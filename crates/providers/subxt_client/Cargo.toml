@@ -8,6 +8,7 @@ repository.workspace = true
 description = "Subxt-based production chain client shared by storage provider node coordinators"
 
 [dependencies]
+async-trait = { workspace = true }
 codec = { workspace = true, features = ["std"] }
 hex = { workspace = true, features = ["std"] }
 sp-core = { workspace = true, features = ["std"] }

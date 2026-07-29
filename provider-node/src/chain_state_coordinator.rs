@@ -390,7 +390,7 @@ impl ChainStateCoordinator {
             // are measured against) at this finalized block, via its runtime
             // API — so the provider never needs to know which block notion the
             // pallet uses.
-            match crate::subxt_client::fetch_current_anchor_block(&at).await {
+            match provider_subxt_client::fetch_current_anchor_block(&at).await {
                 Ok(anchor_block) => {
                     self.chain_state
                         .current_anchor_block

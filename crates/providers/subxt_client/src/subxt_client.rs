@@ -3,17 +3,17 @@
 //! Subxt-based production chain client shared by all coordinators.
 //!
 //! A single [`SubxtChainClient`] holds one [`subxt::OnlineClient`] connection
-//! and one signing key, and backs every coordinator's chain-client trait
-//! (`ReplicaSyncChainClient`, `ChallengeChainClient`): the provider node
-//! implements those traits as thin adapters over this client's inherent
-//! methods. Coordinators still depend on the narrow trait they need, so
-//! per-trait mocks keep working; the production wiring just hands each one a
-//! clone of the same client (a cheap `OnlineClient`/`Keypair` clone that
-//! shares the underlying WebSocket connection).
+//! and one signing key, and implements every coordinator's chain-client trait
+//! (`ReplicaSyncChainClient`, `ChallengeChainClient`). Coordinators still
+//! depend on the narrow trait they need, so per-trait mocks keep working; the
+//! production wiring just hands each one a clone of the same client (a cheap
+//! `OnlineClient`/`Keypair` clone that shares the underlying WebSocket
+//! connection).
 
 use crate::chain_connection::{self, ChainWatch};
 use crate::{
-    decode_challenge_for_provider, BucketSnapshot, DetectedChallenge, Error, ReplicaAgreementInfo,
+    decode_challenge_for_provider, BucketSnapshot, ChallengeChainClient, DetectedChallenge, Error,
+    ReplicaAgreementInfo, ReplicaSyncChainClient,
 };
 use sp_core::crypto::Ss58Codec;
 use sp_core::H256;
@@ -617,16 +617,13 @@ impl SubxtChainClient {
     }
 }
 
-/// Chain operations backing the provider node's `ReplicaSyncChainClient`
-/// trait impl.
-impl SubxtChainClient {
-    /// Get the current block number (the anchor clock).
-    pub async fn get_current_block(&self) -> Result<u64, Error> {
+#[async_trait::async_trait]
+impl ReplicaSyncChainClient for SubxtChainClient {
+    async fn get_current_block(&self) -> Result<u64, Error> {
         self.current_anchor_block().await
     }
 
-    /// Fetch replica agreements for this provider.
-    pub async fn fetch_replica_agreements(
+    async fn fetch_replica_agreements(
         &self,
         provider_account: &str,
         local_buckets: Vec<BucketId>,
@@ -725,11 +722,7 @@ impl SubxtChainClient {
         }
     }
 
-    /// Fetch the bucket snapshot (latest checkpoint state) from chain.
-    pub async fn fetch_bucket_snapshot(
-        &self,
-        bucket_id: BucketId,
-    ) -> Result<BucketSnapshot, Error> {
+    async fn fetch_bucket_snapshot(&self, bucket_id: BucketId) -> Result<BucketSnapshot, Error> {
         use subxt::ext::scale_value::ValueDef;
 
         let storage_address =
@@ -774,8 +767,7 @@ impl SubxtChainClient {
         }
     }
 
-    /// Fetch primary provider HTTP endpoints for a bucket.
-    pub async fn fetch_primary_endpoints(&self, bucket_id: BucketId) -> Result<Vec<String>, Error> {
+    async fn fetch_primary_endpoints(&self, bucket_id: BucketId) -> Result<Vec<String>, Error> {
         use subxt::ext::scale_value::{At, Composite, Primitive, ValueDef};
 
         let storage_address =
@@ -859,8 +851,7 @@ impl SubxtChainClient {
         Ok(endpoints)
     }
 
-    /// Submit a `confirm_replica_sync` extrinsic.
-    pub async fn submit_sync_confirmation(
+    async fn submit_sync_confirmation(
         &self,
         bucket_id: BucketId,
         target_mmr_root: H256,
@@ -906,9 +897,8 @@ impl SubxtChainClient {
     }
 }
 
-/// Chain operations backing the provider node's `ChallengeChainClient`
-/// trait impl.
-impl SubxtChainClient {
+#[async_trait::async_trait]
+impl ChallengeChainClient for SubxtChainClient {
     /// Poll for active challenges against this provider.
     ///
     /// Iterates the on-chain `StorageProvider::Challenges` map. It is a
@@ -920,7 +910,7 @@ impl SubxtChainClient {
     /// Cost is bounded by `ChallengeTimeout` (storage entries past their
     /// deadline are reaped in `on_finalize`), so iteration is at worst the
     /// number of open challenges across all unexpired deadlines.
-    pub async fn poll_challenges(&self) -> Result<Vec<DetectedChallenge>, Error> {
+    async fn poll_challenges(&self) -> Result<Vec<DetectedChallenge>, Error> {
         // Our account's raw bytes, used to filter challenges targeting us.
         let our_bytes: [u8; 32] = self.signer.public_key().0;
 
@@ -990,7 +980,7 @@ impl SubxtChainClient {
     /// challenge id but not the proof parameters, so the responder fetches
     /// the full `Challenge` value here. Returns `None` when the entry is
     /// missing (already responded / reaped) or targets another provider.
-    pub async fn fetch_challenge(
+    async fn fetch_challenge(
         &self,
         deadline: u32,
         index: u16,
@@ -1041,8 +1031,7 @@ impl SubxtChainClient {
         }))
     }
 
-    /// Submit a challenge response transaction.
-    pub async fn submit_response(
+    async fn submit_response(
         &self,
         challenge_id: (u32, u16),
         chunk_data: Vec<u8>,

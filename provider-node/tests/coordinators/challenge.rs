@@ -3,13 +3,14 @@
 //! Integration tests for the challenge responder.
 
 use super::{test_state, test_state_with_data, wait_for, ALICE_SS58};
+use provider_subxt_client::Error;
 use sp_core::H256;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use storage_primitives::BucketId;
 use storage_provider_node::{
     ChallengeChainClient, ChallengeResponder, ChallengeResponderConfig, ChallengeResponseResult,
-    DetectedChallenge, Error,
+    DetectedChallenge,
 };
 
 struct MockChallengeChainClient {

@@ -27,7 +27,6 @@ pub mod replica_sync_coordinator;
 pub mod s3_api;
 pub mod s3_index;
 pub mod storage;
-pub(crate) mod subxt_client;
 pub mod types;
 
 pub use api::create_router;

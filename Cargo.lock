@@ -7063,6 +7063,7 @@ dependencies = [
 name = "provider-subxt-client"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "hex",
  "parity-scale-codec",
  "sp-core",

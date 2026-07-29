@@ -13,6 +13,7 @@ pub mod subxt_client;
 pub use subxt_client::{fetch_current_anchor_block, SubxtChainClient};
 
 use sp_core::H256;
+use std::sync::Arc;
 use storage_primitives::BucketId;
 
 /// Errors produced by the chain client.
@@ -58,6 +59,121 @@ pub struct ReplicaAgreementInfo {
 pub struct BucketSnapshot {
     pub mmr_root: H256,
     pub leaf_count: u64,
+}
+
+/// Trait abstracting chain interactions for the challenge responder.
+#[async_trait::async_trait]
+pub trait ChallengeChainClient: Send + Sync {
+    /// Poll the chain for active challenges targeting this provider.
+    async fn poll_challenges(&self) -> Result<Vec<DetectedChallenge>, Error>;
+
+    /// Point-read a single challenge by id, `None` if it is gone (already
+    /// responded / reaped) or targets another provider. Backs the
+    /// event-driven path, where `ChallengeCreated` carries the id but not
+    /// the proof parameters.
+    async fn fetch_challenge(
+        &self,
+        deadline: u32,
+        index: u16,
+    ) -> Result<Option<DetectedChallenge>, Error>;
+
+    /// Submit a challenge response transaction.
+    async fn submit_response(
+        &self,
+        challenge_id: (u32, u16),
+        chunk_data: Vec<u8>,
+        mmr_proof: storage_primitives::MmrProof,
+        chunk_proof: storage_primitives::MerkleProof,
+    ) -> Result<H256, Error>;
+}
+
+#[async_trait::async_trait]
+impl<T: ChallengeChainClient> ChallengeChainClient for Arc<T> {
+    async fn poll_challenges(&self) -> Result<Vec<DetectedChallenge>, Error> {
+        self.as_ref().poll_challenges().await
+    }
+
+    async fn fetch_challenge(
+        &self,
+        deadline: u32,
+        index: u16,
+    ) -> Result<Option<DetectedChallenge>, Error> {
+        self.as_ref().fetch_challenge(deadline, index).await
+    }
+
+    async fn submit_response(
+        &self,
+        challenge_id: (u32, u16),
+        chunk_data: Vec<u8>,
+        mmr_proof: storage_primitives::MmrProof,
+        chunk_proof: storage_primitives::MerkleProof,
+    ) -> Result<H256, Error> {
+        self.as_ref()
+            .submit_response(challenge_id, chunk_data, mmr_proof, chunk_proof)
+            .await
+    }
+}
+
+/// Trait abstracting chain interactions for the replica sync coordinator.
+#[async_trait::async_trait]
+pub trait ReplicaSyncChainClient: Send + Sync {
+    /// Get the current block number.
+    async fn get_current_block(&self) -> Result<u64, Error>;
+
+    /// Fetch replica agreements for this provider.
+    async fn fetch_replica_agreements(
+        &self,
+        provider_account: &str,
+        local_buckets: Vec<BucketId>,
+    ) -> Result<Vec<ReplicaAgreementInfo>, Error>;
+
+    /// Fetch the bucket snapshot (latest checkpoint state) from chain.
+    async fn fetch_bucket_snapshot(&self, bucket_id: BucketId) -> Result<BucketSnapshot, Error>;
+
+    /// Fetch primary provider HTTP endpoints for a bucket.
+    async fn fetch_primary_endpoints(&self, bucket_id: BucketId) -> Result<Vec<String>, Error>;
+
+    /// Submit a confirm_replica_sync extrinsic.
+    async fn submit_sync_confirmation(
+        &self,
+        bucket_id: BucketId,
+        target_mmr_root: H256,
+    ) -> Result<(u8, u128), Error>;
+}
+
+#[async_trait::async_trait]
+impl<T: ReplicaSyncChainClient> ReplicaSyncChainClient for Arc<T> {
+    async fn get_current_block(&self) -> Result<u64, Error> {
+        self.as_ref().get_current_block().await
+    }
+
+    async fn fetch_replica_agreements(
+        &self,
+        provider_account: &str,
+        local_buckets: Vec<BucketId>,
+    ) -> Result<Vec<ReplicaAgreementInfo>, Error> {
+        self.as_ref()
+            .fetch_replica_agreements(provider_account, local_buckets)
+            .await
+    }
+
+    async fn fetch_bucket_snapshot(&self, bucket_id: BucketId) -> Result<BucketSnapshot, Error> {
+        self.as_ref().fetch_bucket_snapshot(bucket_id).await
+    }
+
+    async fn fetch_primary_endpoints(&self, bucket_id: BucketId) -> Result<Vec<String>, Error> {
+        self.as_ref().fetch_primary_endpoints(bucket_id).await
+    }
+
+    async fn submit_sync_confirmation(
+        &self,
+        bucket_id: BucketId,
+        target_mmr_root: H256,
+    ) -> Result<(u8, u128), Error> {
+        self.as_ref()
+            .submit_sync_confirmation(bucket_id, target_mmr_root)
+            .await
+    }
 }
 
 /// Manually-decoded view of a `Challenge` struct from raw SCALE bytes.

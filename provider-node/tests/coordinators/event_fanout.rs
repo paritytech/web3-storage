@@ -5,6 +5,7 @@
 //! including the bootstrap scan on `Resubscribed` and lag recovery.
 
 use super::{test_state, test_state_with_data, wait_for, ALICE_SS58};
+use provider_subxt_client::Error;
 use sp_core::H256;
 use sp_runtime::AccountId32;
 use std::str::FromStr;
@@ -15,7 +16,7 @@ use storage_primitives::BucketId;
 use storage_provider_node::chain_events::BlockEvent;
 use storage_provider_node::replica_sync_coordinator::{BucketSnapshot, ReplicaAgreementInfo};
 use storage_provider_node::{
-    ChallengeChainClient, ChallengeResponder, ChallengeResponderConfig, DetectedChallenge, Error,
+    ChallengeChainClient, ChallengeResponder, ChallengeResponderConfig, DetectedChallenge,
     ReplicaSyncChainClient, ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig,
 };
 

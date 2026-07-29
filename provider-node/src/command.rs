@@ -8,14 +8,13 @@ use crate::{
     chain_events::{BlockEvent, BlockEventRx, BlockEventTx, EVENT_CHANNEL_CAPACITY},
     chain_state_coordinator::ChainStateCoordinator,
     cli::{Cli, StorageMode, DEFAULT_PROVIDER_ID},
-    create_router,
-    subxt_client::SubxtChainClient,
-    ChainStateCoordinatorHandle, ChallengeResponder, ChallengeResponderConfig,
+    create_router, ChainStateCoordinatorHandle, ChallengeResponder, ChallengeResponderConfig,
     ChallengeResponderHandle, DiskStorage, NonceStore, NullNonceStore, ProviderDeps, ProviderState,
     ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig, ReplicaSyncCoordinatorHandle, Storage,
     StorageBackend,
 };
 use clap::Parser;
+use provider_subxt_client::SubxtChainClient;
 use std::net::SocketAddr;
 use std::str::FromStr;
 use std::sync::Arc;

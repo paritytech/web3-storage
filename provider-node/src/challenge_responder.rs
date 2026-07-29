@@ -20,6 +20,9 @@ use std::sync::Arc;
 use std::time::Duration;
 use storage_primitives::BucketId;
 use tokio::sync::{broadcast, mpsc};
+pub use provider_subxt_client::{
+    decode_challenge_for_provider, ChallengeChainClient, DecodedChallenge, DetectedChallenge,
+};
 
 /// Configuration for the challenge responder.
 #[derive(Clone, Debug)]
@@ -42,10 +45,6 @@ impl Default for ChallengeResponderConfig {
         }
     }
 }
-
-pub use provider_subxt_client::{
-    decode_challenge_for_provider, DecodedChallenge, DetectedChallenge,
-};
 
 /// Result of responding to a challenge.
 #[derive(Clone, Debug)]
@@ -71,59 +70,6 @@ pub enum ChallengeResponseResult {
         bucket_id: BucketId,
         leaf_index: u64,
     },
-}
-
-/// Trait abstracting chain interactions for the challenge responder.
-#[async_trait::async_trait]
-pub trait ChallengeChainClient: Send + Sync {
-    /// Poll the chain for active challenges targeting this provider.
-    async fn poll_challenges(&self) -> Result<Vec<DetectedChallenge>, Error>;
-
-    /// Point-read a single challenge by id, `None` if it is gone (already
-    /// responded / reaped) or targets another provider. Backs the
-    /// event-driven path, where `ChallengeCreated` carries the id but not
-    /// the proof parameters.
-    async fn fetch_challenge(
-        &self,
-        deadline: u32,
-        index: u16,
-    ) -> Result<Option<DetectedChallenge>, Error>;
-
-    /// Submit a challenge response transaction.
-    async fn submit_response(
-        &self,
-        challenge_id: (u32, u16),
-        chunk_data: Vec<u8>,
-        mmr_proof: storage_primitives::MmrProof,
-        chunk_proof: storage_primitives::MerkleProof,
-    ) -> Result<H256, Error>;
-}
-
-#[async_trait::async_trait]
-impl<T: ChallengeChainClient> ChallengeChainClient for Arc<T> {
-    async fn poll_challenges(&self) -> Result<Vec<DetectedChallenge>, Error> {
-        self.as_ref().poll_challenges().await
-    }
-
-    async fn fetch_challenge(
-        &self,
-        deadline: u32,
-        index: u16,
-    ) -> Result<Option<DetectedChallenge>, Error> {
-        self.as_ref().fetch_challenge(deadline, index).await
-    }
-
-    async fn submit_response(
-        &self,
-        challenge_id: (u32, u16),
-        chunk_data: Vec<u8>,
-        mmr_proof: storage_primitives::MmrProof,
-        chunk_proof: storage_primitives::MerkleProof,
-    ) -> Result<H256, Error> {
-        self.as_ref()
-            .submit_response(challenge_id, chunk_data, mmr_proof, chunk_proof)
-            .await
-    }
 }
 
 /// Commands for controlling the responder.

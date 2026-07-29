@@ -3,6 +3,7 @@
 //! Integration tests for the replica sync coordinator.
 
 use super::{test_state, ALICE_SS58};
+use provider_subxt_client::Error;
 use sp_core::H256;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -11,8 +12,8 @@ use storage_primitives::BucketId;
 use storage_provider_node::auth::{MembershipCache, StaticMembershipResolver};
 use storage_provider_node::replica_sync_coordinator::{BucketSnapshot, ReplicaAgreementInfo};
 use storage_provider_node::{
-    Error, NullNonceStore, ProviderDeps, ProviderState, ReplicaSyncChainClient,
-    ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig, Storage, SyncDuty, SyncResult,
+    NullNonceStore, ProviderDeps, ProviderState, ReplicaSyncChainClient, ReplicaSyncCoordinator,
+    ReplicaSyncCoordinatorConfig, Storage, SyncDuty, SyncResult,
 };
 
 struct MockReplicaSyncChainClient {
