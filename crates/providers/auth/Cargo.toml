@@ -15,5 +15,4 @@ sp-core = { workspace = true, features = ["std"] }
 storage-primitives = { workspace = true, features = ["std"] }
 subxt = { workspace = true }
 thiserror = { workspace = true }
-tokio = { workspace = true }
 tracing = { workspace = true, features = ["std"] }

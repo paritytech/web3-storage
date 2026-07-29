@@ -7056,7 +7056,6 @@ dependencies = [
  "storage-primitives",
  "subxt",
  "thiserror 2.0.18",
- "tokio",
  "tracing",
 ]
 
@@ -7072,6 +7071,25 @@ dependencies = [
  "sp-core",
  "sp-runtime",
  "storage-primitives",
+]
+
+[[package]]
+name = "provider-storage"
+version = "0.1.0"
+dependencies = [
+ "bincode",
+ "dashmap",
+ "hex",
+ "parity-scale-codec",
+ "parking_lot",
+ "rocksdb",
+ "serde",
+ "serde_json",
+ "sp-core",
+ "storage-primitives",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tracing",
 ]
 
 [[package]]
@@ -9717,6 +9735,7 @@ dependencies = [
  "parity-scale-codec",
  "provider-auth",
  "provider-negotiation",
+ "provider-storage",
  "rand 0.8.5",
  "reqwest",
  "serde",
@@ -9908,7 +9927,6 @@ dependencies = [
  "async-trait",
  "axum",
  "base64",
- "bincode",
  "clap",
  "dashmap",
  "hex",
@@ -9916,13 +9934,14 @@ dependencies = [
  "parking_lot",
  "provider-auth",
  "provider-negotiation",
+ "provider-storage",
  "reqwest",
- "rocksdb",
  "serde",
  "serde_json",
  "sp-core",
  "sp-runtime",
  "storage-primitives",
+ "storage-subxt",
  "subxt",
  "subxt-rpcs",
  "subxt-signer 0.50.2",

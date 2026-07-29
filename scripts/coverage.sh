@@ -26,6 +26,7 @@ COV_PACKAGES=(
 	storage-provider-node
 	provider-negotiation
 	provider-auth
+	provider-storage
 )
 
 # Not measured, with the reason per crate.

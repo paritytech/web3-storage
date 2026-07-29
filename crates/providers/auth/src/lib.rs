@@ -19,6 +19,7 @@ pub mod verify;
 pub use error::AuthError;
 pub use http_auth::{auth_message, build_auth_header};
 pub use membership::{
-    ChainMembershipResolver, MembershipCache, MembershipResolver, StaticMembershipResolver,
+    ChainApiSource, ChainMembershipResolver, MembershipCache, MembershipResolver,
+    StaticMembershipResolver,
 };
 pub use verify::{require_role, verify_signature, RequiredRole};

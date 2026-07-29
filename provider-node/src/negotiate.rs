@@ -20,8 +20,8 @@
 //!    `replica-term-v1:` depending on the quote's flavour.
 
 use crate::error::Error;
-use crate::storage::{NonceStore, NullNonceStore};
 use crate::types::ProviderInfo;
+use provider_storage::{NonceStore, NullNonceStore};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 

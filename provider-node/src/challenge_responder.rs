@@ -2,22 +2,30 @@
 
 //! Challenge Responder - Automated response to on-chain challenges.
 //!
-//! This module provides a background service that monitors the blockchain
-//! for challenges against this provider and automatically responds with
-//! the required proof data.
+//! This module provides a background service that reacts to
+//! `ChallengeCreated` events (fanned out by the chain-state coordinator)
+//! against this provider and automatically responds with the required proof
+//! data. A full `Challenges` scan runs at startup and on every stream
+//! (re)subscription to catch challenges raised while the node was down, plus
+//! on a slow safety-net interval — a missed challenge means getting slashed,
+//! so the event path is backstopped rather than trusted blindly.
 
+use crate::chain_events::{BlockEvent, BlockEventRx};
 use crate::{Error, ProviderState};
 use sp_core::H256;
+use sp_runtime::AccountId32;
+use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use storage_primitives::BucketId;
-use tokio::sync::mpsc;
+use tokio::sync::{broadcast, mpsc};
 
 /// Configuration for the challenge responder.
 #[derive(Clone, Debug)]
 pub struct ChallengeResponderConfig {
-    /// How often to poll for challenges (if not using subscriptions).
+    /// Safety-net interval between full `Challenges` reconciliation scans.
+    /// Challenges are normally handled event-driven; zero disables the scan.
     pub poll_interval: Duration,
     /// Maximum time to spend gathering proof data.
     pub proof_timeout: Duration,
@@ -28,7 +36,7 @@ pub struct ChallengeResponderConfig {
 impl Default for ChallengeResponderConfig {
     fn default() -> Self {
         Self {
-            poll_interval: Duration::from_secs(6), // ~1 block
+            poll_interval: Duration::from_secs(300),
             proof_timeout: Duration::from_secs(30),
             auto_respond: true,
         }
@@ -88,6 +96,16 @@ pub trait ChallengeChainClient: Send + Sync {
     /// Poll the chain for active challenges targeting this provider.
     async fn poll_challenges(&self) -> Result<Vec<DetectedChallenge>, Error>;
 
+    /// Point-read a single challenge by id, `None` if it is gone (already
+    /// responded / reaped) or targets another provider. Backs the
+    /// event-driven path, where `ChallengeCreated` carries the id but not
+    /// the proof parameters.
+    async fn fetch_challenge(
+        &self,
+        deadline: u32,
+        index: u16,
+    ) -> Result<Option<DetectedChallenge>, Error>;
+
     /// Submit a challenge response transaction.
     async fn submit_response(
         &self,
@@ -102,6 +120,14 @@ pub trait ChallengeChainClient: Send + Sync {
 impl<T: ChallengeChainClient> ChallengeChainClient for Arc<T> {
     async fn poll_challenges(&self) -> Result<Vec<DetectedChallenge>, Error> {
         self.as_ref().poll_challenges().await
+    }
+
+    async fn fetch_challenge(
+        &self,
+        deadline: u32,
+        index: u16,
+    ) -> Result<Option<DetectedChallenge>, Error> {
+        self.as_ref().fetch_challenge(deadline, index).await
     }
 
     async fn submit_response(
@@ -189,8 +215,14 @@ impl ChallengeResponder {
     }
 
     /// Start the challenge responder background service.
+    ///
+    /// `events_rx` is a subscription to the chain-state coordinator's block
+    /// event fan-out; the responder reacts to `ChallengeCreated` events and
+    /// reconciles with a full scan on `Resubscribed` / lag / the safety-net
+    /// interval.
     pub async fn start(
         self,
+        events_rx: BlockEventRx,
         callback: Option<Arc<dyn Fn(ChallengeResponseResult) + Send + Sync>>,
     ) -> Result<ChallengeResponderHandle, Error> {
         let (command_tx, command_rx) = mpsc::channel::<ResponderCommand>(32);
@@ -198,7 +230,8 @@ impl ChallengeResponder {
         let running_clone = running.clone();
 
         tokio::spawn(async move {
-            self.run_loop(command_rx, running_clone, callback).await;
+            self.run_loop(command_rx, events_rx, running_clone, callback)
+                .await;
         });
 
         Ok(ChallengeResponderHandle {
@@ -211,19 +244,34 @@ impl ChallengeResponder {
     async fn run_loop(
         self,
         mut command_rx: mpsc::Receiver<ResponderCommand>,
+        mut events_rx: BlockEventRx,
         running: Arc<AtomicBool>,
         callback: Option<Arc<dyn Fn(ChallengeResponseResult) + Send + Sync>>,
     ) {
         let mut paused = false;
-        let mut interval = tokio::time::interval(self.config.poll_interval);
+        // A closed broadcast channel (follower gone) yields `Closed` on every
+        // poll; disarm the events select arm then, or the loop busy-spins.
+        let mut events_open = true;
+        // Only challenges against our own account are actionable; with an
+        // unparseable provider id the point-read filter still protects us.
+        let our_account = AccountId32::from_str(&self.state.provider_id).ok();
+        // The safety-net interval's first tick fires immediately, doubling as
+        // the startup bootstrap scan (challenges raised while the node was
+        // down). With the safety net disabled, the bootstrap scan comes from
+        // the follower's `Resubscribed` event on its first connect instead.
+        let safety_net = !self.config.poll_interval.is_zero();
+        let mut interval = tokio::time::interval(if safety_net {
+            self.config.poll_interval
+        } else {
+            Duration::from_secs(3600)
+        });
 
         tracing::info!("Challenge responder started");
 
         loop {
             tokio::select! {
-                // Prefer control commands over the poll tick: the interval's
-                // first tick fires immediately, so an unbiased select could
-                // service a poll before a Pause/Stop queued right after start().
+                // Prefer control commands over event/scan work, so a
+                // Pause/Stop queued right after start() is honored first.
                 biased;
 
                 cmd = command_rx.recv() => {
@@ -249,32 +297,88 @@ impl ChallengeResponder {
                         }
                     }
                 }
-                _ = interval.tick() => {
-                    if paused || !self.config.auto_respond {
+                // While paused, stop consuming so events stay queued instead of
+                // being dropped. Replaying them on resume is safe: each one is
+                // point-read against live chain state, so anything already
+                // resolved is a no-op. A pause longer than the channel's
+                // capacity surfaces as `Lagged` below, which reconciles with a
+                // full scan.
+                event = events_rx.recv(), if events_open && !paused => {
+                    if matches!(event, Err(broadcast::error::RecvError::Closed)) {
+                        events_open = false;
                         continue;
                     }
-
-                    match self.chain_client.poll_challenges().await {
-                        Ok(challenges) => {
-                            for challenge in challenges {
-                                tracing::info!(
-                                    "Detected challenge for bucket {} (deadline: {}, index: {})",
-                                    challenge.bucket_id,
-                                    challenge.deadline,
-                                    challenge.index
-                                );
-
-                                let result = self.respond_to_challenge(&challenge).await;
-                                if let Some(ref cb) = callback {
-                                    cb(result);
+                    // Unlike `paused`, this is permanent config: drain and drop,
+                    // since no later state change makes these actionable.
+                    if !self.config.auto_respond {
+                        continue;
+                    }
+                    match event {
+                        Ok(BlockEvent::ChallengeCreated { deadline, index, provider, .. }) => {
+                            if our_account.as_ref().is_some_and(|me| *me != provider) {
+                                continue;
+                            }
+                            match self.chain_client.fetch_challenge(deadline, index).await {
+                                Ok(Some(challenge)) => {
+                                    tracing::info!(
+                                        "Challenge event for bucket {} (deadline: {}, index: {})",
+                                        challenge.bucket_id,
+                                        deadline,
+                                        index
+                                    );
+                                    let result = self.respond_to_challenge(&challenge).await;
+                                    if let Some(ref cb) = callback {
+                                        cb(result);
+                                    }
+                                }
+                                Ok(None) => {}
+                                Err(e) => {
+                                    tracing::warn!(
+                                        "Failed to fetch challenge {deadline}/{index} after event: {e}"
+                                    );
                                 }
                             }
                         }
-                        Err(e) => {
-                            tracing::warn!("Failed to poll for challenges: {}", e);
+                        Ok(BlockEvent::Resubscribed { .. }) | Err(broadcast::error::RecvError::Lagged(_)) => {
+                            // Events may have been missed: reconcile with a scan.
+                            self.scan_and_respond(&callback).await;
                         }
+                        Ok(_) | Err(broadcast::error::RecvError::Closed) => {}
                     }
                 }
+                _ = interval.tick() => {
+                    if paused || !self.config.auto_respond || !safety_net {
+                        continue;
+                    }
+                    self.scan_and_respond(&callback).await;
+                }
+            }
+        }
+    }
+
+    /// Full `Challenges` scan; respond to everything targeting this provider.
+    async fn scan_and_respond(
+        &self,
+        callback: &Option<Arc<dyn Fn(ChallengeResponseResult) + Send + Sync>>,
+    ) {
+        match self.chain_client.poll_challenges().await {
+            Ok(challenges) => {
+                for challenge in challenges {
+                    tracing::info!(
+                        "Detected challenge for bucket {} (deadline: {}, index: {})",
+                        challenge.bucket_id,
+                        challenge.deadline,
+                        challenge.index
+                    );
+
+                    let result = self.respond_to_challenge(&challenge).await;
+                    if let Some(ref cb) = callback {
+                        cb(result);
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!("Failed to poll for challenges: {}", e);
             }
         }
     }

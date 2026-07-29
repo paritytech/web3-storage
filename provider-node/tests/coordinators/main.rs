@@ -5,46 +5,45 @@
 //! Each sub-module covers one coordinator; shared helpers live here.
 
 mod challenge;
+mod event_fanout;
 mod replica_sync;
 
 use provider_auth::{MembershipCache, StaticMembershipResolver};
+use provider_storage::{build_padded_merkle_tree, NullNonceStore, Storage};
 use std::sync::Arc;
 use std::time::Duration;
-use storage_provider_node::{NullNonceStore, ProviderDeps, ProviderState, Storage};
+use storage_primitives::blake2_256;
+use storage_provider_node::{DetectedChallenge, ProviderDeps, ProviderState};
 
 /// Full Alice SS58 address (substrate prefix 42).
 pub const ALICE_SS58: &str = "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY";
 pub const ALICE_SEED: &str = "//Alice";
 
-/// Create a standard test `ProviderState` for coordinator tests.
-pub fn test_state() -> Arc<ProviderState> {
-    let deps = ProviderDeps {
-        storage: Arc::new(Storage::new()),
+/// Standard test dependencies around the given storage backend: no nonce
+/// persistence and an empty static membership set.
+pub fn test_deps(storage: Arc<Storage>) -> ProviderDeps {
+    ProviderDeps {
+        storage,
         nonce_store: Arc::new(NullNonceStore),
         membership: Arc::new(MembershipCache::new(
             Box::new(StaticMembershipResolver(vec![])),
             Duration::from_secs(60),
         )),
         auth_max_skew: Duration::from_secs(300),
-    };
+    }
+}
+
+/// Create a standard test `ProviderState` for coordinator tests.
+pub fn test_state() -> Arc<ProviderState> {
     Arc::new(ProviderState::with_provider_id(
-        deps,
+        test_deps(Arc::new(Storage::new())),
         ALICE_SS58.to_string(),
     ))
 }
 
 /// Create a test `ProviderState` with a keypair derived from the given seed.
 pub fn test_state_with_seed(seed: &str) -> Arc<ProviderState> {
-    let deps = ProviderDeps {
-        storage: Arc::new(Storage::new()),
-        nonce_store: Arc::new(NullNonceStore),
-        membership: Arc::new(MembershipCache::new(
-            Box::new(StaticMembershipResolver(vec![])),
-            Duration::from_secs(60),
-        )),
-        auth_max_skew: Duration::from_secs(300),
-    };
-    Arc::new(ProviderState::with_seed(deps, seed).unwrap())
+    Arc::new(ProviderState::with_seed(test_deps(Arc::new(Storage::new())), seed).unwrap())
 }
 
 /// Poll a condition with timeout. Returns `true` if the condition was met
@@ -64,4 +63,40 @@ where
         }
         tokio::time::sleep(std::time::Duration::from_millis(poll_ms)).await;
     }
+}
+
+/// Create a provider state with a bucket containing a single committed chunk,
+/// and return the state along with a matching challenge.
+pub fn test_state_with_data() -> (Arc<ProviderState>, DetectedChallenge) {
+    let storage = Arc::new(Storage::new());
+    storage.init_bucket(1, 1024 * 1024);
+
+    let chunk_data = b"test-chunk-data-for-challenge";
+    let chunk_hash = blake2_256(chunk_data);
+    storage
+        .store_node(1, chunk_hash, chunk_data.to_vec(), None)
+        .unwrap();
+
+    let data_root = build_padded_merkle_tree(storage.as_ref(), 1, &[chunk_hash]);
+    assert_eq!(data_root, chunk_hash);
+
+    let (mmr_root, start_seq, leaf_indices) = storage.commit(1, vec![data_root]).unwrap();
+    assert_eq!(leaf_indices, vec![0]);
+
+    let challenge = DetectedChallenge {
+        bucket_id: 1,
+        deadline: 1000,
+        index: 0,
+        mmr_root,
+        start_seq,
+        leaf_index: 0,
+        chunk_index: 0,
+        challenger: ALICE_SS58.to_string(),
+    };
+
+    let state = Arc::new(ProviderState::with_provider_id(
+        test_deps(storage),
+        ALICE_SS58.to_string(),
+    ));
+    (state, challenge)
 }

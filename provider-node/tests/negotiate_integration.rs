@@ -10,6 +10,7 @@
 
 use axum::http::StatusCode;
 use provider_auth::{MembershipCache, StaticMembershipResolver};
+use provider_storage::{DiskStorage, NonceStore, NullNonceStore, Storage};
 use reqwest::Client;
 use serde_json::Value;
 use sp_core::{sr25519, Pair};
@@ -20,8 +21,8 @@ use std::time::Duration;
 use storage_primitives::ReplicaTerms;
 use storage_provider_node::ProviderInfo;
 use storage_provider_node::{
-    create_router, DiskStorage, NegotiateRequest, NonceCounter, NonceStore, NullNonceStore,
-    PalletConstants, ProviderDeps, ProviderState, SignedTerms, Storage,
+    create_router, NegotiateRequest, NonceCounter, PalletConstants, ProviderDeps, ProviderState,
+    SignedTerms,
 };
 use tokio::net::TcpListener;
 

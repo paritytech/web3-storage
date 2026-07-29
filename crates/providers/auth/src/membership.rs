@@ -6,7 +6,6 @@ use sp_core::crypto::AccountId32;
 use std::time::{Duration, Instant};
 use storage_primitives::{BucketId, Role};
 use subxt::{OnlineClient, PolkadotConfig};
-use tokio::sync::OnceCell;
 
 /// Cached membership entry for a bucket.
 #[derive(Debug, Clone)]
@@ -98,37 +97,29 @@ fn find_role(members: &[(AccountId32, Role)], account: &AccountId32) -> Option<R
     members.iter().find(|(a, _)| a == account).map(|(_, r)| *r)
 }
 
+/// Source of the current live chain client.
+///
+/// Implementations are expected to follow reconnects (e.g. by borrowing the
+/// client from a watch channel owned by whoever manages the connection).
+/// Erroring while no connection has been established yet is expected and
+/// retryable: the caller surfaces it as a lookup error and the request is
+/// retried later.
+pub trait ChainApiSource: Send + Sync {
+    fn current_api(&self) -> Result<OnlineClient<PolkadotConfig>, String>;
+}
+
 /// Chain-backed membership resolver using subxt dynamic queries.
+///
+/// Borrows the current chain connection from a [`ChainApiSource`] on every
+/// lookup, so lookups automatically follow reconnects instead of holding
+/// their own (never-reconnecting) socket.
 pub struct ChainMembershipResolver {
-    chain_rpc: String,
-    /// Lazily-established chain connection, reused across lookups.
-    ///
-    /// `OnlineClient` is an `Arc`-backed handle over a single WebSocket
-    /// connection and a metadata cache, so connecting is the expensive part
-    /// (network handshake + metadata download). We connect on the first
-    /// lookup and reuse the same client for every subsequent one instead of
-    /// reconnecting per request. If the first attempt fails the cell stays
-    /// empty, so the next lookup retries.
-    api: OnceCell<OnlineClient<PolkadotConfig>>,
+    source: Box<dyn ChainApiSource>,
 }
 
 impl ChainMembershipResolver {
-    pub fn new(chain_rpc: String) -> Self {
-        Self {
-            chain_rpc,
-            api: OnceCell::new(),
-        }
-    }
-
-    /// Return the shared chain client, connecting on first use.
-    async fn api(&self) -> Result<&OnlineClient<PolkadotConfig>, String> {
-        self.api
-            .get_or_try_init(|| async {
-                OnlineClient::<PolkadotConfig>::from_url(&self.chain_rpc)
-                    .await
-                    .map_err(|e| format!("Failed to connect to chain: {e}"))
-            })
-            .await
+    pub fn new(source: Box<dyn ChainApiSource>) -> Self {
+        Self { source }
     }
 }
 
@@ -137,7 +128,7 @@ impl MembershipResolver for ChainMembershipResolver {
     async fn fetch_members(&self, bucket_id: BucketId) -> Result<Vec<(AccountId32, Role)>, String> {
         use subxt::dynamic::{At, Value};
 
-        let api = self.api().await?;
+        let api = self.source.current_api()?;
 
         let storage_query =
             subxt::dynamic::storage::<(Value,), Value>("StorageProvider", "Buckets");
