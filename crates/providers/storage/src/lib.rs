@@ -4,17 +4,6 @@
 //! commitments, plus the drive/S3 metadata indexes served over it. No HTTP or
 //! chain dependencies.
 //!
-//! Layout:
-//! - [`backend`]: the [`StorageBackend`] trait and its two implementations -
-//!   [`Storage`] (in-memory, for development and tests) and [`DiskStorage`]
-//!   (persistent, RocksDB) - plus [`build_padded_merkle_tree`], which writes
-//!   through the trait.
-//! - [`index`]: metadata layered over the blobs - file-system drives
-//!   ([`index::fs`]) and S3-style object listings ([`index::s3`]).
-//! - [`mmr`], [`merkle`]: pure commitment/proof math used by the backends.
-//! - [`error`]: the crate's [`Error`] type.
-//! - [`nonce`]: persistence for the negotiation nonce high-water mark.
-
 pub mod backend;
 pub mod error;
 pub mod index;
