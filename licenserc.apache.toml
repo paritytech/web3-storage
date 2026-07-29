@@ -11,6 +11,7 @@ includes = [
 	"crates/pallets/**/*.sol",
 	"crates/primitives/**/*.rs",
 	"crates/providers/**/*.rs",
+	"crates/utils/**/*.rs",
 	"examples/contracts/**/*.sol",
 	"examples/papi/**/*.ts",
 	"packages/**/*.js",

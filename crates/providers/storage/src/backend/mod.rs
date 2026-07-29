@@ -1,10 +1,9 @@
-// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
-//! Storage backends for the provider node.
+//! Blob persistence layer: the [`StorageBackend`] trait and its implementations.
 //!
-//! This module contains the `StorageBackend` trait and its implementations:
-//! - `Storage`: in-memory backend for testing and development
-//! - `DiskStorage`: persistent RocksDB backend for production
+//! Both [`Storage`] (in-memory) and [`DiskStorage`] (persistent) implement the
+//! trait, allowing the provider node to select the storage backend at startup.
 
 pub mod disk;
 pub mod in_memory;
@@ -12,47 +11,9 @@ pub mod in_memory;
 pub use disk::{DiskNonceStore, DiskStorage};
 pub use in_memory::Storage;
 
-/// Persistence layer for the nonce counter's high-water mark.
-///
-/// [`DiskNonceStore`] is backed by the provider's RocksDB instance.
-/// [`NullNonceStore`] is the default: in-memory mode and any code that does
-/// not need cross-restart durability.
-pub trait NonceStore: Send + Sync {
-    /// Return the highest persisted nonce value, or `None` on a fresh store.
-    fn load(&self) -> Option<u64>;
-
-    /// Persist `value` as the new high-water mark. Monotonic: a lower value
-    /// is silently ignored. Best-effort: errors are logged but not propagated.
-    fn persist(&self, value: u64);
-
-    /// Clear the persisted high-water mark so a re-registration starts fresh.
-    ///
-    /// Call this when the provider deregisters. On the next registration the
-    /// counter will seed from `chain_hsn + 1` rather than the old watermark.
-    /// Best-effort: errors are logged but not propagated.
-    fn reset(&self);
-}
-
-/// No-op [`NonceStore`]: `load` always returns `None`, `persist` and `reset`
-/// do nothing.
-///
-/// Used in in-memory mode and as the default for [`crate::negotiate::NonceCounter::new`]
-/// so existing call sites need no changes.
-#[derive(Debug, Default)]
-pub struct NullNonceStore;
-
-impl NonceStore for NullNonceStore {
-    fn load(&self) -> Option<u64> {
-        None
-    }
-
-    fn persist(&self, _value: u64) {}
-
-    fn reset(&self) {}
-}
-
 use crate::error::Error;
-use crate::types::*;
+use crate::merkle::build_merkle_proof;
+use serde::{Deserialize, Serialize};
 use sp_core::H256;
 use storage_primitives::{hash_children, BucketId};
 
@@ -76,44 +37,22 @@ pub struct BucketInfo {
     pub leaf_count: u64,
 }
 
-/// Build a Merkle proof for a leaf at the given index in a balanced (padded) tree.
-///
-/// Pads the leaf hashes to the next power of 2 with `H256::zero()` so that
-/// the standard index-based verification in `verify_merkle_proof` works.
-pub fn build_merkle_proof(leaf_hashes: &[H256], index: usize) -> storage_primitives::MerkleProof {
-    if leaf_hashes.len() <= 1 {
-        return storage_primitives::MerkleProof {
-            siblings: vec![],
-            path: vec![],
-        };
-    }
+/// Bucket summary info.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BucketSummary {
+    pub bucket_id: BucketId,
+    pub mmr_root: String,
+    pub start_seq: u64,
+    pub leaf_count: u64,
+}
 
-    // Pad to next power of 2 for a balanced tree
-    let padded_len = leaf_hashes.len().next_power_of_two();
-    let mut current_level = leaf_hashes.to_vec();
-    current_level.resize(padded_len, H256::zero());
-
-    let mut siblings = Vec::new();
-    let mut path = Vec::new();
-    let mut idx = index;
-
-    while current_level.len() > 1 {
-        let is_right = idx % 2 == 1;
-        let sibling_idx = if is_right { idx - 1 } else { idx + 1 };
-        siblings.push(current_level[sibling_idx]);
-        path.push(is_right);
-
-        // Build next level
-        let mut next_level = Vec::new();
-        for pair in current_level.chunks(2) {
-            next_level.push(hash_children(pair[0], pair[1]));
-        }
-
-        idx /= 2;
-        current_level = next_level;
-    }
-
-    storage_primitives::MerkleProof { siblings, path }
+/// Per-bucket statistics.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BucketStats {
+    pub bucket_id: BucketId,
+    pub leaf_count: u64,
+    pub node_count: u64,
+    pub bytes_stored: u64,
 }
 
 /// Trait for storage backends (in-memory, disk, etc.).
@@ -266,27 +205,6 @@ pub trait StorageBackend: Send + Sync {
         size
     }
 }
-
-/// Hex encoding utility (simple implementation).
-mod hex {
-    pub fn encode(bytes: &[u8]) -> String {
-        bytes.iter().map(|b| format!("{b:02x}")).collect()
-    }
-
-    pub fn decode(s: &str) -> Result<Vec<u8>, &'static str> {
-        let s = s.strip_prefix("0x").unwrap_or(s);
-        if !s.len().is_multiple_of(2) {
-            return Err("invalid hex length");
-        }
-
-        (0..s.len())
-            .step_by(2)
-            .map(|i| u8::from_str_radix(&s[i..i + 2], 16).map_err(|_| "invalid hex"))
-            .collect()
-    }
-}
-
-pub use hex::{decode as hex_decode, encode as hex_encode};
 
 /// Build a balanced Merkle tree from leaf hashes, storing intermediate nodes in storage.
 ///

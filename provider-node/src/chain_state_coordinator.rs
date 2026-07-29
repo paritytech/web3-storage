@@ -21,11 +21,11 @@
 use crate::chain_connection::{self, ChainHandle, ChainTransport};
 use crate::chain_events::{self, BlockEvent, BlockEventTx};
 use crate::negotiate::NonceCounter;
-use crate::storage::{NonceStore, NullNonceStore};
 use crate::types::ProviderInfo;
 use crate::Error;
 use async_trait::async_trait;
 use parking_lot::RwLock;
+use provider_storage::{NonceStore, NullNonceStore};
 use sp_runtime::AccountId32;
 use std::sync::atomic::AtomicU32;
 use std::sync::Arc;
