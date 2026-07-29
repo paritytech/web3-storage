@@ -4,6 +4,12 @@
 coverage
 provider-data
 
+# Local coverage outputs (scripts/coverage.sh)
+lcov*.info
+coverage-*.md
+coverage-summary.txt
+patch-coverage.md
+
 # pnpm content-addressable store (package cache; reconstructible from lockfiles)
 .pnpm-store/
 
