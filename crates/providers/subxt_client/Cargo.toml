@@ -1,0 +1,20 @@
+[package]
+name = "provider-subxt-client"
+version = "0.1.0"
+authors.workspace = true
+edition.workspace = true
+license = "Apache-2.0"
+repository.workspace = true
+description = "Subxt-based production chain client shared by storage provider node coordinators"
+
+[dependencies]
+codec = { workspace = true, features = ["std"] }
+hex = { workspace = true, features = ["std"] }
+sp-core = { workspace = true, features = ["std"] }
+storage-primitives = { workspace = true, features = ["std"] }
+storage-subxt = { workspace = true }
+subxt = { workspace = true }
+subxt-signer = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true, features = ["std"] }

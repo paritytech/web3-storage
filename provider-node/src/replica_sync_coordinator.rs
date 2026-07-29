@@ -136,22 +136,7 @@ pub struct SyncCoordinatorStatus {
     pub tracked_buckets: Vec<BucketId>,
 }
 
-/// Information about a replica agreement from chain.
-#[derive(Clone, Debug)]
-pub struct ReplicaAgreementInfo {
-    pub bucket_id: BucketId,
-    pub sync_balance: u128,
-    pub sync_price: u128,
-    pub min_sync_interval: u64,
-    pub last_sync: Option<(H256, u64)>,
-}
-
-/// Bucket snapshot from chain.
-#[derive(Clone, Debug)]
-pub struct BucketSnapshot {
-    pub mmr_root: H256,
-    pub leaf_count: u64,
-}
+pub use provider_subxt_client::{BucketSnapshot, ReplicaAgreementInfo};
 
 /// Trait abstracting chain interactions for the replica sync coordinator.
 #[async_trait::async_trait]

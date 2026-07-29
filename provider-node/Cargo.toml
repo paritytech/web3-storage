@@ -9,6 +9,7 @@ description = "Off-chain provider node for scalable Web3 storage"
 
 [dependencies]
 provider-negotiation = { workspace = true }
+provider-subxt-client = { workspace = true }
 storage-primitives = { workspace = true, features = ["serde", "std"] }
 storage-subxt = { workspace = true }
 tokio = { workspace = true }

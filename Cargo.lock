@@ -7060,6 +7060,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "provider-subxt-client"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "parity-scale-codec",
+ "sp-core",
+ "storage-primitives",
+ "storage-subxt",
+ "subxt",
+ "subxt-signer 0.50.2",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "pulley-interpreter"
 version = "35.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9899,6 +9915,7 @@ dependencies = [
  "parity-scale-codec",
  "parking_lot",
  "provider-negotiation",
+ "provider-subxt-client",
  "reqwest",
  "rocksdb",
  "serde",

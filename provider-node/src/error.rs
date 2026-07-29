@@ -115,6 +115,14 @@ pub enum Error {
     RateLimited,
 }
 
+impl From<provider_subxt_client::Error> for Error {
+    fn from(e: provider_subxt_client::Error) -> Self {
+        // Unwrap the message so it is not double-prefixed with "Internal error:".
+        let provider_subxt_client::Error::Internal(msg) = e;
+        Error::Internal(msg)
+    }
+}
+
 #[derive(Serialize)]
 struct ErrorResponse {
     error: String,
