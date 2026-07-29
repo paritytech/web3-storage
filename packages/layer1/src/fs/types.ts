@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 /** File-system interface types (drive-backed storage). */
 
@@ -62,18 +62,16 @@ export interface UploadResult {
   size: number;
 }
 
+export interface FileWithType {
+  bytes: Uint8Array;
+  /** MIME type from the provider's `Content-Type` header, or a generic fallback. */
+  contentType: string;
+}
+
 export interface IndexRoot {
   indexRoot: string;
   fileCount: number;
   dirCount: number;
   /** Total byte count (u64 on the wire) — kept as bigint to avoid 2^53 loss. */
   totalSize: bigint;
-}
-
-export interface CheckpointDuty {
-  bucketId: number;
-  mmrRoot: string;
-  startSeq: number;
-  leafCount: number;
-  ready: boolean;
 }

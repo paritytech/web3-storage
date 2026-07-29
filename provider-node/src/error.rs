@@ -103,7 +103,9 @@ pub enum Error {
     #[error("Provider is deregistering; not accepting new agreements")]
     ProviderDeregistering,
 
-    #[error("Chain state not ready: current_block and request_timeout must both be non-zero")]
+    #[error(
+        "Chain state not ready: current_anchor_block and request_timeout must both be non-zero"
+    )]
     ChainStateNotReady,
 
     #[error("Storage agreement requested 0 byte")]
@@ -111,6 +113,26 @@ pub enum Error {
 
     #[error("Too many requests")]
     RateLimited,
+}
+
+/// Map storage-engine errors onto the node's error space one-to-one so the
+/// HTTP status/JSON mapping below stays the single source of truth.
+impl From<provider_storage::Error> for Error {
+    fn from(e: provider_storage::Error) -> Self {
+        use provider_storage::Error as StorageError;
+        match e {
+            StorageError::NodeNotFound(hash) => Error::NodeNotFound(hash),
+            StorageError::ChildrenMissing(children) => Error::ChildrenMissing(children),
+            StorageError::QuotaExceeded { used, max } => Error::QuotaExceeded { used, max },
+            StorageError::BucketNotFound(id) => Error::BucketNotFound(id),
+            StorageError::RootNotFound(root) => Error::RootNotFound(root),
+            StorageError::InvalidHash { expected, actual } => {
+                Error::InvalidHash { expected, actual }
+            }
+            StorageError::Storage(msg) => Error::Storage(msg),
+            StorageError::Serialization(msg) => Error::Serialization(msg),
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -338,7 +360,7 @@ impl IntoResponse for Error {
                 ErrorResponse {
                     error: "chain_state_not_ready".to_string(),
                     details: Some(serde_json::json!({
-                        "message": "current_block or request_timeout is 0; \
+                        "message": "current_anchor_block or request_timeout is 0; \
                                     the node has not yet synced with the chain"
                     })),
                 },

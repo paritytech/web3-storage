@@ -3,8 +3,9 @@ name: Security
 on:
   push:
     branches: [main, dev]
+  # No base-branch filter: stacked PRs (base = another feature branch)
+  # must get the same CI as dev-targeted PRs.
   pull_request:
-    branches: [main, dev]
   merge_group:
   # Daily re-scan of unchanged code for newly-published advisories / leaks.
   schedule:
@@ -29,12 +30,12 @@ jobs:
       RUSTUP_TOOLCHAIN: stable
     steps:
       - name: Checkout sources
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Install cargo-deny
-        uses: taiki-e/install-action@b8cecb83565409bcc297b2df6e77f030b2a468d5 # v2.82.0
+        uses: taiki-e/install-action@07b4745e0c39a41822af610387492e3e53aa222b # v2.83.4
         with:
           tool: cargo-deny
 
@@ -53,7 +54,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Checkout sources
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0 # full history so every commit is scanned
           persist-credentials: false
@@ -63,7 +64,7 @@ jobs:
 
       - name: Cache gitleaks
         id: cache-gitleaks
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5
         with:
           path: ~/.local/bin/gitleaks
           key: gitleaks-${{ env.GITLEAKS_VERSION }}-${{ runner.os }}

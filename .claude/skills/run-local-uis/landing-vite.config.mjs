@@ -69,6 +69,7 @@ const DEV_BASES = {
   './provider/': 'http://127.0.0.1:5175/',
   './drive/': 'http://127.0.0.1:5174/',
   './s3/': 'http://127.0.0.1:5177/',
+  './photos/': 'http://127.0.0.1:5178/',
 }
 
 function injectConfigPlugin() {

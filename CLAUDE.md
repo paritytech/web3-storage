@@ -10,6 +10,13 @@
 **Pull request rules:**
 - ALWAYS open pull requests against the repository's default branch (`dev`)
 
+**Code review rules:**
+- NEVER submit AI-generated review comments (PR reviews, inline comments, or issue comments) to GitHub automatically
+- ALWAYS present review findings to the human reviewer for triage first, and only post the ones they explicitly approve, after they explicitly ask for them to be posted
+
+**Workspace crate rules:**
+- When adding, splitting out, or renaming a workspace member crate, ALWAYS classify it in `scripts/coverage.sh`: add it to `COV_PACKAGES` (measured) or `COV_SKIP_PACKAGES` (skipped, with a reason comment). CI's coverage job fails on any unclassified member.
+
 **Cargo dependency rules:**
 - ALWAYS declare external dependencies in the root `[workspace.dependencies]` and inherit them in crates via `{ workspace = true }`. Never add inline-versioned dependencies (e.g. `foo = "1.2"`) to a crate's `Cargo.toml`.
 - On the inheriting line you may only add `features` (additive) and `optional`; per Cargo, `version` and `default-features` cannot appear there, so set `default-features` in the workspace declaration (e.g. `hex = { version = "0.4", default-features = false }`).
@@ -18,6 +25,14 @@
 - ALWAYS run `/format` after generating or modifying Rust code
 - ALWAYS run `/format` before creating any git commit
 - This ensures all code follows project formatting standards (Rust, TOML, feature propagation) and passes clippy
+
+**Design & spec discipline:**
+- `docs/design/` is the **canonical, review-gated source of truth** (enforced by `.github/CODEOWNERS`). Reason and implement *from* it; treat it as the spec.
+- **Validate code against the design.** When writing or changing code, check it against `docs/design/`. On any divergence, **stop and flag** — don't proceed on assumptions.
+- **Prefer flagging over quietly editing the design to match the code.** If implementation and design disagree, treat it as a *finding*: open or reference an issue and discuss before changing the spec, rather than silently reconciling the gap.
+- If something in the design looks **wrong or vulnerable**, **flag and discuss** (open an issue and ping the design owner) — don't just fix it. Changes to the design itself go through a PR reviewed per `.github/CODEOWNERS`.
+- **`docs/reference/`** is *derived* documentation and **not** gated. When you change behavior, **update the relevant `reference/` doc** so it keeps reflecting the implementation.
+- **`docs/drafts/`** is unratified / WIP — don't treat it as authoritative or reason from it as if it were the spec.
 
 ## Project Overview
 
@@ -136,7 +151,7 @@ just fs-demo-ci
 cargo run -p file-system-client --example basic_usage
 ```
 
-**Quick Start Guide**: [FILE_SYSTEM_QUICKSTART.md](./FILE_SYSTEM_QUICKSTART.md)
+**Quick Start Guide**: [FILE_SYSTEM_QUICKSTART.md](docs/getting-started/FILE_SYSTEM_QUICKSTART.md)
 
 **Complete Documentation**: [docs/filesystems/README.md](./docs/filesystems/README.md)
 
@@ -210,72 +225,13 @@ export function sameAddress(a, b) {
 
 ### Directory Structure
 
-```
-web3-storage/
-├── pallet/                     # Substrate pallet (on-chain logic - Layer 0)
-│   ├── src/lib.rs             # Core pallet implementation
-│   └── Cargo.toml             # Pallet dependencies
-├── runtimes/                   # Parachain runtimes
-│   ├── web3-storage-local/     # Local testnet runtime (storage-parachain-runtime)
-│   │   ├── src/lib.rs         # Runtime configuration
-│   │   └── Cargo.toml         # Runtime dependencies
-│   └── web3-storage-paseo/     # Paseo testnet runtime (storage-paseo-runtime)
-├── provider-node/              # Off-chain HTTP storage server
-│   ├── src/                   # Provider implementation
-│   │   ├── main.rs           # Server entry point
-│   │   ├── storage.rs        # Storage layer
-│   │   └── mmr.rs            # MMR commitment logic
-│   └── Cargo.toml            # Provider dependencies
-├── client/                     # Layer 0 Client SDK
-│   ├── src/                   # SDK implementation
-│   │   ├── lib.rs            # Main client API
-│   │   └── types.rs          # Client types
-│   ├── examples/             # Usage examples
-│   └── README.md             # SDK documentation
-├── primitives/                 # Layer 0 shared types and utilities
-│   ├── src/lib.rs            # Common types
-│   └── Cargo.toml            # Primitive dependencies
-├── precompiles/                # pallet_revive precompiles (Solidity → pallets)
-│   ├── storage-provider-precompile/  # 0x…0901 — bucket lifecycle
-│   └── drive-registry-precompile/    # 0x…0902 — drive lifecycle
-├── examples/contracts/         # Example Solidity dApps (StorageMarketplace.sol)
-├── storage-interfaces/         # Layer 1 - High-level interfaces
-│   └── file-system/           # File System Interface
-│       ├── primitives/        # File system types (DriveInfo, CommitStrategy, etc.)
-│       ├── pallet-registry/   # Drive Registry pallet (on-chain)
-│       └── client/            # File System Client SDK
-│           ├── src/
-│           │   ├── lib.rs     # Main file system client
-│           │   └── substrate.rs # Blockchain integration (subxt)
-│           ├── examples/
-│           │   └── basic_usage.rs # Complete workflow example
-│           └── README.md      # File system client docs
-├── scripts/                    # Helper scripts
-│   ├── build-chain-spec.sh   # Build runtime + emit chain spec (used by `just generate-chain-spec`)
-│   ├── check-chain.sh        # Relay + parachain health probe
-│   └── quick-test.sh         # Curl-based smoke test of provider HTTP API
-├── chain-specs/                # Chain specification files
-├── docs/                       # Documentation
-│   ├── README.md             # Documentation index
-│   ├── getting-started/      # Quick start guides
-│   ├── testing/              # Testing procedures
-│   ├── reference/            # API references
-│   ├── design/               # Architecture docs
-│   └── filesystems/          # Layer 1 File System docs
-│       ├── README.md         # File system overview
-│       ├── ARCHITECTURE.md   # Encoding, security, chain integration
-│       ├── USER_GUIDE.md     # User guide
-│       ├── API_REFERENCE.md  # API documentation
-│       └── ADMIN_GUIDE.md    # Admin guide
-├── FILE_SYSTEM_QUICKSTART.md  # Quick start for file system
-└── justfile                    # Development commands
-```
+See [Project Structure](README.md#project-structure) in the root README for the canonical annotated directory tree.
 
 ### Key Components
 
 #### Layer 0 (Raw Storage)
 
-**Pallet (`pallet/`)**: On-chain logic for provider registration, bucket creation, storage agreements, checkpoints, and challenge/slashing mechanism.
+**Pallet (`crates/pallets/storage-provider/`)**: On-chain logic for provider registration, bucket creation, storage agreements, checkpoints, and challenge/slashing mechanism.
 
 **Runtime (`runtimes/web3-storage-local/`)**: Parachain runtime that includes the storage provider pallet and configures its parameters (stake requirements, challenge periods, etc.).
 
@@ -285,33 +241,33 @@ web3-storage/
 - Serves data via HTTP API
 - Signs checkpoints for on-chain submission
 
-**Client SDK (`client/`)**: Rust library for applications to:
+**Client SDK (`clients/storage/`)**: Rust library for applications to:
 - Create buckets and agreements (on-chain)
 - Upload/download data (off-chain HTTP)
 - Submit checkpoints (on-chain)
 - Challenge providers (on-chain)
 
-**Primitives (`primitives/`)**: Shared types used across pallet, provider node, and client.
+**Primitives (`crates/primitives/storage/`)**: Shared types used across pallet, provider node, and client.
 
-**Smart Contracts (`precompiles/`, `examples/contracts/`)**: `pallet_revive` (PolkaVM-based smart contracts) is wired into both runtimes. Two custom precompiles expose the client-side bucket lifecycle and drive registry to Solidity contracts. The `StorageMarketplace.sol` example shows how a dApp buys storage on behalf of its users; `just sc-demo` runs the end-to-end PAPI test. Full design in [docs/design/smart-contracts.md](docs/design/smart-contracts.md).
+**Smart Contracts (`crates/pallets/*/precompiles/`, `examples/contracts/`)**: `pallet_revive` (PolkaVM-based smart contracts) is wired into both runtimes. Two custom precompiles expose the client-side bucket lifecycle and drive registry to Solidity contracts. The `StorageMarketplace.sol` example shows how a dApp buys storage on behalf of its users; `just sc-demo` runs the end-to-end PAPI test. Full design in [docs/drafts/smart-contracts.md](docs/drafts/smart-contracts.md).
 
 #### Layer 1 (File System Interface)
 
-**File System Primitives (`storage-interfaces/file-system/primitives/`)**: High-level types for file system:
+**File System Primitives (`crates/primitives/file-system/`)**: High-level types for file system:
 - `DriveInfo`: Drive metadata and configuration
 - `DirectoryNode`: Protobuf-based directory structure
 - `FileManifest`: File metadata with chunk tracking
 - `CommitStrategy`: Checkpoint strategies (Immediate, Batched, Manual)
 - Helper functions for CID computation and path handling
 
-**Drive Registry Pallet (`storage-interfaces/file-system/pallet-registry/`)**: On-chain drive management:
+**Drive Registry Pallet (`crates/pallets/drive-registry/`)**: On-chain drive management:
 - Drive creation with automatic infrastructure setup
 - Root CID tracking for drive state
 - User-to-drive mapping
 - Bucket-to-drive mapping
 - Drive lifecycle (create, update, clear, delete)
 
-**File System Client (`storage-interfaces/file-system/client/`)**: High-level SDK providing:
+**File System Client (`clients/file-system/`)**: High-level SDK providing:
 - Familiar file/folder interface over Layer 0 blob storage
 - Automatic drive creation and provider selection
 - Directory operations (create, list, navigate)
@@ -320,7 +276,7 @@ web3-storage/
 - Content-addressed storage with CID verification
 - Flexible commit strategies
 
-**Example:** `storage-interfaces/file-system/client/examples/basic_usage.rs`
+**Example:** `clients/file-system/examples/basic_usage.rs`
 - Complete workflow: drive creation → directories → file uploads/downloads
 - Real blockchain integration with event extraction
 - Demonstrates the full Layer 1 capabilities
@@ -348,7 +304,7 @@ The project uses Zombienet for local relay chain + parachain testing:
 just start-chain
 
 # Or manually:
-.bin/zombienet spawn zombienet.toml
+.bin/zombienet spawn zombienet/zombienet-parachain-local.toml
 ```
 
 **Network URLs**:
@@ -377,7 +333,7 @@ The Polkadot SDK provides:
 ## Dependencies
 
 - **Polkadot SDK**: See `Cargo.toml` workspace dependencies
-- **Rust**: 1.74+ with `wasm32-unknown-unknown` target
+- **Rust**: pinned by `rust-toolchain.toml` (currently 1.93.0) with `wasm32v1-none` target
 - **Just**: Command runner (`cargo install just`)
 - **Zombienet**: Network spawner (auto-downloaded by `just setup`)
 - **Polkadot**: Relay chain binary (auto-downloaded)
@@ -385,7 +341,12 @@ The Polkadot SDK provides:
 
 ## Configuration
 
-### Runtime Parameters (runtimes/web3-storage-local/src/lib.rs)
+### Runtime Parameters (runtimes/web3-storage-local/src/storage.rs)
+
+All durations are measured in **anchor (relay-chain) blocks** (`RC_HOURS`,
+6 s each), not parachain blocks — the pallet reads its clock from
+`Config::BlockNumberProvider` (see the anchor-clock section in
+[docs/design/scalable-web3-storage-implementation.md](docs/design/scalable-web3-storage-implementation.md)):
 
 ```rust
 // Token decimals
@@ -397,16 +358,10 @@ pub const MinProviderStake: Balance = 1_000 * UNIT;
 // 1 token (1e12) per 1 GB (1e9 bytes) = 1000 per byte
 pub const MinStakePerByte: Balance = 1_000;
 
-// Challenge response deadline (provider must respond within this many blocks)
-pub const ChallengeTimeout: BlockNumber = 48 * HOURS;
-pub const SettlementTimeout: BlockNumber = 24 * HOURS;
-pub const RequestTimeout: BlockNumber = 6 * HOURS;
-
-// Provider-initiated checkpoint config
-pub const DefaultCheckpointInterval: BlockNumber = 100;
-pub const DefaultCheckpointGrace: BlockNumber = 20;
-pub const CheckpointReward: Balance = 1_000_000_000_000;     // 1 token
-pub const CheckpointMissPenalty: Balance = 500_000_000_000;  // 0.5 token
+// Challenge response deadline (provider must respond within this many anchor blocks)
+pub const ChallengeTimeout: BlockNumber = 48 * RC_HOURS;
+pub const SettlementTimeout: BlockNumber = 24 * RC_HOURS;
+pub const RequestTimeout: BlockNumber = 6 * RC_HOURS;
 ```
 
 ### Provider Settings (configured per provider)
@@ -428,13 +383,13 @@ pub struct ProviderSettings {
 Providers must stake tokens proportional to their declared capacity:
 
 ```rust
-// Minimum stake per byte of declared capacity
-pub const MinStakePerByte: Balance = 1_000_000; // 1 unit per MB
+// Minimum stake per byte of declared capacity (1 token per GB)
+pub const MinStakePerByte: Balance = 1_000;
 
 // Required stake calculation
 required_stake = max_capacity * MinStakePerByte
 
-// Example: 1 TB capacity requires 1,000,000,000,000 units stake
+// Example: 1 TB capacity requires ~1.1e15 units (~1100 tokens) stake
 ```
 
 ## Key Concepts
@@ -520,7 +475,7 @@ let recommendations = client.suggest_providers(bytes, duration, budget).await?;
 - Price (too high = -30 points)
 - Duration (mismatch = -20 points)
 
-See [Storage Marketplace Design](docs/design/marketplace.md) for details.
+See [Storage Marketplace Design](docs/drafts/marketplace.md) for details.
 
 ### Checkpoint Management
 
@@ -551,29 +506,30 @@ handle.stop().await?;         // Stop background loop
 **Key Components**:
 - `CheckpointManager`: Coordinates multi-provider checkpoint collection and consensus
 - `CheckpointPersistence`: Persists checkpoint state to disk with backup rotation
-- `EventSubscriber`: Real-time blockchain event monitoring (checkpoints, challenges)
+- `EventStream` (from `storage-indexers`, re-exported by `storage-client`): real-time blockchain event monitoring (checkpoints, challenges)
 - `ProviderHealthHistory`: Tracks provider reliability and response times
 
-See [Checkpoint Protocol Design](docs/design/CHECKPOINT_PROTOCOL.md) for details.
+See [Checkpoint Protocol Design](docs/drafts/CHECKPOINT_PROTOCOL.md) for details.
 
 ### Event Subscription
 
-Subscribe to real-time blockchain events:
+Subscribe to real-time, strongly-typed blockchain events via the `storage-indexers` crate (re-exported by `storage-client`).
+The stream rides a reconnecting WebSocket transport and yields the generated `storage_subxt::api::Event` runtime enum - no hand-rolled event types:
 
 ```rust
-use storage_client::{EventSubscriber, EventFilter, StorageEvent};
+use futures::StreamExt;
+use storage_client::{EventFilter, EventStream};
+use storage_subxt::api;
 
-let subscriber = EventSubscriber::connect(chain_endpoint).await?;
+// Filter by pallet up front (StorageProvider / DriveRegistry / S3Registry),
+// optionally refine with a predicate on the decoded event.
+let mut stream = EventStream::connect(chain_endpoint, EventFilter::storage_pallets()).await?;
 
-// Subscribe to specific events
-let filter = EventFilter::bucket(bucket_id);
-let mut stream = subscriber.subscribe(filter).await?;
-
-while let Some(event) = stream.next().await {
-    match event {
-        StorageEvent::BucketCheckpointed { bucket_id, mmr_root, .. } => { /* ... */ }
-        StorageEvent::ChallengeCreated { challenge_id, .. } => { /* ... */ }
-        StorageEvent::ProviderSlashed { provider, amount, .. } => { /* ... */ }
+while let Some(ev) = stream.next().await {
+    match ev.event {
+        api::Event::StorageProvider(event) => { /* ev.block_number, ev.block_hash available */ }
+        api::Event::DriveRegistry(event) => { /* ... */ }
+        api::Event::S3Registry(event) => { /* ... */ }
         _ => {}
     }
 }
@@ -639,9 +595,9 @@ For the full review criteria (Parity Standards), see the `/review` skill. The re
 | [Payment Calculator](docs/reference/PAYMENT_CALCULATOR.md) | Calculate agreement costs |
 | [Architecture Design](docs/design/scalable-web3-storage.md) | System design, economics, common concerns |
 | [Implementation Details](docs/design/scalable-web3-storage-implementation.md) | Technical specs |
-| [Execution Flows](docs/design/EXECUTION_FLOWS.md) | Sequence diagrams for all extrinsics |
-| [Storage Marketplace](docs/design/marketplace.md) | Provider capacity & discovery |
-| [Checkpoint Protocol](docs/design/CHECKPOINT_PROTOCOL.md) | Automated checkpoint management |
+| [Execution Flows](docs/reference/EXECUTION_FLOWS.md) | Sequence diagrams for all extrinsics |
+| [Storage Marketplace](docs/drafts/marketplace.md) | Provider capacity & discovery |
+| [Checkpoint Protocol](docs/drafts/CHECKPOINT_PROTOCOL.md) | Automated checkpoint management |
 | [File System Architecture](docs/filesystems/ARCHITECTURE.md) | Layer 1 encoding, security, blockchain details |
 
 ## Common Issues & Solutions
@@ -680,7 +636,8 @@ For the full review criteria (Parity Standards), see the `/review` skill. The re
 
 - Token decimals: 12 (like Polkadot)
 - Minimum stake: 1000 tokens
-- Challenge period: 100 blocks
+- Challenge response window: 48h (`48 * RC_HOURS` anchor blocks)
+- All on-chain durations are anchor (relay-chain) blocks, 6 s each
 - Data is content-addressed with blake2-256
 - All data operations happen off-chain via HTTP
 - Chain is only for accountability and disputes

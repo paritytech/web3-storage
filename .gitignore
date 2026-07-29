@@ -4,6 +4,9 @@
 coverage
 provider-data
 
+# pnpm content-addressable store (package cache; reconstructible from lockfiles)
+.pnpm-store/
+
 # IDE
 .idea/
 .vscode/

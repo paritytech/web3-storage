@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-only
-//
+
 // Deploy the Photos contract once per network and print its H160 address.
 // Usage: tsx scripts/deploy-contract.ts [chain_ws] [deployer_seed]
 //   defaults: ws://127.0.0.1:2222  //Alice

@@ -3,14 +3,10 @@
 //! HTTP API handlers for the provider node.
 
 use crate::auth::{self, RequiredRole};
-use crate::checkpoint_coordinator::{
-    CheckpointDutyQuery, CheckpointDutyResponse, SignProposalRequest, SignProposalResponse,
-};
 use crate::error::Error;
 use crate::fs_api;
 use crate::negotiate::{self, AgreementTermsOf, NegotiateRequest, SignedTerms};
 use crate::s3_api;
-use crate::storage::{hex_decode, hex_encode};
 use crate::types::*;
 use crate::ProviderState;
 use axum::{
@@ -26,7 +22,7 @@ use sp_core::H256;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use storage_primitives::AgreementTerms;
-use storage_primitives::{CheckpointProposal, CommitmentPayload};
+use storage_primitives::{Commitment, CommitmentPayload};
 use tokio_rate_limit::RateLimiter;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
@@ -102,10 +98,6 @@ pub fn create_router(state: Arc<ProviderState>) -> Router {
                 rate_limit_by_ip_middleware,
             )),
         )
-        // Checkpoint coordination
-        .route("/checkpoint/sign", post(sign_checkpoint_proposal))
-        .route("/checkpoint/duty", get(get_checkpoint_duty))
-        .route("/checkpoint/trigger", post(trigger_checkpoint))
         // Replica sync status
         .route("/replica/historical_roots", get(get_historical_roots))
         .route("/replica/sync_status", get(get_replica_sync_status))
@@ -241,10 +233,13 @@ async fn get_node(
     State(state): State<Arc<ProviderState>>,
     Query(query): Query<GetNodeQuery>,
 ) -> Result<Json<DownloadNodeResponse>, Error> {
-    let hash_bytes = hex_decode(&query.hash).map_err(|_| Error::InvalidHash {
-        expected: query.hash.clone(),
-        actual: "invalid hex".to_string(),
-    })?;
+    let hash_bytes =
+        hex::decode(query.hash.strip_prefix("0x").unwrap_or(&query.hash)).map_err(|_| {
+            Error::InvalidHash {
+                expected: query.hash.clone(),
+                actual: "invalid hex".to_string(),
+            }
+        })?;
     let hash = H256::from_slice(&hash_bytes);
 
     let node = state
@@ -257,7 +252,7 @@ async fn get_node(
         data: BASE64.encode(&node.data),
         children: node.children.map(|c| {
             c.iter()
-                .map(|h| format!("0x{}", hex_encode(h.as_bytes())))
+                .map(|h| format!("0x{}", hex::encode(h.as_bytes())))
                 .collect()
         }),
     }))
@@ -278,10 +273,11 @@ async fn upload_node(
     .await?;
 
     // Decode hash
-    let hash_bytes = hex_decode(&request.hash).map_err(|_| Error::InvalidHash {
-        expected: request.hash.clone(),
-        actual: "invalid hex".to_string(),
-    })?;
+    let hash_bytes = hex::decode(request.hash.strip_prefix("0x").unwrap_or(&request.hash))
+        .map_err(|_| Error::InvalidHash {
+            expected: request.hash.clone(),
+            actual: "invalid hex".to_string(),
+        })?;
     let hash = H256::from_slice(&hash_bytes);
 
     // Decode data
@@ -295,9 +291,11 @@ async fn upload_node(
         .map(|c| {
             c.iter()
                 .map(|h| {
-                    let bytes = hex_decode(h).map_err(|_| Error::InvalidHash {
-                        expected: h.clone(),
-                        actual: "invalid hex".to_string(),
+                    let bytes = hex::decode(h.strip_prefix("0x").unwrap_or(h)).map_err(|_| {
+                        Error::InvalidHash {
+                            expected: h.clone(),
+                            actual: "invalid hex".to_string(),
+                        }
                     })?;
                     Ok(H256::from_slice(&bytes))
                 })
@@ -324,10 +322,11 @@ async fn check_exists(
         .hashes
         .iter()
         .map(|h| {
-            let bytes = hex_decode(h).map_err(|_| Error::InvalidHash {
-                expected: h.clone(),
-                actual: "invalid hex".to_string(),
-            })?;
+            let bytes =
+                hex::decode(h.strip_prefix("0x").unwrap_or(h)).map_err(|_| Error::InvalidHash {
+                    expected: h.clone(),
+                    actual: "invalid hex".to_string(),
+                })?;
             Ok(H256::from_slice(&bytes))
         })
         .collect::<Result<Vec<_>, Error>>()?;
@@ -337,11 +336,11 @@ async fn check_exists(
     Ok(Json(ExistsResponse {
         exists: exists
             .iter()
-            .map(|h| format!("0x{}", hex_encode(h.as_bytes())))
+            .map(|h| format!("0x{}", hex::encode(h.as_bytes())))
             .collect(),
         missing: missing
             .iter()
-            .map(|h| format!("0x{}", hex_encode(h.as_bytes())))
+            .map(|h| format!("0x{}", hex::encode(h.as_bytes())))
             .collect(),
     }))
 }
@@ -368,10 +367,11 @@ async fn commit(
         .data_roots
         .iter()
         .map(|h| {
-            let bytes = hex_decode(h).map_err(|_| Error::InvalidHash {
-                expected: h.clone(),
-                actual: "invalid hex".to_string(),
-            })?;
+            let bytes =
+                hex::decode(h.strip_prefix("0x").unwrap_or(h)).map_err(|_| Error::InvalidHash {
+                    expected: h.clone(),
+                    actual: "invalid hex".to_string(),
+                })?;
             Ok(H256::from_slice(&bytes))
         })
         .collect::<Result<Vec<_>, Error>>()?;
@@ -391,15 +391,17 @@ async fn commit(
 
     let payload = CommitmentPayload::new(
         request.bucket_id,
-        mmr_root,
-        start_seq,
-        leaf_count,
+        Commitment {
+            mmr_root,
+            start_seq,
+            leaf_count,
+        },
         request.nonce,
     );
     let signature = state.sign(&payload.encode())?;
 
     Ok(Json(CommitResponse {
-        mmr_root: format!("0x{}", hex_encode(mmr_root.as_bytes())),
+        mmr_root: format!("0x{}", hex::encode(mmr_root.as_bytes())),
         start_seq,
         leaf_count,
         leaf_indices,
@@ -412,7 +414,13 @@ async fn read_chunks(
     State(state): State<Arc<ProviderState>>,
     Query(query): Query<ReadQuery>,
 ) -> Result<Json<ReadResponse>, Error> {
-    let root_bytes = hex_decode(&query.data_root).map_err(|_| Error::InvalidHash {
+    let root_bytes = hex::decode(
+        query
+            .data_root
+            .strip_prefix("0x")
+            .unwrap_or(&query.data_root),
+    )
+    .map_err(|_| Error::InvalidHash {
         expected: query.data_root.clone(),
         actual: "invalid hex".to_string(),
     })?;
@@ -430,13 +438,13 @@ async fn read_chunks(
                 chunks.push(ChunkWithProof {
                     hash: format!(
                         "0x{}",
-                        hex_encode(storage_primitives::blake2_256(&data).as_bytes())
+                        hex::encode(storage_primitives::blake2_256(&data).as_bytes())
                     ),
                     data: BASE64.encode(&data),
                     proof: proof
                         .siblings
                         .iter()
-                        .map(|h| format!("0x{}", hex_encode(h.as_bytes())))
+                        .map(|h| format!("0x{}", hex::encode(h.as_bytes())))
                         .collect(),
                 });
             }
@@ -464,16 +472,18 @@ async fn get_commitment(
     // honours leaf_count rather than hardcoding `0`.
     let payload = CommitmentPayload::new(
         query.bucket_id,
-        bucket.mmr_root,
-        bucket.start_seq,
-        bucket.leaf_count,
+        Commitment {
+            mmr_root: bucket.mmr_root,
+            start_seq: bucket.start_seq,
+            leaf_count: bucket.leaf_count,
+        },
         query.nonce,
     );
     let signature = state.sign(&payload.encode())?;
 
     Ok(Json(CommitmentResponse {
         bucket_id: query.bucket_id,
-        mmr_root: format!("0x{}", hex_encode(bucket.mmr_root.as_bytes())),
+        mmr_root: format!("0x{}", hex::encode(bucket.mmr_root.as_bytes())),
         start_seq: bucket.start_seq,
         leaf_count: bucket.leaf_count,
         provider_signature: signature,
@@ -483,9 +493,9 @@ async fn get_commitment(
 
 /// Return a checkpoint-compatible signature (signs with real leaf_count).
 ///
-/// Unlike `/commitment` which signs with leaf_count=0 for challenge_offchain,
-/// this endpoint signs with the actual leaf_count so the signature can be used
-/// in the on-chain `checkpoint` extrinsic.
+/// Signs the same payload as `/commitment` (both use the real leaf_count now
+/// that the pallet honours it); kept as a separate endpoint for the checkpoint
+/// workflow, where the signature goes into the on-chain `checkpoint` call.
 async fn get_checkpoint_signature(
     State(state): State<Arc<ProviderState>>,
     Query(query): Query<CommitmentQuery>,
@@ -500,16 +510,18 @@ async fn get_checkpoint_signature(
     // Sign with real leaf_count for on-chain checkpoint verification.
     let payload = CommitmentPayload::new(
         query.bucket_id,
-        bucket.mmr_root,
-        bucket.start_seq,
-        leaf_count,
+        Commitment {
+            mmr_root: bucket.mmr_root,
+            start_seq: bucket.start_seq,
+            leaf_count,
+        },
         query.nonce,
     );
     let signature = state.sign(&payload.encode())?;
 
     Ok(Json(CheckpointSignatureResponse {
         bucket_id: query.bucket_id,
-        mmr_root: format!("0x{}", hex_encode(bucket.mmr_root.as_bytes())),
+        mmr_root: format!("0x{}", hex::encode(bucket.mmr_root.as_bytes())),
         start_seq: bucket.start_seq,
         leaf_count,
         provider_signature: signature,
@@ -527,7 +539,7 @@ async fn get_mmr_proof(
 
     Ok(Json(MmrProofResponse {
         leaf: MmrLeafData {
-            data_root: format!("0x{}", hex_encode(mmr_proof.leaf.data_root.as_bytes())),
+            data_root: format!("0x{}", hex::encode(mmr_proof.leaf.data_root.as_bytes())),
             data_size: mmr_proof.leaf.data_size,
             total_size: mmr_proof.leaf.total_size,
         },
@@ -535,13 +547,13 @@ async fn get_mmr_proof(
             peaks: mmr_proof
                 .peaks
                 .iter()
-                .map(|h| format!("0x{}", hex_encode(h.as_bytes())))
+                .map(|h| format!("0x{}", hex::encode(h.as_bytes())))
                 .collect(),
             siblings: mmr_proof
                 .leaf_proof
                 .siblings
                 .iter()
-                .map(|h| format!("0x{}", hex_encode(h.as_bytes())))
+                .map(|h| format!("0x{}", hex::encode(h.as_bytes())))
                 .collect(),
             path: mmr_proof.leaf_proof.path,
         },
@@ -552,7 +564,13 @@ async fn get_chunk_proof(
     State(state): State<Arc<ProviderState>>,
     Query(query): Query<ChunkProofQuery>,
 ) -> Result<Json<ChunkProofResponse>, Error> {
-    let root_bytes = hex_decode(&query.data_root).map_err(|_| Error::InvalidHash {
+    let root_bytes = hex::decode(
+        query
+            .data_root
+            .strip_prefix("0x")
+            .unwrap_or(&query.data_root),
+    )
+    .map_err(|_| Error::InvalidHash {
         expected: query.data_root.clone(),
         actual: "invalid hex".to_string(),
     })?;
@@ -564,13 +582,13 @@ async fn get_chunk_proof(
     let chunk_hash = storage_primitives::blake2_256(&chunk_data);
 
     Ok(Json(ChunkProofResponse {
-        chunk_hash: format!("0x{}", hex_encode(chunk_hash.as_bytes())),
+        chunk_hash: format!("0x{}", hex::encode(chunk_hash.as_bytes())),
         chunk_data: Some(BASE64.encode(&chunk_data)),
         proof: MerkleProofData {
             siblings: proof
                 .siblings
                 .iter()
-                .map(|h| format!("0x{}", hex_encode(h.as_bytes())))
+                .map(|h| format!("0x{}", hex::encode(h.as_bytes())))
                 .collect(),
             path: proof.path,
         },
@@ -613,15 +631,17 @@ async fn delete_data(
     // Sign with the real post-delete leaf_count — pallet honours it now.
     let payload = CommitmentPayload::new(
         request.bucket_id,
-        mmr_root,
-        start_seq,
-        leaf_count,
+        Commitment {
+            mmr_root,
+            start_seq,
+            leaf_count,
+        },
         request.nonce,
     );
     let signature = state.sign(&payload.encode())?;
 
     Ok(Json(DeleteResponse {
-        mmr_root: format!("0x{}", hex_encode(mmr_root.as_bytes())),
+        mmr_root: format!("0x{}", hex::encode(mmr_root.as_bytes())),
         start_seq,
         leaf_count,
         provider_signature: signature,
@@ -641,10 +661,10 @@ async fn get_mmr_peaks(
 
     Ok(Json(MmrPeaksResponse {
         bucket_id: query.bucket_id,
-        mmr_root: format!("0x{}", hex_encode(mmr_root.as_bytes())),
+        mmr_root: format!("0x{}", hex::encode(mmr_root.as_bytes())),
         peaks: peaks
             .iter()
-            .map(|h| format!("0x{}", hex_encode(h.as_bytes())))
+            .map(|h| format!("0x{}", hex::encode(h.as_bytes())))
             .collect(),
     }))
 }
@@ -662,7 +682,7 @@ async fn get_mmr_subtree(
     Ok(Json(MmrSubtreeResponse {
         nodes: vec![MmrNode {
             position: 0,
-            hash: format!("0x{}", hex_encode(bucket.mmr_root.as_bytes())),
+            hash: format!("0x{}", hex::encode(bucket.mmr_root.as_bytes())),
             children: None,
         }],
     }))
@@ -675,10 +695,13 @@ async fn fetch_nodes(
     let mut nodes = Vec::new();
 
     for hash_str in &request.hashes {
-        let hash_bytes = hex_decode(hash_str).map_err(|_| Error::InvalidHash {
-            expected: hash_str.clone(),
-            actual: "invalid hex".to_string(),
-        })?;
+        let hash_bytes =
+            hex::decode(hash_str.strip_prefix("0x").unwrap_or(hash_str)).map_err(|_| {
+                Error::InvalidHash {
+                    expected: hash_str.clone(),
+                    actual: "invalid hex".to_string(),
+                }
+            })?;
         let hash = H256::from_slice(&hash_bytes);
 
         if let Some(node) = state.storage.get_node(&hash) {
@@ -687,7 +710,7 @@ async fn fetch_nodes(
                 data: BASE64.encode(&node.data),
                 children: node.children.map(|c| {
                     c.iter()
-                        .map(|h| format!("0x{}", hex_encode(h.as_bytes())))
+                        .map(|h| format!("0x{}", hex::encode(h.as_bytes())))
                         .collect()
                 }),
             });
@@ -695,157 +718,6 @@ async fn fetch_nodes(
     }
 
     Ok(Json(FetchNodesResponse { nodes }))
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Checkpoint Coordination
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Sign a checkpoint proposal from another provider.
-///
-/// Verifies that the proposal matches our local state and returns a signature
-/// if agreed, or disagreement info if our state differs.
-async fn sign_checkpoint_proposal(
-    State(state): State<Arc<ProviderState>>,
-    Json(request): Json<SignProposalRequest>,
-) -> Result<Json<SignProposalResponse>, Error> {
-    // Get our local bucket state
-    let bucket = state
-        .storage
-        .get_bucket(request.bucket_id)
-        .ok_or(Error::BucketNotFound(request.bucket_id))?;
-
-    let local_mmr_root = format!("0x{}", hex_encode(bucket.mmr_root.as_bytes()));
-
-    // Check if we agree with the proposal
-    let proposed_root_bytes = hex_decode(&request.mmr_root).map_err(|_| Error::InvalidHash {
-        expected: request.mmr_root.clone(),
-        actual: "invalid hex".to_string(),
-    })?;
-    let proposed_root = H256::from_slice(&proposed_root_bytes);
-
-    // We agree if MMR roots match and sequence numbers are compatible
-    let agreed = bucket.mmr_root == proposed_root
-        && bucket.start_seq == request.start_seq
-        && bucket.leaf_count == request.leaf_count;
-
-    if !agreed {
-        return Ok(Json(SignProposalResponse {
-            signer: state.provider_id.clone(),
-            signature: String::new(),
-            agreed: false,
-            local_mmr_root: Some(local_mmr_root),
-        }));
-    }
-
-    // Sign the proposal
-    let proposal = CheckpointProposal::new(
-        request.bucket_id,
-        proposed_root,
-        request.start_seq,
-        request.leaf_count,
-        request.window,
-    );
-    let encoded = proposal.encode();
-
-    let signature = state.sign(&encoded)?;
-
-    Ok(Json(SignProposalResponse {
-        signer: state.provider_id.clone(),
-        signature,
-        agreed: true,
-        local_mmr_root: Some(local_mmr_root),
-    }))
-}
-
-/// Trigger checkpoint submission for a bucket.
-///
-/// Sends a ForceCheckpoint command to the checkpoint coordinator,
-/// which handles leader election, signature collection, and on-chain submission.
-async fn trigger_checkpoint(
-    State(state): State<Arc<ProviderState>>,
-    Query(query): Query<CheckpointDutyQuery>,
-) -> Result<Json<TriggerCheckpointResponse>, Error> {
-    tracing::info!(
-        "Checkpoint trigger requested for bucket {}",
-        query.bucket_id
-    );
-
-    // Verify bucket has data locally
-    let bucket = state.storage.get_bucket(query.bucket_id);
-    if bucket.is_none() {
-        return Err(Error::Internal(format!(
-            "Bucket {} not found in local storage. Upload data first.",
-            query.bucket_id
-        )));
-    }
-    let bucket = bucket.unwrap();
-    if bucket.leaf_count == 0 {
-        return Err(Error::Internal(format!(
-            "Bucket {} has no committed data (leaf_count=0). Upload and commit data first.",
-            query.bucket_id
-        )));
-    }
-
-    let sender = state
-        .checkpoint_cmd_tx
-        .lock()
-        .map_err(|_| Error::Internal("Lock poisoned".to_string()))?
-        .clone();
-
-    let sender = sender.ok_or_else(|| {
-        Error::Internal(
-            "Checkpoint coordinator not running. Start provider with --enable-checkpoint-coordinator"
-                .to_string(),
-        )
-    })?;
-
-    sender
-        .send(crate::checkpoint_coordinator::CoordinatorCommand::ForceCheckpoint(query.bucket_id))
-        .await
-        .map_err(|_| Error::Internal(
-            "Coordinator channel closed — the coordinator task may have crashed. Check provider logs and restart.".to_string(),
-        ))?;
-
-    tracing::info!(
-        "ForceCheckpoint command sent for bucket {} (leaves={}, mmr_root=0x{})",
-        query.bucket_id,
-        bucket.leaf_count,
-        hex_encode(&bucket.mmr_root.as_bytes()[..4])
-    );
-
-    Ok(Json(TriggerCheckpointResponse {
-        bucket_id: query.bucket_id,
-        triggered: true,
-        message: format!(
-            "Checkpoint triggered for bucket {} with {} leaves. The coordinator will handle submission.",
-            query.bucket_id, bucket.leaf_count
-        ),
-    }))
-}
-
-/// Get checkpoint duty information for a bucket.
-///
-/// Returns the current state that would be used for a checkpoint.
-async fn get_checkpoint_duty(
-    State(state): State<Arc<ProviderState>>,
-    Query(query): Query<CheckpointDutyQuery>,
-) -> Result<Json<CheckpointDutyResponse>, Error> {
-    let bucket = state
-        .storage
-        .get_bucket(query.bucket_id)
-        .ok_or(Error::BucketNotFound(query.bucket_id))?;
-
-    // We're ready if we have data committed
-    let ready = bucket.leaf_count > 0;
-
-    Ok(Json(CheckpointDutyResponse {
-        bucket_id: query.bucket_id,
-        mmr_root: format!("0x{}", hex_encode(bucket.mmr_root.as_bytes())),
-        start_seq: bucket.start_seq,
-        leaf_count: bucket.leaf_count,
-        ready,
-    }))
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -867,7 +739,7 @@ async fn get_historical_roots(
 
     Ok(Json(HistoricalRootsResponse {
         bucket_id: query.bucket_id,
-        current_root: format!("0x{}", hex_encode(bucket.mmr_root.as_bytes())),
+        current_root: format!("0x{}", hex::encode(bucket.mmr_root.as_bytes())),
         // Provider node doesn't track historical roots - chain does
         historical_roots: [
             String::new(),
@@ -889,8 +761,8 @@ async fn get_historical_roots(
 ///
 /// Returns one of several `503`s when a prerequisite is missing:
 /// - `signing_unavailable` — no `--keyfile`.
-/// - `chain_state_not_ready` — `current_block` and `request_timeout` are not both
-///   known from the chain yet.
+/// - `chain_state_not_ready` — `current_anchor_block` and `request_timeout` are
+///   not both known from the chain yet.
 /// - `provider_info_unavailable` — provider not registered on chain yet; the
 ///   chain-state coordinator clears this automatically once registration lands, no
 ///   restart needed.
@@ -904,11 +776,11 @@ async fn negotiate_terms(
 ) -> Result<Json<SignedTerms>, Error> {
     let keypair = state.keypair.as_ref().ok_or(Error::SigningUnavailable)?;
 
-    // Both current_block and RequestTimeout must be known before we can sign —
-    // otherwise we'd emit unbounded or already-expired terms.
-    let current_block = state
+    // Both the anchor block and RequestTimeout must be known before we can sign
+    // — otherwise we'd emit unbounded or already-expired terms.
+    let anchor_block = state
         .chain_state
-        .current_block
+        .current_anchor_block
         .load(std::sync::atomic::Ordering::Relaxed);
     let request_timeout = state
         .chain_state
@@ -917,7 +789,7 @@ async fn negotiate_terms(
         .as_ref()
         .map(|c| c.request_timeout)
         .unwrap_or(0);
-    if current_block == 0 || request_timeout == 0 {
+    if anchor_block == 0 || request_timeout == 0 {
         return Err(Error::ChainStateNotReady);
     }
 
@@ -958,14 +830,12 @@ async fn negotiate_terms(
         max_bytes: req.max_bytes,
         duration: req.duration,
         price_per_byte: info.price_per_byte,
-        valid_until: current_block.saturating_add(request_timeout),
+        valid_until: anchor_block.saturating_add(request_timeout),
         nonce: nonce_counter.next(),
         bucket_id: req.bucket_id,
         replica_params: req.replica_params,
     };
-    let signature = storage_client::sign_terms(keypair, &terms);
-
-    Ok(Json(SignedTerms { terms, signature }))
+    Ok(Json(provider_negotiation::sign_terms(keypair, terms)))
 }
 
 /// Get replica sync status for a bucket.
@@ -982,7 +852,7 @@ async fn get_replica_sync_status(
 
     Ok(Json(BucketSyncStatusResponse {
         bucket_id: query.bucket_id,
-        local_mmr_root: format!("0x{}", hex_encode(bucket.mmr_root.as_bytes())),
+        local_mmr_root: format!("0x{}", hex::encode(bucket.mmr_root.as_bytes())),
         local_leaf_count: bucket.leaf_count,
         last_sync_block: None, // Would be tracked by coordinator
         syncing: false,        // Would check coordinator state
