@@ -32,8 +32,6 @@ pub type BlockEventRx = tokio::sync::broadcast::Receiver<BlockEvent>;
 /// One coordinator-relevant occurrence on the chain.
 #[derive(Clone, Debug)]
 pub enum BlockEvent {
-    /// A finalized block was seen: the coordinators' clock.
-    NewBlock { number: u32 },
     /// `StorageProvider::ChallengeCreated` — the challenge responder point-reads
     /// the full challenge at `(deadline, index)` and responds.
     ChallengeCreated {
@@ -48,10 +46,9 @@ pub enum BlockEvent {
         bucket_id: BucketId,
         provider: AccountId32,
     },
-    /// `StorageProvider::ProviderCheckpointSubmitted` or
-    /// `StorageProvider::BucketCheckpointed` — new data may be available to
-    /// sync for replicas of `bucket_id`.
-    BucketCheckpointUpdated { bucket_id: BucketId },
+    /// `StorageProvider::BucketCheckpointed` — a client checkpointed the
+    /// bucket, so new canonical data may be available for replicas to sync.
+    BucketCheckpointed { bucket_id: BucketId },
     /// The block follower (re)connected and re-read chain state wholesale.
     /// Coordinators run their bootstrap scan to catch anything missed while
     /// the stream was down. Also the correct reaction to a lagged receiver.
@@ -78,17 +75,9 @@ impl From<provider_events::ReplicaAgreementEstablished> for BlockEvent {
     }
 }
 
-impl From<provider_events::ProviderCheckpointSubmitted> for BlockEvent {
-    fn from(ev: provider_events::ProviderCheckpointSubmitted) -> Self {
-        BlockEvent::BucketCheckpointUpdated {
-            bucket_id: ev.bucket_id,
-        }
-    }
-}
-
 impl From<provider_events::BucketCheckpointed> for BlockEvent {
     fn from(ev: provider_events::BucketCheckpointed) -> Self {
-        BlockEvent::BucketCheckpointUpdated {
+        BlockEvent::BucketCheckpointed {
             bucket_id: ev.bucket_id,
         }
     }
@@ -107,10 +96,6 @@ pub fn decode_block_events(events: &subxt::events::Events<PolkadotConfig>) -> Ve
                 .map(BlockEvent::from)
                 .or_else(|| {
                     decode::<provider_events::ReplicaAgreementEstablished>(&event)
-                        .map(BlockEvent::from)
-                })
-                .or_else(|| {
-                    decode::<provider_events::ProviderCheckpointSubmitted>(&event)
                         .map(BlockEvent::from)
                 })
                 .or_else(|| {
@@ -177,20 +162,7 @@ mod tests {
     }
 
     #[test]
-    fn checkpoint_events_map_to_bucket_update() {
-        let submitted = provider_events::ProviderCheckpointSubmitted {
-            bucket_id: 21,
-            mmr_root: subxt::utils::H256([1u8; 32]),
-            window: 3,
-            leader: subxt::utils::AccountId32([4u8; 32]),
-            signers: vec![subxt::utils::AccountId32([4u8; 32])],
-            reward: 1_000,
-        };
-        assert!(matches!(
-            BlockEvent::from(submitted),
-            BlockEvent::BucketCheckpointUpdated { bucket_id: 21 }
-        ));
-
+    fn bucket_checkpointed_maps_bucket_id() {
         let checkpointed = provider_events::BucketCheckpointed {
             bucket_id: 22,
             commitment: Commitment {
@@ -202,7 +174,7 @@ mod tests {
         };
         assert!(matches!(
             BlockEvent::from(checkpointed),
-            BlockEvent::BucketCheckpointUpdated { bucket_id: 22 }
+            BlockEvent::BucketCheckpointed { bucket_id: 22 }
         ));
     }
 

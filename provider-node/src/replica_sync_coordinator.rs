@@ -336,7 +336,7 @@ impl ReplicaSyncCoordinator {
             BlockEvent::ReplicaAgreementEstablished { provider, .. } => {
                 our_account.as_ref().is_none_or(|me| me == provider)
             }
-            BlockEvent::BucketCheckpointUpdated { bucket_id } => {
+            BlockEvent::BucketCheckpointed { bucket_id } => {
                 self.state.storage.get_bucket(*bucket_id).is_some()
             }
             _ => false,
@@ -410,12 +410,19 @@ impl ReplicaSyncCoordinator {
                         }
                     }
                 }
-                event = events_rx.recv(), if events_open => {
+                // While paused, stop consuming so events stay queued instead of
+                // being dropped. Replaying them on resume is safe: a duty pass
+                // reconciles against live chain state, so a stale event costs at
+                // most one redundant pass. A pause longer than the channel's
+                // capacity surfaces as `Lagged` below, which does the same.
+                event = events_rx.recv(), if events_open && !paused => {
                     if matches!(event, Err(broadcast::error::RecvError::Closed)) {
                         events_open = false;
                         continue;
                     }
-                    if paused || !self.config.auto_confirm {
+                    // Unlike `paused`, this is permanent config: drain and drop,
+                    // since no later state change makes these actionable.
+                    if !self.config.auto_confirm {
                         continue;
                     }
                     match event {

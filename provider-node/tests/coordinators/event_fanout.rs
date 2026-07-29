@@ -184,6 +184,52 @@ async fn resubscribe_triggers_bootstrap_scan() {
     handle.stop().await.unwrap();
 }
 
+#[tokio::test]
+async fn event_sent_while_paused_survives_until_resume() {
+    // The safety net is off here, so a dropped event would be unrecoverable:
+    // the queued event is the only thing that can produce a response.
+    let (state, challenge) = test_state_with_data();
+    let (deadline, index) = (challenge.deadline, challenge.index);
+    let bucket_id = challenge.bucket_id;
+    let mock = MockChallengeClient::new(challenge);
+    let responder =
+        ChallengeResponder::new(event_only_config(), state, Box::new(Arc::clone(&mock)));
+
+    let (events_tx, events_rx) = tokio::sync::broadcast::channel(16);
+    let handle = responder.start(events_rx, None).await.unwrap();
+
+    handle.pause().await.unwrap();
+    events_tx
+        .send(BlockEvent::ChallengeCreated {
+            deadline,
+            index,
+            bucket_id,
+            provider: alice_account(),
+        })
+        .unwrap();
+
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(
+        mock.submitted.lock().unwrap().is_empty(),
+        "a paused responder must not act on events"
+    );
+
+    handle.resume().await.unwrap();
+
+    let mock_ref = Arc::clone(&mock);
+    assert!(
+        wait_for(5, 10, || {
+            let m = Arc::clone(&mock_ref);
+            async move { !m.submitted.lock().unwrap().is_empty() }
+        })
+        .await,
+        "the event queued during the pause should be handled on resume"
+    );
+    assert_eq!(mock.submitted.lock().unwrap()[0], (deadline, index));
+
+    handle.stop().await.unwrap();
+}
+
 // ── replica sync coordinator ──────────────────────────────────────────────────
 
 /// Mock counting duty passes (each pass calls `fetch_replica_agreements`),
@@ -280,8 +326,8 @@ async fn replica_agreement_event_triggers_duty_pass() {
 }
 
 #[tokio::test]
-async fn checkpoint_updated_event_drives_duty_through_sync_attempt() {
-    // A checkpoint on a bucket we hold locally must trigger a duty pass, and
+async fn bucket_checkpointed_event_drives_duty_through_sync_attempt() {
+    // A client checkpoint on a bucket we hold locally must trigger a duty pass, and
     // the resulting duty (new root, no reachable primaries) must surface as
     // PrimaryUnavailable through the callback — all without any network.
     let state = test_state();
@@ -318,16 +364,16 @@ async fn checkpoint_updated_event_drives_duty_through_sync_attempt() {
         .await
         .unwrap();
 
-    // A checkpoint on a bucket we do NOT hold is irrelevant.
+    // A client checkpoint on a bucket we do NOT hold is irrelevant.
     events_tx
-        .send(BlockEvent::BucketCheckpointUpdated { bucket_id: 999 })
+        .send(BlockEvent::BucketCheckpointed { bucket_id: 999 })
         .unwrap();
     tokio::time::sleep(Duration::from_millis(100)).await;
     assert_eq!(mock.duty_passes.load(Ordering::SeqCst), 0);
 
     // One on bucket 7 drives the full duty pass.
     events_tx
-        .send(BlockEvent::BucketCheckpointUpdated { bucket_id: 7 })
+        .send(BlockEvent::BucketCheckpointed { bucket_id: 7 })
         .unwrap();
     let results_ref = Arc::clone(&results);
     assert!(
@@ -347,38 +393,5 @@ async fn checkpoint_updated_event_drives_duty_through_sync_attempt() {
         results.lock().unwrap()[0]
     );
 
-    handle.stop().await.unwrap();
-}
-
-#[tokio::test]
-async fn checkpoint_coordinator_ticks_on_block_events() {
-    use storage_provider_node::{CheckpointCoordinator, CheckpointCoordinatorConfig};
-
-    let mock = Arc::new(super::checkpoint::MockCheckpointChainClient::new(100));
-    let coordinator = CheckpointCoordinator::new(
-        CheckpointCoordinatorConfig::default(),
-        test_state(),
-        Box::new(Arc::clone(&mock)),
-    );
-
-    let (events_tx, events_rx) = tokio::sync::broadcast::channel(16);
-    let handle = coordinator.start(events_rx, None).await.unwrap();
-
-    // Irrelevant event kind: skipped. Block/resubscribe: a duty check runs
-    // (the duty source is the pre-existing stub, so no submission results).
-    events_tx
-        .send(BlockEvent::BucketCheckpointUpdated { bucket_id: 1 })
-        .unwrap();
-    events_tx.send(BlockEvent::NewBlock { number: 1 }).unwrap();
-    events_tx
-        .send(BlockEvent::Resubscribed { at_block: 1 })
-        .unwrap();
-
-    // Paused: block ticks are ignored.
-    handle.pause().await.unwrap();
-    events_tx.send(BlockEvent::NewBlock { number: 2 }).unwrap();
-
-    tokio::time::sleep(Duration::from_millis(200)).await;
-    assert!(handle.is_running());
     handle.stop().await.unwrap();
 }

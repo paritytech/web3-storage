@@ -1323,7 +1323,8 @@ pub mod api {
                         ],
                     )
                 }
-                #[doc = " Get challenges expiring at a specific block."]
+                #[doc = " Get challenges expiring at a specific deadline. `block` is an anchor"]
+                #[doc = " block (see `current_anchor_block`), not a parachain height."]
                 pub fn challenges_at(
                     &self,
                     block: challenges_at::Block,
@@ -1471,6 +1472,46 @@ pub mod api {
                             138u8, 241u8, 140u8, 163u8, 7u8, 191u8, 221u8, 130u8, 220u8, 82u8,
                             23u8, 202u8, 38u8, 246u8, 172u8, 130u8, 202u8, 222u8, 77u8, 114u8,
                             240u8, 197u8,
+                        ],
+                    )
+                }
+                #[doc = " The anchor block every on-chain duration (timeouts, expiries,"]
+                #[doc = " `valid_until`, nonce age) is measured against. Off-chain actors read"]
+                #[doc = " this instead of a specific storage item so they need not know whether"]
+                #[doc = " the anchor is a relay, parachain, or other block number."]
+                pub fn current_anchor_block(
+                    &self,
+                ) -> ::subxt::runtime_apis::StaticPayload<(), current_anchor_block::output::Output>
+                {
+                    ::subxt::runtime_apis::StaticPayload::new_static(
+                        "StorageProviderApi",
+                        "current_anchor_block",
+                        (),
+                        [
+                            59u8, 236u8, 21u8, 191u8, 195u8, 16u8, 79u8, 40u8, 164u8, 36u8, 220u8,
+                            239u8, 237u8, 201u8, 80u8, 99u8, 19u8, 252u8, 60u8, 57u8, 134u8, 218u8,
+                            78u8, 40u8, 143u8, 60u8, 145u8, 141u8, 2u8, 55u8, 110u8, 5u8,
+                        ],
+                    )
+                }
+                #[doc = " Milliseconds per anchor block. Pairs with `current_anchor_block` so"]
+                #[doc = " off-chain consumers can humanize anchor-denominated durations"]
+                #[doc = " without knowing which clock the pallet measures them on."]
+                pub fn anchor_block_time_millis(
+                    &self,
+                ) -> ::subxt::runtime_apis::StaticPayload<
+                    (),
+                    anchor_block_time_millis::output::Output,
+                > {
+                    ::subxt::runtime_apis::StaticPayload::new_static(
+                        "StorageProviderApi",
+                        "anchor_block_time_millis",
+                        (),
+                        [
+                            239u8, 244u8, 149u8, 102u8, 251u8, 165u8, 27u8, 128u8, 69u8, 217u8,
+                            236u8, 147u8, 236u8, 164u8, 3u8, 153u8, 25u8, 224u8, 98u8, 223u8,
+                            178u8, 29u8, 37u8, 43u8, 156u8, 170u8, 181u8, 62u8, 187u8, 111u8, 17u8,
+                            149u8,
                         ],
                     )
                 }
@@ -1642,6 +1683,22 @@ pub mod api {
                         ::subxt::utils::AccountId32,
                         runtime_types::pallet_storage_provider::runtime_api::ProviderInfoResponse,
                     )>;
+                }
+            }
+            pub mod current_anchor_block {
+                use super::root_mod;
+                use super::runtime_types;
+                pub mod output {
+                    use super::runtime_types;
+                    pub type Output = ::core::primitive::u32;
+                }
+            }
+            pub mod anchor_block_time_millis {
+                use super::root_mod;
+                use super::runtime_types;
+                pub mod output {
+                    use super::runtime_types;
+                    pub type Output = ::core::primitive::u64;
                 }
             }
         }
@@ -1856,10 +1913,9 @@ pub mod api {
                         "dry_run_call",
                         (origin, call, result_xcms_version),
                         [
-                            246u8, 144u8, 31u8, 59u8, 168u8, 201u8, 183u8, 35u8, 156u8, 156u8,
-                            137u8, 127u8, 181u8, 89u8, 232u8, 249u8, 54u8, 30u8, 159u8, 34u8,
-                            195u8, 80u8, 66u8, 191u8, 54u8, 30u8, 249u8, 161u8, 74u8, 85u8, 135u8,
-                            169u8,
+                            109u8, 134u8, 206u8, 119u8, 76u8, 31u8, 12u8, 10u8, 120u8, 7u8, 196u8,
+                            32u8, 90u8, 115u8, 214u8, 46u8, 1u8, 188u8, 103u8, 121u8, 79u8, 203u8,
+                            110u8, 236u8, 190u8, 188u8, 126u8, 212u8, 222u8, 122u8, 62u8, 65u8,
                         ],
                     )
                 }
@@ -1877,9 +1933,10 @@ pub mod api {
                         "dry_run_xcm",
                         (origin_location, xcm),
                         [
-                            27u8, 184u8, 255u8, 67u8, 207u8, 149u8, 14u8, 64u8, 9u8, 89u8, 109u8,
-                            255u8, 60u8, 219u8, 0u8, 154u8, 220u8, 4u8, 48u8, 110u8, 163u8, 219u8,
-                            1u8, 2u8, 164u8, 17u8, 187u8, 103u8, 36u8, 200u8, 99u8, 183u8,
+                            182u8, 96u8, 186u8, 176u8, 8u8, 116u8, 95u8, 227u8, 146u8, 160u8,
+                            207u8, 213u8, 115u8, 171u8, 36u8, 7u8, 185u8, 69u8, 60u8, 13u8, 224u8,
+                            16u8, 216u8, 124u8, 83u8, 223u8, 22u8, 88u8, 111u8, 197u8, 121u8,
+                            121u8,
                         ],
                     )
                 }
@@ -3096,9 +3153,9 @@ pub mod api {
             .hash();
         runtime_metadata_hash
             == [
-                95u8, 233u8, 15u8, 247u8, 206u8, 38u8, 5u8, 236u8, 142u8, 15u8, 247u8, 96u8, 119u8,
-                150u8, 140u8, 131u8, 208u8, 156u8, 18u8, 144u8, 86u8, 68u8, 159u8, 31u8, 69u8,
-                126u8, 119u8, 7u8, 78u8, 169u8, 147u8, 112u8,
+                231u8, 83u8, 9u8, 198u8, 41u8, 236u8, 102u8, 255u8, 70u8, 118u8, 252u8, 251u8,
+                42u8, 145u8, 29u8, 175u8, 221u8, 84u8, 121u8, 79u8, 251u8, 77u8, 55u8, 206u8,
+                243u8, 162u8, 67u8, 137u8, 158u8, 140u8, 103u8, 52u8,
             ]
     }
     pub mod system {
@@ -4080,9 +4137,10 @@ pub mod api {
                         "System",
                         "Events",
                         [
-                            222u8, 194u8, 131u8, 108u8, 227u8, 48u8, 253u8, 91u8, 110u8, 126u8,
-                            87u8, 30u8, 20u8, 90u8, 80u8, 34u8, 118u8, 150u8, 187u8, 39u8, 40u8,
-                            85u8, 43u8, 141u8, 4u8, 144u8, 50u8, 15u8, 142u8, 230u8, 34u8, 210u8,
+                            233u8, 122u8, 242u8, 89u8, 111u8, 44u8, 79u8, 42u8, 134u8, 148u8,
+                            202u8, 205u8, 35u8, 253u8, 175u8, 17u8, 35u8, 249u8, 156u8, 192u8,
+                            245u8, 199u8, 35u8, 173u8, 199u8, 21u8, 104u8, 233u8, 140u8, 255u8,
+                            210u8, 166u8,
                         ],
                     )
                 }
@@ -8051,10 +8109,10 @@ pub mod api {
                                 call: ::subxt::alloc::boxed::Box::new(call),
                             },
                             [
-                                210u8, 157u8, 95u8, 197u8, 59u8, 38u8, 228u8, 214u8, 99u8, 234u8,
-                                246u8, 190u8, 12u8, 223u8, 38u8, 78u8, 112u8, 161u8, 55u8, 105u8,
-                                14u8, 116u8, 116u8, 206u8, 43u8, 53u8, 92u8, 154u8, 3u8, 100u8,
-                                6u8, 171u8,
+                                43u8, 61u8, 34u8, 196u8, 63u8, 116u8, 131u8, 30u8, 246u8, 186u8,
+                                196u8, 55u8, 60u8, 105u8, 220u8, 155u8, 201u8, 3u8, 26u8, 50u8,
+                                78u8, 211u8, 147u8, 60u8, 54u8, 235u8, 71u8, 69u8, 90u8, 109u8,
+                                35u8, 118u8,
                             ],
                         )
                     }
@@ -8077,10 +8135,10 @@ pub mod api {
                                 weight,
                             },
                             [
-                                176u8, 134u8, 83u8, 185u8, 53u8, 177u8, 16u8, 124u8, 58u8, 241u8,
-                                16u8, 250u8, 146u8, 133u8, 62u8, 30u8, 148u8, 115u8, 107u8, 115u8,
-                                101u8, 190u8, 167u8, 193u8, 45u8, 10u8, 15u8, 139u8, 2u8, 9u8,
-                                195u8, 102u8,
+                                34u8, 24u8, 136u8, 100u8, 212u8, 221u8, 17u8, 44u8, 215u8, 111u8,
+                                64u8, 212u8, 227u8, 206u8, 240u8, 227u8, 174u8, 136u8, 160u8,
+                                247u8, 209u8, 167u8, 17u8, 148u8, 169u8, 241u8, 134u8, 243u8,
+                                161u8, 56u8, 253u8, 166u8,
                             ],
                         )
                     }
@@ -8119,10 +8177,10 @@ pub mod api {
                                 call: ::subxt::alloc::boxed::Box::new(call),
                             },
                             [
-                                141u8, 10u8, 101u8, 211u8, 149u8, 132u8, 101u8, 156u8, 97u8, 241u8,
-                                138u8, 124u8, 128u8, 156u8, 174u8, 176u8, 5u8, 18u8, 43u8, 237u8,
-                                51u8, 51u8, 100u8, 252u8, 20u8, 46u8, 132u8, 128u8, 231u8, 81u8,
-                                84u8, 1u8,
+                                107u8, 156u8, 87u8, 0u8, 197u8, 212u8, 172u8, 171u8, 82u8, 104u8,
+                                68u8, 136u8, 187u8, 13u8, 216u8, 44u8, 169u8, 73u8, 89u8, 145u8,
+                                8u8, 244u8, 52u8, 0u8, 140u8, 19u8, 208u8, 38u8, 47u8, 81u8, 198u8,
+                                163u8,
                             ],
                         )
                     }
@@ -14315,10 +14373,10 @@ pub mod api {
                             "batch",
                             super::Batch { calls },
                             [
-                                188u8, 179u8, 46u8, 25u8, 239u8, 225u8, 241u8, 55u8, 177u8, 254u8,
-                                131u8, 234u8, 228u8, 120u8, 0u8, 2u8, 107u8, 29u8, 29u8, 154u8,
-                                181u8, 73u8, 23u8, 66u8, 35u8, 53u8, 238u8, 69u8, 139u8, 200u8,
-                                41u8, 207u8,
+                                154u8, 136u8, 138u8, 188u8, 174u8, 70u8, 95u8, 136u8, 139u8, 163u8,
+                                30u8, 148u8, 243u8, 48u8, 246u8, 80u8, 110u8, 210u8, 107u8, 57u8,
+                                175u8, 171u8, 178u8, 91u8, 63u8, 179u8, 141u8, 50u8, 151u8, 41u8,
+                                97u8, 133u8,
                             ],
                         )
                     }
@@ -14349,10 +14407,10 @@ pub mod api {
                                 call: ::subxt::alloc::boxed::Box::new(call),
                             },
                             [
-                                240u8, 225u8, 57u8, 6u8, 63u8, 195u8, 4u8, 201u8, 78u8, 116u8,
-                                109u8, 109u8, 109u8, 235u8, 216u8, 198u8, 210u8, 173u8, 32u8, 19u8,
-                                188u8, 67u8, 81u8, 105u8, 169u8, 251u8, 43u8, 109u8, 170u8, 9u8,
-                                86u8, 9u8,
+                                99u8, 238u8, 105u8, 167u8, 177u8, 181u8, 48u8, 207u8, 102u8, 86u8,
+                                237u8, 213u8, 94u8, 172u8, 125u8, 108u8, 133u8, 3u8, 126u8, 32u8,
+                                104u8, 38u8, 202u8, 81u8, 176u8, 173u8, 90u8, 136u8, 162u8, 164u8,
+                                53u8, 3u8,
                             ],
                         )
                     }
@@ -14378,10 +14436,10 @@ pub mod api {
                             "batch_all",
                             super::BatchAll { calls },
                             [
-                                127u8, 81u8, 243u8, 28u8, 199u8, 180u8, 205u8, 250u8, 127u8, 67u8,
-                                125u8, 175u8, 78u8, 248u8, 32u8, 120u8, 115u8, 104u8, 113u8, 70u8,
-                                120u8, 239u8, 2u8, 61u8, 168u8, 110u8, 253u8, 247u8, 248u8, 5u8,
-                                218u8, 142u8,
+                                156u8, 215u8, 229u8, 112u8, 216u8, 131u8, 205u8, 59u8, 246u8, 21u8,
+                                231u8, 171u8, 151u8, 29u8, 37u8, 30u8, 240u8, 16u8, 219u8, 205u8,
+                                1u8, 48u8, 177u8, 32u8, 247u8, 118u8, 30u8, 237u8, 16u8, 92u8,
+                                84u8, 86u8,
                             ],
                         )
                     }
@@ -14405,10 +14463,10 @@ pub mod api {
                                 call: ::subxt::alloc::boxed::Box::new(call),
                             },
                             [
-                                159u8, 48u8, 140u8, 134u8, 91u8, 247u8, 245u8, 98u8, 141u8, 115u8,
-                                18u8, 4u8, 34u8, 92u8, 52u8, 119u8, 233u8, 161u8, 234u8, 99u8,
-                                138u8, 211u8, 254u8, 13u8, 240u8, 13u8, 108u8, 255u8, 128u8, 121u8,
-                                20u8, 214u8,
+                                74u8, 109u8, 243u8, 229u8, 40u8, 201u8, 116u8, 158u8, 33u8, 38u8,
+                                56u8, 160u8, 125u8, 36u8, 111u8, 190u8, 33u8, 201u8, 106u8, 111u8,
+                                75u8, 43u8, 171u8, 174u8, 186u8, 251u8, 106u8, 10u8, 154u8, 163u8,
+                                154u8, 75u8,
                             ],
                         )
                     }
@@ -14435,10 +14493,10 @@ pub mod api {
                             "force_batch",
                             super::ForceBatch { calls },
                             [
-                                24u8, 145u8, 42u8, 162u8, 212u8, 153u8, 185u8, 18u8, 200u8, 186u8,
-                                241u8, 9u8, 194u8, 65u8, 222u8, 251u8, 247u8, 241u8, 70u8, 119u8,
-                                253u8, 103u8, 140u8, 101u8, 201u8, 138u8, 198u8, 164u8, 251u8,
-                                253u8, 65u8, 191u8,
+                                161u8, 5u8, 205u8, 134u8, 33u8, 111u8, 62u8, 89u8, 89u8, 65u8,
+                                67u8, 57u8, 67u8, 246u8, 48u8, 123u8, 1u8, 202u8, 23u8, 57u8, 26u8,
+                                157u8, 59u8, 127u8, 106u8, 209u8, 255u8, 223u8, 244u8, 74u8, 125u8,
+                                233u8,
                             ],
                         )
                     }
@@ -14462,10 +14520,10 @@ pub mod api {
                                 weight,
                             },
                             [
-                                21u8, 57u8, 88u8, 159u8, 227u8, 67u8, 215u8, 149u8, 22u8, 8u8,
-                                47u8, 116u8, 37u8, 229u8, 169u8, 32u8, 22u8, 21u8, 184u8, 97u8,
-                                199u8, 96u8, 96u8, 116u8, 42u8, 223u8, 148u8, 170u8, 220u8, 0u8,
-                                26u8, 81u8,
+                                115u8, 120u8, 22u8, 210u8, 153u8, 218u8, 24u8, 119u8, 16u8, 219u8,
+                                11u8, 236u8, 220u8, 251u8, 186u8, 193u8, 109u8, 181u8, 78u8, 196u8,
+                                25u8, 87u8, 209u8, 223u8, 107u8, 143u8, 63u8, 139u8, 80u8, 25u8,
+                                245u8, 242u8,
                             ],
                         )
                     }
@@ -14505,10 +14563,10 @@ pub mod api {
                                 fallback: ::subxt::alloc::boxed::Box::new(fallback),
                             },
                             [
-                                47u8, 161u8, 224u8, 182u8, 119u8, 247u8, 150u8, 216u8, 60u8, 239u8,
-                                131u8, 156u8, 89u8, 85u8, 126u8, 142u8, 100u8, 195u8, 148u8, 55u8,
-                                166u8, 98u8, 142u8, 15u8, 86u8, 197u8, 66u8, 237u8, 165u8, 176u8,
-                                62u8, 122u8,
+                                113u8, 246u8, 249u8, 108u8, 56u8, 102u8, 99u8, 73u8, 97u8, 197u8,
+                                86u8, 10u8, 110u8, 153u8, 232u8, 50u8, 164u8, 199u8, 226u8, 39u8,
+                                240u8, 129u8, 172u8, 119u8, 7u8, 238u8, 76u8, 118u8, 128u8, 242u8,
+                                23u8, 4u8,
                             ],
                         )
                     }
@@ -14531,10 +14589,10 @@ pub mod api {
                                 call: ::subxt::alloc::boxed::Box::new(call),
                             },
                             [
-                                63u8, 40u8, 208u8, 222u8, 8u8, 160u8, 133u8, 218u8, 91u8, 56u8,
-                                132u8, 10u8, 124u8, 231u8, 223u8, 216u8, 35u8, 229u8, 9u8, 60u8,
-                                44u8, 240u8, 178u8, 67u8, 79u8, 188u8, 128u8, 87u8, 124u8, 177u8,
-                                117u8, 91u8,
+                                238u8, 249u8, 243u8, 154u8, 10u8, 17u8, 246u8, 100u8, 141u8, 42u8,
+                                246u8, 99u8, 178u8, 183u8, 35u8, 105u8, 161u8, 161u8, 96u8, 31u8,
+                                84u8, 118u8, 26u8, 194u8, 95u8, 100u8, 196u8, 70u8, 156u8, 111u8,
+                                96u8, 16u8,
                             ],
                         )
                     }
@@ -14895,9 +14953,8 @@ pub mod api {
             #[doc = "Finalise a previously-announced deregistration."]
             #[doc = ""]
             #[doc = "Callable by the provider once `DeregisterAnnouncementPeriod` has"]
-            #[doc = "elapsed since their `deregister_provider` call. Drains any"]
-            #[doc = "pending `CheckpointRewards` into the provider's free balance,"]
-            #[doc = "unreserves the remaining stake, and removes the provider record."]
+            #[doc = "elapsed since their `deregister_provider` call. Unreserves the"]
+            #[doc = "remaining stake and removes the provider record."]
             #[doc = ""]
             #[doc = "Still requires `committed_bytes == 0` — if the provider somehow"]
             #[doc = "re-acquired commitments mid-window (they cannot today, since"]
@@ -15485,186 +15542,6 @@ pub mod api {
             )]
             #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-            #[doc = "Submit a provider-initiated checkpoint."]
-            #[doc = ""]
-            #[doc = "Providers autonomously coordinate checkpoints without requiring"]
-            #[doc = "clients to be online. Uses deterministic leader election with"]
-            #[doc = "fallback to any primary provider after grace period."]
-            #[doc = ""]
-            #[doc = "Parameters:"]
-            #[doc = "- `bucket_id`: The bucket to checkpoint"]
-            #[doc = "- `mmr_root`: MMR root that providers agreed on"]
-            #[doc = "- `start_seq`: Starting sequence number"]
-            #[doc = "- `leaf_count`: Number of leaves in the MMR"]
-            #[doc = "- `window`: Checkpoint window number (prevents replay)"]
-            #[doc = "- `signatures`: Provider signatures over the checkpoint proposal"]
-            pub struct ProviderCheckpoint {
-                pub bucket_id: provider_checkpoint::BucketId,
-                pub commitment: provider_checkpoint::Commitment,
-                pub window: provider_checkpoint::Window,
-                pub signatures: provider_checkpoint::Signatures,
-            }
-            pub mod provider_checkpoint {
-                use super::runtime_types;
-                pub type BucketId = ::core::primitive::u64;
-                pub type Commitment = runtime_types::storage_primitives::Commitment;
-                pub type Window = ::core::primitive::u64;
-                pub type Signatures =
-                    runtime_types::bounded_collections::bounded_vec::BoundedVec<(
-                        ::subxt::utils::AccountId32,
-                        runtime_types::sp_runtime::MultiSignature,
-                    )>;
-            }
-            impl ProviderCheckpoint {
-                const PALLET_NAME: &'static str = "StorageProvider";
-                const CALL_NAME: &'static str = "provider_checkpoint";
-            }
-            impl ::subxt::extrinsics::DecodeAsExtrinsic for ProviderCheckpoint {
-                fn is_extrinsic(pallet_name: &str, call_name: &str) -> bool {
-                    pallet_name == Self::PALLET_NAME && call_name == Self::CALL_NAME
-                }
-            }
-            #[derive(
-                :: subxt :: ext :: scale_decode :: DecodeAsType,
-                :: subxt :: ext :: scale_encode :: EncodeAsType,
-                Clone,
-                Debug,
-                Eq,
-                PartialEq,
-            )]
-            #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
-            #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-            #[doc = "Configure checkpoint window settings for a bucket."]
-            #[doc = ""]
-            #[doc = "Only bucket admin can configure. Setting enabled=false disables"]
-            #[doc = "provider-initiated checkpoints (client-initiated still work)."]
-            pub struct ConfigureCheckpointWindow {
-                pub bucket_id: configure_checkpoint_window::BucketId,
-                pub interval: configure_checkpoint_window::Interval,
-                pub grace_period: configure_checkpoint_window::GracePeriod,
-                pub enabled: configure_checkpoint_window::Enabled,
-            }
-            pub mod configure_checkpoint_window {
-                use super::runtime_types;
-                pub type BucketId = ::core::primitive::u64;
-                pub type Interval = ::core::primitive::u32;
-                pub type GracePeriod = ::core::primitive::u32;
-                pub type Enabled = ::core::primitive::bool;
-            }
-            impl ConfigureCheckpointWindow {
-                const PALLET_NAME: &'static str = "StorageProvider";
-                const CALL_NAME: &'static str = "configure_checkpoint_window";
-            }
-            impl ::subxt::extrinsics::DecodeAsExtrinsic for ConfigureCheckpointWindow {
-                fn is_extrinsic(pallet_name: &str, call_name: &str) -> bool {
-                    pallet_name == Self::PALLET_NAME && call_name == Self::CALL_NAME
-                }
-            }
-            #[derive(
-                :: subxt :: ext :: scale_decode :: DecodeAsType,
-                :: subxt :: ext :: scale_encode :: EncodeAsType,
-                Clone,
-                Debug,
-                Eq,
-                PartialEq,
-            )]
-            #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
-            #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-            #[doc = "Report a missed checkpoint window and penalize the leader."]
-            #[doc = ""]
-            #[doc = "Can only be called after the checkpoint window has fully passed"]
-            #[doc = "(beyond grace period) and no checkpoint was submitted."]
-            #[doc = "Reporter receives a portion of the penalty."]
-            pub struct ReportMissedCheckpoint {
-                pub bucket_id: report_missed_checkpoint::BucketId,
-                pub window: report_missed_checkpoint::Window,
-            }
-            pub mod report_missed_checkpoint {
-                use super::runtime_types;
-                pub type BucketId = ::core::primitive::u64;
-                pub type Window = ::core::primitive::u64;
-            }
-            impl ReportMissedCheckpoint {
-                const PALLET_NAME: &'static str = "StorageProvider";
-                const CALL_NAME: &'static str = "report_missed_checkpoint";
-            }
-            impl ::subxt::extrinsics::DecodeAsExtrinsic for ReportMissedCheckpoint {
-                fn is_extrinsic(pallet_name: &str, call_name: &str) -> bool {
-                    pallet_name == Self::PALLET_NAME && call_name == Self::CALL_NAME
-                }
-            }
-            #[derive(
-                :: subxt :: ext :: scale_decode :: DecodeAsType,
-                :: subxt :: ext :: scale_encode :: EncodeAsType,
-                Clone,
-                Debug,
-                Eq,
-                PartialEq,
-            )]
-            #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
-            #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-            #[doc = "Claim accumulated checkpoint rewards."]
-            #[doc = ""]
-            #[doc = "Providers accumulate rewards for submitting checkpoints."]
-            #[doc = "This transfers accumulated rewards to the provider."]
-            pub struct ClaimCheckpointRewards {
-                pub bucket_id: claim_checkpoint_rewards::BucketId,
-            }
-            pub mod claim_checkpoint_rewards {
-                use super::runtime_types;
-                pub type BucketId = ::core::primitive::u64;
-            }
-            impl ClaimCheckpointRewards {
-                const PALLET_NAME: &'static str = "StorageProvider";
-                const CALL_NAME: &'static str = "claim_checkpoint_rewards";
-            }
-            impl ::subxt::extrinsics::DecodeAsExtrinsic for ClaimCheckpointRewards {
-                fn is_extrinsic(pallet_name: &str, call_name: &str) -> bool {
-                    pallet_name == Self::PALLET_NAME && call_name == Self::CALL_NAME
-                }
-            }
-            #[derive(
-                :: subxt :: ext :: scale_decode :: DecodeAsType,
-                :: subxt :: ext :: scale_encode :: EncodeAsType,
-                Clone,
-                Debug,
-                Eq,
-                PartialEq,
-            )]
-            #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
-            #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-            #[doc = "Fund the checkpoint reward pool for a bucket."]
-            #[doc = ""]
-            #[doc = "Anyone can fund the pool. Funds are used to reward providers"]
-            #[doc = "for submitting checkpoints."]
-            pub struct FundCheckpointPool {
-                pub bucket_id: fund_checkpoint_pool::BucketId,
-                pub amount: fund_checkpoint_pool::Amount,
-            }
-            pub mod fund_checkpoint_pool {
-                use super::runtime_types;
-                pub type BucketId = ::core::primitive::u64;
-                pub type Amount = ::core::primitive::u128;
-            }
-            impl FundCheckpointPool {
-                const PALLET_NAME: &'static str = "StorageProvider";
-                const CALL_NAME: &'static str = "fund_checkpoint_pool";
-            }
-            impl ::subxt::extrinsics::DecodeAsExtrinsic for FundCheckpointPool {
-                fn is_extrinsic(pallet_name: &str, call_name: &str) -> bool {
-                    pallet_name == Self::PALLET_NAME && call_name == Self::CALL_NAME
-                }
-            }
-            #[derive(
-                :: subxt :: ext :: scale_decode :: DecodeAsType,
-                :: subxt :: ext :: scale_encode :: EncodeAsType,
-                Clone,
-                Debug,
-                Eq,
-                PartialEq,
-            )]
-            #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
-            #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
             #[doc = "Challenge on-chain checkpoint (no signatures needed)."]
             #[doc = ""]
             #[doc = "Provider must be in current snapshot's provider list."]
@@ -15946,9 +15823,8 @@ pub mod api {
                     #[doc = "Finalise a previously-announced deregistration."]
                     #[doc = ""]
                     #[doc = "Callable by the provider once `DeregisterAnnouncementPeriod` has"]
-                    #[doc = "elapsed since their `deregister_provider` call. Drains any"]
-                    #[doc = "pending `CheckpointRewards` into the provider's free balance,"]
-                    #[doc = "unreserves the remaining stake, and removes the provider record."]
+                    #[doc = "elapsed since their `deregister_provider` call. Unreserves the"]
+                    #[doc = "remaining stake and removes the provider record."]
                     #[doc = ""]
                     #[doc = "Still requires `committed_bytes == 0` — if the provider somehow"]
                     #[doc = "re-acquired commitments mid-window (they cannot today, since"]
@@ -16380,139 +16256,6 @@ pub mod api {
                                 77u8, 73u8, 204u8, 239u8, 62u8, 125u8, 114u8, 23u8, 173u8, 121u8,
                                 134u8, 193u8, 37u8, 208u8, 133u8, 31u8, 88u8, 192u8, 146u8, 84u8,
                                 199u8, 90u8,
-                            ],
-                        )
-                    }
-                    #[doc = "Submit a provider-initiated checkpoint."]
-                    #[doc = ""]
-                    #[doc = "Providers autonomously coordinate checkpoints without requiring"]
-                    #[doc = "clients to be online. Uses deterministic leader election with"]
-                    #[doc = "fallback to any primary provider after grace period."]
-                    #[doc = ""]
-                    #[doc = "Parameters:"]
-                    #[doc = "- `bucket_id`: The bucket to checkpoint"]
-                    #[doc = "- `mmr_root`: MMR root that providers agreed on"]
-                    #[doc = "- `start_seq`: Starting sequence number"]
-                    #[doc = "- `leaf_count`: Number of leaves in the MMR"]
-                    #[doc = "- `window`: Checkpoint window number (prevents replay)"]
-                    #[doc = "- `signatures`: Provider signatures over the checkpoint proposal"]
-                    pub fn provider_checkpoint(
-                        &self,
-                        bucket_id: super::provider_checkpoint::BucketId,
-                        commitment: super::provider_checkpoint::Commitment,
-                        window: super::provider_checkpoint::Window,
-                        signatures: super::provider_checkpoint::Signatures,
-                    ) -> ::subxt::transactions::StaticPayload<super::ProviderCheckpoint>
-                    {
-                        ::subxt::transactions::StaticPayload::new_static(
-                            "StorageProvider",
-                            "provider_checkpoint",
-                            super::ProviderCheckpoint {
-                                bucket_id,
-                                commitment,
-                                window,
-                                signatures,
-                            },
-                            [
-                                72u8, 81u8, 224u8, 202u8, 178u8, 15u8, 123u8, 164u8, 78u8, 35u8,
-                                134u8, 90u8, 164u8, 2u8, 55u8, 31u8, 154u8, 50u8, 44u8, 101u8,
-                                231u8, 65u8, 63u8, 18u8, 19u8, 50u8, 140u8, 107u8, 6u8, 146u8, 2u8,
-                                231u8,
-                            ],
-                        )
-                    }
-                    #[doc = "Configure checkpoint window settings for a bucket."]
-                    #[doc = ""]
-                    #[doc = "Only bucket admin can configure. Setting enabled=false disables"]
-                    #[doc = "provider-initiated checkpoints (client-initiated still work)."]
-                    pub fn configure_checkpoint_window(
-                        &self,
-                        bucket_id: super::configure_checkpoint_window::BucketId,
-                        interval: super::configure_checkpoint_window::Interval,
-                        grace_period: super::configure_checkpoint_window::GracePeriod,
-                        enabled: super::configure_checkpoint_window::Enabled,
-                    ) -> ::subxt::transactions::StaticPayload<super::ConfigureCheckpointWindow>
-                    {
-                        ::subxt::transactions::StaticPayload::new_static(
-                            "StorageProvider",
-                            "configure_checkpoint_window",
-                            super::ConfigureCheckpointWindow {
-                                bucket_id,
-                                interval,
-                                grace_period,
-                                enabled,
-                            },
-                            [
-                                118u8, 183u8, 248u8, 204u8, 218u8, 141u8, 253u8, 227u8, 230u8,
-                                169u8, 103u8, 160u8, 127u8, 137u8, 178u8, 70u8, 74u8, 230u8, 126u8,
-                                3u8, 226u8, 13u8, 233u8, 10u8, 155u8, 252u8, 15u8, 163u8, 190u8,
-                                0u8, 108u8, 140u8,
-                            ],
-                        )
-                    }
-                    #[doc = "Report a missed checkpoint window and penalize the leader."]
-                    #[doc = ""]
-                    #[doc = "Can only be called after the checkpoint window has fully passed"]
-                    #[doc = "(beyond grace period) and no checkpoint was submitted."]
-                    #[doc = "Reporter receives a portion of the penalty."]
-                    pub fn report_missed_checkpoint(
-                        &self,
-                        bucket_id: super::report_missed_checkpoint::BucketId,
-                        window: super::report_missed_checkpoint::Window,
-                    ) -> ::subxt::transactions::StaticPayload<super::ReportMissedCheckpoint>
-                    {
-                        ::subxt::transactions::StaticPayload::new_static(
-                            "StorageProvider",
-                            "report_missed_checkpoint",
-                            super::ReportMissedCheckpoint { bucket_id, window },
-                            [
-                                72u8, 7u8, 7u8, 7u8, 50u8, 237u8, 249u8, 182u8, 16u8, 236u8, 119u8,
-                                202u8, 182u8, 51u8, 108u8, 143u8, 239u8, 71u8, 169u8, 79u8, 210u8,
-                                151u8, 144u8, 69u8, 67u8, 132u8, 247u8, 70u8, 241u8, 232u8, 131u8,
-                                224u8,
-                            ],
-                        )
-                    }
-                    #[doc = "Claim accumulated checkpoint rewards."]
-                    #[doc = ""]
-                    #[doc = "Providers accumulate rewards for submitting checkpoints."]
-                    #[doc = "This transfers accumulated rewards to the provider."]
-                    pub fn claim_checkpoint_rewards(
-                        &self,
-                        bucket_id: super::claim_checkpoint_rewards::BucketId,
-                    ) -> ::subxt::transactions::StaticPayload<super::ClaimCheckpointRewards>
-                    {
-                        ::subxt::transactions::StaticPayload::new_static(
-                            "StorageProvider",
-                            "claim_checkpoint_rewards",
-                            super::ClaimCheckpointRewards { bucket_id },
-                            [
-                                227u8, 105u8, 210u8, 189u8, 63u8, 228u8, 152u8, 192u8, 63u8, 174u8,
-                                111u8, 190u8, 245u8, 57u8, 209u8, 88u8, 161u8, 48u8, 35u8, 255u8,
-                                80u8, 5u8, 165u8, 161u8, 238u8, 215u8, 193u8, 96u8, 242u8, 105u8,
-                                82u8, 49u8,
-                            ],
-                        )
-                    }
-                    #[doc = "Fund the checkpoint reward pool for a bucket."]
-                    #[doc = ""]
-                    #[doc = "Anyone can fund the pool. Funds are used to reward providers"]
-                    #[doc = "for submitting checkpoints."]
-                    pub fn fund_checkpoint_pool(
-                        &self,
-                        bucket_id: super::fund_checkpoint_pool::BucketId,
-                        amount: super::fund_checkpoint_pool::Amount,
-                    ) -> ::subxt::transactions::StaticPayload<super::FundCheckpointPool>
-                    {
-                        ::subxt::transactions::StaticPayload::new_static(
-                            "StorageProvider",
-                            "fund_checkpoint_pool",
-                            super::FundCheckpointPool { bucket_id, amount },
-                            [
-                                237u8, 239u8, 44u8, 254u8, 27u8, 202u8, 157u8, 124u8, 120u8, 141u8,
-                                222u8, 182u8, 44u8, 51u8, 198u8, 17u8, 135u8, 84u8, 122u8, 12u8,
-                                235u8, 161u8, 157u8, 118u8, 57u8, 119u8, 40u8, 209u8, 7u8, 110u8,
-                                190u8, 126u8,
                             ],
                         )
                     }
@@ -17647,166 +17390,6 @@ pub mod api {
                     pallet_name == Self::PALLET_NAME && event_name == Self::EVENT_NAME
                 }
             }
-            #[derive(
-                :: subxt :: ext :: scale_decode :: DecodeAsType,
-                :: subxt :: ext :: scale_encode :: EncodeAsType,
-                Clone,
-                Debug,
-                Eq,
-                PartialEq,
-            )]
-            #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
-            #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-            pub struct ProviderCheckpointSubmitted {
-                pub bucket_id: provider_checkpoint_submitted::BucketId,
-                pub mmr_root: provider_checkpoint_submitted::MmrRoot,
-                pub window: provider_checkpoint_submitted::Window,
-                pub leader: provider_checkpoint_submitted::Leader,
-                pub signers: provider_checkpoint_submitted::Signers,
-                pub reward: provider_checkpoint_submitted::Reward,
-            }
-            pub mod provider_checkpoint_submitted {
-                use super::runtime_types;
-                pub type BucketId = ::core::primitive::u64;
-                pub type MmrRoot = ::subxt::utils::H256;
-                pub type Window = ::core::primitive::u64;
-                pub type Leader = ::subxt::utils::AccountId32;
-                pub type Signers = ::subxt::alloc::vec::Vec<::subxt::utils::AccountId32>;
-                pub type Reward = ::core::primitive::u128;
-            }
-            impl ProviderCheckpointSubmitted {
-                const PALLET_NAME: &'static str = "StorageProvider";
-                const EVENT_NAME: &'static str = "ProviderCheckpointSubmitted";
-            }
-            impl ::subxt::events::DecodeAsEvent for ProviderCheckpointSubmitted {
-                fn is_event(pallet_name: &str, event_name: &str) -> bool {
-                    pallet_name == Self::PALLET_NAME && event_name == Self::EVENT_NAME
-                }
-            }
-            #[derive(
-                :: subxt :: ext :: scale_decode :: DecodeAsType,
-                :: subxt :: ext :: scale_encode :: EncodeAsType,
-                Clone,
-                Debug,
-                Eq,
-                PartialEq,
-            )]
-            #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
-            #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-            pub struct CheckpointConfigUpdated {
-                pub bucket_id: checkpoint_config_updated::BucketId,
-                pub interval: checkpoint_config_updated::Interval,
-                pub grace_period: checkpoint_config_updated::GracePeriod,
-                pub enabled: checkpoint_config_updated::Enabled,
-            }
-            pub mod checkpoint_config_updated {
-                use super::runtime_types;
-                pub type BucketId = ::core::primitive::u64;
-                pub type Interval = ::core::primitive::u32;
-                pub type GracePeriod = ::core::primitive::u32;
-                pub type Enabled = ::core::primitive::bool;
-            }
-            impl CheckpointConfigUpdated {
-                const PALLET_NAME: &'static str = "StorageProvider";
-                const EVENT_NAME: &'static str = "CheckpointConfigUpdated";
-            }
-            impl ::subxt::events::DecodeAsEvent for CheckpointConfigUpdated {
-                fn is_event(pallet_name: &str, event_name: &str) -> bool {
-                    pallet_name == Self::PALLET_NAME && event_name == Self::EVENT_NAME
-                }
-            }
-            #[derive(
-                :: subxt :: ext :: scale_decode :: DecodeAsType,
-                :: subxt :: ext :: scale_encode :: EncodeAsType,
-                Clone,
-                Debug,
-                Eq,
-                PartialEq,
-            )]
-            #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
-            #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-            pub struct CheckpointMissPenalized {
-                pub bucket_id: checkpoint_miss_penalized::BucketId,
-                pub provider: checkpoint_miss_penalized::Provider,
-                pub window: checkpoint_miss_penalized::Window,
-                pub penalty: checkpoint_miss_penalized::Penalty,
-            }
-            pub mod checkpoint_miss_penalized {
-                use super::runtime_types;
-                pub type BucketId = ::core::primitive::u64;
-                pub type Provider = ::subxt::utils::AccountId32;
-                pub type Window = ::core::primitive::u64;
-                pub type Penalty = ::core::primitive::u128;
-            }
-            impl CheckpointMissPenalized {
-                const PALLET_NAME: &'static str = "StorageProvider";
-                const EVENT_NAME: &'static str = "CheckpointMissPenalized";
-            }
-            impl ::subxt::events::DecodeAsEvent for CheckpointMissPenalized {
-                fn is_event(pallet_name: &str, event_name: &str) -> bool {
-                    pallet_name == Self::PALLET_NAME && event_name == Self::EVENT_NAME
-                }
-            }
-            #[derive(
-                :: subxt :: ext :: scale_decode :: DecodeAsType,
-                :: subxt :: ext :: scale_encode :: EncodeAsType,
-                Clone,
-                Debug,
-                Eq,
-                PartialEq,
-            )]
-            #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
-            #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-            pub struct CheckpointRewardClaimed {
-                pub bucket_id: checkpoint_reward_claimed::BucketId,
-                pub provider: checkpoint_reward_claimed::Provider,
-                pub amount: checkpoint_reward_claimed::Amount,
-            }
-            pub mod checkpoint_reward_claimed {
-                use super::runtime_types;
-                pub type BucketId = ::core::primitive::u64;
-                pub type Provider = ::subxt::utils::AccountId32;
-                pub type Amount = ::core::primitive::u128;
-            }
-            impl CheckpointRewardClaimed {
-                const PALLET_NAME: &'static str = "StorageProvider";
-                const EVENT_NAME: &'static str = "CheckpointRewardClaimed";
-            }
-            impl ::subxt::events::DecodeAsEvent for CheckpointRewardClaimed {
-                fn is_event(pallet_name: &str, event_name: &str) -> bool {
-                    pallet_name == Self::PALLET_NAME && event_name == Self::EVENT_NAME
-                }
-            }
-            #[derive(
-                :: subxt :: ext :: scale_decode :: DecodeAsType,
-                :: subxt :: ext :: scale_encode :: EncodeAsType,
-                Clone,
-                Debug,
-                Eq,
-                PartialEq,
-            )]
-            #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
-            #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-            pub struct CheckpointPoolFunded {
-                pub bucket_id: checkpoint_pool_funded::BucketId,
-                pub funder: checkpoint_pool_funded::Funder,
-                pub amount: checkpoint_pool_funded::Amount,
-            }
-            pub mod checkpoint_pool_funded {
-                use super::runtime_types;
-                pub type BucketId = ::core::primitive::u64;
-                pub type Funder = ::subxt::utils::AccountId32;
-                pub type Amount = ::core::primitive::u128;
-            }
-            impl CheckpointPoolFunded {
-                const PALLET_NAME: &'static str = "StorageProvider";
-                const EVENT_NAME: &'static str = "CheckpointPoolFunded";
-            }
-            impl ::subxt::events::DecodeAsEvent for CheckpointPoolFunded {
-                fn is_event(pallet_name: &str, event_name: &str) -> bool {
-                    pallet_name == Self::PALLET_NAME && event_name == Self::EVENT_NAME
-                }
-            }
         }
         pub mod storage {
             use super::root_mod;
@@ -17950,10 +17533,31 @@ pub mod api {
                         ],
                     )
                 }
+                #[doc = " Highest deadline key the `on_initialize` slash sweep has drained. Each"]
+                #[doc = " block it sweeps up to (but excluding) the previous block's relay parent."]
+                #[doc = " `None` until the first block after genesis/upgrade anchors it. A cursor"]
+                #[doc = " over anchor-denominated deadline keys, hence [`BlockNumberFor`]."]
+                pub fn last_swept_challenge_block(
+                    &self,
+                ) -> ::subxt::storage::StaticAddress<
+                    (),
+                    last_swept_challenge_block::Output,
+                    ::subxt::utils::Yes,
+                > {
+                    ::subxt::storage::StaticAddress::new_static(
+                        "StorageProvider",
+                        "LastSweptChallengeBlock",
+                        [
+                            20u8, 172u8, 244u8, 64u8, 189u8, 63u8, 191u8, 154u8, 42u8, 244u8, 24u8,
+                            9u8, 20u8, 1u8, 79u8, 84u8, 41u8, 155u8, 22u8, 150u8, 31u8, 226u8,
+                            195u8, 120u8, 50u8, 109u8, 220u8, 241u8, 159u8, 54u8, 169u8, 146u8,
+                        ],
+                    )
+                }
                 #[doc = " Number of unresolved challenges currently outstanding against a"]
                 #[doc = " provider, summed across every bucket. Incremented in `create_challenge`"]
                 #[doc = " and decremented exactly once per resolution (defended/invalid-response"]
-                #[doc = " in `respond_to_challenge`, or timeout in `on_finalize`). Gates"]
+                #[doc = " in `respond_to_challenge`, or timeout in the `on_initialize` sweep). Gates"]
                 #[doc = " `complete_deregister`: a provider cannot exit while still slashable for"]
                 #[doc = " a pending challenge."]
                 pub fn pending_challenges(
@@ -18016,90 +17620,6 @@ pub mod api {
                             8u8, 63u8, 212u8, 126u8, 176u8, 205u8, 53u8, 129u8, 86u8, 26u8, 143u8,
                             107u8, 108u8, 16u8, 235u8, 67u8, 48u8, 72u8, 164u8, 169u8, 46u8, 252u8,
                             234u8, 72u8, 201u8, 195u8, 223u8, 123u8, 178u8, 58u8, 116u8, 109u8,
-                        ],
-                    )
-                }
-                #[doc = " Checkpoint window configuration per bucket."]
-                #[doc = " When None, bucket uses runtime defaults."]
-                pub fn checkpoint_configs(
-                    &self,
-                ) -> ::subxt::storage::StaticAddress<
-                    (checkpoint_configs::input::Param0,),
-                    checkpoint_configs::Output,
-                    ::subxt::utils::Maybe,
-                > {
-                    ::subxt::storage::StaticAddress::new_static(
-                        "StorageProvider",
-                        "CheckpointConfigs",
-                        [
-                            16u8, 142u8, 170u8, 165u8, 88u8, 104u8, 68u8, 43u8, 7u8, 130u8, 110u8,
-                            108u8, 180u8, 73u8, 241u8, 180u8, 55u8, 171u8, 135u8, 5u8, 92u8, 143u8,
-                            226u8, 117u8, 190u8, 33u8, 60u8, 35u8, 0u8, 153u8, 62u8, 228u8,
-                        ],
-                    )
-                }
-                #[doc = " Last successful checkpoint window per bucket."]
-                #[doc = " `None` means no checkpoint has been submitted yet."]
-                pub fn last_checkpoint_window(
-                    &self,
-                ) -> ::subxt::storage::StaticAddress<
-                    (last_checkpoint_window::input::Param0,),
-                    last_checkpoint_window::Output,
-                    ::subxt::utils::Maybe,
-                > {
-                    ::subxt::storage::StaticAddress::new_static(
-                        "StorageProvider",
-                        "LastCheckpointWindow",
-                        [
-                            14u8, 94u8, 78u8, 87u8, 151u8, 226u8, 105u8, 146u8, 211u8, 183u8, 17u8,
-                            252u8, 147u8, 35u8, 234u8, 73u8, 46u8, 219u8, 6u8, 236u8, 219u8, 222u8,
-                            84u8, 196u8, 154u8, 34u8, 43u8, 60u8, 33u8, 247u8, 87u8, 189u8,
-                        ],
-                    )
-                }
-                #[doc = " Pending checkpoint rewards per (provider, bucket)."]
-                #[doc = " Accumulates rewards for providers who submit or sign checkpoints."]
-                #[doc = " Provider-first key order enables `iter_prefix(&provider)` so a"]
-                #[doc = " provider's pending rewards can be drained on deregistration without"]
-                #[doc = " scanning every bucket."]
-                pub fn checkpoint_rewards(
-                    &self,
-                ) -> ::subxt::storage::StaticAddress<
-                    (
-                        checkpoint_rewards::input::Param0,
-                        checkpoint_rewards::input::Param1,
-                    ),
-                    checkpoint_rewards::Output,
-                    ::subxt::utils::Maybe,
-                > {
-                    ::subxt::storage::StaticAddress::new_static(
-                        "StorageProvider",
-                        "CheckpointRewards",
-                        [
-                            103u8, 192u8, 103u8, 31u8, 95u8, 50u8, 123u8, 146u8, 54u8, 249u8,
-                            159u8, 248u8, 149u8, 253u8, 235u8, 69u8, 76u8, 164u8, 103u8, 133u8,
-                            111u8, 31u8, 205u8, 63u8, 194u8, 57u8, 190u8, 30u8, 91u8, 178u8, 190u8,
-                            20u8,
-                        ],
-                    )
-                }
-                #[doc = " Checkpoint pool balance per bucket."]
-                #[doc = " Funded by clients to pay for provider-initiated checkpoints."]
-                pub fn checkpoint_pool(
-                    &self,
-                ) -> ::subxt::storage::StaticAddress<
-                    (checkpoint_pool::input::Param0,),
-                    checkpoint_pool::Output,
-                    ::subxt::utils::Maybe,
-                > {
-                    ::subxt::storage::StaticAddress::new_static(
-                        "StorageProvider",
-                        "CheckpointPool",
-                        [
-                            89u8, 159u8, 102u8, 221u8, 142u8, 207u8, 95u8, 168u8, 99u8, 232u8,
-                            11u8, 219u8, 11u8, 227u8, 101u8, 194u8, 100u8, 108u8, 138u8, 137u8,
-                            248u8, 67u8, 104u8, 184u8, 246u8, 140u8, 205u8, 145u8, 153u8, 128u8,
-                            135u8, 196u8,
                         ],
                     )
                 }
@@ -18187,6 +17707,14 @@ pub mod api {
                 }
                 pub type Output = ::core::primitive::u16;
             }
+            pub mod last_swept_challenge_block {
+                use super::root_mod;
+                use super::runtime_types;
+                pub mod input {
+                    use super::runtime_types;
+                }
+                pub type Output = ::core::primitive::u32;
+            }
             pub mod pending_challenges {
                 use super::root_mod;
                 use super::runtime_types;
@@ -18214,45 +17742,6 @@ pub mod api {
                     pub type Param0 = ::subxt::utils::AccountId32;
                 }
                 pub type Output = runtime_types::storage_primitives::ChallengerStatRecord;
-            }
-            pub mod checkpoint_configs {
-                use super::root_mod;
-                use super::runtime_types;
-                pub mod input {
-                    use super::runtime_types;
-                    pub type Param0 = ::core::primitive::u64;
-                }
-                pub type Output = runtime_types::storage_primitives::CheckpointWindowConfig<
-                    ::core::primitive::u32,
-                >;
-            }
-            pub mod last_checkpoint_window {
-                use super::root_mod;
-                use super::runtime_types;
-                pub mod input {
-                    use super::runtime_types;
-                    pub type Param0 = ::core::primitive::u64;
-                }
-                pub type Output = ::core::primitive::u64;
-            }
-            pub mod checkpoint_rewards {
-                use super::root_mod;
-                use super::runtime_types;
-                pub mod input {
-                    use super::runtime_types;
-                    pub type Param0 = ::subxt::utils::AccountId32;
-                    pub type Param1 = ::core::primitive::u64;
-                }
-                pub type Output = ::core::primitive::u128;
-            }
-            pub mod checkpoint_pool {
-                use super::root_mod;
-                use super::runtime_types;
-                pub mod input {
-                    use super::runtime_types;
-                    pub type Param0 = ::core::primitive::u64;
-                }
-                pub type Output = ::core::primitive::u128;
             }
             pub mod member_buckets {
                 use super::root_mod;
@@ -18359,7 +17848,8 @@ pub mod api {
                         ],
                     )
                 }
-                #[doc = " Timeout for challenge response (e.g., ~48 hours in blocks)."]
+                #[doc = " Timeout for challenge response (e.g., ~48 hours in relay chain"]
+                #[doc = " blocks)."]
                 pub fn challenge_timeout(
                     &self,
                 ) -> ::subxt::constants::StaticAddress<::core::primitive::u32> {
@@ -18394,10 +17884,12 @@ pub mod api {
                         ],
                     )
                 }
-                #[doc = " Maximum age of a `CommitmentPayload::nonce` (in blocks) the pallet"]
-                #[doc = " will accept on inbound signatures. The nonce is the block number"]
-                #[doc = " at which the signer signed; values older than this are rejected"]
-                #[doc = " to prevent indefinite signature replay."]
+                #[doc = " Maximum age of a `CommitmentPayload::nonce` (in relay chain"]
+                #[doc = " blocks) the pallet will accept on inbound signatures. The nonce is"]
+                #[doc = " the relay chain block number (per"]
+                #[doc = " [`Config::BlockNumberProvider`]) at which the signer signed;"]
+                #[doc = " values older than this are rejected to prevent indefinite"]
+                #[doc = " signature replay."]
                 pub fn max_nonce_age(
                     &self,
                 ) -> ::subxt::constants::StaticAddress<::core::primitive::u32> {
@@ -18412,7 +17904,8 @@ pub mod api {
                         ],
                     )
                 }
-                #[doc = " Settlement window after agreement expiry for owner to call end_agreement."]
+                #[doc = " Settlement window (in relay chain blocks) after agreement expiry"]
+                #[doc = " for owner to call end_agreement."]
                 pub fn settlement_timeout(
                     &self,
                 ) -> ::subxt::constants::StaticAddress<::core::primitive::u32> {
@@ -18427,7 +17920,8 @@ pub mod api {
                         ],
                     )
                 }
-                #[doc = " Maximum duration for agreement requests before expiry."]
+                #[doc = " Maximum duration (in relay chain blocks) for agreement requests"]
+                #[doc = " before expiry."]
                 pub fn request_timeout(
                     &self,
                 ) -> ::subxt::constants::StaticAddress<::core::primitive::u32> {
@@ -18439,64 +17933,6 @@ pub mod api {
                             125u8, 151u8, 53u8, 76u8, 168u8, 26u8, 10u8, 9u8, 98u8, 68u8, 9u8,
                             178u8, 197u8, 113u8, 31u8, 79u8, 200u8, 90u8, 203u8, 100u8, 41u8,
                             145u8,
-                        ],
-                    )
-                }
-                #[doc = " Default interval between provider-initiated checkpoints (e.g., 100 blocks)."]
-                pub fn default_checkpoint_interval(
-                    &self,
-                ) -> ::subxt::constants::StaticAddress<::core::primitive::u32> {
-                    ::subxt::constants::StaticAddress::new_static(
-                        "StorageProvider",
-                        "DefaultCheckpointInterval",
-                        [
-                            98u8, 252u8, 116u8, 72u8, 26u8, 180u8, 225u8, 83u8, 200u8, 157u8,
-                            125u8, 151u8, 53u8, 76u8, 168u8, 26u8, 10u8, 9u8, 98u8, 68u8, 9u8,
-                            178u8, 197u8, 113u8, 31u8, 79u8, 200u8, 90u8, 203u8, 100u8, 41u8,
-                            145u8,
-                        ],
-                    )
-                }
-                #[doc = " Default grace period for checkpoint leader (e.g., 20 blocks)."]
-                pub fn default_checkpoint_grace(
-                    &self,
-                ) -> ::subxt::constants::StaticAddress<::core::primitive::u32> {
-                    ::subxt::constants::StaticAddress::new_static(
-                        "StorageProvider",
-                        "DefaultCheckpointGrace",
-                        [
-                            98u8, 252u8, 116u8, 72u8, 26u8, 180u8, 225u8, 83u8, 200u8, 157u8,
-                            125u8, 151u8, 53u8, 76u8, 168u8, 26u8, 10u8, 9u8, 98u8, 68u8, 9u8,
-                            178u8, 197u8, 113u8, 31u8, 79u8, 200u8, 90u8, 203u8, 100u8, 41u8,
-                            145u8,
-                        ],
-                    )
-                }
-                #[doc = " Reward paid to provider for submitting a checkpoint."]
-                pub fn checkpoint_reward(
-                    &self,
-                ) -> ::subxt::constants::StaticAddress<::core::primitive::u128> {
-                    ::subxt::constants::StaticAddress::new_static(
-                        "StorageProvider",
-                        "CheckpointReward",
-                        [
-                            84u8, 157u8, 140u8, 4u8, 93u8, 57u8, 29u8, 133u8, 105u8, 200u8, 214u8,
-                            27u8, 144u8, 208u8, 218u8, 160u8, 130u8, 109u8, 101u8, 54u8, 210u8,
-                            136u8, 71u8, 63u8, 49u8, 237u8, 234u8, 15u8, 178u8, 98u8, 148u8, 156u8,
-                        ],
-                    )
-                }
-                #[doc = " Penalty for missing a checkpoint window (slashed from provider stake)."]
-                pub fn checkpoint_miss_penalty(
-                    &self,
-                ) -> ::subxt::constants::StaticAddress<::core::primitive::u128> {
-                    ::subxt::constants::StaticAddress::new_static(
-                        "StorageProvider",
-                        "CheckpointMissPenalty",
-                        [
-                            84u8, 157u8, 140u8, 4u8, 93u8, 57u8, 29u8, 133u8, 105u8, 200u8, 214u8,
-                            27u8, 144u8, 208u8, 218u8, 160u8, 130u8, 109u8, 101u8, 54u8, 210u8,
-                            136u8, 71u8, 63u8, 49u8, 237u8, 234u8, 15u8, 178u8, 98u8, 148u8, 156u8,
                         ],
                     )
                 }
@@ -18515,8 +17951,9 @@ pub mod api {
                         ],
                     )
                 }
-                #[doc = " Minimum number of blocks between announcing a deregistration and"]
-                #[doc = " being allowed to complete it. Must be `> ChallengeTimeout` so any"]
+                #[doc = " Minimum number of relay chain blocks between announcing a"]
+                #[doc = " deregistration and being allowed to complete it. Must be"]
+                #[doc = " `> ChallengeTimeout` so any"]
                 #[doc = " challenge against this provider that was created up to the"]
                 #[doc = " announcement block matures while the provider is still slashable."]
                 pub fn deregister_announcement_period(
@@ -18533,14 +17970,17 @@ pub mod api {
                         ],
                     )
                 }
-                #[doc = " Maximum number of challenges that may share a single deadline block."]
+                #[doc = " Maximum number of challenges that may share a single deadline"]
+                #[doc = " (relay chain block), and the per-block slash budget of the"]
+                #[doc = " `on_initialize` timeout sweep."]
                 #[doc = ""]
-                #[doc = " Bounds the per-deadline challenge count so the `on_finalize` slash"]
-                #[doc = " sweep — which drains and slashes every challenge expiring at a given"]
-                #[doc = " block — does a bounded amount of work whose weight `on_initialize`"]
-                #[doc = " can reserve up front. Only challenges created in the *same* block"]
-                #[doc = " share a deadline (`deadline = created_at + ChallengeTimeout`), so a"]
-                #[doc = " generous value still cannot be exceeded under honest load."]
+                #[doc = " Bounds the per-deadline challenge count at creation, and the sweep"]
+                #[doc = " never slashes more than this many challenges per block regardless"]
+                #[doc = " of how many deadline keys a gap matured at once — so the worst"]
+                #[doc = " case per block equals one fully-loaded deadline. Note that"]
+                #[doc = " consecutive parachain blocks can share a relay parent, so"]
+                #[doc = " challenges created in different parachain blocks may share a"]
+                #[doc = " deadline; the bound is this explicit cap, not block co-location."]
                 pub fn max_challenges_per_deadline(
                     &self,
                 ) -> ::subxt::constants::StaticAddress<::core::primitive::u16> {
@@ -18551,6 +17991,24 @@ pub mod api {
                             116u8, 33u8, 2u8, 170u8, 181u8, 147u8, 171u8, 169u8, 167u8, 227u8,
                             41u8, 144u8, 11u8, 236u8, 82u8, 100u8, 74u8, 60u8, 184u8, 72u8, 169u8,
                             90u8, 208u8, 135u8, 15u8, 117u8, 10u8, 123u8, 128u8, 193u8, 29u8, 70u8,
+                        ],
+                    )
+                }
+                #[doc = " Milliseconds per anchor block — the tick of"]
+                #[doc = " [`Config::BlockNumberProvider`]. Exposed via the"]
+                #[doc = " `anchor_block_time_millis` runtime API so off-chain consumers can"]
+                #[doc = " humanize anchor-denominated durations."]
+                pub fn anchor_block_time_millis(
+                    &self,
+                ) -> ::subxt::constants::StaticAddress<::core::primitive::u64> {
+                    ::subxt::constants::StaticAddress::new_static(
+                        "StorageProvider",
+                        "AnchorBlockTimeMillis",
+                        [
+                            128u8, 214u8, 205u8, 242u8, 181u8, 142u8, 124u8, 231u8, 190u8, 146u8,
+                            59u8, 226u8, 157u8, 101u8, 103u8, 117u8, 249u8, 65u8, 18u8, 191u8,
+                            103u8, 119u8, 53u8, 85u8, 81u8, 96u8, 220u8, 42u8, 184u8, 239u8, 42u8,
+                            246u8,
                         ],
                     )
                 }
@@ -20652,10 +20110,10 @@ pub mod api {
                                 transaction_encoded,
                             },
                             [
-                                88u8, 99u8, 10u8, 165u8, 109u8, 99u8, 79u8, 179u8, 17u8, 183u8,
-                                144u8, 218u8, 193u8, 191u8, 150u8, 78u8, 146u8, 109u8, 73u8, 6u8,
-                                15u8, 185u8, 253u8, 5u8, 33u8, 112u8, 177u8, 63u8, 24u8, 137u8,
-                                153u8, 25u8,
+                                246u8, 194u8, 124u8, 95u8, 91u8, 174u8, 212u8, 101u8, 83u8, 51u8,
+                                32u8, 76u8, 235u8, 39u8, 52u8, 103u8, 212u8, 247u8, 22u8, 201u8,
+                                102u8, 76u8, 63u8, 13u8, 148u8, 125u8, 34u8, 110u8, 35u8, 134u8,
+                                60u8, 158u8,
                             ],
                         )
                     }
@@ -20799,10 +20257,10 @@ pub mod api {
                                 call: ::subxt::alloc::boxed::Box::new(call),
                             },
                             [
-                                65u8, 37u8, 143u8, 233u8, 70u8, 66u8, 49u8, 11u8, 108u8, 89u8,
-                                245u8, 50u8, 26u8, 201u8, 191u8, 132u8, 104u8, 20u8, 133u8, 153u8,
-                                5u8, 210u8, 217u8, 20u8, 233u8, 228u8, 37u8, 109u8, 246u8, 148u8,
-                                94u8, 3u8,
+                                21u8, 4u8, 148u8, 144u8, 252u8, 70u8, 58u8, 10u8, 134u8, 43u8,
+                                183u8, 74u8, 16u8, 33u8, 179u8, 186u8, 244u8, 75u8, 118u8, 139u8,
+                                171u8, 96u8, 146u8, 156u8, 118u8, 78u8, 254u8, 83u8, 35u8, 84u8,
+                                167u8, 138u8,
                             ],
                         )
                     }
@@ -21133,10 +20591,9 @@ pub mod api {
                         "Revive",
                         "EthBlockBuilderIR",
                         [
-                            97u8, 170u8, 243u8, 178u8, 183u8, 25u8, 157u8, 216u8, 96u8, 208u8,
-                            56u8, 192u8, 126u8, 104u8, 209u8, 19u8, 186u8, 97u8, 59u8, 106u8,
-                            143u8, 92u8, 156u8, 72u8, 213u8, 189u8, 38u8, 116u8, 95u8, 39u8, 184u8,
-                            191u8,
+                            62u8, 22u8, 204u8, 180u8, 89u8, 208u8, 118u8, 104u8, 70u8, 79u8, 254u8,
+                            35u8, 81u8, 30u8, 181u8, 91u8, 139u8, 0u8, 140u8, 81u8, 45u8, 123u8,
+                            181u8, 158u8, 118u8, 82u8, 95u8, 24u8, 133u8, 117u8, 33u8, 133u8,
                         ],
                     )
                 }
@@ -25537,6 +24994,9 @@ pub mod api {
                     #[codec(index = 10)]
                     #[doc = "Content type too long."]
                     ContentTypeTooLong,
+                    #[codec(index = 11)]
+                    #[doc = "Bucket total size would exceed the maximum supported value."]
+                    BucketSizeLimitReached,
                 }
                 #[derive(
                     :: subxt :: ext :: scale_decode :: DecodeAsType,
@@ -25792,9 +25252,8 @@ pub mod api {
                     #[doc = "Finalise a previously-announced deregistration."]
                     #[doc = ""]
                     #[doc = "Callable by the provider once `DeregisterAnnouncementPeriod` has"]
-                    #[doc = "elapsed since their `deregister_provider` call. Drains any"]
-                    #[doc = "pending `CheckpointRewards` into the provider's free balance,"]
-                    #[doc = "unreserves the remaining stake, and removes the provider record."]
+                    #[doc = "elapsed since their `deregister_provider` call. Unreserves the"]
+                    #[doc = "remaining stake and removes the provider record."]
                     #[doc = ""]
                     #[doc = "Still requires `committed_bytes == 0` — if the provider somehow"]
                     #[doc = "re-acquired commitments mid-window (they cannot today, since"]
@@ -25963,65 +25422,6 @@ pub mod api {
                                 ::subxt::utils::AccountId32,
                                 runtime_types::sp_runtime::MultiSignature,
                             )>,
-                    },
-                    #[codec(index = 32)]
-                    #[doc = "Submit a provider-initiated checkpoint."]
-                    #[doc = ""]
-                    #[doc = "Providers autonomously coordinate checkpoints without requiring"]
-                    #[doc = "clients to be online. Uses deterministic leader election with"]
-                    #[doc = "fallback to any primary provider after grace period."]
-                    #[doc = ""]
-                    #[doc = "Parameters:"]
-                    #[doc = "- `bucket_id`: The bucket to checkpoint"]
-                    #[doc = "- `mmr_root`: MMR root that providers agreed on"]
-                    #[doc = "- `start_seq`: Starting sequence number"]
-                    #[doc = "- `leaf_count`: Number of leaves in the MMR"]
-                    #[doc = "- `window`: Checkpoint window number (prevents replay)"]
-                    #[doc = "- `signatures`: Provider signatures over the checkpoint proposal"]
-                    provider_checkpoint {
-                        bucket_id: ::core::primitive::u64,
-                        commitment: runtime_types::storage_primitives::Commitment,
-                        window: ::core::primitive::u64,
-                        signatures: runtime_types::bounded_collections::bounded_vec::BoundedVec<(
-                            ::subxt::utils::AccountId32,
-                            runtime_types::sp_runtime::MultiSignature,
-                        )>,
-                    },
-                    #[codec(index = 33)]
-                    #[doc = "Configure checkpoint window settings for a bucket."]
-                    #[doc = ""]
-                    #[doc = "Only bucket admin can configure. Setting enabled=false disables"]
-                    #[doc = "provider-initiated checkpoints (client-initiated still work)."]
-                    configure_checkpoint_window {
-                        bucket_id: ::core::primitive::u64,
-                        interval: ::core::primitive::u32,
-                        grace_period: ::core::primitive::u32,
-                        enabled: ::core::primitive::bool,
-                    },
-                    #[codec(index = 34)]
-                    #[doc = "Report a missed checkpoint window and penalize the leader."]
-                    #[doc = ""]
-                    #[doc = "Can only be called after the checkpoint window has fully passed"]
-                    #[doc = "(beyond grace period) and no checkpoint was submitted."]
-                    #[doc = "Reporter receives a portion of the penalty."]
-                    report_missed_checkpoint {
-                        bucket_id: ::core::primitive::u64,
-                        window: ::core::primitive::u64,
-                    },
-                    #[codec(index = 35)]
-                    #[doc = "Claim accumulated checkpoint rewards."]
-                    #[doc = ""]
-                    #[doc = "Providers accumulate rewards for submitting checkpoints."]
-                    #[doc = "This transfers accumulated rewards to the provider."]
-                    claim_checkpoint_rewards { bucket_id: ::core::primitive::u64 },
-                    #[codec(index = 36)]
-                    #[doc = "Fund the checkpoint reward pool for a bucket."]
-                    #[doc = ""]
-                    #[doc = "Anyone can fund the pool. Funds are used to reward providers"]
-                    #[doc = "for submitting checkpoints."]
-                    fund_checkpoint_pool {
-                        bucket_id: ::core::primitive::u64,
-                        amount: ::core::primitive::u128,
                     },
                     #[codec(index = 40)]
                     #[doc = "Challenge on-chain checkpoint (no signatures needed)."]
@@ -26268,8 +25668,8 @@ pub mod api {
                     AgreementHasPendingChallenge,
                     #[codec(index = 54)]
                     #[doc = "`MaxChallengesPerDeadline` challenges have already been allocated"]
-                    #[doc = "for the deadline this challenge would land on. Bounds the"]
-                    #[doc = "`on_finalize` slash sweep so it stays within its reserved weight."]
+                    #[doc = "for the deadline this challenge would land on. Caps the total the"]
+                    #[doc = "`on_initialize` sweep must eventually drain for a single key."]
                     TooManyChallengesThisBlock,
                     #[codec(index = 55)]
                     InvalidSignature,
@@ -26291,66 +25691,39 @@ pub mod api {
                     #[codec(index = 62)]
                     InvalidPublicKey,
                     #[codec(index = 63)]
-                    #[doc = "Provider-initiated checkpoints are disabled for this bucket."]
-                    ProviderCheckpointsDisabled,
-                    #[codec(index = 64)]
-                    #[doc = "Caller is not the designated checkpoint leader for this window."]
-                    NotCheckpointLeader,
-                    #[codec(index = 65)]
-                    #[doc = "Checkpoint window has not started yet."]
-                    CheckpointWindowNotStarted,
-                    #[codec(index = 66)]
-                    #[doc = "Checkpoint has already been submitted for this window."]
-                    CheckpointAlreadySubmitted,
-                    #[codec(index = 67)]
-                    #[doc = "Invalid checkpoint window number."]
-                    InvalidCheckpointWindow,
-                    #[codec(index = 68)]
-                    #[doc = "Insufficient funds in checkpoint pool to pay reward."]
-                    InsufficientCheckpointPool,
-                    #[codec(index = 69)]
-                    #[doc = "No missed checkpoint to report."]
-                    NoMissedCheckpoint,
-                    #[codec(index = 70)]
-                    #[doc = "Cannot report miss while still within grace period."]
-                    WithinGracePeriod,
-                    #[codec(index = 71)]
-                    #[doc = "No rewards to claim."]
-                    NoRewardsToClaim,
-                    #[codec(index = 72)]
                     #[doc = "Account is a member of too many buckets."]
                     TooManyBucketsForMember,
-                    #[codec(index = 73)]
+                    #[codec(index = 64)]
                     #[doc = "Provider signature over the SCALE-encoded terms is invalid."]
                     InvalidProviderSignature,
-                    #[codec(index = 74)]
+                    #[codec(index = 65)]
                     #[doc = "Signed terms have passed their `valid_until` block."]
                     TermsExpired,
-                    #[codec(index = 75)]
+                    #[codec(index = 66)]
                     #[doc = "Signed terms' `valid_until` extends beyond `now + RequestTimeout` —"]
                     #[doc = "the provider-signed validity window cap enforced on-chain."]
                     TermsValidityTooLong,
-                    #[codec(index = 76)]
+                    #[codec(index = 67)]
                     #[doc = "The terms' nonce has already been consumed inside the provider's"]
                     #[doc = "replay window."]
                     NonceAlreadyUsed,
-                    #[codec(index = 77)]
+                    #[codec(index = 68)]
                     #[doc = "The terms' nonce is older than the provider's replay window"]
                     #[doc = "(distance from `hsn` ≥ [`storage_primitives::REPLAY_WINDOW_BITS`])."]
                     NonceTooOld,
-                    #[codec(index = 78)]
+                    #[codec(index = 69)]
                     #[doc = "The terms' declared owner does not match the extrinsic origin."]
                     TermsOwnerMismatch,
-                    #[codec(index = 79)]
+                    #[codec(index = 70)]
                     #[doc = "Replica terms missing from a signed quote redeemed as a replica"]
                     #[doc = "agreement."]
                     MissingReplicaTerms,
-                    #[codec(index = 80)]
+                    #[codec(index = 71)]
                     #[doc = "The terms' bucket binding does not match the redeeming extrinsic:"]
                     #[doc = "primary terms must carry no bucket, replica terms must name the"]
                     #[doc = "targeted bucket."]
                     TermsBucketMismatch,
-                    #[codec(index = 81)]
+                    #[codec(index = 72)]
                     #[doc = "Storage agreement requested 0 byte"]
                     InvalidMaxBytesRequest,
                 }
@@ -26575,41 +25948,6 @@ pub mod api {
                         slashed_amount: ::core::primitive::u128,
                         challenger_reward: ::core::primitive::u128,
                         reason: runtime_types::storage_primitives::SlashReason,
-                    },
-                    #[codec(index = 31)]
-                    ProviderCheckpointSubmitted {
-                        bucket_id: ::core::primitive::u64,
-                        mmr_root: ::subxt::utils::H256,
-                        window: ::core::primitive::u64,
-                        leader: ::subxt::utils::AccountId32,
-                        signers: ::subxt::alloc::vec::Vec<::subxt::utils::AccountId32>,
-                        reward: ::core::primitive::u128,
-                    },
-                    #[codec(index = 32)]
-                    CheckpointConfigUpdated {
-                        bucket_id: ::core::primitive::u64,
-                        interval: ::core::primitive::u32,
-                        grace_period: ::core::primitive::u32,
-                        enabled: ::core::primitive::bool,
-                    },
-                    #[codec(index = 33)]
-                    CheckpointMissPenalized {
-                        bucket_id: ::core::primitive::u64,
-                        provider: ::subxt::utils::AccountId32,
-                        window: ::core::primitive::u64,
-                        penalty: ::core::primitive::u128,
-                    },
-                    #[codec(index = 34)]
-                    CheckpointRewardClaimed {
-                        bucket_id: ::core::primitive::u64,
-                        provider: ::subxt::utils::AccountId32,
-                        amount: ::core::primitive::u128,
-                    },
-                    #[codec(index = 35)]
-                    CheckpointPoolFunded {
-                        bucket_id: ::core::primitive::u64,
-                        funder: ::subxt::utils::AccountId32,
-                        amount: ::core::primitive::u128,
                     },
                 }
                 #[derive(
@@ -31179,21 +30517,6 @@ pub mod api {
                 pub total_challenges: ::core::primitive::u32,
                 pub successful_challenges: ::core::primitive::u32,
                 pub failed_challenges: ::core::primitive::u32,
-            }
-            #[derive(
-                :: subxt :: ext :: scale_decode :: DecodeAsType,
-                :: subxt :: ext :: scale_encode :: EncodeAsType,
-                Clone,
-                Debug,
-                Eq,
-                PartialEq,
-            )]
-            #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
-            #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-            pub struct CheckpointWindowConfig<_0> {
-                pub interval: _0,
-                pub grace_period: _0,
-                pub enabled: ::core::primitive::bool,
             }
             #[derive(
                 :: subxt :: ext :: scale_decode :: DecodeAsType,

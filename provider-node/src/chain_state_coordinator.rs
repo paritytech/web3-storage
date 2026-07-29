@@ -418,11 +418,8 @@ impl ChainStateCoordinator {
                 }
             };
 
-            // Fan out the block clock and the coordinator-relevant events.
-            // Send failures just mean no coordinator is subscribed.
-            let _ = self.events_tx.send(BlockEvent::NewBlock {
-                number: block_number,
-            });
+            // Fan out the coordinator-relevant events. Send failures just mean
+            // no coordinator is subscribed.
             for event in chain_events::decode_block_events(&events) {
                 let _ = self.events_tx.send(event);
             }
@@ -1368,12 +1365,10 @@ mod tests {
             assert!(chain_rx.borrow().is_some());
             use crate::chain_events::BlockEvent;
             let mut saw_resubscribed = false;
-            let mut saw_new_block = false;
             let mut saw_challenge = false;
             while let Ok(event) = events_rx.try_recv() {
                 match event {
                     BlockEvent::Resubscribed { .. } => saw_resubscribed = true,
-                    BlockEvent::NewBlock { number: 42 } => saw_new_block = true,
                     BlockEvent::ChallengeCreated {
                         deadline: 777,
                         index: 3,
@@ -1384,7 +1379,6 @@ mod tests {
                 }
             }
             assert!(saw_resubscribed, "follow should broadcast Resubscribed");
-            assert!(saw_new_block, "follow should broadcast the block clock");
             assert!(
                 saw_challenge,
                 "follow should statically decode and broadcast ChallengeCreated"

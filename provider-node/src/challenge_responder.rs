@@ -297,12 +297,20 @@ impl ChallengeResponder {
                         }
                     }
                 }
-                event = events_rx.recv(), if events_open => {
+                // While paused, stop consuming so events stay queued instead of
+                // being dropped. Replaying them on resume is safe: each one is
+                // point-read against live chain state, so anything already
+                // resolved is a no-op. A pause longer than the channel's
+                // capacity surfaces as `Lagged` below, which reconciles with a
+                // full scan.
+                event = events_rx.recv(), if events_open && !paused => {
                     if matches!(event, Err(broadcast::error::RecvError::Closed)) {
                         events_open = false;
                         continue;
                     }
-                    if paused || !self.config.auto_respond {
+                    // Unlike `paused`, this is permanent config: drain and drop,
+                    // since no later state change makes these actionable.
+                    if !self.config.auto_respond {
                         continue;
                     }
                     match event {

@@ -32,9 +32,6 @@ pub struct Cli {
     pub key: KeyParams,
 
     #[clap(flatten)]
-    pub checkpoint: CheckpointParams,
-
-    #[clap(flatten)]
     pub replica_sync: ReplicaSyncParams,
 
     #[clap(flatten)]
@@ -244,14 +241,6 @@ fn read_secret_file(path: &std::path::Path) -> Result<String, String> {
     Ok(seed)
 }
 
-/// Parameters for the checkpoint coordinator.
-#[derive(Debug, clap::Args)]
-pub struct CheckpointParams {
-    /// Enable the background checkpoint coordinator.
-    #[arg(long, env = "ENABLE_CHECKPOINT_COORDINATOR")]
-    pub enable_checkpoint_coordinator: bool,
-}
-
 /// Parameters for authentication and authorization.
 #[derive(Debug, clap::Args)]
 pub struct AuthParams {
@@ -345,7 +334,6 @@ mod tests {
         assert_eq!(cli.rpc.chain_rpc, "ws://127.0.0.1:2222");
         assert!(cli.key.keyfile.is_none());
         assert!(cli.key.provider_id.is_none());
-        assert!(!cli.checkpoint.enable_checkpoint_coordinator);
         assert!(!cli.replica_sync.enable_replica_sync);
         assert_eq!(cli.replica_sync.replica_poll_interval, 600);
         assert_eq!(cli.replica_sync.replica_sync_timeout, 300);
@@ -368,7 +356,6 @@ mod tests {
             "ws://example.com:9944",
             "--keyfile",
             "/tmp/test-key",
-            "--enable-checkpoint-coordinator",
             "--enable-replica-sync",
             "--replica-poll-interval",
             "30",
@@ -387,7 +374,6 @@ mod tests {
             cli.key.keyfile.as_ref().unwrap().to_str().unwrap(),
             "/tmp/test-key"
         );
-        assert!(cli.checkpoint.enable_checkpoint_coordinator);
         assert!(cli.replica_sync.enable_replica_sync);
         assert_eq!(cli.replica_sync.replica_poll_interval, 30);
         assert_eq!(cli.replica_sync.replica_sync_timeout, 600);

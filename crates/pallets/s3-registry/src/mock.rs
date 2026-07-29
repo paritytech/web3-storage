@@ -85,10 +85,6 @@ parameter_types! {
     pub const MaxNonceAge: u64 = 200;
     pub const SettlementTimeout: u64 = 50;
     pub const RequestTimeout: u64 = 25;
-    pub const DefaultCheckpointInterval: u64 = 100;
-    pub const DefaultCheckpointGrace: u64 = 20;
-    pub const CheckpointReward: Balance = 1_000_000_000_000;
-    pub const CheckpointMissPenalty: Balance = 500_000_000_000;
     pub TreasuryAccount: u64 = 999;
 }
 
@@ -107,10 +103,6 @@ impl pallet_storage_provider::Config for Test {
     type MaxNonceAge = MaxNonceAge;
     type SettlementTimeout = SettlementTimeout;
     type RequestTimeout = RequestTimeout;
-    type DefaultCheckpointInterval = DefaultCheckpointInterval;
-    type DefaultCheckpointGrace = DefaultCheckpointGrace;
-    type CheckpointReward = CheckpointReward;
-    type CheckpointMissPenalty = CheckpointMissPenalty;
     // Must be > ChallengeTimeout (100) AND > RequestTimeout (25) per the
     // pallet's `integrity_test`. 100 + 50 grace.
     type DeregisterAnnouncementPeriod = ConstU64<150>;

@@ -4,17 +4,16 @@
 //!
 //! A single [`SubxtChainClient`] holds one [`subxt::OnlineClient`] connection
 //! and one signing key, and implements every coordinator's chain-client trait
-//! (`CheckpointChainClient`, `ReplicaSyncChainClient`,
-//! `ChallengeChainClient`). Coordinators still depend on the narrow trait they
-//! need, so per-trait mocks keep working; the production wiring just hands each
-//! one a clone of the same client (a cheap `OnlineClient`/`Keypair` clone that
-//! shares the underlying WebSocket connection).
+//! (`ReplicaSyncChainClient`, `ChallengeChainClient`). Coordinators still
+//! depend on the narrow trait they need, so per-trait mocks keep working; the
+//! production wiring just hands each one a clone of the same client (a cheap
+//! `OnlineClient`/`Keypair` clone that shares the underlying WebSocket
+//! connection).
 
 use crate::chain_connection::{self, ChainWatch};
 use crate::challenge_responder::{
     decode_challenge_for_provider, ChallengeChainClient, DetectedChallenge,
 };
-use crate::checkpoint_coordinator::{CheckpointChainClient, CheckpointDuty};
 use crate::replica_sync_coordinator::{
     BucketSnapshot, ReplicaAgreementInfo, ReplicaSyncChainClient,
 };
@@ -33,11 +32,30 @@ use subxt::ext::scale_value::value;
 /// that landed, and these rejections prove the duty is done rather than
 /// failed. Matched against the pallet + error-variant names resolved from
 /// runtime metadata (see [`SubxtChainClient::is_already_done`]).
-const ALREADY_DONE_ERRORS: [&str; 3] = [
+const ALREADY_DONE_ERRORS: [&str; 2] = [
     "ChallengeNotFound", // respond_to_challenge: challenge was taken on defense
-    "CheckpointAlreadySubmitted", // provider_checkpoint: window already covered
     "SyncTooFrequent",   // confirm_replica_sync: a sync already confirmed
 ];
+
+/// Upper bound on one submit-and-watch pass. Generous next to normal
+/// finalization (a few blocks) so a slow chain isn't mistaken for a stuck one,
+/// but it keeps [`SubxtChainClient::submit_lock`] — held until finalization —
+/// from being wedged forever by a watch that neither resolves nor errors.
+const SUBMIT_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// Outcome of one submit-and-watch pass (see
+/// [`SubxtChainClient::submit_and_finalize`]).
+enum Attempt {
+    /// The transaction landed, or a duplicate rejection proved an earlier
+    /// attempt did.
+    Landed,
+    /// Transport-level failure: the transaction may or may not have landed, so
+    /// resubmitting is safe only because a duplicate rejection counts as
+    /// success.
+    Retryable(Error),
+    /// The chain rejected the call itself; resubmitting would fail identically.
+    Rejected(Error),
+}
 
 /// Query the pallet's `StorageProviderApi::current_anchor_block` runtime API —
 /// the block every on-chain duration (timeouts, expiries, `valid_until`, nonce
@@ -119,11 +137,11 @@ impl SubxtChainClient {
         chain_connection::current_api(&self.chain_rx)
     }
 
-    /// Get the current anchor block (the clock all on-chain durations, in
-    /// particular checkpoint windows, are measured against), read at the latest
-    /// finalized state via the pallet's runtime API.
+    /// Get the current anchor block (the clock every on-chain duration is
+    /// measured against), read at the latest finalized state via the pallet's
+    /// runtime API.
     ///
-    /// Backs `get_current_block` on both the checkpoint and replica-sync traits.
+    /// Backs `get_current_block` on the replica-sync trait.
     async fn current_anchor_block(&self) -> Result<u64, Error> {
         let at = self
             .api()?
@@ -179,52 +197,83 @@ impl SubxtChainClient {
         // One transaction at a time across every clone (see `submit_lock`).
         let _guard = self.submit_lock.lock().await;
 
-        for attempt in 0..2 {
-            let retrying = attempt > 0;
-            let submitted = async {
-                self.api()?
-                    .at_current_block()
-                    .await
-                    .map_err(|e| Error::Internal(format!("Failed to get current block: {e}")))?
-                    .transactions()
-                    .sign_and_submit_then_watch_default(tx, &self.signer)
-                    .await
-                    .map_err(|e| Error::Internal(format!("Failed to submit tx: {e}")))
-            }
-            .await;
+        let first_failure = match self.try_submit(tx, what, false).await {
+            Attempt::Landed => return Ok(()),
+            Attempt::Rejected(e) => return Err(e),
+            Attempt::Retryable(e) => e,
+        };
 
-            let progress = match submitted {
-                Ok(progress) => progress,
-                Err(e) if !retrying => {
-                    tracing::warn!("{what}: submission failed ({e}); retrying once");
-                    tokio::time::sleep(RETRY_DELAY).await;
-                    continue;
-                }
-                Err(e) => return Err(e),
-            };
+        tracing::warn!("{what}: {first_failure}; retrying once");
+        tokio::time::sleep(RETRY_DELAY).await;
 
-            return match progress.wait_for_finalized_success().await {
-                Ok(_) => Ok(()),
-                Err(e) => {
-                    if retrying && Self::is_already_done(&e) {
-                        tracing::info!(
-                            "{what}: duplicate rejected on retry ({e}); first attempt landed"
-                        );
-                        Ok(())
-                    } else if !retrying && !Self::is_dispatch_failure(&e) {
-                        // Non-dispatch failure (e.g. the watch subscription
-                        // died): the tx may or may not have landed — resubmit
-                        // and let the duplicate classification above decide.
-                        tracing::warn!("{what}: tx watch failed ({e}); retrying once");
-                        tokio::time::sleep(RETRY_DELAY).await;
-                        continue;
-                    } else {
-                        Err(Error::Internal(format!("Transaction failed: {e}")))
-                    }
-                }
-            };
+        match self.try_submit(tx, what, true).await {
+            Attempt::Landed => Ok(()),
+            Attempt::Retryable(e) | Attempt::Rejected(e) => Err(e),
         }
-        unreachable!("loop either returns or continues at most once")
+    }
+
+    /// One submit-and-watch pass, bounded by [`SUBMIT_TIMEOUT`]. `retrying`
+    /// marks the second attempt, where a duplicate rejection proves the first
+    /// one landed.
+    ///
+    /// A timed-out pass is [`Attempt::Retryable`], so a transaction that did
+    /// land while the watch hung is still recognised by the duplicate-rejection
+    /// path on the resubmit. With both passes bounded, the total `submit_lock`
+    /// hold is at most `2 * SUBMIT_TIMEOUT + RETRY_DELAY`.
+    async fn try_submit(
+        &self,
+        tx: &subxt::tx::DynamicPayload<Vec<Value>>,
+        what: &str,
+        retrying: bool,
+    ) -> Attempt {
+        match tokio::time::timeout(SUBMIT_TIMEOUT, self.submit_once(tx, what, retrying)).await {
+            Ok(attempt) => attempt,
+            Err(_) => Attempt::Retryable(Error::Internal(format!(
+                "not finalized within {}s",
+                SUBMIT_TIMEOUT.as_secs()
+            ))),
+        }
+    }
+
+    /// The single unbounded submit-and-watch pass that [`Self::try_submit`]
+    /// puts a deadline on.
+    async fn submit_once(
+        &self,
+        tx: &subxt::tx::DynamicPayload<Vec<Value>>,
+        what: &str,
+        retrying: bool,
+    ) -> Attempt {
+        let submitted = async {
+            self.api()?
+                .at_current_block()
+                .await
+                .map_err(|e| Error::Internal(format!("Failed to get current block: {e}")))?
+                .transactions()
+                .sign_and_submit_then_watch_default(tx, &self.signer)
+                .await
+                .map_err(|e| Error::Internal(format!("Failed to submit tx: {e}")))
+        }
+        .await;
+
+        let progress = match submitted {
+            Ok(progress) => progress,
+            Err(e) => return Attempt::Retryable(e),
+        };
+
+        match progress.wait_for_finalized_success().await {
+            Ok(_) => Attempt::Landed,
+            Err(e) if retrying && Self::is_already_done(&e) => {
+                tracing::info!("{what}: duplicate rejected on retry ({e}); first attempt landed");
+                Attempt::Landed
+            }
+            // Non-dispatch failure (e.g. the watch subscription died): the tx
+            // may or may not have landed, so resubmit and let the duplicate
+            // classification above decide.
+            Err(e) if !Self::is_dispatch_failure(&e) => {
+                Attempt::Retryable(Error::Internal(format!("tx watch failed: {e}")))
+            }
+            Err(e) => Attempt::Rejected(Error::Internal(format!("Transaction failed: {e}"))),
+        }
     }
 
     /// Convert a multiaddr string to an HTTP endpoint.
@@ -568,100 +617,6 @@ impl SubxtChainClient {
             mmr_root,
             leaf_count,
         }
-    }
-}
-
-#[async_trait::async_trait]
-impl CheckpointChainClient for SubxtChainClient {
-    async fn get_current_block(&self) -> Result<u64, Error> {
-        self.current_anchor_block().await
-    }
-
-    async fn fetch_checkpoint_config(
-        &self,
-        bucket_id: BucketId,
-    ) -> Result<Option<(u32, u32)>, Error> {
-        use subxt::dynamic::At;
-
-        let config_query =
-            subxt::dynamic::storage::<(Value,), Value>("StorageProvider", "CheckpointConfigs");
-        let at = self
-            .api()?
-            .at_current_block()
-            .await
-            .map_err(|e| Error::Internal(format!("Failed to get storage: {e}")))?;
-
-        match at
-            .storage()
-            .try_fetch(config_query, (Value::u128(bucket_id as u128),))
-            .await
-            .map_err(|e| Error::Internal(format!("Failed to fetch config: {e}")))?
-        {
-            Some(val) => {
-                let decoded = val
-                    .decode()
-                    .map_err(|e| Error::Internal(format!("Failed to decode config: {e}")))?;
-                let interval = decoded
-                    .at("interval")
-                    .and_then(|v| v.as_u128())
-                    .unwrap_or(100) as u32;
-                let grace_period = decoded
-                    .at("grace_period")
-                    .and_then(|v| v.as_u128())
-                    .unwrap_or(20) as u32;
-                Ok(Some((interval, grace_period)))
-            }
-            None => Ok(None),
-        }
-    }
-
-    async fn submit_checkpoint(
-        &self,
-        duty: &CheckpointDuty,
-        signatures: Vec<(String, String)>,
-    ) -> Result<H256, Error> {
-        let bucket_id = duty.bucket_id;
-        let mmr_root = duty.mmr_root;
-        let start_seq = duty.start_seq;
-        let leaf_count = duty.leaf_count;
-        let window = duty.window;
-
-        // Build signature tuples for the extrinsic
-        let mut sig_values = Vec::with_capacity(signatures.len());
-        for (account, sig) in &signatures {
-            let account_id: sp_core::crypto::AccountId32 =
-                sp_core::crypto::Ss58Codec::from_ss58check(account).map_err(|e| {
-                    Error::Internal(format!("Invalid SS58 account '{account}': {e:?}"))
-                })?;
-            let account_bytes: [u8; 32] = account_id.into();
-
-            let sig_bytes = hex::decode(sig.trim_start_matches("0x"))
-                .map_err(|e| Error::Internal(format!("Invalid signature hex: {e}")))?;
-
-            sig_values.push(value!((
-                Value::from_bytes(account_bytes),
-                Sr25519(Value::from_bytes(sig_bytes))
-            )));
-        }
-
-        let tx = subxt::dynamic::tx(
-            "StorageProvider",
-            "provider_checkpoint",
-            vec![
-                Value::u128(bucket_id as u128),
-                Value::named_composite(vec![
-                    ("mmr_root", Value::from_bytes(mmr_root.as_bytes())),
-                    ("start_seq", Value::u128(start_seq as u128)),
-                    ("leaf_count", Value::u128(leaf_count as u128)),
-                ]),
-                Value::u128(window as u128),
-                Value::unnamed_composite(sig_values),
-            ],
-        );
-
-        self.submit_and_finalize(&tx, "provider_checkpoint").await?;
-
-        Ok(H256::zero())
     }
 }
 

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 import { useState, Fragment } from 'react'
-import { Database, ChevronDown, ChevronUp, Users, Lock, AlertTriangle, CheckCircle } from 'lucide-react'
+import { Database, ChevronDown, ChevronUp, Users, Lock, CheckCircle } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/Card'
 import { Badge } from '@/components/ui/Badge'
 import {
@@ -14,7 +14,7 @@ import {
 } from '@/components/ui/Table'
 import { RequireProvider } from '@/components/RequireProvider'
 import { useBucketDetails, type BucketDetail } from '@/state/provider.state'
-import { formatAddress, formatBytes, formatTokens, formatBlockNumber, formatDuration, formatHash } from '@/utils/format'
+import { formatAddress, formatBytes, formatTokens, formatBlockNumber, formatHash } from '@/utils/format'
 
 export function Buckets() {
   return (
@@ -29,7 +29,6 @@ function BucketsContent() {
   const [expandedBucket, setExpandedBucket] = useState<number | null>(null)
 
   const primaryCount = buckets.filter((b) => b.agreement.isPrimary).length
-  const overdueCount = buckets.filter((b) => b.isCheckpointOverdue).length
 
   return (
     <div className="space-y-6">
@@ -39,7 +38,7 @@ function BucketsContent() {
       </div>
 
       {/* Stats */}
-      <div className="grid gap-4 md:grid-cols-3">
+      <div className="grid gap-4 md:grid-cols-2">
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-gray-400">Total Buckets</CardTitle>
@@ -54,16 +53,6 @@ function BucketsContent() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-purple-400">{primaryCount}</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-gray-400">Overdue Checkpoints</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className={`text-2xl font-bold ${overdueCount > 0 ? 'text-yellow-400' : 'text-green-400'}`}>
-              {overdueCount}
-            </div>
           </CardContent>
         </Card>
       </div>
@@ -134,11 +123,7 @@ function BucketsContent() {
                         <TableCell>
                           {bucket.snapshot ? (
                             <div className="flex items-center gap-1">
-                              {bucket.isCheckpointOverdue ? (
-                                <AlertTriangle className="h-3 w-3 text-yellow-400" />
-                              ) : (
-                                <CheckCircle className="h-3 w-3 text-green-400" />
-                              )}
+                              <CheckCircle className="h-3 w-3 text-green-400" />
                               <span className="text-sm">{formatBlockNumber(bucket.snapshot.checkpointBlock)}</span>
                             </div>
                           ) : (
@@ -177,7 +162,7 @@ function BucketsContent() {
 function BucketExpandedDetail({ bucket }: { bucket: BucketDetail }) {
   return (
     <div className="grid gap-6 md:grid-cols-2 p-6">
-      {/* Left: Members + Config */}
+      {/* Left: Members + Agreement */}
       <div className="space-y-4">
         <div>
           <h4 className="text-sm font-medium text-gray-400 mb-2 flex items-center gap-2">
@@ -217,29 +202,9 @@ function BucketExpandedDetail({ bucket }: { bucket: BucketDetail }) {
             </div>
           </div>
         </div>
-
-        {bucket.checkpointConfig && (
-          <div>
-            <h4 className="text-sm font-medium text-gray-400 mb-2">Checkpoint Config</h4>
-            <div className="grid grid-cols-3 gap-2 text-sm">
-              <div className="bg-gray-800/50 rounded p-2">
-                <span className="text-gray-500">Interval</span>
-                <p className="font-medium">{formatDuration(bucket.checkpointConfig.interval)}</p>
-              </div>
-              <div className="bg-gray-800/50 rounded p-2">
-                <span className="text-gray-500">Grace Period</span>
-                <p className="font-medium">{formatDuration(bucket.checkpointConfig.gracePeriod)}</p>
-              </div>
-              <div className="bg-gray-800/50 rounded p-2">
-                <span className="text-gray-500">Enabled</span>
-                <p className="font-medium">{bucket.checkpointConfig.enabled ? 'Yes' : 'No'}</p>
-              </div>
-            </div>
-          </div>
-        )}
       </div>
 
-      {/* Right: Snapshot + Rewards */}
+      {/* Right: Snapshot */}
       <div className="space-y-4">
         <div>
           <h4 className="text-sm font-medium text-gray-400 mb-2">Latest Snapshot</h4>
@@ -267,20 +232,6 @@ function BucketExpandedDetail({ bucket }: { bucket: BucketDetail }) {
           ) : (
             <p className="text-sm text-gray-500 bg-gray-800/50 rounded p-2">No checkpoint submitted yet</p>
           )}
-        </div>
-
-        <div>
-          <h4 className="text-sm font-medium text-gray-400 mb-2">Checkpoint Rewards</h4>
-          <div className="grid grid-cols-2 gap-2 text-sm">
-            <div className="bg-gray-800/50 rounded p-2">
-              <span className="text-gray-500">Pool Balance</span>
-              <p className="font-medium">{formatTokens(bucket.checkpointPoolBalance)}</p>
-            </div>
-            <div className="bg-gray-800/50 rounded p-2">
-              <span className="text-gray-500">Your Pending Reward</span>
-              <p className="font-medium text-green-400">{formatTokens(bucket.checkpointReward)}</p>
-            </div>
-          </div>
         </div>
 
         <div>
