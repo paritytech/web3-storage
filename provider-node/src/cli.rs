@@ -199,11 +199,13 @@ pub struct ChallengeResponderParams {
     #[arg(long, env = "ENABLE_CHALLENGE_RESPONDER")]
     pub enable_challenge_responder: bool,
 
-    /// Seconds between `Challenges` storage poll cycles.
+    /// Seconds between safety-net `Challenges` reconciliation scans.
+    /// Challenges are normally handled event-driven from the finalized-block
+    /// stream; this scan only catches events lost to edge cases. 0 disables it.
     #[arg(
         long,
         value_name = "SECONDS",
-        default_value_t = 6,
+        default_value_t = 300,
         env = "CHALLENGE_POLL_INTERVAL"
     )]
     pub challenge_poll_interval: u64,
@@ -216,11 +218,13 @@ pub struct ReplicaSyncParams {
     #[arg(long, env = "ENABLE_REPLICA_SYNC")]
     pub enable_replica_sync: bool,
 
-    /// Seconds between replica sync poll checks.
+    /// Seconds between safety-net replica duty reconciliation passes.
+    /// Duties are normally discovered event-driven from the finalized-block
+    /// stream; this pass only catches events lost to edge cases. 0 disables it.
     #[arg(
         long,
         value_name = "SECONDS",
-        default_value_t = 12,
+        default_value_t = 600,
         env = "REPLICA_POLL_INTERVAL"
     )]
     pub replica_poll_interval: u64,
@@ -257,11 +261,11 @@ mod tests {
         assert!(cli.key.keyfile.is_none());
         assert!(cli.key.provider_id.is_none());
         assert!(!cli.replica_sync.enable_replica_sync);
-        assert_eq!(cli.replica_sync.replica_poll_interval, 12);
+        assert_eq!(cli.replica_sync.replica_poll_interval, 600);
         assert_eq!(cli.replica_sync.replica_sync_timeout, 300);
         assert_eq!(cli.replica_sync.replica_max_concurrent, 3);
         assert!(!cli.challenge_responder.enable_challenge_responder);
-        assert_eq!(cli.challenge_responder.challenge_poll_interval, 6);
+        assert_eq!(cli.challenge_responder.challenge_poll_interval, 300);
     }
 
     #[test]

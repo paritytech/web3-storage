@@ -7,6 +7,7 @@
 //! - Membership caching with TTL (queries chain via subxt)
 //! - Role-based access control enforcement
 
+use crate::chain_connection::{self, ChainWatch};
 use crate::error::Error;
 use crate::ProviderState;
 use dashmap::DashMap;
@@ -14,7 +15,6 @@ use sp_core::{crypto::AccountId32, sr25519, Pair};
 use std::time::{Duration, Instant};
 use storage_primitives::Role;
 use subxt::{OnlineClient, PolkadotConfig};
-use tokio::sync::OnceCell;
 
 /// Caller identity extracted from a signed request.
 #[derive(Debug, Clone)]
@@ -119,36 +119,24 @@ fn find_role(members: &[(AccountId32, Role)], account: &AccountId32) -> Option<R
 }
 
 /// Chain-backed membership resolver using subxt dynamic queries.
+///
+/// Borrows the node's shared chain connection from the watch channel owned by
+/// the chain-state coordinator, so lookups automatically follow reconnects
+/// instead of holding their own (never-reconnecting) socket.
 pub struct ChainMembershipResolver {
-    chain_rpc: String,
-    /// Lazily-established chain connection, reused across lookups.
-    ///
-    /// `OnlineClient` is an `Arc`-backed handle over a single WebSocket
-    /// connection and a metadata cache, so connecting is the expensive part
-    /// (network handshake + metadata download). We connect on the first
-    /// lookup and reuse the same client for every subsequent one instead of
-    /// reconnecting per request. If the first attempt fails the cell stays
-    /// empty, so the next lookup retries.
-    api: OnceCell<OnlineClient<PolkadotConfig>>,
+    chain_rx: ChainWatch,
 }
 
 impl ChainMembershipResolver {
-    pub fn new(chain_rpc: String) -> Self {
-        Self {
-            chain_rpc,
-            api: OnceCell::new(),
-        }
+    pub fn new(chain_rx: ChainWatch) -> Self {
+        Self { chain_rx }
     }
 
-    /// Return the shared chain client, connecting on first use.
-    async fn api(&self) -> Result<&OnlineClient<PolkadotConfig>, String> {
-        self.api
-            .get_or_try_init(|| async {
-                OnlineClient::<PolkadotConfig>::from_url(&self.chain_rpc)
-                    .await
-                    .map_err(|e| format!("Failed to connect to chain: {e}"))
-            })
-            .await
+    /// Return the current chain client, or fail while the chain has never
+    /// been reached (the caller surfaces this as a lookup error and the
+    /// request is retried later).
+    fn api(&self) -> Result<OnlineClient<PolkadotConfig>, String> {
+        chain_connection::current_api(&self.chain_rx).map_err(|e| e.to_string())
     }
 }
 
@@ -157,7 +145,7 @@ impl MembershipResolver for ChainMembershipResolver {
     async fn fetch_members(&self, bucket_id: u64) -> Result<Vec<(AccountId32, Role)>, String> {
         use subxt::dynamic::{At, Value};
 
-        let api = self.api().await?;
+        let api = self.api()?;
 
         let storage_query =
             subxt::dynamic::storage::<(Value,), Value>("StorageProvider", "Buckets");
@@ -611,5 +599,18 @@ mod tests {
 
         let unknown = AccountId32::new([4u8; 32]);
         assert_eq!(find_role(&members, &unknown), None);
+    }
+
+    #[tokio::test]
+    async fn chain_resolver_fails_cleanly_before_first_connect() {
+        // Before the chain-state coordinator publishes a connection, lookups
+        // must surface a retryable error rather than panic or hang.
+        let (_tx, rx) = tokio::sync::watch::channel(None);
+        let resolver = ChainMembershipResolver::new(rx);
+        let err = resolver
+            .fetch_members(1)
+            .await
+            .expect_err("no connection published yet");
+        assert!(err.contains("not established"), "unexpected error: {err}");
     }
 }

@@ -11,6 +11,8 @@
 
 pub mod api;
 pub mod auth;
+pub mod chain_connection;
+pub mod chain_events;
 pub mod chain_state_coordinator;
 pub mod challenge_responder;
 pub mod cli;
