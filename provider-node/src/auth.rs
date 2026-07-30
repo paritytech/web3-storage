@@ -7,10 +7,10 @@
 //! - Membership caching with TTL (queries chain via subxt)
 //! - Role-based access control enforcement
 
-use crate::chain_connection::{self, ChainWatch};
 use crate::error::Error;
 use crate::ProviderState;
 use dashmap::DashMap;
+use provider_rpc::chain_connection::{self, ChainWatch};
 use sp_core::{crypto::AccountId32, sr25519, Pair};
 use std::time::{Duration, Instant};
 use storage_primitives::Role;

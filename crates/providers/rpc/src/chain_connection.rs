@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! Chain-connection construction: the single place a subxt client is built.
 //!
@@ -42,7 +42,7 @@ pub async fn connect(transport: &ChainTransport) -> Result<ChainHandle, Error> {
         ChainTransport::Rpc { url } => {
             let api = OnlineClient::<PolkadotConfig>::from_url(url)
                 .await
-                .map_err(|e| Error::Internal(format!("Failed to connect to chain: {e}")))?;
+                .map_err(|e| Error::Connection(e.to_string()))?;
             Ok(ChainHandle { api })
         }
     }
@@ -55,7 +55,7 @@ pub fn current_api(chain_rx: &ChainWatch) -> Result<OnlineClient<PolkadotConfig>
         .borrow()
         .as_ref()
         .map(|h| h.api.clone())
-        .ok_or_else(|| Error::Internal("Chain connection not established yet".to_string()))
+        .ok_or(Error::NotConnected)
 }
 
 #[cfg(test)]

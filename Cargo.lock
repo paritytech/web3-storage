@@ -7060,6 +7060,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "provider-rpc"
+version = "0.1.0"
+dependencies = [
+ "sp-runtime",
+ "storage-primitives",
+ "storage-subxt",
+ "subxt",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "provider-storage"
 version = "0.1.0"
 dependencies = [
@@ -9918,6 +9931,7 @@ dependencies = [
  "parity-scale-codec",
  "parking_lot",
  "provider-negotiation",
+ "provider-rpc",
  "provider-storage",
  "reqwest",
  "serde",

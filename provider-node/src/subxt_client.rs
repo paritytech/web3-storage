@@ -10,7 +10,6 @@
 //! `OnlineClient`/`Keypair` clone that shares the underlying WebSocket
 //! connection).
 
-use crate::chain_connection::{self, ChainWatch};
 use crate::challenge_responder::{
     decode_challenge_for_provider, ChallengeChainClient, DetectedChallenge,
 };
@@ -18,6 +17,7 @@ use crate::replica_sync_coordinator::{
     BucketSnapshot, ReplicaAgreementInfo, ReplicaSyncChainClient,
 };
 use crate::Error;
+use provider_rpc::chain_connection::{self, ChainWatch};
 use sp_core::crypto::Ss58Codec;
 use sp_core::H256;
 use std::sync::Arc;
@@ -134,7 +134,7 @@ impl SubxtChainClient {
     /// The current live connection, or an error while the chain has never
     /// been reached yet.
     fn api(&self) -> Result<subxt::OnlineClient<subxt::PolkadotConfig>, Error> {
-        chain_connection::current_api(&self.chain_rx)
+        Ok(chain_connection::current_api(&self.chain_rx)?)
     }
 
     /// Get the current anchor block (the clock every on-chain duration is

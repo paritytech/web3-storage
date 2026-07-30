@@ -4,8 +4,6 @@
 
 use crate::{
     auth::{ChainMembershipResolver, MembershipCache},
-    chain_connection::{self, ChainHandle, ChainTransport},
-    chain_events::{BlockEvent, BlockEventRx, BlockEventTx, EVENT_CHANNEL_CAPACITY},
     chain_state_coordinator::ChainStateCoordinator,
     cli::{Cli, StorageMode, DEFAULT_PROVIDER_ID},
     create_router,
@@ -15,6 +13,10 @@ use crate::{
     ReplicaSyncCoordinatorConfig, ReplicaSyncCoordinatorHandle,
 };
 use clap::Parser;
+use provider_rpc::{
+    chain_connection::{self, ChainHandle, ChainTransport},
+    chain_events::{BlockEvent, BlockEventRx, BlockEventTx, EVENT_CHANNEL_CAPACITY},
+};
 use provider_storage::{DiskStorage, NonceStore, NullNonceStore, Storage, StorageBackend};
 use std::net::SocketAddr;
 use std::str::FromStr;

@@ -115,6 +115,14 @@ pub enum Error {
     RateLimited,
 }
 
+/// Chain-connection failures are internal: the node cannot reach the chain,
+/// which is never the caller's fault.
+impl From<provider_rpc::Error> for Error {
+    fn from(e: provider_rpc::Error) -> Self {
+        Error::Internal(e.to_string())
+    }
+}
+
 /// Map storage-engine errors onto the node's error space one-to-one so the
 /// HTTP status/JSON mapping below stays the single source of truth.
 impl From<provider_storage::Error> for Error {
