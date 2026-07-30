@@ -1180,9 +1180,10 @@ pub mod api {
                         "provider_info",
                         (provider,),
                         [
-                            239u8, 251u8, 158u8, 49u8, 100u8, 13u8, 217u8, 238u8, 217u8, 47u8,
-                            161u8, 4u8, 87u8, 83u8, 144u8, 226u8, 166u8, 44u8, 155u8, 178u8, 10u8,
-                            13u8, 228u8, 125u8, 137u8, 4u8, 237u8, 58u8, 8u8, 53u8, 197u8, 83u8,
+                            203u8, 37u8, 17u8, 92u8, 185u8, 131u8, 95u8, 160u8, 81u8, 140u8, 161u8,
+                            246u8, 239u8, 175u8, 103u8, 131u8, 182u8, 197u8, 133u8, 231u8, 101u8,
+                            211u8, 22u8, 237u8, 206u8, 92u8, 229u8, 135u8, 223u8, 178u8, 45u8,
+                            196u8,
                         ],
                     )
                 }
@@ -1200,9 +1201,10 @@ pub mod api {
                         "providers",
                         (offset, limit),
                         [
-                            97u8, 130u8, 175u8, 149u8, 151u8, 253u8, 160u8, 108u8, 35u8, 101u8,
-                            0u8, 209u8, 166u8, 33u8, 86u8, 45u8, 252u8, 236u8, 124u8, 151u8, 113u8,
-                            156u8, 174u8, 180u8, 9u8, 9u8, 149u8, 232u8, 121u8, 210u8, 41u8, 46u8,
+                            136u8, 10u8, 180u8, 8u8, 78u8, 210u8, 65u8, 195u8, 88u8, 228u8, 106u8,
+                            157u8, 217u8, 132u8, 27u8, 115u8, 129u8, 98u8, 176u8, 128u8, 56u8,
+                            241u8, 156u8, 90u8, 45u8, 190u8, 96u8, 160u8, 188u8, 187u8, 224u8,
+                            41u8,
                         ],
                     )
                 }
@@ -1219,9 +1221,9 @@ pub mod api {
                         "bucket_info",
                         (bucket_id,),
                         [
-                            108u8, 252u8, 24u8, 93u8, 83u8, 38u8, 147u8, 72u8, 205u8, 95u8, 5u8,
-                            175u8, 95u8, 175u8, 181u8, 1u8, 136u8, 254u8, 161u8, 175u8, 43u8, 5u8,
-                            236u8, 161u8, 5u8, 221u8, 137u8, 21u8, 13u8, 152u8, 74u8, 228u8,
+                            204u8, 176u8, 58u8, 81u8, 21u8, 102u8, 221u8, 143u8, 26u8, 54u8, 132u8,
+                            128u8, 1u8, 202u8, 62u8, 225u8, 128u8, 196u8, 191u8, 29u8, 139u8,
+                            163u8, 29u8, 176u8, 154u8, 99u8, 164u8, 247u8, 62u8, 36u8, 90u8, 126u8,
                         ],
                     )
                 }
@@ -1337,9 +1339,9 @@ pub mod api {
                         "challenges_at",
                         (block,),
                         [
-                            173u8, 97u8, 89u8, 253u8, 87u8, 109u8, 200u8, 3u8, 162u8, 165u8, 15u8,
-                            240u8, 136u8, 40u8, 220u8, 56u8, 21u8, 135u8, 15u8, 15u8, 169u8, 88u8,
-                            189u8, 153u8, 242u8, 199u8, 132u8, 162u8, 130u8, 85u8, 9u8, 3u8,
+                            216u8, 226u8, 89u8, 183u8, 95u8, 35u8, 105u8, 91u8, 152u8, 236u8, 56u8,
+                            37u8, 172u8, 121u8, 197u8, 250u8, 250u8, 144u8, 19u8, 130u8, 233u8,
+                            87u8, 54u8, 67u8, 254u8, 149u8, 243u8, 184u8, 245u8, 22u8, 53u8, 63u8,
                         ],
                     )
                 }
@@ -1356,9 +1358,10 @@ pub mod api {
                         "bucket_challenges",
                         (bucket_id,),
                         [
-                            74u8, 24u8, 86u8, 254u8, 75u8, 122u8, 176u8, 254u8, 51u8, 228u8, 125u8,
-                            9u8, 161u8, 85u8, 116u8, 218u8, 203u8, 129u8, 31u8, 81u8, 8u8, 209u8,
-                            180u8, 251u8, 9u8, 27u8, 217u8, 156u8, 143u8, 53u8, 1u8, 48u8,
+                            53u8, 180u8, 217u8, 216u8, 255u8, 151u8, 157u8, 88u8, 60u8, 121u8,
+                            205u8, 91u8, 183u8, 58u8, 180u8, 133u8, 95u8, 101u8, 158u8, 31u8,
+                            141u8, 122u8, 151u8, 164u8, 221u8, 22u8, 199u8, 72u8, 77u8, 196u8,
+                            69u8, 216u8,
                         ],
                     )
                 }
@@ -1375,9 +1378,10 @@ pub mod api {
                         "provider_challenges",
                         (provider,),
                         [
-                            198u8, 162u8, 7u8, 225u8, 86u8, 110u8, 53u8, 138u8, 248u8, 47u8, 228u8,
-                            110u8, 141u8, 216u8, 213u8, 243u8, 18u8, 29u8, 229u8, 199u8, 114u8,
-                            128u8, 28u8, 44u8, 161u8, 75u8, 93u8, 55u8, 30u8, 192u8, 156u8, 229u8,
+                            48u8, 176u8, 221u8, 58u8, 106u8, 223u8, 57u8, 12u8, 188u8, 228u8,
+                            153u8, 226u8, 16u8, 115u8, 83u8, 57u8, 23u8, 119u8, 151u8, 116u8,
+                            116u8, 157u8, 139u8, 213u8, 127u8, 0u8, 155u8, 49u8, 73u8, 131u8, 15u8,
+                            249u8,
                         ],
                     )
                 }
@@ -1394,10 +1398,10 @@ pub mod api {
                         "challenger_challenges",
                         (challenger,),
                         [
-                            72u8, 180u8, 154u8, 21u8, 162u8, 72u8, 30u8, 142u8, 74u8, 226u8, 211u8,
-                            175u8, 142u8, 30u8, 60u8, 144u8, 77u8, 137u8, 190u8, 61u8, 121u8,
-                            155u8, 213u8, 209u8, 159u8, 155u8, 195u8, 19u8, 153u8, 213u8, 123u8,
-                            75u8,
+                            147u8, 30u8, 106u8, 195u8, 126u8, 16u8, 142u8, 181u8, 212u8, 197u8,
+                            189u8, 11u8, 65u8, 194u8, 218u8, 242u8, 218u8, 103u8, 31u8, 183u8,
+                            176u8, 234u8, 137u8, 239u8, 209u8, 159u8, 133u8, 211u8, 203u8, 64u8,
+                            90u8, 112u8,
                         ],
                     )
                 }
@@ -1443,9 +1447,9 @@ pub mod api {
                         "find_matching_providers",
                         (requirements, limit),
                         [
-                            166u8, 24u8, 123u8, 132u8, 131u8, 106u8, 58u8, 240u8, 16u8, 44u8,
-                            105u8, 219u8, 209u8, 149u8, 4u8, 9u8, 205u8, 72u8, 36u8, 81u8, 51u8,
-                            11u8, 159u8, 46u8, 88u8, 43u8, 114u8, 212u8, 204u8, 100u8, 167u8, 92u8,
+                            144u8, 222u8, 70u8, 27u8, 175u8, 253u8, 242u8, 36u8, 12u8, 176u8, 80u8,
+                            47u8, 209u8, 26u8, 110u8, 116u8, 44u8, 62u8, 130u8, 1u8, 213u8, 162u8,
+                            110u8, 117u8, 168u8, 133u8, 111u8, 9u8, 32u8, 98u8, 23u8, 94u8,
                         ],
                     )
                 }
@@ -1468,10 +1472,9 @@ pub mod api {
                         "providers_with_capacity",
                         (bytes_needed, offset, limit),
                         [
-                            129u8, 122u8, 84u8, 248u8, 212u8, 51u8, 191u8, 3u8, 140u8, 218u8,
-                            138u8, 241u8, 140u8, 163u8, 7u8, 191u8, 221u8, 130u8, 220u8, 82u8,
-                            23u8, 202u8, 38u8, 246u8, 172u8, 130u8, 202u8, 222u8, 77u8, 114u8,
-                            240u8, 197u8,
+                            127u8, 92u8, 201u8, 46u8, 173u8, 65u8, 33u8, 160u8, 255u8, 224u8,
+                            192u8, 184u8, 15u8, 80u8, 187u8, 180u8, 234u8, 125u8, 118u8, 39u8, 8u8,
+                            119u8, 60u8, 222u8, 142u8, 31u8, 48u8, 71u8, 210u8, 125u8, 173u8, 2u8,
                         ],
                     )
                 }
@@ -1913,9 +1916,10 @@ pub mod api {
                         "dry_run_call",
                         (origin, call, result_xcms_version),
                         [
-                            109u8, 134u8, 206u8, 119u8, 76u8, 31u8, 12u8, 10u8, 120u8, 7u8, 196u8,
-                            32u8, 90u8, 115u8, 214u8, 46u8, 1u8, 188u8, 103u8, 121u8, 79u8, 203u8,
-                            110u8, 236u8, 190u8, 188u8, 126u8, 212u8, 222u8, 122u8, 62u8, 65u8,
+                            251u8, 35u8, 135u8, 218u8, 65u8, 225u8, 28u8, 173u8, 69u8, 231u8, 20u8,
+                            98u8, 68u8, 203u8, 109u8, 198u8, 219u8, 237u8, 58u8, 130u8, 88u8,
+                            188u8, 172u8, 177u8, 155u8, 220u8, 219u8, 29u8, 34u8, 188u8, 89u8,
+                            105u8,
                         ],
                     )
                 }
@@ -1933,10 +1937,10 @@ pub mod api {
                         "dry_run_xcm",
                         (origin_location, xcm),
                         [
-                            182u8, 96u8, 186u8, 176u8, 8u8, 116u8, 95u8, 227u8, 146u8, 160u8,
-                            207u8, 213u8, 115u8, 171u8, 36u8, 7u8, 185u8, 69u8, 60u8, 13u8, 224u8,
-                            16u8, 216u8, 124u8, 83u8, 223u8, 22u8, 88u8, 111u8, 197u8, 121u8,
-                            121u8,
+                            237u8, 213u8, 176u8, 34u8, 162u8, 213u8, 178u8, 116u8, 122u8, 11u8,
+                            55u8, 106u8, 207u8, 173u8, 27u8, 209u8, 121u8, 247u8, 29u8, 101u8,
+                            112u8, 173u8, 233u8, 38u8, 176u8, 155u8, 38u8, 57u8, 104u8, 232u8,
+                            106u8, 187u8,
                         ],
                     )
                 }
@@ -3153,9 +3157,9 @@ pub mod api {
             .hash();
         runtime_metadata_hash
             == [
-                231u8, 83u8, 9u8, 198u8, 41u8, 236u8, 102u8, 255u8, 70u8, 118u8, 252u8, 251u8,
-                42u8, 145u8, 29u8, 175u8, 221u8, 84u8, 121u8, 79u8, 251u8, 77u8, 55u8, 206u8,
-                243u8, 162u8, 67u8, 137u8, 158u8, 140u8, 103u8, 52u8,
+                138u8, 11u8, 215u8, 27u8, 48u8, 35u8, 44u8, 126u8, 89u8, 174u8, 7u8, 184u8, 184u8,
+                85u8, 125u8, 106u8, 11u8, 122u8, 245u8, 71u8, 188u8, 221u8, 95u8, 12u8, 128u8,
+                64u8, 96u8, 57u8, 228u8, 69u8, 2u8, 73u8,
             ]
     }
     pub mod system {
@@ -4137,10 +4141,9 @@ pub mod api {
                         "System",
                         "Events",
                         [
-                            233u8, 122u8, 242u8, 89u8, 111u8, 44u8, 79u8, 42u8, 134u8, 148u8,
-                            202u8, 205u8, 35u8, 253u8, 175u8, 17u8, 35u8, 249u8, 156u8, 192u8,
-                            245u8, 199u8, 35u8, 173u8, 199u8, 21u8, 104u8, 233u8, 140u8, 255u8,
-                            210u8, 166u8,
+                            200u8, 51u8, 168u8, 211u8, 93u8, 90u8, 208u8, 5u8, 252u8, 242u8, 20u8,
+                            159u8, 134u8, 57u8, 24u8, 42u8, 215u8, 239u8, 218u8, 97u8, 168u8,
+                            221u8, 112u8, 162u8, 133u8, 107u8, 185u8, 88u8, 97u8, 83u8, 92u8, 18u8,
                         ],
                     )
                 }
@@ -8109,10 +8112,10 @@ pub mod api {
                                 call: ::subxt::alloc::boxed::Box::new(call),
                             },
                             [
-                                43u8, 61u8, 34u8, 196u8, 63u8, 116u8, 131u8, 30u8, 246u8, 186u8,
-                                196u8, 55u8, 60u8, 105u8, 220u8, 155u8, 201u8, 3u8, 26u8, 50u8,
-                                78u8, 211u8, 147u8, 60u8, 54u8, 235u8, 71u8, 69u8, 90u8, 109u8,
-                                35u8, 118u8,
+                                193u8, 147u8, 251u8, 110u8, 16u8, 169u8, 158u8, 229u8, 57u8, 30u8,
+                                50u8, 76u8, 254u8, 112u8, 194u8, 243u8, 38u8, 149u8, 103u8, 231u8,
+                                251u8, 222u8, 147u8, 117u8, 254u8, 218u8, 197u8, 32u8, 37u8, 175u8,
+                                17u8, 93u8,
                             ],
                         )
                     }
@@ -8135,10 +8138,10 @@ pub mod api {
                                 weight,
                             },
                             [
-                                34u8, 24u8, 136u8, 100u8, 212u8, 221u8, 17u8, 44u8, 215u8, 111u8,
-                                64u8, 212u8, 227u8, 206u8, 240u8, 227u8, 174u8, 136u8, 160u8,
-                                247u8, 209u8, 167u8, 17u8, 148u8, 169u8, 241u8, 134u8, 243u8,
-                                161u8, 56u8, 253u8, 166u8,
+                                229u8, 76u8, 212u8, 37u8, 166u8, 66u8, 197u8, 119u8, 33u8, 94u8,
+                                154u8, 171u8, 204u8, 67u8, 149u8, 247u8, 225u8, 115u8, 77u8, 241u8,
+                                186u8, 9u8, 102u8, 139u8, 118u8, 96u8, 127u8, 37u8, 17u8, 40u8,
+                                169u8, 96u8,
                             ],
                         )
                     }
@@ -8177,10 +8180,10 @@ pub mod api {
                                 call: ::subxt::alloc::boxed::Box::new(call),
                             },
                             [
-                                107u8, 156u8, 87u8, 0u8, 197u8, 212u8, 172u8, 171u8, 82u8, 104u8,
-                                68u8, 136u8, 187u8, 13u8, 216u8, 44u8, 169u8, 73u8, 89u8, 145u8,
-                                8u8, 244u8, 52u8, 0u8, 140u8, 19u8, 208u8, 38u8, 47u8, 81u8, 198u8,
-                                163u8,
+                                254u8, 158u8, 25u8, 104u8, 126u8, 7u8, 22u8, 59u8, 80u8, 217u8,
+                                247u8, 9u8, 117u8, 28u8, 13u8, 68u8, 55u8, 21u8, 240u8, 6u8, 131u8,
+                                94u8, 190u8, 144u8, 171u8, 40u8, 105u8, 97u8, 139u8, 12u8, 244u8,
+                                49u8,
                             ],
                         )
                     }
@@ -14373,10 +14376,10 @@ pub mod api {
                             "batch",
                             super::Batch { calls },
                             [
-                                154u8, 136u8, 138u8, 188u8, 174u8, 70u8, 95u8, 136u8, 139u8, 163u8,
-                                30u8, 148u8, 243u8, 48u8, 246u8, 80u8, 110u8, 210u8, 107u8, 57u8,
-                                175u8, 171u8, 178u8, 91u8, 63u8, 179u8, 141u8, 50u8, 151u8, 41u8,
-                                97u8, 133u8,
+                                84u8, 239u8, 47u8, 133u8, 152u8, 230u8, 208u8, 211u8, 12u8, 145u8,
+                                135u8, 175u8, 7u8, 26u8, 137u8, 64u8, 229u8, 189u8, 234u8, 103u8,
+                                203u8, 61u8, 77u8, 121u8, 84u8, 148u8, 150u8, 102u8, 3u8, 72u8,
+                                15u8, 232u8,
                             ],
                         )
                     }
@@ -14407,10 +14410,10 @@ pub mod api {
                                 call: ::subxt::alloc::boxed::Box::new(call),
                             },
                             [
-                                99u8, 238u8, 105u8, 167u8, 177u8, 181u8, 48u8, 207u8, 102u8, 86u8,
-                                237u8, 213u8, 94u8, 172u8, 125u8, 108u8, 133u8, 3u8, 126u8, 32u8,
-                                104u8, 38u8, 202u8, 81u8, 176u8, 173u8, 90u8, 136u8, 162u8, 164u8,
-                                53u8, 3u8,
+                                177u8, 98u8, 19u8, 161u8, 29u8, 240u8, 93u8, 89u8, 64u8, 41u8,
+                                148u8, 135u8, 123u8, 196u8, 209u8, 226u8, 45u8, 57u8, 3u8, 166u8,
+                                36u8, 86u8, 232u8, 45u8, 155u8, 78u8, 128u8, 230u8, 179u8, 207u8,
+                                113u8, 143u8,
                             ],
                         )
                     }
@@ -14436,10 +14439,10 @@ pub mod api {
                             "batch_all",
                             super::BatchAll { calls },
                             [
-                                156u8, 215u8, 229u8, 112u8, 216u8, 131u8, 205u8, 59u8, 246u8, 21u8,
-                                231u8, 171u8, 151u8, 29u8, 37u8, 30u8, 240u8, 16u8, 219u8, 205u8,
-                                1u8, 48u8, 177u8, 32u8, 247u8, 118u8, 30u8, 237u8, 16u8, 92u8,
-                                84u8, 86u8,
+                                215u8, 64u8, 194u8, 164u8, 227u8, 130u8, 30u8, 129u8, 175u8, 107u8,
+                                32u8, 65u8, 188u8, 183u8, 140u8, 61u8, 219u8, 228u8, 241u8, 220u8,
+                                44u8, 16u8, 210u8, 65u8, 147u8, 117u8, 116u8, 230u8, 161u8, 25u8,
+                                217u8, 185u8,
                             ],
                         )
                     }
@@ -14463,10 +14466,10 @@ pub mod api {
                                 call: ::subxt::alloc::boxed::Box::new(call),
                             },
                             [
-                                74u8, 109u8, 243u8, 229u8, 40u8, 201u8, 116u8, 158u8, 33u8, 38u8,
-                                56u8, 160u8, 125u8, 36u8, 111u8, 190u8, 33u8, 201u8, 106u8, 111u8,
-                                75u8, 43u8, 171u8, 174u8, 186u8, 251u8, 106u8, 10u8, 154u8, 163u8,
-                                154u8, 75u8,
+                                6u8, 194u8, 124u8, 150u8, 152u8, 49u8, 180u8, 11u8, 190u8, 201u8,
+                                73u8, 3u8, 251u8, 13u8, 247u8, 220u8, 58u8, 252u8, 127u8, 13u8,
+                                33u8, 65u8, 161u8, 111u8, 184u8, 100u8, 17u8, 111u8, 27u8, 137u8,
+                                217u8, 203u8,
                             ],
                         )
                     }
@@ -14493,10 +14496,10 @@ pub mod api {
                             "force_batch",
                             super::ForceBatch { calls },
                             [
-                                161u8, 5u8, 205u8, 134u8, 33u8, 111u8, 62u8, 89u8, 89u8, 65u8,
-                                67u8, 57u8, 67u8, 246u8, 48u8, 123u8, 1u8, 202u8, 23u8, 57u8, 26u8,
-                                157u8, 59u8, 127u8, 106u8, 209u8, 255u8, 223u8, 244u8, 74u8, 125u8,
-                                233u8,
+                                132u8, 170u8, 168u8, 144u8, 172u8, 250u8, 64u8, 88u8, 191u8, 99u8,
+                                203u8, 80u8, 66u8, 72u8, 252u8, 171u8, 3u8, 151u8, 89u8, 200u8,
+                                126u8, 153u8, 143u8, 111u8, 157u8, 232u8, 17u8, 56u8, 219u8, 98u8,
+                                37u8, 213u8,
                             ],
                         )
                     }
@@ -14520,10 +14523,10 @@ pub mod api {
                                 weight,
                             },
                             [
-                                115u8, 120u8, 22u8, 210u8, 153u8, 218u8, 24u8, 119u8, 16u8, 219u8,
-                                11u8, 236u8, 220u8, 251u8, 186u8, 193u8, 109u8, 181u8, 78u8, 196u8,
-                                25u8, 87u8, 209u8, 223u8, 107u8, 143u8, 63u8, 139u8, 80u8, 25u8,
-                                245u8, 242u8,
+                                27u8, 19u8, 163u8, 100u8, 93u8, 127u8, 61u8, 129u8, 175u8, 156u8,
+                                92u8, 194u8, 123u8, 248u8, 173u8, 187u8, 156u8, 125u8, 112u8, 79u8,
+                                221u8, 143u8, 101u8, 213u8, 59u8, 214u8, 155u8, 134u8, 166u8, 69u8,
+                                113u8, 123u8,
                             ],
                         )
                     }
@@ -14563,10 +14566,10 @@ pub mod api {
                                 fallback: ::subxt::alloc::boxed::Box::new(fallback),
                             },
                             [
-                                113u8, 246u8, 249u8, 108u8, 56u8, 102u8, 99u8, 73u8, 97u8, 197u8,
-                                86u8, 10u8, 110u8, 153u8, 232u8, 50u8, 164u8, 199u8, 226u8, 39u8,
-                                240u8, 129u8, 172u8, 119u8, 7u8, 238u8, 76u8, 118u8, 128u8, 242u8,
-                                23u8, 4u8,
+                                81u8, 51u8, 148u8, 5u8, 184u8, 124u8, 9u8, 10u8, 29u8, 139u8,
+                                228u8, 34u8, 235u8, 183u8, 127u8, 7u8, 38u8, 231u8, 101u8, 32u8,
+                                198u8, 181u8, 195u8, 64u8, 169u8, 26u8, 207u8, 65u8, 16u8, 96u8,
+                                247u8, 229u8,
                             ],
                         )
                     }
@@ -14589,10 +14592,10 @@ pub mod api {
                                 call: ::subxt::alloc::boxed::Box::new(call),
                             },
                             [
-                                238u8, 249u8, 243u8, 154u8, 10u8, 17u8, 246u8, 100u8, 141u8, 42u8,
-                                246u8, 99u8, 178u8, 183u8, 35u8, 105u8, 161u8, 161u8, 96u8, 31u8,
-                                84u8, 118u8, 26u8, 194u8, 95u8, 100u8, 196u8, 70u8, 156u8, 111u8,
-                                96u8, 16u8,
+                                15u8, 147u8, 171u8, 56u8, 233u8, 111u8, 153u8, 193u8, 41u8, 8u8,
+                                199u8, 73u8, 3u8, 27u8, 103u8, 51u8, 137u8, 85u8, 89u8, 107u8,
+                                235u8, 116u8, 218u8, 198u8, 78u8, 86u8, 123u8, 151u8, 149u8, 139u8,
+                                176u8, 29u8,
                             ],
                         )
                     }
@@ -15102,10 +15105,15 @@ pub mod api {
             #[doc = "rejects replays via the provider's sliding nonce window, then runs"]
             #[doc = "the standard provider/capacity/stake checks and opens the"]
             #[doc = "agreement."]
+            #[doc = ""]
+            #[doc = "`visibility` sets the new bucket's read visibility (see"]
+            #[doc = "[`Visibility`]); it is the owner's choice and not part of the"]
+            #[doc = "provider-signed terms."]
             pub struct EstablishStorageAgreement {
                 pub provider: establish_storage_agreement::Provider,
                 pub terms: establish_storage_agreement::Terms,
                 pub sig: establish_storage_agreement::Sig,
+                pub visibility: establish_storage_agreement::Visibility,
             }
             pub mod establish_storage_agreement {
                 use super::runtime_types;
@@ -15116,6 +15124,7 @@ pub mod api {
                     ::core::primitive::u32,
                 >;
                 pub type Sig = runtime_types::sp_runtime::MultiSignature;
+                pub type Visibility = runtime_types::storage_primitives::Visibility;
             }
             impl EstablishStorageAgreement {
                 const PALLET_NAME: &'static str = "StorageProvider";
@@ -15178,6 +15187,40 @@ pub mod api {
                 const CALL_NAME: &'static str = "freeze_bucket";
             }
             impl ::subxt::extrinsics::DecodeAsExtrinsic for FreezeBucket {
+                fn is_extrinsic(pallet_name: &str, call_name: &str) -> bool {
+                    pallet_name == Self::PALLET_NAME && call_name == Self::CALL_NAME
+                }
+            }
+            #[derive(
+                :: subxt :: ext :: scale_decode :: DecodeAsType,
+                :: subxt :: ext :: scale_encode :: EncodeAsType,
+                Clone,
+                Debug,
+                Eq,
+                PartialEq,
+            )]
+            #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+            #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+            #[doc = "Set bucket read visibility (admin only)."]
+            #[doc = ""]
+            #[doc = "Flips `Public` ⇄ `Private` unconditionally in both directions — a"]
+            #[doc = "precondition on existing replicas would hand third parties a veto"]
+            #[doc = "over the admin. Effects are asymmetric: privatizing does not recall"]
+            #[doc = "data already replicated, publicizing cannot be undone."]
+            pub struct SetBucketVisibility {
+                pub bucket_id: set_bucket_visibility::BucketId,
+                pub visibility: set_bucket_visibility::Visibility,
+            }
+            pub mod set_bucket_visibility {
+                use super::runtime_types;
+                pub type BucketId = ::core::primitive::u64;
+                pub type Visibility = runtime_types::storage_primitives::Visibility;
+            }
+            impl SetBucketVisibility {
+                const PALLET_NAME: &'static str = "StorageProvider";
+                const CALL_NAME: &'static str = "set_bucket_visibility";
+            }
+            impl ::subxt::extrinsics::DecodeAsExtrinsic for SetBucketVisibility {
                 fn is_extrinsic(pallet_name: &str, call_name: &str) -> bool {
                     pallet_name == Self::PALLET_NAME && call_name == Self::CALL_NAME
                 }
@@ -15933,11 +15976,16 @@ pub mod api {
                     #[doc = "rejects replays via the provider's sliding nonce window, then runs"]
                     #[doc = "the standard provider/capacity/stake checks and opens the"]
                     #[doc = "agreement."]
+                    #[doc = ""]
+                    #[doc = "`visibility` sets the new bucket's read visibility (see"]
+                    #[doc = "[`Visibility`]); it is the owner's choice and not part of the"]
+                    #[doc = "provider-signed terms."]
                     pub fn establish_storage_agreement(
                         &self,
                         provider: super::establish_storage_agreement::Provider,
                         terms: super::establish_storage_agreement::Terms,
                         sig: super::establish_storage_agreement::Sig,
+                        visibility: super::establish_storage_agreement::Visibility,
                     ) -> ::subxt::transactions::StaticPayload<super::EstablishStorageAgreement>
                     {
                         ::subxt::transactions::StaticPayload::new_static(
@@ -15947,12 +15995,13 @@ pub mod api {
                                 provider,
                                 terms,
                                 sig,
+                                visibility,
                             },
                             [
-                                131u8, 51u8, 98u8, 212u8, 112u8, 217u8, 254u8, 11u8, 109u8, 138u8,
-                                107u8, 216u8, 7u8, 59u8, 225u8, 179u8, 146u8, 123u8, 82u8, 149u8,
-                                71u8, 74u8, 219u8, 77u8, 211u8, 242u8, 47u8, 81u8, 96u8, 195u8,
-                                191u8, 187u8,
+                                168u8, 160u8, 195u8, 240u8, 130u8, 10u8, 195u8, 210u8, 37u8, 64u8,
+                                131u8, 3u8, 245u8, 81u8, 141u8, 194u8, 146u8, 45u8, 114u8, 183u8,
+                                81u8, 2u8, 228u8, 216u8, 122u8, 95u8, 184u8, 225u8, 220u8, 114u8,
+                                40u8, 152u8,
                             ],
                         )
                     }
@@ -15993,6 +16042,33 @@ pub mod api {
                                 18u8, 113u8, 229u8, 39u8, 217u8, 237u8, 117u8, 31u8, 54u8, 162u8,
                                 215u8, 170u8, 86u8, 52u8, 95u8, 123u8, 201u8, 81u8, 166u8, 113u8,
                                 79u8, 166u8,
+                            ],
+                        )
+                    }
+                    #[doc = "Set bucket read visibility (admin only)."]
+                    #[doc = ""]
+                    #[doc = "Flips `Public` ⇄ `Private` unconditionally in both directions — a"]
+                    #[doc = "precondition on existing replicas would hand third parties a veto"]
+                    #[doc = "over the admin. Effects are asymmetric: privatizing does not recall"]
+                    #[doc = "data already replicated, publicizing cannot be undone."]
+                    pub fn set_bucket_visibility(
+                        &self,
+                        bucket_id: super::set_bucket_visibility::BucketId,
+                        visibility: super::set_bucket_visibility::Visibility,
+                    ) -> ::subxt::transactions::StaticPayload<super::SetBucketVisibility>
+                    {
+                        ::subxt::transactions::StaticPayload::new_static(
+                            "StorageProvider",
+                            "set_bucket_visibility",
+                            super::SetBucketVisibility {
+                                bucket_id,
+                                visibility,
+                            },
+                            [
+                                140u8, 111u8, 74u8, 174u8, 206u8, 156u8, 45u8, 149u8, 225u8, 105u8,
+                                142u8, 155u8, 249u8, 111u8, 14u8, 144u8, 89u8, 138u8, 56u8, 137u8,
+                                92u8, 27u8, 230u8, 209u8, 136u8, 0u8, 172u8, 179u8, 158u8, 72u8,
+                                90u8, 160u8,
                             ],
                         )
                     }
@@ -16753,6 +16829,34 @@ pub mod api {
             )]
             #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+            pub struct BucketVisibilityChanged {
+                pub bucket_id: bucket_visibility_changed::BucketId,
+                pub visibility: bucket_visibility_changed::Visibility,
+            }
+            pub mod bucket_visibility_changed {
+                use super::runtime_types;
+                pub type BucketId = ::core::primitive::u64;
+                pub type Visibility = runtime_types::storage_primitives::Visibility;
+            }
+            impl BucketVisibilityChanged {
+                const PALLET_NAME: &'static str = "StorageProvider";
+                const EVENT_NAME: &'static str = "BucketVisibilityChanged";
+            }
+            impl ::subxt::events::DecodeAsEvent for BucketVisibilityChanged {
+                fn is_event(pallet_name: &str, event_name: &str) -> bool {
+                    pallet_name == Self::PALLET_NAME && event_name == Self::EVENT_NAME
+                }
+            }
+            #[derive(
+                :: subxt :: ext :: scale_decode :: DecodeAsType,
+                :: subxt :: ext :: scale_encode :: EncodeAsType,
+                Clone,
+                Debug,
+                Eq,
+                PartialEq,
+            )]
+            #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+            #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
             pub struct MemberSet {
                 pub bucket_id: member_set::BucketId,
                 pub member: member_set::Member,
@@ -17330,6 +17434,11 @@ pub mod api {
             )]
             #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+            #[doc = "Provider responded successfully to a challenge."]
+            #[doc = "`challenger_cost` is the deposit share moved to the provider as"]
+            #[doc = "reimbursement; `provider_cost` is the share the provider bears by"]
+            #[doc = "not being reimbursed for it — a cost-split fraction for authorized"]
+            #[doc = "challengers, always zero for public ones. Stake is never touched."]
             pub struct ChallengeDefended {
                 pub challenge_id: challenge_defended::ChallengeId,
                 pub provider: challenge_defended::Provider,
@@ -17408,9 +17517,9 @@ pub mod api {
                         "StorageProvider",
                         "Providers",
                         [
-                            152u8, 29u8, 167u8, 84u8, 52u8, 201u8, 163u8, 110u8, 62u8, 126u8,
-                            218u8, 237u8, 58u8, 218u8, 60u8, 127u8, 47u8, 232u8, 42u8, 234u8, 2u8,
-                            152u8, 37u8, 68u8, 167u8, 80u8, 165u8, 61u8, 60u8, 63u8, 49u8, 17u8,
+                            195u8, 215u8, 197u8, 19u8, 154u8, 128u8, 9u8, 216u8, 68u8, 204u8,
+                            127u8, 13u8, 120u8, 228u8, 24u8, 235u8, 56u8, 60u8, 13u8, 224u8, 56u8,
+                            211u8, 176u8, 4u8, 71u8, 41u8, 44u8, 77u8, 39u8, 51u8, 26u8, 196u8,
                         ],
                     )
                 }
@@ -17461,10 +17570,10 @@ pub mod api {
                         "StorageProvider",
                         "Buckets",
                         [
-                            214u8, 182u8, 226u8, 146u8, 109u8, 120u8, 218u8, 41u8, 95u8, 100u8,
-                            67u8, 8u8, 23u8, 72u8, 44u8, 254u8, 102u8, 186u8, 8u8, 62u8, 169u8,
-                            92u8, 200u8, 122u8, 74u8, 197u8, 151u8, 141u8, 140u8, 117u8, 4u8,
-                            156u8,
+                            183u8, 220u8, 218u8, 192u8, 97u8, 96u8, 99u8, 216u8, 82u8, 242u8,
+                            213u8, 15u8, 137u8, 167u8, 155u8, 214u8, 98u8, 150u8, 203u8, 227u8,
+                            85u8, 224u8, 63u8, 110u8, 31u8, 46u8, 29u8, 107u8, 135u8, 132u8, 143u8,
+                            190u8,
                         ],
                     )
                 }
@@ -17506,9 +17615,10 @@ pub mod api {
                         "StorageProvider",
                         "Challenges",
                         [
-                            40u8, 197u8, 172u8, 0u8, 60u8, 246u8, 61u8, 47u8, 121u8, 94u8, 7u8,
-                            128u8, 88u8, 47u8, 170u8, 54u8, 157u8, 96u8, 226u8, 90u8, 63u8, 235u8,
-                            77u8, 162u8, 121u8, 244u8, 57u8, 246u8, 160u8, 160u8, 187u8, 154u8,
+                            235u8, 132u8, 91u8, 181u8, 74u8, 233u8, 182u8, 65u8, 84u8, 185u8,
+                            147u8, 3u8, 233u8, 101u8, 113u8, 24u8, 113u8, 27u8, 212u8, 51u8, 197u8,
+                            110u8, 134u8, 109u8, 63u8, 25u8, 63u8, 237u8, 187u8, 208u8, 109u8,
+                            128u8,
                         ],
                     )
                 }
@@ -18050,11 +18160,13 @@ pub mod api {
             #[doc = "- `provider`: Provider account that signed the terms."]
             #[doc = "- `terms`: Provider-signed agreement terms."]
             #[doc = "- `sig`: Provider signature over the SCALE-encoded terms."]
+            #[doc = "- `visibility`: Read visibility of the underlying Layer 0 bucket."]
             pub struct CreateDrive {
                 pub name: create_drive::Name,
                 pub provider: create_drive::Provider,
                 pub terms: create_drive::Terms,
                 pub sig: create_drive::Sig,
+                pub visibility: create_drive::Visibility,
             }
             pub mod create_drive {
                 use super::runtime_types;
@@ -18067,6 +18179,7 @@ pub mod api {
                     ::core::primitive::u32,
                 >;
                 pub type Sig = runtime_types::sp_runtime::MultiSignature;
+                pub type Visibility = runtime_types::storage_primitives::Visibility;
             }
             impl CreateDrive {
                 const PALLET_NAME: &'static str = "DriveRegistry";
@@ -18202,12 +18315,14 @@ pub mod api {
                     #[doc = "- `provider`: Provider account that signed the terms."]
                     #[doc = "- `terms`: Provider-signed agreement terms."]
                     #[doc = "- `sig`: Provider signature over the SCALE-encoded terms."]
+                    #[doc = "- `visibility`: Read visibility of the underlying Layer 0 bucket."]
                     pub fn create_drive(
                         &self,
                         name: super::create_drive::Name,
                         provider: super::create_drive::Provider,
                         terms: super::create_drive::Terms,
                         sig: super::create_drive::Sig,
+                        visibility: super::create_drive::Visibility,
                     ) -> ::subxt::transactions::StaticPayload<super::CreateDrive>
                     {
                         ::subxt::transactions::StaticPayload::new_static(
@@ -18218,12 +18333,13 @@ pub mod api {
                                 provider,
                                 terms,
                                 sig,
+                                visibility,
                             },
                             [
-                                58u8, 121u8, 21u8, 232u8, 141u8, 250u8, 202u8, 157u8, 0u8, 223u8,
-                                1u8, 201u8, 11u8, 137u8, 177u8, 251u8, 214u8, 35u8, 152u8, 189u8,
-                                251u8, 203u8, 114u8, 90u8, 132u8, 240u8, 181u8, 145u8, 221u8,
-                                193u8, 65u8, 231u8,
+                                83u8, 141u8, 54u8, 236u8, 99u8, 41u8, 30u8, 203u8, 208u8, 158u8,
+                                250u8, 87u8, 243u8, 146u8, 151u8, 201u8, 238u8, 239u8, 255u8,
+                                115u8, 86u8, 144u8, 164u8, 114u8, 30u8, 118u8, 25u8, 129u8, 245u8,
+                                140u8, 80u8, 134u8,
                             ],
                         )
                     }
@@ -18624,11 +18740,13 @@ pub mod api {
             #[doc = "- `provider`: Explicit provider account that signed the terms."]
             #[doc = "- `terms`: Provider-signed agreement terms."]
             #[doc = "- `sig`: Provider signature over the SCALE-encoded terms."]
+            #[doc = "- `visibility`: Read visibility of the underlying Layer 0 bucket."]
             pub struct CreateS3Bucket {
                 pub name: create_s3_bucket::Name,
                 pub provider: create_s3_bucket::Provider,
                 pub terms: create_s3_bucket::Terms,
                 pub sig: create_s3_bucket::Sig,
+                pub visibility: create_s3_bucket::Visibility,
             }
             pub mod create_s3_bucket {
                 use super::runtime_types;
@@ -18640,6 +18758,7 @@ pub mod api {
                     ::core::primitive::u32,
                 >;
                 pub type Sig = runtime_types::sp_runtime::MultiSignature;
+                pub type Visibility = runtime_types::storage_primitives::Visibility;
             }
             impl CreateS3Bucket {
                 const PALLET_NAME: &'static str = "S3Registry";
@@ -18794,12 +18913,14 @@ pub mod api {
                     #[doc = "- `provider`: Explicit provider account that signed the terms."]
                     #[doc = "- `terms`: Provider-signed agreement terms."]
                     #[doc = "- `sig`: Provider signature over the SCALE-encoded terms."]
+                    #[doc = "- `visibility`: Read visibility of the underlying Layer 0 bucket."]
                     pub fn create_s3_bucket(
                         &self,
                         name: super::create_s3_bucket::Name,
                         provider: super::create_s3_bucket::Provider,
                         terms: super::create_s3_bucket::Terms,
                         sig: super::create_s3_bucket::Sig,
+                        visibility: super::create_s3_bucket::Visibility,
                     ) -> ::subxt::transactions::StaticPayload<super::CreateS3Bucket>
                     {
                         ::subxt::transactions::StaticPayload::new_static(
@@ -18810,12 +18931,13 @@ pub mod api {
                                 provider,
                                 terms,
                                 sig,
+                                visibility,
                             },
                             [
-                                143u8, 80u8, 3u8, 139u8, 89u8, 2u8, 104u8, 137u8, 71u8, 137u8,
-                                151u8, 165u8, 106u8, 178u8, 202u8, 0u8, 108u8, 179u8, 95u8, 188u8,
-                                160u8, 60u8, 31u8, 178u8, 27u8, 107u8, 194u8, 193u8, 166u8, 61u8,
-                                73u8, 51u8,
+                                223u8, 55u8, 21u8, 163u8, 61u8, 151u8, 148u8, 196u8, 4u8, 188u8,
+                                200u8, 4u8, 31u8, 183u8, 218u8, 200u8, 87u8, 103u8, 127u8, 214u8,
+                                166u8, 86u8, 162u8, 108u8, 224u8, 211u8, 80u8, 48u8, 168u8, 178u8,
+                                33u8, 68u8,
                             ],
                         )
                     }
@@ -20110,10 +20232,10 @@ pub mod api {
                                 transaction_encoded,
                             },
                             [
-                                246u8, 194u8, 124u8, 95u8, 91u8, 174u8, 212u8, 101u8, 83u8, 51u8,
-                                32u8, 76u8, 235u8, 39u8, 52u8, 103u8, 212u8, 247u8, 22u8, 201u8,
-                                102u8, 76u8, 63u8, 13u8, 148u8, 125u8, 34u8, 110u8, 35u8, 134u8,
-                                60u8, 158u8,
+                                117u8, 237u8, 70u8, 117u8, 217u8, 168u8, 191u8, 136u8, 216u8,
+                                200u8, 145u8, 25u8, 116u8, 122u8, 92u8, 205u8, 253u8, 93u8, 213u8,
+                                27u8, 241u8, 238u8, 12u8, 246u8, 170u8, 122u8, 174u8, 66u8, 242u8,
+                                240u8, 58u8, 112u8,
                             ],
                         )
                     }
@@ -20257,10 +20379,10 @@ pub mod api {
                                 call: ::subxt::alloc::boxed::Box::new(call),
                             },
                             [
-                                21u8, 4u8, 148u8, 144u8, 252u8, 70u8, 58u8, 10u8, 134u8, 43u8,
-                                183u8, 74u8, 16u8, 33u8, 179u8, 186u8, 244u8, 75u8, 118u8, 139u8,
-                                171u8, 96u8, 146u8, 156u8, 118u8, 78u8, 254u8, 83u8, 35u8, 84u8,
-                                167u8, 138u8,
+                                157u8, 175u8, 147u8, 243u8, 81u8, 90u8, 118u8, 45u8, 143u8, 152u8,
+                                130u8, 15u8, 15u8, 126u8, 204u8, 219u8, 214u8, 49u8, 144u8, 32u8,
+                                22u8, 68u8, 154u8, 59u8, 229u8, 186u8, 0u8, 137u8, 54u8, 199u8,
+                                149u8, 68u8,
                             ],
                         )
                     }
@@ -20591,9 +20713,10 @@ pub mod api {
                         "Revive",
                         "EthBlockBuilderIR",
                         [
-                            62u8, 22u8, 204u8, 180u8, 89u8, 208u8, 118u8, 104u8, 70u8, 79u8, 254u8,
-                            35u8, 81u8, 30u8, 181u8, 91u8, 139u8, 0u8, 140u8, 81u8, 45u8, 123u8,
-                            181u8, 158u8, 118u8, 82u8, 95u8, 24u8, 133u8, 117u8, 33u8, 133u8,
+                            109u8, 18u8, 48u8, 36u8, 163u8, 96u8, 236u8, 223u8, 225u8, 180u8,
+                            127u8, 226u8, 229u8, 193u8, 121u8, 157u8, 183u8, 78u8, 212u8, 45u8,
+                            240u8, 95u8, 75u8, 190u8, 240u8, 25u8, 44u8, 57u8, 27u8, 177u8, 132u8,
+                            44u8,
                         ],
                     )
                 }
@@ -23088,6 +23211,7 @@ pub mod api {
                     #[doc = "- `provider`: Provider account that signed the terms."]
                     #[doc = "- `terms`: Provider-signed agreement terms."]
                     #[doc = "- `sig`: Provider signature over the SCALE-encoded terms."]
+                    #[doc = "- `visibility`: Read visibility of the underlying Layer 0 bucket."]
                     create_drive {
                         name:
                             ::core::option::Option<::subxt::alloc::vec::Vec<::core::primitive::u8>>,
@@ -23098,6 +23222,7 @@ pub mod api {
                             ::core::primitive::u32,
                         >,
                         sig: runtime_types::sp_runtime::MultiSignature,
+                        visibility: runtime_types::storage_primitives::Visibility,
                     },
                     #[codec(index = 2)]
                     #[doc = "Delete a drive completely"]
@@ -24904,6 +25029,7 @@ pub mod api {
                     #[doc = "- `provider`: Explicit provider account that signed the terms."]
                     #[doc = "- `terms`: Provider-signed agreement terms."]
                     #[doc = "- `sig`: Provider signature over the SCALE-encoded terms."]
+                    #[doc = "- `visibility`: Read visibility of the underlying Layer 0 bucket."]
                     create_s3_bucket {
                         name: ::subxt::alloc::vec::Vec<::core::primitive::u8>,
                         provider: ::subxt::utils::AccountId32,
@@ -24913,6 +25039,7 @@ pub mod api {
                             ::core::primitive::u32,
                         >,
                         sig: runtime_types::sp_runtime::MultiSignature,
+                        visibility: runtime_types::storage_primitives::Visibility,
                     },
                     #[codec(index = 1)]
                     #[doc = "Delete an S3 bucket."]
@@ -25197,6 +25324,7 @@ pub mod api {
                     >,
                     pub historical_roots: [(::core::primitive::u32, ::subxt::utils::H256); 6usize],
                     pub total_snapshots: ::core::primitive::u32,
+                    pub visibility: runtime_types::storage_primitives::Visibility,
                 }
                 #[derive(
                     :: subxt :: ext :: scale_decode :: DecodeAsType,
@@ -25297,6 +25425,10 @@ pub mod api {
                     #[doc = "rejects replays via the provider's sliding nonce window, then runs"]
                     #[doc = "the standard provider/capacity/stake checks and opens the"]
                     #[doc = "agreement."]
+                    #[doc = ""]
+                    #[doc = "`visibility` sets the new bucket's read visibility (see"]
+                    #[doc = "[`Visibility`]); it is the owner's choice and not part of the"]
+                    #[doc = "provider-signed terms."]
                     establish_storage_agreement {
                         provider: ::subxt::utils::AccountId32,
                         terms: runtime_types::storage_primitives::agreement_term::AgreementTerms<
@@ -25305,6 +25437,7 @@ pub mod api {
                             ::core::primitive::u32,
                         >,
                         sig: runtime_types::sp_runtime::MultiSignature,
+                        visibility: runtime_types::storage_primitives::Visibility,
                     },
                     #[codec(index = 11)]
                     #[doc = "Set minimum providers required for checkpoint."]
@@ -25315,6 +25448,17 @@ pub mod api {
                     #[codec(index = 12)]
                     #[doc = "Freeze bucket - make append-only (irreversible)."]
                     freeze_bucket { bucket_id: ::core::primitive::u64 },
+                    #[codec(index = 16)]
+                    #[doc = "Set bucket read visibility (admin only)."]
+                    #[doc = ""]
+                    #[doc = "Flips `Public` ⇄ `Private` unconditionally in both directions — a"]
+                    #[doc = "precondition on existing replicas would hand third parties a veto"]
+                    #[doc = "over the admin. Effects are asymmetric: privatizing does not recall"]
+                    #[doc = "data already replicated, publicizing cannot be undone."]
+                    set_bucket_visibility {
+                        bucket_id: ::core::primitive::u64,
+                        visibility: runtime_types::storage_primitives::Visibility,
+                    },
                     #[codec(index = 13)]
                     #[doc = "Add or update a member's role."]
                     set_member {
@@ -25501,6 +25645,7 @@ pub mod api {
                     pub start_seq: ::core::primitive::u64,
                     pub target: runtime_types::storage_primitives::ChunkLocation,
                     pub deposit: ::core::primitive::u128,
+                    pub authorized: ::core::primitive::bool,
                 }
                 #[derive(
                     :: subxt :: ext :: scale_decode :: DecodeAsType,
@@ -25612,118 +25757,122 @@ pub mod api {
                     #[codec(index = 28)]
                     InvalidMinProviders,
                     #[codec(index = 29)]
-                    AgreementNotFound,
+                    #[doc = "Private bucket: primary challenged by a caller who is neither a"]
+                    #[doc = "bucket member nor a primary-agreement owner."]
+                    NotAuthorizedForPrivateBucket,
                     #[codec(index = 30)]
-                    AgreementAlreadyExists,
+                    AgreementNotFound,
                     #[codec(index = 31)]
-                    AgreementExpired,
+                    AgreementAlreadyExists,
                     #[codec(index = 32)]
-                    AgreementNotExpired,
+                    AgreementExpired,
                     #[codec(index = 33)]
-                    AgreementExtensionsBlocked,
+                    AgreementNotExpired,
                     #[codec(index = 34)]
-                    NotAgreementOwner,
+                    AgreementExtensionsBlocked,
                     #[codec(index = 35)]
-                    DurationTooShort,
+                    NotAgreementOwner,
                     #[codec(index = 36)]
-                    DurationTooLong,
+                    DurationTooShort,
                     #[codec(index = 37)]
-                    PaymentExceedsMax,
+                    DurationTooLong,
                     #[codec(index = 38)]
-                    CannotTerminateReplica,
+                    PaymentExceedsMax,
                     #[codec(index = 39)]
-                    SettlementWindowPassed,
+                    CannotTerminateReplica,
                     #[codec(index = 40)]
-                    NotReplica,
+                    SettlementWindowPassed,
                     #[codec(index = 41)]
-                    SyncTooFrequent,
+                    NotReplica,
                     #[codec(index = 42)]
-                    InvalidSyncRoot,
+                    SyncTooFrequent,
                     #[codec(index = 43)]
-                    InsufficientSyncBalance,
+                    InvalidSyncRoot,
                     #[codec(index = 44)]
-                    ChallengeNotFound,
+                    InsufficientSyncBalance,
                     #[codec(index = 45)]
-                    ChallengeAlreadyExists,
+                    ChallengeNotFound,
                     #[codec(index = 46)]
-                    InvalidChallengeProof,
+                    ChallengeAlreadyExists,
                     #[codec(index = 47)]
-                    ChallengeExpired,
+                    InvalidChallengeProof,
                     #[codec(index = 48)]
-                    NotChallengeProvider,
+                    ChallengeExpired,
                     #[codec(index = 49)]
-                    ProviderNotInSnapshot,
+                    NotChallengeProvider,
                     #[codec(index = 50)]
-                    LeafBeyondCanonical,
+                    ProviderNotInSnapshot,
                     #[codec(index = 51)]
-                    InvalidDeletionProof,
+                    LeafBeyondCanonical,
                     #[codec(index = 52)]
+                    InvalidDeletionProof,
+                    #[codec(index = 53)]
                     #[doc = "A provider with unresolved challenges (`PendingChallenges > 0`)"]
                     #[doc = "cannot complete deregistration — they are still slashable."]
                     ProviderHasPendingChallenges,
-                    #[codec(index = 53)]
+                    #[codec(index = 54)]
                     #[doc = "An agreement with an unresolved challenge against this"]
                     #[doc = "`(bucket, provider)` cannot be torn down until the challenge"]
                     #[doc = "resolves (defended, slashed, or timed out)."]
                     AgreementHasPendingChallenge,
-                    #[codec(index = 54)]
+                    #[codec(index = 55)]
                     #[doc = "`MaxChallengesPerDeadline` challenges have already been allocated"]
                     #[doc = "for the deadline this challenge would land on. Caps the total the"]
                     #[doc = "`on_initialize` sweep must eventually drain for a single key."]
                     TooManyChallengesThisBlock,
-                    #[codec(index = 55)]
-                    InvalidSignature,
                     #[codec(index = 56)]
-                    NoSnapshot,
+                    InvalidSignature,
                     #[codec(index = 57)]
-                    SnapshotViolatesFrozen,
+                    NoSnapshot,
                     #[codec(index = 58)]
-                    InsufficientSignatures,
+                    SnapshotViolatesFrozen,
                     #[codec(index = 59)]
+                    InsufficientSignatures,
+                    #[codec(index = 60)]
                     #[doc = "`CommitmentPayload::nonce` is older than `T::MaxNonceAge` blocks"]
                     #[doc = "behind the current block, or refers to a future block. Rejected"]
                     #[doc = "to prevent replay of captured signatures."]
                     CommitmentNonceTooOld,
-                    #[codec(index = 60)]
-                    ArithmeticOverflow,
                     #[codec(index = 61)]
-                    InvalidMultiaddr,
+                    ArithmeticOverflow,
                     #[codec(index = 62)]
-                    InvalidPublicKey,
+                    InvalidMultiaddr,
                     #[codec(index = 63)]
+                    InvalidPublicKey,
+                    #[codec(index = 64)]
                     #[doc = "Account is a member of too many buckets."]
                     TooManyBucketsForMember,
-                    #[codec(index = 64)]
+                    #[codec(index = 65)]
                     #[doc = "Provider signature over the SCALE-encoded terms is invalid."]
                     InvalidProviderSignature,
-                    #[codec(index = 65)]
+                    #[codec(index = 66)]
                     #[doc = "Signed terms have passed their `valid_until` block."]
                     TermsExpired,
-                    #[codec(index = 66)]
+                    #[codec(index = 67)]
                     #[doc = "Signed terms' `valid_until` extends beyond `now + RequestTimeout` —"]
                     #[doc = "the provider-signed validity window cap enforced on-chain."]
                     TermsValidityTooLong,
-                    #[codec(index = 67)]
+                    #[codec(index = 68)]
                     #[doc = "The terms' nonce has already been consumed inside the provider's"]
                     #[doc = "replay window."]
                     NonceAlreadyUsed,
-                    #[codec(index = 68)]
+                    #[codec(index = 69)]
                     #[doc = "The terms' nonce is older than the provider's replay window"]
                     #[doc = "(distance from `hsn` ≥ [`storage_primitives::REPLAY_WINDOW_BITS`])."]
                     NonceTooOld,
-                    #[codec(index = 69)]
+                    #[codec(index = 70)]
                     #[doc = "The terms' declared owner does not match the extrinsic origin."]
                     TermsOwnerMismatch,
-                    #[codec(index = 70)]
+                    #[codec(index = 71)]
                     #[doc = "Replica terms missing from a signed quote redeemed as a replica"]
                     #[doc = "agreement."]
                     MissingReplicaTerms,
-                    #[codec(index = 71)]
+                    #[codec(index = 72)]
                     #[doc = "The terms' bucket binding does not match the redeeming extrinsic:"]
                     #[doc = "primary terms must carry no bucket, replica terms must name the"]
                     #[doc = "targeted bucket."]
                     TermsBucketMismatch,
-                    #[codec(index = 72)]
+                    #[codec(index = 73)]
                     #[doc = "Storage agreement requested 0 byte"]
                     InvalidMaxBytesRequest,
                 }
@@ -25799,47 +25948,52 @@ pub mod api {
                     #[codec(index = 10)]
                     BucketDeleted { bucket_id: ::core::primitive::u64 },
                     #[codec(index = 11)]
+                    BucketVisibilityChanged {
+                        bucket_id: ::core::primitive::u64,
+                        visibility: runtime_types::storage_primitives::Visibility,
+                    },
+                    #[codec(index = 12)]
                     MemberSet {
                         bucket_id: ::core::primitive::u64,
                         member: ::subxt::utils::AccountId32,
                         role: runtime_types::storage_primitives::Role,
                     },
-                    #[codec(index = 12)]
+                    #[codec(index = 13)]
                     MemberRemoved {
                         bucket_id: ::core::primitive::u64,
                         member: ::subxt::utils::AccountId32,
                     },
-                    #[codec(index = 13)]
+                    #[codec(index = 14)]
                     BucketCheckpointed {
                         bucket_id: ::core::primitive::u64,
                         commitment: runtime_types::storage_primitives::Commitment,
                         providers: ::subxt::alloc::vec::Vec<::subxt::utils::AccountId32>,
                     },
-                    #[codec(index = 14)]
+                    #[codec(index = 15)]
                     ProviderAddedToBucket {
                         bucket_id: ::core::primitive::u64,
                         provider: ::subxt::utils::AccountId32,
                     },
-                    #[codec(index = 15)]
+                    #[codec(index = 16)]
                     PrimaryProviderRemoved {
                         bucket_id: ::core::primitive::u64,
                         provider: ::subxt::utils::AccountId32,
                         reason: runtime_types::storage_primitives::RemovalReason,
                     },
-                    #[codec(index = 16)]
+                    #[codec(index = 17)]
                     PrimaryAgreementEndedEarly {
                         bucket_id: ::core::primitive::u64,
                         provider: ::subxt::utils::AccountId32,
                         payment_to_provider: ::core::primitive::u128,
                         burned: ::core::primitive::u128,
                     },
-                    #[codec(index = 17)]
+                    #[codec(index = 18)]
                     SlashedProviderRemoved {
                         bucket_id: ::core::primitive::u64,
                         provider: ::subxt::utils::AccountId32,
                         payment_returned_to_owner: ::core::primitive::u128,
                     },
-                    #[codec(index = 18)]
+                    #[codec(index = 19)]
                     ReplicaSynced {
                         bucket_id: ::core::primitive::u64,
                         provider: ::subxt::utils::AccountId32,
@@ -25847,54 +26001,54 @@ pub mod api {
                         position_matched: ::core::primitive::u8,
                         sync_payment: ::core::primitive::u128,
                     },
-                    #[codec(index = 19)]
+                    #[codec(index = 20)]
                     ReplicaSyncBalanceToppedUp {
                         bucket_id: ::core::primitive::u64,
                         provider: ::subxt::utils::AccountId32,
                         amount: ::core::primitive::u128,
                         new_total: ::core::primitive::u128,
                     },
-                    #[codec(index = 20)]
+                    #[codec(index = 21)]
                     AgreementAccepted {
                         bucket_id: ::core::primitive::u64,
                         provider: ::subxt::utils::AccountId32,
                         expires_at: ::core::primitive::u32,
                     },
-                    #[codec(index = 21)]
+                    #[codec(index = 22)]
                     AgreementToppedUp {
                         bucket_id: ::core::primitive::u64,
                         provider: ::subxt::utils::AccountId32,
                         amount: ::core::primitive::u128,
                         new_max_bytes: ::core::primitive::u64,
                     },
-                    #[codec(index = 22)]
+                    #[codec(index = 23)]
                     AgreementExtended {
                         bucket_id: ::core::primitive::u64,
                         provider: ::subxt::utils::AccountId32,
                         new_expires_at: ::core::primitive::u32,
                         payment: ::core::primitive::u128,
                     },
-                    #[codec(index = 23)]
+                    #[codec(index = 24)]
                     AgreementOwnershipTransferred {
                         bucket_id: ::core::primitive::u64,
                         provider: ::subxt::utils::AccountId32,
                         old_owner: ::subxt::utils::AccountId32,
                         new_owner: ::subxt::utils::AccountId32,
                     },
-                    #[codec(index = 24)]
+                    #[codec(index = 25)]
                     AgreementEnded {
                         bucket_id: ::core::primitive::u64,
                         provider: ::subxt::utils::AccountId32,
                         payment_to_provider: ::core::primitive::u128,
                         burned: ::core::primitive::u128,
                     },
-                    #[codec(index = 25)]
+                    #[codec(index = 26)]
                     AgreementExpiredClaimed {
                         bucket_id: ::core::primitive::u64,
                         provider: ::subxt::utils::AccountId32,
                         payment_to_provider: ::core::primitive::u128,
                     },
-                    #[codec(index = 26)]
+                    #[codec(index = 27)]
                     #[doc = "Owner redeemed provider-signed terms; bucket created and agreement"]
                     #[doc = "opened atomically."]
                     StorageAgreementEstablished {
@@ -25908,7 +26062,7 @@ pub mod api {
                         >,
                         expires_at: ::core::primitive::u32,
                     },
-                    #[codec(index = 27)]
+                    #[codec(index = 28)]
                     #[doc = "Owner redeemed provider-signed replica terms; replica agreement"]
                     #[doc = "opened against an existing bucket."]
                     ReplicaAgreementEstablished {
@@ -25922,7 +26076,7 @@ pub mod api {
                         >,
                         expires_at: ::core::primitive::u32,
                     },
-                    #[codec(index = 28)]
+                    #[codec(index = 29)]
                     ChallengeCreated {
                         challenge_id:
                             runtime_types::storage_primitives::ChallengeId<::core::primitive::u32>,
@@ -25931,7 +26085,12 @@ pub mod api {
                         challenger: ::subxt::utils::AccountId32,
                         respond_by: ::core::primitive::u32,
                     },
-                    #[codec(index = 29)]
+                    #[codec(index = 30)]
+                    #[doc = "Provider responded successfully to a challenge."]
+                    #[doc = "`challenger_cost` is the deposit share moved to the provider as"]
+                    #[doc = "reimbursement; `provider_cost` is the share the provider bears by"]
+                    #[doc = "not being reimbursed for it — a cost-split fraction for authorized"]
+                    #[doc = "challengers, always zero for public ones. Stake is never touched."]
                     ChallengeDefended {
                         challenge_id:
                             runtime_types::storage_primitives::ChallengeId<::core::primitive::u32>,
@@ -25940,7 +26099,7 @@ pub mod api {
                         challenger_cost: ::core::primitive::u128,
                         provider_cost: ::core::primitive::u128,
                     },
-                    #[codec(index = 30)]
+                    #[codec(index = 31)]
                     ChallengeSlashed {
                         challenge_id:
                             runtime_types::storage_primitives::ChallengeId<::core::primitive::u32>,
@@ -26029,7 +26188,8 @@ pub mod api {
                     pub agreements_not_extended: ::core::primitive::u32,
                     pub agreements_burned: ::core::primitive::u32,
                     pub total_bytes_committed: ::core::primitive::u64,
-                    pub challenges_received: ::core::primitive::u32,
+                    pub challenges_received_authorized: ::core::primitive::u32,
+                    pub challenges_received_public: ::core::primitive::u32,
                     pub challenges_failed: ::core::primitive::u32,
                 }
                 #[derive(
@@ -26120,6 +26280,7 @@ pub mod api {
                         runtime_types::storage_primitives::BucketSnapshot<::core::primitive::u32>,
                     >,
                     pub total_snapshots: ::core::primitive::u32,
+                    pub visibility: runtime_types::storage_primitives::Visibility,
                 }
                 #[derive(
                     :: subxt :: ext :: scale_decode :: DecodeAsType,
@@ -26142,6 +26303,7 @@ pub mod api {
                     pub deadline: ::core::primitive::u32,
                     pub index: ::core::primitive::u16,
                     pub deposit: ::core::primitive::u128,
+                    pub authorized: ::core::primitive::bool,
                 }
                 #[derive(
                     :: subxt :: ext :: scale_decode :: DecodeAsType,
@@ -26209,7 +26371,8 @@ pub mod api {
                     pub agreements_extended: ::core::primitive::u32,
                     pub agreements_not_extended: ::core::primitive::u32,
                     pub agreements_burned: ::core::primitive::u32,
-                    pub challenges_received: ::core::primitive::u32,
+                    pub challenges_received_authorized: ::core::primitive::u32,
+                    pub challenges_received_public: ::core::primitive::u32,
                     pub challenges_failed: ::core::primitive::u32,
                     pub max_capacity: ::core::primitive::u64,
                     pub available_capacity: ::core::option::Option<::core::primitive::u64>,
@@ -30699,6 +30862,22 @@ pub mod api {
                 InvalidDeletionClaim,
                 #[codec(index = 3)]
                 InvalidSupersededClaim,
+            }
+            #[derive(
+                :: subxt :: ext :: scale_decode :: DecodeAsType,
+                :: subxt :: ext :: scale_encode :: EncodeAsType,
+                Clone,
+                Debug,
+                Eq,
+                PartialEq,
+            )]
+            #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+            #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+            pub enum Visibility {
+                #[codec(index = 0)]
+                Public,
+                #[codec(index = 1)]
+                Private,
             }
         }
         pub mod xcm {
