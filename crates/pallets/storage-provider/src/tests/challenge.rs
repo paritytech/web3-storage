@@ -2,10 +2,10 @@
 
 use super::*;
 use sp_core::H256;
-use storage_primitives::{BucketSnapshot, ChallengeId, ChunkLocation, Commitment};
+use storage_primitives::{BucketSnapshot, ChallengeId, ChunkLocation, Commitment, Role};
 
 /// Setup: register provider, create agreement, and insert a snapshot with provider signed.
-fn setup_with_snapshot(provider: u64, client: u64) -> u64 {
+pub(super) fn setup_with_snapshot(provider: u64, client: u64) -> u64 {
     register_provider(provider, 200);
     let bucket_id = setup_agreement(provider, client, 50, 200);
 
@@ -33,7 +33,7 @@ fn setup_with_snapshot(provider: u64, client: u64) -> u64 {
 /// genuinely superseded. Required for a `Superseded` defense to be valid under
 /// the tightened soundness rule (challenged root must differ from the live
 /// canonical root, and the challenged seq must still be in range).
-fn advance_snapshot_root(bucket_id: u64) {
+pub(super) fn advance_snapshot_root(bucket_id: u64) {
     Buckets::<Test>::mutate(bucket_id, |maybe_bucket| {
         let bucket = maybe_bucket.as_mut().expect("bucket exists");
         bucket.snapshot = Some(BucketSnapshot {
@@ -346,6 +346,15 @@ fn respond_to_challenge_superseded_cost_split_block_1() {
         frame_system::Pallet::<Test>::set_block_number(1);
         let bucket_id = setup_with_snapshot(2, 1);
 
+        // Authorize the challenger (Reader member): the split table applies
+        // only to the authorized tier — a public stranger pays 100%.
+        assert_ok!(StorageProvider::set_member(
+            RuntimeOrigin::signed(1),
+            bucket_id,
+            3,
+            Role::Reader,
+        ));
+
         // Treasury account is 999 in the mock (TestTreasury).
         const TREASURY: u64 = 999;
 
@@ -393,19 +402,22 @@ fn respond_to_challenge_superseded_cost_split_block_1() {
         // free balance as compensation for responding.
         assert_eq!(Balances::free_balance(2), provider_balance_before + 90);
 
-        // Provider stake decreased by 10
+        // A valid response never touches the provider's stake: the provider
+        // bears its 10% share by not being reimbursed for it.
         let provider_stake_after = Providers::<Test>::get(2).unwrap().stake;
-        assert_eq!(provider_stake_after, provider_stake_before - 10);
+        assert_eq!(provider_stake_after, provider_stake_before);
 
-        // The slashed provider_cost (10) is routed to the Treasury, not burned.
-        assert_eq!(
-            Balances::free_balance(TREASURY),
-            treasury_balance_before + 10
-        );
+        // Nothing flows to the Treasury on a defense.
+        assert_eq!(Balances::free_balance(TREASURY), treasury_balance_before);
 
-        // Slash + resolve is net-zero: total issuance is unchanged. The
-        // repatriated challenger_cost is an internal transfer, also net-zero.
+        // The repatriated challenger_cost is an internal transfer: total
+        // issuance is unchanged.
         assert_eq!(Balances::total_issuance(), total_issuance_before);
+
+        // The defense is counted, at resolution, under the authorized tier.
+        let stats = Providers::<Test>::get(2).unwrap().stats;
+        assert_eq!(stats.challenges_received_authorized, 1);
+        assert_eq!(stats.challenges_received_public, 0);
     });
 }
 
@@ -414,6 +426,15 @@ fn respond_to_challenge_superseded_cost_split_block_5() {
     new_test_ext().execute_with(|| {
         frame_system::Pallet::<Test>::set_block_number(1);
         let bucket_id = setup_with_snapshot(2, 1);
+
+        // Authorize the challenger (Reader member): the split table applies
+        // only to the authorized tier — a public stranger pays 100%.
+        assert_ok!(StorageProvider::set_member(
+            RuntimeOrigin::signed(1),
+            bucket_id,
+            3,
+            Role::Reader,
+        ));
 
         let challenger_balance_before = Balances::free_balance(3);
         let provider_stake_before = Providers::<Test>::get(2).unwrap().stake;
@@ -447,8 +468,10 @@ fn respond_to_challenge_superseded_cost_split_block_5() {
 
         // challenger_cost = 80, provider_cost = 20
         assert_eq!(Balances::free_balance(3), challenger_balance_before - 80);
+        // Stake untouched: the provider bears its share by not being
+        // reimbursed for it.
         let provider_stake_after = Providers::<Test>::get(2).unwrap().stake;
-        assert_eq!(provider_stake_after, provider_stake_before - 20);
+        assert_eq!(provider_stake_after, provider_stake_before);
     });
 }
 
@@ -457,6 +480,15 @@ fn respond_to_challenge_superseded_cost_split_block_24() {
     new_test_ext().execute_with(|| {
         frame_system::Pallet::<Test>::set_block_number(1);
         let bucket_id = setup_with_snapshot(2, 1);
+
+        // Authorize the challenger (Reader member): the split table applies
+        // only to the authorized tier — a public stranger pays 100%.
+        assert_ok!(StorageProvider::set_member(
+            RuntimeOrigin::signed(1),
+            bucket_id,
+            3,
+            Role::Reader,
+        ));
 
         let challenger_balance_before = Balances::free_balance(3);
         let provider_stake_before = Providers::<Test>::get(2).unwrap().stake;
@@ -490,8 +522,10 @@ fn respond_to_challenge_superseded_cost_split_block_24() {
 
         // challenger_cost = 70, provider_cost = 30
         assert_eq!(Balances::free_balance(3), challenger_balance_before - 70);
+        // Stake untouched: the provider bears its share by not being
+        // reimbursed for it.
         let provider_stake_after = Providers::<Test>::get(2).unwrap().stake;
-        assert_eq!(provider_stake_after, provider_stake_before - 30);
+        assert_eq!(provider_stake_after, provider_stake_before);
     });
 }
 
@@ -500,6 +534,15 @@ fn respond_to_challenge_superseded_cost_split_block_95() {
     new_test_ext().execute_with(|| {
         frame_system::Pallet::<Test>::set_block_number(1);
         let bucket_id = setup_with_snapshot(2, 1);
+
+        // Authorize the challenger (Reader member): the split table applies
+        // only to the authorized tier — a public stranger pays 100%.
+        assert_ok!(StorageProvider::set_member(
+            RuntimeOrigin::signed(1),
+            bucket_id,
+            3,
+            Role::Reader,
+        ));
 
         let challenger_balance_before = Balances::free_balance(3);
         let provider_stake_before = Providers::<Test>::get(2).unwrap().stake;
@@ -533,8 +576,10 @@ fn respond_to_challenge_superseded_cost_split_block_95() {
 
         // challenger_cost = 60, provider_cost = 40
         assert_eq!(Balances::free_balance(3), challenger_balance_before - 60);
+        // Stake untouched: the provider bears its share by not being
+        // reimbursed for it.
         let provider_stake_after = Providers::<Test>::get(2).unwrap().stake;
-        assert_eq!(provider_stake_after, provider_stake_before - 40);
+        assert_eq!(provider_stake_after, provider_stake_before);
     });
 }
 
@@ -543,6 +588,15 @@ fn respond_to_challenge_superseded_cost_split_block_96_plus() {
     new_test_ext().execute_with(|| {
         frame_system::Pallet::<Test>::set_block_number(1);
         let bucket_id = setup_with_snapshot(2, 1);
+
+        // Authorize the challenger (Reader member): the split table applies
+        // only to the authorized tier — a public stranger pays 100%.
+        assert_ok!(StorageProvider::set_member(
+            RuntimeOrigin::signed(1),
+            bucket_id,
+            3,
+            Role::Reader,
+        ));
 
         let challenger_balance_before = Balances::free_balance(3);
         let provider_balance_before = Balances::free_balance(2);
@@ -585,8 +639,10 @@ fn respond_to_challenge_superseded_cost_split_block_96_plus() {
         // free balance as compensation for responding.
         assert_eq!(Balances::free_balance(2), provider_balance_before + 50);
 
+        // Stake untouched: the provider bears its share by not being
+        // reimbursed for it.
         let provider_stake_after = Providers::<Test>::get(2).unwrap().stake;
-        assert_eq!(provider_stake_after, provider_stake_before - 50);
+        assert_eq!(provider_stake_after, provider_stake_before);
     });
 }
 
@@ -880,13 +936,15 @@ fn respond_to_challenge_superseded_emits_defended_event() {
             crate::ChallengeResponse::Superseded,
         ));
 
-        // Verify ChallengeDefended event
+        // Verify ChallengeDefended event. Challenger 3 is a public stranger,
+        // so the deposit reimburses the provider in full and the provider
+        // bears nothing.
         let expected_event = RuntimeEvent::StorageProvider(crate::Event::ChallengeDefended {
             challenge_id,
             provider: 2,
             response_time_blocks: 1,
-            challenger_cost: 90,
-            provider_cost: 10,
+            challenger_cost: 100,
+            provider_cost: 0,
         });
         assert!(frame_system::Pallet::<Test>::events()
             .iter()
@@ -1197,10 +1255,13 @@ mod challenge_tests {
             assert_eq!(challenge.mmr_root, mmr_root);
             // Currently a fixed `100u32`; commit 4 will change this.
             assert_eq!(challenge.deposit, 100);
+            // Challenger 3 is a stranger (not a member, owns no agreement).
+            assert!(!challenge.authorized);
 
-            // Provider stats reflect received challenge.
+            // Received counters move at resolution, never at creation.
             let provider = Providers::<Test>::get(2).unwrap();
-            assert_eq!(provider.stats.challenges_received, 1);
+            assert_eq!(provider.stats.challenges_received_authorized, 0);
+            assert_eq!(provider.stats.challenges_received_public, 0);
         });
     }
 
@@ -1288,13 +1349,14 @@ mod challenge_tests {
 
             // Challenge cleared from storage.
             assert!(Challenges::<Test>::get(101, 0).is_none());
-            // Defended path slashes a fraction of the deposit from the
-            // provider's stake based on response time. At block 1 (challenge
-            // also created at block 1) the response is within "block 1" → 10%
-            // of the 100-deposit = 10 deducted, stake drops 200 → 190.
+            // A valid defense never touches stake. Challenger 3 is a public
+            // stranger, so the whole deposit reimburses the provider and the
+            // defense is counted under the public tier.
             let provider = Providers::<Test>::get(2).unwrap();
-            assert_eq!(provider.stake, 190);
+            assert_eq!(provider.stake, 200);
             assert_eq!(provider.stats.challenges_failed, 0);
+            assert_eq!(provider.stats.challenges_received_public, 1);
+            assert_eq!(provider.stats.challenges_received_authorized, 0);
         });
     }
 

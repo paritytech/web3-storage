@@ -192,6 +192,15 @@ impl<T: frame_system::Config> pallet_storage_provider::WeightInfo for WeightInfo
 			.saturating_add(T::DbWeight::get().reads(1))
 			.saturating_add(T::DbWeight::get().writes(1))
 	}
+	/// Placeholder mirroring `set_bucket_min_providers` (same 1-read/1-write
+	/// shape); not benchmarked — regenerate via the CI bench flow.
+	fn set_bucket_visibility() -> Weight {
+		// Placeholder — see doc comment above.
+		Weight::from_parts(11_005_000, 0)
+			.saturating_add(Weight::from_parts(0, 3894))
+			.saturating_add(T::DbWeight::get().reads(1))
+			.saturating_add(T::DbWeight::get().writes(1))
+	}
 	/// Storage: `StorageProvider::Buckets` (r:1 w:1)
 	/// Proof: `StorageProvider::Buckets` (`max_values`: None, `max_size`: None, mode: `Measured`)
 	fn freeze_bucket() -> Weight {

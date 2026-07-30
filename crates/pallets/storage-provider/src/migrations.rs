@@ -69,6 +69,8 @@ pub mod v1 {
                     }),
                     historical_roots: old.historical_roots,
                     total_snapshots: old.total_snapshots,
+                    // Fail-safe default; no v0 chain with data of value exists.
+                    visibility: storage_primitives::Visibility::Private,
                 })
             });
             // `translate` reads every key in the map (whether or not it

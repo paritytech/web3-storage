@@ -11,7 +11,7 @@ use alloc::vec::Vec;
 use codec::{Decode, Encode};
 use scale_info::TypeInfo;
 use sp_core::H256;
-use storage_primitives::{BucketId, BucketSnapshot, ProviderRole, Role};
+use storage_primitives::{BucketId, BucketSnapshot, ProviderRole, Role, Visibility};
 
 /// Provider information returned by runtime API.
 #[derive(Clone, PartialEq, Eq, Encode, Decode, TypeInfo, Debug)]
@@ -32,7 +32,11 @@ pub struct ProviderInfoResponse {
     pub agreements_extended: u32,
     pub agreements_not_extended: u32,
     pub agreements_burned: u32,
-    pub challenges_received: u32,
+    /// Successfully defended challenges from authorized challengers
+    /// (member/agreement owner at creation). Counted at resolution.
+    pub challenges_received_authorized: u32,
+    /// Same, for general-public challengers.
+    pub challenges_received_public: u32,
     pub challenges_failed: u32,
     /// Maximum storage capacity in bytes (0 = unlimited).
     pub max_capacity: u64,
@@ -103,6 +107,7 @@ pub struct BucketResponse {
     pub primary_providers: Vec<Vec<u8>>, // Vec of encoded AccountIds
     pub snapshot: Option<BucketSnapshot<u32>>,
     pub total_snapshots: u32,
+    pub visibility: Visibility,
 }
 
 /// Storage agreement information.
@@ -136,6 +141,8 @@ pub struct ChallengeResponse {
     /// Stable per-deadline index, forming `ChallengeId { deadline, index }`.
     pub index: u16,
     pub deposit: u128,
+    /// Challenger tier snapshotted at creation (member/agreement owner).
+    pub authorized: bool,
 }
 
 sp_api::decl_runtime_apis! {

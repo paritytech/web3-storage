@@ -63,7 +63,7 @@ pub mod pallet {
     use storage_primitives::{
         BucketId, BucketSnapshot, ChallengeId, ChallengerStatRecord, ChunkLocation, Commitment,
         CommitmentPayload, EndAction, MerkleProof, MmrProof, ProviderRole, RemovalReason,
-        ReplayWindow, ReplicaSyncRecord, Role, SlashReason,
+        ReplayWindow, ReplicaSyncRecord, Role, SlashReason, Visibility,
     };
 
     pub type BalanceOf<T> =
@@ -472,8 +472,14 @@ pub mod pallet {
                 .expect("genesis provider registration should not fail");
             }
             for (admin, min_providers) in &self.buckets {
-                Pallet::<T>::create_bucket_internal(admin, *min_providers, None)
-                    .expect("genesis bucket creation should not fail");
+                // Genesis omits the choice, so the fail-safe wrapper default applies.
+                Pallet::<T>::create_bucket_internal(
+                    admin,
+                    *min_providers,
+                    None,
+                    Visibility::Private,
+                )
+                .expect("genesis bucket creation should not fail");
             }
         }
     }
@@ -585,9 +591,16 @@ pub mod pallet {
         pub agreements_burned: u32,
         /// Total bytes ever committed across all agreements.
         pub total_bytes_committed: u64,
-        /// Number of challenges received.
-        pub challenges_received: u32,
-        /// Number of challenges where provider was slashed.
+        /// Challenges from authorized challengers (member/agreement owner at
+        /// challenge creation) that the provider responded to. Counted at
+        /// resolution — a challenge resolves into exactly one of
+        /// received_authorized / received_public (successfully defended) or
+        /// failed (slashed).
+        pub challenges_received_authorized: u32,
+        /// Same, for general-public challengers.
+        pub challenges_received_public: u32,
+        /// Number of challenges where provider was slashed. Tier-independent
+        /// and disjoint from the received counters.
         pub challenges_failed: u32,
     }
 
@@ -617,6 +630,10 @@ pub mod pallet {
         pub historical_roots: [(u32, H256); 6],
         /// Total snapshots created for this bucket.
         pub total_snapshots: u32,
+        /// Read visibility (see `Visibility`). On-chain, only challenge
+        /// creation reads it: `Private` restricts primary challenges to
+        /// members and primary-agreement owners.
+        pub visibility: Visibility,
     }
 
     /// Storage agreement between bucket and provider.
@@ -659,6 +676,11 @@ pub mod pallet {
         pub target: ChunkLocation,
         /// Deposit locked by challenger.
         pub deposit: BalanceOf<T>,
+        /// Whether the challenger was authorized (bucket member or agreement
+        /// owner, via `is_authorized`) at challenge creation. Snapshotted so
+        /// membership/agreement changes between creation and response cannot
+        /// alter the fee split applied in `respond_to_challenge`.
+        pub authorized: bool,
     }
 
     /// Challenge response from provider.
@@ -752,6 +774,10 @@ pub mod pallet {
         },
         BucketDeleted {
             bucket_id: BucketId,
+        },
+        BucketVisibilityChanged {
+            bucket_id: BucketId,
+            visibility: Visibility,
         },
         MemberSet {
             bucket_id: BucketId,
@@ -931,6 +957,7 @@ pub mod pallet {
         MaxPrimaryProvidersReached,
         MinProvidersNotMet,
         InvalidMinProviders,
+        NotAuthorizedForPrivateBucket,
 
         // Agreement errors
         AgreementNotFound,
@@ -1335,6 +1362,10 @@ pub mod pallet {
         /// rejects replays via the provider's sliding nonce window, then runs
         /// the standard provider/capacity/stake checks and opens the
         /// agreement.
+        ///
+        /// `visibility` sets the new bucket's read visibility (see
+        /// [`Visibility`]); it is the owner's choice and not part of the
+        /// provider-signed terms.
         #[pallet::call_index(17)]
         #[pallet::weight(T::WeightInfo::establish_storage_agreement())]
         pub fn establish_storage_agreement(
@@ -1342,9 +1373,10 @@ pub mod pallet {
             provider: T::AccountId,
             terms: AgreementTermsOf<T>,
             sig: sp_runtime::MultiSignature,
+            visibility: Visibility,
         ) -> DispatchResult {
             let who = ensure_signed(origin)?;
-            Self::establish_storage_agreement_internal(&who, &provider, terms, &sig)?;
+            Self::establish_storage_agreement_internal(&who, &provider, terms, &sig, visibility)?;
             Ok(())
         }
 
@@ -1402,6 +1434,37 @@ pub mod pallet {
                 Self::deposit_event(Event::BucketFrozen {
                     bucket_id,
                     frozen_start_seq: snapshot.commitment.start_seq,
+                });
+
+                Ok(())
+            })
+        }
+
+        /// Set bucket read visibility (admin only).
+        ///
+        /// Flips `Public` ⇄ `Private` unconditionally in both directions — a
+        /// precondition on existing replicas would hand third parties a veto
+        /// over the admin. Effects are asymmetric: privatizing does not recall
+        /// data already replicated, publicizing cannot be undone.
+        #[pallet::call_index(16)]
+        #[pallet::weight(T::WeightInfo::set_bucket_visibility())]
+        pub fn set_bucket_visibility(
+            origin: OriginFor<T>,
+            bucket_id: BucketId,
+            visibility: Visibility,
+        ) -> DispatchResult {
+            let who = ensure_signed(origin)?;
+
+            Buckets::<T>::try_mutate(bucket_id, |maybe_bucket| -> DispatchResult {
+                let bucket = maybe_bucket.as_mut().ok_or(Error::<T>::BucketNotFound)?;
+
+                Self::ensure_admin(&who, bucket)?;
+
+                bucket.visibility = visibility;
+
+                Self::deposit_event(Event::BucketVisibilityChanged {
+                    bucket_id,
+                    visibility,
                 });
 
                 Ok(())
@@ -2127,11 +2190,6 @@ pub mod pallet {
         ) -> DispatchResult {
             let who = ensure_signed(origin)?;
 
-            let ChunkLocation {
-                leaf_index,
-                chunk_index,
-            } = target;
-
             let bucket = Buckets::<T>::get(bucket_id).ok_or(Error::<T>::BucketNotFound)?;
             let snapshot = bucket.snapshot.as_ref().ok_or(Error::<T>::NoSnapshot)?;
 
@@ -2161,11 +2219,11 @@ pub mod pallet {
             Self::create_challenge(
                 who,
                 bucket_id,
+                &bucket,
                 provider,
-                snapshot.commitment.mmr_root,
-                snapshot.commitment.start_seq,
-                leaf_index,
-                chunk_index,
+                &agreement.role,
+                snapshot.commitment,
+                target,
             )
         }
 
@@ -2196,16 +2254,9 @@ pub mod pallet {
 
             Self::ensure_recent_nonce(nonce)?;
 
-            let ChunkLocation {
-                leaf_index,
-                chunk_index,
-            } = target;
-
-            // Verify the bucket exists
-            ensure!(
-                Buckets::<T>::contains_key(bucket_id),
-                Error::<T>::BucketNotFound
-            );
+            // Verify the bucket exists (loaded in full: the private-bucket
+            // gate and the challenger tier read its visibility and members).
+            let bucket = Buckets::<T>::get(bucket_id).ok_or(Error::<T>::BucketNotFound)?;
 
             // Verify provider has an ACTIVE agreement for this bucket. An
             // expired-but-unswept agreement leaves a stale row in
@@ -2230,11 +2281,11 @@ pub mod pallet {
             Self::create_challenge(
                 who,
                 bucket_id,
+                &bucket,
                 provider,
-                commitment.mmr_root,
-                commitment.start_seq,
-                leaf_index,
-                chunk_index,
+                &agreement.role,
+                commitment,
+                target,
             )
         }
 
@@ -2252,11 +2303,6 @@ pub mod pallet {
         ) -> DispatchResult {
             let who = ensure_signed(origin)?;
 
-            let ChunkLocation {
-                leaf_index,
-                chunk_index,
-            } = target;
-
             // Get the agreement and verify it's a replica
             let agreement = StorageAgreements::<T>::get(bucket_id, &provider)
                 .ok_or(Error::<T>::AgreementNotFound)?;
@@ -2268,22 +2314,28 @@ pub mod pallet {
                 Error::<T>::AgreementExpired
             );
 
-            let (mmr_root, start_seq) = match &agreement.role {
+            let commitment = match &agreement.role {
                 ProviderRole::Replica { last_sync, .. } => {
-                    let record = last_sync.as_ref().ok_or(Error::<T>::InvalidSyncRoot)?;
-                    (record.commitment.mmr_root, record.commitment.start_seq)
+                    last_sync
+                        .as_ref()
+                        .ok_or(Error::<T>::InvalidSyncRoot)?
+                        .commitment
                 }
                 ProviderRole::Primary => return Err(Error::<T>::NotReplica.into()),
             };
 
+            // Needed for the challenger-tier snapshot (replicas are never
+            // gated by visibility, but the tier still applies).
+            let bucket = Buckets::<T>::get(bucket_id).ok_or(Error::<T>::BucketNotFound)?;
+
             Self::create_challenge(
                 who,
                 bucket_id,
+                &bucket,
                 provider,
-                mmr_root,
-                start_seq,
-                leaf_index,
-                chunk_index,
+                &agreement.role,
+                commitment,
+                target,
             )
         }
 
@@ -2445,15 +2497,22 @@ pub mod pallet {
                 .saturating_sub(T::ChallengeTimeout::get());
             let response_time = anchor_block.saturating_sub(challenge_created_at);
 
-            // Calculate cost split based on response time
-            // Per design:
-            // Block 1: Challenger 90%, Provider 10%
-            // Blocks 2-5: Challenger 80%, Provider 20%
-            // Blocks 6-24: Challenger 70%, Provider 30%
-            // Blocks 25-95: Challenger 60%, Provider 40%
-            // Blocks 96+: Challenger 50%, Provider 50%
-
-            let challenger_percent = if response_time <= BlockNumberFor::<T>::from(1u32) {
+            // A valid response never touches the provider's stake — only the
+            // response cost (proxied by the deposit) is at issue, and the
+            // challenger's deposit reimburses it. How much of that cost the
+            // provider is made to bear depends on the tier snapshotted at
+            // creation:
+            // - General public pays in full — the provider bears nothing
+            //   (anti-DDoS: if strangers got the split, a crowd could each pay
+            //   little while collectively draining the provider).
+            // - Authorized challengers (members/agreement owners) get a split
+            //   by response time, floored at 50% — leverage, not cheap
+            //   recovery:
+            //   Block 1: 90/10, 2-5: 80/20, 6-24: 70/30, 25-95: 60/40,
+            //   96+: 50/50 (challenger/provider).
+            let challenger_percent = if !challenge.authorized {
+                100u32
+            } else if response_time <= BlockNumberFor::<T>::from(1u32) {
                 90u32
             } else if response_time <= BlockNumberFor::<T>::from(5u32) {
                 80u32
@@ -2465,11 +2524,10 @@ pub mod pallet {
                 50u32
             };
 
-            let provider_percent = 100u32.saturating_sub(challenger_percent);
-
-            // Calculate actual costs
             let challenger_cost = challenge.deposit * challenger_percent.into() / 100u32.into();
-            let provider_cost = challenge.deposit * provider_percent.into() / 100u32.into();
+            // The provider's share is borne by simply not being reimbursed for
+            // it — no funds move from the provider, and its stake stays intact.
+            let provider_cost = challenge.deposit.saturating_sub(challenger_cost);
 
             // Challenger forfeits `challenger_cost` to the provider as
             // compensation for the work of responding: move it from the
@@ -2490,18 +2548,19 @@ pub mod pallet {
                 .saturating_add(not_moved);
             T::Currency::unreserve(&challenge.challenger, refund);
 
-            // Slash provider_cost from provider's stake and route it to the
-            // Treasury (no burning). `resolve_creating` restores the issuance
-            // burned by `slash_reserved`, keeping total issuance unchanged.
-            let (provider_cost_imbalance, remaining) =
-                T::Currency::slash_reserved(&who, provider_cost);
-            let actually_slashed = provider_cost.saturating_sub(remaining);
-            T::Currency::resolve_creating(&T::Treasury::get(), provider_cost_imbalance);
-
-            // Update provider stake in storage
+            // Count the responded-to challenge per tier (resolution-time
+            // stats; creation leaves no trace).
             Providers::<T>::mutate(&who, |maybe_provider| {
                 if let Some(provider) = maybe_provider {
-                    provider.stake = provider.stake.saturating_sub(actually_slashed);
+                    if challenge.authorized {
+                        provider.stats.challenges_received_authorized = provider
+                            .stats
+                            .challenges_received_authorized
+                            .saturating_add(1);
+                    } else {
+                        provider.stats.challenges_received_public =
+                            provider.stats.challenges_received_public.saturating_add(1);
+                    }
                 }
             });
 
@@ -2517,7 +2576,7 @@ pub mod pallet {
                 provider: who,
                 response_time_blocks: response_time,
                 challenger_cost,
-                provider_cost: actually_slashed,
+                provider_cost,
             });
 
             Ok(())

@@ -40,6 +40,36 @@ impl<T: Config> Pallet<T> {
         (target_idx, target_is_admin, admin_count)
     }
 
+    fn is_member(who: &T::AccountId, bucket: &Bucket<T>) -> bool {
+        bucket.members.iter().any(|m| &m.account == who)
+    }
+
+    /// The challenger-tier predicate: bucket member (any role) or owner of
+    /// any storage agreement on the bucket (replica funders count).
+    pub(crate) fn is_authorized(
+        who: &T::AccountId,
+        bucket_id: BucketId,
+        bucket: &Bucket<T>,
+    ) -> bool {
+        Self::is_member(who, bucket)
+            || StorageAgreements::<T>::iter_prefix(bucket_id).any(|(_, a)| &a.owner == who)
+    }
+
+    /// The private-bucket challenge gate: bucket member or owner of a
+    /// *primary* agreement (replica-agreement owners deliberately excluded).
+    /// Bounded by `MaxPrimaryProviders` via `bucket.primary_providers`.
+    pub(crate) fn is_authorized_for_private(
+        who: &T::AccountId,
+        bucket_id: BucketId,
+        bucket: &Bucket<T>,
+    ) -> bool {
+        Self::is_member(who, bucket)
+            || bucket
+                .primary_providers
+                .iter()
+                .any(|p| StorageAgreements::<T>::get(bucket_id, p).is_some_and(|a| &a.owner == who))
+    }
+
     pub(crate) fn ensure_writer_or_admin(who: &T::AccountId, bucket: &Bucket<T>) -> DispatchResult {
         ensure!(
             bucket

@@ -22,6 +22,7 @@ fn challenge_to_response<T: Config>(
         deadline: deadline.saturated_into(),
         index,
         deposit: c.deposit.saturated_into::<u128>(),
+        authorized: c.authorized,
     }
 }
 
@@ -113,7 +114,8 @@ impl<T: Config> Pallet<T> {
                 agreements_extended: info.stats.agreements_extended,
                 agreements_not_extended: info.stats.agreements_not_extended,
                 agreements_burned: info.stats.agreements_burned,
-                challenges_received: info.stats.challenges_received,
+                challenges_received_authorized: info.stats.challenges_received_authorized,
+                challenges_received_public: info.stats.challenges_received_public,
                 challenges_failed: info.stats.challenges_failed,
                 max_capacity,
                 available_capacity,
@@ -158,7 +160,8 @@ impl<T: Config> Pallet<T> {
                         agreements_extended: info.stats.agreements_extended,
                         agreements_not_extended: info.stats.agreements_not_extended,
                         agreements_burned: info.stats.agreements_burned,
-                        challenges_received: info.stats.challenges_received,
+                        challenges_received_authorized: info.stats.challenges_received_authorized,
+                        challenges_received_public: info.stats.challenges_received_public,
                         challenges_failed: info.stats.challenges_failed,
                         max_capacity,
                         available_capacity,
@@ -194,6 +197,7 @@ impl<T: Config> Pallet<T> {
                 commitment_nonce: s.commitment_nonce,
             }),
             total_snapshots: bucket.total_snapshots,
+            visibility: bucket.visibility,
         })
     }
 

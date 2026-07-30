@@ -5,9 +5,10 @@ use frame_support::{
     pallet_prelude::*,
     traits::{Currency, ReservableCurrency},
 };
-use sp_core::H256;
 use sp_runtime::traits::{One, Saturating, Zero};
-use storage_primitives::{BucketId, ChallengeId, ChunkLocation, SlashReason};
+use storage_primitives::{
+    BucketId, ChallengeId, ChunkLocation, Commitment, ProviderRole, SlashReason, Visibility,
+};
 
 impl<T: Config> Pallet<T> {
     /// The `on_initialize` slash sweep: slash providers whose challenges expired
@@ -123,12 +124,31 @@ impl<T: Config> Pallet<T> {
     pub(crate) fn create_challenge(
         challenger: T::AccountId,
         bucket_id: BucketId,
+        bucket: &Bucket<T>,
         provider: T::AccountId,
-        mmr_root: H256,
-        start_seq: u64,
-        leaf_index: u64,
-        chunk_index: u64,
+        provider_role: &ProviderRole<BalanceOf<T>, BlockNumberFor<T>>,
+        commitment: Commitment,
+        target: ChunkLocation,
     ) -> DispatchResult {
+        // Private-bucket gate: the public has no legitimate reliance on data
+        // it cannot read, and must not be able to force private bytes
+        // on-chain via the response. Keyed on the challenged provider's role
+        // in its *current* agreement; replicas stay challengeable by anyone
+        // (their content is public — the anti-censorship guarantee).
+        if bucket.visibility == Visibility::Private
+            && matches!(provider_role, ProviderRole::Primary)
+        {
+            ensure!(
+                Self::is_authorized_for_private(&challenger, bucket_id, bucket),
+                Error::<T>::NotAuthorizedForPrivateBucket
+            );
+        }
+
+        // Challenger tier, evaluated once here and snapshotted in the
+        // challenge: membership/agreement changes between creation and
+        // response cannot alter the fee split in `respond_to_challenge`.
+        let authorized = Self::is_authorized(&challenger, bucket_id, bucket);
+
         // Deposit comes from `T::ChallengeDeposit` — a runtime constant
         // sized to make spam expensive without pricing out legitimate
         // challengers. Previously hardcoded `100u32` (1e-10 of a token
@@ -144,13 +164,11 @@ impl<T: Config> Pallet<T> {
             bucket_id,
             provider: provider.clone(),
             challenger: challenger.clone(),
-            mmr_root,
-            start_seq,
-            target: ChunkLocation {
-                leaf_index,
-                chunk_index,
-            },
+            mmr_root: commitment.mmr_root,
+            start_seq: commitment.start_seq,
+            target,
             deposit,
+            authorized,
         };
 
         // Cap the number of challenges that can share this deadline so the
@@ -182,14 +200,6 @@ impl<T: Config> Pallet<T> {
         // escape a live challenge.
         PendingChallenges::<T>::mutate(&provider, |n| *n = n.saturating_add(1));
         PendingChallengesByBucket::<T>::mutate(bucket_id, &provider, |n| *n = n.saturating_add(1));
-
-        // Update provider stats
-        Providers::<T>::mutate(&provider, |maybe_provider| {
-            if let Some(provider_info) = maybe_provider {
-                provider_info.stats.challenges_received =
-                    provider_info.stats.challenges_received.saturating_add(1);
-            }
-        });
 
         // Bump challenger's total_challenges aggregate so the SDK's
         // `get_challenge_stats` doesn't have to scan event history.

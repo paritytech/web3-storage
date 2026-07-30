@@ -182,7 +182,7 @@ pub const VERSION: RuntimeVersion = RuntimeVersion {
     // (Vec -> StorageDoubleMap); 4_003 for dropping the vestigial
     // `ChallengerStatRecord::total_earnings` field. Must stay > the deployed
     // value so the upgrade is accepted and migrations run.
-    spec_version: 4_003,
+    spec_version: 4_004,
     impl_version: 0,
     apis: RUNTIME_API_VERSIONS,
     transaction_version: 2,
