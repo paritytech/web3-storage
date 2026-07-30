@@ -14,6 +14,9 @@
 - NEVER submit AI-generated review comments (PR reviews, inline comments, or issue comments) to GitHub automatically
 - ALWAYS present review findings to the human reviewer for triage first, and only post the ones they explicitly approve, after they explicitly ask for them to be posted
 
+**Workspace crate rules:**
+- When adding, splitting out, or renaming a workspace member crate, ALWAYS classify it in `scripts/coverage.sh`: add it to `COV_PACKAGES` (measured) or `COV_SKIP_PACKAGES` (skipped, with a reason comment). CI's coverage job fails on any unclassified member.
+
 **Cargo dependency rules:**
 - ALWAYS declare external dependencies in the root `[workspace.dependencies]` and inherit them in crates via `{ workspace = true }`. Never add inline-versioned dependencies (e.g. `foo = "1.2"`) to a crate's `Cargo.toml`.
 - On the inheriting line you may only add `features` (additive) and `optional`; per Cargo, `version` and `default-features` cannot appear there, so set `default-features` in the workspace declaration (e.g. `hex = { version = "0.4", default-features = false }`).

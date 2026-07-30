@@ -10,6 +10,7 @@ use axum::http::StatusCode;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use codec::Encode;
 use common::SignedClient;
+use provider_storage::{NullNonceStore, Storage};
 use reqwest::Method;
 use serde_json::{json, Value};
 use sp_core::crypto::Ss58Codec;
@@ -19,7 +20,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use storage_primitives::{Commitment, CommitmentPayload, Role};
 use storage_provider_node::auth::{MembershipCache, StaticMembershipResolver};
-use storage_provider_node::{NullNonceStore, ProviderDeps, ProviderState, Storage};
+use storage_provider_node::{ProviderDeps, ProviderState};
 
 /// Test server helper that starts the provider node on a random port.
 struct TestServer {
