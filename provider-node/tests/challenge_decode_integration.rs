@@ -21,6 +21,7 @@ fn build_challenge(provider: [u8; 32]) -> Vec<u8> {
     let leaf_index: u64 = 7;
     let chunk_index: u64 = 0;
     let deposit: u128 = 1_000_000_000_000;
+    let authorized: bool = true;
     buf.extend_from_slice(&bucket_id.to_le_bytes());
     buf.extend_from_slice(&provider);
     buf.extend_from_slice(&challenger);
@@ -29,6 +30,7 @@ fn build_challenge(provider: [u8; 32]) -> Vec<u8> {
     buf.extend_from_slice(&leaf_index.to_le_bytes());
     buf.extend_from_slice(&chunk_index.to_le_bytes());
     buf.extend_from_slice(&deposit.to_le_bytes());
+    buf.push(authorized as u8);
     buf
 }
 
@@ -69,6 +71,6 @@ fn decode_single_challenge_other_provider() {
 fn decode_single_challenge_truncated() {
     let our_bytes: [u8; 32] = [9u8; 32];
     let mut encoded = build_challenge(our_bytes);
-    encoded.pop(); // one byte short of the fixed 144-byte layout
+    encoded.pop(); // one byte short of the fixed 145-byte layout
     assert!(decode_challenge_for_provider(&encoded, &our_bytes).is_err());
 }

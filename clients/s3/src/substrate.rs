@@ -128,6 +128,7 @@ impl SubstrateClient {
         provider: AccountId32,
         terms: &storage_client::AgreementTermsOf,
         sig: &sp_runtime::MultiSignature,
+        visibility: storage_client::Visibility,
     ) -> std::result::Result<S3BucketId, String> {
         debug!("Creating S3 bucket: {}", name);
 
@@ -139,6 +140,7 @@ impl SubstrateClient {
                 Value::from_bytes(provider.as_ref() as &[u8]),
                 storage_client::substrate::extrinsics::dynamic_agreement_terms(terms),
                 storage_client::substrate::extrinsics::dynamic_multi_signature(sig),
+                storage_client::substrate::extrinsics::dynamic_visibility(visibility),
             ],
         );
 

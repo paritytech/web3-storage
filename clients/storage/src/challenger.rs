@@ -364,24 +364,15 @@ impl ChallengerClient {
             .await
             .map_err(|e| ClientError::Chain(format!("Failed to fetch provider: {e}")))?;
 
-        let (challenges_received, challenges_failed) = if let Some(thunk) = provider_thunk {
-            let value = thunk
-                .decode()
-                .map_err(|e| ClientError::Chain(format!("Failed to decode provider: {e}")))?;
-
-            let stats = named_field(&value, "stats");
-            let received = stats
-                .and_then(|s| named_field(s, "challenges_received"))
-                .and_then(|v| v.as_u128())
-                .unwrap_or(0) as u32;
-            let failed = stats
-                .and_then(|s| named_field(s, "challenges_failed"))
-                .and_then(|v| v.as_u128())
-                .unwrap_or(0) as u32;
-            (received, failed)
-        } else {
+        let Some(thunk) = provider_thunk else {
             return Err(ClientError::Chain(format!("Provider {provider} not found")));
         };
+        let value = thunk
+            .decode()
+            .map_err(|e| ClientError::Chain(format!("Failed to decode provider: {e}")))?;
+        let stats = named_field(&value, "stats");
+        let challenges_defended = defended_count(stats);
+        let challenges_failed = stat_u32(stats, "challenges_failed");
 
         // Compute checkpoint age from bucket snapshot
         let last_checkpoint_age = {
@@ -420,12 +411,12 @@ impl ChallengerClient {
             }
         };
 
-        let reputation = reputation_score(challenges_received, challenges_failed);
-        let challenge_success_rate = if challenges_received == 0 {
+        let reputation = reputation_score(challenges_defended, challenges_failed);
+        let total_resolved = challenges_defended.saturating_add(challenges_failed);
+        let challenge_success_rate = if total_resolved == 0 {
             100.0
         } else {
-            let defended = challenges_received.saturating_sub(challenges_failed);
-            defended as f64 / challenges_received as f64 * 100.0
+            challenges_defended as f64 / total_resolved as f64 * 100.0
         };
 
         let recommendation = if reputation < 60 {
@@ -527,16 +518,10 @@ impl ChallengerClient {
             };
 
             let stats = named_field(&value, "stats");
-            let received = stats
-                .and_then(|s| named_field(s, "challenges_received"))
-                .and_then(|v| v.as_u128())
-                .unwrap_or(0) as u32;
-            let failed = stats
-                .and_then(|s| named_field(s, "challenges_failed"))
-                .and_then(|v| v.as_u128())
-                .unwrap_or(0) as u32;
+            let defended = defended_count(stats);
+            let failed = stat_u32(stats, "challenges_failed");
 
-            let rep = reputation_score(received, failed);
+            let rep = reputation_score(defended, failed);
             if rep < min_reputation_threshold {
                 scored.push((*bucket_id, account, rep));
             }
@@ -806,16 +791,10 @@ impl ChallengerClient {
                 .unwrap_or(0);
 
             let stats = named_field(&value, "stats");
-            let received = stats
-                .and_then(|s| named_field(s, "challenges_received"))
-                .and_then(|v| v.as_u128())
-                .unwrap_or(0) as u32;
-            let failed = stats
-                .and_then(|s| named_field(s, "challenges_failed"))
-                .and_then(|v| v.as_u128())
-                .unwrap_or(0) as u32;
+            let defended = defended_count(stats);
+            let failed = stat_u32(stats, "challenges_failed");
 
-            let rep = reputation_score(received, failed);
+            let rep = reputation_score(defended, failed);
 
             // Providers below 90 reputation are worth considering
             if rep >= 90 {
@@ -826,10 +805,11 @@ impl ChallengerClient {
             let potential_reward = stake / 10;
 
             // Success probability is inverse of their historic defense rate
-            let fail_rate = if received == 0 {
+            let total_resolved = defended.saturating_add(failed);
+            let fail_rate = if total_resolved == 0 {
                 0.1 // assume 10% base risk for untested providers
             } else {
-                failed as f64 / received as f64
+                failed as f64 / total_resolved as f64
             };
             // Higher fail_rate = higher success probability for challenger
             let success_probability = (fail_rate * 0.8 + 0.1).min(1.0);
@@ -918,6 +898,21 @@ fn named_field<'a>(
     }
 }
 
+/// Read one u32 counter out of a decoded `ProviderInfo.stats` composite.
+fn stat_u32(stats: Option<&subxt::ext::scale_value::Value>, field: &str) -> u32 {
+    stats
+        .and_then(|s| named_field(s, field))
+        .and_then(|v| v.as_u128())
+        .unwrap_or(0) as u32
+}
+
+/// Defended-only challenge total across both challenger tiers (the chain
+/// counts defenses per tier at resolution, so pending ones are excluded).
+fn defended_count(stats: Option<&subxt::ext::scale_value::Value>) -> u32 {
+    stat_u32(stats, "challenges_received_authorized")
+        .saturating_add(stat_u32(stats, "challenges_received_public"))
+}
+
 fn decode_account_bytes(value: &subxt::ext::scale_value::Value) -> Option<Vec<u8>> {
     match &value.value {
         ValueDef::Composite(Composite::Unnamed(items)) if items.len() == 32 => {
@@ -927,14 +922,17 @@ fn decode_account_bytes(value: &subxt::ext::scale_value::Value) -> Option<Vec<u8
     }
 }
 
-/// Compute a 0–100 reputation score from on-chain challenge stats.
-/// Providers with no recorded challenges score 100 (benefit of the doubt).
-fn reputation_score(challenges_received: u32, challenges_failed: u32) -> u8 {
-    if challenges_received == 0 {
+/// Compute a 0–100 reputation score from on-chain challenge stats: the share
+/// of resolved challenges the provider defended. The chain counts defenses
+/// per tier at resolution, so `challenges_defended` never includes pending
+/// challenges. Providers with no resolved challenges score 100 (benefit of
+/// the doubt).
+fn reputation_score(challenges_defended: u32, challenges_failed: u32) -> u8 {
+    let total = challenges_defended as u64 + challenges_failed as u64;
+    if total == 0 {
         return 100;
     }
-    let defended = challenges_received.saturating_sub(challenges_failed);
-    ((defended as u64 * 100) / challenges_received as u64).min(100) as u8
+    ((challenges_defended as u64 * 100) / total).min(100) as u8
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

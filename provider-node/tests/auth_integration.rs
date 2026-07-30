@@ -19,12 +19,29 @@ use serde_json::Value;
 use sp_core::{sr25519, Pair};
 use std::sync::Arc;
 use std::time::Duration;
-use storage_primitives::Role;
-use storage_provider_node::auth::{MembershipCache, StaticMembershipResolver};
+use storage_primitives::{Role, Visibility};
+use storage_provider_node::auth::{
+    BucketAccess, MembershipCache, MembershipResolver, StaticMembershipResolver,
+};
 use storage_provider_node::{create_router, ProviderDeps, ProviderState};
 use tokio::net::TcpListener;
 
 type AccountId32 = sp_core::crypto::AccountId32;
+
+/// A resolver whose buckets are all `Public` — exercises the
+/// visibility-aware Reader gate (anonymous reads allowed, writes still
+/// authenticated).
+struct PublicBucketResolver(Vec<(AccountId32, Role)>);
+
+#[async_trait::async_trait]
+impl MembershipResolver for PublicBucketResolver {
+    async fn fetch_access(&self, _bucket_id: u64) -> Result<BucketAccess, String> {
+        Ok(BucketAccess {
+            members: self.0.clone(),
+            visibility: Visibility::Public,
+        })
+    }
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Test server
@@ -37,18 +54,34 @@ struct AuthTestServer {
 
 impl AuthTestServer {
     /// Start a server with auth enabled and Alice as the given role.
+    /// Buckets resolve as `Private` (the static resolver's default).
     async fn with_role(alice_role: Role) -> Self {
         let alice_kp = sr25519::Pair::from_string("//Alice", None).unwrap();
         let alice_account = AccountId32::new(alice_kp.public().0);
+        Self::with_resolver(Box::new(StaticMembershipResolver(vec![(
+            alice_account,
+            alice_role,
+        )])))
+        .await
+    }
 
+    /// Same, but every bucket resolves as `Public`.
+    async fn public_with_role(alice_role: Role) -> Self {
+        let alice_kp = sr25519::Pair::from_string("//Alice", None).unwrap();
+        let alice_account = AccountId32::new(alice_kp.public().0);
+        Self::with_resolver(Box::new(PublicBucketResolver(vec![(
+            alice_account,
+            alice_role,
+        )])))
+        .await
+    }
+
+    async fn with_resolver(resolver: Box<dyn MembershipResolver>) -> Self {
         // The 300s skew keeps the default the `*_expired_timestamp` tests assume.
         let deps = ProviderDeps {
             storage: Arc::new(Storage::new()),
             nonce_store: Arc::new(NullNonceStore),
-            membership: Arc::new(MembershipCache::new(
-                Box::new(StaticMembershipResolver(vec![(alice_account, alice_role)])),
-                Duration::from_secs(60),
-            )),
+            membership: Arc::new(MembershipCache::new(resolver, Duration::from_secs(60))),
             auth_max_skew: Duration::from_secs(300),
         };
         let state = ProviderState::with_seed(deps, "//Alice").expect("//Alice is valid");
@@ -147,6 +180,69 @@ async fn s3_reader_can_get_object() {
 
     assert_eq!(resp.status(), StatusCode::OK);
     assert_eq!(resp.bytes().await.unwrap().as_ref(), b"readable data");
+}
+
+#[tokio::test]
+async fn public_bucket_s3_get_served_without_auth() {
+    let server = AuthTestServer::public_with_role(Role::Writer).await;
+    let alice = sr25519::Pair::from_string("//Alice", None).unwrap();
+
+    // Seed an object (writes stay authenticated even on public buckets).
+    let ts = current_timestamp();
+    let header = make_auth_header(&alice, "PUT", 1, ts);
+    server
+        .client
+        .put(server.url("/s3/1/object?key=open.txt"))
+        .header("Authorization", &header)
+        .body(b"open data".to_vec())
+        .send()
+        .await
+        .unwrap();
+
+    // Anonymous GET: an honest primary serves public-bucket reads to anyone.
+    let resp = server
+        .client
+        .get(server.url("/s3/1/object?key=open.txt"))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(resp.bytes().await.unwrap().as_ref(), b"open data");
+}
+
+#[tokio::test]
+async fn public_bucket_put_still_requires_auth() {
+    let server = AuthTestServer::public_with_role(Role::Writer).await;
+
+    let resp = server
+        .client
+        .put(server.url("/s3/1/object?key=nope.txt"))
+        .body(b"data".to_vec())
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "auth_required");
+}
+
+#[tokio::test]
+async fn private_bucket_get_requires_auth() {
+    let server = AuthTestServer::with_role(Role::Writer).await;
+
+    // Anonymous GET on a private bucket is rejected before any storage work.
+    let resp = server
+        .client
+        .get(server.url("/s3/1/object?key=secret.txt"))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "auth_required");
 }
 
 #[tokio::test]

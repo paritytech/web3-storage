@@ -13,7 +13,7 @@ use crate::ProviderState;
 use dashmap::DashMap;
 use sp_core::{crypto::AccountId32, sr25519, Pair};
 use std::time::{Duration, Instant};
-use storage_primitives::Role;
+use storage_primitives::{Role, Visibility};
 use subxt::{OnlineClient, PolkadotConfig};
 
 /// Caller identity extracted from a signed request.
@@ -31,27 +31,40 @@ pub enum RequiredRole {
     Admin,
 }
 
-/// Cached membership entry for a bucket.
+/// The slice of on-chain bucket state that read access control needs:
+/// who the members are, and whether reads are member-only.
+#[derive(Debug, Clone)]
+pub struct BucketAccess {
+    pub members: Vec<(AccountId32, Role)>,
+    pub visibility: Visibility,
+}
+
+/// Cached access entry for a bucket.
 #[derive(Debug, Clone)]
 struct CachedMembership {
-    members: Vec<(AccountId32, Role)>,
+    access: BucketAccess,
     fetched_at: Instant,
 }
 
-/// Trait for resolving bucket membership (enables mocking in tests).
+/// Trait for resolving bucket membership + visibility (enables mocking in
+/// tests).
 #[async_trait::async_trait]
 pub trait MembershipResolver: Send + Sync {
-    async fn fetch_members(&self, bucket_id: u64) -> Result<Vec<(AccountId32, Role)>, String>;
+    async fn fetch_access(&self, bucket_id: u64) -> Result<BucketAccess, String>;
 }
 
 /// A [`MembershipResolver`] that returns a fixed member set for every bucket.
-/// Used by integration tests across crates.
+/// Used by integration tests across crates. Buckets resolve as `Private`
+/// (auth always required), matching the fail-safe default.
 pub struct StaticMembershipResolver(pub Vec<(AccountId32, Role)>);
 
 #[async_trait::async_trait]
 impl MembershipResolver for StaticMembershipResolver {
-    async fn fetch_members(&self, _bucket_id: u64) -> Result<Vec<(AccountId32, Role)>, String> {
-        Ok(self.0.clone())
+    async fn fetch_access(&self, _bucket_id: u64) -> Result<BucketAccess, String> {
+        Ok(BucketAccess {
+            members: self.0.clone(),
+            visibility: Visibility::Private,
+        })
     }
 }
 
@@ -71,32 +84,27 @@ impl MembershipCache {
         }
     }
 
-    /// Look up a caller's role in a bucket.
-    /// Returns None if the caller is not a member.
-    pub async fn get_role(
-        &self,
-        bucket_id: u64,
-        account: &AccountId32,
-    ) -> Result<Option<Role>, String> {
+    /// Look up a bucket's access state (members + visibility), TTL-cached
+    /// with stale-while-revalidate.
+    pub async fn get_access(&self, bucket_id: u64) -> Result<BucketAccess, String> {
         // Check cache first
         if let Some(entry) = self.cache.get(&bucket_id) {
             if entry.fetched_at.elapsed() < self.ttl {
-                return Ok(find_role(&entry.members, account));
+                return Ok(entry.access.clone());
             }
         }
 
         // Cache miss or stale — fetch from chain
-        match self.resolver.fetch_members(bucket_id).await {
-            Ok(members) => {
-                let role = find_role(&members, account);
+        match self.resolver.fetch_access(bucket_id).await {
+            Ok(access) => {
                 self.cache.insert(
                     bucket_id,
                     CachedMembership {
-                        members,
+                        access: access.clone(),
                         fetched_at: Instant::now(),
                     },
                 );
-                Ok(role)
+                Ok(access)
             }
             Err(e) => {
                 // Stale-while-revalidate: serve stale data if chain is unreachable
@@ -106,11 +114,24 @@ impl MembershipCache {
                         bucket_id,
                         e
                     );
-                    return Ok(find_role(&entry.members, account));
+                    return Ok(entry.access.clone());
                 }
                 Err(e)
             }
         }
+    }
+
+    /// Look up a caller's role in a bucket.
+    /// Returns None if the caller is not a member.
+    pub async fn get_role(
+        &self,
+        bucket_id: u64,
+        account: &AccountId32,
+    ) -> Result<Option<Role>, String> {
+        Ok(find_role(
+            &self.get_access(bucket_id).await?.members,
+            account,
+        ))
     }
 }
 
@@ -142,140 +163,64 @@ impl ChainMembershipResolver {
 
 #[async_trait::async_trait]
 impl MembershipResolver for ChainMembershipResolver {
-    async fn fetch_members(&self, bucket_id: u64) -> Result<Vec<(AccountId32, Role)>, String> {
-        use subxt::dynamic::{At, Value};
+    async fn fetch_access(&self, bucket_id: u64) -> Result<BucketAccess, String> {
+        use storage_subxt::api::runtime_types::storage_primitives as chain_primitives;
 
         let api = self.api()?;
 
-        let storage_query =
-            subxt::dynamic::storage::<(Value,), Value>("StorageProvider", "Buckets");
-
+        // Typed read via the static bindings. `unvalidated`: the bindings are
+        // generated from the paseo runtime, and the local runtime shares the
+        // pallet — exact-hash validation would couple the binary to a single
+        // runtime build for no safety gain (a shape mismatch fails decoding).
+        let storage_address = storage_subxt::api::storage()
+            .storage_provider()
+            .buckets()
+            .unvalidated();
         let at = api
             .at_current_block()
             .await
             .map_err(|e| format!("Failed to get storage: {e}"))?;
-        let result = at
+        let bucket = at
             .storage()
-            .try_fetch(storage_query, (Value::u128(bucket_id as u128),))
+            .try_fetch(storage_address, (bucket_id,))
             .await
             .map_err(|e| format!("Failed to fetch bucket: {e}"))?;
 
-        let bucket_value = match result {
-            Some(v) => v,
-            None => return Ok(vec![]),
+        // A missing bucket resolves as memberless and Private: nobody gets in.
+        let Some(bucket) = bucket else {
+            return Ok(BucketAccess {
+                members: Vec::new(),
+                visibility: Visibility::Private,
+            });
         };
-
-        let decoded = bucket_value
+        let bucket = bucket
             .decode()
             .map_err(|e| format!("Failed to decode bucket: {e}"))?;
 
-        let members_val = match decoded.at("members") {
-            Some(v) => v,
-            None => return Ok(vec![]),
+        let members = bucket
+            .members
+            .0
+            .into_iter()
+            .map(|m| {
+                let role = match m.role {
+                    chain_primitives::Role::Admin => Role::Admin,
+                    chain_primitives::Role::Writer => Role::Writer,
+                    chain_primitives::Role::Reader => Role::Reader,
+                };
+                (AccountId32::new(m.account.0), role)
+            })
+            .collect::<Vec<_>>();
+        let visibility = match bucket.visibility {
+            chain_primitives::Visibility::Public => Visibility::Public,
+            chain_primitives::Visibility::Private => Visibility::Private,
         };
 
-        // `members` is a `BoundedVec<Member>`. Depending on how the runtime's
-        // scale-info nests it, scale_value may wrap the sequence (and each
-        // `AccountId32`) in extra single-field composites, so walk the value
-        // tree and pull out every `{ account, role }` struct rather than
-        // assuming a fixed shape.
-        let mut members = Vec::new();
-        collect_members(members_val, &mut members);
+        tracing::debug!(bucket_id, count = members.len(), "auth: resolved members");
 
-        if members.is_empty() {
-            tracing::warn!(bucket_id, value = ?members_val, "auth: decoded zero members");
-        } else {
-            tracing::debug!(bucket_id, count = members.len(), "auth: resolved members");
-        }
-
-        Ok(members)
-    }
-}
-
-/// Recursively pull `(account, role)` pairs out of a decoded `members` value,
-/// tolerating any wrapper composites that `BoundedVec` / `AccountId32` type
-/// info introduces. A `Member` is the composite that carries both an
-/// `account` and a `role` field.
-fn collect_members<T>(val: &subxt::ext::scale_value::Value<T>, out: &mut Vec<(AccountId32, Role)>) {
-    use subxt::dynamic::At;
-    use subxt::ext::scale_value::{Composite, ValueDef};
-
-    if let (Some(account_v), Some(role_v)) = (val.at("account"), val.at("role")) {
-        if let Some(bytes) = extract_account_bytes(account_v) {
-            out.push((AccountId32::from(bytes), extract_role(role_v)));
-            return;
-        }
-    }
-
-    match &val.value {
-        ValueDef::Composite(Composite::Named(fields)) => {
-            for field in fields {
-                collect_members(&field.1, out);
-            }
-        }
-        ValueDef::Composite(Composite::Unnamed(items)) => {
-            for item in items {
-                collect_members(item, out);
-            }
-        }
-        _ => {}
-    }
-}
-
-/// Extract a 32-byte account id, descending through any wrapper composites
-/// (`AccountId32` -> `[u8; 32]` can be one or more composite layers) and
-/// collecting the `u8` leaves.
-fn extract_account_bytes<T>(val: &subxt::ext::scale_value::Value<T>) -> Option<[u8; 32]> {
-    let mut bytes = Vec::with_capacity(32);
-    collect_u8_leaves(val, &mut bytes);
-    if bytes.len() == 32 {
-        let mut arr = [0u8; 32];
-        arr.copy_from_slice(&bytes);
-        Some(arr)
-    } else {
-        None
-    }
-}
-
-fn collect_u8_leaves<T>(val: &subxt::ext::scale_value::Value<T>, out: &mut Vec<u8>) {
-    use subxt::ext::scale_value::{Composite, Primitive, ValueDef};
-    match &val.value {
-        ValueDef::Primitive(Primitive::U128(n)) => out.push(*n as u8),
-        ValueDef::Composite(Composite::Unnamed(items)) => {
-            for item in items {
-                collect_u8_leaves(item, out);
-            }
-        }
-        ValueDef::Composite(Composite::Named(fields)) => {
-            for field in fields {
-                collect_u8_leaves(&field.1, out);
-            }
-        }
-        _ => {}
-    }
-}
-
-/// Decode a `Role`, descending through wrapper composites to the enum variant.
-fn extract_role<T>(val: &subxt::ext::scale_value::Value<T>) -> Role {
-    find_role_variant(val).unwrap_or(Role::Reader)
-}
-
-fn find_role_variant<T>(val: &subxt::ext::scale_value::Value<T>) -> Option<Role> {
-    use subxt::ext::scale_value::{Composite, ValueDef};
-    match &val.value {
-        ValueDef::Variant(variant) => match variant.name.as_str() {
-            "Admin" => Some(Role::Admin),
-            "Writer" => Some(Role::Writer),
-            "Reader" => Some(Role::Reader),
-            _ => None,
-        },
-        ValueDef::Composite(Composite::Unnamed(items)) => {
-            items.iter().find_map(|v| find_role_variant(v))
-        }
-        ValueDef::Composite(Composite::Named(fields)) => {
-            fields.iter().find_map(|f| find_role_variant(&f.1))
-        }
-        _ => None,
+        Ok(BucketAccess {
+            members,
+            visibility,
+        })
     }
 }
 
@@ -394,9 +339,12 @@ pub fn verify_signature(
 
 /// Check that the caller has sufficient permissions.
 ///
-/// Auth is always enforced. The caller must present a valid signed
-/// `Authorization` header whose account holds the [`RequiredRole`] for the
-/// bucket; otherwise the request is rejected.
+/// Reader-level requests against a `Public` bucket are served without
+/// authentication — an honest primary serves public-bucket reads to anyone.
+/// Everything else (any request on a `Private` bucket, and every
+/// Writer/Admin request) requires a valid signed `Authorization` header
+/// whose account holds the [`RequiredRole`] for the bucket. If the bucket's
+/// visibility cannot be established, it gates like `Private` (fail-safe).
 pub async fn require_role(
     state: &ProviderState,
     auth_header: Option<&str>,
@@ -405,6 +353,18 @@ pub async fn require_role(
     required: RequiredRole,
     max_skew: Duration,
 ) -> Result<(), Error> {
+    if required == RequiredRole::Reader {
+        let is_public = state
+            .membership_cache
+            .get_access(bucket_id)
+            .await
+            .map(|access| access.visibility == Visibility::Public)
+            .unwrap_or(false);
+        if is_public {
+            return Ok(());
+        }
+    }
+
     let header = auth_header.ok_or(Error::AuthRequired)?;
     let account = verify_signature(header, method, bucket_id, max_skew)?;
 
@@ -454,36 +414,6 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs()
-    }
-
-    /// Regression test for the dynamic decoding of `StorageProvider.Buckets`.
-    #[test]
-    fn collect_members_handles_chain_value_nesting() {
-        use subxt::ext::scale_value::Value;
-
-        let acct = [9u8; 32];
-        // AccountId32 -> [u8; 32]: two composite layers around the byte leaves.
-        let account = Value::unnamed_composite(vec![Value::unnamed_composite(
-            acct.iter().map(|b| Value::u128(*b as u128)),
-        )]);
-        let member = Value::named_composite(vec![
-            ("account".to_string(), account),
-            ("role".to_string(), Value::unnamed_variant("Writer", vec![])),
-        ]);
-        let sequence = Value::unnamed_composite(vec![member]);
-        // BoundedVec wrapper around the member sequence.
-        let members_val = Value::unnamed_composite(vec![sequence]);
-
-        let mut out = Vec::new();
-        collect_members(&members_val, &mut out);
-
-        assert_eq!(
-            out.len(),
-            1,
-            "member must be recovered through both wrappers"
-        );
-        assert_eq!(out[0].0, AccountId32::from(acct));
-        assert!(matches!(out[0].1, Role::Writer));
     }
 
     #[test]
@@ -608,7 +538,7 @@ mod tests {
         let (_tx, rx) = tokio::sync::watch::channel(None);
         let resolver = ChainMembershipResolver::new(rx);
         let err = resolver
-            .fetch_members(1)
+            .fetch_access(1)
             .await
             .expect_err("no connection published yet");
         assert!(err.contains("not established"), "unexpected error: {err}");

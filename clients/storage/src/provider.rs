@@ -731,8 +731,13 @@ impl ProviderClient {
             .and_then(|v| v.as_u128())
             .unwrap_or(0) as u32;
 
-        let challenges_received = stats
-            .and_then(|s| named_field(s, "challenges_received"))
+        let challenges_received_authorized = stats
+            .and_then(|s| named_field(s, "challenges_received_authorized"))
+            .and_then(|v| v.as_u128())
+            .unwrap_or(0) as u32;
+
+        let challenges_received_public = stats
+            .and_then(|s| named_field(s, "challenges_received_public"))
             .and_then(|v| v.as_u128())
             .unwrap_or(0) as u32;
 
@@ -753,7 +758,8 @@ impl ProviderClient {
             committed_bytes,
             agreements_total,
             agreements_extended,
-            challenges_received,
+            challenges_received_authorized,
+            challenges_received_public,
             challenges_failed,
             reputation,
         })
@@ -923,7 +929,11 @@ pub struct ProviderStats {
     pub committed_bytes: u64,
     pub agreements_total: u32,
     pub agreements_extended: u32,
-    pub challenges_received: u32,
+    /// Successfully defended challenges from authorized challengers
+    /// (member/agreement owner at creation). Counted at resolution.
+    pub challenges_received_authorized: u32,
+    /// Same, for general-public challengers.
+    pub challenges_received_public: u32,
     pub challenges_failed: u32,
     pub reputation: u8,
 }

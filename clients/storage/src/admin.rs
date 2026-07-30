@@ -82,6 +82,7 @@ impl AdminClient {
     /// let bucket_id = client.establish_storage_agreement(
     ///     "5FHneW46...".to_string(),
     ///     signed,
+    ///     storage_primitives::Visibility::Private,
     /// ).await?;
     /// # Ok(())
     /// # }
@@ -90,6 +91,7 @@ impl AdminClient {
         &self,
         provider: String,
         signed_terms: SignedTerms,
+        visibility: storage_primitives::Visibility,
     ) -> ClientResult<BucketId> {
         let SignedTerms { terms, signature } = signed_terms;
         let chain = self.base.chain()?;
@@ -105,7 +107,12 @@ impl AdminClient {
             terms.nonce,
         );
 
-        let tx = extrinsics::establish_storage_agreement(provider_account, &terms, &signature);
+        let tx = extrinsics::establish_storage_agreement(
+            provider_account,
+            &terms,
+            &signature,
+            visibility,
+        );
 
         let tx_progress = chain
             .api()
@@ -260,6 +267,34 @@ impl AdminClient {
             .map_err(|e| ClientError::Chain(format!("Transaction failed: {e}")))?;
 
         tracing::info!("Froze bucket {}", bucket_id);
+        Ok(())
+    }
+
+    /// Set bucket read visibility (admin only). Flips `Public` ⇄ `Private`
+    /// unconditionally in both directions.
+    pub async fn set_bucket_visibility(
+        &self,
+        bucket_id: BucketId,
+        visibility: storage_primitives::Visibility,
+    ) -> ClientResult<()> {
+        let chain = self.base.chain()?;
+        let signer = chain.signer()?;
+
+        let tx = extrinsics::set_bucket_visibility(bucket_id, visibility);
+        chain
+            .api()
+            .at_current_block()
+            .await
+            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
+            .transactions()
+            .sign_and_submit_then_watch_default(&tx, signer)
+            .await
+            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
+            .wait_for_finalized_success()
+            .await
+            .map_err(|e| ClientError::Chain(format!("Transaction failed: {e}")))?;
+
+        tracing::info!("Set bucket {} visibility to {:?}", bucket_id, visibility);
         Ok(())
     }
 
@@ -599,12 +634,24 @@ impl AdminClient {
             _ => None,
         });
 
+        let visibility = named_field(&value, "visibility")
+            .and_then(|v| match &v.value {
+                ValueDef::Variant(Variant { name, .. }) => match name.as_str() {
+                    "Public" => Some(storage_primitives::Visibility::Public),
+                    "Private" => Some(storage_primitives::Visibility::Private),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .unwrap_or_default();
+
         Ok(BucketInfo {
             bucket_id,
             members,
             frozen_start_seq,
             min_providers,
             snapshot,
+            visibility,
         })
     }
 
@@ -776,6 +823,7 @@ pub struct BucketInfo {
     pub frozen_start_seq: Option<u64>,
     pub min_providers: u32,
     pub snapshot: Option<SnapshotInfo>,
+    pub visibility: storage_primitives::Visibility,
 }
 
 #[derive(Debug, Clone)]

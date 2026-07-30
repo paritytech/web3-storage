@@ -240,6 +240,16 @@ pub mod extrinsics {
         )
     }
 
+    /// Encode a [`Visibility`](storage_primitives::Visibility) as a subxt
+    /// dynamic variant.
+    pub fn dynamic_visibility(visibility: storage_primitives::Visibility) -> subxt::dynamic::Value {
+        let variant = match visibility {
+            storage_primitives::Visibility::Public => "Public",
+            storage_primitives::Visibility::Private => "Private",
+        };
+        subxt::dynamic::Value::unnamed_variant(variant, vec![])
+    }
+
     /// Build an `establish_storage_agreement` extrinsic payload.
     ///
     /// Bundles the SCALE-encoded provider-signed terms and signature into
@@ -250,6 +260,7 @@ pub mod extrinsics {
         provider: AccountId32,
         terms: &crate::agreement::AgreementTermsOf,
         sig: &sp_runtime::MultiSignature,
+        visibility: storage_primitives::Visibility,
     ) -> impl Payload {
         subxt::dynamic::tx(
             PALLET_NAME,
@@ -258,6 +269,22 @@ pub mod extrinsics {
                 subxt::dynamic::Value::from_bytes(provider.as_ref() as &[u8]),
                 dynamic_agreement_terms(terms),
                 dynamic_multi_signature(sig),
+                dynamic_visibility(visibility),
+            ],
+        )
+    }
+
+    /// Build a `set_bucket_visibility` extrinsic payload (admin only).
+    pub fn set_bucket_visibility(
+        bucket_id: u64,
+        visibility: storage_primitives::Visibility,
+    ) -> impl Payload {
+        subxt::dynamic::tx(
+            PALLET_NAME,
+            "set_bucket_visibility",
+            vec![
+                subxt::dynamic::Value::u128(bucket_id as u128),
+                dynamic_visibility(visibility),
             ],
         )
     }

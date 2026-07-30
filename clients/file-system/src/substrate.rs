@@ -75,6 +75,7 @@ pub mod extrinsics {
         provider: AccountId32,
         terms: &AgreementTermsOf,
         sig: &sp_runtime::MultiSignature,
+        visibility: storage_client::Visibility,
     ) -> impl Payload {
         subxt::dynamic::tx(
             "DriveRegistry",
@@ -86,6 +87,7 @@ pub mod extrinsics {
                 subxt::dynamic::Value::from_bytes(provider.as_ref() as &[u8]),
                 dynamic_agreement_terms(terms),
                 dynamic_multi_signature(sig),
+                storage_client::substrate::extrinsics::dynamic_visibility(visibility),
             ],
         )
     }

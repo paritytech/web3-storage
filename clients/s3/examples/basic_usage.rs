@@ -78,7 +78,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("Creating bucket: {bucket_name}");
     let bucket = client
-        .create_bucket(&bucket_name, provider, signed.terms, signed.signature)
+        .create_bucket(
+            &bucket_name,
+            provider,
+            signed.terms,
+            signed.signature,
+            storage_client::Visibility::Private,
+        )
         .await?;
     println!("Bucket created:");
     println!("  S3 Bucket ID: {}", bucket.s3_bucket_id);
