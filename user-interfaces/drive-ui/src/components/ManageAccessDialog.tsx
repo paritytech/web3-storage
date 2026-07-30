@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 import { useState, useEffect, useCallback } from "react";
-import { Users, Plus, Trash2, RefreshCw } from "lucide-react";
+import { Users, Plus, Trash2, RefreshCw, Globe, Lock } from "lucide-react";
 import { isValidSs58 } from "@/lib/crypto";
 import { isSameAddress } from "@web3-storage/sdk";
 import {
@@ -18,10 +18,12 @@ import {
   fetchMembers,
   addMember,
   removeMember,
+  fetchVisibility,
+  setBucketVisibility,
 } from "@/state";
 import { toast } from "@/components/ui/toaster";
 import { truncateHash } from "@/lib/utils";
-import type { BucketMember, MemberRole } from "@/lib/drive-client";
+import type { BucketMember, MemberRole, Visibility } from "@/lib/drive-client";
 
 interface ManageAccessDialogProps {
   open: boolean;
@@ -59,6 +61,8 @@ export default function ManageAccessDialog({
   const [newRole, setNewRole] = useState<MemberRole>("Writer");
   const [adding, setAdding] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
+  const [visibility, setVisibility] = useState<Visibility | null>(null);
+  const [togglingVisibility, setTogglingVisibility] = useState(false);
 
   // Compare by raw bytes: member accounts come from chain (runtime prefix)
   // while signerAddress / typed input may use a different SS58 prefix.
@@ -72,10 +76,12 @@ export default function ManageAccessDialog({
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
-      const m = await fetchMembers(bucketId);
+      const [m, vis] = await Promise.all([fetchMembers(bucketId), fetchVisibility(bucketId)]);
       setMembers(m);
+      setVisibility(vis);
     } catch {
       setMembers([]);
+      setVisibility(null);
     } finally {
       setLoading(false);
     }
@@ -134,6 +140,25 @@ export default function ManageAccessDialog({
     }
   };
 
+  const handleToggleVisibility = async () => {
+    if (!visibility) return;
+    const next: Visibility = visibility === "Private" ? "Public" : "Private";
+    setTogglingVisibility(true);
+    try {
+      await setBucketVisibility(bucketId, next);
+      setVisibility(next);
+      toast({ title: `Drive is now ${next.toLowerCase()}` });
+    } catch (err) {
+      toast({
+        title: "Failed to change visibility",
+        description: err instanceof Error ? err.message : "Error",
+        variant: "destructive",
+      });
+    } finally {
+      setTogglingVisibility(false);
+    }
+  };
+
   const handleRemove = async (account: string) => {
     try {
       await removeMember(bucketId, account);
@@ -162,6 +187,37 @@ export default function ManageAccessDialog({
         </DialogHeader>
 
         <div className="space-y-4">
+          <div
+            className="flex items-center justify-between rounded-md border px-3 py-2"
+            data-testid="bucket-visibility"
+          >
+            <div className="flex items-center gap-2">
+              {visibility === "Public" ? (
+                <Globe className="h-4 w-4 text-muted-foreground" />
+              ) : (
+                <Lock className="h-4 w-4 text-muted-foreground" />
+              )}
+              <div>
+                <p className="text-sm font-medium">{visibility ?? "…"}</p>
+                <p className="text-xs text-muted-foreground">
+                  Private: providers serve reads only to members.
+                </p>
+              </div>
+            </div>
+            {isAdmin && visibility && (
+              <Button
+                data-testid="toggle-visibility"
+                variant="outline"
+                size="sm"
+                className="h-8 text-xs"
+                onClick={handleToggleVisibility}
+                disabled={togglingVisibility}
+              >
+                Make {visibility === "Private" ? "Public" : "Private"}
+              </Button>
+            )}
+          </div>
+
           <div>
             <div className="flex items-center justify-between mb-2">
               <span className="text-sm font-medium">Members</span>

@@ -273,6 +273,7 @@ bucketId: 0
 visibility: Public
 ```
 
+**Events:** `BucketVisibilityChanged`
 **Errors:** `BucketNotFound`, `NotBucketAdmin`
 
 ---
@@ -822,6 +823,16 @@ enum Role { Admin, Writer, Reader }
 - **Admin** - manage members, request primary agreements, configure the bucket, terminate primaries
 - **Writer** - submit checkpoints
 - **Reader** - read-only
+
+### `Visibility`
+
+```rust
+enum Visibility { Public, Private }
+```
+- **Public** - primaries serve reads to anyone; anyone may challenge primaries
+- **Private** - primaries serve reads only to members (cooperative, not chain-enforced); on-chain, primary challenges are restricted to members and primary-agreement owners
+
+Every bucket-creating extrinsic (`establish_storage_agreement`, `create_drive`, `create_s3_bucket`) takes a `visibility` parameter; wrappers that omit the choice default to `Private` (fail-safe).
 
 ### `EndAction`
 
