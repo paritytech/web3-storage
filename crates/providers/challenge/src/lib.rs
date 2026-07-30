@@ -1,18 +1,51 @@
-// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! Challenge Responder - Automated response to on-chain challenges.
 //!
-//! This module provides a background service that monitors the blockchain
+//! This crate provides a background service that monitors the blockchain
 //! for challenges against this provider and automatically responds with
 //! the required proof data.
 
-use crate::{Error, ProviderState};
 use sp_core::H256;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use storage_primitives::BucketId;
+use storage_primitives::{BucketId, MerkleProof, MmrProof};
 use tokio::sync::mpsc;
+
+/// Errors surfaced by the challenge responder.
+#[derive(Debug, thiserror::Error)]
+pub enum ChallengeError {
+    /// Chain interaction failed (polling or submitting).
+    #[error("chain error: {0}")]
+    Chain(String),
+    /// Local storage could not produce the requested proof data.
+    #[error("storage error: {0}")]
+    Storage(String),
+    /// Internal service error (e.g. control channel closed).
+    #[error("internal error: {0}")]
+    Internal(String),
+}
+
+/// Local proof data the responder needs to answer a challenge.
+///
+/// Implemented by the provider node's storage backend; kept narrow so this
+/// crate stays decoupled from the full storage engine.
+pub trait ChallengeProofSource: Send + Sync {
+    /// Generate an MMR proof for the given leaf of a bucket's commitment.
+    fn get_mmr_proof(
+        &self,
+        bucket_id: BucketId,
+        leaf_index: u64,
+    ) -> Result<MmrProof, ChallengeError>;
+
+    /// Fetch a chunk and its Merkle proof under the given data root.
+    fn get_chunk_at_index(
+        &self,
+        data_root: H256,
+        chunk_index: u64,
+    ) -> Result<(Vec<u8>, MerkleProof), ChallengeError>;
+}
 
 /// Configuration for the challenge responder.
 #[derive(Clone, Debug)]
@@ -86,21 +119,21 @@ pub enum ChallengeResponseResult {
 #[async_trait::async_trait]
 pub trait ChallengeChainClient: Send + Sync {
     /// Poll the chain for active challenges targeting this provider.
-    async fn poll_challenges(&self) -> Result<Vec<DetectedChallenge>, Error>;
+    async fn poll_challenges(&self) -> Result<Vec<DetectedChallenge>, ChallengeError>;
 
     /// Submit a challenge response transaction.
     async fn submit_response(
         &self,
         challenge_id: (u32, u16),
         chunk_data: Vec<u8>,
-        mmr_proof: storage_primitives::MmrProof,
-        chunk_proof: storage_primitives::MerkleProof,
-    ) -> Result<H256, Error>;
+        mmr_proof: MmrProof,
+        chunk_proof: MerkleProof,
+    ) -> Result<H256, ChallengeError>;
 }
 
 #[async_trait::async_trait]
 impl<T: ChallengeChainClient> ChallengeChainClient for Arc<T> {
-    async fn poll_challenges(&self) -> Result<Vec<DetectedChallenge>, Error> {
+    async fn poll_challenges(&self) -> Result<Vec<DetectedChallenge>, ChallengeError> {
         self.as_ref().poll_challenges().await
     }
 
@@ -108,9 +141,9 @@ impl<T: ChallengeChainClient> ChallengeChainClient for Arc<T> {
         &self,
         challenge_id: (u32, u16),
         chunk_data: Vec<u8>,
-        mmr_proof: storage_primitives::MmrProof,
-        chunk_proof: storage_primitives::MerkleProof,
-    ) -> Result<H256, Error> {
+        mmr_proof: MmrProof,
+        chunk_proof: MerkleProof,
+    ) -> Result<H256, ChallengeError> {
         self.as_ref()
             .submit_response(challenge_id, chunk_data, mmr_proof, chunk_proof)
             .await
@@ -143,34 +176,34 @@ impl ChallengeResponderHandle {
     }
 
     /// Stop the responder.
-    pub async fn stop(&self) -> Result<(), Error> {
+    pub async fn stop(&self) -> Result<(), ChallengeError> {
         self.command_tx
             .send(ResponderCommand::Stop)
             .await
-            .map_err(|_| Error::Internal("Responder channel closed".to_string()))
+            .map_err(|_| ChallengeError::Internal("Responder channel closed".to_string()))
     }
 
     /// Pause automatic responses.
-    pub async fn pause(&self) -> Result<(), Error> {
+    pub async fn pause(&self) -> Result<(), ChallengeError> {
         self.command_tx
             .send(ResponderCommand::Pause)
             .await
-            .map_err(|_| Error::Internal("Responder channel closed".to_string()))
+            .map_err(|_| ChallengeError::Internal("Responder channel closed".to_string()))
     }
 
     /// Resume automatic responses.
-    pub async fn resume(&self) -> Result<(), Error> {
+    pub async fn resume(&self) -> Result<(), ChallengeError> {
         self.command_tx
             .send(ResponderCommand::Resume)
             .await
-            .map_err(|_| Error::Internal("Responder channel closed".to_string()))
+            .map_err(|_| ChallengeError::Internal("Responder channel closed".to_string()))
     }
 }
 
 /// Challenge responder service.
 pub struct ChallengeResponder {
     config: ChallengeResponderConfig,
-    state: Arc<ProviderState>,
+    proof_source: Arc<dyn ChallengeProofSource>,
     chain_client: Box<dyn ChallengeChainClient>,
 }
 
@@ -178,12 +211,12 @@ impl ChallengeResponder {
     /// Create a new challenge responder.
     pub fn new(
         config: ChallengeResponderConfig,
-        state: Arc<ProviderState>,
+        proof_source: Arc<dyn ChallengeProofSource>,
         chain_client: Box<dyn ChallengeChainClient>,
     ) -> Self {
         Self {
             config,
-            state,
+            proof_source,
             chain_client,
         }
     }
@@ -192,7 +225,7 @@ impl ChallengeResponder {
     pub async fn start(
         self,
         callback: Option<Arc<dyn Fn(ChallengeResponseResult) + Send + Sync>>,
-    ) -> Result<ChallengeResponderHandle, Error> {
+    ) -> Result<ChallengeResponderHandle, ChallengeError> {
         let (command_tx, command_rx) = mpsc::channel::<ResponderCommand>(32);
         let running = Arc::new(AtomicBool::new(true));
         let running_clone = running.clone();
@@ -291,8 +324,7 @@ impl ChallengeResponder {
 
         // Step 1: Generate MMR proof (includes the leaf with data_root)
         let mmr_proof = match self
-            .state
-            .storage
+            .proof_source
             .get_mmr_proof(challenge.bucket_id, challenge.leaf_index)
         {
             Ok(proof) => proof,
@@ -308,8 +340,7 @@ impl ChallengeResponder {
         // Step 2: Get chunk data and Merkle proof using data_root from MMR leaf
         let data_root = mmr_proof.leaf.data_root;
         let (chunk_data, chunk_proof) = match self
-            .state
-            .storage
+            .proof_source
             .get_chunk_at_index(data_root, challenge.chunk_index)
         {
             Ok(data) => data,
@@ -358,10 +389,10 @@ impl ChallengeResponder {
 /// layout of `Challenge<T>` is stable for the deployed runtimes, so we read
 /// fixed offsets.
 ///
-/// Exposed (`#[doc(hidden)]`) only so the fixed-offset layout can be exercised
-/// from an integration test against the encoded `Challenge<T>` bytes — it is
-/// not part of the crate's stable public API.
-#[doc(hidden)]
+/// Produced by [`decode_challenge_for_provider`] for [`ChallengeChainClient`]
+/// implementations (e.g. the provider node's subxt client) when polling the
+/// on-chain `Challenges` storage; also exercised directly by an integration
+/// test against encoded `Challenge<T>` bytes.
 pub struct DecodedChallenge {
     pub bucket_id: u64,
     pub challenger: [u8; 32],
@@ -392,9 +423,10 @@ const CHALLENGE_ENTRY_SIZE: usize = 144;
 ///   deposit (Balance u128)  — 16
 /// Total: 144 bytes.
 ///
-/// `#[doc(hidden)] pub` so the fixed-offset layout is reachable from an
-/// integration test; it is an internal helper, not stable public API.
-#[doc(hidden)]
+/// This is the crate's decode helper for [`ChallengeChainClient`]
+/// implementations that read raw `Challenges` entries (the provider node's
+/// subxt client depends on it in production); the fixed-offset layout is also
+/// exercised directly by an integration test.
 pub fn decode_challenge_for_provider(
     encoded: &[u8],
     our_bytes: &[u8; 32],

@@ -8,9 +8,10 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use storage_primitives::{blake2_256, BucketId};
 use storage_provider_node::auth::{MembershipCache, StaticMembershipResolver};
+use storage_provider_node::challenge_responder::ChallengeError;
 use storage_provider_node::{
     build_padded_merkle_tree, ChallengeChainClient, ChallengeResponder, ChallengeResponderConfig,
-    ChallengeResponseResult, DetectedChallenge, Error, NullNonceStore, ProviderDeps, ProviderState,
+    ChallengeResponseResult, DetectedChallenge, NullNonceStore, ProviderDeps, ProviderState,
     Storage,
 };
 
@@ -46,7 +47,7 @@ impl MockChallengeChainClient {
 
 #[async_trait::async_trait]
 impl ChallengeChainClient for MockChallengeChainClient {
-    async fn poll_challenges(&self) -> Result<Vec<DetectedChallenge>, Error> {
+    async fn poll_challenges(&self) -> Result<Vec<DetectedChallenge>, ChallengeError> {
         Ok(self.challenges.lock().unwrap().clone())
     }
 
@@ -56,10 +57,10 @@ impl ChallengeChainClient for MockChallengeChainClient {
         _chunk_data: Vec<u8>,
         _mmr_proof: storage_primitives::MmrProof,
         _chunk_proof: storage_primitives::MerkleProof,
-    ) -> Result<H256, Error> {
+    ) -> Result<H256, ChallengeError> {
         self.submitted.lock().unwrap().push(challenge_id);
         if let Some(err) = self.submit_error.lock().unwrap().as_ref() {
-            return Err(Error::Internal(err.clone()));
+            return Err(ChallengeError::Internal(err.clone()));
         }
         Ok(H256::zero())
     }
