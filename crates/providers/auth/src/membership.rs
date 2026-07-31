@@ -156,7 +156,7 @@ impl MembershipResolver for ChainMembershipResolver {
             .decode()
             .map_err(|e| format!("Failed to decode bucket: {e}"))?;
 
-        let members = members_from_bucket(bucket);
+        let members = member_roles_from_bucket(bucket);
 
         if members.is_empty() {
             tracing::warn!(bucket_id, "auth: decoded zero members");
@@ -168,25 +168,16 @@ impl MembershipResolver for ChainMembershipResolver {
     }
 }
 
-/// Convert a decoded on-chain bucket into `(account, role)` pairs.
-fn members_from_bucket(
+/// Pair up each member of a decoded on-chain bucket with its role.
+fn member_roles_from_bucket(
     bucket: storage_subxt::api::runtime_types::pallet_storage_provider::pallet::Bucket,
 ) -> Vec<(AccountId32, Role)> {
     bucket
         .members
         .0
         .into_iter()
-        .map(|m| (AccountId32::new(m.account.0), from_runtime_role(m.role)))
+        .map(|m| (AccountId32::new(m.account.0), m.role.into()))
         .collect()
-}
-
-fn from_runtime_role(role: storage_subxt::api::runtime_types::storage_primitives::Role) -> Role {
-    use storage_subxt::api::runtime_types::storage_primitives::Role as RuntimeRole;
-    match role {
-        RuntimeRole::Admin => Role::Admin,
-        RuntimeRole::Writer => Role::Writer,
-        RuntimeRole::Reader => Role::Reader,
-    }
 }
 
 #[cfg(test)]
@@ -196,7 +187,7 @@ mod tests {
     /// Regression test for the typed decoding of `StorageProvider.Buckets`:
     /// pins the generated-type -> primitives conversion for every role.
     #[test]
-    fn members_from_bucket_converts_accounts_and_roles() {
+    fn member_roles_from_bucket_converts_accounts_and_roles() {
         use storage_subxt::api::runtime_types::bounded_collections::bounded_vec::BoundedVec;
         use storage_subxt::api::runtime_types::pallet_storage_provider::pallet::{Bucket, Member};
         use storage_subxt::api::runtime_types::storage_primitives::Role as RuntimeRole;
@@ -220,7 +211,7 @@ mod tests {
         };
 
         assert_eq!(
-            members_from_bucket(bucket),
+            member_roles_from_bucket(bucket),
             vec![
                 (AccountId32::new([1u8; 32]), Role::Admin),
                 (AccountId32::new([2u8; 32]), Role::Writer),
