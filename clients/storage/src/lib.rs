@@ -75,6 +75,7 @@
 //! let bucket_id = client.establish_storage_agreement(
 //!     "5FHneW46...".to_string(), // provider account
 //!     signed,
+//!     storage_primitives::Visibility::Private,
 //! ).await?;
 //! # Ok(())
 //! # }
