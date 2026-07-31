@@ -33,4 +33,8 @@ pub type Migrations = (
     // challenge flow overhaul (#125). A real data transform, so it stays a
     // `VersionedMigration` gated on the pallet's storage version.
     pallet_storage_provider::migrations::v1::MigrateV0ToV1<Runtime>,
+    // Challenger-tier / bucket-visibility layout changes (#330): split
+    // ProviderStats counters, Bucket.visibility (existing buckets migrate as
+    // Public), Challenge.authorized (recomputed). Version-gated on 1 -> 2.
+    pallet_storage_provider::migrations::v2::MigrateV1ToV2<Runtime>,
 );

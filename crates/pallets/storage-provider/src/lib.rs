@@ -87,8 +87,9 @@ pub mod pallet {
     >;
 
     /// In-code storage version. v1 backfills the `commitment_nonce` field added
-    /// to `BucketSnapshot` by #125; see [`crate::migrations::v1`].
-    const STORAGE_VERSION: StorageVersion = StorageVersion::new(1);
+    /// to `BucketSnapshot` by #125; v2 covers the challenger-tier / visibility
+    /// layout changes of #330. See [`crate::migrations`].
+    const STORAGE_VERSION: StorageVersion = StorageVersion::new(2);
 
     #[pallet::pallet]
     #[pallet::storage_version(STORAGE_VERSION)]
