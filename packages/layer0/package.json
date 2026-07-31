@@ -19,17 +19,17 @@
     "@polkadot-labs/hdkd-helpers": "^0.0.31",
     "@web3-storage/core": "workspace:*",
     "@web3-storage/papi": "workspace:*",
-    "polkadot-api": "^2.1.7",
+    "polkadot-api": "^2.2.1",
     "rxjs": "^7.8.2"
   },
   "devDependencies": {
     "@types/node": "^26.0.1",
     "typescript": "~7.0.2",
-    "viem": "^2.54.1",
+    "viem": "^2.55.8",
     "vitest": "^4.1.9"
   },
   "peerDependencies": {
-    "viem": "^2.54.1"
+    "viem": "^2.55.8"
   },
   "peerDependenciesMeta": {
     "viem": {
