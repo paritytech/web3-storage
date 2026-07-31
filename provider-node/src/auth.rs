@@ -164,8 +164,6 @@ impl ChainMembershipResolver {
 #[async_trait::async_trait]
 impl MembershipResolver for ChainMembershipResolver {
     async fn fetch_access(&self, bucket_id: u64) -> Result<BucketAccess, String> {
-        use storage_subxt::api::runtime_types::storage_primitives as chain_primitives;
-
         let api = self.api()?;
 
         // Typed read via the static bindings. `unvalidated`: the bindings are
@@ -201,19 +199,9 @@ impl MembershipResolver for ChainMembershipResolver {
             .members
             .0
             .into_iter()
-            .map(|m| {
-                let role = match m.role {
-                    chain_primitives::Role::Admin => Role::Admin,
-                    chain_primitives::Role::Writer => Role::Writer,
-                    chain_primitives::Role::Reader => Role::Reader,
-                };
-                (AccountId32::new(m.account.0), role)
-            })
+            .map(|m| (AccountId32::new(m.account.0), m.role.into()))
             .collect::<Vec<_>>();
-        let visibility = match bucket.visibility {
-            chain_primitives::Visibility::Public => Visibility::Public,
-            chain_primitives::Visibility::Private => Visibility::Private,
-        };
+        let visibility: Visibility = bucket.visibility.into();
 
         tracing::debug!(bucket_id, count = members.len(), "auth: resolved members");
 

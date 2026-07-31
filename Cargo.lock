@@ -9945,6 +9945,7 @@ dependencies = [
  "parity-scale-codec",
  "scale-info",
  "serde",
+ "storage-primitives",
  "subxt",
  "subxt-signer 0.50.2",
 ]

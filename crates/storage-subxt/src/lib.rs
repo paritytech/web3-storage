@@ -15,3 +15,5 @@ pub use subxt_signer;
 #[rustfmt::skip]
 pub mod storage_paseo_runtime;
 pub use storage_paseo_runtime::*;
+
+mod conversions;
