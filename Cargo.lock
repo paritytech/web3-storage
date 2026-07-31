@@ -7046,6 +7046,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "provider-chain"
+version = "0.1.0"
+dependencies = [
+ "sp-runtime",
+ "storage-primitives",
+ "storage-subxt",
+ "subxt",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "provider-negotiation"
 version = "0.1.0"
 dependencies = [
@@ -7057,19 +7070,6 @@ dependencies = [
  "sp-core",
  "sp-runtime",
  "storage-primitives",
-]
-
-[[package]]
-name = "provider-rpc"
-version = "0.1.0"
-dependencies = [
- "sp-runtime",
- "storage-primitives",
- "storage-subxt",
- "subxt",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
 ]
 
 [[package]]
@@ -9930,8 +9930,8 @@ dependencies = [
  "hex",
  "parity-scale-codec",
  "parking_lot",
+ "provider-chain",
  "provider-negotiation",
- "provider-rpc",
  "provider-storage",
  "reqwest",
  "serde",

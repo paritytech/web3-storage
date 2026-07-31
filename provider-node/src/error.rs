@@ -117,8 +117,8 @@ pub enum Error {
 
 /// Chain-connection failures are internal: the node cannot reach the chain,
 /// which is never the caller's fault.
-impl From<provider_rpc::Error> for Error {
-    fn from(e: provider_rpc::Error) -> Self {
+impl From<provider_chain::Error> for Error {
+    fn from(e: provider_chain::Error) -> Self {
         Error::Internal(e.to_string())
     }
 }

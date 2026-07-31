@@ -13,7 +13,7 @@ use crate::{
     ReplicaSyncCoordinatorConfig, ReplicaSyncCoordinatorHandle,
 };
 use clap::Parser;
-use provider_rpc::{
+use provider_chain::{
     chain_connection::{self, ChainHandle, ChainTransport},
     chain_events::{BlockEvent, BlockEventRx, BlockEventTx, EVENT_CHANNEL_CAPACITY},
 };

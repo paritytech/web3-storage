@@ -1,5 +1,5 @@
 [package]
-name = "provider-rpc"
+name = "provider-chain"
 version = "0.1.0"
 authors.workspace = true
 edition.workspace = true

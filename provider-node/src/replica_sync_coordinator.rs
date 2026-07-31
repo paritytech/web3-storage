@@ -13,7 +13,7 @@
 
 use crate::replica_sync::ReplicaSync;
 use crate::{Error, ProviderState};
-use provider_rpc::chain_events::{BlockEvent, BlockEventRx};
+use provider_chain::chain_events::{BlockEvent, BlockEventRx};
 use sp_core::H256;
 use sp_runtime::AccountId32;
 use std::collections::HashMap;

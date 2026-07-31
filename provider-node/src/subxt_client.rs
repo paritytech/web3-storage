@@ -17,7 +17,7 @@ use crate::replica_sync_coordinator::{
     BucketSnapshot, ReplicaAgreementInfo, ReplicaSyncChainClient,
 };
 use crate::Error;
-use provider_rpc::chain_connection::{self, ChainWatch};
+use provider_chain::chain_connection::{self, ChainWatch};
 use sp_core::crypto::Ss58Codec;
 use sp_core::H256;
 use std::sync::Arc;

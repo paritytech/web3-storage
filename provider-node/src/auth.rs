@@ -10,7 +10,7 @@
 use crate::error::Error;
 use crate::ProviderState;
 use dashmap::DashMap;
-use provider_rpc::chain_connection::{self, ChainWatch};
+use provider_chain::chain_connection::{self, ChainWatch};
 use sp_core::{crypto::AccountId32, sr25519, Pair};
 use std::time::{Duration, Instant};
 use storage_primitives::Role;

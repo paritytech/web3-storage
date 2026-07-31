@@ -22,7 +22,7 @@
 //!    shut down cleanly when stopped.
 
 use async_trait::async_trait;
-use provider_rpc::chain_connection::{ChainHandle, ChainTransport};
+use provider_chain::chain_connection::{ChainHandle, ChainTransport};
 use provider_storage::NonceStore;
 use sp_runtime::AccountId32;
 use std::sync::atomic::Ordering;

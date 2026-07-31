@@ -23,8 +23,8 @@ use crate::types::ProviderInfo;
 use crate::Error;
 use async_trait::async_trait;
 use parking_lot::RwLock;
-use provider_rpc::chain_connection::{self, ChainHandle, ChainTransport};
-use provider_rpc::chain_events::{self, BlockEvent, BlockEventTx};
+use provider_chain::chain_connection::{self, ChainHandle, ChainTransport};
+use provider_chain::chain_events::{self, BlockEvent, BlockEventTx};
 use provider_storage::{NonceStore, NullNonceStore};
 use sp_runtime::AccountId32;
 use std::sync::atomic::AtomicU32;
@@ -1357,7 +1357,7 @@ mod tests {
             // The connection was published and the block fanned out, including
             // the statically-decoded ChallengeCreated from the block's events.
             assert!(chain_rx.borrow().is_some());
-            use provider_rpc::chain_events::BlockEvent;
+            use provider_chain::chain_events::BlockEvent;
             let mut saw_resubscribed = false;
             let mut saw_challenge = false;
             while let Ok(event) = events_rx.try_recv() {
