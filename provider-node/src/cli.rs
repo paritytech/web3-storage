@@ -94,6 +94,18 @@ pub struct RpcParams {
         value_delimiter = ','
     )]
     pub cors_allowed_origins: Option<Vec<String>>,
+
+    /// Port for the Prometheus /metrics exporter, served on its own listener
+    /// (0.0.0.0), never on the public API router. The default 9620 avoids the
+    /// collator's 9615 and the exporter's 9700. A failure to bind only
+    /// disables metrics.
+    #[arg(
+        long,
+        value_name = "PORT",
+        default_value_t = 9620,
+        env = "PROMETHEUS_PORT"
+    )]
+    pub prometheus_port: u16,
 }
 
 /// Parameters for provider identity and signing keys.
@@ -258,6 +270,7 @@ mod tests {
         assert_eq!(cli.storage.storage_path, PathBuf::from("./provider-data"));
         assert_eq!(cli.rpc.bind_addr, "0.0.0.0:3333");
         assert_eq!(cli.rpc.chain_rpc, "ws://127.0.0.1:2222");
+        assert_eq!(cli.rpc.prometheus_port, 9620);
         assert!(cli.key.keyfile.is_none());
         assert!(cli.key.provider_id.is_none());
         assert!(!cli.replica_sync.enable_replica_sync);
@@ -280,6 +293,8 @@ mod tests {
             "127.0.0.1:4444",
             "--chain-rpc",
             "ws://example.com:9944",
+            "--prometheus-port",
+            "9621",
             "--keyfile",
             "/tmp/test-key",
             "--enable-replica-sync",
@@ -296,6 +311,7 @@ mod tests {
         assert_eq!(cli.storage.storage_path, PathBuf::from("/data"));
         assert_eq!(cli.rpc.bind_addr, "127.0.0.1:4444");
         assert_eq!(cli.rpc.chain_rpc, "ws://example.com:9944");
+        assert_eq!(cli.rpc.prometheus_port, 9621);
         assert_eq!(
             cli.key.keyfile.as_ref().unwrap().to_str().unwrap(),
             "/tmp/test-key"

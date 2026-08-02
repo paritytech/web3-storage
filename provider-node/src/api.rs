@@ -124,6 +124,11 @@ pub fn create_router(state: Arc<ProviderState>) -> Router {
         .layer(DefaultBodyLimit::max(256 * 1024 * 1024)) // 256 MB
         .layer(TraceLayer::new_for_http())
         .layer(cors)
+        // Outermost so latency and in-flight cover the full middleware stack.
+        .layer(from_fn_with_state(
+            state.clone(),
+            crate::metrics::track_http_metrics,
+        ))
         .with_state(state)
 }
 
@@ -246,6 +251,7 @@ async fn get_node(
         .storage
         .get_node(&hash)
         .ok_or_else(|| Error::NodeNotFound(query.hash.clone()))?;
+    state.count_download_bytes(node.data.len() as u64);
 
     Ok(Json(DownloadNodeResponse {
         hash: query.hash,
@@ -304,12 +310,18 @@ async fn upload_node(
         .transpose()?;
 
     // Initialize bucket if needed
-    state.storage.init_bucket(request.bucket_id, u64::MAX)?;
-
-    // Store node
     state
         .storage
-        .store_node(request.bucket_id, hash, data, children)?;
+        .init_bucket(request.bucket_id, u64::MAX)
+        .map_err(|e| state.storage_err("init_bucket", e))?;
+
+    // Store node
+    let data_len = data.len() as u64;
+    state
+        .storage
+        .store_node(request.bucket_id, hash, data, children)
+        .map_err(|e| state.storage_err("store_node", e))?;
+    state.count_upload_bytes(data_len);
 
     Ok(Json(UploadNodeResponse { stored: true }))
 }
@@ -376,8 +388,12 @@ async fn commit(
         })
         .collect::<Result<Vec<_>, Error>>()?;
 
-    let (mmr_root, start_seq, leaf_indices) =
-        state.storage.commit(request.bucket_id, data_roots)?;
+    let started = std::time::Instant::now();
+    let (mmr_root, start_seq, leaf_indices) = state
+        .storage
+        .commit(request.bucket_id, data_roots)
+        .map_err(|e| state.storage_err("commit", e))?;
+    state.observe_commit_duration(started);
 
     // Read the post-commit `leaf_count` so the signed payload matches what
     // the pallet reconstructs from the challenger's args. Previously this
@@ -432,9 +448,11 @@ async fn read_chunks(
     let end_chunk = (query.offset + query.length).div_ceil(chunk_size);
 
     let mut chunks = Vec::new();
+    let mut served_bytes = 0u64;
     for chunk_idx in start_chunk..end_chunk {
         match state.storage.get_chunk_at_index(data_root, chunk_idx) {
             Ok((data, proof)) => {
+                served_bytes += data.len() as u64;
                 chunks.push(ChunkWithProof {
                     hash: format!(
                         "0x{}",
@@ -451,6 +469,7 @@ async fn read_chunks(
             Err(_) => break,
         }
     }
+    state.count_download_bytes(served_bytes);
 
     Ok(Json(ReadResponse { chunks }))
 }
@@ -535,7 +554,8 @@ async fn get_mmr_proof(
 ) -> Result<Json<MmrProofResponse>, Error> {
     let mmr_proof = state
         .storage
-        .get_mmr_proof(query.bucket_id, query.leaf_index)?;
+        .get_mmr_proof(query.bucket_id, query.leaf_index)
+        .map_err(|e| state.storage_err("mmr_proof", e))?;
 
     Ok(Json(MmrProofResponse {
         leaf: MmrLeafData {
@@ -578,7 +598,8 @@ async fn get_chunk_proof(
 
     let (chunk_data, proof) = state
         .storage
-        .get_chunk_at_index(data_root, query.chunk_index)?;
+        .get_chunk_at_index(data_root, query.chunk_index)
+        .map_err(|e| state.storage_err("chunk_proof", e))?;
     let chunk_hash = storage_primitives::blake2_256(&chunk_data);
 
     Ok(Json(ChunkProofResponse {
@@ -626,7 +647,8 @@ async fn delete_data(
 
     let (mmr_root, start_seq, leaf_count) = state
         .storage
-        .delete_before(request.bucket_id, request.new_start_seq)?;
+        .delete_before(request.bucket_id, request.new_start_seq)
+        .map_err(|e| state.storage_err("delete_before", e))?;
 
     // Sign with the real post-delete leaf_count — pallet honours it now.
     let payload = CommitmentPayload::new(
@@ -657,7 +679,10 @@ async fn get_mmr_peaks(
     State(state): State<Arc<ProviderState>>,
     Query(query): Query<MmrPeaksQuery>,
 ) -> Result<Json<MmrPeaksResponse>, Error> {
-    let (mmr_root, peaks) = state.storage.get_mmr_peaks(query.bucket_id)?;
+    let (mmr_root, peaks) = state
+        .storage
+        .get_mmr_peaks(query.bucket_id)
+        .map_err(|e| state.storage_err("mmr_peaks", e))?;
 
     Ok(Json(MmrPeaksResponse {
         bucket_id: query.bucket_id,

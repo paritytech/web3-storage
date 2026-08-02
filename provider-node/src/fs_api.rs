@@ -92,7 +92,8 @@ pub async fn fs_put_file(
             let hash = blake2_256(chunk);
             state
                 .storage
-                .store_node(bucket_id, hash, chunk.to_vec(), None)?;
+                .store_node(bucket_id, hash, chunk.to_vec(), None)
+                .map_err(|e| state.storage_err("store_node", e))?;
             Ok(hash)
         })
         .collect::<Result<Vec<_>, Error>>()?;
@@ -101,7 +102,13 @@ pub async fn fs_put_file(
     let data_root = build_padded_merkle_tree(&*state.storage, bucket_id, &chunk_hashes);
 
     // 4. Commit data_root to MMR
-    let (_mmr_root, _start_seq, leaf_indices) = state.storage.commit(bucket_id, vec![data_root])?;
+    let started = std::time::Instant::now();
+    let (_mmr_root, _start_seq, leaf_indices) = state
+        .storage
+        .commit(bucket_id, vec![data_root])
+        .map_err(|e| state.storage_err("commit", e))?;
+    state.observe_commit_duration(started);
+    state.count_upload_bytes(size);
     let leaf_index = leaf_indices[0];
 
     // 5. Extract content type from headers
@@ -166,6 +173,7 @@ pub async fn fs_get_file(
         data.extend_from_slice(&chunk);
     }
     data.truncate(meta.size as usize);
+    state.count_download_bytes(data.len() as u64);
 
     let mut response = (StatusCode::OK, data).into_response();
     let headers = response.headers_mut();

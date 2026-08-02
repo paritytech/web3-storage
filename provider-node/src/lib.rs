@@ -19,6 +19,7 @@ pub mod cli;
 pub mod command;
 pub mod error;
 pub mod fs_api;
+pub mod metrics;
 pub mod negotiate;
 pub mod replica_sync;
 pub mod replica_sync_coordinator;
@@ -37,6 +38,7 @@ pub use challenge_responder::{
     ChallengeResponseResult, DetectedChallenge, ResponderCommand,
 };
 pub use error::Error;
+pub use metrics::{ProviderMetrics, StorageMetricsCollector};
 pub use negotiate::{AgreementTermsOf, NegotiateRequest, NonceCounter, SignedTerms};
 pub use replica_sync::ReplicaSync;
 pub use replica_sync_coordinator::{
@@ -83,6 +85,8 @@ pub struct ProviderState {
     /// Browser origins allowed via CORS. `None` (the default) keeps the
     /// permissive policy; `Some(list)` restricts to exactly those origins.
     pub cors_allowed_origins: Option<Vec<String>>,
+    /// Prometheus metrics; `None` disables all recording.
+    pub metrics: Option<ProviderMetrics>,
     /// Live chain state kept in sync by the chain-state coordinator — the single
     /// writer for `current_anchor_block`, `constants`, `provider_info`, and
     /// `nonce_counter`. `/negotiate` gates on all four before signing.
@@ -108,6 +112,7 @@ impl ProviderState {
             membership_cache: membership,
             auth_max_skew,
             cors_allowed_origins: None,
+            metrics: None,
             chain_state: Arc::new(ChainState::with_nonce_store(nonce_store)),
         }
     }
@@ -133,6 +138,12 @@ impl ProviderState {
     /// the permissive policy; `Some(list)` restricts to exactly those origins.
     pub fn with_cors_origins(mut self, origins: Option<Vec<String>>) -> Self {
         self.cors_allowed_origins = origins;
+        self
+    }
+
+    /// Attach Prometheus metrics. `None` (the default) disables recording.
+    pub fn with_metrics(mut self, metrics: Option<ProviderMetrics>) -> Self {
+        self.metrics = metrics;
         self
     }
 
