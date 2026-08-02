@@ -387,6 +387,8 @@ mod tests {
         let storage = Arc::new(Storage::new());
         let registry = Registry::new();
         StorageMetricsCollector::register(&registry, storage.clone());
+        // Duplicate registration must degrade to a warning, not a panic.
+        StorageMetricsCollector::register(&registry, storage.clone());
 
         let read_gauge = |name: &str| -> f64 {
             let families = registry.gather();
