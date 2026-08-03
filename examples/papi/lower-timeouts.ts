@@ -9,8 +9,10 @@
  * `runtimes/<runtime>/src/storage.rs`): each lives at the well-known unhashed key
  * `twox128(":X:")` and falls back to the compiled default while the key is
  * absent. Setting the key changes the effective value from the next block;
- * deleting it restores the default. Built for compressing protocol timing in
- * dev and stress-test runs (paritytech/web3-storage#267).
+ * deleting it restores the default. All durations are RELAY chain blocks (6s
+ * each) — the pallet measures time on the relay-chain clock. Built for
+ * compressing protocol timing in dev and stress-test runs
+ * (paritytech/web3-storage#267).
  *
  * Usage:
  *   pnpm --filter web3-storage-papi-demo run lower-timeouts -- [options]
@@ -19,7 +21,8 @@
  *   --suri <suri>       sudo account                 (default //Alice)
  *   --profile fast      minute-scale timing preset   (see FAST_PROFILE)
  *   --set Name=Value    set one parameter, repeatable (see PARAMS for names;
- *                       values are blocks or plancks, plain integers)
+ *                       durations are RELAY chain blocks, amounts plancks,
+ *                       plain integers)
  *   --restore           delete all overrides → compiled defaults
  *   --list              print current overrides + effective values, then exit
  *   --dry-run           print what would be submitted without submitting
@@ -48,20 +51,18 @@ import {
 
 /** Every `pub storage` parameter in `runtimes/<runtime>/src/storage.rs`, with its SCALE type. */
 const PARAMS = {
-  // BlockNumber (u32); 6s blocks, so 10 blocks = 1 minute
+  // BlockNumber (u32) in RELAY chain blocks (6s each, so 10 blocks = 1
+  // minute): the pallet measures every duration on the relay-chain clock
+  // (`Config::BlockNumberProvider`), not parachain blocks.
   ChallengeTimeout: "u32",
   MaxNonceAge: "u32",
   SettlementTimeout: "u32",
   RequestTimeout: "u32",
-  DefaultCheckpointInterval: "u32",
-  DefaultCheckpointGrace: "u32",
   DeregisterAnnouncementPeriod: "u32",
   // Balance (u128), plancks
   MinProviderStake: "u128",
   ChallengeDeposit: "u128",
   MinStakePerByte: "u128",
-  CheckpointReward: "u128",
-  CheckpointMissPenalty: "u128",
   MaxChallengesPerDeadline: "u16",
 } as const;
 
@@ -71,20 +72,26 @@ type ParamType = (typeof PARAMS)[ParamName];
 const PARAM_NAMES = Object.keys(PARAMS) as ParamName[];
 
 /**
- * Minute-scale timing for stress/dev runs. Only timing parameters; economic
- * ones (stakes, deposits, rewards) keep their defaults unless --set overrides
- * them.
+ * Minute-scale timing for stress/dev runs, in relay blocks. Only timing
+ * parameters; economic ones (stakes, deposits) keep their defaults unless
+ * --set overrides them.
+ *
+ * Deliberately absent:
+ * - RequestTimeout: the provider node signs /negotiate quotes with
+ *   `valid_until = anchor + RequestTimeout` read from chain metadata at
+ *   connect time, which does not see a live override. Shortening the
+ *   on-chain value makes the pallet reject every later quote with
+ *   TermsValidityTooLong; leave it at its default.
+ * - DeregisterAnnouncementPeriod: must stay > RequestTimeout (re-checked
+ *   below), so with RequestTimeout at its 6h default it cannot be
+ *   minute-scale.
  */
 const FAST_PROFILE: Partial<Record<ParamName, bigint>> = {
   ChallengeTimeout: 100n, // 10 min
   SettlementTimeout: 100n, // 10 min
-  RequestTimeout: 50n, // 5 min
   // Roomy on purpose: the sign → build → broadcast → finalize choreography
   // must fit inside it or every commitment gets rejected as stale.
   MaxNonceAge: 600n, // 1 h
-  DefaultCheckpointInterval: 20n, // 2 min
-  DefaultCheckpointGrace: 10n, // 1 min
-  DeregisterAnnouncementPeriod: 150n, // 15 min
 };
 
 const PROFILES: Record<string, Partial<Record<ParamName, bigint>>> = {

@@ -1,0 +1,16 @@
+[package]
+name = "storage-indexers"
+description = "Block subscriber and typed filtered event stream over the Web3 Storage chain, built on the generated storage-subxt bindings"
+version = "0.1.0"
+authors.workspace = true
+edition.workspace = true
+license = "Apache-2.0"
+repository.workspace = true
+
+[dependencies]
+futures = { workspace = true }
+storage-subxt = { workspace = true }
+subxt = { workspace = true, features = ["jsonrpsee", "native", "reconnecting-rpc-client"] }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }

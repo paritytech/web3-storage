@@ -1,22 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 // Photos-specific contract glue: reshape a provider-signed quote into the
-// drive-registry precompile's `PrimitiveAgreementTerms` ABI struct, and derive
-// the substrate account of a deployed contract from its H160. This is NOT
+// drive-registry precompile's `PrimitiveAgreementTerms` ABI struct. This is NOT
 // general SDK material (it is precompile-shaped), so it stays local to the app,
 // mirroring `examples/papi/sc-support.ts`.
 //
 // The chain-generic revive helpers (deployContract / callContract / encodeCall /
-// decodeContractEmitted / substrateToH160 / h160ToSubstrate / ensureAccountMapped)
-// come from `@web3-storage/sdk/revive`.
+// decodeContractEmitted / substrateToH160 / ensureAccountMapped) come from
+// `@web3-storage/sdk/revive`.
 
-import { asHex, negotiateTerms, type ChainSigner } from "@web3-storage/sdk";
-
-/** Owner-shaped value the negotiate helper needs (a signer or a mapped account). */
-export interface Owner {
-  publicKey: Uint8Array;
-  address: string;
-}
+import { asHex, negotiateTerms, type ChainSigner, type MappedAccount } from "@web3-storage/sdk";
 
 /** Mirror of `IDriveRegistry.PrimitiveAgreementTerms` for viem ABI encoding. */
 export interface PrimitiveAgreementTerms {
@@ -45,7 +38,7 @@ export interface SignedTerms {
  */
 export async function negotiatePrecompileTerms(
   providerUrl: string,
-  owner: Owner | ChainSigner,
+  owner: MappedAccount | ChainSigner,
   { maxBytes, duration, pricePerByte }: { maxBytes: bigint; duration: number; pricePerByte: bigint },
 ): Promise<SignedTerms> {
   const signed = await negotiateTerms(providerUrl, {

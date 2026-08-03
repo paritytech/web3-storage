@@ -6,18 +6,24 @@
 //! disk backend instead of in-memory storage, ensuring the full RocksDB
 //! serialization/deserialization path is exercised through real HTTP requests.
 
+mod common;
+
 use axum::http::StatusCode;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
-use reqwest::Client;
+use common::SignedClient;
+use provider_storage::{DiskStorage, NullNonceStore};
+use reqwest::Method;
 use serde_json::{json, Value};
 use std::sync::Arc;
-use storage_provider_node::{create_router, DiskStorage, ProviderState};
+use std::time::Duration;
+use storage_primitives::Role;
+use storage_provider_node::auth::{MembershipCache, StaticMembershipResolver};
+use storage_provider_node::{ProviderDeps, ProviderState};
 use tempfile::TempDir;
-use tokio::net::TcpListener;
 
 struct DiskTestServer {
     addr: std::net::SocketAddr,
-    client: Client,
+    client: SignedClient,
     // Keep TempDir alive so RocksDB path isn't removed
     _dir: TempDir,
 }
@@ -26,22 +32,24 @@ impl DiskTestServer {
     async fn new() -> Self {
         let dir = TempDir::new().unwrap();
         let disk = DiskStorage::new(dir.path()).expect("RocksDB should open");
-        // Functional tests, not auth tests: run with auth disabled (auth is
-        // enforced by default; see auth_integration.rs for the auth coverage).
-        let state = Arc::new(
-            ProviderState::with_seed(Arc::new(disk), "//Alice")
-                .expect("//Alice is valid")
-                .with_auth_disabled(),
-        );
-
-        let app = create_router(state);
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-
+        let deps = ProviderDeps {
+            storage: Arc::new(disk),
+            nonce_store: Arc::new(NullNonceStore),
+            membership: Arc::new(MembershipCache::new(
+                Box::new(StaticMembershipResolver(vec![(
+                    common::test_member_account(),
+                    Role::Admin,
+                )])),
+                Duration::from_secs(60),
+            )),
+            auth_max_skew: Duration::from_secs(300),
+        };
+        let (addr, client) =
+            common::serve(ProviderState::with_seed(deps, "//Alice").expect("//Alice is valid"))
+                .await;
         Self {
             addr,
-            client: Client::new(),
+            client,
             _dir: dir,
         }
     }
@@ -59,7 +67,7 @@ async fn upload_and_commit(server: &DiskTestServer, bucket_id: u64) -> (String, 
 
     let resp = server
         .client
-        .put(server.url("/node"))
+        .request_bucket(Method::PUT, server.url("/node"), bucket_id)
         .json(&json!({
             "bucket_id": bucket_id,
             "hash": hash_hex,
@@ -73,7 +81,7 @@ async fn upload_and_commit(server: &DiskTestServer, bucket_id: u64) -> (String, 
 
     let commit_resp = server
         .client
-        .post(server.url("/commit"))
+        .request_bucket(Method::POST, server.url("/commit"), bucket_id)
         .json(&json!({
             "bucket_id": bucket_id,
             "data_roots": [hash_hex],

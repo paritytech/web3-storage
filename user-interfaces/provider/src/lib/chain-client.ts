@@ -33,11 +33,40 @@ export { clientReady$, connectToChain, getClient, subscribeToBlocks }
 // The generic connection lifecycle lives in the shared @web3-storage/chain-client
 // package (imported/re-exported above); only provider-specific state stays here.
 
-export const blockNumber$ = new BehaviorSubject<number | undefined>(undefined)
+/**
+ * The pallet's anchor block — the clock every on-chain duration (agreement
+ * expiry, challenge deadlines, checkpoint windows, deregister cooldown) is
+ * measured against. NOT the parachain height: on live networks the two clocks
+ * differ by millions of blocks, so pallet-clock comparisons must read this.
+ */
+export const anchorBlock$ = new BehaviorSubject<number | undefined>(undefined)
+
+/**
+ * Refresh [`anchorBlock$`] from the `current_anchor_block` runtime API. The
+ * unsafe API resolves against live metadata, so no descriptor regeneration is
+ * needed; on runtimes without the API the parachain height is the pallet
+ * clock, so fall back to it.
+ */
+export async function refreshAnchorBlock(parachainBlock: number): Promise<void> {
+  let anchor = parachainBlock
+  const client = getClient()
+  if (client) {
+    try {
+      anchor = Number(
+        await client.getUnsafeApi().apis.StorageProviderApi.current_anchor_block()
+      )
+    } catch { /* pre-anchor runtime */ }
+  }
+  // Publish only if we are still on the connection this answer came from —
+  // a call resolving after a disconnect/reconnect would resurrect a stale
+  // anchor from the previous chain.
+  if (getClient() !== client) return
+  anchorBlock$.next(anchor)
+}
 
 export function disconnectFromChain(): void {
   disconnectChain()
-  blockNumber$.next(undefined)
+  anchorBlock$.next(undefined)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -47,7 +76,7 @@ export function disconnectFromChain(): void {
 export async function getChainProperties(): Promise<{
   tokenDecimals: number
   tokenSymbol: string
-  blockTimeMs: number
+  anchorBlockTimeMs: number
   minProviderStake: bigint
   ss58Prefix: number
   specName: string
@@ -58,7 +87,7 @@ export async function getChainProperties(): Promise<{
   // them via constants / spec data.
   let tokenDecimals = 12
   let tokenSymbol = 'UNIT'
-  let blockTimeMs = 6000
+  let anchorBlockTimeMs = 6000
   let minProviderStake = 1_000_000_000_000_000n
   let ss58Prefix = getSs58Prefix()
   let specName = ''
@@ -98,13 +127,21 @@ export async function getChainProperties(): Promise<{
       minProviderStake = await api.constants.StorageProvider.MinProviderStake()
     } catch { /* use default */ }
 
+    // Anchor-clock tick — deliberately NOT Aura.SlotDuration: every duration
+    // this UI formats (agreement duration, checkpoint interval/grace, provider
+    // min/max duration) is anchor-denominated (relay blocks), which the
+    // parachain block time will stop matching when it changes. The unsafe API
+    // resolves against live metadata, so no descriptor regeneration is needed;
+    // runtimes without the API keep the 6s default.
     try {
-      const period = await api.constants.Aura.SlotDuration()
-      blockTimeMs = Number(period)
+      const millis = await client
+        .getUnsafeApi()
+        .apis.StorageProviderApi.anchor_block_time_millis()
+      anchorBlockTimeMs = Number(millis)
     } catch { /* use default */ }
   }
 
-  return { tokenDecimals, tokenSymbol, blockTimeMs, minProviderStake, ss58Prefix, specName, specVersion, genesisHash }
+  return { tokenDecimals, tokenSymbol, anchorBlockTimeMs, minProviderStake, ss58Prefix, specName, specVersion, genesisHash }
 }
 
 export async function getGenesisHash(): Promise<string> {
@@ -256,12 +293,6 @@ export interface OnChainBucketSnapshot {
   checkpointBlock: number
 }
 
-export interface OnChainCheckpointConfig {
-  interval: number
-  gracePeriod: number
-  enabled: boolean
-}
-
 export interface OnChainBucketDetails {
   bucketId: number
   members: OnChainBucketMember[]
@@ -271,10 +302,6 @@ export interface OnChainBucketDetails {
   snapshot: OnChainBucketSnapshot | null
   historicalRoots: Array<{ position: number; root: string }>
   totalSnapshots: number
-  checkpointConfig: OnChainCheckpointConfig | null
-  lastCheckpointWindow: bigint | null
-  checkpointPoolBalance: bigint
-  checkpointReward: bigint
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -331,7 +358,8 @@ export async function getAccountBalance(address: string): Promise<{
 
 export async function getProviderAgreements(address: string): Promise<OnChainAgreement[]> {
   const entries = await requireApi().query.StorageProvider.StorageAgreements.getEntries()
-  const currentBlock = blockNumber$.getValue() || 0
+  // expires_at is on the pallet's anchor clock, so the comparison must be too.
+  const anchorBlock = anchorBlock$.getValue() || 0
   const out: OnChainAgreement[] = []
   for (const { keyArgs, value } of entries) {
     const [bucketIdRaw, providerAddr] = keyArgs
@@ -340,7 +368,7 @@ export async function getProviderAgreements(address: string): Promise<OnChainAgr
     const expiresAt = value.expires_at
     let status: 'active' | 'expired' | 'terminated' = 'active'
     if (value.extensions_blocked) status = 'terminated'
-    else if (currentBlock > expiresAt && expiresAt > 0) status = 'expired'
+    else if (anchorBlock > expiresAt && expiresAt > 0) status = 'expired'
     out.push({
       id: bucketId,
       bucketId,
@@ -398,7 +426,6 @@ export async function getProviderCheckpoints(address: string): Promise<OnChainCh
 
 export async function getBucketDetails(
   bucketIds: number[],
-  providerAddress: string,
 ): Promise<OnChainBucketDetails[]> {
   const a = requireApi()
   const out: OnChainBucketDetails[] = []
@@ -429,39 +456,6 @@ export async function getBucketDetails(
       }
     }
 
-    let checkpointConfig: OnChainCheckpointConfig | null = null
-    try {
-      const config = await a.query.StorageProvider.CheckpointConfigs.getValue(BigInt(bucketId))
-      if (config) {
-        checkpointConfig = {
-          interval: config.interval,
-          gracePeriod: config.grace_period,
-          enabled: config.enabled,
-        }
-      }
-    } catch { /* not configured */ }
-
-    let lastCheckpointWindow: bigint | null = null
-    try {
-      const val = await a.query.StorageProvider.LastCheckpointWindow.getValue(BigInt(bucketId))
-      lastCheckpointWindow = val ?? null
-    } catch { /* not set */ }
-
-    let checkpointPoolBalance = 0n
-    try {
-      const pool = await a.query.StorageProvider.CheckpointPool.getValue(BigInt(bucketId))
-      checkpointPoolBalance = pool ?? 0n
-    } catch { /* no pool */ }
-
-    let checkpointReward = 0n
-    try {
-      const reward = await a.query.StorageProvider.CheckpointRewards.getValue(
-        providerAddress,
-        BigInt(bucketId),
-      )
-      checkpointReward = reward ?? 0n
-    } catch { /* no reward */ }
-
     out.push({
       bucketId,
       members,
@@ -471,10 +465,6 @@ export async function getBucketDetails(
       snapshot,
       historicalRoots,
       totalSnapshots: bucket.total_snapshots,
-      checkpointConfig,
-      lastCheckpointWindow,
-      checkpointPoolBalance,
-      checkpointReward,
     })
   }
   return out
@@ -482,7 +472,8 @@ export async function getBucketDetails(
 
 export async function getProviderChallenges(address: string): Promise<OnChainChallenge[]> {
   const entries = await requireApi().query.StorageProvider.Challenges.getEntries()
-  const currentBlock = blockNumber$.getValue() || 0
+  // Challenge deadlines are on the pallet's anchor clock.
+  const anchorBlock = anchorBlock$.getValue() || 0
   const challenges: OnChainChallenge[] = []
   // Challenges is a StorageDoubleMap keyed by (deadline, index): each entry is
   // a single challenge with keyArgs = [deadline, index] and value = Challenge.
@@ -499,7 +490,7 @@ export async function getProviderChallenges(address: string): Promise<OnChainCha
       chunkIndex: Number(ch.target.chunk_index),
       mmrRoot: ch.mmr_root,
       startSeq: Number(ch.start_seq),
-      status: currentBlock > deadline ? 'expired' : 'pending',
+      status: anchorBlock > deadline ? 'expired' : 'pending',
       createdAt: 0,
       deadline,
     })

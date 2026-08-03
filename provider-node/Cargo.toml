@@ -8,8 +8,10 @@ repository.workspace = true
 description = "Off-chain provider node for scalable Web3 storage"
 
 [dependencies]
-storage-client = { workspace = true }
+provider-negotiation = { workspace = true }
+provider-storage = { workspace = true }
 storage-primitives = { workspace = true, features = ["serde", "std"] }
+storage-subxt = { workspace = true }
 tokio = { workspace = true }
 axum = { workspace = true }
 tower-http = { workspace = true }
@@ -26,8 +28,6 @@ tracing = { workspace = true, features = ["std"] }
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 parking_lot = { workspace = true }
 dashmap = { workspace = true }
-rocksdb = { workspace = true }
-bincode = { workspace = true }
 hex = { workspace = true, features = ["std"] }
 clap = { workspace = true, features = ["derive", "env"] }
 reqwest = { workspace = true }
@@ -37,4 +37,5 @@ async-trait = { workspace = true }
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util", "time"] }
 serde_json = { workspace = true }
+subxt-rpcs = { workspace = true, features = ["mock-rpc-client"] }
 tempfile = { workspace = true }

@@ -1,0 +1,18 @@
+[package]
+name = "storage-subxt"
+description = "Rust bindings and interface to interact with Web3 Storage using subxt"
+version = "0.1.0"
+authors.workspace = true
+edition.workspace = true
+license = "Apache-2.0"
+repository.workspace = true
+exclude = ["./metadata"]
+readme = "README.md"
+
+
+[dependencies]
+codec = { workspace = true, features = ["std"] }
+scale-info = { workspace = true, features = ["std"] }
+serde = { workspace = true, features = ["derive", "std"] }
+subxt = { workspace = true, features = ["jsonrpsee", "native"] }
+subxt-signer = { workspace = true, features = ["ecdsa", "sr25519", "subxt"] }

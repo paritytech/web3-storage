@@ -3,8 +3,9 @@ name: Integration Tests
 on:
   push:
     branches: [main, dev]
+  # No base-branch filter: stacked PRs (base = another feature branch)
+  # must get the same CI as dev-targeted PRs.
   pull_request:
-    branches: [main, dev]
   merge_group:
   workflow_dispatch:
 
@@ -14,6 +15,13 @@ concurrency:
 
 permissions:
   contents: read
+
+env:
+  # Which runtime the test jobs run against (the chain-spec resolve steps and the
+  # zombienet config key on it). Must be one of the runtimes flagged
+  # integration_tests=true in scripts/runtimes-matrix.json, since those are what
+  # the Build job compiles and uploads.
+  INTEGRATION_TEST_RUNTIME: web3-storage-paseo
 
 jobs:
   set-image:
@@ -27,12 +35,12 @@ jobs:
     outputs:
       src: ${{ github.event_name == 'workflow_dispatch' || github.event_name == 'merge_group' || steps.filter.outputs.src == 'true' }}
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       # paths-filter has no diff base on merge_group; run the full suite there.
       - if: github.event_name != 'merge_group'
-        uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d # v3
+        uses: dorny/paths-filter@7b450fff21473bca461d4b92ce414b9d0420d706 # v3
         id: filter
         with:
           filters: |
@@ -57,7 +65,7 @@ jobs:
       image: ${{ needs.set-image.outputs.CI_IMAGE }}
     steps:
       - name: Checkout sources
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
         with:
           persist-credentials: false
 
@@ -73,8 +81,11 @@ jobs:
       - name: Install just
         run: cargo install just --locked || true
 
-      # One wasm per runtime the test jobs fan out on.
-      - name: Build all runtimes
+      # Build the wasm for every runtime flagged integration_tests=true in the
+      # matrix. The test jobs run against INTEGRATION_TEST_RUNTIME, which must be
+      # one of them. Uploaded below so the test jobs download instead of
+      # rebuilding.
+      - name: Build integration-test runtimes
         run: |
           for cmd in $(jq -r '.[] | select(.integration_tests == true) | .build_command' scripts/runtimes-matrix.json); do
             echo "::group::just $cmd"
@@ -112,12 +123,22 @@ jobs:
       image: ${{ needs.set-image.outputs.CI_IMAGE }}
     steps:
       - name: Checkout sources
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
         with:
           persist-credentials: false
 
       - name: Load common environment variables via env file
         run: cat .github/env >> $GITHUB_ENV
+
+      # Restore the Rust cache before installing just so the build job's cached
+      # ~/.cargo/bin makes the install a fast no-op instead of a ~60s recompile;
+      # it also lands before the artifact download so the cached target/ can't
+      # clobber it. save-if false — only the build job writes this cache.
+      - name: Rust cache
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          shared-key: "integration-tests-build"
+          save-if: false
 
       - name: Install just
         run: cargo install just --locked || true
@@ -154,14 +175,6 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
 
-      # Before the download so the cached target/ can't clobber it. save-if
-      # false — only the build job writes this cache.
-      - name: Rust cache
-        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
-        with:
-          shared-key: "integration-tests-build"
-          save-if: false
-
       # Extract into target/release so the artifact's contents land back at
       # their original paths (chmod, chain_spec_command scripts, demos).
       - name: Download build artifacts
@@ -173,10 +186,20 @@ jobs:
       - name: Restore executable bits
         run: chmod +x target/release/storage-provider-node
 
+      - name: Resolve zombienet config from matrix
+        run: |
+          CONFIG=$(jq -r --arg r "$INTEGRATION_TEST_RUNTIME" '.[] | select(.name==$r) | .zombienet_config // empty' scripts/runtimes-matrix.json)
+          if [ -z "$CONFIG" ]; then
+            echo "ERROR: no zombienet_config for runtime '$INTEGRATION_TEST_RUNTIME' in scripts/runtimes-matrix.json"
+            exit 1
+          fi
+          echo "Using zombienet config: $CONFIG"
+          echo "ZOMBIENET_CONFIG=$CONFIG" >> $GITHUB_ENV
+
       - name: Start chain
         uses: ./.github/actions/start-zombienet
         with:
-          config: zombienet/storage-paseo-local.toml
+          config: ${{ env.ZOMBIENET_CONFIG }}
 
       - name: Wait for parachain blocks
         uses: ./.github/actions/wait-for-parachain
@@ -186,9 +209,7 @@ jobs:
           echo "//Alice" > /tmp/alice-key && chmod 600 /tmp/alice-key
           nohup ./target/release/storage-provider-node \
             --keyfile /tmp/alice-key --storage-mode inmemory \
-            --bind-addr 0.0.0.0:3333 --chain-rpc ws://127.0.0.1:2222 \
-            --enable-checkpoint-coordinator \
-            --disable-auth-i-know-what-i-am-doing > /tmp/provider-inmemory.log 2>&1 &
+            --bind-addr 0.0.0.0:3333 --chain-rpc ws://127.0.0.1:2222 > /tmp/provider-inmemory.log 2>&1 &
 
       - name: Wait for provider health
         uses: ./.github/actions/wait-for-provider-health
@@ -239,7 +260,7 @@ jobs:
       image: ${{ needs.set-image.outputs.CI_IMAGE }}
     steps:
       - name: Checkout sources
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
         with:
           persist-credentials: false
 
@@ -248,7 +269,7 @@ jobs:
 
       - name: Resolve chain-spec script from matrix
         run: |
-          RUNTIME=web3-storage-paseo
+          RUNTIME="$INTEGRATION_TEST_RUNTIME"
           SCRIPT=$(jq -r --arg r "$RUNTIME" '.[] | select(.name==$r) | .chain_spec_script // empty' scripts/runtimes-matrix.json)
           if [ -z "$SCRIPT" ]; then
             echo "ERROR: no chain_spec_script for runtime '$RUNTIME' in scripts/runtimes-matrix.json"
@@ -318,9 +339,7 @@ jobs:
           echo "//Alice" > /tmp/alice-key && chmod 600 /tmp/alice-key
           nohup ./target/release/storage-provider-node \
             --keyfile /tmp/alice-key --storage-mode inmemory \
-            --bind-addr 0.0.0.0:3333 --chain-rpc ws://127.0.0.1:2222 \
-            --enable-checkpoint-coordinator \
-            --disable-auth-i-know-what-i-am-doing > /tmp/provider.log 2>&1 &
+            --bind-addr 0.0.0.0:3333 --chain-rpc ws://127.0.0.1:2222 > /tmp/provider.log 2>&1 &
 
       - name: Wait for provider health
         uses: ./.github/actions/wait-for-provider-health
@@ -447,12 +466,22 @@ jobs:
       image: ${{ needs.set-image.outputs.CI_IMAGE }}
     steps:
       - name: Checkout sources
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
         with:
           persist-credentials: false
 
       - name: Load common environment variables via env file
         run: cat .github/env >> $GITHUB_ENV
+
+      # Restore the Rust cache before installing just so the build job's cached
+      # ~/.cargo/bin makes the install a fast no-op instead of a ~60s recompile;
+      # it also lands before the artifact download so the cached target/ can't
+      # clobber it. save-if false — only the build job writes this cache.
+      - name: Rust cache
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          shared-key: "integration-tests-build"
+          save-if: false
 
       - name: Install just
         run: cargo install just --locked || true
@@ -475,7 +504,7 @@ jobs:
 
       - name: Resolve chain-spec script
         run: |
-          RUNTIME=web3-storage-paseo
+          RUNTIME="$INTEGRATION_TEST_RUNTIME"
           SCRIPT=$(jq -r --arg r "$RUNTIME" '.[] | select(.name==$r) | .chain_spec_script // empty' scripts/runtimes-matrix.json)
           if [ -z "$SCRIPT" ]; then
             echo "ERROR: no chain_spec_script for runtime '$RUNTIME' in scripts/runtimes-matrix.json"
@@ -488,14 +517,6 @@ jobs:
         uses: ./.github/actions/setup-pnpm
         with:
           node-version: ${{ env.NODE_VERSION }}
-
-      # Before the download so the cached target/ can't clobber it. save-if
-      # false — only the build job writes this cache.
-      - name: Rust cache
-        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
-        with:
-          shared-key: "integration-tests-build"
-          save-if: false
 
       # Extract into target/release so the artifact's contents land back at
       # their original paths (chmod, chain_spec_command scripts, demos).
@@ -550,9 +571,7 @@ jobs:
           echo "//Alice" > /tmp/alice-key && chmod 600 /tmp/alice-key
           nohup ./target/release/storage-provider-node \
             --keyfile /tmp/alice-key --storage-mode inmemory \
-            --bind-addr 0.0.0.0:3333 --chain-rpc ws://127.0.0.1:2222 \
-            --enable-checkpoint-coordinator \
-            --disable-auth-i-know-what-i-am-doing > /tmp/provider.log 2>&1 &
+            --bind-addr 0.0.0.0:3333 --chain-rpc ws://127.0.0.1:2222 > /tmp/provider.log 2>&1 &
 
       - name: Wait for provider health
         uses: ./.github/actions/wait-for-provider-health
@@ -603,7 +622,7 @@ jobs:
       image: ${{ needs.set-image.outputs.CI_IMAGE }}
     steps:
       - name: Checkout sources
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
         with:
           persist-credentials: false
 
@@ -612,7 +631,7 @@ jobs:
 
       - name: Resolve chain-spec script from matrix
         run: |
-          RUNTIME=web3-storage-paseo
+          RUNTIME="$INTEGRATION_TEST_RUNTIME"
           SCRIPT=$(jq -r --arg r "$RUNTIME" '.[] | select(.name==$r) | .chain_spec_script // empty' scripts/runtimes-matrix.json)
           if [ -z "$SCRIPT" ]; then
             echo "ERROR: no chain_spec_script for runtime '$RUNTIME' in scripts/runtimes-matrix.json"
@@ -620,6 +639,16 @@ jobs:
           fi
           echo "Using chain-spec script: $SCRIPT"
           echo "E2E_CHAIN_SPEC_SCRIPT=$SCRIPT" >> $GITHUB_ENV
+
+      # Restored before installing just so the build job's cached ~/.cargo/bin
+      # makes the install a fast no-op instead of a ~60s recompile; also before
+      # the artifact download so the cached target/ can't clobber the freshly
+      # downloaded provider + wbuild. save-if false — only the build job writes it.
+      - name: Rust cache
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          shared-key: "integration-tests-build"
+          save-if: false
 
       - name: Install just
         run: cargo install just --locked || true
@@ -639,15 +668,6 @@ jobs:
       - name: Download Polkadot SDK binaries
         if: steps.sdk-cache.outputs.cache-hit != 'true'
         run: just polkadot_version="$POLKADOT_SDK_VERSION" download-polkadot-sdk-binaries
-
-      # Restored before the artifact download so the cached target/ can't clobber
-      # the freshly downloaded provider + wbuild. save-if false — only the build
-      # job writes this cache.
-      - name: Rust cache
-        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
-        with:
-          shared-key: "integration-tests-build"
-          save-if: false
 
       # Extract into target/release so the artifact's target/release-rooted
       # contents land back at their original paths (provider binary + per-runtime
@@ -682,9 +702,7 @@ jobs:
           echo "//Alice" > /tmp/alice-key && chmod 600 /tmp/alice-key
           nohup ./target/release/storage-provider-node \
             --keyfile /tmp/alice-key --storage-mode inmemory \
-            --bind-addr 0.0.0.0:3333 --chain-rpc ws://127.0.0.1:2222 \
-            --enable-checkpoint-coordinator \
-            --disable-auth-i-know-what-i-am-doing > /tmp/provider.log 2>&1 &
+            --bind-addr 0.0.0.0:3333 --chain-rpc ws://127.0.0.1:2222 > /tmp/provider.log 2>&1 &
 
       - name: Wait for provider health
         uses: ./.github/actions/wait-for-provider-health

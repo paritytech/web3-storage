@@ -14,6 +14,8 @@ export * from "@web3-storage/layer1";
 
 // core's chain-free primitives that layer0 doesn't already re-export.
 export {
+  h160ToSubstrate,
+  type MappedAccount,
   HttpError,
   httpFetch,
   negotiateTerms,
@@ -33,7 +35,7 @@ export {
   type MerkleEntry,
   type NegotiateRequest,
   type SignedTerms,
-  type SigningKeypair,
+  type ProviderRequestSigner,
 } from "@web3-storage/core";
 
 export { Web3Storage, type Web3StorageOptions } from "./web3-storage.js";

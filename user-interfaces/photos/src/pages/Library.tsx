@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-only
 //
-// M4 — read-only state detection. Reads the Photos contract's `libraryOf` for
-// the selected account (unsigned) and renders State A ("no library") vs State B
-// ("drive #N"). No writes: creating a library is M5, albums/upload/grid are M6.
+// Reads the Photos contract's `libraryOf` for the selected account (unsigned)
+// and renders State A ("no library" — the interactive create flow) vs State B
+// ("drive #N" — albums, upload, grid, lightbox, and the on-chain metadata anchor).
 
-import { useEffect, useState } from 'react'
-import { Image, FolderPlus, Anchor, AlertTriangle, Settings2 } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { Image, Anchor, AlertTriangle, Settings2, X } from 'lucide-react'
 import { useSelectedAccount } from '@/state/wallet.state'
 import { useSelectedNetwork } from '@/state/network.state'
 import { useConnectionStatus, useConnectionError } from '@/state/chain.state'
@@ -19,10 +19,23 @@ import {
   type LibraryState,
   type ResolvedContract,
 } from '@/lib/photos-contract'
+import {
+  initLibrary,
+  resetLibrary,
+  clearLibraryError,
+  useLibraryError,
+  useAnchorStatus,
+} from '@/state/album.state'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/Card'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import { Spinner } from '@/components/ui/Spinner'
+import { CreateLibraryPanel } from '@/components/CreateLibraryPanel'
+import { AlbumBar } from '@/components/AlbumBar'
+import { UploadButton } from '@/components/UploadButton'
+import { PhotoGrid } from '@/components/PhotoGrid'
+import { Lightbox } from '@/components/Lightbox'
+import { PhotoEditor } from '@/components/PhotoEditor'
 import { formatAddress, formatHash } from '@/utils/format'
 
 type ReadState =
@@ -36,8 +49,14 @@ export function Library() {
   const network = useSelectedNetwork()
   const connectionStatus = useConnectionStatus()
   const connectionError = useConnectionError()
+  const libraryError = useLibraryError()
+  const anchor = useAnchorStatus()
   const [state, setState] = useState<ReadState>({ kind: 'idle' })
   const [refresh, setRefresh] = useState(0)
+  // Identifies the currently-loaded library; a `refresh` bump that keeps the same
+  // key (e.g. a background re-anchor finishing) re-reads silently instead of
+  // flashing the whole view back to a loading spinner.
+  const loadKeyRef = useRef('')
 
   const contract = resolveContractAddress(network)
 
@@ -55,8 +74,15 @@ export function Library() {
       return
     }
 
+    // Only show the full-screen loading state on a genuine (re)load — switching
+    // account/network/contract. A pure `refresh` bump (same key) re-reads in place
+    // so background-anchor completions don't blank out the library the user is using.
+    const loadKey = `${account.address}|${network.id}|${contract.address}`
+    const isReload = loadKey !== loadKeyRef.current
+    loadKeyRef.current = loadKey
+
     let cancelled = false
-    setState({ kind: 'loading' })
+    if (isReload) setState({ kind: 'loading' })
     ;(async () => {
       try {
         const userH160 = substrateToH160(account.polkadotSigner.publicKey)
@@ -75,6 +101,32 @@ export function Library() {
     // effect on its address (not the object identity) plus the inputs that
     // change what we read.
   }, [account?.address, connectionStatus, contract?.address, network.id, refresh])
+
+  // ── State B: bind the album layer once a library is confirmed on-chain ──
+  // initLibrary resolves the drive's `/fs` context and loads its albums; it is
+  // idempotent for the same drive, so the re-reads triggered by `refresh` (e.g.
+  // after a `setRoot`) just refresh the listings. `onAnchored` bumps `refresh`
+  // so the displayed on-chain anchor updates after each mutation.
+  const readyState = state.kind === 'ready' ? state : null
+  useEffect(() => {
+    if (!readyState || !readyState.library.exists || !account) return
+    void initLibrary(
+      readyState.library.driveId,
+      readyState.contract,
+      account,
+      readyState.library.rootCid,
+      () => setRefresh((n) => n + 1),
+    )
+    // Key on the library-exists/driveId transition, not just `state.kind`: creating
+    // a library in-session flips `exists` false→true while `kind` stays 'ready', so
+    // depending on `kind` alone would leave the album layer unbound until a reload.
+  }, [readyState?.library.exists, readyState?.library.driveId, account?.address, network.id])
+
+  // Tear down the album layer (release object URLs, drop caches) when the
+  // account or network changes, or the page unmounts.
+  useEffect(() => {
+    return () => resetLibrary()
+  }, [account?.address, network.id])
 
   // ── Not connected to a wallet yet ──
   if (!account) {
@@ -151,38 +203,24 @@ export function Library() {
   const { library } = state
   const anchored = !isZeroRoot(library.rootCid)
 
-  // ── State A — no library ──
+  // ── State A — no library: the interactive create flow (M5) ──
   if (!library.exists) {
     return (
-      <Centered>
-        <Card className="max-w-md">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <FolderPlus className="h-5 w-5 text-purple-500" /> No library yet
-            </CardTitle>
-            <CardDescription>
-              {account.name || formatAddress(account.address)} hasn't set up a photo library on{' '}
-              {network.name}.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <p className="text-sm text-gray-400">
-              Creating a library — picking a storage provider and opening an agreement — lands in
-              the next milestone (M5). This skeleton is read-only.
-            </p>
-            <Button disabled title="Coming in M5">
-              Create library
-            </Button>
-            <ContractFootnote contract={contract} />
-          </CardContent>
-        </Card>
-      </Centered>
+      <div className="pt-8">
+        <CreateLibraryPanel
+          account={account}
+          contract={contract}
+          network={network}
+          onCreated={() => setRefresh((n) => n + 1)}
+        />
+      </div>
     )
   }
 
-  // ── State B — has a library ──
+  // ── State B — has a library: albums + upload + grid + lightbox (M6) ──
+  const anchoring = anchor.stage === 'recomputing' || anchor.stage === 'anchoring'
   return (
-    <div className="max-w-3xl mx-auto space-y-6">
+    <div className="max-w-5xl mx-auto space-y-6">
       <Card>
         <CardHeader>
           <div className="flex items-center justify-between">
@@ -195,11 +233,14 @@ export function Library() {
             Owned for {account.name || formatAddress(account.address)} on {network.name}.
           </CardDescription>
         </CardHeader>
-        <CardContent className="space-y-4">
+        <CardContent className="space-y-5">
           <div className="flex items-start gap-2 text-sm">
             <Anchor className="h-4 w-4 mt-0.5 text-gray-500" />
             <div>
-              <div className="text-gray-400">On-chain metadata anchor</div>
+              <div className="flex items-center gap-2 text-gray-400">
+                On-chain metadata anchor
+                {anchoring && <Spinner size="sm" />}
+              </div>
               {anchored ? (
                 <code className="text-gray-200" data-testid="root-cid" title={library.rootCid}>
                   {formatHash(library.rootCid, 10, 8)}
@@ -210,16 +251,40 @@ export function Library() {
             </div>
           </div>
 
-          <div className="rounded-md border border-gray-800 bg-gray-900/40 p-4">
-            <div className="text-sm font-medium text-gray-300">Albums &amp; photos</div>
-            <p className="text-xs text-gray-500 mt-1">
-              Browsing albums, uploading, and the photo grid arrive in M6.
-            </p>
+          {/* ── Transient error from an FS / anchor operation ── */}
+          {(libraryError || anchor.stage === 'error') && (
+            <div
+              className="flex items-start justify-between gap-3 rounded-md border border-red-900/50 bg-red-950/20 p-3 text-sm text-red-300"
+              data-testid="library-error"
+            >
+              <div className="flex items-start gap-2">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                <span>{libraryError ?? anchor.message}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => clearLibraryError()}
+                aria-label="Dismiss"
+                className="shrink-0 rounded p-0.5 text-red-400 hover:text-red-200"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          )}
+
+          {/* ── Albums + upload + grid ── */}
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <AlbumBar />
+            <UploadButton />
           </div>
+          <PhotoGrid />
 
           <ContractFootnote contract={contract} />
         </CardContent>
       </Card>
+
+      <Lightbox />
+      <PhotoEditor />
     </div>
   )
 }
