@@ -237,8 +237,6 @@ pub struct CommitmentCollection {
     /// `(bucket_id, commitment, nonce)` payload.
     pub nonce: u64,
     /// Signatures from agreeing providers: (account_id, signature_bytes).
-    /// Only providers whose response matched the modal
-    /// `(start_seq, leaf_count, nonce)` payload are included.
     pub signatures: Vec<(AccountId32, Vec<u8>)>,
     /// Providers that agreed on the majority root.
     pub agreeing_providers: Vec<AccountId32>,
@@ -251,51 +249,14 @@ pub struct CommitmentCollection {
 /// Length of an sr25519 signature; the only scheme providers sign with.
 const SR25519_SIGNATURE_LEN: usize = 64;
 
-/// The exact `CommitmentPayload` a provider signature covers.
-///
-/// The pallet re-encodes one of these and verifies *every* submitted
-/// signature against it, so signatures over differing payloads cannot be
-/// batched into a single `checkpoint` call.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-struct PayloadKey {
-    start_seq: u64,
-    leaf_count: u64,
-    nonce: u64,
-}
-
-impl PayloadKey {
-    const fn new(start_seq: u64, leaf_count: u64, nonce: u64) -> Self {
-        Self {
-            start_seq,
-            leaf_count,
-            nonce,
-        }
-    }
-}
-
 /// A provider response that cleared every ingestion check, reduced to the
 /// values the consensus pass consumes.
+#[derive(Clone)]
 struct ValidatedCommitment {
     mmr_root: H256,
-    payload: PayloadKey,
+    start_seq: u64,
+    leaf_count: u64,
     signature: Vec<u8>,
-}
-
-/// Signatures grouped by the payload they cover.
-type SigsByPayload = HashMap<PayloadKey, Vec<(AccountId32, Vec<u8>)>>;
-
-/// Pick the payload sub-group carrying the most signatures.
-///
-/// Since the nonce is client-chosen and validated on ingestion, groups here
-/// differ only in `(start_seq, leaf_count)` - i.e. providers disagreeing about
-/// the committed range. Ties break toward the larger `leaf_count` (never
-/// reward a provider for claiming a shorter, less challengeable range), then
-/// `start_seq`, so the choice never depends on `HashMap` iteration order.
-fn modal_payload_group(groups: SigsByPayload) -> (PayloadKey, Vec<(AccountId32, Vec<u8>)>) {
-    groups
-        .into_iter()
-        .max_by_key(|(key, sigs)| (sigs.len(), key.leaf_count, key.start_seq))
-        .unwrap_or_default()
 }
 
 /// Detected conflict between providers.
@@ -1127,7 +1088,7 @@ impl CheckpointManager {
             futures::future::join_all(provider_commitment_futures).await;
 
         // Categorize results by MMR root, keeping only usable responses
-        let mut commitments_by_root: HashMap<H256, Vec<(AccountId32, PayloadKey, Vec<u8>)>> =
+        let mut commitments_by_root: HashMap<H256, Vec<(AccountId32, ValidatedCommitment)>> =
             HashMap::new();
         let mut unreachable = Vec::new();
 
@@ -1145,7 +1106,7 @@ impl CheckpointManager {
                     commitments_by_root
                         .entry(valid.mmr_root)
                         .or_default()
-                        .push((account, valid.payload, valid.signature));
+                        .push((account, valid));
                 }
                 // An unusable response is no better than no response: the
                 // provider contributes nothing this round.
@@ -1167,38 +1128,29 @@ impl CheckpointManager {
             .flat_map(|(root, providers)| {
                 providers
                     .iter()
-                    .map(|(id, _, _)| (id.clone(), *root))
+                    .map(|(id, _)| (id.clone(), *root))
                     .collect::<Vec<_>>()
             })
             .collect();
 
-        // Same root still leaves room for disagreement about the committed
-        // range, and the pallet accepts only one payload per call.
-        let mut by_payload = SigsByPayload::new();
-        for (id, payload, sig) in &agreeing {
-            by_payload
-                .entry(*payload)
-                .or_default()
-                .push((id.clone(), sig.clone()));
-        }
-        let (payload, signatures) = modal_payload_group(by_payload);
+        let signatures: Vec<_> = agreeing
+            .iter()
+            .map(|(id, valid)| (id.clone(), valid.signature.clone()))
+            .collect();
 
-        let dropped = agreeing.len().saturating_sub(signatures.len());
-        if dropped > 0 {
-            tracing::warn!(
-                "Bucket {bucket_id}: dropping {dropped} same-root signature(s) covering a \
-                 different (start_seq, leaf_count) than the majority range"
-            );
-        }
+        let (start_seq, leaf_count) = agreeing
+            .first()
+            .map(|(_, valid)| (valid.start_seq, valid.leaf_count))
+            .unwrap_or((0, 0));
 
         Ok(CommitmentCollection {
             bucket_id,
             mmr_root: majority_root,
-            start_seq: payload.start_seq,
-            leaf_count: payload.leaf_count,
-            nonce: payload.nonce,
+            start_seq,
+            leaf_count,
+            nonce,
             signatures,
-            agreeing_providers: agreeing.iter().map(|(id, _, _)| id.clone()).collect(),
+            agreeing_providers: agreeing.iter().map(|(id, _)| id.clone()).collect(),
             disagreeing_providers: disagreeing,
             unreachable_providers: unreachable,
         })
@@ -1294,11 +1246,8 @@ impl CheckpointManager {
 
         Some(ValidatedCommitment {
             mmr_root,
-            payload: PayloadKey::new(
-                commitment.start_seq,
-                commitment.leaf_count,
-                commitment.nonce,
-            ),
+            start_seq: commitment.start_seq,
+            leaf_count: commitment.leaf_count,
             signature,
         })
     }
@@ -1428,28 +1377,20 @@ impl CheckpointManager {
             / 100.0)
             .ceil() as usize;
 
-        // Check consensus threshold against what will actually be submitted:
-        // agreeing providers whose signature survived payload grouping. The
-        // pallet counts signatures, not opinions.
-        if collection.signatures.len() < required {
+        // Check consensus threshold
+        if collection.agreeing_providers.len() < required {
             return CheckpointResult::InsufficientConsensus {
-                agreeing: collection.signatures.len(),
+                agreeing: collection.agreeing_providers.len(),
                 required,
                 disagreements: collection.disagreeing_providers,
             };
         }
 
-        let signers: Vec<AccountId32> = collection
-            .signatures
-            .iter()
-            .map(|(id, _)| id.clone())
-            .collect();
-
         // Submit on-chain
         match self.submit_commitment_onchain(&collection).await {
             Ok(block_hash) => CheckpointResult::Submitted {
                 block_hash,
-                signers,
+                signers: collection.agreeing_providers,
             },
             Err(e) => CheckpointResult::TransactionFailed {
                 error: e.to_string(),
@@ -2837,47 +2778,6 @@ mod tests {
     }
 
     #[test]
-    fn modal_payload_group_picks_largest_group() {
-        let a = AccountId32::new([1u8; 32]);
-        let b = AccountId32::new([2u8; 32]);
-        let c = AccountId32::new([3u8; 32]);
-
-        let mut groups = SigsByPayload::new();
-        groups.insert(
-            PayloadKey::new(0, 10, 100),
-            vec![(a, vec![1]), (b, vec![2])],
-        );
-        groups.insert(PayloadKey::new(0, 20, 100), vec![(c, vec![3])]);
-
-        let (key, sigs) = modal_payload_group(groups);
-        assert_eq!(key, PayloadKey::new(0, 10, 100));
-        assert_eq!(sigs.len(), 2);
-    }
-
-    #[test]
-    fn modal_payload_group_tie_breaks_on_larger_range() {
-        let a = AccountId32::new([1u8; 32]);
-        let b = AccountId32::new([2u8; 32]);
-
-        let mut groups = SigsByPayload::new();
-        groups.insert(PayloadKey::new(0, 10, 100), vec![(a, vec![1])]);
-        groups.insert(PayloadKey::new(0, 20, 100), vec![(b, vec![2])]);
-
-        let (key, _) = modal_payload_group(groups);
-        assert_eq!(
-            key.leaf_count, 20,
-            "a tie must never install the shorter, less challengeable range"
-        );
-    }
-
-    #[test]
-    fn modal_payload_group_empty_is_zeroed() {
-        let (key, sigs) = modal_payload_group(SigsByPayload::new());
-        assert_eq!(key, PayloadKey::default());
-        assert!(sigs.is_empty());
-    }
-
-    #[test]
     fn validated_commitment_accepts_matching_response() {
         let account = AccountId32::new([1u8; 32]);
         let response =
@@ -2887,7 +2787,7 @@ mod tests {
             CheckpointManager::validated_commitment(1, &account, &response, 42, Some((5, 10)))
                 .expect("a well-formed response must be accepted");
         assert_eq!(valid.mmr_root, H256::from([7u8; 32]));
-        assert_eq!(valid.payload, PayloadKey::new(5, 10, 42));
+        assert_eq!((valid.start_seq, valid.leaf_count), (5, 10));
         assert_eq!(valid.signature, vec![9u8; SR25519_SIGNATURE_LEN]);
     }
 
