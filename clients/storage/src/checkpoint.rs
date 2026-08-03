@@ -2814,21 +2814,8 @@ mod tests {
         assert_eq!(cloned.nonce, 42);
     }
 
-    fn commitment_response(
-        bucket_id: BucketId,
-        start_seq: u64,
-        leaf_count: u64,
-        nonce: u64,
-        signature: &str,
-    ) -> CommitmentResponse {
-        CommitmentResponse {
-            bucket_id,
-            mmr_root: format!("0x{}", hex::encode([7u8; 32])),
-            start_seq,
-            leaf_count,
-            provider_signature: signature.to_string(),
-            nonce,
-        }
+    fn test_mmr_root() -> String {
+        format!("0x{}", hex::encode([7u8; 32]))
     }
 
     fn valid_signature_hex() -> String {
@@ -2879,7 +2866,8 @@ mod tests {
     #[test]
     fn validated_signature_accepts_matching_response() {
         let account = AccountId32::new([1u8; 32]);
-        let response = commitment_response(1, 5, 10, 42, &valid_signature_hex());
+        let response =
+            CommitmentResponse::new(1, test_mmr_root(), 5, 10, valid_signature_hex(), 42);
 
         let sig = CheckpointManager::validated_signature(1, &account, &response, 42, Some((5, 10)));
         assert_eq!(sig, Some(vec![9u8; SR25519_SIGNATURE_LEN]));
@@ -2889,7 +2877,8 @@ mod tests {
     fn validated_signature_rejects_nonce_mismatch() {
         let account = AccountId32::new([1u8; 32]);
         // A provider echoing its own nonce cannot join a batch signed over ours.
-        let response = commitment_response(1, 5, 10, 999, &valid_signature_hex());
+        let response =
+            CommitmentResponse::new(1, test_mmr_root(), 5, 10, valid_signature_hex(), 999);
 
         assert!(CheckpointManager::validated_signature(1, &account, &response, 42, None).is_none());
     }
@@ -2898,14 +2887,16 @@ mod tests {
     fn validated_signature_rejects_range_regression() {
         let account = AccountId32::new([1u8; 32]);
 
-        let shrunk_leaves = commitment_response(1, 5, 9, 42, &valid_signature_hex());
+        let shrunk_leaves =
+            CommitmentResponse::new(1, test_mmr_root(), 5, 9, valid_signature_hex(), 42);
         assert!(
             CheckpointManager::validated_signature(1, &account, &shrunk_leaves, 42, Some((5, 10)))
                 .is_none(),
             "leaf_count below the on-chain snapshot must be refused"
         );
 
-        let rewound_start = commitment_response(1, 4, 10, 42, &valid_signature_hex());
+        let rewound_start =
+            CommitmentResponse::new(1, test_mmr_root(), 4, 10, valid_signature_hex(), 42);
         assert!(CheckpointManager::validated_signature(
             1,
             &account,
@@ -2920,13 +2911,20 @@ mod tests {
     fn validated_signature_rejects_unusable_signatures() {
         let account = AccountId32::new([1u8; 32]);
 
-        let undecodable = commitment_response(1, 5, 10, 42, "not-hex");
+        let undecodable =
+            CommitmentResponse::new(1, test_mmr_root(), 5, 10, "not-hex".to_string(), 42);
         assert!(
             CheckpointManager::validated_signature(1, &account, &undecodable, 42, None).is_none()
         );
 
-        let wrong_length =
-            commitment_response(1, 5, 10, 42, &format!("0x{}", hex::encode([9u8; 63])));
+        let wrong_length = CommitmentResponse::new(
+            1,
+            test_mmr_root(),
+            5,
+            10,
+            format!("0x{}", hex::encode([9u8; 63])),
+            42,
+        );
         assert!(
             CheckpointManager::validated_signature(1, &account, &wrong_length, 42, None).is_none(),
             "a short signature must not reach the extrinsic builder"
