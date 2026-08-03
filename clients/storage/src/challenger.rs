@@ -656,7 +656,7 @@ impl ChallengerClient {
                         },
                     );
                 }
-                Err(e) => tracing::warn!("Failed to decode provider {}: {e}", account.0[0]),
+                Err(e) => tracing::warn!("Failed to decode provider {account}: {e}"),
             }
         }
 

@@ -273,6 +273,14 @@ impl PayloadKey {
     }
 }
 
+/// A provider response that cleared every ingestion check, reduced to the
+/// values the consensus pass consumes.
+struct ValidatedCommitment {
+    mmr_root: H256,
+    payload: PayloadKey,
+    signature: Vec<u8>,
+}
+
 /// Signatures grouped by the payload they cover.
 type SigsByPayload = HashMap<PayloadKey, Vec<(AccountId32, Vec<u8>)>>;
 
@@ -1083,8 +1091,8 @@ impl CheckpointManager {
     /// provider, which signs over it and echoes it back — so all signatures
     /// cover one identical `CommitmentPayload`, exactly as the pallet
     /// verifies them. Responses that deviate (wrong nonce, unusable
-    /// signature, a range that regresses below the on-chain snapshot) are
-    /// dropped rather than allowed to spoil the batch.
+    /// signature, unparsable root, a range that regresses below the on-chain
+    /// snapshot) are dropped rather than allowed to spoil the batch.
     pub async fn collect_commitments(
         &self,
         bucket_id: BucketId,
@@ -1110,34 +1118,34 @@ impl CheckpointManager {
         let floor = Self::snapshot_floor(&at, bucket_id).await?;
 
         // Query all providers in parallel, all over the same nonce
-        let futures: Vec<_> = providers
+        let provider_commitment_futures: Vec<_> = providers
             .iter()
             .map(|p| self.query_provider_commitment(p, bucket_id, nonce))
             .collect();
 
-        let results = futures::future::join_all(futures).await;
+        let provider_commitment_results =
+            futures::future::join_all(provider_commitment_futures).await;
 
         // Categorize results by MMR root, keeping only usable responses
-        let mut commitments_by_root: HashMap<
-            H256,
-            Vec<(AccountId32, CommitmentResponse, Vec<u8>)>,
-        > = HashMap::new();
+        let mut commitments_by_root: HashMap<H256, Vec<(AccountId32, PayloadKey, Vec<u8>)>> =
+            HashMap::new();
         let mut unreachable = Vec::new();
 
-        for (provider, result) in providers.iter().zip(results) {
+        for (provider, provider_commitment_result) in
+            providers.iter().zip(provider_commitment_results)
+        {
             let account = provider.account_id.clone();
-            let Ok(commitment) = result else {
+            let Ok(commitment) = provider_commitment_result else {
                 unreachable.push(account);
                 continue;
             };
 
-            match Self::validated_signature(bucket_id, &account, &commitment, nonce, floor) {
-                Some(sig_bytes) => {
-                    let mmr_root = self.parse_h256(&commitment.mmr_root)?;
+            match Self::validated_commitment(bucket_id, &account, &commitment, nonce, floor) {
+                Some(valid) => {
                     commitments_by_root
-                        .entry(mmr_root)
+                        .entry(valid.mmr_root)
                         .or_default()
-                        .push((account, commitment, sig_bytes));
+                        .push((account, valid.payload, valid.signature));
                 }
                 // An unusable response is no better than no response: the
                 // provider contributes nothing this round.
@@ -1167,9 +1175,9 @@ impl CheckpointManager {
         // Same root still leaves room for disagreement about the committed
         // range, and the pallet accepts only one payload per call.
         let mut by_payload = SigsByPayload::new();
-        for (id, c, sig) in &agreeing {
+        for (id, payload, sig) in &agreeing {
             by_payload
-                .entry(PayloadKey::new(c.start_seq, c.leaf_count, c.nonce))
+                .entry(*payload)
                 .or_default()
                 .push((id.clone(), sig.clone()));
         }
@@ -1223,15 +1231,15 @@ impl CheckpointManager {
             .map(|s| (s.commitment.start_seq, s.commitment.leaf_count)))
     }
 
-    /// Return a provider response's signature bytes, or `None` (with a
-    /// warning) when the response cannot be part of a checkpoint.
-    fn validated_signature(
+    /// Reduce a provider response to the values consensus needs, or `None`
+    /// (with a warning) when the response cannot be part of a checkpoint.
+    fn validated_commitment(
         bucket_id: BucketId,
         account: &AccountId32,
         commitment: &CommitmentResponse,
         requested_nonce: u64,
         floor: Option<(u64, u64)>,
-    ) -> Option<Vec<u8>> {
+    ) -> Option<ValidatedCommitment> {
         if commitment.nonce != requested_nonce {
             tracing::warn!(
                 "Bucket {bucket_id}: provider {account} echoed nonce {} instead of the requested \
@@ -1256,23 +1264,43 @@ impl CheckpointManager {
             }
         }
 
-        match Self::decode_signature(&commitment.provider_signature) {
-            Ok(sig) if sig.len() == SR25519_SIGNATURE_LEN => Some(sig),
+        let mmr_root = match crate::substrate::parse_h256(&commitment.mmr_root) {
+            Ok(root) => root,
+            Err(e) => {
+                tracing::warn!(
+                    "Bucket {bucket_id}: provider {account} returned an unparsable MMR root: {e}"
+                );
+                return None;
+            }
+        };
+
+        let signature = match Self::decode_signature(&commitment.provider_signature) {
+            Ok(sig) if sig.len() == SR25519_SIGNATURE_LEN => sig,
             Ok(sig) => {
                 tracing::warn!(
                     "Bucket {bucket_id}: provider {account} returned a {}-byte signature, \
                      expected {SR25519_SIGNATURE_LEN}",
                     sig.len()
                 );
-                None
+                return None;
             }
             Err(e) => {
                 tracing::warn!(
                     "Bucket {bucket_id}: provider {account} returned an undecodable signature: {e}"
                 );
-                None
+                return None;
             }
-        }
+        };
+
+        Some(ValidatedCommitment {
+            mmr_root,
+            payload: PayloadKey::new(
+                commitment.start_seq,
+                commitment.leaf_count,
+                commitment.nonce,
+            ),
+            signature,
+        })
     }
 
     /// Query a single provider for their commitment with health tracking.
@@ -1476,20 +1504,6 @@ impl CheckpointManager {
     // ========================================================================
     // Helpers
     // ========================================================================
-
-    /// Parse a hex string to H256.
-    fn parse_h256(&self, hex_str: &str) -> Result<H256, ClientError> {
-        let s = hex_str.strip_prefix("0x").unwrap_or(hex_str);
-        let bytes = hex::decode(s).map_err(|e| ClientError::Serialization(e.to_string()))?;
-        if bytes.len() != 32 {
-            return Err(ClientError::Serialization(
-                "Invalid H256 length".to_string(),
-            ));
-        }
-        let mut arr = [0u8; 32];
-        arr.copy_from_slice(&bytes);
-        Ok(H256::from(arr))
-    }
 
     /// Decode a hex signature string to bytes.
     fn decode_signature(sig_str: &str) -> Result<Vec<u8>, ClientError> {
@@ -2864,40 +2878,65 @@ mod tests {
     }
 
     #[test]
-    fn validated_signature_accepts_matching_response() {
+    fn validated_commitment_accepts_matching_response() {
         let account = AccountId32::new([1u8; 32]);
         let response =
             CommitmentResponse::new(1, test_mmr_root(), 5, 10, valid_signature_hex(), 42);
 
-        let sig = CheckpointManager::validated_signature(1, &account, &response, 42, Some((5, 10)));
-        assert_eq!(sig, Some(vec![9u8; SR25519_SIGNATURE_LEN]));
+        let valid =
+            CheckpointManager::validated_commitment(1, &account, &response, 42, Some((5, 10)))
+                .expect("a well-formed response must be accepted");
+        assert_eq!(valid.mmr_root, H256::from([7u8; 32]));
+        assert_eq!(valid.payload, PayloadKey::new(5, 10, 42));
+        assert_eq!(valid.signature, vec![9u8; SR25519_SIGNATURE_LEN]);
     }
 
     #[test]
-    fn validated_signature_rejects_nonce_mismatch() {
+    fn validated_commitment_rejects_unparsable_root() {
+        let account = AccountId32::new([1u8; 32]);
+        // One provider's garbage root must drop that provider only, never
+        // abort the whole collection round.
+        let response = CommitmentResponse::new(
+            1,
+            "0xnot-a-root".to_string(),
+            5,
+            10,
+            valid_signature_hex(),
+            42,
+        );
+
+        assert!(
+            CheckpointManager::validated_commitment(1, &account, &response, 42, None).is_none()
+        );
+    }
+
+    #[test]
+    fn validated_commitment_rejects_nonce_mismatch() {
         let account = AccountId32::new([1u8; 32]);
         // A provider echoing its own nonce cannot join a batch signed over ours.
         let response =
             CommitmentResponse::new(1, test_mmr_root(), 5, 10, valid_signature_hex(), 999);
 
-        assert!(CheckpointManager::validated_signature(1, &account, &response, 42, None).is_none());
+        assert!(
+            CheckpointManager::validated_commitment(1, &account, &response, 42, None).is_none()
+        );
     }
 
     #[test]
-    fn validated_signature_rejects_range_regression() {
+    fn validated_commitment_rejects_range_regression() {
         let account = AccountId32::new([1u8; 32]);
 
         let shrunk_leaves =
             CommitmentResponse::new(1, test_mmr_root(), 5, 9, valid_signature_hex(), 42);
         assert!(
-            CheckpointManager::validated_signature(1, &account, &shrunk_leaves, 42, Some((5, 10)))
+            CheckpointManager::validated_commitment(1, &account, &shrunk_leaves, 42, Some((5, 10)))
                 .is_none(),
             "leaf_count below the on-chain snapshot must be refused"
         );
 
         let rewound_start =
             CommitmentResponse::new(1, test_mmr_root(), 4, 10, valid_signature_hex(), 42);
-        assert!(CheckpointManager::validated_signature(
+        assert!(CheckpointManager::validated_commitment(
             1,
             &account,
             &rewound_start,
@@ -2908,13 +2947,13 @@ mod tests {
     }
 
     #[test]
-    fn validated_signature_rejects_unusable_signatures() {
+    fn validated_commitment_rejects_unusable_signatures() {
         let account = AccountId32::new([1u8; 32]);
 
         let undecodable =
             CommitmentResponse::new(1, test_mmr_root(), 5, 10, "not-hex".to_string(), 42);
         assert!(
-            CheckpointManager::validated_signature(1, &account, &undecodable, 42, None).is_none()
+            CheckpointManager::validated_commitment(1, &account, &undecodable, 42, None).is_none()
         );
 
         let wrong_length = CommitmentResponse::new(
@@ -2926,7 +2965,7 @@ mod tests {
             42,
         );
         assert!(
-            CheckpointManager::validated_signature(1, &account, &wrong_length, 42, None).is_none(),
+            CheckpointManager::validated_commitment(1, &account, &wrong_length, 42, None).is_none(),
             "a short signature must not reach the extrinsic builder"
         );
     }
