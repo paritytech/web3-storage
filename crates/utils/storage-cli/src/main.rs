@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+
 //! `storage-cli` — operator CLI for scalable Web3 storage.
 //!
 //! Drives on-chain and off-chain storage operations through the

@@ -2,6 +2,9 @@
 
 use crate::cli::GlobalArgs;
 use anyhow::{bail, Context, Result};
+use sp_core::crypto::Ss58Codec;
+use sp_runtime::AccountId32;
+use storage_client::{ClientConfig, Signer};
 
 /// Bucket identifier on chain (alias of `storage_primitives::BucketId`, a `u64`).
 pub type BucketId = u64;
@@ -21,6 +24,27 @@ pub fn resolve_suri(global: &GlobalArgs) -> Result<String> {
         }
         (None, None) => bail!("one of --suri or --keyfile is required"),
     }
+}
+
+/// Build the client config (chain RPC + provider URL) from the global flags.
+pub fn build_config(global: &GlobalArgs) -> ClientConfig {
+    ClientConfig {
+        chain_ws_url: global.chain_rpc.clone(),
+        provider_urls: vec![global.provider_url.clone()],
+        ..Default::default()
+    }
+}
+
+/// Derive the signer from `--suri`/`--keyfile`. It both identifies the account
+/// being operated on and authenticates every provider request.
+pub fn resolve_signer(global: &GlobalArgs) -> Result<Signer> {
+    let suri = resolve_suri(global)?;
+    Signer::from_seed(&suri).context("failed to derive keypair from SURI")
+}
+
+/// The SS58 address of the signer's account.
+pub fn account_ss58(signer: &Signer) -> String {
+    AccountId32::from(signer.keypair().public_key().0).to_ss58check()
 }
 
 #[cfg(test)]

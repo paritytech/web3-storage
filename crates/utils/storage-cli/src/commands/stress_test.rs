@@ -8,8 +8,6 @@ use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail, Context, Result};
 use clap::{Args, Subcommand};
-use sp_core::crypto::Ss58Codec;
-use sp_runtime::AccountId32;
 use storage_client::substrate::SubstrateClient;
 use storage_client::{AdminClient, ClientConfig, Signer, StorageUserClient};
 use tokio::sync::Semaphore;
@@ -17,7 +15,7 @@ use tokio::task::JoinSet;
 
 use crate::actions::upload::{upload_once, Upload};
 use crate::cli::GlobalArgs;
-use crate::common::{resolve_suri, BucketId};
+use crate::common::{account_ss58, build_config, resolve_signer, BucketId};
 use crate::metrics::{summarize, OpOutcome, OpSummary};
 
 // === Stress test subcommands ===
@@ -141,27 +139,6 @@ async fn run_user(
     }
 }
 
-/// Build the client config (chain RPC + provider URL) from the global flags.
-fn build_config(global: &GlobalArgs) -> ClientConfig {
-    ClientConfig {
-        chain_ws_url: global.chain_rpc.clone(),
-        provider_urls: vec![global.provider_url.clone()],
-        ..Default::default()
-    }
-}
-
-/// Derive the signer from `--suri`/`--keyfile`. It both identifies the account
-/// whose buckets we upload to and authenticates every provider request.
-fn resolve_signer(global: &GlobalArgs) -> Result<Signer> {
-    let suri = resolve_suri(global)?;
-    Signer::from_seed(&suri).context("failed to derive keypair from SURI")
-}
-
-/// The SS58 address of the signer's account.
-fn account_ss58(signer: &Signer) -> String {
-    AccountId32::from(signer.keypair().public_key().0).to_ss58check()
-}
-
 /// Resolve the buckets the account can upload to via `provider_hex`: those with
 /// a `StorageAgreements[bucket][provider]` entry. The signer only identifies the
 /// account being read; buckets and agreements are never created. Errors if none
@@ -210,10 +187,9 @@ async fn discover_target_buckets(
     Ok(selected)
 }
 
-/// Construct `count` provider clients — one per simulated user, so each gets its
-/// own connection pool. Off-chain HTTP only; the signer is used purely to sign
-/// the provider `Authorization` header on each request.
-fn build_clients(
+/// Separate clients so each user drives its own connection pool, and signs its
+/// own provider `Authorization` headers.
+fn build_clients_per_user(
     config: &ClientConfig,
     signer: &Signer,
     count: usize,
@@ -269,9 +245,7 @@ async fn run_load(
     let mut outcomes = Vec::with_capacity(clients.len() * args.uploads_per_user.get());
 
     // Build each user's future once; spawn it for parallelism or await it in
-    // sequence. Passing the `Copy` config values positionally keeps the spawned
-    // future `'static` (it owns its `usize`/`bool`/`Arc`s), so the closure only
-    // borrows `buckets`/`sem`/`args` locally.
+    // sequence.
     let run_one = |user_idx: usize, client: Arc<StorageUserClient>| {
         run_user(
             user_idx,
@@ -343,7 +317,7 @@ pub async fn upload(global: &GlobalArgs, args: &UploadArgs) -> Result<OpSummary>
     let total_uploads = args.users.get().saturating_mul(args.uploads_per_user.get());
     print_banner(args, total_uploads, buckets.len(), &global.provider_url);
 
-    let clients = build_clients(&config, &signer, args.users.get())?;
+    let clients = build_clients_per_user(&config, &signer, args.users.get())?;
     let started = Instant::now();
     let outcomes = run_load(clients, Arc::new(buckets), args).await;
     Ok(summarize(Upload, &outcomes, started.elapsed()))
