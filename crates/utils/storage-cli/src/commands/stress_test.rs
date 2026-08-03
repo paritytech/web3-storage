@@ -11,8 +11,7 @@ use clap::{Args, Subcommand};
 use sp_core::crypto::Ss58Codec;
 use sp_runtime::AccountId32;
 use storage_client::substrate::SubstrateClient;
-use storage_client::{AdminClient, ClientConfig, StorageUserClient};
-use subxt_signer::{sr25519::Keypair, SecretUri};
+use storage_client::{AdminClient, ClientConfig, Signer, StorageUserClient};
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 
@@ -151,26 +150,32 @@ fn build_config(global: &GlobalArgs) -> ClientConfig {
     }
 }
 
-/// Derive the SS58 account whose buckets we upload to, from `--suri`/`--keyfile`.
-fn resolve_account(global: &GlobalArgs) -> Result<String> {
+/// Derive the signer from `--suri`/`--keyfile`. It both identifies the account
+/// whose buckets we upload to and authenticates every provider request.
+fn resolve_signer(global: &GlobalArgs) -> Result<Signer> {
     let suri = resolve_suri(global)?;
-    let keypair = Keypair::from_uri(&suri.parse::<SecretUri>().context("failed to parse SURI")?)
-        .context("failed to derive keypair from SURI")?;
-    Ok(AccountId32::from(keypair.public_key().0).to_ss58check())
+    Signer::from_seed(&suri).context("failed to derive keypair from SURI")
+}
+
+/// The SS58 address of the signer's account.
+fn account_ss58(signer: &Signer) -> String {
+    AccountId32::from(signer.keypair().public_key().0).to_ss58check()
 }
 
 /// Resolve the buckets the account can upload to via `provider_hex`: those with
-/// a `StorageAgreements[bucket][provider]` entry. Read-only chain access (no
-/// signer); buckets and agreements are never created. Errors if none match.
+/// a `StorageAgreements[bucket][provider]` entry. The signer only identifies the
+/// account being read; buckets and agreements are never created. Errors if none
+/// match.
 async fn discover_target_buckets(
     config: &ClientConfig,
+    signer: Signer,
     account_ss58: &str,
     provider_hex: &str,
     provider_display: &str,
     chain_rpc: &str,
 ) -> Result<Vec<BucketId>> {
-    let mut admin = AdminClient::new(config.clone(), account_ss58.to_string())
-        .context("failed to construct chain client")?;
+    let mut admin =
+        AdminClient::new(config.clone(), signer).context("failed to construct chain client")?;
     admin
         .connect()
         .await
@@ -206,11 +211,16 @@ async fn discover_target_buckets(
 }
 
 /// Construct `count` provider clients — one per simulated user, so each gets its
-/// own connection pool. Off-chain HTTP only (no chain, no signer).
-fn build_clients(config: &ClientConfig, count: usize) -> Result<Vec<Arc<StorageUserClient>>> {
+/// own connection pool. Off-chain HTTP only; the signer is used purely to sign
+/// the provider `Authorization` header on each request.
+fn build_clients(
+    config: &ClientConfig,
+    signer: &Signer,
+    count: usize,
+) -> Result<Vec<Arc<StorageUserClient>>> {
     (0..count)
         .map(|_| {
-            StorageUserClient::new(config.clone())
+            StorageUserClient::new(config.clone(), signer.clone())
                 .map(Arc::new)
                 .context("failed to construct provider client")
         })
@@ -308,7 +318,8 @@ async fn run_load(
 /// them. Per-upload failures are folded into the metrics, so this only returns
 /// `Err` for setup failures (bad provider, chain connection, no matching buckets).
 pub async fn upload(global: &GlobalArgs, args: &UploadArgs) -> Result<OpSummary> {
-    let account_ss58 = resolve_account(global)?;
+    let signer = resolve_signer(global)?;
+    let account_ss58 = account_ss58(&signer);
 
     let provider_hex = SubstrateClient::parse_account(&args.provider)
         .map_err(|e: storage_client::ClientError| anyhow!("invalid --provider account: {e}"))
@@ -318,6 +329,7 @@ pub async fn upload(global: &GlobalArgs, args: &UploadArgs) -> Result<OpSummary>
 
     let mut buckets = discover_target_buckets(
         &config,
+        signer.clone(),
         &account_ss58,
         &provider_hex,
         &args.provider,
@@ -331,7 +343,7 @@ pub async fn upload(global: &GlobalArgs, args: &UploadArgs) -> Result<OpSummary>
     let total_uploads = args.users.get().saturating_mul(args.uploads_per_user.get());
     print_banner(args, total_uploads, buckets.len(), &global.provider_url);
 
-    let clients = build_clients(&config, args.users.get())?;
+    let clients = build_clients(&config, &signer, args.users.get())?;
     let started = Instant::now();
     let outcomes = run_load(clients, Arc::new(buckets), args).await;
     Ok(summarize(Upload, &outcomes, started.elapsed()))

@@ -16,6 +16,7 @@ members = [
 	"crates/providers/storage",
 
 	"crates/storage-subxt",
+	"crates/utils/storage-cli",
 	"crates/utils/storage-indexers",
 	"provider-node",
 
@@ -32,9 +33,6 @@ members = [
 	"crates/pallets/drive-registry/precompiles",
 	"crates/pallets/s3-registry/precompiles",
 	"crates/pallets/storage-provider/precompiles",
-
-	# Developer tooling
-	"utils/storage-cli",
 ]
 
 [workspace.package]
