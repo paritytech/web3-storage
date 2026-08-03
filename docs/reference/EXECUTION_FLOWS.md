@@ -317,20 +317,17 @@ sequenceDiagram
 
     Note over U,C: Step 1: Collect signatures from providers
 
-    Note over SC: nonce = current anchor block (client-chosen, one per round)
-
     loop For each primary provider
-        SC->>PN: GET /commitment?bucket_id=X&nonce=N
-        PN->>PN: Sign CommitmentPayload over the given nonce
-        PN-->>SC: { mmr_root, start_seq, leaf_count, provider_signature, nonce }
+        SC->>PN: GET /commitment?bucket_id=X
+        PN->>PN: Sign CommitmentPayload
+        PN-->>SC: { mmr_root, start_seq, provider_signature }
     end
 
-    Note over SC: Drop responses with a mismatched nonce, an unusable<br/>signature, or a range behind the on-chain snapshot
     Note over SC: Verify all providers agree on same mmr_root
 
     Note over U,C: Step 2: Submit checkpoint on-chain
 
-    U->>C: checkpoint(bucket_id, commitment, nonce, signatures[])
+    U->>C: checkpoint(bucket_id, commitment)
 
     Note over C: commitment = Commitment { mmr_root, start_seq, leaf_count }
 
@@ -343,9 +340,6 @@ sequenceDiagram
         C->>C: idx = bucket.primary_providers.position(provider)?
 
         Note over C: Build payload
-        C->>C: payload = CommitmentPayload::new(bucket_id, commitment, nonce)
-
-        Note over C: One payload for every signature — hence one shared nonce
 
         Note over C: Verify signature against provider's public key
         C->>C: provider_info = Providers::get(provider)?
