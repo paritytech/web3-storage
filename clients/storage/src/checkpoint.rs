@@ -263,6 +263,16 @@ struct PayloadKey {
     nonce: u64,
 }
 
+impl PayloadKey {
+    const fn new(start_seq: u64, leaf_count: u64, nonce: u64) -> Self {
+        Self {
+            start_seq,
+            leaf_count,
+            nonce,
+        }
+    }
+}
+
 /// Signatures grouped by the payload they cover.
 type SigsByPayload = HashMap<PayloadKey, Vec<(AccountId32, Vec<u8>)>>;
 
@@ -1159,11 +1169,7 @@ impl CheckpointManager {
         let mut by_payload = SigsByPayload::new();
         for (id, c, sig) in &agreeing {
             by_payload
-                .entry(PayloadKey {
-                    start_seq: c.start_seq,
-                    leaf_count: c.leaf_count,
-                    nonce: c.nonce,
-                })
+                .entry(PayloadKey::new(c.start_seq, c.leaf_count, c.nonce))
                 .or_default()
                 .push((id.clone(), sig.clone()));
         }
@@ -2808,14 +2814,6 @@ mod tests {
         assert_eq!(cloned.nonce, 42);
     }
 
-    fn payload_key(start_seq: u64, leaf_count: u64, nonce: u64) -> PayloadKey {
-        PayloadKey {
-            start_seq,
-            leaf_count,
-            nonce,
-        }
-    }
-
     fn commitment_response(
         bucket_id: BucketId,
         start_seq: u64,
@@ -2844,11 +2842,14 @@ mod tests {
         let c = AccountId32::new([3u8; 32]);
 
         let mut groups = SigsByPayload::new();
-        groups.insert(payload_key(0, 10, 100), vec![(a, vec![1]), (b, vec![2])]);
-        groups.insert(payload_key(0, 20, 100), vec![(c, vec![3])]);
+        groups.insert(
+            PayloadKey::new(0, 10, 100),
+            vec![(a, vec![1]), (b, vec![2])],
+        );
+        groups.insert(PayloadKey::new(0, 20, 100), vec![(c, vec![3])]);
 
         let (key, sigs) = modal_payload_group(groups);
-        assert_eq!(key, payload_key(0, 10, 100));
+        assert_eq!(key, PayloadKey::new(0, 10, 100));
         assert_eq!(sigs.len(), 2);
     }
 
@@ -2858,8 +2859,8 @@ mod tests {
         let b = AccountId32::new([2u8; 32]);
 
         let mut groups = SigsByPayload::new();
-        groups.insert(payload_key(0, 10, 100), vec![(a, vec![1])]);
-        groups.insert(payload_key(0, 20, 100), vec![(b, vec![2])]);
+        groups.insert(PayloadKey::new(0, 10, 100), vec![(a, vec![1])]);
+        groups.insert(PayloadKey::new(0, 20, 100), vec![(b, vec![2])]);
 
         let (key, _) = modal_payload_group(groups);
         assert_eq!(
