@@ -2,8 +2,8 @@
   "name": "web3-storage",
   "private": true,
   "devDependencies": {
-    "c8": "^11.0.0",
-    "tsx": "^4.22.5"
+    "c8": "^12.0.0",
+    "tsx": "^4.23.1"
   },
   "scripts": {
     "postinstall": "pnpm --filter @web3-storage/papi run papi:install",
