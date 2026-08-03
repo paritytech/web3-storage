@@ -31,9 +31,6 @@ pub struct Cli {
     pub key: KeyParams,
 
     #[clap(flatten)]
-    pub checkpoint: CheckpointParams,
-
-    #[clap(flatten)]
     pub replica_sync: ReplicaSyncParams,
 
     #[clap(flatten)]
@@ -170,27 +167,9 @@ fn read_secret_file(path: &std::path::Path) -> Result<String, String> {
     Ok(seed)
 }
 
-/// Parameters for the checkpoint coordinator.
-#[derive(Debug, clap::Args)]
-pub struct CheckpointParams {
-    /// Enable the background checkpoint coordinator.
-    #[arg(long, env = "ENABLE_CHECKPOINT_COORDINATOR")]
-    pub enable_checkpoint_coordinator: bool,
-}
-
 /// Parameters for authentication and authorization.
-///
-/// Authentication and role-based access control are enforced by default. The
-/// only way to turn them off is the deliberately verbose
-/// `--disable-auth-i-know-what-i-am-doing` flag below.
 #[derive(Debug, clap::Args)]
 pub struct AuthParams {
-    /// Disable ALL authentication and role-based access control. Every endpoint
-    /// becomes publicly readable AND writable by anyone. Intended only for
-    /// throwaway local experiments — never run a real provider this way.
-    #[arg(long)]
-    pub disable_auth_i_know_what_i_am_doing: bool,
-
     /// Cache TTL in seconds for membership lookups from the chain.
     #[arg(
         long,
@@ -220,11 +199,13 @@ pub struct ChallengeResponderParams {
     #[arg(long, env = "ENABLE_CHALLENGE_RESPONDER")]
     pub enable_challenge_responder: bool,
 
-    /// Seconds between `Challenges` storage poll cycles.
+    /// Seconds between safety-net `Challenges` reconciliation scans.
+    /// Challenges are normally handled event-driven from the finalized-block
+    /// stream; this scan only catches events lost to edge cases. 0 disables it.
     #[arg(
         long,
         value_name = "SECONDS",
-        default_value_t = 6,
+        default_value_t = 300,
         env = "CHALLENGE_POLL_INTERVAL"
     )]
     pub challenge_poll_interval: u64,
@@ -237,11 +218,13 @@ pub struct ReplicaSyncParams {
     #[arg(long, env = "ENABLE_REPLICA_SYNC")]
     pub enable_replica_sync: bool,
 
-    /// Seconds between replica sync poll checks.
+    /// Seconds between safety-net replica duty reconciliation passes.
+    /// Duties are normally discovered event-driven from the finalized-block
+    /// stream; this pass only catches events lost to edge cases. 0 disables it.
     #[arg(
         long,
         value_name = "SECONDS",
-        default_value_t = 12,
+        default_value_t = 600,
         env = "REPLICA_POLL_INTERVAL"
     )]
     pub replica_poll_interval: u64,
@@ -277,13 +260,12 @@ mod tests {
         assert_eq!(cli.rpc.chain_rpc, "ws://127.0.0.1:2222");
         assert!(cli.key.keyfile.is_none());
         assert!(cli.key.provider_id.is_none());
-        assert!(!cli.checkpoint.enable_checkpoint_coordinator);
         assert!(!cli.replica_sync.enable_replica_sync);
-        assert_eq!(cli.replica_sync.replica_poll_interval, 12);
+        assert_eq!(cli.replica_sync.replica_poll_interval, 600);
         assert_eq!(cli.replica_sync.replica_sync_timeout, 300);
         assert_eq!(cli.replica_sync.replica_max_concurrent, 3);
         assert!(!cli.challenge_responder.enable_challenge_responder);
-        assert_eq!(cli.challenge_responder.challenge_poll_interval, 6);
+        assert_eq!(cli.challenge_responder.challenge_poll_interval, 300);
     }
 
     #[test]
@@ -300,7 +282,6 @@ mod tests {
             "ws://example.com:9944",
             "--keyfile",
             "/tmp/test-key",
-            "--enable-checkpoint-coordinator",
             "--enable-replica-sync",
             "--replica-poll-interval",
             "30",
@@ -319,7 +300,6 @@ mod tests {
             cli.key.keyfile.as_ref().unwrap().to_str().unwrap(),
             "/tmp/test-key"
         );
-        assert!(cli.checkpoint.enable_checkpoint_coordinator);
         assert!(cli.replica_sync.enable_replica_sync);
         assert_eq!(cli.replica_sync.replica_poll_interval, 30);
         assert_eq!(cli.replica_sync.replica_sync_timeout, 600);

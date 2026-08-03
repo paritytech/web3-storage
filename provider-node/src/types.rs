@@ -3,8 +3,47 @@
 //! API types for the provider node.
 
 use serde::{Deserialize, Serialize};
-use storage_client::discovery::ProviderInfo;
 use storage_primitives::BucketId;
+
+pub use provider_storage::{BucketStats, BucketSummary};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// On-chain Provider Info
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// The node's view of its on-chain provider registration.
+///
+/// Decoded from the `StorageProvider::Providers` storage entry by the
+/// chain-state coordinator; consumed by `/negotiate` validation and `/info`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderInfo {
+    /// Network address for connecting.
+    pub multiaddr: String,
+    /// Total stake locked.
+    pub stake: u128,
+    /// Currently committed bytes.
+    pub committed_bytes: u64,
+    /// Maximum capacity (0 = unlimited).
+    pub max_capacity: u64,
+    /// Minimum agreement duration.
+    pub min_duration: u32,
+    /// Maximum agreement duration.
+    pub max_duration: u32,
+    /// Price per byte per block.
+    pub price_per_byte: u128,
+    /// Whether accepting primary agreements.
+    pub accepting_primary: bool,
+    /// Replica sync price (None if not accepting replicas).
+    pub replica_sync_price: Option<u128>,
+    /// Whether accepting extensions.
+    pub accepting_extensions: bool,
+    /// Total agreements ever.
+    pub agreements_total: u32,
+    /// Failed challenges count.
+    pub challenges_failed: u32,
+    /// Block at which deregistration becomes finalisable (`None` = not deregistering).
+    pub deregister_at: Option<u32>,
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Node Upload/Download Types
@@ -65,7 +104,7 @@ pub struct CommitRequest {
     pub bucket_id: BucketId,
     /// Data roots to add to the MMR
     pub data_roots: Vec<String>,
-    /// `CommitmentPayload` nonce — block at which the caller expects to
+    /// `CommitmentPayload` nonce — anchor block at which the caller expects to
     /// submit the resulting signature on-chain. The provider signs over
     /// this value so the pallet's recency check passes.
     pub nonce: u64,
@@ -146,14 +185,6 @@ pub struct CheckpointSignatureResponse {
     pub leaf_count: u64,
     pub provider_signature: String,
     pub nonce: u64,
-}
-
-/// Response from triggering a checkpoint via the coordinator.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TriggerCheckpointResponse {
-    pub bucket_id: BucketId,
-    pub triggered: bool,
-    pub message: String,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -244,15 +275,6 @@ pub struct DeleteResponse {
 // Bucket Types
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Bucket summary info.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BucketSummary {
-    pub bucket_id: BucketId,
-    pub mmr_root: String,
-    pub start_seq: u64,
-    pub leaf_count: u64,
-}
-
 /// Response with bucket list.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ListBucketsResponse {
@@ -304,15 +326,6 @@ pub struct StatsResponse {
     pub total_nodes: u64,
     pub total_bytes: u64,
     pub buckets: Vec<BucketStats>,
-}
-
-/// Per-bucket statistics.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BucketStats {
-    pub bucket_id: BucketId,
-    pub leaf_count: u64,
-    pub node_count: u64,
-    pub bytes_stored: u64,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

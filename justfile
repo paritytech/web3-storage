@@ -60,6 +60,14 @@ build-paseo-runtime:
 build-provider:
     cargo build --release -p storage-provider-node
 
+# Reproduce the CI Rust coverage gate locally (needs cargo-llvm-cov + diff-cover).
+# For a PR not based on dev: git fetch origin <base> && COMPARE_BRANCH=origin/<base> just coverage
+coverage:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    git fetch --no-tags origin dev
+    scripts/coverage.sh all
+
 [private]
 _download BIN URL SHA256="":
     #!/usr/bin/env bash
@@ -136,7 +144,7 @@ start-chain: check build-runtime
     echo ""
     echo "=== Starting Blockchain (Relay Chain + Parachain) ==="
     echo ""
-    PROJECT_ROOT=$(pwd) .bin/zombienet spawn -p native zombienet.toml
+    PROJECT_ROOT=$(pwd) .bin/zombienet spawn -p native zombienet/zombienet-parachain-local.toml
 
 # Start the blockchain (relay chain + paseo storage parachain)
 start-paseo-chain: check build-paseo-runtime
@@ -180,7 +188,7 @@ start-e2e-chain RUNTIME="web3-storage-paseo": check
 #   just start-provider                                       # inmemory, //Alice key, port 3333, auth enforced
 #   just start-provider MODE=disk PORT=3334                    # disk storage on port 3334
 #   just start-provider KEYFILE=/path/to/seed MODE=disk        # custom key from file
-start-provider MODE="inmemory" PORT=PROVIDER_PORT STORAGE_PATH="./provider-data" KEYFILE="" DISABLE_AUTH="false": build-provider
+start-provider MODE="inmemory" PORT=PROVIDER_PORT STORAGE_PATH="./provider-data" KEYFILE="": build-provider
     #!/usr/bin/env bash
     set -euo pipefail
     echo ""
@@ -191,9 +199,6 @@ start-provider MODE="inmemory" PORT=PROVIDER_PORT STORAGE_PATH="./provider-data"
     EXTRA_ARGS=""
     if [ "{{MODE}}" = "disk" ]; then
         EXTRA_ARGS="--storage-path {{STORAGE_PATH}}"
-    fi
-    if [ "{{DISABLE_AUTH}}" = "true" ]; then
-        EXTRA_ARGS="$EXTRA_ARGS --disable-auth-i-know-what-i-am-doing"
     fi
     if [ -n "{{KEYFILE}}" ]; then
         KEY_ARGS="--keyfile {{KEYFILE}}"
@@ -209,7 +214,6 @@ start-provider MODE="inmemory" PORT=PROVIDER_PORT STORAGE_PATH="./provider-data"
         --storage-mode "{{MODE}}" \
         --bind-addr "0.0.0.0:{{PORT}}" \
         --chain-rpc "{{ CHAIN_WS }}" \
-        --enable-checkpoint-coordinator \
         $EXTRA_ARGS
 
 # Register on-chain then start the provider node (original behavior)
@@ -240,6 +244,34 @@ stats:
 generate-chain-spec: build-runtime
     ./scripts/build-chain-spec.sh > chain-spec.json
     @echo "Chain spec generated: chain-spec.json"
+
+# Generate subxt code from runtime metadata (paseo runtime).
+# Requires a running node (`just start-paseo-chain` in another terminal) and
+# the `subxt` CLI (`cargo install subxt-cli --force --locked`) + `rustfmt` on PATH.
+subxt-codegen URL=CHAIN_WS OUTPUT="crates/storage-subxt/src/storage_paseo_runtime.rs" METADATA="crates/storage-subxt/metadata/storage_paseo_runtime.scale":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "Downloading metadata from {{ URL }}..."
+    mkdir -p "$(dirname "{{ METADATA }}")" "$(dirname "{{ OUTPUT }}")"
+    subxt metadata -f bytes --url "{{ URL }}" > "{{ METADATA }}"
+    echo "Generating subxt code..."
+    printf '// SPDX-License-Identifier: Apache-2.0\n\n' > "{{ OUTPUT }}"
+    subxt codegen --file "{{ METADATA }}" \
+        --derive Clone \
+        --derive Eq \
+        --derive PartialEq \
+        --derive-for-type "pallet_storage_provider::pallet::ProviderInfo=serde::Serialize" \
+        --derive-for-type "pallet_storage_provider::pallet::ProviderInfo=serde::Deserialize" \
+        --derive-for-type "pallet_storage_provider::pallet::ProviderSettings=serde::Serialize" \
+        --derive-for-type "pallet_storage_provider::pallet::ProviderSettings=serde::Deserialize" \
+        --derive-for-type "pallet_storage_provider::pallet::ProviderStats=serde::Serialize" \
+        --derive-for-type "pallet_storage_provider::pallet::ProviderStats=serde::Deserialize" \
+        --derive-for-type "bounded_collections::bounded_vec::BoundedVec=serde::Serialize" \
+        --derive-for-type "bounded_collections::bounded_vec::BoundedVec=serde::Deserialize" \
+        --derive-for-type "sp_runtime::MultiSignature=codec::Encode" \
+        --derive-for-type "sp_runtime::MultiSignature=codec::Decode" \
+        | rustfmt --edition=2021 --emit=stdout >> "{{ OUTPUT }}"
+    echo "Generated {{ OUTPUT }}"
 
 # Demo: full integration test (PAPI-based)
 # Runs setup, upload, 2 challenges + responses, and asserts 2 ChallengeDefended events.
@@ -340,11 +372,6 @@ papi-setup:
 # Marketplace-style read-only walk of the Providers storage map
 papi-provider-discovery BYTES="1073741824" DURATION="100" MAX_PRICE="10": papi-setup
     node --import tsx examples/papi/provider-discovery.ts "{{ CHAIN_WS }}" "{{ BYTES }}" "{{ DURATION }}" "{{ MAX_PRICE }}"
-
-# Missed checkpoint slashing flow: configure_checkpoint_window (tight) ->
-# wait past window -> report_missed_checkpoint (slashes leader, pays reporter).
-papi-checkpoint-missed PROVIDER_URL=PROVIDER_URL PROVIDER_SEED="//Alice" CLIENT_SEED="//Bob": papi-setup
-    node --import tsx examples/papi/checkpoint-missed.ts "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}" "{{ PROVIDER_SEED }}" "{{ CLIENT_SEED }}"
 
 # ============================================================
 # E2E Test Suite
