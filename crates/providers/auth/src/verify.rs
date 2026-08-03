@@ -169,6 +169,7 @@ pub async fn require_role(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::membership::StaticMembershipResolver;
     use sp_core::Pair;
     use std::time::Duration;
 
@@ -267,25 +268,121 @@ mod tests {
         assert!(result.is_err());
     }
 
-    #[test]
-    fn test_role_enforcement_reader() {
-        // Reader can satisfy RequiredRole::Reader (any role satisfies Reader)
-        assert!(matches!(RequiredRole::Reader, RequiredRole::Reader));
-        // Reader cannot satisfy Writer
-        assert!(!matches!(Role::Reader, Role::Writer | Role::Admin));
+    /// Run `require_role` against a bucket whose only member is `//Alice`
+    /// holding `granted`, with a valid signed header from that same account.
+    async fn require_role_for(granted: Role, required: RequiredRole) -> Result<(), AuthError> {
+        let keypair = sr25519::Pair::from_string("//Alice", None).unwrap();
+        let membership = MembershipCache::new(
+            Box::new(StaticMembershipResolver(vec![(
+                AccountId32::new(keypair.public().0),
+                granted,
+            )])),
+            Duration::from_secs(60),
+        );
+        let header = make_auth_header(&keypair, "PUT", 1, current_timestamp());
+
+        require_role(
+            &membership,
+            Some(&header),
+            "PUT",
+            1,
+            required,
+            Duration::from_secs(300),
+        )
+        .await
     }
 
-    #[test]
-    fn test_role_enforcement_writer() {
-        // Writer can satisfy Reader and Writer, but not Admin
-        assert!(matches!(Role::Writer, Role::Writer | Role::Admin));
-        assert!(!matches!(Role::Writer, Role::Admin));
+    #[tokio::test]
+    async fn require_role_enforces_the_role_matrix() {
+        // Drives every (granted, required) pair through `require_role` so the
+        // privilege ladder cannot be widened without a test failing.
+        for (granted, required, allowed) in [
+            (Role::Reader, RequiredRole::Reader, true),
+            (Role::Reader, RequiredRole::Writer, false),
+            (Role::Reader, RequiredRole::Admin, false),
+            (Role::Writer, RequiredRole::Reader, true),
+            (Role::Writer, RequiredRole::Writer, true),
+            (Role::Writer, RequiredRole::Admin, false),
+            (Role::Admin, RequiredRole::Reader, true),
+            (Role::Admin, RequiredRole::Writer, true),
+            (Role::Admin, RequiredRole::Admin, true),
+        ] {
+            let result = require_role_for(granted, required).await;
+            if allowed {
+                assert!(
+                    result.is_ok(),
+                    "{granted:?} must satisfy {required:?}, got {result:?}"
+                );
+            } else {
+                assert!(
+                    matches!(result, Err(AuthError::InsufficientRole)),
+                    "{granted:?} must not satisfy {required:?}, got {result:?}"
+                );
+            }
+        }
     }
 
-    #[test]
-    fn test_role_enforcement_admin() {
-        // Admin satisfies everything
-        assert!(matches!(Role::Admin, Role::Admin));
-        assert!(matches!(Role::Admin, Role::Writer | Role::Admin));
+    #[tokio::test]
+    async fn require_role_rejects_non_member() {
+        // A valid signature is not authorization: Bob signs correctly but holds
+        // no role in the bucket, so even a read must be refused.
+        let alice = sr25519::Pair::from_string("//Alice", None).unwrap();
+        let bob = sr25519::Pair::from_string("//Bob", None).unwrap();
+        let membership = MembershipCache::new(
+            Box::new(StaticMembershipResolver(vec![(
+                AccountId32::new(alice.public().0),
+                Role::Admin,
+            )])),
+            Duration::from_secs(60),
+        );
+        let header = make_auth_header(&bob, "GET", 1, current_timestamp());
+
+        let result = require_role(
+            &membership,
+            Some(&header),
+            "GET",
+            1,
+            RequiredRole::Reader,
+            Duration::from_secs(300),
+        )
+        .await;
+        assert!(matches!(result, Err(AuthError::InsufficientRole)));
+    }
+
+    #[tokio::test]
+    async fn require_role_rejects_unsigned_and_forged_requests() {
+        let alice = sr25519::Pair::from_string("//Alice", None).unwrap();
+        let membership = MembershipCache::new(
+            Box::new(StaticMembershipResolver(vec![(
+                AccountId32::new(alice.public().0),
+                Role::Admin,
+            )])),
+            Duration::from_secs(60),
+        );
+
+        let missing = require_role(
+            &membership,
+            None,
+            "GET",
+            1,
+            RequiredRole::Reader,
+            Duration::from_secs(300),
+        )
+        .await;
+        assert!(matches!(missing, Err(AuthError::AuthRequired)));
+
+        // Header signed for bucket 1 must not authorize bucket 2, even though
+        // the signer is an Admin of the bucket it did sign for.
+        let header = make_auth_header(&alice, "GET", 1, current_timestamp());
+        let replayed = require_role(
+            &membership,
+            Some(&header),
+            "GET",
+            2,
+            RequiredRole::Reader,
+            Duration::from_secs(300),
+        )
+        .await;
+        assert!(matches!(replayed, Err(AuthError::AuthRequired)));
     }
 }

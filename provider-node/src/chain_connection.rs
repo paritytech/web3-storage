@@ -58,18 +58,6 @@ pub fn current_api(chain_rx: &ChainWatch) -> Result<OnlineClient<PolkadotConfig>
         .ok_or_else(|| Error::Internal("Chain connection not established yet".to_string()))
 }
 
-/// Adapter letting the auth membership resolver borrow the shared connection
-/// through the watch channel, so its lookups follow reconnects like every
-/// other consumer. (A newtype because the orphan rule forbids implementing
-/// the foreign `ChainApiSource` trait directly on the foreign `Receiver`.)
-pub struct WatchApiSource(pub ChainWatch);
-
-impl provider_auth::ChainApiSource for WatchApiSource {
-    fn current_api(&self) -> Result<OnlineClient<PolkadotConfig>, String> {
-        current_api(&self.0).map_err(|e| e.to_string())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -99,7 +87,9 @@ mod tests {
         // Before the chain-state coordinator publishes a connection, auth
         // lookups must surface a retryable error rather than panic or hang.
         let (_tx, rx) = tokio::sync::watch::channel(None);
-        let resolver = provider_auth::ChainMembershipResolver::new(Box::new(WatchApiSource(rx)));
+        let resolver = provider_auth::ChainMembershipResolver::new(move || {
+            current_api(&rx).map_err(|e| e.to_string())
+        });
         let err = provider_auth::MembershipResolver::fetch_members(&resolver, 1)
             .await
             .expect_err("no connection published yet");

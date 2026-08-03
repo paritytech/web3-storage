@@ -78,8 +78,10 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // Membership-based auth over the chain's bucket member sets, resolved
     // through the shared watch connection.
-    let resolver =
-        ChainMembershipResolver::new(Box::new(chain_connection::WatchApiSource(chain_rx.clone())));
+    let resolver = ChainMembershipResolver::new({
+        let chain_rx = chain_rx.clone();
+        move || chain_connection::current_api(&chain_rx).map_err(|e| e.to_string())
+    });
     let ttl = Duration::from_secs(cli.auth.auth_cache_ttl);
     let membership = Arc::new(MembershipCache::new(Box::new(resolver), ttl));
     tracing::info!(

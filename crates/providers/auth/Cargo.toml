@@ -16,3 +16,6 @@ storage-primitives = { workspace = true, features = ["std"] }
 subxt = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true, features = ["std"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt"] }

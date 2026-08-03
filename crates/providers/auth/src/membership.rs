@@ -97,29 +97,24 @@ fn find_role(members: &[(AccountId32, Role)], account: &AccountId32) -> Option<R
     members.iter().find(|(a, _)| a == account).map(|(_, r)| *r)
 }
 
-/// Source of the current live chain client.
-///
-/// Implementations are expected to follow reconnects (e.g. by borrowing the
-/// client from a watch channel owned by whoever manages the connection).
-/// Erroring while no connection has been established yet is expected and
-/// retryable: the caller surfaces it as a lookup error and the request is
-/// retried later.
-pub trait ChainApiSource: Send + Sync {
-    fn current_api(&self) -> Result<OnlineClient<PolkadotConfig>, String>;
-}
+type CurrentApi = dyn Fn() -> Result<OnlineClient<PolkadotConfig>, String> + Send + Sync;
 
 /// Chain-backed membership resolver using subxt dynamic queries.
-///
-/// Borrows the current chain connection from a [`ChainApiSource`] on every
-/// lookup, so lookups automatically follow reconnects instead of holding
-/// their own (never-reconnecting) socket.
 pub struct ChainMembershipResolver {
-    source: Box<dyn ChainApiSource>,
+    current_api: Box<CurrentApi>,
 }
 
 impl ChainMembershipResolver {
-    pub fn new(source: Box<dyn ChainApiSource>) -> Self {
-        Self { source }
+    /// `current_api` is called on every lookup rather than once up front, so
+    /// lookups follow the caller's reconnects instead of pinning a socket that
+    /// never reconnects. Returning an error before the first connect is
+    /// expected and retryable: it surfaces as a lookup error.
+    pub fn new(
+        current_api: impl Fn() -> Result<OnlineClient<PolkadotConfig>, String> + Send + Sync + 'static,
+    ) -> Self {
+        Self {
+            current_api: Box::new(current_api),
+        }
     }
 }
 
@@ -128,7 +123,7 @@ impl MembershipResolver for ChainMembershipResolver {
     async fn fetch_members(&self, bucket_id: BucketId) -> Result<Vec<(AccountId32, Role)>, String> {
         use subxt::dynamic::{At, Value};
 
-        let api = self.source.current_api()?;
+        let api = (self.current_api)()?;
 
         let storage_query =
             subxt::dynamic::storage::<(Value,), Value>("StorageProvider", "Buckets");

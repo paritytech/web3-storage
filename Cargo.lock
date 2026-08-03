@@ -7056,6 +7056,7 @@ dependencies = [
  "storage-primitives",
  "subxt",
  "thiserror 2.0.18",
+ "tokio",
  "tracing",
 ]
 
