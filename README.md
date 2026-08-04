@@ -196,7 +196,7 @@ web3-storage/
 │   ├── pallets/            # FRAME pallets: storage-provider, drive-registry, s3-registry
 │   │                       #   each with a precompiles/ subfolder (pallet_revive precompiles)
 │   ├── primitives/         # Shared types: storage, file-system, s3
-│   ├── providers/          # provider-negotiation: off-chain client<->provider wire protocol crate
+│   ├── providers/          # Provider-node library crates
 │   └── storage-subxt/      # Static subxt runtime bindings
 ├── runtimes/               # Parachain runtimes: web3-storage-local, web3-storage-paseo
 ├── provider-node/          # Off-chain HTTP storage server
