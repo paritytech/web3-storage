@@ -272,6 +272,19 @@ pub fn sign_terms(
     sign_terms_with(pair, terms)
 }
 
+/// Helper: attest sync roots the way a replica does for
+/// `confirm_replica_sync` — a signature over the SCALE-encoded array from
+/// the pair stamped as the provider's registered key.
+pub fn sign_sync_roots(
+    provider: u64,
+    roots: &[Option<sp_core::H256>; 7],
+) -> sp_runtime::MultiSignature {
+    use codec::Encode;
+    use sp_core::Pair as _;
+    let pair = provider_signer(provider);
+    sp_runtime::MultiSignature::Sr25519(pair.sign(&roots.encode()))
+}
+
 /// Helper: primary terms
 /// + with a fresh nonce
 /// + valid for the current RequestTimeout window.

@@ -96,7 +96,8 @@ impl ReplicaSyncChainClient for MockReplicaSyncChainClient {
     async fn submit_sync_confirmation(
         &self,
         bucket_id: BucketId,
-        _target_mmr_root: H256,
+        _roots: [Option<H256>; 7],
+        _signature: sp_runtime::MultiSignature,
     ) -> Result<(u8, u128), Error> {
         self.confirmations.lock().unwrap().push(bucket_id);
         let result = &*self.confirm_result.lock().unwrap();

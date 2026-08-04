@@ -159,7 +159,7 @@ fn setup_replica_agreement<T: Config>(
     bucket_id: BucketId,
     replica: &T::AccountId,
     replica_index: u32,
-) {
+) -> sp_core::sr25519::Public {
     let key = register_sr25519_key::<T>(replica, KEY_TYPE, replica_index);
     let terms = build_replica_terms::<T>(
         admin,
@@ -171,6 +171,18 @@ fn setup_replica_agreement<T: Config>(
     let sig = sign_terms::<T>(&key, &terms);
     Pallet::<T>::establish_replica_agreement_internal(admin, bucket_id, replica, terms, &sig)
         .expect("establish_replica_agreement_internal succeeds");
+    key
+}
+
+/// Attest sync roots for `confirm_replica_sync` with the replica's keystore
+/// key — the pallet verifies this over the SCALE-encoded array.
+fn sign_sync_roots<T: Config>(
+    key: &sp_core::sr25519::Public,
+    roots: &[Option<H256>; 7],
+) -> sp_runtime::MultiSignature {
+    let sig = sp_io::crypto::sr25519_sign(KEY_TYPE, key, &codec::Encode::encode(roots))
+        .expect("benchmarking keystore signs with a key it generated");
+    sp_runtime::MultiSignature::Sr25519(sig)
 }
 
 /// Direct-storage helper: register `provider` as a primary on an existing
@@ -847,18 +859,18 @@ mod benchmarks {
         );
 
         // Open the replica agreement via the signed-terms helper.
-        setup_replica_agreement::<T>(&admin, bucket_id, &replica_provider, 1);
+        let replica_key = setup_replica_agreement::<T>(&admin, bucket_id, &replica_provider, 1);
 
         // Confirm replica sync so replica has a last_sync root
         let roots: [Option<H256>; 7] = [Some(mmr_root), None, None, None, None, None, None];
-        let sig =
-            sp_runtime::MultiSignature::Sr25519(sp_core::sr25519::Signature::from_raw([0u8; 64]));
-        let _ = Pallet::<T>::confirm_replica_sync(
+        let sig = sign_sync_roots::<T>(&replica_key, &roots);
+        Pallet::<T>::confirm_replica_sync(
             RawOrigin::Signed(replica_provider.clone()).into(),
             bucket_id,
             roots,
             sig,
-        );
+        )
+        .expect("confirm_replica_sync succeeds");
 
         #[extrinsic_call]
         challenge_replica(
@@ -1053,12 +1065,11 @@ mod benchmarks {
         );
 
         // Open the replica agreement via the signed-terms helper.
-        setup_replica_agreement::<T>(&admin, bucket_id, &replica_provider, 1);
+        let replica_key = setup_replica_agreement::<T>(&admin, bucket_id, &replica_provider, 1);
 
         // roots[0] matches current snapshot mmr_root
         let roots: [Option<H256>; 7] = [Some(mmr_root), None, None, None, None, None, None];
-        let signature =
-            sp_runtime::MultiSignature::Sr25519(sp_core::sr25519::Signature::from_raw([0u8; 64]));
+        let signature = sign_sync_roots::<T>(&replica_key, &roots);
 
         #[extrinsic_call]
         confirm_replica_sync(

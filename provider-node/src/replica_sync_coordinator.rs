@@ -14,7 +14,7 @@
 use crate::chain_events::{BlockEvent, BlockEventRx};
 use crate::replica_sync::ReplicaSync;
 use crate::{Error, ProviderState};
-use sp_core::H256;
+use sp_core::{Pair as _, H256};
 use sp_runtime::AccountId32;
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -172,12 +172,24 @@ pub trait ReplicaSyncChainClient: Send + Sync {
     /// Fetch primary provider HTTP endpoints for a bucket.
     async fn fetch_primary_endpoints(&self, bucket_id: BucketId) -> Result<Vec<String>, Error>;
 
-    /// Submit a confirm_replica_sync extrinsic.
+    /// Submit a confirm_replica_sync extrinsic. `signature` is the
+    /// provider's attestation over the SCALE-encoded `roots` array — the
+    /// pallet verifies it against the registered `public_key`.
     async fn submit_sync_confirmation(
         &self,
         bucket_id: BucketId,
-        target_mmr_root: H256,
+        roots: [Option<H256>; 7],
+        signature: sp_runtime::MultiSignature,
     ) -> Result<(u8, u128), Error>;
+}
+
+/// The `roots` array shape `confirm_replica_sync` expects: the target root
+/// in position 0, the rest empty. Shared by the signer and the submitter so
+/// the signed payload can never drift from the submitted one.
+pub fn sync_confirmation_roots(target_mmr_root: H256) -> [Option<H256>; 7] {
+    let mut roots = [None; 7];
+    roots[0] = Some(target_mmr_root);
+    roots
 }
 
 #[async_trait::async_trait]
@@ -207,10 +219,11 @@ impl<T: ReplicaSyncChainClient> ReplicaSyncChainClient for Arc<T> {
     async fn submit_sync_confirmation(
         &self,
         bucket_id: BucketId,
-        target_mmr_root: H256,
+        roots: [Option<H256>; 7],
+        signature: sp_runtime::MultiSignature,
     ) -> Result<(u8, u128), Error> {
         self.as_ref()
-            .submit_sync_confirmation(bucket_id, target_mmr_root)
+            .submit_sync_confirmation(bucket_id, roots, signature)
             .await
     }
 }
@@ -701,9 +714,24 @@ impl ReplicaSyncCoordinator {
 
         // Submit on-chain confirmation if auto_confirm is enabled
         if self.config.auto_confirm {
+            // Attest the roots we are claiming: the pallet verifies this
+            // signature over the SCALE-encoded array against our registered
+            // public key.
+            let roots = sync_confirmation_roots(duty.target_mmr_root);
+            let signature = match self.state.keypair.as_ref() {
+                Some(pair) => {
+                    sp_runtime::MultiSignature::Sr25519(pair.sign(&codec::Encode::encode(&roots)))
+                }
+                None => {
+                    return SyncResult::SubmissionFailed {
+                        bucket_id: duty.bucket_id,
+                        error: "no signing key configured; cannot attest sync roots".to_string(),
+                    };
+                }
+            };
             match self
                 .chain_client
-                .submit_sync_confirmation(duty.bucket_id, duty.target_mmr_root)
+                .submit_sync_confirmation(duty.bucket_id, roots, signature)
                 .await
             {
                 Ok((position, payment)) => SyncResult::Success {

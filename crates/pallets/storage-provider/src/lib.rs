@@ -2534,9 +2534,16 @@ pub mod pallet {
             origin: OriginFor<T>,
             bucket_id: BucketId,
             roots: [Option<H256>; 7],
-            _signature: sp_runtime::MultiSignature,
+            signature: sp_runtime::MultiSignature,
         ) -> DispatchResult {
             let who = ensure_signed(origin)?;
+
+            // The replica attests which roots it actually holds by signing
+            // the SCALE-encoded `roots` array with its registered key.
+            // There is no nonce: a replayed confirmation re-attests the same
+            // roots, and the new-root / sync-interval checks below already
+            // make that a no-op.
+            Self::verify_signature(&signature, &roots.encode(), &who)?;
 
             let bucket = Buckets::<T>::get(bucket_id).ok_or(Error::<T>::BucketNotFound)?;
 
