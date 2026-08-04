@@ -199,7 +199,7 @@ async function main() {
     // 6) End the agreement *through the contract*. Only the original buyer
     //    (the marketplace's bucket-owner mapping) can call this.
     console.log("\n[6/6] endMyAgreement via contract…");
-    const providerBytes32 = provider.publicKey; // substrate AccountId32 = 32-byte sr25519 pubkey
+    const providerBytes32 = provider.publicKey; // the provider's AccountId32 (32 raw bytes)
     const endData = encodeCall(abi, "endMyAgreement", [
       bucketId,
       toHex(providerBytes32),
