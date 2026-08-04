@@ -176,7 +176,7 @@ fn setup_replica_agreement<T: Config>(
 
 /// Attest sync roots for `confirm_replica_sync` with the replica's keystore
 /// key — the pallet verifies this over the SCALE-encoded array.
-fn sign_sync_roots<T: Config>(
+fn sign_sync_roots(
     key: &sp_core::sr25519::Public,
     roots: &[Option<H256>; 7],
 ) -> sp_runtime::MultiSignature {
@@ -863,7 +863,7 @@ mod benchmarks {
 
         // Confirm replica sync so replica has a last_sync root
         let roots: [Option<H256>; 7] = [Some(mmr_root), None, None, None, None, None, None];
-        let sig = sign_sync_roots::<T>(&replica_key, &roots);
+        let sig = sign_sync_roots(&replica_key, &roots);
         Pallet::<T>::confirm_replica_sync(
             RawOrigin::Signed(replica_provider.clone()).into(),
             bucket_id,
@@ -1069,7 +1069,7 @@ mod benchmarks {
 
         // roots[0] matches current snapshot mmr_root
         let roots: [Option<H256>; 7] = [Some(mmr_root), None, None, None, None, None, None];
-        let signature = sign_sync_roots::<T>(&replica_key, &roots);
+        let signature = sign_sync_roots(&replica_key, &roots);
 
         #[extrinsic_call]
         confirm_replica_sync(
