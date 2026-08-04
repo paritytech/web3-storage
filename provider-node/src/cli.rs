@@ -85,21 +85,19 @@ pub struct RpcParams {
     )]
     pub chain_transport: TransportKind,
 
-    /// Relay-chain spec file for the light transport (a raw spec with
-    /// reachable boot nodes). Falls back to fetching from --relay-rpc.
-    #[arg(long, value_name = "FILE", env = "RELAY_CHAIN_SPEC")]
-    pub relay_chain_spec: Option<PathBuf>,
+    /// Relay-chain spec for the light transport: a spec file path (a raw
+    /// spec with reachable boot nodes — the trust-preserving option), or a
+    /// ws:// / wss:// node URL to fetch it from at startup (dev convenience;
+    /// trusts that node).
+    #[arg(long, value_name = "FILE|WS_URL", env = "RELAY_CHAIN_SPEC")]
+    pub relay_chain_spec: Option<String>,
 
-    /// Parachain spec file for the light transport (a raw spec with boot
-    /// nodes serving the light request-response protocols). Falls back to
-    /// fetching from --chain-rpc.
-    #[arg(long, value_name = "FILE", env = "PARA_CHAIN_SPEC")]
-    pub para_chain_spec: Option<PathBuf>,
-
-    /// Relay-chain RPC URL used only to fetch the relay spec at startup when
-    /// --relay-chain-spec is not given (dev convenience; trusts that node).
-    #[arg(long, value_name = "URL", env = "RELAY_RPC")]
-    pub relay_rpc: Option<String>,
+    /// Parachain spec for the light transport: a spec file path (a raw spec
+    /// with boot nodes serving the light request-response protocols), or a
+    /// ws:// / wss:// node URL to fetch it from. Defaults to fetching from
+    /// --chain-rpc (dev only).
+    #[arg(long, value_name = "FILE|WS_URL", env = "PARA_CHAIN_SPEC")]
+    pub para_chain_spec: Option<String>,
 
     /// Public multiaddr to advertise on chain instead of the bind-derived one.
     ///
@@ -130,42 +128,43 @@ pub enum TransportKind {
     /// External RPC node over WebSocket (`--chain-rpc`).
     Rpc,
     /// Embedded smoldot light client. Chain specs come from
-    /// `--relay-chain-spec` / `--para-chain-spec` files, falling back to
-    /// fetching from `--relay-rpc` / `--chain-rpc` (dev only).
+    /// `--relay-chain-spec` / `--para-chain-spec` — a spec file path, or a
+    /// ws:// URL to fetch from (dev only); the parachain spec defaults to
+    /// fetching from `--chain-rpc`.
     Light,
+}
+
+/// A spec argument is a node URL to fetch from when it looks like a
+/// WebSocket URL, and a spec file path otherwise.
+fn spec_source(value: &str) -> SpecSource {
+    if value.starts_with("ws://") || value.starts_with("wss://") {
+        SpecSource::FetchFromRpc(value.to_string())
+    } else {
+        SpecSource::File(PathBuf::from(value))
+    }
 }
 
 impl RpcParams {
     /// Resolve the CLI flags into a concrete [`ChainTransport`].
     ///
-    /// Errors when the light transport has no way to obtain the relay spec
-    /// (neither a spec file nor a relay RPC to fetch it from).
+    /// Errors when the light transport has no relay spec source.
     pub fn chain_transport(&self) -> Result<ChainTransport, String> {
         match self.chain_transport {
             TransportKind::Rpc => Ok(ChainTransport::Rpc {
                 url: self.chain_rpc.clone(),
             }),
-            TransportKind::Light => {
-                let relay_spec = match (&self.relay_chain_spec, &self.relay_rpc) {
-                    (Some(path), _) => SpecSource::File(path.clone()),
-                    (None, Some(url)) => SpecSource::FetchFromRpc(url.clone()),
-                    (None, None) => {
-                        return Err(
-                            "--chain-transport light needs --relay-chain-spec (or, for dev, \
-                             --relay-rpc to fetch it from a node)"
-                                .to_string(),
-                        )
-                    }
-                };
-                let para_spec = match &self.para_chain_spec {
-                    Some(path) => SpecSource::File(path.clone()),
-                    None => SpecSource::FetchFromRpc(self.chain_rpc.clone()),
-                };
-                Ok(ChainTransport::LightClient {
-                    relay_spec,
-                    para_spec,
-                })
-            }
+            TransportKind::Light => Ok(ChainTransport::LightClient {
+                relay_spec: self.relay_chain_spec.as_deref().map(spec_source).ok_or(
+                    "--chain-transport light needs --relay-chain-spec (a spec file, or, \
+                     for dev, a ws:// node URL to fetch it from)"
+                        .to_string(),
+                )?,
+                para_spec: self
+                    .para_chain_spec
+                    .as_deref()
+                    .map(spec_source)
+                    .unwrap_or_else(|| SpecSource::FetchFromRpc(self.chain_rpc.clone())),
+            }),
         }
     }
 }
@@ -415,13 +414,13 @@ mod tests {
             matches!(para_spec, SpecSource::File(p) if p == PathBuf::from("/specs/para.json").as_path())
         );
 
-        // Without spec files, the relay spec fetches from --relay-rpc and the
-        // para spec from --chain-rpc.
+        // A ws:// spec argument means "fetch from this node"; without a para
+        // spec at all, the para spec fetches from --chain-rpc.
         let cli = Cli::try_parse_from([
             "storage-provider-node",
             "--chain-transport",
             "light",
-            "--relay-rpc",
+            "--relay-chain-spec",
             "ws://127.0.0.1:9900",
         ])
         .unwrap();
