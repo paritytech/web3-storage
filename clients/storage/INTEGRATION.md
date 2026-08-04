@@ -69,7 +69,10 @@ use subxt_signer::sr25519::Keypair;
 // Load from seed phrase or keystore
 let keypair = Keypair::from_uri("//Alice")?;
 
-// Any subxt sr25519 keypair converts into a Signer
+// Any subxt sr25519 keypair converts into a Signer. This is the
+// extrinsic-submission account; the provider's *signing* key registered as
+// `public_key` may use any supported scheme (sr25519/ed25519/ecdsa/eth —
+// see the register_provider example's `scheme` argument).
 let mut client = AdminClient::new(config, Signer::from(keypair))?;
 client.connect().await?;
 ```

@@ -10,10 +10,10 @@ Register a new storage provider.
 
 **Parameters:**
 - `multiaddr`: `BoundedVec<u8, T::MaxMultiaddrLength>` - network address (e.g. `/ip4/127.0.0.1/tcp/3333`)
-- `publicKey`: `BoundedVec<u8, ConstU32<64>>` - raw public key (32 bytes for Sr25519/Ed25519, 33 bytes for ECDSA)
+- `publicKey`: `BoundedVec<u8, ConstU32<64>>` - raw public key: 32 bytes for Sr25519/Ed25519 or 33 bytes for compressed Ecdsa/Eth. Any other length fails with `InvalidPublicKey` (the 64-byte capacity is reserved for future schemes). The signature scheme is chosen per submitted signature — the provider node's `--key-scheme` must produce signatures matching this key.
 - `stake`: `BalanceOf<T>` - Amount to stake (must be ≥ `MinProviderStake`)
 
-**Example:**
+**Example** (an sr25519 dev key — any supported scheme works the same way):
 ```
 multiaddr: /ip4/127.0.0.1/tcp/3333
 publicKey: 0xd43593c715fdd31c61141abd04a99fd6822c8558854ccde39a5684e7a56da27d

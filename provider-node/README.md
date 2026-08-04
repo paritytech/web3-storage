@@ -12,6 +12,20 @@ just start-provider   # requires a running chain (just start-chain)
 just health           # check provider is up
 ```
 
+## Signing key
+
+The node signs commitments, checkpoint co-signatures, negotiated terms, and
+replica sync attestations with the keypair derived from `--keyfile`. The
+scheme is selected with `--key-scheme` (`sr25519` default, `ed25519`,
+`ecdsa`, or `eth`) and must match the `public_key` registered on-chain —
+`/negotiate` returns `503 provider_key_mismatch` while they differ.
+Extrinsics are always submitted from the sr25519 account derived from the
+same seed, which is the provider's on-chain identity.
+
+Every signature leaves the node as a SCALE-encoded `MultiSignature`,
+`0x`-prefixed hex, so the scheme tag travels with it (e.g.
+`0x01<64-byte sr25519 sig>`, `0x02<65-byte ecdsa sig>`).
+
 ## Authentication
 
 Authentication is always enforced: every mutating Layer-0 endpoint (`PUT
@@ -23,7 +37,10 @@ whether they should require the `Reader` role is tracked in
 [#228](https://github.com/paritytech/web3-storage/issues/228).
 
 The client signs an sr25519 message binding the request to a bucket and a
-timestamp:
+timestamp. Client auth is sr25519-only for now (unlike on-chain provider
+signature verification, which is multi-scheme); extending it is part of the
+header redesign tracked in
+[#304](https://github.com/paritytech/web3-storage/issues/304):
 
 ```text
 signed message:  web3storage:<METHOD>:<bucket_id>:<timestamp>

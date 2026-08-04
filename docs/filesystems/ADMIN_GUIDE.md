@@ -133,9 +133,10 @@ use pallet_storage_provider::Call as StorageProviderCall;
 
 // 1. Provider registers with stake
 StorageProviderCall::register_provider {
-    endpoint: b"http://provider.example.com:3000".to_vec(),
-    capacity: 1_000_000_000_000,  // 1 TB
-    stake: 1_000 * UNIT,           // 1000 tokens stake
+    multiaddr: b"/ip4/127.0.0.1/tcp/3333".to_vec().try_into().unwrap(),
+    // Raw signing key: 32 bytes (Sr25519/Ed25519) or 33 (compressed Ecdsa/Eth)
+    public_key: signing_key_bytes.try_into().unwrap(),
+    stake: 1_000 * UNIT, // 1000 tokens stake
 };
 
 // 2. Admin updates provider settings
