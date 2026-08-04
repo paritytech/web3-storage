@@ -27,6 +27,7 @@ use async_trait::async_trait;
 use parking_lot::RwLock;
 use provider_storage::{NonceStore, NullNonceStore};
 use sp_runtime::AccountId32;
+use std::future::Future;
 use std::sync::atomic::AtomicU32;
 use std::sync::Arc;
 use std::time::Duration;
@@ -37,6 +38,26 @@ use tokio::task::JoinHandle;
 
 /// Pallet whose storage, constants, and events the coordinator follows.
 const PALLET_NAME: &str = "StorageProvider";
+
+/// Run `fut` under `budget`, mapping expiry to an [`Error`] naming `what`.
+///
+/// Every wait in the reconnect loop goes through this: an operation that can
+/// hang forever (e.g. a wedged smoldot backend with no timeout of its own)
+/// must turn into an `Err` so the loop can rebuild the connection instead of
+/// hanging with a stale handle still published.
+async fn with_timeout<T>(
+    what: &str,
+    budget: Duration,
+    fut: impl Future<Output = Result<T, Error>>,
+) -> Result<T, Error> {
+    match tokio::time::timeout(budget, fut).await {
+        Ok(result) => result,
+        Err(_) => Err(Error::Internal(format!(
+            "{what} timed out after {}s",
+            budget.as_secs()
+        ))),
+    }
+}
 
 // ── ChainState ────────────────────────────────────────────────────────────────
 
@@ -315,15 +336,12 @@ impl ChainStateCoordinator {
         /// because killing a slow warp sync throws its progress away.
         const CONNECT_TIMEOUT: Duration = Duration::from_secs(300);
 
-        let handle =
-            tokio::time::timeout(CONNECT_TIMEOUT, chain_connection::connect(&self.transport))
-                .await
-                .map_err(|_| {
-                    Error::Internal(format!(
-                        "Connecting to the chain timed out after {}s",
-                        CONNECT_TIMEOUT.as_secs()
-                    ))
-                })??;
+        let handle = with_timeout(
+            "Connecting to the chain",
+            CONNECT_TIMEOUT,
+            chain_connection::connect(&self.transport),
+        )
+        .await?;
         self.follow(handle).await
     }
 
@@ -345,7 +363,7 @@ impl ChainStateCoordinator {
         /// would otherwise hang the reconnect loop forever.
         const BOOTSTRAP_TIMEOUT: Duration = Duration::from_secs(60);
 
-        let (mut blocks, chain) = tokio::time::timeout(BOOTSTRAP_TIMEOUT, async {
+        let (mut blocks, chain) = with_timeout("Chain bootstrap", BOOTSTRAP_TIMEOUT, async {
             let api = handle.api.clone();
             let blocks = api
                 .stream_blocks()
@@ -369,13 +387,7 @@ impl ChainStateCoordinator {
 
             Ok::<_, Error>((blocks, chain))
         })
-        .await
-        .map_err(|_| {
-            Error::Internal(format!(
-                "Chain bootstrap timed out after {}s",
-                BOOTSTRAP_TIMEOUT.as_secs()
-            ))
-        })??;
+        .await?;
 
         // Tell coordinators to reconcile: events emitted while the stream was
         // down were missed for good, so they re-scan chain state instead.
@@ -1410,6 +1422,66 @@ mod tests {
             assert!(
                 saw_challenge,
                 "follow should statically decode and broadcast ChallengeCreated"
+            );
+        }
+
+        #[tokio::test(start_paused = true)]
+        async fn with_timeout_expiry_maps_to_error() {
+            // Paused time auto-advances past the budget instantly.
+            let err = with_timeout(
+                "Chain bootstrap",
+                Duration::from_secs(5),
+                std::future::pending::<Result<(), Error>>(),
+            )
+            .await
+            .expect_err("a never-ready future must hit the budget");
+            assert!(
+                err.to_string()
+                    .contains("Chain bootstrap timed out after 5s"),
+                "unexpected error: {err}"
+            );
+        }
+
+        #[tokio::test]
+        async fn with_timeout_passes_results_through() {
+            let ok = with_timeout("op", Duration::from_secs(1), async { Ok::<_, Error>(7) })
+                .await
+                .expect("value passes through");
+            assert_eq!(ok, 7);
+
+            let err = with_timeout("op", Duration::from_secs(1), async {
+                Err::<(), _>(Error::Internal("inner failure".to_string()))
+            })
+            .await
+            .expect_err("inner error passes through");
+            assert!(
+                err.to_string().contains("inner failure"),
+                "unexpected error: {err}"
+            );
+        }
+
+        #[tokio::test]
+        async fn connect_and_follow_surfaces_connect_errors() {
+            // Port 1 on loopback refuses immediately, so this exercises the
+            // budgeted connect path without waiting out any timeout.
+            let (chain_tx, _chain_rx) = tokio::sync::watch::channel(None);
+            let (events_tx, _events_rx) = tokio::sync::broadcast::channel(16);
+            let coordinator = ChainStateCoordinator::new(
+                ChainTransport::Rpc {
+                    url: "ws://127.0.0.1:1".to_string(),
+                },
+                provider_account(),
+                Arc::new(ChainState::default()),
+                chain_tx,
+                events_tx,
+            );
+            let err = coordinator
+                .connect_and_follow()
+                .await
+                .expect_err("connect to a closed port must fail");
+            assert!(
+                err.to_string().contains("Failed to connect to chain"),
+                "unexpected error: {err}"
             );
         }
     }
