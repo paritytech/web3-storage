@@ -299,16 +299,11 @@ pub async fn fetch_current_anchor_block<C>(
 where
     C: subxt::client::OnlineClientAtBlockT<subxt::PolkadotConfig>,
 {
-    // `unvalidated`: the bindings are generated from the paseo runtime, and the
-    // local runtime shares the pallet — exact-hash validation would couple the
-    // binary to a single runtime build for no safety gain (a shape mismatch
-    // fails decoding).
     at.runtime_apis()
         .call(
             storage_subxt::api::runtime_apis()
                 .storage_provider_api()
-                .current_anchor_block()
-                .unvalidated(),
+                .current_anchor_block(),
         )
         .await
         .map_err(|e| Error::Internal(format!("current_anchor_block runtime API call failed: {e}")))
@@ -351,14 +346,7 @@ fn subxt_account(who: &AccountId32) -> subxt::utils::AccountId32 {
 #[async_trait]
 impl ChainStateChainClient for RealChainStateClient {
     async fn get_provider_info(&self, who: &AccountId32) -> Result<Option<ProviderInfo>, Error> {
-        // `unvalidated`: the bindings are generated from the paseo runtime, and
-        // the local runtime shares the pallet — exact-hash validation would
-        // couple the binary to a single runtime build for no safety gain (a
-        // shape mismatch fails decoding).
-        let addr = storage_subxt::api::storage()
-            .storage_provider()
-            .providers()
-            .unvalidated();
+        let addr = storage_subxt::api::storage().storage_provider().providers();
         let at = self
             .api
             .at_current_block()
@@ -381,8 +369,7 @@ impl ChainStateChainClient for RealChainStateClient {
     async fn fetch_replay_hsn(&self, who: &AccountId32) -> Result<Option<u64>, Error> {
         let addr = storage_subxt::api::storage()
             .storage_provider()
-            .provider_replay_states()
-            .unvalidated();
+            .provider_replay_states();
         let at = self
             .api
             .at_current_block()
@@ -409,30 +396,23 @@ impl ChainStateChainClient for RealChainStateClient {
             .await
             .map_err(|e| Error::Internal(format!("Failed to get current block: {e}")))?;
 
-        // Absence has to be probed separately: on an `unvalidated` address subxt
-        // skips the metadata lookup that would yield `ConstantNameNotFound`, so a
-        // missing constant would otherwise arrive as an opaque decode error and be
-        // reported as a failure rather than as "this runtime has no such constant".
-        if at
-            .metadata_ref()
-            .pallet_by_name(PALLET_NAME)
-            .and_then(|pallet| pallet.constant_by_name("RequestTimeout"))
-            .is_none()
-        {
-            return Ok(None);
+        match at.constants().entry(
+            storage_subxt::api::constants()
+                .storage_provider()
+                .request_timeout(),
+        ) {
+            Ok(timeout) => Ok(Some(timeout)),
+            // A runtime without the constant is a different thing from a failed
+            // read: the caller logs it as a metadata gap and leaves the pallet
+            // constants unset, rather than treating it as a chain error.
+            Err(
+                subxt::error::ConstantError::PalletNameNotFound(_)
+                | subxt::error::ConstantError::ConstantNameNotFound { .. },
+            ) => Ok(None),
+            Err(e) => Err(Error::Internal(format!(
+                "Failed to read RequestTimeout: {e}"
+            ))),
         }
-
-        let timeout = at
-            .constants()
-            .entry(
-                storage_subxt::api::constants()
-                    .storage_provider()
-                    .request_timeout()
-                    .unvalidated(),
-            )
-            .map_err(|e| Error::Internal(format!("Failed to read RequestTimeout: {e}")))?;
-
-        Ok(Some(timeout))
     }
 }
 
