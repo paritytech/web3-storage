@@ -10,7 +10,6 @@
 //! on a slow safety-net interval — a missed challenge means getting slashed,
 //! so the event path is backstopped rather than trusted blindly.
 
-use crate::{Error, ProviderState};
 use provider_chain::chain_events::{BlockEvent, BlockEventRx};
 use sp_core::H256;
 use sp_runtime::AccountId32;
@@ -40,6 +39,10 @@ pub enum ChallengeError {
 /// Implemented by the provider node's storage backend; kept narrow so this
 /// crate stays decoupled from the full storage engine.
 pub trait ChallengeProofSource: Send + Sync {
+    /// SS58 account of the provider this responder acts for; used to filter
+    /// `ChallengeCreated` events down to our own challenges.
+    fn provider_id(&self) -> &str;
+
     /// Generate an MMR proof for the given leaf of a bucket's commitment.
     fn get_mmr_proof(
         &self,
@@ -138,7 +141,7 @@ pub trait ChallengeChainClient: Send + Sync {
         &self,
         deadline: u32,
         index: u16,
-    ) -> Result<Option<DetectedChallenge>, Error>;
+    ) -> Result<Option<DetectedChallenge>, ChallengeError>;
 
     /// Submit a challenge response transaction.
     async fn submit_response(
@@ -160,7 +163,7 @@ impl<T: ChallengeChainClient> ChallengeChainClient for Arc<T> {
         &self,
         deadline: u32,
         index: u16,
-    ) -> Result<Option<DetectedChallenge>, Error> {
+    ) -> Result<Option<DetectedChallenge>, ChallengeError> {
         self.as_ref().fetch_challenge(deadline, index).await
     }
 
@@ -288,7 +291,7 @@ impl ChallengeResponder {
         let mut events_open = true;
         // Only challenges against our own account are actionable; with an
         // unparseable provider id the point-read filter still protects us.
-        let our_account = AccountId32::from_str(&self.state.provider_id).ok();
+        let our_account = AccountId32::from_str(self.proof_source.provider_id()).ok();
         // The safety-net interval's first tick fires immediately, doubling as
         // the startup bootstrap scan (challenges raised while the node was
         // down). With the safety net disabled, the bootstrap scan comes from

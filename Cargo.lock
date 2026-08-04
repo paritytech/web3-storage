@@ -7063,7 +7063,9 @@ name = "provider-challenge"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "provider-chain",
  "sp-core",
+ "sp-runtime",
  "storage-primitives",
  "thiserror 2.0.18",
  "tokio",

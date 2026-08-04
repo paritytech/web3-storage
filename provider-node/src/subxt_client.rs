@@ -920,7 +920,8 @@ impl ChallengeChainClient for SubxtChainClient {
         let storage_address =
             subxt::dynamic::storage::<(Value, Value), Value>("StorageProvider", "Challenges");
         let at = self
-            .api()?
+            .api()
+            .map_err(|e| ChallengeError::Chain(e.to_string()))?
             .at_current_block()
             .await
             .map_err(|e| ChallengeError::Chain(format!("Failed to get storage: {e}")))?;
@@ -987,7 +988,7 @@ impl ChallengeChainClient for SubxtChainClient {
         &self,
         deadline: u32,
         index: u16,
-    ) -> Result<Option<DetectedChallenge>, Error> {
+    ) -> Result<Option<DetectedChallenge>, ChallengeError> {
         let our_bytes: [u8; 32] = self.signer.public_key().0;
 
         // Typed read via the static bindings. `unvalidated`: the bindings are
@@ -999,22 +1000,23 @@ impl ChallengeChainClient for SubxtChainClient {
             .challenges()
             .unvalidated();
         let at = self
-            .api()?
+            .api()
+            .map_err(|e| ChallengeError::Chain(e.to_string()))?
             .at_current_block()
             .await
-            .map_err(|e| Error::Internal(format!("Failed to get storage: {e}")))?;
+            .map_err(|e| ChallengeError::Chain(format!("Failed to get storage: {e}")))?;
 
         let Some(value) = at
             .storage()
             .try_fetch(storage_address, (deadline, index))
             .await
-            .map_err(|e| Error::Internal(format!("Failed to fetch challenge: {e}")))?
+            .map_err(|e| ChallengeError::Chain(format!("Failed to fetch challenge: {e}")))?
         else {
             return Ok(None);
         };
 
         let challenge = value.decode().map_err(|e| {
-            Error::Internal(format!(
+            ChallengeError::Chain(format!(
                 "Failed to decode challenge at {deadline}/{index}: {e}"
             ))
         })?;
@@ -1117,7 +1119,8 @@ impl ChallengeChainClient for SubxtChainClient {
         );
 
         self.submit_and_finalize(&tx, "respond_to_challenge")
-            .await?;
+            .await
+            .map_err(|e| ChallengeError::Chain(e.to_string()))?;
 
         Ok(H256::zero())
     }

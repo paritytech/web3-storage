@@ -53,7 +53,7 @@ impl ChallengeChainClient for MockChallengeChainClient {
         &self,
         deadline: u32,
         index: u16,
-    ) -> Result<Option<DetectedChallenge>, Error> {
+    ) -> Result<Option<DetectedChallenge>, ChallengeError> {
         Ok(self
             .challenges
             .lock()

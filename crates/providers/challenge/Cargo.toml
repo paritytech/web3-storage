@@ -9,7 +9,9 @@ description = "Challenge responder service: polls on-chain challenges and answer
 
 [dependencies]
 async-trait = { workspace = true }
+provider-chain = { workspace = true }
 sp-core = { workspace = true, features = ["std"] }
+sp-runtime = { workspace = true, features = ["std"] }
 storage-primitives = { workspace = true, features = ["std"] }
 thiserror = { workspace = true }
 tokio = { workspace = true }

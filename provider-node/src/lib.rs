@@ -148,6 +148,10 @@ impl ProviderState {
 }
 
 impl provider_challenge::ChallengeProofSource for ProviderState {
+    fn provider_id(&self) -> &str {
+        &self.provider_id
+    }
+
     fn get_mmr_proof(
         &self,
         bucket_id: storage_primitives::BucketId,

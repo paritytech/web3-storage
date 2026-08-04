@@ -13,6 +13,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use storage_primitives::BucketId;
+use storage_provider_node::challenge_responder::ChallengeError;
 use storage_provider_node::replica_sync_coordinator::{BucketSnapshot, ReplicaAgreementInfo};
 use storage_provider_node::{
     ChallengeChainClient, ChallengeResponder, ChallengeResponderConfig, DetectedChallenge, Error,
@@ -46,7 +47,7 @@ impl MockChallengeClient {
 
 #[async_trait::async_trait]
 impl ChallengeChainClient for MockChallengeClient {
-    async fn poll_challenges(&self) -> Result<Vec<DetectedChallenge>, Error> {
+    async fn poll_challenges(&self) -> Result<Vec<DetectedChallenge>, ChallengeError> {
         self.scanned.fetch_add(1, Ordering::SeqCst);
         Ok(vec![])
     }
@@ -55,7 +56,7 @@ impl ChallengeChainClient for MockChallengeClient {
         &self,
         deadline: u32,
         index: u16,
-    ) -> Result<Option<DetectedChallenge>, Error> {
+    ) -> Result<Option<DetectedChallenge>, ChallengeError> {
         self.fetched.fetch_add(1, Ordering::SeqCst);
         if (deadline, index) == (self.challenge.deadline, self.challenge.index) {
             Ok(Some(self.challenge.clone()))
@@ -70,7 +71,7 @@ impl ChallengeChainClient for MockChallengeClient {
         _chunk_data: Vec<u8>,
         _mmr_proof: storage_primitives::MmrProof,
         _chunk_proof: storage_primitives::MerkleProof,
-    ) -> Result<H256, Error> {
+    ) -> Result<H256, ChallengeError> {
         self.submitted.lock().unwrap().push(challenge_id);
         Ok(H256::zero())
     }
