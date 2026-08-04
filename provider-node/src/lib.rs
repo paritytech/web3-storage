@@ -325,6 +325,61 @@ mod tests {
         }
     }
 
+    /// sign_terms produces, for every scheme, a signature the pallet's
+    /// terms verification accepts: over `blake2_256(signing_payload())`,
+    /// against the account derived from the raw registered key.
+    #[test]
+    fn sign_terms_round_trips_for_every_scheme() {
+        use sp_runtime::traits::{IdentifyAccount, Verify};
+        use sp_runtime::{AccountId32, MultiSigner};
+
+        let terms = AgreementTermsOf {
+            owner: AccountId32::new([7u8; 32]),
+            max_bytes: 1024,
+            duration: 50,
+            price_per_byte: 5,
+            valid_until: 100,
+            nonce: 1,
+            bucket_id: None,
+            replica_params: None,
+        };
+
+        for scheme in [
+            KeyScheme::Sr25519,
+            KeyScheme::Ed25519,
+            KeyScheme::Ecdsa,
+            KeyScheme::Eth,
+        ] {
+            let keypair = ProviderKeypair::from_seed("//Alice", scheme).unwrap();
+            let key = keypair.public_key_bytes();
+            let signed = keypair.sign_terms(terms.clone());
+            assert_eq!(
+                signed.terms, terms,
+                "{scheme:?} must bundle the terms unchanged"
+            );
+
+            let hash = sp_core::hashing::blake2_256(&signed.terms.signing_payload());
+            let signer = match &signed.signature {
+                MultiSignature::Sr25519(_) => {
+                    MultiSigner::Sr25519(sr25519::Public::try_from(key.as_slice()).unwrap())
+                }
+                MultiSignature::Ed25519(_) => {
+                    MultiSigner::Ed25519(ed25519::Public::try_from(key.as_slice()).unwrap())
+                }
+                MultiSignature::Ecdsa(_) => {
+                    MultiSigner::Ecdsa(ecdsa::Public::try_from(key.as_slice()).unwrap())
+                }
+                MultiSignature::Eth(_) => {
+                    MultiSigner::Eth(ecdsa::KeccakPublic::try_from(key.as_slice()).unwrap())
+                }
+            };
+            assert!(
+                signed.signature.verify(&hash[..], &signer.into_account()),
+                "{scheme:?} terms signature failed verification"
+            );
+        }
+    }
+
     /// Every scheme round-trips: sign() emits a SCALE MultiSignature whose
     /// variant matches the configured scheme and whose registered key shape
     /// is 32 (Sr25519/Ed25519) or 33 (Ecdsa/Eth) bytes.

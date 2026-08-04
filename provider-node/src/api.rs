@@ -816,11 +816,9 @@ async fn negotiate_terms(
     // the coordinator's latest snapshot, so a re-registration heals it on the
     // next refresh without a restart.
     if info.public_key != keypair.public_key_bytes() {
-        tracing::warn!(
-            registered = %hex::encode(&info.public_key),
-            local = %hex::encode(keypair.public_key_bytes()),
-            "local signing key does not match registered on-chain public_key"
-        );
+        let registered = hex::encode(&info.public_key);
+        let local = hex::encode(keypair.public_key_bytes());
+        tracing::warn!(%registered, %local, "local signing key does not match registered on-chain public_key");
         return Err(Error::ProviderKeyMismatch);
     }
 
