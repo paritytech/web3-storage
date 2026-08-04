@@ -766,6 +766,9 @@ async fn get_historical_roots(
 /// - `provider_info_unavailable` — provider not registered on chain yet; the
 ///   chain-state coordinator clears this automatically once registration lands, no
 ///   restart needed.
+/// - `provider_key_mismatch` — the local signing key differs from the registered
+///   on-chain `public_key`; signed terms would never verify. Clears on the next
+///   provider-info refresh once the keys agree.
 /// - `nonce_counter_unavailable` — counter not yet aligned with the chain's replay
 ///   window.
 /// - `provider_deregistering` — provider has announced deregistration and no longer
@@ -806,6 +809,19 @@ async fn negotiate_terms(
     // sign new terms — the on-chain pallet rejects them too once deregistering.
     if info.deregister_at.is_some() {
         return Err(Error::ProviderDeregistering);
+    }
+
+    // Signing with a key the chain doesn't know about produces terms that can
+    // never be redeemed — fail fast instead. Compared at request time against
+    // the coordinator's latest snapshot, so a re-registration heals it on the
+    // next refresh without a restart.
+    if info.public_key != keypair.public_key_bytes() {
+        tracing::warn!(
+            registered = %hex::encode(&info.public_key),
+            local = %hex::encode(keypair.public_key_bytes()),
+            "local signing key does not match registered on-chain public_key"
+        );
+        return Err(Error::ProviderKeyMismatch);
     }
 
     negotiate::validate_request(&req, &info)?;

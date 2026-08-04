@@ -19,6 +19,9 @@ pub use provider_storage::{BucketStats, BucketSummary};
 pub struct ProviderInfo {
     /// Network address for connecting.
     pub multiaddr: String,
+    /// Raw registered public key bytes. `/negotiate` refuses to sign while
+    /// this doesn't match the local signing key.
+    pub public_key: Vec<u8>,
     /// Total stake locked.
     pub stake: u128,
     /// Currently committed bytes.

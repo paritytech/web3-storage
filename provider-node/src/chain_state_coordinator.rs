@@ -650,6 +650,9 @@ fn decode_provider_info(value: &Value) -> Result<ProviderInfo, Error> {
 
     Ok(ProviderInfo {
         multiaddr,
+        public_key: named_field(value, "public_key")
+            .map(decode_byte_vec)
+            .unwrap_or_default(),
         stake,
         committed_bytes,
         max_capacity: named_field(settings, "max_capacity")
@@ -763,6 +766,7 @@ mod tests {
     fn sample_provider_info() -> ProviderInfo {
         ProviderInfo {
             multiaddr: "/ip4/1.2.3.4/tcp/3333".to_string(),
+            public_key: vec![1u8; 32],
             stake: 1_000,
             committed_bytes: 500,
             max_capacity: 10_000,
