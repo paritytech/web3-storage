@@ -140,7 +140,9 @@ impl ChallengerClient {
     /// - `commitment`: The MMR commitment (root + range) the provider signed over
     /// - `target`: Which leaf + chunk within that commitment to challenge
     /// - `nonce`: The nonce the provider signed over (echoed from their commitment)
-    /// - `provider_signature`: The provider's signature on the commitment (64 bytes for Sr25519)
+    /// - `provider_signature`: The provider's scheme-tagged signature on the
+    ///   commitment — decode the node's hex wire format with
+    ///   [`extrinsics::decode_multi_signature`](crate::substrate::extrinsics::decode_multi_signature)
     pub async fn challenge_offchain(
         &self,
         bucket_id: BucketId,
@@ -148,7 +150,7 @@ impl ChallengerClient {
         commitment: Commitment,
         target: ChunkLocation,
         nonce: u64,
-        provider_signature: Vec<u8>,
+        provider_signature: sp_runtime::MultiSignature,
     ) -> ClientResult<ChallengeId> {
         let chain = self.base.chain()?;
         let signer = chain.signer()?;
@@ -171,7 +173,7 @@ impl ChallengerClient {
             commitment,
             target,
             nonce,
-            provider_signature,
+            &provider_signature,
         );
 
         let tx_progress = chain

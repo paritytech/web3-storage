@@ -32,7 +32,7 @@ use crate::challenger::{ChallengeId, ChallengerClient};
 use crate::checkpoint_persistence::{
     CheckpointPersistence, PersistedCheckpointState, PersistenceConfig, StateBuilder,
 };
-use crate::substrate::SubstrateClient;
+use crate::substrate::{extrinsics, SubstrateClient};
 use crate::{ClientError, CommitmentResponse};
 use sp_core::H256;
 use sp_runtime::AccountId32;
@@ -231,8 +231,8 @@ pub struct CommitmentCollection {
     pub start_seq: u64,
     /// Number of leaves in the MMR.
     pub leaf_count: u64,
-    /// Signatures from agreeing providers: (account_id, signature_bytes).
-    pub signatures: Vec<(AccountId32, Vec<u8>)>,
+    /// Scheme-tagged signatures from agreeing providers.
+    pub signatures: Vec<(AccountId32, sp_runtime::MultiSignature)>,
     /// Providers that agreed on the majority root.
     pub agreeing_providers: Vec<AccountId32>,
     /// Providers with different roots: (account_id, their_root).
@@ -1255,15 +1255,19 @@ impl CheckpointManager {
             })
             .collect();
 
-        // Extract signature bytes from agreeing providers
+        // Decode scheme-tagged signatures from agreeing providers; an
+        // undecodable one would only fail on-chain, so drop it here instead.
         let signatures: Vec<_> = agreeing
             .iter()
-            .map(|(id, c)| {
-                let sig_bytes = self
-                    .decode_signature(&c.provider_signature)
-                    .unwrap_or_default();
-                (id.clone(), sig_bytes)
-            })
+            .filter_map(
+                |(id, c)| match extrinsics::decode_multi_signature(&c.provider_signature) {
+                    Ok(sig) => Some((id.clone(), sig)),
+                    Err(e) => {
+                        tracing::warn!("Dropping undecodable signature from {id}: {e}");
+                        None
+                    }
+                },
+            )
             .collect();
 
         let (start_seq, leaf_count) = agreeing
@@ -1435,12 +1439,10 @@ impl CheckpointManager {
         let signatures_value: Vec<Value> = collection
             .signatures
             .iter()
-            .map(|(account_id, sig_bytes)| {
-                // Create tuple (AccountId, MultiSignature)
+            .map(|(account_id, sig)| {
                 Value::unnamed_composite(vec![
                     Value::from_bytes(account_id.as_ref() as &[u8]),
-                    // MultiSignature::Sr25519(Signature)
-                    Value::unnamed_variant("Sr25519", vec![Value::from_bytes(sig_bytes)]),
+                    extrinsics::dynamic_multi_signature(sig),
                 ])
             })
             .collect();
@@ -1498,12 +1500,6 @@ impl CheckpointManager {
         let mut arr = [0u8; 32];
         arr.copy_from_slice(&bytes);
         Ok(H256::from(arr))
-    }
-
-    /// Decode a hex signature string to bytes.
-    fn decode_signature(&self, sig_str: &str) -> Result<Vec<u8>, ClientError> {
-        let s = sig_str.strip_prefix("0x").unwrap_or(sig_str);
-        hex::decode(s).map_err(|e| ClientError::Serialization(e.to_string()))
     }
 
     /// Invalidate the provider cache for a bucket.

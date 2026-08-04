@@ -228,16 +228,32 @@ pub mod extrinsics {
     /// `verify_terms_signature` match: the signature travels as the
     /// variant's raw inner bytes.
     pub fn dynamic_multi_signature(sig: &sp_runtime::MultiSignature) -> subxt::dynamic::Value {
+        use sp_runtime::MultiSignature as MS;
         let (variant, bytes) = match sig {
-            sp_runtime::MultiSignature::Sr25519(s) => ("Sr25519", s.encode()),
-            sp_runtime::MultiSignature::Ed25519(s) => ("Ed25519", s.encode()),
-            sp_runtime::MultiSignature::Ecdsa(s) => ("Ecdsa", s.encode()),
-            sp_runtime::MultiSignature::Eth(s) => ("Eth", s.encode()),
+            MS::Sr25519(s) => ("Sr25519", s.encode()),
+            MS::Ed25519(s) => ("Ed25519", s.encode()),
+            MS::Ecdsa(s) => ("Ecdsa", s.encode()),
+            MS::Eth(s) => ("Eth", s.encode()),
         };
         subxt::dynamic::Value::unnamed_variant(
             variant,
             vec![subxt::dynamic::Value::from_bytes(bytes)],
         )
+    }
+
+    /// Decode a provider-emitted signature — `0x`-prefixed hex of a
+    /// SCALE-encoded [`sp_runtime::MultiSignature`], the wire format every
+    /// provider-node signing endpoint uses — back into the typed value.
+    pub fn decode_multi_signature(
+        sig_hex: &str,
+    ) -> Result<sp_runtime::MultiSignature, crate::base::ClientError> {
+        use codec::Decode;
+        let s = sig_hex.strip_prefix("0x").unwrap_or(sig_hex);
+        let bytes =
+            hex::decode(s).map_err(|e| crate::base::ClientError::Serialization(e.to_string()))?;
+        sp_runtime::MultiSignature::decode(&mut &bytes[..]).map_err(|e| {
+            crate::base::ClientError::Serialization(format!("invalid SCALE MultiSignature: {e}"))
+        })
     }
 
     /// Build an `establish_storage_agreement` extrinsic payload.
@@ -354,7 +370,7 @@ pub mod extrinsics {
         commitment: Commitment,
         target: ChunkLocation,
         nonce: u64,
-        provider_signature: Vec<u8>,
+        provider_signature: &sp_runtime::MultiSignature,
     ) -> impl Payload {
         subxt::dynamic::tx(
             PALLET_NAME,
@@ -365,11 +381,7 @@ pub mod extrinsics {
                 dynamic_commitment(commitment),
                 dynamic_chunk_location(target),
                 subxt::dynamic::Value::u128(nonce as u128),
-                // MultiSignature enum: Sr25519 = 0, Ed25519 = 1, Ecdsa = 2
-                subxt::dynamic::Value::unnamed_variant(
-                    "Sr25519",
-                    vec![subxt::dynamic::Value::from_bytes(&provider_signature)],
-                ),
+                dynamic_multi_signature(provider_signature),
             ],
         )
     }

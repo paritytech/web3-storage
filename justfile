@@ -188,7 +188,8 @@ start-e2e-chain RUNTIME="web3-storage-paseo": check
 #   just start-provider                                       # inmemory, //Alice key, port 3333, auth enforced
 #   just start-provider MODE=disk PORT=3334                    # disk storage on port 3334
 #   just start-provider KEYFILE=/path/to/seed MODE=disk        # custom key from file
-start-provider MODE="inmemory" PORT=PROVIDER_PORT STORAGE_PATH="./provider-data" KEYFILE="": build-provider
+#   just start-provider KEY_SCHEME=ed25519                     # non-sr25519 signing key
+start-provider MODE="inmemory" PORT=PROVIDER_PORT STORAGE_PATH="./provider-data" KEYFILE="" KEY_SCHEME="": build-provider
     #!/usr/bin/env bash
     set -euo pipefail
     echo ""
@@ -199,6 +200,9 @@ start-provider MODE="inmemory" PORT=PROVIDER_PORT STORAGE_PATH="./provider-data"
     EXTRA_ARGS=""
     if [ "{{MODE}}" = "disk" ]; then
         EXTRA_ARGS="--storage-path {{STORAGE_PATH}}"
+    fi
+    if [ -n "{{KEY_SCHEME}}" ]; then
+        EXTRA_ARGS="$EXTRA_ARGS --key-scheme {{KEY_SCHEME}}"
     fi
     if [ -n "{{KEYFILE}}" ]; then
         KEY_ARGS="--keyfile {{KEYFILE}}"
@@ -217,17 +221,27 @@ start-provider MODE="inmemory" PORT=PROVIDER_PORT STORAGE_PATH="./provider-data"
         $EXTRA_ARGS
 
 # Register on-chain then start the provider node (original behavior)
-register-then-start-provider MODE="inmemory" PORT=PROVIDER_PORT STORAGE_PATH="./provider-data" KEYFILE="":
-    just start-provider MODE="{{MODE}}" PORT="{{PORT}}" STORAGE_PATH="{{STORAGE_PATH}}" KEYFILE="{{KEYFILE}}"
-    just register-provider "{{KEYFILE}}"
+register-then-start-provider MODE="inmemory" PORT=PROVIDER_PORT STORAGE_PATH="./provider-data" KEYFILE="" KEY_SCHEME="":
+    just start-provider MODE="{{MODE}}" PORT="{{PORT}}" STORAGE_PATH="{{STORAGE_PATH}}" KEYFILE="{{KEYFILE}}" KEY_SCHEME="{{KEY_SCHEME}}"
+    just register-provider "{{KEYFILE}}" "{{KEY_SCHEME}}"
 
 # Register provider on-chain (idempotent). Requires a running chain.
 # Called automatically by register-then-start-provider, or run standalone.
-register-provider KEYFILE="":
+# KEY_SCHEME registers a non-sr25519 signing key (the node's --key-scheme
+# must match); extrinsics are still submitted from the sr25519 account.
+register-provider KEYFILE="" KEY_SCHEME="":
     #!/usr/bin/env bash
     set -euo pipefail
     ARGS=("{{ CHAIN_WS }}" "{{ PROVIDER_URL }}" "{{ PROVIDER_MULTI_ADDR }}")
-    if [ -n "{{KEYFILE}}" ]; then
+    if [ -n "{{KEY_SCHEME}}" ]; then
+        KEYFILE_ARG="{{KEYFILE}}"
+        if [ -z "$KEYFILE_ARG" ]; then
+            KEYFILE_ARG=$(mktemp)
+            echo "//Alice" > "$KEYFILE_ARG" && chmod 600 "$KEYFILE_ARG"
+            trap "rm -f $KEYFILE_ARG" EXIT
+        fi
+        ARGS+=("$KEYFILE_ARG" "{{KEY_SCHEME}}")
+    elif [ -n "{{KEYFILE}}" ]; then
         ARGS+=("{{KEYFILE}}")
     fi
     cargo run -p storage-client --example register_provider -- "${ARGS[@]}"
