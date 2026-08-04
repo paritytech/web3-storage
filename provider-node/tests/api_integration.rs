@@ -14,13 +14,13 @@ use provider_storage::{NullNonceStore, Storage};
 use reqwest::Method;
 use serde_json::{json, Value};
 use sp_core::crypto::Ss58Codec;
-use sp_core::{sr25519, ByteArray, Pair, H256};
+use sp_core::{sr25519, Pair, H256};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 use storage_primitives::{Commitment, CommitmentPayload, Role};
 use storage_provider_node::auth::{MembershipCache, StaticMembershipResolver};
-use storage_provider_node::{ProviderDeps, ProviderState};
+use storage_provider_node::{KeyScheme, ProviderDeps, ProviderState};
 
 /// Test server helper that starts the provider node on a random port.
 struct TestServer {
@@ -36,6 +36,11 @@ impl TestServer {
     /// Endpoints that sign commitments (`/commit`, `/commitment`, ...) work
     /// because a real sr25519 keypair is available.
     async fn new() -> Self {
+        Self::new_with_scheme(KeyScheme::Sr25519).await
+    }
+
+    /// Spin up a server signing with `//Alice` under the given scheme.
+    async fn new_with_scheme(scheme: KeyScheme) -> Self {
         let deps = ProviderDeps {
             storage: Arc::new(Storage::new()),
             nonce_store: Arc::new(NullNonceStore),
@@ -49,7 +54,8 @@ impl TestServer {
             auth_max_skew: Duration::from_secs(300),
         };
         Self::with_state(
-            ProviderState::with_seed(deps, PROVIDER_SEED).expect("//Alice is a valid SURI"),
+            ProviderState::with_seed_scheme(deps, PROVIDER_SEED, scheme)
+                .expect("//Alice is a valid SURI"),
         )
         .await
     }
@@ -494,6 +500,22 @@ fn alice_public() -> sr25519::Public {
         .public()
 }
 
+/// Decode a `provider_signature` field: 0x-prefixed hex of a SCALE-encoded
+/// `MultiSignature`, as emitted by `ProviderState::sign`.
+fn decode_provider_signature(sig_hex: &str) -> sp_runtime::MultiSignature {
+    use codec::Decode;
+    let bytes = hex_decode(sig_hex).expect("signature hex parses");
+    sp_runtime::MultiSignature::decode(&mut &bytes[..]).expect("valid SCALE MultiSignature")
+}
+
+/// Expect the signature to be the Sr25519 variant and unwrap it.
+fn expect_sr25519(sig: sp_runtime::MultiSignature) -> sr25519::Signature {
+    match sig {
+        sp_runtime::MultiSignature::Sr25519(sig) => sig,
+        other => panic!("expected an Sr25519 signature, got {other:?}"),
+    }
+}
+
 #[tokio::test]
 async fn commit_returns_valid_sr25519_signature_over_commitment_payload() {
     // The whole point of the zero-byte-signing fix: when a key IS configured,
@@ -510,13 +532,10 @@ async fn commit_returns_valid_sr25519_signature_over_commitment_payload() {
         .as_str()
         .expect("provider_signature present");
 
-    // Defensive: the zero-byte placeholder this PR removes was exactly 64
-    // hex-encoded zero bytes. If it ever returns, this catches it.
-    let sig_bytes = hex_decode(sig_hex).expect("signature hex parses");
-    assert_eq!(sig_bytes.len(), 64, "sr25519 signatures are 64 bytes");
+    // Defensive: if the zero-byte placeholder ever returns, this catches it.
+    let sig = expect_sr25519(decode_provider_signature(sig_hex));
     assert_ne!(
-        sig_bytes,
-        vec![0u8; 64],
+        sig.0, [0u8; 64],
         "server returned zero-byte placeholder instead of a real signature"
     );
 
@@ -540,7 +559,6 @@ async fn commit_returns_valid_sr25519_signature_over_commitment_payload() {
     );
     let encoded = payload.encode();
 
-    let sig = sr25519::Signature::from_slice(&sig_bytes).expect("64-byte signature");
     assert!(
         sr25519::Pair::verify(&sig, &encoded, &alice_public()),
         "signature did not verify against //Alice over the expected commitment payload"
@@ -574,8 +592,10 @@ async fn checkpoint_signature_verifies_with_real_leaf_count() {
     let nonce = body["nonce"].as_u64().unwrap();
     assert!(leaf_count > 0, "leaf_count must be the real on-disk value");
 
-    let sig_bytes = hex_decode(body["provider_signature"].as_str().unwrap()).unwrap();
-    assert_ne!(sig_bytes, vec![0u8; 64]);
+    let sig = expect_sr25519(decode_provider_signature(
+        body["provider_signature"].as_str().unwrap(),
+    ));
+    assert_ne!(sig.0, [0u8; 64]);
 
     let payload = CommitmentPayload::new(
         bucket_id,
@@ -586,7 +606,6 @@ async fn checkpoint_signature_verifies_with_real_leaf_count() {
         },
         nonce,
     );
-    let sig = sr25519::Signature::from_slice(&sig_bytes).unwrap();
     assert!(sr25519::Pair::verify(
         &sig,
         payload.encode(),
@@ -604,10 +623,9 @@ async fn commitment_signature_does_not_verify_under_a_different_key() {
     let (_h, body) = upload_and_commit(&server, bucket_id).await;
     let mmr_root = H256::from_slice(&hex_decode(body["mmr_root"].as_str().unwrap()).unwrap());
     let start_seq = body["start_seq"].as_u64().unwrap();
-    let sig = sr25519::Signature::from_slice(
-        &hex_decode(body["provider_signature"].as_str().unwrap()).unwrap(),
-    )
-    .unwrap();
+    let sig = expect_sr25519(decode_provider_signature(
+        body["provider_signature"].as_str().unwrap(),
+    ));
     let nonce = body["nonce"].as_u64().unwrap();
     let encoded = CommitmentPayload::new(
         bucket_id,
@@ -624,6 +642,45 @@ async fn commitment_signature_does_not_verify_under_a_different_key() {
     assert!(
         !sr25519::Pair::verify(&sig, &encoded, &bob),
         "Alice's signature wrongly verifies under Bob's key"
+    );
+}
+
+#[tokio::test]
+async fn commit_signs_with_configured_ed25519_scheme() {
+    // A node started with --key-scheme ed25519 must emit Ed25519-tagged
+    // MultiSignatures that verify under the ed25519 key derived from the
+    // same seed — the full multi-scheme wire path.
+    use sp_core::ed25519;
+
+    let server = TestServer::new_with_scheme(KeyScheme::Ed25519).await;
+    let bucket_id = 11;
+
+    let (_h, body) = upload_and_commit(&server, bucket_id).await;
+    let mmr_root = H256::from_slice(&hex_decode(body["mmr_root"].as_str().unwrap()).unwrap());
+    let start_seq = body["start_seq"].as_u64().unwrap();
+    let leaf_count = body["leaf_count"].as_u64().unwrap();
+    let nonce = body["nonce"].as_u64().unwrap();
+
+    let sig = match decode_provider_signature(body["provider_signature"].as_str().unwrap()) {
+        sp_runtime::MultiSignature::Ed25519(sig) => sig,
+        other => panic!("expected an Ed25519 signature, got {other:?}"),
+    };
+
+    let payload = CommitmentPayload::new(
+        bucket_id,
+        Commitment {
+            mmr_root,
+            start_seq,
+            leaf_count,
+        },
+        nonce,
+    );
+    let alice_ed = ed25519::Pair::from_string(PROVIDER_SEED, None)
+        .unwrap()
+        .public();
+    assert!(
+        ed25519::Pair::verify(&sig, payload.encode(), &alice_ed),
+        "Ed25519 signature did not verify under the ed25519 //Alice key"
     );
 }
 

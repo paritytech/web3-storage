@@ -109,6 +109,12 @@ pub struct KeyParams {
     /// signing capability.
     #[arg(long, value_name = "ACCOUNT", env = "PROVIDER_ID")]
     pub provider_id: Option<String>,
+
+    /// Signature scheme for the signing keypair derived from --keyfile — must
+    /// match the scheme of the `public_key` registered on-chain. The
+    /// extrinsic-submission account stays sr25519 regardless.
+    #[arg(long, value_enum, default_value_t = crate::KeyScheme::Sr25519)]
+    pub key_scheme: crate::KeyScheme,
 }
 
 impl KeyParams {
@@ -311,6 +317,7 @@ mod tests {
         let params = KeyParams {
             keyfile: Some(PathBuf::from("/nonexistent/path/to/keyfile")),
             provider_id: None,
+            key_scheme: crate::KeyScheme::Sr25519,
         };
         let err = params.load_seed().unwrap_err();
         assert!(err.contains("Failed to open"), "unexpected error: {err}");
@@ -330,6 +337,7 @@ mod tests {
         let params = KeyParams {
             keyfile: Some(path),
             provider_id: None,
+            key_scheme: crate::KeyScheme::Sr25519,
         };
         let err = params.load_seed().unwrap_err();
         assert!(err.contains("empty"), "unexpected error: {err}");
@@ -349,6 +357,7 @@ mod tests {
         let params = KeyParams {
             keyfile: Some(path),
             provider_id: None,
+            key_scheme: crate::KeyScheme::Sr25519,
         };
         assert_eq!(params.load_seed().unwrap(), Some("//Charlie".to_string()));
     }
@@ -365,6 +374,7 @@ mod tests {
         let params = KeyParams {
             keyfile: Some(path),
             provider_id: None,
+            key_scheme: crate::KeyScheme::Sr25519,
         };
         let err = params.load_seed().unwrap_err();
         assert!(
@@ -378,6 +388,7 @@ mod tests {
         let params = KeyParams {
             keyfile: None,
             provider_id: None,
+            key_scheme: crate::KeyScheme::Sr25519,
         };
         assert_eq!(params.load_seed().unwrap(), None);
     }

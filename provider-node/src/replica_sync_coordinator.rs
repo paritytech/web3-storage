@@ -14,7 +14,7 @@
 use crate::chain_events::{BlockEvent, BlockEventRx};
 use crate::replica_sync::ReplicaSync;
 use crate::{Error, ProviderState};
-use sp_core::{Pair as _, H256};
+use sp_core::H256;
 use sp_runtime::AccountId32;
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -719,9 +719,7 @@ impl ReplicaSyncCoordinator {
             // public key.
             let roots = sync_confirmation_roots(duty.target_mmr_root);
             let signature = match self.state.keypair.as_ref() {
-                Some(pair) => {
-                    sp_runtime::MultiSignature::Sr25519(pair.sign(&codec::Encode::encode(&roots)))
-                }
+                Some(pair) => pair.sign(&codec::Encode::encode(&roots)),
                 None => {
                     return SyncResult::SubmissionFailed {
                         bucket_id: duty.bucket_id,

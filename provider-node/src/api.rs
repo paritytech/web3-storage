@@ -835,7 +835,7 @@ async fn negotiate_terms(
         bucket_id: req.bucket_id,
         replica_params: req.replica_params,
     };
-    Ok(Json(provider_negotiation::sign_terms(keypair, terms)))
+    Ok(Json(keypair.sign_terms(terms)))
 }
 
 /// Get replica sync status for a bucket.
