@@ -40,17 +40,17 @@ cargo run -p storage-cli -- \
   --provider <PROVIDER_SS58> \
   --users 10 \
   --uploads-per-user 5 \
-  --max-payload-size 1048576 \
+  --payload-size 1048576 \
   --parallel-uploads
 ```
 
 | Param                        | Default            | Description                                                |
 | ---------------------------- | ------------------ | ---------------------------------------------------------- |
 | `--provider <ACCOUNT>`       | required           | Provider account (SS58 or `0x`-hex) whose agreements select the target buckets. |
-| `--max-buckets-to-write <N>` | all buckets        | Cap the number of buckets written to.                      |
+| `--max-buckets-to-write <N>` | all buckets        | Cap the number of buckets written to (must be `>= 1`).     |
 | `--users <N>`                | `1`                | Number of simulated users, each with its own client.       |
 | `--uploads-per-user <X>`     | `1`                | Number of uploads each user performs.                      |
-| `--max-payload-size <BYTES>` | `524288` (0.5 MiB) | Exact size of each randomly-generated payload.             |
+| `--payload-size <BYTES>`     | `524288` (0.5 MiB) | Exact size of each randomly-generated payload.             |
 | `--parallel-users`           | off (sequential)   | Run users in parallel.                                     |
 | `--parallel-uploads`         | off (sequential)   | Run each user's uploads in parallel.                       |
 | `--max-concurrency <N>`      | `0` (unbounded)    | Cap total in-flight uploads across all users.              |

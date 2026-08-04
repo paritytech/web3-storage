@@ -9721,7 +9721,6 @@ dependencies = [
  "sp-core",
  "sp-runtime",
  "storage-client",
- "subxt-signer 0.50.2",
  "tempfile",
  "tokio",
  "tracing-subscriber 0.3.19",

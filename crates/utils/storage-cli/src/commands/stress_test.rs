@@ -37,9 +37,9 @@ pub struct UploadArgs {
     #[arg(long, value_name = "ACCOUNT")]
     pub provider: String,
 
-    /// Cap the number of buckets written to (default: all matching buckets).
+    /// Cap the number of buckets written to (1..N; default: all matching buckets).
     #[arg(long, value_name = "N")]
-    pub max_buckets_to_write: Option<usize>,
+    pub max_buckets_to_write: Option<NonZeroUsize>,
 
     /// Number of concurrent simulated users, each with its own client (1..N).
     #[arg(long, value_name = "N", default_value = "1")]
@@ -51,7 +51,7 @@ pub struct UploadArgs {
 
     /// Exact size in bytes of each randomly-generated payload (default 0.5 MiB).
     #[arg(long, value_name = "BYTES", default_value = "524288")]
-    pub max_payload_size: NonZeroUsize,
+    pub payload_size: NonZeroUsize,
 
     /// Run users in parallel (default: sequential).
     #[arg(long, default_value_t = false)]
@@ -226,7 +226,7 @@ fn print_banner(args: &UploadArgs, total_uploads: usize, bucket_count: usize, pr
         axis(args.parallel_users),
         args.uploads_per_user,
         axis(args.parallel_uploads),
-        args.max_payload_size,
+        args.payload_size,
         bucket_count,
         provider_url,
         cap,
@@ -252,7 +252,7 @@ async fn run_load(
             client,
             buckets.clone(),
             args.uploads_per_user.get(),
-            args.max_payload_size.get(),
+            args.payload_size.get(),
             args.parallel_uploads,
             sem.clone(),
         )
@@ -284,7 +284,7 @@ async fn run_load(
 /// Targets are resolved from chain (`MemberBuckets[account]` ∩ buckets with a
 /// `StorageAgreements[bucket][provider]` entry); buckets and agreements are
 /// never created — if nothing matches, it errors out. `--users` clients each
-/// perform `--uploads-per-user` uploads of `--max-payload-size` random bytes,
+/// perform `--uploads-per-user` uploads of `--payload-size` random bytes,
 /// with users and per-user uploads run sequentially or in parallel per the
 /// `--parallel-*` flags, optionally capped by `--max-concurrency`.
 ///
@@ -311,7 +311,7 @@ pub async fn upload(global: &GlobalArgs, args: &UploadArgs) -> Result<OpSummary>
     )
     .await?;
     if let Some(max) = args.max_buckets_to_write {
-        buckets.truncate(max);
+        buckets.truncate(max.get());
     }
 
     let total_uploads = args.users.get().saturating_mul(args.uploads_per_user.get());
@@ -331,6 +331,30 @@ mod tests {
     fn random_payload_has_exact_size() {
         for size in [1usize, 7, 1024, 512 * 1024] {
             assert_eq!(random_payload(size).len(), size);
+        }
+    }
+
+    #[test]
+    fn zero_valued_count_flags_are_rejected() {
+        use clap::Parser;
+
+        #[derive(Debug, Parser)]
+        struct Wrapper {
+            #[clap(flatten)]
+            args: UploadArgs,
+        }
+
+        for flag in [
+            "--max-buckets-to-write",
+            "--users",
+            "--uploads-per-user",
+            "--payload-size",
+        ] {
+            assert!(
+                Wrapper::try_parse_from(["stress-test-upload", "--provider", "//Alice", flag, "0"])
+                    .is_err(),
+                "{flag} 0 should be rejected"
+            );
         }
     }
 
