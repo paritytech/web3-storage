@@ -24,7 +24,7 @@ pub enum ChainTransport {
     },
     /// Embedded smoldot light client following the relay chain and deriving
     /// parachain finality from it — no operated RPC infrastructure needed.
-    Light {
+    LightClient {
         /// Relay-chain spec (with reachable boot nodes).
         relay_spec: SpecSource,
         /// Parachain spec (with boot nodes serving the light-client
@@ -110,16 +110,16 @@ pub async fn connect(transport: &ChainTransport) -> Result<ChainHandle, Error> {
                 .map_err(|e| Error::Internal(format!("Failed to connect to chain: {e}")))?;
             Ok(ChainHandle::from_api(api))
         }
-        ChainTransport::Light {
+        ChainTransport::LightClient {
             relay_spec,
             para_spec,
         } => {
             let relay = relay_spec.load("relay").await?;
             let para = para_spec.load("parachain").await?;
 
-            let (light, _relay_rpc) = LightClient::relay_chain(relay.as_str())
+            let (light_client, _relay_rpc) = LightClient::relay_chain(relay.as_str())
                 .map_err(|e| Error::Internal(format!("Failed to start light client: {e}")))?;
-            let para_rpc = light.parachain(para.as_str()).map_err(|e| {
+            let para_rpc = light_client.parachain(para.as_str()).map_err(|e| {
                 Error::Internal(format!("Failed to add parachain to light client: {e}"))
             })?;
             let api = OnlineClient::<PolkadotConfig>::from_rpc_client(para_rpc)
@@ -129,7 +129,7 @@ pub async fn connect(transport: &ChainTransport) -> Result<ChainHandle, Error> {
             tracing::info!("Embedded light client started (relay + parachain)");
             Ok(ChainHandle {
                 api,
-                _light: Some(light),
+                _light: Some(light_client),
             })
         }
     }
@@ -170,7 +170,7 @@ mod tests {
 
     #[tokio::test]
     async fn light_with_missing_spec_file_errors() {
-        let err = connect(&ChainTransport::Light {
+        let err = connect(&ChainTransport::LightClient {
             relay_spec: SpecSource::File(PathBuf::from("/nonexistent/relay.json")),
             para_spec: SpecSource::File(PathBuf::from("/nonexistent/para.json")),
         })
@@ -191,7 +191,7 @@ mod tests {
         let path = dir.path().join("relay.json");
         std::fs::write(&path, "{\"not\": \"a chain spec\"}").unwrap();
 
-        let err = connect(&ChainTransport::Light {
+        let err = connect(&ChainTransport::LightClient {
             relay_spec: SpecSource::File(path),
             para_spec: SpecSource::File(PathBuf::from("/nonexistent/para.json")),
         })
@@ -211,7 +211,7 @@ mod tests {
 
     #[tokio::test]
     async fn light_spec_fetch_from_unreachable_node_errors() {
-        let err = connect(&ChainTransport::Light {
+        let err = connect(&ChainTransport::LightClient {
             relay_spec: SpecSource::FetchFromRpc("ws://127.0.0.1:1".to_string()),
             para_spec: SpecSource::File(PathBuf::from("/nonexistent/para.json")),
         })

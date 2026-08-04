@@ -304,10 +304,26 @@ impl ChainStateCoordinator {
     }
 
     /// Connect to the chain, bootstrap initial state, then drive the finalized-block
-    /// stream until it ends or stalls. Returns `Err` if connecting fails; `Ok(())`
-    /// if the stream terminates — either way the caller reconnects.
+    /// stream until it ends or stalls. Returns `Err` if connecting or bootstrapping
+    /// fails; `Ok(())` if the stream terminates — either way the caller reconnects.
     async fn connect_and_follow(&self) -> Result<(), Error> {
-        let handle = chain_connection::connect(&self.transport).await?;
+        /// Budget for building a cold connection. On the light transport,
+        /// `connect` awaits smoldot's peer discovery and warp sync with no
+        /// timeout of its own, so a wedged light client would otherwise hang
+        /// here forever — with the previous (dead) handle still published to
+        /// consumers — and the reconnect loop could never rebuild it. Generous
+        /// because killing a slow warp sync throws its progress away.
+        const CONNECT_TIMEOUT: Duration = Duration::from_secs(300);
+
+        let handle =
+            tokio::time::timeout(CONNECT_TIMEOUT, chain_connection::connect(&self.transport))
+                .await
+                .map_err(|_| {
+                    Error::Internal(format!(
+                        "Connecting to the chain timed out after {}s",
+                        CONNECT_TIMEOUT.as_secs()
+                    ))
+                })??;
         self.follow(handle).await
     }
 
@@ -320,32 +336,46 @@ impl ChainStateCoordinator {
         /// as dead and rebuilt. Finality can pause briefly (session boundaries,
         /// backend resubscriptions), so this is several times the block time;
         /// a genuinely stalled stream otherwise hangs forever with no error.
+        /// The connection is already warp-synced by `connect`, so the first
+        /// block gets the same budget as every other.
         const STALL_TIMEOUT: Duration = Duration::from_secs(60);
-        /// The first block gets a longer budget: a fresh embedded light client
-        /// has to discover peers and warp-sync before anything is finalized,
-        /// and rebuilding mid-sync would throw that progress away.
-        const FIRST_BLOCK_TIMEOUT: Duration = Duration::from_secs(300);
+        /// Budget for subscribing and the bootstrap reads below: ordinary RPC
+        /// round-trips on an already-synced connection, but on the light
+        /// client they have no timeout of their own and a wedged backend
+        /// would otherwise hang the reconnect loop forever.
+        const BOOTSTRAP_TIMEOUT: Duration = Duration::from_secs(60);
 
-        let api = handle.api.clone();
-        let mut blocks = api
-            .stream_blocks()
-            .await
-            .map_err(|e| Error::Internal(format!("Failed to subscribe to blocks: {e}")))?;
+        let (mut blocks, chain) = tokio::time::timeout(BOOTSTRAP_TIMEOUT, async {
+            let api = handle.api.clone();
+            let blocks = api
+                .stream_blocks()
+                .await
+                .map_err(|e| Error::Internal(format!("Failed to subscribe to blocks: {e}")))?;
 
-        // Publish the new connection only after the block stream is up, so
-        // consumers never observe a handle whose backend failed immediately.
-        self.chain_tx.send_replace(Some(handle));
-        let chain = RealChainStateClient { api };
+            // Publish the new connection only after the block stream is up, so
+            // consumers never observe a handle whose backend failed immediately.
+            self.chain_tx.send_replace(Some(handle));
+            let chain = RealChainStateClient { api };
 
-        tracing::info!("chain-state coordinator: connected; following finalized blocks");
+            tracing::info!("chain-state coordinator: connected; following finalized blocks");
 
-        // Fetch pallet constants once per connection (they only change on runtime upgrade).
-        sync_constants(&chain, &self.chain_state).await;
+            // Fetch pallet constants once per connection (they only change on runtime upgrade).
+            sync_constants(&chain, &self.chain_state).await;
 
-        // Bootstrap from any existing on-chain state so a restarted node that was
-        // already registered picks up its provider_info and nonce counter immediately
-        // rather than waiting for the next relevant event.
-        refresh_provider_state(&chain, &self.chain_state, &self.provider_account).await;
+            // Bootstrap from any existing on-chain state so a restarted node that was
+            // already registered picks up its provider_info and nonce counter immediately
+            // rather than waiting for the next relevant event.
+            refresh_provider_state(&chain, &self.chain_state, &self.provider_account).await;
+
+            Ok::<_, Error>((blocks, chain))
+        })
+        .await
+        .map_err(|_| {
+            Error::Internal(format!(
+                "Chain bootstrap timed out after {}s",
+                BOOTSTRAP_TIMEOUT.as_secs()
+            ))
+        })??;
 
         // Tell coordinators to reconcile: events emitted while the stream was
         // down were missed for good, so they re-scan chain state instead.
@@ -356,20 +386,18 @@ impl ChainStateCoordinator {
                 .load(std::sync::atomic::Ordering::Relaxed),
         });
 
-        let mut stall_timeout = FIRST_BLOCK_TIMEOUT;
         loop {
-            let next = match tokio::time::timeout(stall_timeout, blocks.next()).await {
+            let next = match tokio::time::timeout(STALL_TIMEOUT, blocks.next()).await {
                 Ok(Some(next)) => next,
                 Ok(None) => break,
                 Err(_) => {
                     tracing::warn!(
                         "chain-state coordinator: no finalized block for {}s; rebuilding connection",
-                        stall_timeout.as_secs()
+                        STALL_TIMEOUT.as_secs()
                     );
                     break;
                 }
             };
-            stall_timeout = STALL_TIMEOUT;
             let block = match next {
                 Ok(block) => block,
                 Err(e) => {

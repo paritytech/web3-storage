@@ -161,7 +161,7 @@ impl RpcParams {
                     Some(path) => SpecSource::File(path.clone()),
                     None => SpecSource::FetchFromRpc(self.chain_rpc.clone()),
                 };
-                Ok(ChainTransport::Light {
+                Ok(ChainTransport::LightClient {
                     relay_spec,
                     para_spec,
                 })
@@ -401,7 +401,7 @@ mod tests {
             "/specs/para.json",
         ])
         .unwrap();
-        let ChainTransport::Light {
+        let ChainTransport::LightClient {
             relay_spec,
             para_spec,
         } = cli.rpc.chain_transport().unwrap()
@@ -425,7 +425,7 @@ mod tests {
             "ws://127.0.0.1:9900",
         ])
         .unwrap();
-        let ChainTransport::Light {
+        let ChainTransport::LightClient {
             relay_spec,
             para_spec,
         } = cli.rpc.chain_transport().unwrap()
