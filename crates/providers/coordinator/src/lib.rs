@@ -28,7 +28,7 @@ use sp_runtime::AccountId32;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use subxt::ext::scale_value::{At, Composite, Primitive, Value, ValueDef, Variant};
+use storage_subxt::api::runtime_types::pallet_storage_provider::pallet::ProviderInfo as RuntimeProviderInfo;
 use subxt::{OnlineClient, PolkadotConfig};
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
@@ -85,6 +85,30 @@ pub struct ProviderInfo {
     pub challenges_failed: u32,
     /// Block at which deregistration becomes finalisable (`None` = not deregistering).
     pub deregister_at: Option<u32>,
+}
+
+impl From<RuntimeProviderInfo> for ProviderInfo {
+    /// Flatten the runtime's nested `ProviderInfo` into the node's view.
+    ///
+    /// `public_key` and the six unused `stats` counters are deliberately
+    /// dropped — they are not part of what `/negotiate` or `/info` expose.
+    fn from(info: RuntimeProviderInfo) -> Self {
+        Self {
+            multiaddr: String::from_utf8_lossy(&info.multiaddr.0).into_owned(),
+            stake: info.stake,
+            committed_bytes: info.committed_bytes,
+            max_capacity: info.settings.max_capacity,
+            min_duration: info.settings.min_duration,
+            max_duration: info.settings.max_duration,
+            price_per_byte: info.settings.price_per_byte,
+            accepting_primary: info.settings.accepting_primary,
+            replica_sync_price: info.settings.replica_sync_price,
+            accepting_extensions: info.settings.accepting_extensions,
+            agreements_total: info.stats.agreements_total,
+            challenges_failed: info.stats.challenges_failed,
+            deregister_at: info.deregister_at,
+        }
+    }
 }
 
 // ── ChainState ────────────────────────────────────────────────────────────────
@@ -275,20 +299,19 @@ pub async fn fetch_current_anchor_block<C>(
 where
     C: subxt::client::OnlineClientAtBlockT<subxt::PolkadotConfig>,
 {
-    use codec::Decode;
-    // Invoke by the runtime API's `state_call` name and decode the raw SCALE
-    // response directly as the block number. Decoding by hand (rather than
-    // through the dynamic value path) avoids depending on this API being
-    // present in the node's metadata snapshot.
-    let bytes = at
-        .runtime_apis()
-        .call_raw("StorageProviderApi_current_anchor_block", None)
+    // `unvalidated`: the bindings are generated from the paseo runtime, and the
+    // local runtime shares the pallet — exact-hash validation would couple the
+    // binary to a single runtime build for no safety gain (a shape mismatch
+    // fails decoding).
+    at.runtime_apis()
+        .call(
+            storage_subxt::api::runtime_apis()
+                .storage_provider_api()
+                .current_anchor_block()
+                .unvalidated(),
+        )
         .await
-        .map_err(|e| {
-            Error::Internal(format!("current_anchor_block runtime API call failed: {e}"))
-        })?;
-    u32::decode(&mut &bytes[..])
-        .map_err(|e| Error::Internal(format!("Failed to decode anchor block: {e}")))
+        .map_err(|e| Error::Internal(format!("current_anchor_block runtime API call failed: {e}")))
 }
 
 // ── chain reads ───────────────────────────────────────────────────────────────
@@ -312,15 +335,30 @@ pub trait ChainStateChainClient: Send + Sync {
     async fn fetch_request_timeout(&self) -> Result<Option<u32>, Error>;
 }
 
-/// Production [`ChainStateChainClient`] running dynamic storage queries on the
-/// coordinator's own subxt connection (shared with the block subscription).
+/// Production [`ChainStateChainClient`] running typed storage queries — through
+/// the generated `storage-subxt` bindings — on the coordinator's own subxt
+/// connection (shared with the block subscription).
 struct RealChainStateClient {
     api: OnlineClient<PolkadotConfig>,
 }
 
-impl RealChainStateClient {
-    async fn fetch_value(&self, entry: &str, who: &AccountId32) -> Result<Option<Value>, Error> {
-        let addr = subxt::dynamic::storage::<(Value,), Value>(PALLET_NAME, entry);
+/// Convert an account from the `sp_runtime` representation the node uses into
+/// the `subxt` one the generated bindings expect. Same 32 bytes either way.
+fn subxt_account(who: &AccountId32) -> subxt::utils::AccountId32 {
+    subxt::utils::AccountId32(*<AccountId32 as AsRef<[u8; 32]>>::as_ref(who))
+}
+
+#[async_trait]
+impl ChainStateChainClient for RealChainStateClient {
+    async fn get_provider_info(&self, who: &AccountId32) -> Result<Option<ProviderInfo>, Error> {
+        // `unvalidated`: the bindings are generated from the paseo runtime, and
+        // the local runtime shares the pallet — exact-hash validation would
+        // couple the binary to a single runtime build for no safety gain (a
+        // shape mismatch fails decoding).
+        let addr = storage_subxt::api::storage()
+            .storage_provider()
+            .providers()
+            .unvalidated();
         let at = self
             .api
             .at_current_block()
@@ -328,52 +366,73 @@ impl RealChainStateClient {
             .map_err(|e| Error::Internal(format!("Failed to get storage: {e}")))?;
         let Some(value) = at
             .storage()
-            .try_fetch(addr, (Value::from_bytes(who.as_ref() as &[u8]),))
+            .try_fetch(addr, (subxt_account(who),))
             .await
-            .map_err(|e| Error::Internal(format!("Failed to fetch {entry}: {e}")))?
+            .map_err(|e| Error::Internal(format!("Failed to fetch Providers: {e}")))?
         else {
             return Ok(None);
         };
-        value
+        let info = value
             .decode()
-            .map(Some)
-            .map_err(|e| Error::Internal(format!("Failed to decode {entry}: {e}")))
-    }
-}
-
-#[async_trait]
-impl ChainStateChainClient for RealChainStateClient {
-    async fn get_provider_info(&self, who: &AccountId32) -> Result<Option<ProviderInfo>, Error> {
-        match self.fetch_value("Providers", who).await? {
-            Some(value) => decode_provider_info(&value).map(Some),
-            None => Ok(None),
-        }
+            .map_err(|e| Error::Internal(format!("Failed to decode Providers: {e}")))?;
+        Ok(Some(ProviderInfo::from(info)))
     }
 
     async fn fetch_replay_hsn(&self, who: &AccountId32) -> Result<Option<u64>, Error> {
-        Ok(self
-            .fetch_value("ProviderReplayStates", who)
-            .await?
-            .as_ref()
-            .and_then(|value| named_field(value, "hsn"))
-            .and_then(|v| v.as_u128())
-            .map(|h| h as u64))
-    }
-
-    async fn fetch_request_timeout(&self) -> Result<Option<u32>, Error> {
-        let value: Value = self
+        let addr = storage_subxt::api::storage()
+            .storage_provider()
+            .provider_replay_states()
+            .unvalidated();
+        let at = self
             .api
             .at_current_block()
             .await
-            .map_err(|e| Error::Internal(format!("Failed to get current block: {e}")))?
+            .map_err(|e| Error::Internal(format!("Failed to get storage: {e}")))?;
+        let Some(value) = at
+            .storage()
+            .try_fetch(addr, (subxt_account(who),))
+            .await
+            .map_err(|e| Error::Internal(format!("Failed to fetch ProviderReplayStates: {e}")))?
+        else {
+            return Ok(None);
+        };
+        let window = value
+            .decode()
+            .map_err(|e| Error::Internal(format!("Failed to decode ProviderReplayStates: {e}")))?;
+        Ok(Some(window.hsn))
+    }
+
+    async fn fetch_request_timeout(&self) -> Result<Option<u32>, Error> {
+        let at = self
+            .api
+            .at_current_block()
+            .await
+            .map_err(|e| Error::Internal(format!("Failed to get current block: {e}")))?;
+
+        // Absence has to be probed separately: on an `unvalidated` address subxt
+        // skips the metadata lookup that would yield `ConstantNameNotFound`, so a
+        // missing constant would otherwise arrive as an opaque decode error and be
+        // reported as a failure rather than as "this runtime has no such constant".
+        if at
+            .metadata_ref()
+            .pallet_by_name(PALLET_NAME)
+            .and_then(|pallet| pallet.constant_by_name("RequestTimeout"))
+            .is_none()
+        {
+            return Ok(None);
+        }
+
+        let timeout = at
             .constants()
-            .entry(subxt::dynamic::constant::<Value>(
-                PALLET_NAME,
-                "RequestTimeout",
-            ))
+            .entry(
+                storage_subxt::api::constants()
+                    .storage_provider()
+                    .request_timeout()
+                    .unvalidated(),
+            )
             .map_err(|e| Error::Internal(format!("Failed to read RequestTimeout: {e}")))?;
 
-        Ok(value.as_u128().map(|v| v as u32))
+        Ok(Some(timeout))
     }
 }
 
@@ -407,29 +466,52 @@ impl ProviderLifecycleEvent {
 fn parse_provider_lifecycle_events(
     events: &subxt::events::Events<PolkadotConfig>,
 ) -> Vec<ProviderLifecycleEvent> {
+    use storage_subxt::api::storage_provider::events as ev;
+
+    let updated = |account: subxt::utils::AccountId32| ProviderLifecycleEvent::Updated {
+        provider: AccountId32::new(account.0),
+    };
+
     events
         .iter()
         .filter_map(|event| event.ok())
         .filter(|event| event.pallet_name() == PALLET_NAME)
         .filter_map(|event| {
-            let deregistered = match event.event_name() {
-                "ProviderDeregistered" => true,
-                "ProviderRegistered"
-                | "ProviderSettingsUpdated"
-                | "ProviderMultiaddrUpdated"
-                | "DeregisterAnnounced"
-                | "DeregisterCancelled" => false,
-                _ => return None,
-            };
-            let fields = event.decode_fields_unchecked_as::<Value>().ok()?;
-            let provider = decode_account(fields.at("provider")?)?;
-            Some(if deregistered {
-                ProviderLifecycleEvent::Deregistered { provider }
-            } else {
-                ProviderLifecycleEvent::Updated { provider }
-            })
+            decode::<ev::ProviderDeregistered>(&event)
+                .map(|e| ProviderLifecycleEvent::Deregistered {
+                    provider: AccountId32::new(e.provider.0),
+                })
+                .or_else(|| decode::<ev::ProviderRegistered>(&event).map(|e| updated(e.provider)))
+                .or_else(|| {
+                    decode::<ev::ProviderSettingsUpdated>(&event).map(|e| updated(e.provider))
+                })
+                .or_else(|| {
+                    decode::<ev::ProviderMultiaddrUpdated>(&event).map(|e| updated(e.provider))
+                })
+                .or_else(|| decode::<ev::DeregisterAnnounced>(&event).map(|e| updated(e.provider)))
+                .or_else(|| decode::<ev::DeregisterCancelled>(&event).map(|e| updated(e.provider)))
         })
         .collect()
+}
+
+/// Statically decode `event` as `E` when its pallet/event identity matches;
+/// `None` otherwise. An event that matches but fails to decode (a runtime whose
+/// event shape drifted from the bindings) is logged and skipped — the next
+/// relevant event, or the next reconnect's bootstrap refresh, covers the miss.
+fn decode<E: subxt::events::DecodeAsEvent>(
+    event: &subxt::events::Event<'_, PolkadotConfig>,
+) -> Option<E> {
+    match event.decode_fields_as::<E>()? {
+        Ok(decoded) => Some(decoded),
+        Err(e) => {
+            tracing::warn!(
+                "chain-state coordinator: failed to decode {}::{} against the static bindings: {e}",
+                event.pallet_name(),
+                event.event_name(),
+            );
+            None
+        }
+    }
 }
 
 // ── ChainStateCoordinator ─────────────────────────────────────────────────────
@@ -806,155 +888,13 @@ impl ChainStateCoordinatorHandle {
     }
 }
 
-// ── dynamic-value decoding ────────────────────────────────────────────────────
-
-/// Decode a `StorageProvider::Providers` storage value into [`ProviderInfo`].
-fn decode_provider_info(value: &Value) -> Result<ProviderInfo, Error> {
-    let missing = |field: &str| Error::Internal(format!("Missing '{field}' in ProviderInfo"));
-
-    let multiaddr = named_field(value, "multiaddr")
-        .map(|v| String::from_utf8_lossy(&decode_byte_vec(v)).into_owned())
-        .unwrap_or_default();
-
-    let stake = named_field(value, "stake")
-        .and_then(|v| v.as_u128())
-        .ok_or_else(|| missing("stake"))?;
-
-    let committed_bytes = named_field(value, "committed_bytes")
-        .and_then(|v| v.as_u128())
-        .ok_or_else(|| missing("committed_bytes"))? as u64;
-
-    let settings = named_field(value, "settings").ok_or_else(|| missing("settings"))?;
-
-    let replica_sync_price =
-        named_field(settings, "replica_sync_price").and_then(|v| match &v.value {
-            ValueDef::Variant(Variant { name, values }) if name == "Some" => {
-                values.values().next().and_then(|v| v.as_u128())
-            }
-            _ => None,
-        });
-
-    let stats = named_field(value, "stats");
-    let agreements_total = stats
-        .and_then(|s| named_field(s, "agreements_total"))
-        .and_then(|v| v.as_u128())
-        .unwrap_or(0) as u32;
-    let challenges_failed = stats
-        .and_then(|s| named_field(s, "challenges_failed"))
-        .and_then(|v| v.as_u128())
-        .unwrap_or(0) as u32;
-
-    Ok(ProviderInfo {
-        multiaddr,
-        stake,
-        committed_bytes,
-        max_capacity: named_field(settings, "max_capacity")
-            .and_then(|v| v.as_u128())
-            .ok_or_else(|| missing("max_capacity"))? as u64,
-        min_duration: named_field(settings, "min_duration")
-            .and_then(|v| v.as_u128())
-            .ok_or_else(|| missing("min_duration"))? as u32,
-        max_duration: named_field(settings, "max_duration")
-            .and_then(|v| v.as_u128())
-            .ok_or_else(|| missing("max_duration"))? as u32,
-        price_per_byte: named_field(settings, "price_per_byte")
-            .and_then(|v| v.as_u128())
-            .ok_or_else(|| missing("price_per_byte"))?,
-        accepting_primary: named_field(settings, "accepting_primary")
-            .and_then(|v| v.as_bool())
-            .ok_or_else(|| missing("accepting_primary"))?,
-        replica_sync_price,
-        accepting_extensions: named_field(settings, "accepting_extensions")
-            .and_then(|v| v.as_bool())
-            .ok_or_else(|| missing("accepting_extensions"))?,
-        agreements_total,
-        challenges_failed,
-        deregister_at: named_field(value, "deregister_at").and_then(|v| match &v.value {
-            ValueDef::Variant(Variant { name, values }) if name == "Some" => values
-                .values()
-                .next()
-                .and_then(|v| v.as_u128())
-                .map(|n| n as u32),
-            _ => None,
-        }),
-    })
-}
-
-/// Look up a named field in a scale_value composite.
-fn named_field<'a>(value: &'a Value, field: &str) -> Option<&'a Value> {
-    match &value.value {
-        ValueDef::Composite(Composite::Named(fields)) => {
-            fields.iter().find(|(n, _)| n == field).map(|(_, v)| v)
-        }
-        _ => None,
-    }
-}
-
-/// Decode a `Vec<u8>` / `BoundedVec<u8, _>` from a scale_value composite.
-///
-/// `BoundedVec<T, N>` serializes its `TypeInfo` as a 1-field unnamed composite
-/// wrapping the inner `Vec<T>`, so scale_value surfaces it as
-/// `Composite::Unnamed([inner_vec])`. This helper drills through that wrapper
-/// if present, then collects the bytes.
-fn decode_byte_vec(value: &Value) -> Vec<u8> {
-    let ValueDef::Composite(Composite::Unnamed(items)) = &value.value else {
-        return Vec::new();
-    };
-    // Direct sequence of byte primitives.
-    let bytes: Vec<u8> = items
-        .iter()
-        .filter_map(|b| b.as_u128().map(|n| n as u8))
-        .collect();
-    if !items.is_empty() && bytes.len() == items.len() {
-        return bytes;
-    }
-    // BoundedVec wrapper: single inner field holds the actual sequence.
-    if items.len() == 1 {
-        return decode_byte_vec(&items[0]);
-    }
-    Vec::new()
-}
-
-/// Decode an [`AccountId32`] from a SCALE value (a possibly-nested composite of
-/// 32 byte primitives).
-pub(crate) fn decode_account(v: &Value) -> Option<AccountId32> {
-    let mut bytes = [0u8; 32];
-    if collect_bytes(v, &mut bytes, 0) == 32 {
-        Some(AccountId32::new(bytes))
-    } else {
-        None
-    }
-}
-
-/// Recursively collect raw bytes from a SCALE value into `buf` starting at
-/// `offset`, returning the new offset.
-fn collect_bytes(v: &Value, buf: &mut [u8; 32], offset: usize) -> usize {
-    match &v.value {
-        ValueDef::Primitive(Primitive::U128(n)) => {
-            // Keep counting past the buffer so oversized inputs fail the
-            // exact-length check in `decode_account`.
-            if offset < 32 {
-                buf[offset] = *n as u8;
-            }
-            offset + 1
-        }
-        ValueDef::Composite(Composite::Unnamed(items)) => {
-            let mut pos = offset;
-            for item in items {
-                pos = collect_bytes(item, buf, pos);
-            }
-            pos
-        }
-        _ => offset,
-    }
-}
-
 // ── tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::sync::atomic::Ordering;
+    use subxt::ext::scale_value::Value;
 
     fn sample_provider_info() -> ProviderInfo {
         ProviderInfo {
@@ -1033,120 +973,6 @@ mod tests {
         assert!(!is_relevant_provider_event(&theirs, &me));
     }
 
-    // ── dynamic-value decoders ────────────────────────────────────────────
-
-    /// Build a `Providers`-storage-shaped value the way subxt surfaces it:
-    /// a named composite with nested `settings`/`stats` composites, `Option`
-    /// fields as `Some`/`None` variants, and the `multiaddr` `BoundedVec<u8>`
-    /// wrapped in the single-field unnamed composite scale_value produces.
-    fn provider_info_value(replica_sync_price: Option<u128>, deregister_at: Option<u32>) -> Value {
-        let opt = |val: Option<u128>| match val {
-            Some(v) => Value::unnamed_variant("Some", vec![Value::u128(v)]),
-            None => Value::unnamed_variant("None", Vec::<Value<()>>::new()),
-        };
-        let settings = Value::named_composite([
-            ("max_capacity", Value::u128(10_000)),
-            ("min_duration", Value::u128(10)),
-            ("max_duration", Value::u128(100)),
-            ("price_per_byte", Value::u128(5)),
-            ("accepting_primary", Value::bool(true)),
-            ("accepting_extensions", Value::bool(true)),
-            ("replica_sync_price", opt(replica_sync_price)),
-        ]);
-        let stats = Value::named_composite([
-            ("agreements_total", Value::u128(3)),
-            ("challenges_failed", Value::u128(1)),
-        ]);
-        // `BoundedVec<u8>` surfaces as a 1-field unnamed composite wrapping
-        // the byte sequence.
-        let multiaddr = Value::unnamed_composite([Value::from_bytes("/ip4/1.2.3.4/tcp/3333")]);
-        Value::named_composite([
-            ("multiaddr", multiaddr),
-            ("stake", Value::u128(1_000)),
-            ("committed_bytes", Value::u128(500)),
-            ("settings", settings),
-            ("stats", stats),
-            ("deregister_at", opt(deregister_at.map(u128::from))),
-        ])
-    }
-
-    #[test]
-    fn decode_provider_info_full() {
-        let info = decode_provider_info(&provider_info_value(Some(7), Some(42))).unwrap();
-        assert_eq!(info.multiaddr, "/ip4/1.2.3.4/tcp/3333");
-        assert_eq!(info.stake, 1_000);
-        assert_eq!(info.committed_bytes, 500);
-        assert_eq!(info.max_capacity, 10_000);
-        assert_eq!(info.min_duration, 10);
-        assert_eq!(info.max_duration, 100);
-        assert_eq!(info.price_per_byte, 5);
-        assert!(info.accepting_primary);
-        assert!(info.accepting_extensions);
-        assert_eq!(info.replica_sync_price, Some(7));
-        assert_eq!(info.agreements_total, 3);
-        assert_eq!(info.challenges_failed, 1);
-        assert_eq!(info.deregister_at, Some(42));
-    }
-
-    #[test]
-    fn decode_provider_info_none_options() {
-        let info = decode_provider_info(&provider_info_value(None, None)).unwrap();
-        assert_eq!(info.replica_sync_price, None);
-        assert_eq!(info.deregister_at, None);
-    }
-
-    #[test]
-    fn decode_provider_info_missing_required_field_errors() {
-        // Everything present except the required `stake` field.
-        let value = Value::named_composite([("multiaddr", Value::from_bytes("/ip4/1.2.3.4"))]);
-        let err = decode_provider_info(&value).unwrap_err();
-        assert!(
-            matches!(&err, Error::Internal(msg) if msg.contains("stake")),
-            "unexpected error: {err:?}"
-        );
-    }
-
-    #[test]
-    fn named_field_finds_and_misses() {
-        let value = Value::named_composite([("present", Value::u128(1))]);
-        assert!(named_field(&value, "present").is_some());
-        assert!(named_field(&value, "absent").is_none());
-        // Not a named composite → always None.
-        let prim = Value::u128(9);
-        assert!(named_field(&prim, "present").is_none());
-    }
-
-    #[test]
-    fn decode_byte_vec_handles_direct_and_wrapped_and_other() {
-        // Direct byte sequence (e.g. `Vec<u8>`).
-        let direct = Value::from_bytes(b"hello");
-        assert_eq!(decode_byte_vec(&direct), b"hello");
-        // Single-field unnamed wrapper (e.g. `BoundedVec<u8, _>`).
-        let wrapped = Value::unnamed_composite([Value::from_bytes(b"hi")]);
-        assert_eq!(decode_byte_vec(&wrapped), b"hi");
-        // Non-composite → empty.
-        let prim = Value::u128(5);
-        assert!(decode_byte_vec(&prim).is_empty());
-    }
-
-    #[test]
-    fn decode_account_from_flat_and_nested_bytes() {
-        // Flat 32-byte sequence.
-        let flat = Value::from_bytes([7u8; 32]);
-        assert_eq!(decode_account(&flat), Some(AccountId32::new([7u8; 32])));
-        // `[u8; 32]` newtype nests the sequence one level deeper.
-        let nested = Value::unnamed_composite([Value::from_bytes([9u8; 32])]);
-        assert_eq!(decode_account(&nested), Some(AccountId32::new([9u8; 32])));
-    }
-
-    #[test]
-    fn decode_account_rejects_wrong_length() {
-        let short = Value::from_bytes([0u8; 31]);
-        assert_eq!(decode_account(&short), None);
-        let long = Value::from_bytes([0u8; 33]);
-        assert_eq!(decode_account(&long), None);
-    }
-
     // ── real subxt client over a mock RPC connection ──────────────────────
     //
     // These tests drive [`RealChainStateClient`] and [`ChainStateCoordinator::follow`]
@@ -1208,8 +1034,8 @@ mod tests {
         }
 
         /// A `Providers` storage value matching the full runtime `ProviderInfo`
-        /// shape — unlike [`provider_info_value`], every runtime field must be
-        /// present for `scale_value` to encode it against the real type.
+        /// shape: every runtime field must be present for `scale_value` to
+        /// encode it against the real type.
         fn runtime_provider_info_value(
             replica_sync_price: Option<u128>,
             deregister_at: Option<u32>,

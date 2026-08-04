@@ -9,18 +9,19 @@ description = "Chain-state coordinator for provider nodes: keeps the node's view
 
 [dependencies]
 async-trait = { workspace = true }
-codec = { workspace = true, features = ["std"] }
 parking_lot = { workspace = true }
 provider-chain = { workspace = true }
 provider-storage = { workspace = true }
 serde = { workspace = true, features = ["std"] }
 sp-runtime = { workspace = true, features = ["std"] }
+storage-subxt = { workspace = true }
 subxt = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
+codec = { workspace = true, features = ["std"] }
 hex = { workspace = true, features = ["std"] }
 serde_json = { workspace = true, features = ["std"] }
 sp-core = { workspace = true, features = ["std"] }

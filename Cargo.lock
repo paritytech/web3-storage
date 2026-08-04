@@ -7072,6 +7072,7 @@ dependencies = [
  "serde_json",
  "sp-core",
  "sp-runtime",
+ "storage-subxt",
  "subxt",
  "subxt-rpcs",
  "thiserror 2.0.18",
