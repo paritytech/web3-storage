@@ -29,6 +29,37 @@ impl<T: Config> Pallet<T> {
         Ok(())
     }
 
+    /// Derive the `AccountId32` that `MultiSignature::verify` compares
+    /// against, from the provider's registered raw public key. The signature
+    /// variant picks the derivation — `Eth` uses the revive-style keccak
+    /// address mapping, not blake2, so it must not share the Ecdsa arm.
+    fn expected_signer_account(
+        public_key_bytes: &[u8],
+        signature: &sp_runtime::MultiSignature,
+    ) -> Result<sp_runtime::AccountId32, Error<T>> {
+        use sp_runtime::{traits::IdentifyAccount, MultiSignature, MultiSigner};
+
+        let signer = match signature {
+            MultiSignature::Sr25519(_) => MultiSigner::Sr25519(
+                sp_core::sr25519::Public::try_from(public_key_bytes)
+                    .map_err(|_| Error::<T>::InvalidPublicKey)?,
+            ),
+            MultiSignature::Ed25519(_) => MultiSigner::Ed25519(
+                sp_core::ed25519::Public::try_from(public_key_bytes)
+                    .map_err(|_| Error::<T>::InvalidPublicKey)?,
+            ),
+            MultiSignature::Ecdsa(_) => MultiSigner::Ecdsa(
+                sp_core::ecdsa::Public::try_from(public_key_bytes)
+                    .map_err(|_| Error::<T>::InvalidPublicKey)?,
+            ),
+            MultiSignature::Eth(_) => MultiSigner::Eth(
+                sp_core::ecdsa::KeccakPublic::try_from(public_key_bytes)
+                    .map_err(|_| Error::<T>::InvalidPublicKey)?,
+            ),
+        };
+        Ok(signer.into_account())
+    }
+
     /// Verify a MultiSignature against an encoded message using stored public key.
     ///
     /// This:
@@ -46,28 +77,7 @@ impl<T: Config> Pallet<T> {
 
         // Get the provider's registered public key
         let provider = Providers::<T>::get(signer).ok_or(Error::<T>::ProviderNotFound)?;
-        let public_key_bytes = provider.public_key.as_slice();
-
-        // Convert public key to AccountId32 based on signature type
-        let account_id = match signature {
-            sp_runtime::MultiSignature::Sr25519(_) | sp_runtime::MultiSignature::Ed25519(_) => {
-                // Sr25519 and Ed25519 public keys are 32 bytes, directly used as AccountId32
-                if public_key_bytes.len() != 32 {
-                    return Err(Error::<T>::InvalidPublicKey.into());
-                }
-                let mut key_bytes = [0u8; 32];
-                key_bytes.copy_from_slice(public_key_bytes);
-                sp_runtime::AccountId32::new(key_bytes)
-            }
-            sp_runtime::MultiSignature::Ecdsa(_) | sp_runtime::MultiSignature::Eth(_) => {
-                // Ecdsa/Eth public keys are 33 bytes (compressed), AccountId32 is blake2_256 hash
-                if public_key_bytes.len() != 33 {
-                    return Err(Error::<T>::InvalidPublicKey.into());
-                }
-                let hash = sp_io::hashing::blake2_256(public_key_bytes);
-                sp_runtime::AccountId32::new(hash)
-            }
-        };
+        let account_id = Self::expected_signer_account(provider.public_key.as_slice(), signature)?;
 
         // Verify signature against the account ID
         let is_valid = signature.verify(message, &account_id);
@@ -93,20 +103,7 @@ impl<T: Config> Pallet<T> {
     ) -> DispatchResult {
         use sp_runtime::traits::Verify;
 
-        let public_key_bytes = provider_info.public_key.as_slice();
-        let account_id = match sig {
-            sp_runtime::MultiSignature::Sr25519(_) | sp_runtime::MultiSignature::Ed25519(_) => {
-                ensure!(public_key_bytes.len() == 32, Error::<T>::InvalidPublicKey);
-                let mut key_bytes = [0u8; 32];
-                key_bytes.copy_from_slice(public_key_bytes);
-                sp_runtime::AccountId32::new(key_bytes)
-            }
-            sp_runtime::MultiSignature::Ecdsa(_) | sp_runtime::MultiSignature::Eth(_) => {
-                ensure!(public_key_bytes.len() == 33, Error::<T>::InvalidPublicKey);
-                let hash = sp_io::hashing::blake2_256(public_key_bytes);
-                sp_runtime::AccountId32::new(hash)
-            }
-        };
+        let account_id = Self::expected_signer_account(provider_info.public_key.as_slice(), sig)?;
 
         let mut payload = context.to_vec();
         terms.encode_to(&mut payload);

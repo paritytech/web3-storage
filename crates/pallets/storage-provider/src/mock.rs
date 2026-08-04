@@ -7,7 +7,7 @@ use frame_support::{
     derive_impl,
     traits::{ConstU16, ConstU32, ConstU64, Hooks},
 };
-use sp_core::{Get, Pair as _, H256};
+use sp_core::{Get, H256};
 use sp_runtime::{
     traits::{BlakeTwo256, IdentityLookup},
     BuildStorage,
@@ -229,17 +229,38 @@ pub fn next_terms_nonce() -> u64 {
     TERMS_NONCE.fetch_add(1, Ordering::Relaxed)
 }
 
+/// Helper: deterministic keypair of any scheme for `provider`, stamped into
+/// the provider's on-chain `public_key` so signatures verify.
+pub fn provider_signer_with<P: sp_core::Pair>(provider: u64) -> P {
+    use sp_core::crypto::ByteArray;
+    let pair = P::from_seed_slice(&[provider as u8; 32]).expect("32-byte seed is valid");
+    crate::Providers::<Test>::mutate(provider, |maybe_p| {
+        if let Some(p) = maybe_p {
+            p.public_key = pair.public().to_raw_vec().try_into().unwrap();
+        }
+    });
+    pair
+}
+
 /// Helper: deterministic sr25519 keypair for `provider`, stamped into the
 /// provider's on-chain `public_key` so terms signatures verify.
 #[allow(dead_code)]
 pub fn provider_signer(provider: u64) -> sp_core::sr25519::Pair {
-    let pair = sp_core::sr25519::Pair::from_seed(&[provider as u8; 32]);
-    crate::Providers::<Test>::mutate(provider, |maybe_p| {
-        if let Some(p) = maybe_p {
-            p.public_key = pair.public().0.to_vec().try_into().unwrap();
-        }
-    });
-    pair
+    provider_signer_with(provider)
+}
+
+/// Helper: sign SCALE-encoded terms the way a provider quotes off-chain,
+/// with any scheme whose signature converts into a `MultiSignature`
+/// (`Eth`/`KeccakPair` has no such conversion — wrap it explicitly).
+pub fn sign_terms_with<P: sp_core::Pair>(
+    pair: &P,
+    terms: &crate::AgreementTermsOf<Test>,
+) -> sp_runtime::MultiSignature
+where
+    P::Signature: Into<sp_runtime::MultiSignature>,
+{
+    let hash = sp_io::hashing::blake2_256(&terms.signing_payload());
+    pair.sign(&hash).into()
 }
 
 /// Helper: sign SCALE-encoded terms the way a provider quotes off-chain.
@@ -248,8 +269,7 @@ pub fn sign_terms(
     pair: &sp_core::sr25519::Pair,
     terms: &crate::AgreementTermsOf<Test>,
 ) -> sp_runtime::MultiSignature {
-    let hash = sp_io::hashing::blake2_256(&terms.signing_payload());
-    sp_runtime::MultiSignature::Sr25519(pair.sign(&hash))
+    sign_terms_with(pair, terms)
 }
 
 /// Helper: primary terms
