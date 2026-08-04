@@ -11,7 +11,6 @@
 
 pub mod api;
 pub mod auth;
-pub mod chain_state_coordinator;
 pub mod challenge_responder;
 pub mod cli;
 pub mod command;
@@ -25,17 +24,18 @@ pub(crate) mod subxt_client;
 pub mod types;
 
 pub use api::create_router;
-pub use chain_state_coordinator::{
-    is_relevant_provider_event, refresh_if_relevant_event, refresh_provider_state, sync_constants,
-    ChainState, ChainStateChainClient, ChainStateCoordinator, ChainStateCoordinatorHandle,
-    PalletConstants, ProviderLifecycleEvent,
-};
 pub use challenge_responder::{
     ChallengeChainClient, ChallengeResponder, ChallengeResponderConfig, ChallengeResponderHandle,
     ChallengeResponseResult, DetectedChallenge, ResponderCommand,
 };
 pub use error::Error;
-pub use negotiate::{AgreementTermsOf, NegotiateRequest, NonceCounter, SignedTerms};
+pub use negotiate::{AgreementTermsOf, NegotiateRequest, SignedTerms};
+pub use provider_coordinator as chain_state_coordinator;
+pub use provider_coordinator::{
+    is_relevant_provider_event, refresh_if_relevant_event, refresh_provider_state, sync_constants,
+    ChainState, ChainStateChainClient, ChainStateCoordinator, ChainStateCoordinatorHandle,
+    NonceCounter, PalletConstants, ProviderLifecycleEvent,
+};
 pub use replica_sync::ReplicaSync;
 pub use replica_sync_coordinator::{
     ReplicaSyncChainClient, ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig,

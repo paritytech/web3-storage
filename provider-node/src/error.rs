@@ -123,6 +123,18 @@ impl From<provider_chain::Error> for Error {
     }
 }
 
+/// Map coordinator errors onto the node's error space one-to-one. Going through
+/// `to_string()` would re-wrap an already-prefixed message ("Internal error:
+/// Internal error: …"), so match the variant and carry the message across
+/// unchanged.
+impl From<provider_coordinator::Error> for Error {
+    fn from(e: provider_coordinator::Error) -> Self {
+        match e {
+            provider_coordinator::Error::Internal(msg) => Error::Internal(msg),
+        }
+    }
+}
+
 /// Map storage-engine errors onto the node's error space one-to-one so the
 /// HTTP status/JSON mapping below stays the single source of truth.
 impl From<provider_storage::Error> for Error {
