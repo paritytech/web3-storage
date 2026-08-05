@@ -12,7 +12,7 @@ import { Enum } from "polkadot-api";
 
 import type { SignedTerms } from "@web3-storage/core";
 
-import { asHex, bytesEq, hexToBytes, type ParachainApi } from "../address.js";
+import { asHex, hexToBytes, type ParachainApi } from "../address.js";
 import { getProviderNodeInfo } from "../provider-http.js";
 import type { ChainSigner } from "../signers.js";
 import { READ_OPTS, requireOneEvent, submitTx, submitTxFinalized, type SubmitOpts } from "../tx.js";
@@ -53,9 +53,12 @@ export async function updateProviderSettings(
 /**
  * Ensure a provider is registered and configured to accept primary
  * agreements. Idempotent: safe to call when an earlier script on the same
- * chain already registered the provider. Fails loudly when the on-chain
- * public key differs from the signer's — off-chain signatures would fail to
- * verify much later otherwise.
+ * chain already registered the provider — the registered `public_key` may
+ * legitimately differ from the signer's account key (a non-sr25519 scheme,
+ * or a distinct signing key), so no key equality is asserted. A key that
+ * doesn't match the node's is caught authoritatively by the node itself:
+ * `/negotiate` returns 503 `provider_key_mismatch` (#300 adds an explicit
+ * intended-key parameter to registration helpers).
  */
 export async function ensureProviderRegistered(
   api: ParachainApi,
@@ -74,13 +77,6 @@ export async function ensureProviderRegistered(
   if (!existing) {
     console.log("  Registering provider", provider.address);
     await registerProvider(api, provider, providerUrl, undefined, opts);
-  } else {
-    if (!bytesEq(existing.public_key, provider.publicKey)) {
-      throw new Error(
-        `Provider ${provider.address} is already registered with a different public_key. ` +
-          `Restart the chain, or run this script with a fresh provider seed.`,
-      );
-    }
   }
   // Always (re)apply settings so price/acceptance are correct for this run.
   await updateProviderSettings(
