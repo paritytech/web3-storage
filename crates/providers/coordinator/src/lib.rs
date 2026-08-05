@@ -1287,7 +1287,10 @@ mod tests {
                 .await
                 .expect_err("malformed Providers bytes must not decode");
             let Error::Internal(msg) = &err;
-            assert!(msg.contains("decode Providers"), "unexpected error: {err:?}");
+            assert!(
+                msg.contains("decode Providers"),
+                "unexpected error: {err:?}"
+            );
         }
 
         /// Same for the replay window: a present-but-undecodable entry is an
