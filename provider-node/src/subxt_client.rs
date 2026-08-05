@@ -15,7 +15,7 @@ use crate::challenge_responder::{
     decode_challenge_for_provider, ChallengeChainClient, DetectedChallenge,
 };
 use crate::replica_sync_coordinator::{
-    BucketSnapshot, ReplicaAgreementInfo, ReplicaSyncChainClient,
+    BucketSnapshot, ReplicaAgreementInfo, ReplicaSyncChainClient, SignedSyncRoots,
 };
 use crate::Error;
 use sp_core::crypto::Ss58Codec;
@@ -869,10 +869,10 @@ impl ReplicaSyncChainClient for SubxtChainClient {
     async fn submit_sync_confirmation(
         &self,
         bucket_id: BucketId,
-        roots: [Option<H256>; 7],
-        signature: sp_runtime::MultiSignature,
+        attestation: SignedSyncRoots,
     ) -> Result<(u8, u128), Error> {
-        let roots_value: Vec<Value> = roots
+        let roots_value: Vec<Value> = attestation
+            .roots
             .iter()
             .map(|root| match root {
                 Some(root) => value!(Some(Value::from_bytes(root.as_bytes()))),
@@ -886,14 +886,14 @@ impl ReplicaSyncChainClient for SubxtChainClient {
             vec![
                 Value::u128(bucket_id as u128),
                 Value::unnamed_composite(roots_value),
-                multi_signature_value(&signature),
+                multi_signature_value(&attestation.signature),
             ],
         );
 
         tracing::info!(
             "Submitting confirm_replica_sync for bucket {} with roots {:?}",
             bucket_id,
-            roots
+            attestation.roots
         );
 
         self.submit_and_finalize(&tx, "confirm_replica_sync")

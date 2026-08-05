@@ -41,7 +41,8 @@ pub use negotiate::{AgreementTermsOf, NegotiateRequest, NonceCounter, SignedTerm
 pub use replica_sync::ReplicaSync;
 pub use replica_sync_coordinator::{
     ReplicaSyncChainClient, ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig,
-    ReplicaSyncCoordinatorHandle, SyncCommand, SyncCoordinatorStatus, SyncDuty, SyncResult,
+    ReplicaSyncCoordinatorHandle, SignedSyncRoots, SyncCommand, SyncCoordinatorStatus, SyncDuty,
+    SyncResult,
 };
 pub use types::*;
 
