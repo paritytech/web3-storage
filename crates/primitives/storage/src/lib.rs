@@ -380,11 +380,8 @@ pub struct CommitmentPayload {
 }
 
 impl CommitmentPayload {
-    /// Current protocol version. Bumped from `0x02` to `0x03` when the
-    /// time-based `nonce` field was removed; `0x02` signatures cannot be
-    /// replayed against this version because the encoded payload would
-    /// mismatch on `version`.
-    pub const CURRENT_VERSION: u8 = 3;
+    /// Current protocol version `0x1`
+    pub const CURRENT_VERSION: u8 = 1;
 
     /// Create a new commitment payload
     pub fn new(bucket_id: BucketId, commitment: Commitment) -> Self {
@@ -598,9 +595,9 @@ mod tests {
     }
 
     /// Off-chain signers and the pallet must encode this payload identically
-    /// or no signature verifies, and the leading `version` byte is what stops
-    /// a signature for one layout being replayed against another. Pin the
-    /// exact encoding to guard both.
+    /// or no signature verifies, so pin the exact bytes. The leading `0x01` and
+    /// the length of 57 together record that this is the pre-`0x02` encoding
+    /// restored: dropping the nonce reverted both the layout and the version.
     #[test]
     fn commitment_payload_encoding_is_byte_identical() {
         let payload = CommitmentPayload::new(
@@ -612,14 +609,15 @@ mod tests {
             },
         );
 
-        let mut expected = alloc::vec![3u8]; // version
+        let mut expected = alloc::vec![1u8]; // version
         expected.extend_from_slice(&1u64.to_le_bytes()); // bucket_id
         expected.extend_from_slice(&[0u8; 32]); // mmr_root (H256::zero)
         expected.extend_from_slice(&10u64.to_le_bytes()); // start_seq
         expected.extend_from_slice(&5u64.to_le_bytes()); // leaf_count
 
         assert_eq!(payload.encode(), expected);
-        assert_eq!(CommitmentPayload::CURRENT_VERSION, 3);
+        assert_eq!(expected.len(), 57);
+        assert_eq!(CommitmentPayload::CURRENT_VERSION, 1);
     }
 
     fn snapshot_with_signers(primary_signers: Vec<u8>) -> BucketSnapshot<u32> {

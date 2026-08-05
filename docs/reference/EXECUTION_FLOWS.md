@@ -74,7 +74,7 @@ Provider signatures on checkpoints create **non-repudiable evidence**:
 │  CommitmentPayload (what providers sign)                                 │
 ├──────────────────────────────────────────────────────────────────────────┤
 │  {                                                                       │
-│    version: 3,                    // Protocol version                    │
+│    version: 1,                    // Protocol version                    │
 │    bucket_id: u64,                // Which bucket                        │
 │    commitment: Commitment {                                              │
 │      mmr_root: H256,              // Merkle Mountain Range root          │
@@ -295,7 +295,7 @@ sequenceDiagram
     PN->>S: Update MMR root
     PN->>PN: Sign commitment payload
 
-    Note over PN: CommitmentPayload {<br/> version: 3,<br/> bucket_id,<br/> commitment: { mmr_root, start_seq, leaf_count }<br/>}
+    Note over PN: CommitmentPayload {<br/> version: 1,<br/> bucket_id,<br/> commitment: { mmr_root, start_seq, leaf_count }<br/>}
 
     PN-->>SC: { mmr_root, start_seq, leaf_indices, provider_signature }
 

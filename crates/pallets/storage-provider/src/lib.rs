@@ -85,10 +85,6 @@ pub mod pallet {
         BlockNumberFor<T>,
     >;
 
-    /// In-code storage version. This pallet ships no migrations, so it stays at
-    /// `0`: the only bump it ever had (#270, to backfill the `commitment_nonce`
-    /// that #125 added) is reverted along with the nonce itself, and the v0
-    /// layout is the nonce-less one this pallet now uses again.
     const STORAGE_VERSION: StorageVersion = StorageVersion::new(0);
 
     #[pallet::pallet]
