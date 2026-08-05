@@ -74,11 +74,13 @@ Provider signatures on checkpoints create **non-repudiable evidence**:
 │  CommitmentPayload (what providers sign)                                 │
 ├──────────────────────────────────────────────────────────────────────────┤
 │  {                                                                       │
-│    version: 1,                    // Protocol version                    │
+│    version: 3,                    // Protocol version                    │
 │    bucket_id: u64,                // Which bucket                        │
-│    mmr_root: H256,                // Merkle Mountain Range root          │
-│    start_seq: u64,                // First leaf index                    │
-│    leaf_count: u64,               // Number of leaves                    │
+│    commitment: Commitment {                                              │
+│      mmr_root: H256,              // Merkle Mountain Range root          │
+│      start_seq: u64,              // First leaf index                    │
+│      leaf_count: u64,             // Number of leaves                    │
+│    },                                                                    │
 │  }                                                                       │
 ├──────────────────────────────────────────────────────────────────────────┤
 │  By signing this, the provider attests:                                  │
@@ -293,7 +295,7 @@ sequenceDiagram
     PN->>S: Update MMR root
     PN->>PN: Sign commitment payload
 
-    Note over PN: CommitmentPayload {<br/> bucket_id,<br/> mmr_root,<br/> start_seq,<br/> leaf_count: 0<br/>}
+    Note over PN: CommitmentPayload {<br/> version: 3,<br/> bucket_id,<br/> commitment: { mmr_root, start_seq, leaf_count }<br/>}
 
     PN-->>SC: { mmr_root, start_seq, leaf_indices, provider_signature }
 
@@ -338,7 +340,7 @@ sequenceDiagram
         C->>C: idx = bucket.primary_providers.position(provider)?
 
         Note over C: Build payload
-        C->>C: payload = CommitmentPayload::new(bucket_id, mmr_root, start_seq, leaf_count)
+        C->>C: payload = CommitmentPayload::new(bucket_id, commitment)
 
         Note over C: Verify signature against provider's public key
         C->>C: provider_info = Providers::get(provider)?

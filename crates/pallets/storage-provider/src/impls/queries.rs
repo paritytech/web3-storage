@@ -191,7 +191,6 @@ impl<T: Config> Pallet<T> {
                 commitment: s.commitment,
                 checkpoint_block: s.checkpoint_block.saturated_into::<u32>(),
                 primary_signers: s.primary_signers.clone(),
-                commitment_nonce: s.commitment_nonce,
             }),
             total_snapshots: bucket.total_snapshots,
         })
