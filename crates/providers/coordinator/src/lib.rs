@@ -1272,6 +1272,48 @@ mod tests {
             assert!(info.is_none());
         }
 
+        /// A `Providers` entry whose bytes don't match the runtime type must
+        /// error, not decode to a half-populated `ProviderInfo`. The dynamic
+        /// decoder this replaced silently defaulted `multiaddr`,
+        /// `replica_sync_price`, `deregister_at` and the two stats counters on
+        /// a field miss, which let a runtime mismatch degrade quietly.
+        #[tokio::test]
+        async fn provider_info_decode_failure_is_an_error() {
+            let client = RealChainStateClient {
+                api: mock_api(vec![(key_prefix(PALLET_NAME, "Providers"), "0x00".into())]).await,
+            };
+            let err = client
+                .get_provider_info(&provider_account())
+                .await
+                .expect_err("malformed Providers bytes must not decode");
+            let Error::Internal(msg) = &err;
+            assert!(msg.contains("decode Providers"), "unexpected error: {err:?}");
+        }
+
+        /// Same for the replay window: a present-but-undecodable entry is an
+        /// error, not `Ok(None)`. Collapsing it to `None` would look identical
+        /// to "provider has never signed", which seeds the nonce counter
+        /// differently.
+        #[tokio::test]
+        async fn replay_hsn_decode_failure_is_an_error() {
+            let client = RealChainStateClient {
+                api: mock_api(vec![(
+                    key_prefix(PALLET_NAME, "ProviderReplayStates"),
+                    "0x00".into(),
+                )])
+                .await,
+            };
+            let err = client
+                .fetch_replay_hsn(&provider_account())
+                .await
+                .expect_err("malformed ProviderReplayStates bytes must not decode");
+            let Error::Internal(msg) = &err;
+            assert!(
+                msg.contains("decode ProviderReplayStates"),
+                "unexpected error: {err:?}"
+            );
+        }
+
         #[tokio::test]
         async fn provider_info_round_trips_through_runtime_types() {
             let md = metadata();
@@ -1378,6 +1420,85 @@ mod tests {
             assert!(
                 saw_challenge,
                 "follow should statically decode and broadcast ChallengeCreated"
+            );
+        }
+
+        /// `NonceStore` that only records whether [`NonceStore::reset`] fired.
+        #[derive(Default)]
+        struct ResetSpy(AtomicBool);
+
+        impl NonceStore for ResetSpy {
+            fn load(&self) -> Option<u64> {
+                None
+            }
+            fn persist(&self, _value: u64) {}
+            fn reset(&self) {
+                self.0.store(true, Ordering::SeqCst);
+            }
+        }
+
+        /// An on-chain `ProviderDeregistered` must reach `nonce_store.reset()`.
+        ///
+        /// The integration suite covers the same gate, but starting from an
+        /// already-built [`ProviderLifecycleEvent`]. This is the only test that
+        /// runs the whole path — SCALE-encoded runtime event → static decode →
+        /// `Deregistered` → watermark cleared — so it is what proves the
+        /// `ProviderDeregistered` arm is wired to the right variant.
+        #[tokio::test]
+        async fn deregistration_event_clears_the_nonce_watermark() {
+            let md = metadata();
+            let account = provider_account();
+
+            let deregistered = event_record(Value::named_variant(
+                "ProviderDeregistered",
+                [
+                    (
+                        "provider",
+                        Value::from_bytes(<AccountId32 as AsRef<[u8]>>::as_ref(&account)),
+                    ),
+                    ("stake_returned", Value::u128(1_000)),
+                ],
+            ));
+            let events_ty = storage_value_type(&md, "System", "Events");
+            let events_bytes =
+                encode_value(&md, events_ty, &Value::unnamed_composite([deregistered]));
+
+            let providers_ty = storage_value_type(&md, PALLET_NAME, "Providers");
+            let provider_bytes =
+                encode_value(&md, providers_ty, &runtime_provider_info_value(None, None));
+
+            let api = mock_api(vec![
+                (
+                    key_prefix("System", "Events"),
+                    format!("0x{}", hex::encode(events_bytes)),
+                ),
+                (
+                    key_prefix(PALLET_NAME, "Providers"),
+                    format!("0x{}", hex::encode(provider_bytes)),
+                ),
+            ])
+            .await;
+
+            let store = Arc::new(ResetSpy::default());
+            let chain_state = Arc::new(ChainState::with_nonce_store(store.clone()));
+            let coordinator = ChainStateCoordinator::new(
+                ChainTransport::Rpc {
+                    url: "ws://unused.invalid".to_string(),
+                },
+                account,
+                chain_state,
+                tokio::sync::watch::channel(None).0,
+                tokio::sync::broadcast::channel(16).0,
+            );
+
+            coordinator
+                .follow(ChainHandle { api })
+                .await
+                .expect("follow runs to stream end");
+
+            assert!(
+                store.0.load(Ordering::SeqCst),
+                "a confirmed ProviderDeregistered must reset the persisted nonce watermark"
             );
         }
     }
