@@ -63,3 +63,44 @@ impl From<provider_storage::Error> for Error {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn from_provider_storage_error_maps_one_to_one() {
+        use provider_storage::Error as StorageError;
+
+        let cases: Vec<(StorageError, &str)> = vec![
+            (StorageError::NodeNotFound("h".into()), "Node not found: h"),
+            (
+                StorageError::ChildrenMissing(vec!["a".into(), "b".into()]),
+                "Children missing: [\"a\", \"b\"]",
+            ),
+            (
+                StorageError::QuotaExceeded { used: 1, max: 2 },
+                "Quota exceeded: used 1, max 2",
+            ),
+            (StorageError::BucketNotFound(7), "Bucket not found: 7"),
+            (StorageError::RootNotFound("r".into()), "Root not found: r"),
+            (
+                StorageError::InvalidHash {
+                    expected: "e".into(),
+                    actual: "a".into(),
+                },
+                "Invalid hash: expected e, got a",
+            ),
+            (StorageError::Storage("s".into()), "Storage error: s"),
+            (
+                StorageError::Serialization("z".into()),
+                "Serialization error: z",
+            ),
+        ];
+
+        for (storage_err, expected_message) in cases {
+            let mapped: Error = storage_err.into();
+            assert_eq!(mapped.to_string(), expected_message);
+        }
+    }
+}

@@ -573,6 +573,82 @@ mod tests {
     }
 
     #[test]
+    fn test_from_provider_replica_error_maps_one_to_one() {
+        use provider_replica::Error as ReplicaError;
+
+        let cases: Vec<(ReplicaError, &str)> = vec![
+            (ReplicaError::NodeNotFound("h".into()), "Node not found: h"),
+            (
+                ReplicaError::ChildrenMissing(vec!["a".into()]),
+                "Children missing: [\"a\"]",
+            ),
+            (
+                ReplicaError::QuotaExceeded { used: 1, max: 2 },
+                "Quota exceeded: used 1, max 2",
+            ),
+            (ReplicaError::BucketNotFound(7), "Bucket not found: 7"),
+            (ReplicaError::RootNotFound("r".into()), "Root not found: r"),
+            (
+                ReplicaError::InvalidHash {
+                    expected: "e".into(),
+                    actual: "a".into(),
+                },
+                "Invalid hash: expected e, got a",
+            ),
+            (ReplicaError::Storage("s".into()), "Storage error: s"),
+            (
+                ReplicaError::Serialization("z".into()),
+                "Serialization error: z",
+            ),
+            (ReplicaError::Internal("i".into()), "Internal error: i"),
+        ];
+
+        for (replica_err, expected_message) in cases {
+            let mapped: Error = replica_err.into();
+            assert_eq!(mapped.to_string(), expected_message);
+        }
+    }
+
+    #[test]
+    fn test_from_error_for_provider_replica_error_maps_one_to_one() {
+        use provider_replica::Error as ReplicaError;
+
+        let cases: Vec<(Error, &str)> = vec![
+            (Error::NodeNotFound("h".into()), "Node not found: h"),
+            (
+                Error::ChildrenMissing(vec!["a".into()]),
+                "Children missing: [\"a\"]",
+            ),
+            (
+                Error::QuotaExceeded { used: 1, max: 2 },
+                "Quota exceeded: used 1, max 2",
+            ),
+            (Error::BucketNotFound(7), "Bucket not found: 7"),
+            (Error::RootNotFound("r".into()), "Root not found: r"),
+            (
+                Error::InvalidHash {
+                    expected: "e".into(),
+                    actual: "a".into(),
+                },
+                "Invalid hash: expected e, got a",
+            ),
+            (Error::Storage("s".into()), "Storage error: s"),
+            (Error::Serialization("z".into()), "Serialization error: z"),
+            (Error::Internal("i".into()), "Internal error: i"),
+        ];
+
+        for (node_err, expected_message) in cases {
+            let mapped: ReplicaError = node_err.into();
+            assert_eq!(mapped.to_string(), expected_message);
+        }
+
+        // Every other node `Error` variant is unreachable from the replica
+        // trait's methods but still mapped defensively via `Display`.
+        let mapped: ReplicaError = Error::InvalidSignature.into();
+        assert!(matches!(mapped, ReplicaError::Internal(msg) if msg == "Invalid signature"));
+    }
+
+    #[test]
     fn test_nonce_counter_unavailable_503() {
         let resp = Error::NonceCounterUnavailable.into_response();
         let (parts, body) = resp.into_parts();

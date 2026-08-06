@@ -7077,12 +7077,14 @@ name = "provider-replica"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "axum",
  "base64",
  "hex",
  "provider-chain",
  "provider-storage",
  "reqwest",
  "serde",
+ "serde_json",
  "sp-core",
  "sp-runtime",
  "storage-primitives",

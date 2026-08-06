@@ -2,6 +2,7 @@
 
 //! Integration tests for the replica sync coordinator.
 
+use axum::{routing::get, Json, Router};
 use provider_replica::coordinator::{BucketSnapshot, ReplicaAgreementInfo};
 use provider_replica::{
     Error, ReplicaSyncChainClient, ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig, SyncDuty,
@@ -242,6 +243,70 @@ async fn test_primary_unavailable() {
 
     let result = coordinator.sync_and_confirm(&duty).await;
     assert!(matches!(result, SyncResult::PrimaryUnavailable { .. }));
+}
+
+/// Spawn a minimal mock primary that answers `GET /mmr_peaks` with a fixed
+/// root and no peaks, so `sync_and_confirm` completes the HTTP round trip and
+/// reaches its post-sync verification step.
+async fn spawn_mock_primary(bucket_id: BucketId, mmr_root_hex: String) -> String {
+    let app = Router::new().route(
+        "/mmr_peaks",
+        get(move || {
+            let mmr_root_hex = mmr_root_hex.clone();
+            async move {
+                Json(serde_json::json!({
+                    "bucket_id": bucket_id,
+                    "mmr_root": mmr_root_hex,
+                    "peaks": Vec::<String>::new(),
+                }))
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    while tokio::net::TcpStream::connect(addr).await.is_err() {
+        tokio::task::yield_now().await;
+    }
+    format!("http://{addr}")
+}
+
+#[tokio::test]
+async fn test_sync_from_primary_succeeds_but_final_verification_fails() {
+    let bucket_id = 1;
+    let target_root = H256::repeat_byte(0xDD);
+    let target_root_hex = format!("0x{}", hex::encode(target_root.as_bytes()));
+    let primary_url = spawn_mock_primary(bucket_id, target_root_hex).await;
+
+    let duty = SyncDuty {
+        bucket_id,
+        target_mmr_root: target_root,
+        target_leaf_count: 0,
+        primary_endpoints: vec![primary_url],
+        sync_balance: 1000,
+        sync_price: 100,
+        min_sync_interval: 0,
+        last_sync: None,
+    };
+
+    let mock = MockReplicaSyncChainClient::new();
+    let config = ReplicaSyncCoordinatorConfig::default();
+    let coordinator = ReplicaSyncCoordinator::new(
+        config,
+        test_storage(),
+        ALICE_SS58.to_string(),
+        Box::new(mock),
+    );
+
+    let result = coordinator.sync_and_confirm(&duty).await;
+    // The HTTP round trip with the primary succeeds (the peaks response's
+    // root matches the duty's target), but `sync_from_primary` only fetches
+    // peaks/subtrees today - it never calls `Storage::commit` - so the local
+    // bucket's `mmr_root` stays zero and final verification fails.
+    assert!(
+        matches!(result, SyncResult::VerificationFailed { .. }),
+        "expected VerificationFailed, got {result:?}"
+    );
 }
 
 #[tokio::test(start_paused = true)]
