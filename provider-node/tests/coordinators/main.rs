@@ -6,7 +6,6 @@
 
 mod challenge;
 mod event_fanout;
-mod replica_sync;
 
 use provider_storage::{build_padded_merkle_tree, NullNonceStore, Storage};
 use std::sync::Arc;

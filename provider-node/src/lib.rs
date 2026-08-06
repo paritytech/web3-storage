@@ -18,8 +18,6 @@ pub mod command;
 pub mod error;
 pub mod fs_api;
 pub mod negotiate;
-pub mod replica_sync;
-pub mod replica_sync_coordinator;
 pub mod s3_api;
 pub(crate) mod subxt_client;
 pub mod types;
@@ -36,9 +34,8 @@ pub use challenge_responder::{
 };
 pub use error::Error;
 pub use negotiate::{AgreementTermsOf, NegotiateRequest, NonceCounter, SignedTerms};
-pub use replica_sync::ReplicaSync;
-pub use replica_sync_coordinator::{
-    ReplicaSyncChainClient, ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig,
+pub use provider_replica::{
+    ReplicaSync, ReplicaSyncChainClient, ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig,
     ReplicaSyncCoordinatorHandle, SyncCommand, SyncCoordinatorStatus, SyncDuty, SyncResult,
 };
 pub use types::*;

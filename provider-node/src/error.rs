@@ -143,6 +143,55 @@ impl From<provider_storage::Error> for Error {
     }
 }
 
+/// Map replica-sync errors onto the node's error space one-to-one, same as
+/// the `provider_storage` mapping above.
+impl From<provider_replica::Error> for Error {
+    fn from(e: provider_replica::Error) -> Self {
+        use provider_replica::Error as ReplicaError;
+        match e {
+            ReplicaError::NodeNotFound(hash) => Error::NodeNotFound(hash),
+            ReplicaError::ChildrenMissing(children) => Error::ChildrenMissing(children),
+            ReplicaError::QuotaExceeded { used, max } => Error::QuotaExceeded { used, max },
+            ReplicaError::BucketNotFound(id) => Error::BucketNotFound(id),
+            ReplicaError::RootNotFound(root) => Error::RootNotFound(root),
+            ReplicaError::InvalidHash { expected, actual } => {
+                Error::InvalidHash { expected, actual }
+            }
+            ReplicaError::Storage(msg) => Error::Storage(msg),
+            ReplicaError::Serialization(msg) => Error::Serialization(msg),
+            ReplicaError::Internal(msg) => Error::Internal(msg),
+        }
+    }
+}
+
+/// Reverse of the mapping above: `SubxtChainClient`'s `ReplicaSyncChainClient`
+/// impl (in `subxt_client.rs`) shares chain-connection and submission helpers
+/// with `ChallengeChainClient`, which return this node's `Error`, but the
+/// replica trait's methods return `provider_replica::Error`. Every variant
+/// those shared helpers actually produce is `Internal`, mapped here
+/// message-for-message so the conversion never double-wraps it; the rest are
+/// unreachable from that path but mapped defensively via `Display`.
+impl From<Error> for provider_replica::Error {
+    fn from(e: Error) -> Self {
+        match e {
+            Error::NodeNotFound(hash) => provider_replica::Error::NodeNotFound(hash),
+            Error::ChildrenMissing(children) => provider_replica::Error::ChildrenMissing(children),
+            Error::QuotaExceeded { used, max } => {
+                provider_replica::Error::QuotaExceeded { used, max }
+            }
+            Error::BucketNotFound(id) => provider_replica::Error::BucketNotFound(id),
+            Error::RootNotFound(root) => provider_replica::Error::RootNotFound(root),
+            Error::InvalidHash { expected, actual } => {
+                provider_replica::Error::InvalidHash { expected, actual }
+            }
+            Error::Storage(msg) => provider_replica::Error::Storage(msg),
+            Error::Serialization(msg) => provider_replica::Error::Serialization(msg),
+            Error::Internal(msg) => provider_replica::Error::Internal(msg),
+            other => provider_replica::Error::Internal(other.to_string()),
+        }
+    }
+}
+
 #[derive(Serialize)]
 struct ErrorResponse {
     error: String,

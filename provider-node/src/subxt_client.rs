@@ -13,11 +13,10 @@
 use crate::challenge_responder::{
     decode_challenge_for_provider, ChallengeChainClient, DetectedChallenge,
 };
-use crate::replica_sync_coordinator::{
-    BucketSnapshot, ReplicaAgreementInfo, ReplicaSyncChainClient,
-};
 use crate::Error;
 use provider_chain::chain_connection::{self, ChainWatch};
+use provider_replica::coordinator::{BucketSnapshot, ReplicaAgreementInfo};
+use provider_replica::ReplicaSyncChainClient;
 use sp_core::crypto::Ss58Codec;
 use sp_core::H256;
 use std::sync::Arc;
@@ -501,7 +500,7 @@ impl SubxtChainClient {
     fn decode_storage_agreement_bytes(
         bucket_id: BucketId,
         bytes: &[u8],
-    ) -> Result<ReplicaAgreementInfo, Error> {
+    ) -> Result<ReplicaAgreementInfo, provider_replica::Error> {
         // StorageAgreement layout:
         // - owner: AccountId (32 bytes)
         // - max_bytes: u64 (8 bytes)
@@ -514,7 +513,9 @@ impl SubxtChainClient {
 
         let min_size = 32 + 8 + 16 + 16 + 4 + 1; // up to role enum
         if bytes.len() < min_size {
-            return Err(Error::Internal("Agreement data too short".to_string()));
+            return Err(provider_replica::Error::Internal(
+                "Agreement data too short".to_string(),
+            ));
         }
 
         let role_start = 32 + 8 + 16 + 16 + 4 + 1; // Skip to role enum
@@ -522,7 +523,9 @@ impl SubxtChainClient {
 
         // Role enum: 0 = Primary, 1 = Replica
         if role_variant != 1 {
-            return Err(Error::Internal("Not a replica agreement".to_string()));
+            return Err(provider_replica::Error::Internal(
+                "Not a replica agreement".to_string(),
+            ));
         }
 
         // Parse Replica fields: sync_balance, sync_price, min_sync_interval, last_sync
@@ -530,37 +533,31 @@ impl SubxtChainClient {
         let remaining = &bytes[replica_start..];
 
         if remaining.len() < 16 + 16 + 4 {
-            return Err(Error::Internal("Replica data too short".to_string()));
+            return Err(provider_replica::Error::Internal(
+                "Replica data too short".to_string(),
+            ));
         }
 
-        let sync_balance = u128::from_le_bytes(
-            remaining[0..16]
-                .try_into()
-                .map_err(|_| Error::Internal("Failed to parse sync_balance".to_string()))?,
-        );
+        let sync_balance = u128::from_le_bytes(remaining[0..16].try_into().map_err(|_| {
+            provider_replica::Error::Internal("Failed to parse sync_balance".to_string())
+        })?);
 
-        let sync_price = u128::from_le_bytes(
-            remaining[16..32]
-                .try_into()
-                .map_err(|_| Error::Internal("Failed to parse sync_price".to_string()))?,
-        );
+        let sync_price = u128::from_le_bytes(remaining[16..32].try_into().map_err(|_| {
+            provider_replica::Error::Internal("Failed to parse sync_price".to_string())
+        })?);
 
-        let min_sync_interval = u32::from_le_bytes(
-            remaining[32..36]
-                .try_into()
-                .map_err(|_| Error::Internal("Failed to parse min_sync_interval".to_string()))?,
-        ) as u64;
+        let min_sync_interval = u32::from_le_bytes(remaining[32..36].try_into().map_err(|_| {
+            provider_replica::Error::Internal("Failed to parse min_sync_interval".to_string())
+        })?) as u64;
 
         let last_sync_option = remaining.get(36).copied().unwrap_or(0);
         let last_sync = if last_sync_option == 1 && remaining.len() >= 36 + 1 + 32 + 4 {
-            let root_bytes: [u8; 32] = remaining[37..69]
-                .try_into()
-                .map_err(|_| Error::Internal("Failed to parse last_sync root".to_string()))?;
-            let block = u32::from_le_bytes(
-                remaining[69..73]
-                    .try_into()
-                    .map_err(|_| Error::Internal("Failed to parse last_sync block".to_string()))?,
-            ) as u64;
+            let root_bytes: [u8; 32] = remaining[37..69].try_into().map_err(|_| {
+                provider_replica::Error::Internal("Failed to parse last_sync root".to_string())
+            })?;
+            let block = u32::from_le_bytes(remaining[69..73].try_into().map_err(|_| {
+                provider_replica::Error::Internal("Failed to parse last_sync block".to_string())
+            })?) as u64;
             Some((H256::from(root_bytes), block))
         } else {
             None
@@ -622,21 +619,23 @@ impl SubxtChainClient {
 
 #[async_trait::async_trait]
 impl ReplicaSyncChainClient for SubxtChainClient {
-    async fn get_current_block(&self) -> Result<u64, Error> {
-        self.current_anchor_block().await
+    async fn get_current_block(&self) -> Result<u64, provider_replica::Error> {
+        Ok(self.current_anchor_block().await?)
     }
 
     async fn fetch_replica_agreements(
         &self,
         provider_account: &str,
         local_buckets: Vec<BucketId>,
-    ) -> Result<Vec<ReplicaAgreementInfo>, Error> {
+    ) -> Result<Vec<ReplicaAgreementInfo>, provider_replica::Error> {
         let provider_account = provider_account.to_string();
         {
             let mut agreements = Vec::new();
 
-            let account_bytes = hex::decode(provider_account.trim_start_matches("0x"))
-                .map_err(|e| Error::Internal(format!("Invalid account hex: {e}")))?;
+            let account_bytes =
+                hex::decode(provider_account.trim_start_matches("0x")).map_err(|e| {
+                    provider_replica::Error::Internal(format!("Invalid account hex: {e}"))
+                })?;
 
             let api = self.api()?;
 
@@ -647,10 +646,9 @@ impl ReplicaSyncChainClient for SubxtChainClient {
                     "StorageAgreements",
                 );
 
-                let at = api
-                    .at_current_block()
-                    .await
-                    .map_err(|e| Error::Internal(format!("Failed to get storage: {e}")))?;
+                let at = api.at_current_block().await.map_err(|e| {
+                    provider_replica::Error::Internal(format!("Failed to get storage: {e}"))
+                })?;
 
                 if let Ok(Some(value)) = at
                     .storage()
@@ -725,17 +723,18 @@ impl ReplicaSyncChainClient for SubxtChainClient {
         }
     }
 
-    async fn fetch_bucket_snapshot(&self, bucket_id: BucketId) -> Result<BucketSnapshot, Error> {
+    async fn fetch_bucket_snapshot(
+        &self,
+        bucket_id: BucketId,
+    ) -> Result<BucketSnapshot, provider_replica::Error> {
         use subxt::ext::scale_value::ValueDef;
 
         let storage_address =
             subxt::dynamic::storage::<(Value,), Value>("StorageProvider", "Buckets");
 
-        let at = self
-            .api()?
-            .at_current_block()
-            .await
-            .map_err(|e| Error::Internal(format!("Failed to get storage: {e}")))?;
+        let at = self.api()?.at_current_block().await.map_err(|e| {
+            provider_replica::Error::Internal(format!("Failed to get storage: {e}"))
+        })?;
 
         match at
             .storage()
@@ -744,9 +743,9 @@ impl ReplicaSyncChainClient for SubxtChainClient {
         {
             Ok(Some(value)) => {
                 use subxt::ext::scale_value::At;
-                let decoded = value
-                    .decode()
-                    .map_err(|e| Error::Internal(format!("Failed to decode bucket: {e}")))?;
+                let decoded = value.decode().map_err(|e| {
+                    provider_replica::Error::Internal(format!("Failed to decode bucket: {e}"))
+                })?;
 
                 if let Some(snapshot_opt) = decoded.at(4) {
                     if let ValueDef::Variant(variant) = &snapshot_opt.value {
@@ -770,17 +769,18 @@ impl ReplicaSyncChainClient for SubxtChainClient {
         }
     }
 
-    async fn fetch_primary_endpoints(&self, bucket_id: BucketId) -> Result<Vec<String>, Error> {
+    async fn fetch_primary_endpoints(
+        &self,
+        bucket_id: BucketId,
+    ) -> Result<Vec<String>, provider_replica::Error> {
         use subxt::ext::scale_value::{At, Composite, Primitive, ValueDef};
 
         let storage_address =
             subxt::dynamic::storage::<(Value,), Value>("StorageProvider", "Buckets");
 
-        let at = self
-            .api()?
-            .at_current_block()
-            .await
-            .map_err(|e| Error::Internal(format!("Failed to get storage: {e}")))?;
+        let at = self.api()?.at_current_block().await.map_err(|e| {
+            provider_replica::Error::Internal(format!("Failed to get storage: {e}"))
+        })?;
 
         let bucket_value = match at
             .storage()
@@ -791,9 +791,9 @@ impl ReplicaSyncChainClient for SubxtChainClient {
             _ => return Ok(vec![]),
         };
 
-        let decoded = bucket_value
-            .decode()
-            .map_err(|e| Error::Internal(format!("Failed to decode bucket: {e}")))?;
+        let decoded = bucket_value.decode().map_err(|e| {
+            provider_replica::Error::Internal(format!("Failed to decode bucket: {e}"))
+        })?;
 
         let mut provider_bytes_list = Vec::new();
 
@@ -828,11 +828,9 @@ impl ReplicaSyncChainClient for SubxtChainClient {
             let provider_addr =
                 subxt::dynamic::storage::<(Value,), Value>("StorageProvider", "Providers");
 
-            let at = self
-                .api()?
-                .at_current_block()
-                .await
-                .map_err(|e| Error::Internal(format!("Failed to get storage: {e}")))?;
+            let at = self.api()?.at_current_block().await.map_err(|e| {
+                provider_replica::Error::Internal(format!("Failed to get storage: {e}"))
+            })?;
 
             if let Ok(Some(value)) = at
                 .storage()
@@ -858,7 +856,7 @@ impl ReplicaSyncChainClient for SubxtChainClient {
         &self,
         bucket_id: BucketId,
         target_mmr_root: H256,
-    ) -> Result<(u8, u128), Error> {
+    ) -> Result<(u8, u128), provider_replica::Error> {
         // Build roots array: position 0 = current root, rest = None
         let roots_value: Vec<Value> = (0..7)
             .map(|i| {
