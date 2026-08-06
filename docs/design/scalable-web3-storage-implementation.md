@@ -161,10 +161,28 @@ derivable from a checkpointed root alone. Two situations:
 
 Divergence recovery is deliberately blunt because it should never run:
 prevention is the rule. Recommended write topologies, in order of
-preference: a single writer per bucket; multiple logical writers funneled
-through one sequencer (same provider order, same nonce everywhere); or one
-bucket per writer, merged at Layer 1 — buckets are cheap, contended logs
-are not.
+preference:
+
+- **A single writer per bucket**, serializing its own commits: never issue
+  commit N+1 before commit N is acknowledged by every provider it targets
+  (uploads may parallelize freely — only commit order matters).
+- **Multiple logical writers behind one sequencer** — same provider order,
+  same nonce everywhere. The sequencer is an ordering/liveness role, not a
+  trust role: it cannot forge content or liability, only delay or reorder.
+  It need not be a fixed party: writers can rotate leadership
+  deterministically per anchor-block window, computed from the on-chain
+  writer set with no election traffic — the same pattern Tendermint uses
+  for proposers, and the same anchor-block election the (removed)
+  provider-initiated checkpoints used. An offline leader costs one idle
+  window, never a deadlock. See
+  [docs/drafts/multi-writer-coordination.md](../drafts/multi-writer-coordination.md).
+- **Per-writer logs inside one bucket** (*multi-log bucket — proposed
+  protocol extension, pending design review*): each writer appends to its
+  own sub-MMR, and the bucket commitment becomes a small Merkle map
+  `writer → sub-MMR root`. Contention is removed by construction —
+  concurrent commits by different writers cannot interleave, so the
+  divergence above cannot be constructed. Specified in the same draft; not
+  yet part of the protocol.
 
 **Changing or adding a primary (migration)**: Bringing a new primary up to
 speed does not require routing the data through the client. Chunks are
