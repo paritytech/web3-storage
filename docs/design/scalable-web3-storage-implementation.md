@@ -104,10 +104,73 @@ Primary providers don't sync with each other. Clients are responsible for upload
 1. Client uploads data to Primary A, B, C (separately)
 2. Client triggers commit on each provider, collects signatures
 3. Client checkpoints on-chain with collected signatures
-4. Primaries not in the snapshot should sync (client re-uploads)
+4. Primaries not in the snapshot should sync (client re-uploads, or the
+   provider pulls via the sync protocol — see "Changing or adding a primary")
 5. After checkpoint, providers can prune non-canonical roots
 
 **Liability**: A provider is only liable for MMR states they acknowledged (signed). Challenges against the canonical checkpoint only work for providers listed in the snapshot's provider bitfield.
+
+#### Concurrent writers: divergence and arbitration
+
+The chain does not sequence appends — ordering the MMR is the writer set's
+responsibility (this is why writes are restricted to Writer/Admin accounts).
+The correct mental model is two-phase commit: off-chain commits are the
+*prepare* phase — cheap, per-provider, binding on no one else — and the
+checkpoint is the *commit point*, the moment a single canonical state exists.
+There is no rollback primitive because none is needed: an un-checkpointed
+tail obligates nobody, and its only cost is the writer's own quota
+("providers must keep all signed data").
+
+If uncoordinated writers commit concurrently against different providers in
+different orders, the providers' MMRs diverge: every copy is internally
+valid — mountain shapes depend only on leaf count — but the leaf *order*,
+and therefore the roots, differ, and no checkpointable quorum exists.
+Detection is immediate and free: the `/commit` responses disagree in front
+of the writers (`leaf_indices`, `leaf_count`, and roots differ across
+providers). Resolution is arbitration, not repair:
+
+1. Some writer checkpoints whichever ordering can gather `min_providers`
+   matching signatures — that order becomes canonical.
+2. Divergent providers sync to the canonical state: re-append the same
+   leaves in canonical order (metadata-only — all chunks are already local
+   and content-addressed), prune the non-canonical tree, and sign the
+   canonical commitment.
+3. Anyone re-attaches them via the permissionless `extend_checkpoint`.
+
+Recommended write topologies, in order of preference: a single writer per
+bucket; multiple logical writers funneled through one sequencer (same
+provider order, same nonce everywhere); or one bucket per writer, merged at
+Layer 1 — buckets are cheap, contended logs are not.
+
+#### Changing or adding a primary (migration)
+
+Bringing a new primary up to speed does not require routing the data through
+the client. Chunks are content-addressed and self-verifying against the
+committed MMR root, so the *source* of bytes is trust-irrelevant, and the
+replica sync protocol (peaks, subtree, bulk node fetch) is a general
+provider-to-provider transfer surface; `replica_sync_price` compensates the
+serving provider. The flow:
+
+1. Open the new (primary) agreement.
+2. The new provider pulls the bucket from any existing data holder via the
+   sync protocol, paying the source's sync price.
+3. The client verifies the new provider's state against the canonical
+   commitment (equality or extension check per "Verifying the bucket root"),
+   costing metadata only.
+4. The new provider signs the current canonical commitment; anyone submits
+   `extend_checkpoint` — liability attaches with no new checkpoint and no
+   re-upload.
+5. The old agreement runs to expiry (agreements are binding; data there
+   stays enforceable until then).
+
+A provider can also onboard as a *replica* first — replicas sync
+autonomously by design — and take over a primary agreement once the data is
+local, at zero additional transfer cost.
+
+Fallback hierarchy when no cooperative source exists: replicas (their
+purpose), a client-held copy, and last of all challenge-based extraction —
+deliberately priced as a last resort. A bucket whose data matters should
+fund at least one replica precisely so migration never reaches that point.
 
 **Replica providers** sync autonomously from primaries or other replicas. They confirm sync on-chain and are liable for the roots they've confirmed.
 
