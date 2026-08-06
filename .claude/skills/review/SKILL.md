@@ -55,4 +55,20 @@ When reviewing, analyze for:
    - API compatibility
    - Migration requirements
 
+8. **Design Alignment** (see the `design-alignment` skill for the full procedure)
+   - `docs/design/` is canonical and must stay true to the code
+   - Changes must conform to the core design docs in `docs/design/`
+   - Any deviation from the documented design must be explicitly flagged as
+     `⚠️ DESIGN DEVIATION`, citing the doc/section and the code location; the author
+     must either conform to the design or update the design doc in the same PR with
+     rationale
+
+9. **Reference Docs Consistency** (see the `reference-docs` skill for the full procedure)
+   - `docs/reference/` is canonical and must stay true to the code
+   - If a change alters a documented flow or makes any statement in `docs/reference/`
+     (`EXTRINSICS_REFERENCE.md`, `PAYMENT_CALCULATOR.md`, …) no longer true, the doc
+     must be updated in the same change
+   - A missing reference-doc update is a blocking finding, flagged as
+     `📄 REFERENCE DOC OUT OF DATE`
+
 Provide specific feedback with file paths and line numbers.
