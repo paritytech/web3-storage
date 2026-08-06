@@ -135,21 +135,36 @@ Y appends LB then LA → […, LB, LA]   LA at leaf index 6
 
 Same mountain shapes (7 leaves each), different roots. Detection is
 immediate and free: C1 sees `leaf_indices [5]` from X but `[6]` from Y —
-the `/commit` responses disagree in front of the writers. Resolution is
-arbitration, not repair:
+the `/commit` responses disagree in front of the writers.
 
-1. Some writer checkpoints whichever ordering can gather `min_providers`
-   matching signatures — that order becomes canonical.
-2. Divergent providers sync to the canonical state: re-append the same
-   leaves in canonical order (metadata-only — all chunks are already local
-   and content-addressed), prune the non-canonical tree, and sign the
-   canonical commitment.
-3. Anyone re-attaches them via the permissionless `extend_checkpoint`.
+Divergence cannot be repaired by appending: `/commit` appends to the
+provider's single current state, so a divergent un-checkpointed suffix
+poisons every subsequent root — and the canonical leaf *order* is not
+derivable from a checkpointed root alone. Two situations:
 
-Recommended write topologies, in order of preference: a single writer per
-bucket; multiple logical writers funneled through one sequencer (same
-provider order, same nonce everywhere); or one bucket per writer, merged at
-Layer 1 — buckets are cheap, contended logs are not.
+- **A quorum ordering exists.** If some subset of providers received the
+  same order and meets `min_providers`, a writer checkpoints that ordering
+  and it becomes canonical. Providers outside the snapshot cannot rejoin by
+  appending; they need their un-checkpointed suffix replaced with the
+  canonical one (the "should sync" in the flow above). No mechanism for
+  that replacement is currently specified — until one is, an out-of-snapshot
+  divergent provider is recovered the same way as the no-quorum case below.
+- **No quorum exists** (e.g. two providers, two orders, `min_providers = 2`):
+  no checkpoint can be formed at all. The recovery that works with the
+  current protocol surface is a reset: the admin performs a destructive
+  write — new MMR with `start_seq >= old_start_seq + old_leaf_count` (see
+  Delete Data) — and one writer re-commits every live data_root to every
+  provider in a single chosen order. This is metadata-only (all chunks are
+  already local and content-addressed); the abandoned divergent tails were
+  never checkpointed and their signed commitments expire with their nonces.
+  The cost is the quota consumed by the abandoned tails.
+
+Divergence recovery is deliberately blunt because it should never run:
+prevention is the rule. Recommended write topologies, in order of
+preference: a single writer per bucket; multiple logical writers funneled
+through one sequencer (same provider order, same nonce everywhere); or one
+bucket per writer, merged at Layer 1 — buckets are cheap, contended logs
+are not.
 
 **Changing or adding a primary (migration)**: Bringing a new primary up to
 speed does not require routing the data through the client. Chunks are
