@@ -1788,9 +1788,111 @@ Response (200 OK):
   "nonce": 12345  // echo of the nonce the provider signed over
 }
 
+Retries are idempotent — a repeated request with the same data_roots and
+nonce returns the original signed state without appending again (see
+"Retry & Idempotency" below).
+
 Response (400 Bad Request):
 { "error": "root_not_found", "missing": ["0xroot2..."] }
 ```
+
+### Retry & Idempotency (intermittent clients)
+
+Clients — mobile apps and browsers in particular — can drop offline at any
+point in the upload → commit → checkpoint sequence, including *after* a request
+was processed but *before* its response arrived. Every step is safely
+retryable:
+
+**Uploads are idempotent.** Nodes are content-addressed; re-uploading an
+existing node is a no-op. A resuming client calls `POST /exists` to discover
+what is missing and uploads only that (see Sync Protocol above).
+
+**Commits are idempotent per `(bucket_id, data_roots, nonce)`.** If the client
+misses the response (connection dropped after the provider already appended),
+a retry with the same `data_roots` and `nonce` MUST NOT append duplicate
+leaves: the provider recognizes the repeated request, leaves the MMR
+untouched, and returns the same signed state it produced the first time. A
+retry after the nonce has aged out behaves like `GET /commitment` — current
+state, fresh signature, no re-append. The append happens at most once.
+
+**Signatures are refreshable without re-appending.** `CommitmentPayload.nonce`
+is recency-checked on-chain, so signatures collected before a long offline
+period may expire. `GET /commitment?bucket_id=…&nonce=…` re-issues a signature
+over the provider's current MMR state under a fresh nonce at any time; a
+recovered client re-fetches signatures and retries `checkpoint` — nothing is
+re-uploaded.
+
+**Checkpoints tolerate partial signature collection.** `checkpoint` needs only
+`min_providers` signatures, and the permissionless `extend_checkpoint` lets
+the recovered client — or anyone else — attach straggler signatures later.
+
+**What the client must persist.** Until a checkpoint lands on-chain, the
+provider-signed commitments are the client's only enforcement handle
+(`challenge_offchain`); client software must store pending signatures durably
+(a few hundred bytes) and should checkpoint promptly on environments with
+evictable storage (browsers). Everything else — MMR peaks, leaf indices,
+manifests — is recoverable from any provider and verifiable against the last
+on-chain checkpoint root (`hash(peaks) == mmr_root`).
+
+### Verifying the bucket root: fresh vs. stale anchors
+
+Before accepting a provider's signed commitment, the client independently
+derives the expected bucket root. That derivation needs a trusted starting
+point — an **anchor**:
+
+**Anchor selection.** The client's anchor is the freshest state it can trust:
+the last on-chain checkpoint (`BucketSnapshot.commitment`), or — if newer — the
+latest provider-signed `CommitmentPayload` it holds. A signed commitment is as
+authoritative for its holder as a checkpoint: it is enforceable via
+`challenge_offchain`.
+
+**Fresh anchor (leaf counts match).** If the anchor's `leaf_count` equals the
+provider's current leaf count, verification is equality: fetch
+`GET /mmr_peaks` and check `hash(peaks) == anchor root`.
+
+**Stale anchor (commits happened since).** If the provider's state has more
+leaves than the anchor — other writers committed since, or the client lost
+local state — equality cannot hold and MUST NOT be treated as failure. The
+client verifies **extension** instead: using the node-fetch endpoints from the
+replica sync protocol, it obtains the interior nodes of the current forest
+that correspond to the anchor's peaks, then checks that (a) those nodes bag to
+the anchor root, and (b) the same nodes hash upward into the current peaks.
+Both together prove that the current state contains the anchored history
+unmodified, with the newer leaves appended on top — the standard append-only
+consistency check (as in Certificate Transparency logs), costing O(log n)
+hashes. Only then does the client append its own leaves to the verified
+current peaks to predict the post-commit root.
+
+**Cold-start recovery (all local state lost).** A client that lost everything
+but its signing key — cleared browser storage, reinstalled app, new device —
+recovers entirely from the chain and the providers, banking on the last
+on-chain checkpoint as its (stale) anchor:
+
+1. Buckets, agreements, and the last `BucketSnapshot.commitment` are read from
+   the chain — this is the trust anchor, however old.
+2. The provider's current state is verified against it with the extension
+   check above; peaks, leaf indices, and manifests are re-fetched from any
+   provider and verified the same way. The stored data itself never needed to
+   exist locally.
+3. Enforcement for leaves committed *after* the last checkpoint is re-armed by
+   fetching a fresh signed commitment over the current state
+   (`GET /commitment` under a fresh nonce) — an honest provider re-signs
+   immediately, and the client should then checkpoint to make the protection
+   public rather than rely on local persistence again.
+
+The genuine exposure is narrow but real: leaves committed after the last
+checkpoint, where the client lost the signed commitment AND the provider
+refuses to re-sign — the client then holds nothing to challenge with for
+those leaves. This is the strongest argument for checkpointing promptly:
+an on-chain checkpoint is the only enforcement handle that survives total
+client-side loss.
+
+**Backstop.** Every primary maintains the same MMR from the same ordered
+commits, and the next `checkpoint` requires `min_providers` signatures over an
+identical commitment. A provider that rewrote or injected history diverges
+from the other primaries and is excluded from — or blocks — the snapshot,
+while each writer of the intervening leaves still holds its own enforceable
+signed commitment for the data it committed.
 
 ### Read
 
@@ -1931,6 +2033,28 @@ Response (403 Forbidden):
 Note: Only bucket admins can delete data. This triggers deletion of data before
 new_start_seq. Provider returns new commitment covering remaining data. Admin
 signature authorizes the deletion and serves as proof if challenged later.
+
+Pruning order (deletion and compaction): the provider SHOULD NOT physically
+discard pruned data until a checkpoint carrying the advanced `start_seq` is
+final on-chain. Until then, the old snapshot remains the canonical,
+publicly challengeable state — the provider's only defense for already-pruned
+leaves is the admin-signed `Deleted` response, whose nonce is recency-checked
+and therefore goes stale. The safe sequence for a compaction (rewriting live
+data past dead middle leaves) is:
+
+1. Re-commit the surviving data_roots as fresh leaves in the new MMR
+   (`start_seq >= old_start_seq + old_leaf_count`). Content addressing makes
+   this metadata-only: every chunk already exists on the provider, so
+   `/exists` dedups all data bytes.
+2. Collect provider signatures over the new commitment and submit
+   `checkpoint` — the `start_seq` advance is carried inside the checkpoint's
+   `Commitment`; there is no separate on-chain delete.
+3. Only after that checkpoint is final: garbage-collect chunks unreachable
+   from any canonical leaf's data_root.
+
+Layer-1 metadata survives compaction untouched (manifests reference
+data_roots, not leaf positions); clients refresh cached leaf indices from the
+new commit responses.
 
 List Buckets
 ────────────
