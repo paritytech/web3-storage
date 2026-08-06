@@ -366,6 +366,11 @@ pub struct ChunkLocation {
 }
 
 /// Payload that providers sign to commit to bucket state.
+///
+/// TODO(#316): this names a bucket but not the agreement it was signed under,
+/// so a commitment outlives the obligation it attests to. Adding `agreement_id`
+/// bounds validity to the agreement's lifetime, which is what #337 removed the
+/// wall-clock nonce in favour of.
 #[derive(
     Clone, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo, MaxEncodedLen, Debug,
 )]

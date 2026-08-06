@@ -2185,6 +2185,15 @@ pub mod pallet {
             );
 
             // Build the commitment payload that the provider signed.
+            //
+            // TODO(#316): the liveness check above is keyed `(bucket_id,
+            // provider)`, which a re-join reuses, so it cannot tell a
+            // commitment signed under the previous agreement from one signed
+            // under the current one. A provider that left, legitimately
+            // deleted the data and re-joined is still slashable on the old
+            // commitment. The removed nonce recency window (#337) used to cap
+            // that at 24h; the real bound is the agreement's lifetime, which
+            // arrives with `agreement_id` in #316.
             let payload = CommitmentPayload::new(bucket_id, commitment);
             let encoded_payload = payload.encode();
 
