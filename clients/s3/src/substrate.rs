@@ -372,8 +372,21 @@ impl SubstrateClient {
 
         let mut buckets = Vec::new();
         for (id, result) in fetched {
-            let Ok(Some(value)) = result else { continue };
-            let Ok(info) = value.decode() else { continue };
+            let value = match result {
+                Ok(Some(value)) => value,
+                Ok(None) => continue,
+                Err(e) => {
+                    warn!("Failed to fetch bucket {id}: {e}");
+                    continue;
+                }
+            };
+            let info = match value.decode() {
+                Ok(info) => info,
+                Err(e) => {
+                    warn!("Failed to decode bucket {id}: {e}");
+                    continue;
+                }
+            };
             buckets.push(BucketInfo {
                 s3_bucket_id: id,
                 name: String::from_utf8_lossy(&convert::unbounded(info.name)).to_string(),

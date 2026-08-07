@@ -776,7 +776,8 @@ pub struct CommitmentResponse {
 }
 
 impl CommitmentResponse {
-    pub fn new(
+    #[cfg(test)]
+    pub(crate) fn new(
         bucket_id: BucketId,
         mmr_root: String,
         start_seq: u64,

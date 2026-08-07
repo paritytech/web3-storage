@@ -1202,9 +1202,15 @@ impl CheckpointManager {
         }
 
         // A shrinking range would narrow what the provider can be challenged
-        // over — never accept it, whatever the majority says.
+        // over — never accept it, whatever the majority says. The range is
+        // `[start_seq, start_seq + leaf_count)` (design: "Canonical range");
+        // delete only ever moves `start_seq` forward, so `leaf_count` legitimately
+        // *drops* on every delete and is not itself a floor - the invariant that
+        // must hold is that neither end of the range moves backwards.
         if let Some((floor_start_seq, floor_leaf_count)) = floor {
-            if commitment.start_seq < floor_start_seq || commitment.leaf_count < floor_leaf_count {
+            let floor_end = floor_start_seq.saturating_add(floor_leaf_count);
+            let commitment_end = commitment.start_seq.saturating_add(commitment.leaf_count);
+            if commitment.start_seq < floor_start_seq || commitment_end < floor_end {
                 tracing::warn!(
                     "Bucket {bucket_id}: provider {account} reported range (start_seq={}, \
                      leaf_count={}) behind the on-chain snapshot (start_seq={floor_start_seq}, \
@@ -2826,12 +2832,14 @@ mod tests {
     fn validated_commitment_rejects_range_regression() {
         let account = AccountId32::new([1u8; 32]);
 
-        let shrunk_leaves =
+        // start_seq unchanged but the range *end* moved backwards (5+9=14 < 5+10=15):
+        // data disappeared with no compensating delete. Must be refused.
+        let shrunk_end =
             CommitmentResponse::new(1, test_mmr_root(), 5, 9, valid_signature_hex(), 42);
         assert!(
-            CheckpointManager::validated_commitment(1, &account, &shrunk_leaves, 42, Some((5, 10)))
+            CheckpointManager::validated_commitment(1, &account, &shrunk_end, 42, Some((5, 10)))
                 .is_none(),
-            "leaf_count below the on-chain snapshot must be refused"
+            "a range end behind the on-chain snapshot must be refused"
         );
 
         let rewound_start =
@@ -2844,6 +2852,23 @@ mod tests {
             Some((5, 10))
         )
         .is_none());
+    }
+
+    #[test]
+    fn validated_commitment_accepts_legitimate_delete() {
+        // Design: "Delete: Increase start_seq (old leaves no longer in range)".
+        // A delete moves start_seq forward and leaf_count down by the same
+        // amount, so the range end (start_seq + leaf_count) is unchanged.
+        // This must NOT be treated as a regression.
+        let account = AccountId32::new([1u8; 32]);
+        let post_delete =
+            CommitmentResponse::new(1, test_mmr_root(), 8, 7, valid_signature_hex(), 42);
+
+        assert!(
+            CheckpointManager::validated_commitment(1, &account, &post_delete, 42, Some((5, 10)))
+                .is_some(),
+            "a post-delete range with an unchanged end must be accepted"
+        );
     }
 
     #[test]
