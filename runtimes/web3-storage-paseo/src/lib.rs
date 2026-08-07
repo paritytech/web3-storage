@@ -185,9 +185,11 @@ pub const VERSION: RuntimeVersion = RuntimeVersion {
     spec_version: 4_003,
     impl_version: 0,
     apis: RUNTIME_API_VERSIONS,
-    // 3 since `checkpoint` and `challenge_offchain` each dropped their `nonce`
-    // argument: offline signers and stale-metadata clients must fail loudly
-    // rather than mis-encode a call.
+    // 3 since dropping the commitment nonce changed how three calls encode:
+    // `checkpoint` and `challenge_offchain` each lost a `nonce` argument, and
+    // `respond_to_challenge`'s `ChallengeResponse::Deleted` variant lost its
+    // `nonce` field. Offline signers and stale-metadata clients must fail
+    // loudly rather than mis-encode a call.
     transaction_version: 3,
     system_version: 1,
 };
