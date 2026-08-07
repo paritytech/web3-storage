@@ -178,18 +178,19 @@ pub const VERSION: RuntimeVersion = RuntimeVersion {
     impl_name: Cow::Borrowed("paseo-web3-storage-runtime"),
     authoring_version: 1,
     // Encodes the runtime semver: major * 1_000_000 + minor * 1_000 + patch.
-    // 0.4.1 -> 4_001 on dev; 4_002 for the breaking Challenges storage reshape
-    // (Vec -> StorageDoubleMap); 4_003 for dropping the vestigial
-    // `ChallengerStatRecord::total_earnings` field. Must stay > the deployed
-    // value so the upgrade is accepted and migrations run.
+    // * 0.4.1 -> 4_001 on dev (#212), released as v0.4.1-paseo and still the deployed value;
+    // * 4_002 for the breaking Challenges storage reshape (Vec -> StorageDoubleMap) (#125);
+    // * 4_003 for dropping the vestigial `ChallengerStatRecord::total_earnings` field (#125).
     spec_version: 4_003,
     impl_version: 0,
     apis: RUNTIME_API_VERSIONS,
-    // 3 since dropping the commitment nonce changed how three calls encode:
-    // `checkpoint` and `challenge_offchain` each lost a `nonce` argument, and
-    // `respond_to_challenge`'s `ChallengeResponse::Deleted` variant lost its
-    // `nonce` field. Offline signers and stale-metadata clients must fail
-    // loudly rather than mis-encode a call.
+    // Bumped whenever call encoding changes, so offline signers and stale-metadata
+    // clients fail loudly rather than mis-encode a call.
+    // * 1 on the initial paseo runtime (#58);
+    // * 2 in the v0.2.0-paseo release, still the deployed value;
+    // * 3 for dropping the commitment nonce: `checkpoint` and `challenge_offchain` each lost
+    //   a `nonce` argument, and `respond_to_challenge`'s `ChallengeResponse::Deleted` variant
+    //   lost its `nonce` field (#339).
     transaction_version: 3,
     system_version: 1,
 };
