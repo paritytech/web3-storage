@@ -174,10 +174,22 @@ pub const VERSION: RuntimeVersion = RuntimeVersion {
     spec_name: Cow::Borrowed("web3-storage-parachain"),
     impl_name: Cow::Borrowed("web3-storage-parachain"),
     authoring_version: 1,
+    // Plain counter, not the semver encoding the paseo runtime uses. Zombienet
+    // respawns this runtime from genesis, so no chain is ever upgraded across
+    // these values.
+    // * 1 on the initial parachain runtime;
+    // * 2 for the breaking Challenges storage reshape (Vec -> StorageDoubleMap) (#125);
+    // * 3 for dropping the vestigial `ChallengerStatRecord::total_earnings` field (#125).
     spec_version: 3,
     impl_version: 0,
     apis: RUNTIME_API_VERSIONS,
-    transaction_version: 1,
+    // Bumped whenever call encoding changes, so offline signers and stale-metadata
+    // clients fail loudly rather than mis-encode a call.
+    // * 1 on the initial parachain runtime;
+    // * 2 for dropping the commitment nonce: `checkpoint` and `challenge_offchain` each lost
+    //   a `nonce` argument, and `respond_to_challenge`'s `ChallengeResponse::Deleted` variant
+    //   lost its `nonce` field (#339).
+    transaction_version: 2,
     system_version: 1,
 };
 

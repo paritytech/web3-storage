@@ -141,7 +141,6 @@ impl ChallengerClient {
     /// # Parameters
     /// - `commitment`: The MMR commitment (root + range) the provider signed over
     /// - `target`: Which leaf + chunk within that commitment to challenge
-    /// - `nonce`: The nonce the provider signed over (echoed from their commitment)
     /// - `provider_signature`: The provider's signature on the commitment (64 bytes for Sr25519)
     pub async fn challenge_offchain(
         &self,
@@ -149,7 +148,6 @@ impl ChallengerClient {
         provider: String,
         commitment: Commitment,
         target: ChunkLocation,
-        nonce: u64,
         provider_signature: Vec<u8>,
     ) -> ClientResult<ChallengeId> {
         let chain = self.base.chain()?;
@@ -172,7 +170,6 @@ impl ChallengerClient {
             provider_account,
             commitment,
             target,
-            nonce,
             provider_signature,
         )?;
 

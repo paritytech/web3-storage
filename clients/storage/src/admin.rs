@@ -457,7 +457,6 @@ impl AdminClient {
         &self,
         bucket_id: BucketId,
         commitment: Commitment,
-        nonce: u64, // nonce the providers signed over (echoed from their commitment)
         signatures: Vec<(String, Vec<u8>)>, // (provider SS58, signature bytes)
     ) -> ClientResult<()> {
         let chain = self.base.chain()?;
@@ -472,7 +471,7 @@ impl AdminClient {
             })
             .collect::<ClientResult<Vec<_>>>()?;
 
-        let tx = extrinsics::checkpoint(bucket_id, commitment, nonce, parsed_sigs)?;
+        let tx = extrinsics::checkpoint(bucket_id, commitment, parsed_sigs)?;
 
         let tx_progress = chain
             .api()

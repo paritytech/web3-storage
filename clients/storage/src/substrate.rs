@@ -174,7 +174,6 @@ pub mod extrinsics {
     pub fn checkpoint(
         bucket_id: u64,
         commitment: Commitment,
-        nonce: u64,
         signatures: Vec<(AccountId32, Vec<u8>)>,
     ) -> Result<impl Payload, ClientError> {
         let sigs = signatures
@@ -190,7 +189,6 @@ pub mod extrinsics {
         Ok(api::tx().storage_provider().checkpoint(
             bucket_id,
             convert::commitment(&commitment),
-            nonce,
             convert::bounded(sigs),
         ))
     }
@@ -217,7 +215,6 @@ pub mod extrinsics {
         provider: AccountId32,
         commitment: Commitment,
         target: ChunkLocation,
-        nonce: u64,
         provider_signature: Vec<u8>,
     ) -> Result<impl Payload, ClientError> {
         Ok(api::tx().storage_provider().challenge_offchain(
@@ -225,7 +222,6 @@ pub mod extrinsics {
             convert::to_subxt_account(&provider),
             convert::commitment(&commitment),
             convert::chunk_location(&target),
-            nonce,
             convert::sr25519_signature(provider_signature)?,
         ))
     }

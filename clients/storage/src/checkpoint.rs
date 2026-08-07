@@ -232,10 +232,6 @@ pub struct CommitmentCollection {
     pub start_seq: u64,
     /// Number of leaves in the MMR.
     pub leaf_count: u64,
-    /// The shared `CommitmentPayload` nonce every signature in `signatures`
-    /// was made over. The pallet verifies all signatures against one encoded
-    /// `(bucket_id, commitment, nonce)` payload.
-    pub nonce: u64,
     /// Signatures from agreeing providers: (account_id, signature_bytes).
     pub signatures: Vec<(AccountId32, Vec<u8>)>,
     /// Providers that agreed on the majority root.
@@ -1048,12 +1044,9 @@ impl CheckpointManager {
 
     /// Collect commitments from all providers for a bucket.
     ///
-    /// The nonce is chosen here (the current anchor block) and sent to every
-    /// provider, which signs over it and echoes it back — so all signatures
-    /// cover one identical `CommitmentPayload`, exactly as the pallet
-    /// verifies them. Responses that deviate (wrong nonce, unusable
-    /// signature, unparsable root, a range that regresses below the on-chain
-    /// snapshot) are dropped rather than allowed to spoil the batch.
+    /// Responses that cannot be part of a checkpoint (unusable signature,
+    /// unparsable root, a range that regresses below the on-chain snapshot)
+    /// are dropped rather than allowed to spoil the batch.
     pub async fn collect_commitments(
         &self,
         bucket_id: BucketId,
@@ -1067,21 +1060,18 @@ impl CheckpointManager {
             )));
         }
 
-        // The anchor block is the pallet's clock: using it as the nonce keeps
-        // us inside `MaxNonceAge` and is a value no provider can steer.
         let at = self
             .chain_client
             .api()
             .at_current_block()
             .await
             .map_err(|e| ClientError::Chain(format!("Failed to read chain state: {e}")))?;
-        let nonce = u64::from(crate::substrate::fetch_current_anchor_block(&at).await?);
         let floor = Self::snapshot_floor(&at, bucket_id).await?;
 
-        // Query all providers in parallel, all over the same nonce
+        // Query all providers in parallel
         let provider_commitment_futures: Vec<_> = providers
             .iter()
-            .map(|p| self.query_provider_commitment(p, bucket_id, nonce))
+            .map(|p| self.query_provider_commitment(p, bucket_id))
             .collect();
 
         let provider_commitment_results =
@@ -1101,7 +1091,7 @@ impl CheckpointManager {
                 continue;
             };
 
-            match Self::validated_commitment(bucket_id, &account, &commitment, nonce, floor) {
+            match Self::validated_commitment(bucket_id, &account, &commitment, floor) {
                 Some(valid) => {
                     commitments_by_root
                         .entry(valid.mmr_root)
@@ -1148,7 +1138,6 @@ impl CheckpointManager {
             mmr_root: majority_root,
             start_seq,
             leaf_count,
-            nonce,
             signatures,
             agreeing_providers: agreeing.iter().map(|(id, _)| id.clone()).collect(),
             disagreeing_providers: disagreeing,
@@ -1189,18 +1178,8 @@ impl CheckpointManager {
         bucket_id: BucketId,
         account: &AccountId32,
         commitment: &CommitmentResponse,
-        requested_nonce: u64,
         floor: Option<(u64, u64)>,
     ) -> Option<ValidatedCommitment> {
-        if commitment.nonce != requested_nonce {
-            tracing::warn!(
-                "Bucket {bucket_id}: provider {account} echoed nonce {} instead of the requested \
-                 {requested_nonce}; its signature cannot join this checkpoint",
-                commitment.nonce
-            );
-            return None;
-        }
-
         // A shrinking range would narrow what the provider can be challenged
         // over — never accept it, whatever the majority says. The range is
         // `[start_seq, start_seq + leaf_count)` (design: "Canonical range");
@@ -1259,24 +1238,17 @@ impl CheckpointManager {
     }
 
     /// Query a single provider for their commitment with health tracking.
-    ///
-    /// `nonce` is the caller-chosen replay-protection value the provider signs
-    /// over; the endpoint requires it and echoes it back.
     async fn query_provider_commitment(
         &self,
         provider: &ProviderInfo,
         bucket_id: BucketId,
-        nonce: u64,
     ) -> Result<CommitmentResponse, ClientError> {
         let mut retries = 0;
         let mut delay = self.config.retry_delay;
         let start = Instant::now();
 
         loop {
-            let url = format!(
-                "{}/commitment?bucket_id={}&nonce={}",
-                provider.endpoint, bucket_id, nonce
-            );
+            let url = format!("{}/commitment?bucket_id={}", provider.endpoint, bucket_id);
 
             let result = tokio::time::timeout(self.config.provider_timeout, async {
                 self.http_client.get(&url).send().await
@@ -1407,10 +1379,10 @@ impl CheckpointManager {
     /// Submit the commitment transaction on-chain via the `checkpoint`
     /// extrinsic.
     ///
-    /// Providers excluded from this batch cannot simply be appended later:
-    /// the pallet's `extend_checkpoint` verifies late signatures against the
-    /// stored snapshot's own nonce, so they must re-sign that payload first
-    /// (and this SDK does not expose the extrinsic yet).
+    /// Providers excluded from this batch can be appended later via the
+    /// pallet's `extend_checkpoint`, which verifies late signatures against the
+    /// payload reconstructed from the stored snapshot's commitment (this SDK
+    /// does not expose that extrinsic yet).
     async fn submit_commitment_onchain(
         &self,
         collection: &CommitmentCollection,
@@ -1425,7 +1397,6 @@ impl CheckpointManager {
                 start_seq: collection.start_seq,
                 leaf_count: collection.leaf_count,
             },
-            collection.nonce,
             collection.signatures.clone(),
         )?;
 
@@ -2762,7 +2733,6 @@ mod tests {
             mmr_root: H256::zero(),
             start_seq: 0,
             leaf_count: 10,
-            nonce: 42,
             signatures: vec![],
             agreeing_providers: vec![],
             disagreeing_providers: vec![],
@@ -2772,7 +2742,6 @@ mod tests {
         let cloned = collection.clone();
         assert_eq!(cloned.bucket_id, 1);
         assert_eq!(cloned.leaf_count, 10);
-        assert_eq!(cloned.nonce, 42);
     }
 
     fn test_mmr_root() -> String {
@@ -2786,12 +2755,10 @@ mod tests {
     #[test]
     fn validated_commitment_accepts_matching_response() {
         let account = AccountId32::new([1u8; 32]);
-        let response =
-            CommitmentResponse::new(1, test_mmr_root(), 5, 10, valid_signature_hex(), 42);
+        let response = CommitmentResponse::new(1, test_mmr_root(), 5, 10, valid_signature_hex());
 
-        let valid =
-            CheckpointManager::validated_commitment(1, &account, &response, 42, Some((5, 10)))
-                .expect("a well-formed response must be accepted");
+        let valid = CheckpointManager::validated_commitment(1, &account, &response, Some((5, 10)))
+            .expect("a well-formed response must be accepted");
         assert_eq!(valid.mmr_root, H256::from([7u8; 32]));
         assert_eq!((valid.start_seq, valid.leaf_count), (5, 10));
         assert_eq!(valid.signature, vec![9u8; SR25519_SIGNATURE_LEN]);
@@ -2802,30 +2769,10 @@ mod tests {
         let account = AccountId32::new([1u8; 32]);
         // One provider's garbage root must drop that provider only, never
         // abort the whole collection round.
-        let response = CommitmentResponse::new(
-            1,
-            "0xnot-a-root".to_string(),
-            5,
-            10,
-            valid_signature_hex(),
-            42,
-        );
-
-        assert!(
-            CheckpointManager::validated_commitment(1, &account, &response, 42, None).is_none()
-        );
-    }
-
-    #[test]
-    fn validated_commitment_rejects_nonce_mismatch() {
-        let account = AccountId32::new([1u8; 32]);
-        // A provider echoing its own nonce cannot join a batch signed over ours.
         let response =
-            CommitmentResponse::new(1, test_mmr_root(), 5, 10, valid_signature_hex(), 999);
+            CommitmentResponse::new(1, "0xnot-a-root".to_string(), 5, 10, valid_signature_hex());
 
-        assert!(
-            CheckpointManager::validated_commitment(1, &account, &response, 42, None).is_none()
-        );
+        assert!(CheckpointManager::validated_commitment(1, &account, &response, None).is_none());
     }
 
     #[test]
@@ -2834,21 +2781,19 @@ mod tests {
 
         // start_seq unchanged but the range *end* moved backwards (5+9=14 < 5+10=15):
         // data disappeared with no compensating delete. Must be refused.
-        let shrunk_end =
-            CommitmentResponse::new(1, test_mmr_root(), 5, 9, valid_signature_hex(), 42);
+        let shrunk_end = CommitmentResponse::new(1, test_mmr_root(), 5, 9, valid_signature_hex());
         assert!(
-            CheckpointManager::validated_commitment(1, &account, &shrunk_end, 42, Some((5, 10)))
+            CheckpointManager::validated_commitment(1, &account, &shrunk_end, Some((5, 10)))
                 .is_none(),
             "a range end behind the on-chain snapshot must be refused"
         );
 
         let rewound_start =
-            CommitmentResponse::new(1, test_mmr_root(), 4, 10, valid_signature_hex(), 42);
+            CommitmentResponse::new(1, test_mmr_root(), 4, 10, valid_signature_hex());
         assert!(CheckpointManager::validated_commitment(
             1,
             &account,
             &rewound_start,
-            42,
             Some((5, 10))
         )
         .is_none());
@@ -2861,11 +2806,10 @@ mod tests {
         // amount, so the range end (start_seq + leaf_count) is unchanged.
         // This must NOT be treated as a regression.
         let account = AccountId32::new([1u8; 32]);
-        let post_delete =
-            CommitmentResponse::new(1, test_mmr_root(), 8, 7, valid_signature_hex(), 42);
+        let post_delete = CommitmentResponse::new(1, test_mmr_root(), 8, 7, valid_signature_hex());
 
         assert!(
-            CheckpointManager::validated_commitment(1, &account, &post_delete, 42, Some((5, 10)))
+            CheckpointManager::validated_commitment(1, &account, &post_delete, Some((5, 10)))
                 .is_some(),
             "a post-delete range with an unchanged end must be accepted"
         );
@@ -2875,11 +2819,8 @@ mod tests {
     fn validated_commitment_rejects_unusable_signatures() {
         let account = AccountId32::new([1u8; 32]);
 
-        let undecodable =
-            CommitmentResponse::new(1, test_mmr_root(), 5, 10, "not-hex".to_string(), 42);
-        assert!(
-            CheckpointManager::validated_commitment(1, &account, &undecodable, 42, None).is_none()
-        );
+        let undecodable = CommitmentResponse::new(1, test_mmr_root(), 5, 10, "not-hex".to_string());
+        assert!(CheckpointManager::validated_commitment(1, &account, &undecodable, None).is_none());
 
         let wrong_length = CommitmentResponse::new(
             1,
@@ -2887,10 +2828,9 @@ mod tests {
             5,
             10,
             format!("0x{}", hex::encode([9u8; 63])),
-            42,
         );
         assert!(
-            CheckpointManager::validated_commitment(1, &account, &wrong_length, 42, None).is_none(),
+            CheckpointManager::validated_commitment(1, &account, &wrong_length, None).is_none(),
             "a short signature must not reach the extrinsic builder"
         );
     }
