@@ -174,22 +174,21 @@ pub const VERSION: RuntimeVersion = RuntimeVersion {
     spec_name: Cow::Borrowed("web3-storage-parachain"),
     impl_name: Cow::Borrowed("web3-storage-parachain"),
     authoring_version: 1,
-    // Plain counter, not the semver encoding the paseo runtime uses. Zombienet
-    // respawns this runtime from genesis, so no chain is ever upgraded across
-    // these values.
-    // * 1 on the initial parachain runtime;
-    // * 2 for the breaking Challenges storage reshape (Vec -> StorageDoubleMap) (#125);
-    // * 3 for dropping the vestigial `ChallengerStatRecord::total_earnings` field (#125).
-    spec_version: 3,
+    // Encodes the runtime semver: major * 1_000_000 + minor * 1_000 + patch.
+    // * 0.4.1 -> 4_001 on dev (#212), released as v0.4.1-paseo and still the deployed value;
+    // * 4_002 for the breaking Challenges storage reshape (Vec -> StorageDoubleMap) (#125);
+    // * 4_003 for dropping the vestigial `ChallengerStatRecord::total_earnings` field (#125).
+    spec_version: 4_003,
     impl_version: 0,
     apis: RUNTIME_API_VERSIONS,
     // Bumped whenever call encoding changes, so offline signers and stale-metadata
     // clients fail loudly rather than mis-encode a call.
-    // * 1 on the initial parachain runtime;
-    // * 2 for dropping the commitment nonce: `checkpoint` and `challenge_offchain` each lost
+    // * 1 on the initial paseo runtime (#58);
+    // * 2 in the v0.2.0-paseo release, still the deployed value;
+    // * 3 for dropping the commitment nonce: `checkpoint` and `challenge_offchain` each lost
     //   a `nonce` argument, and `respond_to_challenge`'s `ChallengeResponse::Deleted` variant
     //   lost its `nonce` field (#339).
-    transaction_version: 2,
+    transaction_version: 3,
     system_version: 1,
 };
 
