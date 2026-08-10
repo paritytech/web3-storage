@@ -9,11 +9,10 @@
 
 use crate::base::{BaseClient, ClientConfig, ClientError, ClientResult};
 use crate::convert;
-use crate::substrate::{decoded_key, SubstrateClient};
+use crate::substrate::SubstrateClient;
 use sp_core::crypto::Ss58Codec;
-use std::ops::ControlFlow;
 use storage_subxt::api;
-use storage_subxt::api::runtime_types::pallet_storage_provider::pallet as pallet_types;
+use storage_subxt::api::runtime_types::pallet_storage_provider::runtime_api as rt_api;
 
 /// Storage requirements for provider matching.
 #[derive(Debug, Clone)]
@@ -98,22 +97,33 @@ pub struct ProviderInfo {
     pub deregister_at: Option<u32>,
 }
 
-impl From<pallet_types::ProviderInfo> for ProviderInfo {
-    fn from(p: pallet_types::ProviderInfo) -> Self {
+impl From<rt_api::ProviderInfoResponse> for ProviderInfo {
+    fn from(p: rt_api::ProviderInfoResponse) -> Self {
         Self {
-            multiaddr: String::from_utf8_lossy(&convert::unbounded(p.multiaddr)).into_owned(),
+            multiaddr: String::from_utf8_lossy(&p.multiaddr).into_owned(),
             stake: p.stake,
             committed_bytes: p.committed_bytes,
-            max_capacity: p.settings.max_capacity,
-            min_duration: p.settings.min_duration,
-            max_duration: p.settings.max_duration,
-            price_per_byte: p.settings.price_per_byte,
-            accepting_primary: p.settings.accepting_primary,
-            replica_sync_price: p.settings.replica_sync_price,
-            accepting_extensions: p.settings.accepting_extensions,
-            agreements_total: p.stats.agreements_total,
-            challenges_failed: p.stats.challenges_failed,
+            max_capacity: p.max_capacity,
+            min_duration: p.min_duration,
+            max_duration: p.max_duration,
+            price_per_byte: p.price_per_byte,
+            accepting_primary: p.accepting_primary,
+            replica_sync_price: p.replica_sync_price,
+            accepting_extensions: p.accepting_extensions,
+            agreements_total: p.agreements_total,
+            challenges_failed: p.challenges_failed,
             deregister_at: p.deregister_at,
+        }
+    }
+}
+
+impl From<rt_api::PartialMatchReason> for PartialMatchReason {
+    fn from(r: rt_api::PartialMatchReason) -> Self {
+        match r {
+            rt_api::PartialMatchReason::PriceTooHigh => Self::PriceTooHigh,
+            rt_api::PartialMatchReason::InsufficientCapacity => Self::InsufficientCapacity,
+            rt_api::PartialMatchReason::DurationMismatch => Self::DurationMismatch,
+            rt_api::PartialMatchReason::NotAccepting => Self::NotAccepting,
         }
     }
 }
@@ -163,6 +173,19 @@ impl DiscoveryClient {
     /// Returns up to `limit` providers, sorted by match score (best first).
     /// Ties are broken by price ascending (cheaper wins).
     ///
+    /// Matching and scoring happen on-chain via
+    /// `StorageProviderApi::find_matching_providers`, so this is one call
+    /// rather than a scan of the whole provider directory.
+    ///
+    /// # Results are ranked, not filtered
+    ///
+    /// `max_price_per_byte` is a *scoring* input, not a hard filter: a
+    /// provider charging above it is still returned, with its score reduced
+    /// and [`PartialMatchReason::PriceTooHigh`] set. Callers that need a
+    /// budget guarantee must check `info.price_per_byte` themselves. The same
+    /// is true of capacity and duration. Providers that have announced
+    /// deregistration are excluded outright.
+    ///
     /// # Parameters
     /// - `requirements`: Storage requirements to match against
     /// - `limit`: Maximum number of providers to return
@@ -200,29 +223,44 @@ impl DiscoveryClient {
             requirements.max_price_per_byte
         );
 
-        let mut results: Vec<MatchedProvider> = Vec::new();
+        let chain = self.base.chain()?;
+        let at = chain.at_current_block().await?;
 
-        self.for_each_provider(|account_str, info| {
-            // Hard filter: enforce the caller's price ceiling. Other partial-match
-            // conditions (capacity, duration) still surface via score_provider.
-            if info.price_per_byte <= requirements.max_price_per_byte {
-                results.push(score_provider(account_str, info, &requirements));
-            }
-            // Scoring is global, so every provider has to be considered before
-            // the ranking can be truncated.
-            ControlFlow::Continue(())
-        })
-        .await?;
+        let matched = at
+            .runtime_apis()
+            .call(
+                api::runtime_apis()
+                    .storage_provider_api()
+                    .find_matching_providers(
+                        rt_api::StorageRequirements {
+                            bytes_needed: requirements.bytes_needed,
+                            min_duration: requirements.min_duration,
+                            max_price_per_byte: requirements.max_price_per_byte,
+                            primary_only: requirements.primary_only,
+                        },
+                        limit,
+                    ),
+            )
+            .await
+            .map_err(|e| {
+                ClientError::Chain(format!("find_matching_providers runtime API failed: {e}"))
+            })?;
 
-        // Sort: score descending, price ascending for ties (mirrors pallet logic)
-        results.sort_by(|a, b| {
-            b.match_score
-                .cmp(&a.match_score)
-                .then(a.info.price_per_byte.cmp(&b.info.price_per_byte))
-        });
-
-        results.truncate(limit as usize);
-        Ok(results)
+        // Already sorted by score descending, price ascending, and truncated
+        // to `limit` on-chain.
+        Ok(matched
+            .into_iter()
+            .filter_map(|m| {
+                let account = convert::account_from_runtime_api(&m.account, "provider")?;
+                Some(MatchedProvider {
+                    account: convert::to_sp_account(&account).to_ss58check(),
+                    info: ProviderInfo::from(m.info),
+                    match_score: m.match_score,
+                    available_capacity: m.available_capacity,
+                    partial_reason: m.partial_reason.map(PartialMatchReason::from),
+                })
+            })
+            .collect())
     }
 
     /// Find the best provider for the given requirements.
@@ -238,8 +276,8 @@ impl DiscoveryClient {
 
     /// Get providers with sufficient capacity for the given bytes (paginated).
     ///
-    /// Only returns providers that are accepting agreements and have enough
-    /// available capacity.
+    /// Only returns providers that are accepting agreements, have enough
+    /// available capacity, and hold stake sufficient to back the extra bytes.
     ///
     /// # Parameters
     /// - `bytes_needed`: Storage capacity needed
@@ -258,35 +296,30 @@ impl DiscoveryClient {
             limit
         );
 
-        // Only the requested page is retained, so iteration can stop as soon
-        // as it is filled.
-        let wanted = (offset as usize).saturating_add(limit as usize);
-        let mut matching: Vec<(String, ProviderInfo)> = Vec::new();
+        let chain = self.base.chain()?;
+        let at = chain.at_current_block().await?;
 
-        self.for_each_provider(|account_str, info| {
-            // Must be accepting some kind of agreement
-            if !info.accepting_primary && info.replica_sync_price.is_none() {
-                return ControlFlow::Continue(());
-            }
+        let page = at
+            .runtime_apis()
+            .call(
+                api::runtime_apis()
+                    .storage_provider_api()
+                    .providers_with_capacity(bytes_needed, offset, limit),
+            )
+            .await
+            .map_err(|e| {
+                ClientError::Chain(format!("providers_with_capacity runtime API failed: {e}"))
+            })?;
 
-            // Must have sufficient available capacity (0 = unlimited)
-            if info.max_capacity > 0 {
-                let available = info.max_capacity.saturating_sub(info.committed_bytes);
-                if available < bytes_needed {
-                    return ControlFlow::Continue(());
-                }
-            }
-
-            matching.push((account_str, info));
-            if matching.len() >= wanted {
-                ControlFlow::Break(())
-            } else {
-                ControlFlow::Continue(())
-            }
-        })
-        .await?;
-
-        Ok(matching.into_iter().skip(offset as usize).collect())
+        Ok(page
+            .into_iter()
+            .map(|(account, info)| {
+                (
+                    convert::to_sp_account(&account).to_ss58check(),
+                    ProviderInfo::from(info),
+                )
+            })
+            .collect())
     }
 
     /// Get recommendations for provider selection based on requirements and budget.
@@ -375,31 +408,23 @@ impl DiscoveryClient {
         let account_id = SubstrateClient::parse_account(account)?;
 
         let at = chain.at_current_block().await?;
-        let value = at
-            .storage()
-            .try_fetch(
-                api::storage().storage_provider().providers(),
-                (convert::to_subxt_account(&account_id),),
+        let info = at
+            .runtime_apis()
+            .call(
+                api::runtime_apis()
+                    .storage_provider_api()
+                    .provider_info(convert::to_subxt_account(&account_id)),
             )
             .await
-            .map_err(|e| ClientError::Chain(format!("Failed to fetch provider: {e}")))?;
+            .map_err(|e| ClientError::Chain(format!("provider_info runtime API failed: {e}")))?;
 
-        let Some(value) = value else {
-            return Ok(None);
-        };
-
-        let info = value
-            .decode()
-            .map_err(|e| ClientError::Chain(format!("Failed to decode provider: {e}")))?;
-
-        Ok(Some(ProviderInfo::from(info)))
+        Ok(info.map(ProviderInfo::from))
     }
 
     /// Check if a provider can accept additional bytes.
     ///
-    /// Returns true if the provider is accepting agreements and has sufficient
-    /// available capacity. Does not verify stake sufficiency (requires a runtime
-    /// constant not available via storage queries).
+    /// Returns true if the provider is accepting agreements, has sufficient
+    /// available capacity, and holds stake covering the extra bytes.
     pub async fn can_provider_accept(
         &self,
         account: &str,
@@ -416,79 +441,14 @@ impl DiscoveryClient {
         let account_id = SubstrateClient::parse_account(account)?;
 
         let at = chain.at_current_block().await?;
-        let value = at
-            .storage()
-            .try_fetch(
-                api::storage().storage_provider().providers(),
-                (convert::to_subxt_account(&account_id),),
+        at.runtime_apis()
+            .call(
+                api::runtime_apis()
+                    .storage_provider_api()
+                    .can_accept_bytes(convert::to_subxt_account(&account_id), additional_bytes),
             )
             .await
-            .map_err(|e| ClientError::Chain(format!("Failed to fetch provider: {e}")))?;
-
-        let Some(value) = value else {
-            return Ok(false);
-        };
-
-        let info: ProviderInfo = value
-            .decode()
-            .map_err(|e| ClientError::Chain(format!("Failed to decode provider: {e}")))?
-            .into();
-
-        if !info.accepting_primary && info.replica_sync_price.is_none() {
-            return Ok(false);
-        }
-
-        if info.max_capacity > 0 {
-            let available = info.max_capacity.saturating_sub(info.committed_bytes);
-            return Ok(available >= additional_bytes);
-        }
-
-        Ok(true) // Unlimited capacity
-    }
-
-    /// Stream the `Providers` map, handing each `(ss58_account, info)` to
-    /// `visit` as it arrives.
-    ///
-    /// Callers filter inside the closure so only what they keep is held in
-    /// memory, and returning [`ControlFlow::Break`] stops iteration — which
-    /// also stops fetching further storage pages.
-    ///
-    /// Entries that fail to decode are skipped with a warning.
-    async fn for_each_provider<F>(&self, mut visit: F) -> ClientResult<()>
-    where
-        F: FnMut(String, ProviderInfo) -> ControlFlow<()>,
-    {
-        let chain = self.base.chain()?;
-
-        let at = chain.at_current_block().await?;
-
-        let mut iter = at
-            .storage()
-            .iter(api::storage().storage_provider().providers(), ())
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to iterate providers: {e}")))?;
-
-        while let Some(result) = iter.next().await {
-            let kv =
-                result.map_err(|e| ClientError::Chain(format!("Storage iteration error: {e}")))?;
-
-            let (account,) = match decoded_key(&kv, "provider") {
-                Some(k) => k,
-                None => continue,
-            };
-            let account_str = convert::to_sp_account(&account).to_ss58check();
-
-            match kv.value().decode() {
-                Ok(info) => {
-                    if visit(account_str, ProviderInfo::from(info)).is_break() {
-                        break;
-                    }
-                }
-                Err(e) => tracing::warn!("Failed to decode provider {account_str}: {e}"),
-            }
-        }
-
-        Ok(())
+            .map_err(|e| ClientError::Chain(format!("can_accept_bytes runtime API failed: {e}")))
     }
 
     /// List all registered providers (paginated).
@@ -499,85 +459,27 @@ impl DiscoveryClient {
     ) -> ClientResult<Vec<(String, ProviderInfo)>> {
         tracing::info!("Listing providers (offset={}, limit={})", offset, limit);
 
-        // Stop as soon as the requested page is covered.
-        let wanted = (offset as usize).saturating_add(limit as usize);
-        let mut page: Vec<(String, ProviderInfo)> = Vec::new();
+        let chain = self.base.chain()?;
+        let at = chain.at_current_block().await?;
 
-        self.for_each_provider(|account_str, info| {
-            page.push((account_str, info));
-            if page.len() >= wanted {
-                ControlFlow::Break(())
-            } else {
-                ControlFlow::Continue(())
-            }
-        })
-        .await?;
+        let page = at
+            .runtime_apis()
+            .call(
+                api::runtime_apis()
+                    .storage_provider_api()
+                    .providers(offset, limit),
+            )
+            .await
+            .map_err(|e| ClientError::Chain(format!("providers runtime API failed: {e}")))?;
 
-        Ok(page.into_iter().skip(offset as usize).collect())
-    }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Private helpers
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Score a provider against requirements, mirroring the pallet's `query_find_matching_providers`.
-fn score_provider(
-    account: String,
-    info: ProviderInfo,
-    req: &StorageRequirements,
-) -> MatchedProvider {
-    let available_capacity = if info.max_capacity > 0 {
-        Some(info.max_capacity.saturating_sub(info.committed_bytes))
-    } else {
-        None
-    };
-
-    let available = available_capacity.unwrap_or(u64::MAX);
-
-    let mut score: u8 = 100;
-    let mut partial_reason: Option<PartialMatchReason> = None;
-
-    // Not accepting
-    let not_accepting = if req.primary_only {
-        !info.accepting_primary
-    } else {
-        !info.accepting_primary && info.replica_sync_price.is_none()
-    };
-    if not_accepting {
-        score = 0;
-        partial_reason = Some(PartialMatchReason::NotAccepting);
-    }
-
-    // Insufficient capacity
-    if score > 0 && available < req.bytes_needed {
-        score = score.saturating_sub(50);
-        if partial_reason.is_none() {
-            partial_reason = Some(PartialMatchReason::InsufficientCapacity);
-        }
-    }
-
-    // Price too high
-    if score > 0 && info.price_per_byte > req.max_price_per_byte {
-        score = score.saturating_sub(30);
-        if partial_reason.is_none() {
-            partial_reason = Some(PartialMatchReason::PriceTooHigh);
-        }
-    }
-
-    // Duration mismatch
-    if score > 0 && (req.min_duration < info.min_duration || req.min_duration > info.max_duration) {
-        score = score.saturating_sub(20);
-        if partial_reason.is_none() {
-            partial_reason = Some(PartialMatchReason::DurationMismatch);
-        }
-    }
-
-    MatchedProvider {
-        account,
-        info,
-        match_score: score,
-        available_capacity,
-        partial_reason,
+        Ok(page
+            .into_iter()
+            .map(|(account, info)| {
+                (
+                    convert::to_sp_account(&account).to_ss58check(),
+                    ProviderInfo::from(info),
+                )
+            })
+            .collect())
     }
 }

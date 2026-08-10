@@ -12,7 +12,7 @@
 use crate::agreement::SignedTerms;
 use crate::base::{BaseClient, ClientConfig, ClientError, ClientResult};
 use crate::convert;
-use crate::substrate::{decoded_key, extrinsics, SubstrateClient};
+use crate::substrate::{extrinsics, SubstrateClient};
 use crate::Signer;
 use sp_core::H256;
 use sp_runtime::AccountId32;
@@ -551,45 +551,31 @@ impl AdminClient {
 
         let at = chain.at_current_block().await?;
 
-        let mut iter = at
-            .storage()
-            .iter(
-                api::storage().storage_provider().storage_agreements(),
-                (bucket_id,),
+        let agreements = at
+            .runtime_apis()
+            .call(
+                api::runtime_apis()
+                    .storage_provider_api()
+                    .bucket_agreements(bucket_id),
             )
             .await
-            .map_err(|e| ClientError::Chain(format!("Failed to iterate agreements: {e}")))?;
+            .map_err(|e| {
+                ClientError::Chain(format!("bucket_agreements runtime API failed: {e}"))
+            })?;
 
-        let mut agreements = Vec::new();
-
-        while let Some(result) = iter.next().await {
-            let kv =
-                result.map_err(|e| ClientError::Chain(format!("Storage iteration error: {e}")))?;
-
-            let (_, provider): (BucketId, subxt::utils::AccountId32) =
-                match decoded_key(&kv, "agreement") {
-                    Some(k) => k,
-                    None => continue,
-                };
-
-            let agreement = match kv.value().decode() {
-                Ok(v) => v,
-                Err(e) => {
-                    tracing::warn!("Failed to decode agreement: {e}");
-                    continue;
-                }
-            };
-
-            agreements.push(AgreementInfo {
-                provider: convert::account_hex(&provider),
-                max_bytes: agreement.max_bytes,
-                payment_locked: agreement.payment_locked,
-                expires_at: agreement.expires_at,
-                is_primary: matches!(agreement.role, ProviderRole::Primary),
-            });
-        }
-
-        Ok(agreements)
+        Ok(agreements
+            .into_iter()
+            .filter_map(|a| {
+                let provider = convert::account_from_runtime_api(&a.provider, "provider")?;
+                Some(AgreementInfo {
+                    provider: convert::account_hex(&provider),
+                    max_bytes: a.max_bytes,
+                    payment_locked: a.payment_locked,
+                    expires_at: a.expires_at,
+                    is_primary: matches!(a.role, ProviderRole::Primary),
+                })
+            })
+            .collect())
     }
 
     /// Get the buckets this admin account is a member of.

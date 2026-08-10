@@ -30,6 +30,26 @@ pub fn account_hex(a: &subxt::utils::AccountId32) -> String {
     format!("0x{}", hex::encode(a.0))
 }
 
+/// Decode an account carried by a runtime-API response, where accounts arrive
+/// as SCALE-encoded `Vec<u8>` rather than a typed `AccountId32`.
+///
+/// `AccountId32::encode()` is the bare 32 bytes, so this is a length check.
+/// Returns `None` and warns on anything else — callers skip that row rather
+/// than failing the whole listing, matching how `substrate::decoded_key`
+/// treats an undecodable storage key.
+pub fn account_from_runtime_api(bytes: &[u8], field: &str) -> Option<subxt::utils::AccountId32> {
+    match <[u8; 32]>::try_from(bytes) {
+        Ok(a) => Some(subxt::utils::AccountId32(a)),
+        Err(_) => {
+            tracing::warn!(
+                "Skipping runtime API row: {field} account must be 32 bytes, got {}",
+                bytes.len()
+            );
+            None
+        }
+    }
+}
+
 /// Wrap a `Vec` in the generated `BoundedVec` newtype (bounds are enforced
 /// on-chain at decode time, not by this wrapper).
 pub fn bounded<T>(v: Vec<T>) -> BoundedVec<T> {
@@ -211,6 +231,17 @@ mod tests {
         let sx = to_subxt_account(&sp);
         assert_eq!(sx.0, [42u8; 32]);
         assert_eq!(to_sp_account(&sx), sp);
+    }
+
+    #[test]
+    fn account_from_runtime_api_checks_length() {
+        assert_eq!(
+            account_from_runtime_api(&[9u8; 32], "provider"),
+            Some(subxt::utils::AccountId32([9u8; 32]))
+        );
+        assert_eq!(account_from_runtime_api(&[9u8; 31], "provider"), None);
+        assert_eq!(account_from_runtime_api(&[9u8; 33], "provider"), None);
+        assert_eq!(account_from_runtime_api(&[], "provider"), None);
     }
 
     #[test]

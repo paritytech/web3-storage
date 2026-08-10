@@ -38,6 +38,12 @@ pub struct ProviderInfoResponse {
     pub max_capacity: u64,
     /// Available capacity in bytes (None if unlimited).
     pub available_capacity: Option<u64>,
+    /// Anchor block at which deregistration becomes finalisable
+    /// (`None` = not deregistering).
+    pub deregister_at: Option<u32>,
+    /// Reputation 0-100, from [`reputation_score`]. Carried here so clients
+    /// never re-implement the formula.
+    pub reputation: u8,
 }
 
 /// Storage requirements for provider matching.
@@ -121,6 +127,37 @@ pub struct AgreementResponse {
     pub started_at: u32,
 }
 
+/// Upper bound on the number of candidates `challenge_candidates` returns, so
+/// a caller-supplied `limit` cannot ask for an unbounded response.
+pub const MAX_CHALLENGE_CANDIDATES: u32 = 256;
+
+/// A provider worth challenging: it holds at least one storage agreement and
+/// its reputation is below the caller's threshold.
+#[derive(Clone, PartialEq, Eq, Encode, Decode, TypeInfo, Debug)]
+#[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
+pub struct ChallengeCandidate {
+    /// One of the buckets this provider stores for — the challenge target.
+    pub bucket_id: BucketId,
+    pub provider: Vec<u8>, // Encoded AccountId
+    pub stake: u128,
+    pub challenges_received: u32,
+    pub challenges_failed: u32,
+    /// Reputation 0–100, from [`reputation_score`].
+    pub reputation: u8,
+}
+
+/// A provider's 0–100 reputation from its on-chain challenge record.
+///
+/// Providers with no recorded challenges score 100 — benefit of the doubt, so
+/// a newly registered provider is not immediately challenge-worthy.
+pub fn reputation_score(challenges_received: u32, challenges_failed: u32) -> u8 {
+    if challenges_received == 0 {
+        return 100;
+    }
+    let defended = challenges_received.saturating_sub(challenges_failed);
+    ((defended as u64 * 100) / challenges_received as u64).min(100) as u8
+}
+
 /// Challenge information.
 #[derive(Clone, PartialEq, Eq, Encode, Decode, TypeInfo, Debug)]
 #[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
@@ -192,6 +229,14 @@ sp_api::decl_runtime_apis! {
 
         /// Get providers with sufficient capacity for the given bytes (paginated).
         fn providers_with_capacity(bytes_needed: u64, offset: u32, limit: u32) -> Vec<(AccountId, ProviderInfoResponse)>;
+
+        /// Providers holding at least one storage agreement whose reputation is
+        /// below `max_reputation`, worst first. Each provider appears once,
+        /// paired with one of its buckets.
+        ///
+        /// `limit` is clamped to [`MAX_CHALLENGE_CANDIDATES`]; it bounds the
+        /// response, not the underlying scan.
+        fn challenge_candidates(max_reputation: u8, limit: u32) -> Vec<ChallengeCandidate>;
 
         /// The anchor block every on-chain duration (timeouts, expiries,
         /// `valid_until`, nonce age) is measured against. Off-chain actors read

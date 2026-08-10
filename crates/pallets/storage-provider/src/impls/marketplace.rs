@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::*;
+use alloc::collections::BTreeSet;
 use alloc::vec::Vec;
 use frame_support::pallet_prelude::*;
 use sp_runtime::traits::{CheckedMul, SaturatedConversion};
@@ -106,6 +107,11 @@ impl<T: Config> Pallet<T> {
                 challenges_failed: info.stats.challenges_failed,
                 max_capacity,
                 available_capacity,
+                deregister_at: info.deregister_at.map(|b| b.saturated_into::<u32>()),
+                reputation: crate::runtime_api::reputation_score(
+                    info.stats.challenges_received,
+                    info.stats.challenges_failed,
+                ),
             };
 
             results.push(MatchedProvider {
@@ -195,9 +201,61 @@ impl<T: Config> Pallet<T> {
                         challenges_failed: info.stats.challenges_failed,
                         max_capacity,
                         available_capacity,
+                        deregister_at: info.deregister_at.map(|b| b.saturated_into::<u32>()),
+                        reputation: crate::runtime_api::reputation_score(
+                            info.stats.challenges_received,
+                            info.stats.challenges_failed,
+                        ),
                     },
                 )
             })
             .collect()
+    }
+
+    /// Providers holding at least one storage agreement whose reputation is
+    /// below `max_reputation`, worst first.
+    ///
+    /// Deduplicated by provider: a provider storing for many buckets is one
+    /// candidate, paired with whichever of its buckets is seen first, so a
+    /// caller challenges it at most once per round.
+    pub fn query_challenge_candidates(
+        max_reputation: u8,
+        limit: u32,
+    ) -> Vec<crate::runtime_api::ChallengeCandidate> {
+        use crate::runtime_api::{reputation_score, ChallengeCandidate};
+
+        let mut seen = BTreeSet::new();
+        let mut candidates: Vec<ChallengeCandidate> = Vec::new();
+
+        for (bucket_id, provider, _) in StorageAgreements::<T>::iter() {
+            if !seen.insert(provider.clone()) {
+                continue;
+            }
+
+            // A provider with an agreement but no registration cannot be
+            // scored, and is not slashable either — skip it.
+            let Some(info) = Providers::<T>::get(&provider) else {
+                continue;
+            };
+
+            let reputation =
+                reputation_score(info.stats.challenges_received, info.stats.challenges_failed);
+            if reputation >= max_reputation {
+                continue;
+            }
+
+            candidates.push(ChallengeCandidate {
+                bucket_id,
+                provider: provider.encode(),
+                stake: info.stake.saturated_into::<u128>(),
+                challenges_received: info.stats.challenges_received,
+                challenges_failed: info.stats.challenges_failed,
+                reputation,
+            });
+        }
+
+        candidates.sort_by_key(|c| c.reputation);
+        candidates.truncate(limit.min(crate::runtime_api::MAX_CHALLENGE_CANDIDATES) as usize);
+        candidates
     }
 }

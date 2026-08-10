@@ -12,7 +12,7 @@
 use crate::base::{BaseClient, ClientConfig, ClientError, ClientResult};
 use crate::convert;
 use crate::discovery::ProviderInfo;
-use crate::substrate::{decoded_key, extrinsics, SubstrateClient};
+use crate::substrate::{extrinsics, SubstrateClient};
 use crate::Signer;
 use sp_core::H256;
 use sp_runtime::AccountId32;
@@ -129,24 +129,17 @@ impl ProviderClient {
         let chain = self.base.chain()?;
 
         let at = chain.at_current_block().await?;
-        let value = at
-            .storage()
-            .try_fetch(
-                api::storage().storage_provider().providers(),
-                (convert::to_subxt_account(account),),
+        let info = at
+            .runtime_apis()
+            .call(
+                api::runtime_apis()
+                    .storage_provider_api()
+                    .provider_info(convert::to_subxt_account(account)),
             )
             .await
-            .map_err(|e| ClientError::Chain(format!("Failed to fetch provider: {e}")))?;
+            .map_err(|e| ClientError::Chain(format!("provider_info runtime API failed: {e}")))?;
 
-        let Some(value) = value else {
-            return Ok(None);
-        };
-
-        let info = value
-            .decode()
-            .map_err(|e| ClientError::Chain(format!("Failed to decode provider: {e}")))?;
-
-        Ok(Some(ProviderInfo::from(info)))
+        Ok(info.map(ProviderInfo::from))
     }
 
     /// Update provider settings.
@@ -366,45 +359,31 @@ impl ProviderClient {
 
         let at = chain.at_current_block().await?;
 
-        let mut iter = at
-            .storage()
-            .iter(api::storage().storage_provider().storage_agreements(), ())
+        let agreements = at
+            .runtime_apis()
+            .call(
+                api::runtime_apis()
+                    .storage_provider_api()
+                    .provider_agreements(provider),
+            )
             .await
-            .map_err(|e| ClientError::Chain(format!("Failed to iterate agreements: {e}")))?;
+            .map_err(|e| {
+                ClientError::Chain(format!("provider_agreements runtime API failed: {e}"))
+            })?;
 
-        let mut agreements = Vec::new();
-
-        while let Some(result) = iter.next().await {
-            let kv =
-                result.map_err(|e| ClientError::Chain(format!("Storage iteration error: {e}")))?;
-
-            let (bucket_id, agreement_provider): (BucketId, subxt::utils::AccountId32) =
-                match decoded_key(&kv, "agreement") {
-                    Some(k) => k,
-                    None => continue,
-                };
-            if agreement_provider != provider {
-                continue;
-            }
-
-            let agreement = match kv.value().decode() {
-                Ok(v) => v,
-                Err(e) => {
-                    tracing::warn!("Failed to decode agreement: {e}");
-                    continue;
-                }
-            };
-
-            agreements.push(ActiveAgreement {
-                bucket_id,
-                owner: convert::account_hex(&agreement.owner),
-                max_bytes: agreement.max_bytes,
-                expires_at: agreement.expires_at,
-                is_primary: matches!(agreement.role, ProviderRole::Primary),
-            });
-        }
-
-        Ok(agreements)
+        Ok(agreements
+            .into_iter()
+            .filter_map(|a| {
+                let owner = convert::account_from_runtime_api(&a.owner, "owner")?;
+                Some(ActiveAgreement {
+                    bucket_id: a.bucket_id,
+                    owner: convert::account_hex(&owner),
+                    max_bytes: a.max_bytes,
+                    expires_at: a.expires_at,
+                    is_primary: matches!(a.role, ProviderRole::Primary),
+                })
+            })
+            .collect())
     }
 
     /// Confirm replica sync to receive payment.
@@ -505,48 +484,30 @@ impl ProviderClient {
 
         let at = chain.at_current_block().await?;
 
-        let mut iter = at
-            .storage()
-            .iter(api::storage().storage_provider().challenges(), ())
+        let challenges = at
+            .runtime_apis()
+            .call(
+                api::runtime_apis()
+                    .storage_provider_api()
+                    .provider_challenges(provider),
+            )
             .await
-            .map_err(|e| ClientError::Chain(format!("Failed to iterate challenges: {e}")))?;
+            .map_err(|e| {
+                ClientError::Chain(format!("provider_challenges runtime API failed: {e}"))
+            })?;
 
-        let mut challenges = Vec::new();
-
-        while let Some(result) = iter.next().await {
-            let kv =
-                result.map_err(|e| ClientError::Chain(format!("Storage iteration error: {e}")))?;
-
-            // Challenges is a double map (deadline, index) -> Challenge; the
-            // stable index comes from the storage key, never from iteration
-            // order.
-            let (deadline, index): (u32, u16) = match decoded_key(&kv, "challenge") {
-                Some(k) => k,
-                None => continue,
-            };
-
-            let challenge = match kv.value().decode() {
-                Ok(v) => v,
-                Err(e) => {
-                    tracing::warn!("Failed to decode challenge at block {deadline}: {e}");
-                    continue;
-                }
-            };
-
-            if challenge.provider != provider {
-                continue;
-            }
-
-            challenges.push(ChallengeInfo {
-                challenge_id: (deadline, index),
-                bucket_id: challenge.bucket_id,
-                deadline,
-                leaf_index: challenge.target.leaf_index,
-                chunk_index: challenge.target.chunk_index,
-            });
-        }
-
-        Ok(challenges)
+        Ok(challenges
+            .into_iter()
+            .map(|c| ChallengeInfo {
+                // The stable index is carried by the response, never derived
+                // from result position.
+                challenge_id: (c.deadline, c.index),
+                bucket_id: c.bucket_id,
+                deadline: c.deadline,
+                leaf_index: c.leaf_index,
+                chunk_index: c.chunk_index,
+            })
+            .collect())
     }
 
     // ═════════════════════════════════════════════════════════════════════════

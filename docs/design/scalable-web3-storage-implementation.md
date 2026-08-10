@@ -888,18 +888,29 @@ sp_api::decl_runtime_apis! {
         fn bucket_challenges(bucket_id: BucketId) -> Vec<ChallengeResponse>;
         fn provider_challenges(provider: AccountId) -> Vec<ChallengeResponse>;
         fn challenger_challenges(challenger: AccountId) -> Vec<ChallengeResponse>;
+        fn challenge_candidates(max_reputation: u8, limit: u32) -> Vec<ChallengeCandidate>;
     }
 }
 ```
 
 Response types live in `crates/pallets/storage-provider/src/runtime_api.rs` (`ProviderInfoResponse`,
 `StorageRequirements`, `MatchedProvider`, `BucketResponse`,
-`AgreementResponse`, `ChallengeResponse`, etc.). They flatten the on-chain
+`AgreementResponse`, `ChallengeResponse`, `ChallengeCandidate`, etc.). They flatten the on-chain
 structs into encode/decode-friendly shapes (e.g. `AccountId` as `Vec<u8>`,
 `Balance` as `u128`) so client-side SDKs don't need to depend on the runtime's
 generics. `MatchedProvider` also carries a `match_score` (0–100) and an
 optional `PartialMatchReason` (price, capacity, duration, not-accepting) for
 the marketplace UI to surface why a provider didn't qualify.
+`ProviderInfoResponse` carries `deregister_at` so clients can tell a
+winding-down provider from an active one without a second storage read.
+
+`challenge_candidates` is the challenger-side counterpart of
+`find_matching_providers`: both fold a whole-map scan plus a scoring pass into
+one call so the SDK never pages a storage map to rank providers. Reputation is
+defined once, on-chain, by `runtime_api::reputation_score` — a provider with no
+recorded challenges scores 100, otherwise the score is the share of challenges
+it defended. `limit` is clamped to `MAX_CHALLENGE_CANDIDATES`; it bounds the
+response, not the scan.
 
 ### Extrinsics
 

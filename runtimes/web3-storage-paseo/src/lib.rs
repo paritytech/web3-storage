@@ -853,6 +853,13 @@ pallet_revive::impl_runtime_apis_plus_revive_traits!(
             StorageProvider::query_providers_with_capacity(bytes_needed, offset, limit)
         }
 
+        fn challenge_candidates(
+            max_reputation: u8,
+            limit: u32,
+        ) -> Vec<pallet_storage_provider::runtime_api::ChallengeCandidate> {
+            StorageProvider::query_challenge_candidates(max_reputation, limit)
+        }
+
         fn current_anchor_block() -> pallet_storage_provider::BlockNumberFor<Runtime> {
             StorageProvider::current_anchor_block()
         }
