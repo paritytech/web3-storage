@@ -180,8 +180,11 @@ pub const VERSION: RuntimeVersion = RuntimeVersion {
     // Encodes the runtime semver: major * 1_000_000 + minor * 1_000 + patch.
     // * 0.4.1 -> 4_001 on dev (#212), released as v0.4.1-paseo and still the deployed value;
     // * 4_002 for the breaking Challenges storage reshape (Vec -> StorageDoubleMap) (#125);
-    // * 4_003 for dropping the vestigial `ChallengerStatRecord::total_earnings` field (#125).
-    spec_version: 4_003,
+    // * 4_003 for dropping the vestigial `ChallengerStatRecord::total_earnings` field (#125);
+    // * 4_004 for the `StorageProviderApi` additions: a new `challenge_candidates` method, and
+    //   `deregister_at` + `reputation` on `ProviderInfoResponse`. Read-only API surface only -
+    //   no storage layout or call encoding changed.
+    spec_version: 4_004,
     impl_version: 0,
     apis: RUNTIME_API_VERSIONS,
     // Bumped whenever call encoding changes, so offline signers and stale-metadata

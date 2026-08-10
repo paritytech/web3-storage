@@ -179,8 +179,9 @@ pub const VERSION: RuntimeVersion = RuntimeVersion {
     // these values.
     // * 1 on the initial parachain runtime;
     // * 2 for the breaking Challenges storage reshape (Vec -> StorageDoubleMap) (#125);
-    // * 3 for dropping the vestigial `ChallengerStatRecord::total_earnings` field (#125).
-    spec_version: 3,
+    // * 3 for dropping the vestigial `ChallengerStatRecord::total_earnings` field (#125);
+    // * 4 for the `StorageProviderApi` additions, kept in lockstep with paseo's 4_004.
+    spec_version: 4,
     impl_version: 0,
     apis: RUNTIME_API_VERSIONS,
     // Bumped whenever call encoding changes, so offline signers and stale-metadata
