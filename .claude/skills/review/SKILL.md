@@ -64,7 +64,8 @@ When reviewing, analyze for:
      rationale
 
 9. **Reference Docs Consistency** (see the `reference-docs` skill for the full procedure)
-   - `docs/reference/` is canonical and must stay true to the code
+   - `docs/reference/` is derived documentation, but it is review-gated and must
+     stay true to the code
    - If a change alters a documented flow or makes any statement in `docs/reference/`
      (`EXTRINSICS_REFERENCE.md`, `PAYMENT_CALCULATOR.md`, …) no longer true, the doc
      must be updated in the same change
