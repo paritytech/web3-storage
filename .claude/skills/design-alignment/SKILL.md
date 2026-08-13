@@ -11,8 +11,8 @@ Neither side may drift from the other — the design is never changed implicitly
 
 ## What to do
 
-Given a set of changes (local diff against `main` by default, or a PR number via
-`gh pr view` / `gh pr diff`):
+Given a set of changes (local diff against the branch's base — `dev` unless stated
+otherwise — or a PR number via `gh pr view` / `gh pr diff`):
 
 1. Identify which design areas the changes touch. Map changed files to the relevant
    design docs, e.g.:

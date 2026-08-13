@@ -19,8 +19,8 @@ Current reference docs (check the directory — more may have been added):
 
 ## What to do
 
-Given a set of changes (local diff against `main` by default, or a PR number via
-`gh pr view` / `gh pr diff`):
+Given a set of changes (local diff against the branch's base — `dev` unless stated
+otherwise — or a PR number via `gh pr view` / `gh pr diff`):
 
 1. Detect reference-impacting changes. In particular:
    - Added / removed / renamed extrinsics, or changed signatures, parameters,
