@@ -31,7 +31,7 @@
 - **Validate code against the design.** When writing or changing code, check it against `docs/design/`. On any divergence, **stop and flag** — don't proceed on assumptions.
 - **Prefer flagging over quietly editing the design to match the code.** If implementation and design disagree, treat it as a *finding*: open or reference an issue and discuss before changing the spec, rather than silently reconciling the gap.
 - If something in the design looks **wrong or vulnerable**, **flag and discuss** (open an issue and ping the design owner) — don't just fix it. Changes to the design itself go through a PR reviewed per `.github/CODEOWNERS`.
-- **`docs/reference/`** is *derived* documentation and **not** gated. When you change behavior, **update the relevant `reference/` doc** so it keeps reflecting the implementation.
+- **`docs/reference/`** is *derived* documentation, but it is **review-gated** (per `.github/CODEOWNERS`) and must stay true to the code. When you change behavior, **update the relevant `reference/` doc in the same change** so it keeps reflecting the implementation.
 - **`docs/drafts/`** is unratified / WIP — don't treat it as authoritative or reason from it as if it were the spec.
 
 ## Project Overview
