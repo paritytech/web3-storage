@@ -26,7 +26,7 @@ env:
 # Storage-backend coverage, split so both are exercised and no suite runs twice.
 # Every provider is launched through .github/actions/start-provider.
 #
-#   e2e-integration-tests  → no --storage-mode: asserts the binary default (rocksdb)
+#   e2e-integration-tests  → no --storage-backend: asserts the binary default (rocksdb)
 #   integration-tests      → rocksdb
 #   sc-integration-tests   → inmemory
 #   ui-integration-tests   → inmemory
@@ -220,7 +220,7 @@ jobs:
       - name: Start provider (rocksdb)
         uses: ./.github/actions/start-provider
         with:
-          mode: rocksdb
+          backend: rocksdb
           label: rocksdb
 
       - name: Run L0 demo
@@ -252,7 +252,7 @@ jobs:
 
   # ── E2E test suite ──────────────────────────────────────────────────────────
   # All PAPI E2E workflows against a single provider started with no
-  # --storage-mode, i.e. on the binary's default backend (web3-storage-paseo
+  # --storage-backend, i.e. on the binary's default backend (web3-storage-paseo
   # only). Consumes the shared build artifact (provider binary + wasm) instead of
   # rebuilding — the chain-spec script's cargo build is a cache no-op. JS coverage
   # (c8) is collected here; Rust coverage (pallet + provider) is handled by the
@@ -344,7 +344,7 @@ jobs:
       - name: Wait for parachain blocks
         uses: ./.github/actions/wait-for-parachain
 
-      # No --storage-mode on purpose: the deepest suite runs whatever the binary
+      # No --storage-backend on purpose: the deepest suite runs whatever the binary
       # defaults to, so a change to that default is caught here.
       - name: Start provider (binary default backend)
         uses: ./.github/actions/start-provider
@@ -578,7 +578,7 @@ jobs:
       - name: Start provider (inmemory)
         uses: ./.github/actions/start-provider
         with:
-          mode: inmemory
+          backend: inmemory
           label: inmemory
 
       - name: Run smart-contract end-to-end demo
@@ -707,7 +707,7 @@ jobs:
       - name: Start provider (Alice, inmemory)
         uses: ./.github/actions/start-provider
         with:
-          mode: inmemory
+          backend: inmemory
           label: inmemory
 
       - name: drive-ui e2e

@@ -8,9 +8,9 @@ inputs:
     description: SURI written to the keyfile the provider signs with.
     required: false
     default: "//Alice"
-  mode:
+  backend:
     description: >-
-      Storage backend: "rocksdb", "inmemory", or "" to pass no --storage-mode and
+      Storage backend: "rocksdb", "inmemory", or "" to pass no --storage-backend and
       exercise the binary's own default.
     required: false
     default: ""
@@ -41,7 +41,7 @@ runs:
     - shell: bash
       env:
         SEED: ${{ inputs.seed }}
-        MODE: ${{ inputs.mode }}
+        BACKEND: ${{ inputs.backend }}
         PORT: ${{ inputs.port }}
         STORAGE_PATH: ${{ inputs.storage-path }}
         CHAIN_RPC: ${{ inputs.chain-rpc }}
@@ -53,12 +53,12 @@ runs:
         printf '%s\n' "$SEED" > "$KEYFILE"
         chmod 600 "$KEYFILE"
 
-        echo "Starting ${LABEL} provider on :${PORT} (mode: ${MODE:-<binary default>})"
-        # ${MODE:+...} expands to nothing when mode is empty, so the run gets no
-        # --storage-mode flag and exercises the binary's default.
+        echo "Starting ${LABEL} provider on :${PORT} (backend: ${BACKEND:-<binary default>})"
+        # ${BACKEND:+...} expands to nothing when it is empty, so the run gets no
+        # --storage-backend flag and exercises the binary's default.
         nohup ./target/release/storage-provider-node \
           --keyfile "$KEYFILE" \
-          ${MODE:+--storage-mode "$MODE"} \
+          ${BACKEND:+--storage-backend "$BACKEND"} \
           --storage-path "$STORAGE_PATH" \
           --bind-addr "0.0.0.0:${PORT}" \
           --chain-rpc "$CHAIN_RPC" \

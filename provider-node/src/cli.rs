@@ -51,7 +51,7 @@ pub struct Cli {
 pub struct StorageParams {
     /// Storage backend to use.
     #[arg(long, value_enum, default_value_t = StorageBackendKind::RocksDb)]
-    pub storage_mode: StorageBackendKind,
+    pub storage_backend: StorageBackendKind,
 
     /// Path for persistent data (ignored by the in-memory backend).
     #[arg(long, default_value = "./provider-data", env = "STORAGE_PATH")]
@@ -61,7 +61,7 @@ pub struct StorageParams {
 impl StorageParams {
     /// The backend these flags describe.
     pub fn spec(&self) -> StorageBackendSpec {
-        match self.storage_mode {
+        match self.storage_backend {
             StorageBackendKind::InMemory => StorageBackendSpec::InMemory,
             StorageBackendKind::RocksDb => StorageBackendSpec::RocksDb {
                 path: self.storage_path.clone(),
@@ -275,7 +275,7 @@ mod tests {
         // Persistence is the default: an operator who passes no storage flags
         // must not silently get a backend that drops everything on restart.
         assert!(matches!(
-            cli.storage.storage_mode,
+            cli.storage.storage_backend,
             StorageBackendKind::RocksDb
         ));
         assert_eq!(cli.storage.storage_path, PathBuf::from("./provider-data"));
@@ -295,7 +295,7 @@ mod tests {
     fn all_args_parse() {
         let cli = Cli::try_parse_from([
             "storage-provider-node",
-            "--storage-mode",
+            "--storage-backend",
             "rocksdb",
             "--storage-path",
             "/data",
@@ -316,7 +316,7 @@ mod tests {
         .unwrap();
 
         assert!(matches!(
-            cli.storage.storage_mode,
+            cli.storage.storage_backend,
             StorageBackendKind::RocksDb
         ));
         assert_eq!(cli.storage.storage_path, PathBuf::from("/data"));
@@ -337,7 +337,7 @@ mod tests {
     #[test]
     fn backend_values_are_engine_names() {
         let spec = |value: &str| {
-            Cli::try_parse_from(["storage-provider-node", "--storage-mode", value])
+            Cli::try_parse_from(["storage-provider-node", "--storage-backend", value])
                 .map(|cli| cli.storage.spec())
         };
 
@@ -352,7 +352,7 @@ mod tests {
         for rejected in ["disk", "rocks-db", "in-memory"] {
             assert!(
                 spec(rejected).is_err(),
-                "--storage-mode {rejected} should be rejected"
+                "--storage-backend {rejected} should be rejected"
             );
         }
     }
