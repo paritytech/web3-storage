@@ -69,7 +69,8 @@ pub async fn s3_put_object(
             let hash = blake2_256(chunk);
             state
                 .storage
-                .store_node(bucket_id, hash, chunk.to_vec(), None)?;
+                .store_node(bucket_id, hash, chunk.to_vec(), None)
+                .map_err(|e| state.storage_err("store_node", e))?;
             Ok(hash)
         })
         .collect::<Result<Vec<_>, Error>>()?;
@@ -78,7 +79,13 @@ pub async fn s3_put_object(
     let data_root = build_padded_merkle_tree(&*state.storage, bucket_id, &chunk_hashes);
 
     // 4. Commit data_root to MMR
-    let (_mmr_root, _start_seq, leaf_indices) = state.storage.commit(bucket_id, vec![data_root])?;
+    let started = std::time::Instant::now();
+    let (_mmr_root, _start_seq, leaf_indices) = state
+        .storage
+        .commit(bucket_id, vec![data_root])
+        .map_err(|e| state.storage_err("commit", e))?;
+    state.observe_commit_duration(started);
+    state.count_upload_bytes(size);
     let leaf_index = leaf_indices[0];
 
     // 5. Extract metadata from headers
@@ -158,6 +165,7 @@ pub async fn s3_get_object(
     }
     // Truncate to original size
     data.truncate(meta.size as usize);
+    state.count_download_bytes(data.len() as u64);
 
     let mut response = (StatusCode::OK, data).into_response();
     let headers = response.headers_mut();

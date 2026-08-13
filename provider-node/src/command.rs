@@ -9,6 +9,7 @@ use crate::{
     chain_state_coordinator::ChainStateCoordinator,
     cli::{Cli, StorageMode, DEFAULT_PROVIDER_ID},
     create_router,
+    metrics::{ProviderMetrics, StorageMetricsCollector},
     subxt_client::SubxtChainClient,
     ChainStateCoordinatorHandle, ChallengeResponder, ChallengeResponderConfig,
     ChallengeResponderHandle, ProviderDeps, ProviderState, ReplicaSyncCoordinator,
@@ -76,6 +77,12 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
         };
 
+    // Node-local metrics registry, served on its own listener below — never
+    // on the public API router. Any failure here only disables metrics.
+    let registry = prometheus::Registry::new();
+    let metrics = ProviderMetrics::register(&registry);
+    StorageMetricsCollector::register(&registry, storage.clone());
+
     // Membership-based auth over the chain's bucket member sets, resolved
     // through the shared watch connection.
     let resolver = ChainMembershipResolver::new(chain_rx.clone());
@@ -116,9 +123,21 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
             ProviderState::with_provider_id(deps, provider_id)
         }
     }
-    .with_cors_origins(cli.rpc.cors_allowed_origins.clone());
+    .with_cors_origins(cli.rpc.cors_allowed_origins.clone())
+    .with_metrics(metrics);
 
     let state = Arc::new(state);
+
+    // 0.0.0.0 so scrapers on the pod/container network can reach it, matching
+    // the API listener's default.
+    let prometheus_addr = SocketAddr::from(([0, 0, 0, 0], cli.rpc.prometheus_port));
+    tokio::spawn(async move {
+        if let Err(e) =
+            substrate_prometheus_endpoint::init_prometheus(prometheus_addr, registry).await
+        {
+            tracing::warn!("Prometheus exporter failed ({e}); metrics not served");
+        }
+    });
 
     // The signing chain client shared by every coordinator: one signer (the
     // provider's own account) over the shared watch connection; coordinators

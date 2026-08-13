@@ -150,6 +150,7 @@ bincode = "1.3"
 clap = { version = "4" }
 futures = "0.3"
 hex = { version = "0.4", default-features = false }
+prometheus = { version = "0.13", default-features = false }
 prost = "0.13"
 serde = { version = "1.0", default-features = false, features = ["derive"] }
 serde_json = { version = "1.0", default-features = false }
@@ -164,6 +165,7 @@ dashmap = "6.0"
 parking_lot = "0.12"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 rocksdb = { version = "0.22", default-features = false }
+substrate-prometheus-endpoint = { version = "0.17.7" }
 tokio = { version = "1.0", features = ["full"] }
 tokio-rate-limit = "0.8"
 tower = "0.5"
