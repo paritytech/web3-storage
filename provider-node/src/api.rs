@@ -170,8 +170,8 @@ pub(crate) async fn check_role(
         required,
         state.auth_max_skew,
     )
-    .await?;
-    Ok(())
+    .await
+    .map_err(Into::into)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

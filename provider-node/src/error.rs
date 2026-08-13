@@ -122,9 +122,7 @@ impl From<provider_auth::AuthError> for Error {
             AuthError::AuthRequired => Error::AuthRequired,
             AuthError::TimestampExpired => Error::TimestampExpired,
             AuthError::InsufficientRole => Error::InsufficientRole,
-            AuthError::MembershipLookup(e) => {
-                Error::Internal(format!("Membership lookup failed: {e}"))
-            }
+            e @ AuthError::MembershipLookup(_) => Error::Internal(e.to_string()),
         }
     }
 }

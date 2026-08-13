@@ -3,6 +3,7 @@
 //! Request signature verification (sr25519) and role-based access control.
 
 use crate::error::AuthError;
+use crate::http_auth::auth_message;
 use crate::membership::MembershipCache;
 use sp_core::{crypto::AccountId32, sr25519, Pair};
 use std::time::Duration;
@@ -120,10 +121,9 @@ pub fn verify_signature(
     //   expose a raw key and wrap the payload in `<Bytes>…</Bytes>` before
     //   signing (see `@polkadot-api/signers-common`'s `getSignBytes`).
     // Accept either so wallet-backed clients (the UIs) can authenticate.
-    let message = crate::http_auth::auth_message(method, bucket_id, timestamp_str);
-    let wrapped = wrap_bytes(message.as_bytes());
+    let message = auth_message(method, bucket_id, timestamp_str);
     let verified = sr25519::Pair::verify(&signature, message.as_bytes(), &pubkey)
-        || sr25519::Pair::verify(&signature, &wrapped, &pubkey);
+        || sr25519::Pair::verify(&signature, &wrap_bytes(message.as_bytes()), &pubkey);
     if !verified {
         return Err(AuthError::AuthRequired);
     }
@@ -169,6 +169,7 @@ pub async fn require_role(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::http_auth::build_auth_header;
     use crate::membership::StaticMembershipResolver;
     use sp_core::Pair;
     use std::time::Duration;
@@ -179,13 +180,9 @@ mod tests {
         bucket_id: BucketId,
         timestamp: u64,
     ) -> String {
-        crate::http_auth::build_auth_header(
-            &keypair.public().0,
-            method,
-            bucket_id,
-            timestamp,
-            |msg| keypair.sign(msg).0,
-        )
+        build_auth_header(&keypair.public().0, method, bucket_id, timestamp, |msg| {
+            keypair.sign(msg).0
+        })
     }
 
     fn current_timestamp() -> u64 {
@@ -213,7 +210,7 @@ mod tests {
         // provider must accept that form so UI/wallet clients can authenticate.
         let keypair = sr25519::Pair::from_string("//Alice", None).unwrap();
         let ts = current_timestamp();
-        let message = crate::http_auth::auth_message("PUT", 1, &ts.to_string());
+        let message = auth_message("PUT", 1, &ts.to_string());
         let sig = keypair.sign(&wrap_bytes(message.as_bytes()));
         let header = format!(
             "Web3Storage 0x{}:0x{}:{}",

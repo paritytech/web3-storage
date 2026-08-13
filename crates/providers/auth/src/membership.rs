@@ -2,6 +2,7 @@
 
 //! Bucket membership resolution with TTL caching (queries chain via subxt).
 
+use dashmap::DashMap;
 use sp_core::crypto::AccountId32;
 use std::time::{Duration, Instant};
 use storage_primitives::{BucketId, Role};
@@ -36,7 +37,7 @@ impl MembershipResolver for StaticMembershipResolver {
 
 /// Membership cache backed by chain queries via subxt.
 pub struct MembershipCache {
-    cache: dashmap::DashMap<BucketId, CachedMembership>,
+    cache: DashMap<BucketId, CachedMembership>,
     ttl: Duration,
     resolver: Box<dyn MembershipResolver>,
 }
@@ -44,7 +45,7 @@ pub struct MembershipCache {
 impl MembershipCache {
     pub fn new(resolver: Box<dyn MembershipResolver>, ttl: Duration) -> Self {
         Self {
-            cache: dashmap::DashMap::new(),
+            cache: DashMap::new(),
             ttl,
             resolver,
         }

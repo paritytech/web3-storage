@@ -9929,7 +9929,6 @@ dependencies = [
  "axum",
  "base64",
  "clap",
- "dashmap",
  "hex",
  "parity-scale-codec",
  "parking_lot",
