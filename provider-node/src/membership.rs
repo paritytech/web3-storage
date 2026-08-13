@@ -5,7 +5,7 @@
 use crate::chain_connection::{self, ChainWatch};
 use provider_auth::{Member, MembershipError, MembershipResolver};
 use sp_core::crypto::AccountId32;
-use storage_primitives::{BucketId, Role};
+use storage_primitives::BucketId;
 use subxt::{OnlineClient, PolkadotConfig};
 
 /// Membership resolver over the node's shared chain connection, so lookups
@@ -29,12 +29,16 @@ impl ChainMembershipResolver {
 #[async_trait::async_trait]
 impl MembershipResolver for ChainMembershipResolver {
     async fn fetch_members(&self, bucket_id: BucketId) -> Result<Vec<Member>, MembershipError> {
-        use subxt::dynamic::{At, Value};
-
         let api = self.api()?;
 
-        let storage_query =
-            subxt::dynamic::storage::<(Value,), Value>("StorageProvider", "Buckets");
+        // Typed read via the static bindings. `unvalidated`: the bindings are
+        // generated from the paseo runtime, and the local runtime shares the
+        // pallet — exact-hash validation would couple the binary to a single
+        // runtime build for no safety gain (a shape mismatch fails decoding).
+        let storage_address = storage_subxt::api::storage()
+            .storage_provider()
+            .buckets()
+            .unvalidated();
 
         let at = api
             .at_current_block()
@@ -42,7 +46,7 @@ impl MembershipResolver for ChainMembershipResolver {
             .map_err(|e| MembershipError::Unavailable(e.to_string()))?;
         let result = at
             .storage()
-            .try_fetch(storage_query, (Value::u128(bucket_id as u128),))
+            .try_fetch(storage_address, (bucket_id,))
             .await
             .map_err(|e| MembershipError::Unavailable(e.to_string()))?;
 
@@ -53,138 +57,43 @@ impl MembershipResolver for ChainMembershipResolver {
             None => return Ok(vec![]),
         };
 
-        let decoded = bucket_value.decode().map_err(|e| MembershipError::Decode {
+        let bucket = bucket_value.decode().map_err(|e| MembershipError::Decode {
             bucket_id,
             reason: e.to_string(),
         })?;
 
-        let members_val = decoded
-            .at("members")
-            .ok_or_else(|| MembershipError::Decode {
-                bucket_id,
-                reason: "bucket has no `members` field".to_string(),
-            })?;
-
-        // `members` is a `BoundedVec<Member>`. Depending on how the runtime's
-        // scale-info nests it, scale_value may wrap the sequence (and each
-        // `AccountId32`) in extra single-field composites, so walk the value
-        // tree and pull out every `{ account, role }` struct rather than
-        // assuming a fixed shape.
-        let mut members = Vec::new();
-        collect_members(bucket_id, members_val, &mut members)?;
+        let members = member_roles_from_bucket(bucket);
 
         // `create_bucket` seeds an admin and `remove_member` refuses to drop the
-        // last one, so an existing bucket always has members. None decoded means
-        // the value did not have the shape we walked, not an empty bucket.
+        // last one, so an existing bucket always has members. With the typed
+        // decode above there is no shape to misread, so this is a chain-side
+        // surprise worth logging — the caller reads it as "not a member".
         if members.is_empty() {
-            tracing::warn!(bucket_id, value = ?members_val, "auth: decoded zero members");
-            return Err(MembershipError::Decode {
-                bucket_id,
-                reason: "no members found in the bucket's member set".to_string(),
-            });
+            tracing::warn!(bucket_id, "auth: bucket decoded with zero members");
+        } else {
+            tracing::debug!(bucket_id, count = members.len(), "auth: resolved members");
         }
 
-        tracing::debug!(bucket_id, count = members.len(), "auth: resolved members");
         Ok(members)
     }
 }
 
-/// Recursively pull `(account, role)` pairs out of a decoded `members` value,
-/// tolerating any wrapper composites that `BoundedVec` / `AccountId32` type
-/// info introduces. A `Member` is the composite that carries both an
-/// `account` and a `role` field.
-fn collect_members<T>(
-    bucket_id: BucketId,
-    val: &subxt::ext::scale_value::Value<T>,
-    out: &mut Vec<Member>,
-) -> Result<(), MembershipError> {
-    use subxt::dynamic::At;
-    use subxt::ext::scale_value::{Composite, ValueDef};
-
-    if let (Some(account_v), Some(role_v)) = (val.at("account"), val.at("role")) {
-        if let Some(bytes) = extract_account_bytes(account_v) {
-            // Defaulting an unreadable role would silently grant access; a shape
-            // we cannot read is a decode failure, not a role.
-            let role = find_role_variant(role_v).ok_or_else(|| MembershipError::Decode {
-                bucket_id,
-                reason: "unrecognised Role variant".to_string(),
-            })?;
-            out.push((AccountId32::from(bytes), role).into());
-            return Ok(());
-        }
-    }
-
-    match &val.value {
-        ValueDef::Composite(Composite::Named(fields)) => {
-            for field in fields {
-                collect_members(bucket_id, &field.1, out)?;
-            }
-        }
-        ValueDef::Composite(Composite::Unnamed(items)) => {
-            for item in items {
-                collect_members(bucket_id, item, out)?;
-            }
-        }
-        _ => {}
-    }
-    Ok(())
-}
-
-/// Extract a 32-byte account id, descending through any wrapper composites
-/// (`AccountId32` -> `[u8; 32]` can be one or more composite layers) and
-/// collecting the `u8` leaves.
-fn extract_account_bytes<T>(val: &subxt::ext::scale_value::Value<T>) -> Option<[u8; 32]> {
-    let mut bytes = Vec::with_capacity(32);
-    collect_u8_leaves(val, &mut bytes);
-    if bytes.len() == 32 {
-        let mut arr = [0u8; 32];
-        arr.copy_from_slice(&bytes);
-        Some(arr)
-    } else {
-        None
-    }
-}
-
-fn collect_u8_leaves<T>(val: &subxt::ext::scale_value::Value<T>, out: &mut Vec<u8>) {
-    use subxt::ext::scale_value::{Composite, Primitive, ValueDef};
-    match &val.value {
-        ValueDef::Primitive(Primitive::U128(n)) => out.push(*n as u8),
-        ValueDef::Composite(Composite::Unnamed(items)) => {
-            for item in items {
-                collect_u8_leaves(item, out);
-            }
-        }
-        ValueDef::Composite(Composite::Named(fields)) => {
-            for field in fields {
-                collect_u8_leaves(&field.1, out);
-            }
-        }
-        _ => {}
-    }
-}
-
-fn find_role_variant<T>(val: &subxt::ext::scale_value::Value<T>) -> Option<Role> {
-    use subxt::ext::scale_value::{Composite, ValueDef};
-    match &val.value {
-        ValueDef::Variant(variant) => match variant.name.as_str() {
-            "Admin" => Some(Role::Admin),
-            "Writer" => Some(Role::Writer),
-            "Reader" => Some(Role::Reader),
-            _ => None,
-        },
-        ValueDef::Composite(Composite::Unnamed(items)) => {
-            items.iter().find_map(|v| find_role_variant(v))
-        }
-        ValueDef::Composite(Composite::Named(fields)) => {
-            fields.iter().find_map(|f| find_role_variant(&f.1))
-        }
-        _ => None,
-    }
+/// Pair up each member of a decoded on-chain bucket with its role.
+fn member_roles_from_bucket(
+    bucket: storage_subxt::api::runtime_types::pallet_storage_provider::pallet::Bucket,
+) -> Vec<Member> {
+    bucket
+        .members
+        .0
+        .into_iter()
+        .map(|m| (AccountId32::new(m.account.0), m.role.into()).into())
+        .collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use storage_primitives::Role;
 
     #[tokio::test]
     async fn chain_resolver_fails_cleanly_before_first_connect() {
@@ -203,72 +112,37 @@ mod tests {
         );
     }
 
-    /// Regression test for the dynamic decoding of `StorageProvider.Buckets`.
+    /// Regression test for the typed decoding of `StorageProvider.Buckets`:
+    /// pins the generated-type -> primitives conversion for every role.
     #[test]
-    fn collect_members_handles_chain_value_nesting() {
-        use subxt::ext::scale_value::Value;
+    fn member_roles_from_bucket_converts_accounts_and_roles() {
+        use storage_subxt::api::runtime_types::bounded_collections::bounded_vec::BoundedVec;
+        use storage_subxt::api::runtime_types::pallet_storage_provider::pallet::{Bucket, Member};
+        use storage_subxt::api::runtime_types::storage_primitives::Role as RuntimeRole;
 
-        let acct = [9u8; 32];
-        // AccountId32 -> [u8; 32]: two composite layers around the byte leaves.
-        let account = Value::unnamed_composite(vec![Value::unnamed_composite(
-            acct.iter().map(|b| Value::u128(*b as u128)),
-        )]);
-        let member = Value::named_composite(vec![
-            ("account".to_string(), account),
-            ("role".to_string(), Value::unnamed_variant("Writer", vec![])),
-        ]);
-        let sequence = Value::unnamed_composite(vec![member]);
-        // BoundedVec wrapper around the member sequence.
-        let members_val = Value::unnamed_composite(vec![sequence]);
+        let member = |byte: u8, role: RuntimeRole| Member {
+            account: subxt::utils::AccountId32([byte; 32]),
+            role,
+        };
+        let bucket = Bucket {
+            members: BoundedVec(vec![
+                member(1, RuntimeRole::Admin),
+                member(2, RuntimeRole::Writer),
+                member(3, RuntimeRole::Reader),
+            ]),
+            frozen_start_seq: None,
+            min_providers: 1,
+            primary_providers: BoundedVec(vec![]),
+            snapshot: None,
+            historical_roots: [(0, subxt::utils::H256::zero()); 6],
+            total_snapshots: 0,
+        };
 
-        let mut out = Vec::new();
-        collect_members(1, &members_val, &mut out).expect("well-formed value");
-
-        assert_eq!(
-            out.len(),
-            1,
-            "member must be recovered through both wrappers"
-        );
-        assert_eq!(out[0].account, AccountId32::from(acct));
-        assert!(matches!(out[0].role, Role::Writer));
-    }
-
-    #[test]
-    fn an_unreadable_role_is_a_decode_error_not_a_reader() {
-        use subxt::ext::scale_value::Value;
-
-        let account = Value::unnamed_composite(vec![Value::unnamed_composite(
-            [9u8; 32].iter().map(|b| Value::u128(*b as u128)),
-        )]);
-        let member = Value::named_composite(vec![
-            ("account".to_string(), account),
-            // A variant the provider does not know — a runtime reshape, not a role.
-            (
-                "role".to_string(),
-                Value::unnamed_variant("Auditor", vec![]),
-            ),
-        ]);
-        let members_val = Value::unnamed_composite(vec![Value::unnamed_composite(vec![member])]);
-
-        let err = collect_members(7, &members_val, &mut Vec::new())
-            .expect_err("unknown role must not decode");
-        assert!(
-            matches!(err, MembershipError::Decode { bucket_id: 7, .. }),
-            "unexpected error: {err}"
-        );
-    }
-
-    #[test]
-    fn an_unrecognised_shape_yields_no_members() {
-        use subxt::ext::scale_value::Value;
-
-        // Shape we do not recognise: no `{ account, role }` composite anywhere.
-        let members_val = Value::unnamed_composite(vec![Value::u128(1), Value::u128(2)]);
-
-        let mut out = Vec::new();
-        collect_members(3, &members_val, &mut out).expect("the walk itself succeeds");
-        // `fetch_members` turns this into `Decode`, since an existing bucket
-        // always has at least one member.
-        assert!(out.is_empty(), "nothing member-shaped to find");
+        let expected: Vec<provider_auth::Member> = vec![
+            (AccountId32::new([1u8; 32]), Role::Admin).into(),
+            (AccountId32::new([2u8; 32]), Role::Writer).into(),
+            (AccountId32::new([3u8; 32]), Role::Reader).into(),
+        ];
+        assert_eq!(member_roles_from_bucket(bucket), expected);
     }
 }
