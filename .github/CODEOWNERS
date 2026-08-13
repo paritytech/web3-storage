@@ -11,6 +11,7 @@
 # Canonical documentation — docs/design is the core design and requires
 # @eskimor's review; docs/reference must stay true to the code and requires
 # sign-off from any one of its owners.
-# `/**` matches every file recursively — all subdirectories, all file types.
+# `/**` matches every file under the preceding directory recursively — all
+# subdirectories, all file types, no exceptions.
 /docs/design/**              @eskimor
 /docs/reference/**           @eskimor @mudigal @bkontur
