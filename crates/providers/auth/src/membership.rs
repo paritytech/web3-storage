@@ -80,7 +80,8 @@ impl CachedMembership {
 /// Trait for resolving bucket membership (enables mocking in tests).
 #[async_trait::async_trait]
 pub trait MembershipResolver: Send + Sync {
-    /// Every member of `bucket_id`, or an empty set if no such bucket exists.
+    /// Every member of `bucket_id`. An empty set means nobody is a member —
+    /// either the bucket does not exist, or it holds no members.
     async fn fetch_members(&self, bucket_id: BucketId) -> Result<Vec<Member>, MembershipError>;
 }
 
