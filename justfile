@@ -184,11 +184,13 @@ start-e2e-chain RUNTIME="web3-storage-paseo": check
         -lruntime=info
 
 # Start the storage provider node (without registering on-chain)
+# MODE defaults to disk, matching the binary's own default.
 # Examples:
-#   just start-provider                                       # inmemory, //Alice key, port 3333, auth enforced
-#   just start-provider MODE=disk PORT=3334                    # disk storage on port 3334
-#   just start-provider KEYFILE=/path/to/seed MODE=disk        # custom key from file
-start-provider MODE="inmemory" PORT=PROVIDER_PORT STORAGE_PATH="./provider-data" KEYFILE="": build-provider
+#   just start-provider                                        # disk storage in ./provider-data, //Alice key, port 3333
+#   just start-provider MODE=inmemory                          # throwaway run, data dropped on exit
+#   just start-provider MODE=disk PORT=3334 STORAGE_PATH=/tmp/p2  # second provider, separate data dir
+#   just start-provider KEYFILE=/path/to/seed                  # custom key from file
+start-provider MODE="disk" PORT=PROVIDER_PORT STORAGE_PATH="./provider-data" KEYFILE="": build-provider
     #!/usr/bin/env bash
     set -euo pipefail
     echo ""
@@ -217,7 +219,7 @@ start-provider MODE="inmemory" PORT=PROVIDER_PORT STORAGE_PATH="./provider-data"
         $EXTRA_ARGS
 
 # Register on-chain then start the provider node (original behavior)
-register-then-start-provider MODE="inmemory" PORT=PROVIDER_PORT STORAGE_PATH="./provider-data" KEYFILE="":
+register-then-start-provider MODE="disk" PORT=PROVIDER_PORT STORAGE_PATH="./provider-data" KEYFILE="":
     just start-provider MODE="{{MODE}}" PORT="{{PORT}}" STORAGE_PATH="{{STORAGE_PATH}}" KEYFILE="{{KEYFILE}}"
     just register-provider "{{KEYFILE}}"
 

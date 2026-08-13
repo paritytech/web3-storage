@@ -12,6 +12,18 @@ just start-provider   # requires a running chain (just start-chain)
 just health           # check provider is up
 ```
 
+## Storage backend
+
+`--storage-mode disk` is the default: chunks and the MMR state go to RocksDB
+under `--storage-path` (default `./provider-data`, or `$STORAGE_PATH`), and the
+provider's nonce counter is persisted alongside them so it survives a restart.
+A provider that forgot its data could not answer challenges for buckets it
+still has agreements for.
+
+`--storage-mode inmemory` opts out: everything lives in RAM and is gone when the
+process exits. Use it for throwaway local runs and tests that want a clean slate;
+it also swaps in a no-op nonce store, so nothing is written outside the process.
+
 ## Authentication
 
 Authentication is always enforced: every mutating Layer-0 endpoint (`PUT

@@ -9,11 +9,15 @@ use std::path::PathBuf;
 pub const DEFAULT_PROVIDER_ID: &str = "0x0000000000000000000000000000000000000000";
 
 /// Storage backend mode.
-#[derive(Clone, Debug, clap::ValueEnum)]
+#[derive(Clone, Debug, Default, clap::ValueEnum)]
 pub enum StorageMode {
-    /// In-memory storage (data lost on restart).
+    /// In-memory storage (data lost on restart). Opt-in, for throwaway local
+    /// runs and tests that want a clean slate per process.
     Inmemory,
-    /// Persistent disk storage.
+    /// Persistent disk storage (RocksDB). The default: a provider that loses
+    /// its data on restart cannot answer challenges for what it agreed to
+    /// store.
+    #[default]
     Disk,
 }
 
@@ -44,7 +48,7 @@ pub struct Cli {
 #[derive(Debug, clap::Args)]
 pub struct StorageParams {
     /// Storage backend to use.
-    #[arg(long, value_enum, default_value_t = StorageMode::Inmemory)]
+    #[arg(long, value_enum, default_value_t = StorageMode::default())]
     pub storage_mode: StorageMode,
 
     /// Path for persistent data (only used with --storage-mode disk).
@@ -254,7 +258,9 @@ mod tests {
     #[test]
     fn default_values() {
         let cli = Cli::try_parse_from(["storage-provider-node"]).unwrap();
-        assert!(matches!(cli.storage.storage_mode, StorageMode::Inmemory));
+        // Persistence is the default: an operator who passes no storage flags
+        // must not silently get a backend that drops everything on restart.
+        assert!(matches!(cli.storage.storage_mode, StorageMode::Disk));
         assert_eq!(cli.storage.storage_path, PathBuf::from("./provider-data"));
         assert_eq!(cli.rpc.bind_addr, "0.0.0.0:3333");
         assert_eq!(cli.rpc.chain_rpc, "ws://127.0.0.1:2222");
@@ -304,6 +310,13 @@ mod tests {
         assert_eq!(cli.replica_sync.replica_poll_interval, 30);
         assert_eq!(cli.replica_sync.replica_sync_timeout, 600);
         assert_eq!(cli.replica_sync.replica_max_concurrent, 5);
+    }
+
+    #[test]
+    fn inmemory_is_opt_in() {
+        let cli =
+            Cli::try_parse_from(["storage-provider-node", "--storage-mode", "inmemory"]).unwrap();
+        assert!(matches!(cli.storage.storage_mode, StorageMode::Inmemory));
     }
 
     #[test]
