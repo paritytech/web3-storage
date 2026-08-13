@@ -9,14 +9,79 @@
 #![allow(dead_code)]
 
 use provider_auth::build_auth_header;
+use provider_storage::{DiskStorage, Storage, StorageBackend};
 use reqwest::{Method, RequestBuilder};
 use sp_core::{sr25519, Pair};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use storage_provider_node::{create_router, ProviderState};
+use tempfile::TempDir;
 
 type AccountId32 = sp_core::crypto::AccountId32;
+
+/// Storage backend a test runs against.
+///
+/// The HTTP surface is meant to behave identically on both, so suites declare
+/// their tests with [`backend_tests!`] and each one runs twice.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Backend {
+    InMemory,
+    Disk,
+}
+
+/// Storage for `backend`, plus the scratch directory RocksDB needs kept alive
+/// for as long as the server (`None` for in-memory).
+pub fn storage_for(backend: Backend) -> (Arc<dyn StorageBackend>, Option<TempDir>) {
+    match backend {
+        Backend::InMemory => (Arc::new(Storage::new()), None),
+        Backend::Disk => {
+            let dir = TempDir::new().expect("temp dir");
+            let storage = DiskStorage::new(dir.path()).expect("RocksDB should open");
+            (Arc::new(storage), Some(dir))
+        }
+    }
+}
+
+/// Declare tests that run once per [`Backend`].
+///
+/// ```ignore
+/// common::backend_tests! {
+///     async fn health(backend) {
+///         let server = TestServer::new(backend).await;
+///         // ...
+///     }
+/// }
+/// ```
+///
+/// expands to `health::in_memory` and `health::disk`, so a failure names the
+/// backend it happened on. The inner module and the test body function share a
+/// name deliberately — they live in different namespaces.
+macro_rules! backend_tests {
+    ($(
+        $(#[$attr:meta])*
+        async fn $name:ident($backend:ident) $body:block
+    )*) => {
+        $(
+            $(#[$attr])*
+            async fn $name($backend: common::Backend) $body
+
+            mod $name {
+                #[tokio::test]
+                async fn in_memory() {
+                    super::$name(super::common::Backend::InMemory).await
+                }
+
+                #[tokio::test]
+                async fn disk() {
+                    super::$name(super::common::Backend::Disk).await
+                }
+            }
+        )*
+    };
+}
+
+pub(crate) use backend_tests;
 
 /// The account every test signs as.
 pub const TEST_MEMBER_SEED: &str = "//Alice";
