@@ -15,15 +15,16 @@ pub const DEFAULT_PROVIDER_ID: &str = "0x000000000000000000000000000000000000000
 ///
 /// Flat by necessity: clap value-enums must be unit variants. The configured
 /// form is [`StorageBackendSpec`], built by [`StorageParams::spec`].
+///
+/// `rename_all = "lower"` is what makes the values `rocksdb` / `inmemory`
+/// rather than clap's default kebab-case (`rocks-db`, `in-memory`) — the same
+/// attribute, for the same reason, as `sc_cli::arg_enums::Database`.
 #[derive(Clone, Debug, clap::ValueEnum)]
+#[value(rename_all = "lower")]
 pub enum StorageBackendKind {
     /// In-memory storage (data lost on restart).
-    // `inmemory` is what CI, the justfile and the docs already pass; the
-    // derive would otherwise render this variant as `in-memory`.
-    #[value(name = "inmemory", alias = "in-memory")]
     InMemory,
     /// Persistent RocksDB storage.
-    #[value(alias = "disk")]
     RocksDb,
 }
 
@@ -304,7 +305,7 @@ mod tests {
         let cli = Cli::try_parse_from([
             "storage-provider-node",
             "--storage-mode",
-            "disk",
+            "rocksdb",
             "--storage-path",
             "/data",
             "--bind-addr",
@@ -350,16 +351,13 @@ mod tests {
         ));
     }
 
-    /// The engine names are canonical; the older `disk` spelling and the
-    /// derive's default `in-memory` keep working so existing scripts, CI and
-    /// docs do not break on the rename.
+    /// The accepted values are the engine names, lower-cased — not clap's
+    /// default kebab-case, and with no alias for the old `disk` spelling.
     #[test]
-    fn backend_names_and_aliases_parse() {
+    fn backend_values_are_engine_names() {
         for (arg, expected) in [
             ("rocksdb", StorageBackendKind::RocksDb),
-            ("disk", StorageBackendKind::RocksDb),
             ("inmemory", StorageBackendKind::InMemory),
-            ("in-memory", StorageBackendKind::InMemory),
         ] {
             let cli = Cli::try_parse_from(["storage-provider-node", "--storage-mode", arg])
                 .unwrap_or_else(|e| panic!("--storage-mode {arg} should parse: {e}"));
@@ -367,6 +365,13 @@ mod tests {
                 std::mem::discriminant(&cli.storage.storage_mode),
                 std::mem::discriminant(&expected),
                 "--storage-mode {arg}"
+            );
+        }
+
+        for rejected in ["disk", "rocks-db", "in-memory"] {
+            assert!(
+                Cli::try_parse_from(["storage-provider-node", "--storage-mode", rejected]).is_err(),
+                "--storage-mode {rejected} should be rejected"
             );
         }
     }
