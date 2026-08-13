@@ -5,7 +5,7 @@ description: Review local changes or a pull request (authoritative review criter
 
 This skill is the single source of truth for code review criteria in this repository.
 
-If no arguments are passed, review the local changes by looking at the diff between the base branch - main by default - and the current branch.
+If no arguments are passed, review the local changes by looking at the diff between the base branch - `dev` by default - and the current branch.
 If arguments are passed, review pull request #$ARGUMENTS by fetching it and seeing its details with `gh pr view` and `gh pr diff`.
 
 When reviewing, analyze for:
@@ -54,5 +54,24 @@ When reviewing, analyze for:
 7. **Breaking Changes**
    - API compatibility
    - Migration requirements
+
+8. **Design Alignment** — invoke the `design-alignment` skill and follow its
+   procedure in full; the points below are a summary, not a substitute
+   - `docs/design/` is canonical and must stay true to the code
+   - Changes must conform to the core design docs in `docs/design/`
+   - Any deviation from the documented design must be explicitly flagged as
+     `⚠️ DESIGN DEVIATION`, citing the doc/section and the code location; the author
+     must either conform to the design or update the design doc in the same PR with
+     rationale
+
+9. **Reference Docs Consistency** — invoke the `reference-docs` skill and follow its
+   procedure in full; the points below are a summary, not a substitute
+   - `docs/reference/` is derived documentation, but it is review-gated and must
+     stay true to the code
+   - If a change alters a documented flow or makes any statement in `docs/reference/`
+     (`EXTRINSICS_REFERENCE.md`, `PAYMENT_CALCULATOR.md`, …) no longer true, the doc
+     must be updated in the same change
+   - A missing reference-doc update is a blocking finding, flagged as
+     `📄 REFERENCE DOC OUT OF DATE`
 
 Provide specific feedback with file paths and line numbers.
