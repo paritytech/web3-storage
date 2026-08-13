@@ -13,7 +13,6 @@ dashmap = { workspace = true }
 hex = { workspace = true, features = ["std"] }
 sp-core = { workspace = true, features = ["std"] }
 storage-primitives = { workspace = true, features = ["std"] }
-subxt = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true, features = ["std"] }
 

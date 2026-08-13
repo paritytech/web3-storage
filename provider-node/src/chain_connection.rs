@@ -81,18 +81,4 @@ mod tests {
         let err = current_api(&rx).expect_err("no connection published yet");
         assert!(err.to_string().contains("not established"));
     }
-
-    #[tokio::test]
-    async fn chain_resolver_fails_cleanly_before_first_connect() {
-        // Before the chain-state coordinator publishes a connection, auth
-        // lookups must surface a retryable error rather than panic or hang.
-        let (_tx, rx) = tokio::sync::watch::channel(None);
-        let resolver = provider_auth::ChainMembershipResolver::new(move || {
-            current_api(&rx).map_err(|e| e.to_string())
-        });
-        let err = provider_auth::MembershipResolver::fetch_members(&resolver, 1)
-            .await
-            .expect_err("no connection published yet");
-        assert!(err.contains("not established"), "unexpected error: {err}");
-    }
 }

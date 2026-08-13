@@ -18,6 +18,7 @@ pub mod cli;
 pub mod command;
 pub mod error;
 pub mod fs_api;
+pub mod membership;
 pub mod negotiate;
 pub mod replica_sync;
 pub mod replica_sync_coordinator;

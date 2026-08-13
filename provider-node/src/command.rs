@@ -8,13 +8,14 @@ use crate::{
     chain_state_coordinator::ChainStateCoordinator,
     cli::{Cli, StorageMode, DEFAULT_PROVIDER_ID},
     create_router,
+    membership::ChainMembershipResolver,
     subxt_client::SubxtChainClient,
     ChainStateCoordinatorHandle, ChallengeResponder, ChallengeResponderConfig,
     ChallengeResponderHandle, ProviderDeps, ProviderState, ReplicaSyncCoordinator,
     ReplicaSyncCoordinatorConfig, ReplicaSyncCoordinatorHandle,
 };
 use clap::Parser;
-use provider_auth::{ChainMembershipResolver, MembershipCache};
+use provider_auth::MembershipCache;
 use provider_storage::{DiskStorage, NonceStore, NullNonceStore, Storage, StorageBackend};
 use std::net::SocketAddr;
 use std::str::FromStr;
@@ -78,10 +79,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // Membership-based auth over the chain's bucket member sets, resolved
     // through the shared watch connection.
-    let resolver = ChainMembershipResolver::new({
-        let chain_rx = chain_rx.clone();
-        move || chain_connection::current_api(&chain_rx).map_err(|e| e.to_string())
-    });
+    let resolver = ChainMembershipResolver::new(chain_rx.clone());
     let ttl = Duration::from_secs(cli.auth.auth_cache_ttl);
     let membership = Arc::new(MembershipCache::new(Box::new(resolver), ttl));
     tracing::info!(
