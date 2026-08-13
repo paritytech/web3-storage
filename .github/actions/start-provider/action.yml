@@ -1,0 +1,98 @@
+name: Start storage provider
+description: >-
+  Write a keyfile, launch storage-provider-node in the background, and wait for
+  its /health endpoint. Replaces the nohup block that every integration job used
+  to repeat, so a job declares which backend it wants and nothing else. Running
+  a second provider is one more `uses:` with a different port/label.
+
+inputs:
+  seed:
+    description: SURI written to the keyfile the provider signs with.
+    required: false
+    default: "//Alice"
+  mode:
+    description: >-
+      Storage backend: "disk", "inmemory", or "" to pass no --storage-mode at
+      all and exercise the binary's own default. Leaving it empty is deliberate
+      coverage of that default, not an oversight.
+    required: false
+    default: ""
+  port:
+    description: Port the provider binds its HTTP API to.
+    required: false
+    default: "3333"
+  storage-path:
+    description: >-
+      Data directory for disk mode. Ignored by inmemory. Must be unique per
+      provider — two RocksDB instances cannot share one directory.
+    required: false
+    default: /tmp/provider-data
+  chain-rpc:
+    description: Parachain RPC WebSocket URL.
+    required: false
+    default: ws://127.0.0.1:2222
+  label:
+    description: >-
+      Short name for this provider ("inmemory", "disk", …). Labels the
+      health-wait output and names the files this action writes:
+      /tmp/provider-<label>.key and /tmp/provider-<label>.log — collect the
+      latter with a /tmp/provider-*.log glob in the job's logs artifact.
+    required: false
+    default: provider
+  wait-attempts:
+    description: Health poll attempts, 2s apart (60 ≈ 2min).
+    required: false
+    default: "60"
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        SEED: ${{ inputs.seed }}
+        MODE: ${{ inputs.mode }}
+        PORT: ${{ inputs.port }}
+        STORAGE_PATH: ${{ inputs.storage-path }}
+        CHAIN_RPC: ${{ inputs.chain-rpc }}
+        LABEL: ${{ inputs.label }}
+      run: |
+        set -euo pipefail
+        KEYFILE="/tmp/provider-${LABEL}.key"
+        LOG_FILE="/tmp/provider-${LABEL}.log"
+        printf '%s\n' "$SEED" > "$KEYFILE"
+        chmod 600 "$KEYFILE"
+
+        # An empty mode passes no flag, so the run asserts the binary's default.
+        MODE_ARG=()
+        if [ -n "$MODE" ]; then
+          MODE_ARG=(--storage-mode "$MODE")
+        fi
+
+        echo "Starting ${LABEL} provider on :${PORT} (mode: ${MODE:-<binary default>})"
+        # ${arr[@]+"${arr[@]}"} expands to nothing when the array is empty,
+        # instead of tripping `set -u` or passing a stray empty argument.
+        nohup ./target/release/storage-provider-node \
+          --keyfile "$KEYFILE" \
+          ${MODE_ARG[@]+"${MODE_ARG[@]}"} \
+          --storage-path "$STORAGE_PATH" \
+          --bind-addr "0.0.0.0:${PORT}" \
+          --chain-rpc "$CHAIN_RPC" \
+          > "$LOG_FILE" 2>&1 &
+        PID=$!
+
+        # Fail fast on an immediate exit (bad flags, port in use, a RocksDB lock
+        # still held by a previous instance) instead of burning the full health
+        # timeout on a process that is already gone.
+        sleep 2
+        if ! kill -0 "$PID" 2>/dev/null; then
+          echo "::error::${LABEL} provider exited immediately after launch."
+          cat "$LOG_FILE" || true
+          exit 1
+        fi
+
+    - uses: ./.github/actions/wait-for-provider-health
+      with:
+        url: http://127.0.0.1:${{ inputs.port }}
+        label: ${{ inputs.label }}
+        log-file: /tmp/provider-${{ inputs.label }}.log
+        attempts: ${{ inputs.wait-attempts }}
