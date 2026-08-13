@@ -8,15 +8,18 @@
 //!   provider HTTP requests (client builds, provider verifies).
 //! * [`membership`] — the [`membership::MembershipResolver`] seam and a TTL
 //!   cache over it; resolving against a chain is left to the caller.
+//! * [`role`] — the privilege ladder: which granted role clears which bar.
 //! * [`verify`] — sr25519 request signature verification and role-based access
 //!   control enforcement.
 
 pub mod error;
 pub mod http_auth;
 pub mod membership;
+pub mod role;
 pub mod verify;
 
 pub use error::AuthError;
 pub use http_auth::{auth_message, build_auth_header};
 pub use membership::{MembershipCache, MembershipResolver, StaticMembershipResolver};
-pub use verify::{require_role, verify_signature, RequiredRole};
+pub use role::RequiredRole;
+pub use verify::{require_role, verify_signature};

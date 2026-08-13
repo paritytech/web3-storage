@@ -5,17 +5,10 @@
 use crate::error::AuthError;
 use crate::http_auth::auth_message;
 use crate::membership::MembershipCache;
+use crate::role::RequiredRole;
 use sp_core::{crypto::AccountId32, sr25519, Pair};
 use std::time::Duration;
-use storage_primitives::{BucketId, Role};
-
-/// Required role for an endpoint.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RequiredRole {
-    Reader,
-    Writer,
-    Admin,
-}
+use storage_primitives::BucketId;
 
 /// Wrap a payload the way Polkadot message-signing surfaces do before signing:
 /// `<Bytes>` ++ payload ++ `</Bytes>`. Browser extensions (`signRaw`) and PAPI's
@@ -153,13 +146,7 @@ pub async fn require_role(
         .map_err(AuthError::MembershipLookup)?
         .ok_or(AuthError::InsufficientRole)?;
 
-    let allowed = match required {
-        RequiredRole::Reader => true, // any role can read
-        RequiredRole::Writer => matches!(role, Role::Writer | Role::Admin),
-        RequiredRole::Admin => matches!(role, Role::Admin),
-    };
-
-    if !allowed {
+    if !required.is_satisfied_by(role) {
         return Err(AuthError::InsufficientRole);
     }
 
@@ -173,6 +160,7 @@ mod tests {
     use crate::membership::StaticMembershipResolver;
     use sp_core::Pair;
     use std::time::Duration;
+    use storage_primitives::Role;
 
     fn make_auth_header(
         keypair: &sr25519::Pair,

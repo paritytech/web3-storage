@@ -18,6 +18,27 @@ struct CachedMembership {
     fetched_at: Instant,
 }
 
+impl CachedMembership {
+    fn new(members: Vec<(AccountId32, Role)>) -> Self {
+        Self {
+            members,
+            fetched_at: Instant::now(),
+        }
+    }
+
+    fn is_fresh(&self, ttl: Duration) -> bool {
+        self.fetched_at.elapsed() < ttl
+    }
+
+    /// The account's role in this member set, or `None` if it holds none.
+    fn role_of(&self, account: &AccountId32) -> Option<Role> {
+        self.members
+            .iter()
+            .find(|(a, _)| a == account)
+            .map(|(_, r)| *r)
+    }
+}
+
 /// Trait for resolving bucket membership (enables mocking in tests).
 #[async_trait::async_trait]
 pub trait MembershipResolver: Send + Sync {
@@ -63,22 +84,17 @@ impl MembershipCache {
     ) -> Result<Option<Role>, String> {
         // Check cache first
         if let Some(entry) = self.cache.get(&bucket_id) {
-            if entry.fetched_at.elapsed() < self.ttl {
-                return Ok(find_role(&entry.members, account));
+            if entry.is_fresh(self.ttl) {
+                return Ok(entry.role_of(account));
             }
         }
 
         // Cache miss or stale — fetch from chain
         match self.resolver.fetch_members(bucket_id).await {
             Ok(members) => {
-                let role = find_role(&members, account);
-                self.cache.insert(
-                    bucket_id,
-                    CachedMembership {
-                        members,
-                        fetched_at: Instant::now(),
-                    },
-                );
+                let entry = CachedMembership::new(members);
+                let role = entry.role_of(account);
+                self.cache.insert(bucket_id, entry);
                 Ok(role)
             }
             Err(e) => {
@@ -89,7 +105,7 @@ impl MembershipCache {
                         bucket_id,
                         e
                     );
-                    return Ok(find_role(&entry.members, account));
+                    return Ok(entry.role_of(account));
                 }
                 Err(e)
             }
@@ -97,31 +113,34 @@ impl MembershipCache {
     }
 }
 
-fn find_role(members: &[(AccountId32, Role)], account: &AccountId32) -> Option<Role> {
-    members.iter().find(|(a, _)| a == account).map(|(_, r)| *r)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn test_find_role() {
+    fn role_of_finds_each_member_and_rejects_strangers() {
         let alice = AccountId32::new([1u8; 32]);
         let bob = AccountId32::new([2u8; 32]);
         let charlie = AccountId32::new([3u8; 32]);
 
-        let members = vec![
+        let entry = CachedMembership::new(vec![
             (alice.clone(), Role::Admin),
             (bob.clone(), Role::Writer),
             (charlie.clone(), Role::Reader),
-        ];
+        ]);
 
-        assert_eq!(find_role(&members, &alice), Some(Role::Admin));
-        assert_eq!(find_role(&members, &bob), Some(Role::Writer));
-        assert_eq!(find_role(&members, &charlie), Some(Role::Reader));
+        assert_eq!(entry.role_of(&alice), Some(Role::Admin));
+        assert_eq!(entry.role_of(&bob), Some(Role::Writer));
+        assert_eq!(entry.role_of(&charlie), Some(Role::Reader));
 
         let unknown = AccountId32::new([4u8; 32]);
-        assert_eq!(find_role(&members, &unknown), None);
+        assert_eq!(entry.role_of(&unknown), None);
+    }
+
+    #[test]
+    fn entries_go_stale_once_the_ttl_elapses() {
+        let entry = CachedMembership::new(vec![]);
+        assert!(entry.is_fresh(Duration::from_secs(60)));
+        assert!(!entry.is_fresh(Duration::ZERO));
     }
 }
