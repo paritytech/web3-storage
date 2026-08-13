@@ -44,8 +44,6 @@ impl TestBackend {
         Self::open(spec, Some(dir))
     }
 
-    /// Built through [`StorageBackendSpec::build`], the call the binary makes,
-    /// so tests get the real backend/nonce-store pairing.
     fn open(spec: StorageBackendSpec, dir: Option<TempDir>) -> Self {
         let (storage, nonce_store) = spec.build().expect("backend opens");
         Self {

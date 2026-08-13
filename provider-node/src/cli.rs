@@ -9,7 +9,7 @@ use std::path::PathBuf;
 /// Placeholder provider ID used when no identity is configured.
 pub const DEFAULT_PROVIDER_ID: &str = "0x0000000000000000000000000000000000000000";
 
-/// Storage backend, named after the engine like `sc_cli::arg_enums::Database`.
+/// Storage backend to run.
 ///
 /// Clap value-enums must be unit variants; [`StorageParams::spec`] maps this to
 /// the configured [`StorageBackendSpec`]. `rename_all` keeps the values
@@ -53,14 +53,13 @@ pub struct StorageParams {
     #[arg(long, value_enum, default_value_t = StorageBackendKind::RocksDb)]
     pub storage_mode: StorageBackendKind,
 
-    /// Path for persistent data (only used with --storage-mode rocksdb).
+    /// Path for persistent data (ignored by the in-memory backend).
     #[arg(long, default_value = "./provider-data", env = "STORAGE_PATH")]
     pub storage_path: PathBuf,
 }
 
 impl StorageParams {
-    /// The backend these flags describe. `--storage-path` is read only here;
-    /// the in-memory backend ignores it.
+    /// The backend these flags describe.
     pub fn spec(&self) -> StorageBackendSpec {
         match self.storage_mode {
             StorageBackendKind::InMemory => StorageBackendSpec::InMemory,
@@ -333,9 +332,8 @@ mod tests {
         assert_eq!(cli.replica_sync.replica_max_concurrent, 5);
     }
 
-    /// Only the engine names parse — not clap's kebab-case default, and no
-    /// alias for the old `disk` spelling. Asserting on the spec covers the
-    /// mapping and `--storage-path` at the same time.
+    /// `rocksdb` and `inmemory` are the only accepted values, and each maps to
+    /// the matching spec.
     #[test]
     fn backend_values_are_engine_names() {
         let spec = |value: &str| {
