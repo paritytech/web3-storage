@@ -14,15 +14,13 @@ just health           # check provider is up
 
 ## Storage backend
 
-`--storage-mode disk` is the default: chunks and the MMR state go to RocksDB
-under `--storage-path` (default `./provider-data`, or `$STORAGE_PATH`), and the
-provider's nonce counter is persisted alongside them so it survives a restart.
-A provider that forgot its data could not answer challenges for buckets it
-still has agreements for.
+`--storage-mode disk` (the default) keeps chunks, MMR state and the nonce
+counter in RocksDB under `--storage-path` (`./provider-data`, or
+`$STORAGE_PATH`), so they survive a restart — a provider that forgot its data
+could not answer challenges for buckets it still has agreements for.
 
-`--storage-mode inmemory` opts out: everything lives in RAM and is gone when the
-process exits. Use it for throwaway local runs and tests that want a clean slate;
-it also swaps in a no-op nonce store, so nothing is written outside the process.
+`--storage-mode inmemory` opts out: everything lives in RAM, including a no-op
+nonce store, and is gone when the process exits. For throwaway local runs.
 
 ## Authentication
 

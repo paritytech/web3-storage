@@ -9,15 +9,11 @@ use std::path::PathBuf;
 pub const DEFAULT_PROVIDER_ID: &str = "0x0000000000000000000000000000000000000000";
 
 /// Storage backend mode.
-#[derive(Clone, Debug, Default, clap::ValueEnum)]
+#[derive(Clone, Debug, clap::ValueEnum)]
 pub enum StorageMode {
-    /// In-memory storage (data lost on restart). Opt-in, for throwaway local
-    /// runs and tests that want a clean slate per process.
+    /// In-memory storage (data lost on restart).
     Inmemory,
-    /// Persistent disk storage (RocksDB). The default: a provider that loses
-    /// its data on restart cannot answer challenges for what it agreed to
-    /// store.
-    #[default]
+    /// Persistent disk storage (RocksDB).
     Disk,
 }
 
@@ -48,7 +44,7 @@ pub struct Cli {
 #[derive(Debug, clap::Args)]
 pub struct StorageParams {
     /// Storage backend to use.
-    #[arg(long, value_enum, default_value_t = StorageMode::default())]
+    #[arg(long, value_enum, default_value_t = StorageMode::Disk)]
     pub storage_mode: StorageMode,
 
     /// Path for persistent data (only used with --storage-mode disk).

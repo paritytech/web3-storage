@@ -23,16 +23,13 @@ env:
   # the Build job compiles and uploads.
   INTEGRATION_TEST_RUNTIME: web3-storage-paseo
 
-# Storage-backend coverage is split across the jobs below so both backends are
-# exercised without any suite running twice:
+# Storage-backend coverage, split so both are exercised and no suite runs twice.
+# Every provider is launched through .github/actions/start-provider.
 #
 #   e2e-integration-tests  → no --storage-mode: asserts the binary default (disk)
 #   integration-tests      → disk, plus a mid-job restart (persistence)
 #   sc-integration-tests   → inmemory
 #   ui-integration-tests   → inmemory
-#
-# Every provider is launched through .github/actions/start-provider. A job that
-# needs a second provider adds one more `uses:` with a different port + label.
 jobs:
   set-image:
     uses: ./.github/workflows/set-image.yml
@@ -125,9 +122,8 @@ jobs:
   # to validate production-like topology. Single runtime (web3-storage-paseo).
   # Layer 0 breadth is handled comprehensively by e2e-integration-tests.
   #
-  # Runs on the disk backend and restarts the provider mid-job: persistence is
-  # the property inmemory cannot have, and the reason disk is the default. The
-  # inmemory backend is covered by the sc and ui jobs, so no suite runs twice.
+  # Runs on disk and restarts the provider mid-job: persistence is the property
+  # inmemory cannot have, and the reason disk is the default.
   integration-tests:
     name: Zombienet Smoke Test
     runs-on: parity-large
@@ -218,96 +214,69 @@ jobs:
       - name: Wait for parachain blocks
         uses: ./.github/actions/wait-for-parachain
 
-      # //Alice on :3333: the L0 demo registers this account as a provider and
-      # the L1 demos then reuse that registration, so all three suites have to
-      # share one provider on the justfile's default PROVIDER_URL.
+      # One provider for all three demos: the L0 demo registers //Alice on-chain
+      # and the L1 demos reuse that registration, on the justfile's default
+      # PROVIDER_URL.
       - name: Start provider (disk)
         uses: ./.github/actions/start-provider
         with:
-          seed: "//Alice"
           mode: disk
-          port: "3333"
           storage-path: /tmp/provider-data
           label: disk
 
       - name: Run L0 demo
         run: just demo
 
-      # Persistence is the whole point of the disk backend and nothing else in
-      # CI restarts a provider. Snapshot what the L0 demo stored, kill the
-      # process, and bring it back on the same data dir — the fs/s3 demos below
-      # then run against the restarted instance, so this also proves a recovered
-      # provider is actually usable, not merely non-empty.
+      # Snapshot what the L0 demo stored, kill the process, bring it back on the
+      # same data dir. The fs/s3 demos below then run against the restarted
+      # instance, proving a recovered provider is usable, not merely non-empty.
       - name: Snapshot provider stats, then kill it
         run: |
           set -euo pipefail
-          STATS=$(curl -sf http://127.0.0.1:3333/stats)
-          NODES=$(echo "$STATS" | jq -r '.total_nodes // 0')
-          BYTES=$(echo "$STATS" | jq -r '.total_bytes // 0')
-          echo "Before restart: total_nodes=$NODES total_bytes=$BYTES"
-          if [ "$NODES" -eq 0 ]; then
+          PAT="bind-addr 0.0.0.0:3333"
+          STATS=$(curl -sf http://127.0.0.1:3333/stats | jq -c '{total_nodes, total_bytes}')
+          echo "Before restart: $STATS"
+          if [ "$(echo "$STATS" | jq -r .total_nodes)" -eq 0 ]; then
             echo "::error::Provider stored nothing — the restart check below would pass vacuously."
             exit 1
           fi
-          echo "NODES_BEFORE_RESTART=$NODES" >> $GITHUB_ENV
-          echo "BYTES_BEFORE_RESTART=$BYTES" >> $GITHUB_ENV
+          echo "STATS_BEFORE_RESTART=$STATS" >> $GITHUB_ENV
 
-          pkill -f "bind-addr 0.0.0.0:3333"
+          pkill -f "$PAT"
           # RocksDB holds a LOCK on the data dir until the process is gone, so
           # the restart must not race the shutdown.
           for _ in $(seq 1 30); do
-            pgrep -f "bind-addr 0.0.0.0:3333" > /dev/null || break
+            pgrep -f "$PAT" > /dev/null || break
             sleep 1
           done
-          if pgrep -f "bind-addr 0.0.0.0:3333" > /dev/null; then
+          if pgrep -f "$PAT" > /dev/null; then
             echo "::error::Provider did not exit within 30s of SIGTERM."
             exit 1
           fi
 
+      # wait-for: ready, not health — the fs/s3 demos below need the nonce
+      # counter and the on-chain registration the restarted process re-reads.
+      # Shorter timeout than a cold start: the chain is already up.
       - name: Restart provider on the same data dir
         uses: ./.github/actions/start-provider
         with:
-          seed: "//Alice"
           mode: disk
-          port: "3333"
           # Same --storage-path as the first start: that is what makes this a
           # recovery rather than a fresh provider.
           storage-path: /tmp/provider-data
           label: disk-restarted
+          wait-for: ready
+          wait-attempts: "20"
 
       - name: Data survived the restart
         run: |
           set -euo pipefail
-          STATS=$(curl -sf http://127.0.0.1:3333/stats)
-          NODES=$(echo "$STATS" | jq -r '.total_nodes // 0')
-          BYTES=$(echo "$STATS" | jq -r '.total_bytes // 0')
-          echo "After restart:  total_nodes=$NODES total_bytes=$BYTES"
-          if [ "$NODES" != "$NODES_BEFORE_RESTART" ] || [ "$BYTES" != "$BYTES_BEFORE_RESTART" ]; then
-            echo "::error::Provider lost data across a restart: nodes ${NODES_BEFORE_RESTART}→${NODES}, bytes ${BYTES_BEFORE_RESTART}→${BYTES}."
+          STATS=$(curl -sf http://127.0.0.1:3333/stats | jq -c '{total_nodes, total_bytes}')
+          echo "After restart:  $STATS"
+          if [ "$STATS" != "$STATS_BEFORE_RESTART" ]; then
+            echo "::error::Provider lost data across a restart: ${STATS_BEFORE_RESTART} → ${STATS}."
             exit 1
           fi
-          echo "Provider kept all $NODES nodes / $BYTES bytes across the restart."
-
-      # /health answers before the chain-derived state is back; the fs/s3 demos
-      # need the signing path (nonce counter) and the on-chain registration the
-      # restarted process re-reads, so wait for readiness rather than liveness.
-      - name: Wait for restarted provider readiness
-        run: |
-          set -euo pipefail
-          for i in $(seq 1 60); do
-            # `|| true`: a refused connection or half-written response is a
-            # retry, not a step failure, and set -e would abort on it.
-            READY=$(curl -sf http://127.0.0.1:3333/info \
-              | jq -r '.readiness | .nonce_counter_ready and .provider_info_loaded' || true)
-            if [ "$READY" = "true" ]; then
-              echo "Provider ready again (attempt $i)"
-              exit 0
-            fi
-            sleep 2
-          done
-          echo "::error::Restarted provider never reported nonce_counter_ready + provider_info_loaded."
-          curl -sf http://127.0.0.1:3333/info | jq . || true
-          exit 1
 
       - name: Run file system integration test
         run: just drain-tx-pool-then fs-demo-ci
@@ -428,14 +397,10 @@ jobs:
         uses: ./.github/actions/wait-for-parachain
 
       # No --storage-mode on purpose: the deepest suite runs whatever the binary
-      # defaults to (disk), so a change to that default is caught here rather
-      # than in production.
+      # defaults to, so a change to that default is caught here.
       - name: Start provider (binary default backend)
         uses: ./.github/actions/start-provider
         with:
-          seed: "//Alice"
-          port: "3333"
-          storage-path: /tmp/provider-data
           label: default
 
       # The tracked metadata snapshot in packages/papi is the single descriptor
@@ -661,13 +626,11 @@ jobs:
           log-file: /tmp/omni-node.log
 
       # Contracts don't care which backend is underneath, so this job carries
-      # part of the inmemory coverage that the e2e job gave up.
+      # inmemory coverage.
       - name: Start provider (inmemory)
         uses: ./.github/actions/start-provider
         with:
-          seed: "//Alice"
           mode: inmemory
-          port: "3333"
           label: inmemory
 
       - name: Run smart-contract end-to-end demo
@@ -792,13 +755,11 @@ jobs:
         uses: ./.github/actions/wait-for-parachain
 
       # Playwright drives the UIs, not the backend; inmemory keeps the fixture
-      # clean per run and carries the rest of the inmemory coverage.
+      # clean per run.
       - name: Start provider (Alice, inmemory)
         uses: ./.github/actions/start-provider
         with:
-          seed: "//Alice"
           mode: inmemory
-          port: "3333"
           label: inmemory
 
       - name: drive-ui e2e
