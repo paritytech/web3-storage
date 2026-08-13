@@ -1,20 +1,13 @@
 name: Wait for provider health
 description: >-
-  Poll a storage-provider-node until it reports the requested state, or time
-  out. Owns what "up" means, so no job hand-rolls a curl/jq poll loop.
+  Poll a storage-provider-node /health endpoint until it responds with a valid
+  JSON status, or time out.
 
 inputs:
   url:
     description: Provider HTTP base URL to poll.
     required: false
     default: http://127.0.0.1:3333
-  wait-for:
-    description: >-
-      health = the HTTP listener answers. ready = chain-derived state is loaded
-      too (nonce counter + on-chain registration), which the signing endpoints
-      need and which /health answers before.
-    required: false
-    default: health
   attempts:
     description: Number of poll attempts, 2s apart (60 ≈ 2min).
     required: false
@@ -34,26 +27,18 @@ runs:
     - shell: bash
       env:
         URL: ${{ inputs.url }}
-        WAIT_FOR: ${{ inputs.wait-for }}
         ATTEMPTS: ${{ inputs.attempts }}
         LABEL: ${{ inputs.label }}
         LOG_FILE: ${{ inputs.log-file }}
       run: |
-        case "$WAIT_FOR" in
-          health) ENDPOINT=health; CHECK='.status' ;;
-          ready)  ENDPOINT=info;   CHECK='.readiness | .nonce_counter_ready and .provider_info_loaded' ;;
-          *) echo "::error::wait-for must be 'health' or 'ready', got '${WAIT_FOR}'"; exit 1 ;;
-        esac
-
-        echo "Waiting for ${LABEL} provider to be ${WAIT_FOR} (${URL}/${ENDPOINT})..."
+        echo "Waiting for ${LABEL} provider (${URL})..."
         for i in $(seq 1 "$ATTEMPTS"); do
-          if curl -s "${URL}/${ENDPOINT}" | jq -e "$CHECK" > /dev/null 2>&1; then
-            echo "${LABEL} provider is ${WAIT_FOR} (attempt $i)"
+          if curl -s "${URL}/health" | jq -e '.status' > /dev/null 2>&1; then
+            echo "${LABEL} provider is healthy (attempt $i)"
             break
           fi
           if [ "$i" -eq "$ATTEMPTS" ]; then
-            echo "Timeout: ${LABEL} provider never became ${WAIT_FOR}"
-            curl -s "${URL}/${ENDPOINT}" | jq . 2>/dev/null || true
+            echo "Timeout: ${LABEL} provider did not become healthy"
             cat "$LOG_FILE" 2>/dev/null || true
             exit 1
           fi

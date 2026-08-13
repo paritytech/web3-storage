@@ -34,14 +34,6 @@ inputs:
       written: /tmp/provider-<label>.{key,log}.
     required: false
     default: provider
-  wait-for:
-    description: Passed to wait-for-provider-health — "health" or "ready".
-    required: false
-    default: health
-  wait-attempts:
-    description: Poll attempts, 2s apart (60 ≈ 2min).
-    required: false
-    default: "60"
 
 runs:
   using: composite
@@ -85,7 +77,5 @@ runs:
     - uses: ./.github/actions/wait-for-provider-health
       with:
         url: http://127.0.0.1:${{ inputs.port }}
-        wait-for: ${{ inputs.wait-for }}
         label: ${{ inputs.label }}
         log-file: /tmp/provider-${{ inputs.label }}.log
-        attempts: ${{ inputs.wait-attempts }}

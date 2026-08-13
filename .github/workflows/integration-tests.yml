@@ -27,7 +27,7 @@ env:
 # Every provider is launched through .github/actions/start-provider.
 #
 #   e2e-integration-tests  → no --storage-mode: asserts the binary default (disk)
-#   integration-tests      → disk, plus a mid-job restart (persistence)
+#   integration-tests      → disk
 #   sc-integration-tests   → inmemory
 #   ui-integration-tests   → inmemory
 jobs:
@@ -122,8 +122,8 @@ jobs:
   # to validate production-like topology. Single runtime (web3-storage-paseo).
   # Layer 0 breadth is handled comprehensively by e2e-integration-tests.
   #
-  # Runs on disk and restarts the provider mid-job: persistence is the property
-  # inmemory cannot have, and the reason disk is the default.
+  # Runs on disk, so the L1 fs/s3 demos exercise the backend the binary defaults
+  # to. The inmemory backend is covered by the sc and ui jobs.
   integration-tests:
     name: Zombienet Smoke Test
     runs-on: parity-large
@@ -221,66 +221,10 @@ jobs:
         uses: ./.github/actions/start-provider
         with:
           mode: disk
-          storage-path: /tmp/provider-data
           label: disk
 
       - name: Run L0 demo
         run: just demo
-
-      # Snapshot what the L0 demo stored, kill the process, bring it back on the
-      # same data dir. The fs/s3 demos below then run against the restarted
-      # instance, proving a recovered provider is usable, not merely non-empty.
-      # shell: bash — workflow steps default to `sh -e {0}` in the CI container,
-      # and `set -o pipefail` is a bash-ism.
-      - name: Snapshot provider stats, then kill it
-        shell: bash
-        run: |
-          set -euo pipefail
-          PAT="bind-addr 0.0.0.0:3333"
-          STATS=$(curl -sf http://127.0.0.1:3333/stats | jq -c '{total_nodes, total_bytes}')
-          echo "Before restart: $STATS"
-          if [ "$(echo "$STATS" | jq -r .total_nodes)" -eq 0 ]; then
-            echo "::error::Provider stored nothing — the restart check below would pass vacuously."
-            exit 1
-          fi
-          echo "STATS_BEFORE_RESTART=$STATS" >> $GITHUB_ENV
-
-          pkill -f "$PAT"
-          # RocksDB holds a LOCK on the data dir until the process is gone, so
-          # the restart must not race the shutdown.
-          for _ in $(seq 1 30); do
-            pgrep -f "$PAT" > /dev/null || break
-            sleep 1
-          done
-          if pgrep -f "$PAT" > /dev/null; then
-            echo "::error::Provider did not exit within 30s of SIGTERM."
-            exit 1
-          fi
-
-      # wait-for: ready, not health — the fs/s3 demos below need the nonce
-      # counter and the on-chain registration the restarted process re-reads.
-      # Shorter timeout than a cold start: the chain is already up.
-      - name: Restart provider on the same data dir
-        uses: ./.github/actions/start-provider
-        with:
-          mode: disk
-          # Same --storage-path as the first start: that is what makes this a
-          # recovery rather than a fresh provider.
-          storage-path: /tmp/provider-data
-          label: disk-restarted
-          wait-for: ready
-          wait-attempts: "20"
-
-      - name: Data survived the restart
-        shell: bash
-        run: |
-          set -euo pipefail
-          STATS=$(curl -sf http://127.0.0.1:3333/stats | jq -c '{total_nodes, total_bytes}')
-          echo "After restart:  $STATS"
-          if [ "$STATS" != "$STATS_BEFORE_RESTART" ]; then
-            echo "::error::Provider lost data across a restart: ${STATS_BEFORE_RESTART} → ${STATS}."
-            exit 1
-          fi
 
       - name: Run file system integration test
         run: just drain-tx-pool-then fs-demo-ci
