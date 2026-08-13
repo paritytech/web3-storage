@@ -4,22 +4,18 @@
 //! signed `Authorization` header) and the provider node (which verifies it and
 //! enforces bucket roles).
 //!
-//! * [`http_auth`] — the signed `Authorization` header format for bucket-scoped
-//!   provider HTTP requests (client builds, provider verifies).
-//! * [`membership`] — the [`membership::MembershipResolver`] seam and a TTL
-//!   cache over it; resolving against a chain is left to the caller.
-//! * [`role`] — the privilege ladder: which granted role clears which bar.
-//! * [`verify`] — sr25519 request signature verification and role-based access
-//!   control enforcement.
+//! * [`http_auth`] — the signed `Authorization` header format.
+//! * [`membership`] — bucket members, the role ladder, and a TTL cache.
+//! * [`verify`] — signature verification and role enforcement.
 
 pub mod error;
 pub mod http_auth;
 pub mod membership;
-pub mod role;
 pub mod verify;
 
-pub use error::AuthError;
+pub use error::{AuthError, MembershipError};
 pub use http_auth::{auth_message, build_auth_header};
-pub use membership::{MembershipCache, MembershipResolver, StaticMembershipResolver};
-pub use role::RequiredRole;
+pub use membership::{
+    Member, MembershipCache, MembershipResolver, RequiredRole, StaticMembershipResolver,
+};
 pub use verify::{require_role, verify_signature};

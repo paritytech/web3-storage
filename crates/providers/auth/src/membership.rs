@@ -1,25 +1,59 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! Bucket membership resolution with TTL caching.
-//!
-//! Resolution itself is left to [`MembershipResolver`]; this crate deliberately
-//! knows nothing about the chain, so the node can supply a subxt-backed
-//! implementation without dragging that dependency in here.
+//! Bucket membership and the role ladder. Resolution is left to
+//! [`MembershipResolver`], so this crate needs no chain dependency.
 
+use crate::error::MembershipError;
 use dashmap::DashMap;
 use sp_core::crypto::AccountId32;
 use std::time::{Duration, Instant};
 use storage_primitives::{BucketId, Role};
 
+/// A bucket member and the role they hold.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Member {
+    pub account: AccountId32,
+    pub role: Role,
+}
+
+impl From<(AccountId32, Role)> for Member {
+    fn from((account, role): (AccountId32, Role)) -> Self {
+        Self { account, role }
+    }
+}
+
+/// Required role for an endpoint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RequiredRole {
+    Reader,
+    Writer,
+    Admin,
+}
+
+impl RequiredRole {
+    /// Matched over the pair, not on `self` alone, so a new [`Role`] fails to
+    /// compile here until it is given an explicit answer.
+    pub fn is_satisfied_by(self, granted: Role) -> bool {
+        match (self, granted) {
+            // Any member of the bucket can read.
+            (RequiredRole::Reader, Role::Reader | Role::Writer | Role::Admin) => true,
+            (RequiredRole::Writer, Role::Writer | Role::Admin) => true,
+            (RequiredRole::Writer, Role::Reader) => false,
+            (RequiredRole::Admin, Role::Admin) => true,
+            (RequiredRole::Admin, Role::Reader | Role::Writer) => false,
+        }
+    }
+}
+
 /// Cached membership entry for a bucket.
 #[derive(Debug, Clone)]
 struct CachedMembership {
-    members: Vec<(AccountId32, Role)>,
+    members: Vec<Member>,
     fetched_at: Instant,
 }
 
 impl CachedMembership {
-    fn new(members: Vec<(AccountId32, Role)>) -> Self {
+    fn new(members: Vec<Member>) -> Self {
         Self {
             members,
             fetched_at: Instant::now(),
@@ -30,31 +64,27 @@ impl CachedMembership {
         self.fetched_at.elapsed() < ttl
     }
 
-    /// The account's role in this member set, or `None` if it holds none.
     fn role_of(&self, account: &AccountId32) -> Option<Role> {
         self.members
             .iter()
-            .find(|(a, _)| a == account)
-            .map(|(_, r)| *r)
+            .find(|m| &m.account == account)
+            .map(|m| m.role)
     }
 }
 
 /// Trait for resolving bucket membership (enables mocking in tests).
 #[async_trait::async_trait]
 pub trait MembershipResolver: Send + Sync {
-    async fn fetch_members(&self, bucket_id: BucketId) -> Result<Vec<(AccountId32, Role)>, String>;
+    async fn fetch_members(&self, bucket_id: BucketId) -> Result<Vec<Member>, MembershipError>;
 }
 
 /// A [`MembershipResolver`] that returns a fixed member set for every bucket.
 /// Used by integration tests across crates.
-pub struct StaticMembershipResolver(pub Vec<(AccountId32, Role)>);
+pub struct StaticMembershipResolver(pub Vec<Member>);
 
 #[async_trait::async_trait]
 impl MembershipResolver for StaticMembershipResolver {
-    async fn fetch_members(
-        &self,
-        _bucket_id: BucketId,
-    ) -> Result<Vec<(AccountId32, Role)>, String> {
+    async fn fetch_members(&self, _bucket_id: BucketId) -> Result<Vec<Member>, MembershipError> {
         Ok(self.0.clone())
     }
 }
@@ -81,7 +111,7 @@ impl MembershipCache {
         &self,
         bucket_id: BucketId,
         account: &AccountId32,
-    ) -> Result<Option<Role>, String> {
+    ) -> Result<Option<Role>, MembershipError> {
         // Check cache first
         if let Some(entry) = self.cache.get(&bucket_id) {
             if entry.is_fresh(self.ttl) {
@@ -118,15 +148,38 @@ mod tests {
     use super::*;
 
     #[test]
+    fn privilege_ladder_is_exhaustive() {
+        // Every (required, granted) pair, so the ladder cannot be widened
+        // without a test failing.
+        for (required, granted, expected) in [
+            (RequiredRole::Reader, Role::Reader, true),
+            (RequiredRole::Reader, Role::Writer, true),
+            (RequiredRole::Reader, Role::Admin, true),
+            (RequiredRole::Writer, Role::Reader, false),
+            (RequiredRole::Writer, Role::Writer, true),
+            (RequiredRole::Writer, Role::Admin, true),
+            (RequiredRole::Admin, Role::Reader, false),
+            (RequiredRole::Admin, Role::Writer, false),
+            (RequiredRole::Admin, Role::Admin, true),
+        ] {
+            assert_eq!(
+                required.is_satisfied_by(granted),
+                expected,
+                "{granted:?} vs required {required:?}"
+            );
+        }
+    }
+
+    #[test]
     fn role_of_finds_each_member_and_rejects_strangers() {
         let alice = AccountId32::new([1u8; 32]);
         let bob = AccountId32::new([2u8; 32]);
         let charlie = AccountId32::new([3u8; 32]);
 
         let entry = CachedMembership::new(vec![
-            (alice.clone(), Role::Admin),
-            (bob.clone(), Role::Writer),
-            (charlie.clone(), Role::Reader),
+            (alice.clone(), Role::Admin).into(),
+            (bob.clone(), Role::Writer).into(),
+            (charlie.clone(), Role::Reader).into(),
         ]);
 
         assert_eq!(entry.role_of(&alice), Some(Role::Admin));

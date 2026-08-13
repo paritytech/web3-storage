@@ -39,7 +39,8 @@ impl DiskTestServer {
                 Box::new(StaticMembershipResolver(vec![(
                     common::test_member_account(),
                     Role::Admin,
-                )])),
+                )
+                    .into()])),
                 Duration::from_secs(60),
             )),
             auth_max_skew: Duration::from_secs(300),

@@ -248,7 +248,8 @@ pub async fn start_test_provider() -> String {
             Box::new(StaticMembershipResolver(vec![(
                 dev_account("alice"),
                 Role::Admin,
-            )])),
+            )
+                .into()])),
             Duration::from_secs(60),
         )),
         auth_max_skew: Duration::from_secs(300),

@@ -46,7 +46,9 @@ impl AuthTestServer {
             storage: Arc::new(Storage::new()),
             nonce_store: Arc::new(NullNonceStore),
             membership: Arc::new(MembershipCache::new(
-                Box::new(StaticMembershipResolver(vec![(alice_account, alice_role)])),
+                Box::new(StaticMembershipResolver(vec![
+                    (alice_account, alice_role).into()
+                ])),
                 Duration::from_secs(60),
             )),
             auth_max_skew: Duration::from_secs(300),

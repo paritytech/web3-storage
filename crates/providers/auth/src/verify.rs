@@ -4,8 +4,7 @@
 
 use crate::error::AuthError;
 use crate::http_auth::auth_message;
-use crate::membership::MembershipCache;
-use crate::role::RequiredRole;
+use crate::membership::{MembershipCache, RequiredRole};
 use sp_core::{crypto::AccountId32, sr25519, Pair};
 use std::time::Duration;
 use storage_primitives::BucketId;
@@ -142,8 +141,7 @@ pub async fn require_role(
 
     let role = membership
         .get_role(bucket_id, &account)
-        .await
-        .map_err(AuthError::MembershipLookup)?
+        .await?
         .ok_or(AuthError::InsufficientRole)?;
 
     if !required.is_satisfied_by(role) {
@@ -261,7 +259,8 @@ mod tests {
             Box::new(StaticMembershipResolver(vec![(
                 AccountId32::new(keypair.public().0),
                 granted,
-            )])),
+            )
+                .into()])),
             Duration::from_secs(60),
         );
         let header = make_auth_header(&keypair, "PUT", 1, current_timestamp());
@@ -317,7 +316,8 @@ mod tests {
             Box::new(StaticMembershipResolver(vec![(
                 AccountId32::new(alice.public().0),
                 Role::Admin,
-            )])),
+            )
+                .into()])),
             Duration::from_secs(60),
         );
         let header = make_auth_header(&bob, "GET", 1, current_timestamp());
@@ -341,7 +341,8 @@ mod tests {
             Box::new(StaticMembershipResolver(vec![(
                 AccountId32::new(alice.public().0),
                 Role::Admin,
-            )])),
+            )
+                .into()])),
             Duration::from_secs(60),
         );
 

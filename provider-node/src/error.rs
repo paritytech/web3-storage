@@ -7,7 +7,7 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
-use provider_auth::AuthError;
+use provider_auth::{AuthError, MembershipError};
 use serde::Serialize;
 use thiserror::Error;
 
@@ -262,6 +262,14 @@ impl IntoResponse for Error {
                     details: None,
                 },
             ),
+            // Transient and worth retrying, unlike a decode failure.
+            Error::Auth(err @ AuthError::MembershipLookup(MembershipError::Unavailable(_))) => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                ErrorResponse {
+                    error: "membership_unavailable".to_string(),
+                    details: Some(serde_json::json!({ "message": err.to_string() })),
+                },
+            ),
             Error::Auth(err @ AuthError::MembershipLookup(_)) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 ErrorResponse {
@@ -484,8 +492,22 @@ mod tests {
             status_of(AuthError::InsufficientRole.into()),
             StatusCode::FORBIDDEN
         );
+        // A chain blip is retryable; a decode failure is a bug. They must not
+        // share a status code.
         assert_eq!(
-            status_of(AuthError::MembershipLookup("chain down".into()).into()),
+            status_of(
+                AuthError::MembershipLookup(MembershipError::Unavailable("down".into())).into()
+            ),
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        assert_eq!(
+            status_of(
+                AuthError::MembershipLookup(MembershipError::Decode {
+                    bucket_id: 1,
+                    reason: "unexpected shape".into(),
+                })
+                .into()
+            ),
             StatusCode::INTERNAL_SERVER_ERROR
         );
         assert_eq!(
