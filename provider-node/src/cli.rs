@@ -9,13 +9,22 @@ use std::path::PathBuf;
 /// Placeholder provider ID used when no identity is configured.
 pub const DEFAULT_PROVIDER_ID: &str = "0x0000000000000000000000000000000000000000";
 
-/// Storage backend mode.
+/// Which storage backend to run, named after the engine like the SDK's
+/// `sc_cli::arg_enums::Database` (`rocksdb`, `paritydb`, …) rather than after a
+/// property such as "disk", so a second engine has an obvious place to land.
+///
+/// Flat by necessity: clap value-enums must be unit variants. The configured
+/// form is [`StorageBackendSpec`], built by [`StorageParams::spec`].
 #[derive(Clone, Debug, clap::ValueEnum)]
-pub enum StorageMode {
+pub enum StorageBackendKind {
     /// In-memory storage (data lost on restart).
-    Inmemory,
-    /// Persistent disk storage (RocksDB).
-    Disk,
+    // `inmemory` is what CI, the justfile and the docs already pass; the
+    // derive would otherwise render this variant as `in-memory`.
+    #[value(name = "inmemory", alias = "in-memory")]
+    InMemory,
+    /// Persistent RocksDB storage.
+    #[value(alias = "disk")]
+    RocksDb,
 }
 
 /// Storage Provider Node - Off-chain storage server for Web3 Storage.
@@ -45,10 +54,10 @@ pub struct Cli {
 #[derive(Debug, clap::Args)]
 pub struct StorageParams {
     /// Storage backend to use.
-    #[arg(long, value_enum, default_value_t = StorageMode::Disk)]
-    pub storage_mode: StorageMode,
+    #[arg(long, value_enum, default_value_t = StorageBackendKind::RocksDb)]
+    pub storage_mode: StorageBackendKind,
 
-    /// Path for persistent data (only used with --storage-mode disk).
+    /// Path for persistent data (only used with --storage-mode rocksdb).
     #[arg(long, default_value = "./provider-data", env = "STORAGE_PATH")]
     pub storage_path: PathBuf,
 }
@@ -58,11 +67,11 @@ impl StorageParams {
     ///
     /// This is the one place the flat CLI enum meets the backend that actually
     /// gets built, and the only place `--storage-path` is read — it belongs to
-    /// disk mode and is ignored by in-memory.
+    /// the persistent engine and is ignored by in-memory.
     pub fn spec(&self) -> StorageBackendSpec {
         match self.storage_mode {
-            StorageMode::Inmemory => StorageBackendSpec::InMemory,
-            StorageMode::Disk => StorageBackendSpec::Disk {
+            StorageBackendKind::InMemory => StorageBackendSpec::InMemory,
+            StorageBackendKind::RocksDb => StorageBackendSpec::RocksDb {
                 path: self.storage_path.clone(),
             },
         }
@@ -273,7 +282,10 @@ mod tests {
         let cli = Cli::try_parse_from(["storage-provider-node"]).unwrap();
         // Persistence is the default: an operator who passes no storage flags
         // must not silently get a backend that drops everything on restart.
-        assert!(matches!(cli.storage.storage_mode, StorageMode::Disk));
+        assert!(matches!(
+            cli.storage.storage_mode,
+            StorageBackendKind::RocksDb
+        ));
         assert_eq!(cli.storage.storage_path, PathBuf::from("./provider-data"));
         assert_eq!(cli.rpc.bind_addr, "0.0.0.0:3333");
         assert_eq!(cli.rpc.chain_rpc, "ws://127.0.0.1:2222");
@@ -311,7 +323,10 @@ mod tests {
         ])
         .unwrap();
 
-        assert!(matches!(cli.storage.storage_mode, StorageMode::Disk));
+        assert!(matches!(
+            cli.storage.storage_mode,
+            StorageBackendKind::RocksDb
+        ));
         assert_eq!(cli.storage.storage_path, PathBuf::from("/data"));
         assert_eq!(cli.rpc.bind_addr, "127.0.0.1:4444");
         assert_eq!(cli.rpc.chain_rpc, "ws://example.com:9944");
@@ -329,7 +344,31 @@ mod tests {
     fn inmemory_is_opt_in() {
         let cli =
             Cli::try_parse_from(["storage-provider-node", "--storage-mode", "inmemory"]).unwrap();
-        assert!(matches!(cli.storage.storage_mode, StorageMode::Inmemory));
+        assert!(matches!(
+            cli.storage.storage_mode,
+            StorageBackendKind::InMemory
+        ));
+    }
+
+    /// The engine names are canonical; the older `disk` spelling and the
+    /// derive's default `in-memory` keep working so existing scripts, CI and
+    /// docs do not break on the rename.
+    #[test]
+    fn backend_names_and_aliases_parse() {
+        for (arg, expected) in [
+            ("rocksdb", StorageBackendKind::RocksDb),
+            ("disk", StorageBackendKind::RocksDb),
+            ("inmemory", StorageBackendKind::InMemory),
+            ("in-memory", StorageBackendKind::InMemory),
+        ] {
+            let cli = Cli::try_parse_from(["storage-provider-node", "--storage-mode", arg])
+                .unwrap_or_else(|e| panic!("--storage-mode {arg} should parse: {e}"));
+            assert_eq!(
+                std::mem::discriminant(&cli.storage.storage_mode),
+                std::mem::discriminant(&expected),
+                "--storage-mode {arg}"
+            );
+        }
     }
 
     #[test]

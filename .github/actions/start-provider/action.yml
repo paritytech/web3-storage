@@ -10,7 +10,7 @@ inputs:
     default: "//Alice"
   mode:
     description: >-
-      Storage backend: "disk", "inmemory", or "" to pass no --storage-mode and
+      Storage backend: "rocksdb", "inmemory", or "" to pass no --storage-mode and
       exercise the binary's own default.
     required: false
     default: ""
@@ -20,7 +20,7 @@ inputs:
     default: "3333"
   storage-path:
     description: >-
-      Data directory for disk mode, unique per provider — two RocksDB instances
+      Data directory for rocksdb, unique per provider — two RocksDB instances
       cannot share one. Ignored by inmemory.
     required: false
     default: /tmp/provider-data

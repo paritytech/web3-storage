@@ -20,33 +20,33 @@ use tempfile::TempDir;
 
 /// Backend selector, reusing the node's own CLI vocabulary rather than a
 /// test-only copy of it.
-pub use storage_provider_node::cli::StorageMode;
+pub use storage_provider_node::cli::StorageBackendKind;
 
 type AccountId32 = sp_core::crypto::AccountId32;
 
-/// Storage and nonce store for `mode`, plus the scratch directory RocksDB needs
+/// Storage and nonce store for `kind`, plus the scratch directory RocksDB needs
 /// kept alive for as long as the server (`None` for in-memory).
 ///
 /// Goes through [`StorageBackendSpec::build`], the same call the binary makes,
 /// so tests exercise the real backend/nonce-store pairing instead of assuming
 /// one.
 pub fn storage_for(
-    mode: StorageMode,
+    kind: StorageBackendKind,
 ) -> (
     Arc<dyn StorageBackend>,
     Arc<dyn NonceStore>,
     Option<TempDir>,
 ) {
-    match mode {
-        StorageMode::Inmemory => {
+    match kind {
+        StorageBackendKind::InMemory => {
             let (storage, nonce_store) = StorageBackendSpec::InMemory
                 .build()
                 .expect("in-memory backend is infallible");
             (storage, nonce_store, None)
         }
-        StorageMode::Disk => {
+        StorageBackendKind::RocksDb => {
             let dir = TempDir::new().expect("temp dir");
-            let (storage, nonce_store) = StorageBackendSpec::Disk {
+            let (storage, nonce_store) = StorageBackendSpec::RocksDb {
                 path: dir.path().to_path_buf(),
             }
             .build()
@@ -56,38 +56,38 @@ pub fn storage_for(
     }
 }
 
-/// Declare tests that run once per [`StorageMode`].
+/// Declare tests that run once per [`StorageBackendKind`].
 ///
 /// ```ignore
 /// common::backend_tests! {
-///     async fn health(mode) {
-///         let server = TestServer::new(mode).await;
+///     async fn health(kind) {
+///         let server = TestServer::new(kind).await;
 ///         // ...
 ///     }
 /// }
 /// ```
 ///
-/// expands to `health::in_memory` and `health::disk`, so a failure names the
+/// expands to `health::in_memory` and `health::rocksdb`, so a failure names the
 /// backend it happened on. The inner module and the test body function share a
 /// name deliberately — they live in different namespaces.
 macro_rules! backend_tests {
     ($(
         $(#[$attr:meta])*
-        async fn $name:ident($mode:ident) $body:block
+        async fn $name:ident($kind:ident) $body:block
     )*) => {
         $(
             $(#[$attr])*
-            async fn $name($mode: common::StorageMode) $body
+            async fn $name($kind: common::StorageBackendKind) $body
 
             mod $name {
                 #[tokio::test]
                 async fn in_memory() {
-                    super::$name(super::common::StorageMode::Inmemory).await
+                    super::$name(super::common::StorageBackendKind::InMemory).await
                 }
 
                 #[tokio::test]
-                async fn disk() {
-                    super::$name(super::common::StorageMode::Disk).await
+                async fn rocksdb() {
+                    super::$name(super::common::StorageBackendKind::RocksDb).await
                 }
             }
         )*

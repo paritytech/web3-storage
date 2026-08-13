@@ -26,8 +26,8 @@ env:
 # Storage-backend coverage, split so both are exercised and no suite runs twice.
 # Every provider is launched through .github/actions/start-provider.
 #
-#   e2e-integration-tests  → no --storage-mode: asserts the binary default (disk)
-#   integration-tests      → disk
+#   e2e-integration-tests  → no --storage-mode: asserts the binary default (rocksdb)
+#   integration-tests      → rocksdb
 #   sc-integration-tests   → inmemory
 #   ui-integration-tests   → inmemory
 jobs:
@@ -122,7 +122,7 @@ jobs:
   # to validate production-like topology. Single runtime (web3-storage-paseo).
   # Layer 0 breadth is handled comprehensively by e2e-integration-tests.
   #
-  # Runs on disk, so the L1 fs/s3 demos exercise the backend the binary defaults
+  # Runs on rocksdb, so the L1 fs/s3 demos exercise the backend the binary defaults
   # to. The inmemory backend is covered by the sc and ui jobs.
   integration-tests:
     name: Zombienet Smoke Test
@@ -217,11 +217,11 @@ jobs:
       # One provider for all three demos: the L0 demo registers //Alice on-chain
       # and the L1 demos reuse that registration, on the justfile's default
       # PROVIDER_URL.
-      - name: Start provider (disk)
+      - name: Start provider (rocksdb)
         uses: ./.github/actions/start-provider
         with:
-          mode: disk
-          label: disk
+          mode: rocksdb
+          label: rocksdb
 
       - name: Run L0 demo
         run: just demo

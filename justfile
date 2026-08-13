@@ -185,11 +185,11 @@ start-e2e-chain RUNTIME="web3-storage-paseo": check
 
 # Start the storage provider node (without registering on-chain)
 # Examples:
-#   just start-provider                                    # disk in ./provider-data, //Alice key, port 3333
+#   just start-provider                                    # rocksdb in ./provider-data, //Alice key, port 3333
 #   just start-provider MODE=inmemory                      # throwaway run, data dropped on exit
 #   just start-provider PORT=3334 STORAGE_PATH=/tmp/p2     # second provider, separate data dir
 #   just start-provider KEYFILE=/path/to/seed              # custom key from file
-start-provider MODE="disk" PORT=PROVIDER_PORT STORAGE_PATH="./provider-data" KEYFILE="": build-provider
+start-provider MODE="rocksdb" PORT=PROVIDER_PORT STORAGE_PATH="./provider-data" KEYFILE="": build-provider
     #!/usr/bin/env bash
     set -euo pipefail
     echo ""
@@ -198,7 +198,7 @@ start-provider MODE="disk" PORT=PROVIDER_PORT STORAGE_PATH="./provider-data" KEY
     echo "Provider health: http://127.0.0.1:{{PORT}}/health"
     echo ""
     EXTRA_ARGS=""
-    if [ "{{MODE}}" = "disk" ]; then
+    if [ "{{MODE}}" != "inmemory" ]; then
         EXTRA_ARGS="--storage-path {{STORAGE_PATH}}"
     fi
     if [ -n "{{KEYFILE}}" ]; then
@@ -218,7 +218,7 @@ start-provider MODE="disk" PORT=PROVIDER_PORT STORAGE_PATH="./provider-data" KEY
         $EXTRA_ARGS
 
 # Register on-chain then start the provider node (original behavior)
-register-then-start-provider MODE="disk" PORT=PROVIDER_PORT STORAGE_PATH="./provider-data" KEYFILE="":
+register-then-start-provider MODE="rocksdb" PORT=PROVIDER_PORT STORAGE_PATH="./provider-data" KEYFILE="":
     just start-provider MODE="{{MODE}}" PORT="{{PORT}}" STORAGE_PATH="{{STORAGE_PATH}}" KEYFILE="{{KEYFILE}}"
     just register-provider "{{KEYFILE}}"
 

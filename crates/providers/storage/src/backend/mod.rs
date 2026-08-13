@@ -32,7 +32,7 @@ pub enum StorageBackendSpec {
     /// RAM only; everything is gone when the process exits.
     InMemory,
     /// RocksDB rooted at `path`.
-    Disk { path: PathBuf },
+    RocksDb { path: PathBuf },
 }
 
 impl StorageBackendSpec {
@@ -46,7 +46,7 @@ impl StorageBackendSpec {
     pub fn build(&self) -> Result<(Arc<dyn StorageBackend>, Arc<dyn NonceStore>), Error> {
         match self {
             Self::InMemory => Ok((Arc::new(Storage::new()), Arc::new(NullNonceStore))),
-            Self::Disk { path } => {
+            Self::RocksDb { path } => {
                 let disk = DiskStorage::new(path)?;
                 let nonce_store = disk.nonce_store();
                 Ok((Arc::new(disk), nonce_store))
@@ -59,7 +59,7 @@ impl fmt::Display for StorageBackendSpec {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InMemory => write!(f, "in-memory (data is lost on restart)"),
-            Self::Disk { path } => write!(f, "disk at {}", path.display()),
+            Self::RocksDb { path } => write!(f, "RocksDB at {}", path.display()),
         }
     }
 }
