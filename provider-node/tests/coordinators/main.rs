@@ -8,11 +8,11 @@ mod challenge;
 mod event_fanout;
 mod replica_sync;
 
+use provider_auth::{Authenticator, StaticMembershipResolver};
 use provider_storage::{build_padded_merkle_tree, NullNonceStore, Storage};
 use std::sync::Arc;
 use std::time::Duration;
 use storage_primitives::blake2_256;
-use storage_provider_node::auth::{MembershipCache, StaticMembershipResolver};
 use storage_provider_node::{DetectedChallenge, ProviderDeps, ProviderState};
 
 /// Full Alice SS58 address (substrate prefix 42).
@@ -25,11 +25,11 @@ pub fn test_deps(storage: Arc<Storage>) -> ProviderDeps {
     ProviderDeps {
         storage,
         nonce_store: Arc::new(NullNonceStore),
-        membership: Arc::new(MembershipCache::new(
-            Box::new(StaticMembershipResolver(vec![])),
+        auth: Arc::new(Authenticator::new(
+            StaticMembershipResolver(vec![]),
             Duration::from_secs(60),
+            Duration::from_secs(300),
         )),
-        auth_max_skew: Duration::from_secs(300),
     }
 }
 

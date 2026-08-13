@@ -3,13 +3,13 @@
 //! Integration tests for the replica sync coordinator.
 
 use super::{test_state, ALICE_SS58};
+use provider_auth::{Authenticator, StaticMembershipResolver};
 use provider_storage::{NullNonceStore, Storage};
 use sp_core::H256;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use storage_primitives::BucketId;
-use storage_provider_node::auth::{MembershipCache, StaticMembershipResolver};
 use storage_provider_node::replica_sync_coordinator::{BucketSnapshot, ReplicaAgreementInfo};
 use storage_provider_node::{
     Error, ProviderDeps, ProviderState, ReplicaSyncChainClient, ReplicaSyncCoordinator,
@@ -161,11 +161,11 @@ async fn test_already_synced() {
     let deps = ProviderDeps {
         storage,
         nonce_store: Arc::new(NullNonceStore),
-        membership: Arc::new(MembershipCache::new(
-            Box::new(StaticMembershipResolver(vec![])),
+        auth: Arc::new(Authenticator::new(
+            StaticMembershipResolver(vec![]),
             Duration::from_secs(60),
+            Duration::from_secs(300),
         )),
-        auth_max_skew: Duration::from_secs(300),
     };
     let state = Arc::new(ProviderState::with_provider_id(deps, "test".to_string()));
 
@@ -384,11 +384,11 @@ async fn test_duties_filter_already_synced() {
     let deps = ProviderDeps {
         storage,
         nonce_store: Arc::new(NullNonceStore),
-        membership: Arc::new(MembershipCache::new(
-            Box::new(StaticMembershipResolver(vec![])),
+        auth: Arc::new(Authenticator::new(
+            StaticMembershipResolver(vec![]),
             Duration::from_secs(60),
+            Duration::from_secs(300),
         )),
-        auth_max_skew: Duration::from_secs(300),
     };
     let state = Arc::new(ProviderState::with_provider_id(
         deps,
