@@ -13,9 +13,56 @@ pub use in_memory::Storage;
 
 use crate::error::Error;
 use crate::merkle::build_merkle_proof;
+use crate::nonce::{NonceStore, NullNonceStore};
 use serde::{Deserialize, Serialize};
 use sp_core::H256;
+use std::fmt;
+use std::path::PathBuf;
+use std::sync::Arc;
 use storage_primitives::{hash_children, BucketId};
+
+/// Which backend to build, and what that backend needs.
+///
+/// The CLI parses a flat `--storage-mode` (clap value-enums must be unit
+/// variants) and maps it here, so anything a backend needs — today a path, room
+/// for tuning later — lives on the variant that uses it rather than in a
+/// sibling flag that the other variant silently ignores.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StorageBackendSpec {
+    /// RAM only; everything is gone when the process exits.
+    InMemory,
+    /// RocksDB rooted at `path`.
+    Disk { path: PathBuf },
+}
+
+impl StorageBackendSpec {
+    /// Build the backend together with the nonce store that matches its
+    /// persistence.
+    ///
+    /// The pairing is the point: a disk backend must get the RocksDB-backed
+    /// nonce store so the provider's extrinsic nonce survives a restart, and
+    /// in-memory must get the no-op one. Callers that construct the two halves
+    /// separately can — and did — drift apart.
+    pub fn build(&self) -> Result<(Arc<dyn StorageBackend>, Arc<dyn NonceStore>), Error> {
+        match self {
+            Self::InMemory => Ok((Arc::new(Storage::new()), Arc::new(NullNonceStore))),
+            Self::Disk { path } => {
+                let disk = DiskStorage::new(path)?;
+                let nonce_store = disk.nonce_store();
+                Ok((Arc::new(disk), nonce_store))
+            }
+        }
+    }
+}
+
+impl fmt::Display for StorageBackendSpec {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InMemory => write!(f, "in-memory (data is lost on restart)"),
+            Self::Disk { path } => write!(f, "disk at {}", path.display()),
+        }
+    }
+}
 
 /// A stored node (chunk or internal node).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

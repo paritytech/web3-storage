@@ -11,7 +11,6 @@ use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use codec::Encode;
 use common::SignedClient;
 use provider_auth::{Authenticator, StaticMembershipResolver};
-use provider_storage::NullNonceStore;
 use reqwest::Method;
 use serde_json::{json, Value};
 use sp_core::crypto::Ss58Codec;
@@ -34,15 +33,15 @@ struct TestServer {
 pub const PROVIDER_SEED: &str = "//Alice";
 
 impl TestServer {
-    /// Spin up a server on `backend` with `//Alice` as the signing key.
+    /// Spin up a server on `mode` with `//Alice` as the signing key.
     ///
     /// Endpoints that sign commitments (`/commit`, `/commitment`, ...) work
     /// because a real sr25519 keypair is available.
-    async fn new(backend: common::Backend) -> Self {
-        let (storage, dir) = common::storage_for(backend);
+    async fn new(mode: common::StorageMode) -> Self {
+        let (storage, nonce_store, dir) = common::storage_for(mode);
         let deps = ProviderDeps {
             storage,
-            nonce_store: Arc::new(NullNonceStore),
+            nonce_store,
             auth: Arc::new(Authenticator::new(
                 StaticMembershipResolver(vec![(common::test_member_account(), Role::Admin).into()]),
                 Duration::from_secs(60),
@@ -56,15 +55,15 @@ impl TestServer {
         .await
     }
 
-    /// Spin up a server on `backend` with no signing key.
+    /// Spin up a server on `mode` with no signing key.
     ///
     /// Used to verify that signing-bound endpoints return 503 rather than
     /// silently emitting zero-byte placeholder signatures.
-    async fn new_unsigned(backend: common::Backend) -> Self {
-        let (storage, dir) = common::storage_for(backend);
+    async fn new_unsigned(mode: common::StorageMode) -> Self {
+        let (storage, nonce_store, dir) = common::storage_for(mode);
         let deps = ProviderDeps {
             storage,
-            nonce_store: Arc::new(NullNonceStore),
+            nonce_store,
             auth: Arc::new(Authenticator::new(
                 StaticMembershipResolver(vec![(common::test_member_account(), Role::Admin).into()]),
                 Duration::from_secs(60),
@@ -93,8 +92,8 @@ impl TestServer {
 }
 
 common::backend_tests! {
-    async fn test_health_endpoint(backend) {
-        let server = TestServer::new(backend).await;
+    async fn test_health_endpoint(mode) {
+        let server = TestServer::new(mode).await;
 
         let response = server
             .client
@@ -112,8 +111,8 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
-    async fn test_info_endpoint(backend) {
-        let server = TestServer::new(backend).await;
+    async fn test_info_endpoint(mode) {
+        let server = TestServer::new(mode).await;
 
         let response = server.client.get(server.url("/info")).send().await.unwrap();
 
@@ -137,8 +136,8 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
-    async fn test_upload_and_download_node(backend) {
-        let server = TestServer::new(backend).await;
+    async fn test_upload_and_download_node(mode) {
+        let server = TestServer::new(mode).await;
 
         // Create test data
         let data = b"Hello, World!";
@@ -183,8 +182,8 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
-    async fn test_check_exists(backend) {
-        let server = TestServer::new(backend).await;
+    async fn test_check_exists(mode) {
+        let server = TestServer::new(mode).await;
 
         // Upload a node first
         let data = b"Test data for exists check";
@@ -232,8 +231,8 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
-    async fn test_commit_and_get_commitment(backend) {
-        let server = TestServer::new(backend).await;
+    async fn test_commit_and_get_commitment(mode) {
+        let server = TestServer::new(mode).await;
 
         // Upload a data root (leaf chunk)
         let data = b"Chunk data for commit test";
@@ -291,8 +290,8 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
-    async fn test_list_buckets(backend) {
-        let server = TestServer::new(backend).await;
+    async fn test_list_buckets(mode) {
+        let server = TestServer::new(mode).await;
 
         // Upload to bucket 1 to create it
         let data = b"Data for bucket 1";
@@ -328,8 +327,8 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
-    async fn test_upload_with_invalid_hash_fails(backend) {
-        let server = TestServer::new(backend).await;
+    async fn test_upload_with_invalid_hash_fails(mode) {
+        let server = TestServer::new(mode).await;
 
         let data = b"Some data";
         let wrong_hash = "0x0000000000000000000000000000000000000000000000000000000000000001";
@@ -355,8 +354,8 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
-    async fn test_upload_internal_node_with_missing_children_fails(backend) {
-        let server = TestServer::new(backend).await;
+    async fn test_upload_internal_node_with_missing_children_fails(mode) {
+        let server = TestServer::new(mode).await;
 
         let child1 = "0x0000000000000000000000000000000000000000000000000000000000000001";
         let child2 = "0x0000000000000000000000000000000000000000000000000000000000000002";
@@ -390,8 +389,8 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
-    async fn test_full_upload_commit_read_flow(backend) {
-        let server = TestServer::new(backend).await;
+    async fn test_full_upload_commit_read_flow(mode) {
+        let server = TestServer::new(mode).await;
 
         // Step 1: Upload multiple chunks
         let chunks: Vec<&[u8]> = vec![b"Chunk 1 data", b"Chunk 2 data", b"Chunk 3 data"];
@@ -508,11 +507,11 @@ fn alice_public() -> sr25519::Public {
 }
 
 common::backend_tests! {
-    async fn commit_returns_valid_sr25519_signature_over_commitment_payload(backend) {
+    async fn commit_returns_valid_sr25519_signature_over_commitment_payload(mode) {
         // The whole point of the zero-byte-signing fix: when a key IS configured,
         // the server must produce a real sr25519 signature that verifies under the
         // provider's public key against the exact bytes the pallet will hash.
-        let server = TestServer::new(backend).await;
+        let server = TestServer::new(mode).await;
         let bucket_id = 7;
 
         let (_chunk_hash, body) = upload_and_commit(&server, bucket_id).await;
@@ -562,11 +561,11 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
-    async fn checkpoint_signature_verifies_with_real_leaf_count(backend) {
+    async fn checkpoint_signature_verifies_with_real_leaf_count(mode) {
         // `/checkpoint-signature` signs the payload with the *real* leaf_count
         // (unlike /commit which uses 0). Verify both that a real signature comes
         // back and that it round-trips against the public key.
-        let server = TestServer::new(backend).await;
+        let server = TestServer::new(mode).await;
         let bucket_id = 8;
 
         upload_and_commit(&server, bucket_id).await;
@@ -610,10 +609,10 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
-    async fn commitment_signature_does_not_verify_under_a_different_key(backend) {
+    async fn commitment_signature_does_not_verify_under_a_different_key(mode) {
         // Negative control: //Bob must not be able to take credit for //Alice's
         // signature. Catches accidental no-op verifiers.
-        let server = TestServer::new(backend).await;
+        let server = TestServer::new(mode).await;
         let bucket_id = 9;
 
         let (_h, body) = upload_and_commit(&server, bucket_id).await;
@@ -644,11 +643,11 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
-    async fn commit_returns_503_when_no_signing_key_configured(backend) {
+    async fn commit_returns_503_when_no_signing_key_configured(mode) {
         // The pre-fix behaviour silently returned 64 zero bytes here. Post-fix,
         // the handler must refuse with 503 Service Unavailable so callers do not
         // mistake a placeholder for a real provider commitment.
-        let server = TestServer::new_unsigned(backend).await;
+        let server = TestServer::new_unsigned(mode).await;
 
         let data = b"chunk-without-key";
         let hash = storage_primitives::blake2_256(data);
@@ -681,10 +680,10 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
-    async fn commitment_endpoint_returns_503_when_no_signing_key(backend) {
+    async fn commitment_endpoint_returns_503_when_no_signing_key(mode) {
         // GET /commitment also signs the response — it must also refuse rather
         // than emit zero bytes.
-        let server = TestServer::new_unsigned(backend).await;
+        let server = TestServer::new_unsigned(mode).await;
 
         // Seed the bucket via storage so the bucket-lookup gate passes and the
         // handler actually reaches the signing step. Calling /commit on the
@@ -726,8 +725,8 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
-    async fn delete_endpoint_returns_503_when_no_signing_key(backend) {
-        let server = TestServer::new_unsigned(backend).await;
+    async fn delete_endpoint_returns_503_when_no_signing_key(mode) {
+        let server = TestServer::new_unsigned(mode).await;
 
         // Seed and commit so the delete handler can reach its sign() call.
         let data = b"chunk-for-delete-503";
@@ -776,8 +775,8 @@ common::backend_tests! {
 // ─────────────────────────────────────────────────────────────────────────────
 
 common::backend_tests! {
-    async fn test_stats_endpoint_empty(backend) {
-        let server = TestServer::new(backend).await;
+    async fn test_stats_endpoint_empty(mode) {
+        let server = TestServer::new(mode).await;
 
         let resp = server
             .client
@@ -796,8 +795,8 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
-    async fn test_stats_endpoint(backend) {
-        let server = TestServer::new(backend).await;
+    async fn test_stats_endpoint(mode) {
+        let server = TestServer::new(mode).await;
 
         // Upload data so stats are non-zero
         upload_and_commit(&server, 1).await;
@@ -825,8 +824,8 @@ common::backend_tests! {
 // ─────────────────────────────────────────────────────────────────────────────
 
 common::backend_tests! {
-    async fn test_chunk_proof_endpoint(backend) {
-        let server = TestServer::new(backend).await;
+    async fn test_chunk_proof_endpoint(mode) {
+        let server = TestServer::new(mode).await;
         let (hash_hex, _body) = upload_and_commit(&server, 1).await;
 
         let resp = server
@@ -846,8 +845,8 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
-    async fn test_chunk_proof_invalid_root(backend) {
-        let server = TestServer::new(backend).await;
+    async fn test_chunk_proof_invalid_root(mode) {
+        let server = TestServer::new(mode).await;
 
         let fake_root = "0x0000000000000000000000000000000000000000000000000000000000000001";
         let resp = server
@@ -868,8 +867,8 @@ common::backend_tests! {
 common::backend_tests! {
     /// Ported from the old disk-only suite, which was the only place
     /// `/mmr_proof` was covered.
-    async fn test_mmr_proof_endpoint(backend) {
-        let server = TestServer::new(backend).await;
+    async fn test_mmr_proof_endpoint(mode) {
+        let server = TestServer::new(mode).await;
         upload_and_commit(&server, 1).await;
 
         let resp = server
@@ -887,8 +886,8 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
-    async fn test_mmr_peaks_endpoint(backend) {
-        let server = TestServer::new(backend).await;
+    async fn test_mmr_peaks_endpoint(mode) {
+        let server = TestServer::new(mode).await;
         upload_and_commit(&server, 1).await;
 
         let resp = server
@@ -907,8 +906,8 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
-    async fn test_mmr_peaks_nonexistent_bucket(backend) {
-        let server = TestServer::new(backend).await;
+    async fn test_mmr_peaks_nonexistent_bucket(mode) {
+        let server = TestServer::new(mode).await;
 
         let resp = server
             .client
@@ -924,8 +923,8 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
-    async fn test_mmr_subtree_endpoint(backend) {
-        let server = TestServer::new(backend).await;
+    async fn test_mmr_subtree_endpoint(mode) {
+        let server = TestServer::new(mode).await;
         upload_and_commit(&server, 1).await;
 
         let resp = server
@@ -950,8 +949,8 @@ common::backend_tests! {
 // ─────────────────────────────────────────────────────────────────────────────
 
 common::backend_tests! {
-    async fn test_fetch_nodes_endpoint(backend) {
-        let server = TestServer::new(backend).await;
+    async fn test_fetch_nodes_endpoint(mode) {
+        let server = TestServer::new(mode).await;
 
         let data = b"fetch-nodes-test-data";
         let hash = storage_primitives::blake2_256(data);
@@ -993,8 +992,8 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
-    async fn test_fetch_nodes_unknown_hashes(backend) {
-        let server = TestServer::new(backend).await;
+    async fn test_fetch_nodes_unknown_hashes(mode) {
+        let server = TestServer::new(mode).await;
 
         let fake = "0x0000000000000000000000000000000000000000000000000000000000000042";
         let resp = server
@@ -1020,8 +1019,8 @@ common::backend_tests! {
 // ─────────────────────────────────────────────────────────────────────────────
 
 common::backend_tests! {
-    async fn test_historical_roots_endpoint(backend) {
-        let server = TestServer::new(backend).await;
+    async fn test_historical_roots_endpoint(mode) {
+        let server = TestServer::new(mode).await;
         upload_and_commit(&server, 1).await;
 
         let resp = server
@@ -1047,8 +1046,8 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
-    async fn test_replica_sync_status_endpoint(backend) {
-        let server = TestServer::new(backend).await;
+    async fn test_replica_sync_status_endpoint(mode) {
+        let server = TestServer::new(mode).await;
         upload_and_commit(&server, 1).await;
 
         let resp = server
@@ -1072,8 +1071,8 @@ common::backend_tests! {
 // ─────────────────────────────────────────────────────────────────────────────
 
 common::backend_tests! {
-    async fn test_delete_happy_path(backend) {
-        let server = TestServer::new(backend).await;
+    async fn test_delete_happy_path(mode) {
+        let server = TestServer::new(mode).await;
 
         // Commit two data roots
         let data1 = b"chunk-for-delete-1";
@@ -1141,8 +1140,8 @@ common::backend_tests! {
 // ─────────────────────────────────────────────────────────────────────────────
 
 common::backend_tests! {
-    async fn test_get_node_invalid_hex(backend) {
-        let server = TestServer::new(backend).await;
+    async fn test_get_node_invalid_hex(mode) {
+        let server = TestServer::new(mode).await;
 
         let resp = server
             .client
@@ -1158,8 +1157,8 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
-    async fn test_get_node_not_found(backend) {
-        let server = TestServer::new(backend).await;
+    async fn test_get_node_not_found(mode) {
+        let server = TestServer::new(mode).await;
 
         let valid_but_absent = "0x0000000000000000000000000000000000000000000000000000000000000099";
         let resp = server
@@ -1176,8 +1175,8 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
-    async fn test_upload_node_invalid_base64(backend) {
-        let server = TestServer::new(backend).await;
+    async fn test_upload_node_invalid_base64(mode) {
+        let server = TestServer::new(mode).await;
 
         let hash = "0x0000000000000000000000000000000000000000000000000000000000000001";
         let resp = server
@@ -1200,8 +1199,8 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
-    async fn test_upload_node_invalid_hex_children(backend) {
-        let server = TestServer::new(backend).await;
+    async fn test_upload_node_invalid_hex_children(mode) {
+        let server = TestServer::new(mode).await;
 
         let data = b"child test data";
         let hash = storage_primitives::blake2_256(data);
@@ -1227,8 +1226,8 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
-    async fn test_commit_invalid_hex_data_root(backend) {
-        let server = TestServer::new(backend).await;
+    async fn test_commit_invalid_hex_data_root(mode) {
+        let server = TestServer::new(mode).await;
 
         let resp = server
             .client
@@ -1249,8 +1248,8 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
-    async fn test_commit_without_signing_key(backend) {
-        let server = TestServer::new_unsigned(backend).await;
+    async fn test_commit_without_signing_key(mode) {
+        let server = TestServer::new_unsigned(mode).await;
 
         // Upload a valid node first (upload doesn't need signing)
         let data = b"commit-no-key";
@@ -1289,8 +1288,8 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
-    async fn test_read_chunks_invalid_hex(backend) {
-        let server = TestServer::new(backend).await;
+    async fn test_read_chunks_invalid_hex(mode) {
+        let server = TestServer::new(mode).await;
 
         let resp = server
             .client
@@ -1306,8 +1305,8 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
-    async fn test_read_chunks_nonexistent_root(backend) {
-        let server = TestServer::new(backend).await;
+    async fn test_read_chunks_nonexistent_root(mode) {
+        let server = TestServer::new(mode).await;
 
         let valid_hex = "0x0000000000000000000000000000000000000000000000000000000000000001";
         let resp = server
@@ -1326,8 +1325,8 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
-    async fn test_chunk_proof_invalid_hex(backend) {
-        let server = TestServer::new(backend).await;
+    async fn test_chunk_proof_invalid_hex(mode) {
+        let server = TestServer::new(mode).await;
 
         let resp = server
             .client

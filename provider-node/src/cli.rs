@@ -3,6 +3,7 @@
 //! CLI argument parsing for the storage provider node.
 
 use clap::Parser;
+use provider_storage::StorageBackendSpec;
 use std::path::PathBuf;
 
 /// Placeholder provider ID used when no identity is configured.
@@ -50,6 +51,22 @@ pub struct StorageParams {
     /// Path for persistent data (only used with --storage-mode disk).
     #[arg(long, default_value = "./provider-data", env = "STORAGE_PATH")]
     pub storage_path: PathBuf,
+}
+
+impl StorageParams {
+    /// The backend these flags describe.
+    ///
+    /// This is the one place the flat CLI enum meets the backend that actually
+    /// gets built, and the only place `--storage-path` is read — it belongs to
+    /// disk mode and is ignored by in-memory.
+    pub fn spec(&self) -> StorageBackendSpec {
+        match self.storage_mode {
+            StorageMode::Inmemory => StorageBackendSpec::InMemory,
+            StorageMode::Disk => StorageBackendSpec::Disk {
+                path: self.storage_path.clone(),
+            },
+        }
+    }
 }
 
 /// Parameters for network endpoints.

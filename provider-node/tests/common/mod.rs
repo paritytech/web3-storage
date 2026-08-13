@@ -9,7 +9,7 @@
 #![allow(dead_code)]
 
 use provider_auth::build_auth_header;
-use provider_storage::{DiskStorage, Storage, StorageBackend};
+use provider_storage::{NonceStore, StorageBackend, StorageBackendSpec};
 use reqwest::{Method, RequestBuilder};
 use sp_core::{sr25519, Pair};
 use std::net::SocketAddr;
@@ -18,37 +18,50 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use storage_provider_node::{create_router, ProviderState};
 use tempfile::TempDir;
 
+/// Backend selector, reusing the node's own CLI vocabulary rather than a
+/// test-only copy of it.
+pub use storage_provider_node::cli::StorageMode;
+
 type AccountId32 = sp_core::crypto::AccountId32;
 
-/// Storage backend a test runs against.
+/// Storage and nonce store for `mode`, plus the scratch directory RocksDB needs
+/// kept alive for as long as the server (`None` for in-memory).
 ///
-/// The HTTP surface is meant to behave identically on both, so suites declare
-/// their tests with [`backend_tests!`] and each one runs twice.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Backend {
-    InMemory,
-    Disk,
-}
-
-/// Storage for `backend`, plus the scratch directory RocksDB needs kept alive
-/// for as long as the server (`None` for in-memory).
-pub fn storage_for(backend: Backend) -> (Arc<dyn StorageBackend>, Option<TempDir>) {
-    match backend {
-        Backend::InMemory => (Arc::new(Storage::new()), None),
-        Backend::Disk => {
+/// Goes through [`StorageBackendSpec::build`], the same call the binary makes,
+/// so tests exercise the real backend/nonce-store pairing instead of assuming
+/// one.
+pub fn storage_for(
+    mode: StorageMode,
+) -> (
+    Arc<dyn StorageBackend>,
+    Arc<dyn NonceStore>,
+    Option<TempDir>,
+) {
+    match mode {
+        StorageMode::Inmemory => {
+            let (storage, nonce_store) = StorageBackendSpec::InMemory
+                .build()
+                .expect("in-memory backend is infallible");
+            (storage, nonce_store, None)
+        }
+        StorageMode::Disk => {
             let dir = TempDir::new().expect("temp dir");
-            let storage = DiskStorage::new(dir.path()).expect("RocksDB should open");
-            (Arc::new(storage), Some(dir))
+            let (storage, nonce_store) = StorageBackendSpec::Disk {
+                path: dir.path().to_path_buf(),
+            }
+            .build()
+            .expect("RocksDB should open");
+            (storage, nonce_store, Some(dir))
         }
     }
 }
 
-/// Declare tests that run once per [`Backend`].
+/// Declare tests that run once per [`StorageMode`].
 ///
 /// ```ignore
 /// common::backend_tests! {
-///     async fn health(backend) {
-///         let server = TestServer::new(backend).await;
+///     async fn health(mode) {
+///         let server = TestServer::new(mode).await;
 ///         // ...
 ///     }
 /// }
@@ -60,21 +73,21 @@ pub fn storage_for(backend: Backend) -> (Arc<dyn StorageBackend>, Option<TempDir
 macro_rules! backend_tests {
     ($(
         $(#[$attr:meta])*
-        async fn $name:ident($backend:ident) $body:block
+        async fn $name:ident($mode:ident) $body:block
     )*) => {
         $(
             $(#[$attr])*
-            async fn $name($backend: common::Backend) $body
+            async fn $name($mode: common::StorageMode) $body
 
             mod $name {
                 #[tokio::test]
                 async fn in_memory() {
-                    super::$name(super::common::Backend::InMemory).await
+                    super::$name(super::common::StorageMode::Inmemory).await
                 }
 
                 #[tokio::test]
                 async fn disk() {
-                    super::$name(super::common::Backend::Disk).await
+                    super::$name(super::common::StorageMode::Disk).await
                 }
             }
         )*
