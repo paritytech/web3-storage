@@ -123,7 +123,7 @@ pub fn verify_signature(
     // Accept either so wallet-backed clients (the UIs) can authenticate.
     let message = auth_message(method, bucket_id, timestamp_str);
     let verified = sr25519::Pair::verify(&signature, message.as_bytes(), &pubkey)
-        || sr25519::Pair::verify(&signature, &wrap_bytes(message.as_bytes()), &pubkey);
+        || sr25519::Pair::verify(&signature, wrap_bytes(message.as_bytes()), &pubkey);
     if !verified {
         return Err(AuthError::AuthRequired);
     }
