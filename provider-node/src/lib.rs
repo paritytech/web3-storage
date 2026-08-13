@@ -10,13 +10,13 @@
 //! - Syncing data between providers (for replicas)
 
 pub mod api;
-pub mod auth;
 pub mod chain_state_coordinator;
 pub mod challenge_responder;
 pub mod cli;
 pub mod command;
 pub mod error;
 pub mod fs_api;
+pub mod membership;
 pub mod negotiate;
 pub mod replica_sync;
 pub mod replica_sync_coordinator;
@@ -47,7 +47,6 @@ use provider_storage::{FsIndexManager, NonceStore, S3IndexManager, StorageBacken
 use sp_core::crypto::Ss58Codec;
 use sp_core::{sr25519, Pair};
 use std::sync::Arc;
-use std::time::Duration;
 
 /// Everything a servable [`ProviderState`] requires.
 pub struct ProviderDeps {
@@ -56,10 +55,8 @@ pub struct ProviderDeps {
     /// Persistence backing for the nonce counter — [`NullNonceStore`] in
     /// in-memory mode, the disk store in disk mode.
     pub nonce_store: Arc<dyn NonceStore>,
-    /// Membership cache for role lookups.
-    pub membership: Arc<auth::MembershipCache>,
-    /// Maximum allowed clock skew for request timestamps.
-    pub auth_max_skew: Duration,
+    /// Verifies signed requests and enforces bucket roles.
+    pub auth: Arc<provider_auth::Authenticator>,
 }
 
 /// Provider node state shared across handlers.
@@ -74,10 +71,8 @@ pub struct ProviderState {
     pub s3_index: S3IndexManager,
     /// File system drive index
     pub fs_index: FsIndexManager,
-    /// Membership cache for role lookups.
-    pub membership_cache: Arc<auth::MembershipCache>,
-    /// Maximum allowed clock skew for request timestamps.
-    pub auth_max_skew: Duration,
+    /// Verifies signed requests and enforces bucket roles.
+    pub auth: Arc<provider_auth::Authenticator>,
     /// Browser origins allowed via CORS. `None` (the default) keeps the
     /// permissive policy; `Some(list)` restricts to exactly those origins.
     pub cors_allowed_origins: Option<Vec<String>>,
@@ -94,8 +89,7 @@ impl ProviderState {
         let ProviderDeps {
             storage,
             nonce_store,
-            membership,
-            auth_max_skew,
+            auth,
         } = deps;
         Self {
             storage,
@@ -103,8 +97,7 @@ impl ProviderState {
             keypair,
             s3_index: S3IndexManager::new(),
             fs_index: FsIndexManager::new(),
-            membership_cache: membership,
-            auth_max_skew,
+            auth,
             cors_allowed_origins: None,
             chain_state: Arc::new(ChainState::with_nonce_store(nonce_store)),
         }
@@ -150,7 +143,9 @@ impl ProviderState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use provider_auth::Authenticator;
     use provider_storage::NullNonceStore;
+    use std::time::Duration;
 
     #[test]
     fn sign_without_keypair_refuses_with_signing_unavailable() {
@@ -161,11 +156,11 @@ mod tests {
         let deps = ProviderDeps {
             storage: Arc::new(provider_storage::Storage::new()),
             nonce_store: Arc::new(NullNonceStore),
-            membership: Arc::new(auth::MembershipCache::new(
-                Box::new(auth::StaticMembershipResolver(vec![])),
+            auth: Arc::new(Authenticator::new(
+                provider_auth::StaticMembershipResolver(vec![]),
                 Duration::from_secs(60),
+                Duration::from_secs(300),
             )),
-            auth_max_skew: Duration::from_secs(300),
         };
         let state = ProviderState::with_provider_id(deps, "no-key-provider".to_string());
         let err = state
@@ -183,11 +178,11 @@ mod tests {
         let deps = ProviderDeps {
             storage: Arc::new(provider_storage::Storage::new()),
             nonce_store: Arc::new(NullNonceStore),
-            membership: Arc::new(auth::MembershipCache::new(
-                Box::new(auth::StaticMembershipResolver(vec![])),
+            auth: Arc::new(Authenticator::new(
+                provider_auth::StaticMembershipResolver(vec![]),
                 Duration::from_secs(60),
+                Duration::from_secs(300),
             )),
-            auth_max_skew: Duration::from_secs(300),
         };
         let state = ProviderState::with_seed(deps, "//Alice").unwrap();
         let message = b"commitment-payload-bytes";
@@ -234,11 +229,11 @@ mod tests {
         let deps = ProviderDeps {
             storage: Arc::new(provider_storage::Storage::new()),
             nonce_store: Arc::new(NullNonceStore),
-            membership: Arc::new(auth::MembershipCache::new(
-                Box::new(auth::StaticMembershipResolver(vec![])),
+            auth: Arc::new(Authenticator::new(
+                provider_auth::StaticMembershipResolver(vec![]),
                 Duration::from_secs(60),
+                Duration::from_secs(300),
             )),
-            auth_max_skew: Duration::from_secs(300),
         };
         let state = ProviderState::with_seed(deps, "//Alice").unwrap();
         let alice_pub = keypair_for("//Alice").public();
@@ -263,20 +258,20 @@ mod tests {
         let alice_deps = ProviderDeps {
             storage: Arc::new(provider_storage::Storage::new()),
             nonce_store: Arc::new(NullNonceStore),
-            membership: Arc::new(auth::MembershipCache::new(
-                Box::new(auth::StaticMembershipResolver(vec![])),
+            auth: Arc::new(Authenticator::new(
+                provider_auth::StaticMembershipResolver(vec![]),
                 Duration::from_secs(60),
+                Duration::from_secs(300),
             )),
-            auth_max_skew: Duration::from_secs(300),
         };
         let bob_deps = ProviderDeps {
             storage: Arc::new(provider_storage::Storage::new()),
             nonce_store: Arc::new(NullNonceStore),
-            membership: Arc::new(auth::MembershipCache::new(
-                Box::new(auth::StaticMembershipResolver(vec![])),
+            auth: Arc::new(Authenticator::new(
+                provider_auth::StaticMembershipResolver(vec![]),
                 Duration::from_secs(60),
+                Duration::from_secs(300),
             )),
-            auth_max_skew: Duration::from_secs(300),
         };
         let alice = ProviderState::with_seed(alice_deps, "//Alice").unwrap();
         let bob = ProviderState::with_seed(bob_deps, "//Bob").unwrap();
@@ -297,11 +292,11 @@ mod tests {
         let deps = ProviderDeps {
             storage: Arc::new(provider_storage::Storage::new()),
             nonce_store: Arc::new(NullNonceStore),
-            membership: Arc::new(auth::MembershipCache::new(
-                Box::new(auth::StaticMembershipResolver(vec![])),
+            auth: Arc::new(Authenticator::new(
+                provider_auth::StaticMembershipResolver(vec![]),
                 Duration::from_secs(60),
+                Duration::from_secs(300),
             )),
-            auth_max_skew: Duration::from_secs(300),
         };
         let state = ProviderState::with_provider_id(deps, "test-provider".to_string());
         assert_eq!(

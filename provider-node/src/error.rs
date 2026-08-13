@@ -7,6 +7,7 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
+use provider_auth::{AuthError, MembershipError};
 use serde::Serialize;
 use thiserror::Error;
 
@@ -60,14 +61,8 @@ pub enum Error {
     #[error("Invalid path: {0}")]
     InvalidPath(String),
 
-    #[error("Authentication required")]
-    AuthRequired,
-
-    #[error("Timestamp expired or too far in the future")]
-    TimestampExpired,
-
-    #[error("Insufficient role for this operation")]
-    InsufficientRole,
+    #[error(transparent)]
+    Auth(#[from] AuthError),
 
     #[error("Signing unavailable: provider has no keypair configured")]
     SigningUnavailable,
@@ -261,18 +256,33 @@ impl IntoResponse for Error {
                     details: Some(serde_json::json!({ "message": msg })),
                 },
             ),
-            Error::AuthRequired | Error::TimestampExpired => (
+            Error::Auth(AuthError::AuthRequired | AuthError::TimestampExpired) => (
                 StatusCode::UNAUTHORIZED,
                 ErrorResponse {
                     error: "auth_required".to_string(),
                     details: Some(serde_json::json!({ "message": self.to_string() })),
                 },
             ),
-            Error::InsufficientRole => (
+            Error::Auth(AuthError::InsufficientRole) => (
                 StatusCode::FORBIDDEN,
                 ErrorResponse {
                     error: "insufficient_role".to_string(),
                     details: None,
+                },
+            ),
+            // Transient and worth retrying, unlike a decode failure.
+            Error::Auth(err @ AuthError::MembershipLookup(MembershipError::Unavailable(_))) => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                ErrorResponse {
+                    error: "membership_unavailable".to_string(),
+                    details: Some(serde_json::json!({ "message": err.to_string() })),
+                },
+            ),
+            Error::Auth(err @ AuthError::MembershipLookup(_)) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                ErrorResponse {
+                    error: "internal_error".to_string(),
+                    details: Some(serde_json::json!({ "message": err.to_string() })),
                 },
             ),
             Error::SigningUnavailable => (
@@ -478,9 +488,36 @@ mod tests {
             status_of(Error::InvalidPath("p".into())),
             StatusCode::BAD_REQUEST
         );
-        assert_eq!(status_of(Error::AuthRequired), StatusCode::UNAUTHORIZED);
-        assert_eq!(status_of(Error::TimestampExpired), StatusCode::UNAUTHORIZED);
-        assert_eq!(status_of(Error::InsufficientRole), StatusCode::FORBIDDEN);
+        assert_eq!(
+            status_of(AuthError::AuthRequired.into()),
+            StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(
+            status_of(AuthError::TimestampExpired.into()),
+            StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(
+            status_of(AuthError::InsufficientRole.into()),
+            StatusCode::FORBIDDEN
+        );
+        // A chain blip is retryable; a decode failure is a bug. They must not
+        // share a status code.
+        assert_eq!(
+            status_of(
+                AuthError::MembershipLookup(MembershipError::Unavailable("down".into())).into()
+            ),
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        assert_eq!(
+            status_of(
+                AuthError::MembershipLookup(MembershipError::Decode {
+                    bucket_id: 1,
+                    reason: "unexpected shape".into(),
+                })
+                .into()
+            ),
+            StatusCode::INTERNAL_SERVER_ERROR
+        );
         assert_eq!(
             status_of(Error::SigningUnavailable),
             StatusCode::SERVICE_UNAVAILABLE

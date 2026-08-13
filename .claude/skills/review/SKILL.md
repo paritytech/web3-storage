@@ -55,7 +55,15 @@ When reviewing, analyze for:
    - API compatibility
    - Migration requirements
 
-8. **Design Alignment** — invoke the `design-alignment` skill and follow its
+8. **Crate Boundaries** (`crates/providers/*`)
+   - Prefer these crates not depending on `subxt` or other transport-specific
+     clients; where one does, ask whether the seam could be a trait instead
+   - The trait belongs in the crate; the subxt-backed implementation belongs in
+     `provider-node`, supplied when the node is wired up
+   - Rough test: could subxt be swapped by touching mostly provider-node? If not,
+     it is worth raising — a suggestion, not a blocking finding
+
+9. **Design Alignment** — invoke the `design-alignment` skill and follow its
    procedure in full; the points below are a summary, not a substitute
    - `docs/design/` is canonical and must stay true to the code
    - Changes must conform to the core design docs in `docs/design/`
@@ -64,14 +72,14 @@ When reviewing, analyze for:
      must either conform to the design or update the design doc in the same PR with
      rationale
 
-9. **Reference Docs Consistency** — invoke the `reference-docs` skill and follow its
-   procedure in full; the points below are a summary, not a substitute
-   - `docs/reference/` is derived documentation, but it is review-gated and must
-     stay true to the code
-   - If a change alters a documented flow or makes any statement in `docs/reference/`
-     (`EXTRINSICS_REFERENCE.md`, `PAYMENT_CALCULATOR.md`, …) no longer true, the doc
-     must be updated in the same change
-   - A missing reference-doc update is a blocking finding, flagged as
-     `📄 REFERENCE DOC OUT OF DATE`
+10. **Reference Docs Consistency** — invoke the `reference-docs` skill and follow its
+    procedure in full; the points below are a summary, not a substitute
+    - `docs/reference/` is derived documentation, but it is review-gated and must
+      stay true to the code
+    - If a change alters a documented flow or makes any statement in `docs/reference/`
+      (`EXTRINSICS_REFERENCE.md`, `PAYMENT_CALCULATOR.md`, …) no longer true, the doc
+      must be updated in the same change
+    - A missing reference-doc update is a blocking finding, flagged as
+      `📄 REFERENCE DOC OUT OF DATE`
 
 Provide specific feedback with file paths and line numbers.

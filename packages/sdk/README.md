@@ -78,7 +78,7 @@ only the final one.
 | `fs.downloadFile` (by path) | No (documented) | the provider's `/fs` file route returns no `data_root` to check against |
 
 Provider requests are signed (`Web3Storage <pubkey>:<sig>:<timestamp>` per
-`provider-node/src/auth.rs`) whenever the signer carries a raw keypair
+the `crates/providers/auth` crate) whenever the signer carries a raw keypair
 (`makeSigner` populates it). Wallet-extension signers can't produce the raw
 sr25519 signature — unauthenticated providers still work.
 

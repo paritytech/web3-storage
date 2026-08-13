@@ -26,6 +26,7 @@ COV_PACKAGES=(
 	storage-provider-node
 	provider-chain
 	provider-negotiation
+	provider-auth
 	provider-storage
 )
 
