@@ -55,7 +55,8 @@ When reviewing, analyze for:
    - API compatibility
    - Migration requirements
 
-8. **Design Alignment** (see the `design-alignment` skill for the full procedure)
+8. **Design Alignment** — invoke the `design-alignment` skill and follow its
+   procedure in full; the points below are a summary, not a substitute
    - `docs/design/` is canonical and must stay true to the code
    - Changes must conform to the core design docs in `docs/design/`
    - Any deviation from the documented design must be explicitly flagged as
@@ -63,7 +64,8 @@ When reviewing, analyze for:
      must either conform to the design or update the design doc in the same PR with
      rationale
 
-9. **Reference Docs Consistency** (see the `reference-docs` skill for the full procedure)
+9. **Reference Docs Consistency** — invoke the `reference-docs` skill and follow its
+   procedure in full; the points below are a summary, not a substitute
    - `docs/reference/` is derived documentation, but it is review-gated and must
      stay true to the code
    - If a change alters a documented flow or makes any statement in `docs/reference/`
