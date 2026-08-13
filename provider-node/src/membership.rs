@@ -46,6 +46,8 @@ impl MembershipResolver for ChainMembershipResolver {
             .await
             .map_err(|e| MembershipError::Unavailable(e.to_string()))?;
 
+        // No such bucket: an empty member set, which the caller reads as "not a
+        // member". Distinct from a bucket we cannot decode, below.
         let bucket_value = match result {
             Some(v) => v,
             None => return Ok(vec![]),
@@ -56,10 +58,12 @@ impl MembershipResolver for ChainMembershipResolver {
             reason: e.to_string(),
         })?;
 
-        let members_val = match decoded.at("members") {
-            Some(v) => v,
-            None => return Ok(vec![]),
-        };
+        let members_val = decoded
+            .at("members")
+            .ok_or_else(|| MembershipError::Decode {
+                bucket_id,
+                reason: "bucket has no `members` field".to_string(),
+            })?;
 
         // `members` is a `BoundedVec<Member>`. Depending on how the runtime's
         // scale-info nests it, scale_value may wrap the sequence (and each
@@ -67,14 +71,20 @@ impl MembershipResolver for ChainMembershipResolver {
         // tree and pull out every `{ account, role }` struct rather than
         // assuming a fixed shape.
         let mut members = Vec::new();
-        collect_members(members_val, &mut members);
+        collect_members(bucket_id, members_val, &mut members)?;
 
+        // `create_bucket` seeds an admin and `remove_member` refuses to drop the
+        // last one, so an existing bucket always has members. None decoded means
+        // the value did not have the shape we walked, not an empty bucket.
         if members.is_empty() {
             tracing::warn!(bucket_id, value = ?members_val, "auth: decoded zero members");
-        } else {
-            tracing::debug!(bucket_id, count = members.len(), "auth: resolved members");
+            return Err(MembershipError::Decode {
+                bucket_id,
+                reason: "no members found in the bucket's member set".to_string(),
+            });
         }
 
+        tracing::debug!(bucket_id, count = members.len(), "auth: resolved members");
         Ok(members)
     }
 }
@@ -83,30 +93,41 @@ impl MembershipResolver for ChainMembershipResolver {
 /// tolerating any wrapper composites that `BoundedVec` / `AccountId32` type
 /// info introduces. A `Member` is the composite that carries both an
 /// `account` and a `role` field.
-fn collect_members<T>(val: &subxt::ext::scale_value::Value<T>, out: &mut Vec<Member>) {
+fn collect_members<T>(
+    bucket_id: BucketId,
+    val: &subxt::ext::scale_value::Value<T>,
+    out: &mut Vec<Member>,
+) -> Result<(), MembershipError> {
     use subxt::dynamic::At;
     use subxt::ext::scale_value::{Composite, ValueDef};
 
     if let (Some(account_v), Some(role_v)) = (val.at("account"), val.at("role")) {
         if let Some(bytes) = extract_account_bytes(account_v) {
-            out.push((AccountId32::from(bytes), extract_role(role_v)).into());
-            return;
+            // Defaulting an unreadable role would silently grant access; a shape
+            // we cannot read is a decode failure, not a role.
+            let role = find_role_variant(role_v).ok_or_else(|| MembershipError::Decode {
+                bucket_id,
+                reason: "unrecognised Role variant".to_string(),
+            })?;
+            out.push((AccountId32::from(bytes), role).into());
+            return Ok(());
         }
     }
 
     match &val.value {
         ValueDef::Composite(Composite::Named(fields)) => {
             for field in fields {
-                collect_members(&field.1, out);
+                collect_members(bucket_id, &field.1, out)?;
             }
         }
         ValueDef::Composite(Composite::Unnamed(items)) => {
             for item in items {
-                collect_members(item, out);
+                collect_members(bucket_id, item, out)?;
             }
         }
         _ => {}
     }
+    Ok(())
 }
 
 /// Extract a 32-byte account id, descending through any wrapper composites
@@ -140,11 +161,6 @@ fn collect_u8_leaves<T>(val: &subxt::ext::scale_value::Value<T>, out: &mut Vec<u
         }
         _ => {}
     }
-}
-
-/// Decode a `Role`, descending through wrapper composites to the enum variant.
-fn extract_role<T>(val: &subxt::ext::scale_value::Value<T>) -> Role {
-    find_role_variant(val).unwrap_or(Role::Reader)
 }
 
 fn find_role_variant<T>(val: &subxt::ext::scale_value::Value<T>) -> Option<Role> {
@@ -206,7 +222,7 @@ mod tests {
         let members_val = Value::unnamed_composite(vec![sequence]);
 
         let mut out = Vec::new();
-        collect_members(&members_val, &mut out);
+        collect_members(1, &members_val, &mut out).expect("well-formed value");
 
         assert_eq!(
             out.len(),
@@ -215,5 +231,44 @@ mod tests {
         );
         assert_eq!(out[0].account, AccountId32::from(acct));
         assert!(matches!(out[0].role, Role::Writer));
+    }
+
+    #[test]
+    fn an_unreadable_role_is_a_decode_error_not_a_reader() {
+        use subxt::ext::scale_value::Value;
+
+        let account = Value::unnamed_composite(vec![Value::unnamed_composite(
+            [9u8; 32].iter().map(|b| Value::u128(*b as u128)),
+        )]);
+        let member = Value::named_composite(vec![
+            ("account".to_string(), account),
+            // A variant the provider does not know — a runtime reshape, not a role.
+            (
+                "role".to_string(),
+                Value::unnamed_variant("Auditor", vec![]),
+            ),
+        ]);
+        let members_val = Value::unnamed_composite(vec![Value::unnamed_composite(vec![member])]);
+
+        let err = collect_members(7, &members_val, &mut Vec::new())
+            .expect_err("unknown role must not decode");
+        assert!(
+            matches!(err, MembershipError::Decode { bucket_id: 7, .. }),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn an_unrecognised_shape_yields_no_members() {
+        use subxt::ext::scale_value::Value;
+
+        // Shape we do not recognise: no `{ account, role }` composite anywhere.
+        let members_val = Value::unnamed_composite(vec![Value::u128(1), Value::u128(2)]);
+
+        let mut out = Vec::new();
+        collect_members(3, &members_val, &mut out).expect("the walk itself succeeds");
+        // `fetch_members` turns this into `Decode`, since an existing bucket
+        // always has at least one member.
+        assert!(out.is_empty(), "nothing member-shaped to find");
     }
 }

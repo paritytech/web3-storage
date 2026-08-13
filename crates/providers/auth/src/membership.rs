@@ -12,7 +12,9 @@ use storage_primitives::{BucketId, Role};
 /// A bucket member and the role they hold.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Member {
+    /// The member's on-chain account.
     pub account: AccountId32,
+    /// What that account may do in the bucket.
     pub role: Role,
 }
 
@@ -25,8 +27,11 @@ impl From<(AccountId32, Role)> for Member {
 /// Required role for an endpoint.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RequiredRole {
+    /// Any member of the bucket.
     Reader,
+    /// `Writer` or `Admin`.
     Writer,
+    /// `Admin` only.
     Admin,
 }
 
@@ -75,6 +80,7 @@ impl CachedMembership {
 /// Trait for resolving bucket membership (enables mocking in tests).
 #[async_trait::async_trait]
 pub trait MembershipResolver: Send + Sync {
+    /// Every member of `bucket_id`, or an empty set if no such bucket exists.
     async fn fetch_members(&self, bucket_id: BucketId) -> Result<Vec<Member>, MembershipError>;
 }
 

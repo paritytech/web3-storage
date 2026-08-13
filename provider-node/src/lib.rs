@@ -145,6 +145,7 @@ impl ProviderState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use provider_auth::Authenticator;
     use provider_storage::NullNonceStore;
     use std::time::Duration;
 
