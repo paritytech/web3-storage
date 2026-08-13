@@ -13,6 +13,8 @@ Current reference docs (check the directory — more may have been added):
 
 - `EXTRINSICS_REFERENCE.md` — the complete blockchain API: every extrinsic, its
   parameters, events, and errors.
+- `EXECUTION_FLOWS.md` — sequence diagrams and step-by-step flows for every
+  extrinsic, including the off-chain HTTP calls around them.
 - `PAYMENT_CALCULATOR.md` — payment formulas, worked examples, and parameter values.
 
 ## What to do
@@ -22,8 +24,9 @@ Given a set of changes (local diff against `main` by default, or a PR number via
 
 1. Detect reference-impacting changes. In particular:
    - Added / removed / renamed extrinsics, or changed signatures, parameters,
-     events, or `Error` variants in `pallet/` or
-     `storage-interfaces/file-system/pallet-registry/` → `EXTRINSICS_REFERENCE.md`
+     events, or `Error` variants in `crates/pallets/**` → `EXTRINSICS_REFERENCE.md`,
+     and `EXECUTION_FLOWS.md` when the call sequence or its surrounding HTTP
+     steps change
    - Changes to payment math, pricing, stake formulas, or the runtime constants they
      depend on (`UNIT`, `MinProviderStake`, `MinStakePerByte`, timeouts, checkpoint
      reward/penalty in `runtimes/`) → `PAYMENT_CALCULATOR.md`
