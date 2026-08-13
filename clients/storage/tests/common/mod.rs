@@ -2,7 +2,7 @@
 
 //! Shared test helpers for integration tests.
 
-use provider_auth::{MembershipCache, StaticMembershipResolver};
+use provider_auth::{Authenticator, StaticMembershipResolver};
 use provider_storage::{NullNonceStore, Storage};
 use sp_core::crypto::Ss58Codec;
 use sp_core::Pair;
@@ -244,15 +244,11 @@ pub async fn start_test_provider() -> String {
     let deps = ProviderDeps {
         storage: Arc::new(Storage::new()),
         nonce_store: Arc::new(NullNonceStore),
-        membership: Arc::new(MembershipCache::new(
-            Box::new(StaticMembershipResolver(vec![(
-                dev_account("alice"),
-                Role::Admin,
-            )
-                .into()])),
+        auth: Arc::new(Authenticator::new(
+            StaticMembershipResolver(vec![(dev_account("alice"), Role::Admin).into()]),
             Duration::from_secs(60),
+            Duration::from_secs(300),
         )),
-        auth_max_skew: Duration::from_secs(300),
     };
     let state = ProviderState::with_seed(deps, "//Alice").expect("//Alice is a valid SURI");
     let app = create_router(Arc::new(state));

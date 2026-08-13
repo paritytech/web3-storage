@@ -162,16 +162,11 @@ pub(crate) async fn check_role(
     bucket_id: u64,
     required: RequiredRole,
 ) -> Result<(), Error> {
-    provider_auth::require_role(
-        &state.membership_cache,
-        auth_header(headers),
-        method,
-        bucket_id,
-        required,
-        state.auth_max_skew,
-    )
-    .await
-    .map_err(Into::into)
+    state
+        .auth
+        .require_role(auth_header(headers), method, bucket_id, required)
+        .await
+        .map_err(Into::into)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

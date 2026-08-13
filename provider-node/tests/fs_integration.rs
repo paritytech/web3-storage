@@ -6,7 +6,7 @@ mod common;
 
 use axum::http::StatusCode;
 use common::SignedClient;
-use provider_auth::{MembershipCache, StaticMembershipResolver};
+use provider_auth::{Authenticator, StaticMembershipResolver};
 use provider_storage::{NullNonceStore, Storage};
 use serde_json::Value;
 use std::net::SocketAddr;
@@ -25,15 +25,11 @@ impl TestServer {
         let deps = ProviderDeps {
             storage: Arc::new(Storage::new()),
             nonce_store: Arc::new(NullNonceStore),
-            membership: Arc::new(MembershipCache::new(
-                Box::new(StaticMembershipResolver(vec![(
-                    common::test_member_account(),
-                    Role::Admin,
-                )
-                    .into()])),
+            auth: Arc::new(Authenticator::new(
+                StaticMembershipResolver(vec![(common::test_member_account(), Role::Admin).into()]),
                 Duration::from_secs(60),
+                Duration::from_secs(300),
             )),
-            auth_max_skew: Duration::from_secs(300),
         };
         let (addr, client) = common::serve(ProviderState::with_provider_id(
             deps,

@@ -4,7 +4,7 @@
 
 use crate::error::AuthError;
 use crate::http_auth::auth_message;
-use crate::membership::{MembershipCache, RequiredRole};
+use crate::membership::{MembershipCache, MembershipResolver, RequiredRole};
 use sp_core::{crypto::AccountId32, sr25519, Pair};
 use std::time::Duration;
 use storage_primitives::BucketId;
@@ -49,8 +49,8 @@ fn wrap_bytes(msg: &[u8]) -> Vec<u8> {
 ///   of the 32-byte sr25519 public key and 64-byte signature.
 ///
 /// On success returns the [`AccountId32`] derived from the recovered public key;
-/// the caller maps that account to a bucket role in [`require_role`].
-pub fn verify_signature(
+/// [`Authenticator::require_role`] maps that account to a bucket role.
+fn verify_signature(
     auth_header: &str,
     method: &str,
     bucket_id: BucketId,
@@ -123,39 +123,58 @@ pub fn verify_signature(
     Ok(AccountId32::new(pubkey.0))
 }
 
-/// Check that the caller has sufficient permissions.
-///
-/// Auth is always enforced. The caller must present a valid signed
-/// `Authorization` header whose account holds the [`RequiredRole`] for the
-/// bucket; otherwise the request is rejected.
-pub async fn require_role(
-    membership: &MembershipCache,
-    auth_header: Option<&str>,
-    method: &str,
-    bucket_id: BucketId,
-    required: RequiredRole,
+/// Verifies signed requests and enforces bucket roles. Holds the settings that
+/// do not change per request, so callers pass only the request itself.
+pub struct Authenticator {
+    membership: MembershipCache,
     max_skew: Duration,
-) -> Result<(), AuthError> {
-    let header = auth_header.ok_or(AuthError::AuthRequired)?;
-    let account = verify_signature(header, method, bucket_id, max_skew)?;
+}
 
-    let role = membership
-        .get_role(bucket_id, &account)
-        .await?
-        .ok_or(AuthError::InsufficientRole)?;
-
-    if !required.is_satisfied_by(role) {
-        return Err(AuthError::InsufficientRole);
+impl Authenticator {
+    /// `ttl` bounds how long a resolved member set is reused; `max_skew` how far
+    /// a request timestamp may drift from the server clock.
+    pub fn new(
+        resolver: impl MembershipResolver + 'static,
+        ttl: Duration,
+        max_skew: Duration,
+    ) -> Self {
+        Self {
+            membership: MembershipCache::new(resolver, ttl),
+            max_skew,
+        }
     }
 
-    Ok(())
+    /// Auth is always enforced: the caller must present a valid signed
+    /// `Authorization` header whose account holds `required` for the bucket.
+    pub async fn require_role(
+        &self,
+        auth_header: Option<&str>,
+        method: &str,
+        bucket_id: BucketId,
+        required: RequiredRole,
+    ) -> Result<(), AuthError> {
+        let header = auth_header.ok_or(AuthError::AuthRequired)?;
+        let account = verify_signature(header, method, bucket_id, self.max_skew)?;
+
+        let role = self
+            .membership
+            .get_role(bucket_id, &account)
+            .await?
+            .ok_or(AuthError::InsufficientRole)?;
+
+        if !required.is_satisfied_by(role) {
+            return Err(AuthError::InsufficientRole);
+        }
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::http_auth::build_auth_header;
-    use crate::membership::StaticMembershipResolver;
+    use crate::membership::{Member, StaticMembershipResolver};
     use sp_core::Pair;
     use std::time::Duration;
     use storage_primitives::Role;
@@ -253,27 +272,20 @@ mod tests {
 
     /// Run `require_role` against a bucket whose only member is `//Alice`
     /// holding `granted`, with a valid signed header from that same account.
-    async fn require_role_for(granted: Role, required: RequiredRole) -> Result<(), AuthError> {
-        let keypair = sr25519::Pair::from_string("//Alice", None).unwrap();
-        let membership = MembershipCache::new(
-            Box::new(StaticMembershipResolver(vec![(
-                AccountId32::new(keypair.public().0),
-                granted,
-            )
-                .into()])),
+    fn authenticator(members: Vec<Member>) -> Authenticator {
+        Authenticator::new(
+            StaticMembershipResolver(members),
             Duration::from_secs(60),
-        );
-        let header = make_auth_header(&keypair, "PUT", 1, current_timestamp());
-
-        require_role(
-            &membership,
-            Some(&header),
-            "PUT",
-            1,
-            required,
             Duration::from_secs(300),
         )
-        .await
+    }
+
+    async fn require_role_for(granted: Role, required: RequiredRole) -> Result<(), AuthError> {
+        let keypair = sr25519::Pair::from_string("//Alice", None).unwrap();
+        let auth = authenticator(vec![(AccountId32::new(keypair.public().0), granted).into()]);
+        let header = make_auth_header(&keypair, "PUT", 1, current_timestamp());
+
+        auth.require_role(Some(&header), "PUT", 1, required).await
     }
 
     #[tokio::test]
@@ -307,68 +319,65 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn accepts_a_resolver_chosen_at_runtime() {
+        // Picking a resolver at runtime forces the caller to box it; the
+        // `impl MembershipResolver` bound must still accept that.
+        fn pick(mock: bool, member: Member) -> Box<dyn MembershipResolver> {
+            if mock {
+                Box::new(StaticMembershipResolver(vec![member]))
+            } else {
+                Box::new(StaticMembershipResolver(vec![]))
+            }
+        }
+
+        let keypair = sr25519::Pair::from_string("//Alice", None).unwrap();
+        let account = AccountId32::new(keypair.public().0);
+        let resolver = pick(true, (account, Role::Admin).into());
+
+        let auth = Authenticator::new(resolver, Duration::from_secs(60), Duration::from_secs(300));
+        let header = make_auth_header(&keypair, "PUT", 1, current_timestamp());
+
+        assert!(auth
+            .require_role(Some(&header), "PUT", 1, RequiredRole::Admin)
+            .await
+            .is_ok());
+    }
+
+    #[tokio::test]
     async fn require_role_rejects_non_member() {
         // A valid signature is not authorization: Bob signs correctly but holds
         // no role in the bucket, so even a read must be refused.
         let alice = sr25519::Pair::from_string("//Alice", None).unwrap();
         let bob = sr25519::Pair::from_string("//Bob", None).unwrap();
-        let membership = MembershipCache::new(
-            Box::new(StaticMembershipResolver(vec![(
-                AccountId32::new(alice.public().0),
-                Role::Admin,
-            )
-                .into()])),
-            Duration::from_secs(60),
-        );
+        let auth = authenticator(vec![
+            (AccountId32::new(alice.public().0), Role::Admin).into()
+        ]);
         let header = make_auth_header(&bob, "GET", 1, current_timestamp());
 
-        let result = require_role(
-            &membership,
-            Some(&header),
-            "GET",
-            1,
-            RequiredRole::Reader,
-            Duration::from_secs(300),
-        )
-        .await;
+        let result = auth
+            .require_role(Some(&header), "GET", 1, RequiredRole::Reader)
+            .await;
         assert!(matches!(result, Err(AuthError::InsufficientRole)));
     }
 
     #[tokio::test]
     async fn require_role_rejects_unsigned_and_forged_requests() {
         let alice = sr25519::Pair::from_string("//Alice", None).unwrap();
-        let membership = MembershipCache::new(
-            Box::new(StaticMembershipResolver(vec![(
-                AccountId32::new(alice.public().0),
-                Role::Admin,
-            )
-                .into()])),
-            Duration::from_secs(60),
-        );
+        let auth = authenticator(vec![
+            (AccountId32::new(alice.public().0), Role::Admin).into()
+        ]);
 
-        let missing = require_role(
-            &membership,
-            None,
-            "GET",
-            1,
-            RequiredRole::Reader,
-            Duration::from_secs(300),
-        )
-        .await;
+        let missing = auth
+            .require_role(None, "GET", 1, RequiredRole::Reader)
+            .await;
         assert!(matches!(missing, Err(AuthError::AuthRequired)));
 
         // Header signed for bucket 1 must not authorize bucket 2, even though
         // the signer is an Admin of the bucket it did sign for.
         let header = make_auth_header(&alice, "GET", 1, current_timestamp());
-        let replayed = require_role(
-            &membership,
-            Some(&header),
-            "GET",
-            2,
-            RequiredRole::Reader,
-            Duration::from_secs(300),
-        )
-        .await;
+        let replayed = auth
+            .require_role(Some(&header), "GET", 2, RequiredRole::Reader)
+            .await;
         assert!(matches!(replayed, Err(AuthError::AuthRequired)));
     }
 }

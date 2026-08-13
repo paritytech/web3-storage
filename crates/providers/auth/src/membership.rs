@@ -78,6 +78,14 @@ pub trait MembershipResolver: Send + Sync {
     async fn fetch_members(&self, bucket_id: BucketId) -> Result<Vec<Member>, MembershipError>;
 }
 
+/// So a boxed resolver still satisfies the `impl MembershipResolver` bound.
+#[async_trait::async_trait]
+impl<T: MembershipResolver + ?Sized> MembershipResolver for Box<T> {
+    async fn fetch_members(&self, bucket_id: BucketId) -> Result<Vec<Member>, MembershipError> {
+        (**self).fetch_members(bucket_id).await
+    }
+}
+
 /// A [`MembershipResolver`] that returns a fixed member set for every bucket.
 /// Used by integration tests across crates.
 pub struct StaticMembershipResolver(pub Vec<Member>);
@@ -90,24 +98,24 @@ impl MembershipResolver for StaticMembershipResolver {
 }
 
 /// TTL cache in front of a [`MembershipResolver`].
-pub struct MembershipCache {
+pub(crate) struct MembershipCache {
     cache: DashMap<BucketId, CachedMembership>,
     ttl: Duration,
     resolver: Box<dyn MembershipResolver>,
 }
 
 impl MembershipCache {
-    pub fn new(resolver: Box<dyn MembershipResolver>, ttl: Duration) -> Self {
+    pub(crate) fn new(resolver: impl MembershipResolver + 'static, ttl: Duration) -> Self {
         Self {
             cache: DashMap::new(),
             ttl,
-            resolver,
+            resolver: Box::new(resolver),
         }
     }
 
     /// Look up a caller's role in a bucket.
     /// Returns None if the caller is not a member.
-    pub async fn get_role(
+    pub(crate) async fn get_role(
         &self,
         bucket_id: BucketId,
         account: &AccountId32,

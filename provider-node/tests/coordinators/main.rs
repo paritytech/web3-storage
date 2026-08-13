@@ -8,7 +8,7 @@ mod challenge;
 mod event_fanout;
 mod replica_sync;
 
-use provider_auth::{MembershipCache, StaticMembershipResolver};
+use provider_auth::{Authenticator, StaticMembershipResolver};
 use provider_storage::{build_padded_merkle_tree, NullNonceStore, Storage};
 use std::sync::Arc;
 use std::time::Duration;
@@ -25,11 +25,11 @@ pub fn test_deps(storage: Arc<Storage>) -> ProviderDeps {
     ProviderDeps {
         storage,
         nonce_store: Arc::new(NullNonceStore),
-        membership: Arc::new(MembershipCache::new(
-            Box::new(StaticMembershipResolver(vec![])),
+        auth: Arc::new(Authenticator::new(
+            StaticMembershipResolver(vec![]),
             Duration::from_secs(60),
+            Duration::from_secs(300),
         )),
-        auth_max_skew: Duration::from_secs(300),
     }
 }
 

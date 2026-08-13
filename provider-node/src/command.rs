@@ -15,7 +15,7 @@ use crate::{
     ReplicaSyncCoordinatorConfig, ReplicaSyncCoordinatorHandle,
 };
 use clap::Parser;
-use provider_auth::MembershipCache;
+use provider_auth::Authenticator;
 use provider_storage::{DiskStorage, NonceStore, NullNonceStore, Storage, StorageBackend};
 use std::net::SocketAddr;
 use std::str::FromStr;
@@ -81,7 +81,11 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // through the shared watch connection.
     let resolver = ChainMembershipResolver::new(chain_rx.clone());
     let ttl = Duration::from_secs(cli.auth.auth_cache_ttl);
-    let membership = Arc::new(MembershipCache::new(Box::new(resolver), ttl));
+    let auth = Arc::new(Authenticator::new(
+        resolver,
+        ttl,
+        Duration::from_secs(cli.auth.auth_max_skew),
+    ));
     tracing::info!(
         "Auth: membership cache_ttl={}s, max_skew={}s",
         cli.auth.auth_cache_ttl,
@@ -91,8 +95,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let deps = ProviderDeps {
         storage,
         nonce_store,
-        membership,
-        auth_max_skew: Duration::from_secs(cli.auth.auth_max_skew),
+        auth,
     };
 
     // Resolve provider identity

@@ -10,7 +10,7 @@ use axum::http::StatusCode;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use codec::Encode;
 use common::SignedClient;
-use provider_auth::{MembershipCache, StaticMembershipResolver};
+use provider_auth::{Authenticator, StaticMembershipResolver};
 use provider_storage::{NullNonceStore, Storage};
 use reqwest::Method;
 use serde_json::{json, Value};
@@ -39,15 +39,11 @@ impl TestServer {
         let deps = ProviderDeps {
             storage: Arc::new(Storage::new()),
             nonce_store: Arc::new(NullNonceStore),
-            membership: Arc::new(MembershipCache::new(
-                Box::new(StaticMembershipResolver(vec![(
-                    common::test_member_account(),
-                    Role::Admin,
-                )
-                    .into()])),
+            auth: Arc::new(Authenticator::new(
+                StaticMembershipResolver(vec![(common::test_member_account(), Role::Admin).into()]),
                 Duration::from_secs(60),
+                Duration::from_secs(300),
             )),
-            auth_max_skew: Duration::from_secs(300),
         };
         Self::with_state(
             ProviderState::with_seed(deps, PROVIDER_SEED).expect("//Alice is a valid SURI"),
@@ -63,15 +59,11 @@ impl TestServer {
         let deps = ProviderDeps {
             storage: Arc::new(Storage::new()),
             nonce_store: Arc::new(NullNonceStore),
-            membership: Arc::new(MembershipCache::new(
-                Box::new(StaticMembershipResolver(vec![(
-                    common::test_member_account(),
-                    Role::Admin,
-                )
-                    .into()])),
+            auth: Arc::new(Authenticator::new(
+                StaticMembershipResolver(vec![(common::test_member_account(), Role::Admin).into()]),
                 Duration::from_secs(60),
+                Duration::from_secs(300),
             )),
-            auth_max_skew: Duration::from_secs(300),
         };
         Self::with_state(ProviderState::with_provider_id(
             deps,
