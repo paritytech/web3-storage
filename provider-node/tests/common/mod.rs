@@ -8,7 +8,7 @@
 // a subset of these helpers, so per-crate dead-code analysis flags the rest.
 #![allow(dead_code)]
 
-use provider_negotiation::build_auth_header;
+use provider_auth::build_auth_header;
 use reqwest::{Method, RequestBuilder};
 use sp_core::{sr25519, Pair};
 use std::net::SocketAddr;
