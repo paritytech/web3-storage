@@ -6,6 +6,7 @@ use crate::chain_connection::{self, ChainWatch};
 use provider_auth::{Member, MembershipError, MembershipResolver};
 use sp_core::crypto::AccountId32;
 use storage_primitives::BucketId;
+use storage_subxt::api::runtime_types::pallet_storage_provider::pallet::Member as RuntimeMember;
 use subxt::{OnlineClient, PolkadotConfig};
 
 /// Membership resolver over the node's shared chain connection, so lookups
@@ -31,10 +32,7 @@ impl MembershipResolver for ChainMembershipResolver {
     async fn fetch_members(&self, bucket_id: BucketId) -> Result<Vec<Member>, MembershipError> {
         let api = self.api()?;
 
-        // Typed read via the static bindings. `unvalidated`: the bindings are
-        // generated from the paseo runtime, and the local runtime shares the
-        // pallet — exact-hash validation would couple the binary to a single
-        // runtime build for no safety gain (a shape mismatch fails decoding).
+        // `unvalidated`: see the `storage-subxt` crate docs.
         let storage_address = storage_subxt::api::storage()
             .storage_provider()
             .buckets()
@@ -62,12 +60,11 @@ impl MembershipResolver for ChainMembershipResolver {
             reason: e.to_string(),
         })?;
 
-        let members = member_roles_from_bucket(bucket);
+        let members = member_roles(bucket.members.0);
 
         // `create_bucket` seeds an admin and `remove_member` refuses to drop the
-        // last one, so an existing bucket always has members. With the typed
-        // decode above there is no shape to misread, so this is a chain-side
-        // surprise worth logging — the caller reads it as "not a member".
+        // last one, so zero members means something changed chain-side. The
+        // caller reads it as "not a member".
         if members.is_empty() {
             tracing::warn!(bucket_id, "auth: bucket decoded with zero members");
         } else {
@@ -78,13 +75,8 @@ impl MembershipResolver for ChainMembershipResolver {
     }
 }
 
-/// Pair up each member of a decoded on-chain bucket with its role.
-fn member_roles_from_bucket(
-    bucket: storage_subxt::api::runtime_types::pallet_storage_provider::pallet::Bucket,
-) -> Vec<Member> {
-    bucket
-        .members
-        .0
+fn member_roles(members: Vec<RuntimeMember>) -> Vec<Member> {
+    members
         .into_iter()
         .map(|m| (AccountId32::new(m.account.0), m.role.into()).into())
         .collect()
@@ -112,37 +104,28 @@ mod tests {
         );
     }
 
-    /// Regression test for the typed decoding of `StorageProvider.Buckets`:
-    /// pins the generated-type -> primitives conversion for every role.
+    /// Pins the generated-type -> primitives conversion for every role.
     #[test]
-    fn member_roles_from_bucket_converts_accounts_and_roles() {
-        use storage_subxt::api::runtime_types::bounded_collections::bounded_vec::BoundedVec;
-        use storage_subxt::api::runtime_types::pallet_storage_provider::pallet::{Bucket, Member};
+    fn member_roles_converts_accounts_and_roles() {
         use storage_subxt::api::runtime_types::storage_primitives::Role as RuntimeRole;
 
-        let member = |byte: u8, role: RuntimeRole| Member {
+        let member = |byte: u8, role: RuntimeRole| RuntimeMember {
             account: subxt::utils::AccountId32([byte; 32]),
             role,
         };
-        let bucket = Bucket {
-            members: BoundedVec(vec![
-                member(1, RuntimeRole::Admin),
-                member(2, RuntimeRole::Writer),
-                member(3, RuntimeRole::Reader),
-            ]),
-            frozen_start_seq: None,
-            min_providers: 1,
-            primary_providers: BoundedVec(vec![]),
-            snapshot: None,
-            historical_roots: [(0, subxt::utils::H256::zero()); 6],
-            total_snapshots: 0,
-        };
 
-        let expected: Vec<provider_auth::Member> = vec![
+        let expected: Vec<Member> = vec![
             (AccountId32::new([1u8; 32]), Role::Admin).into(),
             (AccountId32::new([2u8; 32]), Role::Writer).into(),
             (AccountId32::new([3u8; 32]), Role::Reader).into(),
         ];
-        assert_eq!(member_roles_from_bucket(bucket), expected);
+        assert_eq!(
+            member_roles(vec![
+                member(1, RuntimeRole::Admin),
+                member(2, RuntimeRole::Writer),
+                member(3, RuntimeRole::Reader),
+            ]),
+            expected
+        );
     }
 }
