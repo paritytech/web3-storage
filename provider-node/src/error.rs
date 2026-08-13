@@ -7,6 +7,7 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
+use provider_auth::AuthError;
 use serde::Serialize;
 use thiserror::Error;
 
@@ -60,14 +61,8 @@ pub enum Error {
     #[error("Invalid path: {0}")]
     InvalidPath(String),
 
-    #[error("Authentication required")]
-    AuthRequired,
-
-    #[error("Timestamp expired or too far in the future")]
-    TimestampExpired,
-
-    #[error("Insufficient role for this operation")]
-    InsufficientRole,
+    #[error(transparent)]
+    Auth(#[from] AuthError),
 
     #[error("Signing unavailable: provider has no keypair configured")]
     SigningUnavailable,
@@ -113,18 +108,6 @@ pub enum Error {
 
     #[error("Too many requests")]
     RateLimited,
-}
-
-impl From<provider_auth::AuthError> for Error {
-    fn from(err: provider_auth::AuthError) -> Self {
-        use provider_auth::AuthError;
-        match err {
-            AuthError::AuthRequired => Error::AuthRequired,
-            AuthError::TimestampExpired => Error::TimestampExpired,
-            AuthError::InsufficientRole => Error::InsufficientRole,
-            e @ AuthError::MembershipLookup(_) => Error::Internal(e.to_string()),
-        }
-    }
 }
 
 /// Map storage-engine errors onto the node's error space one-to-one so the
@@ -265,18 +248,25 @@ impl IntoResponse for Error {
                     details: Some(serde_json::json!({ "message": msg })),
                 },
             ),
-            Error::AuthRequired | Error::TimestampExpired => (
+            Error::Auth(AuthError::AuthRequired | AuthError::TimestampExpired) => (
                 StatusCode::UNAUTHORIZED,
                 ErrorResponse {
                     error: "auth_required".to_string(),
                     details: Some(serde_json::json!({ "message": self.to_string() })),
                 },
             ),
-            Error::InsufficientRole => (
+            Error::Auth(AuthError::InsufficientRole) => (
                 StatusCode::FORBIDDEN,
                 ErrorResponse {
                     error: "insufficient_role".to_string(),
                     details: None,
+                },
+            ),
+            Error::Auth(err @ AuthError::MembershipLookup(_)) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                ErrorResponse {
+                    error: "internal_error".to_string(),
+                    details: Some(serde_json::json!({ "message": err.to_string() })),
                 },
             ),
             Error::SigningUnavailable => (
@@ -482,9 +472,22 @@ mod tests {
             status_of(Error::InvalidPath("p".into())),
             StatusCode::BAD_REQUEST
         );
-        assert_eq!(status_of(Error::AuthRequired), StatusCode::UNAUTHORIZED);
-        assert_eq!(status_of(Error::TimestampExpired), StatusCode::UNAUTHORIZED);
-        assert_eq!(status_of(Error::InsufficientRole), StatusCode::FORBIDDEN);
+        assert_eq!(
+            status_of(AuthError::AuthRequired.into()),
+            StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(
+            status_of(AuthError::TimestampExpired.into()),
+            StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(
+            status_of(AuthError::InsufficientRole.into()),
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            status_of(AuthError::MembershipLookup("chain down".into()).into()),
+            StatusCode::INTERNAL_SERVER_ERROR
+        );
         assert_eq!(
             status_of(Error::SigningUnavailable),
             StatusCode::SERVICE_UNAVAILABLE
