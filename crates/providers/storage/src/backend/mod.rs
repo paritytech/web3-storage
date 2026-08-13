@@ -22,11 +22,6 @@ use std::sync::Arc;
 use storage_primitives::{hash_children, BucketId};
 
 /// Which backend to build, and what that backend needs.
-///
-/// The CLI parses a flat `--storage-mode` (clap value-enums must be unit
-/// variants) and maps it here, so anything a backend needs — today a path, room
-/// for tuning later — lives on the variant that uses it rather than in a
-/// sibling flag that the other variant silently ignores.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StorageBackendSpec {
     /// RAM only; everything is gone when the process exits.
@@ -36,13 +31,9 @@ pub enum StorageBackendSpec {
 }
 
 impl StorageBackendSpec {
-    /// Build the backend together with the nonce store that matches its
-    /// persistence.
-    ///
-    /// The pairing is the point: a disk backend must get the RocksDB-backed
-    /// nonce store so the provider's extrinsic nonce survives a restart, and
-    /// in-memory must get the no-op one. Callers that construct the two halves
-    /// separately can — and did — drift apart.
+    /// Build the backend and the nonce store matching its persistence: RocksDB
+    /// keeps the provider's extrinsic nonce across restarts, in-memory is a
+    /// no-op.
     pub fn build(&self) -> Result<(Arc<dyn StorageBackend>, Arc<dyn NonceStore>), Error> {
         match self {
             Self::InMemory => Ok((Arc::new(Storage::new()), Arc::new(NullNonceStore))),

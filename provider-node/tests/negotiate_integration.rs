@@ -10,7 +10,7 @@
 
 use axum::http::StatusCode;
 use provider_auth::{Authenticator, StaticMembershipResolver};
-use provider_storage::{DiskStorage, NonceStore, NullNonceStore, Storage};
+use provider_storage::{NonceStore, NullNonceStore, Storage, StorageBackendSpec};
 use reqwest::Client;
 use serde_json::Value;
 use sp_core::{sr25519, Pair};
@@ -825,8 +825,11 @@ fn with_store_counter_persists_on_next() {
     // A counter backed by a DiskNonceStore persists each allocation so a fresh
     // counter seeded from the store resumes above the last issued nonce.
     let dir = tempfile::TempDir::new().unwrap();
-    let storage = DiskStorage::new(dir.path()).unwrap();
-    let store = storage.nonce_store();
+    let (_storage, store) = StorageBackendSpec::RocksDb {
+        path: dir.path().to_path_buf(),
+    }
+    .build()
+    .unwrap();
 
     let counter = NonceCounter::with_store(1, store.clone());
     counter.bootstrap_from_hsn(0); // counter now at 1

@@ -57,10 +57,8 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         Err(e) => tracing::warn!("Chain unreachable at startup ({e}); retrying in the background"),
     }
 
-    // Storage backend plus the nonce store that follows its persistence, so the
-    // nonce counter survives a disk restart. `build` owns that pairing.
     let backend = cli.storage.spec();
-    tracing::info!("Using {backend} storage");
+    tracing::info!("Storage backend: {backend}");
     let (storage, nonce_store) = backend.build()?;
 
     // Membership-based auth over the chain's bucket member sets, resolved

@@ -9,91 +9,37 @@ mod common;
 use axum::http::StatusCode;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use codec::Encode;
-use common::SignedClient;
-use provider_auth::{Authenticator, StaticMembershipResolver};
 use reqwest::Method;
 use serde_json::{json, Value};
 use sp_core::crypto::Ss58Codec;
 use sp_core::{sr25519, ByteArray, Pair, H256};
-use std::net::SocketAddr;
-use std::sync::Arc;
-use std::time::Duration;
-use storage_primitives::{Commitment, CommitmentPayload, Role};
-use storage_provider_node::{ProviderDeps, ProviderState};
-use tempfile::TempDir;
+use storage_primitives::{Commitment, CommitmentPayload};
+use storage_provider_node::ProviderState;
 
-/// Test server helper that starts the provider node on a random port.
-struct TestServer {
-    addr: SocketAddr,
-    client: SignedClient,
-    /// RocksDB scratch dir, `None` in-memory. Held so it outlives the server.
-    _dir: Option<TempDir>,
-}
-
-pub const PROVIDER_SEED: &str = "//Alice";
+use common::{TestBackend, TestServer};
 
 impl TestServer {
-    /// Spin up a server on `kind` with `//Alice` as the signing key.
-    ///
-    /// Endpoints that sign commitments (`/commit`, `/commitment`, ...) work
-    /// because a real sr25519 keypair is available.
-    async fn new(kind: common::StorageBackendKind) -> Self {
-        let (storage, nonce_store, dir) = common::storage_for(kind);
-        let deps = ProviderDeps {
-            storage,
-            nonce_store,
-            auth: Arc::new(Authenticator::new(
-                StaticMembershipResolver(vec![(common::test_member_account(), Role::Admin).into()]),
-                Duration::from_secs(60),
-                Duration::from_secs(300),
-            )),
-        };
-        Self::with_state(
-            ProviderState::with_seed(deps, PROVIDER_SEED).expect("//Alice is a valid SURI"),
-            dir,
-        )
+    /// Signing provider (`//Alice`): endpoints that sign commitments work.
+    async fn new(backend: TestBackend) -> Self {
+        Self::start(backend, |deps| {
+            ProviderState::with_seed(deps, common::PROVIDER_SEED).expect("//Alice is a valid SURI")
+        })
         .await
     }
 
-    /// Spin up a server on `kind` with no signing key.
-    ///
-    /// Used to verify that signing-bound endpoints return 503 rather than
-    /// silently emitting zero-byte placeholder signatures.
-    async fn new_unsigned(kind: common::StorageBackendKind) -> Self {
-        let (storage, nonce_store, dir) = common::storage_for(kind);
-        let deps = ProviderDeps {
-            storage,
-            nonce_store,
-            auth: Arc::new(Authenticator::new(
-                StaticMembershipResolver(vec![(common::test_member_account(), Role::Admin).into()]),
-                Duration::from_secs(60),
-                Duration::from_secs(300),
-            )),
-        };
-        Self::with_state(
-            ProviderState::with_provider_id(deps, "0xtest_provider".to_string()),
-            dir,
-        )
+    /// No signing key, so signing-bound endpoints must answer 503 rather than
+    /// emit zero-byte placeholder signatures.
+    async fn new_unsigned(backend: TestBackend) -> Self {
+        Self::start(backend, |deps| {
+            ProviderState::with_provider_id(deps, "0xtest_provider".to_string())
+        })
         .await
-    }
-
-    async fn with_state(state: ProviderState, dir: Option<TempDir>) -> Self {
-        let (addr, client) = common::serve(state).await;
-        Self {
-            addr,
-            client,
-            _dir: dir,
-        }
-    }
-
-    fn url(&self, path: &str) -> String {
-        format!("http://{}{}", self.addr, path)
     }
 }
 
 common::backend_tests! {
-    async fn test_health_endpoint(kind) {
-        let server = TestServer::new(kind).await;
+    async fn test_health_endpoint(backend) {
+        let server = TestServer::new(backend).await;
 
         let response = server
             .client
@@ -111,14 +57,14 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
-    async fn test_info_endpoint(kind) {
-        let server = TestServer::new(kind).await;
+    async fn test_info_endpoint(backend) {
+        let server = TestServer::new(backend).await;
 
         let response = server.client.get(server.url("/info")).send().await.unwrap();
 
         assert_eq!(response.status(), StatusCode::OK);
 
-        let expect_provider_id = sr25519::Pair::from_string(PROVIDER_SEED, None)
+        let expect_provider_id = sr25519::Pair::from_string(common::PROVIDER_SEED, None)
             .expect("Invalid provider seed")
             .public()
             .to_ss58check();
@@ -136,8 +82,8 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
-    async fn test_upload_and_download_node(kind) {
-        let server = TestServer::new(kind).await;
+    async fn test_upload_and_download_node(backend) {
+        let server = TestServer::new(backend).await;
 
         // Create test data
         let data = b"Hello, World!";
@@ -182,8 +128,8 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
-    async fn test_check_exists(kind) {
-        let server = TestServer::new(kind).await;
+    async fn test_check_exists(backend) {
+        let server = TestServer::new(backend).await;
 
         // Upload a node first
         let data = b"Test data for exists check";
@@ -231,8 +177,8 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
-    async fn test_commit_and_get_commitment(kind) {
-        let server = TestServer::new(kind).await;
+    async fn test_commit_and_get_commitment(backend) {
+        let server = TestServer::new(backend).await;
 
         // Upload a data root (leaf chunk)
         let data = b"Chunk data for commit test";
@@ -290,8 +236,8 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
-    async fn test_list_buckets(kind) {
-        let server = TestServer::new(kind).await;
+    async fn test_list_buckets(backend) {
+        let server = TestServer::new(backend).await;
 
         // Upload to bucket 1 to create it
         let data = b"Data for bucket 1";
@@ -327,8 +273,8 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
-    async fn test_upload_with_invalid_hash_fails(kind) {
-        let server = TestServer::new(kind).await;
+    async fn test_upload_with_invalid_hash_fails(backend) {
+        let server = TestServer::new(backend).await;
 
         let data = b"Some data";
         let wrong_hash = "0x0000000000000000000000000000000000000000000000000000000000000001";
@@ -354,8 +300,8 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
-    async fn test_upload_internal_node_with_missing_children_fails(kind) {
-        let server = TestServer::new(kind).await;
+    async fn test_upload_internal_node_with_missing_children_fails(backend) {
+        let server = TestServer::new(backend).await;
 
         let child1 = "0x0000000000000000000000000000000000000000000000000000000000000001";
         let child2 = "0x0000000000000000000000000000000000000000000000000000000000000002";
@@ -389,8 +335,8 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
-    async fn test_full_upload_commit_read_flow(kind) {
-        let server = TestServer::new(kind).await;
+    async fn test_full_upload_commit_read_flow(backend) {
+        let server = TestServer::new(backend).await;
 
         // Step 1: Upload multiple chunks
         let chunks: Vec<&[u8]> = vec![b"Chunk 1 data", b"Chunk 2 data", b"Chunk 3 data"];
@@ -498,20 +444,17 @@ async fn upload_and_commit(server: &TestServer, bucket_id: u64) -> (String, Valu
     (hash_hex, body)
 }
 
-/// `//Alice`'s sr25519 public key, used to verify signatures produced by the
-/// server. Derived once via `sr25519::Pair::from_string("//Alice", None)`.
+/// `//Alice`'s sr25519 public key, used to verify signatures from the server.
 fn alice_public() -> sr25519::Public {
-    sr25519::Pair::from_string("//Alice", None)
-        .expect("//Alice is a valid SURI")
-        .public()
+    common::test_member_pair().public()
 }
 
 common::backend_tests! {
-    async fn commit_returns_valid_sr25519_signature_over_commitment_payload(kind) {
+    async fn commit_returns_valid_sr25519_signature_over_commitment_payload(backend) {
         // The whole point of the zero-byte-signing fix: when a key IS configured,
         // the server must produce a real sr25519 signature that verifies under the
         // provider's public key against the exact bytes the pallet will hash.
-        let server = TestServer::new(kind).await;
+        let server = TestServer::new(backend).await;
         let bucket_id = 7;
 
         let (_chunk_hash, body) = upload_and_commit(&server, bucket_id).await;
@@ -561,11 +504,11 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
-    async fn checkpoint_signature_verifies_with_real_leaf_count(kind) {
+    async fn checkpoint_signature_verifies_with_real_leaf_count(backend) {
         // `/checkpoint-signature` signs the payload with the *real* leaf_count
         // (unlike /commit which uses 0). Verify both that a real signature comes
         // back and that it round-trips against the public key.
-        let server = TestServer::new(kind).await;
+        let server = TestServer::new(backend).await;
         let bucket_id = 8;
 
         upload_and_commit(&server, bucket_id).await;
@@ -609,10 +552,10 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
-    async fn commitment_signature_does_not_verify_under_a_different_key(kind) {
+    async fn commitment_signature_does_not_verify_under_a_different_key(backend) {
         // Negative control: //Bob must not be able to take credit for //Alice's
         // signature. Catches accidental no-op verifiers.
-        let server = TestServer::new(kind).await;
+        let server = TestServer::new(backend).await;
         let bucket_id = 9;
 
         let (_h, body) = upload_and_commit(&server, bucket_id).await;
@@ -643,11 +586,11 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
-    async fn commit_returns_503_when_no_signing_key_configured(kind) {
+    async fn commit_returns_503_when_no_signing_key_configured(backend) {
         // The pre-fix behaviour silently returned 64 zero bytes here. Post-fix,
         // the handler must refuse with 503 Service Unavailable so callers do not
         // mistake a placeholder for a real provider commitment.
-        let server = TestServer::new_unsigned(kind).await;
+        let server = TestServer::new_unsigned(backend).await;
 
         let data = b"chunk-without-key";
         let hash = storage_primitives::blake2_256(data);
@@ -680,10 +623,10 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
-    async fn commitment_endpoint_returns_503_when_no_signing_key(kind) {
+    async fn commitment_endpoint_returns_503_when_no_signing_key(backend) {
         // GET /commitment also signs the response — it must also refuse rather
         // than emit zero bytes.
-        let server = TestServer::new_unsigned(kind).await;
+        let server = TestServer::new_unsigned(backend).await;
 
         // Seed the bucket via storage so the bucket-lookup gate passes and the
         // handler actually reaches the signing step. Calling /commit on the
@@ -725,8 +668,8 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
-    async fn delete_endpoint_returns_503_when_no_signing_key(kind) {
-        let server = TestServer::new_unsigned(kind).await;
+    async fn delete_endpoint_returns_503_when_no_signing_key(backend) {
+        let server = TestServer::new_unsigned(backend).await;
 
         // Seed and commit so the delete handler can reach its sign() call.
         let data = b"chunk-for-delete-503";
@@ -775,8 +718,8 @@ common::backend_tests! {
 // ─────────────────────────────────────────────────────────────────────────────
 
 common::backend_tests! {
-    async fn test_stats_endpoint_empty(kind) {
-        let server = TestServer::new(kind).await;
+    async fn test_stats_endpoint_empty(backend) {
+        let server = TestServer::new(backend).await;
 
         let resp = server
             .client
@@ -795,8 +738,8 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
-    async fn test_stats_endpoint(kind) {
-        let server = TestServer::new(kind).await;
+    async fn test_stats_endpoint(backend) {
+        let server = TestServer::new(backend).await;
 
         // Upload data so stats are non-zero
         upload_and_commit(&server, 1).await;
@@ -824,8 +767,8 @@ common::backend_tests! {
 // ─────────────────────────────────────────────────────────────────────────────
 
 common::backend_tests! {
-    async fn test_chunk_proof_endpoint(kind) {
-        let server = TestServer::new(kind).await;
+    async fn test_chunk_proof_endpoint(backend) {
+        let server = TestServer::new(backend).await;
         let (hash_hex, _body) = upload_and_commit(&server, 1).await;
 
         let resp = server
@@ -845,8 +788,8 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
-    async fn test_chunk_proof_invalid_root(kind) {
-        let server = TestServer::new(kind).await;
+    async fn test_chunk_proof_invalid_root(backend) {
+        let server = TestServer::new(backend).await;
 
         let fake_root = "0x0000000000000000000000000000000000000000000000000000000000000001";
         let resp = server
@@ -865,10 +808,8 @@ common::backend_tests! {
 // ─────────────────────────────────────────────────────────────────────────────
 
 common::backend_tests! {
-    /// Ported from the old disk-only suite, which was the only place
-    /// `/mmr_proof` was covered.
-    async fn test_mmr_proof_endpoint(kind) {
-        let server = TestServer::new(kind).await;
+    async fn test_mmr_proof_endpoint(backend) {
+        let server = TestServer::new(backend).await;
         upload_and_commit(&server, 1).await;
 
         let resp = server
@@ -886,8 +827,8 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
-    async fn test_mmr_peaks_endpoint(kind) {
-        let server = TestServer::new(kind).await;
+    async fn test_mmr_peaks_endpoint(backend) {
+        let server = TestServer::new(backend).await;
         upload_and_commit(&server, 1).await;
 
         let resp = server
@@ -906,8 +847,8 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
-    async fn test_mmr_peaks_nonexistent_bucket(kind) {
-        let server = TestServer::new(kind).await;
+    async fn test_mmr_peaks_nonexistent_bucket(backend) {
+        let server = TestServer::new(backend).await;
 
         let resp = server
             .client
@@ -923,8 +864,8 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
-    async fn test_mmr_subtree_endpoint(kind) {
-        let server = TestServer::new(kind).await;
+    async fn test_mmr_subtree_endpoint(backend) {
+        let server = TestServer::new(backend).await;
         upload_and_commit(&server, 1).await;
 
         let resp = server
@@ -949,8 +890,8 @@ common::backend_tests! {
 // ─────────────────────────────────────────────────────────────────────────────
 
 common::backend_tests! {
-    async fn test_fetch_nodes_endpoint(kind) {
-        let server = TestServer::new(kind).await;
+    async fn test_fetch_nodes_endpoint(backend) {
+        let server = TestServer::new(backend).await;
 
         let data = b"fetch-nodes-test-data";
         let hash = storage_primitives::blake2_256(data);
@@ -992,8 +933,8 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
-    async fn test_fetch_nodes_unknown_hashes(kind) {
-        let server = TestServer::new(kind).await;
+    async fn test_fetch_nodes_unknown_hashes(backend) {
+        let server = TestServer::new(backend).await;
 
         let fake = "0x0000000000000000000000000000000000000000000000000000000000000042";
         let resp = server
@@ -1019,8 +960,8 @@ common::backend_tests! {
 // ─────────────────────────────────────────────────────────────────────────────
 
 common::backend_tests! {
-    async fn test_historical_roots_endpoint(kind) {
-        let server = TestServer::new(kind).await;
+    async fn test_historical_roots_endpoint(backend) {
+        let server = TestServer::new(backend).await;
         upload_and_commit(&server, 1).await;
 
         let resp = server
@@ -1046,8 +987,8 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
-    async fn test_replica_sync_status_endpoint(kind) {
-        let server = TestServer::new(kind).await;
+    async fn test_replica_sync_status_endpoint(backend) {
+        let server = TestServer::new(backend).await;
         upload_and_commit(&server, 1).await;
 
         let resp = server
@@ -1071,8 +1012,8 @@ common::backend_tests! {
 // ─────────────────────────────────────────────────────────────────────────────
 
 common::backend_tests! {
-    async fn test_delete_happy_path(kind) {
-        let server = TestServer::new(kind).await;
+    async fn test_delete_happy_path(backend) {
+        let server = TestServer::new(backend).await;
 
         // Commit two data roots
         let data1 = b"chunk-for-delete-1";
@@ -1140,8 +1081,8 @@ common::backend_tests! {
 // ─────────────────────────────────────────────────────────────────────────────
 
 common::backend_tests! {
-    async fn test_get_node_invalid_hex(kind) {
-        let server = TestServer::new(kind).await;
+    async fn test_get_node_invalid_hex(backend) {
+        let server = TestServer::new(backend).await;
 
         let resp = server
             .client
@@ -1157,8 +1098,8 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
-    async fn test_get_node_not_found(kind) {
-        let server = TestServer::new(kind).await;
+    async fn test_get_node_not_found(backend) {
+        let server = TestServer::new(backend).await;
 
         let valid_but_absent = "0x0000000000000000000000000000000000000000000000000000000000000099";
         let resp = server
@@ -1175,8 +1116,8 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
-    async fn test_upload_node_invalid_base64(kind) {
-        let server = TestServer::new(kind).await;
+    async fn test_upload_node_invalid_base64(backend) {
+        let server = TestServer::new(backend).await;
 
         let hash = "0x0000000000000000000000000000000000000000000000000000000000000001";
         let resp = server
@@ -1199,8 +1140,8 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
-    async fn test_upload_node_invalid_hex_children(kind) {
-        let server = TestServer::new(kind).await;
+    async fn test_upload_node_invalid_hex_children(backend) {
+        let server = TestServer::new(backend).await;
 
         let data = b"child test data";
         let hash = storage_primitives::blake2_256(data);
@@ -1226,8 +1167,8 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
-    async fn test_commit_invalid_hex_data_root(kind) {
-        let server = TestServer::new(kind).await;
+    async fn test_commit_invalid_hex_data_root(backend) {
+        let server = TestServer::new(backend).await;
 
         let resp = server
             .client
@@ -1248,8 +1189,8 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
-    async fn test_commit_without_signing_key(kind) {
-        let server = TestServer::new_unsigned(kind).await;
+    async fn test_commit_without_signing_key(backend) {
+        let server = TestServer::new_unsigned(backend).await;
 
         // Upload a valid node first (upload doesn't need signing)
         let data = b"commit-no-key";
@@ -1288,8 +1229,8 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
-    async fn test_read_chunks_invalid_hex(kind) {
-        let server = TestServer::new(kind).await;
+    async fn test_read_chunks_invalid_hex(backend) {
+        let server = TestServer::new(backend).await;
 
         let resp = server
             .client
@@ -1305,8 +1246,8 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
-    async fn test_read_chunks_nonexistent_root(kind) {
-        let server = TestServer::new(kind).await;
+    async fn test_read_chunks_nonexistent_root(backend) {
+        let server = TestServer::new(backend).await;
 
         let valid_hex = "0x0000000000000000000000000000000000000000000000000000000000000001";
         let resp = server
@@ -1325,8 +1266,8 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
-    async fn test_chunk_proof_invalid_hex(kind) {
-        let server = TestServer::new(kind).await;
+    async fn test_chunk_proof_invalid_hex(backend) {
+        let server = TestServer::new(backend).await;
 
         let resp = server
             .client

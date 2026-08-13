@@ -5,55 +5,23 @@
 mod common;
 
 use axum::http::StatusCode;
-use common::SignedClient;
-use provider_auth::{Authenticator, StaticMembershipResolver};
 use serde_json::Value;
-use std::net::SocketAddr;
-use std::sync::Arc;
-use std::time::Duration;
-use storage_primitives::Role;
-use storage_provider_node::{ProviderDeps, ProviderState};
-use tempfile::TempDir;
+use storage_provider_node::ProviderState;
 
-struct TestServer {
-    addr: SocketAddr,
-    client: SignedClient,
-    /// RocksDB scratch dir, `None` in-memory. Held so it outlives the server.
-    _dir: Option<TempDir>,
-}
+use common::{TestBackend, TestServer};
 
 impl TestServer {
-    async fn new(kind: common::StorageBackendKind) -> Self {
-        let (storage, nonce_store, dir) = common::storage_for(kind);
-        let deps = ProviderDeps {
-            storage,
-            nonce_store,
-            auth: Arc::new(Authenticator::new(
-                StaticMembershipResolver(vec![(common::test_member_account(), Role::Admin).into()]),
-                Duration::from_secs(60),
-                Duration::from_secs(300),
-            )),
-        };
-        let (addr, client) = common::serve(ProviderState::with_provider_id(
-            deps,
-            "0xtest_provider".to_string(),
-        ))
-        .await;
-        Self {
-            addr,
-            client,
-            _dir: dir,
-        }
-    }
-
-    fn url(&self, path: &str) -> String {
-        format!("http://{}{}", self.addr, path)
+    async fn new(backend: TestBackend) -> Self {
+        Self::start(backend, |deps| {
+            ProviderState::with_provider_id(deps, "0xtest_provider".to_string())
+        })
+        .await
     }
 }
 
 common::backend_tests! {
-    async fn test_s3_put_and_get_object(kind) {
-        let server = TestServer::new(kind).await;
+    async fn test_s3_put_and_get_object(backend) {
+        let server = TestServer::new(backend).await;
 
         // PUT object
         let response = server
@@ -92,8 +60,8 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
-    async fn test_s3_head_object(kind) {
-        let server = TestServer::new(kind).await;
+    async fn test_s3_head_object(backend) {
+        let server = TestServer::new(backend).await;
 
         // PUT first
         server
@@ -130,8 +98,8 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
-    async fn test_s3_delete_object(kind) {
-        let server = TestServer::new(kind).await;
+    async fn test_s3_delete_object(backend) {
+        let server = TestServer::new(backend).await;
 
         // PUT
         server
@@ -167,8 +135,8 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
-    async fn test_s3_get_nonexistent_returns_404(kind) {
-        let server = TestServer::new(kind).await;
+    async fn test_s3_get_nonexistent_returns_404(backend) {
+        let server = TestServer::new(backend).await;
 
         let response = server
             .client
@@ -182,8 +150,8 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
-    async fn test_s3_list_objects(kind) {
-        let server = TestServer::new(kind).await;
+    async fn test_s3_list_objects(backend) {
+        let server = TestServer::new(backend).await;
 
         // Upload several objects
         for name in &["photos/cat.jpg", "photos/dog.jpg", "docs/readme.txt"] {
@@ -234,8 +202,8 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
-    async fn test_s3_list_pagination(kind) {
-        let server = TestServer::new(kind).await;
+    async fn test_s3_list_pagination(backend) {
+        let server = TestServer::new(backend).await;
 
         // Upload 5 objects
         for i in 0..5 {
@@ -279,8 +247,8 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
-    async fn test_s3_index_root(kind) {
-        let server = TestServer::new(kind).await;
+    async fn test_s3_index_root(backend) {
+        let server = TestServer::new(backend).await;
 
         // Empty bucket
         let response = server
@@ -331,8 +299,8 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
-    async fn test_s3_large_file_multi_chunk(kind) {
-        let server = TestServer::new(kind).await;
+    async fn test_s3_large_file_multi_chunk(backend) {
+        let server = TestServer::new(backend).await;
 
         // Create data larger than one chunk (256 KiB = 262144 bytes)
         // Use 300 KB to get 2 chunks
@@ -367,8 +335,8 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
-    async fn test_s3_put_overwrite(kind) {
-        let server = TestServer::new(kind).await;
+    async fn test_s3_put_overwrite(backend) {
+        let server = TestServer::new(backend).await;
 
         // PUT v1
         server
@@ -415,8 +383,8 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
-    async fn test_s3_mmr_proof_works_with_s3_data(kind) {
-        let server = TestServer::new(kind).await;
+    async fn test_s3_mmr_proof_works_with_s3_data(backend) {
+        let server = TestServer::new(backend).await;
 
         // Upload via S3 API
         let put_response = server
@@ -451,8 +419,8 @@ common::backend_tests! {
 // ─────────────────────────────────────────────────────────────────────────────
 
 common::backend_tests! {
-    async fn test_s3_head_nonexistent(kind) {
-        let server = TestServer::new(kind).await;
+    async fn test_s3_head_nonexistent(backend) {
+        let server = TestServer::new(backend).await;
 
         let response = server
             .client
@@ -465,8 +433,8 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
-    async fn test_s3_delete_nonexistent(kind) {
-        let server = TestServer::new(kind).await;
+    async fn test_s3_delete_nonexistent(backend) {
+        let server = TestServer::new(backend).await;
 
         let response = server
             .client
@@ -482,8 +450,8 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
-    async fn test_s3_put_empty_body(kind) {
-        let server = TestServer::new(kind).await;
+    async fn test_s3_put_empty_body(backend) {
+        let server = TestServer::new(backend).await;
 
         let response = server
             .client
@@ -511,8 +479,8 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
-    async fn test_s3_metadata_roundtrip_on_get(kind) {
-        let server = TestServer::new(kind).await;
+    async fn test_s3_metadata_roundtrip_on_get(backend) {
+        let server = TestServer::new(backend).await;
 
         // PUT with custom metadata
         server
@@ -549,8 +517,8 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
-    async fn test_s3_list_empty_bucket(kind) {
-        let server = TestServer::new(kind).await;
+    async fn test_s3_list_empty_bucket(backend) {
+        let server = TestServer::new(backend).await;
 
         let response = server
             .client

@@ -8,86 +8,117 @@
 // a subset of these helpers, so per-crate dead-code analysis flags the rest.
 #![allow(dead_code)]
 
-use provider_auth::build_auth_header;
+use provider_auth::{build_auth_header, Authenticator, StaticMembershipResolver};
 use provider_storage::{NonceStore, StorageBackend, StorageBackendSpec};
 use reqwest::{Method, RequestBuilder};
 use sp_core::{sr25519, Pair};
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
-use storage_provider_node::{create_router, ProviderState};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use storage_primitives::Role;
+use storage_provider_node::{create_router, ProviderDeps, ProviderState};
 use tempfile::TempDir;
-
-/// Backend selector, reusing the node's own CLI vocabulary rather than a
-/// test-only copy of it.
-pub use storage_provider_node::cli::StorageBackendKind;
 
 type AccountId32 = sp_core::crypto::AccountId32;
 
-/// Storage and nonce store for `kind`, plus the scratch directory RocksDB needs
-/// kept alive for as long as the server (`None` for in-memory).
-///
-/// Goes through [`StorageBackendSpec::build`], the same call the binary makes,
-/// so tests exercise the real backend/nonce-store pairing instead of assuming
-/// one.
-pub fn storage_for(
-    kind: StorageBackendKind,
-) -> (
-    Arc<dyn StorageBackend>,
-    Arc<dyn NonceStore>,
-    Option<TempDir>,
-) {
-    match kind {
-        StorageBackendKind::InMemory => {
-            let (storage, nonce_store) = StorageBackendSpec::InMemory
-                .build()
-                .expect("in-memory backend is infallible");
-            (storage, nonce_store, None)
-        }
-        StorageBackendKind::RocksDb => {
-            let dir = TempDir::new().expect("temp dir");
-            let (storage, nonce_store) = StorageBackendSpec::RocksDb {
-                path: dir.path().to_path_buf(),
-            }
-            .build()
-            .expect("RocksDB should open");
-            (storage, nonce_store, Some(dir))
+/// Seed the provider signs with when a suite wants a signing identity.
+pub const PROVIDER_SEED: &str = "//Alice";
+
+/// An opened backend, plus RocksDB's scratch dir which must outlive it.
+pub struct TestBackend {
+    storage: Arc<dyn StorageBackend>,
+    nonce_store: Arc<dyn NonceStore>,
+    _dir: Option<TempDir>,
+}
+
+impl TestBackend {
+    pub fn in_memory() -> Self {
+        Self::open(StorageBackendSpec::InMemory, None)
+    }
+
+    pub fn rocksdb() -> Self {
+        let dir = TempDir::new().expect("temp dir");
+        let spec = StorageBackendSpec::RocksDb {
+            path: dir.path().to_path_buf(),
+        };
+        Self::open(spec, Some(dir))
+    }
+
+    /// Built through [`StorageBackendSpec::build`], the call the binary makes,
+    /// so tests get the real backend/nonce-store pairing.
+    fn open(spec: StorageBackendSpec, dir: Option<TempDir>) -> Self {
+        let (storage, nonce_store) = spec.build().expect("backend opens");
+        Self {
+            storage,
+            nonce_store,
+            _dir: dir,
         }
     }
 }
 
-/// Declare tests that run once per [`StorageBackendKind`].
+/// Provider serving on a random port, over one [`TestBackend`].
+pub struct TestServer {
+    addr: SocketAddr,
+    pub client: SignedClient,
+    _dir: Option<TempDir>,
+}
+
+impl TestServer {
+    /// `state` picks the identity: seeded (signing) or provider-id only.
+    pub async fn start(
+        backend: TestBackend,
+        state: impl FnOnce(ProviderDeps) -> ProviderState,
+    ) -> Self {
+        let TestBackend {
+            storage,
+            nonce_store,
+            _dir,
+        } = backend;
+        let deps = ProviderDeps {
+            storage,
+            nonce_store,
+            auth: Arc::new(Authenticator::new(
+                StaticMembershipResolver(vec![(test_member_account(), Role::Admin).into()]),
+                Duration::from_secs(60),
+                Duration::from_secs(300),
+            )),
+        };
+        let (addr, client) = serve(state(deps)).await;
+        Self { addr, client, _dir }
+    }
+
+    pub fn url(&self, path: &str) -> String {
+        format!("http://{}{}", self.addr, path)
+    }
+}
+
+/// Declare tests that run once per backend.
 ///
 /// ```ignore
 /// common::backend_tests! {
-///     async fn health(kind) {
-///         let server = TestServer::new(kind).await;
+///     async fn health(backend) {
+///         let server = TestServer::new(backend).await;
 ///         // ...
 ///     }
 /// }
 /// ```
 ///
 /// expands to `health::in_memory` and `health::rocksdb`, so a failure names the
-/// backend it happened on. The inner module and the test body function share a
-/// name deliberately — they live in different namespaces.
+/// backend it happened on.
 macro_rules! backend_tests {
-    ($(
-        $(#[$attr:meta])*
-        async fn $name:ident($kind:ident) $body:block
-    )*) => {
+    ($(async fn $name:ident($backend:ident) $body:block)*) => {
         $(
-            $(#[$attr])*
-            async fn $name($kind: common::StorageBackendKind) $body
+            async fn $name($backend: common::TestBackend) $body
 
             mod $name {
                 #[tokio::test]
                 async fn in_memory() {
-                    super::$name(super::common::StorageBackendKind::InMemory).await
+                    super::$name(super::common::TestBackend::in_memory()).await
                 }
 
                 #[tokio::test]
                 async fn rocksdb() {
-                    super::$name(super::common::StorageBackendKind::RocksDb).await
+                    super::$name(super::common::TestBackend::rocksdb()).await
                 }
             }
         )*
@@ -99,8 +130,15 @@ pub(crate) use backend_tests;
 /// The account every test signs as.
 pub const TEST_MEMBER_SEED: &str = "//Alice";
 
+/// Derived once per test thread: `//Alice` is a dev *phrase*, so each call
+/// would otherwise run PBKDF2 2048 times — tens of ms in a debug build, and
+/// this is called several times per test case.
 pub fn test_member_pair() -> sr25519::Pair {
-    sr25519::Pair::from_string(TEST_MEMBER_SEED, None).expect("//Alice is a valid SURI")
+    thread_local! {
+        static PAIR: sr25519::Pair =
+            sr25519::Pair::from_string(TEST_MEMBER_SEED, None).expect("//Alice is a valid SURI");
+    }
+    PAIR.with(|pair| pair.clone())
 }
 
 pub fn test_member_account() -> AccountId32 {

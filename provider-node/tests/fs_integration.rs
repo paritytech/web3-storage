@@ -5,49 +5,17 @@
 mod common;
 
 use axum::http::StatusCode;
-use common::SignedClient;
-use provider_auth::{Authenticator, StaticMembershipResolver};
 use serde_json::Value;
-use std::net::SocketAddr;
-use std::sync::Arc;
-use std::time::Duration;
-use storage_primitives::Role;
-use storage_provider_node::{ProviderDeps, ProviderState};
-use tempfile::TempDir;
+use storage_provider_node::ProviderState;
 
-struct TestServer {
-    addr: SocketAddr,
-    client: SignedClient,
-    /// RocksDB scratch dir, `None` in-memory. Held so it outlives the server.
-    _dir: Option<TempDir>,
-}
+use common::{TestBackend, TestServer};
 
 impl TestServer {
-    async fn new(kind: common::StorageBackendKind) -> Self {
-        let (storage, nonce_store, dir) = common::storage_for(kind);
-        let deps = ProviderDeps {
-            storage,
-            nonce_store,
-            auth: Arc::new(Authenticator::new(
-                StaticMembershipResolver(vec![(common::test_member_account(), Role::Admin).into()]),
-                Duration::from_secs(60),
-                Duration::from_secs(300),
-            )),
-        };
-        let (addr, client) = common::serve(ProviderState::with_provider_id(
-            deps,
-            "0xtest_provider".to_string(),
-        ))
-        .await;
-        Self {
-            addr,
-            client,
-            _dir: dir,
-        }
-    }
-
-    fn url(&self, path: &str) -> String {
-        format!("http://{}{}", self.addr, path)
+    async fn new(backend: TestBackend) -> Self {
+        Self::start(backend, |deps| {
+            ProviderState::with_provider_id(deps, "0xtest_provider".to_string())
+        })
+        .await
     }
 }
 
@@ -56,8 +24,8 @@ impl TestServer {
 // ─────────────────────────────────────────────────────────────────────────────
 
 common::backend_tests! {
-    async fn test_fs_put_and_get_file(kind) {
-        let server = TestServer::new(kind).await;
+    async fn test_fs_put_and_get_file(backend) {
+        let server = TestServer::new(backend).await;
 
         // PUT
         let resp = server
@@ -95,8 +63,8 @@ common::backend_tests! {
 // ─────────────────────────────────────────────────────────────────────────────
 
 common::backend_tests! {
-    async fn test_fs_get_nonexistent_file(kind) {
-        let server = TestServer::new(kind).await;
+    async fn test_fs_get_nonexistent_file(backend) {
+        let server = TestServer::new(backend).await;
 
         let resp = server
             .client
@@ -116,8 +84,8 @@ common::backend_tests! {
 // ─────────────────────────────────────────────────────────────────────────────
 
 common::backend_tests! {
-    async fn test_fs_delete_file(kind) {
-        let server = TestServer::new(kind).await;
+    async fn test_fs_delete_file(backend) {
+        let server = TestServer::new(backend).await;
 
         // PUT
         server
@@ -151,8 +119,8 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
-    async fn test_fs_delete_nonexistent(kind) {
-        let server = TestServer::new(kind).await;
+    async fn test_fs_delete_nonexistent(backend) {
+        let server = TestServer::new(backend).await;
 
         let resp = server
             .client
@@ -172,8 +140,8 @@ common::backend_tests! {
 // ─────────────────────────────────────────────────────────────────────────────
 
 common::backend_tests! {
-    async fn test_fs_mkdir(kind) {
-        let server = TestServer::new(kind).await;
+    async fn test_fs_mkdir(backend) {
+        let server = TestServer::new(backend).await;
 
         let resp = server
             .client
@@ -194,8 +162,8 @@ common::backend_tests! {
 // ─────────────────────────────────────────────────────────────────────────────
 
 common::backend_tests! {
-    async fn test_fs_list_dir(kind) {
-        let server = TestServer::new(kind).await;
+    async fn test_fs_list_dir(backend) {
+        let server = TestServer::new(backend).await;
 
         // Create a directory and a file
         server
@@ -229,8 +197,8 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
-    async fn test_fs_list_dir_recursive(kind) {
-        let server = TestServer::new(kind).await;
+    async fn test_fs_list_dir_recursive(backend) {
+        let server = TestServer::new(backend).await;
 
         // Create nested structure
         server
@@ -270,8 +238,8 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
-    async fn test_fs_list_dir_empty(kind) {
-        let server = TestServer::new(kind).await;
+    async fn test_fs_list_dir_empty(backend) {
+        let server = TestServer::new(backend).await;
 
         let resp = server
             .client
@@ -294,8 +262,8 @@ common::backend_tests! {
 // ─────────────────────────────────────────────────────────────────────────────
 
 common::backend_tests! {
-    async fn test_fs_index_root_empty(kind) {
-        let server = TestServer::new(kind).await;
+    async fn test_fs_index_root_empty(backend) {
+        let server = TestServer::new(backend).await;
 
         let resp = server
             .client
@@ -313,8 +281,8 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
-    async fn test_fs_index_root_with_files(kind) {
-        let server = TestServer::new(kind).await;
+    async fn test_fs_index_root_with_files(backend) {
+        let server = TestServer::new(backend).await;
 
         server
             .client
@@ -354,8 +322,8 @@ common::backend_tests! {
 // ─────────────────────────────────────────────────────────────────────────────
 
 common::backend_tests! {
-    async fn test_fs_put_invalid_path(kind) {
-        let server = TestServer::new(kind).await;
+    async fn test_fs_put_invalid_path(backend) {
+        let server = TestServer::new(backend).await;
 
         let resp = server
             .client
@@ -376,8 +344,8 @@ common::backend_tests! {
 // ─────────────────────────────────────────────────────────────────────────────
 
 common::backend_tests! {
-    async fn test_fs_rejects_path_traversal(kind) {
-        let server = TestServer::new(kind).await;
+    async fn test_fs_rejects_path_traversal(backend) {
+        let server = TestServer::new(backend).await;
 
         // Each tuple is (HTTP method, URL) for a path containing `..`.
         let put = server
@@ -408,8 +376,8 @@ common::backend_tests! {
 // ─────────────────────────────────────────────────────────────────────────────
 
 common::backend_tests! {
-    async fn test_fs_put_overwrite(kind) {
-        let server = TestServer::new(kind).await;
+    async fn test_fs_put_overwrite(backend) {
+        let server = TestServer::new(backend).await;
 
         // PUT v1
         server
@@ -458,8 +426,8 @@ common::backend_tests! {
 // ─────────────────────────────────────────────────────────────────────────────
 
 common::backend_tests! {
-    async fn test_fs_large_file(kind) {
-        let server = TestServer::new(kind).await;
+    async fn test_fs_large_file(backend) {
+        let server = TestServer::new(backend).await;
 
         // 300 KB → 2 chunks (256 KiB threshold)
         let data = vec![0x42u8; 300 * 1024];
@@ -497,8 +465,8 @@ common::backend_tests! {
 // ─────────────────────────────────────────────────────────────────────────────
 
 common::backend_tests! {
-    async fn test_fs_get_directory_returns_error(kind) {
-        let server = TestServer::new(kind).await;
+    async fn test_fs_get_directory_returns_error(backend) {
+        let server = TestServer::new(backend).await;
 
         // Create directory
         server
@@ -527,8 +495,8 @@ common::backend_tests! {
 // ─────────────────────────────────────────────────────────────────────────────
 
 common::backend_tests! {
-    async fn test_fs_put_empty_body(kind) {
-        let server = TestServer::new(kind).await;
+    async fn test_fs_put_empty_body(backend) {
+        let server = TestServer::new(backend).await;
 
         // PUT with empty body should succeed (zero-size file)
         let resp = server
@@ -557,8 +525,8 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
-    async fn test_fs_mkdir_no_leading_slash(kind) {
-        let server = TestServer::new(kind).await;
+    async fn test_fs_mkdir_no_leading_slash(backend) {
+        let server = TestServer::new(backend).await;
 
         let resp = server
             .client
@@ -574,8 +542,8 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
-    async fn test_fs_delete_file_then_list(kind) {
-        let server = TestServer::new(kind).await;
+    async fn test_fs_delete_file_then_list(backend) {
+        let server = TestServer::new(backend).await;
 
         // Upload two files
         server
@@ -615,8 +583,8 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
-    async fn test_fs_nested_mkdir_and_file(kind) {
-        let server = TestServer::new(kind).await;
+    async fn test_fs_nested_mkdir_and_file(backend) {
+        let server = TestServer::new(backend).await;
 
         // Create nested dir
         server

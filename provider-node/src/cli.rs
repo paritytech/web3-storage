@@ -9,16 +9,11 @@ use std::path::PathBuf;
 /// Placeholder provider ID used when no identity is configured.
 pub const DEFAULT_PROVIDER_ID: &str = "0x0000000000000000000000000000000000000000";
 
-/// Which storage backend to run, named after the engine like the SDK's
-/// `sc_cli::arg_enums::Database` (`rocksdb`, `paritydb`, …) rather than after a
-/// property such as "disk", so a second engine has an obvious place to land.
+/// Storage backend, named after the engine like `sc_cli::arg_enums::Database`.
 ///
-/// Flat by necessity: clap value-enums must be unit variants. The configured
-/// form is [`StorageBackendSpec`], built by [`StorageParams::spec`].
-///
-/// `rename_all = "lower"` is what makes the values `rocksdb` / `inmemory`
-/// rather than clap's default kebab-case (`rocks-db`, `in-memory`) — the same
-/// attribute, for the same reason, as `sc_cli::arg_enums::Database`.
+/// Clap value-enums must be unit variants; [`StorageParams::spec`] maps this to
+/// the configured [`StorageBackendSpec`]. `rename_all` keeps the values
+/// `rocksdb` / `inmemory` instead of clap's kebab-case default.
 #[derive(Clone, Debug, clap::ValueEnum)]
 #[value(rename_all = "lower")]
 pub enum StorageBackendKind {
@@ -64,11 +59,8 @@ pub struct StorageParams {
 }
 
 impl StorageParams {
-    /// The backend these flags describe.
-    ///
-    /// This is the one place the flat CLI enum meets the backend that actually
-    /// gets built, and the only place `--storage-path` is read — it belongs to
-    /// the persistent engine and is ignored by in-memory.
+    /// The backend these flags describe. `--storage-path` is read only here;
+    /// the in-memory backend ignores it.
     pub fn spec(&self) -> StorageBackendSpec {
         match self.storage_mode {
             StorageBackendKind::InMemory => StorageBackendSpec::InMemory,
@@ -341,36 +333,27 @@ mod tests {
         assert_eq!(cli.replica_sync.replica_max_concurrent, 5);
     }
 
-    #[test]
-    fn inmemory_is_opt_in() {
-        let cli =
-            Cli::try_parse_from(["storage-provider-node", "--storage-mode", "inmemory"]).unwrap();
-        assert!(matches!(
-            cli.storage.storage_mode,
-            StorageBackendKind::InMemory
-        ));
-    }
-
-    /// The accepted values are the engine names, lower-cased — not clap's
-    /// default kebab-case, and with no alias for the old `disk` spelling.
+    /// Only the engine names parse — not clap's kebab-case default, and no
+    /// alias for the old `disk` spelling. Asserting on the spec covers the
+    /// mapping and `--storage-path` at the same time.
     #[test]
     fn backend_values_are_engine_names() {
-        for (arg, expected) in [
-            ("rocksdb", StorageBackendKind::RocksDb),
-            ("inmemory", StorageBackendKind::InMemory),
-        ] {
-            let cli = Cli::try_parse_from(["storage-provider-node", "--storage-mode", arg])
-                .unwrap_or_else(|e| panic!("--storage-mode {arg} should parse: {e}"));
-            assert_eq!(
-                std::mem::discriminant(&cli.storage.storage_mode),
-                std::mem::discriminant(&expected),
-                "--storage-mode {arg}"
-            );
-        }
+        let spec = |value: &str| {
+            Cli::try_parse_from(["storage-provider-node", "--storage-mode", value])
+                .map(|cli| cli.storage.spec())
+        };
+
+        assert_eq!(spec("inmemory").unwrap(), StorageBackendSpec::InMemory);
+        assert_eq!(
+            spec("rocksdb").unwrap(),
+            StorageBackendSpec::RocksDb {
+                path: "./provider-data".into()
+            }
+        );
 
         for rejected in ["disk", "rocks-db", "in-memory"] {
             assert!(
-                Cli::try_parse_from(["storage-provider-node", "--storage-mode", rejected]).is_err(),
+                spec(rejected).is_err(),
                 "--storage-mode {rejected} should be rejected"
             );
         }
