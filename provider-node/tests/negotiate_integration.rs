@@ -9,6 +9,7 @@
 //! per-IP rate limiter.
 
 use axum::http::StatusCode;
+use provider_auth::{Authenticator, StaticMembershipResolver};
 use provider_storage::{DiskStorage, NonceStore, NullNonceStore, Storage};
 use reqwest::Client;
 use serde_json::Value;
@@ -18,7 +19,6 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 use storage_primitives::ReplicaTerms;
-use storage_provider_node::auth::{MembershipCache, StaticMembershipResolver};
 use storage_provider_node::ProviderInfo;
 use storage_provider_node::{
     create_router, NegotiateRequest, NonceCounter, PalletConstants, ProviderDeps, ProviderState,
@@ -42,11 +42,11 @@ impl TestServer {
         let deps = ProviderDeps {
             storage: Arc::new(Storage::new()),
             nonce_store: Arc::new(NullNonceStore),
-            membership: Arc::new(MembershipCache::new(
-                Box::new(StaticMembershipResolver(vec![])),
+            auth: Arc::new(Authenticator::new(
+                StaticMembershipResolver(vec![]),
                 Duration::from_secs(60),
+                Duration::from_secs(300),
             )),
-            auth_max_skew: Duration::from_secs(300),
         };
         let state = ProviderState::with_seed(deps, PROVIDER_SEED).expect("//Alice is a valid SURI");
         // Simulate what the coordinator does once registration lands: publish
@@ -188,11 +188,11 @@ async fn negotiate_valid_until_is_anchor_block_plus_request_timeout() {
     let deps = ProviderDeps {
         storage: Arc::new(Storage::new()),
         nonce_store: Arc::new(NullNonceStore),
-        membership: Arc::new(MembershipCache::new(
-            Box::new(StaticMembershipResolver(vec![])),
+        auth: Arc::new(Authenticator::new(
+            StaticMembershipResolver(vec![]),
             Duration::from_secs(60),
+            Duration::from_secs(300),
         )),
-        auth_max_skew: Duration::from_secs(300),
     };
     let state = ProviderState::with_seed(deps, PROVIDER_SEED).unwrap();
     state
@@ -223,11 +223,11 @@ async fn negotiate_503_when_anchor_block_unknown() {
     let deps = ProviderDeps {
         storage: Arc::new(Storage::new()),
         nonce_store: Arc::new(NullNonceStore),
-        membership: Arc::new(MembershipCache::new(
-            Box::new(StaticMembershipResolver(vec![])),
+        auth: Arc::new(Authenticator::new(
+            StaticMembershipResolver(vec![]),
             Duration::from_secs(60),
+            Duration::from_secs(300),
         )),
-        auth_max_skew: Duration::from_secs(300),
     };
     let state = ProviderState::with_seed(deps, PROVIDER_SEED).unwrap();
     *state.chain_state.constants.write() = Some(PalletConstants {
@@ -252,11 +252,11 @@ async fn negotiate_503_when_request_timeout_unknown() {
     let deps = ProviderDeps {
         storage: Arc::new(Storage::new()),
         nonce_store: Arc::new(NullNonceStore),
-        membership: Arc::new(MembershipCache::new(
-            Box::new(StaticMembershipResolver(vec![])),
+        auth: Arc::new(Authenticator::new(
+            StaticMembershipResolver(vec![]),
             Duration::from_secs(60),
+            Duration::from_secs(300),
         )),
-        auth_max_skew: Duration::from_secs(300),
     };
     let state = ProviderState::with_seed(deps, PROVIDER_SEED).unwrap();
     state
@@ -340,11 +340,11 @@ async fn negotiate_503_when_no_signing_key() {
     let deps = ProviderDeps {
         storage: Arc::new(Storage::new()),
         nonce_store: Arc::new(NullNonceStore),
-        membership: Arc::new(MembershipCache::new(
-            Box::new(StaticMembershipResolver(vec![])),
+        auth: Arc::new(Authenticator::new(
+            StaticMembershipResolver(vec![]),
             Duration::from_secs(60),
+            Duration::from_secs(300),
         )),
-        auth_max_skew: Duration::from_secs(300),
     };
     let server = TestServer::serve(Arc::new(ProviderState::with_provider_id(
         deps,
@@ -366,11 +366,11 @@ async fn negotiate_503_when_provider_info_unavailable() {
     let deps = ProviderDeps {
         storage: Arc::new(Storage::new()),
         nonce_store: Arc::new(NullNonceStore),
-        membership: Arc::new(MembershipCache::new(
-            Box::new(StaticMembershipResolver(vec![])),
+        auth: Arc::new(Authenticator::new(
+            StaticMembershipResolver(vec![]),
             Duration::from_secs(60),
+            Duration::from_secs(300),
         )),
-        auth_max_skew: Duration::from_secs(300),
     };
     let state = ProviderState::with_seed(deps, PROVIDER_SEED).unwrap();
     state
@@ -461,11 +461,11 @@ async fn negotiate_transitions_to_info_unavailable_after_complete_deregister() {
     let deps = ProviderDeps {
         storage: Arc::new(Storage::new()),
         nonce_store: Arc::new(NullNonceStore),
-        membership: Arc::new(MembershipCache::new(
-            Box::new(StaticMembershipResolver(vec![])),
+        auth: Arc::new(Authenticator::new(
+            StaticMembershipResolver(vec![]),
             Duration::from_secs(60),
+            Duration::from_secs(300),
         )),
-        auth_max_skew: Duration::from_secs(300),
     };
     let state = ProviderState::with_seed(deps, PROVIDER_SEED).unwrap();
     state
@@ -520,11 +520,11 @@ async fn negotiate_recovers_after_deregister_cancelled() {
     let deps = ProviderDeps {
         storage: Arc::new(Storage::new()),
         nonce_store: Arc::new(NullNonceStore),
-        membership: Arc::new(MembershipCache::new(
-            Box::new(StaticMembershipResolver(vec![])),
+        auth: Arc::new(Authenticator::new(
+            StaticMembershipResolver(vec![]),
             Duration::from_secs(60),
+            Duration::from_secs(300),
         )),
-        auth_max_skew: Duration::from_secs(300),
     };
     let state = ProviderState::with_seed(deps, PROVIDER_SEED).unwrap();
     state
@@ -572,11 +572,11 @@ async fn negotiate_503_when_nonce_counter_absent() {
     let deps = ProviderDeps {
         storage: Arc::new(Storage::new()),
         nonce_store: Arc::new(NullNonceStore),
-        membership: Arc::new(MembershipCache::new(
-            Box::new(StaticMembershipResolver(vec![])),
+        auth: Arc::new(Authenticator::new(
+            StaticMembershipResolver(vec![]),
             Duration::from_secs(60),
+            Duration::from_secs(300),
         )),
-        auth_max_skew: Duration::from_secs(300),
     };
     let state = ProviderState::with_seed(deps, PROVIDER_SEED).unwrap();
     state
@@ -605,11 +605,11 @@ async fn negotiate_503_when_nonce_counter_present_but_not_bootstrapped() {
     let deps = ProviderDeps {
         storage: Arc::new(Storage::new()),
         nonce_store: Arc::new(NullNonceStore),
-        membership: Arc::new(MembershipCache::new(
-            Box::new(StaticMembershipResolver(vec![])),
+        auth: Arc::new(Authenticator::new(
+            StaticMembershipResolver(vec![]),
             Duration::from_secs(60),
+            Duration::from_secs(300),
         )),
-        auth_max_skew: Duration::from_secs(300),
     };
     let state = ProviderState::with_seed(deps, PROVIDER_SEED).unwrap();
     state

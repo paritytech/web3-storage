@@ -16,6 +16,7 @@
 
 **Workspace crate rules:**
 - When adding, splitting out, or renaming a workspace member crate, ALWAYS classify it in `scripts/coverage.sh`: add it to `COV_PACKAGES` (measured) or `COV_SKIP_PACKAGES` (skipped, with a reason comment). CI's coverage job fails on any unclassified member.
+- Prefer keeping `crates/providers/*` free of `subxt`: express what the crate needs as a trait and let `provider-node` supply the subxt-backed implementation, so swapping the chain client stays a provider-node change.
 
 **Cargo dependency rules:**
 - ALWAYS declare external dependencies in the root `[workspace.dependencies]` and inherit them in crates via `{ workspace = true }`. Never add inline-versioned dependencies (e.g. `foo = "1.2"`) to a crate's `Cargo.toml`.
