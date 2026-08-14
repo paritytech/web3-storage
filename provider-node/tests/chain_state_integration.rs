@@ -548,10 +548,7 @@ async fn refresh_seeds_counter_from_persisted_value_above_chain_hsn() {
     let store = std::sync::Arc::new(RecordingNonceStore::new(Some(21)));
     // In production, command.rs installs the store before the coordinator starts.
     // Since nonce_store is pub, set it directly.
-    let cs = ChainState {
-        nonce_store: store,
-        ..Default::default()
-    };
+    let cs = ChainState::with_nonce_store(store);
 
     // Chain reports hsn=5 → floor = 6. Persisted watermark = 21 wins.
     let chain = MockChainClient {
@@ -579,10 +576,7 @@ async fn deregister_event_resets_persisted_nonce_store() {
     // also see Ok(None) when not registered) never wipe a watermark that is
     // still needed.
     let store = std::sync::Arc::new(RecordingNonceStore::new(Some(99)));
-    let cs = ChainState {
-        nonce_store: store.clone(),
-        ..Default::default()
-    };
+    let cs = ChainState::with_nonce_store(store.clone());
 
     let deregister_event = ProviderLifecycleEvent::Deregistered {
         provider: provider_account(),
@@ -611,10 +605,7 @@ async fn ok_none_without_deregister_event_preserves_nonce_watermark() {
     // is not registered — must NOT reset the persisted watermark, so the
     // durable backstop is not destroyed by transient/reconnect observations.
     let store = std::sync::Arc::new(RecordingNonceStore::new(Some(99)));
-    let cs = ChainState {
-        nonce_store: store.clone(),
-        ..Default::default()
-    };
+    let cs = ChainState::with_nonce_store(store.clone());
 
     // Directly call refresh_provider_state with Ok(None) — no deregister event.
     refresh_provider_state(&MockChainClient::default(), &cs, &provider_account()).await;

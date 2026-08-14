@@ -95,6 +95,7 @@ macro_rules! backend_tests {
     };
 }
 
+#[allow(unused_imports)]
 pub(crate) use backend_tests;
 
 /// The account every test signs as.

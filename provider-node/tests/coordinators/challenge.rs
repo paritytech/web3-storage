@@ -264,7 +264,7 @@ async fn test_proof_generation_failed_no_bucket() {
 
 #[tokio::test(start_paused = true)]
 async fn test_data_not_found_bad_chunk_index() {
-    let (state, mut challenge) = test_state_with_data();
+    let (state, mut challenge, _dir) = test_state_with_data();
     challenge.chunk_index = 999;
 
     let result: Arc<Mutex<Option<ChallengeResponseResult>>> = Arc::new(Mutex::new(None));
