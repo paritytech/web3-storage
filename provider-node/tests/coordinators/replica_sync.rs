@@ -153,7 +153,7 @@ async fn test_already_synced() {
     let storage = Arc::new(Storage::new());
     storage.init_bucket(1, u64::MAX);
     let data = b"test data".to_vec();
-    let hash = sp_core::hashing::blake2_256(&data);
+    let hash = sp_crypto_hashing::blake2_256(&data);
     let data_root = H256::from(hash);
     let _ = storage.store_node(1, data_root, data, None);
     let (mmr_root, _, _) = storage.commit(1, vec![data_root]).unwrap();
@@ -376,7 +376,7 @@ async fn test_duties_filter_already_synced() {
     storage.init_bucket(1, u64::MAX);
 
     let data = b"synced data".to_vec();
-    let hash = sp_core::hashing::blake2_256(&data);
+    let hash = sp_crypto_hashing::blake2_256(&data);
     let data_root = H256::from(hash);
     storage.store_node(1, data_root, data, None).unwrap();
     let (mmr_root, _, _) = storage.commit(1, vec![data_root]).unwrap();

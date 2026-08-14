@@ -25,7 +25,7 @@ extern crate alloc;
 use alloc::borrow::Cow;
 use alloc::{vec, vec::Vec};
 use cumulus_pallet_parachain_system::RelayNumberMonotonicallyIncreases;
-use cumulus_primitives_core::{AggregateMessageOrigin, ParaId};
+use cumulus_primitives_core::{AggregateMessageOrigin, ParaId, VerifySchedulingSignature};
 use frame_support::{
     derive_impl,
     dispatch::DispatchClass,
@@ -354,6 +354,8 @@ impl cumulus_pallet_parachain_system::Config for Runtime {
     type ConsensusHook = ConsensusHook;
     type WeightInfo = weights::cumulus_pallet_parachain_system::WeightInfo<Runtime>;
     type RelayParentOffset = ConstU32<0>;
+    // V3 scheduling stays off; enabling it before collators support it stalls the chain.
+    type SchedulingSignatureVerifier = ();
 }
 
 impl parachain_info::Config for Runtime {}
@@ -752,6 +754,16 @@ pallet_revive::impl_runtime_apis_plus_revive_traits!(
     impl cumulus_primitives_core::RelayParentOffsetApi<Block> for Runtime {
         fn relay_parent_offset() -> u32 {
             0
+        }
+
+        fn max_claim_queue_offset() -> u8 {
+            cumulus_pallet_parachain_system::Pallet::<Runtime>::max_claim_queue_offset()
+        }
+    }
+
+    impl cumulus_primitives_core::SchedulingV3EnabledApi<Block> for Runtime {
+        fn scheduling_v3_enabled() -> bool {
+            <Runtime as cumulus_pallet_parachain_system::Config>::SchedulingSignatureVerifier::V3_SCHEDULING_ENABLED
         }
     }
 

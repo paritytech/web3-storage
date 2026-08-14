@@ -168,7 +168,7 @@ async fn negotiate_returns_signed_terms_with_valid_signature() {
     assert!(signed.terms.replica_params.is_none());
 
     // The signature must verify under //Alice over blake2_256(signing_payload).
-    let hash = sp_core::hashing::blake2_256(&signed.terms.signing_payload());
+    let hash = sp_crypto_hashing::blake2_256(&signed.terms.signing_payload());
     let sig = match signed.signature {
         MultiSignature::Sr25519(s) => s,
         other => panic!("expected an sr25519 signature, got {other:?}"),
