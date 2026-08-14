@@ -6,7 +6,7 @@ use crate::{
     chain_connection::{self, ChainHandle, ChainTransport},
     chain_events::{BlockEvent, BlockEventRx, BlockEventTx, EVENT_CHANNEL_CAPACITY},
     chain_state_coordinator::ChainStateCoordinator,
-    cli::{Cli, StorageMode, DEFAULT_PROVIDER_ID},
+    cli::{Cli, DEFAULT_PROVIDER_ID},
     create_router,
     membership::ChainMembershipResolver,
     subxt_client::SubxtChainClient,
@@ -16,7 +16,6 @@ use crate::{
 };
 use clap::Parser;
 use provider_auth::Authenticator;
-use provider_storage::{DiskStorage, NonceStore, NullNonceStore, Storage, StorageBackend};
 use std::net::SocketAddr;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -58,24 +57,9 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         Err(e) => tracing::warn!("Chain unreachable at startup ({e}); retrying in the background"),
     }
 
-    // Create storage backend and the associated nonce store (which follows the
-    // same persistence mode so the nonce counter survives disk restarts).
-    let (storage, nonce_store): (Arc<dyn StorageBackend>, Arc<dyn NonceStore>) =
-        match cli.storage.storage_mode {
-            StorageMode::Inmemory => {
-                tracing::info!("Using in-memory storage (data will be lost on restart)");
-                (Arc::new(Storage::new()), Arc::new(NullNonceStore))
-            }
-            StorageMode::Disk => {
-                tracing::info!(
-                    "Using persistent disk storage at: {}",
-                    cli.storage.storage_path.display()
-                );
-                let disk = DiskStorage::new(&cli.storage.storage_path)?;
-                let store = disk.nonce_store();
-                (Arc::new(disk), store)
-            }
-        };
+    let backend = cli.storage.spec();
+    tracing::info!("Storage backend: {backend}");
+    let (storage, nonce_store) = backend.build()?;
 
     // Membership-based auth over the chain's bucket member sets, resolved
     // through the shared watch connection.
