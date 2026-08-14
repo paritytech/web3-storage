@@ -35,7 +35,7 @@ futures = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
-provider-storage = { workspace = true }
+provider-storage = { workspace = true, features = ["test-helpers"] }
 storage-provider-node = { workspace = true }
 axum = { workspace = true }
 tempfile = { workspace = true }
