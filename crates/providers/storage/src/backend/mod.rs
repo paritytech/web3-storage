@@ -2,8 +2,8 @@
 
 //! Blob persistence layer: the [`StorageBackend`] trait and its implementations.
 //!
-//! Both [`Storage`] (in-memory) and [`DiskStorage`] (persistent) implement the
-//! trait, allowing the provider node to select the storage backend at startup.
+//! [`StorageBackendSpec`] names an implementation and its configuration, and
+//! builds it — that is what the provider node selects at startup.
 
 pub mod disk;
 
@@ -51,30 +51,6 @@ impl fmt::Display for StorageBackendSpec {
         match self {
             Self::RocksDb { path } => write!(f, "RocksDB at {}", path.display()),
         }
-    }
-}
-
-#[cfg(test)]
-mod spec_tests {
-    use super::*;
-    use tempfile::TempDir;
-
-    #[test]
-    fn rocksdb_pairs_with_a_nonce_store_that_survives_reopen() {
-        let dir = TempDir::new().unwrap();
-        let spec = StorageBackendSpec::RocksDb {
-            path: dir.path().to_path_buf(),
-        };
-
-        // Scoped so both halves drop and RocksDB releases the directory lock.
-        {
-            let (_storage, nonce_store) = spec.build().expect("RocksDB opens");
-            nonce_store.persist(7);
-        }
-
-        let (_storage, nonce_store) = spec.build().expect("RocksDB reopens");
-        assert_eq!(nonce_store.load(), Some(7));
-        assert!(spec.to_string().starts_with("RocksDB at "));
     }
 }
 
@@ -300,4 +276,28 @@ pub fn build_padded_merkle_tree(
     }
 
     current_level[0]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn rocksdb_pairs_with_a_nonce_store_that_survives_reopen() {
+        let dir = TempDir::new().unwrap();
+        let spec = StorageBackendSpec::RocksDb {
+            path: dir.path().to_path_buf(),
+        };
+
+        // Scoped so both halves drop and RocksDB releases the directory lock.
+        {
+            let (_storage, nonce_store) = spec.build().expect("RocksDB opens");
+            nonce_store.persist(7);
+        }
+
+        let (_storage, nonce_store) = spec.build().expect("RocksDB reopens");
+        assert_eq!(nonce_store.load(), Some(7));
+        assert!(spec.to_string().starts_with("RocksDB at "));
+    }
 }

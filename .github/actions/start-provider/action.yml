@@ -20,9 +20,10 @@ inputs:
     default: "3333"
   storage-path:
     description: >-
-      Data directory, unique per provider — two providers cannot share one.
+      Data directory. Defaults to /tmp/provider-data-<label>, so two providers
+      in one job cannot end up sharing one — RocksDB only lets the first in.
     required: false
-    default: /tmp/provider-data
+    default: ""
   chain-rpc:
     description: Parachain RPC WebSocket URL.
     required: false
@@ -49,6 +50,7 @@ runs:
         set -euo pipefail
         KEYFILE="/tmp/provider-${LABEL}.key"
         LOG_FILE="/tmp/provider-${LABEL}.log"
+        STORAGE_PATH="${STORAGE_PATH:-/tmp/provider-data-${LABEL}}"
         printf '%s\n' "$SEED" > "$KEYFILE"
         chmod 600 "$KEYFILE"
 

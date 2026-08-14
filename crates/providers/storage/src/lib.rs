@@ -22,6 +22,10 @@ pub use index::{
 pub use merkle::build_merkle_proof;
 pub use nonce::NonceStore;
 
+/// Names the scratch directories [`temp_rocksdb`] creates.
+#[cfg(any(test, feature = "test-helpers"))]
+pub const TEMP_DIR_PREFIX: &str = "w3s-provider-storage-";
+
 /// What [`temp_rocksdb`] returns.
 #[cfg(any(test, feature = "test-helpers"))]
 pub type TempBackend = (
@@ -32,9 +36,14 @@ pub type TempBackend = (
 
 /// A RocksDB backend on a scratch directory. Keep the guard for as long as the
 /// backend is in use — dropping it takes the database with it.
+///
+/// The directory is prefixed, so anything a test leaks stays greppable.
 #[cfg(any(test, feature = "test-helpers"))]
 pub fn temp_rocksdb() -> TempBackend {
-    let dir = tempfile::TempDir::new().expect("temp dir");
+    let dir = tempfile::Builder::new()
+        .prefix(TEMP_DIR_PREFIX)
+        .tempdir()
+        .expect("temp dir");
     let (storage, nonce_store) = StorageBackendSpec::RocksDb {
         path: dir.path().to_path_buf(),
     }

@@ -242,7 +242,8 @@ pub async fn dev_discovery() -> Option<DiscoveryClient> {
 /// `//Alice` is granted `Admin` on every bucket.
 pub async fn start_test_provider() -> String {
     // The spawned server lives for the whole test binary, so its database
-    // outlives any guard this could hand back: keep the directory.
+    // outlives any guard this could hand back: keep the directory. It is left
+    // behind under the temp dir, named `provider_storage::TEMP_DIR_PREFIX*`.
     let (storage, nonce_store, dir) = temp_rocksdb();
     let _ = dir.keep();
     let deps = ProviderDeps {

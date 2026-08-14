@@ -11,7 +11,6 @@ pub const DEFAULT_PROVIDER_ID: &str = "0x000000000000000000000000000000000000000
 
 /// Storage backend to run.
 ///
-/// [`StorageParams::spec`] maps this to the configured [`StorageBackendSpec`].
 /// `rename_all` keeps the values lower-case instead of clap's kebab-case
 /// default, so an engine reads as `rocksdb` rather than `rocks-db`.
 #[derive(Clone, Debug, clap::ValueEnum)]
@@ -19,6 +18,17 @@ pub const DEFAULT_PROVIDER_ID: &str = "0x000000000000000000000000000000000000000
 pub enum StorageBackendKind {
     /// Persistent RocksDB storage.
     RocksDb,
+}
+
+impl StorageBackendKind {
+    /// The spec for this engine, rooted at `path`.
+    ///
+    /// The only place a kind becomes a spec, so a new engine is one arm here.
+    pub fn spec(&self, path: PathBuf) -> StorageBackendSpec {
+        match self {
+            Self::RocksDb => StorageBackendSpec::RocksDb { path },
+        }
+    }
 }
 
 /// Storage Provider Node - Off-chain storage server for Web3 Storage.
@@ -51,7 +61,7 @@ pub struct StorageParams {
     #[arg(long, value_enum, default_value_t = StorageBackendKind::RocksDb)]
     pub storage_backend: StorageBackendKind,
 
-    /// Path for persistent data (ignored by the in-memory backend).
+    /// Directory holding the chunks, the MMR state and the nonce counter.
     #[arg(long, default_value = "./provider-data", env = "STORAGE_PATH")]
     pub storage_path: PathBuf,
 }
@@ -59,11 +69,7 @@ pub struct StorageParams {
 impl StorageParams {
     /// The backend these flags describe.
     pub fn spec(&self) -> StorageBackendSpec {
-        match self.storage_backend {
-            StorageBackendKind::RocksDb => StorageBackendSpec::RocksDb {
-                path: self.storage_path.clone(),
-            },
-        }
+        self.storage_backend.spec(self.storage_path.clone())
     }
 }
 

@@ -6,10 +6,9 @@
 
 // Each integration suite compiles this module in its own test crate and uses only a
 // subset of it, so per-crate analysis flags the rest.
-#![allow(dead_code, unused_imports, unused_macros)]
+#![allow(dead_code)]
 
 use provider_auth::{build_auth_header, Authenticator, StaticMembershipResolver};
-use provider_storage::StorageBackendSpec;
 use reqwest::{Method, RequestBuilder};
 use sp_core::{sr25519, Pair};
 use std::net::SocketAddr;
@@ -22,8 +21,10 @@ use tempfile::TempDir;
 
 type AccountId32 = sp_core::crypto::AccountId32;
 
-/// Seed the provider signs with when a suite wants a signing identity.
-pub const PROVIDER_SEED: &str = "//Alice";
+/// Seed the provider signs with when a suite wants a signing identity. Same
+/// key as the client's: the suites only need the signatures to verify, not the
+/// two sides to be distinguishable.
+pub const PROVIDER_SEED: &str = TEST_MEMBER_SEED;
 
 /// Provider serving on a random port, over its own throwaway backend.
 pub struct TestServer {
@@ -38,13 +39,14 @@ impl TestServer {
         backend: StorageBackendKind,
         state: impl FnOnce(ProviderDeps) -> ProviderState,
     ) -> Self {
-        let dir = TempDir::new().expect("temp dir");
-        let spec = match backend {
-            StorageBackendKind::RocksDb => StorageBackendSpec::RocksDb {
-                path: dir.path().to_path_buf(),
-            },
-        };
-        let (storage, nonce_store) = spec.build().expect("backend opens");
+        let dir = tempfile::Builder::new()
+            .prefix(provider_storage::TEMP_DIR_PREFIX)
+            .tempdir()
+            .expect("temp dir");
+        let (storage, nonce_store) = backend
+            .spec(dir.path().to_path_buf())
+            .build()
+            .expect("backend opens");
         let deps = ProviderDeps {
             storage,
             nonce_store,

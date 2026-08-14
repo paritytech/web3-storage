@@ -331,7 +331,10 @@ async fn bucket_checkpointed_event_drives_duty_through_sync_attempt() {
     // the resulting duty (new root, no reachable primaries) must surface as
     // PrimaryUnavailable through the callback — all without any network.
     let (state, _dir) = test_state();
-    state.storage.init_bucket(7, 1024 * 1024).unwrap();
+    state
+        .storage
+        .init_bucket(7, 1024 * 1024)
+        .expect("bucket initialises");
 
     let mock = Arc::new(MockReplicaClient {
         duty_passes: AtomicUsize::new(0),
