@@ -21,8 +21,5 @@ sp-core = { workspace = true, features = ["std"] }
 thiserror = { workspace = true }
 tracing = { workspace = true, features = ["std"] }
 
-[features]
-test-helpers = []
-
 [dev-dependencies]
 tempfile = { workspace = true }

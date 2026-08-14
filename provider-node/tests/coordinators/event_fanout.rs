@@ -86,7 +86,7 @@ fn event_only_config() -> ChallengeResponderConfig {
 
 #[tokio::test]
 async fn challenge_event_triggers_point_read_and_response() {
-    let (state, challenge) = test_state_with_data();
+    let (state, challenge, _dir) = test_state_with_data();
     let (deadline, index) = (challenge.deadline, challenge.index);
     let bucket_id = challenge.bucket_id;
     let mock = MockChallengeClient::new(challenge);
@@ -127,7 +127,7 @@ async fn challenge_event_triggers_point_read_and_response() {
 
 #[tokio::test]
 async fn foreign_challenge_event_is_ignored() {
-    let (state, challenge) = test_state_with_data();
+    let (state, challenge, _dir) = test_state_with_data();
     let (deadline, index) = (challenge.deadline, challenge.index);
     let bucket_id = challenge.bucket_id;
     let mock = MockChallengeClient::new(challenge);
@@ -159,7 +159,7 @@ async fn foreign_challenge_event_is_ignored() {
 
 #[tokio::test]
 async fn resubscribe_triggers_bootstrap_scan() {
-    let (state, challenge) = test_state_with_data();
+    let (state, challenge, _dir) = test_state_with_data();
     let mock = MockChallengeClient::new(challenge);
     let responder =
         ChallengeResponder::new(event_only_config(), state, Box::new(Arc::clone(&mock)));
@@ -188,7 +188,7 @@ async fn resubscribe_triggers_bootstrap_scan() {
 async fn event_sent_while_paused_survives_until_resume() {
     // The safety net is off here, so a dropped event would be unrecoverable:
     // the queued event is the only thing that can produce a response.
-    let (state, challenge) = test_state_with_data();
+    let (state, challenge, _dir) = test_state_with_data();
     let (deadline, index) = (challenge.deadline, challenge.index);
     let bucket_id = challenge.bucket_id;
     let mock = MockChallengeClient::new(challenge);
@@ -289,8 +289,8 @@ async fn replica_agreement_event_triggers_duty_pass() {
         poll_interval: Duration::ZERO,
         ..Default::default()
     };
-    let coordinator =
-        ReplicaSyncCoordinator::new(config, test_state(), Box::new(Arc::clone(&mock)));
+    let (state, _dir) = test_state();
+    let coordinator = ReplicaSyncCoordinator::new(config, state, Box::new(Arc::clone(&mock)));
 
     let (events_tx, events_rx) = tokio::sync::broadcast::channel(16);
     let handle = coordinator.start(events_rx, None).await.unwrap();
@@ -330,7 +330,7 @@ async fn bucket_checkpointed_event_drives_duty_through_sync_attempt() {
     // A client checkpoint on a bucket we hold locally must trigger a duty pass, and
     // the resulting duty (new root, no reachable primaries) must surface as
     // PrimaryUnavailable through the callback — all without any network.
-    let state = test_state();
+    let (state, _dir) = test_state();
     state.storage.init_bucket(7, 1024 * 1024).unwrap();
 
     let mock = Arc::new(MockReplicaClient {

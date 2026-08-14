@@ -10,8 +10,7 @@
 
 use axum::http::StatusCode;
 use provider_auth::{Authenticator, StaticMembershipResolver};
-use provider_storage::backend::in_memory::Storage;
-use provider_storage::{NonceStore, NullNonceStore, StorageBackendSpec};
+use provider_storage::{NonceStore, StorageBackendSpec};
 use reqwest::Client;
 use serde_json::Value;
 use sp_core::{sr25519, Pair};
@@ -25,6 +24,7 @@ use storage_provider_node::{
     create_router, NegotiateRequest, NonceCounter, PalletConstants, ProviderDeps, ProviderState,
     SignedTerms,
 };
+use tempfile::TempDir;
 use tokio::net::TcpListener;
 
 const PROVIDER_SEED: &str = "//Alice";
@@ -34,21 +34,34 @@ const PROVIDER_SEED: &str = "//Alice";
 struct TestServer {
     addr: SocketAddr,
     client: Client,
+    _dir: Option<TempDir>,
+}
+
+/// Deps over a real backend; the caller keeps the `TempDir` alive.
+fn test_deps() -> (ProviderDeps, TempDir) {
+    let dir = TempDir::new().expect("temp dir");
+    let (storage, nonce_store) = StorageBackendSpec::RocksDb {
+        path: dir.path().to_path_buf(),
+    }
+    .build()
+    .expect("RocksDB opens");
+    let deps = ProviderDeps {
+        storage,
+        nonce_store,
+        auth: Arc::new(Authenticator::new(
+            StaticMembershipResolver(vec![]),
+            Duration::from_secs(60),
+            Duration::from_secs(300),
+        )),
+    };
+    (deps, dir)
 }
 
 impl TestServer {
     /// `//Alice`-signed server whose state advertises `info` on-chain and has a
     /// nonce counter ready, i.e. every `/negotiate` prerequisite satisfied.
     async fn ready(info: ProviderInfo) -> Self {
-        let deps = ProviderDeps {
-            storage: Arc::new(Storage::new()),
-            nonce_store: Arc::new(NullNonceStore),
-            auth: Arc::new(Authenticator::new(
-                StaticMembershipResolver(vec![]),
-                Duration::from_secs(60),
-                Duration::from_secs(300),
-            )),
-        };
+        let (deps, _dir) = test_deps();
         let state = ProviderState::with_seed(deps, PROVIDER_SEED).expect("//Alice is a valid SURI");
         // Simulate what the coordinator does once registration lands: publish
         // constants, bootstrap the nonce counter, then publish provider_info.
@@ -60,11 +73,16 @@ impl TestServer {
         *state.chain_state.constants.write() = Some(PalletConstants {
             request_timeout: 200,
         });
-        let counter = std::sync::Arc::new(NonceCounter::new(1));
+        let counter = std::sync::Arc::new(NonceCounter::with_store(
+            1,
+            state.chain_state.nonce_store.clone(),
+        ));
         counter.bootstrap_from_hsn(0);
         *state.chain_state.nonce_counter.write() = Some(counter);
         *state.chain_state.provider_info.write() = Some(info);
-        Self::serve(Arc::new(state)).await
+        let mut server = Self::serve(Arc::new(state)).await;
+        server._dir = Some(_dir);
+        server
     }
 
     async fn serve(state: Arc<ProviderState>) -> Self {
@@ -83,6 +101,7 @@ impl TestServer {
         Self {
             addr,
             client: Client::new(),
+            _dir: None,
         }
     }
 
@@ -186,15 +205,7 @@ async fn negotiate_valid_until_is_anchor_block_plus_request_timeout() {
     // checks `valid_until` against. Seed a Paseo-scale value to prove the
     // validity window is anchored to it (a parachain-height-based window
     // would be rejected on-chain as already expired).
-    let deps = ProviderDeps {
-        storage: Arc::new(Storage::new()),
-        nonce_store: Arc::new(NullNonceStore),
-        auth: Arc::new(Authenticator::new(
-            StaticMembershipResolver(vec![]),
-            Duration::from_secs(60),
-            Duration::from_secs(300),
-        )),
-    };
+    let (deps, _dir) = test_deps();
     let state = ProviderState::with_seed(deps, PROVIDER_SEED).unwrap();
     state
         .chain_state
@@ -203,7 +214,10 @@ async fn negotiate_valid_until_is_anchor_block_plus_request_timeout() {
     *state.chain_state.constants.write() = Some(PalletConstants {
         request_timeout: 3_600,
     });
-    let counter = std::sync::Arc::new(NonceCounter::new(1));
+    let counter = std::sync::Arc::new(NonceCounter::with_store(
+        1,
+        state.chain_state.nonce_store.clone(),
+    ));
     counter.bootstrap_from_hsn(0);
     *state.chain_state.nonce_counter.write() = Some(counter);
     *state.chain_state.provider_info.write() = Some(provider_info());
@@ -221,20 +235,15 @@ async fn negotiate_503_when_anchor_block_unknown() {
     // i.e. the chain-state coordinator has not processed a finalized block
     // yet): signing would emit terms whose `valid_until` is meaningless on
     // the pallet's clock, so the handler must refuse.
-    let deps = ProviderDeps {
-        storage: Arc::new(Storage::new()),
-        nonce_store: Arc::new(NullNonceStore),
-        auth: Arc::new(Authenticator::new(
-            StaticMembershipResolver(vec![]),
-            Duration::from_secs(60),
-            Duration::from_secs(300),
-        )),
-    };
+    let (deps, _dir) = test_deps();
     let state = ProviderState::with_seed(deps, PROVIDER_SEED).unwrap();
     *state.chain_state.constants.write() = Some(PalletConstants {
         request_timeout: 200,
     });
-    let counter = std::sync::Arc::new(NonceCounter::new(1));
+    let counter = std::sync::Arc::new(NonceCounter::with_store(
+        1,
+        state.chain_state.nonce_store.clone(),
+    ));
     counter.bootstrap_from_hsn(0);
     *state.chain_state.nonce_counter.write() = Some(counter);
     *state.chain_state.provider_info.write() = Some(provider_info());
@@ -250,21 +259,16 @@ async fn negotiate_503_when_anchor_block_unknown() {
 async fn negotiate_503_when_request_timeout_unknown() {
     // The mirror case: clock known but the RequestTimeout constant not yet
     // fetched — an unbounded validity window must not be signed either.
-    let deps = ProviderDeps {
-        storage: Arc::new(Storage::new()),
-        nonce_store: Arc::new(NullNonceStore),
-        auth: Arc::new(Authenticator::new(
-            StaticMembershipResolver(vec![]),
-            Duration::from_secs(60),
-            Duration::from_secs(300),
-        )),
-    };
+    let (deps, _dir) = test_deps();
     let state = ProviderState::with_seed(deps, PROVIDER_SEED).unwrap();
     state
         .chain_state
         .current_anchor_block
         .store(100, std::sync::atomic::Ordering::Relaxed);
-    let counter = std::sync::Arc::new(NonceCounter::new(1));
+    let counter = std::sync::Arc::new(NonceCounter::with_store(
+        1,
+        state.chain_state.nonce_store.clone(),
+    ));
     counter.bootstrap_from_hsn(0);
     *state.chain_state.nonce_counter.write() = Some(counter);
     *state.chain_state.provider_info.write() = Some(provider_info());
@@ -338,15 +342,7 @@ async fn negotiate_accepts_replica_when_sync_price_configured() {
 #[tokio::test]
 async fn negotiate_503_when_no_signing_key() {
     // No keypair configured → the handler refuses before doing any work.
-    let deps = ProviderDeps {
-        storage: Arc::new(Storage::new()),
-        nonce_store: Arc::new(NullNonceStore),
-        auth: Arc::new(Authenticator::new(
-            StaticMembershipResolver(vec![]),
-            Duration::from_secs(60),
-            Duration::from_secs(300),
-        )),
-    };
+    let (deps, _dir) = test_deps();
     let server = TestServer::serve(Arc::new(ProviderState::with_provider_id(
         deps,
         "0xtest_provider".to_string(),
@@ -364,15 +360,7 @@ async fn negotiate_503_when_provider_info_unavailable() {
     // Keypair present and chain state ready, but no on-chain registration info
     // loaded (the reconciler never published it): the node cannot validate terms
     // it would be bound to, so it must refuse. `provider_info` defaults to `None`.
-    let deps = ProviderDeps {
-        storage: Arc::new(Storage::new()),
-        nonce_store: Arc::new(NullNonceStore),
-        auth: Arc::new(Authenticator::new(
-            StaticMembershipResolver(vec![]),
-            Duration::from_secs(60),
-            Duration::from_secs(300),
-        )),
-    };
+    let (deps, _dir) = test_deps();
     let state = ProviderState::with_seed(deps, PROVIDER_SEED).unwrap();
     state
         .chain_state
@@ -392,7 +380,10 @@ async fn negotiate_503_when_provider_info_unavailable() {
 
     // Once on-chain info lands (mirroring the coordinator: bootstrap nonce
     // counter, then publish provider_info), negotiation succeeds.
-    let counter = std::sync::Arc::new(NonceCounter::new(1));
+    let counter = std::sync::Arc::new(NonceCounter::with_store(
+        1,
+        state.chain_state.nonce_store.clone(),
+    ));
     counter.bootstrap_from_hsn(0);
     *state.chain_state.nonce_counter.write() = Some(counter);
     *state.chain_state.provider_info.write() = Some(provider_info());
@@ -459,15 +450,7 @@ async fn negotiate_transitions_to_info_unavailable_after_complete_deregister() {
     // returns None → clears provider_info. Subsequent negotiate calls should
     // return provider_info_unavailable, not provider_deregistering (the info is
     // just gone at that point).
-    let deps = ProviderDeps {
-        storage: Arc::new(Storage::new()),
-        nonce_store: Arc::new(NullNonceStore),
-        auth: Arc::new(Authenticator::new(
-            StaticMembershipResolver(vec![]),
-            Duration::from_secs(60),
-            Duration::from_secs(300),
-        )),
-    };
+    let (deps, _dir) = test_deps();
     let state = ProviderState::with_seed(deps, PROVIDER_SEED).unwrap();
     state
         .chain_state
@@ -476,7 +459,10 @@ async fn negotiate_transitions_to_info_unavailable_after_complete_deregister() {
     *state.chain_state.constants.write() = Some(PalletConstants {
         request_timeout: 200,
     });
-    let counter = std::sync::Arc::new(NonceCounter::new(1));
+    let counter = std::sync::Arc::new(NonceCounter::with_store(
+        1,
+        state.chain_state.nonce_store.clone(),
+    ));
     counter.bootstrap_from_hsn(0);
     *state.chain_state.nonce_counter.write() = Some(counter);
     // Phase 1: deregistration announced.
@@ -518,15 +504,7 @@ async fn negotiate_recovers_after_deregister_cancelled() {
     // coordinator re-fetches storage which now reports deregister_at = None →
     // negotiate signs again. Mirrors the coordinator clearing the deregistering
     // state when a provider backs out of winding down.
-    let deps = ProviderDeps {
-        storage: Arc::new(Storage::new()),
-        nonce_store: Arc::new(NullNonceStore),
-        auth: Arc::new(Authenticator::new(
-            StaticMembershipResolver(vec![]),
-            Duration::from_secs(60),
-            Duration::from_secs(300),
-        )),
-    };
+    let (deps, _dir) = test_deps();
     let state = ProviderState::with_seed(deps, PROVIDER_SEED).unwrap();
     state
         .chain_state
@@ -535,7 +513,10 @@ async fn negotiate_recovers_after_deregister_cancelled() {
     *state.chain_state.constants.write() = Some(PalletConstants {
         request_timeout: 200,
     });
-    let counter = std::sync::Arc::new(NonceCounter::new(1));
+    let counter = std::sync::Arc::new(NonceCounter::with_store(
+        1,
+        state.chain_state.nonce_store.clone(),
+    ));
     counter.bootstrap_from_hsn(0);
     *state.chain_state.nonce_counter.write() = Some(counter);
     let mut deregistering = provider_info();
@@ -570,15 +551,7 @@ async fn negotiate_503_when_nonce_counter_absent() {
     // Registered (provider_info loaded) but the coordinator has not yet
     // published any nonce counter (nonce_counter == None). The handler must
     // refuse so we never sign a nonce not derived from on-chain state.
-    let deps = ProviderDeps {
-        storage: Arc::new(Storage::new()),
-        nonce_store: Arc::new(NullNonceStore),
-        auth: Arc::new(Authenticator::new(
-            StaticMembershipResolver(vec![]),
-            Duration::from_secs(60),
-            Duration::from_secs(300),
-        )),
-    };
+    let (deps, _dir) = test_deps();
     let state = ProviderState::with_seed(deps, PROVIDER_SEED).unwrap();
     state
         .chain_state
@@ -603,15 +576,7 @@ async fn negotiate_503_when_nonce_counter_present_but_not_bootstrapped() {
     // Some counter but bootstrap_from_hsn has not yet been called (e.g. the
     // chain returned the provider info but replay state was not yet visible).
     // The handler must refuse until is_bootstrapped() is true.
-    let deps = ProviderDeps {
-        storage: Arc::new(Storage::new()),
-        nonce_store: Arc::new(NullNonceStore),
-        auth: Arc::new(Authenticator::new(
-            StaticMembershipResolver(vec![]),
-            Duration::from_secs(60),
-            Duration::from_secs(300),
-        )),
-    };
+    let (deps, _dir) = test_deps();
     let state = ProviderState::with_seed(deps, PROVIDER_SEED).unwrap();
     state
         .chain_state
@@ -622,7 +587,10 @@ async fn negotiate_503_when_nonce_counter_present_but_not_bootstrapped() {
     });
     *state.chain_state.provider_info.write() = Some(provider_info());
     // Counter is Some but not bootstrapped (no bootstrap_from_hsn call).
-    let counter = std::sync::Arc::new(NonceCounter::new(1));
+    let counter = std::sync::Arc::new(NonceCounter::with_store(
+        1,
+        state.chain_state.nonce_store.clone(),
+    ));
     *state.chain_state.nonce_counter.write() = Some(counter);
     let server = TestServer::serve(Arc::new(state)).await;
 
@@ -755,6 +723,20 @@ async fn negotiate_rate_limited_after_burst() {
     );
 }
 
+/// Store that forgets, for counter tests that only exercise the atomic.
+#[derive(Default)]
+struct ForgetfulStore;
+
+impl NonceStore for ForgetfulStore {
+    fn load(&self) -> Option<u64> {
+        None
+    }
+
+    fn persist(&self, _value: u64) {}
+
+    fn reset(&self) {}
+}
+
 // ─── NonceCounter ─────────────────────────────────────────────────────────────
 //
 // `NonceCounter` is the nonce source `/negotiate` allocates from. The
@@ -763,7 +745,7 @@ async fn negotiate_rate_limited_after_burst() {
 
 #[test]
 fn nonce_counter_is_unbootstrapped_until_aligned() {
-    let counter = NonceCounter::new(1);
+    let counter = NonceCounter::with_store(1, Arc::new(ForgetfulStore));
     // Fresh counter has not been reconciled with the chain's replay window.
     assert!(!counter.is_bootstrapped());
     counter.bootstrap_from_hsn(0);
@@ -774,7 +756,7 @@ fn nonce_counter_is_unbootstrapped_until_aligned() {
 fn bootstrap_from_hsn_advances_to_hsn_plus_one() {
     // Counter starts at 1 but the chain's replay head is already at 10, so the
     // node must resume at 11 — never reissue a nonce the chain has seen.
-    let counter = NonceCounter::new(1);
+    let counter = NonceCounter::with_store(1, Arc::new(ForgetfulStore));
     counter.bootstrap_from_hsn(10);
     assert!(counter.is_bootstrapped());
     assert_eq!(counter.next(), 11);
@@ -785,7 +767,7 @@ fn bootstrap_from_hsn_advances_to_hsn_plus_one() {
 fn bootstrap_from_hsn_never_rewinds() {
     // A stale/lower hsn (e.g. an out-of-order poll) must not pull the counter
     // back below nonces it may already have issued.
-    let counter = NonceCounter::new(1);
+    let counter = NonceCounter::with_store(1, Arc::new(ForgetfulStore));
     counter.bootstrap_from_hsn(10); // now at 11
     assert_eq!(counter.next(), 11); // -> 12
     counter.bootstrap_from_hsn(3); // lower head: no-op
@@ -799,7 +781,7 @@ async fn concurrent_next_allocates_distinct_nonces() {
 
     // Hammer the atomic from many tasks: every allocation must be unique and the
     // count exact (exercises the `compare_exchange_weak` retry path under load).
-    let counter = Arc::new(NonceCounter::new(1));
+    let counter = Arc::new(NonceCounter::with_store(1, Arc::new(ForgetfulStore)));
     counter.bootstrap_from_hsn(0);
 
     let mut handles = Vec::new();
@@ -844,15 +826,4 @@ fn with_store_counter_persists_on_next() {
         new_counter.next() > 2,
         "restarted counter must resume above the last issued nonce"
     );
-}
-
-#[test]
-fn new_counter_uses_null_store_so_existing_tests_compile() {
-    // Regression: NonceCounter::new must still work with no store argument.
-    let counter = NonceCounter::new(1);
-    counter.bootstrap_from_hsn(5);
-    assert_eq!(counter.next(), 6);
-    // NullNonceStore persists nothing — load returns None.
-    let null: NullNonceStore = Default::default();
-    assert!(null.load().is_none());
 }

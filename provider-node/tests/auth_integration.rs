@@ -14,8 +14,7 @@ use axum::http::StatusCode;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use common::{current_timestamp, make_auth_header};
 use provider_auth::{Authenticator, StaticMembershipResolver};
-use provider_storage::backend::in_memory::Storage;
-use provider_storage::NullNonceStore;
+use provider_storage::StorageBackendSpec;
 use reqwest::Client;
 use serde_json::Value;
 use sp_core::{sr25519, Pair};
@@ -23,6 +22,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use storage_primitives::Role;
 use storage_provider_node::{create_router, ProviderDeps, ProviderState};
+use tempfile::TempDir;
 use tokio::net::TcpListener;
 
 type AccountId32 = sp_core::crypto::AccountId32;
@@ -34,6 +34,8 @@ type AccountId32 = sp_core::crypto::AccountId32;
 struct AuthTestServer {
     addr: std::net::SocketAddr,
     client: Client,
+    /// Scratch dir for this server's database; dropped with the server.
+    _dir: TempDir,
 }
 
 impl AuthTestServer {
@@ -43,9 +45,15 @@ impl AuthTestServer {
         let alice_account = AccountId32::new(alice_kp.public().0);
 
         // The 300s skew keeps the default the `*_expired_timestamp` tests assume.
+        let dir = TempDir::new().expect("temp dir");
+        let (storage, nonce_store) = StorageBackendSpec::RocksDb {
+            path: dir.path().to_path_buf(),
+        }
+        .build()
+        .expect("RocksDB opens");
         let deps = ProviderDeps {
-            storage: Arc::new(Storage::new()),
-            nonce_store: Arc::new(NullNonceStore),
+            storage,
+            nonce_store,
             auth: Arc::new(Authenticator::new(
                 StaticMembershipResolver(vec![(alice_account, alice_role).into()]),
                 Duration::from_secs(60),
@@ -63,6 +71,7 @@ impl AuthTestServer {
         Self {
             addr,
             client: Client::new(),
+            _dir: dir,
         }
     }
 
