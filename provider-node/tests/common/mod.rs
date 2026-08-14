@@ -5,8 +5,9 @@
 //! Tests use [`SignedClient`] to sign every request as `//Alice`.
 
 // Each integration suite compiles this module in its own test crate and exercises only
-// a subset of these helpers, so per-crate dead-code analysis flags the rest.
-#![allow(dead_code)]
+// a subset of these helpers, so per-crate analysis flags the rest — the macro and its
+// re-export included, since only the api/fs/s3 suites call it.
+#![allow(dead_code, unused_imports, unused_macros)]
 
 use provider_auth::{build_auth_header, Authenticator, StaticMembershipResolver};
 use provider_storage::StorageBackendSpec;
@@ -95,7 +96,6 @@ macro_rules! backend_tests {
     };
 }
 
-#[allow(unused_imports)]
 pub(crate) use backend_tests;
 
 /// The account every test signs as.
