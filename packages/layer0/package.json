@@ -15,21 +15,21 @@
   },
   "dependencies": {
     "@polkadot-api/descriptors": "workspace:*",
-    "@polkadot-labs/hdkd": "^0.0.28",
-    "@polkadot-labs/hdkd-helpers": "^0.0.30",
+    "@polkadot-labs/hdkd": "^0.0.29",
+    "@polkadot-labs/hdkd-helpers": "^0.0.31",
     "@web3-storage/core": "workspace:*",
     "@web3-storage/papi": "workspace:*",
-    "polkadot-api": "^2.1.6",
+    "polkadot-api": "^2.2.1",
     "rxjs": "^7.8.2"
   },
   "devDependencies": {
-    "@types/node": "^22.0.0",
-    "typescript": "~5.8.3",
-    "viem": "^2.21.0",
-    "vitest": "^4.1.5"
+    "@types/node": "^26.0.1",
+    "typescript": "~7.0.2",
+    "viem": "^2.55.8",
+    "vitest": "^4.1.9"
   },
   "peerDependencies": {
-    "viem": "^2.21.0"
+    "viem": "^2.55.8"
   },
   "peerDependenciesMeta": {
     "viem": {

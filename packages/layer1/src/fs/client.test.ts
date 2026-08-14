@@ -1,14 +1,14 @@
-// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
 import { makeSigner } from "@web3-storage/layer0";
 import { FileSystemClient } from "./client.js";
 
-function makeClient(json: unknown = {}, body?: Uint8Array) {
+function makeClient(json: unknown = {}, body?: Uint8Array, headers?: HeadersInit) {
   const calls: Array<{ url: string; init?: RequestInit }> = [];
   const fetchImpl = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
     calls.push({ url: String(url), init });
-    if (body) return new Response((body as Uint8Array<ArrayBuffer>).slice(), { status: 200 });
+    if (body) return new Response((body as Uint8Array<ArrayBuffer>).slice(), { status: 200, headers });
     return new Response(JSON.stringify(json), { status: 200 });
   });
   const client = new FileSystemClient({
@@ -48,6 +48,24 @@ describe("FileSystemClient HTTP ops", () => {
     const body = new TextEncoder().encode("file body");
     const { client } = makeClient({}, body);
     expect(await client.downloadFile(1n, "/a.txt")).toEqual(body);
+  });
+
+  it("downloadFileWithType returns bytes + content-type from the response header", async () => {
+    const body = new TextEncoder().encode("img");
+    const { client } = makeClient({}, body, { "content-type": "image/jpeg" });
+    expect(await client.downloadFileWithType(1n, "/a.jpg")).toEqual({
+      bytes: body,
+      contentType: "image/jpeg",
+    });
+  });
+
+  it("downloadFileWithType falls back to application/octet-stream without a content-type header", async () => {
+    const body = new TextEncoder().encode("bin");
+    const { client } = makeClient({}, body);
+    expect(await client.downloadFileWithType(1n, "/a.bin")).toEqual({
+      bytes: body,
+      contentType: "application/octet-stream",
+    });
   });
 
   it("uses the explicit providerUrl override without chain resolution", async () => {

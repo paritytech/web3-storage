@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 //! Integration tests for the chain-state coordinator that need no blockchain.
 //!
 //! The chain reads the coordinator performs sit behind the
@@ -11,35 +13,59 @@
 //!    we assert the resulting [`ChainState`].
 //!
 //! 2. **Event relevance.** [`is_relevant_provider_event`] decides which block
-//!    events trigger a refresh; tested across the provider lifecycle variants,
-//!    wrong-account events, and unrelated events.
+//!    events trigger a refresh; tested across the provider lifecycle variants
+//!    and wrong-account events.
 //!
 //! 3. **Resilience.** [`ChainStateCoordinator::start`] drives a reconnect loop.
 //!    Pointed at an unreachable chain it must stay up, never panic, leave
 //!    [`ChainState`] at its defaults (so `/negotiate` keeps returning 503), and
 //!    shut down cleanly when stopped.
 //!
-//! 4. **Membership invalidation.** [`invalidate_membership_on_events`] scans a
-//!    finalized block's events for membership changes and evicts the affected
-//!    bucket from [`MembershipCache`] — keyed by `bucket_id`, independent of
-//!    [`is_relevant_provider_event`] — so the next `require_role` lookup re-fetches
-//!    fresh roles instead of serving a stale cached role until TTL expiry.
+//! 4. **Membership invalidation.** [`invalidate_membership_for_buckets`] drops the
+//!    affected buckets from the [`Authenticator`]'s membership cache — keyed by
+//!    `bucket_id`, independent of [`is_relevant_provider_event`] — so the next
+//!    `require_role` lookup re-resolves fresh roles instead of honouring a stale
+//!    cached role until the TTL expires.
 
 use async_trait::async_trait;
-use sp_core::H256;
+use provider_auth::{
+    build_auth_header, Authenticator, Member, MembershipError, MembershipResolver, RequiredRole,
+    StaticMembershipResolver,
+};
+use provider_storage::NonceStore;
+use sp_core::{sr25519, Pair};
 use sp_runtime::AccountId32;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use storage_client::discovery::ProviderInfo;
-use storage_client::{ClientError, ProviderSettings, StorageEvent};
-use storage_primitives::Role;
-use storage_provider_node::auth::{MembershipCache, MembershipResolver};
+use storage_primitives::{BucketId, Role};
+use storage_provider_node::chain_connection::{ChainHandle, ChainTransport};
 use storage_provider_node::{
-    invalidate_membership_on_events, is_relevant_provider_event, refresh_if_relevant_event,
+    invalidate_membership_for_buckets, is_relevant_provider_event, refresh_if_relevant_event,
     refresh_provider_state, sync_constants, ChainState, ChainStateChainClient,
-    ChainStateCoordinator, NonceCounter, NonceStore, PalletConstants,
+    ChainStateCoordinator, Error, NonceCounter, PalletConstants, ProviderInfo,
+    ProviderLifecycleEvent,
 };
+
+/// Coordinator against the unreachable chain, with freshly-made (and
+/// immediately caller-dropped) channel counterparts: `send` failures are
+/// ignored by the coordinator, so this exercises the same loop as production.
+fn unreachable_coordinator(chain_state: Arc<ChainState>) -> ChainStateCoordinator {
+    ChainStateCoordinator::new(
+        ChainTransport::Rpc {
+            url: UNREACHABLE_CHAIN.to_string(),
+        },
+        provider_account(),
+        chain_state,
+        Arc::new(Authenticator::new(
+            StaticMembershipResolver(vec![]),
+            Duration::from_secs(60),
+            Duration::from_secs(300),
+        )),
+        tokio::sync::watch::channel::<Option<ChainHandle>>(None).0,
+        tokio::sync::broadcast::channel(16).0,
+    )
+}
 
 /// A WS URL that refuses immediately: port 1 on loopback is never listening, so
 /// every connect attempt fails fast and the coordinator loops on the error arm.
@@ -74,12 +100,7 @@ fn sample_provider_info() -> ProviderInfo {
 #[tokio::test]
 async fn coordinator_leaves_state_at_defaults_while_chain_unreachable() {
     let chain_state = Arc::new(ChainState::default());
-    let coordinator = ChainStateCoordinator::new(
-        UNREACHABLE_CHAIN.to_string(),
-        provider_account(),
-        chain_state.clone(),
-        None,
-    );
+    let coordinator = unreachable_coordinator(chain_state.clone());
     let handle = coordinator.start();
 
     // Give the reconnect loop time to attempt (and fail) at least one connect.
@@ -87,7 +108,7 @@ async fn coordinator_leaves_state_at_defaults_while_chain_unreachable() {
 
     // A chain it can't reach must never produce state: every field stays at the
     // default that makes `/negotiate` return 503.
-    assert_eq!(chain_state.current_block.load(Ordering::Relaxed), 0);
+    assert_eq!(chain_state.current_anchor_block.load(Ordering::Relaxed), 0);
     assert!(chain_state.constants.read().is_none());
     assert!(chain_state.provider_info.read().is_none());
     assert!(chain_state.nonce_counter.read().is_none());
@@ -101,12 +122,7 @@ async fn coordinator_shares_chain_state_with_caller() {
     let chain_state = Arc::new(ChainState::default());
     let before = Arc::strong_count(&chain_state);
 
-    let coordinator = ChainStateCoordinator::new(
-        UNREACHABLE_CHAIN.to_string(),
-        provider_account(),
-        chain_state.clone(),
-        None,
-    );
+    let coordinator = unreachable_coordinator(chain_state.clone());
     let handle = coordinator.start();
 
     // The coordinator holds its own clone of the same `Arc<ChainState>`, so the
@@ -123,13 +139,7 @@ async fn coordinator_shares_chain_state_with_caller() {
 #[tokio::test]
 async fn coordinator_stop_is_prompt() {
     let chain_state = Arc::new(ChainState::default());
-    let handle = ChainStateCoordinator::new(
-        UNREACHABLE_CHAIN.to_string(),
-        provider_account(),
-        chain_state,
-        None,
-    )
-    .start();
+    let handle = unreachable_coordinator(chain_state).start();
 
     // Stopping aborts the loop even while it is mid-backoff; it must not block
     // for the full RECONNECT_DELAY.
@@ -141,19 +151,13 @@ async fn coordinator_stop_is_prompt() {
 #[tokio::test]
 async fn coordinator_keeps_retrying_without_panicking() {
     let chain_state = Arc::new(ChainState::default());
-    let handle = ChainStateCoordinator::new(
-        UNREACHABLE_CHAIN.to_string(),
-        provider_account(),
-        chain_state.clone(),
-        None,
-    )
-    .start();
+    let handle = unreachable_coordinator(chain_state.clone()).start();
 
     // Across several connect/backoff cycles the loop stays alive and never
     // dirties state. If the task had panicked, `stop()`'s join would surface it.
     for _ in 0..3 {
         tokio::time::sleep(Duration::from_millis(60)).await;
-        assert_eq!(chain_state.current_block.load(Ordering::Relaxed), 0);
+        assert_eq!(chain_state.current_anchor_block.load(Ordering::Relaxed), 0);
         assert!(chain_state.provider_info.read().is_none());
     }
 
@@ -163,13 +167,7 @@ async fn coordinator_keeps_retrying_without_panicking() {
 #[tokio::test]
 async fn coordinator_releases_shared_state_after_stop() {
     let chain_state = Arc::new(ChainState::default());
-    let handle = ChainStateCoordinator::new(
-        UNREACHABLE_CHAIN.to_string(),
-        provider_account(),
-        chain_state.clone(),
-        None,
-    )
-    .start();
+    let handle = unreachable_coordinator(chain_state.clone()).start();
 
     // `stop()` aborts the task and awaits its teardown, dropping the coordinator
     // and its `chain_state` clone. (Merely *dropping* the handle does not — tokio
@@ -187,7 +185,7 @@ async fn coordinator_releases_shared_state_after_stop() {
 
 /// Canned [`ChainStateChainClient`] for driving the synchronisation logic
 /// without a chain. Each read is either `Ok(value)` or, when its `*_err` flag is
-/// set, a `ClientError` — so every branch of `sync_constants` /
+/// set, an `Error` — so every branch of `sync_constants` /
 /// `refresh_provider_state` is reachable.
 #[derive(Default)]
 struct MockChainClient {
@@ -201,28 +199,23 @@ struct MockChainClient {
 
 #[async_trait]
 impl ChainStateChainClient for MockChainClient {
-    async fn get_provider_info(
-        &self,
-        _who: &AccountId32,
-    ) -> Result<Option<ProviderInfo>, ClientError> {
+    async fn get_provider_info(&self, _who: &AccountId32) -> Result<Option<ProviderInfo>, Error> {
         if self.info_err {
-            return Err(ClientError::Chain("mock get_provider_info failure".into()));
+            return Err(Error::Internal("mock get_provider_info failure".into()));
         }
         Ok(self.info.clone())
     }
 
-    async fn fetch_replay_hsn(&self, _who: &AccountId32) -> Result<Option<u64>, ClientError> {
+    async fn fetch_replay_hsn(&self, _who: &AccountId32) -> Result<Option<u64>, Error> {
         if self.hsn_err {
-            return Err(ClientError::Chain("mock fetch_replay_hsn failure".into()));
+            return Err(Error::Internal("mock fetch_replay_hsn failure".into()));
         }
         Ok(self.hsn)
     }
 
-    async fn fetch_request_timeout(&self) -> Result<Option<u32>, ClientError> {
+    async fn fetch_request_timeout(&self) -> Result<Option<u32>, Error> {
         if self.request_timeout_err {
-            return Err(ClientError::Chain(
-                "mock fetch_request_timeout failure".into(),
-            ));
+            return Err(Error::Internal("mock fetch_request_timeout failure".into()));
         }
         Ok(self.request_timeout)
     }
@@ -319,7 +312,7 @@ async fn refresh_clears_info_and_counter_when_not_registered() {
     // provider is not (or no longer) registered — both fields are dropped so
     // `/negotiate` reports `provider_info_unavailable`.
     let cs = ChainState::default();
-    cs.current_block.store(100, Ordering::Relaxed);
+    cs.current_anchor_block.store(100, Ordering::Relaxed);
     *cs.constants.write() = Some(PalletConstants {
         request_timeout: 200,
     });
@@ -334,7 +327,7 @@ async fn refresh_clears_info_and_counter_when_not_registered() {
     assert!(cs.provider_info.read().is_none());
     assert!(cs.nonce_counter.read().is_none());
     // Per-connection constants and the block height are not tied to registration.
-    assert_eq!(cs.current_block.load(Ordering::Relaxed), 100);
+    assert_eq!(cs.current_anchor_block.load(Ordering::Relaxed), 100);
     assert_eq!(cs.constants.read().as_ref().unwrap().request_timeout, 200);
 }
 
@@ -433,50 +426,12 @@ async fn refresh_completes_pending_bootstrap_when_replay_state_appears() {
 #[test]
 fn lifecycle_events_for_self_are_relevant() {
     let me = provider_account();
-    let bh = H256::zero();
     let events = [
-        StorageEvent::ProviderRegistered {
+        ProviderLifecycleEvent::Updated {
             provider: me.clone(),
-            stake: 0,
-            block_hash: bh,
-            block_number: 1,
         },
-        StorageEvent::ProviderSettingsUpdated {
+        ProviderLifecycleEvent::Deregistered {
             provider: me.clone(),
-            block_hash: bh,
-            block_number: 1,
-            provider_settings: ProviderSettings {
-                price_per_byte: 5,
-                min_duration: 10,
-                max_duration: 100,
-                accepting_primary: true,
-                replica_sync_price: None,
-                accepting_extensions: true,
-                max_capacity: 0,
-            },
-        },
-        StorageEvent::ProviderMultiaddrUpdated {
-            provider: me.clone(),
-            multiaddr: "/ip4/1.2.3.4/tcp/3333".to_string(),
-            block_hash: bh,
-            block_number: 1,
-        },
-        StorageEvent::DeregisterAnnounced {
-            provider: me.clone(),
-            complete_after: 10,
-            block_hash: bh,
-            block_number: 1,
-        },
-        StorageEvent::ProviderDeregistered {
-            provider: me.clone(),
-            stake_returned: 0,
-            block_hash: bh,
-            block_number: 1,
-        },
-        StorageEvent::DeregisterCancelled {
-            provider: me.clone(),
-            block_hash: bh,
-            block_number: 1,
         },
     ];
 
@@ -490,41 +445,17 @@ fn lifecycle_events_for_self_are_relevant() {
 
 #[test]
 fn lifecycle_event_for_other_provider_is_irrelevant() {
-    let event = StorageEvent::ProviderRegistered {
+    let event = ProviderLifecycleEvent::Updated {
         provider: provider_account_2(),
-        stake: 0,
-        block_hash: H256::zero(),
-        block_number: 1,
     };
     // Same event shape, different account → not ours, ignore it.
     assert!(!is_relevant_provider_event(&event, &provider_account()));
 }
 
-#[test]
-fn non_lifecycle_event_is_irrelevant() {
-    // A checkpoint event names no `provider` we filter on; it must never trigger
-    // a provider-state refresh.
-    let event = StorageEvent::BucketCheckpointed {
-        bucket_id: 1,
-        mmr_root: H256::zero(),
-        start_seq: 0,
-        leaf_count: 0,
-        providers: vec![provider_account()],
-        block_hash: H256::zero(),
-        block_number: 1,
-    };
-    assert!(!is_relevant_provider_event(&event, &provider_account()));
-}
-
 // ── refresh_if_relevant_event (block-event dispatch) ──────────────────────────
 
-fn registered_event(provider: AccountId32) -> StorageEvent {
-    StorageEvent::ProviderRegistered {
-        provider,
-        stake: 0,
-        block_hash: H256::zero(),
-        block_number: 1,
-    }
+fn registered_event(provider: AccountId32) -> ProviderLifecycleEvent {
+    ProviderLifecycleEvent::Updated { provider }
 }
 
 #[tokio::test]
@@ -559,14 +490,8 @@ async fn irrelevant_block_events_do_not_refresh() {
     };
     let events = [
         registered_event(provider_account_2()),
-        StorageEvent::BucketCheckpointed {
-            bucket_id: 1,
-            mmr_root: H256::zero(),
-            start_seq: 0,
-            leaf_count: 0,
-            providers: vec![provider_account()],
-            block_hash: H256::zero(),
-            block_number: 1,
+        ProviderLifecycleEvent::Deregistered {
+            provider: provider_account_2(),
         },
     ];
 
@@ -590,88 +515,112 @@ async fn empty_block_does_not_refresh() {
     assert!(cs.provider_info.read().is_none());
 }
 
-// ── membership cache invalidation (invalidate_membership_on_events) ───────────
+// ── membership invalidation (invalidate_membership_for_buckets) ───────────────
 
 /// Resolver that counts calls, so tests can tell whether a lookup hit the cache or
-/// went to the resolver.
+/// went to the resolver. Every bucket resolves to `account` as an `Admin`, so an
+/// authorized request only fails when the resolver itself is bypassed.
 struct CountingMembershipResolver {
-    calls: Arc<std::sync::atomic::AtomicUsize>,
+    account: AccountId32,
+    calls: Arc<AtomicUsize>,
 }
 
 #[async_trait]
 impl MembershipResolver for CountingMembershipResolver {
-    async fn fetch_members(&self, _bucket_id: u64) -> Result<Vec<(AccountId32, Role)>, String> {
+    async fn fetch_members(&self, _bucket_id: BucketId) -> Result<Vec<Member>, MembershipError> {
         self.calls.fetch_add(1, Ordering::SeqCst);
-        Ok(vec![])
+        Ok(vec![(self.account.clone(), Role::Admin).into()])
     }
 }
 
-fn member_removed_event(bucket_id: u64) -> StorageEvent {
-    StorageEvent::MemberRemoved {
-        bucket_id,
-        member: AccountId32::new([8u8; 32]),
-        block_hash: H256::zero(),
-        block_number: 1,
-    }
+/// An [`Authenticator`] over [`CountingMembershipResolver`], plus its call counter
+/// and the keypair whose requests it authorizes. The 300s TTL is long enough that
+/// only an explicit invalidation can cause a re-fetch within a test.
+fn counting_authenticator() -> (Authenticator, Arc<AtomicUsize>, sr25519::Pair) {
+    let keypair = sr25519::Pair::from_string("//Alice", None).expect("//Alice is a valid SURI");
+    let calls = Arc::new(AtomicUsize::new(0));
+    let auth = Authenticator::new(
+        CountingMembershipResolver {
+            account: AccountId32::new(keypair.public().0),
+            calls: calls.clone(),
+        },
+        Duration::from_secs(300),
+        Duration::from_secs(300),
+    );
+    (auth, calls, keypair)
+}
+
+/// Drive one authorized read of `bucket_id` through `auth`, the way an HTTP
+/// handler does — so the assertions below observe the real cache path rather than
+/// a test-only accessor.
+async fn authorized_read(auth: &Authenticator, keypair: &sr25519::Pair, bucket_id: BucketId) {
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system clock is after the Unix epoch")
+        .as_secs();
+    let header = build_auth_header(&keypair.public().0, "GET", bucket_id, timestamp, |msg| {
+        keypair.sign(msg).0
+    });
+    auth.require_role(Some(&header), "GET", bucket_id, RequiredRole::Reader)
+        .await
+        .expect("the signer is an Admin of every bucket here");
 }
 
 #[tokio::test]
-async fn membership_event_in_finalized_block_invalidates_cached_bucket() {
-    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    let cache = MembershipCache::new(
-        Box::new(CountingMembershipResolver {
-            calls: calls.clone(),
-        }),
-        Duration::from_secs(300),
-    );
-    let account = provider_account();
+async fn membership_change_forces_the_next_lookup_to_re_resolve() {
+    let (auth, calls, keypair) = counting_authenticator();
 
-    // Populate the cache for bucket 1.
-    cache.get_role(1, &account).await.unwrap();
+    authorized_read(&auth, &keypair, 1).await;
     assert_eq!(calls.load(Ordering::SeqCst), 1);
 
-    // A finalized block carrying a MemberRemoved event for bucket 1, alongside an
-    // unrelated provider event — mirroring what the coordinator parses per block.
-    let block_events = [
-        registered_event(provider_account_2()),
-        member_removed_event(1),
-    ];
-    invalidate_membership_on_events(&cache, &block_events);
-
-    // The cached role can no longer be trusted — the next lookup must re-fetch.
-    cache.get_role(1, &account).await.unwrap();
-    assert_eq!(
-        calls.load(Ordering::SeqCst),
-        2,
-        "a membership event for the cached bucket must force a re-fetch"
-    );
-}
-
-#[tokio::test]
-async fn unrelated_block_event_leaves_cached_membership_intact() {
-    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    let cache = MembershipCache::new(
-        Box::new(CountingMembershipResolver {
-            calls: calls.clone(),
-        }),
-        Duration::from_secs(300),
-    );
-    let account = provider_account();
-
-    cache.get_role(1, &account).await.unwrap();
-    assert_eq!(calls.load(Ordering::SeqCst), 1);
-
-    // A block with only a provider-lifecycle event (no bucket_id) must not touch
-    // a cached bucket's membership.
-    let block_events = [registered_event(provider_account())];
-    invalidate_membership_on_events(&cache, &block_events);
-
-    cache.get_role(1, &account).await.unwrap();
+    // Well inside the TTL, so this is served from cache.
+    authorized_read(&auth, &keypair, 1).await;
     assert_eq!(
         calls.load(Ordering::SeqCst),
         1,
-        "an unrelated event must leave the cached bucket intact"
+        "second read must be cached"
     );
+
+    // A finalized block changed bucket 1's member set: the cached role can no
+    // longer be trusted, TTL notwithstanding.
+    invalidate_membership_for_buckets(&auth, &[1]);
+
+    authorized_read(&auth, &keypair, 1).await;
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        2,
+        "a membership change for the cached bucket must force a re-resolve"
+    );
+}
+
+#[tokio::test]
+async fn membership_change_leaves_other_buckets_cached() {
+    let (auth, calls, keypair) = counting_authenticator();
+
+    authorized_read(&auth, &keypair, 1).await;
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+    // Invalidation is per bucket: a change in bucket 2 says nothing about bucket 1.
+    invalidate_membership_for_buckets(&auth, &[2]);
+
+    authorized_read(&auth, &keypair, 1).await;
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        1,
+        "another bucket's membership change must leave bucket 1 cached"
+    );
+}
+
+#[tokio::test]
+async fn invalidating_uncached_buckets_is_a_noop() {
+    let (auth, calls, _keypair) = counting_authenticator();
+
+    // Nothing cached yet, and blocks with no membership events invalidate nothing —
+    // neither must reach the resolver or panic.
+    invalidate_membership_for_buckets(&auth, &[42]);
+    invalidate_membership_for_buckets(&auth, &[]);
+
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
 }
 
 // ─── Nonce counter persistence (nonce_store seeding) ──────────────────────────
@@ -749,11 +698,8 @@ async fn deregister_event_resets_persisted_nonce_store() {
         ..Default::default()
     };
 
-    let deregister_event = StorageEvent::ProviderDeregistered {
+    let deregister_event = ProviderLifecycleEvent::Deregistered {
         provider: provider_account(),
-        stake_returned: 0,
-        block_hash: H256::zero(),
-        block_number: 1,
     };
     // Chain reports provider not registered (after the event).
     let chain = MockChainClient::default(); // info=None

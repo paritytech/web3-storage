@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { httpFetch, HttpError, signProviderRequest } from "./http.js";
@@ -58,16 +58,16 @@ describe("httpFetch", () => {
 });
 
 describe("signProviderRequest", () => {
-  it("builds the Web3Storage header over the canonical message", () => {
+  it("builds the Web3Storage header over the canonical message", async () => {
     const seen: Uint8Array[] = [];
-    const keypair = {
+    const signer = {
       publicKey: hexToBytes("0xaa".repeat(1) + "bb".repeat(31)),
-      sign: (input: Uint8Array) => {
+      signBytes: async (input: Uint8Array) => {
         seen.push(input);
         return hexToBytes("0x" + "cd".repeat(64));
       },
     };
-    const headers = signProviderRequest(keypair, "PUT", 42n);
+    const headers = await signProviderRequest(signer, "PUT", 42n);
     const auth = headers.Authorization;
     expect(auth).toMatch(/^Web3Storage 0x[0-9a-f]{64}:0x[0-9a-f]{128}:\d+$/);
     const ts = auth.split(":").pop()!;

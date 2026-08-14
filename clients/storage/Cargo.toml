@@ -1,0 +1,40 @@
+[package]
+name = "storage-client"
+version = "0.1.0"
+authors.workspace = true
+edition.workspace = true
+license = "Apache-2.0"
+repository.workspace = true
+description = "Client library for scalable Web3 storage"
+
+[dependencies]
+provider-auth = { workspace = true }
+provider-negotiation = { workspace = true }
+storage-indexers = { workspace = true }
+storage-primitives = { workspace = true, features = ["serde", "std"] }
+storage-subxt = { workspace = true }
+codec = { workspace = true, features = ["std"] }
+reqwest = { workspace = true }
+serde = { workspace = true, features = ["std"] }
+serde_json = { workspace = true }
+sp-core = { workspace = true, features = ["std"] }
+sp-runtime = { workspace = true, features = ["std"] }
+tokio = { workspace = true }
+base64 = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+rand = { workspace = true }
+chacha20poly1305 = { workspace = true }
+hex = { workspace = true, features = ["std"] }
+async-trait = { workspace = true }
+subxt = { workspace = true }
+subxt-signer = { workspace = true }
+futures = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+provider-storage = { workspace = true }
+storage-provider-node = { workspace = true }
+axum = { workspace = true }
+tempfile = { workspace = true }

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 /**
  * Sr25519 key derivation and signer construction, PAPI-native (hdkd — no
@@ -34,10 +34,9 @@ export interface ChainSigner {
   /** Dev-account name, when this is one of the well-known dev signers. */
   name?: DevAccountName;
   /**
-   * Raw keypair, when locally derived. Needed for provider request signing
-   * (raw sr25519 over the auth message — PolkadotSigner.signBytes may wrap).
-   * Wallet-extension signers cannot provide this; signed provider requests
-   * are then unavailable (unauthenticated providers still work).
+   * Raw keypair backing the signer, when one is available (derived/dev signers).
+   * Provider-request auth signs through {@link ChainSigner.signer}'s `signBytes`,
+   * so this is not required — a wallet-extension signer has no raw key.
    */
   keypair?: Keypair;
 }

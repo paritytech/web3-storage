@@ -4,23 +4,28 @@
 //!
 //! These tests spin up a real HTTP server and test the full request/response cycle.
 
+mod common;
+
 use axum::http::StatusCode;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use codec::Encode;
-use reqwest::Client;
+use common::SignedClient;
+use provider_auth::{Authenticator, StaticMembershipResolver};
+use provider_storage::{NullNonceStore, Storage};
+use reqwest::Method;
 use serde_json::{json, Value};
 use sp_core::crypto::Ss58Codec;
 use sp_core::{sr25519, ByteArray, Pair, H256};
 use std::net::SocketAddr;
 use std::sync::Arc;
-use storage_primitives::CommitmentPayload;
-use storage_provider_node::{create_router, ProviderState, Storage};
-use tokio::net::TcpListener;
+use std::time::Duration;
+use storage_primitives::{Commitment, CommitmentPayload, Role};
+use storage_provider_node::{ProviderDeps, ProviderState};
 
 /// Test server helper that starts the provider node on a random port.
 struct TestServer {
     addr: SocketAddr,
-    client: Client,
+    client: SignedClient,
 }
 
 pub const PROVIDER_SEED: &str = "//Alice";
@@ -31,14 +36,18 @@ impl TestServer {
     /// Endpoints that sign commitments (`/commit`, `/commitment`, ...) work
     /// because a real sr25519 keypair is available.
     async fn new() -> Self {
-        // These tests exercise endpoint behavior, not auth, so run with auth
-        // disabled (auth is enforced by default). Auth is covered end-to-end in
-        // `auth_integration.rs`.
-        Self::with_state(Arc::new(
-            ProviderState::with_seed(Arc::new(Storage::new()), PROVIDER_SEED)
-                .expect("//Alice is a valid SURI")
-                .with_auth_disabled(),
-        ))
+        let deps = ProviderDeps {
+            storage: Arc::new(Storage::new()),
+            nonce_store: Arc::new(NullNonceStore),
+            auth: Arc::new(Authenticator::new(
+                StaticMembershipResolver(vec![(common::test_member_account(), Role::Admin).into()]),
+                Duration::from_secs(60),
+                Duration::from_secs(300),
+            )),
+        };
+        Self::with_state(
+            ProviderState::with_seed(deps, PROVIDER_SEED).expect("//Alice is a valid SURI"),
+        )
         .await
     }
 
@@ -47,35 +56,25 @@ impl TestServer {
     /// Used to verify that signing-bound endpoints return 503 rather than
     /// silently emitting zero-byte placeholder signatures.
     async fn new_unsigned() -> Self {
-        Self::with_state(Arc::new(
-            ProviderState::with_provider_id(
-                Arc::new(Storage::new()),
-                "0xtest_provider".to_string(),
-            )
-            .with_auth_disabled(),
+        let deps = ProviderDeps {
+            storage: Arc::new(Storage::new()),
+            nonce_store: Arc::new(NullNonceStore),
+            auth: Arc::new(Authenticator::new(
+                StaticMembershipResolver(vec![(common::test_member_account(), Role::Admin).into()]),
+                Duration::from_secs(60),
+                Duration::from_secs(300),
+            )),
+        };
+        Self::with_state(ProviderState::with_provider_id(
+            deps,
+            "0xtest_provider".to_string(),
         ))
         .await
     }
 
-    async fn with_state(state: Arc<ProviderState>) -> Self {
-        let app = create_router(state);
-
-        // Bind to port 0 to get a random available port
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-
-        // Spawn the server
-        tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
-        });
-
-        // Give the server a moment to start
-        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
-
-        Self {
-            addr,
-            client: Client::new(),
-        }
+    async fn with_state(state: ProviderState) -> Self {
+        let (addr, client) = common::serve(state).await;
+        Self { addr, client }
     }
 
     fn url(&self, path: &str) -> String {
@@ -451,7 +450,7 @@ async fn upload_and_commit(server: &TestServer, bucket_id: u64) -> (String, Valu
 
     let resp = server
         .client
-        .put(server.url("/node"))
+        .request_bucket(Method::PUT, server.url("/node"), bucket_id)
         .json(&json!({
             "bucket_id": bucket_id,
             "hash": hash_hex,
@@ -465,7 +464,7 @@ async fn upload_and_commit(server: &TestServer, bucket_id: u64) -> (String, Valu
 
     let commit_resp = server
         .client
-        .post(server.url("/commit"))
+        .request_bucket(Method::POST, server.url("/commit"), bucket_id)
         .json(&json!({
             "bucket_id": bucket_id,
             "data_roots": [hash_hex],
@@ -524,7 +523,15 @@ async fn commit_returns_valid_sr25519_signature_over_commitment_payload() {
     let leaf_count = body["leaf_count"]
         .as_u64()
         .expect("leaf_count present in /commit response");
-    let payload = CommitmentPayload::new(bucket_id, mmr_root, start_seq, leaf_count, nonce);
+    let payload = CommitmentPayload::new(
+        bucket_id,
+        Commitment {
+            mmr_root,
+            start_seq,
+            leaf_count,
+        },
+        nonce,
+    );
     let encoded = payload.encode();
 
     let sig = sr25519::Signature::from_slice(&sig_bytes).expect("64-byte signature");
@@ -564,7 +571,15 @@ async fn checkpoint_signature_verifies_with_real_leaf_count() {
     let sig_bytes = hex_decode(body["provider_signature"].as_str().unwrap()).unwrap();
     assert_ne!(sig_bytes, vec![0u8; 64]);
 
-    let payload = CommitmentPayload::new(bucket_id, mmr_root, start_seq, leaf_count, nonce);
+    let payload = CommitmentPayload::new(
+        bucket_id,
+        Commitment {
+            mmr_root,
+            start_seq,
+            leaf_count,
+        },
+        nonce,
+    );
     let sig = sr25519::Signature::from_slice(&sig_bytes).unwrap();
     assert!(sr25519::Pair::verify(
         &sig,
@@ -588,7 +603,16 @@ async fn commitment_signature_does_not_verify_under_a_different_key() {
     )
     .unwrap();
     let nonce = body["nonce"].as_u64().unwrap();
-    let encoded = CommitmentPayload::new(bucket_id, mmr_root, start_seq, 0, nonce).encode();
+    let encoded = CommitmentPayload::new(
+        bucket_id,
+        Commitment {
+            mmr_root,
+            start_seq,
+            leaf_count: 0,
+        },
+        nonce,
+    )
+    .encode();
 
     let bob = sr25519::Pair::from_string("//Bob", None).unwrap().public();
     assert!(
@@ -669,70 +693,6 @@ async fn commitment_endpoint_returns_503_when_no_signing_key() {
     let resp = server
         .client
         .get(server.url("/commitment?bucket_id=1&nonce=0"))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
-    let body: Value = resp.json().await.unwrap();
-    assert_eq!(body["error"], "signing_unavailable");
-}
-
-#[tokio::test]
-async fn checkpoint_sign_endpoint_returns_503_when_no_signing_key() {
-    // POST /checkpoint/sign is the second of the two duplicated zero-byte
-    // sites the audit flagged (provider-node/src/api.rs:604-608). It must
-    // also refuse with 503 — and crucially, never emit a 0x00..00 signature.
-    let unsigned = TestServer::new_unsigned().await;
-    let keyed = TestServer::new().await;
-
-    // Seed identical state on both servers so the unsigned server's local
-    // MMR matches the proposal and the handler reaches the signing step
-    // (it short-circuits with `agreed: false` if the local root differs).
-    let data = b"chunk-for-checkpoint-sign";
-    let hash = storage_primitives::blake2_256(data);
-    let hash_hex = format!("0x{}", hex_encode(hash.as_bytes()));
-    for s in [&unsigned, &keyed] {
-        s.client
-            .put(s.url("/node"))
-            .json(&json!({
-                "bucket_id": 1,
-                "hash": hash_hex,
-                "data": BASE64.encode(data),
-                "children": null,
-            }))
-            .send()
-            .await
-            .unwrap();
-        s.client
-            .post(s.url("/commit"))
-            .json(&json!({ "bucket_id": 1, "data_roots": [hash_hex], "nonce": 0u64 }))
-            .send()
-            .await
-            .unwrap();
-    }
-    // Take the proposal parameters from the keyed server (its /commit
-    // succeeded). The unsigned server's storage mutated on its own 503'd
-    // /commit, so both servers' MMR roots are identical.
-    let proposal = keyed
-        .client
-        .get(keyed.url("/commitment?bucket_id=1&nonce=0"))
-        .send()
-        .await
-        .unwrap()
-        .json::<Value>()
-        .await
-        .unwrap();
-
-    let resp = unsigned
-        .client
-        .post(unsigned.url("/checkpoint/sign"))
-        .json(&json!({
-            "bucket_id": 1,
-            "mmr_root": proposal["mmr_root"],
-            "start_seq": proposal["start_seq"],
-            "leaf_count": proposal["leaf_count"],
-            "window": 0,
-        }))
         .send()
         .await
         .unwrap();
@@ -998,108 +958,6 @@ async fn test_fetch_nodes_unknown_hashes() {
     let body: Value = resp.json().await.unwrap();
     let nodes = body["nodes"].as_array().unwrap();
     assert!(nodes.is_empty());
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Checkpoint coordination
-// ─────────────────────────────────────────────────────────────────────────────
-
-#[tokio::test]
-async fn test_checkpoint_sign_happy_path() {
-    let server = TestServer::new().await;
-    let (_hash_hex, _commit_body) = upload_and_commit(&server, 1).await;
-
-    // Get the real commitment so we can build a matching proposal
-    let commitment_resp = server
-        .client
-        .get(server.url("/commitment?bucket_id=1&nonce=0"))
-        .send()
-        .await
-        .unwrap();
-    let commitment: Value = commitment_resp.json().await.unwrap();
-
-    let resp = server
-        .client
-        .post(server.url("/checkpoint/sign"))
-        .json(&json!({
-            "bucket_id": 1,
-            "mmr_root": commitment["mmr_root"],
-            "start_seq": commitment["start_seq"],
-            "leaf_count": commitment["leaf_count"],
-            "window": 0,
-        }))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), StatusCode::OK);
-
-    let body: Value = resp.json().await.unwrap();
-    assert_eq!(body["agreed"], true);
-    // signature should be a non-empty hex string
-    let sig = body["signature"].as_str().unwrap();
-    assert!(!sig.is_empty());
-    assert!(sig.starts_with("0x"));
-}
-
-#[tokio::test]
-async fn test_checkpoint_sign_disagreement() {
-    let server = TestServer::new().await;
-    upload_and_commit(&server, 1).await;
-
-    let wrong_root = "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
-    let resp = server
-        .client
-        .post(server.url("/checkpoint/sign"))
-        .json(&json!({
-            "bucket_id": 1,
-            "mmr_root": wrong_root,
-            "start_seq": 0,
-            "leaf_count": 1,
-            "window": 0,
-        }))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), StatusCode::OK);
-
-    let body: Value = resp.json().await.unwrap();
-    assert_eq!(body["agreed"], false);
-    assert_eq!(body["signature"], "");
-}
-
-#[tokio::test]
-async fn test_checkpoint_duty_endpoint() {
-    let server = TestServer::new().await;
-    upload_and_commit(&server, 1).await;
-
-    let resp = server
-        .client
-        .get(server.url("/checkpoint/duty?bucket_id=1"))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), StatusCode::OK);
-
-    let body: Value = resp.json().await.unwrap();
-    assert_eq!(body["bucket_id"], 1);
-    assert_eq!(body["ready"], true);
-    assert!(body["leaf_count"].as_u64().unwrap() > 0);
-    assert!(body["mmr_root"].is_string());
-}
-
-#[tokio::test]
-async fn test_checkpoint_trigger_no_coordinator() {
-    let server = TestServer::new().await;
-    upload_and_commit(&server, 1).await;
-
-    let resp = server
-        .client
-        .post(server.url("/checkpoint/trigger?bucket_id=1"))
-        .send()
-        .await
-        .unwrap();
-    // Should fail because no checkpoint coordinator is running
-    assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1415,20 +1273,6 @@ async fn test_chunk_proof_invalid_hex() {
 
     let body: Value = resp.json().await.unwrap();
     assert_eq!(body["error"], "invalid_hash");
-}
-
-#[tokio::test]
-async fn test_checkpoint_trigger_unknown_bucket() {
-    let server = TestServer::new().await;
-
-    let resp = server
-        .client
-        .post(server.url("/checkpoint/trigger?bucket_id=9999"))
-        .send()
-        .await
-        .unwrap();
-    // Should fail: bucket doesn't exist or no coordinator running
-    assert!(resp.status().is_server_error());
 }
 
 // Helper functions

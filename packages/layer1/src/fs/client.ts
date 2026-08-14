@@ -1,12 +1,12 @@
-// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 /**
  * FileSystemClient — drives (DriveRegistry) + the provider node's /fs HTTP
  * surface. Chain ops delegate to the layer-0 pallet wrappers (silent, no
  * auto-retry, finalized submission + finalized reads by default — UI-grade,
  * reorg-safe; tests/examples opt into in-block/best via readOpts/submitMode);
- * HTTP ops go through core's retrying fetch and are signed when the signer
- * has a raw keypair.
+ * HTTP ops go through core's retrying fetch and are signed with the signer's
+ * raw keypair, which the provider always requires.
  *
  * Verification: `downloadByCid` is verified (single chunk — its hash IS the
  * CID; the layer-0 downloadChunk throws CidMismatchError). Path-based
@@ -15,11 +15,7 @@
  * (Rust-client parity) — tracked separately.
  */
 
-import {
-  httpFetch,
-  signProviderRequest,
-  type HttpFetchOpts,
-} from "@web3-storage/core";
+import { httpFetch } from "@web3-storage/core";
 import {
   createDrive as createDriveTx,
   deleteDrive as deleteDriveTx,
@@ -28,23 +24,16 @@ import {
   setMember as setMemberTx,
   shareDrive as shareDriveTx,
   unshareDrive as unshareDriveTx,
-  type ChainSigner,
-  type ParachainApi,
-  type SubmitOpts,
-  type TxStatusListener,
   type WaitOpts,
 } from "@web3-storage/layer0";
 
-import {
-  ProviderUrlResolver,
-  resolveBucketProviders,
-  resolveCreationTerms,
-} from "../provider-url.js";
+import { Layer1Client, type Layer1ClientOptions } from "../base-client.js";
+import { resolveBucketProviders, resolveCreationTerms } from "../provider-url.js";
 import type {
   BucketMember,
-  CheckpointDuty,
   CreateDriveOptions,
   DriveInfo,
+  FileWithType,
   FsEntry,
   IndexRoot,
   MemberRole,
@@ -52,27 +41,7 @@ import type {
   UploadResult,
 } from "./types.js";
 
-export interface FileSystemClientOptions {
-  api: ParachainApi;
-  signer?: ChainSigner | null;
-  /** Explicit provider URL (dev/tests) — skips on-chain resolution. */
-  providerUrl?: string;
-  /** Injection point for unit tests. */
-  fetch?: typeof fetch;
-  /** Tx progress listener. Default null (silent) — apps drive their own UI. */
-  onStatus?: TxStatusListener | null;
-  /**
-   * Read view for chain lookups. Defaults to "finalized" (UI-grade,
-   * reorg-safe). Tests/examples pass READ_OPTS ({at: "best"}) to match their
-   * in-block submission semantics.
-   */
-  readOpts?: { at: "best" | "finalized" };
-  /**
-   * Submission doneness. Defaults to "finalized" (UI-grade). Tests/examples
-   * pass "best" for speed.
-   */
-  submitMode?: "best" | "finalized";
-}
+export type FileSystemClientOptions = Layer1ClientOptions;
 
 function decodeName(name: Uint8Array | string | undefined | null): string | null {
   if (name == null) return null;
@@ -84,45 +53,7 @@ function decodeName(name: Uint8Array | string | undefined | null): string | null
   }
 }
 
-export class FileSystemClient {
-  private readonly api: ParachainApi;
-  private signer: ChainSigner | null;
-  private readonly providers: ProviderUrlResolver;
-  private readonly fetchOpts: HttpFetchOpts;
-  private readonly onStatus: TxStatusListener | null;
-  private readonly readOpts: { at: "best" | "finalized" };
-  private readonly submitMode: "best" | "finalized";
-  private readonly creationUrlOverride?: string;
-
-  constructor(opts: FileSystemClientOptions) {
-    this.api = opts.api;
-    this.signer = opts.signer ?? null;
-    this.readOpts = opts.readOpts ?? { at: "finalized" };
-    this.submitMode = opts.submitMode ?? "finalized";
-    this.providers = new ProviderUrlResolver(opts.api, opts.providerUrl, this.readOpts);
-    this.creationUrlOverride = opts.providerUrl;
-    this.fetchOpts = opts.fetch ? { fetchImpl: opts.fetch } : {};
-    this.onStatus = opts.onStatus ?? null;
-  }
-
-  setSigner(signer: ChainSigner | null): void {
-    this.signer = signer;
-  }
-
-  private requireSigner(): ChainSigner {
-    if (!this.signer) throw new Error("Signer not set");
-    return this.signer;
-  }
-
-  private submitOpts(): SubmitOpts {
-    return { mode: this.submitMode, retryStale: 0, onStatus: this.onStatus };
-  }
-
-  private authHeaders(method: string, bucketId: bigint): Record<string, string> {
-    const kp = this.signer?.keypair;
-    return kp ? signProviderRequest(kp, method, bucketId) : {};
-  }
-
+export class FileSystemClient extends Layer1Client {
   // ── Drive chain ops ─────────────────────────────────────────────────────
 
   /**
@@ -292,7 +223,7 @@ export class FileSystemClient {
     if (opts.recursive) params.set("recursive", "true");
     const response = await httpFetch(
       `${providerUrl}/fs/${bucketId}/ls?${params.toString()}`,
-      { signal: opts.signal, headers: this.authHeaders("GET", bucketId) },
+      { signal: opts.signal, headers: await this.authHeaders("GET", bucketId) },
       this.fetchOpts,
     );
     if (!response.ok) throw new Error(`List directory failed: ${response.status}`);
@@ -320,7 +251,7 @@ export class FileSystemClient {
         method: "PUT",
         headers: {
           "Content-Type": options.contentType || "application/octet-stream",
-          ...this.authHeaders("PUT", bucketId),
+          ...(await this.authHeaders("PUT", bucketId)),
         },
         body: data as BodyInit,
         signal: options.signal,
@@ -334,6 +265,22 @@ export class FileSystemClient {
     return { dataRoot: body.data_root, size: data.length };
   }
 
+  /** GET the /fs file route, shared by the path-based download methods. */
+  private async fetchFileResponse(
+    bucketId: bigint,
+    path: string,
+    opts: { signal?: AbortSignal },
+  ): Promise<Response> {
+    const providerUrl = await this.getProviderUrl(bucketId);
+    const response = await httpFetch(
+      `${providerUrl}/fs/${bucketId}/file?path=${encodeURIComponent(path)}`,
+      { signal: opts.signal, headers: await this.authHeaders("GET", bucketId) },
+      this.fetchOpts,
+    );
+    if (!response.ok) throw new Error(`Download failed: ${response.status}`);
+    return response;
+  }
+
   /**
    * Download a file by path. UNVERIFIED — the /fs file route returns no
    * data_root to check against; see the module docs.
@@ -343,14 +290,23 @@ export class FileSystemClient {
     path: string,
     opts: { signal?: AbortSignal } = {},
   ): Promise<Uint8Array> {
-    const providerUrl = await this.getProviderUrl(bucketId);
-    const response = await httpFetch(
-      `${providerUrl}/fs/${bucketId}/file?path=${encodeURIComponent(path)}`,
-      { signal: opts.signal, headers: this.authHeaders("GET", bucketId) },
-      this.fetchOpts,
-    );
-    if (!response.ok) throw new Error(`Download failed: ${response.status}`);
+    const response = await this.fetchFileResponse(bucketId, path, opts);
     return new Uint8Array(await response.arrayBuffer());
+  }
+
+  /**
+   * Download a file by path along with its stored MIME type (from the
+   * provider's `Content-Type` header) — e.g. to re-`uploadFile` it unchanged
+   * when moving/renaming a path. UNVERIFIED, like {@link downloadFile}.
+   */
+  async downloadFileWithType(
+    bucketId: bigint,
+    path: string,
+    opts: { signal?: AbortSignal } = {},
+  ): Promise<FileWithType> {
+    const response = await this.fetchFileResponse(bucketId, path, opts);
+    const contentType = response.headers.get("content-type") || "application/octet-stream";
+    return { bytes: new Uint8Array(await response.arrayBuffer()), contentType };
   }
 
   /** Download a single chunk by CID — VERIFIED (throws CidMismatchError). */
@@ -362,7 +318,7 @@ export class FileSystemClient {
     const providerUrl = await this.getProviderUrl(bucketId);
     const response = await httpFetch(
       `${providerUrl}/fs/${bucketId}/file?path=${encodeURIComponent(path)}`,
-      { method: "DELETE", headers: this.authHeaders("DELETE", bucketId) },
+      { method: "DELETE", headers: await this.authHeaders("DELETE", bucketId) },
       this.fetchOpts,
     );
     if (!response.ok) {
@@ -374,7 +330,7 @@ export class FileSystemClient {
     const providerUrl = await this.getProviderUrl(bucketId);
     const response = await httpFetch(
       `${providerUrl}/fs/${bucketId}/mkdir?path=${encodeURIComponent(path)}`,
-      { method: "POST", headers: this.authHeaders("POST", bucketId) },
+      { method: "POST", headers: await this.authHeaders("POST", bucketId) },
       this.fetchOpts,
     );
     if (!response.ok) {
@@ -387,7 +343,7 @@ export class FileSystemClient {
     const providerUrl = await this.getProviderUrl(bucketId);
     const response = await httpFetch(
       `${providerUrl}/fs/${bucketId}/index_root`,
-      { headers: this.authHeaders("GET", bucketId) },
+      { headers: await this.authHeaders("GET", bucketId) },
       this.fetchOpts,
     );
     if (!response.ok) throw new Error(`index_root failed: ${response.status}`);
@@ -401,33 +357,5 @@ export class FileSystemClient {
       dirCount: Number(body.dir_count ?? 0),
       totalSize: BigInt(body.total_size ?? 0),
     };
-  }
-
-  // ── Checkpoint (provider HTTP) ──────────────────────────────────────────
-
-  async getCheckpointDuty(bucketId: bigint): Promise<CheckpointDuty | null> {
-    const providerUrl = await this.getProviderUrl(bucketId);
-    const response = await httpFetch(
-      `${providerUrl}/checkpoint/duty?bucket_id=${bucketId}`,
-      { headers: this.authHeaders("GET", bucketId) },
-      this.fetchOpts,
-    );
-    if (!response.ok) {
-      if (response.status === 404) return null;
-      throw new Error(`Checkpoint duty failed: ${response.status}`);
-    }
-    return response.json();
-  }
-
-  async triggerCheckpoint(bucketId: bigint): Promise<void> {
-    const providerUrl = await this.getProviderUrl(bucketId);
-    const response = await httpFetch(
-      `${providerUrl}/checkpoint/trigger?bucket_id=${bucketId}`,
-      { method: "POST", headers: this.authHeaders("POST", bucketId) },
-      this.fetchOpts,
-    );
-    if (!response.ok) {
-      throw new Error(`Checkpoint trigger failed: ${response.status} ${await response.text().catch(() => "")}`);
-    }
   }
 }

@@ -8,10 +8,30 @@ packages:
   - "user-interfaces/provider"
   - "user-interfaces/drive-ui"
   - "user-interfaces/s3-ui"
+  - "user-interfaces/photos"
   - "packages/*"
   - "examples/papi"
+
+# rollup 4.62.3's prebuilt linux-x64-gnu binary requires GLIBC_2.32, but CI
+# runs in paritytech/ci-unified (Debian bullseye, glibc 2.31), so `papi
+# generate` crashes with ERR_DLOPEN_FAILED during pnpm install. Pin the last
+# version built against the older baseline. Remove once
+# https://github.com/rollup/rollup/issues/6461 is fixed (rollup rebuilds on a
+# glibc <= 2.31 baseline) or the CI image moves past bullseye.
+overrides:
+  rollup: 4.62.2
 
 # pnpm blocks dependency build scripts unless allow-listed; esbuild needs its
 # postinstall to place the platform binary.
 allowBuilds:
   esbuild: true
+
+# pnpm quarantines packages published less than minimumReleaseAge minutes ago
+# (supply-chain protection). Dependabot ignores this policy when resolving
+# lockfiles, so exempt the browser-data packages that publish near-daily;
+# their releases are machine-generated data tables, not code.
+minimumReleaseAge: 1440
+minimumReleaseAgeExclude:
+  - baseline-browser-mapping
+  - caniuse-lite
+  - electron-to-chromium

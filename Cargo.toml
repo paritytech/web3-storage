@@ -1,28 +1,38 @@
 [workspace]
 resolver = "2"
 members = [
-	# Layer 0: Scalable Web3 Storage
-	"client",
-	"pallet",
-	"primitives",
+	# Storage client
+	"clients/file-system",
+	"clients/s3",
+	"clients/storage",
+
+	# Storage pallet
+	"crates/pallets/drive-registry",
+	"crates/pallets/s3-registry",
+	"crates/pallets/storage-provider",
+
+	# Provider Node crates
+	"crates/providers/auth",
+	"crates/providers/negotiation",
+	"crates/providers/storage",
+
+	"crates/storage-subxt",
+	"crates/utils/storage-indexers",
 	"provider-node",
+
+	# Storage runtime
 	"runtimes/web3-storage-local",
 	"runtimes/web3-storage-paseo",
 
+	# Shared primitives
+	"crates/primitives/file-system",
+	"crates/primitives/s3",
+	"crates/primitives/storage",
+
 	# Smart-contract precompiles (pallet_revive integration)
-	"precompiles/drive-registry-precompile",
-	"precompiles/s3-registry-precompile",
-	"precompiles/storage-provider-precompile",
-
-	# Storage Interfaces: File System Interface
-	"storage-interfaces/file-system/client",
-	"storage-interfaces/file-system/pallet-registry",
-	"storage-interfaces/file-system/primitives",
-
-	# Storage Interfaces: S3-Compatible Interface
-	"storage-interfaces/s3/client",
-	"storage-interfaces/s3/pallet-s3-registry",
-	"storage-interfaces/s3/primitives",
+	"crates/pallets/drive-registry/precompiles",
+	"crates/pallets/s3-registry/precompiles",
+	"crates/pallets/storage-provider/precompiles",
 ]
 
 [workspace.package]
@@ -33,24 +43,29 @@ repository = "https://github.com/paritytech/web3-storage"
 
 [workspace.dependencies]
 # Layer 0: Scalable Web3 Storage (Internal crates)
-pallet-drive-registry-precompile = { path = "precompiles/drive-registry-precompile", default-features = false }
-pallet-s3-registry-precompile = { path = "precompiles/s3-registry-precompile", default-features = false }
-pallet-storage-provider = { path = "pallet", default-features = false }
-pallet-storage-provider-precompile = { path = "precompiles/storage-provider-precompile", default-features = false }
-storage-client = { path = "client" }
+pallet-drive-registry-precompile = { path = "crates/pallets/drive-registry/precompiles", default-features = false }
+pallet-s3-registry-precompile = { path = "crates/pallets/s3-registry/precompiles", default-features = false }
+pallet-storage-provider = { path = "crates/pallets/storage-provider", default-features = false }
+pallet-storage-provider-precompile = { path = "crates/pallets/storage-provider/precompiles", default-features = false }
+provider-auth = { path = "crates/providers/auth" }
+provider-negotiation = { path = "crates/providers/negotiation" }
+provider-storage = { path = "crates/providers/storage" }
+storage-client = { path = "clients/storage" }
+storage-indexers = { path = "crates/utils/storage-indexers" }
 storage-parachain-runtime = { path = "runtimes/web3-storage-local" }
-storage-primitives = { path = "primitives", default-features = false }
+storage-primitives = { path = "crates/primitives/storage", default-features = false }
 storage-provider-node = { path = "provider-node" }
+storage-subxt = { path = "crates/storage-subxt" }
 
 # Storage Interfaces: File System Interface
-file-system-client = { path = "storage-interfaces/file-system/client" }
-file-system-primitives = { path = "storage-interfaces/file-system/primitives", default-features = false }
-pallet-drive-registry = { path = "storage-interfaces/file-system/pallet-registry", default-features = false }
+file-system-client = { path = "clients/file-system" }
+file-system-primitives = { path = "crates/primitives/file-system", default-features = false }
+pallet-drive-registry = { path = "crates/pallets/drive-registry", default-features = false }
 
 # Storage Interfaces: S3-Compatible Interface
-pallet-s3-registry = { path = "storage-interfaces/s3/pallet-s3-registry", default-features = false }
-s3-client = { path = "storage-interfaces/s3/client" }
-s3-primitives = { path = "storage-interfaces/s3/primitives", default-features = false }
+pallet-s3-registry = { path = "crates/pallets/s3-registry", default-features = false }
+s3-client = { path = "clients/s3" }
+s3-primitives = { path = "crates/primitives/s3", default-features = false }
 
 # Substrate frame
 frame-benchmarking = { version = "46.0.0", default-features = false }
@@ -163,8 +178,9 @@ chacha20poly1305 = "0.10"
 rand = "0.8"
 
 # Subxt (chain interaction for off-chain clients)
-subxt = { version = "0.44.3" }
-subxt-signer = { version = "0.44.3", features = ["sr25519"] }
+subxt = { version = "0.50.2" }
+subxt-rpcs = { version = "0.50.2" }
+subxt-signer = { version = "0.50.2", features = ["sr25519"] }
 
 # Testing
 sp-keyring = { version = "46.0.0", default-features = false }

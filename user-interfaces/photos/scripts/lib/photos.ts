@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-only
-//
+
 // Photos-contract specifics: load the compiled artifact and read `libraryOf`
 // unsigned via the `ReviveApi.call` runtime API (no signature, no gas) — the
 // same state-detection read the UI will use.
@@ -84,8 +84,5 @@ export async function anchorRoot(
   const data = encodeCall(abi, "setRoot", [rootCid]);
   const r = await callContract(api, signer, contractAddressBytes, data);
   const logs = decodeContractEmitted(r.events, api, asHex(contractAddressBytes), abi);
-  assert.ok(
-    logs.some((l) => l.eventName === "RootUpdated"),
-    "setRoot landed on-chain but no RootUpdated event was decoded — likely ABI/bytecode drift between Photos.json and the deployed contract",
-  );
+  assert.ok(logs.some((l) => l.eventName === "RootUpdated"), "RootUpdated event not emitted");
 }
