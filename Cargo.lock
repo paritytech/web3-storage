@@ -9944,6 +9944,8 @@ dependencies = [
  "hex",
  "parity-scale-codec",
  "parking_lot",
+ "provider-auth",
+ "provider-chain",
  "provider-negotiation",
  "provider-storage",
  "reqwest",
