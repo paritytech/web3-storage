@@ -30,8 +30,8 @@ inputs:
     default: ws://127.0.0.1:2222
   label:
     description: >-
-      Short name for this provider. Labels the wait output and names the files
-      written: /tmp/provider-<label>.{key,log}.
+      Short name for this provider. Labels the wait output and names what it
+      writes: /tmp/provider-<label>.{key,log} and the default data directory.
     required: false
     default: provider
 

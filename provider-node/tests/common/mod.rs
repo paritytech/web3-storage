@@ -82,6 +82,10 @@ impl TestServer {
 ///
 /// expands to one test per backend, named after it (`health::rocksdb`), so a
 /// failure says which one it happened on.
+///
+/// Allowed as unused: the suites that never parameterize by backend (auth,
+/// negotiate, chain-state) compile this module too.
+#[allow(unused_macros)]
 macro_rules! backend_tests {
     ($(async fn $name:ident($backend:ident) $body:block)*) => {
         $(
@@ -97,6 +101,7 @@ macro_rules! backend_tests {
     };
 }
 
+#[allow(unused_imports)]
 pub(crate) use backend_tests;
 
 /// The account every test signs as.

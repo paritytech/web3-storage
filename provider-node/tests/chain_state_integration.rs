@@ -22,13 +22,6 @@
 //!    shut down cleanly when stopped.
 
 use async_trait::async_trait;
-
-/// Chain state over a throwaway backend's nonce store.
-fn test_chain_state() -> (ChainState, tempfile::TempDir) {
-    let (_storage, nonce_store, dir) = temp_rocksdb();
-    (ChainState::with_nonce_store(nonce_store), dir)
-}
-
 use provider_storage::{temp_rocksdb, NonceStore};
 use sp_runtime::AccountId32;
 use std::sync::atomic::Ordering;
@@ -40,6 +33,17 @@ use storage_provider_node::{
     ChainState, ChainStateChainClient, ChainStateCoordinator, Error, NonceCounter, PalletConstants,
     ProviderInfo, ProviderLifecycleEvent,
 };
+
+/// Chain state over a throwaway backend's nonce store.
+fn test_chain_state() -> (ChainState, tempfile::TempDir) {
+    let (_storage, nonce_store, dir) = temp_rocksdb();
+    (ChainState::with_nonce_store(nonce_store), dir)
+}
+
+/// Counter over that state's own store, as the coordinator builds it.
+fn counter_for(cs: &ChainState) -> Arc<NonceCounter> {
+    Arc::new(NonceCounter::with_store(1, cs.nonce_store.clone()))
+}
 
 /// Coordinator against the unreachable chain, with freshly-made (and
 /// immediately caller-dropped) channel counterparts: `send` failures are
@@ -310,7 +314,7 @@ async fn refresh_clears_info_and_counter_when_not_registered() {
     *cs.constants.write() = Some(PalletConstants {
         request_timeout: 200,
     });
-    let counter = Arc::new(NonceCounter::with_store(1, cs.nonce_store.clone()));
+    let counter = counter_for(&cs);
     counter.bootstrap_from_hsn(0);
     *cs.nonce_counter.write() = Some(counter);
     *cs.provider_info.write() = Some(sample_provider_info());
@@ -331,7 +335,7 @@ async fn refresh_leaves_existing_state_untouched_on_get_info_error() {
     // previously-published good state.
     let (cs, _dir) = test_chain_state();
     *cs.provider_info.write() = Some(sample_provider_info());
-    let counter = Arc::new(NonceCounter::with_store(1, cs.nonce_store.clone()));
+    let counter = counter_for(&cs);
     counter.bootstrap_from_hsn(3);
     *cs.nonce_counter.write() = Some(counter);
 
@@ -368,7 +372,7 @@ async fn refresh_preserves_bootstrapped_counter_on_later_event() {
     // A live, bootstrapped counter is never recreated on subsequent refreshes —
     // recreating would reset to hsn+1 and reissue nonces for in-flight quotes.
     let (cs, _dir) = test_chain_state();
-    let counter = Arc::new(NonceCounter::with_store(1, cs.nonce_store.clone()));
+    let counter = counter_for(&cs);
     counter.bootstrap_from_hsn(10); // counter now at 11
     counter.next(); // 11 -> 12
     counter.next(); // 12 -> 13 (two nonces issued beyond hsn+1)
@@ -396,7 +400,7 @@ async fn refresh_completes_pending_bootstrap_when_replay_state_appears() {
     // After the transient window where hsn was None, a later refresh with a real
     // hsn must bootstrap the existing counter rather than leave it unbootstrapped.
     let (cs, _dir) = test_chain_state();
-    let counter = Arc::new(NonceCounter::with_store(1, cs.nonce_store.clone()));
+    let counter = counter_for(&cs);
     // Un-bootstrapped (simulates the hsn=None transient window).
     *cs.nonce_counter.write() = Some(counter);
     *cs.provider_info.write() = Some(sample_provider_info());

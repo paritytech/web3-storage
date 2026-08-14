@@ -1068,6 +1068,7 @@ common::backend_tests! {
 
         let body: Value = resp.json().await.unwrap();
         assert_eq!(body["start_seq"], 1);
+        assert_eq!(body["leaf_count"], 1);
         assert!(body["mmr_root"].is_string());
         assert!(body["provider_signature"]
             .as_str()

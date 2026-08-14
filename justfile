@@ -214,9 +214,11 @@ start-provider BACKEND="rocksdb" PORT=PROVIDER_PORT STORAGE_PATH="./provider-dat
         --chain-rpc "{{ CHAIN_WS }}"
 
 # Register on-chain then start the provider node (original behavior)
+# Registration is a chain-only extrinsic, so it must run first: start-provider
+# runs in the foreground and never returns.
 register-then-start-provider BACKEND="rocksdb" PORT=PROVIDER_PORT STORAGE_PATH="./provider-data" KEYFILE="":
-    just start-provider BACKEND="{{BACKEND}}" PORT="{{PORT}}" STORAGE_PATH="{{STORAGE_PATH}}" KEYFILE="{{KEYFILE}}"
     just register-provider "{{KEYFILE}}"
+    just start-provider BACKEND="{{BACKEND}}" PORT="{{PORT}}" STORAGE_PATH="{{STORAGE_PATH}}" KEYFILE="{{KEYFILE}}"
 
 # Register provider on-chain (idempotent). Requires a running chain.
 # Called automatically by register-then-start-provider, or run standalone.
