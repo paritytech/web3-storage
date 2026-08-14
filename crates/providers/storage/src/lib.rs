@@ -13,7 +13,7 @@ pub mod nonce;
 
 pub use backend::{
     build_padded_merkle_tree, BucketInfo, BucketStats, BucketSummary, DiskNonceStore, DiskStorage,
-    Storage, StorageBackend, StorageBackendSpec, StoredNode,
+    OpenedBackend, Storage, StorageBackend, StorageBackendSpec, StoredNode,
 };
 pub use error::Error;
 pub use index::{

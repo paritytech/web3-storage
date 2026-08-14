@@ -185,8 +185,7 @@ start-e2e-chain RUNTIME="web3-storage-paseo": check
 
 # Start the storage provider node (without registering on-chain)
 # Examples:
-#   just start-provider                                    # rocksdb in ./provider-data, //Alice key, port 3333
-#   just start-provider BACKEND=inmemory                      # throwaway run, data dropped on exit
+#   just start-provider                                    # default backend in ./provider-data, //Alice key, port 3333
 #   just start-provider PORT=3334 STORAGE_PATH=/tmp/p2     # second provider, separate data dir
 #   just start-provider KEYFILE=/path/to/seed              # custom key from file
 start-provider BACKEND="rocksdb" PORT=PROVIDER_PORT STORAGE_PATH="./provider-data" KEYFILE="": build-provider
@@ -197,10 +196,6 @@ start-provider BACKEND="rocksdb" PORT=PROVIDER_PORT STORAGE_PATH="./provider-dat
     echo ""
     echo "Provider health: http://127.0.0.1:{{PORT}}/health"
     echo ""
-    EXTRA_ARGS=""
-    if [ "{{BACKEND}}" != "inmemory" ]; then
-        EXTRA_ARGS="--storage-path {{STORAGE_PATH}}"
-    fi
     if [ -n "{{KEYFILE}}" ]; then
         KEY_ARGS="--keyfile {{KEYFILE}}"
     else
@@ -213,9 +208,9 @@ start-provider BACKEND="rocksdb" PORT=PROVIDER_PORT STORAGE_PATH="./provider-dat
     ./target/release/storage-provider-node \
         $KEY_ARGS \
         --storage-backend "{{BACKEND}}" \
+        --storage-path "{{STORAGE_PATH}}" \
         --bind-addr "0.0.0.0:{{PORT}}" \
-        --chain-rpc "{{ CHAIN_WS }}" \
-        $EXTRA_ARGS
+        --chain-rpc "{{ CHAIN_WS }}"
 
 # Register on-chain then start the provider node (original behavior)
 register-then-start-provider BACKEND="rocksdb" PORT=PROVIDER_PORT STORAGE_PATH="./provider-data" KEYFILE="":

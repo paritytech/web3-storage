@@ -10,8 +10,8 @@ inputs:
     default: "//Alice"
   backend:
     description: >-
-      Storage backend: "rocksdb", "inmemory", or "" to pass no --storage-backend and
-      exercise the binary's own default.
+      Storage backend, or "" to pass no --storage-backend and exercise the
+      binary's own default.
     required: false
     default: ""
   port:
@@ -20,8 +20,7 @@ inputs:
     default: "3333"
   storage-path:
     description: >-
-      Data directory for rocksdb, unique per provider — two RocksDB instances
-      cannot share one. Ignored by inmemory.
+      Data directory, unique per provider — two providers cannot share one.
     required: false
     default: /tmp/provider-data
   chain-rpc:

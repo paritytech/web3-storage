@@ -11,14 +11,12 @@ pub const DEFAULT_PROVIDER_ID: &str = "0x000000000000000000000000000000000000000
 
 /// Storage backend to run.
 ///
-/// Clap value-enums must be unit variants; [`StorageParams::spec`] maps this to
-/// the configured [`StorageBackendSpec`]. `rename_all` keeps the values
-/// `rocksdb` / `inmemory` instead of clap's kebab-case default.
+/// [`StorageParams::spec`] maps this to the configured [`StorageBackendSpec`].
+/// `rename_all` keeps the values lower-case instead of clap's kebab-case
+/// default, so an engine reads as `rocksdb` rather than `rocks-db`.
 #[derive(Clone, Debug, clap::ValueEnum)]
 #[value(rename_all = "lower")]
 pub enum StorageBackendKind {
-    /// In-memory storage (data lost on restart).
-    InMemory,
     /// Persistent RocksDB storage.
     RocksDb,
 }
@@ -62,7 +60,6 @@ impl StorageParams {
     /// The backend these flags describe.
     pub fn spec(&self) -> StorageBackendSpec {
         match self.storage_backend {
-            StorageBackendKind::InMemory => StorageBackendSpec::InMemory,
             StorageBackendKind::RocksDb => StorageBackendSpec::RocksDb {
                 path: self.storage_path.clone(),
             },
@@ -332,16 +329,14 @@ mod tests {
         assert_eq!(cli.replica_sync.replica_max_concurrent, 5);
     }
 
-    /// `rocksdb` and `inmemory` are the only accepted values, and each maps to
-    /// the matching spec.
+    /// Values are the engine names, and each maps to the matching spec.
     #[test]
-    fn backend_values_are_engine_names() {
+    fn backend_value_is_the_engine_name() {
         let spec = |value: &str| {
             Cli::try_parse_from(["storage-provider-node", "--storage-backend", value])
                 .map(|cli| cli.storage.spec())
         };
 
-        assert_eq!(spec("inmemory").unwrap(), StorageBackendSpec::InMemory);
         assert_eq!(
             spec("rocksdb").unwrap(),
             StorageBackendSpec::RocksDb {
@@ -349,7 +344,7 @@ mod tests {
             }
         );
 
-        for rejected in ["disk", "rocks-db", "in-memory"] {
+        for rejected in ["disk", "rocks-db", "inmemory"] {
             assert!(
                 spec(rejected).is_err(),
                 "--storage-backend {rejected} should be rejected"

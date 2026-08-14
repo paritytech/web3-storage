@@ -23,13 +23,8 @@ env:
   # the Build job compiles and uploads.
   INTEGRATION_TEST_RUNTIME: web3-storage-paseo
 
-# Storage-backend coverage, split so both are exercised and no suite runs twice.
-# Every provider is launched through .github/actions/start-provider.
-#
-#   e2e-integration-tests  → no --storage-backend: asserts the binary default (rocksdb)
-#   integration-tests      → rocksdb
-#   sc-integration-tests   → inmemory
-#   ui-integration-tests   → inmemory
+# Every provider is launched through .github/actions/start-provider. The e2e job
+# passes no --storage-backend, so the run also asserts the binary's default.
 jobs:
   set-image:
     uses: ./.github/workflows/set-image.yml
@@ -122,8 +117,7 @@ jobs:
   # to validate production-like topology. Single runtime (web3-storage-paseo).
   # Layer 0 breadth is handled comprehensively by e2e-integration-tests.
   #
-  # Runs on rocksdb, so the L1 fs/s3 demos exercise the backend the binary defaults
-  # to. The inmemory backend is covered by the sc and ui jobs.
+  # Pins the backend explicitly; the other jobs take the binary default.
   integration-tests:
     name: Zombienet Smoke Test
     runs-on: parity-large
@@ -573,13 +567,10 @@ jobs:
         with:
           log-file: /tmp/omni-node.log
 
-      # Contracts don't care which backend is underneath, so this job carries
-      # inmemory coverage.
-      - name: Start provider (inmemory)
+      - name: Start provider
         uses: ./.github/actions/start-provider
         with:
-          backend: inmemory
-          label: inmemory
+          label: sc
 
       - name: Run smart-contract end-to-end demo
         run: just sc-demo "http://127.0.0.1:3333" "//Alice" "//Bob"
@@ -612,7 +603,7 @@ jobs:
   # ── UI Playwright e2e ─────────────────────────────────────────────────────
   # Drive / console / provider UIs (Vite dev servers) exercised against a
   # standalone paseo dev chain (omni-node, 2s blocks, no relay chain) + a
-  # single inmemory provider. Like the integration-tests job, it consumes the
+  # single provider. Like the integration-tests job, it consumes the
   # prebuilt `build` artifact (provider binary + runtime wasm) instead of
   # rebuilding: the chain-spec script's `cargo build` becomes a near-no-op
   # against the warm integration-tests-build cache. The UIs are served by Vite
@@ -702,13 +693,10 @@ jobs:
       - name: Wait for parachain blocks
         uses: ./.github/actions/wait-for-parachain
 
-      # Playwright drives the UIs, not the backend; inmemory keeps the fixture
-      # clean per run.
-      - name: Start provider (Alice, inmemory)
+      - name: Start provider (Alice)
         uses: ./.github/actions/start-provider
         with:
-          backend: inmemory
-          label: inmemory
+          label: ui
 
       - name: drive-ui e2e
         env:

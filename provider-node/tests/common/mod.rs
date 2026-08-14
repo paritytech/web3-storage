@@ -28,24 +28,16 @@ pub const PROVIDER_SEED: &str = "//Alice";
 pub struct TestBackend {
     storage: Arc<dyn StorageBackend>,
     nonce_store: Arc<dyn NonceStore>,
-    _dir: Option<TempDir>,
+    _dir: TempDir,
 }
 
 impl TestBackend {
-    pub fn in_memory() -> Self {
-        Self::open(StorageBackendSpec::InMemory, None)
-    }
-
     pub fn rocksdb() -> Self {
         let dir = TempDir::new().expect("temp dir");
         let spec = StorageBackendSpec::RocksDb {
             path: dir.path().to_path_buf(),
         };
-        Self::open(spec, Some(dir))
-    }
-
-    fn open(spec: StorageBackendSpec, dir: Option<TempDir>) -> Self {
-        let (storage, nonce_store) = spec.build().expect("backend opens");
+        let (storage, nonce_store) = spec.build().expect("RocksDB opens");
         Self {
             storage,
             nonce_store,
@@ -58,7 +50,7 @@ impl TestBackend {
 pub struct TestServer {
     addr: SocketAddr,
     pub client: SignedClient,
-    _dir: Option<TempDir>,
+    _dir: TempDir,
 }
 
 impl TestServer {
@@ -101,19 +93,14 @@ impl TestServer {
 /// }
 /// ```
 ///
-/// expands to `health::in_memory` and `health::rocksdb`, so a failure names the
-/// backend it happened on.
+/// expands to one test per backend, named after it (`health::rocksdb`), so a
+/// failure says which one it happened on.
 macro_rules! backend_tests {
     ($(async fn $name:ident($backend:ident) $body:block)*) => {
         $(
             async fn $name($backend: common::TestBackend) $body
 
             mod $name {
-                #[tokio::test]
-                async fn in_memory() {
-                    super::$name(super::common::TestBackend::in_memory()).await
-                }
-
                 #[tokio::test]
                 async fn rocksdb() {
                     super::$name(super::common::TestBackend::rocksdb()).await
