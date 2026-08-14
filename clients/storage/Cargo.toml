@@ -8,6 +8,7 @@ repository.workspace = true
 description = "Client library for scalable Web3 storage"
 
 [dependencies]
+provider-auth = { workspace = true }
 provider-negotiation = { workspace = true }
 storage-indexers = { workspace = true }
 storage-primitives = { workspace = true, features = ["serde", "std"] }
@@ -33,7 +34,7 @@ futures = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
-provider-storage = { workspace = true }
+provider-storage = { workspace = true, features = ["test-helpers"] }
 storage-provider-node = { workspace = true }
 axum = { workspace = true }
 tempfile = { workspace = true }

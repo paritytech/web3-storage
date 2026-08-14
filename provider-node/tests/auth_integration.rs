@@ -13,14 +13,14 @@ mod common;
 use axum::http::StatusCode;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use common::{current_timestamp, make_auth_header};
-use provider_storage::{NullNonceStore, Storage};
+use provider_auth::{Authenticator, StaticMembershipResolver};
+use provider_storage::temp_rocksdb;
 use reqwest::Client;
 use serde_json::Value;
 use sp_core::{sr25519, Pair};
 use std::sync::Arc;
 use std::time::Duration;
 use storage_primitives::Role;
-use storage_provider_node::auth::{MembershipCache, StaticMembershipResolver};
 use storage_provider_node::{create_router, ProviderDeps, ProviderState};
 use tokio::net::TcpListener;
 
@@ -33,6 +33,8 @@ type AccountId32 = sp_core::crypto::AccountId32;
 struct AuthTestServer {
     addr: std::net::SocketAddr,
     client: Client,
+    /// This server's scratch directory; dropped with the server.
+    _dir: tempfile::TempDir,
 }
 
 impl AuthTestServer {
@@ -42,14 +44,15 @@ impl AuthTestServer {
         let alice_account = AccountId32::new(alice_kp.public().0);
 
         // The 300s skew keeps the default the `*_expired_timestamp` tests assume.
+        let (storage, nonce_store, dir) = temp_rocksdb();
         let deps = ProviderDeps {
-            storage: Arc::new(Storage::new()),
-            nonce_store: Arc::new(NullNonceStore),
-            membership: Arc::new(MembershipCache::new(
-                Box::new(StaticMembershipResolver(vec![(alice_account, alice_role)])),
+            storage,
+            nonce_store,
+            auth: Arc::new(Authenticator::new(
+                StaticMembershipResolver(vec![(alice_account, alice_role).into()]),
                 Duration::from_secs(60),
+                Duration::from_secs(300),
             )),
-            auth_max_skew: Duration::from_secs(300),
         };
         let state = ProviderState::with_seed(deps, "//Alice").expect("//Alice is valid");
 
@@ -62,6 +65,7 @@ impl AuthTestServer {
         Self {
             addr,
             client: Client::new(),
+            _dir: dir,
         }
     }
 

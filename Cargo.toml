@@ -12,6 +12,7 @@ members = [
 	"crates/pallets/storage-provider",
 
 	# Provider Node crates
+	"crates/providers/auth",
 	"crates/providers/negotiation",
 	"crates/providers/storage",
 
@@ -47,6 +48,7 @@ pallet-drive-registry-precompile = { path = "crates/pallets/drive-registry/preco
 pallet-s3-registry-precompile = { path = "crates/pallets/s3-registry/precompiles", default-features = false }
 pallet-storage-provider = { path = "crates/pallets/storage-provider", default-features = false }
 pallet-storage-provider-precompile = { path = "crates/pallets/storage-provider/precompiles", default-features = false }
+provider-auth = { path = "crates/providers/auth" }
 provider-negotiation = { path = "crates/providers/negotiation" }
 provider-storage = { path = "crates/providers/storage" }
 storage-client = { path = "clients/storage" }
