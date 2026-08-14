@@ -9,7 +9,8 @@ mod event_fanout;
 mod replica_sync;
 
 use provider_auth::{Authenticator, StaticMembershipResolver};
-use provider_storage::{build_padded_merkle_tree, NullNonceStore, Storage};
+use provider_storage::backend::in_memory::Storage;
+use provider_storage::{build_padded_merkle_tree, NullNonceStore};
 use std::sync::Arc;
 use std::time::Duration;
 use storage_primitives::blake2_256;

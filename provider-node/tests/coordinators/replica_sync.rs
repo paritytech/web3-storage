@@ -4,7 +4,8 @@
 
 use super::{test_state, ALICE_SS58};
 use provider_auth::{Authenticator, StaticMembershipResolver};
-use provider_storage::{NullNonceStore, Storage};
+use provider_storage::backend::in_memory::Storage;
+use provider_storage::NullNonceStore;
 use sp_core::H256;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};

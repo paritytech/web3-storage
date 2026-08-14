@@ -22,9 +22,6 @@ thiserror = { workspace = true }
 tracing = { workspace = true, features = ["std"] }
 
 [features]
-# The in-memory backend, for tests that do not need persistence. Off by
-# default, so a provider binary never carries a backend an operator cannot
-# select.
 test-helpers = []
 
 [dev-dependencies]

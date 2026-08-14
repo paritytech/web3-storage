@@ -10,8 +10,6 @@ pub mod disk;
 pub mod in_memory;
 
 pub use disk::{DiskNonceStore, DiskStorage};
-#[cfg(any(test, feature = "test-helpers"))]
-pub use in_memory::Storage;
 
 use crate::error::Error;
 use crate::merkle::build_merkle_proof;

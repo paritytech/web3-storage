@@ -156,7 +156,7 @@ mod tests {
         // when no keypair is configured, so the HTTP layer can map it to a
         // 503 instead of emitting a cryptographically invalid placeholder.
         let deps = ProviderDeps {
-            storage: Arc::new(provider_storage::Storage::new()),
+            storage: Arc::new(provider_storage::backend::in_memory::Storage::new()),
             nonce_store: Arc::new(NullNonceStore),
             auth: Arc::new(Authenticator::new(
                 provider_auth::StaticMembershipResolver(vec![]),
@@ -178,7 +178,7 @@ mod tests {
         // returns the 0x00..00 placeholder again, and also catches the more
         // subtle case where the bytes look random but aren't valid sr25519.
         let deps = ProviderDeps {
-            storage: Arc::new(provider_storage::Storage::new()),
+            storage: Arc::new(provider_storage::backend::in_memory::Storage::new()),
             nonce_store: Arc::new(NullNonceStore),
             auth: Arc::new(Authenticator::new(
                 provider_auth::StaticMembershipResolver(vec![]),
@@ -229,7 +229,7 @@ mod tests {
         // test guards against accidentally swapping to a backend that
         // returns a constant value (e.g. zero bytes).
         let deps = ProviderDeps {
-            storage: Arc::new(provider_storage::Storage::new()),
+            storage: Arc::new(provider_storage::backend::in_memory::Storage::new()),
             nonce_store: Arc::new(NullNonceStore),
             auth: Arc::new(Authenticator::new(
                 provider_auth::StaticMembershipResolver(vec![]),
@@ -258,7 +258,7 @@ mod tests {
         // Cheap protection against a future refactor that accidentally
         // stops checking the message or the key.
         let alice_deps = ProviderDeps {
-            storage: Arc::new(provider_storage::Storage::new()),
+            storage: Arc::new(provider_storage::backend::in_memory::Storage::new()),
             nonce_store: Arc::new(NullNonceStore),
             auth: Arc::new(Authenticator::new(
                 provider_auth::StaticMembershipResolver(vec![]),
@@ -267,7 +267,7 @@ mod tests {
             )),
         };
         let bob_deps = ProviderDeps {
-            storage: Arc::new(provider_storage::Storage::new()),
+            storage: Arc::new(provider_storage::backend::in_memory::Storage::new()),
             nonce_store: Arc::new(NullNonceStore),
             auth: Arc::new(Authenticator::new(
                 provider_auth::StaticMembershipResolver(vec![]),
@@ -292,7 +292,7 @@ mod tests {
     fn provider_state_chain_defaults_on_new() {
         use std::sync::atomic::Ordering;
         let deps = ProviderDeps {
-            storage: Arc::new(provider_storage::Storage::new()),
+            storage: Arc::new(provider_storage::backend::in_memory::Storage::new()),
             nonce_store: Arc::new(NullNonceStore),
             auth: Arc::new(Authenticator::new(
                 provider_auth::StaticMembershipResolver(vec![]),

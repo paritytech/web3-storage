@@ -10,7 +10,8 @@
 
 use axum::http::StatusCode;
 use provider_auth::{Authenticator, StaticMembershipResolver};
-use provider_storage::{NonceStore, NullNonceStore, Storage, StorageBackendSpec};
+use provider_storage::backend::in_memory::Storage;
+use provider_storage::{NonceStore, NullNonceStore, StorageBackendSpec};
 use reqwest::Client;
 use serde_json::Value;
 use sp_core::{sr25519, Pair};
