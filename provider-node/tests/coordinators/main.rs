@@ -9,7 +9,7 @@ mod event_fanout;
 mod replica_sync;
 
 use provider_auth::{Authenticator, StaticMembershipResolver};
-use provider_storage::{build_padded_merkle_tree, StorageBackend, StorageBackendSpec};
+use provider_storage::{build_padded_merkle_tree, temp_rocksdb, StorageBackend};
 use std::sync::Arc;
 use std::time::Duration;
 use storage_primitives::blake2_256;
@@ -19,21 +19,6 @@ use tempfile::TempDir;
 /// Full Alice SS58 address (substrate prefix 42).
 pub const ALICE_SS58: &str = "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY";
 pub const ALICE_SEED: &str = "//Alice";
-
-/// A backend on a scratch directory, with the guard the caller must keep.
-pub fn test_backend() -> (
-    Arc<dyn StorageBackend>,
-    Arc<dyn provider_storage::NonceStore>,
-    TempDir,
-) {
-    let dir = TempDir::new().expect("temp dir");
-    let (storage, nonce_store) = StorageBackendSpec::RocksDb {
-        path: dir.path().to_path_buf(),
-    }
-    .build()
-    .expect("RocksDB opens");
-    (storage, nonce_store, dir)
-}
 
 /// Standard test dependencies around the given backend: an empty static
 /// membership set.
@@ -54,7 +39,7 @@ pub fn test_deps(
 
 /// Create a standard test `ProviderState` for coordinator tests.
 pub fn test_state() -> (Arc<ProviderState>, TempDir) {
-    let (storage, nonce_store, dir) = test_backend();
+    let (storage, nonce_store, dir) = temp_rocksdb();
     let state = Arc::new(ProviderState::with_provider_id(
         test_deps(storage, nonce_store),
         ALICE_SS58.to_string(),
@@ -64,7 +49,7 @@ pub fn test_state() -> (Arc<ProviderState>, TempDir) {
 
 /// Create a test `ProviderState` with a keypair derived from the given seed.
 pub fn test_state_with_seed(seed: &str) -> (Arc<ProviderState>, TempDir) {
-    let (storage, nonce_store, dir) = test_backend();
+    let (storage, nonce_store, dir) = temp_rocksdb();
     let state = Arc::new(ProviderState::with_seed(test_deps(storage, nonce_store), seed).unwrap());
     (state, dir)
 }
@@ -91,7 +76,7 @@ where
 /// Create a provider state with a bucket containing a single committed chunk,
 /// and return the state along with a matching challenge.
 pub fn test_state_with_data() -> (Arc<ProviderState>, DetectedChallenge, TempDir) {
-    let (storage, nonce_store, dir) = test_backend();
+    let (storage, nonce_store, dir) = temp_rocksdb();
     storage.init_bucket(1, 1024 * 1024);
 
     let chunk_data = b"test-chunk-data-for-challenge";

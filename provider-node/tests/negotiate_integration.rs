@@ -10,7 +10,7 @@
 
 use axum::http::StatusCode;
 use provider_auth::{Authenticator, StaticMembershipResolver};
-use provider_storage::{NonceStore, StorageBackendSpec};
+use provider_storage::{temp_rocksdb, NonceStore};
 use reqwest::Client;
 use serde_json::Value;
 use sp_core::{sr25519, Pair};
@@ -24,7 +24,6 @@ use storage_provider_node::{
     create_router, NegotiateRequest, NonceCounter, PalletConstants, ProviderDeps, ProviderState,
     SignedTerms,
 };
-use tempfile::TempDir;
 use tokio::net::TcpListener;
 
 const PROVIDER_SEED: &str = "//Alice";
@@ -34,17 +33,12 @@ const PROVIDER_SEED: &str = "//Alice";
 struct TestServer {
     addr: SocketAddr,
     client: Client,
-    _dir: Option<TempDir>,
+    _dir: Option<tempfile::TempDir>,
 }
 
-/// Deps over a real backend; the caller keeps the `TempDir` alive.
-fn test_deps() -> (ProviderDeps, TempDir) {
-    let dir = TempDir::new().expect("temp dir");
-    let (storage, nonce_store) = StorageBackendSpec::RocksDb {
-        path: dir.path().to_path_buf(),
-    }
-    .build()
-    .expect("RocksDB opens");
+/// Deps over a throwaway backend; the caller keeps it alive.
+fn test_deps() -> (ProviderDeps, tempfile::TempDir) {
+    let (storage, nonce_store, dir) = temp_rocksdb();
     let deps = ProviderDeps {
         storage,
         nonce_store,
@@ -807,12 +801,7 @@ async fn concurrent_next_allocates_distinct_nonces() {
 fn with_store_counter_persists_on_next() {
     // A counter backed by a DiskNonceStore persists each allocation so a fresh
     // counter seeded from the store resumes above the last issued nonce.
-    let dir = tempfile::TempDir::new().unwrap();
-    let (_storage, store) = StorageBackendSpec::RocksDb {
-        path: dir.path().to_path_buf(),
-    }
-    .build()
-    .unwrap();
+    let (_storage, store, _dir) = temp_rocksdb();
 
     let counter = NonceCounter::with_store(1, store.clone());
     counter.bootstrap_from_hsn(0); // counter now at 1

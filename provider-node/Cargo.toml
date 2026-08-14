@@ -35,6 +35,7 @@ codec = { workspace = true, features = ["std"] }
 async-trait = { workspace = true }
 
 [dev-dependencies]
+provider-storage = { workspace = true, features = ["test-helpers"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util", "time"] }
 serde_json = { workspace = true }
 subxt-rpcs = { workspace = true, features = ["mock-rpc-client"] }

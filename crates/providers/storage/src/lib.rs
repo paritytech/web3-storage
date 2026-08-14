@@ -21,3 +21,21 @@ pub use index::{
 };
 pub use merkle::build_merkle_proof;
 pub use nonce::NonceStore;
+
+/// A RocksDB backend on a scratch directory: the storage, its nonce store, and
+/// the directory guard. Keep the guard for as long as the backend is in use —
+/// dropping it takes the database with it.
+#[cfg(any(test, feature = "test-helpers"))]
+pub fn temp_rocksdb() -> (
+    std::sync::Arc<dyn StorageBackend>,
+    std::sync::Arc<dyn NonceStore>,
+    tempfile::TempDir,
+) {
+    let dir = tempfile::TempDir::new().expect("temp dir");
+    let (storage, nonce_store) = StorageBackendSpec::RocksDb {
+        path: dir.path().to_path_buf(),
+    }
+    .build()
+    .expect("RocksDB opens");
+    (storage, nonce_store, dir)
+}

@@ -23,19 +23,13 @@
 
 use async_trait::async_trait;
 
-/// Chain state over a real nonce store. Keep the `TempDir` bound for as long
-/// as the state is used.
+/// Chain state over a throwaway backend's nonce store.
 fn test_chain_state() -> (ChainState, tempfile::TempDir) {
-    let dir = tempfile::TempDir::new().expect("temp dir");
-    let (_storage, store) = StorageBackendSpec::RocksDb {
-        path: dir.path().to_path_buf(),
-    }
-    .build()
-    .expect("RocksDB opens");
-    (ChainState::with_nonce_store(store), dir)
+    let (_storage, nonce_store, dir) = temp_rocksdb();
+    (ChainState::with_nonce_store(nonce_store), dir)
 }
 
-use provider_storage::{NonceStore, StorageBackendSpec};
+use provider_storage::{temp_rocksdb, NonceStore};
 use sp_runtime::AccountId32;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;

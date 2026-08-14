@@ -9,13 +9,14 @@
 #![allow(dead_code)]
 
 use provider_auth::{build_auth_header, Authenticator, StaticMembershipResolver};
-use provider_storage::{NonceStore, StorageBackend, StorageBackendSpec};
+use provider_storage::StorageBackendSpec;
 use reqwest::{Method, RequestBuilder};
 use sp_core::{sr25519, Pair};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use storage_primitives::Role;
+pub use storage_provider_node::cli::StorageBackendKind;
 use storage_provider_node::{create_router, ProviderDeps, ProviderState};
 use tempfile::TempDir;
 
@@ -24,29 +25,7 @@ type AccountId32 = sp_core::crypto::AccountId32;
 /// Seed the provider signs with when a suite wants a signing identity.
 pub const PROVIDER_SEED: &str = "//Alice";
 
-/// An opened backend, plus RocksDB's scratch dir which must outlive it.
-pub struct TestBackend {
-    storage: Arc<dyn StorageBackend>,
-    nonce_store: Arc<dyn NonceStore>,
-    _dir: TempDir,
-}
-
-impl TestBackend {
-    pub fn rocksdb() -> Self {
-        let dir = TempDir::new().expect("temp dir");
-        let spec = StorageBackendSpec::RocksDb {
-            path: dir.path().to_path_buf(),
-        };
-        let (storage, nonce_store) = spec.build().expect("RocksDB opens");
-        Self {
-            storage,
-            nonce_store,
-            _dir: dir,
-        }
-    }
-}
-
-/// Provider serving on a random port, over one [`TestBackend`].
+/// Provider serving on a random port, over its own throwaway backend.
 pub struct TestServer {
     addr: SocketAddr,
     pub client: SignedClient,
@@ -56,14 +35,16 @@ pub struct TestServer {
 impl TestServer {
     /// `state` picks the identity: seeded (signing) or provider-id only.
     pub async fn start(
-        backend: TestBackend,
+        backend: StorageBackendKind,
         state: impl FnOnce(ProviderDeps) -> ProviderState,
     ) -> Self {
-        let TestBackend {
-            storage,
-            nonce_store,
-            _dir,
-        } = backend;
+        let dir = TempDir::new().expect("temp dir");
+        let spec = match backend {
+            StorageBackendKind::RocksDb => StorageBackendSpec::RocksDb {
+                path: dir.path().to_path_buf(),
+            },
+        };
+        let (storage, nonce_store) = spec.build().expect("backend opens");
         let deps = ProviderDeps {
             storage,
             nonce_store,
@@ -74,7 +55,11 @@ impl TestServer {
             )),
         };
         let (addr, client) = serve(state(deps)).await;
-        Self { addr, client, _dir }
+        Self {
+            addr,
+            client,
+            _dir: dir,
+        }
     }
 
     pub fn url(&self, path: &str) -> String {
@@ -98,12 +83,12 @@ impl TestServer {
 macro_rules! backend_tests {
     ($(async fn $name:ident($backend:ident) $body:block)*) => {
         $(
-            async fn $name($backend: common::TestBackend) $body
+            async fn $name($backend: common::StorageBackendKind) $body
 
             mod $name {
                 #[tokio::test]
                 async fn rocksdb() {
-                    super::$name(super::common::TestBackend::rocksdb()).await
+                    super::$name(super::common::StorageBackendKind::RocksDb).await
                 }
             }
         )*

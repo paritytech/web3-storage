@@ -145,19 +145,13 @@ impl ProviderState {
 mod tests {
     use super::*;
     use provider_auth::Authenticator;
-    use provider_storage::StorageBackendSpec;
+    use provider_storage::temp_rocksdb;
     use std::time::Duration;
-    use tempfile::TempDir;
 
-    /// Deps over a real backend on a scratch directory. Keep the returned
-    /// `TempDir` bound for as long as the state is used.
-    fn test_deps() -> (ProviderDeps, TempDir) {
-        let dir = TempDir::new().expect("temp dir");
-        let (storage, nonce_store) = StorageBackendSpec::RocksDb {
-            path: dir.path().to_path_buf(),
-        }
-        .build()
-        .expect("RocksDB opens");
+    /// Deps over a throwaway backend. Keep the returned guard bound for as
+    /// long as the state is used.
+    fn test_deps() -> (ProviderDeps, tempfile::TempDir) {
+        let (storage, nonce_store, dir) = temp_rocksdb();
         let deps = ProviderDeps {
             storage,
             nonce_store,

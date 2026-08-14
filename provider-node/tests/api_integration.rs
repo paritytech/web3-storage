@@ -16,11 +16,11 @@ use sp_core::{sr25519, ByteArray, Pair, H256};
 use storage_primitives::{Commitment, CommitmentPayload};
 use storage_provider_node::ProviderState;
 
-use common::{TestBackend, TestServer};
+use common::{StorageBackendKind, TestServer};
 
 impl TestServer {
     /// Signing provider (`//Alice`): endpoints that sign commitments work.
-    async fn new(backend: TestBackend) -> Self {
+    async fn new(backend: StorageBackendKind) -> Self {
         Self::start(backend, |deps| {
             ProviderState::with_seed(deps, common::PROVIDER_SEED).expect("//Alice is a valid SURI")
         })
@@ -29,7 +29,7 @@ impl TestServer {
 
     /// No signing key, so signing-bound endpoints must answer 503 rather than
     /// emit zero-byte placeholder signatures.
-    async fn new_unsigned(backend: TestBackend) -> Self {
+    async fn new_unsigned(backend: StorageBackendKind) -> Self {
         Self::start(backend, |deps| {
             ProviderState::with_provider_id(deps, "0xtest_provider".to_string())
         })

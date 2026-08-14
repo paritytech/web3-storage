@@ -750,20 +750,13 @@ fn collect_bytes(v: &Value, buf: &mut [u8; 32], offset: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use provider_storage::StorageBackendSpec;
+    use provider_storage::temp_rocksdb;
     use std::sync::atomic::Ordering;
-    use tempfile::TempDir;
 
-    /// Chain state over a real nonce store. Keep the `TempDir` bound for as
-    /// long as the state is used.
-    fn test_chain_state() -> (ChainState, TempDir) {
-        let dir = TempDir::new().expect("temp dir");
-        let (_storage, store) = StorageBackendSpec::RocksDb {
-            path: dir.path().to_path_buf(),
-        }
-        .build()
-        .expect("RocksDB opens");
-        (ChainState::with_nonce_store(store), dir)
+    /// Chain state over a throwaway backend's nonce store.
+    fn test_chain_state() -> (ChainState, tempfile::TempDir) {
+        let (_storage, nonce_store, dir) = temp_rocksdb();
+        (ChainState::with_nonce_store(nonce_store), dir)
     }
 
     fn sample_provider_info() -> ProviderInfo {
