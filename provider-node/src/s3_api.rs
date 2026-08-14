@@ -9,7 +9,6 @@
 //! Example: `PUT /s3/1/object?key=photos/cat.jpg`
 
 use crate::api::check_role;
-use crate::auth::RequiredRole;
 use crate::error::Error;
 use crate::ProviderState;
 use axum::{
@@ -19,6 +18,7 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
+use provider_auth::RequiredRole;
 use provider_storage::{build_padded_merkle_tree, ListResult, ObjectMeta};
 use serde::{Deserialize, Serialize};
 use sp_core::H256;

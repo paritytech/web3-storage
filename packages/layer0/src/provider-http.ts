@@ -30,7 +30,7 @@ export interface ProviderFetchOpts {
   body?: unknown;
   /**
    * When set, attach the signed `Authorization` header the provider verifies
-   * (`provider-node/src/auth.rs`) for a bucket-scoped, role-gated request
+   * (`crates/providers/auth`) for a bucket-scoped, role-gated request
    * (`PUT /node`, `POST /commit`, …). Omit for public/read endpoints.
    */
   sign?: { signer: ProviderRequestSigner; bucketId: bigint | number };
