@@ -104,9 +104,23 @@ impl MembershipResolver for StaticMembershipResolver {
     }
 }
 
+/// A bucket's cache slot: its membership (if any) plus a generation counter
+/// bumped on every [`MembershipCache::invalidate`] call.
+///
+/// The generation lets a resolver call that was already in flight when an
+/// `invalidate()` landed detect that its result is now stale and must not be
+/// persisted. Without it, a fetch started just before a revocation could still
+/// write the pre-revocation members into the cache *after* the invalidation ran,
+/// silently resurrecting the revoked access for a full TTL.
+#[derive(Debug, Clone)]
+struct CacheSlot {
+    membership: Option<CachedMembership>,
+    generation: u64,
+}
+
 /// TTL cache in front of a [`MembershipResolver`].
 pub(crate) struct MembershipCache {
-    cache: DashMap<BucketId, CachedMembership>,
+    cache: DashMap<BucketId, CacheSlot>,
     ttl: Duration,
     resolver: Box<dyn MembershipResolver>,
 }
@@ -127,24 +141,50 @@ impl MembershipCache {
         bucket_id: BucketId,
         account: &AccountId32,
     ) -> Result<Option<Role>, MembershipError> {
-        // Check cache first
-        if let Some(entry) = self.cache.get(&bucket_id) {
-            if entry.is_fresh(self.ttl) {
-                return Ok(entry.role_of(account));
+        // Check cache first, remembering the generation so the fetch below can
+        // detect an invalidate() that lands while it is in flight.
+        let generation_before = match self.cache.get(&bucket_id) {
+            Some(slot) => {
+                if let Some(entry) = &slot.membership {
+                    if entry.is_fresh(self.ttl) {
+                        return Ok(entry.role_of(account));
+                    }
+                }
+                slot.generation
             }
-        }
+            None => 0,
+        };
 
         // Cache miss or stale — fetch from chain
         match self.resolver.fetch_members(bucket_id).await {
             Ok(members) => {
                 let entry = CachedMembership::new(members);
                 let role = entry.role_of(account);
-                self.cache.insert(bucket_id, entry);
+                // Persist only if the generation hasn't moved since we started;
+                // otherwise an invalidate() ran while we awaited the chain and
+                // this result is already stale. `and_modify`/`or_insert_with`
+                // take the same per-key lock as `invalidate`, so there is no
+                // window between the check and the write.
+                self.cache
+                    .entry(bucket_id)
+                    .and_modify(|slot| {
+                        if slot.generation == generation_before {
+                            slot.membership = Some(entry.clone());
+                        }
+                    })
+                    .or_insert_with(|| CacheSlot {
+                        membership: Some(entry),
+                        generation: generation_before,
+                    });
                 Ok(role)
             }
             Err(e) => {
                 // Stale-while-revalidate: serve stale data if chain is unreachable
-                if let Some(entry) = self.cache.get(&bucket_id) {
+                if let Some(entry) = self
+                    .cache
+                    .get(&bucket_id)
+                    .and_then(|slot| slot.membership.clone())
+                {
                     tracing::warn!(
                         "Chain unreachable for bucket {} membership, serving stale data: {}",
                         bucket_id,
@@ -155,6 +195,24 @@ impl MembershipCache {
                 Err(e)
             }
         }
+    }
+
+    /// Drop the cached membership for `bucket_id`, if any, so the next lookup
+    /// re-resolves it, and bump its generation so a resolver call already in
+    /// flight cannot resurrect the invalidated membership when it completes.
+    pub(crate) fn invalidate(&self, bucket_id: BucketId) {
+        self.cache
+            .entry(bucket_id)
+            .and_modify(|slot| {
+                slot.membership = None;
+                slot.generation = slot.generation.saturating_add(1);
+            })
+            .or_insert_with(|| CacheSlot {
+                membership: None,
+                // Above the 0 an in-flight fetch recorded for an absent slot, so
+                // that fetch's result is discarded rather than cached.
+                generation: 1,
+            });
     }
 }
 

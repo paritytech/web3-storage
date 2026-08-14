@@ -168,6 +168,14 @@ impl Authenticator {
 
         Ok(())
     }
+
+    /// Drop the cached membership for `bucket_id` so the next request against it
+    /// re-resolves. Called when a finalized block changes the bucket's member
+    /// set, which closes the revocation window that would otherwise stay open
+    /// until the cache TTL expires.
+    pub fn invalidate_bucket(&self, bucket_id: BucketId) {
+        self.membership.invalidate(bucket_id);
+    }
 }
 
 #[cfg(test)]
