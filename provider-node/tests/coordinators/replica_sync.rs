@@ -150,7 +150,9 @@ async fn test_insufficient_balance() {
 #[tokio::test]
 async fn test_already_synced() {
     let (storage, nonce_store, _dir) = provider_storage::temp_rocksdb();
-    storage.init_bucket(1, u64::MAX);
+    storage
+        .init_bucket(1, u64::MAX)
+        .expect("bucket initialises");
     let data = b"test data".to_vec();
     let hash = sp_core::hashing::blake2_256(&data);
     let data_root = H256::from(hash);
@@ -372,7 +374,9 @@ async fn test_duties_filter_zero_snapshot_root() {
 #[tokio::test]
 async fn test_duties_filter_already_synced() {
     let (storage, nonce_store, _dir) = provider_storage::temp_rocksdb();
-    storage.init_bucket(1, u64::MAX);
+    storage
+        .init_bucket(1, u64::MAX)
+        .expect("bucket initialises");
 
     let data = b"synced data".to_vec();
     let hash = sp_core::hashing::blake2_256(&data);

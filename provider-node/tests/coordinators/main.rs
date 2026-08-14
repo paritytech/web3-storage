@@ -77,7 +77,9 @@ where
 /// and return the state along with a matching challenge.
 pub fn test_state_with_data() -> (Arc<ProviderState>, DetectedChallenge, TempDir) {
     let (storage, nonce_store, dir) = temp_rocksdb();
-    storage.init_bucket(1, 1024 * 1024);
+    storage
+        .init_bucket(1, 1024 * 1024)
+        .expect("bucket initialises");
 
     let chunk_data = b"test-chunk-data-for-challenge";
     let chunk_hash = blake2_256(chunk_data);
