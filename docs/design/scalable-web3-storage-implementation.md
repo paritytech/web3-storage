@@ -1683,7 +1683,7 @@ chain's `Buckets` storage (`bucket.members`).
 
 > **⚠️ Under-specified — [#304](https://github.com/paritytech/web3-storage/issues/304).**
 > This scheme grew organically across several crates and needs one source of
-> truth: the wire format is currently defined twice (Rust `provider-negotiation`
+> truth: the wire format is currently defined twice (Rust `provider-auth`
 > + TS `core`) and hand-synced; the provider also accepts a `<Bytes>`-wrapped
 > form (what wallets / PAPI `signBytes` send) not documented below; and the
 > signed message binds only method + bucket + timestamp — **no body or provider

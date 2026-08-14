@@ -7046,6 +7046,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "provider-auth"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "dashmap",
+ "hex",
+ "sp-core",
+ "storage-primitives",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "provider-negotiation"
 version = "0.1.0"
 dependencies = [
@@ -9720,6 +9734,7 @@ dependencies = [
  "futures",
  "hex",
  "parity-scale-codec",
+ "provider-auth",
  "provider-negotiation",
  "provider-storage",
  "rand 0.8.5",
@@ -9914,10 +9929,10 @@ dependencies = [
  "axum",
  "base64",
  "clap",
- "dashmap",
  "hex",
  "parity-scale-codec",
  "parking_lot",
+ "provider-auth",
  "provider-negotiation",
  "provider-storage",
  "reqwest",
@@ -9946,6 +9961,7 @@ dependencies = [
  "parity-scale-codec",
  "scale-info",
  "serde",
+ "storage-primitives",
  "subxt",
  "subxt-signer 0.50.2",
 ]
