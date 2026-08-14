@@ -185,9 +185,10 @@ start-e2e-chain RUNTIME="web3-storage-paseo": check
 
 # Start the storage provider node (without registering on-chain)
 # Examples:
-#   just start-provider                                    # default backend in ./provider-data, //Alice key, port 3333
-#   just start-provider PORT=3334 STORAGE_PATH=/tmp/p2     # second provider, separate data dir
-#   just start-provider KEYFILE=/path/to/seed              # custom key from file
+#   just start-provider                                            # default backend in ./provider-data, //Alice key, port 3333
+#   just start-provider BACKEND=rocksdb STORAGE_PATH=/tmp/rocks    # pick the engine and where it stores
+#   just start-provider PORT=3334 STORAGE_PATH=/tmp/p2             # second provider, separate data dir
+#   just start-provider KEYFILE=/path/to/seed                      # custom key from file
 start-provider BACKEND="rocksdb" PORT=PROVIDER_PORT STORAGE_PATH="./provider-data" KEYFILE="": build-provider
     #!/usr/bin/env bash
     set -euo pipefail

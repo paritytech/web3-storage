@@ -11,9 +11,11 @@ pub mod merkle;
 pub mod mmr;
 pub mod nonce;
 
+#[cfg(any(test, feature = "test-helpers"))]
+pub use backend::Storage;
 pub use backend::{
     build_padded_merkle_tree, BucketInfo, BucketStats, BucketSummary, DiskNonceStore, DiskStorage,
-    OpenedBackend, Storage, StorageBackend, StorageBackendSpec, StoredNode,
+    OpenedBackend, StorageBackend, StorageBackendSpec, StoredNode,
 };
 pub use error::Error;
 pub use index::{

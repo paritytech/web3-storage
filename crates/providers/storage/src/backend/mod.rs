@@ -6,9 +6,11 @@
 //! trait, allowing the provider node to select the storage backend at startup.
 
 pub mod disk;
+#[cfg(any(test, feature = "test-helpers"))]
 pub mod in_memory;
 
 pub use disk::{DiskNonceStore, DiskStorage};
+#[cfg(any(test, feature = "test-helpers"))]
 pub use in_memory::Storage;
 
 use crate::error::Error;
