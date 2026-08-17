@@ -25,7 +25,7 @@ use async_trait::async_trait;
 use parking_lot::RwLock;
 use provider_chain::chain_connection::{self, ChainHandle, ChainTransport};
 use provider_chain::chain_events::{self, BlockEvent, BlockEventTx};
-use provider_storage::{NonceStore, NullNonceStore};
+use provider_storage::NonceStore;
 use sp_runtime::AccountId32;
 use std::sync::atomic::AtomicU32;
 use std::sync::Arc;
@@ -63,17 +63,9 @@ pub struct ChainState {
     /// the provider is registered and the replay state is available.
     /// `/negotiate` returns 503 while `None`.
     pub nonce_counter: RwLock<Option<Arc<NonceCounter>>>,
-    /// Persistence backing for the nonce counter. In disk mode this is a
-    /// `DiskNonceStore`; in in-memory mode it is the no-op `NullNonceStore`.
-    /// The coordinator uses it to seed a restarted counter above the last
-    /// issued nonce.
+    /// Persistence backing for the nonce counter, so the coordinator can seed
+    /// a restarted counter above the last issued nonce.
     pub nonce_store: Arc<dyn NonceStore>,
-}
-
-impl Default for ChainState {
-    fn default() -> Self {
-        Self::with_nonce_store(Arc::new(NullNonceStore))
-    }
 }
 
 impl ChainState {
@@ -758,7 +750,14 @@ fn collect_bytes(v: &Value, buf: &mut [u8; 32], offset: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use provider_storage::temp_rocksdb;
     use std::sync::atomic::Ordering;
+
+    /// Chain state over a throwaway backend's nonce store.
+    fn test_chain_state() -> (ChainState, tempfile::TempDir) {
+        let (_storage, nonce_store, dir) = temp_rocksdb();
+        (ChainState::with_nonce_store(nonce_store), dir)
+    }
 
     fn sample_provider_info() -> ProviderInfo {
         ProviderInfo {
@@ -780,7 +779,7 @@ mod tests {
 
     #[test]
     fn chain_state_defaults_to_unknown() {
-        let cs = ChainState::default();
+        let (cs, _dir) = test_chain_state();
         assert_eq!(cs.current_anchor_block.load(Ordering::Relaxed), 0);
         assert!(cs.constants.read().is_none());
         assert!(cs.provider_info.read().is_none());
@@ -789,14 +788,14 @@ mod tests {
 
     #[test]
     fn chain_state_current_anchor_block_round_trips() {
-        let cs = ChainState::default();
+        let (cs, _dir) = test_chain_state();
         cs.current_anchor_block.store(42, Ordering::Relaxed);
         assert_eq!(cs.current_anchor_block.load(Ordering::Relaxed), 42);
     }
 
     #[test]
     fn chain_state_provider_info_round_trips() {
-        let cs = ChainState::default();
+        let (cs, _dir) = test_chain_state();
         *cs.provider_info.write() = Some(sample_provider_info());
         let guard = cs.provider_info.read();
         let info = guard.as_ref().unwrap();
@@ -807,9 +806,9 @@ mod tests {
 
     #[test]
     fn chain_state_nonce_counter_round_trips() {
-        let cs = ChainState::default();
+        let (cs, _dir) = test_chain_state();
         assert!(cs.nonce_counter.read().is_none());
-        let counter = Arc::new(NonceCounter::new(1));
+        let counter = Arc::new(NonceCounter::with_store(1, cs.nonce_store.clone()));
         counter.bootstrap_from_hsn(5);
         *cs.nonce_counter.write() = Some(counter);
         assert!(cs.nonce_counter.read().is_some());
@@ -817,7 +816,7 @@ mod tests {
 
     #[test]
     fn chain_state_constants_round_trips() {
-        let cs = ChainState::default();
+        let (cs, _dir) = test_chain_state();
         assert!(cs.constants.read().is_none());
         *cs.constants.write() = Some(PalletConstants {
             request_timeout: 100,
@@ -1320,7 +1319,8 @@ mod tests {
             ])
             .await;
 
-            let chain_state = Arc::new(ChainState::default());
+            let (state, _dir) = test_chain_state();
+            let chain_state = Arc::new(state);
             let (chain_tx, chain_rx) = tokio::sync::watch::channel(None);
             let (events_tx, mut events_rx) = tokio::sync::broadcast::channel(16);
             let coordinator = ChainStateCoordinator::new(

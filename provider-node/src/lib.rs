@@ -52,8 +52,7 @@ use std::sync::Arc;
 pub struct ProviderDeps {
     /// Local storage backend.
     pub storage: Arc<dyn StorageBackend>,
-    /// Persistence backing for the nonce counter — [`NullNonceStore`] in
-    /// in-memory mode, the disk store in disk mode.
+    /// Persistence backing for the nonce counter.
     pub nonce_store: Arc<dyn NonceStore>,
     /// Verifies signed requests and enforces bucket roles.
     pub auth: Arc<provider_auth::Authenticator>,
@@ -144,8 +143,24 @@ impl ProviderState {
 mod tests {
     use super::*;
     use provider_auth::Authenticator;
-    use provider_storage::NullNonceStore;
+    use provider_storage::temp_rocksdb;
     use std::time::Duration;
+
+    /// Deps over a throwaway backend. Keep the returned guard bound for as
+    /// long as the state is used.
+    fn test_deps() -> (ProviderDeps, tempfile::TempDir) {
+        let (storage, nonce_store, dir) = temp_rocksdb();
+        let deps = ProviderDeps {
+            storage,
+            nonce_store,
+            auth: Arc::new(Authenticator::new(
+                provider_auth::StaticMembershipResolver(vec![]),
+                Duration::from_secs(60),
+                Duration::from_secs(300),
+            )),
+        };
+        (deps, dir)
+    }
 
     #[test]
     fn sign_without_keypair_refuses_with_signing_unavailable() {
@@ -153,15 +168,7 @@ mod tests {
         // contract is that `sign()` MUST return `Err(SigningUnavailable)`
         // when no keypair is configured, so the HTTP layer can map it to a
         // 503 instead of emitting a cryptographically invalid placeholder.
-        let deps = ProviderDeps {
-            storage: Arc::new(provider_storage::Storage::new()),
-            nonce_store: Arc::new(NullNonceStore),
-            auth: Arc::new(Authenticator::new(
-                provider_auth::StaticMembershipResolver(vec![]),
-                Duration::from_secs(60),
-                Duration::from_secs(300),
-            )),
-        };
+        let (deps, _dir) = test_deps();
         let state = ProviderState::with_provider_id(deps, "no-key-provider".to_string());
         let err = state
             .sign(b"any message")
@@ -175,15 +182,7 @@ mod tests {
         // Alice's public key. This catches any regression where sign() ever
         // returns the 0x00..00 placeholder again, and also catches the more
         // subtle case where the bytes look random but aren't valid sr25519.
-        let deps = ProviderDeps {
-            storage: Arc::new(provider_storage::Storage::new()),
-            nonce_store: Arc::new(NullNonceStore),
-            auth: Arc::new(Authenticator::new(
-                provider_auth::StaticMembershipResolver(vec![]),
-                Duration::from_secs(60),
-                Duration::from_secs(300),
-            )),
-        };
+        let (deps, _dir) = test_deps();
         let state = ProviderState::with_seed(deps, "//Alice").unwrap();
         let message = b"commitment-payload-bytes";
 
@@ -226,15 +225,7 @@ mod tests {
         // message produce different signatures, but both must verify. This
         // test guards against accidentally swapping to a backend that
         // returns a constant value (e.g. zero bytes).
-        let deps = ProviderDeps {
-            storage: Arc::new(provider_storage::Storage::new()),
-            nonce_store: Arc::new(NullNonceStore),
-            auth: Arc::new(Authenticator::new(
-                provider_auth::StaticMembershipResolver(vec![]),
-                Duration::from_secs(60),
-                Duration::from_secs(300),
-            )),
-        };
+        let (deps, _dir) = test_deps();
         let state = ProviderState::with_seed(deps, "//Alice").unwrap();
         let alice_pub = keypair_for("//Alice").public();
         let msg = b"commitment-payload";
@@ -255,24 +246,8 @@ mod tests {
         // Negative control: //Bob's signature must NOT verify under //Alice.
         // Cheap protection against a future refactor that accidentally
         // stops checking the message or the key.
-        let alice_deps = ProviderDeps {
-            storage: Arc::new(provider_storage::Storage::new()),
-            nonce_store: Arc::new(NullNonceStore),
-            auth: Arc::new(Authenticator::new(
-                provider_auth::StaticMembershipResolver(vec![]),
-                Duration::from_secs(60),
-                Duration::from_secs(300),
-            )),
-        };
-        let bob_deps = ProviderDeps {
-            storage: Arc::new(provider_storage::Storage::new()),
-            nonce_store: Arc::new(NullNonceStore),
-            auth: Arc::new(Authenticator::new(
-                provider_auth::StaticMembershipResolver(vec![]),
-                Duration::from_secs(60),
-                Duration::from_secs(300),
-            )),
-        };
+        let (alice_deps, _alice_dir) = test_deps();
+        let (bob_deps, _bob_dir) = test_deps();
         let alice = ProviderState::with_seed(alice_deps, "//Alice").unwrap();
         let bob = ProviderState::with_seed(bob_deps, "//Bob").unwrap();
         let alice_pub = keypair_for("//Alice").public();
@@ -289,15 +264,7 @@ mod tests {
     #[test]
     fn provider_state_chain_defaults_on_new() {
         use std::sync::atomic::Ordering;
-        let deps = ProviderDeps {
-            storage: Arc::new(provider_storage::Storage::new()),
-            nonce_store: Arc::new(NullNonceStore),
-            auth: Arc::new(Authenticator::new(
-                provider_auth::StaticMembershipResolver(vec![]),
-                Duration::from_secs(60),
-                Duration::from_secs(300),
-            )),
-        };
+        let (deps, _dir) = test_deps();
         let state = ProviderState::with_provider_id(deps, "test-provider".to_string());
         assert_eq!(
             state

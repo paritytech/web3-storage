@@ -3,7 +3,7 @@
 //! Shared test helpers for integration tests.
 
 use provider_auth::{Authenticator, StaticMembershipResolver};
-use provider_storage::{NullNonceStore, Storage};
+use provider_storage::temp_rocksdb;
 use sp_core::crypto::Ss58Codec;
 use sp_core::Pair;
 use sp_runtime::AccountId32;
@@ -241,9 +241,14 @@ pub async fn dev_discovery() -> Option<DiscoveryClient> {
 /// (`/commit`, `/commitment`, `/checkpoint-signature`, `/delete`) work end-to-end.
 /// `//Alice` is granted `Admin` on every bucket.
 pub async fn start_test_provider() -> String {
+    // The spawned server lives for the whole test binary, so its database
+    // outlives any guard this could hand back: keep the directory. It is left
+    // behind under the temp dir, named `provider_storage::TEMP_DIR_PREFIX*`.
+    let (storage, nonce_store, dir) = temp_rocksdb();
+    let _ = dir.keep();
     let deps = ProviderDeps {
-        storage: Arc::new(Storage::new()),
-        nonce_store: Arc::new(NullNonceStore),
+        storage,
+        nonce_store,
         auth: Arc::new(Authenticator::new(
             StaticMembershipResolver(vec![(dev_account("alice"), Role::Admin).into()]),
             Duration::from_secs(60),
