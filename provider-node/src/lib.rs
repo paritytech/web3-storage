@@ -28,9 +28,9 @@ pub mod types;
 
 pub use api::create_router;
 pub use chain_state_coordinator::{
-    invalidate_membership_for_buckets, is_relevant_provider_event, refresh_if_relevant_event,
-    refresh_provider_state, sync_constants, ChainState, ChainStateChainClient,
-    ChainStateCoordinator, ChainStateCoordinatorHandle, PalletConstants, ProviderLifecycleEvent,
+    is_relevant_provider_event, refresh_if_relevant_event, refresh_provider_state, sync_constants,
+    ChainState, ChainStateChainClient, ChainStateCoordinator, ChainStateCoordinatorHandle,
+    PalletConstants, ProviderLifecycleEvent,
 };
 pub use challenge_responder::{
     ChallengeChainClient, ChallengeResponder, ChallengeResponderConfig, ChallengeResponderHandle,

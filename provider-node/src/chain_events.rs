@@ -12,6 +12,11 @@
 //! change that reshapes one of these events surfaces as a decode failure
 //! (logged, backstopped by the safety-net scans) instead of silently
 //! yielding `None` on dynamic field lookups.
+//!
+//! [`BlockEvent`] has one exception to that: [`BlockEvent::BucketMembershipChanged`]
+//! is produced by the chain-state coordinator's dynamic `parse_membership_changes`
+//! rather than by [`decode_block_events`], because it decodes the same handful of
+//! fields regardless of runtime metadata drift.
 
 use sp_runtime::AccountId32;
 use storage_primitives::BucketId;
@@ -49,6 +54,11 @@ pub enum BlockEvent {
     /// `StorageProvider::BucketCheckpointed` — a client checkpointed the
     /// bucket, so new canonical data may be available for replicas to sync.
     BucketCheckpointed { bucket_id: BucketId },
+    /// `StorageProvider::MemberSet` / `MemberRemoved` / `BucketDeleted` — the
+    /// bucket's member set changed, so any cached authorization for it is
+    /// stale. Produced by the follower's dynamic `parse_membership_changes`,
+    /// not by [`decode_block_events`] — see the module doc.
+    BucketMembershipChanged { bucket_id: BucketId },
     /// The block follower (re)connected and re-read chain state wholesale.
     /// Coordinators run their bootstrap scan to catch anything missed while
     /// the stream was down. Also the correct reaction to a lagged receiver.

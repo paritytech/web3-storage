@@ -8,7 +8,7 @@ use crate::{
     chain_state_coordinator::ChainStateCoordinator,
     cli::{Cli, StorageMode, DEFAULT_PROVIDER_ID},
     create_router,
-    membership::ChainMembershipResolver,
+    membership::{BlockEventInvalidations, ChainMembershipResolver},
     subxt_client::SubxtChainClient,
     ChainStateCoordinatorHandle, ChallengeResponder, ChallengeResponderConfig,
     ChallengeResponderHandle, ProviderDeps, ProviderState, ReplicaSyncCoordinator,
@@ -78,14 +78,15 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         };
 
     // Membership-based auth over the chain's bucket member sets, resolved
-    // through the shared watch connection.
+    // through the shared watch connection. Subscribed here rather than after
+    // the chain-state coordinator starts, so the cache cannot miss the
+    // bootstrap `Resubscribed` the coordinator broadcasts on first connect.
     let resolver = ChainMembershipResolver::new(chain_rx.clone());
     let ttl = Duration::from_secs(cli.auth.auth_cache_ttl);
-    let auth = Arc::new(Authenticator::new(
-        resolver,
-        ttl,
-        Duration::from_secs(cli.auth.auth_max_skew),
-    ));
+    let auth = Arc::new(
+        Authenticator::new(resolver, ttl, Duration::from_secs(cli.auth.auth_max_skew))
+            .with_invalidations(BlockEventInvalidations::new(events_tx.subscribe())),
+    );
     tracing::info!(
         "Auth: membership cache_ttl={}s, max_skew={}s",
         cli.auth.auth_cache_ttl,
@@ -211,7 +212,6 @@ fn start_chain_state_coordinator(
         transport,
         provider_account,
         state.chain_state.clone(),
-        state.auth.clone(),
         chain_tx,
         events_tx,
     );

@@ -6,6 +6,7 @@
 
 mod challenge;
 mod event_fanout;
+mod membership;
 mod replica_sync;
 
 use provider_auth::{Authenticator, StaticMembershipResolver};

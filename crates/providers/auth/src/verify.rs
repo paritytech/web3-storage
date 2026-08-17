@@ -4,7 +4,9 @@
 
 use crate::error::AuthError;
 use crate::http_auth::auth_message;
-use crate::membership::{MembershipCache, MembershipResolver, RequiredRole};
+use crate::membership::{
+    MembershipCache, MembershipInvalidations, MembershipResolver, RequiredRole,
+};
 use sp_core::{crypto::AccountId32, sr25519, Pair};
 use std::time::Duration;
 use storage_primitives::BucketId;
@@ -144,6 +146,14 @@ impl Authenticator {
         }
     }
 
+    /// Feed membership invalidations into the cache, so a change takes effect
+    /// on the next request rather than at the end of the TTL. Without this the
+    /// TTL is the only bound.
+    pub fn with_invalidations(mut self, feed: impl MembershipInvalidations + 'static) -> Self {
+        self.membership = self.membership.with_invalidations(feed);
+        self
+    }
+
     /// Auth is always enforced: the caller must present a valid signed
     /// `Authorization` header whose account holds `required` for the bucket.
     pub async fn require_role(
@@ -167,14 +177,6 @@ impl Authenticator {
         }
 
         Ok(())
-    }
-
-    /// Drop the cached membership for `bucket_id` so the next request against it
-    /// re-resolves. Called when a finalized block changes the bucket's member
-    /// set, which closes the revocation window that would otherwise stay open
-    /// until the cache TTL expires.
-    pub fn invalidate_bucket(&self, bucket_id: BucketId) {
-        self.membership.invalidate(bucket_id);
     }
 }
 

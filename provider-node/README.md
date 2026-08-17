@@ -44,6 +44,13 @@ The recovered public key is mapped to the bucket's on-chain role
 within the configured skew window of the provider's clock or the request is
 rejected as expired.
 
+Bucket roles are cached, not read fresh on every request. A membership change
+(adding or removing a member, changing a role, deleting a bucket) takes effect
+on the first request after the finalized block that carries it. If that
+notification is ever missed (the block-event feed lagged or the node was
+disconnected from the chain), the change is instead bounded by
+`--auth-cache-ttl` (default 30s).
+
 ## Test
 
 ```bash

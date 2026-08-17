@@ -21,30 +21,22 @@
 //!    [`ChainState`] at its defaults (so `/negotiate` keeps returning 503), and
 //!    shut down cleanly when stopped.
 //!
-//! 4. **Membership invalidation.** [`invalidate_membership_for_buckets`] drops the
-//!    affected buckets from the [`Authenticator`]'s membership cache — keyed by
-//!    `bucket_id`, independent of [`is_relevant_provider_event`] — so the next
-//!    `require_role` lookup re-resolves fresh roles instead of honouring a stale
-//!    cached role until the TTL expires.
+//! Membership invalidation is covered separately, in
+//! `tests/coordinators/membership.rs`: the coordinator only broadcasts
+//! `BlockEvent::BucketMembershipChanged`/`Resubscribed` now, and the
+//! membership cache pulls from that feed itself.
 
 use async_trait::async_trait;
-use provider_auth::{
-    build_auth_header, Authenticator, Member, MembershipError, MembershipResolver, RequiredRole,
-    StaticMembershipResolver,
-};
 use provider_storage::NonceStore;
-use sp_core::{sr25519, Pair};
 use sp_runtime::AccountId32;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
-use storage_primitives::{BucketId, Role};
 use storage_provider_node::chain_connection::{ChainHandle, ChainTransport};
 use storage_provider_node::{
-    invalidate_membership_for_buckets, is_relevant_provider_event, refresh_if_relevant_event,
-    refresh_provider_state, sync_constants, ChainState, ChainStateChainClient,
-    ChainStateCoordinator, Error, NonceCounter, PalletConstants, ProviderInfo,
-    ProviderLifecycleEvent,
+    is_relevant_provider_event, refresh_if_relevant_event, refresh_provider_state, sync_constants,
+    ChainState, ChainStateChainClient, ChainStateCoordinator, Error, NonceCounter, PalletConstants,
+    ProviderInfo, ProviderLifecycleEvent,
 };
 
 /// Coordinator against the unreachable chain, with freshly-made (and
@@ -57,11 +49,6 @@ fn unreachable_coordinator(chain_state: Arc<ChainState>) -> ChainStateCoordinato
         },
         provider_account(),
         chain_state,
-        Arc::new(Authenticator::new(
-            StaticMembershipResolver(vec![]),
-            Duration::from_secs(60),
-            Duration::from_secs(300),
-        )),
         tokio::sync::watch::channel::<Option<ChainHandle>>(None).0,
         tokio::sync::broadcast::channel(16).0,
     )
@@ -513,114 +500,6 @@ async fn empty_block_does_not_refresh() {
     refresh_if_relevant_event(&chain, &cs, &provider_account(), &[], 1).await;
 
     assert!(cs.provider_info.read().is_none());
-}
-
-// ── membership invalidation (invalidate_membership_for_buckets) ───────────────
-
-/// Resolver that counts calls, so tests can tell whether a lookup hit the cache or
-/// went to the resolver. Every bucket resolves to `account` as an `Admin`, so an
-/// authorized request only fails when the resolver itself is bypassed.
-struct CountingMembershipResolver {
-    account: AccountId32,
-    calls: Arc<AtomicUsize>,
-}
-
-#[async_trait]
-impl MembershipResolver for CountingMembershipResolver {
-    async fn fetch_members(&self, _bucket_id: BucketId) -> Result<Vec<Member>, MembershipError> {
-        self.calls.fetch_add(1, Ordering::SeqCst);
-        Ok(vec![(self.account.clone(), Role::Admin).into()])
-    }
-}
-
-/// An [`Authenticator`] over [`CountingMembershipResolver`], plus its call counter
-/// and the keypair whose requests it authorizes. The 300s TTL is long enough that
-/// only an explicit invalidation can cause a re-fetch within a test.
-fn counting_authenticator() -> (Authenticator, Arc<AtomicUsize>, sr25519::Pair) {
-    let keypair = sr25519::Pair::from_string("//Alice", None).expect("//Alice is a valid SURI");
-    let calls = Arc::new(AtomicUsize::new(0));
-    let auth = Authenticator::new(
-        CountingMembershipResolver {
-            account: AccountId32::new(keypair.public().0),
-            calls: calls.clone(),
-        },
-        Duration::from_secs(300),
-        Duration::from_secs(300),
-    );
-    (auth, calls, keypair)
-}
-
-/// Drive one authorized read of `bucket_id` through `auth`, the way an HTTP
-/// handler does — so the assertions below observe the real cache path rather than
-/// a test-only accessor.
-async fn authorized_read(auth: &Authenticator, keypair: &sr25519::Pair, bucket_id: BucketId) {
-    let timestamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .expect("system clock is after the Unix epoch")
-        .as_secs();
-    let header = build_auth_header(&keypair.public().0, "GET", bucket_id, timestamp, |msg| {
-        keypair.sign(msg).0
-    });
-    auth.require_role(Some(&header), "GET", bucket_id, RequiredRole::Reader)
-        .await
-        .expect("the signer is an Admin of every bucket here");
-}
-
-#[tokio::test]
-async fn membership_change_forces_the_next_lookup_to_re_resolve() {
-    let (auth, calls, keypair) = counting_authenticator();
-
-    authorized_read(&auth, &keypair, 1).await;
-    assert_eq!(calls.load(Ordering::SeqCst), 1);
-
-    // Well inside the TTL, so this is served from cache.
-    authorized_read(&auth, &keypair, 1).await;
-    assert_eq!(
-        calls.load(Ordering::SeqCst),
-        1,
-        "second read must be cached"
-    );
-
-    // A finalized block changed bucket 1's member set: the cached role can no
-    // longer be trusted, TTL notwithstanding.
-    invalidate_membership_for_buckets(&auth, &[1]);
-
-    authorized_read(&auth, &keypair, 1).await;
-    assert_eq!(
-        calls.load(Ordering::SeqCst),
-        2,
-        "a membership change for the cached bucket must force a re-resolve"
-    );
-}
-
-#[tokio::test]
-async fn membership_change_leaves_other_buckets_cached() {
-    let (auth, calls, keypair) = counting_authenticator();
-
-    authorized_read(&auth, &keypair, 1).await;
-    assert_eq!(calls.load(Ordering::SeqCst), 1);
-
-    // Invalidation is per bucket: a change in bucket 2 says nothing about bucket 1.
-    invalidate_membership_for_buckets(&auth, &[2]);
-
-    authorized_read(&auth, &keypair, 1).await;
-    assert_eq!(
-        calls.load(Ordering::SeqCst),
-        1,
-        "another bucket's membership change must leave bucket 1 cached"
-    );
-}
-
-#[tokio::test]
-async fn invalidating_uncached_buckets_is_a_noop() {
-    let (auth, calls, _keypair) = counting_authenticator();
-
-    // Nothing cached yet, and blocks with no membership events invalidate nothing —
-    // neither must reach the resolver or panic.
-    invalidate_membership_for_buckets(&auth, &[42]);
-    invalidate_membership_for_buckets(&auth, &[]);
-
-    assert_eq!(calls.load(Ordering::SeqCst), 0);
 }
 
 // ─── Nonce counter persistence (nonce_store seeding) ──────────────────────────

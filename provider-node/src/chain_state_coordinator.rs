@@ -18,10 +18,9 @@
 //! `ProviderInfo` so `committed_bytes`, `stake`, and all settings stay
 //! current — no field-patching, no partial updates, no second writer.
 //!
-//! It is also where cached authorization is revoked: a finalized block that
-//! changes a bucket's member set invalidates that bucket in the shared
-//! [`Authenticator`], so a revoked role stops being honoured on the next
-//! request rather than at the end of the cache TTL.
+//! It also broadcasts bucket-membership changes as
+//! [`BlockEvent::BucketMembershipChanged`], so the membership cache can drop
+//! stale authorization on its own rather than being told to.
 
 use crate::chain_connection::{self, ChainHandle, ChainTransport};
 use crate::chain_events::{self, BlockEvent, BlockEventTx};
@@ -30,7 +29,6 @@ use crate::types::ProviderInfo;
 use crate::Error;
 use async_trait::async_trait;
 use parking_lot::RwLock;
-use provider_auth::Authenticator;
 use provider_storage::{NonceStore, NullNonceStore};
 use sp_runtime::AccountId32;
 use std::sync::atomic::AtomicU32;
@@ -247,10 +245,12 @@ fn parse_provider_lifecycle_events(
 
 /// Decode a finalized block's events down to the buckets whose membership
 /// changed: `MemberSet` and `MemberRemoved` rewrite the member set, and
-/// `BucketDeleted` removes it entirely. All three make any cached authorization
-/// for the bucket stale, and none of them carries a role the provider could
-/// apply incrementally — so only the bucket id is decoded and the cache entry is
-/// dropped wholesale.
+/// `BucketDeleted` removes it entirely. Only the bucket id is decoded — the
+/// cache always drops the whole entry and re-resolves it from chain, rather
+/// than patching in the new member/role `MemberSet` and `MemberRemoved` do
+/// carry, because a set patched from an older snapshot across a missed event
+/// is one that never existed on chain. Re-resolution is self-healing; patching
+/// is not.
 fn parse_membership_changes(events: &subxt::events::Events<PolkadotConfig>) -> Vec<BucketId> {
     events
         .iter()
@@ -279,9 +279,6 @@ pub struct ChainStateCoordinator {
     transport: ChainTransport,
     provider_account: AccountId32,
     chain_state: Arc<ChainState>,
-    /// The node's authenticator, whose membership cache this coordinator
-    /// invalidates (never populates) per bucket on membership-changing events.
-    auth: Arc<Authenticator>,
     /// Publishes the live connection to every chain consumer. This coordinator
     /// is the only writer: it rebuilds the connection on stream loss or stall
     /// and everyone else picks up the new handle from the watch channel.
@@ -295,7 +292,6 @@ impl ChainStateCoordinator {
         transport: ChainTransport,
         provider_account: AccountId32,
         chain_state: Arc<ChainState>,
-        auth: Arc<Authenticator>,
         chain_tx: watch::Sender<Option<ChainHandle>>,
         events_tx: BlockEventTx,
     ) -> Self {
@@ -303,7 +299,6 @@ impl ChainStateCoordinator {
             transport,
             provider_account,
             chain_state,
-            auth,
             chain_tx,
             events_tx,
         }
@@ -459,7 +454,11 @@ impl ChainStateCoordinator {
             let parsed = parse_provider_lifecycle_events(&events);
             self.process_provider_events(&chain, &parsed, block_number)
                 .await;
-            invalidate_membership_for_buckets(&self.auth, &parse_membership_changes(&events));
+            for bucket_id in parse_membership_changes(&events) {
+                let _ = self
+                    .events_tx
+                    .send(BlockEvent::BucketMembershipChanged { bucket_id });
+            }
         }
 
         Ok(())
@@ -630,19 +629,6 @@ pub fn is_relevant_provider_event(
     provider_account: &AccountId32,
 ) -> bool {
     event.provider() == provider_account
-}
-
-/// Drop cached authorization for every bucket in `buckets`, so the next request
-/// against one re-resolves its member set from chain.
-///
-/// Independent of [`is_relevant_provider_event`]: membership is keyed by bucket,
-/// not by provider account, so these events apply regardless of which provider
-/// the block concerns. Invalidating a bucket that isn't cached is a no-op.
-pub fn invalidate_membership_for_buckets(auth: &Authenticator, buckets: &[BucketId]) {
-    for bucket_id in buckets {
-        tracing::debug!("chain-state coordinator: invalidating membership for bucket {bucket_id}");
-        auth.invalidate_bucket(*bucket_id);
-    }
 }
 
 // ── ChainStateCoordinatorHandle ───────────────────────────────────────────────
@@ -1038,17 +1024,6 @@ mod tests {
             AccountId32::new([7u8; 32])
         }
 
-        /// Authenticator whose membership never resolves to anyone — these tests
-        /// only need the coordinator's invalidation path to be wired, not to
-        /// authorize a request.
-        fn test_authenticator() -> Arc<Authenticator> {
-            Arc::new(Authenticator::new(
-                provider_auth::StaticMembershipResolver(vec![]),
-                Duration::from_secs(60),
-                Duration::from_secs(300),
-            ))
-        }
-
         /// `0x`-prefixed twox128(pallet) ++ twox128(entry) storage-key prefix.
         fn key_prefix(pallet: &str, entry: &str) -> String {
             let mut key = sp_core::twox_128(pallet.as_bytes()).to_vec();
@@ -1441,6 +1416,59 @@ mod tests {
         }
 
         #[tokio::test]
+        async fn follow_broadcasts_membership_changes() {
+            let md = metadata();
+            let account = provider_account();
+
+            let providers_ty = storage_value_type(&md, PALLET_NAME, "Providers");
+            let provider_bytes =
+                encode_value(&md, providers_ty, &runtime_provider_info_value(None, None));
+            let events_bytes = encoded_membership_events(&md, &account);
+
+            let api = mock_api(vec![
+                (
+                    key_prefix("System", "Events"),
+                    format!("0x{}", hex::encode(events_bytes)),
+                ),
+                (
+                    key_prefix(PALLET_NAME, "Providers"),
+                    format!("0x{}", hex::encode(provider_bytes)),
+                ),
+            ])
+            .await;
+
+            let chain_state = Arc::new(ChainState::default());
+            let (chain_tx, _chain_rx) = tokio::sync::watch::channel(None);
+            let (events_tx, mut events_rx) = tokio::sync::broadcast::channel(16);
+            let coordinator = ChainStateCoordinator::new(
+                ChainTransport::Rpc {
+                    url: "ws://unused.invalid".to_string(),
+                },
+                account,
+                chain_state,
+                chain_tx,
+                events_tx,
+            );
+
+            coordinator
+                .follow(ChainHandle { api })
+                .await
+                .expect("follow runs to stream end");
+
+            use crate::chain_events::BlockEvent;
+            let mut changed_buckets = Vec::new();
+            while let Ok(event) = events_rx.try_recv() {
+                if let BlockEvent::BucketMembershipChanged { bucket_id } = event {
+                    changed_buckets.push(bucket_id);
+                }
+            }
+            // Matches `membership_changes_decode_to_their_bucket_ids`: duplicates
+            // included (invalidation is idempotent), the provider-lifecycle event
+            // in the same block contributes nothing.
+            assert_eq!(changed_buckets, vec![7, 7, 8]);
+        }
+
+        #[tokio::test]
         async fn follow_processes_finalized_blocks_and_provider_events() {
             let md = metadata();
             let account = provider_account();
@@ -1473,7 +1501,6 @@ mod tests {
                 },
                 account,
                 chain_state.clone(),
-                test_authenticator(),
                 chain_tx,
                 events_tx,
             );
