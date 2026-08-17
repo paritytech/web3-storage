@@ -472,22 +472,22 @@ common::backend_tests! {
             "server returned zero-byte placeholder instead of a real signature"
         );
 
-    // Reconstruct exactly what the handler signed: CommitmentPayload with
-    // the real post-commit leaf_count (no longer hardcoded 0).
-    let mmr_root_bytes = hex_decode(mmr_root_hex).unwrap();
-    let mmr_root = H256::from_slice(&mmr_root_bytes);
-    let leaf_count = body["leaf_count"]
-        .as_u64()
-        .expect("leaf_count present in /commit response");
-    let payload = CommitmentPayload::new(
-        bucket_id,
-        Commitment {
-            mmr_root,
-            start_seq,
-            leaf_count,
-        },
-    );
-    let encoded = payload.encode();
+        // Reconstruct exactly what the handler signed: CommitmentPayload with
+        // the real post-commit leaf_count (no longer hardcoded 0).
+        let mmr_root_bytes = hex_decode(mmr_root_hex).unwrap();
+        let mmr_root = H256::from_slice(&mmr_root_bytes);
+        let leaf_count = body["leaf_count"]
+            .as_u64()
+            .expect("leaf_count present in /commit response");
+        let payload = CommitmentPayload::new(
+            bucket_id,
+            Commitment {
+                mmr_root,
+                start_seq,
+                leaf_count,
+            },
+        );
+        let encoded = payload.encode();
 
         let sig = sr25519::Signature::from_slice(&sig_bytes).expect("64-byte signature");
         assert!(
@@ -507,37 +507,38 @@ common::backend_tests! {
 
         upload_and_commit(&server, bucket_id).await;
 
-    let resp = server
-        .client
-        .get(server.url(&format!("/checkpoint-signature?bucket_id={bucket_id}")))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), StatusCode::OK);
-    let body: Value = resp.json().await.unwrap();
+        let resp = server
+            .client
+            .get(server.url(&format!("/checkpoint-signature?bucket_id={bucket_id}")))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body: Value = resp.json().await.unwrap();
 
-    let mmr_root = H256::from_slice(&hex_decode(body["mmr_root"].as_str().unwrap()).unwrap());
-    let start_seq = body["start_seq"].as_u64().unwrap();
-    let leaf_count = body["leaf_count"].as_u64().unwrap();
-    assert!(leaf_count > 0, "leaf_count must be the real on-disk value");
+        let mmr_root = H256::from_slice(&hex_decode(body["mmr_root"].as_str().unwrap()).unwrap());
+        let start_seq = body["start_seq"].as_u64().unwrap();
+        let leaf_count = body["leaf_count"].as_u64().unwrap();
+        assert!(leaf_count > 0, "leaf_count must be the real on-disk value");
 
         let sig_bytes = hex_decode(body["provider_signature"].as_str().unwrap()).unwrap();
         assert_ne!(sig_bytes, vec![0u8; 64]);
 
-    let payload = CommitmentPayload::new(
-        bucket_id,
-        Commitment {
-            mmr_root,
-            start_seq,
-            leaf_count,
-        },
-    );
-    let sig = sr25519::Signature::from_slice(&sig_bytes).unwrap();
-    assert!(sr25519::Pair::verify(
-        &sig,
-        payload.encode(),
-        &alice_public()
-    ));
+        let payload = CommitmentPayload::new(
+            bucket_id,
+            Commitment {
+                mmr_root,
+                start_seq,
+                leaf_count,
+            },
+        );
+        let sig = sr25519::Signature::from_slice(&sig_bytes).unwrap();
+        assert!(sr25519::Pair::verify(
+            &sig,
+            payload.encode(),
+            &alice_public()
+        ));
+    }
 }
 
 common::backend_tests! {
@@ -547,22 +548,22 @@ common::backend_tests! {
         let server = TestServer::new(backend).await;
         let bucket_id = 9;
 
-    let (_h, body) = upload_and_commit(&server, bucket_id).await;
-    let mmr_root = H256::from_slice(&hex_decode(body["mmr_root"].as_str().unwrap()).unwrap());
-    let start_seq = body["start_seq"].as_u64().unwrap();
-    let sig = sr25519::Signature::from_slice(
-        &hex_decode(body["provider_signature"].as_str().unwrap()).unwrap(),
-    )
-    .unwrap();
-    let encoded = CommitmentPayload::new(
-        bucket_id,
-        Commitment {
-            mmr_root,
-            start_seq,
-            leaf_count: 0,
-        },
-    )
-    .encode();
+        let (_h, body) = upload_and_commit(&server, bucket_id).await;
+        let mmr_root = H256::from_slice(&hex_decode(body["mmr_root"].as_str().unwrap()).unwrap());
+        let start_seq = body["start_seq"].as_u64().unwrap();
+        let sig = sr25519::Signature::from_slice(
+            &hex_decode(body["provider_signature"].as_str().unwrap()).unwrap(),
+        )
+        .unwrap();
+        let encoded = CommitmentPayload::new(
+            bucket_id,
+            Commitment {
+                mmr_root,
+                start_seq,
+                leaf_count: 0,
+            },
+        )
+        .encode();
 
         let bob = sr25519::Pair::from_string("//Bob", None).unwrap().public();
         assert!(
@@ -596,16 +597,17 @@ common::backend_tests! {
             .await
             .unwrap();
 
-    let resp = server
-        .client
-        .post(server.url("/commit"))
-        .json(&json!({ "bucket_id": 1, "data_roots": [hash_hex] }))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
-    let body: Value = resp.json().await.unwrap();
-    assert_eq!(body["error"], "signing_unavailable");
+        let resp = server
+            .client
+            .post(server.url("/commit"))
+            .json(&json!({ "bucket_id": 1, "data_roots": [hash_hex] }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let body: Value = resp.json().await.unwrap();
+        assert_eq!(body["error"], "signing_unavailable");
+    }
 }
 
 common::backend_tests! {
@@ -614,86 +616,88 @@ common::backend_tests! {
         // than emit zero bytes.
         let server = TestServer::new_unsigned(backend).await;
 
-    // Seed the bucket via storage so the bucket-lookup gate passes and the
-    // handler actually reaches the signing step. Calling /commit on the
-    // unsigned server returns 503 but still mutates storage, which is enough
-    // to make /commitment reach state.sign(...).
-    let data = b"chunk-for-commitment-503";
-    let hash = storage_primitives::blake2_256(data);
-    let hash_hex = format!("0x{}", hex_encode(hash.as_bytes()));
-    server
-        .client
-        .put(server.url("/node"))
-        .json(&json!({
-            "bucket_id": 1,
-            "hash": hash_hex,
-            "data": BASE64.encode(data),
-            "children": null,
-        }))
-        .send()
-        .await
-        .unwrap();
-    server
-        .client
-        .post(server.url("/commit"))
-        .json(&json!({ "bucket_id": 1, "data_roots": [hash_hex] }))
-        .send()
-        .await
-        .unwrap();
+        // Seed the bucket via storage so the bucket-lookup gate passes and the
+        // handler actually reaches the signing step. Calling /commit on the
+        // unsigned server returns 503 but still mutates storage, which is enough
+        // to make /commitment reach state.sign(...).
+        let data = b"chunk-for-commitment-503";
+        let hash = storage_primitives::blake2_256(data);
+        let hash_hex = format!("0x{}", hex_encode(hash.as_bytes()));
+        server
+            .client
+            .put(server.url("/node"))
+            .json(&json!({
+                "bucket_id": 1,
+                "hash": hash_hex,
+                "data": BASE64.encode(data),
+                "children": null,
+            }))
+            .send()
+            .await
+            .unwrap();
+        server
+            .client
+            .post(server.url("/commit"))
+            .json(&json!({ "bucket_id": 1, "data_roots": [hash_hex] }))
+            .send()
+            .await
+            .unwrap();
 
-    let resp = server
-        .client
-        .get(server.url("/commitment?bucket_id=1"))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
-    let body: Value = resp.json().await.unwrap();
-    assert_eq!(body["error"], "signing_unavailable");
+        let resp = server
+            .client
+            .get(server.url("/commitment?bucket_id=1"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let body: Value = resp.json().await.unwrap();
+        assert_eq!(body["error"], "signing_unavailable");
+    }
 }
 
 common::backend_tests! {
     async fn delete_endpoint_returns_503_when_no_signing_key(backend) {
         let server = TestServer::new_unsigned(backend).await;
 
-    // Seed and commit so the delete handler can reach its sign() call.
-    let data = b"chunk-for-delete-503";
-    let hash = storage_primitives::blake2_256(data);
-    let hash_hex = format!("0x{}", hex_encode(hash.as_bytes()));
-    server
-        .client
-        .put(server.url("/node"))
-        .json(&json!({
-            "bucket_id": 1,
-            "hash": hash_hex,
-            "data": BASE64.encode(data),
-            "children": null,
-        }))
-        .send()
-        .await
-        .unwrap();
-    server
-        .client
-        .post(server.url("/commit"))
-        .json(&json!({ "bucket_id": 1, "data_roots": [hash_hex] }))
-        .send()
-        .await
-        .unwrap();
+        // Seed and commit so the delete handler can reach its sign() call.
+        let data = b"chunk-for-delete-503";
+        let hash = storage_primitives::blake2_256(data);
+        let hash_hex = format!("0x{}", hex_encode(hash.as_bytes()));
+        server
+            .client
+            .put(server.url("/node"))
+            .json(&json!({
+                "bucket_id": 1,
+                "hash": hash_hex,
+                "data": BASE64.encode(data),
+                "children": null,
+            }))
+            .send()
+            .await
+            .unwrap();
+        server
+            .client
+            .post(server.url("/commit"))
+            .json(&json!({ "bucket_id": 1, "data_roots": [hash_hex] }))
+            .send()
+            .await
+            .unwrap();
 
-    let resp = server
-        .client
-        .post(server.url("/delete"))
-        .json(&json!({
-            "bucket_id": 1,
-            "new_start_seq": 1,
-            "admin_signature": "0x00",
-        }))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
-    let body: Value = resp.json().await.unwrap();
-    assert_eq!(body["error"], "signing_unavailable");
+        let resp = server
+            .client
+            .post(server.url("/delete"))
+            .json(&json!({
+                "bucket_id": 1,
+                "new_start_seq": 1,
+                "admin_signature": "0x00",
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let body: Value = resp.json().await.unwrap();
+        assert_eq!(body["error"], "signing_unavailable");
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
