@@ -21,7 +21,7 @@
 
 use crate::error::Error;
 use crate::types::ProviderInfo;
-use provider_storage::{NonceStore, NullNonceStore};
+use provider_storage::NonceStore;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
@@ -122,24 +122,11 @@ impl std::fmt::Debug for NonceCounter {
 }
 
 impl NonceCounter {
-    /// Create a counter starting at `start` with a no-op store.
-    ///
-    /// All existing call sites use this constructor; no persistence occurs
-    /// (in-memory mode, or tests). The counter is *not* considered bootstrapped
-    /// until [`Self::bootstrap_from_hsn`] aligns it with the chain.
-    pub fn new(start: u64) -> Self {
-        Self {
-            counter: AtomicU64::new(start),
-            bootstrapped: AtomicBool::new(false),
-            store: Arc::new(NullNonceStore),
-        }
-    }
-
     /// Create a counter starting at `start` backed by `store` for persistence.
     ///
-    /// Use this in disk mode: seed `start` from `store.load().unwrap_or(1)`
-    /// (the persisted high-water mark), then call `bootstrap_from_hsn` to
-    /// advance past the chain's replay head.
+    /// Seed `start` from `store.load().unwrap_or(1)` (the persisted high-water
+    /// mark), then call `bootstrap_from_hsn` to advance past the chain's replay
+    /// head. The counter is *not* considered bootstrapped until then.
     pub fn with_store(start: u64, store: Arc<dyn NonceStore>) -> Self {
         Self {
             counter: AtomicU64::new(start),
