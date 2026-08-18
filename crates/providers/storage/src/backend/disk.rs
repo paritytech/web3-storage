@@ -404,9 +404,20 @@ impl DiskStorage {
             .get_bucket(bucket_id)
             .ok_or(Error::BucketNotFound(bucket_id))?;
 
+        // start_seq can only advance, and no further than one past the last
+        // leaf; a rewind or overshoot is a caller error, never a silent no-op.
+        let end_seq = bucket.start_seq.saturating_add(bucket.leaf_count());
+        if new_start_seq < bucket.start_seq || new_start_seq > end_seq {
+            return Err(Error::InvalidStartSeq {
+                requested: new_start_seq,
+                current: bucket.start_seq,
+                end: end_seq,
+            });
+        }
+
         // Remove leaves before new_start_seq
         let to_remove = (new_start_seq - bucket.start_seq) as usize;
-        if to_remove > 0 && to_remove <= bucket.leaves.len() {
+        if to_remove > 0 {
             bucket.leaves.drain(0..to_remove);
             bucket.start_seq = new_start_seq;
 
@@ -719,6 +730,88 @@ mod tests {
         // Persist at a low value must now succeed (watermark was zeroed by reset).
         store.persist(2);
         assert_eq!(store.load(), Some(2));
+    }
+
+    /// Create a bucket and commit `n` single-node leaves, returning their roots.
+    fn bucket_with_leaves(storage: &DiskStorage, bucket_id: BucketId, n: usize) -> Vec<H256> {
+        storage.init_bucket(bucket_id, u64::MAX).unwrap();
+        (0..n)
+            .map(|i| {
+                let data = vec![i as u8; 8];
+                let hash = blake2_256(&data);
+                storage.store_node(bucket_id, hash, data, None).unwrap();
+                storage.commit(bucket_id, vec![hash]).unwrap();
+                hash
+            })
+            .collect()
+    }
+
+    #[test]
+    fn delete_before_rejects_rewind_and_overshoot() {
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        bucket_with_leaves(&storage, 1, 3);
+
+        storage.delete_before(1, 2).unwrap();
+
+        // Rewind below the current start_seq must be rejected, not wrap.
+        let err = storage.delete_before(1, 1).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                Error::InvalidStartSeq {
+                    requested: 1,
+                    current: 2,
+                    end: 3
+                }
+            ),
+            "unexpected error: {err:?}"
+        );
+
+        // Advancing past the last leaf + 1 must be rejected, not silently Ok.
+        let err = storage.delete_before(1, 4).unwrap_err();
+        assert!(
+            matches!(err, Error::InvalidStartSeq { requested: 4, .. }),
+            "unexpected error: {err:?}"
+        );
+    }
+
+    #[test]
+    fn delete_before_noop_at_current_start_seq() {
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        bucket_with_leaves(&storage, 1, 2);
+        let before = storage.get_bucket(1).unwrap();
+
+        let (root, start_seq, leaf_count) = storage.delete_before(1, before.start_seq).unwrap();
+
+        assert_eq!(root, before.mmr_root);
+        assert_eq!(start_seq, before.start_seq);
+        assert_eq!(leaf_count, before.leaf_count());
+    }
+
+    #[test]
+    fn delete_before_prunes_prefix_and_rebuilds_mmr() {
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        bucket_with_leaves(&storage, 1, 3);
+        let before = storage.get_bucket(1).unwrap();
+
+        let (root, start_seq, leaf_count) = storage.delete_before(1, 2).unwrap();
+
+        assert_eq!(start_seq, 2);
+        assert_eq!(leaf_count, 1);
+        assert_ne!(root, before.mmr_root);
+        // The new root must equal an MMR built from the surviving leaf alone.
+        let after = storage.get_bucket(1).unwrap();
+        let mut mmr = crate::mmr::Mmr::new();
+        for leaf in &after.leaves {
+            mmr.push(blake2_256(&leaf.encode()));
+        }
+        assert_eq!(root, mmr.root());
+        // Deleting up to the end (empty bucket) is a valid full prune.
+        let (_, start_seq, leaf_count) = storage.delete_before(1, 3).unwrap();
+        assert_eq!((start_seq, leaf_count), (3, 0));
     }
 
     #[test]

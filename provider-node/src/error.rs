@@ -141,6 +141,19 @@ impl IntoResponse for Error {
                         details: Some(serde_json::json!({ "used": used, "max": max })),
                     },
                 ),
+                StorageError::InvalidStartSeq {
+                    requested,
+                    current,
+                    end,
+                } => (
+                    StatusCode::BAD_REQUEST,
+                    ErrorResponse {
+                        error: "invalid_start_seq".to_string(),
+                        details: Some(
+                            serde_json::json!({ "requested": requested, "current": current, "end": end }),
+                        ),
+                    },
+                ),
                 StorageError::BucketNotFound(id) => (
                     StatusCode::NOT_FOUND,
                     ErrorResponse {
@@ -463,6 +476,14 @@ mod tests {
                 max: 0
             })),
             StatusCode::INSUFFICIENT_STORAGE
+        );
+        assert_eq!(
+            status_of(Error::from(provider_storage::Error::InvalidStartSeq {
+                requested: 0,
+                current: 1,
+                end: 2,
+            })),
+            StatusCode::BAD_REQUEST
         );
         assert_eq!(
             status_of(Error::from(provider_storage::Error::BucketNotFound(1))),
