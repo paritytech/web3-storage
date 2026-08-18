@@ -166,8 +166,21 @@ async function main() {
       await deleteObjectMetadata(api, client, s3BucketId, "test-copy.txt");
       const result = await deleteS3Bucket(api, client, s3BucketId);
       assert.ok(result, "Should get S3BucketDeleted event");
+      // `refunded` joined the event with the L0 teardown; older descriptor
+      // sets don't type it yet, hence the defensive read.
+      const refunded = (result as { refunded?: bigint }).refunded;
+      assert.ok(
+        refunded !== undefined && refunded > 0n,
+        "Deletion mid-agreement should refund unused time",
+      );
       const after = await api.query.S3Registry.S3Buckets.getValue(s3BucketId, READ_OPTS);
       assert.strictEqual(after, undefined, "Bucket should be gone");
+      // The Layer 0 bucket and its agreements are torn down with it.
+      const l0After = await api.query.StorageProvider.Buckets.getValue(
+        layer0BucketId,
+        READ_OPTS,
+      );
+      assert.strictEqual(l0After, undefined, "Layer 0 bucket should be torn down");
     },
   });
 
