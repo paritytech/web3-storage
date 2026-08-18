@@ -217,14 +217,13 @@ impl MembershipCache {
             Ok(members) => {
                 let entry = CachedMembership::new(members);
                 let role = entry.role_of(account);
-                // `entry()` holds this bucket's shard lock, and `invalidate`/
-                // `invalidate_all` bump the epoch *before* taking that lock to
-                // remove/clear, so this re-check and the write below cannot be
-                // split by an invalidation: either it already moved the epoch
-                // and we skip, or we win the lock first and the invalidation's
-                // removal runs after, deleting what we just wrote.
+                // `entry()` first: its shard lock has to already be held when
+                // the epoch is read, or the check and the write can be split
+                // by an invalidation. Swapping these two lines reopens the
+                // race — see [`Self::epoch`].
+                let slot = self.cache.entry(bucket_id);
                 if self.epoch.load(Ordering::SeqCst) == epoch_before {
-                    self.cache.entry(bucket_id).insert(entry);
+                    slot.insert(entry);
                 }
                 Ok(role)
             }

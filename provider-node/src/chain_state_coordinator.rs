@@ -236,13 +236,13 @@ fn parse_provider_lifecycle_events(
 // ── membership-changing events ────────────────────────────────────────────────
 
 /// Decode a finalized block's events down to the buckets whose membership
-/// changed: `MemberSet` and `MemberRemoved` rewrite the member set, and
-/// `BucketDeleted` removes it entirely. Only the bucket id is decoded — the
-/// cache always drops the whole entry and re-resolves it from chain, rather
-/// than patching in the new member/role `MemberSet` and `MemberRemoved` do
-/// carry, because a set patched from an older snapshot across a missed event
-/// is one that never existed on chain. Re-resolution is self-healing; patching
-/// is not.
+/// changed: `BucketCreated` seeds the member set, `MemberSet` and
+/// `MemberRemoved` rewrite it, and `BucketDeleted` removes it entirely. Only
+/// the bucket id is decoded — the cache always drops the whole entry and
+/// re-resolves it from chain, rather than patching in the new member/role
+/// `MemberSet` and `MemberRemoved` do carry, because a set patched from an
+/// older snapshot across a missed event is one that never existed on chain.
+/// Re-resolution is self-healing; patching is not.
 fn parse_membership_changes(events: &subxt::events::Events<PolkadotConfig>) -> Vec<BucketId> {
     events
         .iter()
@@ -251,7 +251,7 @@ fn parse_membership_changes(events: &subxt::events::Events<PolkadotConfig>) -> V
         .filter(|event| {
             matches!(
                 event.event_name(),
-                "MemberSet" | "MemberRemoved" | "BucketDeleted"
+                "BucketCreated" | "MemberSet" | "MemberRemoved" | "BucketDeleted"
             )
         })
         .filter_map(|event| {
@@ -1334,10 +1334,17 @@ mod tests {
         }
 
         /// `System::Events` bytes holding one of each membership-changing event
-        /// (buckets 7, 7, and 8) plus a `ProviderRegistered` that carries no
+        /// (buckets 7, 7, 8, and 9) plus a `ProviderRegistered` that carries no
         /// bucket at all, encoded against the real runtime types.
         fn encoded_membership_events(md: &subxt::Metadata, provider: &AccountId32) -> Vec<u8> {
             let member = Value::from_bytes([3u8; 32]);
+            let bucket_created = event_record(Value::named_variant(
+                "BucketCreated",
+                [
+                    ("bucket_id", Value::u128(9)),
+                    ("admin", Value::from_bytes([4u8; 32])),
+                ],
+            ));
             let member_set = event_record(Value::named_variant(
                 "MemberSet",
                 [
@@ -1371,7 +1378,13 @@ mod tests {
             encode_value(
                 md,
                 ty,
-                &Value::unnamed_composite([member_set, member_removed, bucket_deleted, registered]),
+                &Value::unnamed_composite([
+                    bucket_created,
+                    member_set,
+                    member_removed,
+                    bucket_deleted,
+                    registered,
+                ]),
             )
         }
 
@@ -1393,7 +1406,7 @@ mod tests {
             // Every membership-changing event contributes its bucket, duplicates
             // included (invalidation is idempotent); the provider-lifecycle event
             // carries no bucket and must be skipped.
-            assert_eq!(parse_membership_changes(&events), vec![7, 7, 8]);
+            assert_eq!(parse_membership_changes(&events), vec![9, 7, 7, 8]);
         }
 
         #[tokio::test]
@@ -1436,7 +1449,8 @@ mod tests {
             ])
             .await;
 
-            let chain_state = Arc::new(ChainState::default());
+            let (chain_state, _dir) = test_chain_state();
+            let chain_state = Arc::new(chain_state);
             let (chain_tx, _chain_rx) = tokio::sync::watch::channel(None);
             let (events_tx, mut events_rx) = tokio::sync::broadcast::channel(16);
             let coordinator = ChainStateCoordinator::new(
@@ -1464,7 +1478,7 @@ mod tests {
             // Matches `membership_changes_decode_to_their_bucket_ids`: duplicates
             // included (invalidation is idempotent), the provider-lifecycle event
             // in the same block contributes nothing.
-            assert_eq!(changed_buckets, vec![7, 7, 8]);
+            assert_eq!(changed_buckets, vec![9, 7, 7, 8]);
         }
 
         #[tokio::test]
