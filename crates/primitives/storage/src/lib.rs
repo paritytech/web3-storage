@@ -505,8 +505,7 @@ impl<BlockNumber> BucketSnapshot<BlockNumber> {
 
 /// Compute blake2b-256 hash of data
 pub fn blake2_256(data: &[u8]) -> H256 {
-    // Use sp_core's blake2_256 which is optimized and available in both std and no_std
-    sp_core::hashing::blake2_256(data).into()
+    sp_crypto_hashing::blake2_256(data).into()
 }
 
 /// Compute hash of two children for internal Merkle node

@@ -33,4 +33,9 @@ pub type Migrations = (
     // challenge flow overhaul (#125). A real data transform, so it stays a
     // `VersionedMigration` gated on the pallet's storage version.
     pallet_storage_provider::migrations::v1::MigrateV0ToV1<Runtime>,
+    // SDK `polkadot-stable2606` bumped both pallets' in-code storage versions.
+    // Each migration is gated on the on-chain version, so both are no-ops once
+    // applied.
+    cumulus_pallet_parachain_system::migration::Migration<Runtime>,
+    cumulus_pallet_xcmp_queue::migration::v7::MigrateV6ToV7<Runtime>,
 );
