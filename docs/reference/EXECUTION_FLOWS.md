@@ -20,7 +20,8 @@ implementation reads the anchor. See the anchor-clock section in
 7. [Checkpoint (Commitment) Flow](#checkpoint-commitment-flow)
 8. [Data Read Flow](#data-read-flow)
 9. [Challenge Flow](#challenge-flow)
-10. [Layer 1: Drive Operations](#layer-1-drive-operations)
+10. [Data Deletion & Erasure Flow](#data-deletion--erasure-flow)
+11. [Layer 1: Drive Operations](#layer-1-drive-operations)
 
 ---
 
@@ -532,6 +533,79 @@ sequenceDiagram
 
     Note over C: Bucket membership and agreement teardown are NOT part of the<br/>sweep — anyone triggers them afterwards via the permissionless<br/>remove_slashed extrinsic.
 ```
+
+---
+
+## Data Deletion & Erasure Flow
+
+Deletion is two-phased: the prune + checkpoint shrink the provider's
+*liability* immediately; the bytes are physically erased (and the quota
+headroom returns) once the canonical checkpoint has passed the pruned
+range and the provider holds the admin's signed deletion receipt — the
+durable evidence for the `Deleted` challenge defense. Frozen buckets
+refuse every step of this flow.
+
+### L0 prune: `POST /delete` → `/delete/confirm` → `checkpoint` → erasure
+
+```mermaid
+sequenceDiagram
+    participant A as Admin (client)
+    participant PN as Provider Node
+    participant SP as Storage Provider Pallet
+    participant GC as Provider GC Coordinator
+
+    A->>PN: POST /delete { bucket_id, new_start_seq }
+    Note over PN: Frozen check against chain state (fail closed: 503)
+    Note over PN: Leaves below new_start_seq move to the retention stash
+    PN-->>A: post-prune commitment + provider_signature
+
+    A->>PN: POST /delete/confirm { bucket_id, mmr_root,<br/>new_start_seq, admin, signature }
+    Note over PN: Admin's signature over the deletion payload stored<br/>as the durable deletion receipt
+    PN-->>A: { stored: true }
+
+    A->>SP: checkpoint(bucket_id, commitment, signatures)
+    SP->>SP: frozen? require start_seq == frozen_start_seq
+    SP-->>A: Event::BucketCheckpointed { commitment }
+
+    Note over GC: On BucketCheckpointed (or the safety-net rescan)
+    GC->>SP: read canonical snapshot, agreement, pending challenges
+    Note over GC: Erasure requires: canonical start_seq ≥ pruned range end,<br/>the admin's deletion receipt held,<br/>no pending challenges
+    GC->>PN: erase pruned range (refcounted — zero-ref nodes deleted)
+    Note over PN: used_bytes credited — quota headroom returns
+```
+
+Until erasure, the provider can still prove challenges against any
+commitment covering the stashed leaves (proofs are rebuilt for the exact
+cited commitment). After erasure, a challenge citing an old commitment
+that covered the erased leaves is answered with
+`ChallengeResponse::Deleted`, built from the stored receipt — which the
+pallet verifies against the bucket admin's signature. Erasure never moves
+money — payments stay fixed by the agreement's `max_bytes`.
+
+### Bucket teardown: `delete_drive` / `delete_s3_bucket`
+
+```mermaid
+sequenceDiagram
+    participant O as Owner
+    participant L1 as Drive / S3 Registry Pallet
+    participant SP as Storage Provider Pallet
+    participant GC as Provider GC Coordinator
+
+    O->>L1: delete_drive(drive_id) / delete_s3_bucket(s3_bucket_id)
+    L1->>SP: cleanup_bucket_internal(bucket_id, owner)
+    SP->>SP: refuse if frozen or a challenge is pending
+    SP->>SP: settle every agreement: prorated refund to owner,<br/>time-served payment to provider
+    SP-->>O: Event::BucketDeleted { bucket_id }
+    L1-->>O: Event::DriveDeleted { refunded } / S3BucketDeleted { refunded }
+
+    Note over GC: On BucketDeleted (or the rescan finding a local bucket<br/>with no chain row)
+    GC->>GC: condemn the bucket: stash all leaves
+    Note over GC: Once "no chain obligation" is re-confirmed against chain truth
+    GC->>GC: erase everything, drop the bucket row
+```
+
+`delete_s3_bucket` additionally requires the bucket to be empty
+(`object_count == 0`), so clients clear the object metadata rows first.
 
 ---
 

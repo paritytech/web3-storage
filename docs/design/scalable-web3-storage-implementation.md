@@ -35,7 +35,7 @@ primaries (replicas stay challengeable by anyone).
 
 **Redundancy**: A bucket can have storage agreements with multiple providers. The `min_providers` setting controls how many providers must acknowledge a state before it can be checkpointed. This ensures minimum redundancy for critical data.
 
-**Append-only mode**: When `frozen_start_seq` is set, the bucket becomes append-only from that point. The start_seq can never decrease below the frozen value, preventing deletion of historical data. This is irreversible and requires the current snapshot to meet `min_providers` threshold.
+**Append-only mode**: When `frozen_start_seq` is set, the bucket becomes append-only from that point. The start_seq is pinned to the frozen value exactly — only `leaf_count` can grow — so no checkpoint can delete historical data, and the bucket itself can no longer be torn down (`cleanup_bucket_internal` refuses frozen buckets). This is irreversible and requires the current snapshot to meet `min_providers` threshold.
 
 ### Storage Model
 
@@ -50,6 +50,10 @@ primaries (replicas stay challengeable by anyone).
 **No conflict rejection**: Providers accept all uploads within quota. "Conflicts" (different clients uploading different data) are fine — the checkpoint determines which state becomes canonical.
 
 **Pruning rule**: Non-canonical branches can only be pruned once a canonical branch exists with greater depth. A branch with range `[A, A+N)` can be pruned once canonical has range `[B, B+M)` where `B + M > A + N`. This ensures providers remain liable for any data that could still be challenged.
+
+**Erasure lifecycle (provider-side)**: `POST /delete` moves the pruned leaves into a retention stash and returns the provider-signed post-prune commitment — the provider stays able to prove challenges against any commitment covering stashed leaves. Physical erasure is reference-counted (content-addressed chunks may serve many leaves, and deduplicated, many buckets: a node is deleted only when its last committed reference dies) and runs only once three conditions hold: (a) the canonical range has passed the pruned range per the pruning rule — or the bucket / the provider's agreement is gone from chain entirely; (b) the admin's signed deletion authorization is held as a durable *deletion receipt* (attached via `POST /delete/confirm`), so a `challenge_offchain` citing an older commitment covering the range is answered with the `Deleted` defense rather than the bytes — the receipt outlives the erasure; (c) no challenge against the provider is pending on the bucket. `used_bytes` — the quota measured against the agreement's paid `max_bytes` — counts bytes physically stored (stash included) and is credited exactly at erasure, so quota headroom returns when disk does. Deletion never moves money: payments are fixed by `max_bytes`; prorated refunds exist only in whole-bucket teardown.
+
+**Bucket teardown**: `delete_drive` and `delete_s3_bucket` route through `cleanup_bucket_internal`, which refuses frozen buckets and buckets with pending challenges, settles every agreement (prorated refund to the owner, time-served payment to the provider), removes the bucket, and emits `BucketDeleted`. The provider reacts by condemning its local copy — stashing all leaves — and erasing it through the same delayed-erasure lifecycle (a full rescan recovers a missed `BucketDeleted`, since the chain row is gone afterwards).
 
 **Optional snapshots**: On-chain snapshots are optional. Without a snapshot:
 - `challenge_offchain` works (challenger provides provider signature)
@@ -371,7 +375,7 @@ pub struct Bucket<T: Config> {
     /// and primary-agreement owners.
     pub visibility: Visibility,
     /// If Some, bucket is append-only from this start_seq.
-    /// Checkpoints with start_seq < frozen_start_seq are rejected (prevents deletions).
+    /// Checkpoints with start_seq != frozen_start_seq are rejected (prevents deletions).
     pub frozen_start_seq: Option<u64>,
     /// Minimum primary provider signatures required for checkpoint.
     pub min_providers: u32,
@@ -1676,7 +1680,8 @@ The provider node exposes a JSON-over-HTTP API (axum) on, by default,
 
 ### Authentication & RBAC
 
-Mutating Layer-0 endpoints (`PUT /node`, `POST /commit`, `POST /delete`) and
+Mutating Layer-0 endpoints (`PUT /node`, `POST /commit`, `POST /delete`,
+`POST /delete/confirm`) and
 authenticated read endpoints require an `Authorization` header. The provider node verifies an sr25519 signature
 locally and resolves the caller's role via a TTL-cached query against the
 chain's `Buckets` storage (`bucket.members`).
@@ -1923,13 +1928,61 @@ Response (200 OK):
 
 Response (400 Bad Request):
 { "error": "invalid_signature" }
+{ "error": "invalid_start_seq" }   // rewind or overshoot: start_seq only advances
+
+Response (403 Forbidden):
+{ "error": "not_admin" }
+{ "error": "bucket_frozen" }       // frozen buckets are append-only: no deletion
+
+Response (503 Service Unavailable):
+{ "error": "chain_state_unavailable" }  // frozen check fails closed when the
+                                        // chain cannot be read; retry
+
+Note: Only bucket admins can delete data. This moves the leaves before
+new_start_seq into the retention stash and returns the provider-signed
+post-prune commitment (the checkpoint argument). The admin then authorizes
+the deletion via POST /delete/confirm below.
+
+Confirm Deletion (admin only)
+─────────────────────────────
+POST /delete/confirm
+Authorization: Web3Storage <pubkey_hex>:<signature_hex>:<timestamp>
+  // admin-signed header, same scheme as /delete
+
+Request:
+{
+  "bucket_id": "0x1234...",
+  "mmr_root": "0xnew...",       // the post-prune commitment from /delete
+  "new_start_seq": 10,
+  "admin": "0x...",             // 32-byte admin public key, hex
+  "signature": "0x..."          // SCALE-encoded MultiSignature, hex: the
+                                // admin's signature over CommitmentPayload
+                                // { version: 1, bucket_id, Commitment {
+                                //   mmr_root, start_seq: new_start_seq,
+                                //   leaf_count: 0 } } — the exact payload
+                                // the pallet verifies for the Deleted defense
+}
+
+Response (200 OK):
+{ "stored": true }
+
+Response (400 Bad Request):
+{ "error": "invalid_start_seq" }   // no stashed prune matches this
+                                   // (mmr_root, new_start_seq) pair
+{ "error": "invalid_hash" }        // mmr_root / admin not 32 hex bytes
+{ "error": "invalid_signature" }   // signature hex does not decode to a
+                                   // SCALE MultiSignature
 
 Response (403 Forbidden):
 { "error": "not_admin" }
 
-Note: Only bucket admins can delete data. This triggers deletion of data before
-new_start_seq. Provider returns new commitment covering remaining data. Admin
-signature authorizes the deletion and serves as proof if challenged later.
+Note: Stores the admin's deletion authorization as the durable deletion
+receipt, parsed into typed form at this boundary (whether the admin
+really signed it is adjudicated on-chain if a challenge forces the
+Deleted defense). The receipt is a precondition for physically erasing the stashed
+range (see the erasure lifecycle) and outlives the erasure: a later
+challenge_offchain citing a commitment that covered the erased leaves is
+answered with ChallengeResponse::Deleted built from this receipt.
 
 List Buckets
 ────────────
