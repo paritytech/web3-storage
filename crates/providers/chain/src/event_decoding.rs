@@ -273,6 +273,84 @@ mod tests {
     }
 
     #[test]
+    fn bucket_deleted_maps_bucket_id() {
+        let ev = provider_events::BucketDeleted { bucket_id: 33 };
+        assert!(matches!(
+            BlockEvent::from(ev),
+            BlockEvent::BucketDeleted { bucket_id: 33 }
+        ));
+    }
+
+    #[test]
+    fn agreement_events_map_to_agreement_changed() {
+        let expect_changed = |ev: BlockEvent, id: u64| {
+            let BlockEvent::AgreementChanged {
+                bucket_id,
+                provider,
+            } = ev
+            else {
+                panic!("expected AgreementChanged");
+            };
+            assert_eq!(bucket_id, id);
+            assert_eq!(provider, AccountId32::new([6u8; 32]));
+        };
+
+        expect_changed(
+            BlockEvent::from(provider_events::AgreementEnded {
+                bucket_id: 44,
+                provider: subxt::utils::AccountId32([6u8; 32]),
+                payment_to_provider: 0,
+                burned: 0,
+            }),
+            44,
+        );
+        expect_changed(
+            BlockEvent::from(provider_events::AgreementAccepted {
+                bucket_id: 45,
+                provider: subxt::utils::AccountId32([6u8; 32]),
+                expires_at: 100,
+            }),
+            45,
+        );
+        expect_changed(
+            BlockEvent::from(provider_events::AgreementToppedUp {
+                bucket_id: 46,
+                provider: subxt::utils::AccountId32([6u8; 32]),
+                amount: 5,
+                new_max_bytes: 2048,
+            }),
+            46,
+        );
+        expect_changed(
+            BlockEvent::from(provider_events::AgreementExpiredClaimed {
+                bucket_id: 47,
+                provider: subxt::utils::AccountId32([6u8; 32]),
+                payment_to_provider: 0,
+            }),
+            47,
+        );
+        expect_changed(
+            BlockEvent::from(provider_events::StorageAgreementEstablished {
+                bucket_id: 48,
+                provider: subxt::utils::AccountId32([6u8; 32]),
+                owner: subxt::utils::AccountId32([2u8; 32]),
+                terms: AgreementTerms {
+                    owner: subxt::utils::AccountId32([2u8; 32]),
+                    max_bytes: 1024,
+                    duration: 100,
+                    price_per_byte: 1,
+                    valid_until: 50,
+                    nonce: 1,
+                    bucket_id: Some(48),
+                    replica_params: None,
+                },
+                expires_at: 150,
+            }),
+            48,
+        );
+    }
+
+    #[test]
     fn challenge_created_maps_id_and_account() {
         let ev = provider_events::ChallengeCreated {
             challenge_id: ChallengeId {
