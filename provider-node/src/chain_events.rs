@@ -12,11 +12,6 @@
 //! change that reshapes one of these events surfaces as a decode failure
 //! (logged, backstopped by the safety-net scans) instead of silently
 //! yielding `None` on dynamic field lookups.
-//!
-//! [`BlockEvent`] has one exception to that: [`BlockEvent::BucketMembershipChanged`]
-//! is produced by the chain-state coordinator's dynamic `parse_membership_changes`
-//! rather than by [`decode_block_events`], because it decodes the same handful of
-//! fields regardless of runtime metadata drift.
 
 use sp_runtime::AccountId32;
 use storage_primitives::BucketId;
@@ -54,10 +49,12 @@ pub enum BlockEvent {
     /// `StorageProvider::BucketCheckpointed` — a client checkpointed the
     /// bucket, so new canonical data may be available for replicas to sync.
     BucketCheckpointed { bucket_id: BucketId },
-    /// `StorageProvider::MemberSet` / `MemberRemoved` / `BucketDeleted` — the
-    /// bucket's member set changed, so any cached authorization for it is
-    /// stale. Produced by the follower's dynamic `parse_membership_changes`,
-    /// not by [`decode_block_events`] — see the module doc.
+    /// `StorageProvider::BucketCreated` / `MemberSet` / `MemberRemoved` /
+    /// `BucketDeleted` - the bucket's member set changed, so any cached
+    /// authorization for it is stale. Only the bucket id is decoded: patching
+    /// in the member/role the event carries would build a set that never
+    /// existed on chain if an earlier event was missed, so the cache drops the
+    /// entry and re-resolves.
     BucketMembershipChanged { bucket_id: BucketId },
     /// The block follower (re)connected and re-read chain state wholesale.
     /// Coordinators run their bootstrap scan to catch anything missed while
@@ -93,6 +90,38 @@ impl From<provider_events::BucketCheckpointed> for BlockEvent {
     }
 }
 
+impl From<provider_events::BucketCreated> for BlockEvent {
+    fn from(ev: provider_events::BucketCreated) -> Self {
+        BlockEvent::BucketMembershipChanged {
+            bucket_id: ev.bucket_id,
+        }
+    }
+}
+
+impl From<provider_events::MemberSet> for BlockEvent {
+    fn from(ev: provider_events::MemberSet) -> Self {
+        BlockEvent::BucketMembershipChanged {
+            bucket_id: ev.bucket_id,
+        }
+    }
+}
+
+impl From<provider_events::MemberRemoved> for BlockEvent {
+    fn from(ev: provider_events::MemberRemoved) -> Self {
+        BlockEvent::BucketMembershipChanged {
+            bucket_id: ev.bucket_id,
+        }
+    }
+}
+
+impl From<provider_events::BucketDeleted> for BlockEvent {
+    fn from(ev: provider_events::BucketDeleted) -> Self {
+        BlockEvent::BucketMembershipChanged {
+            bucket_id: ev.bucket_id,
+        }
+    }
+}
+
 /// Decode one block's events into the coordinator-relevant [`BlockEvent`]s.
 // TODO: the try-each-variant chain below scales poorly as more events become
 // coordinator-relevant; revisit a direct pallet-event -> BlockEvent mapping
@@ -111,6 +140,10 @@ pub fn decode_block_events(events: &subxt::events::Events<PolkadotConfig>) -> Ve
                 .or_else(|| {
                     decode::<provider_events::BucketCheckpointed>(&event).map(BlockEvent::from)
                 })
+                .or_else(|| decode::<provider_events::BucketCreated>(&event).map(BlockEvent::from))
+                .or_else(|| decode::<provider_events::MemberSet>(&event).map(BlockEvent::from))
+                .or_else(|| decode::<provider_events::MemberRemoved>(&event).map(BlockEvent::from))
+                .or_else(|| decode::<provider_events::BucketDeleted>(&event).map(BlockEvent::from))
         })
         .collect()
 }
@@ -213,5 +246,53 @@ mod tests {
         assert_eq!(index, 7);
         assert_eq!(bucket_id, 42);
         assert_eq!(provider, AccountId32::new([5u8; 32]));
+    }
+
+    #[test]
+    fn bucket_created_maps_bucket_id() {
+        let ev = provider_events::BucketCreated {
+            bucket_id: 9,
+            admin: subxt::utils::AccountId32([4u8; 32]),
+        };
+        assert!(matches!(
+            BlockEvent::from(ev),
+            BlockEvent::BucketMembershipChanged { bucket_id: 9 }
+        ));
+    }
+
+    #[test]
+    fn member_set_maps_bucket_id() {
+        use storage_subxt::api::runtime_types::storage_primitives::Role;
+
+        let ev = provider_events::MemberSet {
+            bucket_id: 7,
+            member: subxt::utils::AccountId32([3u8; 32]),
+            role: Role::Writer,
+        };
+        assert!(matches!(
+            BlockEvent::from(ev),
+            BlockEvent::BucketMembershipChanged { bucket_id: 7 }
+        ));
+    }
+
+    #[test]
+    fn member_removed_maps_bucket_id() {
+        let ev = provider_events::MemberRemoved {
+            bucket_id: 7,
+            member: subxt::utils::AccountId32([3u8; 32]),
+        };
+        assert!(matches!(
+            BlockEvent::from(ev),
+            BlockEvent::BucketMembershipChanged { bucket_id: 7 }
+        ));
+    }
+
+    #[test]
+    fn bucket_deleted_maps_bucket_id() {
+        let ev = provider_events::BucketDeleted { bucket_id: 8 };
+        assert!(matches!(
+            BlockEvent::from(ev),
+            BlockEvent::BucketMembershipChanged { bucket_id: 8 }
+        ));
     }
 }

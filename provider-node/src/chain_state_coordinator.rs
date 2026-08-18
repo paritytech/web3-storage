@@ -34,7 +34,6 @@ use sp_runtime::AccountId32;
 use std::sync::atomic::AtomicU32;
 use std::sync::Arc;
 use std::time::Duration;
-use storage_primitives::BucketId;
 use subxt::ext::scale_value::{At, Composite, Primitive, Value, ValueDef, Variant};
 use subxt::{OnlineClient, PolkadotConfig};
 use tokio::sync::watch;
@@ -233,34 +232,6 @@ fn parse_provider_lifecycle_events(
         .collect()
 }
 
-// ── membership-changing events ────────────────────────────────────────────────
-
-/// Decode a finalized block's events down to the buckets whose membership
-/// changed: `BucketCreated` seeds the member set, `MemberSet` and
-/// `MemberRemoved` rewrite it, and `BucketDeleted` removes it entirely. Only
-/// the bucket id is decoded — the cache always drops the whole entry and
-/// re-resolves it from chain, rather than patching in the new member/role
-/// `MemberSet` and `MemberRemoved` do carry, because a set patched from an
-/// older snapshot across a missed event is one that never existed on chain.
-/// Re-resolution is self-healing; patching is not.
-fn parse_membership_changes(events: &subxt::events::Events<PolkadotConfig>) -> Vec<BucketId> {
-    events
-        .iter()
-        .filter_map(|event| event.ok())
-        .filter(|event| event.pallet_name() == PALLET_NAME)
-        .filter(|event| {
-            matches!(
-                event.event_name(),
-                "BucketCreated" | "MemberSet" | "MemberRemoved" | "BucketDeleted"
-            )
-        })
-        .filter_map(|event| {
-            let fields = event.decode_fields_unchecked_as::<Value>().ok()?;
-            fields.at("bucket_id")?.as_u128().map(|id| id as BucketId)
-        })
-        .collect()
-}
-
 // ── ChainStateCoordinator ─────────────────────────────────────────────────────
 
 /// Builds and starts the live chain-state synchronisation for a single provider.
@@ -446,11 +417,6 @@ impl ChainStateCoordinator {
             let parsed = parse_provider_lifecycle_events(&events);
             self.process_provider_events(&chain, &parsed, block_number)
                 .await;
-            for bucket_id in parse_membership_changes(&events) {
-                let _ = self
-                    .events_tx
-                    .send(BlockEvent::BucketMembershipChanged { bucket_id });
-            }
         }
 
         Ok(())
@@ -1388,6 +1354,20 @@ mod tests {
             )
         }
 
+        /// The `BucketMembershipChanged` bucket ids `chain_events::decode_block_events`
+        /// produces from `events`, in encounter order.
+        fn membership_changed_bucket_ids(
+            events: &subxt::events::Events<PolkadotConfig>,
+        ) -> Vec<u64> {
+            chain_events::decode_block_events(events)
+                .into_iter()
+                .filter_map(|event| match event {
+                    BlockEvent::BucketMembershipChanged { bucket_id } => Some(bucket_id),
+                    _ => None,
+                })
+                .collect()
+        }
+
         #[tokio::test]
         async fn membership_changes_decode_to_their_bucket_ids() {
             let md = metadata();
@@ -1406,7 +1386,7 @@ mod tests {
             // Every membership-changing event contributes its bucket, duplicates
             // included (invalidation is idempotent); the provider-lifecycle event
             // carries no bucket and must be skipped.
-            assert_eq!(parse_membership_changes(&events), vec![9, 7, 7, 8]);
+            assert_eq!(membership_changed_bucket_ids(&events), vec![9, 7, 7, 8]);
         }
 
         #[tokio::test]
@@ -1424,7 +1404,7 @@ mod tests {
             let at = api.at_current_block().await.expect("block handle");
             let events = at.events().fetch().await.expect("events fetch");
 
-            assert!(parse_membership_changes(&events).is_empty());
+            assert!(membership_changed_bucket_ids(&events).is_empty());
         }
 
         #[tokio::test]
