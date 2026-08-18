@@ -200,7 +200,10 @@ async fn unrelated_events_leave_the_cache_alone() {
 
     // A checkpoint event carries no membership information and must not evict
     // anything.
-    let _ = tx.send(BlockEvent::BucketCheckpointed { bucket_id: 1 });
+    let _ = tx.send(BlockEvent::BucketCheckpointed {
+        bucket_id: 1,
+        start_seq: 0,
+    });
 
     authorized_read(&auth, &keypair, 1).await;
     assert_eq!(

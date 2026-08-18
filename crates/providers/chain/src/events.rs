@@ -40,10 +40,23 @@ pub enum BlockEvent {
         provider: AccountId32,
     },
     /// `StorageProvider::BucketCheckpointed` — a client checkpointed the
-    /// bucket, so new canonical data may be available for replicas to sync.
-    BucketCheckpointed { bucket_id: BucketId },
-    /// `StorageProvider::BucketCreated` / `MemberSet` / `MemberRemoved` /
-    /// `BucketDeleted` - the bucket's member set changed, so any cached
+    /// bucket: new canonical data may be available for replicas to sync, and
+    /// a canonical `start_seq` advance may release pruned data for the GC.
+    BucketCheckpointed { bucket_id: BucketId, start_seq: u64 },
+    /// `StorageProvider::BucketDeleted` — the bucket was torn down on-chain.
+    /// One-shot: the bucket row is gone afterwards, so a missed event is
+    /// only recoverable via the GC's "local bucket with no chain row" rescan.
+    /// Also invalidates cached membership for the bucket.
+    BucketDeleted { bucket_id: BucketId },
+    /// Any agreement lifecycle change on a bucket (established, accepted,
+    /// topped up, ended, expired-claimed). The GC treats all of them as
+    /// "reconcile this bucket": re-read quota, detect lost agreements.
+    AgreementChanged {
+        bucket_id: BucketId,
+        provider: AccountId32,
+    },
+    /// `StorageProvider::BucketCreated` / `MemberSet` / `MemberRemoved` -
+    /// the bucket's member set changed, so any cached
     /// authorization for it is stale. Only the bucket id is decoded: patching
     /// in the member/role the event carries would build a set that never
     /// existed on chain if an earlier event was missed, so the cache drops the

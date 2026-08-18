@@ -36,6 +36,7 @@ impl From<provider_events::BucketCheckpointed> for BlockEvent {
     fn from(ev: provider_events::BucketCheckpointed) -> Self {
         BlockEvent::BucketCheckpointed {
             bucket_id: ev.bucket_id,
+            start_seq: ev.commitment.start_seq,
         }
     }
 }
@@ -66,11 +67,35 @@ impl From<provider_events::MemberRemoved> for BlockEvent {
 
 impl From<provider_events::BucketDeleted> for BlockEvent {
     fn from(ev: provider_events::BucketDeleted) -> Self {
-        BlockEvent::BucketMembershipChanged {
+        BlockEvent::BucketDeleted {
             bucket_id: ev.bucket_id,
         }
     }
 }
+
+/// Every agreement-lifecycle event carries the same two fields and means
+/// the same thing to consumers — "reconcile this bucket" — so they all
+/// collapse into [`BlockEvent::AgreementChanged`].
+macro_rules! agreement_changed_from {
+    ($($event:ident),+ $(,)?) => {$(
+        impl From<provider_events::$event> for BlockEvent {
+            fn from(ev: provider_events::$event) -> Self {
+                BlockEvent::AgreementChanged {
+                    bucket_id: ev.bucket_id,
+                    provider: AccountId32::new(ev.provider.0),
+                }
+            }
+        }
+    )+};
+}
+
+agreement_changed_from!(
+    AgreementAccepted,
+    StorageAgreementEstablished,
+    AgreementToppedUp,
+    AgreementEnded,
+    AgreementExpiredClaimed,
+);
 
 /// Decode one block's events into the coordinator-relevant [`BlockEvent`]s.
 ///
@@ -108,6 +133,20 @@ pub fn decode_block_events(
                 })
                 .or_else(|| {
                     decode_membership::<provider_events::BucketDeleted>(&event, block_number)
+                })
+                .or_else(|| {
+                    decode::<provider_events::AgreementAccepted>(&event).map(BlockEvent::from)
+                })
+                .or_else(|| {
+                    decode::<provider_events::StorageAgreementEstablished>(&event)
+                        .map(BlockEvent::from)
+                })
+                .or_else(|| {
+                    decode::<provider_events::AgreementToppedUp>(&event).map(BlockEvent::from)
+                })
+                .or_else(|| decode::<provider_events::AgreementEnded>(&event).map(BlockEvent::from))
+                .or_else(|| {
+                    decode::<provider_events::AgreementExpiredClaimed>(&event).map(BlockEvent::from)
                 })
         })
         .collect()
@@ -214,19 +253,22 @@ mod tests {
     }
 
     #[test]
-    fn bucket_checkpointed_maps_bucket_id() {
+    fn bucket_checkpointed_maps_bucket_id_and_start_seq() {
         let checkpointed = provider_events::BucketCheckpointed {
             bucket_id: 22,
             commitment: Commitment {
                 mmr_root: subxt::utils::H256([1u8; 32]),
-                start_seq: 0,
+                start_seq: 5,
                 leaf_count: 1,
             },
             providers: vec![subxt::utils::AccountId32([4u8; 32])],
         };
         assert!(matches!(
             BlockEvent::from(checkpointed),
-            BlockEvent::BucketCheckpointed { bucket_id: 22 }
+            BlockEvent::BucketCheckpointed {
+                bucket_id: 22,
+                start_seq: 5
+            }
         ));
     }
 
@@ -293,15 +335,6 @@ mod tests {
         assert!(matches!(
             BlockEvent::from(ev),
             BlockEvent::BucketMembershipChanged { bucket_id: 7 }
-        ));
-    }
-
-    #[test]
-    fn bucket_deleted_maps_bucket_id() {
-        let ev = provider_events::BucketDeleted { bucket_id: 8 };
-        assert!(matches!(
-            BlockEvent::from(ev),
-            BlockEvent::BucketMembershipChanged { bucket_id: 8 }
         ));
     }
 
