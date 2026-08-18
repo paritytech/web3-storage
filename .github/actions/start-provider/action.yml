@@ -1,0 +1,82 @@
+name: Start storage provider
+description: >-
+  Write a keyfile, launch storage-provider-node in the background, and wait for
+  it to come up.
+
+inputs:
+  seed:
+    description: SURI written to the keyfile the provider signs with.
+    required: false
+    default: "//Alice"
+  backend:
+    description: >-
+      Storage backend, or "" to pass no --storage-backend and exercise the
+      binary's own default.
+    required: false
+    default: ""
+  port:
+    description: Port the provider binds its HTTP API to.
+    required: false
+    default: "3333"
+  storage-path:
+    description: >-
+      Data directory. Defaults to /tmp/provider-data-<label>, so two providers
+      in one job cannot end up sharing one — RocksDB only lets the first in.
+    required: false
+    default: ""
+  chain-rpc:
+    description: Parachain RPC WebSocket URL.
+    required: false
+    default: ws://127.0.0.1:2222
+  label:
+    description: >-
+      Short name for this provider. Labels the wait output and names what it
+      writes: /tmp/provider-<label>.{key,log} and the default data directory.
+    required: false
+    default: provider
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        SEED: ${{ inputs.seed }}
+        BACKEND: ${{ inputs.backend }}
+        PORT: ${{ inputs.port }}
+        STORAGE_PATH: ${{ inputs.storage-path }}
+        CHAIN_RPC: ${{ inputs.chain-rpc }}
+        LABEL: ${{ inputs.label }}
+      run: |
+        set -euo pipefail
+        KEYFILE="/tmp/provider-${LABEL}.key"
+        LOG_FILE="/tmp/provider-${LABEL}.log"
+        STORAGE_PATH="${STORAGE_PATH:-/tmp/provider-data-${LABEL}}"
+        printf '%s\n' "$SEED" > "$KEYFILE"
+        chmod 600 "$KEYFILE"
+
+        echo "Starting ${LABEL} provider on :${PORT} (backend: ${BACKEND:-<binary default>})"
+        # ${BACKEND:+...} expands to nothing when it is empty, so the run gets no
+        # --storage-backend flag and exercises the binary's default.
+        nohup ./target/release/storage-provider-node \
+          --keyfile "$KEYFILE" \
+          ${BACKEND:+--storage-backend "$BACKEND"} \
+          --storage-path "$STORAGE_PATH" \
+          --bind-addr "0.0.0.0:${PORT}" \
+          --chain-rpc "$CHAIN_RPC" \
+          > "$LOG_FILE" 2>&1 &
+        PID=$!
+
+        # Fail fast if it exited immediately (bad flags, port in use, stale
+        # RocksDB lock) rather than burning the whole poll timeout.
+        sleep 2
+        if ! kill -0 "$PID" 2>/dev/null; then
+          echo "::error::${LABEL} provider exited immediately after launch."
+          cat "$LOG_FILE" || true
+          exit 1
+        fi
+
+    - uses: ./.github/actions/wait-for-provider-health
+      with:
+        url: http://127.0.0.1:${{ inputs.port }}
+        label: ${{ inputs.label }}
+        log-file: /tmp/provider-${{ inputs.label }}.log

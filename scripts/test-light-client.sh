@@ -31,17 +31,20 @@ PARA_RPC="${PARA_RPC:-ws://127.0.0.1:2222}"
 KEYFILE=$(mktemp)
 echo "//Alice" > "$KEYFILE" && chmod 600 "$KEYFILE"
 LOG=$(mktemp "${TMPDIR:-/tmp}/light-client-provider.XXXXXX")
+# Own throwaway storage: the RPC provider on 3333 holds ./provider-data.
+STORAGE_DIR=$(mktemp -d "${TMPDIR:-/tmp}/light-client-storage.XXXXXX")
 
 cleanup() {
     [ -n "${PROVIDER_PID:-}" ] && kill "$PROVIDER_PID" 2>/dev/null || true
     rm -f "$KEYFILE"
+    rm -rf "$STORAGE_DIR"
 }
 trap cleanup EXIT
 
 echo "Starting provider with the embedded light client (log: $LOG)..."
 echo "Specs fetched from: relay $RELAY_RPC, para $PARA_RPC"
 RUST_LOG=info "$BIN" \
-    --keyfile "$KEYFILE" --storage-mode inmemory \
+    --keyfile "$KEYFILE" --storage-path "$STORAGE_DIR" \
     --bind-addr "0.0.0.0:$PROVIDER_PORT" \
     --chain-rpc "$PARA_RPC" \
     --chain-transport light \
