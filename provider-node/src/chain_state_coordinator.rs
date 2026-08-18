@@ -987,8 +987,8 @@ mod tests {
 
         /// `0x`-prefixed twox128(pallet) ++ twox128(entry) storage-key prefix.
         fn key_prefix(pallet: &str, entry: &str) -> String {
-            let mut key = sp_core::twox_128(pallet.as_bytes()).to_vec();
-            key.extend(sp_core::twox_128(entry.as_bytes()));
+            let mut key = sp_crypto_hashing::twox_128(pallet.as_bytes()).to_vec();
+            key.extend(sp_crypto_hashing::twox_128(entry.as_bytes()));
             format!("0x{}", hex::encode(key))
         }
 

@@ -920,12 +920,12 @@ impl FileSystemClient {
         let storage_client = at.storage();
 
         // Build the storage key for Drives storage map
-        use sp_core::twox_128;
+        use sp_crypto_hashing::twox_128;
 
         let pallet_hash = twox_128(b"DriveRegistry");
         let storage_hash = twox_128(b"Drives");
         let key = drive_id.to_le_bytes();
-        let key_hash = sp_core::blake2_128(&key);
+        let key_hash = sp_crypto_hashing::blake2_128(&key);
 
         let mut storage_key = Vec::new();
         storage_key.extend_from_slice(&pallet_hash);

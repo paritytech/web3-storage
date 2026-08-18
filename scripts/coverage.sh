@@ -78,14 +78,7 @@ verify_classification() {
 # replica_sync.rs (no chain-client trait of its own, exercised only
 # indirectly through replica_sync_coordinator — measure it once it is
 # directly testable); binary entry points.
-#
-# NOTE: listing a crate in COV_SKIP_PACKAGES only keeps it out of the *test
-# selection*; if a measured crate depends on it, its sources are still
-# instrumented and land in the report. `crates/storage-subxt/` is such a case
-# (provider-node depends on it), so the whole crate is ignored by path - the
-# generated bindings are named after the runtime (`storage_paseo_runtime.rs`)
-# and do not match the `_subxt\.rs` / `subxt_client\.rs` patterns.
-COV_IGNORE='(/\.cargo/|/rustc/|weights\.rs|runtime_api\.rs|mock\.rs|benchmarking\.rs|/primitives/|crates/storage-subxt/|subxt_client\.rs|_subxt\.rs|clients/[^/]+/src/|clients/[^/]+/tests/|src/replica_sync\.rs|src/main\.rs|src/cli\.rs|src/command\.rs)'
+COV_IGNORE='(/\.cargo/|/rustc/|weights\.rs|runtime_api\.rs|mock\.rs|benchmarking\.rs|/primitives/|/storage-subxt/|subxt_client\.rs|_subxt\.rs|clients/[^/]+/src/|clients/[^/]+/tests/|src/replica_sync\.rs|src/main\.rs|src/cli\.rs|src/command\.rs)'
 
 REPO_ROOT="${GITHUB_WORKSPACE:-$(git rev-parse --show-toplevel)}"
 cd "$REPO_ROOT"
