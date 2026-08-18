@@ -60,4 +60,12 @@ impl KvStore for SledStore {
     fn flush(&mut self) {
         self.db.flush().expect("sled flush");
     }
+
+    /// Sled exposes no manual compaction; its GC runs on its own schedule.
+    /// Reported as "no API" so the disk numbers are not read as "compacted and
+    /// still this large".
+    fn compact(&mut self) -> bool {
+        self.flush();
+        false
+    }
 }

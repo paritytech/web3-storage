@@ -1,15 +1,16 @@
 # Database Engine Evaluation
 
 This directory holds the benchmark-backed evaluation of database engines for the
-two storage components, the recommendation for each, and the configuration and
+**Storage Provider**, the resulting recommendation, and the configuration and
 migration guidance that follows from it.
 
-The Storage Provider and Blockchain Node have **different database workload
-profiles**. This evaluation treats them separately and benchmarks the candidates
-the issue calls out:
+The scope is deliberately one component. The chain side is **out of scope**: this
+system runs on **Asset Hub**, so we neither operate the parachain node nor choose
+its state-trie backend, and any recommendation there would be unactionable.
 
-- **Storage Provider** (per-bucket DBs): **Sled vs SQLite (WAL) vs RocksDB**, across **both** the sharded and shared architectures
-- **Blockchain Node** (state trie): **RocksDB vs ParityDB**
+What is benchmarked: **Sled vs SQLite (WAL) vs redb vs RocksDB vs ParityDB**,
+across **both** candidate architectures — one DB per bucket (sharded) and one DB
+for all buckets (shared).
 
 ## Documents
 
@@ -17,17 +18,17 @@ the issue calls out:
 |---|----------|----------|
 | — | [README.md](README.md) | This index + methodology + fairness caveats |
 | 1 | [01-storage-provider-benchmark.md](01-storage-provider-benchmark.md) | Architecture × engine matrix (sharded vs shared; Sled/SQLite/RocksDB/ParityDB) |
-| 2 | [02-blockchain-provider-benchmark.md](02-blockchain-provider-benchmark.md) | Measured RocksDB vs ParityDB for the state trie |
-| 3 | [03-recommendations.md](03-recommendations.md) | Recommendation + justification per component |
-| 4 | [04-configuration-guide.md](04-configuration-guide.md) | Engine config, memory limits, compaction tuning, OS/cgroup isolation |
-| 5 | [05-migration-plan.md](05-migration-plan.md) | Single-RocksDB → chosen per-bucket architecture |
+| 2 | [02-recommendations.md](02-recommendations.md) | Recommendation + justification |
+| 3 | [03-configuration-guide.md](03-configuration-guide.md) | SQLite/LRU-pool config, memory budget, bucket deletion |
+| 4 | [04-migration-plan.md](04-migration-plan.md) | Single-RocksDB → chosen per-bucket architecture |
 
 ## The harness
 
 All numbers in these documents come from a real, runnable harness committed at
 [`benchmarks/db-bench/`](../../../benchmarks/db-bench). It exposes a common
-`KvStore` trait over RocksDB, Sled, SQLite (WAL, bundled), and ParityDB, and
-runs workloads modelled on the actual access patterns of each component.
+`KvStore` trait over the five embedded engines — RocksDB, Sled, SQLite (WAL,
+bundled), redb, and ParityDB — and runs workloads modelled on the Storage
+Provider's actual access patterns.
 
 ```bash
 # Full run (writes JSON into results/ next to this README)
@@ -39,13 +40,12 @@ bash scripts/run-db-benchmarks.sh
 just db-bench --quick
 ```
 
-Raw results live in [`results/`](results/): `storage-provider.json` and
-`blockchain-provider.json`. Every table below is derived from those files;
-re-running the harness regenerates them.
+Raw results live in [`results/`](results/): `storage-provider.json`. Every table
+in these reports is derived from that file; re-running the harness regenerates it.
 
 The crate is intentionally **excluded from `default-members`** in the workspace
 `Cargo.toml`, so normal `cargo build` / `cargo test` / CI do **not** pull in the
-four heavy DB dependencies. It builds only via `cargo build -p db-bench` or the
+heavy DB dependencies. It builds only via `cargo build -p db-bench` or the
 `just db-bench` recipe.
 
 ## Methodology
@@ -56,9 +56,7 @@ four heavy DB dependencies. It builds only via `cargo build -p db-bench` or the
   chunk-node variant) and **shared** (a single DB for all buckets, keyed by
   `bucket_id || position`). A `concurrent_write` scenario writes many buckets
   from 8 threads under each architecture — the decisive test, since a shared DB
-  serializes SQLite's single writer while sharded files do not. Blockchain
-  Provider scenarios use random 32-byte keys committed in per-block batches, the
-  Substrate state-trie pattern.
+  serializes SQLite's single writer while sharded files do not.
 - **Reproducible.** A fixed RNG seed drives all data generation.
 - **Latency** is reported as p50/p90/p99/max in microseconds (nearest-rank
   percentiles over per-operation samples). **Throughput** is ops/s and MiB/s

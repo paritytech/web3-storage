@@ -1,6 +1,6 @@
 //! RocksDB backend (LSM-tree). Configured close to a lightweight per-instance
 //! profile: small write buffers and block cache, since the per-bucket model
-//! opens many instances. The state-trie workload uses the same options.
+//! opens many instances. The shared-DB scenarios use the same options.
 
 use super::KvStore;
 use rocksdb::{Options, WriteBatch, WriteOptions, DB};
@@ -48,5 +48,14 @@ impl KvStore for RocksStore {
 
     fn flush(&mut self) {
         self.db.flush().expect("rocksdb flush");
+    }
+
+    /// Full-range manual compaction — merges every level and drops the
+    /// tombstones that a plain delete leaves behind. This is the "scheduled
+    /// compaction" the reports say production pruning must be paired with.
+    fn compact(&mut self) -> bool {
+        self.flush();
+        self.db.compact_range(None::<&[u8]>, None::<&[u8]>);
+        true
     }
 }

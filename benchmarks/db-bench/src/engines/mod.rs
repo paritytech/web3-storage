@@ -1,15 +1,16 @@
-//! A minimal key/value abstraction over the four candidate engines so the
+//! A minimal key/value abstraction over the five candidate engines so the
 //! workloads can be written once and run against each.
 //!
 //! Fairness note (also stated in the reports): achieving *identical* durability
-//! semantics across four engines with different commit pipelines is not
+//! semantics across five engines with different commit pipelines is not
 //! possible. We pick a documented, comparable baseline per engine and surface
 //! the `sync` flag on batch commits to the strongest equivalent each one
 //! offers. The exact per-engine configuration lives in each submodule and is
-//! reproduced in `04-configuration-guide.md`.
+//! reproduced in `03-configuration-guide.md`.
 
 mod concurrent;
 mod paritydb;
+mod redb_store;
 mod rocks;
 mod sled_store;
 mod sqlite;
@@ -26,6 +27,8 @@ pub enum Engine {
     Sled,
     Sqlite,
     Paritydb,
+    /// Pure-Rust copy-on-write B-tree — SQLite's index family without SQL.
+    Redb,
 }
 
 impl Engine {
@@ -35,6 +38,7 @@ impl Engine {
             Engine::Sled => "sled",
             Engine::Sqlite => "sqlite",
             Engine::Paritydb => "paritydb",
+            Engine::Redb => "redb",
         }
     }
 
@@ -45,6 +49,7 @@ impl Engine {
             Engine::Sled => Box::new(sled_store::SledStore::open(path)),
             Engine::Sqlite => Box::new(sqlite::SqliteStore::open(path)),
             Engine::Paritydb => Box::new(paritydb::ParityStore::open(path)),
+            Engine::Redb => Box::new(redb_store::RedbStore::open(path)),
         }
     }
 }
@@ -66,4 +71,15 @@ pub trait KvStore {
 
     /// Flush all buffered state durably to disk.
     fn flush(&mut self);
+
+    /// Reclaim free space held by superseded pages, tombstones, or free lists.
+    ///
+    /// Returns whether the engine has an explicit reclamation API at all. This
+    /// distinction matters when reading the disk-size scenarios: `false` means
+    /// the post-compaction size is simply the pre-compaction size, *not* that
+    /// compaction was tried and found nothing. Engines that reclaim only via a
+    /// background worker (ParityDB) or offer no API (Sled) return `false`.
+    fn compact(&mut self) -> bool {
+        false
+    }
 }

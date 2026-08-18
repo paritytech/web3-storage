@@ -4,7 +4,7 @@
 # results under docs/design/database-evaluation/results/.
 #
 # Usage:
-#   scripts/run-db-benchmarks.sh            # full run, both components
+#   scripts/run-db-benchmarks.sh            # full run
 #   scripts/run-db-benchmarks.sh --quick    # fast smoke run (tiny sizes)
 #
 # The reports under docs/design/database-evaluation/ are written from these
@@ -33,13 +33,9 @@ cargo build -p db-bench --release
 
 BIN="${REPO_ROOT}/target/release/db-bench"
 
-echo ">> Running Storage Provider benchmarks (sled vs sqlite vs rocksdb) ..."
-"${BIN}" --component storage --seed "${SEED}" --work-directory "${WORKDIR}/storage" \
+echo ">> Running Storage Provider benchmarks (sled vs sqlite vs redb vs rocksdb vs paritydb) ..."
+"${BIN}" --seed "${SEED}" --work-directory "${WORKDIR}/storage" \
 	--output "${OUT_DIR}/storage-provider.json" "${EXTRA_ARGS[@]}"
-
-echo ">> Running Blockchain Node benchmarks (rocksdb vs paritydb) ..."
-"${BIN}" --component blockchain --seed "${SEED}" --work-directory "${WORKDIR}/blockchain" \
-	--output "${OUT_DIR}/blockchain-provider.json" "${EXTRA_ARGS[@]}"
 
 echo ">> Done. Results in ${OUT_DIR}:"
 ls -1 "${OUT_DIR}"/*.json

@@ -45,4 +45,11 @@ impl KvStore for ParityStore {
         // No public flush API; durability is achieved by the background worker
         // and finalized on drop. Workloads that measure on-disk state reopen.
     }
+
+    /// ParityDB reclaims through its background worker over time and exposes no
+    /// synchronous compaction call, so there is nothing to drive here. This is
+    /// why its post-delete disk figures stay inflated within a benchmark run.
+    fn compact(&mut self) -> bool {
+        false
+    }
 }

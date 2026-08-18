@@ -1,7 +1,7 @@
 # Migration Plan
 
 From today's **single shared RocksDB** to the recommended architecture:
-**SQLite per bucket** (Storage Provider) and **ParityDB** (Blockchain Provider).
+**SQLite per bucket** in the Storage Provider.
 Sequenced to interleave with [Issue #100](https://github.com/paritytech/web3-storage/issues/100)
 (per-bucket isolation), which this evaluation directly informs.
 
@@ -13,32 +13,9 @@ Sequenced to interleave with [Issue #100](https://github.com/paritytech/web3-sto
   every commit/proof/delete is O(n) on the whole leaf set — the core problem
   Issue #100 targets. The backend already sits behind the `StorageBackend` trait
   (`provider-node/src/storage/mod.rs`), selected at startup via `--storage-mode`.
-- **Blockchain Node** — Substrate default backend (RocksDB via `sc-client-db`).
 
 The `StorageBackend` trait is the seam that makes the provider migration low-risk:
 a new backend is a new trait impl, switchable by flag, with no callers changed.
-
----
-
-## Blockchain Node migration (independent, low-risk, do first)
-
-This is a node operational change, not a code change — the runtime is
-DB-agnostic.
-
-1. **A/B validate** on a testnet: run the parachain with `--database rocksdb`
-   vs `--database paritydb` under identical load; confirm the
-   [report 02](02-blockchain-provider-benchmark.md) ranking holds at node level
-   (block-import time, state-read latency, on-disk size, RSS).
-2. **Set the cgroup memory safeguards** ([Step 2](04-configuration-guide.md#step-2--system-memory-safeguards-cgroups)) — mandatory before switching, given ParityDB's page-cache working set.
-3. **Cut over** new nodes to `--database paritydb`. ParityDB cannot read a RocksDB
-   directory in place: for existing nodes, **resync from genesis/warp** into a
-   fresh ParityDB directory, or run paritydb on new nodes and retire rocksdb
-   nodes. No state is lost (it is reconstructible from the chain).
-4. **Rollback:** flip the flag back to `--database rocksdb` and resync — fully
-   reversible.
-
-No application code changes. Can land before or in parallel with the provider
-work.
 
 ---
 
@@ -67,7 +44,7 @@ sharded-vs-shared matrix in [report 01](01-storage-provider-benchmark.md).
   `commit`, `delete_before`, and proof reads become **bounded range operations**
   on `leaves` keyed by position, instead of deserialize-mutate-reserialize of the
   whole set.
-- Apply the [PRAGMAs and pool config](04-configuration-guide.md#storage-provider--sqlite-wal-per-bucket).
+- Apply the [PRAGMAs and pool config](03-configuration-guide.md#storage-provider--sqlite-wal-per-bucket).
 - Add `--storage-mode sqlite` alongside the existing `inmemory` / `disk` modes in
   `provider-node/src/cli.rs` + `command.rs`. The old RocksDB `disk` mode stays
   available throughout.
@@ -97,11 +74,7 @@ sharded-vs-shared matrix in [report 01](01-storage-provider-benchmark.md).
 ## Sequencing
 
 ```
-┌─ Blockchain: A/B validate ParityDB ─┐   (independent)
-│  → set cgroups → cut over            │
-└──────────────────────────────────────┘
-
-┌─ Storage (with Issue #100) ─────────────────────────────────────┐
+┌─ Storage (with Issue #100) ──────────────────────────────────────┐
 │ Phase 1: SqliteBucketStore + per-position schema + LRU pool      │
 │ Phase 2: migrate / drain-and-refill, verify MMR roots            │
 │ Phase 3: cutover, keep RocksDB as rollback, then deprecate       │
@@ -114,13 +87,11 @@ sharded-vs-shared matrix in [report 01](01-storage-provider-benchmark.md).
 |------|-----------|
 | New SQLite backend has a correctness bug | Trait-isolated; `--storage-mode disk` (RocksDB) stays selectable for instant rollback |
 | Migration corrupts/loses data | Per-bucket MMR-root verification against on-chain checkpoint before retiring source; idempotent migrator |
-| ParityDB memory pressure on chain node | cgroup `MemoryMin`/`MemoryMax` set before cutover; flag-flip rollback to RocksDB |
-| Too many open buckets exhaust FDs/RAM | LRU pool cap sized from the [config guide](04-configuration-guide.md); SQLite's 3 FDs + 32 KiB per instance give large headroom |
-| Absolute perf differs from tmpfs benchmark | Re-run `just db-bench` + the node A/B on target SSD hardware before final sign-off |
+| Too many open buckets exhaust FDs/RAM | LRU pool cap sized from the [config guide](03-configuration-guide.md); SQLite's 3 FDs + 32 KiB per instance give large headroom |
+| Absolute perf differs from tmpfs benchmark | Re-run `just db-bench` on target SSD hardware before final sign-off |
 
 ## Definition of done
 
-- [ ] Node A/B confirms ParityDB ranking on real hardware; chain runs ParityDB with cgroup safeguards.
 - [ ] `SqliteBucketStore` implements `StorageBackend` with per-position MMR storage; `--storage-mode sqlite` available.
 - [ ] All existing provider-node + client tests pass against the SQLite backend.
 - [ ] Migration verified by MMR-root equality per bucket.

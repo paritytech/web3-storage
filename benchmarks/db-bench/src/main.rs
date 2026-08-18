@@ -1,44 +1,30 @@
 //! Database engine benchmark harness.
 //!
-//! Compares candidate engines on the two component workloads:
-//!   * Storage Provider: sharded (per-bucket DB) vs shared (single DB)
-//!     architectures — Sled/SQLite/RocksDB, plus ParityDB in the shared model
-//!   * Blockchain Node (state trie): RocksDB vs ParityDB
+//! Compares candidate engines on the Storage Provider's workloads across both
+//! architectures under evaluation: sharded (one DB per bucket) vs shared (a
+//! single DB for all buckets) — Sled/SQLite/redb/RocksDB, plus ParityDB in the
+//! shared model.
 //!
 //! Results are emitted as JSON (one record per engine × scenario) for the
 //! reports under `docs/design/database-evaluation/`.
 //!
 //! Examples:
-//!   cargo run -p db-bench --release -- --component storage --output results.json
-//!   cargo run -p db-bench --release -- --component all --quick
+//!   cargo run -p db-bench --release -- --output results.json
+//!   cargo run -p db-bench --release -- --engine sqlite --quick
 
 mod engines;
 mod metrics;
 mod workloads;
 
-use clap::{Parser, ValueEnum};
+use clap::Parser;
 use engines::Engine;
 use std::path::PathBuf;
 use workloads::Context;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-enum Component {
-    /// Storage Provider workloads, both sharded and shared architectures.
-    Storage,
-    /// Blockchain Node state-trie workloads (rocksdb, paritydb).
-    Blockchain,
-    /// Both components.
-    All,
-}
-
 #[derive(Parser, Debug)]
 #[command(about = "Database engine benchmark harness")]
 struct Cli {
-    /// Which component's workloads to run.
-    #[arg(long, value_enum, default_value_t = Component::All)]
-    component: Component,
-
-    /// Restrict to a single engine (otherwise the component's full candidate set).
+    /// Restrict to a single engine (otherwise the full candidate set).
     #[arg(long, value_enum)]
     engine: Option<Engine>,
 
@@ -64,21 +50,19 @@ struct Cli {
 }
 
 /// Sharded (per-bucket-file) candidates — engines viable as many small instances.
-fn storage_sharded_engines() -> Vec<Engine> {
-    vec![Engine::Sled, Engine::Sqlite, Engine::Rocksdb]
+fn sharded_engines() -> Vec<Engine> {
+    vec![Engine::Sled, Engine::Sqlite, Engine::Redb, Engine::Rocksdb]
 }
 /// Shared (single-DB) candidates — per-instance overhead no longer matters, so
-/// ParityDB joins as a fourth candidate.
-fn storage_shared_engines() -> Vec<Engine> {
+/// ParityDB joins as a fifth candidate.
+fn shared_engines() -> Vec<Engine> {
     vec![
         Engine::Rocksdb,
         Engine::Sled,
         Engine::Sqlite,
+        Engine::Redb,
         Engine::Paritydb,
     ]
-}
-fn blockchain_engines() -> Vec<Engine> {
-    vec![Engine::Rocksdb, Engine::Paritydb]
 }
 
 /// Apply the optional `--engine` filter to a candidate list.
@@ -114,14 +98,11 @@ fn main() {
 
     let mut all_records = Vec::new();
 
-    let run_storage = matches!(cli.component, Component::Storage | Component::All);
-    let run_blockchain = matches!(cli.component, Component::Blockchain | Component::All);
-
-    if run_storage {
+    {
         use workloads::storage_shared::Architecture;
 
         // Sharded architecture: one DB file per bucket.
-        for engine in filtered(storage_sharded_engines(), cli.engine) {
+        for engine in filtered(sharded_engines(), cli.engine) {
             eprintln!("[storage/sharded] running {} ...", engine.name());
             let mut records = workloads::storage::run_all(engine, &context);
             tag_architecture(&mut records, "sharded");
@@ -129,13 +110,13 @@ fn main() {
         }
 
         // Shared architecture: one DB holding all buckets.
-        for engine in filtered(storage_shared_engines(), cli.engine) {
+        for engine in filtered(shared_engines(), cli.engine) {
             eprintln!("[storage/shared] running {} ...", engine.name());
             all_records.extend(workloads::storage_shared::run_all(engine, &context));
         }
 
         // Concurrent multi-bucket writes — the decisive cross-architecture test.
-        for engine in filtered(storage_sharded_engines(), cli.engine) {
+        for engine in filtered(sharded_engines(), cli.engine) {
             eprintln!("[storage/concurrent sharded] running {} ...", engine.name());
             all_records.push(workloads::storage_shared::concurrent_write(
                 engine,
@@ -143,20 +124,13 @@ fn main() {
                 Architecture::Sharded,
             ));
         }
-        for engine in filtered(storage_shared_engines(), cli.engine) {
+        for engine in filtered(shared_engines(), cli.engine) {
             eprintln!("[storage/concurrent shared] running {} ...", engine.name());
             all_records.push(workloads::storage_shared::concurrent_write(
                 engine,
                 &context,
                 Architecture::Shared,
             ));
-        }
-    }
-
-    if run_blockchain {
-        for engine in filtered(blockchain_engines(), cli.engine) {
-            eprintln!("[blockchain] running {} ...", engine.name());
-            all_records.extend(workloads::state_trie::run_all(engine, &context));
         }
     }
 

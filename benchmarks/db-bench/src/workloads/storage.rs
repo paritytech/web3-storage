@@ -164,12 +164,25 @@ fn disk_efficiency(engine: Engine, context: &Context, value_size: usize, scenari
 
     let logical = (count * (value_size + 8)) as u64;
     let on_disk = directory_size_bytes(&directory);
+
+    // Steady-state size is what an engine costs day to day, but an engine with
+    // a reclamation API can be scheduled to give space back. Measure both so
+    // the two are not conflated: copy-on-write and log-structured engines look
+    // far worse before compaction than after.
+    let mut store = engine.open(&directory);
+    let has_compaction = store.compact();
+    drop(store);
+    let on_disk_compacted = directory_size_bytes(&directory);
+
     let mut record = Record::new(COMPONENT, scenario, engine.name());
     record.params = json!({ "entries": count, "value_bytes": value_size });
     record.disk_bytes = Some(on_disk);
     record.extra = json!({
         "logical_bytes": logical,
         "amplification": on_disk as f64 / logical.max(1) as f64,
+        "has_compaction_api": has_compaction,
+        "disk_compacted_bytes": on_disk_compacted,
+        "amplification_compacted": on_disk_compacted as f64 / logical.max(1) as f64,
     });
     record
 }
@@ -191,7 +204,15 @@ fn bulk_delete(engine: Engine, context: &Context) -> Record {
     store.flush();
     let delete_keys_elapsed = started.elapsed();
     let size_after_delete = directory_size_bytes(&directory_a);
+
+    // Deleting keys writes tombstones/free-list entries rather than freeing
+    // bytes; time the compaction that actually reclaims them, since production
+    // pruning has to pay this cost somewhere.
+    let compaction_started = Instant::now();
+    let has_compaction = store.compact();
+    let compaction_elapsed = compaction_started.elapsed();
     drop(store);
+    let size_after_compaction = directory_size_bytes(&directory_a);
 
     // Strategy B: drop the store and remove the directory (file-level cleanup).
     let directory_b = context.fresh_directory("provider_delete_rmtree");
@@ -203,8 +224,12 @@ fn bulk_delete(engine: Engine, context: &Context) -> Record {
     record.extra = json!({
         "delete_all_keys_us": delete_keys_elapsed.as_secs_f64() * 1e6,
         "bytes_after_key_delete": size_after_delete,
+        "has_compaction_api": has_compaction,
+        "compaction_us": compaction_elapsed.as_secs_f64() * 1e6,
+        "bytes_after_compaction": size_after_compaction,
         "rmtree_us": remove_elapsed.as_secs_f64() * 1e6,
-        "note": "rmtree models per-bucket-file cleanup; delete_all_keys models shared-DB tombstones",
+        "note": "rmtree models per-bucket-file cleanup; delete_all_keys models shared-DB tombstones, \
+                 whose space is only returned by the subsequent compaction",
     });
     record
 }
