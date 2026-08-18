@@ -210,7 +210,7 @@ mod tests {
         }
 
         let feed = BlockEventInvalidations::new(rx);
-        assert!(matches!(feed.drain(), Invalidation::All));
+        assert_eq!(feed.drain(), Invalidation::All);
     }
 
     #[test]
@@ -220,12 +220,12 @@ mod tests {
             let _ = tx.send(BlockEvent::BucketMembershipChanged { bucket_id });
         }
         let feed = BlockEventInvalidations::new(rx);
-        assert!(matches!(feed.drain(), Invalidation::All));
+        assert_eq!(feed.drain(), Invalidation::All);
 
         // The first drain must have consumed the messages still buffered past
         // the lag, not just flagged `All` and left them queued — otherwise a
         // second drain with nothing new sent would still find them.
-        assert!(matches!(feed.drain(), Invalidation::None));
+        assert_eq!(feed.drain(), Invalidation::None);
     }
 
     #[test]
@@ -236,6 +236,6 @@ mod tests {
         // A dead follower must not fail authorization closed: the feed simply
         // has nothing more to report, leaving the TTL as the only bound.
         let feed = BlockEventInvalidations::new(rx);
-        assert!(matches!(feed.drain(), Invalidation::None));
+        assert_eq!(feed.drain(), Invalidation::None);
     }
 }

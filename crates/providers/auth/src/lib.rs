@@ -11,6 +11,8 @@
 pub mod error;
 pub mod http_auth;
 pub mod membership;
+#[cfg(test)]
+mod test_support;
 pub mod verify;
 
 pub use error::{AuthError, MembershipError};

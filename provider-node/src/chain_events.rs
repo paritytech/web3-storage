@@ -123,10 +123,19 @@ impl From<provider_events::BucketDeleted> for BlockEvent {
 }
 
 /// Decode one block's events into the coordinator-relevant [`BlockEvent`]s.
+///
+/// A membership-changing event whose fields fail to decode is escalated
+/// rather than dropped: unlike the other event kinds, silently missing one
+/// means a revocation is never applied and survives for the full
+/// `--auth-cache-ttl` on a node that is otherwise connected and healthy. See
+/// [`decode_membership`].
 // TODO: the try-each-variant chain below scales poorly as more events become
 // coordinator-relevant; revisit a direct pallet-event -> BlockEvent mapping
 // together with the dynamic-subxt vs runtime-API decision.
-pub fn decode_block_events(events: &subxt::events::Events<PolkadotConfig>) -> Vec<BlockEvent> {
+pub fn decode_block_events(
+    events: &subxt::events::Events<PolkadotConfig>,
+    block_number: u32,
+) -> Vec<BlockEvent> {
     events
         .iter()
         .filter_map(|event| event.ok())
@@ -140,10 +149,16 @@ pub fn decode_block_events(events: &subxt::events::Events<PolkadotConfig>) -> Ve
                 .or_else(|| {
                     decode::<provider_events::BucketCheckpointed>(&event).map(BlockEvent::from)
                 })
-                .or_else(|| decode::<provider_events::BucketCreated>(&event).map(BlockEvent::from))
-                .or_else(|| decode::<provider_events::MemberSet>(&event).map(BlockEvent::from))
-                .or_else(|| decode::<provider_events::MemberRemoved>(&event).map(BlockEvent::from))
-                .or_else(|| decode::<provider_events::BucketDeleted>(&event).map(BlockEvent::from))
+                .or_else(|| {
+                    decode_membership::<provider_events::BucketCreated>(&event, block_number)
+                })
+                .or_else(|| decode_membership::<provider_events::MemberSet>(&event, block_number))
+                .or_else(|| {
+                    decode_membership::<provider_events::MemberRemoved>(&event, block_number)
+                })
+                .or_else(|| {
+                    decode_membership::<provider_events::BucketDeleted>(&event, block_number)
+                })
         })
         .collect()
 }
@@ -165,6 +180,48 @@ fn decode<E: subxt::events::DecodeAsEvent>(
             );
             None
         }
+    }
+}
+
+/// Like [`decode`], but for a membership-changing event: a decode failure
+/// cannot be silently dropped like the other event kinds, since there is no
+/// bucket id left to invalidate and the safety net is a plain TTL, not a
+/// rescan. So it escalates instead, via [`escalate_membership_decode_failure`].
+fn decode_membership<E>(
+    event: &subxt::events::Event<'_, PolkadotConfig>,
+    block_number: u32,
+) -> Option<BlockEvent>
+where
+    E: subxt::events::DecodeAsEvent,
+    BlockEvent: From<E>,
+{
+    match event.decode_fields_as::<E>()? {
+        Ok(decoded) => Some(BlockEvent::from(decoded)),
+        Err(e) => Some(escalate_membership_decode_failure(
+            event.pallet_name(),
+            event.event_name(),
+            block_number,
+            e,
+        )),
+    }
+}
+
+/// A membership event that matched its pallet/event name but whose fields
+/// failed to decode is treated as unknown-scope rather than dropped: which
+/// bucket changed can no longer be named, so every cached member set is
+/// invalidated instead, the same reaction as a lagged or restarted feed.
+fn escalate_membership_decode_failure(
+    pallet: &str,
+    event_name: &str,
+    block_number: u32,
+    err: impl std::fmt::Display,
+) -> BlockEvent {
+    tracing::warn!(
+        "failed to decode {pallet}::{event_name} at block {block_number} against the static \
+         bindings; treating as an unknown membership change: {err}"
+    );
+    BlockEvent::Resubscribed {
+        at_block: block_number,
     }
 }
 
@@ -294,5 +351,19 @@ mod tests {
             BlockEvent::from(ev),
             BlockEvent::BucketMembershipChanged { bucket_id: 8 }
         ));
+    }
+
+    #[test]
+    fn undecodable_membership_event_escalates_to_resubscribed() {
+        // A membership event has no bucket id left to invalidate once its
+        // fields fail to decode, unlike every other event kind here - so it
+        // must escalate to a wholesale re-scan rather than being dropped.
+        let event = escalate_membership_decode_failure(
+            "StorageProvider",
+            "MemberSet",
+            42,
+            "field shape drifted from the static bindings",
+        );
+        assert!(matches!(event, BlockEvent::Resubscribed { at_block: 42 }));
     }
 }

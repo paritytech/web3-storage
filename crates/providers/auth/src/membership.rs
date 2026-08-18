@@ -112,6 +112,7 @@ impl MembershipResolver for StaticMembershipResolver {
 }
 
 /// What a drain of a [`MembershipInvalidations`] feed found.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Invalidation {
     /// Nothing changed since the last drain — the common case, allocation-free.
     None,
@@ -312,6 +313,7 @@ impl MembershipCache {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::{FlakyResolver, QueuedInvalidations};
 
     #[test]
     fn privilege_ladder_is_exhaustive() {
@@ -366,7 +368,7 @@ mod tests {
     // ── MembershipInvalidations ────────────────────────────────────────────
 
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-    use std::sync::{Arc, Mutex};
+    use std::sync::Arc;
 
     /// Resolver that grants `account` an `Admin` role on every bucket and
     /// counts how many times it was actually called, so a test can tell a
@@ -384,51 +386,6 @@ mod tests {
         ) -> Result<Vec<Member>, MembershipError> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             Ok(vec![(self.account.clone(), Role::Admin).into()])
-        }
-    }
-
-    /// Resolver that succeeds once, then fails every call after - so a test
-    /// can seed a fresh cache entry and then force `get_role`'s error arm on
-    /// the very next lookup.
-    struct FlakyResolver {
-        account: AccountId32,
-        calls: Arc<AtomicUsize>,
-    }
-
-    #[async_trait::async_trait]
-    impl MembershipResolver for FlakyResolver {
-        async fn fetch_members(
-            &self,
-            _bucket_id: BucketId,
-        ) -> Result<Vec<Member>, MembershipError> {
-            let call = self.calls.fetch_add(1, Ordering::SeqCst) + 1;
-            if call == 1 {
-                Ok(vec![(self.account.clone(), Role::Admin).into()])
-            } else {
-                Err(MembershipError::Unavailable("chain down".to_string()))
-            }
-        }
-    }
-
-    /// A [`MembershipInvalidations`] a test can load with one value to return
-    /// on the next [`drain`](MembershipInvalidations::drain), simulating an
-    /// event arriving between two lookups.
-    #[derive(Clone)]
-    struct QueuedInvalidations(Arc<Mutex<Option<Invalidation>>>);
-
-    impl QueuedInvalidations {
-        fn new() -> Self {
-            Self(Arc::new(Mutex::new(None)))
-        }
-
-        fn queue(&self, invalidation: Invalidation) {
-            *self.0.lock().unwrap() = Some(invalidation);
-        }
-    }
-
-    impl MembershipInvalidations for QueuedInvalidations {
-        fn drain(&self) -> Invalidation {
-            self.0.lock().unwrap().take().unwrap_or(Invalidation::None)
         }
     }
 

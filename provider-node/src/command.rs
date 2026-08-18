@@ -180,8 +180,8 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
 /// Start the chain-state coordinator, which keeps
 /// `chain_state.current_anchor_block` and `chain_state.provider_info` in sync
-/// with the chain, and drops `state.auth`'s cached membership for any bucket
-/// whose member set changes on-chain.
+/// with the chain, and broadcasts bucket-membership changes on the
+/// block-event fan-out, which the auth membership cache drains.
 ///
 /// Returns `None` only when the provider id isn't a valid account. The
 /// coordinator itself never fails to start: it connects in the background and

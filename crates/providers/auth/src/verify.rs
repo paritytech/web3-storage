@@ -206,6 +206,7 @@ mod tests {
     use crate::error::MembershipError;
     use crate::http_auth::build_auth_header;
     use crate::membership::{Member, StaticMembershipResolver};
+    use crate::test_support::FlakyResolver;
     use sp_core::Pair;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
@@ -408,28 +409,6 @@ mod tests {
             .require_role(Some(&header), "GET", 2, RequiredRole::Reader)
             .await;
         assert!(matches!(replayed, Err(AuthError::AuthRequired)));
-    }
-
-    /// Resolver that succeeds once, then fails - lets a test seed a cached
-    /// entry and then force `require_role`'s error arm on the next call.
-    struct FlakyResolver {
-        account: AccountId32,
-        calls: Arc<AtomicUsize>,
-    }
-
-    #[async_trait::async_trait]
-    impl MembershipResolver for FlakyResolver {
-        async fn fetch_members(
-            &self,
-            _bucket_id: BucketId,
-        ) -> Result<Vec<Member>, MembershipError> {
-            let call = self.calls.fetch_add(1, Ordering::SeqCst) + 1;
-            if call == 1 {
-                Ok(vec![(self.account.clone(), Role::Admin).into()])
-            } else {
-                Err(MembershipError::Unavailable("chain down".to_string()))
-            }
-        }
     }
 
     #[tokio::test]

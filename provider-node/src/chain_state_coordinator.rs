@@ -410,7 +410,7 @@ impl ChainStateCoordinator {
 
             // Fan out the coordinator-relevant events. Send failures just mean
             // no coordinator is subscribed.
-            for event in chain_events::decode_block_events(&events) {
+            for event in chain_events::decode_block_events(&events, block_number) {
                 let _ = self.events_tx.send(event);
             }
 
@@ -1359,7 +1359,7 @@ mod tests {
         fn membership_changed_bucket_ids(
             events: &subxt::events::Events<PolkadotConfig>,
         ) -> Vec<u64> {
-            chain_events::decode_block_events(events)
+            chain_events::decode_block_events(events, 0)
                 .into_iter()
                 .filter_map(|event| match event {
                     BlockEvent::BucketMembershipChanged { bucket_id } => Some(bucket_id),
