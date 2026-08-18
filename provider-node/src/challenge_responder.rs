@@ -396,12 +396,16 @@ impl ChallengeResponder {
             challenge.bucket_id
         );
 
-        // Step 1: Generate MMR proof (includes the leaf with data_root)
-        let mmr_proof = match self
-            .state
-            .storage
-            .get_mmr_proof(challenge.bucket_id, challenge.leaf_index)
-        {
+        // Step 1: Generate MMR proof (includes the leaf with data_root).
+        // The challenge's leaf_index is relative to the cited commitment's
+        // start_seq, and the cited root may predate later commits or prunes,
+        // so the proof is rebuilt for that exact commitment state.
+        let mmr_proof = match self.state.storage.get_mmr_proof_for_commitment(
+            challenge.bucket_id,
+            challenge.mmr_root,
+            challenge.start_seq,
+            challenge.leaf_index,
+        ) {
             Ok(proof) => proof,
             Err(e) => {
                 tracing::error!("Failed to generate MMR proof: {}", e);

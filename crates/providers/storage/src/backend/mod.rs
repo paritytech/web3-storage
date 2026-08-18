@@ -225,6 +225,21 @@ pub trait StorageBackend: Send + Sync {
         leaf_index: u64,
     ) -> Result<storage_primitives::MmrProof, Error>;
 
+    /// Rebuild the MMR proof for the exact commitment a challenge cites.
+    ///
+    /// A challenge references a signed commitment's `(mmr_root, start_seq)`
+    /// and a `leaf_index` relative to that `start_seq` — not the bucket's
+    /// current state, which may have moved on through later commits or
+    /// prunes. The proof must therefore be generated against the cited MMR
+    /// state, reconstructed from the leaf history.
+    fn get_mmr_proof_for_commitment(
+        &self,
+        bucket_id: BucketId,
+        commitment_root: H256,
+        commitment_start_seq: u64,
+        leaf_index: u64,
+    ) -> Result<storage_primitives::MmrProof, Error>;
+
     /// Get MMR peaks.
     fn get_mmr_peaks(&self, bucket_id: BucketId) -> Result<(H256, Vec<H256>), Error>;
 
