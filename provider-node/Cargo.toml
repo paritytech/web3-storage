@@ -22,6 +22,7 @@ serde_json = { workspace = true }
 sp-core = { workspace = true, features = ["std"] }
 sp-runtime = { workspace = true, features = ["std"] }
 subxt = { workspace = true, features = ["light-client"] }
+subxt-rpcs = { workspace = true }
 subxt-signer = { workspace = true }
 base64 = { workspace = true }
 thiserror = { workspace = true }
