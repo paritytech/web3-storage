@@ -125,13 +125,23 @@ async fn membership_event_leaves_other_buckets_cached() {
 
 #[tokio::test]
 async fn events_for_uncached_buckets_are_a_noop() {
-    let (_auth, calls, _keypair, tx) = counting_authenticator();
+    let (auth, calls, keypair, tx) = counting_authenticator();
 
     // Nothing cached yet — an event for a bucket nobody has looked up must
-    // reach no resolver and not panic.
+    // not panic and must not itself cost a resolve.
     let _ = tx.send(BlockEvent::BucketMembershipChanged { bucket_id: 42 });
 
-    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    // The next lookup for that same bucket drains the event first (calling
+    // `invalidate` on an already-absent entry, which must be a no-op) and
+    // then does its own ordinary resolve — exactly one call, not zero and
+    // not two, proving the event was actually drained rather than never
+    // reached at all.
+    authorized_read(&auth, &keypair, 42).await;
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        1,
+        "an event for a never-cached bucket must cost exactly the lookup's own resolve, not more"
+    );
 }
 
 #[tokio::test]

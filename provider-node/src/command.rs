@@ -67,7 +67,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // bootstrap `Resubscribed` the coordinator broadcasts on first connect.
     let resolver = ChainMembershipResolver::new(chain_rx.clone());
     // Incoherent, not unsafe - warn rather than clamp an explicit choice.
-    if cli.auth.auth_max_stale < cli.auth.auth_cache_ttl {
+    if cli.auth.auth_max_stale <= cli.auth.auth_cache_ttl {
         tracing::warn!(
             "--auth-max-stale ({}s) is below --auth-cache-ttl ({}s): a cached member set \
              will never be served once the chain is unreachable",

@@ -149,19 +149,13 @@ impl MembershipInvalidations for NoInvalidations {
 /// TTL cache in front of a [`MembershipResolver`].
 pub(crate) struct MembershipCache {
     cache: DashMap<BucketId, CachedMembership>,
-    /// How many invalidations this cache has processed. A lookup records it
-    /// before calling the resolver and re-checks it, under the entry's shard
-    /// lock, before persisting: if it moved, an invalidation landed while the
-    /// fetch was in flight and that result is already stale. Without it a
-    /// fetch started just before a revocation could write the pre-revocation
-    /// members back *after* the invalidation ran, resurrecting revoked access
-    /// for a full TTL.
+    /// Invalidations processed so far. A lookup samples it before resolving and
+    /// re-checks it before persisting: if it moved, the fetch raced an
+    /// invalidation and its result is dropped rather than resurrecting revoked
+    /// access for a full TTL.
     ///
-    /// One counter for the whole cache, not one per bucket: invalidating
-    /// bucket B therefore also discards an in-flight fetch of unrelated
-    /// bucket A. That costs A's next request a re-resolve and can never
-    /// produce a wrong answer, which is the right trade for zero per-bucket
-    /// storage.
+    /// It is cache-wide, so invalidating one bucket also discards in-flight
+    /// fetches for others - an extra re-resolve, never a wrong answer.
     epoch: AtomicU64,
     /// How long an entry is served before the chain is rechecked.
     ttl: Duration,
@@ -258,6 +252,13 @@ impl MembershipCache {
                 Ok(role)
             }
             Err(e) => {
+                // Drain again: a change for this bucket may have arrived during
+                // the refetch, and a member set already known to be outdated
+                // must not be served. Draining rather than comparing the epoch,
+                // because the epoch is cache-wide - an unrelated bucket's change
+                // keeps this one's stale-if-error grace.
+                self.drain_invalidations();
+
                 // stale-if-error, not stale-while-revalidate: stale data is
                 // served only because a refetch failed, and only up to
                 // max_stale - never merely because the TTL lapsed.
@@ -630,6 +631,131 @@ mod tests {
             calls.load(Ordering::SeqCst),
             2,
             "the discarded first-ever fetch must not have been cached, so this lookup must re-resolve"
+        );
+    }
+
+    /// Resolver that succeeds once (to seed a cache entry), then blocks until
+    /// signaled and fails - so a test can land an invalidation while this
+    /// bucket's own refetch is in flight and about to return `Err`.
+    struct GatedFlakyResolver {
+        account: AccountId32,
+        calls: Arc<AtomicUsize>,
+        proceed: Arc<AtomicBool>,
+    }
+
+    #[async_trait::async_trait]
+    impl MembershipResolver for GatedFlakyResolver {
+        async fn fetch_members(
+            &self,
+            _bucket_id: BucketId,
+        ) -> Result<Vec<Member>, MembershipError> {
+            let call = self.calls.fetch_add(1, Ordering::SeqCst) + 1;
+            if call == 1 {
+                return Ok(vec![(self.account.clone(), Role::Admin).into()]);
+            }
+            while !self.proceed.load(Ordering::SeqCst) {
+                tokio::task::yield_now().await;
+            }
+            Err(MembershipError::Unavailable("chain down".to_string()))
+        }
+    }
+
+    #[tokio::test]
+    async fn an_unrelated_invalidation_still_allows_serving_stale() {
+        // The other side of the bound: bucket 2's member set changing says
+        // nothing about bucket 1, so it must not cost bucket 1 its
+        // stale-if-error grace. Guards against reaching for the cache-wide
+        // epoch here - that would refuse on exactly this case while still
+        // missing the one above, since an undrained event bumps no epoch.
+        let account = AccountId32::new([30u8; 32]);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let proceed = Arc::new(AtomicBool::new(false));
+        let cache = Arc::new(
+            MembershipCache::new(GatedFlakyResolver {
+                account: account.clone(),
+                calls: calls.clone(),
+                proceed: proceed.clone(),
+            })
+            .with_ttl(Duration::ZERO)
+            .with_max_stale(Duration::from_secs(300)),
+        );
+
+        // Seed bucket 1.
+        cache.get_role(1, &account).await.unwrap();
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+        // Second lookup refetches (TTL zero) and blocks before failing.
+        let in_flight = {
+            let cache = cache.clone();
+            let account = account.clone();
+            tokio::spawn(async move { cache.get_role(1, &account).await })
+        };
+
+        while calls.load(Ordering::SeqCst) == 1 {
+            tokio::task::yield_now().await;
+        }
+
+        // An unrelated bucket is invalidated while bucket 1's refetch is in
+        // flight, bumping the cache-wide epoch without touching bucket 1's
+        // entry at all.
+        cache.invalidate(2);
+
+        proceed.store(true, Ordering::SeqCst);
+        let result = in_flight.await.unwrap();
+
+        assert_eq!(
+            result.expect("an unrelated bucket's change must not refuse this one"),
+            Some(Role::Admin),
+            "bucket 1's cached role is still within max_stale and nothing said it changed"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_undrained_event_for_this_bucket_is_not_served_stale() {
+        // The window finding 9 actually names: an event for *this* bucket
+        // arrives after this request's own drain, and no concurrent request
+        // drains it either. The cached member set is known-outdated by the
+        // time the error arm runs, so it must not be served.
+        let account = AccountId32::new([31u8; 32]);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let proceed = Arc::new(AtomicBool::new(false));
+        let feed = QueuedInvalidations::new();
+        let cache = Arc::new(
+            MembershipCache::new(GatedFlakyResolver {
+                account: account.clone(),
+                calls: calls.clone(),
+                proceed: proceed.clone(),
+            })
+            .with_ttl(Duration::ZERO)
+            .with_max_stale(Duration::from_secs(300))
+            .with_invalidations(feed.clone()),
+        );
+
+        cache.get_role(1, &account).await.unwrap();
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+        let in_flight = {
+            let cache = cache.clone();
+            let account = account.clone();
+            tokio::spawn(async move { cache.get_role(1, &account).await })
+        };
+
+        while calls.load(Ordering::SeqCst) == 1 {
+            tokio::task::yield_now().await;
+        }
+
+        // Bucket 1's membership changed while its refetch was in flight.
+        // Nothing drains this: the in-flight request already drained, and no
+        // other request is running.
+        feed.queue(Invalidation::Buckets(vec![1]));
+
+        proceed.store(true, Ordering::SeqCst);
+        let result = in_flight.await.unwrap();
+
+        assert!(
+            matches!(result, Err(MembershipError::Unavailable(_))),
+            "a pending event for this very bucket must stop its cached member set \
+             being served stale, got {result:?}"
         );
     }
 
