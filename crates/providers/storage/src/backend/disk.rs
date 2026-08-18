@@ -58,9 +58,10 @@ struct BucketState {
     max_bytes: u64,
     /// Pruned-but-not-yet-erased leaf ranges (the pending-erasure queue).
     pruned: Vec<PrunedRange>,
-    /// Admin-signed deletion receipts, kept even after their ranges are
-    /// erased — permanent evidence for the on-chain `Deleted` defense.
-    deletion_receipts: Vec<super::DeletionReceipt>,
+    /// Admin-signed deletion receipts keyed by `new_start_seq` (one per
+    /// prune point), kept even after their ranges are erased — permanent
+    /// evidence for the on-chain `Deleted` defense.
+    deletion_receipts: std::collections::BTreeMap<u64, super::DeletionReceipt>,
     /// Set when the bucket was deleted on-chain (or the agreement ended).
     /// The bucket row is removed once `leaves` and `pruned` are both empty.
     condemned: bool,
@@ -75,7 +76,7 @@ impl BucketState {
             used_bytes: 0,
             max_bytes,
             pruned: Vec::new(),
-            deletion_receipts: Vec::new(),
+            deletion_receipts: std::collections::BTreeMap::new(),
             condemned: false,
         }
     }
@@ -536,6 +537,13 @@ impl DiskStorage {
     }
 
     /// Delete data before a given sequence number.
+    ///
+    /// The removed leaves move into the bucket's retention stash — the
+    /// provider must stay able to prove commitments covering them until an
+    /// admin deletion receipt is held and the canonical checkpoint passed
+    /// the range, at which point the GC calls
+    /// [`erase_pruned_range`](Self::erase_pruned_range). Quota (`used_bytes`)
+    /// is deliberately NOT credited here: it tracks disk actually consumed.
     pub fn delete_before(
         &self,
         bucket_id: BucketId,
@@ -558,10 +566,15 @@ impl DiskStorage {
             });
         }
 
-        // Remove leaves before new_start_seq
+        // Move leaves before new_start_seq into the retention stash
         let to_remove = (new_start_seq - bucket.start_seq) as usize;
         if to_remove > 0 {
-            bucket.leaves.drain(0..to_remove);
+            let removed: Vec<MmrLeaf> = bucket.leaves.drain(0..to_remove).collect();
+            bucket.pruned.push(PrunedRange {
+                first_seq: bucket.start_seq,
+                leaves: removed,
+                new_start_seq,
+            });
             bucket.start_seq = new_start_seq;
 
             // Recalculate MMR
@@ -575,6 +588,248 @@ impl DiskStorage {
         }
 
         Ok((bucket.mmr_root, bucket.start_seq, bucket.leaf_count()))
+    }
+
+    /// Set/refresh the bucket quota learned from the chain agreement.
+    pub fn set_bucket_quota(&self, bucket_id: BucketId, max_bytes: u64) -> Result<(), Error> {
+        let _guard = self.lock_writes();
+        let mut bucket = self
+            .get_bucket(bucket_id)
+            .ok_or(Error::BucketNotFound(bucket_id))?;
+        if bucket.max_bytes != max_bytes {
+            bucket.max_bytes = max_bytes;
+            self.update_bucket(bucket_id, &bucket)?;
+        }
+        Ok(())
+    }
+
+    /// Pruned ranges awaiting physical erasure, oldest first.
+    pub fn pruned_ranges(&self, bucket_id: BucketId) -> Vec<super::PrunedRangeInfo> {
+        let Some(bucket) = self.get_bucket(bucket_id) else {
+            return Vec::new();
+        };
+        bucket
+            .pruned
+            .iter()
+            .map(|r| super::PrunedRangeInfo {
+                first_seq: r.first_seq,
+                end_seq: r.first_seq.saturating_add(r.leaves.len() as u64),
+                new_start_seq: r.new_start_seq,
+                has_receipt: bucket.deletion_receipts.contains_key(&r.new_start_seq),
+            })
+            .collect()
+    }
+
+    /// Whether the bucket was condemned (deleted on-chain / agreement gone).
+    pub fn is_condemned(&self, bucket_id: BucketId) -> bool {
+        self.get_bucket(bucket_id).is_some_and(|b| b.condemned)
+    }
+
+    /// Store an admin-signed deletion receipt for a stashed range (matched
+    /// by `new_start_seq`); replaces a previous receipt for the same range.
+    pub fn attach_deletion_receipt(
+        &self,
+        bucket_id: BucketId,
+        receipt: super::DeletionReceipt,
+    ) -> Result<(), Error> {
+        let _guard = self.lock_writes();
+        let mut bucket = self
+            .get_bucket(bucket_id)
+            .ok_or(Error::BucketNotFound(bucket_id))?;
+        let covers_stashed_range = bucket
+            .pruned
+            .iter()
+            .any(|r| r.new_start_seq == receipt.new_start_seq);
+        if !covers_stashed_range {
+            return Err(Error::InvalidStartSeq {
+                requested: receipt.new_start_seq,
+                current: bucket.start_seq,
+                end: bucket.start_seq.saturating_add(bucket.leaf_count()),
+            });
+        }
+        bucket
+            .deletion_receipts
+            .insert(receipt.new_start_seq, receipt);
+        self.update_bucket(bucket_id, &bucket)
+    }
+
+    /// The stored receipt with the smallest `new_start_seq` strictly greater
+    /// than `seq`, if any.
+    pub fn deletion_receipt_covering(
+        &self,
+        bucket_id: BucketId,
+        seq: u64,
+    ) -> Option<super::DeletionReceipt> {
+        use std::ops::Bound;
+        self.get_bucket(bucket_id)?
+            .deletion_receipts
+            .range((Bound::Excluded(seq), Bound::Unbounded))
+            .next()
+            .map(|(_, r)| r.clone())
+    }
+
+    /// Bucket teardown, first half: stash all remaining leaves and mark the
+    /// bucket condemned; `erase_pruned_range` later erases the stash and
+    /// removes the row. If nothing is stored, the row is dropped right away.
+    pub fn condemn_bucket(&self, bucket_id: BucketId) -> Result<(), Error> {
+        let _guard = self.lock_writes();
+        let Some(mut bucket) = self.get_bucket(bucket_id) else {
+            return Ok(()); // already torn down
+        };
+        if bucket.condemned {
+            return Ok(());
+        }
+
+        if !bucket.leaves.is_empty() {
+            let first_seq = bucket.start_seq;
+            let leaves = std::mem::take(&mut bucket.leaves);
+            let new_start_seq = first_seq.saturating_add(leaves.len() as u64);
+            bucket.pruned.push(PrunedRange {
+                first_seq,
+                leaves,
+                new_start_seq,
+            });
+            bucket.start_seq = new_start_seq;
+            bucket.mmr_root = crate::mmr::Mmr::new().root();
+        }
+        bucket.condemned = true;
+
+        if bucket.pruned.is_empty() {
+            // Nothing committed was ever stored: no liability, drop the row.
+            let cf = self
+                .db
+                .cf_handle(CF_BUCKETS)
+                .ok_or_else(|| Error::Storage("Buckets CF not found".to_string()))?;
+            self.db
+                .delete_cf(&cf, bucket_id.to_le_bytes())
+                .map_err(|e| Error::Storage(e.to_string()))?;
+            return Ok(());
+        }
+        self.update_bucket(bucket_id, &bucket)
+    }
+
+    /// Physically erase one stashed range. See the trait docs for the
+    /// contract; checking that liability has passed is the caller's job.
+    pub fn erase_pruned_range(
+        &self,
+        bucket_id: BucketId,
+        first_seq: u64,
+    ) -> Result<super::EraseOutcome, Error> {
+        let _guard = self.lock_writes();
+        let mut bucket = self
+            .get_bucket(bucket_id)
+            .ok_or(Error::BucketNotFound(bucket_id))?;
+        let Some(pos) = bucket.pruned.iter().position(|r| r.first_seq == first_seq) else {
+            return Ok(super::EraseOutcome::default()); // already erased
+        };
+        let range = bucket.pruned.remove(pos);
+
+        // Gather refcount decrements: one per encounter along each leaf tree,
+        // symmetric with commit's increments.
+        let mut decrements: std::collections::HashMap<H256, u64> = std::collections::HashMap::new();
+        for leaf in &range.leaves {
+            let walk = self.try_walk_tree(leaf.data_root, &mut |hash, _| {
+                *decrements.entry(hash).or_default() += 1;
+            });
+            if let Err(e) = walk {
+                // Nodes reached before the failure genuinely lose this
+                // leaf's reference; unreachable ones keep their count and
+                // leak — the safe direction.
+                tracing::warn!(
+                    bucket_id,
+                    error = %e,
+                    "erase: leaf tree incomplete, applying partial decrements"
+                );
+            }
+        }
+
+        let cf_nodes = self
+            .db
+            .cf_handle(CF_NODES)
+            .ok_or_else(|| Error::Storage("Nodes CF not found".to_string()))?;
+        let cf_refcounts = self
+            .db
+            .cf_handle(CF_REFCOUNTS)
+            .ok_or_else(|| Error::Storage("Refcounts CF not found".to_string()))?;
+        let cf_buckets = self
+            .db
+            .cf_handle(CF_BUCKETS)
+            .ok_or_else(|| Error::Storage("Buckets CF not found".to_string()))?;
+
+        let mut batch = rocksdb::WriteBatch::default();
+        let mut nodes_deleted = 0u64;
+        // charged bucket -> bytes to credit back to its used_bytes
+        let mut credits: std::collections::HashMap<u64, u64> = std::collections::HashMap::new();
+        for (hash, n) in decrements {
+            let Some((count, charged_bucket, size)) = self.refcount_entry(&hash)? else {
+                tracing::warn!(
+                    bucket_id,
+                    hash = %format!("0x{}", hex::encode(hash.as_bytes())),
+                    "erase: refcount entry missing, node kept"
+                );
+                continue;
+            };
+            let new_count = count.saturating_sub(n);
+            if new_count == 0 {
+                batch.delete_cf(&cf_nodes, hash.as_bytes());
+                batch.delete_cf(&cf_refcounts, hash.as_bytes());
+                nodes_deleted += 1;
+                *credits.entry(charged_bucket).or_default() += size;
+            } else {
+                batch.put_cf(
+                    &cf_refcounts,
+                    hash.as_bytes(),
+                    encode_refcount(new_count, charged_bucket, size),
+                );
+            }
+        }
+        let bytes_freed: u64 = credits.values().sum();
+
+        // Apply quota credits; the erasing bucket's own row may be credited.
+        let mut rows: std::collections::HashMap<u64, BucketState> =
+            std::collections::HashMap::new();
+        rows.insert(bucket_id, bucket);
+        for (credited, bytes) in credits {
+            if let std::collections::hash_map::Entry::Vacant(entry) = rows.entry(credited) {
+                match DiskStorage::get_bucket(self, credited) {
+                    Some(state) => {
+                        entry.insert(state);
+                    }
+                    None => {
+                        tracing::warn!(
+                            credited,
+                            bytes,
+                            "erase: charged bucket no longer exists, credit dropped"
+                        );
+                        continue;
+                    }
+                }
+            }
+            if let Some(state) = rows.get_mut(&credited) {
+                state.used_bytes = state.used_bytes.saturating_sub(bytes);
+            }
+        }
+        for (id, state) in rows {
+            let fully_gone = id == bucket_id
+                && state.condemned
+                && state.leaves.is_empty()
+                && state.pruned.is_empty();
+            if fully_gone {
+                batch.delete_cf(&cf_buckets, id.to_le_bytes());
+            } else {
+                let value =
+                    bincode::serialize(&state).map_err(|e| Error::Serialization(e.to_string()))?;
+                batch.put_cf(&cf_buckets, id.to_le_bytes(), value);
+            }
+        }
+
+        self.db
+            .write(batch)
+            .map_err(|e| Error::Storage(e.to_string()))?;
+        Ok(super::EraseOutcome {
+            nodes_deleted,
+            bytes_freed,
+        })
     }
 
     /// Get MMR proof for a leaf.
@@ -628,31 +883,45 @@ impl DiskStorage {
             .get_bucket(bucket_id)
             .ok_or(Error::BucketNotFound(bucket_id))?;
 
-        // Rebase the commitment window onto the local leaf vector, which
-        // covers [bucket.start_seq, bucket.start_seq + leaves.len()).
-        if commitment_start_seq < bucket.start_seq {
-            return Err(Error::NodeNotFound(format!(
-                "leaves from seq {commitment_start_seq} pruned (local start_seq {})",
-                bucket.start_seq
-            )));
+        // Full known leaf history in sequence order: stashed (pruned but not
+        // yet erased) ranges first, then the live leaves. Ranges are pushed
+        // in prune order, so this is already sorted; the sort defends the
+        // invariant cheaply.
+        let mut history: Vec<(u64, &MmrLeaf)> = Vec::new();
+        for range in &bucket.pruned {
+            for (i, leaf) in range.leaves.iter().enumerate() {
+                history.push((range.first_seq.saturating_add(i as u64), leaf));
+            }
         }
-        let offset = (commitment_start_seq - bucket.start_seq) as usize;
-        if offset > bucket.leaves.len() {
-            return Err(Error::NodeNotFound(format!(
-                "no leaves at seq {commitment_start_seq} (local end {})",
-                bucket.start_seq.saturating_add(bucket.leaf_count())
-            )));
+        for (i, leaf) in bucket.leaves.iter().enumerate() {
+            history.push((bucket.start_seq.saturating_add(i as u64), leaf));
         }
-        let window = &bucket.leaves[offset..];
+        history.sort_by_key(|(seq, _)| *seq);
+
+        let start_pos = history
+            .iter()
+            .position(|(seq, _)| *seq == commitment_start_seq)
+            .ok_or_else(|| {
+                Error::NodeNotFound(format!(
+                    "no leaf at seq {commitment_start_seq} (pruned and erased, or never committed)"
+                ))
+            })?;
+        let window = &history[start_pos..];
 
         // The commitment is some prefix of `window`; replay until the root
-        // matches. First match wins: a longer prefix hashes differently.
+        // matches, stopping at any sequence gap (an erased middle range).
+        // First match wins: a longer prefix hashes differently.
         // Linear scan with one root recompute per pushed leaf — fine at
         // current bucket sizes; cache (root -> leaf_count) if buckets grow
         // past ~10^4 leaves.
         let mut mmr = crate::mmr::Mmr::new();
         let mut matched_count = None;
-        for (i, leaf) in window.iter().enumerate() {
+        let mut expected_seq = commitment_start_seq;
+        for (i, (seq, leaf)) in window.iter().enumerate() {
+            if *seq != expected_seq {
+                break;
+            }
+            expected_seq = expected_seq.saturating_add(1);
             mmr.push(blake2_256(&leaf.encode()));
             if mmr.root() == commitment_root {
                 matched_count = Some(i + 1);
@@ -672,7 +941,7 @@ impl DiskStorage {
             )));
         }
 
-        let leaf = window[leaf_index as usize].clone();
+        let leaf = window[leaf_index as usize].1.clone();
         let (siblings, path, peaks) = mmr
             .proof_with_path(leaf_index)
             .ok_or(Error::NodeNotFound(format!("mmr_proof_{leaf_index}")))?;
@@ -770,6 +1039,46 @@ impl StorageBackend for DiskStorage {
         new_start_seq: u64,
     ) -> Result<(H256, u64, u64), Error> {
         self.delete_before(bucket_id, new_start_seq)
+    }
+
+    fn attach_deletion_receipt(
+        &self,
+        bucket_id: BucketId,
+        receipt: super::DeletionReceipt,
+    ) -> Result<(), Error> {
+        self.attach_deletion_receipt(bucket_id, receipt)
+    }
+
+    fn deletion_receipt_covering(
+        &self,
+        bucket_id: BucketId,
+        seq: u64,
+    ) -> Option<super::DeletionReceipt> {
+        self.deletion_receipt_covering(bucket_id, seq)
+    }
+
+    fn set_bucket_quota(&self, bucket_id: BucketId, max_bytes: u64) -> Result<(), Error> {
+        self.set_bucket_quota(bucket_id, max_bytes)
+    }
+
+    fn pruned_ranges(&self, bucket_id: BucketId) -> Vec<super::PrunedRangeInfo> {
+        self.pruned_ranges(bucket_id)
+    }
+
+    fn is_condemned(&self, bucket_id: BucketId) -> bool {
+        self.is_condemned(bucket_id)
+    }
+
+    fn erase_pruned_range(
+        &self,
+        bucket_id: BucketId,
+        first_seq: u64,
+    ) -> Result<super::EraseOutcome, Error> {
+        self.erase_pruned_range(bucket_id, first_seq)
+    }
+
+    fn condemn_bucket(&self, bucket_id: BucketId) -> Result<(), Error> {
+        self.condemn_bucket(bucket_id)
     }
 
     fn get_mmr_proof(
@@ -1131,6 +1440,128 @@ mod tests {
     }
 
     #[test]
+    fn delete_before_keeps_used_bytes_until_erasure() {
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        storage.init_bucket(1, u64::MAX).unwrap();
+        let (root, _) = store_two_chunk_tree(&storage, 1, 0);
+        storage.commit(1, vec![root]).unwrap();
+        let used = storage.get_bucket(1).unwrap().used_bytes;
+        assert_eq!(used, 72); // 2 chunks of 4 + internal node of 64
+
+        storage.delete_before(1, 1).unwrap();
+        // Quota tracks disk actually consumed: the stash still holds the
+        // bytes, so nothing is credited at prune time.
+        assert_eq!(storage.get_bucket(1).unwrap().used_bytes, used);
+
+        let outcome = storage.erase_pruned_range(1, 0).unwrap();
+        assert_eq!(outcome.nodes_deleted, 3);
+        assert_eq!(outcome.bytes_freed, 72);
+        assert_eq!(storage.get_bucket(1).unwrap().used_bytes, 0);
+        assert!(storage.get_node(&root).is_none());
+    }
+
+    #[test]
+    fn erase_keeps_shared_nodes_and_credits_the_charged_bucket() {
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        storage.init_bucket(1, u64::MAX).unwrap();
+        storage.init_bucket(2, u64::MAX).unwrap();
+
+        // Both buckets commit the same single-chunk leaf; bucket 1 stored it
+        // first and carries the charge.
+        let data = vec![7u8; 16];
+        let hash = blake2_256(&data);
+        storage.store_node(1, hash, data.clone(), None).unwrap();
+        storage.store_node(2, hash, data, None).unwrap();
+        storage.commit(1, vec![hash]).unwrap();
+        storage.commit(2, vec![hash]).unwrap();
+        assert_eq!(storage.get_bucket(1).unwrap().used_bytes, 16);
+        assert_eq!(storage.get_bucket(2).unwrap().used_bytes, 0);
+
+        // Bucket 1 deletes: the node survives (bucket 2 still references it)
+        // and nothing is credited — the bytes are still on disk.
+        storage.delete_before(1, 1).unwrap();
+        let outcome = storage.erase_pruned_range(1, 0).unwrap();
+        assert_eq!(outcome, super::super::EraseOutcome::default());
+        assert!(storage.get_node(&hash).is_some());
+        assert_eq!(storage.refcount_entry(&hash).unwrap(), Some((1, 1, 16)));
+        assert_eq!(storage.get_bucket(1).unwrap().used_bytes, 16);
+
+        // Bucket 2 deletes too: last reference dies, node erased, and the
+        // credit goes to the bucket that was charged (bucket 1).
+        storage.delete_before(2, 1).unwrap();
+        let outcome = storage.erase_pruned_range(2, 0).unwrap();
+        assert_eq!(outcome.nodes_deleted, 1);
+        assert_eq!(outcome.bytes_freed, 16);
+        assert!(storage.get_node(&hash).is_none());
+        assert_eq!(storage.get_bucket(1).unwrap().used_bytes, 0);
+    }
+
+    #[test]
+    fn erase_is_idempotent() {
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        bucket_with_leaves(&storage, 1, 2);
+        storage.delete_before(1, 1).unwrap();
+
+        let first = storage.erase_pruned_range(1, 0).unwrap();
+        assert!(first.nodes_deleted > 0);
+        let second = storage.erase_pruned_range(1, 0).unwrap();
+        assert_eq!(second, super::super::EraseOutcome::default());
+    }
+
+    #[test]
+    fn condemn_then_erase_removes_bucket_row() {
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        let roots = bucket_with_leaves(&storage, 1, 2);
+
+        storage.condemn_bucket(1).unwrap();
+        assert!(storage.is_condemned(1));
+        let ranges = storage.pruned_ranges(1);
+        assert_eq!(ranges.len(), 1);
+        assert_eq!((ranges[0].first_seq, ranges[0].end_seq), (0, 2));
+        // Condemning twice is a no-op.
+        storage.condemn_bucket(1).unwrap();
+        assert!(storage.is_condemned(1));
+
+        let outcome = storage.erase_pruned_range(1, 0).unwrap();
+        assert_eq!(outcome.nodes_deleted, 2);
+        assert!(storage.get_bucket(1).is_none(), "bucket row must be gone");
+        for root in roots {
+            assert!(storage.get_node(&root).is_none());
+        }
+
+        // Condemning a bucket that never stored anything drops it directly.
+        storage.init_bucket(2, u64::MAX).unwrap();
+        storage.condemn_bucket(2).unwrap();
+        assert!(storage.get_bucket(2).is_none());
+    }
+
+    #[test]
+    fn set_bucket_quota_enforced_on_next_store() {
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        storage.init_bucket(1, u64::MAX).unwrap();
+
+        let data = vec![1u8; 8];
+        let hash = blake2_256(&data);
+        storage.store_node(1, hash, data, None).unwrap();
+
+        storage.set_bucket_quota(1, 10).unwrap();
+        let data2 = vec![2u8; 8];
+        let hash2 = blake2_256(&data2);
+        let err = storage.store_node(1, hash2, data2, None).unwrap_err();
+        assert!(
+            matches!(err, Error::QuotaExceeded { used: 8, max: 10 }),
+            "got {err:?}"
+        );
+        // Unknown bucket errors instead of creating state.
+        assert!(storage.set_bucket_quota(99, 10).is_err());
+    }
+
+    #[test]
     fn proof_for_older_commitment_matches_cited_root() {
         let dir = TempDir::new().unwrap();
         let storage = DiskStorage::new(dir.path()).unwrap();
@@ -1183,7 +1614,7 @@ mod tests {
     }
 
     #[test]
-    fn proof_for_pruned_commitment_errors() {
+    fn proof_from_stash_until_erased() {
         let dir = TempDir::new().unwrap();
         let storage = DiskStorage::new(dir.path()).unwrap();
         bucket_with_leaves(&storage, 1, 2);
@@ -1191,8 +1622,15 @@ mod tests {
 
         storage.delete_before(1, 2).unwrap();
 
-        // The cited commitment starts below the local start_seq: its leaves
-        // are gone (until a retention stash exists), so this must error.
+        // Pruned leaves live on in the stash: the provider must stay able to
+        // prove the old commitment while it is still challengeable.
+        let proof = storage
+            .get_mmr_proof_for_commitment(1, old_root, 0, 0)
+            .unwrap();
+        assert!(storage_primitives::verify_mmr_proof(&proof, &old_root));
+
+        // After physical erasure the leaves (and proofs) are gone for good.
+        storage.erase_pruned_range(1, 0).unwrap();
         assert!(storage
             .get_mmr_proof_for_commitment(1, old_root, 0, 0)
             .is_err());
