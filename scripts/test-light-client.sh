@@ -5,9 +5,11 @@
 #
 # Starts the provider with --chain-transport light against an already-running
 # local zombienet (relay + parachain, e.g. `just start-chain`), using the
-# chain specs from zombienet's network directory: the relay's raw spec as-is,
-# and the parachain's raw spec with the live boot nodes injected (zombienet
-# only writes boot nodes into the non-raw variant, which smoldot cannot use).
+# relay's raw spec from zombienet's network directory as-is, and a minimal
+# parachain spec: the live spec's boot nodes plus a stateRootHash-only genesis
+# (smoldot never executes para genesis — it derives the head from the relay —
+# so the genesis state root alone identifies the chain). This is the same spec
+# shape a production deployment would vet and ship.
 # Waits until the provider's chain-state coordinator reports synced provider
 # info on /info.
 #
@@ -41,29 +43,34 @@ if [ -z "$RELAY_SPEC" ] || [ -z "$PARA_LIVE" ]; then
     exit 1
 fi
 
-# Para spec for smoldot: the collator's spec converted to raw genesis storage
-# (smoldot cannot execute runtimeGenesis; converting the very spec the
-# network runs preserves the genesis hash) plus the advertised boot nodes.
-# chain-spec-builder writes `chain_spec.json` into the working directory.
-CONVERT_DIR=$(mktemp -d "${TMPDIR:-/tmp}/para-raw-spec.XXXXXX")
-(cd "$CONVERT_DIR" && "$OLDPWD/.bin/chain-spec-builder" convert-to-raw "$PARA_LIVE")
-PARA_RAW="$CONVERT_DIR/chain_spec.json"
+# Genesis state root from the running para node. Fetching it trusts that node
+# — fine for a dev script (the FetchFromRpc spec path has the same property);
+# a production spec pins a vetted value here instead.
+PARA_RPC="${PARA_RPC:-http://127.0.0.1:2222}"
+rpc_result() {
+    curl -sf -H 'Content-Type: application/json' \
+        -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"$1\",\"params\":$2}" "$PARA_RPC" \
+        | python3 -c "import json,sys;print(json.load(sys.stdin)['result']$3)"
+}
+GENESIS_HASH=$(rpc_result chain_getBlockHash '[0]' '')
+STATE_ROOT=$(rpc_result chain_getHeader "[\"$GENESIS_HASH\"]" "['stateRoot']")
+
+# Para spec for smoldot: the live spec's identity and boot nodes with the
+# genesis replaced by its state root.
 PARA_SPEC=$(mktemp "${TMPDIR:-/tmp}/para-light-spec.XXXXXX.json")
-python3 - "$PARA_RAW" "$PARA_LIVE" "$RELAY_SPEC" "$PARA_SPEC" <<'EOF'
+python3 - "$PARA_LIVE" "$RELAY_SPEC" "$STATE_ROOT" "$PARA_SPEC" <<'EOF'
 import json, sys
-raw = json.load(open(sys.argv[1]))
-live = json.load(open(sys.argv[2]))
-relay = json.load(open(sys.argv[3]))
-raw["bootNodes"] = live.get("bootNodes", [])
-assert raw["bootNodes"], "no boot nodes found in the live parachain spec"
-assert "raw" in raw.get("genesis", {}), "parachain spec conversion did not produce raw genesis"
+live = json.load(open(sys.argv[1]))
+relay = json.load(open(sys.argv[2]))
+assert live.get("bootNodes"), "no boot nodes found in the live parachain spec"
 # smoldot matches a parachain to its relay by exact id; zombienet's para spec
 # says e.g. "westend-local" while the relay spec's id is "westend_local_testnet".
-raw["relay_chain"] = relay["id"]
-json.dump(raw, open(sys.argv[4], "w"))
+live["relay_chain"] = relay["id"]
+live["genesis"] = {"stateRootHash": sys.argv[3]}
+json.dump(live, open(sys.argv[4], "w"))
 EOF
 echo "Relay spec: $RELAY_SPEC"
-echo "Para spec:  $PARA_SPEC (raw genesis + $(python3 -c "import json,sys;print(len(json.load(open('$PARA_SPEC'))['bootNodes']))") boot node(s))"
+echo "Para spec:  $PARA_SPEC (genesis stateRootHash $STATE_ROOT + $(python3 -c "import json,sys;print(len(json.load(open('$PARA_SPEC'))['bootNodes']))") boot node(s))"
 
 KEYFILE=$(mktemp)
 echo "//Alice" > "$KEYFILE" && chmod 600 "$KEYFILE"
