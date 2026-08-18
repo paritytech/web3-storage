@@ -243,15 +243,42 @@ mod benchmarks {
     }
 
     /// Worst case:
+    /// - A real Layer 0 bucket with an accepted primary agreement, so the
+    ///   cleanup path (`cleanup_bucket_internal`) runs the prorated refund
+    ///   and provider-stat updates.
     /// - `UserBuckets` is at `MaxBucketsPerUser` with the target ID inserted
     ///   last, so `retain` walks every other entry before removing it.
     /// - The bucket name being removed from `BucketNameToId` is at max length.
     #[benchmark]
     fn delete_s3_bucket() {
+        let (provider, provider_pk) = create_provider::<T>(0);
         let user = funded_account::<T>("user", 0);
+
+        // Create through the real extrinsic so the Layer 0 bucket and its
+        // agreement exist for the teardown being measured.
         let name = make_bucket_name(63, 1);
-        let s3_bucket_id: S3BucketId = 42;
-        insert_s3_bucket::<T>(&user, s3_bucket_id, &name, 0);
+        let terms: AgreementTermsOf<T> = AgreementTerms {
+            owner: user.clone(),
+            max_bytes: 1_000,
+            duration: 100u32.into(),
+            price_per_byte: 1u32.into(),
+            valid_until: pallet_storage_provider::Pallet::<T>::current_anchor_block()
+                .saturating_add(<T as pallet_storage_provider::Config>::RequestTimeout::get()),
+            nonce: 1,
+            bucket_id: None,
+            replica_params: None,
+        };
+        let sig = sign_terms::<T>(&provider_pk, &terms);
+        let bounded_name: BucketName = name.clone().try_into().unwrap();
+        Pallet::<T>::create_s3_bucket(
+            RawOrigin::Signed(user.clone()).into(),
+            name,
+            provider,
+            terms,
+            sig,
+        )
+        .expect("create_s3_bucket succeeds in benchmark setup");
+        let s3_bucket_id = BucketNameToId::<T>::get(&bounded_name).expect("bucket just created");
 
         // Fill UserBuckets to MaxBucketsPerUser with the target id last.
         let cap = T::MaxBucketsPerUser::get();

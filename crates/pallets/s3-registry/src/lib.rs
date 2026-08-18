@@ -130,8 +130,12 @@ pub mod pallet {
             layer0_bucket_id: u64,
             owner: T::AccountId,
         },
-        /// S3 bucket deleted.
-        S3BucketDeleted { s3_bucket_id: S3BucketId },
+        /// S3 bucket deleted, along with its Layer 0 bucket and agreements.
+        S3BucketDeleted {
+            s3_bucket_id: S3BucketId,
+            /// Prorated refund returned to the owner for unused storage time.
+            refunded: BalanceOf<T>,
+        },
         /// Object metadata stored.
         ObjectPut {
             s3_bucket_id: S3BucketId,
@@ -282,6 +286,17 @@ pub mod pallet {
             ensure!(bucket_info.owner == who, Error::<T>::NotBucketOwner);
             ensure!(bucket_info.object_count == 0, Error::<T>::BucketNotEmpty);
 
+            // Tear down the underlying Layer 0 bucket first (mirrors drive
+            // deletion): ends all agreements with prorated refunds, pays
+            // providers for time served, and removes the bucket. Without
+            // this the L0 bucket and its locked payments would outlive the
+            // S3 bucket. Errors (frozen bucket, pending challenge) propagate
+            // before any S3 state is touched.
+            let refunded = pallet_storage_provider::Pallet::<T>::cleanup_bucket_internal(
+                bucket_info.layer0_bucket_id,
+                &who,
+            )?;
+
             // Remove from storage
             S3Buckets::<T>::remove(s3_bucket_id);
             BucketNameToId::<T>::remove(&bucket_info.name);
@@ -291,7 +306,10 @@ pub mod pallet {
             user_buckets.retain(|&id| id != s3_bucket_id);
             UserBuckets::<T>::insert(&who, user_buckets);
 
-            Self::deposit_event(Event::S3BucketDeleted { s3_bucket_id });
+            Self::deposit_event(Event::S3BucketDeleted {
+                s3_bucket_id,
+                refunded,
+            });
 
             Ok(())
         }
