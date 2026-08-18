@@ -168,8 +168,7 @@ impl Authenticator {
 
     /// How old a cached member set may be and still authorize a request while
     /// the chain is unreachable; past it the lookup fails rather than
-    /// authorizing from an unboundedly stale snapshot. Defaults to a multiple
-    /// of the TTL.
+    /// authorizing from an unboundedly stale snapshot. Defaults to 5 minutes.
     pub fn with_max_stale(mut self, max_stale: Duration) -> Self {
         self.membership = self.membership.with_max_stale(max_stale);
         self
@@ -435,12 +434,11 @@ mod tests {
 
     #[tokio::test]
     async fn require_role_refuses_membership_past_max_stale_on_chain_failure() {
-        // With ttl zero, max_stale defaults to zero too, so once the chain
-        // fails on the second lookup the cached entry - however briefly
-        // held - is already past the bound. `require_role` must surface the
-        // exact variant the provider node maps to `503
-        // membership_unavailable`, rather than authorizing from an
-        // unboundedly stale snapshot.
+        // With max_stale zero, once the chain fails on the second lookup the
+        // cached entry - however briefly held - is already past the bound.
+        // `require_role` must surface the exact variant the provider node
+        // maps to `503 membership_unavailable`, rather than authorizing from
+        // an unboundedly stale snapshot.
         let keypair = sr25519::Pair::from_string("//Alice", None).unwrap();
         let account = AccountId32::new(keypair.public().0);
         let calls = Arc::new(AtomicUsize::new(0));
@@ -448,7 +446,8 @@ mod tests {
             account: account.clone(),
             calls: calls.clone(),
         })
-        .with_ttl(Duration::ZERO);
+        .with_ttl(Duration::ZERO)
+        .with_max_stale(Duration::ZERO);
         let header = make_auth_header(&keypair, "GET", 1, current_timestamp());
 
         // Seeds the cache via the resolver's one successful call.
@@ -471,10 +470,10 @@ mod tests {
 
     #[tokio::test]
     async fn with_max_stale_widens_the_bound_the_ttl_would_have_set() {
-        // Same setup as the test above, which refuses because `ttl` of zero
-        // derives a zero ceiling. Raising it via the builder must let the
-        // brief outage through - otherwise `--auth-max-stale` is decorative
-        // and the flag silently does nothing.
+        // Same setup as the test above, which refuses with max_stale zero.
+        // Raising it via the builder must let the brief outage through -
+        // otherwise `--auth-max-stale` is decorative and the flag silently
+        // does nothing.
         let keypair = sr25519::Pair::from_string("//Alice", None).unwrap();
         let account = AccountId32::new(keypair.public().0);
         let calls = Arc::new(AtomicUsize::new(0));

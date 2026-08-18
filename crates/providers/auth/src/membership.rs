@@ -164,9 +164,9 @@ pub(crate) struct MembershipCache {
     epoch: AtomicU64,
     /// How long an entry is served before the chain is rechecked.
     ttl: Duration,
-    /// Explicit stale-if-error ceiling. `None` derives one from `ttl`, resolved
-    /// on read so the builders can be called in any order.
-    max_stale: Option<Duration>,
+    /// Stale-if-error ceiling: how old a cached entry may be and still be
+    /// served when a refetch fails.
+    max_stale: Duration,
     resolver: Box<dyn MembershipResolver>,
     invalidations: Box<dyn MembershipInvalidations>,
 }
@@ -174,9 +174,9 @@ pub(crate) struct MembershipCache {
 /// TTL for callers that don't set one. Matches `--auth-cache-ttl`'s default.
 const DEFAULT_TTL: Duration = Duration::from_secs(30);
 
-/// Derives the stale-if-error ceiling from the TTL when none is set, keeping it
-/// proportional to how fresh the caller wanted membership in the first place.
-const MAX_STALE_TTL_MULTIPLE: u32 = 10;
+/// Stale-if-error ceiling for callers that don't set one. Matches
+/// `--auth-max-stale`'s default.
+const DEFAULT_MAX_STALE: Duration = Duration::from_secs(300);
 
 impl MembershipCache {
     pub(crate) fn new(resolver: impl MembershipResolver + 'static) -> Self {
@@ -184,7 +184,7 @@ impl MembershipCache {
             cache: DashMap::new(),
             epoch: AtomicU64::new(0),
             ttl: DEFAULT_TTL,
-            max_stale: None,
+            max_stale: DEFAULT_MAX_STALE,
             resolver: Box::new(resolver),
             invalidations: Box::new(NoInvalidations),
         }
@@ -205,15 +205,10 @@ impl MembershipCache {
         self
     }
 
-    /// Override the ceiling otherwise derived from the TTL.
+    /// Override the default stale-if-error ceiling.
     pub(crate) fn with_max_stale(mut self, max_stale: Duration) -> Self {
-        self.max_stale = Some(max_stale);
+        self.max_stale = max_stale;
         self
-    }
-
-    fn max_stale(&self) -> Duration {
-        self.max_stale
-            .unwrap_or_else(|| self.ttl.saturating_mul(MAX_STALE_TTL_MULTIPLE))
     }
 
     /// Apply everything the feed has seen since the last lookup. Runs before
@@ -266,7 +261,7 @@ impl MembershipCache {
                 // served only because a refetch failed, and only up to
                 // max_stale - never merely because the TTL lapsed.
                 if let Some(entry) = self.cache.get(&bucket_id) {
-                    let (age, max_stale) = (entry.age(), self.max_stale());
+                    let (age, max_stale) = (entry.age(), self.max_stale);
                     if age <= max_stale {
                         tracing::warn!(
                             "Chain unreachable for bucket {} membership (age {:?}), serving stale data: {}",
