@@ -172,8 +172,21 @@ export class S3Client extends Layer1Client {
     return buckets;
   }
 
-  async deleteBucket(s3BucketId: bigint): Promise<void> {
-    await deleteS3BucketTx(this.api, this.requireSigner(), s3BucketId, this.submitOpts());
+  /**
+   * Delete the (empty) bucket; the chain also tears down the underlying
+   * Layer 0 bucket and refunds unused storage time. Resolves with that
+   * refund from `S3BucketDeleted`.
+   */
+  async deleteBucket(s3BucketId: bigint): Promise<{ refunded: bigint }> {
+    const deleted = await deleteS3BucketTx(
+      this.api,
+      this.requireSigner(),
+      s3BucketId,
+      this.submitOpts(),
+    );
+    // `refunded` landed on S3BucketDeleted together with the L0 teardown;
+    // descriptor sets generated from older runtimes don't type it yet.
+    return { refunded: (deleted as { refunded?: bigint }).refunded ?? 0n };
   }
 
   // ── Object metadata chain ops ───────────────────────────────────────────

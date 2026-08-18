@@ -142,8 +142,15 @@ export class FileSystemClient extends Layer1Client {
     return drives;
   }
 
-  async deleteDrive(driveId: bigint): Promise<void> {
-    await deleteDriveTx(this.api, this.requireSigner(), driveId, this.submitOpts());
+  /** Delete the drive; resolves with the prorated refund from `DriveDeleted`. */
+  async deleteDrive(driveId: bigint): Promise<{ refunded: bigint }> {
+    const deleted = await deleteDriveTx(
+      this.api,
+      this.requireSigner(),
+      driveId,
+      this.submitOpts(),
+    );
+    return { refunded: deleted.refunded };
   }
 
   /**

@@ -16,7 +16,8 @@ import {
   ContextMenuItem,
   ContextMenuSeparator,
 } from "@/components/ui/context-menu";
-import { useBuckets, useSelectedBucket, selectBucket, deleteBucket } from "@/state";
+import { useBuckets, useBucketUsage, useSelectedBucket, selectBucket, deleteBucket } from "@/state";
+import { formatBytes, formatTokens } from "@/lib/utils";
 import type { BucketInfo } from "@/lib/s3-client";
 import { toast } from "@/components/ui/toaster";
 import ConfirmDialog from "./ConfirmDialog";
@@ -56,6 +57,7 @@ function providerTitle(providers: BucketInfo["providerInfo"]): string {
 
 export default function BucketList() {
   const buckets = useBuckets();
+  const usage = useBucketUsage();
   const selected = useSelectedBucket();
   const [showNewBucket, setShowNewBucket] = useState(false);
   const [bucketToDelete, setBucketToDelete] = useState<BucketInfo | null>(null);
@@ -64,8 +66,14 @@ export default function BucketList() {
   const handleDelete = async () => {
     if (!bucketToDelete) return;
     try {
-      await deleteBucket(bucketToDelete.s3BucketId);
-      toast({ title: "Bucket deleted" });
+      const refunded = await deleteBucket(bucketToDelete.s3BucketId);
+      toast({
+        title: "Bucket deleted",
+        description:
+          refunded && refunded > 0n
+            ? `Refunded ${formatTokens(refunded)} for the remaining paid period`
+            : undefined,
+      });
     } catch (err) {
       toast({
         title: "Delete failed",
@@ -110,6 +118,37 @@ export default function BucketList() {
                     <p className="text-xs text-muted-foreground">
                       ID: {bucket.s3BucketId.toString()}
                     </p>
+                    {(() => {
+                      const u = usage.get(bucket.s3BucketId.toString());
+                      if (!u) return null;
+                      if (!u.quotaSynced) {
+                        return (
+                          <p
+                            className="text-xs text-muted-foreground"
+                            data-testid={`bucket-list-usage-${bucket.s3BucketId}`}
+                          >
+                            {formatBytes(u.usedBytes)} used
+                          </p>
+                        );
+                      }
+                      const pct =
+                        u.maxBytes > 0n
+                          ? Math.min(Number((u.usedBytes * 100n) / u.maxBytes), 100)
+                          : 0;
+                      return (
+                        <div data-testid={`bucket-list-usage-${bucket.s3BucketId}`}>
+                          <p className="text-xs text-muted-foreground">
+                            {formatBytes(u.usedBytes)} of {formatBytes(u.maxBytes)} used
+                          </p>
+                          <div className="mt-0.5 h-1 w-full rounded bg-muted">
+                            <div
+                              className="h-1 rounded bg-primary"
+                              style={{ width: `${pct}%` }}
+                            />
+                          </div>
+                        </div>
+                      );
+                    })()}
                     {(() => {
                       const p = providerParts(bucket.providerInfo);
                       return (

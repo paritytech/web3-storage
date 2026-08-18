@@ -16,8 +16,8 @@ import {
   ContextMenuItem,
   ContextMenuSeparator,
 } from "@/components/ui/context-menu";
-import { useDrives, useSelectedDrive, selectDrive, deleteDrive } from "@/state";
-import { formatBytes } from "@/lib/utils";
+import { useDrives, useDriveUsage, useSelectedDrive, selectDrive, deleteDrive } from "@/state";
+import { formatBytes, formatTokens } from "@/lib/utils";
 import type { DriveInfo } from "@/lib/drive-client";
 import { toast } from "@/components/ui/toaster";
 import ConfirmDialog from "./ConfirmDialog";
@@ -57,6 +57,7 @@ function providerTitle(providers: DriveInfo["providerInfo"]): string {
 
 export default function DriveList() {
   const drives = useDrives();
+  const usage = useDriveUsage();
   const selected = useSelectedDrive();
   const [showNewDrive, setShowNewDrive] = useState(false);
   const [driveToDelete, setDriveToDelete] = useState<DriveInfo | null>(null);
@@ -65,8 +66,14 @@ export default function DriveList() {
   const handleDelete = async () => {
     if (!driveToDelete) return;
     try {
-      await deleteDrive(driveToDelete.driveId);
-      toast({ title: "Drive deleted" });
+      const refunded = await deleteDrive(driveToDelete.driveId);
+      toast({
+        title: "Drive deleted",
+        description:
+          refunded && refunded > 0n
+            ? `Refunded ${formatTokens(refunded)} for the remaining paid period`
+            : undefined,
+      });
     } catch (err) {
       toast({
         title: "Delete failed",
@@ -108,9 +115,33 @@ export default function DriveList() {
                   <HardDrive className={`h-4 w-4 flex-shrink-0 ${isSelected ? "text-primary" : "text-muted-foreground"}`} />
                   <div className="flex-1 min-w-0">
                     <p className="truncate">{name}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {formatBytes(Number(drive.maxCapacity))}
-                    </p>
+                    {(() => {
+                      const u = usage.get(drive.driveId.toString());
+                      if (!u) {
+                        // Provider usage unavailable: fall back to quota only.
+                        return (
+                          <p className="text-xs text-muted-foreground">
+                            {formatBytes(Number(drive.maxCapacity))}
+                          </p>
+                        );
+                      }
+                      const max = u.quotaSynced ? u.maxBytes : drive.maxCapacity;
+                      const pct =
+                        max > 0n ? Math.min(Number((u.usedBytes * 100n) / max), 100) : 0;
+                      return (
+                        <div data-testid={`drive-list-usage-${drive.driveId}`}>
+                          <p className="text-xs text-muted-foreground">
+                            {formatBytes(u.usedBytes)} of {formatBytes(max)} used
+                          </p>
+                          <div className="mt-0.5 h-1 w-full rounded bg-muted">
+                            <div
+                              className="h-1 rounded bg-primary"
+                              style={{ width: `${pct}%` }}
+                            />
+                          </div>
+                        </div>
+                      );
+                    })()}
                     {(() => {
                       const p = providerParts(drive.providerInfo);
                       return (

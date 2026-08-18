@@ -54,6 +54,7 @@ export {
 // S3
 export {
   useBuckets,
+  useBucketUsage,
   useSelectedBucket,
   useCurrentPrefix,
   useObjects,
