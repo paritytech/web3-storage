@@ -20,10 +20,12 @@ import {
   createDrive as createDriveTx,
   deleteDrive as deleteDriveTx,
   downloadChunk,
+  fetchBucketUsage,
   removeMember as removeMemberTx,
   setMember as setMemberTx,
   shareDrive as shareDriveTx,
   unshareDrive as unshareDriveTx,
+  type BucketUsage,
   type WaitOpts,
 } from "@web3-storage/layer0";
 
@@ -142,6 +144,17 @@ export class FileSystemClient extends Layer1Client {
 
   async deleteDrive(driveId: bigint): Promise<void> {
     await deleteDriveTx(this.api, this.requireSigner(), driveId, this.submitOpts());
+  }
+
+  /**
+   * The drive's physical usage against its paid quota, read from the
+   * provider node (a can-fail, provider-side read — not chain state).
+   */
+  async getDriveUsage(driveId: bigint): Promise<BucketUsage> {
+    const drive = await this.api.query.DriveRegistry.Drives.getValue(driveId, this.readOpts);
+    if (!drive) throw new Error(`Drive ${driveId} not found`);
+    const providerUrl = await this.getProviderUrl(drive.bucket_id);
+    return fetchBucketUsage(providerUrl, drive.bucket_id);
   }
 
   async shareDrive(driveId: bigint, member: string, role: MemberRole): Promise<void> {

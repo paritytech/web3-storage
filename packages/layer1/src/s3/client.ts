@@ -24,7 +24,9 @@ import {
   createS3Bucket as createS3BucketTx,
   deleteObjectMetadata as deleteObjectMetadataTx,
   deleteS3Bucket as deleteS3BucketTx,
+  fetchBucketUsage,
   putObjectMetadata as putObjectMetadataTx,
+  type BucketUsage,
   type WaitOpts,
 } from "@web3-storage/layer0";
 
@@ -225,6 +227,15 @@ export class S3Client extends Layer1Client {
       key,
       this.submitOpts(),
     );
+  }
+
+  /**
+   * The bucket's physical usage against its paid quota, read from the
+   * provider node (a can-fail, provider-side read — not chain state).
+   */
+  async getBucketUsage(layer0BucketId: bigint): Promise<BucketUsage> {
+    const providerUrl = await this.getProviderUrl(layer0BucketId);
+    return fetchBucketUsage(providerUrl, layer0BucketId);
   }
 
   // ── Provider resolution ─────────────────────────────────────────────────
