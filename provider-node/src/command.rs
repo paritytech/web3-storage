@@ -100,29 +100,6 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // Resolve provider identity
     let seed = cli.key.load_seed()?;
-    let state = match &seed {
-        Some(seed) => {
-            let state = ProviderState::with_seed(deps, seed)?;
-            tracing::info!("Signing enabled for account: {}", state.provider_id);
-            state
-        }
-        None => {
-            let provider_id = cli
-                .key
-                .provider_id
-                .clone()
-                .unwrap_or_else(|| DEFAULT_PROVIDER_ID.to_string());
-            tracing::warn!(
-                "No --keyfile set, using --provider-id without signing: {}",
-                provider_id
-            );
-
-            ProviderState::with_provider_id(deps, provider_id)
-        }
-    }
-    .with_cors_origins(cli.rpc.cors_allowed_origins.clone());
-
-    let state = Arc::new(state);
 
     // The signing chain client shared by every coordinator: one signer (the
     // provider's own account) over the shared watch connection; coordinators
@@ -138,6 +115,37 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         },
         None => None,
     };
+
+    let state = Arc::new(
+        match &seed {
+            Some(seed) => {
+                let state = ProviderState::with_seed(deps, seed)?;
+                tracing::info!("Signing enabled for account: {}", state.provider_id);
+                state
+            }
+            None => {
+                let provider_id = cli
+                    .key
+                    .provider_id
+                    .clone()
+                    .unwrap_or_else(|| DEFAULT_PROVIDER_ID.to_string());
+                tracing::warn!(
+                    "No --keyfile set, using --provider-id without signing: {}",
+                    provider_id
+                );
+
+                ProviderState::with_provider_id(deps, provider_id)
+            }
+        }
+        .with_cors_origins(cli.rpc.cors_allowed_origins.clone())
+        // The /delete frozen check reads chain state through the same
+        // client; nodes without one skip the check.
+        .with_gc_chain(
+            chain_client
+                .as_ref()
+                .map(|c| Arc::new(c.clone()) as Arc<dyn crate::gc_coordinator::GcChainClient>),
+        ),
+    );
 
     // Subscribe the coordinators before the follower starts, so none of them
     // can miss the initial `Resubscribed` bootstrap event.

@@ -995,6 +995,231 @@ common::backend_tests! {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Delete refusals: frozen buckets and unreadable chain state
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Scripted chain truth for the `/delete` refusal tests.
+struct StubGcChain {
+    frozen: bool,
+    fail: bool,
+}
+
+#[async_trait::async_trait]
+impl storage_provider_node::GcChainClient for StubGcChain {
+    async fn fetch_canonical_bucket(
+        &self,
+        _bucket_id: u64,
+    ) -> Result<storage_provider_node::CanonicalBucketState, storage_provider_node::Error> {
+        if self.fail {
+            return Err(storage_provider_node::Error::Internal(
+                "chain down".to_string(),
+            ));
+        }
+        Ok(storage_provider_node::CanonicalBucketState {
+            exists: true,
+            frozen_start_seq: self.frozen.then_some(0),
+            canonical_start_seq: None,
+        })
+    }
+
+    async fn fetch_agreement_max_bytes(
+        &self,
+        _bucket_id: u64,
+    ) -> Result<Option<u64>, storage_provider_node::Error> {
+        Ok(None)
+    }
+
+    async fn has_pending_challenges(
+        &self,
+        _bucket_id: u64,
+    ) -> Result<bool, storage_provider_node::Error> {
+        Ok(false)
+    }
+}
+
+/// Hex of a well-formed SCALE `MultiSignature`, built from the typed value
+/// rather than a hand-assembled byte string.
+fn valid_sig_hex() -> String {
+    let sig: sp_runtime::MultiSignature = sp_core::sr25519::Signature::from([0u8; 64]).into();
+    format!("0x{}", hex_encode(&codec::Encode::encode(&sig)))
+}
+
+common::backend_tests! {
+    async fn test_delete_on_frozen_bucket_is_forbidden(backend) {
+        let server = TestServer::start(backend, |deps| {
+            ProviderState::with_seed(deps, common::PROVIDER_SEED)
+                .expect("valid SURI")
+                .with_gc_chain(Some(std::sync::Arc::new(StubGcChain { frozen: true, fail: false })))
+        })
+        .await;
+
+        let resp = server
+            .client
+            .post(server.url("/delete"))
+            .json(&json!({ "bucket_id": 1, "new_start_seq": 1, "nonce": 0u64 }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+        let body: Value = resp.json().await.unwrap();
+        assert_eq!(body["error"], "bucket_frozen");
+    }
+
+    async fn test_delete_fails_closed_when_chain_unreadable(backend) {
+        let server = TestServer::start(backend, |deps| {
+            ProviderState::with_seed(deps, common::PROVIDER_SEED)
+                .expect("valid SURI")
+                .with_gc_chain(Some(std::sync::Arc::new(StubGcChain { frozen: false, fail: true })))
+        })
+        .await;
+
+        let resp = server
+            .client
+            .post(server.url("/delete"))
+            .json(&json!({ "bucket_id": 1, "new_start_seq": 1, "nonce": 0u64 }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let body: Value = resp.json().await.unwrap();
+        assert_eq!(body["error"], "chain_state_unavailable");
+    }
+
+    async fn test_buckets_report_usage_and_quota(backend) {
+        let server = TestServer::new(backend).await;
+
+        let data = b"usage-visible-chunk";
+        let hash = storage_primitives::blake2_256(data);
+        let hash_hex = format!("0x{}", hex_encode(hash.as_bytes()));
+        server
+            .client
+            .put(server.url("/node"))
+            .json(&json!({
+                "bucket_id": 1,
+                "hash": hash_hex,
+                "data": BASE64.encode(data),
+                "children": null,
+            }))
+            .send()
+            .await
+            .unwrap();
+
+        let resp = server
+            .client
+            .get(server.url("/buckets"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body: Value = resp.json().await.unwrap();
+        let bucket = &body["buckets"][0];
+        assert_eq!(bucket["bucket_id"], 1);
+        assert_eq!(bucket["used_bytes"].as_u64(), Some(data.len() as u64));
+        // Quota not yet synced from an agreement: unlimited sentinel.
+        assert_eq!(bucket["max_bytes"].as_u64(), Some(u64::MAX));
+    }
+
+    async fn test_delete_confirm_stores_receipt(backend) {
+        let server = TestServer::new(backend).await;
+
+        // Upload + commit one chunk, then prune it.
+        let data = b"chunk-to-confirm-deletion";
+        let hash = storage_primitives::blake2_256(data);
+        let hash_hex = format!("0x{}", hex_encode(hash.as_bytes()));
+        server
+            .client
+            .put(server.url("/node"))
+            .json(&json!({
+                "bucket_id": 1,
+                "hash": hash_hex,
+                "data": BASE64.encode(data),
+                "children": null,
+            }))
+            .send()
+            .await
+            .unwrap();
+        server
+            .client
+            .post(server.url("/commit"))
+            .json(&json!({ "bucket_id": 1, "data_roots": [hash_hex] }))
+            .send()
+            .await
+            .unwrap();
+        let resp = server
+            .client
+            .post(server.url("/delete"))
+            .json(&json!({ "bucket_id": 1, "new_start_seq": 1 }))
+            .send()
+            .await
+            .unwrap();
+        let body: Value = resp.json().await.unwrap();
+        let mmr_root = body["mmr_root"].as_str().unwrap().to_string();
+
+        // Store the admin's deletion authorization for the prune. The node
+        // parses it into a typed receipt (whether the admin really signed
+        // it is adjudicated on-chain at defense time).
+        let resp = server
+            .client
+            .post(server.url("/delete/confirm"))
+            .json(&json!({
+                "bucket_id": 1,
+                "mmr_root": mmr_root,
+                "new_start_seq": 1,
+                "admin": format!("0x{}", hex_encode(&[7u8; 32][..])),
+                "signature": valid_sig_hex(),
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body: Value = resp.json().await.unwrap();
+        assert_eq!(body["stored"], true);
+    }
+
+    async fn test_delete_confirm_rejects_undecodable_signature(backend) {
+        let server = TestServer::new(backend).await;
+        // Valid hex, but not a SCALE MultiSignature: rejected at the
+        // boundary (400) instead of failing years later at defense time.
+        let resp = server
+            .client
+            .post(server.url("/delete/confirm"))
+            .json(&json!({
+                "bucket_id": 1,
+                "mmr_root": format!("0x{}", hex_encode(&[0u8; 32][..])),
+                "new_start_seq": 1,
+                "admin": format!("0x{}", hex_encode(&[7u8; 32][..])),
+                "signature": "0x0102",
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        let body: Value = resp.json().await.unwrap();
+        assert_eq!(body["error"], "invalid_signature");
+    }
+
+    async fn test_delete_confirm_rejects_unknown_range(backend) {
+        let server = TestServer::new(backend).await;
+        // No prune happened: nothing to confirm.
+        let resp = server
+            .client
+            .post(server.url("/delete/confirm"))
+            .json(&json!({
+                "bucket_id": 1,
+                "mmr_root": format!("0x{}", hex_encode(&[0u8; 32][..])),
+                "new_start_seq": 5,
+                "admin": format!("0x{}", hex_encode(&[7u8; 32][..])),
+                "signature": valid_sig_hex(),
+            }))
+            .send()
+            .await
+            .unwrap();
+        // Bucket 1 does not even exist locally yet.
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Delete happy path
 // ─────────────────────────────────────────────────────────────────────────────
 

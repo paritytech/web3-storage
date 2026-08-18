@@ -81,6 +81,14 @@ pub struct BucketSummary {
     pub mmr_root: String,
     pub start_seq: u64,
     pub leaf_count: u64,
+    /// Bytes physically stored and charged to this bucket (stashed
+    /// pruned-but-not-erased data included).
+    pub used_bytes: u64,
+    /// Quota from the chain agreement, written by the GC coordinator's
+    /// reconcile pass (on agreement events and its periodic rescan) via
+    /// [`set_bucket_quota`](StorageBackend::set_bucket_quota);
+    /// `u64::MAX` = not yet synced.
+    pub max_bytes: u64,
 }
 
 /// Per-bucket statistics.
