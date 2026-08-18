@@ -1936,10 +1936,13 @@ pub mod pallet {
                 // Must be writer or admin
                 Self::ensure_writer_or_admin(&who, bucket)?;
 
-                // Check frozen constraint
+                // Frozen buckets are append-only: start_seq is pinned to the
+                // frozen value exactly — only leaf_count may grow. `>=` here
+                // would let a checkpoint advance start_seq and delete
+                // history, defeating the freeze.
                 if let Some(frozen_start) = bucket.frozen_start_seq {
                     ensure!(
-                        commitment.start_seq >= frozen_start,
+                        commitment.start_seq == frozen_start,
                         Error::<T>::SnapshotViolatesFrozen
                     );
                 }

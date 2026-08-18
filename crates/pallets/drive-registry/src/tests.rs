@@ -327,6 +327,56 @@ fn delete_drive_works() {
 }
 
 #[test]
+fn delete_drive_refuses_frozen_bucket() {
+    new_test_ext().execute_with(|| {
+        advance_to_block_1();
+
+        let (provider_pk, provider) = setup_provider();
+        let terms = primary_terms(1, 100, 500, 1, 0);
+        let sig = sign_terms(&provider_pk, &terms);
+
+        let alice = 1u64;
+        assert_ok!(DriveRegistry::create_drive(
+            RuntimeOrigin::signed(alice),
+            None,
+            provider,
+            terms,
+            sig
+        ));
+        let bucket_id = DriveRegistry::get_drive(0).expect("drive exists").bucket_id;
+
+        // Checkpoint (min_providers 0 needs no signatures) and freeze the
+        // underlying bucket: it is append-only forever now.
+        assert_ok!(StorageProvider::set_min_providers(
+            RuntimeOrigin::signed(alice),
+            bucket_id,
+            0
+        ));
+        assert_ok!(StorageProvider::checkpoint(
+            RuntimeOrigin::signed(alice),
+            bucket_id,
+            storage_primitives::Commitment {
+                mmr_root: sp_core::H256::repeat_byte(0xAA),
+                start_seq: 0,
+                leaf_count: 1,
+            },
+            Default::default(),
+        ));
+        assert_ok!(StorageProvider::freeze_bucket(
+            RuntimeOrigin::signed(alice),
+            bucket_id
+        ));
+
+        // Deleting the drive would tear the frozen bucket down — refused.
+        assert_noop!(
+            DriveRegistry::delete_drive(RuntimeOrigin::signed(alice), 0),
+            Error::<Test>::BucketCleanupFailed
+        );
+        assert!(DriveRegistry::get_drive(0).is_some());
+    });
+}
+
+#[test]
 fn share_drive_works() {
     new_test_ext().execute_with(|| {
         advance_to_block_1();
