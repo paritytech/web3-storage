@@ -37,6 +37,7 @@ pub fn open_shared_concurrent(engine: Engine, path: &Path) -> Arc<dyn Shared> {
         Engine::Sled => Arc::new(SledShared::open(path)),
         Engine::Sqlite => Arc::new(SqliteShared::open(path)),
         Engine::Paritydb => Arc::new(ParityShared::open(path)),
+        Engine::Redb => Arc::new(RedbShared::open(path)),
     }
 }
 
@@ -147,6 +148,39 @@ impl Writer for ParityWriter {
             .iter()
             .map(|(key, value)| (0u8, key.clone(), Some(value.clone())));
         self.db.commit(changes).expect("parity-db shared commit");
+    }
+}
+
+// ── redb: one Database shared across threads, single writer at a time ─────────
+//
+// redb enforces its single-writer rule in-process: `begin_write` blocks on a
+// condvar until the live write transaction finishes. That is the same
+// serialization SQLite gets from its file lock, so the shared-vs-sharded gap
+// here is directly comparable to SQLite's.
+
+struct RedbShared {
+    db: Arc<redb::Database>,
+}
+impl RedbShared {
+    fn open(path: &Path) -> Self {
+        let db = redb::Database::create(path.join("db.redb")).expect("open redb shared");
+        super::redb_store::create_table(&db);
+        Self { db: Arc::new(db) }
+    }
+}
+impl Shared for RedbShared {
+    fn new_writer(&self) -> Box<dyn Writer> {
+        Box::new(RedbWriter {
+            db: self.db.clone(),
+        })
+    }
+}
+struct RedbWriter {
+    db: Arc<redb::Database>,
+}
+impl Writer for RedbWriter {
+    fn commit_batch(&mut self, batch: &[(Vec<u8>, Vec<u8>)], sync: bool) {
+        super::redb_store::commit_batch(&self.db, batch, sync);
     }
 }
 

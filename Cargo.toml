@@ -47,10 +47,10 @@ default-members = [
 	"clients/s3",
 	"clients/storage",
 	"crates/pallets/drive-registry",
-	"crates/pallets/s3-registry",
-	"crates/pallets/storage-provider",
 	"crates/pallets/drive-registry/precompiles",
+	"crates/pallets/s3-registry",
 	"crates/pallets/s3-registry/precompiles",
+	"crates/pallets/storage-provider",
 	"crates/pallets/storage-provider/precompiles",
 	"crates/primitives/file-system",
 	"crates/primitives/s3",
@@ -221,6 +221,10 @@ sp-keyring = { version = "48.0.0", default-features = false }
 sp-keystore = { version = "0.49.0", default-features = false }
 tempfile = "3"
 tokio-test = "0.4"
+
+# Benchmark-only database engines (inherited only by `benchmarks/db-bench`, which
+# is excluded from default-members, so normal builds never fetch these).
+redb = "4.1"
 
 [profile.release]
 opt-level = 3

@@ -1,9 +1,11 @@
 # Recommendations
 
-Backed by the measured results in [01](01-storage-provider-benchmark.md) and
-[02](02-blockchain-provider-benchmark.md). Each recommendation states the choice,
-the justification from the data, the trade-off accepted, and the conditions that
-would change it.
+Backed by the measured results in [01](01-storage-provider-benchmark.md). The
+recommendation states the choice, the justification from the data, the trade-off
+accepted, and the conditions that would change it.
+
+Scope: the **Storage Provider** only. The chain runs on Asset Hub, so its
+database backend is not ours to choose.
 
 ---
 
@@ -80,66 +82,18 @@ per bucket, ubiquitous tooling, and a battle-tested engine.
 
 ---
 
-## Blockchain Node (state trie) → **ParityDB**
-
-### Decision
-
-Run the parachain node with the **ParityDB** backend (`--database paritydb`),
-paired with the mandatory memory-isolation mitigation below.
-
-### Justification (from the data)
-
-The state-trie workload is dominated by random 32-byte-key point reads, which is
-precisely what ParityDB's hash-indexed tables are built for:
-
-| Driver | ParityDB | RocksDB | Margin |
-|--------|---------:|--------:|--------|
-| Cold state read p50 | **1.0 µs** | 14.5 µs | **14× faster** |
-| Warm state read p50 | **0.9 µs** | 3.3 µs | 3.7× faster |
-| Read p99 (warm) | **4.3 µs** | 27.1 µs | tighter tail |
-| Block import p50 | **80.5 µs** | 131.0 µs | ~40% faster |
-| On-disk after import | **14.6 MiB** | 20.4 MiB | ~28% smaller |
-
-Faster state reads improve block execution and RPC state queries directly, and
-this matches why upstream Substrate offers ParityDB as the optimized state
-backend. Lower write amplification (append-oriented tables vs. LSM compaction)
-also addresses the issue's **SSD compaction-wear** concern for RocksDB.
-
-### Trade-off accepted
-
-- **Higher, page-cache-driven memory.** ParityDB peaked at **396 MiB vs RocksDB's
-  94 MiB** under sustained load because it relies on the OS page cache rather than
-  an explicit bounded block cache. This is the issue's "page-cache starvation"
-  risk and makes the **cgroup isolation mitigation (Step 2) mandatory**, not
-  optional — see [04-configuration-guide.md](04-configuration-guide.md).
-- **Moderate maturity** vs. RocksDB's very-high maturity. Mitigated by ParityDB
-  being Parity-maintained and the default state backend on production Polkadot
-  infrastructure.
-- **No synchronous space reclamation on pruning** (it grew on bare delete) — but
-  RocksDB shares this; both need scheduled compaction / background reclamation.
-
-### What would change this
-
-If the node is deployed in a tightly memory-constrained environment where the
-cgroup cap cannot be set high enough for ParityDB's page-cache working set, or if
-an operator requires the maximal-maturity option, RocksDB remains a fully
-supported fallback (`--database rocksdb`) with the Step 3 compaction tuning
-applied. The synthetic ranking should be **confirmed with the node-level A/B run**
-in [02](02-blockchain-provider-benchmark.md) before final commitment.
-
----
-
 ## Summary
 
-| Component | Choice | One-line reason |
-|-----------|--------|-----------------|
-| Storage Provider | **Sharded + SQLite (WAL)** | Sharded wins bucket-delete/concurrency/isolation; LRU pool bounds its memory; SQLite is the cheapest sharded engine to open with the lowest footprint |
-| Blockchain Node (state trie) | **ParityDB** | 14× faster cold state reads + smaller on-disk; bound its memory with cgroups |
+**Sharded (one DB per bucket) + SQLite in WAL mode.** Sharding wins the operations
+tied to the bucket lifecycle — deletion, concurrent writes, fault isolation — and
+the LRU pool bounds the memory that the shared model would otherwise win on.
+Within the sharded model SQLite is the cheapest engine to open (39 µs) with the
+lowest per-instance footprint.
 
 The sharded-vs-shared decision was measured both ways (not assumed); the matrix
 and crossover conditions are in [01](01-storage-provider-benchmark.md). If a
 future operating point pushes simultaneously-hot bucket counts far past the LRU
 pool cap, **shared + RocksDB** is the evidence-backed alternative.
 
-Next: [04-configuration-guide.md](04-configuration-guide.md) ·
-[05-migration-plan.md](05-migration-plan.md)
+Next: [03-configuration-guide.md](03-configuration-guide.md) ·
+[04-migration-plan.md](04-migration-plan.md)

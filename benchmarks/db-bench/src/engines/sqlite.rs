@@ -71,4 +71,14 @@ impl KvStore for SqliteStore {
             .pragma_update(None, "wal_checkpoint", "TRUNCATE")
             .expect("wal checkpoint");
     }
+
+    /// `VACUUM` rewrites the database into a fresh file with no free pages,
+    /// returning the slack to the filesystem.
+    fn compact(&mut self) -> bool {
+        self.flush();
+        self.connection
+            .execute_batch("VACUUM")
+            .expect("sqlite vacuum");
+        true
+    }
 }

@@ -1,6 +1,5 @@
 //! Benchmark scenarios and shared helpers.
 
-pub mod state_trie;
 pub mod storage;
 pub mod storage_shared;
 
@@ -14,7 +13,7 @@ use std::path::{Path, PathBuf};
 /// One measured scenario result. Fields not relevant to a scenario stay `None`.
 #[derive(Debug, Clone, Serialize)]
 pub struct Record {
-    /// `"storage_provider"` or `"blockchain_node"`.
+    /// Always `"storage_provider"`.
     pub component: String,
     pub scenario: String,
     pub engine: String,
@@ -93,13 +92,6 @@ pub fn shared_key(bucket: u64, position: u64) -> Vec<u8> {
     let mut key = Vec::with_capacity(16);
     key.extend_from_slice(&bucket.to_be_bytes());
     key.extend_from_slice(&position.to_be_bytes());
-    key
-}
-
-/// A random 32-byte key (state-trie node hash / content hash).
-pub fn hash_key(rng: &mut ChaCha8Rng) -> Vec<u8> {
-    let mut key = vec![0u8; 32];
-    rng.fill_bytes(&mut key);
     key
 }
 
