@@ -52,14 +52,11 @@ fn counting_authenticator() -> (
     let keypair = sr25519::Pair::from_string("//Alice", None).expect("//Alice is a valid SURI");
     let calls = Arc::new(AtomicUsize::new(0));
     let (tx, rx) = tokio::sync::broadcast::channel(16);
-    let auth = Authenticator::new(
-        CountingMembershipResolver {
-            account: AccountId32::new(keypair.public().0),
-            calls: calls.clone(),
-        },
-        Duration::from_secs(300),
-        Duration::from_secs(300),
-    )
+    let auth = Authenticator::new(CountingMembershipResolver {
+        account: AccountId32::new(keypair.public().0),
+        calls: calls.clone(),
+    })
+    .with_ttl(Duration::from_secs(300))
     .with_invalidations(BlockEventInvalidations::new(rx));
     (auth, calls, keypair, tx)
 }

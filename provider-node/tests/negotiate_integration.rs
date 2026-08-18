@@ -17,7 +17,6 @@ use sp_core::{sr25519, Pair};
 use sp_runtime::{AccountId32, MultiSignature};
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::Duration;
 use storage_primitives::ReplicaTerms;
 use storage_provider_node::ProviderInfo;
 use storage_provider_node::{
@@ -42,11 +41,7 @@ fn test_deps() -> (ProviderDeps, tempfile::TempDir) {
     let deps = ProviderDeps {
         storage,
         nonce_store,
-        auth: Arc::new(Authenticator::new(
-            StaticMembershipResolver(vec![]),
-            Duration::from_secs(60),
-            Duration::from_secs(300),
-        )),
+        auth: Arc::new(Authenticator::new(StaticMembershipResolver(vec![]))),
     };
     (deps, dir)
 }

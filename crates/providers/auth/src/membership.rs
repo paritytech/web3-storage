@@ -67,8 +67,13 @@ impl CachedMembership {
         }
     }
 
+    /// How long ago this entry was fetched.
+    fn age(&self) -> Duration {
+        self.fetched_at.elapsed()
+    }
+
     fn is_fresh(&self, ttl: Duration) -> bool {
-        self.fetched_at.elapsed() < ttl
+        self.age() < ttl
     }
 
     fn role_of(&self, account: &AccountId32) -> Option<Role> {
@@ -157,17 +162,29 @@ pub(crate) struct MembershipCache {
     /// produce a wrong answer, which is the right trade for zero per-bucket
     /// storage.
     epoch: AtomicU64,
+    /// How long an entry is served before the chain is rechecked.
     ttl: Duration,
+    /// Explicit stale-if-error ceiling. `None` derives one from `ttl`, resolved
+    /// on read so the builders can be called in any order.
+    max_stale: Option<Duration>,
     resolver: Box<dyn MembershipResolver>,
     invalidations: Box<dyn MembershipInvalidations>,
 }
 
+/// TTL for callers that don't set one. Matches `--auth-cache-ttl`'s default.
+const DEFAULT_TTL: Duration = Duration::from_secs(30);
+
+/// Derives the stale-if-error ceiling from the TTL when none is set, keeping it
+/// proportional to how fresh the caller wanted membership in the first place.
+const MAX_STALE_TTL_MULTIPLE: u32 = 10;
+
 impl MembershipCache {
-    pub(crate) fn new(resolver: impl MembershipResolver + 'static, ttl: Duration) -> Self {
+    pub(crate) fn new(resolver: impl MembershipResolver + 'static) -> Self {
         Self {
             cache: DashMap::new(),
             epoch: AtomicU64::new(0),
-            ttl,
+            ttl: DEFAULT_TTL,
+            max_stale: None,
             resolver: Box::new(resolver),
             invalidations: Box::new(NoInvalidations),
         }
@@ -180,6 +197,23 @@ impl MembershipCache {
     ) -> Self {
         self.invalidations = Box::new(feed);
         self
+    }
+
+    /// How long a resolved member set is served before the chain is rechecked.
+    pub(crate) fn with_ttl(mut self, ttl: Duration) -> Self {
+        self.ttl = ttl;
+        self
+    }
+
+    /// Override the ceiling otherwise derived from the TTL.
+    pub(crate) fn with_max_stale(mut self, max_stale: Duration) -> Self {
+        self.max_stale = Some(max_stale);
+        self
+    }
+
+    fn max_stale(&self) -> Duration {
+        self.max_stale
+            .unwrap_or_else(|| self.ttl.saturating_mul(MAX_STALE_TTL_MULTIPLE))
     }
 
     /// Apply everything the feed has seen since the last lookup. Runs before
@@ -228,14 +262,27 @@ impl MembershipCache {
                 Ok(role)
             }
             Err(e) => {
-                // Stale-while-revalidate: serve stale data if chain is unreachable
+                // stale-if-error, not stale-while-revalidate: stale data is
+                // served only because a refetch failed, and only up to
+                // max_stale - never merely because the TTL lapsed.
                 if let Some(entry) = self.cache.get(&bucket_id) {
-                    tracing::warn!(
-                        "Chain unreachable for bucket {} membership, serving stale data: {}",
+                    let (age, max_stale) = (entry.age(), self.max_stale());
+                    if age <= max_stale {
+                        tracing::warn!(
+                            "Chain unreachable for bucket {} membership (age {:?}), serving stale data: {}",
+                            bucket_id,
+                            age,
+                            e
+                        );
+                        return Ok(entry.role_of(account));
+                    }
+                    tracing::error!(
+                        "Cached membership for bucket {} is {:?} old (max_stale {:?}); refusing request: {}",
                         bucket_id,
+                        age,
+                        max_stale,
                         e
                     );
-                    return Ok(entry.role_of(account));
                 }
                 Err(e)
             }
@@ -345,6 +392,29 @@ mod tests {
         }
     }
 
+    /// Resolver that succeeds once, then fails every call after - so a test
+    /// can seed a fresh cache entry and then force `get_role`'s error arm on
+    /// the very next lookup.
+    struct FlakyResolver {
+        account: AccountId32,
+        calls: Arc<AtomicUsize>,
+    }
+
+    #[async_trait::async_trait]
+    impl MembershipResolver for FlakyResolver {
+        async fn fetch_members(
+            &self,
+            _bucket_id: BucketId,
+        ) -> Result<Vec<Member>, MembershipError> {
+            let call = self.calls.fetch_add(1, Ordering::SeqCst) + 1;
+            if call == 1 {
+                Ok(vec![(self.account.clone(), Role::Admin).into()])
+            } else {
+                Err(MembershipError::Unavailable("chain down".to_string()))
+            }
+        }
+    }
+
     /// A [`MembershipInvalidations`] a test can load with one value to return
     /// on the next [`drain`](MembershipInvalidations::drain), simulating an
     /// event arriving between two lookups.
@@ -376,8 +446,8 @@ mod tests {
         // a no-op on the map, not a slot-creating write - otherwise every
         // chain-wide membership event permanently grows the map by one entry
         // for a bucket that will never be looked up.
-        let cache =
-            MembershipCache::new(StaticMembershipResolver(vec![]), Duration::from_secs(300));
+        let cache = MembershipCache::new(StaticMembershipResolver(vec![]))
+            .with_ttl(Duration::from_secs(300));
 
         cache.invalidate(42);
 
@@ -392,13 +462,11 @@ mod tests {
         let account = AccountId32::new([3u8; 32]);
         let calls = Arc::new(AtomicUsize::new(0));
         let feed = QueuedInvalidations::new();
-        let cache = MembershipCache::new(
-            CountingResolver {
-                account: account.clone(),
-                calls: calls.clone(),
-            },
-            Duration::from_secs(300),
-        )
+        let cache = MembershipCache::new(CountingResolver {
+            account: account.clone(),
+            calls: calls.clone(),
+        })
+        .with_ttl(Duration::from_secs(300))
         .with_invalidations(feed.clone());
 
         // Populate a fresh cache entry.
@@ -454,14 +522,14 @@ mod tests {
         // Zero TTL: every lookup treats the cached entry as stale and refetches,
         // so the second lookup below is a genuine in-flight race rather than a
         // cache hit that never touches the resolver.
-        let cache = Arc::new(MembershipCache::new(
-            GatedResolver {
+        let cache = Arc::new(
+            MembershipCache::new(GatedResolver {
                 account: account.clone(),
                 calls: calls.clone(),
                 proceed: proceed.clone(),
-            },
-            Duration::ZERO,
-        ));
+            })
+            .with_ttl(Duration::ZERO),
+        );
 
         // Seed an existing, cached entry for bucket 1.
         cache.get_role(1, &account).await.unwrap();
@@ -517,14 +585,14 @@ mod tests {
         let account = AccountId32::new([10u8; 32]);
         let calls = Arc::new(AtomicUsize::new(0));
         let proceed = Arc::new(AtomicBool::new(true));
-        let cache = Arc::new(MembershipCache::new(
-            GatedResolver {
+        let cache = Arc::new(
+            MembershipCache::new(GatedResolver {
                 account: account.clone(),
                 calls: calls.clone(),
                 proceed: proceed.clone(),
-            },
-            Duration::ZERO,
-        ));
+            })
+            .with_ttl(Duration::ZERO),
+        );
 
         cache.get_role(1, &account).await.unwrap();
         assert_eq!(calls.load(Ordering::SeqCst), 1);
@@ -571,14 +639,14 @@ mod tests {
         let account = AccountId32::new([11u8; 32]);
         let calls = Arc::new(AtomicUsize::new(0));
         let proceed = Arc::new(AtomicBool::new(false));
-        let cache = Arc::new(MembershipCache::new(
-            GatedResolver {
+        let cache = Arc::new(
+            MembershipCache::new(GatedResolver {
                 account: account.clone(),
                 calls: calls.clone(),
                 proceed: proceed.clone(),
-            },
-            Duration::from_secs(300),
-        ));
+            })
+            .with_ttl(Duration::from_secs(300)),
+        );
 
         // No seed lookup: bucket 1 has never been cached.
         let in_flight = {
@@ -610,6 +678,75 @@ mod tests {
             calls.load(Ordering::SeqCst),
             2,
             "the discarded first-ever fetch must not have been cached, so this lookup must re-resolve"
+        );
+    }
+
+    // ── max_stale (stale-if-error bound, issue #347) ────────────────────────
+
+    #[tokio::test]
+    async fn stale_membership_within_max_stale_is_still_served() {
+        // Today's baseline: when the chain fails, a cached entry younger
+        // than `max_stale` is still served. Must not regress once the error
+        // arm starts consulting the bound - only the past-the-bound case
+        // (below) should start refusing.
+        let account = AccountId32::new([20u8; 32]);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let cache = MembershipCache::new(FlakyResolver {
+            account: account.clone(),
+            calls: calls.clone(),
+        })
+        .with_ttl(Duration::ZERO) // force every lookup to attempt a refetch
+        .with_max_stale(Duration::from_secs(300)); // generously within bound
+
+        // Seed a cached entry via the resolver's one successful call.
+        let role = cache.get_role(1, &account).await.unwrap();
+        assert_eq!(role, Some(Role::Admin));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+        // Second lookup: TTL is zero, so this attempts a refetch, which
+        // fails. The cached entry is a moment old - comfortably within
+        // max_stale - so it must still be served.
+        let role = cache.get_role(1, &account).await.unwrap();
+        assert_eq!(
+            role,
+            Some(Role::Admin),
+            "an entry within max_stale must still be served when the chain fails"
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn stale_membership_past_max_stale_is_refused() {
+        let account = AccountId32::new([21u8; 32]);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let cache = MembershipCache::new(FlakyResolver {
+            account: account.clone(),
+            calls: calls.clone(),
+        })
+        .with_ttl(Duration::ZERO)
+        .with_max_stale(Duration::ZERO); // any age at all exceeds this
+
+        let role = cache.get_role(1, &account).await.unwrap();
+        assert_eq!(role, Some(Role::Admin));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+        // Second lookup refetches (TTL zero), the refetch fails, and the
+        // cached entry is already older than max_stale (zero) by the time
+        // it's consulted - the request must be refused rather than served
+        // stale.
+        let result = cache.get_role(1, &account).await;
+        assert!(
+            matches!(result, Err(MembershipError::Unavailable(_))),
+            "an entry older than max_stale must not be served on chain failure, got {result:?}"
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+
+        // Refused, not evicted: the entry must still be in the map so a
+        // future successful refetch can overwrite it, rather than forcing a
+        // cold miss on top of an already-unavailable chain.
+        assert!(
+            cache.cache.get(&1).is_some(),
+            "a refused entry must be left in the map, not evicted"
         );
     }
 }

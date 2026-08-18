@@ -66,14 +66,26 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // the chain-state coordinator starts, so the cache cannot miss the
     // bootstrap `Resubscribed` the coordinator broadcasts on first connect.
     let resolver = ChainMembershipResolver::new(chain_rx.clone());
-    let ttl = Duration::from_secs(cli.auth.auth_cache_ttl);
+    // Incoherent, not unsafe - warn rather than clamp an explicit choice.
+    if cli.auth.auth_max_stale < cli.auth.auth_cache_ttl {
+        tracing::warn!(
+            "--auth-max-stale ({}s) is below --auth-cache-ttl ({}s): a cached member set \
+             will never be served once the chain is unreachable",
+            cli.auth.auth_max_stale,
+            cli.auth.auth_cache_ttl
+        );
+    }
     let auth = Arc::new(
-        Authenticator::new(resolver, ttl, Duration::from_secs(cli.auth.auth_max_skew))
+        Authenticator::new(resolver)
+            .with_ttl(Duration::from_secs(cli.auth.auth_cache_ttl))
+            .with_max_skew(Duration::from_secs(cli.auth.auth_max_skew))
+            .with_max_stale(Duration::from_secs(cli.auth.auth_max_stale))
             .with_invalidations(BlockEventInvalidations::new(events_tx.subscribe())),
     );
     tracing::info!(
-        "Auth: membership cache_ttl={}s, max_skew={}s",
+        "Auth: membership cache_ttl={}s, max_stale={}s, max_skew={}s",
         cli.auth.auth_cache_ttl,
+        cli.auth.auth_max_stale,
         cli.auth.auth_max_skew
     );
 

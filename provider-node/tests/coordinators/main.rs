@@ -12,7 +12,6 @@ mod replica_sync;
 use provider_auth::{Authenticator, StaticMembershipResolver};
 use provider_storage::{build_padded_merkle_tree, temp_rocksdb, StorageBackend};
 use std::sync::Arc;
-use std::time::Duration;
 use storage_primitives::blake2_256;
 use storage_provider_node::{DetectedChallenge, ProviderDeps, ProviderState};
 use tempfile::TempDir;
@@ -30,11 +29,7 @@ pub fn test_deps(
     ProviderDeps {
         storage,
         nonce_store,
-        auth: Arc::new(Authenticator::new(
-            StaticMembershipResolver(vec![]),
-            Duration::from_secs(60),
-            Duration::from_secs(300),
-        )),
+        auth: Arc::new(Authenticator::new(StaticMembershipResolver(vec![]))),
     }
 }
 
