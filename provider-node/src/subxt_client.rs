@@ -11,6 +11,7 @@
 //! connection).
 
 use crate::challenge_responder::{ChallengeChainClient, ChallengeError, DetectedChallenge};
+use crate::gc_coordinator::{CanonicalBucketState, GcChainClient};
 use crate::replica_sync_coordinator::{
     BucketSnapshot, ReplicaAgreementInfo, ReplicaSyncChainClient,
 };
@@ -564,6 +565,85 @@ impl SubxtChainClient {
             min_sync_interval,
             last_sync,
         })
+    }
+}
+
+#[async_trait::async_trait]
+impl GcChainClient for SubxtChainClient {
+    async fn fetch_canonical_bucket(
+        &self,
+        bucket_id: BucketId,
+    ) -> Result<CanonicalBucketState, Error> {
+        // `unvalidated`: see the `storage-subxt` crate docs.
+        let storage_address = storage_subxt::api::storage()
+            .storage_provider()
+            .buckets()
+            .unvalidated();
+
+        let at = self
+            .api()?
+            .at_current_block()
+            .await
+            .map_err(|e| Error::Internal(format!("Failed to get storage: {e}")))?;
+
+        let Some(value) = at
+            .storage()
+            .try_fetch(storage_address, (bucket_id,))
+            .await
+            .map_err(|e| Error::Internal(format!("Failed to fetch bucket {bucket_id}: {e}")))?
+        else {
+            // Authoritative "no bucket row" — distinct from a fetch failure,
+            // which propagates as Err (the GC fails closed on it).
+            return Ok(CanonicalBucketState::default());
+        };
+
+        let bucket = value
+            .decode()
+            .map_err(|e| Error::Internal(format!("Failed to decode bucket {bucket_id}: {e}")))?;
+
+        Ok(CanonicalBucketState {
+            exists: true,
+            frozen_start_seq: bucket.frozen_start_seq,
+            canonical_start_seq: bucket.snapshot.map(|s| s.commitment.start_seq),
+        })
+    }
+
+    async fn fetch_agreement_max_bytes(&self, bucket_id: BucketId) -> Result<Option<u64>, Error> {
+        // `unvalidated`: see the `storage-subxt` crate docs.
+        let storage_address = storage_subxt::api::storage()
+            .storage_provider()
+            .storage_agreements()
+            .unvalidated();
+
+        let at = self
+            .api()?
+            .at_current_block()
+            .await
+            .map_err(|e| Error::Internal(format!("Failed to get storage: {e}")))?;
+
+        let our_account = subxt::utils::AccountId32(self.signer.public_key().0);
+        let Some(value) = at
+            .storage()
+            .try_fetch(storage_address, (bucket_id, our_account))
+            .await
+            .map_err(|e| {
+                Error::Internal(format!("Failed to fetch agreement for {bucket_id}: {e}"))
+            })?
+        else {
+            return Ok(None);
+        };
+
+        let agreement = value.decode().map_err(|e| {
+            Error::Internal(format!("Failed to decode agreement for {bucket_id}: {e}"))
+        })?;
+        Ok(Some(agreement.max_bytes))
+    }
+
+    async fn has_pending_challenges(&self, bucket_id: BucketId) -> Result<bool, Error> {
+        let challenges = ChallengeChainClient::poll_challenges(self)
+            .await
+            .map_err(|e| Error::Internal(e.to_string()))?;
+        Ok(challenges.iter().any(|c| c.bucket_id == bucket_id))
     }
 }
 
