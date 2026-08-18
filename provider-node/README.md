@@ -56,11 +56,13 @@ within the configured skew window of the provider's clock or the request is
 rejected as expired.
 
 Bucket roles are cached, not read fresh on every request. A membership change
-(adding or removing a member, changing a role, deleting a bucket) takes effect
-on the first request after the finalized block that carries it. If that
-notification is ever missed (the block-event feed lagged or the node was
-disconnected from the chain), the change is instead bounded by
-`--auth-cache-ttl` (default 30s).
+takes effect on the first request after the finalized block that carries it.
+A feed that lags or reconnects invalidates every cached bucket immediately,
+rather than waiting on the TTL; only a feed that stops running entirely (no
+chain-state coordinator) falls back to `--auth-cache-ttl` (default 30s). If
+the chain is unreachable when a lookup needs to refetch, the cached member
+set is still served, but only for up to `--auth-max-stale` (default 5
+minutes) - past that, the request is refused with `503`.
 
 ## Test
 
