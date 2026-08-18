@@ -54,6 +54,15 @@ impl BucketState {
 /// Disk-based storage backend using RocksDB.
 pub struct DiskStorage {
     db: Arc<DB>,
+    /// Serializes the read-modify-write paths (`init_bucket`, `store_node`,
+    /// `commit`, `delete_before`): they read `BucketState`, mutate it, and
+    /// write several keys, so two concurrent writers would lose updates
+    /// (e.g. a `used_bytes` increment). Reads never take this lock —
+    /// RocksDB handles concurrent reads itself.
+    ///
+    /// Deliberately one global lock: write volume is far below contention
+    /// territory; switch to per-bucket locks if that ever changes.
+    write_lock: parking_lot::Mutex<()>,
 }
 
 impl DiskStorage {
@@ -69,11 +78,21 @@ impl DiskStorage {
         let db = DB::open_cf(&opts, path, &cf_names)
             .map_err(|e| Error::Storage(format!("Failed to open RocksDB: {e}")))?;
 
-        Ok(Self { db: Arc::new(db) })
+        Ok(Self {
+            db: Arc::new(db),
+            write_lock: parking_lot::Mutex::new(()),
+        })
+    }
+
+    /// Acquire the write lock serializing read-modify-write paths (the
+    /// guard protects no in-memory state — everything lives in RocksDB).
+    fn lock_writes(&self) -> parking_lot::MutexGuard<'_, ()> {
+        self.write_lock.lock()
     }
 
     /// Initialize a bucket with the given quota.
     pub fn init_bucket(&self, bucket_id: BucketId, max_bytes: u64) -> Result<(), Error> {
+        let _guard = self.lock_writes();
         let cf = self
             .db
             .cf_handle(CF_BUCKETS)
@@ -207,6 +226,8 @@ impl DiskStorage {
         data: Vec<u8>,
         children: Option<Vec<H256>>,
     ) -> Result<(), Error> {
+        let _guard = self.lock_writes();
+
         // Verify hash
         let actual_hash = blake2_256(&data);
         if actual_hash != expected_hash {
@@ -273,13 +294,22 @@ impl DiskStorage {
             let value =
                 bincode::serialize(&node).map_err(|e| Error::Serialization(e.to_string()))?;
 
-            self.db
-                .put_cf(&cf_nodes, key, &value)
-                .map_err(|e| Error::Storage(e.to_string()))?;
-
-            // Update quota
+            // Node and quota update land atomically: a crash between two
+            // separate puts would leak an uncharged node.
             bucket.used_bytes = bucket.used_bytes.saturating_add(data_len);
-            self.update_bucket(bucket_id, &bucket)?;
+            let cf_buckets = self
+                .db
+                .cf_handle(CF_BUCKETS)
+                .ok_or_else(|| Error::Storage("Buckets CF not found".to_string()))?;
+            let bucket_value =
+                bincode::serialize(&bucket).map_err(|e| Error::Serialization(e.to_string()))?;
+
+            let mut batch = rocksdb::WriteBatch::default();
+            batch.put_cf(&cf_nodes, key, &value);
+            batch.put_cf(&cf_buckets, bucket_id.to_le_bytes(), &bucket_value);
+            self.db
+                .write(batch)
+                .map_err(|e| Error::Storage(e.to_string()))?;
         }
 
         Ok(())
@@ -327,6 +357,8 @@ impl DiskStorage {
         bucket_id: BucketId,
         data_roots: Vec<H256>,
     ) -> Result<(H256, u64, Vec<u64>), Error> {
+        let _guard = self.lock_writes();
+
         // Verify all roots exist
         let cf_nodes = self
             .db
@@ -400,6 +432,8 @@ impl DiskStorage {
         bucket_id: BucketId,
         new_start_seq: u64,
     ) -> Result<(H256, u64, u64), Error> {
+        let _guard = self.lock_writes();
+
         let mut bucket = self
             .get_bucket(bucket_id)
             .ok_or(Error::BucketNotFound(bucket_id))?;
