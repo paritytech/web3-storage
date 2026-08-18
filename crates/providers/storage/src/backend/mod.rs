@@ -184,6 +184,32 @@ pub trait StorageBackend: Send + Sync {
         hashes
     }
 
+    /// DFS over a content tree, visiting every stored node (zero-hash padding
+    /// skipped). Fails on the first node missing from the store, so callers
+    /// can rely on "Ok = the entire tree is present".
+    fn try_walk_tree(
+        &self,
+        root: H256,
+        visit: &mut dyn FnMut(H256, &StoredNode),
+    ) -> Result<(), Error> {
+        let mut stack = vec![root];
+        while let Some(hash) = stack.pop() {
+            if hash == H256::zero() {
+                continue;
+            }
+            let node = self.get_node(&hash).ok_or_else(|| {
+                Error::NodeNotFound(format!("0x{}", hex::encode(hash.as_bytes())))
+            })?;
+            if let Some(children) = &node.children {
+                for child in children.iter().rev() {
+                    stack.push(*child);
+                }
+            }
+            visit(hash, &node);
+        }
+        Ok(())
+    }
+
     /// Get chunk data and Merkle proof at the given index from a data root.
     fn get_chunk_at_index(
         &self,

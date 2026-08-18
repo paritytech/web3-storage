@@ -19,13 +19,36 @@ use storage_primitives::{blake2_256, BucketId, MmrLeaf};
 const CF_NODES: &str = "nodes";
 const CF_BUCKETS: &str = "buckets";
 const CF_ROOT_TO_BUCKET: &str = "root_to_bucket";
+/// Per-node reference counts: how many committed leaves (live or stashed,
+/// across all buckets) reach the node. Keyed like CF_NODES.
+const CF_REFCOUNTS: &str = "refcounts";
 /// Small metadata values (e.g. the nonce counter highest sequence nonce).
 const CF_METADATA: &str = "metadata";
 
 /// RocksDB key for the persisted nonce counter highest sequence nonce.
 const KEY_NONCE: &[u8] = b"nonce_counter";
 
+mod refcounts;
+
+use refcounts::{decode_refcount, encode_refcount};
+
+/// A contiguous run of leaves removed by `delete_before`, retained until the
+/// on-chain liability for them has provably passed (then physically erased).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct PrunedRange {
+    /// Global sequence number of `leaves[0]`.
+    first_seq: u64,
+    /// The removed leaves, contiguous from `first_seq`.
+    leaves: Vec<MmrLeaf>,
+    /// The start_seq this prune advanced the bucket to.
+    new_start_seq: u64,
+}
+
 /// Bucket state managed by this provider (serialized to disk).
+///
+/// Changing fields or their order changes the bincode encoding: existing
+/// data directories become unreadable and must be wiped (no migration
+/// machinery — introduce it if a deployment ever needs one).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct BucketState {
     mmr_root: H256,
@@ -33,6 +56,14 @@ struct BucketState {
     leaves: Vec<MmrLeaf>,
     used_bytes: u64,
     max_bytes: u64,
+    /// Pruned-but-not-yet-erased leaf ranges (the pending-erasure queue).
+    pruned: Vec<PrunedRange>,
+    /// Admin-signed deletion receipts, kept even after their ranges are
+    /// erased — permanent evidence for the on-chain `Deleted` defense.
+    deletion_receipts: Vec<super::DeletionReceipt>,
+    /// Set when the bucket was deleted on-chain (or the agreement ended).
+    /// The bucket row is removed once `leaves` and `pruned` are both empty.
+    condemned: bool,
 }
 
 impl BucketState {
@@ -43,6 +74,9 @@ impl BucketState {
             leaves: Vec::new(),
             used_bytes: 0,
             max_bytes,
+            pruned: Vec::new(),
+            deletion_receipts: Vec::new(),
+            condemned: false,
         }
     }
 
@@ -73,15 +107,35 @@ impl DiskStorage {
         opts.create_missing_column_families(true);
 
         // Define column families
-        let cf_names = vec![CF_NODES, CF_BUCKETS, CF_ROOT_TO_BUCKET, CF_METADATA];
+        let cf_names = vec![
+            CF_NODES,
+            CF_BUCKETS,
+            CF_ROOT_TO_BUCKET,
+            CF_REFCOUNTS,
+            CF_METADATA,
+        ];
 
         let db = DB::open_cf(&opts, path, &cf_names)
             .map_err(|e| Error::Storage(format!("Failed to open RocksDB: {e}")))?;
 
-        Ok(Self {
+        let storage = Self {
             db: Arc::new(db),
             write_lock: parking_lot::Mutex::new(()),
-        })
+        };
+        Ok(storage)
+    }
+
+    /// Read a CF_REFCOUNTS entry: `(count, charged_bucket, size)`.
+    fn refcount_entry(&self, hash: &H256) -> Result<Option<(u64, u64, u64)>, Error> {
+        let cf = self
+            .db
+            .cf_handle(CF_REFCOUNTS)
+            .ok_or_else(|| Error::Storage("Refcounts CF not found".to_string()))?;
+        self.db
+            .get_cf(&cf, hash.as_bytes())
+            .map_err(|e| Error::Storage(e.to_string()))?
+            .map(|v| decode_refcount(&v))
+            .transpose()
     }
 
     /// Acquire the write lock serializing read-modify-write paths (the
@@ -304,9 +358,17 @@ impl DiskStorage {
             let bucket_value =
                 bincode::serialize(&bucket).map_err(|e| Error::Serialization(e.to_string()))?;
 
+            let cf_refcounts = self
+                .db
+                .cf_handle(CF_REFCOUNTS)
+                .ok_or_else(|| Error::Storage("Refcounts CF not found".to_string()))?;
+
             let mut batch = rocksdb::WriteBatch::default();
             batch.put_cf(&cf_nodes, key, &value);
             batch.put_cf(&cf_buckets, bucket_id.to_le_bytes(), &bucket_value);
+            // Charge record: count stays 0 until a commit references the
+            // node; erasure credits `bucket_id`'s used_bytes by `data_len`.
+            batch.put_cf(&cf_refcounts, key, encode_refcount(0, bucket_id, data_len));
             self.db
                 .write(batch)
                 .map_err(|e| Error::Storage(e.to_string()))?;
@@ -359,7 +421,7 @@ impl DiskStorage {
     ) -> Result<(H256, u64, Vec<u64>), Error> {
         let _guard = self.lock_writes();
 
-        // Verify all roots exist
+        // Verify all roots exist (missing roots keep their dedicated error)
         let cf_nodes = self
             .db
             .cf_handle(CF_NODES)
@@ -385,6 +447,25 @@ impl DiskStorage {
             .get_bucket(bucket_id)
             .ok_or(Error::BucketNotFound(bucket_id))?;
 
+        // Walk each root once: verify the whole tree is present (committing
+        // to a partially-uploaded tree would create liability the provider
+        // cannot prove), measure its content size, and gather the refcount
+        // increments this commit adds.
+        let mut increments: std::collections::HashMap<H256, u64> = std::collections::HashMap::new();
+        let mut node_sizes: std::collections::HashMap<H256, u64> = std::collections::HashMap::new();
+        let mut root_sizes = Vec::with_capacity(data_roots.len());
+        for root in &data_roots {
+            let mut data_size = 0u64;
+            self.try_walk_tree(*root, &mut |hash, node| {
+                *increments.entry(hash).or_default() += 1;
+                node_sizes.entry(hash).or_insert(node.data.len() as u64);
+                if node.children.is_none() {
+                    data_size = data_size.saturating_add(node.data.len() as u64);
+                }
+            })?;
+            root_sizes.push(data_size);
+        }
+
         let start_seq = bucket.start_seq;
         let mut leaf_indices = Vec::new();
         let mut mmr = crate::mmr::Mmr::new();
@@ -399,8 +480,7 @@ impl DiskStorage {
         for (i, data_root) in data_roots.iter().enumerate() {
             leaf_indices.push(start_index + i as u64);
 
-            // Calculate data size by traversing the stored node tree
-            let data_size = self.calculate_tree_size(*data_root);
+            let data_size = root_sizes[i];
             let total_size = bucket
                 .leaves
                 .last()
@@ -420,8 +500,37 @@ impl DiskStorage {
 
         bucket.mmr_root = mmr.root();
 
-        // Update bucket
-        self.update_bucket(bucket_id, &bucket)?;
+        // Bucket row and refcount increments land in one atomic batch.
+        let cf_buckets = self
+            .db
+            .cf_handle(CF_BUCKETS)
+            .ok_or_else(|| Error::Storage("Buckets CF not found".to_string()))?;
+        let cf_refcounts = self
+            .db
+            .cf_handle(CF_REFCOUNTS)
+            .ok_or_else(|| Error::Storage("Refcounts CF not found".to_string()))?;
+
+        let mut batch = rocksdb::WriteBatch::default();
+        for (hash, n) in increments {
+            // A missing entry means the node predates refcounting (or its
+            // charge record was created by another bucket's migration skip);
+            // charge attribution defaults to the committing bucket.
+            let fallback_size = node_sizes.get(&hash).copied().unwrap_or(0);
+            let (count, charged_bucket, size) =
+                self.refcount_entry(&hash)?
+                    .unwrap_or((0, bucket_id, fallback_size));
+            batch.put_cf(
+                &cf_refcounts,
+                hash.as_bytes(),
+                encode_refcount(count.saturating_add(n), charged_bucket, size),
+            );
+        }
+        let bucket_value =
+            bincode::serialize(&bucket).map_err(|e| Error::Serialization(e.to_string()))?;
+        batch.put_cf(&cf_buckets, bucket_id.to_le_bytes(), &bucket_value);
+        self.db
+            .write(batch)
+            .map_err(|e| Error::Storage(e.to_string()))?;
 
         Ok((bucket.mmr_root, start_seq, leaf_indices))
     }
@@ -935,6 +1044,90 @@ mod tests {
         // Deleting up to the end (empty bucket) is a valid full prune.
         let (_, start_seq, leaf_count) = storage.delete_before(1, 3).unwrap();
         assert_eq!((start_seq, leaf_count), (3, 0));
+    }
+
+    /// Store a two-chunk file: two leaf nodes + one internal node.
+    /// Returns (root, chunk hashes).
+    fn store_two_chunk_tree(
+        storage: &DiskStorage,
+        bucket_id: BucketId,
+        tag: u8,
+    ) -> (H256, [H256; 2]) {
+        let chunk_a = vec![tag, 1, 1, 1];
+        let chunk_b = vec![tag, 2, 2, 2];
+        let hash_a = blake2_256(&chunk_a);
+        let hash_b = blake2_256(&chunk_b);
+        storage
+            .store_node(bucket_id, hash_a, chunk_a, None)
+            .unwrap();
+        storage
+            .store_node(bucket_id, hash_b, chunk_b, None)
+            .unwrap();
+        let root_data: Vec<u8> = [hash_a.as_bytes(), hash_b.as_bytes()].concat();
+        let root = blake2_256(&root_data);
+        storage
+            .store_node(bucket_id, root, root_data, Some(vec![hash_a, hash_b]))
+            .unwrap();
+        (root, [hash_a, hash_b])
+    }
+
+    #[test]
+    fn commit_increments_refcounts() {
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        storage.init_bucket(1, u64::MAX).unwrap();
+        let (root, [hash_a, hash_b]) = store_two_chunk_tree(&storage, 1, 0);
+
+        // Stored but uncommitted: charge record exists with count 0.
+        assert_eq!(storage.refcount_entry(&root).unwrap(), Some((0, 1, 64)));
+        assert_eq!(storage.refcount_entry(&hash_a).unwrap(), Some((0, 1, 4)));
+
+        storage.commit(1, vec![root]).unwrap();
+        assert_eq!(storage.refcount_entry(&root).unwrap(), Some((1, 1, 64)));
+        assert_eq!(storage.refcount_entry(&hash_a).unwrap(), Some((1, 1, 4)));
+        assert_eq!(storage.refcount_entry(&hash_b).unwrap(), Some((1, 1, 4)));
+
+        // Committing the same root as a second leaf counts again.
+        storage.commit(1, vec![root]).unwrap();
+        assert_eq!(storage.refcount_entry(&root).unwrap(), Some((2, 1, 64)));
+        assert_eq!(storage.refcount_entry(&hash_a).unwrap(), Some((2, 1, 4)));
+    }
+
+    #[test]
+    fn shared_chunk_across_buckets_counts_twice_charges_once() {
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        storage.init_bucket(1, u64::MAX).unwrap();
+        storage.init_bucket(2, u64::MAX).unwrap();
+
+        let data = vec![9u8; 16];
+        let hash = blake2_256(&data);
+        storage.store_node(1, hash, data.clone(), None).unwrap();
+        // Second bucket stores the same content: global dedup, no re-charge.
+        storage.store_node(2, hash, data, None).unwrap();
+        assert_eq!(storage.get_bucket(2).unwrap().used_bytes, 0);
+
+        storage.commit(1, vec![hash]).unwrap();
+        storage.commit(2, vec![hash]).unwrap();
+        // Two references, still charged to the first storer.
+        assert_eq!(storage.refcount_entry(&hash).unwrap(), Some((2, 1, 16)));
+    }
+
+    #[test]
+    fn commit_fails_on_missing_subtree_node() {
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        storage.init_bucket(1, u64::MAX).unwrap();
+        let (root, [hash_a, _]) = store_two_chunk_tree(&storage, 1, 0);
+
+        // Simulate a vanished child (e.g. erased between upload and commit).
+        let cf = storage.db.cf_handle(CF_NODES).unwrap();
+        storage.db.delete_cf(&cf, hash_a.as_bytes()).unwrap();
+
+        let err = storage.commit(1, vec![root]).unwrap_err();
+        assert!(matches!(err, Error::NodeNotFound(_)), "got {err:?}");
+        // Nothing was committed: no refcount increments applied.
+        assert_eq!(storage.refcount_entry(&root).unwrap(), Some((0, 1, 64)));
     }
 
     #[test]
