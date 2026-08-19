@@ -25,6 +25,7 @@ COV_PACKAGES=(
 	pallet-s3-registry
 	storage-provider-node
 	provider-negotiation
+	provider-auth
 	provider-storage
 )
 
@@ -77,7 +78,7 @@ verify_classification() {
 # replica_sync.rs (no chain-client trait of its own, exercised only
 # indirectly through replica_sync_coordinator — measure it once it is
 # directly testable); binary entry points.
-COV_IGNORE='(/\.cargo/|/rustc/|weights\.rs|runtime_api\.rs|mock\.rs|benchmarking\.rs|/primitives/|subxt_client\.rs|_subxt\.rs|clients/[^/]+/src/|clients/[^/]+/tests/|src/replica_sync\.rs|src/main\.rs|src/cli\.rs|src/command\.rs)'
+COV_IGNORE='(/\.cargo/|/rustc/|weights\.rs|runtime_api\.rs|mock\.rs|benchmarking\.rs|/primitives/|/storage-subxt/|subxt_client\.rs|_subxt\.rs|clients/[^/]+/src/|clients/[^/]+/tests/|src/replica_sync\.rs|src/main\.rs|src/cli\.rs|src/command\.rs)'
 
 REPO_ROOT="${GITHUB_WORKSPACE:-$(git rev-parse --show-toplevel)}"
 cd "$REPO_ROOT"

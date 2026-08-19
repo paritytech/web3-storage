@@ -367,11 +367,10 @@ pub struct ChunkLocation {
 
 /// Payload that providers sign to commit to bucket state.
 ///
-/// The `nonce` field binds each signature to a specific moment in time —
-/// callers populate it with the block number at sign-time. The pallet rejects
-/// signatures whose nonce is too far in the past, preventing an attacker who
-/// captures a single signature from replaying it forever to challenge or
-/// defend against the signer.
+/// TODO(#316): this names a bucket but not the agreement it was signed under,
+/// so a commitment outlives the obligation it attests to. Adding `agreement_id`
+/// bounds validity to the agreement's lifetime, which is what #337 removed the
+/// wall-clock nonce in favour of.
 #[derive(
     Clone, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo, MaxEncodedLen, Debug,
 )]
@@ -383,23 +382,18 @@ pub struct CommitmentPayload {
     pub bucket_id: BucketId,
     /// MMR commitment being signed over (root + covered leaf range).
     pub commitment: Commitment,
-    /// Replay-protection nonce — block number at the time the signer signed.
-    pub nonce: u64,
 }
 
 impl CommitmentPayload {
-    /// Current protocol version. Bumped from `0x01` to `0x02` when the `nonce`
-    /// field was added; older signatures (no nonce) cannot be replayed against
-    /// this version because the encoded payload would mismatch on `version`.
-    pub const CURRENT_VERSION: u8 = 2;
+    /// Current protocol version `0x1`
+    pub const CURRENT_VERSION: u8 = 1;
 
     /// Create a new commitment payload
-    pub fn new(bucket_id: BucketId, commitment: Commitment, nonce: u64) -> Self {
+    pub fn new(bucket_id: BucketId, commitment: Commitment) -> Self {
         Self {
             version: Self::CURRENT_VERSION,
             bucket_id,
             commitment,
-            nonce,
         }
     }
 
@@ -430,11 +424,6 @@ pub struct BucketSnapshot<BlockNumber> {
     /// Bit i is set if primary_providers[i] signed.
     /// Uses Vec<u8> with LSB0 ordering for efficient bit manipulation.
     pub primary_signers: Vec<u8>,
-    /// The `nonce` value from the `CommitmentPayload` that the original
-    /// signers signed. Required by `extend_checkpoint` so a late-arriving
-    /// signature can be verified against the same payload the initial
-    /// signers committed to.
-    pub commitment_nonce: u64,
 }
 
 impl<BlockNumber> BucketSnapshot<BlockNumber> {
@@ -505,8 +494,7 @@ impl<BlockNumber> BucketSnapshot<BlockNumber> {
 
 /// Compute blake2b-256 hash of data
 pub fn blake2_256(data: &[u8]) -> H256 {
-    // Use sp_core's blake2_256 which is optimized and available in both std and no_std
-    sp_core::hashing::blake2_256(data).into()
+    sp_crypto_hashing::blake2_256(data).into()
 }
 
 /// Compute hash of two children for internal Merkle node
@@ -601,7 +589,6 @@ mod tests {
                 start_seq: 10,
                 leaf_count: 5,
             },
-            42,
         );
 
         assert_eq!(payload.range_end(), 15);
@@ -611,10 +598,10 @@ mod tests {
         assert!(!payload.contains_seq(15));
     }
 
-    /// Embedding `Commitment` in place of the loose
-    /// `(mmr_root, start_seq, leaf_count)` triplet must be byte-identical to
-    /// the previous flat layout, so existing signatures still verify and stored
-    /// values need no migration. Pin the exact encoding to guard that.
+    /// Off-chain signers and the pallet must encode this payload identically
+    /// or no signature verifies, so pin the exact bytes. The leading `0x01` and
+    /// the length of 57 together record that this is the pre-`0x02` encoding
+    /// restored: dropping the nonce reverted both the layout and the version.
     #[test]
     fn commitment_payload_encoding_is_byte_identical() {
         let payload = CommitmentPayload::new(
@@ -624,17 +611,17 @@ mod tests {
                 start_seq: 10,
                 leaf_count: 5,
             },
-            42,
         );
 
-        let mut expected = alloc::vec![CommitmentPayload::CURRENT_VERSION]; // version: u8
+        let mut expected = alloc::vec![1u8]; // version
         expected.extend_from_slice(&1u64.to_le_bytes()); // bucket_id
         expected.extend_from_slice(&[0u8; 32]); // mmr_root (H256::zero)
         expected.extend_from_slice(&10u64.to_le_bytes()); // start_seq
         expected.extend_from_slice(&5u64.to_le_bytes()); // leaf_count
-        expected.extend_from_slice(&42u64.to_le_bytes()); // nonce
 
         assert_eq!(payload.encode(), expected);
+        assert_eq!(expected.len(), 57);
+        assert_eq!(CommitmentPayload::CURRENT_VERSION, 1);
     }
 
     fn snapshot_with_signers(primary_signers: Vec<u8>) -> BucketSnapshot<u32> {
@@ -642,7 +629,6 @@ mod tests {
             commitment: Commitment::default(),
             checkpoint_block: 0,
             primary_signers,
-            commitment_nonce: 0,
         }
     }
 
