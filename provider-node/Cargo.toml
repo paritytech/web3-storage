@@ -20,6 +20,7 @@ tokio-rate-limit = { workspace = true }
 serde = { workspace = true, features = ["std"] }
 serde_json = { workspace = true }
 sp-core = { workspace = true, features = ["std"] }
+sp-crypto-hashing = { workspace = true, features = ["std"] }
 sp-runtime = { workspace = true, features = ["std"] }
 subxt = { workspace = true, features = ["light-client"] }
 subxt-rpcs = { workspace = true }

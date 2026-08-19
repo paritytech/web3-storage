@@ -38,7 +38,7 @@ pub mod api {
         "S3Registry",
         "Revive",
     ];
-    pub static RUNTIME_APIS: [&str; 21usize] = [
+    pub static RUNTIME_APIS: [&str; 22usize] = [
         "Core",
         "Metadata",
         "BlockBuilder",
@@ -51,6 +51,7 @@ pub mod api {
         "CollectCollationInfo",
         "AuraUnincludedSegmentApi",
         "RelayParentOffsetApi",
+        "SchedulingV3EnabledApi",
         "GetParachainInfo",
         "GenesisBuilder",
         "StorageProviderApi",
@@ -132,6 +133,11 @@ pub mod api {
             }
             pub fn relay_parent_offset_api(&self) -> relay_parent_offset_api::RelayParentOffsetApi {
                 relay_parent_offset_api::RelayParentOffsetApi
+            }
+            pub fn scheduling_v3_enabled_api(
+                &self,
+            ) -> scheduling_v3_enabled_api::SchedulingV3EnabledApi {
+                scheduling_v3_enabled_api::SchedulingV3EnabledApi
             }
             pub fn get_parachain_info(&self) -> get_parachain_info::GetParachainInfo {
                 get_parachain_info::GetParachainInfo
@@ -980,13 +986,26 @@ pub mod api {
         pub mod relay_parent_offset_api {
             use super::root_mod;
             use super::runtime_types;
-            #[doc = " API to tell the node side how the relay parent should be chosen."]
+            #[doc = " API to tell the node side how the relay parent should be chosen and how claim queue"]
+            #[doc = " offsets are determined."]
             #[doc = ""]
-            #[doc = " A larger offset indicates that the relay parent should not be the tip of the relay chain,"]
-            #[doc = " but `N` blocks behind the tip. This offset is then enforced by the runtime."]
+            #[doc = " A larger relay parent offset indicates that the relay parent should not be the tip of"]
+            #[doc = " the relay chain, but `N` blocks behind the tip. This offset is then enforced by the"]
+            #[doc = " runtime."]
+            #[doc = ""]
+            #[doc = " The max claim queue offset determines how far \"into the future\" collators target when"]
+            #[doc = " selecting cores from the claim queue. This provides async backing flexibility while"]
+            #[doc = " preventing collators from skipping slots."]
+            #[doc = " See: <https://github.com/paritytech/polkadot-sdk/issues/8893>"]
+            #[doc = ""]
+            #[doc = " Version history:"]
+            #[doc = " - Version 1: Initial version with `relay_parent_offset` only"]
+            #[doc = " - Version 2: Added `max_claim_queue_offset` method"]
             pub struct RelayParentOffsetApi;
             impl RelayParentOffsetApi {
-                #[doc = " Fetch the slot offset that is expected from the relay chain."]
+                #[doc = " Fetch the relay parent offset that is expected from the relay chain."]
+                #[doc = ""]
+                #[doc = " This determines how many blocks behind the relay chain tip the relay parent should be."]
                 pub fn relay_parent_offset(
                     &self,
                 ) -> ::subxt::runtime_apis::StaticPayload<(), relay_parent_offset::output::Output>
@@ -1002,6 +1021,56 @@ pub mod api {
                         ],
                     )
                 }
+                #[doc = " Maximum claim queue offset for async backing flexibility."]
+                #[doc = ""]
+                #[doc = " Bounds how far \"into the future\" a candidate may look in the claim queue when"]
+                #[doc = " selecting a core. The effective claim queue depth depends on the candidate version:"]
+                #[doc = ""]
+                #[doc = " - **V1/V2 candidates**: the claim queue is looked up at the candidate's `relay_parent`,"]
+                #[doc = "   which is `relay_parent_offset` blocks behind the relay-chain tip. The effective"]
+                #[doc = "   depth is `relay_parent_offset + max_claim_queue_offset`."]
+                #[doc = ""]
+                #[doc = " - **V3 candidates**: the claim queue is looked up at the candidate's"]
+                #[doc = "   `scheduling_parent` — the relay-chain block of the *last finished* slot, decoupled"]
+                #[doc = "   from the execution-context `relay_parent`. The effective depth is just"]
+                #[doc = "   `max_claim_queue_offset`."]
+                #[doc = ""]
+                #[doc = " Collators select a core via an offset in `[0, max_claim_queue_offset]`."]
+                #[doc = ""]
+                #[doc = " - **V2 candidates**: `max_claim_queue_offset = 1` is sufficient. The claim queue is"]
+                #[doc = "   looked up at `relay_parent`, which sits behind the tip. Offset 0 covers synchronous"]
+                #[doc = "   backing in the next relay block; offset 1 covers asynchronous backing in the relay"]
+                #[doc = "   block after that."]
+                #[doc = ""]
+                #[doc = " - **V3 candidates**: offset 0 is not reachable — the `scheduling_parent`"]
+                #[doc = "   is usually the leaf when picked, but its child is already being built, so there is"]
+                #[doc = "   no opportunity to land in the next relay block. Offset 1 is reachable under"]
+                #[doc = "   synchronous-backing semantics. For elastic scaling the last block in the bundle is"]
+                #[doc = "   built near the end of the current slot, which makes offset 1 too tight —"]
+                #[doc = "   `max_claim_queue_offset = 2` is the minimum cap that keeps elastic scaling viable."]
+                #[doc = ""]
+                #[doc = " Note: this method was added in `api_version = 2`. Collators calling on runtimes that"]
+                #[doc = " only implement `api_version = 1` of [`RelayParentOffsetApi`] will receive an error"]
+                #[doc = " and should fall back to a sensible default (current collator defaults: `1` on the"]
+                #[doc = " V3 path, `0` on the V1/V2 path)."]
+                #[doc = ""]
+                #[doc = " See: <https://github.com/paritytech/polkadot-sdk/issues/8893>"]
+                pub fn max_claim_queue_offset(
+                    &self,
+                ) -> ::subxt::runtime_apis::StaticPayload<(), max_claim_queue_offset::output::Output>
+                {
+                    ::subxt::runtime_apis::StaticPayload::new_static(
+                        "RelayParentOffsetApi",
+                        "max_claim_queue_offset",
+                        (),
+                        [
+                            133u8, 210u8, 177u8, 58u8, 123u8, 3u8, 104u8, 148u8, 80u8, 141u8, 80u8,
+                            222u8, 228u8, 72u8, 138u8, 183u8, 137u8, 143u8, 89u8, 10u8, 211u8,
+                            16u8, 174u8, 187u8, 126u8, 20u8, 218u8, 43u8, 164u8, 131u8, 161u8,
+                            146u8,
+                        ],
+                    )
+                }
             }
             pub mod relay_parent_offset {
                 use super::root_mod;
@@ -1009,6 +1078,55 @@ pub mod api {
                 pub mod output {
                     use super::runtime_types;
                     pub type Output = ::core::primitive::u32;
+                }
+            }
+            pub mod max_claim_queue_offset {
+                use super::root_mod;
+                use super::runtime_types;
+                pub mod output {
+                    use super::runtime_types;
+                    pub type Output = ::core::primitive::u8;
+                }
+            }
+        }
+        pub mod scheduling_v3_enabled_api {
+            use super::root_mod;
+            use super::runtime_types;
+            #[doc = " API to tell the node side whether V3 scheduling is enabled."]
+            #[doc = ""]
+            #[doc = " When enabled, collators must produce V3 candidates with:"]
+            #[doc = " - ParachainBlockData::V2 containing the scheduling proof"]
+            #[doc = " - CandidateDescriptorV3 with scheduling_parent"]
+            #[doc = ""]
+            #[doc = " This is mutually exclusive with relay parent offset (building on older"]
+            #[doc = " relay parents). A parachain enables V3 when it wants low-latency block"]
+            #[doc = " production with the dual-parent model."]
+            pub struct SchedulingV3EnabledApi;
+            impl SchedulingV3EnabledApi {
+                #[doc = " Returns true if V3 scheduling is enabled for this parachain."]
+                pub fn scheduling_v3_enabled(
+                    &self,
+                ) -> ::subxt::runtime_apis::StaticPayload<(), scheduling_v3_enabled::output::Output>
+                {
+                    ::subxt::runtime_apis::StaticPayload::new_static(
+                        "SchedulingV3EnabledApi",
+                        "scheduling_v3_enabled",
+                        (),
+                        [
+                            143u8, 112u8, 193u8, 113u8, 247u8, 129u8, 139u8, 38u8, 76u8, 228u8,
+                            82u8, 134u8, 153u8, 164u8, 146u8, 164u8, 108u8, 190u8, 44u8, 142u8,
+                            143u8, 24u8, 144u8, 55u8, 17u8, 45u8, 118u8, 100u8, 215u8, 94u8, 186u8,
+                            95u8,
+                        ],
+                    )
+                }
+            }
+            pub mod scheduling_v3_enabled {
+                use super::root_mod;
+                use super::runtime_types;
+                pub mod output {
+                    use super::runtime_types;
+                    pub type Output = ::core::primitive::bool;
                 }
             }
         }
@@ -1219,9 +1337,10 @@ pub mod api {
                         "bucket_info",
                         (bucket_id,),
                         [
-                            108u8, 252u8, 24u8, 93u8, 83u8, 38u8, 147u8, 72u8, 205u8, 95u8, 5u8,
-                            175u8, 95u8, 175u8, 181u8, 1u8, 136u8, 254u8, 161u8, 175u8, 43u8, 5u8,
-                            236u8, 161u8, 5u8, 221u8, 137u8, 21u8, 13u8, 152u8, 74u8, 228u8,
+                            65u8, 244u8, 32u8, 139u8, 156u8, 102u8, 129u8, 87u8, 230u8, 115u8,
+                            54u8, 157u8, 16u8, 111u8, 236u8, 116u8, 207u8, 149u8, 14u8, 90u8, 48u8,
+                            126u8, 174u8, 220u8, 228u8, 18u8, 41u8, 224u8, 162u8, 163u8, 102u8,
+                            69u8,
                         ],
                     )
                 }
@@ -1913,9 +2032,10 @@ pub mod api {
                         "dry_run_call",
                         (origin, call, result_xcms_version),
                         [
-                            109u8, 134u8, 206u8, 119u8, 76u8, 31u8, 12u8, 10u8, 120u8, 7u8, 196u8,
-                            32u8, 90u8, 115u8, 214u8, 46u8, 1u8, 188u8, 103u8, 121u8, 79u8, 203u8,
-                            110u8, 236u8, 190u8, 188u8, 126u8, 212u8, 222u8, 122u8, 62u8, 65u8,
+                            32u8, 81u8, 66u8, 68u8, 236u8, 47u8, 78u8, 60u8, 232u8, 230u8, 31u8,
+                            145u8, 199u8, 108u8, 227u8, 19u8, 220u8, 35u8, 65u8, 40u8, 186u8,
+                            137u8, 97u8, 252u8, 17u8, 103u8, 118u8, 185u8, 199u8, 60u8, 142u8,
+                            161u8,
                         ],
                     )
                 }
@@ -1933,10 +2053,9 @@ pub mod api {
                         "dry_run_xcm",
                         (origin_location, xcm),
                         [
-                            182u8, 96u8, 186u8, 176u8, 8u8, 116u8, 95u8, 227u8, 146u8, 160u8,
-                            207u8, 213u8, 115u8, 171u8, 36u8, 7u8, 185u8, 69u8, 60u8, 13u8, 224u8,
-                            16u8, 216u8, 124u8, 83u8, 223u8, 22u8, 88u8, 111u8, 197u8, 121u8,
-                            121u8,
+                            62u8, 249u8, 219u8, 182u8, 170u8, 136u8, 13u8, 220u8, 107u8, 80u8,
+                            229u8, 193u8, 174u8, 47u8, 95u8, 3u8, 151u8, 207u8, 104u8, 95u8, 216u8,
+                            143u8, 120u8, 30u8, 95u8, 0u8, 214u8, 23u8, 132u8, 32u8, 237u8, 242u8,
                         ],
                     )
                 }
@@ -2251,6 +2370,25 @@ pub mod api {
                         ],
                     )
                 }
+                #[doc = " Returns the block gas limit as calculated from the weights."]
+                pub fn max_extrinsic_weight_in_gas(
+                    &self,
+                ) -> ::subxt::runtime_apis::StaticPayload<
+                    (),
+                    max_extrinsic_weight_in_gas::output::Output,
+                > {
+                    ::subxt::runtime_apis::StaticPayload::new_static(
+                        "ReviveApi",
+                        "max_extrinsic_weight_in_gas",
+                        (),
+                        [
+                            193u8, 108u8, 7u8, 121u8, 11u8, 129u8, 152u8, 150u8, 187u8, 122u8,
+                            85u8, 242u8, 57u8, 201u8, 232u8, 101u8, 54u8, 232u8, 160u8, 88u8, 22u8,
+                            250u8, 249u8, 47u8, 130u8, 61u8, 45u8, 104u8, 162u8, 124u8, 205u8,
+                            208u8,
+                        ],
+                    )
+                }
                 #[doc = " Returns the free balance of the given `[H160]` address, using EVM decimals."]
                 pub fn balance(
                     &self,
@@ -2431,10 +2569,52 @@ pub mod api {
                         "eth_transact_with_config",
                         (tx, config),
                         [
-                            123u8, 155u8, 163u8, 24u8, 249u8, 148u8, 255u8, 246u8, 31u8, 93u8,
-                            139u8, 161u8, 45u8, 5u8, 31u8, 27u8, 222u8, 80u8, 0u8, 27u8, 153u8,
-                            94u8, 38u8, 232u8, 247u8, 64u8, 109u8, 161u8, 167u8, 111u8, 162u8,
-                            153u8,
+                            65u8, 132u8, 110u8, 140u8, 158u8, 96u8, 58u8, 132u8, 34u8, 94u8, 195u8,
+                            129u8, 22u8, 176u8, 17u8, 18u8, 168u8, 242u8, 251u8, 41u8, 78u8, 236u8,
+                            247u8, 84u8, 152u8, 76u8, 23u8, 167u8, 238u8, 194u8, 183u8, 4u8,
+                        ],
+                    )
+                }
+                #[doc = " Estimates the amount of gas that a transactions requires."]
+                #[doc = ""]
+                #[doc = " This function estimates the gas of the transaction according to the same binary search"]
+                #[doc = " algorithm that's implemented in Geth. It stops when with an acceptable error ratio of"]
+                #[doc = " 1.5% so that the algorithm terminates early."]
+                pub fn eth_estimate_gas(
+                    &self,
+                    tx: eth_estimate_gas::Tx,
+                    config: eth_estimate_gas::Config,
+                ) -> ::subxt::runtime_apis::StaticPayload<
+                    (eth_estimate_gas::Tx, eth_estimate_gas::Config),
+                    eth_estimate_gas::output::Output,
+                > {
+                    ::subxt::runtime_apis::StaticPayload::new_static(
+                        "ReviveApi",
+                        "eth_estimate_gas",
+                        (tx, config),
+                        [
+                            229u8, 78u8, 173u8, 181u8, 193u8, 82u8, 153u8, 43u8, 62u8, 36u8, 203u8,
+                            161u8, 222u8, 20u8, 136u8, 195u8, 24u8, 203u8, 6u8, 244u8, 45u8, 62u8,
+                            128u8, 113u8, 86u8, 110u8, 20u8, 135u8, 23u8, 47u8, 83u8, 43u8,
+                        ],
+                    )
+                }
+                #[doc = " Return the pre-dispatch weight booked for the signed Ethereum transaction payload."]
+                pub fn eth_pre_dispatch_weight(
+                    &self,
+                    tx: eth_pre_dispatch_weight::Tx,
+                ) -> ::subxt::runtime_apis::StaticPayload<
+                    (eth_pre_dispatch_weight::Tx,),
+                    eth_pre_dispatch_weight::output::Output,
+                > {
+                    ::subxt::runtime_apis::StaticPayload::new_static(
+                        "ReviveApi",
+                        "eth_pre_dispatch_weight",
+                        (tx,),
+                        [
+                            126u8, 128u8, 251u8, 50u8, 139u8, 193u8, 107u8, 159u8, 179u8, 230u8,
+                            220u8, 45u8, 100u8, 90u8, 117u8, 101u8, 47u8, 157u8, 11u8, 73u8, 52u8,
+                            54u8, 44u8, 191u8, 239u8, 136u8, 132u8, 163u8, 210u8, 6u8, 87u8, 163u8,
                         ],
                     )
                 }
@@ -2589,6 +2769,35 @@ pub mod api {
                         ],
                     )
                 }
+                #[doc = " Dry run and return the trace of the given call with additional configuration."]
+                #[doc = ""]
+                #[doc = " Like [`Self::trace_call`], but accepts a [`TracingConfig`] that can carry state"]
+                #[doc = " overrides and future extensibility. The config must be the **last argument** for"]
+                #[doc = " backwards compatibility — see [`TracingConfig`] documentation."]
+                pub fn trace_call_with_config(
+                    &self,
+                    tx: trace_call_with_config::Tx,
+                    tracer_type: trace_call_with_config::TracerType,
+                    config: trace_call_with_config::Config,
+                ) -> ::subxt::runtime_apis::StaticPayload<
+                    (
+                        trace_call_with_config::Tx,
+                        trace_call_with_config::TracerType,
+                        trace_call_with_config::Config,
+                    ),
+                    trace_call_with_config::output::Output,
+                > {
+                    ::subxt::runtime_apis::StaticPayload::new_static(
+                        "ReviveApi",
+                        "trace_call_with_config",
+                        (tx, tracer_type, config),
+                        [
+                            86u8, 8u8, 47u8, 109u8, 136u8, 137u8, 46u8, 225u8, 101u8, 245u8, 14u8,
+                            125u8, 178u8, 77u8, 3u8, 212u8, 178u8, 36u8, 106u8, 186u8, 190u8, 94u8,
+                            64u8, 91u8, 234u8, 49u8, 130u8, 158u8, 189u8, 43u8, 124u8, 213u8,
+                        ],
+                    )
+                }
                 #[doc = " The address of the validator that produced the current block."]
                 pub fn block_author(
                     &self,
@@ -2731,6 +2940,14 @@ pub mod api {
                     pub type Output = runtime_types::primitive_types::U256;
                 }
             }
+            pub mod max_extrinsic_weight_in_gas {
+                use super::root_mod;
+                use super::runtime_types;
+                pub mod output {
+                    use super::runtime_types;
+                    pub type Output = runtime_types::primitive_types::U256;
+                }
+            }
             pub mod balance {
                 use super::root_mod;
                 use super::runtime_types;
@@ -2827,6 +3044,34 @@ pub mod api {
                     >;
                 }
             }
+            pub mod eth_estimate_gas {
+                use super::root_mod;
+                use super::runtime_types;
+                pub type Tx =
+                    runtime_types::pallet_revive::evm::api::rpc_types_gen::GenericTransaction;
+                pub type Config = runtime_types::pallet_revive::evm::api::rpc_types::DryRunConfig<
+                    ::core::primitive::u64,
+                >;
+                pub mod output {
+                    use super::runtime_types;
+                    pub type Output = ::core::result::Result<
+                        runtime_types::primitive_types::U256,
+                        runtime_types::pallet_revive::primitives::EthTransactError,
+                    >;
+                }
+            }
+            pub mod eth_pre_dispatch_weight {
+                use super::root_mod;
+                use super::runtime_types;
+                pub type Tx = ::subxt::alloc::vec::Vec<::core::primitive::u8>;
+                pub mod output {
+                    use super::runtime_types;
+                    pub type Output = ::core::result::Result<
+                        runtime_types::sp_weights::weight_v2::Weight,
+                        runtime_types::pallet_revive::primitives::EthTransactError,
+                    >;
+                }
+            }
             pub mod upload_code {
                 use super::root_mod;
                 use super::runtime_types;
@@ -2904,6 +3149,22 @@ pub mod api {
                     runtime_types::pallet_revive::evm::api::rpc_types_gen::GenericTransaction;
                 pub type Config =
                     runtime_types::pallet_revive::evm::api::debug_rpc_types::TracerType;
+                pub mod output {
+                    use super::runtime_types;
+                    pub type Output = ::core::result::Result<
+                        runtime_types::pallet_revive::evm::api::debug_rpc_types::Trace,
+                        runtime_types::pallet_revive::primitives::EthTransactError,
+                    >;
+                }
+            }
+            pub mod trace_call_with_config {
+                use super::root_mod;
+                use super::runtime_types;
+                pub type Tx =
+                    runtime_types::pallet_revive::evm::api::rpc_types_gen::GenericTransaction;
+                pub type TracerType =
+                    runtime_types::pallet_revive::evm::api::debug_rpc_types::TracerType;
+                pub type Config = runtime_types::pallet_revive::evm::api::rpc_types::TracingConfig;
                 pub mod output {
                     use super::runtime_types;
                     pub type Output = ::core::result::Result<
@@ -3153,9 +3414,9 @@ pub mod api {
             .hash();
         runtime_metadata_hash
             == [
-                231u8, 83u8, 9u8, 198u8, 41u8, 236u8, 102u8, 255u8, 70u8, 118u8, 252u8, 251u8,
-                42u8, 145u8, 29u8, 175u8, 221u8, 84u8, 121u8, 79u8, 251u8, 77u8, 55u8, 206u8,
-                243u8, 162u8, 67u8, 137u8, 158u8, 140u8, 103u8, 52u8,
+                88u8, 203u8, 137u8, 39u8, 60u8, 57u8, 32u8, 14u8, 224u8, 93u8, 39u8, 101u8, 100u8,
+                78u8, 13u8, 127u8, 9u8, 174u8, 208u8, 164u8, 167u8, 80u8, 124u8, 183u8, 54u8, 35u8,
+                25u8, 230u8, 29u8, 69u8, 92u8, 77u8,
             ]
     }
     pub mod system {
@@ -3796,8 +4057,14 @@ pub mod api {
             )]
             #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-            #[doc = "`:code` was updated."]
-            pub struct CodeUpdated;
+            #[doc = "`:code` was updated to the code with the given hash."]
+            pub struct CodeUpdated {
+                pub hash: code_updated::Hash,
+            }
+            pub mod code_updated {
+                use super::runtime_types;
+                pub type Hash = ::subxt::utils::H256;
+            }
             impl CodeUpdated {
                 const PALLET_NAME: &'static str = "System";
                 const EVENT_NAME: &'static str = "CodeUpdated";
@@ -4137,10 +4404,9 @@ pub mod api {
                         "System",
                         "Events",
                         [
-                            233u8, 122u8, 242u8, 89u8, 111u8, 44u8, 79u8, 42u8, 134u8, 148u8,
-                            202u8, 205u8, 35u8, 253u8, 175u8, 17u8, 35u8, 249u8, 156u8, 192u8,
-                            245u8, 199u8, 35u8, 173u8, 199u8, 21u8, 104u8, 233u8, 140u8, 255u8,
-                            210u8, 166u8,
+                            203u8, 0u8, 25u8, 250u8, 152u8, 79u8, 62u8, 88u8, 26u8, 1u8, 181u8,
+                            73u8, 166u8, 51u8, 108u8, 24u8, 217u8, 101u8, 171u8, 172u8, 72u8, 16u8,
+                            126u8, 232u8, 20u8, 166u8, 63u8, 49u8, 212u8, 244u8, 84u8, 109u8,
                         ],
                     )
                 }
@@ -5391,6 +5657,25 @@ pub mod api {
                         ],
                     )
                 }
+                #[doc = " The approved peer id to be sent as a UMP signal on the last block of the PoV."]
+                pub fn pending_approved_peer(
+                    &self,
+                ) -> ::subxt::storage::StaticAddress<
+                    (),
+                    pending_approved_peer::Output,
+                    ::subxt::utils::Yes,
+                > {
+                    ::subxt::storage::StaticAddress::new_static(
+                        "ParachainSystem",
+                        "PendingApprovedPeer",
+                        [
+                            136u8, 87u8, 187u8, 173u8, 33u8, 170u8, 105u8, 135u8, 72u8, 177u8,
+                            34u8, 20u8, 143u8, 154u8, 14u8, 86u8, 247u8, 133u8, 144u8, 167u8, 62u8,
+                            191u8, 42u8, 221u8, 165u8, 230u8, 91u8, 213u8, 160u8, 116u8, 95u8,
+                            41u8,
+                        ],
+                    )
+                }
                 #[doc = " The factor to multiply the base delivery fee by for UMP."]
                 pub fn upward_delivery_fee_factor(
                     &self,
@@ -5501,9 +5786,10 @@ pub mod api {
                         "ParachainSystem",
                         "PoVMessagesTracker",
                         [
-                            166u8, 131u8, 149u8, 113u8, 81u8, 208u8, 210u8, 242u8, 47u8, 27u8,
-                            92u8, 91u8, 7u8, 30u8, 167u8, 241u8, 27u8, 50u8, 16u8, 192u8, 34u8,
-                            129u8, 187u8, 240u8, 72u8, 82u8, 202u8, 6u8, 215u8, 162u8, 17u8, 95u8,
+                            175u8, 99u8, 193u8, 44u8, 132u8, 57u8, 47u8, 56u8, 39u8, 56u8, 119u8,
+                            182u8, 68u8, 119u8, 85u8, 160u8, 69u8, 33u8, 150u8, 145u8, 206u8,
+                            141u8, 205u8, 109u8, 79u8, 230u8, 121u8, 34u8, 53u8, 230u8, 182u8,
+                            69u8,
                         ],
                     )
                 }
@@ -5721,6 +6007,16 @@ pub mod api {
                 }
                 pub type Output =
                     ::subxt::alloc::vec::Vec<::subxt::alloc::vec::Vec<::core::primitive::u8>>;
+            }
+            pub mod pending_approved_peer {
+                use super::root_mod;
+                use super::runtime_types;
+                pub mod input {
+                    use super::runtime_types;
+                }
+                pub type Output = runtime_types::bounded_collections::bounded_vec::BoundedVec<
+                    ::core::primitive::u8,
+                >;
             }
             pub mod upward_delivery_fee_factor {
                 use super::root_mod;
@@ -7605,10 +7901,10 @@ pub mod api {
                         "Balances",
                         "Freezes",
                         [
-                            103u8, 248u8, 73u8, 236u8, 239u8, 124u8, 250u8, 210u8, 106u8, 200u8,
-                            122u8, 101u8, 229u8, 47u8, 253u8, 152u8, 20u8, 59u8, 6u8, 172u8, 157u8,
-                            83u8, 244u8, 197u8, 179u8, 15u8, 20u8, 168u8, 227u8, 104u8, 210u8,
-                            76u8,
+                            178u8, 213u8, 232u8, 36u8, 189u8, 157u8, 117u8, 93u8, 176u8, 242u8,
+                            252u8, 202u8, 71u8, 97u8, 152u8, 133u8, 66u8, 38u8, 80u8, 16u8, 174u8,
+                            179u8, 195u8, 255u8, 250u8, 93u8, 177u8, 18u8, 38u8, 146u8, 62u8,
+                            141u8,
                         ],
                     )
                 }
@@ -8109,10 +8405,10 @@ pub mod api {
                                 call: ::subxt::alloc::boxed::Box::new(call),
                             },
                             [
-                                43u8, 61u8, 34u8, 196u8, 63u8, 116u8, 131u8, 30u8, 246u8, 186u8,
-                                196u8, 55u8, 60u8, 105u8, 220u8, 155u8, 201u8, 3u8, 26u8, 50u8,
-                                78u8, 211u8, 147u8, 60u8, 54u8, 235u8, 71u8, 69u8, 90u8, 109u8,
-                                35u8, 118u8,
+                                131u8, 238u8, 123u8, 209u8, 243u8, 46u8, 196u8, 193u8, 45u8, 148u8,
+                                56u8, 27u8, 49u8, 221u8, 52u8, 171u8, 43u8, 247u8, 197u8, 44u8,
+                                172u8, 146u8, 113u8, 61u8, 126u8, 167u8, 17u8, 81u8, 66u8, 45u8,
+                                35u8, 43u8,
                             ],
                         )
                     }
@@ -8135,10 +8431,10 @@ pub mod api {
                                 weight,
                             },
                             [
-                                34u8, 24u8, 136u8, 100u8, 212u8, 221u8, 17u8, 44u8, 215u8, 111u8,
-                                64u8, 212u8, 227u8, 206u8, 240u8, 227u8, 174u8, 136u8, 160u8,
-                                247u8, 209u8, 167u8, 17u8, 148u8, 169u8, 241u8, 134u8, 243u8,
-                                161u8, 56u8, 253u8, 166u8,
+                                51u8, 177u8, 3u8, 163u8, 244u8, 252u8, 235u8, 252u8, 205u8, 24u8,
+                                190u8, 233u8, 74u8, 128u8, 250u8, 210u8, 35u8, 182u8, 112u8, 223u8,
+                                72u8, 162u8, 165u8, 113u8, 67u8, 43u8, 166u8, 134u8, 38u8, 101u8,
+                                131u8, 184u8,
                             ],
                         )
                     }
@@ -8177,10 +8473,10 @@ pub mod api {
                                 call: ::subxt::alloc::boxed::Box::new(call),
                             },
                             [
-                                107u8, 156u8, 87u8, 0u8, 197u8, 212u8, 172u8, 171u8, 82u8, 104u8,
-                                68u8, 136u8, 187u8, 13u8, 216u8, 44u8, 169u8, 73u8, 89u8, 145u8,
-                                8u8, 244u8, 52u8, 0u8, 140u8, 19u8, 208u8, 38u8, 47u8, 81u8, 198u8,
-                                163u8,
+                                132u8, 26u8, 35u8, 43u8, 131u8, 46u8, 77u8, 127u8, 126u8, 37u8,
+                                58u8, 53u8, 114u8, 41u8, 2u8, 32u8, 125u8, 89u8, 9u8, 183u8, 6u8,
+                                24u8, 133u8, 0u8, 31u8, 254u8, 196u8, 71u8, 226u8, 189u8, 253u8,
+                                41u8,
                             ],
                         )
                     }
@@ -10415,10 +10711,10 @@ pub mod api {
                         "XcmpQueue",
                         "OutboundXcmpStatus",
                         [
-                            194u8, 238u8, 16u8, 108u8, 61u8, 118u8, 213u8, 179u8, 67u8, 116u8,
-                            100u8, 175u8, 211u8, 182u8, 5u8, 46u8, 91u8, 160u8, 94u8, 46u8, 131u8,
-                            214u8, 10u8, 169u8, 110u8, 60u8, 32u8, 42u8, 126u8, 231u8, 165u8,
-                            103u8,
+                            65u8, 141u8, 184u8, 245u8, 238u8, 212u8, 51u8, 168u8, 205u8, 141u8,
+                            80u8, 223u8, 225u8, 129u8, 200u8, 147u8, 211u8, 121u8, 196u8, 201u8,
+                            25u8, 119u8, 28u8, 202u8, 13u8, 147u8, 205u8, 73u8, 8u8, 16u8, 139u8,
+                            76u8,
                         ],
                     )
                 }
@@ -14373,10 +14669,10 @@ pub mod api {
                             "batch",
                             super::Batch { calls },
                             [
-                                154u8, 136u8, 138u8, 188u8, 174u8, 70u8, 95u8, 136u8, 139u8, 163u8,
-                                30u8, 148u8, 243u8, 48u8, 246u8, 80u8, 110u8, 210u8, 107u8, 57u8,
-                                175u8, 171u8, 178u8, 91u8, 63u8, 179u8, 141u8, 50u8, 151u8, 41u8,
-                                97u8, 133u8,
+                                91u8, 165u8, 197u8, 63u8, 101u8, 73u8, 170u8, 185u8, 159u8, 186u8,
+                                202u8, 46u8, 33u8, 166u8, 48u8, 252u8, 53u8, 124u8, 220u8, 103u8,
+                                178u8, 156u8, 120u8, 47u8, 42u8, 114u8, 33u8, 212u8, 143u8, 226u8,
+                                182u8, 254u8,
                             ],
                         )
                     }
@@ -14407,10 +14703,10 @@ pub mod api {
                                 call: ::subxt::alloc::boxed::Box::new(call),
                             },
                             [
-                                99u8, 238u8, 105u8, 167u8, 177u8, 181u8, 48u8, 207u8, 102u8, 86u8,
-                                237u8, 213u8, 94u8, 172u8, 125u8, 108u8, 133u8, 3u8, 126u8, 32u8,
-                                104u8, 38u8, 202u8, 81u8, 176u8, 173u8, 90u8, 136u8, 162u8, 164u8,
-                                53u8, 3u8,
+                                2u8, 53u8, 38u8, 110u8, 234u8, 147u8, 157u8, 131u8, 72u8, 125u8,
+                                114u8, 95u8, 7u8, 11u8, 140u8, 235u8, 57u8, 140u8, 215u8, 166u8,
+                                90u8, 129u8, 185u8, 11u8, 159u8, 46u8, 144u8, 55u8, 31u8, 148u8,
+                                67u8, 112u8,
                             ],
                         )
                     }
@@ -14436,10 +14732,10 @@ pub mod api {
                             "batch_all",
                             super::BatchAll { calls },
                             [
-                                156u8, 215u8, 229u8, 112u8, 216u8, 131u8, 205u8, 59u8, 246u8, 21u8,
-                                231u8, 171u8, 151u8, 29u8, 37u8, 30u8, 240u8, 16u8, 219u8, 205u8,
-                                1u8, 48u8, 177u8, 32u8, 247u8, 118u8, 30u8, 237u8, 16u8, 92u8,
-                                84u8, 86u8,
+                                212u8, 140u8, 162u8, 18u8, 127u8, 157u8, 93u8, 198u8, 0u8, 183u8,
+                                160u8, 106u8, 181u8, 9u8, 127u8, 26u8, 67u8, 248u8, 245u8, 47u8,
+                                131u8, 194u8, 98u8, 123u8, 210u8, 101u8, 249u8, 121u8, 245u8, 0u8,
+                                41u8, 209u8,
                             ],
                         )
                     }
@@ -14463,10 +14759,10 @@ pub mod api {
                                 call: ::subxt::alloc::boxed::Box::new(call),
                             },
                             [
-                                74u8, 109u8, 243u8, 229u8, 40u8, 201u8, 116u8, 158u8, 33u8, 38u8,
-                                56u8, 160u8, 125u8, 36u8, 111u8, 190u8, 33u8, 201u8, 106u8, 111u8,
-                                75u8, 43u8, 171u8, 174u8, 186u8, 251u8, 106u8, 10u8, 154u8, 163u8,
-                                154u8, 75u8,
+                                58u8, 91u8, 14u8, 61u8, 202u8, 127u8, 167u8, 190u8, 235u8, 134u8,
+                                253u8, 254u8, 253u8, 61u8, 64u8, 39u8, 141u8, 2u8, 236u8, 217u8,
+                                136u8, 160u8, 27u8, 170u8, 41u8, 254u8, 233u8, 149u8, 107u8, 95u8,
+                                238u8, 223u8,
                             ],
                         )
                     }
@@ -14493,10 +14789,10 @@ pub mod api {
                             "force_batch",
                             super::ForceBatch { calls },
                             [
-                                161u8, 5u8, 205u8, 134u8, 33u8, 111u8, 62u8, 89u8, 89u8, 65u8,
-                                67u8, 57u8, 67u8, 246u8, 48u8, 123u8, 1u8, 202u8, 23u8, 57u8, 26u8,
-                                157u8, 59u8, 127u8, 106u8, 209u8, 255u8, 223u8, 244u8, 74u8, 125u8,
-                                233u8,
+                                255u8, 149u8, 167u8, 161u8, 247u8, 112u8, 42u8, 52u8, 243u8, 71u8,
+                                151u8, 187u8, 200u8, 62u8, 195u8, 130u8, 64u8, 89u8, 225u8, 116u8,
+                                102u8, 153u8, 106u8, 131u8, 225u8, 78u8, 185u8, 96u8, 187u8, 194u8,
+                                0u8, 253u8,
                             ],
                         )
                     }
@@ -14520,10 +14816,10 @@ pub mod api {
                                 weight,
                             },
                             [
-                                115u8, 120u8, 22u8, 210u8, 153u8, 218u8, 24u8, 119u8, 16u8, 219u8,
-                                11u8, 236u8, 220u8, 251u8, 186u8, 193u8, 109u8, 181u8, 78u8, 196u8,
-                                25u8, 87u8, 209u8, 223u8, 107u8, 143u8, 63u8, 139u8, 80u8, 25u8,
-                                245u8, 242u8,
+                                11u8, 132u8, 171u8, 214u8, 91u8, 67u8, 251u8, 35u8, 209u8, 63u8,
+                                5u8, 183u8, 129u8, 31u8, 48u8, 201u8, 236u8, 34u8, 239u8, 15u8,
+                                182u8, 20u8, 215u8, 226u8, 25u8, 115u8, 35u8, 118u8, 104u8, 228u8,
+                                254u8, 185u8,
                             ],
                         )
                     }
@@ -14563,10 +14859,10 @@ pub mod api {
                                 fallback: ::subxt::alloc::boxed::Box::new(fallback),
                             },
                             [
-                                113u8, 246u8, 249u8, 108u8, 56u8, 102u8, 99u8, 73u8, 97u8, 197u8,
-                                86u8, 10u8, 110u8, 153u8, 232u8, 50u8, 164u8, 199u8, 226u8, 39u8,
-                                240u8, 129u8, 172u8, 119u8, 7u8, 238u8, 76u8, 118u8, 128u8, 242u8,
-                                23u8, 4u8,
+                                195u8, 210u8, 154u8, 30u8, 103u8, 188u8, 190u8, 94u8, 228u8, 118u8,
+                                166u8, 100u8, 3u8, 31u8, 27u8, 228u8, 58u8, 75u8, 90u8, 205u8,
+                                107u8, 220u8, 119u8, 70u8, 75u8, 112u8, 146u8, 66u8, 143u8, 253u8,
+                                158u8, 112u8,
                             ],
                         )
                     }
@@ -14589,10 +14885,10 @@ pub mod api {
                                 call: ::subxt::alloc::boxed::Box::new(call),
                             },
                             [
-                                238u8, 249u8, 243u8, 154u8, 10u8, 17u8, 246u8, 100u8, 141u8, 42u8,
-                                246u8, 99u8, 178u8, 183u8, 35u8, 105u8, 161u8, 161u8, 96u8, 31u8,
-                                84u8, 118u8, 26u8, 194u8, 95u8, 100u8, 196u8, 70u8, 156u8, 111u8,
-                                96u8, 16u8,
+                                22u8, 16u8, 115u8, 72u8, 93u8, 176u8, 45u8, 190u8, 230u8, 217u8,
+                                111u8, 13u8, 54u8, 69u8, 243u8, 208u8, 45u8, 135u8, 157u8, 25u8,
+                                2u8, 157u8, 165u8, 140u8, 101u8, 82u8, 20u8, 208u8, 75u8, 44u8,
+                                237u8, 204u8,
                             ],
                         )
                     }
@@ -15473,14 +15769,12 @@ pub mod api {
             pub struct Checkpoint {
                 pub bucket_id: checkpoint::BucketId,
                 pub commitment: checkpoint::Commitment,
-                pub nonce: checkpoint::Nonce,
                 pub signatures: checkpoint::Signatures,
             }
             pub mod checkpoint {
                 use super::runtime_types;
                 pub type BucketId = ::core::primitive::u64;
                 pub type Commitment = runtime_types::storage_primitives::Commitment;
-                pub type Nonce = ::core::primitive::u64;
                 pub type Signatures =
                     runtime_types::bounded_collections::bounded_vec::BoundedVec<(
                         ::subxt::utils::AccountId32,
@@ -15590,7 +15884,6 @@ pub mod api {
                 pub provider: challenge_offchain::Provider,
                 pub commitment: challenge_offchain::Commitment,
                 pub target: challenge_offchain::Target,
-                pub nonce: challenge_offchain::Nonce,
                 pub provider_signature: challenge_offchain::ProviderSignature,
             }
             pub mod challenge_offchain {
@@ -15599,7 +15892,6 @@ pub mod api {
                 pub type Provider = ::subxt::utils::AccountId32;
                 pub type Commitment = runtime_types::storage_primitives::Commitment;
                 pub type Target = runtime_types::storage_primitives::ChunkLocation;
-                pub type Nonce = ::core::primitive::u64;
                 pub type ProviderSignature = runtime_types::sp_runtime::MultiSignature;
             }
             impl ChallengeOffchain {
@@ -16213,7 +16505,6 @@ pub mod api {
                         &self,
                         bucket_id: super::checkpoint::BucketId,
                         commitment: super::checkpoint::Commitment,
-                        nonce: super::checkpoint::Nonce,
                         signatures: super::checkpoint::Signatures,
                     ) -> ::subxt::transactions::StaticPayload<super::Checkpoint>
                     {
@@ -16223,14 +16514,13 @@ pub mod api {
                             super::Checkpoint {
                                 bucket_id,
                                 commitment,
-                                nonce,
                                 signatures,
                             },
                             [
-                                135u8, 160u8, 81u8, 16u8, 171u8, 245u8, 13u8, 226u8, 125u8, 87u8,
-                                144u8, 202u8, 117u8, 175u8, 62u8, 198u8, 178u8, 210u8, 161u8,
-                                129u8, 36u8, 7u8, 226u8, 28u8, 214u8, 121u8, 158u8, 248u8, 187u8,
-                                188u8, 136u8, 229u8,
+                                73u8, 81u8, 114u8, 65u8, 146u8, 157u8, 136u8, 82u8, 59u8, 151u8,
+                                45u8, 159u8, 241u8, 70u8, 172u8, 204u8, 37u8, 116u8, 45u8, 34u8,
+                                89u8, 17u8, 182u8, 185u8, 246u8, 216u8, 26u8, 185u8, 161u8, 67u8,
+                                228u8, 194u8,
                             ],
                         )
                     }
@@ -16301,7 +16591,6 @@ pub mod api {
                         provider: super::challenge_offchain::Provider,
                         commitment: super::challenge_offchain::Commitment,
                         target: super::challenge_offchain::Target,
-                        nonce: super::challenge_offchain::Nonce,
                         provider_signature: super::challenge_offchain::ProviderSignature,
                     ) -> ::subxt::transactions::StaticPayload<super::ChallengeOffchain>
                     {
@@ -16313,14 +16602,13 @@ pub mod api {
                                 provider,
                                 commitment,
                                 target,
-                                nonce,
                                 provider_signature,
                             },
                             [
-                                183u8, 129u8, 166u8, 48u8, 241u8, 79u8, 112u8, 157u8, 81u8, 184u8,
-                                176u8, 17u8, 167u8, 102u8, 50u8, 60u8, 75u8, 107u8, 224u8, 118u8,
-                                192u8, 116u8, 48u8, 231u8, 136u8, 195u8, 76u8, 186u8, 113u8, 44u8,
-                                255u8, 215u8,
+                                11u8, 203u8, 30u8, 171u8, 230u8, 222u8, 198u8, 178u8, 56u8, 157u8,
+                                66u8, 14u8, 131u8, 58u8, 157u8, 39u8, 214u8, 119u8, 113u8, 111u8,
+                                194u8, 163u8, 231u8, 15u8, 219u8, 161u8, 228u8, 113u8, 243u8,
+                                240u8, 185u8, 126u8,
                             ],
                         )
                     }
@@ -16366,10 +16654,10 @@ pub mod api {
                                 response,
                             },
                             [
-                                65u8, 86u8, 85u8, 54u8, 124u8, 137u8, 93u8, 88u8, 68u8, 192u8,
-                                200u8, 121u8, 11u8, 120u8, 74u8, 22u8, 68u8, 169u8, 66u8, 79u8,
-                                131u8, 131u8, 203u8, 94u8, 124u8, 201u8, 65u8, 133u8, 2u8, 73u8,
-                                124u8, 150u8,
+                                85u8, 139u8, 231u8, 142u8, 210u8, 34u8, 182u8, 213u8, 88u8, 52u8,
+                                150u8, 158u8, 20u8, 225u8, 56u8, 83u8, 233u8, 253u8, 173u8, 204u8,
+                                12u8, 88u8, 173u8, 113u8, 223u8, 117u8, 91u8, 23u8, 243u8, 25u8,
+                                136u8, 254u8,
                             ],
                         )
                     }
@@ -17461,10 +17749,9 @@ pub mod api {
                         "StorageProvider",
                         "Buckets",
                         [
-                            214u8, 182u8, 226u8, 146u8, 109u8, 120u8, 218u8, 41u8, 95u8, 100u8,
-                            67u8, 8u8, 23u8, 72u8, 44u8, 254u8, 102u8, 186u8, 8u8, 62u8, 169u8,
-                            92u8, 200u8, 122u8, 74u8, 197u8, 151u8, 141u8, 140u8, 117u8, 4u8,
-                            156u8,
+                            72u8, 77u8, 90u8, 151u8, 188u8, 249u8, 217u8, 206u8, 0u8, 187u8, 173u8,
+                            9u8, 158u8, 242u8, 79u8, 215u8, 129u8, 144u8, 252u8, 55u8, 65u8, 223u8,
+                            146u8, 13u8, 76u8, 87u8, 244u8, 205u8, 19u8, 171u8, 53u8, 55u8,
                         ],
                     )
                 }
@@ -17881,26 +18168,6 @@ pub mod api {
                             84u8, 157u8, 140u8, 4u8, 93u8, 57u8, 29u8, 133u8, 105u8, 200u8, 214u8,
                             27u8, 144u8, 208u8, 218u8, 160u8, 130u8, 109u8, 101u8, 54u8, 210u8,
                             136u8, 71u8, 63u8, 49u8, 237u8, 234u8, 15u8, 178u8, 98u8, 148u8, 156u8,
-                        ],
-                    )
-                }
-                #[doc = " Maximum age of a `CommitmentPayload::nonce` (in relay chain"]
-                #[doc = " blocks) the pallet will accept on inbound signatures. The nonce is"]
-                #[doc = " the relay chain block number (per"]
-                #[doc = " [`Config::BlockNumberProvider`]) at which the signer signed;"]
-                #[doc = " values older than this are rejected to prevent indefinite"]
-                #[doc = " signature replay."]
-                pub fn max_nonce_age(
-                    &self,
-                ) -> ::subxt::constants::StaticAddress<::core::primitive::u32> {
-                    ::subxt::constants::StaticAddress::new_static(
-                        "StorageProvider",
-                        "MaxNonceAge",
-                        [
-                            98u8, 252u8, 116u8, 72u8, 26u8, 180u8, 225u8, 83u8, 200u8, 157u8,
-                            125u8, 151u8, 53u8, 76u8, 168u8, 26u8, 10u8, 9u8, 98u8, 68u8, 9u8,
-                            178u8, 197u8, 113u8, 31u8, 79u8, 200u8, 90u8, 203u8, 100u8, 41u8,
-                            145u8,
                         ],
                     )
                 }
@@ -19755,6 +20022,9 @@ pub mod api {
             #[doc = ""]
             #[doc = "This will error if the origin is already mapped or is a eth native `Address20`. It will"]
             #[doc = "take a deposit that can be released by calling [`Self::unmap_account`]."]
+            #[doc = ""]
+            #[doc = "Noop when [`Config::AutoMap`] is enabled, as accounts are automatically mapped"]
+            #[doc = "on creation via [`AutoMapper`]."]
             pub struct MapAccount;
             impl MapAccount {
                 const PALLET_NAME: &'static str = "Revive";
@@ -19775,10 +20045,40 @@ pub mod api {
             )]
             #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+            #[doc = "Map many accounts and make the TX free if at least 90% were unmapped or held deposits."]
+            pub struct BatchMapAccounts {
+                pub accounts: batch_map_accounts::Accounts,
+            }
+            pub mod batch_map_accounts {
+                use super::runtime_types;
+                pub type Accounts = ::subxt::alloc::vec::Vec<::subxt::utils::AccountId32>;
+            }
+            impl BatchMapAccounts {
+                const PALLET_NAME: &'static str = "Revive";
+                const CALL_NAME: &'static str = "batch_map_accounts";
+            }
+            impl ::subxt::extrinsics::DecodeAsExtrinsic for BatchMapAccounts {
+                fn is_extrinsic(pallet_name: &str, call_name: &str) -> bool {
+                    pallet_name == Self::PALLET_NAME && call_name == Self::CALL_NAME
+                }
+            }
+            #[derive(
+                :: subxt :: ext :: scale_decode :: DecodeAsType,
+                :: subxt :: ext :: scale_encode :: EncodeAsType,
+                Clone,
+                Debug,
+                Eq,
+                PartialEq,
+            )]
+            #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+            #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
             #[doc = "Unregister the callers account id in order to free the deposit."]
             #[doc = ""]
             #[doc = "There is no reason to ever call this function other than freeing up the deposit."]
             #[doc = "This is only useful when the account should no longer be used."]
+            #[doc = ""]
+            #[doc = "Disabled when [`Config::AutoMap`] is enabled, as accounts are automatically unmapped"]
+            #[doc = "on kill via [`AutoMapper`]."]
             pub struct UnmapAccount;
             impl UnmapAccount {
                 const PALLET_NAME: &'static str = "Revive";
@@ -20110,10 +20410,10 @@ pub mod api {
                                 transaction_encoded,
                             },
                             [
-                                246u8, 194u8, 124u8, 95u8, 91u8, 174u8, 212u8, 101u8, 83u8, 51u8,
-                                32u8, 76u8, 235u8, 39u8, 52u8, 103u8, 212u8, 247u8, 22u8, 201u8,
-                                102u8, 76u8, 63u8, 13u8, 148u8, 125u8, 34u8, 110u8, 35u8, 134u8,
-                                60u8, 158u8,
+                                18u8, 241u8, 123u8, 212u8, 232u8, 103u8, 4u8, 176u8, 22u8, 67u8,
+                                85u8, 104u8, 173u8, 65u8, 135u8, 197u8, 101u8, 108u8, 206u8, 58u8,
+                                250u8, 222u8, 98u8, 161u8, 155u8, 141u8, 201u8, 113u8, 60u8, 65u8,
+                                103u8, 146u8,
                             ],
                         )
                     }
@@ -20204,6 +20504,9 @@ pub mod api {
                     #[doc = ""]
                     #[doc = "This will error if the origin is already mapped or is a eth native `Address20`. It will"]
                     #[doc = "take a deposit that can be released by calling [`Self::unmap_account`]."]
+                    #[doc = ""]
+                    #[doc = "Noop when [`Config::AutoMap`] is enabled, as accounts are automatically mapped"]
+                    #[doc = "on creation via [`AutoMapper`]."]
                     pub fn map_account(
                         &self,
                     ) -> ::subxt::transactions::StaticPayload<super::MapAccount>
@@ -20220,10 +20523,31 @@ pub mod api {
                             ],
                         )
                     }
+                    #[doc = "Map many accounts and make the TX free if at least 90% were unmapped or held deposits."]
+                    pub fn batch_map_accounts(
+                        &self,
+                        accounts: super::batch_map_accounts::Accounts,
+                    ) -> ::subxt::transactions::StaticPayload<super::BatchMapAccounts>
+                    {
+                        ::subxt::transactions::StaticPayload::new_static(
+                            "Revive",
+                            "batch_map_accounts",
+                            super::BatchMapAccounts { accounts },
+                            [
+                                94u8, 4u8, 51u8, 242u8, 7u8, 130u8, 111u8, 234u8, 74u8, 103u8,
+                                209u8, 135u8, 7u8, 75u8, 117u8, 189u8, 162u8, 152u8, 4u8, 82u8,
+                                97u8, 130u8, 224u8, 210u8, 182u8, 153u8, 43u8, 121u8, 119u8, 27u8,
+                                8u8, 133u8,
+                            ],
+                        )
+                    }
                     #[doc = "Unregister the callers account id in order to free the deposit."]
                     #[doc = ""]
                     #[doc = "There is no reason to ever call this function other than freeing up the deposit."]
                     #[doc = "This is only useful when the account should no longer be used."]
+                    #[doc = ""]
+                    #[doc = "Disabled when [`Config::AutoMap`] is enabled, as accounts are automatically unmapped"]
+                    #[doc = "on kill via [`AutoMapper`]."]
                     pub fn unmap_account(
                         &self,
                     ) -> ::subxt::transactions::StaticPayload<super::UnmapAccount>
@@ -20257,10 +20581,10 @@ pub mod api {
                                 call: ::subxt::alloc::boxed::Box::new(call),
                             },
                             [
-                                21u8, 4u8, 148u8, 144u8, 252u8, 70u8, 58u8, 10u8, 134u8, 43u8,
-                                183u8, 74u8, 16u8, 33u8, 179u8, 186u8, 244u8, 75u8, 118u8, 139u8,
-                                171u8, 96u8, 146u8, 156u8, 118u8, 78u8, 254u8, 83u8, 35u8, 84u8,
-                                167u8, 138u8,
+                                124u8, 136u8, 75u8, 61u8, 69u8, 54u8, 26u8, 81u8, 121u8, 48u8,
+                                197u8, 195u8, 156u8, 50u8, 121u8, 34u8, 130u8, 110u8, 205u8, 60u8,
+                                113u8, 195u8, 118u8, 180u8, 188u8, 167u8, 145u8, 143u8, 162u8,
+                                115u8, 130u8, 129u8,
                             ],
                         )
                     }
@@ -20426,6 +20750,37 @@ pub mod api {
                         ],
                     )
                 }
+                #[doc = " Native currency storage deposit contributed by a user into a contract."]
+                #[doc = ""]
+                #[doc = " Bounds how much native value the user can receive back from that contract's"]
+                #[doc = " storage deposit."]
+                #[doc = ""]
+                #[doc = " Keys: `(holder, contributor) -> amount`"]
+                #[doc = " - `holder`: account on which the deposit is held (a contract, or the pallet's own account"]
+                #[doc = "   for code-upload deposits)."]
+                #[doc = " - `contributor`: user that funded the deposit. Receives the native portion on refund, capped"]
+                #[doc = "   at this entry's `amount`."]
+                pub fn native_deposit_of(
+                    &self,
+                ) -> ::subxt::storage::StaticAddress<
+                    (
+                        native_deposit_of::input::Param0,
+                        native_deposit_of::input::Param1,
+                    ),
+                    native_deposit_of::Output,
+                    ::subxt::utils::Maybe,
+                > {
+                    ::subxt::storage::StaticAddress::new_static(
+                        "Revive",
+                        "NativeDepositOf",
+                        [
+                            25u8, 77u8, 255u8, 79u8, 112u8, 172u8, 99u8, 104u8, 53u8, 32u8, 76u8,
+                            159u8, 2u8, 181u8, 149u8, 115u8, 236u8, 67u8, 100u8, 122u8, 22u8,
+                            137u8, 197u8, 109u8, 59u8, 179u8, 88u8, 181u8, 168u8, 104u8, 135u8,
+                            127u8,
+                        ],
+                    )
+                }
                 #[doc = " The immutable data associated with a given account."]
                 pub fn immutable_data_of(
                     &self,
@@ -20445,10 +20800,11 @@ pub mod api {
                         ],
                     )
                 }
-                #[doc = " Evicted contracts that await child trie deletion."]
+                #[doc = " Terminated contracts that await lazy cleanup."]
                 #[doc = ""]
-                #[doc = " Child trie deletion is a heavy operation depending on the amount of storage items"]
-                #[doc = " stored in said trie. Therefore this operation is performed lazily in `on_idle`."]
+                #[doc = " Each entry pairs a child trie ID with the contract account so that `on_idle` can"]
+                #[doc = " drain both the child trie and any [`NativeDepositOf`] entries that named the contract"]
+                #[doc = " as `holder`. Both can be arbitrarily large, so cleanup runs lazily in `on_idle`."]
                 pub fn deletion_queue(
                     &self,
                 ) -> ::subxt::storage::StaticAddress<
@@ -20460,10 +20816,10 @@ pub mod api {
                         "Revive",
                         "DeletionQueue",
                         [
-                            225u8, 125u8, 34u8, 21u8, 159u8, 147u8, 240u8, 245u8, 76u8, 72u8, 53u8,
-                            144u8, 246u8, 175u8, 245u8, 217u8, 128u8, 93u8, 15u8, 213u8, 37u8,
-                            235u8, 254u8, 252u8, 117u8, 47u8, 144u8, 85u8, 239u8, 176u8, 190u8,
-                            84u8,
+                            210u8, 201u8, 187u8, 82u8, 177u8, 3u8, 215u8, 131u8, 155u8, 110u8,
+                            213u8, 58u8, 84u8, 236u8, 170u8, 40u8, 220u8, 156u8, 140u8, 107u8,
+                            119u8, 42u8, 220u8, 107u8, 204u8, 6u8, 154u8, 4u8, 27u8, 79u8, 37u8,
+                            119u8,
                         ],
                     )
                 }
@@ -20665,6 +21021,16 @@ pub mod api {
                 }
                 pub type Output = runtime_types::pallet_revive::storage::AccountInfo;
             }
+            pub mod native_deposit_of {
+                use super::root_mod;
+                use super::runtime_types;
+                pub mod input {
+                    use super::runtime_types;
+                    pub type Param0 = ::subxt::utils::AccountId32;
+                    pub type Param1 = ::subxt::utils::AccountId32;
+                }
+                pub type Output = ::core::primitive::u128;
+            }
             pub mod immutable_data_of {
                 use super::root_mod;
                 use super::runtime_types;
@@ -20683,9 +21049,7 @@ pub mod api {
                     use super::runtime_types;
                     pub type Param0 = ::core::primitive::u32;
                 }
-                pub type Output = runtime_types::bounded_collections::bounded_vec::BoundedVec<
-                    ::core::primitive::u8,
-                >;
+                pub type Output = runtime_types::pallet_revive::storage::DeletionQueueItem;
             }
             pub mod deletion_queue_counter {
                 use super::root_mod;
@@ -20921,6 +21285,25 @@ pub mod api {
                     ::subxt::constants::StaticAddress::new_static(
                         "Revive",
                         "DebugEnabled",
+                        [
+                            165u8, 28u8, 112u8, 190u8, 18u8, 129u8, 182u8, 206u8, 237u8, 1u8, 68u8,
+                            252u8, 125u8, 234u8, 185u8, 50u8, 149u8, 164u8, 47u8, 126u8, 134u8,
+                            100u8, 14u8, 86u8, 209u8, 39u8, 20u8, 4u8, 233u8, 115u8, 102u8, 131u8,
+                        ],
+                    )
+                }
+                #[doc = " When enabled, accounts are automatically mapped on creation and unmapped on"]
+                #[doc = " kill via [`AutoMapper`]. This removes the need for explicit `map_account` calls."]
+                #[doc = ""]
+                #[doc = " Requires `frame_system::Config::OnNewAccount` and `OnKilledAccount` to be set"]
+                #[doc = " to [`AutoMapper`]. When enabled, the `map_account` and `unmap_account`"]
+                #[doc = " dispatchables are disabled."]
+                pub fn auto_map(
+                    &self,
+                ) -> ::subxt::constants::StaticAddress<::core::primitive::bool> {
+                    ::subxt::constants::StaticAddress::new_static(
+                        "Revive",
+                        "AutoMap",
                         [
                             165u8, 28u8, 112u8, 190u8, 18u8, 129u8, 182u8, 206u8, 237u8, 1u8, 68u8,
                             252u8, 125u8, 234u8, 185u8, 50u8, 149u8, 164u8, 47u8, 126u8, 134u8,
@@ -21308,6 +21691,9 @@ pub mod api {
                 pub bundle_index: ::core::primitive::u8,
                 pub ump_msg_count: ::core::primitive::u32,
                 pub hrmp_outbound_count: ::core::primitive::u32,
+                pub hrmp_outbound_recipients: ::subxt::alloc::vec::Vec<
+                    runtime_types::polkadot_parachain_primitives::primitives::Id,
+                >,
             }
         }
         pub mod cumulus_pallet_weight_reclaim {
@@ -21500,6 +21886,7 @@ pub mod api {
                 pub first_index: ::core::primitive::u16,
                 pub last_index: ::core::primitive::u16,
                 pub flags: runtime_types::cumulus_pallet_xcmp_queue::OutboundChannelFlags,
+                pub queued_bytes: ::core::primitive::u32,
             }
             #[derive(
                 :: subxt :: ext :: scale_decode :: DecodeAsType,
@@ -22211,8 +22598,8 @@ pub mod api {
                         dispatch_info: runtime_types::frame_system::DispatchEventInfo,
                     },
                     #[codec(index = 2)]
-                    #[doc = "`:code` was updated."]
-                    CodeUpdated,
+                    #[doc = "`:code` was updated to the code with the given hash."]
+                    CodeUpdated { hash: ::subxt::utils::H256 },
                     #[codec(index = 3)]
                     #[doc = "A new account was created."]
                     NewAccount {
@@ -23728,10 +24115,18 @@ pub mod api {
                         )]
                         #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
                         #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-                        pub struct DryRunConfig<_0> {
-                            pub timestamp_override: ::core::option::Option<_0>,
-                            pub reserved: ::core::option::Option<()>,
-                        }
+                        pub struct DryRunConfig < _0 > { pub timestamp_override : :: core :: option :: Option < _0 > , pub perform_balance_checks : :: core :: option :: Option < :: core :: primitive :: bool > , pub state_overrides : :: core :: option :: Option < runtime_types :: pallet_revive :: evm :: api :: rpc_types_gen :: StateOverrideSet > , }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct TracingConfig { pub state_overrides : :: core :: option :: Option < runtime_types :: pallet_revive :: evm :: api :: rpc_types_gen :: StateOverrideSet > , }
                     }
                     pub mod rpc_types_gen {
                         use super::runtime_types;
@@ -23818,6 +24213,54 @@ pub mod api {
                             pub data: ::core::option::Option<
                                 runtime_types::pallet_revive::evm::api::byte::Bytes,
                             >,
+                        }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct StateOverride { pub balance : :: core :: option :: Option < runtime_types :: primitive_types :: U256 > , pub nonce : :: core :: option :: Option < runtime_types :: primitive_types :: U256 > , pub code : :: core :: option :: Option < runtime_types :: pallet_revive :: evm :: api :: byte :: Bytes > , pub storage : :: core :: option :: Option < runtime_types :: pallet_revive :: evm :: api :: rpc_types_gen :: StorageOverride > , pub move_precompile_to_address : :: core :: option :: Option < :: subxt :: utils :: H160 > , }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct StateOverrideSet (pub :: subxt :: utils :: KeyedVec < :: subxt :: utils :: H160 , runtime_types :: pallet_revive :: evm :: api :: rpc_types_gen :: StateOverride > ,) ;
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub enum StorageOverride {
+                            #[codec(index = 0)]
+                            State(
+                                ::subxt::utils::KeyedVec<
+                                    ::subxt::utils::H256,
+                                    ::subxt::utils::H256,
+                                >,
+                            ),
+                            #[codec(index = 1)]
+                            StateDiff(
+                                ::subxt::utils::KeyedVec<
+                                    ::subxt::utils::H256,
+                                    ::subxt::utils::H256,
+                                >,
+                            ),
                         }
                         #[derive(
                             :: subxt :: ext :: scale_decode :: DecodeAsType,
@@ -24285,12 +24728,23 @@ pub mod api {
                     #[doc = ""]
                     #[doc = "This will error if the origin is already mapped or is a eth native `Address20`. It will"]
                     #[doc = "take a deposit that can be released by calling [`Self::unmap_account`]."]
+                    #[doc = ""]
+                    #[doc = "Noop when [`Config::AutoMap`] is enabled, as accounts are automatically mapped"]
+                    #[doc = "on creation via [`AutoMapper`]."]
                     map_account,
+                    #[codec(index = 13)]
+                    #[doc = "Map many accounts and make the TX free if at least 90% were unmapped or held deposits."]
+                    batch_map_accounts {
+                        accounts: ::subxt::alloc::vec::Vec<::subxt::utils::AccountId32>,
+                    },
                     #[codec(index = 8)]
                     #[doc = "Unregister the callers account id in order to free the deposit."]
                     #[doc = ""]
                     #[doc = "There is no reason to ever call this function other than freeing up the deposit."]
                     #[doc = "This is only useful when the account should no longer be used."]
+                    #[doc = ""]
+                    #[doc = "Disabled when [`Config::AutoMap`] is enabled, as accounts are automatically unmapped"]
+                    #[doc = "on kill via [`AutoMapper`]."]
                     unmap_account,
                     #[codec(index = 9)]
                     #[doc = "Dispatch an `call` with the origin set to the callers fallback address."]
@@ -24513,6 +24967,14 @@ pub mod api {
                     #[codec(index = 65)]
                     #[doc = "ECDSA public key recovery failed. Most probably wrong recovery id or signature."]
                     EcdsaRecoveryFailed,
+                    #[codec(index = 66)]
+                    #[doc = "Manual mapping is disabled when auto-mapping is enabled."]
+                    AutoMappingEnabled,
+                    #[codec(index = 67)]
+                    #[doc = "A contract cannot be created at this address: it still has uncleared"]
+                    #[doc = "[`NativeDepositOf`] entries from a previously terminated contract that the deletion"]
+                    #[doc = "queue has not yet drained."]
+                    PendingDepositCleanup,
                 }
                 #[derive(
                     :: subxt :: ext :: scale_decode :: DecodeAsType,
@@ -24549,6 +25011,20 @@ pub mod api {
                     EthExtrinsicRevert {
                         dispatch_error: runtime_types::sp_runtime::DispatchError,
                     },
+                }
+                #[derive(
+                    :: subxt :: ext :: scale_decode :: DecodeAsType,
+                    :: subxt :: ext :: scale_encode :: EncodeAsType,
+                    Clone,
+                    Debug,
+                    Eq,
+                    PartialEq,
+                )]
+                #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                pub enum FreezeReason {
+                    #[codec(index = 0)]
+                    PGasMinBalance,
                 }
                 #[derive(
                     :: subxt :: ext :: scale_decode :: DecodeAsType,
@@ -24802,6 +25278,22 @@ pub mod api {
                     pub storage_item_deposit: ::core::primitive::u128,
                     pub storage_base_deposit: ::core::primitive::u128,
                     pub immutable_data_len: ::core::primitive::u32,
+                }
+                #[derive(
+                    :: subxt :: ext :: scale_decode :: DecodeAsType,
+                    :: subxt :: ext :: scale_encode :: EncodeAsType,
+                    Clone,
+                    Debug,
+                    Eq,
+                    PartialEq,
+                )]
+                #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                pub struct DeletionQueueItem {
+                    pub trie_id: runtime_types::bounded_collections::bounded_vec::BoundedVec<
+                        ::core::primitive::u8,
+                    >,
+                    pub account_id: ::subxt::utils::AccountId32,
                 }
                 #[derive(
                     :: subxt :: ext :: scale_decode :: DecodeAsType,
@@ -25404,7 +25896,6 @@ pub mod api {
                     checkpoint {
                         bucket_id: ::core::primitive::u64,
                         commitment: runtime_types::storage_primitives::Commitment,
-                        nonce: ::core::primitive::u64,
                         signatures: runtime_types::bounded_collections::bounded_vec::BoundedVec<(
                             ::subxt::utils::AccountId32,
                             runtime_types::sp_runtime::MultiSignature,
@@ -25448,7 +25939,6 @@ pub mod api {
                         provider: ::subxt::utils::AccountId32,
                         commitment: runtime_types::storage_primitives::Commitment,
                         target: runtime_types::storage_primitives::ChunkLocation,
-                        nonce: ::core::primitive::u64,
                         provider_signature: runtime_types::sp_runtime::MultiSignature,
                     },
                     #[codec(index = 43)]
@@ -25525,7 +26015,6 @@ pub mod api {
                     Deleted {
                         new_mmr_root: ::subxt::utils::H256,
                         new_start_seq: ::core::primitive::u64,
-                        nonce: ::core::primitive::u64,
                         admin: ::subxt::utils::AccountId32,
                         admin_signature: runtime_types::sp_runtime::MultiSignature,
                     },
@@ -25680,50 +26169,45 @@ pub mod api {
                     #[codec(index = 58)]
                     InsufficientSignatures,
                     #[codec(index = 59)]
-                    #[doc = "`CommitmentPayload::nonce` is older than `T::MaxNonceAge` blocks"]
-                    #[doc = "behind the current block, or refers to a future block. Rejected"]
-                    #[doc = "to prevent replay of captured signatures."]
-                    CommitmentNonceTooOld,
-                    #[codec(index = 60)]
                     ArithmeticOverflow,
-                    #[codec(index = 61)]
+                    #[codec(index = 60)]
                     InvalidMultiaddr,
-                    #[codec(index = 62)]
+                    #[codec(index = 61)]
                     InvalidPublicKey,
-                    #[codec(index = 63)]
+                    #[codec(index = 62)]
                     #[doc = "Account is a member of too many buckets."]
                     TooManyBucketsForMember,
-                    #[codec(index = 64)]
+                    #[codec(index = 63)]
                     #[doc = "Provider signature over the SCALE-encoded terms is invalid."]
                     InvalidProviderSignature,
-                    #[codec(index = 65)]
+                    #[codec(index = 64)]
                     #[doc = "Signed terms have passed their `valid_until` block."]
                     TermsExpired,
-                    #[codec(index = 66)]
+                    #[codec(index = 65)]
                     #[doc = "Signed terms' `valid_until` extends beyond `now + RequestTimeout` —"]
                     #[doc = "the provider-signed validity window cap enforced on-chain."]
                     TermsValidityTooLong,
-                    #[codec(index = 67)]
+                    #[codec(index = 66)]
                     #[doc = "The terms' nonce has already been consumed inside the provider's"]
                     #[doc = "replay window."]
                     NonceAlreadyUsed,
-                    #[codec(index = 68)]
+                    #[codec(index = 67)]
                     #[doc = "The terms' nonce is older than the provider's replay window"]
                     #[doc = "(distance from `hsn` ≥ [`storage_primitives::REPLAY_WINDOW_BITS`])."]
                     NonceTooOld,
-                    #[codec(index = 69)]
+                    #[codec(index = 68)]
                     #[doc = "The terms' declared owner does not match the extrinsic origin."]
                     TermsOwnerMismatch,
-                    #[codec(index = 70)]
+                    #[codec(index = 69)]
                     #[doc = "Replica terms missing from a signed quote redeemed as a replica"]
                     #[doc = "agreement."]
                     MissingReplicaTerms,
-                    #[codec(index = 71)]
+                    #[codec(index = 70)]
                     #[doc = "The terms' bucket binding does not match the redeeming extrinsic:"]
                     #[doc = "primary terms must carry no bucket, replica terms must name the"]
                     #[doc = "targeted bucket."]
                     TermsBucketMismatch,
-                    #[codec(index = 72)]
+                    #[codec(index = 71)]
                     #[doc = "Storage agreement requested 0 byte"]
                     InvalidMaxBytesRequest,
                 }
@@ -30381,7 +30865,10 @@ pub mod api {
             )]
             #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-            pub enum RuntimeFreezeReason {}
+            pub enum RuntimeFreezeReason {
+                #[codec(index = 60)]
+                Revive(runtime_types::pallet_revive::pallet::FreezeReason),
+            }
             #[derive(
                 :: subxt :: ext :: scale_decode :: DecodeAsType,
                 :: subxt :: ext :: scale_encode :: EncodeAsType,
@@ -30487,7 +30974,6 @@ pub mod api {
                 pub commitment: runtime_types::storage_primitives::Commitment,
                 pub checkpoint_block: _0,
                 pub primary_signers: ::subxt::alloc::vec::Vec<::core::primitive::u8>,
-                pub commitment_nonce: ::core::primitive::u64,
             }
             #[derive(
                 :: subxt :: ext :: scale_decode :: DecodeAsType,

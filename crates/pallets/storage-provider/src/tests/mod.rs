@@ -21,7 +21,6 @@ mod error_paths;
 mod extend_topup;
 mod genesis;
 mod member_buckets;
-mod migrations;
 mod misc;
 mod provider;
 mod replica;

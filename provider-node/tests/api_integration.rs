@@ -198,18 +198,17 @@ common::backend_tests! {
             .await
             .unwrap();
 
-        // Commit
-        let commit_response = server
-            .client
-            .post(server.url("/commit"))
-            .json(&json!({
-                "bucket_id": 1,
-                "data_roots": [hash_hex],
-                "nonce": 0u64,
-            }))
-            .send()
-            .await
-            .unwrap();
+    // Commit
+    let commit_response = server
+        .client
+        .post(server.url("/commit"))
+        .json(&json!({
+            "bucket_id": 1,
+            "data_roots": [hash_hex],
+        }))
+        .send()
+        .await
+        .unwrap();
 
         assert_eq!(commit_response.status(), StatusCode::OK);
 
@@ -219,13 +218,13 @@ common::backend_tests! {
         assert_eq!(body["leaf_indices"], json!([0]));
         assert!(body["provider_signature"].is_string());
 
-        // Get commitment
-        let commitment_response = server
-            .client
-            .get(server.url("/commitment?bucket_id=1&nonce=0"))
-            .send()
-            .await
-            .unwrap();
+    // Get commitment
+    let commitment_response = server
+        .client
+        .get(server.url("/commitment?bucket_id=1"))
+        .send()
+        .await
+        .unwrap();
 
         assert_eq!(commitment_response.status(), StatusCode::OK);
 
@@ -366,18 +365,17 @@ common::backend_tests! {
         // Step 2: Build a simple internal node (just use first chunk as root for simplicity)
         let data_root = &chunk_hashes[0];
 
-        // Step 3: Commit
-        let commit_response = server
-            .client
-            .post(server.url("/commit"))
-            .json(&json!({
-                "bucket_id": 1,
-                "data_roots": [data_root],
-                "nonce": 0u64,
-            }))
-            .send()
-            .await
-            .unwrap();
+    // Step 3: Commit
+    let commit_response = server
+        .client
+        .post(server.url("/commit"))
+        .json(&json!({
+            "bucket_id": 1,
+            "data_roots": [data_root],
+        }))
+        .send()
+        .await
+        .unwrap();
 
         assert_eq!(commit_response.status(), StatusCode::OK);
 
@@ -432,7 +430,6 @@ async fn upload_and_commit(server: &TestServer, bucket_id: u64) -> (String, Valu
         .json(&json!({
             "bucket_id": bucket_id,
             "data_roots": [hash_hex],
-            "nonce": 0u64,
         }))
         .send()
         .await
@@ -476,11 +473,9 @@ common::backend_tests! {
         );
 
         // Reconstruct exactly what the handler signed: CommitmentPayload with
-        // the real post-commit leaf_count (no longer hardcoded 0) and the nonce
-        // echoed back from the response.
+        // the real post-commit leaf_count (no longer hardcoded 0).
         let mmr_root_bytes = hex_decode(mmr_root_hex).unwrap();
         let mmr_root = H256::from_slice(&mmr_root_bytes);
-        let nonce = body["nonce"].as_u64().expect("nonce echoed in response");
         let leaf_count = body["leaf_count"]
             .as_u64()
             .expect("leaf_count present in /commit response");
@@ -491,7 +486,6 @@ common::backend_tests! {
                 start_seq,
                 leaf_count,
             },
-            nonce,
         );
         let encoded = payload.encode();
 
@@ -515,9 +509,7 @@ common::backend_tests! {
 
         let resp = server
             .client
-            .get(server.url(&format!(
-                "/checkpoint-signature?bucket_id={bucket_id}&nonce=0"
-            )))
+            .get(server.url(&format!("/checkpoint-signature?bucket_id={bucket_id}")))
             .send()
             .await
             .unwrap();
@@ -527,7 +519,6 @@ common::backend_tests! {
         let mmr_root = H256::from_slice(&hex_decode(body["mmr_root"].as_str().unwrap()).unwrap());
         let start_seq = body["start_seq"].as_u64().unwrap();
         let leaf_count = body["leaf_count"].as_u64().unwrap();
-        let nonce = body["nonce"].as_u64().unwrap();
         assert!(leaf_count > 0, "leaf_count must be the real on-disk value");
 
         let sig_bytes = hex_decode(body["provider_signature"].as_str().unwrap()).unwrap();
@@ -540,7 +531,6 @@ common::backend_tests! {
                 start_seq,
                 leaf_count,
             },
-            nonce,
         );
         let sig = sr25519::Signature::from_slice(&sig_bytes).unwrap();
         assert!(sr25519::Pair::verify(
@@ -565,7 +555,6 @@ common::backend_tests! {
             &hex_decode(body["provider_signature"].as_str().unwrap()).unwrap(),
         )
         .unwrap();
-        let nonce = body["nonce"].as_u64().unwrap();
         let encoded = CommitmentPayload::new(
             bucket_id,
             Commitment {
@@ -573,7 +562,6 @@ common::backend_tests! {
                 start_seq,
                 leaf_count: 0,
             },
-            nonce,
         )
         .encode();
 
@@ -612,7 +600,7 @@ common::backend_tests! {
         let resp = server
             .client
             .post(server.url("/commit"))
-            .json(&json!({ "bucket_id": 1, "data_roots": [hash_hex], "nonce": 0u64 }))
+            .json(&json!({ "bucket_id": 1, "data_roots": [hash_hex] }))
             .send()
             .await
             .unwrap();
@@ -650,14 +638,14 @@ common::backend_tests! {
         server
             .client
             .post(server.url("/commit"))
-            .json(&json!({ "bucket_id": 1, "data_roots": [hash_hex], "nonce": 0u64 }))
+            .json(&json!({ "bucket_id": 1, "data_roots": [hash_hex] }))
             .send()
             .await
             .unwrap();
 
         let resp = server
             .client
-            .get(server.url("/commitment?bucket_id=1&nonce=0"))
+            .get(server.url("/commitment?bucket_id=1"))
             .send()
             .await
             .unwrap();
@@ -690,7 +678,7 @@ common::backend_tests! {
         server
             .client
             .post(server.url("/commit"))
-            .json(&json!({ "bucket_id": 1, "data_roots": [hash_hex], "nonce": 0u64 }))
+            .json(&json!({ "bucket_id": 1, "data_roots": [hash_hex] }))
             .send()
             .await
             .unwrap();
@@ -702,7 +690,6 @@ common::backend_tests! {
                 "bucket_id": 1,
                 "new_start_seq": 1,
                 "admin_signature": "0x00",
-                "nonce": 0u64,
             }))
             .send()
             .await
@@ -1039,32 +1026,30 @@ common::backend_tests! {
                 .unwrap();
         }
 
-        server
-            .client
-            .post(server.url("/commit"))
-            .json(&json!({
-                "bucket_id": 1,
-                "data_roots": [hash1_hex, hash2_hex],
-                "nonce": 0u64,
-            }))
-            .send()
-            .await
-            .unwrap();
+    server
+        .client
+        .post(server.url("/commit"))
+        .json(&json!({
+            "bucket_id": 1,
+            "data_roots": [hash1_hex, hash2_hex],
+        }))
+        .send()
+        .await
+        .unwrap();
 
-        // Delete with new_start_seq=1 (removes first leaf)
-        let resp = server
-            .client
-            .post(server.url("/delete"))
-            .json(&json!({
-                "bucket_id": 1,
-                "new_start_seq": 1,
-                "admin_signature": "0x00",
-                "nonce": 0u64,
-            }))
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(resp.status(), StatusCode::OK);
+    // Delete with new_start_seq=1 (removes first leaf)
+    let resp = server
+        .client
+        .post(server.url("/delete"))
+        .json(&json!({
+            "bucket_id": 1,
+            "new_start_seq": 1,
+            "admin_signature": "0x00",
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
 
         let body: Value = resp.json().await.unwrap();
         assert_eq!(body["start_seq"], 1);
@@ -1171,18 +1156,17 @@ common::backend_tests! {
     async fn test_commit_invalid_hex_data_root(backend) {
         let server = TestServer::new(backend).await;
 
-        let resp = server
-            .client
-            .post(server.url("/commit"))
-            .json(&json!({
-                "bucket_id": 1,
-                "data_roots": ["not_hex"],
-                "nonce": 0u64,
-            }))
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let resp = server
+        .client
+        .post(server.url("/commit"))
+        .json(&json!({
+            "bucket_id": 1,
+            "data_roots": ["not_hex"],
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 
         let body: Value = resp.json().await.unwrap();
         assert_eq!(body["error"], "invalid_hash");
@@ -1211,18 +1195,17 @@ common::backend_tests! {
             .await
             .unwrap();
 
-        let resp = server
-            .client
-            .post(server.url("/commit"))
-            .json(&json!({
-                "bucket_id": 1,
-                "data_roots": [hash_hex],
-                "nonce": 0u64,
-            }))
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let resp = server
+        .client
+        .post(server.url("/commit"))
+        .json(&json!({
+            "bucket_id": 1,
+            "data_roots": [hash_hex],
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
 
         let body: Value = resp.json().await.unwrap();
         assert_eq!(body["error"], "signing_unavailable");
