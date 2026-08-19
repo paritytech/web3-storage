@@ -20,7 +20,6 @@ fn setup_with_snapshot(provider: u64, client: u64) -> u64 {
                 },
                 checkpoint_block: 1,
                 primary_signers: vec![0x01], // bit 0 set = provider at index 0 signed
-                commitment_nonce: 0,
             });
         }
     });
@@ -44,7 +43,6 @@ fn advance_snapshot_root(bucket_id: u64) {
             },
             checkpoint_block: 1,
             primary_signers: vec![0x01],
-            commitment_nonce: 1,
         });
     });
 }
@@ -150,7 +148,6 @@ fn challenge_checkpoint_fails_provider_not_signed() {
                     },
                     checkpoint_block: 1,
                     primary_signers: vec![0x01], // only bit 0 set
-                    commitment_nonce: 0,
                 });
             }
         });
@@ -191,7 +188,6 @@ fn challenge_offchain_fails_no_agreement() {
                     leaf_index: 0,
                     chunk_index: 0,
                 },
-                0,
                 sp_runtime::MultiSignature::Sr25519([0u8; 64].into()),
             ),
             Error::<Test>::AgreementNotFound
@@ -290,7 +286,6 @@ fn respond_to_challenge_superseded_works() {
                 },
                 checkpoint_block: 1,
                 primary_signers: vec![0x01],
-                commitment_nonce: 1,
             });
         });
 
@@ -615,7 +610,6 @@ fn challenge_slashes_multiple_challenges_in_sweep() {
                     },
                     checkpoint_block: 1,
                     primary_signers: vec![0x03], // bits 0 and 1 set
-                    commitment_nonce: 0,
                 });
             }
         });
@@ -688,7 +682,6 @@ fn responding_to_sibling_preserves_other_challenge_index() {
                     },
                     checkpoint_block: 1,
                     primary_signers: vec![0x03],
-                    commitment_nonce: 0,
                 });
             }
         });
@@ -729,7 +722,6 @@ fn responding_to_sibling_preserves_other_challenge_index() {
                 },
                 checkpoint_block: 1,
                 primary_signers: vec![0x03],
-                commitment_nonce: 1,
             });
         });
 
@@ -870,7 +862,6 @@ fn respond_to_challenge_superseded_emits_defended_event() {
                 },
                 checkpoint_block: 1,
                 primary_signers: vec![0x01],
-                commitment_nonce: 1,
             });
         });
 
@@ -932,7 +923,6 @@ fn setup_three_primaries_snapshot() -> u64 {
             checkpoint_block: 1,
             // bits {0, 2} set: provider 2 (idx 0) and 4 (idx 2) signed.
             primary_signers: vec![0b0000_0101],
-            commitment_nonce: 0,
         });
     });
 
@@ -1083,10 +1073,7 @@ fn challenge_count_per_deadline_is_capped() {
 // PR #125 challenge-overhaul tests.
 //
 // Kept in a nested module so they coexist with dev's top-level challenge tests
-// above without name collisions. Adaptations from the original PR #125 file:
-//   * The replay-recency gate surfaces `Error::CommitmentNonceTooOld` in the
-//     merged pallet (PR #125 originally named it `NonceTooOld`), so the three
-//     nonce-rejection tests assert `CommitmentNonceTooOld`.
+// above without name collisions.
 // ─────────────────────────────────────────────────────────────────────────────
 mod challenge_tests {
     use super::*;
@@ -1160,7 +1147,6 @@ mod challenge_tests {
             },
             checkpoint_block: System::block_number(),
             primary_signers: vec![0b0000_0001],
-            commitment_nonce: System::block_number(),
         };
         Buckets::<Test>::mutate(0u64, |bucket| {
             let bucket = bucket.as_mut().expect("bucket exists");
@@ -1517,7 +1503,6 @@ mod challenge_tests {
                     },
                     checkpoint_block: 1,
                     primary_signers: vec![0b0000_0001],
-                    commitment_nonce: 1,
                 });
             });
 
@@ -1605,7 +1590,6 @@ mod challenge_tests {
                     },
                     checkpoint_block: 1,
                     primary_signers: vec![0b0000_0001],
-                    commitment_nonce: 1,
                 });
             });
 
@@ -2036,113 +2020,6 @@ mod challenge_tests {
         });
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // Replay protection — `CommitmentPayload::nonce` recency
-    // ─────────────────────────────────────────────────────────────────────────
-
-    /// Pre-replay-protection, a provider's signature was valid forever. With
-    /// `T::MaxNonceAge` enforcement, a nonce older than that window is
-    /// rejected before signature verification fires — so the test can use a
-    /// dummy signature and still observe the rejection.
-    #[test]
-    fn challenge_offchain_rejects_old_nonce() {
-        new_test_ext().execute_with(|| {
-            // Mock `MaxNonceAge = 200`. Place us far enough ahead that nonce=1
-            // is outside the window.
-            System::set_block_number(500);
-            let (mmr_root, _, _) = single_chunk_proof(b"chunk-0");
-            setup_primary_with_snapshot(mmr_root, 0, 1);
-
-            let dummy_sig =
-                sp_runtime::MultiSignature::Sr25519(sp_core::sr25519::Signature::from([0u8; 64]));
-            assert_noop!(
-                StorageProvider::challenge_offchain(
-                    RuntimeOrigin::signed(3),
-                    0,
-                    2,
-                    Commitment {
-                        mmr_root,
-                        start_seq: 0,
-                        leaf_count: 1,
-                    },
-                    ChunkLocation {
-                        leaf_index: 0,
-                        chunk_index: 0,
-                    },
-                    1,
-                    dummy_sig,
-                ),
-                Error::<Test>::CommitmentNonceTooOld
-            );
-        });
-    }
-
-    /// A future-dated nonce is nonsensical (the signer can't know future
-    /// blocks at sign-time) and is rejected the same way.
-    #[test]
-    fn challenge_offchain_rejects_future_nonce() {
-        new_test_ext().execute_with(|| {
-            System::set_block_number(10);
-            let (mmr_root, _, _) = single_chunk_proof(b"chunk-0");
-            setup_primary_with_snapshot(mmr_root, 0, 1);
-
-            let dummy_sig =
-                sp_runtime::MultiSignature::Sr25519(sp_core::sr25519::Signature::from([0u8; 64]));
-            assert_noop!(
-                StorageProvider::challenge_offchain(
-                    RuntimeOrigin::signed(3),
-                    0,
-                    2,
-                    Commitment {
-                        mmr_root,
-                        start_seq: 0,
-                        leaf_count: 1,
-                    },
-                    ChunkLocation {
-                        leaf_index: 0,
-                        chunk_index: 0,
-                    },
-                    9999,
-                    dummy_sig,
-                ),
-                Error::<Test>::CommitmentNonceTooOld
-            );
-        });
-    }
-
-    /// The same recency gate fires on the multi-signature `checkpoint`
-    /// extrinsic, before any per-signature work happens. Same dummy-signature
-    /// trick works here.
-    #[test]
-    fn checkpoint_rejects_old_nonce() {
-        new_test_ext().execute_with(|| {
-            System::set_block_number(500);
-            // No snapshot needed — the recency check runs before bucket
-            // resolution.
-            let dummy_sig =
-                sp_runtime::MultiSignature::Sr25519(sp_core::sr25519::Signature::from([0u8; 64]));
-            let sigs: frame_support::BoundedVec<
-                (u64, sp_runtime::MultiSignature),
-                <Test as Config>::MaxPrimaryProviders,
-            > = vec![(2, dummy_sig)].try_into().unwrap();
-
-            assert_noop!(
-                StorageProvider::checkpoint(
-                    RuntimeOrigin::signed(1),
-                    0,
-                    Commitment {
-                        mmr_root: H256::zero(),
-                        start_seq: 0,
-                        leaf_count: 0,
-                    },
-                    1,
-                    sigs,
-                ),
-                Error::<Test>::CommitmentNonceTooOld
-            );
-        });
-    }
-
     #[test]
     fn challenge_replica_fails_without_last_sync() {
         new_test_ext().execute_with(|| {
@@ -2328,7 +2205,6 @@ mod challenge_tests {
         mmr_root: H256,
         start_seq: u64,
         leaf_count: u64,
-        nonce: u64,
     ) -> sp_runtime::MultiSignature {
         let pair = provider_signer(provider);
         let payload = storage_primitives::CommitmentPayload::new(
@@ -2338,7 +2214,6 @@ mod challenge_tests {
                 start_seq,
                 leaf_count,
             },
-            nonce,
         );
         // `verify_signature` checks the raw encoded payload (sr25519 hashes
         // internally), so sign the encoding directly — no extra blake2 round.
@@ -2478,7 +2353,7 @@ mod challenge_tests {
             // While active (block 5 < expires_at 101): a valid signature opens
             // the challenge.
             System::set_block_number(5);
-            let sig = signed_offchain_commitment(2, 0, mmr_root, 0, 1, 5);
+            let sig = signed_offchain_commitment(2, 0, mmr_root, 0, 1);
             assert_ok!(StorageProvider::challenge_offchain(
                 RuntimeOrigin::signed(3),
                 0,
@@ -2492,7 +2367,6 @@ mod challenge_tests {
                     leaf_index: 0,
                     chunk_index: 0,
                 },
-                5,
                 sig,
             ));
 
@@ -2515,7 +2389,6 @@ mod challenge_tests {
                         leaf_index: 0,
                         chunk_index: 0,
                     },
-                    101,
                     dummy,
                 ),
                 Error::<Test>::AgreementExpired

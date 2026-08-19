@@ -44,7 +44,6 @@ fn query_bucket_info_returns_data() {
                     },
                     checkpoint_block: 1,
                     primary_signers: vec![0x01],
-                    commitment_nonce: 0,
                 });
             }
         });
@@ -318,7 +317,6 @@ fn query_challenges_at_returns_data() {
                     },
                     checkpoint_block: 1,
                     primary_signers: vec![0x03],
-                    commitment_nonce: 0,
                 });
             }
         });
@@ -378,7 +376,6 @@ fn query_challenges_at_returns_data() {
                 },
                 checkpoint_block: 1,
                 primary_signers: vec![0x03],
-                commitment_nonce: 1,
             });
         });
         assert_ok!(StorageProvider::respond_to_challenge(
@@ -419,7 +416,6 @@ fn setup_two_challenges() -> u64 {
                 },
                 checkpoint_block: 1,
                 primary_signers: vec![0x03],
-                commitment_nonce: 0,
             });
         }
     });

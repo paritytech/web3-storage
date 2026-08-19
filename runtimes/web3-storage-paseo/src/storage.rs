@@ -30,11 +30,6 @@ use crate::{
 parameter_types! {
     pub storage MinProviderStake: Balance = 1_000 * UNIT;  // 1000 tokens minimum stake
     pub storage ChallengeTimeout: BlockNumber = 48 * RC_HOURS;
-    // Replay-protection window for `CommitmentPayload::nonce`. A signature whose
-    // nonce is older than this is rejected. Set wide enough to accommodate
-    // normal off-chain choreography (provider signs, client builds & broadcasts
-    // tx, tx finalises) without forcing re-signing.
-    pub storage MaxNonceAge: BlockNumber = 24 * RC_HOURS;
     // Reserved from the challenger when opening a challenge. 1 token at 12
     // decimals = floor on spam economics. Previously hardcoded `100u32`
     // (1e-10 of a token) which made challenge spam effectively free.
@@ -108,7 +103,6 @@ impl pallet_storage_provider::Config for Runtime {
     type MaxChunkSize = ConstU32<262144>; // 256 KiB
     type ChallengeTimeout = ChallengeTimeout;
     type ChallengeDeposit = ChallengeDeposit;
-    type MaxNonceAge = MaxNonceAge;
     type SettlementTimeout = SettlementTimeout;
     type RequestTimeout = RequestTimeout;
     type MaxBucketsPerMember = ConstU32<1000>;

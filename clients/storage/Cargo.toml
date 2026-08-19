@@ -18,6 +18,7 @@ reqwest = { workspace = true }
 serde = { workspace = true, features = ["std"] }
 serde_json = { workspace = true }
 sp-core = { workspace = true, features = ["std"] }
+sp-crypto-hashing = { workspace = true, features = ["std"] }
 sp-runtime = { workspace = true, features = ["std"] }
 tokio = { workspace = true }
 base64 = { workspace = true }

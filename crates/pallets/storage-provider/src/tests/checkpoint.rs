@@ -19,7 +19,6 @@ fn checkpoint_fails_not_writer() {
                     start_seq: 0,
                     leaf_count: 10,
                 },
-                0, // nonce
                 Default::default(),
             ),
             Error::<Test>::NotBucketWriter
@@ -39,7 +38,6 @@ fn checkpoint_fails_no_bucket() {
                     start_seq: 0,
                     leaf_count: 10,
                 },
-                0, // nonce
                 Default::default(),
             ),
             Error::<Test>::BucketNotFound
@@ -61,7 +59,6 @@ fn checkpoint_works_with_zero_min_providers() {
                 start_seq: 0,
                 leaf_count: 10,
             },
-            0,                  // nonce
             Default::default(), // empty signatures
         ));
 
@@ -98,7 +95,6 @@ fn extend_checkpoint_works_after_initial_checkpoint() {
                 start_seq: 0,
                 leaf_count: 10,
             },
-            0, // nonce
             Default::default(),
         ));
 
