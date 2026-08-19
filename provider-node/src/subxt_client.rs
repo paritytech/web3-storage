@@ -1111,6 +1111,50 @@ impl ChallengeChainClient for SubxtChainClient {
 
         Ok(block_hash.unwrap_or_default())
     }
+
+    async fn submit_deleted_response(
+        &self,
+        challenge_id: (u32, u16),
+        receipt: &provider_challenge::DeletionReceipt,
+    ) -> Result<H256, ChallengeError> {
+        let challenge_id_val = value!({
+            deadline: challenge_id.0 as u128,
+            index: challenge_id.1 as u128
+        });
+
+        let signature_val = match &receipt.signature {
+            sp_runtime::MultiSignature::Sr25519(sig) => {
+                value!(Sr25519(Value::from_bytes(sig.0.as_slice())))
+            }
+            sp_runtime::MultiSignature::Ed25519(sig) => {
+                value!(Ed25519(Value::from_bytes(sig.0.as_slice())))
+            }
+            other => {
+                return Err(ChallengeError::Internal(format!(
+                    "unsupported receipt signature scheme: {other:?}"
+                )))
+            }
+        };
+
+        let response_val = value!(Deleted {
+            new_mmr_root: Value::from_bytes(receipt.mmr_root.as_bytes()),
+            new_start_seq: receipt.new_start_seq as u128,
+            admin: Value::from_bytes(<[u8; 32]>::from(receipt.admin.clone())),
+            admin_signature: signature_val
+        });
+
+        let tx = subxt::dynamic::tx(
+            "StorageProvider",
+            "respond_to_challenge",
+            vec![challenge_id_val, response_val],
+        );
+
+        self.submit_and_finalize(&tx, "respond_to_challenge")
+            .await
+            .map_err(|e| ChallengeError::Chain(e.to_string()))?;
+
+        Ok(H256::zero())
+    }
 }
 
 #[cfg(test)]
