@@ -300,7 +300,6 @@ pub mod extrinsics {
     pub fn checkpoint(
         bucket_id: u64,
         commitment: Commitment,
-        nonce: u64,
         signatures: Vec<(AccountId32, Vec<u8>)>,
     ) -> impl Payload {
         let sigs: Vec<subxt::dynamic::Value> = signatures
@@ -322,7 +321,6 @@ pub mod extrinsics {
             vec![
                 subxt::dynamic::Value::u128(bucket_id as u128),
                 dynamic_commitment(commitment),
-                subxt::dynamic::Value::u128(nonce as u128),
                 subxt::dynamic::Value::unnamed_composite(sigs),
             ],
         )
@@ -353,7 +351,6 @@ pub mod extrinsics {
         provider: AccountId32,
         commitment: Commitment,
         target: ChunkLocation,
-        nonce: u64,
         provider_signature: Vec<u8>,
     ) -> impl Payload {
         subxt::dynamic::tx(
@@ -364,7 +361,6 @@ pub mod extrinsics {
                 subxt::dynamic::Value::from_bytes(provider.as_ref() as &[u8]),
                 dynamic_commitment(commitment),
                 dynamic_chunk_location(target),
-                subxt::dynamic::Value::u128(nonce as u128),
                 // MultiSignature enum: Sr25519 = 0, Ed25519 = 1, Ecdsa = 2
                 subxt::dynamic::Value::unnamed_variant(
                     "Sr25519",
@@ -819,13 +815,17 @@ pub mod storage {
     /// Query challenges at a deadline block.
     pub fn challenges(
         deadline_block: u32,
+        index: u16,
     ) -> (
-        DynamicAddress<(subxt::dynamic::Value,)>,
-        (subxt::dynamic::Value,),
+        DynamicAddress<(subxt::dynamic::Value, subxt::dynamic::Value)>,
+        (subxt::dynamic::Value, subxt::dynamic::Value),
     ) {
         (
             subxt::dynamic::storage(PALLET_NAME, "Challenges"),
-            (subxt::dynamic::Value::u128(deadline_block as u128),),
+            (
+                subxt::dynamic::Value::u128(deadline_block as u128),
+                subxt::dynamic::Value::u128(index as u128),
+            ),
         )
     }
 

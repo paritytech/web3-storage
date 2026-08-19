@@ -25,7 +25,7 @@ extern crate alloc;
 use alloc::borrow::Cow;
 use alloc::{vec, vec::Vec};
 use cumulus_pallet_parachain_system::RelayNumberMonotonicallyIncreases;
-use cumulus_primitives_core::{AggregateMessageOrigin, ParaId};
+use cumulus_primitives_core::{AggregateMessageOrigin, ParaId, VerifySchedulingSignature};
 use frame_support::{
     derive_impl,
     dispatch::DispatchClass,
@@ -178,14 +178,20 @@ pub const VERSION: RuntimeVersion = RuntimeVersion {
     impl_name: Cow::Borrowed("paseo-web3-storage-runtime"),
     authoring_version: 1,
     // Encodes the runtime semver: major * 1_000_000 + minor * 1_000 + patch.
-    // 0.4.1 -> 4_001 on dev; 4_002 for the breaking Challenges storage reshape
-    // (Vec -> StorageDoubleMap); 4_003 for dropping the vestigial
-    // `ChallengerStatRecord::total_earnings` field. Must stay > the deployed
-    // value so the upgrade is accepted and migrations run.
+    // * 0.4.1 -> 4_001 on dev (#212), released as v0.4.1-paseo and still the deployed value;
+    // * 4_002 for the breaking Challenges storage reshape (Vec -> StorageDoubleMap) (#125);
+    // * 4_003 for dropping the vestigial `ChallengerStatRecord::total_earnings` field (#125).
     spec_version: 4_003,
     impl_version: 0,
     apis: RUNTIME_API_VERSIONS,
-    transaction_version: 2,
+    // Bumped whenever call encoding changes, so offline signers and stale-metadata
+    // clients fail loudly rather than mis-encode a call.
+    // * 1 on the initial paseo runtime (#58);
+    // * 2 in the v0.2.0-paseo release, still the deployed value;
+    // * 3 for dropping the commitment nonce: `checkpoint` and `challenge_offchain` each lost
+    //   a `nonce` argument, and `respond_to_challenge`'s `ChallengeResponse::Deleted` variant
+    //   lost its `nonce` field (#339).
+    transaction_version: 3,
     system_version: 1,
 };
 
@@ -354,6 +360,8 @@ impl cumulus_pallet_parachain_system::Config for Runtime {
     type ConsensusHook = ConsensusHook;
     type WeightInfo = weights::cumulus_pallet_parachain_system::WeightInfo<Runtime>;
     type RelayParentOffset = ConstU32<0>;
+    // V3 scheduling stays off; enabling it before collators support it stalls the chain.
+    type SchedulingSignatureVerifier = ();
 }
 
 impl parachain_info::Config for Runtime {}
@@ -752,6 +760,16 @@ pallet_revive::impl_runtime_apis_plus_revive_traits!(
     impl cumulus_primitives_core::RelayParentOffsetApi<Block> for Runtime {
         fn relay_parent_offset() -> u32 {
             0
+        }
+
+        fn max_claim_queue_offset() -> u8 {
+            cumulus_pallet_parachain_system::Pallet::<Runtime>::max_claim_queue_offset()
+        }
+    }
+
+    impl cumulus_primitives_core::SchedulingV3EnabledApi<Block> for Runtime {
+        fn scheduling_v3_enabled() -> bool {
+            <Runtime as cumulus_pallet_parachain_system::Config>::SchedulingSignatureVerifier::V3_SCHEDULING_ENABLED
         }
     }
 

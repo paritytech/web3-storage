@@ -23,7 +23,7 @@
 
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr, PickFirst};
-use sp_core::hashing::blake2_256;
+use sp_crypto_hashing::blake2_256;
 use sp_runtime::{AccountId32, MultiSignature};
 use storage_primitives::{AgreementTerms, BucketId};
 

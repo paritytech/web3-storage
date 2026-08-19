@@ -120,7 +120,7 @@ async fn test_upload_then_commit() {
         .await
         .unwrap();
 
-    let commit = client.commit(1, vec![data_root], 0u64).await.unwrap();
+    let commit = client.commit(1, vec![data_root]).await.unwrap();
 
     assert!(!commit.mmr_root.is_empty());
     assert_eq!(commit.start_seq, 0);
@@ -136,14 +136,14 @@ async fn test_sequential_commits_increment_leaf_index() {
         .upload(1, b"First piece of data", ChunkingStrategy::default())
         .await
         .unwrap();
-    let commit1 = client.commit(1, vec![root1], 0u64).await.unwrap();
+    let commit1 = client.commit(1, vec![root1]).await.unwrap();
     assert_eq!(commit1.leaf_indices, vec![0]);
 
     let root2 = client
         .upload(1, b"Second piece of data", ChunkingStrategy::default())
         .await
         .unwrap();
-    let commit2 = client.commit(1, vec![root2], 0u64).await.unwrap();
+    let commit2 = client.commit(1, vec![root2]).await.unwrap();
     assert_eq!(commit2.leaf_indices, vec![1]);
 }
 
@@ -165,10 +165,7 @@ async fn test_batch_commit_multiple_roots() {
         .await
         .unwrap();
 
-    let commit = client
-        .commit(1, vec![root1, root2, root3], 0u64)
-        .await
-        .unwrap();
+    let commit = client.commit(1, vec![root1, root2, root3]).await.unwrap();
 
     assert_eq!(commit.leaf_indices, vec![0, 1, 2]);
 }
@@ -185,7 +182,7 @@ async fn test_commit_nonexistent_root_returns_error() {
         .unwrap();
 
     let phantom = H256::from_slice(&[0xAB; 32]);
-    let result = client.commit(1, vec![phantom], 0u64).await;
+    let result = client.commit(1, vec![phantom]).await;
 
     assert!(
         result.is_err(),
@@ -207,7 +204,7 @@ async fn test_upload_commit_download_roundtrip() {
         .upload(1, original, ChunkingStrategy::default())
         .await
         .unwrap();
-    client.commit(1, vec![data_root], 0u64).await.unwrap();
+    client.commit(1, vec![data_root]).await.unwrap();
 
     let retrieved = client
         .download(&data_root, 0, original.len() as u64)
@@ -227,7 +224,7 @@ async fn test_download_full_roundtrip() {
         .upload(1, original, ChunkingStrategy::default())
         .await
         .unwrap();
-    client.commit(1, vec![data_root], 0u64).await.unwrap();
+    client.commit(1, vec![data_root]).await.unwrap();
 
     let retrieved = client
         .download_full(&data_root, original.len() as u64)
@@ -249,7 +246,7 @@ async fn test_download_partial_offset() {
         .upload(1, &data, ChunkingStrategy::Fixed(chunk_size))
         .await
         .unwrap();
-    client.commit(1, vec![data_root], 0u64).await.unwrap();
+    client.commit(1, vec![data_root]).await.unwrap();
 
     // Download chunk 0 (bytes 0..16)
     let chunk0 = client
@@ -350,7 +347,7 @@ async fn test_encryption_roundtrip() {
         .upload(1, original, ChunkingStrategy::default())
         .await
         .unwrap();
-    client.commit(1, vec![data_root], 0u64).await.unwrap();
+    client.commit(1, vec![data_root]).await.unwrap();
 
     // The provider stores ciphertext, which is larger than the plaintext by
     // ENCRYPTION_OVERHEAD bytes.  We must fetch the full ciphertext so the
@@ -401,7 +398,7 @@ async fn test_decryption_with_wrong_key_fails() {
         .upload(1, data, ChunkingStrategy::default())
         .await
         .unwrap();
-    client1.commit(1, vec![data_root], 0u64).await.unwrap();
+    client1.commit(1, vec![data_root]).await.unwrap();
 
     // Try to decrypt with a different key.
     // We must request the full ciphertext length so the cipher can attempt
@@ -431,9 +428,9 @@ async fn test_get_commitment_reflects_uploads() {
         .upload(1, b"Data for commitment test", ChunkingStrategy::default())
         .await
         .unwrap();
-    client.commit(1, vec![root], 0u64).await.unwrap();
+    client.commit(1, vec![root]).await.unwrap();
 
-    let commitment = client.get_commitment(1, 0u64).await.unwrap();
+    let commitment = client.get_commitment(1).await.unwrap();
 
     assert_eq!(commitment.bucket_id, 1);
     assert_eq!(commitment.leaf_count, 1);
@@ -450,15 +447,15 @@ async fn test_sequential_commits_grow_leaf_count() {
         .upload(1, b"Leaf 1", ChunkingStrategy::default())
         .await
         .unwrap();
-    client.commit(1, vec![root1], 0u64).await.unwrap();
+    client.commit(1, vec![root1]).await.unwrap();
 
     let root2 = client
         .upload(1, b"Leaf 2", ChunkingStrategy::default())
         .await
         .unwrap();
-    client.commit(1, vec![root2], 0u64).await.unwrap();
+    client.commit(1, vec![root2]).await.unwrap();
 
-    let commitment = client.get_commitment(1, 0u64).await.unwrap();
+    let commitment = client.get_commitment(1).await.unwrap();
     assert_eq!(commitment.leaf_count, 2);
 }
 
@@ -468,7 +465,7 @@ async fn test_get_commitment_fails_for_empty_bucket() {
     let client = make_client(url);
 
     // Bucket 99 has never received any data.
-    let result = client.get_commitment(99, 0u64).await;
+    let result = client.get_commitment(99).await;
 
     assert!(
         result.is_err(),
@@ -551,7 +548,7 @@ async fn test_spot_check_passes_for_valid_data() {
         .upload(1, data, ChunkingStrategy::default())
         .await
         .unwrap();
-    client.commit(1, vec![data_root], 0u64).await.unwrap();
+    client.commit(1, vec![data_root]).await.unwrap();
 
     let passed = client.spot_check(&data_root, 0).await.unwrap();
 
@@ -585,16 +582,16 @@ async fn test_different_buckets_are_independent() {
         .upload(1, b"Bucket 1 data", ChunkingStrategy::default())
         .await
         .unwrap();
-    client.commit(1, vec![root1], 0u64).await.unwrap();
+    client.commit(1, vec![root1]).await.unwrap();
 
     let root2 = client
         .upload(2, b"Bucket 2 data", ChunkingStrategy::default())
         .await
         .unwrap();
-    client.commit(2, vec![root2], 0u64).await.unwrap();
+    client.commit(2, vec![root2]).await.unwrap();
 
-    let c1 = client.get_commitment(1, 0u64).await.unwrap();
-    let c2 = client.get_commitment(2, 0u64).await.unwrap();
+    let c1 = client.get_commitment(1).await.unwrap();
+    let c2 = client.get_commitment(2).await.unwrap();
 
     assert_eq!(c1.bucket_id, 1);
     assert_eq!(c2.bucket_id, 2);

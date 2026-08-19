@@ -249,7 +249,6 @@ fn challenge_checkpoint_emits_event() {
                     },
                     checkpoint_block: 1,
                     primary_signers: vec![0x01],
-                    commitment_nonce: 0,
                 });
             }
         });
@@ -294,7 +293,6 @@ fn checkpoint_emits_event() {
                 start_seq: 0,
                 leaf_count: 10,
             },
-            1, // nonce
             Default::default(),
         ));
 
@@ -329,7 +327,6 @@ fn extend_checkpoint_emits_event() {
             RuntimeOrigin::signed(1),
             bucket_id,
             commitment,
-            1, // nonce
             Default::default(),
         ));
 

@@ -7,7 +7,7 @@
 //! `Fixed(0x0901)`; the u16 sits at bytes 16-17 with a `0x0000` suffix at
 //! bytes 18-19, which are reserved for built-in precompiles). Pattern follows
 //! the XCM precompile reference (`polkadot/xcm/pallet-xcm/precompiles/src/lib.rs`
-//! in `polkadot-stable2603`).
+//! in `polkadot-stable2606`).
 
 #![cfg_attr(not(feature = "std"), no_std)]
 

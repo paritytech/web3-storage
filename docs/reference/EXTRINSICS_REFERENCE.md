@@ -572,17 +572,13 @@ bucketId: 0
 
 **Parameters:**
 - `bucketId`: `BucketId` (u64)
-- `mmrRoot`: `H256` - Merkle Mountain Range root
-- `startSeq`: `u64` - starting sequence number
-- `leafCount`: `u64` - number of leaves in MMR
+- `commitment`: `Commitment` - `{ mmrRoot: H256, startSeq: u64, leafCount: u64 }`, the MMR range the providers signed over
 - `signatures`: `BoundedVec<(AccountId, MultiSignature), T::MaxPrimaryProviders>` - provider signatures
 
 **Example:**
 ```
 bucketId: 0
-mmrRoot: 0x1234567890abcdef...
-startSeq: 0
-leafCount: 10
+commitment: { mmrRoot: 0x1234567890abcdef..., startSeq: 0, leafCount: 10 }
 signatures: [
   (5GrwvaEF..., 0xsignature1...),
   (5FHneW46..., 0xsignature2...)
@@ -675,20 +671,16 @@ Challenge a provider using an **off-chain commitment signature**. Works even whe
 **Parameters:**
 - `bucketId`: `BucketId` (u64)
 - `provider`: `AccountId`
-- `mmrRoot`: `H256`
-- `startSeq`: `u64`
-- `leafIndex`: `u64`
-- `chunkIndex`: `u64`
+- `commitment`: `Commitment` - `{ mmrRoot: H256, startSeq: u64, leafCount: u64 }`, passed through verbatim so the pallet's payload reconstruction matches what the provider signed
+- `target`: `ChunkLocation` - `{ leafIndex: u64, chunkIndex: u64 }`, the chunk being challenged within `commitment`
 - `providerSignature`: `MultiSignature` - provider's signature over the commitment payload
 
 **Example:**
 ```
 bucketId: 0
 provider: 5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY
-mmrRoot: 0x1234567890abcdef...
-startSeq: 0
-leafIndex: 7
-chunkIndex: 3
+commitment: { mmrRoot: 0x1234567890abcdef..., startSeq: 0, leafCount: 10 }
+target: { leafIndex: 7, chunkIndex: 3 }
 providerSignature: 0xsig...
 ```
 
@@ -896,7 +888,7 @@ createBucketWithStorage(maxBytes, duration, maxPricePerByte)
 
 ```
 1. [off-chain] collect signatures from primaries
-2. checkpoint(bucketId, mmrRoot, startSeq, leafCount, signatures)
+2. checkpoint(bucketId, commitment, signatures)
 3. [optional] extendCheckpoint(...) with late signers
 ```
 
@@ -907,7 +899,7 @@ createBucketWithStorage(maxBytes, duration, maxPricePerByte)
 challengeCheckpoint(bucketId, provider, leafIndex, chunkIndex)
 
 // against an off-chain commitment (hot buckets):
-challengeOffchain(bucketId, provider, mmrRoot, startSeq, leafIndex, chunkIndex, providerSignature)
+challengeOffchain(bucketId, provider, commitment, target, providerSignature)
 
 // against a replica:
 challengeReplica(bucketId, provider, leafIndex, chunkIndex)
