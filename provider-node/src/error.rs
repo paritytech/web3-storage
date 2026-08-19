@@ -13,14 +13,8 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum Error {
-    #[error("Node not found: {0}")]
-    NodeNotFound(String),
-
     #[error(transparent)]
     Backend(#[from] provider_storage::Error),
-
-    #[error("Bucket not found: {0}")]
-    BucketNotFound(u64),
 
     #[error("Invalid hash: expected {expected}, got {actual}")]
     InvalidHash { expected: String, actual: String },
@@ -115,13 +109,6 @@ impl IntoResponse for Error {
     fn into_response(self) -> Response {
         use provider_storage::Error as StorageError;
         let (status, error_response) = match &self {
-            Error::NodeNotFound(hash) => (
-                StatusCode::NOT_FOUND,
-                ErrorResponse {
-                    error: "not_found".to_string(),
-                    details: Some(serde_json::json!({ "hash": hash })),
-                },
-            ),
             // Exhaustive on purpose — no wildcard — so a new storage variant
             // fails compilation until it gets an explicit status.
             Error::Backend(e) => match e {
@@ -185,13 +172,6 @@ impl IntoResponse for Error {
                     },
                 ),
             },
-            Error::BucketNotFound(id) => (
-                StatusCode::NOT_FOUND,
-                ErrorResponse {
-                    error: "bucket_not_found".to_string(),
-                    details: Some(serde_json::json!({ "bucket_id": id })),
-                },
-            ),
             Error::InvalidHash { expected, actual } => (
                 StatusCode::BAD_REQUEST,
                 ErrorResponse {
@@ -428,7 +408,9 @@ mod tests {
     #[test]
     fn test_all_error_variants_status_codes() {
         assert_eq!(
-            status_of(Error::NodeNotFound("x".into())),
+            status_of(Error::from(provider_storage::Error::NodeNotFound(
+                "x".into()
+            ))),
             StatusCode::NOT_FOUND
         );
         // Storage-engine errors route through the transparent Backend variant.
@@ -445,7 +427,10 @@ mod tests {
             })),
             StatusCode::INSUFFICIENT_STORAGE
         );
-        assert_eq!(status_of(Error::BucketNotFound(1)), StatusCode::NOT_FOUND);
+        assert_eq!(
+            status_of(Error::from(provider_storage::Error::BucketNotFound(1))),
+            StatusCode::NOT_FOUND
+        );
         assert_eq!(
             status_of(Error::from(provider_storage::Error::RootNotFound(
                 "x".into()
@@ -547,7 +532,8 @@ mod tests {
 
     #[test]
     fn test_error_response_json_structure() {
-        let resp = Error::NodeNotFound("0xabc".into()).into_response();
+        let resp =
+            Error::from(provider_storage::Error::NodeNotFound("0xabc".into())).into_response();
         let (parts, body) = resp.into_parts();
         assert_eq!(parts.status, StatusCode::NOT_FOUND);
 
