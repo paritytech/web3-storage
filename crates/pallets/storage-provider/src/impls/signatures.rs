@@ -3,6 +3,22 @@
 use crate::*;
 use frame_support::pallet_prelude::*;
 
+/// Verify a signature against a bare account's own key bytes: on
+/// AccountId32 runtimes the SCALE-encoded AccountId IS the public key,
+/// and `MultiSignature::verify` handles every scheme against it.
+/// `None` when the encoding is not 32 bytes — such a runtime has no
+/// plain-account identity to verify against.
+pub(crate) fn plain_account_verifies(
+    signature: &sp_runtime::MultiSignature,
+    message: &[u8],
+    encoded_signer: &[u8],
+) -> Option<bool> {
+    use sp_runtime::traits::Verify;
+
+    let bytes: [u8; 32] = encoded_signer.try_into().ok()?;
+    Some(signature.verify(message, &sp_runtime::AccountId32::new(bytes)))
+}
+
 impl<T: Config> Pallet<T> {
     /// Verify a MultiSignature against an encoded message using stored public key.
     ///
@@ -19,8 +35,17 @@ impl<T: Config> Pallet<T> {
     ) -> DispatchResult {
         use sp_runtime::traits::Verify;
 
-        // Get the provider's registered public key
-        let provider = Providers::<T>::get(signer).ok_or(Error::<T>::ProviderNotFound)?;
+        // Registered providers sign with their registered key. A plain
+        // account (e.g. the bucket admin signing a deletion authorization
+        // for the `Deleted` challenge defense) has no registry entry, so
+        // its own key bytes are the verification identity.
+        let Some(provider) = Providers::<T>::get(signer) else {
+            return match plain_account_verifies(signature, message, &signer.encode()) {
+                None => Err(Error::<T>::InvalidPublicKey.into()),
+                Some(false) => Err(Error::<T>::InvalidSignature.into()),
+                Some(true) => Ok(()),
+            };
+        };
         let public_key_bytes = provider.public_key.as_slice();
 
         // Convert public key to AccountId32 based on signature type
