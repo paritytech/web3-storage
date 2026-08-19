@@ -6,7 +6,7 @@
       "wsUrl": "ws://127.0.0.1:2222",
       "metadata": ".papi/metadata/parachain.scale",
       "genesis": "0x4545454545454545454545454545454545454545454545454545454545454545",
-      "codeHash": "0xbcbeb67912a2b9b513dc3afb4d0beeae460a0fb1c1e9646d973f0ffa0d4c2d3c"
+      "codeHash": "0x3bb6cecb09ceea282573874ddea9c566f780044aec03967ba3e9502c0447801c"
     }
   }
 }
