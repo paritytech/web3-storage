@@ -95,6 +95,8 @@ pub struct ProviderInfo {
     pub challenges_failed: u32,
     /// Block at which deregistration becomes finalisable (`None` = not deregistering).
     pub deregister_at: Option<u32>,
+    /// Reputation 0-100, computed on-chain by `runtime_api::reputation_score`.
+    pub reputation: u8,
 }
 
 impl From<rt_api::ProviderInfoResponse> for ProviderInfo {
@@ -113,6 +115,7 @@ impl From<rt_api::ProviderInfoResponse> for ProviderInfo {
             agreements_total: p.agreements_total,
             challenges_failed: p.challenges_failed,
             deregister_at: p.deregister_at,
+            reputation: p.reputation,
         }
     }
 }
@@ -358,19 +361,22 @@ impl DiscoveryClient {
         // Score and rank providers
         let recommendations: Vec<ProviderRecommendation> = providers
             .into_iter()
-            .map(|provider| {
+            .filter_map(|provider| {
                 // Calculate estimated cost
-                let estimated_cost =
-                    provider.info.price_per_byte * bytes as u128 * duration as u128;
+                let estimated_cost = provider
+                    .info
+                    .price_per_byte
+                    .saturating_mul(bytes as u128)
+                    .saturating_mul(duration as u128);
 
-                // Calculate reliability score based on challenge history
-                let reliability_score = if provider.info.agreements_total > 0 {
-                    let failure_rate = provider.info.challenges_failed as f64
-                        / provider.info.agreements_total as f64;
-                    ((1.0 - failure_rate) * 100.0) as u8
-                } else {
-                    50 // Neutral score for new providers
-                };
+                // filter out providers whose price above user's budget
+                if estimated_cost > budget {
+                    return None;
+                }
+
+                // Reputation is defined once, on-chain, by
+                // `runtime_api::reputation_score` - never recomputed here.
+                let reliability_score = provider.info.reputation;
 
                 // Generate recommendation reason
                 let reason = if provider.match_score == 100 && reliability_score >= 90 {
@@ -383,12 +389,12 @@ impl DiscoveryClient {
                     "Partial match - consider alternatives".to_string()
                 };
 
-                ProviderRecommendation {
+                Some(ProviderRecommendation {
                     provider,
                     estimated_cost,
                     reliability_score,
                     reason,
-                }
+                })
             })
             .collect();
 
