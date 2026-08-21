@@ -235,9 +235,16 @@ sp_api::decl_runtime_apis! {
         /// Get providers with sufficient capacity for the given bytes (paginated).
         fn providers_with_capacity(bytes_needed: u64, offset: u32, limit: u32) -> Vec<(AccountId, ProviderInfoResponse)>;
 
-        /// Providers holding at least one storage agreement whose reputation is
-        /// below `max_reputation`, worst first. Each provider appears once,
-        /// paired with one of its buckets.
+        /// Returns providers worth challenging, worst reputation first.
+        ///
+        /// A provider qualifies if it holds at least one storage agreement and
+        /// its reputation is strictly below `max_reputation`. Each provider
+        /// appears once, paired with one of its buckets, so a caller challenges
+        /// it at most once per round.
+        ///
+        /// Reputation runs from 0 to 100 (see [`reputation_score`]).
+        /// `max_reputation` saturates outside that range instead of erroring:
+        /// `0` matches nothing, and any value above 100 disables the filter.
         ///
         /// `limit` is clamped to [`MAX_CHALLENGE_CANDIDATES`]; it bounds the
         /// response, not the underlying scan.

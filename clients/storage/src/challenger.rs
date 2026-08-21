@@ -26,6 +26,18 @@ pub struct ChallengerClient {
     signer: Signer,
 }
 
+/// Top of the reputation scale, mirroring
+/// `pallet_storage_provider::runtime_api::reputation_score`, which returns
+/// 0..=100. Not importable: this crate depends on the generated bindings
+/// rather than on the pallet.
+const REPUTATION_SCALE_MAX: u8 = 100;
+
+/// Ceiling the chain applies to `challenge_candidates`, mirroring
+/// `pallet_storage_provider::runtime_api::MAX_CHALLENGE_CANDIDATES`. Not
+/// importable: this crate depends on the generated bindings rather than on the
+/// pallet, so the two must be kept in step by hand.
+const MAX_CHALLENGE_CANDIDATES: u32 = 256;
+
 impl ChallengerClient {
     /// Create a new challenger client. `signer` submits every extrinsic and
     /// identifies the challenger account.
@@ -556,11 +568,19 @@ impl ChallengerClient {
     ///
     /// The chain does the agreement scan, the provider join, the scoring and
     /// the ranking, so this is one call rather than two full-map scans.
+    ///
+    /// `max_reputation` must be within the 0..=100 reputation scale.
     async fn challenge_candidates(
         &self,
         max_reputation: u8,
         limit: u32,
     ) -> ClientResult<Vec<(BucketId, AccountId32, ChallengeCandidate)>> {
+        if max_reputation > REPUTATION_SCALE_MAX {
+            return Err(ClientError::Config(format!(
+                "max_reputation must be 0..={REPUTATION_SCALE_MAX}, got {max_reputation}"
+            )));
+        }
+
         let chain = self.base.chain()?;
 
         let at = chain.at_current_block().await?;
@@ -588,14 +608,24 @@ impl ChallengerClient {
 
     /// Find the most profitable providers to challenge, ranked by expected value.
     ///
-    /// Scores all providers by reputation (from on-chain stats) and stake.
+    /// Scores eligible providers by reputation (from on-chain stats) and stake.
     /// Providers with lower reputation and higher stake are ranked highest.
-    pub async fn find_challenge_targets(&self, limit: usize) -> ClientResult<Vec<ChallengeTarget>> {
-        // Providers below 90 reputation are worth considering. `u32::MAX` asks
-        // for as many as the chain will give — it clamps to its own ceiling —
-        // so the expected-value ranking below sees the widest candidate pool
-        // available rather than only the first `limit` worst-reputation ones.
-        let candidates = self.challenge_candidates(90, u32::MAX).await?;
+    ///
+    /// `max_reputation` bounds eligibility: a provider qualifies when its
+    /// reputation is strictly below it. The chain also caps the eligible pool
+    /// at its own ceiling, worst-reputation first, so this can miss a
+    /// high-stake provider outside that cap.
+    pub async fn find_challenge_targets(
+        &self,
+        max_reputation: u8,
+        limit: usize,
+    ) -> ClientResult<Vec<ChallengeTarget>> {
+        // The chain returns the worst-by-reputation candidates up to this cap.
+        // Reputation is the inverse of failure rate, so that ordering covers
+        // half of the expected value below; the half it misses is stake.
+        let candidates = self
+            .challenge_candidates(max_reputation, MAX_CHALLENGE_CANDIDATES)
+            .await?;
 
         let mut targets: Vec<ChallengeTarget> = Vec::new();
 
