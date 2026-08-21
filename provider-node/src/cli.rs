@@ -217,6 +217,15 @@ pub struct AuthParams {
         env = "AUTH_MAX_STALE"
     )]
     pub auth_max_stale: u64,
+
+    /// Maximum number of buckets' membership resident in the cache at once.
+    #[arg(
+        long,
+        value_name = "ENTRIES",
+        default_value_t = 10_000,
+        env = "AUTH_CACHE_MAX_ENTRIES"
+    )]
+    pub auth_cache_max_entries: u64,
 }
 
 /// Parameters for the challenge responder background service.

@@ -5,9 +5,11 @@
 //! so this crate needs no chain dependency.
 
 use crate::error::MembershipError;
-use dashmap::DashMap;
+use moka::future::{Cache, CacheBuilder};
+use moka::Expiry;
 use sp_core::crypto::AccountId32;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use storage_primitives::{BucketId, Role};
 
@@ -146,22 +148,57 @@ impl MembershipInvalidations for NoInvalidations {
     }
 }
 
+/// How long a resident entry survives. Keyed off *creation*, matching
+/// [`CachedMembership::age`], so a read cannot extend a stale entry's life.
+///
+/// An entry is dropped once nothing can read it again: a non-empty set at
+/// `max_stale`, past which it is too old to be fresh and too old to serve on
+/// error; an empty one at `ttl`, since a refetch is due then anyway and an
+/// empty set only ever denies, so it needs no stale-if-error grace.
+struct MembershipExpiry {
+    ttl: Duration,
+    max_stale: Duration,
+}
+
+impl Expiry<BucketId, Arc<CachedMembership>> for MembershipExpiry {
+    fn expire_after_create(
+        &self,
+        _key: &BucketId,
+        value: &Arc<CachedMembership>,
+        _created_at: Instant,
+    ) -> Option<Duration> {
+        Some(if value.members.is_empty() {
+            self.ttl
+        } else {
+            self.max_stale
+        })
+    }
+}
+
 /// TTL cache in front of a [`MembershipResolver`].
 pub(crate) struct MembershipCache {
-    cache: DashMap<BucketId, CachedMembership>,
+    /// Bounded by `max_entries`, with per-entry expiry from
+    /// [`MembershipExpiry`]. Values are `Arc`-wrapped because moka clones the
+    /// value on every `get` - without it, a cache hit would clone the whole
+    /// member list on the auth hot path.
+    cache: Cache<BucketId, Arc<CachedMembership>>,
     /// Invalidations processed so far. A lookup samples it before resolving and
-    /// re-checks it before persisting: if it moved, the fetch raced an
-    /// invalidation and its result is dropped rather than resurrecting revoked
+    /// re-checks it after persisting: if it moved, the fetch raced an
+    /// invalidation and the insert is undone rather than resurrecting revoked
     /// access for a full TTL.
     ///
     /// It is cache-wide, so invalidating one bucket also discards in-flight
     /// fetches for others - an extra re-resolve, never a wrong answer.
     epoch: AtomicU64,
-    /// How long an entry is served before the chain is rechecked.
+    /// How long an entry is served before the chain is rechecked. Also bounds
+    /// an empty entry's residency - see [`MembershipExpiry`].
     ttl: Duration,
     /// Stale-if-error ceiling: how old a cached entry may be and still be
-    /// served when a refetch fails.
+    /// served when a refetch fails. Also bounds a non-empty entry's
+    /// residency - see [`MembershipExpiry`].
     max_stale: Duration,
+    /// Upper bound on resident entries (review.md finding 1 / #347).
+    max_entries: u64,
     resolver: Box<dyn MembershipResolver>,
     invalidations: Box<dyn MembershipInvalidations>,
 }
@@ -173,13 +210,31 @@ const DEFAULT_TTL: Duration = Duration::from_secs(30);
 /// `--auth-max-stale`'s default.
 const DEFAULT_MAX_STALE: Duration = Duration::from_secs(300);
 
+/// Entry-count ceiling for callers that don't set one. Matches
+/// `--auth-cache-max-entries`'s default.
+const DEFAULT_MAX_ENTRIES: u64 = 10_000;
+
+/// Rebuilt by `new()` and by every `with_*` that affects residency, since all
+/// three are baked into the `Cache` at construction. Callers chain the
+/// builders before the first lookup, so rebuilding an empty cache is free.
+fn build_cache(
+    max_entries: u64,
+    ttl: Duration,
+    max_stale: Duration,
+) -> Cache<BucketId, Arc<CachedMembership>> {
+    CacheBuilder::new(max_entries)
+        .expire_after(MembershipExpiry { ttl, max_stale })
+        .build()
+}
+
 impl MembershipCache {
     pub(crate) fn new(resolver: impl MembershipResolver + 'static) -> Self {
         Self {
-            cache: DashMap::new(),
+            cache: build_cache(DEFAULT_MAX_ENTRIES, DEFAULT_TTL, DEFAULT_MAX_STALE),
             epoch: AtomicU64::new(0),
             ttl: DEFAULT_TTL,
             max_stale: DEFAULT_MAX_STALE,
+            max_entries: DEFAULT_MAX_ENTRIES,
             resolver: Box::new(resolver),
             invalidations: Box::new(NoInvalidations),
         }
@@ -195,24 +250,38 @@ impl MembershipCache {
     }
 
     /// How long a resolved member set is served before the chain is rechecked.
+    /// Defaults to 30 seconds.
     pub(crate) fn with_ttl(mut self, ttl: Duration) -> Self {
         self.ttl = ttl;
+        self.cache = build_cache(self.max_entries, self.ttl, self.max_stale);
         self
     }
 
-    /// Override the default stale-if-error ceiling.
+    /// Override the default stale-if-error ceiling. Defaults to 5 minutes.
     pub(crate) fn with_max_stale(mut self, max_stale: Duration) -> Self {
         self.max_stale = max_stale;
+        self.cache = build_cache(self.max_entries, self.ttl, self.max_stale);
+        self
+    }
+
+    /// Override the default entry-count ceiling. Defaults to 10,000.
+    pub(crate) fn with_max_entries(mut self, max_entries: u64) -> Self {
+        self.max_entries = max_entries;
+        self.cache = build_cache(self.max_entries, self.ttl, self.max_stale);
         self
     }
 
     /// Apply everything the feed has seen since the last lookup. Runs before
     /// the cache is consulted, so a change broadcast before this request
     /// arrived is honoured by *this* request rather than the next one.
-    fn drain_invalidations(&self) {
+    async fn drain_invalidations(&self) {
         match self.invalidations.drain() {
             Invalidation::None => {}
-            Invalidation::Buckets(ids) => ids.into_iter().for_each(|id| self.invalidate(id)),
+            Invalidation::Buckets(ids) => {
+                for id in ids {
+                    self.invalidate(id).await;
+                }
+            }
             Invalidation::All => self.invalidate_all(),
         }
     }
@@ -224,13 +293,13 @@ impl MembershipCache {
         bucket_id: BucketId,
         account: &AccountId32,
     ) -> Result<Option<Role>, MembershipError> {
-        self.drain_invalidations();
+        self.drain_invalidations().await;
 
-        if let Some(entry) = self.cache.get(&bucket_id) {
+        if let Some(entry) = self.cache.get(&bucket_id).await {
             if entry.is_fresh(self.ttl) {
                 return Ok(entry.role_of(account));
             }
-        } // guard dropped here, before the await below
+        }
 
         // Recorded before the await, so the persist below can tell whether an
         // invalidation landed while the resolver call was in flight.
@@ -239,15 +308,22 @@ impl MembershipCache {
         // Cache miss or stale — fetch from chain
         match self.resolver.fetch_members(bucket_id).await {
             Ok(members) => {
-                let entry = CachedMembership::new(members);
+                let entry = Arc::new(CachedMembership::new(members));
                 let role = entry.role_of(account);
-                // `entry()` first: its shard lock has to already be held when
-                // the epoch is read, or the check and the write can be split
-                // by an invalidation. Swapping these two lines reopens the
-                // race — see [`Self::epoch`].
-                let slot = self.cache.entry(bucket_id);
+                // Cache it only if no invalidation landed during the fetch,
+                // then check again: no lock spans the insert, so a bump can
+                // still slip between the two lines. `invalidate` bumps
+                // *before* removing and this reads *after* inserting, so of
+                // the two, at least one always fires - either its removal
+                // takes our entry, or we see its bump and undo ourselves.
+                // Checking only once, either side, leaves the other ordering
+                // free to resurrect the revoked member set for a full
+                // `max_stale`.
                 if self.epoch.load(Ordering::SeqCst) == epoch_before {
-                    slot.insert(entry);
+                    self.cache.insert(bucket_id, entry).await;
+                    if self.epoch.load(Ordering::SeqCst) != epoch_before {
+                        self.cache.invalidate(&bucket_id).await;
+                    }
                 }
                 Ok(role)
             }
@@ -257,12 +333,12 @@ impl MembershipCache {
                 // must not be served. Draining rather than comparing the epoch,
                 // because the epoch is cache-wide - an unrelated bucket's change
                 // keeps this one's stale-if-error grace.
-                self.drain_invalidations();
+                self.drain_invalidations().await;
 
                 // stale-if-error, not stale-while-revalidate: stale data is
                 // served only because a refetch failed, and only up to
                 // max_stale - never merely because the TTL lapsed.
-                if let Some(entry) = self.cache.get(&bucket_id) {
+                if let Some(entry) = self.cache.get(&bucket_id).await {
                     let (age, max_stale) = (entry.age(), self.max_stale);
                     if age <= max_stale {
                         tracing::warn!(
@@ -290,24 +366,25 @@ impl MembershipCache {
     /// re-resolves it.
     ///
     /// The epoch is bumped *before* the removal, not after: `get_role`
-    /// re-reads it from inside `cache.entry(bucket_id)`'s shard lock, so
-    /// bumping first leaves only two safe orderings — either that lookup sees
-    /// the new epoch and discards its result, or it wins the lock first and
-    /// this removal then deletes what it just wrote. Bumping afterwards would
-    /// open a window where a lookup reads the old epoch and writes after the
-    /// removal has already run, resurrecting the invalidated membership.
-    fn invalidate(&self, bucket_id: BucketId) {
+    /// re-reads it *after* its own insert, so bumping first leaves only two
+    /// safe orderings — either that insert lands first and this removal then
+    /// deletes what it just wrote, or this removal runs first and that
+    /// lookup's own re-read sees the new epoch and undoes its insert. Bumping
+    /// afterwards would open a window where a lookup reads the old epoch,
+    /// inserts, and re-reads before this removal has run, resurrecting the
+    /// invalidated membership.
+    async fn invalidate(&self, bucket_id: BucketId) {
         self.epoch.fetch_add(1, Ordering::SeqCst);
-        self.cache.remove(&bucket_id);
+        self.cache.invalidate(&bucket_id).await;
     }
 
-    /// Drop every cached membership. `clear()` takes one shard lock at a time
-    /// rather than all at once, but a bucket lives in exactly one shard, so
-    /// the same bump-before-lock ordering that makes [`Self::invalidate`]
-    /// safe makes this safe too.
+    /// Drop every cached membership. `moka`'s `invalidate_all` is O(1) - it
+    /// bumps an internal cutoff rather than walking every entry - so unlike
+    /// the old `DashMap::clear()` this is cheap on the request path
+    /// regardless of how many buckets are resident.
     fn invalidate_all(&self) {
         self.epoch.fetch_add(1, Ordering::SeqCst);
-        self.cache.clear();
+        self.cache.invalidate_all();
     }
 }
 
@@ -390,8 +467,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn invalidating_a_never_cached_bucket_leaves_the_map_empty() {
+    #[tokio::test]
+    async fn invalidating_a_never_cached_bucket_leaves_the_map_empty() {
         // `parse_membership_changes` filters chain-wide membership events by
         // pallet and event name only, with no is-this-our-bucket predicate
         // (provider-node/src/chain_state_coordinator.rs), so `invalidate` is
@@ -402,10 +479,14 @@ mod tests {
         let cache = MembershipCache::new(StaticMembershipResolver(vec![]))
             .with_ttl(Duration::from_secs(300));
 
-        cache.invalidate(42);
+        cache.invalidate(42).await;
 
-        assert!(
-            cache.cache.is_empty(),
+        // `entry_count()` is eventually consistent - settle it first so this
+        // assertion reflects the invalidate above, not a stale count.
+        cache.cache.run_pending_tasks().await;
+        assert_eq!(
+            cache.cache.entry_count(),
+            0,
             "invalidating a bucket that was never cached must not create an entry for it"
         );
     }
@@ -515,7 +596,7 @@ mod tests {
         // entry is gone entirely, not just blanked, so nothing is left to
         // resurrect the pre-invalidation membership it fetched.
         assert!(
-            cache.cache.get(&1).is_none(),
+            cache.cache.get(&1).await.is_none(),
             "invalidate_all landing mid-refetch must discard that refetch's result"
         );
 
@@ -562,14 +643,14 @@ mod tests {
         }
 
         // A targeted invalidation for the same bucket lands mid-refetch.
-        cache.invalidate(1);
+        cache.invalidate(1).await;
 
         proceed.store(true, Ordering::SeqCst);
         let role = in_flight.await.unwrap().unwrap();
         assert_eq!(role, Some(Role::Admin));
 
         assert!(
-            cache.cache.get(&1).is_none(),
+            cache.cache.get(&1).await.is_none(),
             "invalidate landing mid-refetch must discard that refetch's result"
         );
 
@@ -615,14 +696,14 @@ mod tests {
 
         // An invalidation for this bucket lands while its first-ever fetch is
         // still in flight.
-        cache.invalidate(1);
+        cache.invalidate(1).await;
 
         proceed.store(true, Ordering::SeqCst);
         let role = in_flight.await.unwrap().unwrap();
         assert_eq!(role, Some(Role::Admin));
 
         assert!(
-            cache.cache.get(&1).is_none(),
+            cache.cache.get(&1).await.is_none(),
             "an invalidation landing mid-fetch of a never-cached bucket must still discard that fetch's result"
         );
 
@@ -698,7 +779,7 @@ mod tests {
         // An unrelated bucket is invalidated while bucket 1's refetch is in
         // flight, bumping the cache-wide epoch without touching bucket 1's
         // entry at all.
-        cache.invalidate(2);
+        cache.invalidate(2).await;
 
         proceed.store(true, Ordering::SeqCst);
         let result = in_flight.await.unwrap();
@@ -801,17 +882,20 @@ mod tests {
             account: account.clone(),
             calls: calls.clone(),
         })
-        .with_ttl(Duration::ZERO)
-        .with_max_stale(Duration::ZERO); // any age at all exceeds this
+        .with_ttl(Duration::ZERO) // force every lookup to attempt a refetch
+        .with_max_stale(Duration::from_millis(50));
 
         let role = cache.get_role(1, &account).await.unwrap();
         assert_eq!(role, Some(Role::Admin));
         assert_eq!(calls.load(Ordering::SeqCst), 1);
 
-        // Second lookup refetches (TTL zero), the refetch fails, and the
-        // cached entry is already older than max_stale (zero) by the time
-        // it's consulted - the request must be refused rather than served
-        // stale.
+        // Age the entry genuinely past max_stale rather than leaning on a
+        // zero bound, so this exercises real elapsed time.
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // The lookup refetches (TTL zero), the refetch fails, and the cached
+        // member set is past max_stale - so the request must be refused
+        // rather than served stale.
         let result = cache.get_role(1, &account).await;
         assert!(
             matches!(result, Err(MembershipError::Unavailable(_))),
@@ -819,12 +903,126 @@ mod tests {
         );
         assert_eq!(calls.load(Ordering::SeqCst), 2);
 
-        // Refused, not evicted: the entry must still be in the map so a
-        // future successful refetch can overwrite it, rather than forcing a
-        // cold miss on top of an already-unavailable chain.
+        // Residency deliberately not asserted: `max_stale` now drives both
+        // this refusal and `cache`'s expiry, so "too old to serve" and
+        // "already evicted" are the same boundary off the same duration and
+        // cannot be observed apart. The point the old assertion protected -
+        // that a stale leftover never blocks a later successful refetch -
+        // holds regardless, since `insert` overwrites whatever was there.
+    }
+
+    // ── bounding the cache (review.md finding 1, issue #347 part 2) ────────
+    //
+    // The three tests below pin what the bound has to do: cap the entry
+    // count, and stop holding an entry once nothing can read it again.
+
+    #[tokio::test]
+    async fn cache_size_is_bounded_by_max_entries() {
+        // Walking `bucket_id = 1..N` with a self-signed header grows the map
+        // by one permanent entry per distinct id (`review.md:11-21`) - any
+        // keypair verifies, membership is what's checked. Once bounded,
+        // resident entries must never exceed the configured ceiling.
+        let account = AccountId32::new([50u8; 32]);
+        let cache = MembershipCache::new(StaticMembershipResolver(vec![(
+            account.clone(),
+            Role::Reader,
+        )
+            .into()]))
+        .with_ttl(Duration::from_secs(300))
+        .with_max_entries(8);
+
+        for bucket_id in 0..64 {
+            cache.get_role(bucket_id, &account).await.unwrap();
+        }
+
+        // `entry_count()` is eventually consistent - settle it first so this
+        // reflects the 64 inserts above, not a lagging count.
+        cache.cache.run_pending_tasks().await;
         assert!(
-            cache.cache.get(&1).is_some(),
-            "a refused entry must be left in the map, not evicted"
+            cache.cache.entry_count() <= 8,
+            "resident entries ({}) must not exceed max_entries (8)",
+            cache.cache.entry_count()
+        );
+    }
+
+    #[tokio::test]
+    async fn an_entry_past_max_stale_does_not_remain_resident_forever() {
+        // Today `max_stale` only gates whether a *failed* refetch may still
+        // serve a cached entry (`stale_membership_past_max_stale_is_refused`
+        // above) - nothing removes the entry itself once it ages past that
+        // bound, so a bucket the chain will never be asked about again stays
+        // resident for the life of the process. Once bounded, an entry past
+        // `max_stale` must be gone, not merely unserved.
+        let account = AccountId32::new([51u8; 32]);
+        let cache = MembershipCache::new(StaticMembershipResolver(vec![(
+            account.clone(),
+            Role::Reader,
+        )
+            .into()]))
+        .with_ttl(Duration::from_secs(300))
+        .with_max_stale(Duration::from_millis(10));
+
+        cache.get_role(1, &account).await.unwrap();
+        assert!(
+            cache.cache.get(&1).await.is_some(),
+            "the seed lookup must cache the entry"
+        );
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        assert!(
+            cache.cache.get(&1).await.is_none(),
+            "an entry older than max_stale must not remain resident"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_empty_member_set_expires_well_before_a_non_empty_one() {
+        // A bucket that doesn't exist on chain resolves to an empty member
+        // set exactly like a real, memberless one
+        // (`provider-node/src/membership.rs:58-73`), and today both are
+        // cached with the same lifetime as any other entry - the multiplier
+        // that makes the unbounded map remotely driveable (review.md finding
+        // 1): every id in the `u64` space is a valid key. An empty result
+        // must therefore go once its TTL lapses, rather than holding a slot
+        // for the whole `max_stale` window a non-empty one earns.
+        struct MixedResolver {
+            account: AccountId32,
+        }
+
+        #[async_trait::async_trait]
+        impl MembershipResolver for MixedResolver {
+            async fn fetch_members(
+                &self,
+                bucket_id: BucketId,
+            ) -> Result<Vec<Member>, MembershipError> {
+                Ok(if bucket_id == 1 {
+                    vec![] // "nonexistent" bucket
+                } else {
+                    vec![(self.account.clone(), Role::Reader).into()]
+                })
+            }
+        }
+
+        let account = AccountId32::new([52u8; 32]);
+        let cache = MembershipCache::new(MixedResolver {
+            account: account.clone(),
+        })
+        .with_ttl(Duration::from_millis(10))
+        .with_max_stale(Duration::from_secs(300));
+
+        cache.get_role(1, &account).await.unwrap(); // empty set
+        cache.get_role(2, &account).await.unwrap(); // real member
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        assert!(
+            cache.cache.get(&1).await.is_none(),
+            "an empty member set must not outlive its TTL"
+        );
+        assert!(
+            cache.cache.get(&2).await.is_some(),
+            "a non-empty member set must stay resident to max_stale, well past the TTL"
         );
     }
 }

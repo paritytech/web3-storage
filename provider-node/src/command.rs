@@ -80,13 +80,15 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
             .with_ttl(Duration::from_secs(cli.auth.auth_cache_ttl))
             .with_max_skew(Duration::from_secs(cli.auth.auth_max_skew))
             .with_max_stale(Duration::from_secs(cli.auth.auth_max_stale))
+            .with_max_entries(cli.auth.auth_cache_max_entries)
             .with_invalidations(BlockEventInvalidations::new(events_tx.subscribe())),
     );
     tracing::info!(
-        "Auth: membership cache_ttl={}s, max_stale={}s, max_skew={}s",
+        "Auth: membership cache_ttl={}s, max_stale={}s, max_skew={}s, max_entries={}",
         cli.auth.auth_cache_ttl,
         cli.auth.auth_max_stale,
-        cli.auth.auth_max_skew
+        cli.auth.auth_max_skew,
+        cli.auth.auth_cache_max_entries
     );
 
     let deps = ProviderDeps {

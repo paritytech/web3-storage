@@ -174,6 +174,13 @@ impl Authenticator {
         self
     }
 
+    /// Maximum number of buckets' membership resident in the cache at once.
+    /// Defaults to 10,000.
+    pub fn with_max_entries(mut self, max_entries: u64) -> Self {
+        self.membership = self.membership.with_max_entries(max_entries);
+        self
+    }
+
     /// Auth is always enforced: the caller must present a valid signed
     /// `Authorization` header whose account holds `required` for the bucket.
     pub async fn require_role(
