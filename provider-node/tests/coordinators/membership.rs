@@ -169,6 +169,29 @@ async fn resubscribed_invalidates_every_cached_bucket() {
 }
 
 #[tokio::test]
+async fn membership_scope_unknown_invalidates_every_cached_bucket() {
+    let (auth, calls, keypair, tx) = counting_authenticator();
+
+    authorized_read(&auth, &keypair, 1).await;
+    authorized_read(&auth, &keypair, 2).await;
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+
+    // A membership event whose fields failed to decode carries no bucket id
+    // to invalidate, so it must fall back to distrusting every cached
+    // bucket - the same reaction as `Resubscribed`, but without implying the
+    // follower reconnected.
+    let _ = tx.send(BlockEvent::MembershipScopeUnknown { at_block: 100 });
+
+    authorized_read(&auth, &keypair, 1).await;
+    authorized_read(&auth, &keypair, 2).await;
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        4,
+        "MembershipScopeUnknown must force every cached bucket to re-resolve, not just one"
+    );
+}
+
+#[tokio::test]
 async fn unrelated_events_leave_the_cache_alone() {
     let (auth, calls, keypair, tx) = counting_authenticator();
 

@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! Test doubles shared by `membership`'s and `verify`'s test modules, so a
-//! fixture used by both isn't defined twice in the same crate.
+//! Test doubles for this crate's test modules, kept in one place so the
+//! resolver fixtures sit together - and so one used by both `membership` and
+//! `verify` isn't defined twice.
 
 use crate::error::MembershipError;
 use crate::membership::{Invalidation, Member, MembershipInvalidations, MembershipResolver};
 use sp_core::crypto::AccountId32;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use storage_primitives::{BucketId, Role};
 
@@ -27,6 +28,25 @@ impl MembershipResolver for FlakyResolver {
         } else {
             Err(MembershipError::Unavailable("chain down".to_string()))
         }
+    }
+}
+
+/// Resolver that blocks inside `fetch_members` until told to proceed, so a
+/// test can land an invalidation while a fetch is in flight.
+pub(crate) struct GatedResolver {
+    pub(crate) account: AccountId32,
+    pub(crate) calls: Arc<AtomicUsize>,
+    pub(crate) proceed: Arc<AtomicBool>,
+}
+
+#[async_trait::async_trait]
+impl MembershipResolver for GatedResolver {
+    async fn fetch_members(&self, _bucket_id: BucketId) -> Result<Vec<Member>, MembershipError> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        while !self.proceed.load(Ordering::SeqCst) {
+            tokio::task::yield_now().await;
+        }
+        Ok(vec![(self.account.clone(), Role::Admin).into()])
     }
 }
 

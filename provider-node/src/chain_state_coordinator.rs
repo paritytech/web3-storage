@@ -378,6 +378,7 @@ impl ChainStateCoordinator {
                     tracing::warn!(
                         "chain-state coordinator: failed to get block handle for {block_number}: {e}"
                     );
+                    escalate_block_read_failure(&self.events_tx, block_number);
                     continue;
                 }
             };
@@ -404,6 +405,7 @@ impl ChainStateCoordinator {
                     tracing::warn!(
                         "chain-state coordinator: failed to fetch events for block {block_number}: {e}"
                     );
+                    escalate_block_read_failure(&self.events_tx, block_number);
                     continue;
                 }
             };
@@ -606,6 +608,18 @@ impl ChainStateCoordinatorHandle {
     }
 }
 
+/// A finalized block's handle or events could not be fetched at all, so its
+/// membership events (if any) are lost rather than merely dropped one at a
+/// time - the same "no bucket id left to invalidate" situation an undecodable
+/// event escalates to, and for the same reason: a plain `continue` here would
+/// let a revoked member keep authorizing for a full `--auth-cache-ttl` on a
+/// node that is otherwise connected and healthy.
+fn escalate_block_read_failure(events_tx: &BlockEventTx, block_number: u32) {
+    let _ = events_tx.send(BlockEvent::MembershipScopeUnknown {
+        at_block: block_number,
+    });
+}
+
 // ── dynamic-value decoding ────────────────────────────────────────────────────
 
 /// Decode a `StorageProvider::Providers` storage value into [`ProviderInfo`].
@@ -761,6 +775,16 @@ mod tests {
     fn test_chain_state() -> (ChainState, tempfile::TempDir) {
         let (_storage, nonce_store, dir) = temp_rocksdb();
         (ChainState::with_nonce_store(nonce_store), dir)
+    }
+
+    #[test]
+    fn escalate_block_read_failure_broadcasts_membership_scope_unknown() {
+        let (tx, mut rx) = tokio::sync::broadcast::channel(4);
+        escalate_block_read_failure(&tx, 99);
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(BlockEvent::MembershipScopeUnknown { at_block: 99 })
+        ));
     }
 
     fn sample_provider_info() -> ProviderInfo {

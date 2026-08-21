@@ -116,13 +116,20 @@ impl MembershipInvalidations for BlockEventInvalidations {
         let mut all = false;
         loop {
             match events.try_recv() {
-                Ok(BlockEvent::BucketMembershipChanged { bucket_id }) => buckets.push(bucket_id),
+                Ok(BlockEvent::BucketMembershipChanged { bucket_id }) if !all => {
+                    buckets.push(bucket_id)
+                }
                 // The follower re-read chain state wholesale, or this task
                 // fell behind the fan-out — either way, events before this
                 // point were missed for good. Keep draining rather than
                 // returning here, so the backlog actually clears instead of
                 // leaving the feed permanently lagged.
                 Ok(BlockEvent::Resubscribed { .. }) => all = true,
+                // A membership event's bucket id could not be attributed to
+                // a specific bucket (decode failure or a dropped block) - the
+                // same "trust nothing cached" reaction as Resubscribed, but
+                // it does not imply anything about the other event kinds.
+                Ok(BlockEvent::MembershipScopeUnknown { .. }) => all = true,
                 Ok(_) => {}
                 Err(TryRecvError::Lagged(_)) => all = true,
                 Err(TryRecvError::Empty) => break,

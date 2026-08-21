@@ -64,6 +64,11 @@ the chain is unreachable when a lookup needs to refetch, the cached member
 set is still served, but only for up to `--auth-max-stale` (default 5
 minutes) - past that, the request is refused with `503`.
 
+Because any keypair can ask about any bucket id, the cache is also capped at
+`--auth-cache-max-entries` buckets (default 10,000), and entries are removed
+rather than left stale: a member set at the stale bound, an empty one already
+at the TTL. Eviction costs nothing but a re-resolve on the next request.
+
 ## Test
 
 ```bash

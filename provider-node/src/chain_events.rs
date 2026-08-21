@@ -60,6 +60,13 @@ pub enum BlockEvent {
     /// Coordinators run their bootstrap scan to catch anything missed while
     /// the stream was down. Also the correct reaction to a lagged receiver.
     Resubscribed { at_block: u32 },
+    /// A membership-changing event at `at_block` could not be attributed to a
+    /// bucket - its fields failed to decode, so there is no id left to
+    /// invalidate. Unlike [`Resubscribed`](Self::Resubscribed), the follower
+    /// is still connected and every other coordinator's view of chain state
+    /// is unaffected; only the membership cache needs to react, by
+    /// distrusting every cached bucket.
+    MembershipScopeUnknown { at_block: u32 },
 }
 
 impl From<provider_events::ChallengeCreated> for BlockEvent {
@@ -209,7 +216,9 @@ where
 /// A membership event that matched its pallet/event name but whose fields
 /// failed to decode is treated as unknown-scope rather than dropped: which
 /// bucket changed can no longer be named, so every cached member set is
-/// invalidated instead, the same reaction as a lagged or restarted feed.
+/// invalidated instead, the same reaction as a lagged or restarted feed - but
+/// via a variant of its own, since nothing actually reconnected and the other
+/// coordinators have no reason to run their full-scan reaction to this.
 fn escalate_membership_decode_failure(
     pallet: &str,
     event_name: &str,
@@ -220,7 +229,7 @@ fn escalate_membership_decode_failure(
         "failed to decode {pallet}::{event_name} at block {block_number} against the static \
          bindings; treating as an unknown membership change: {err}"
     );
-    BlockEvent::Resubscribed {
+    BlockEvent::MembershipScopeUnknown {
         at_block: block_number,
     }
 }
@@ -354,16 +363,22 @@ mod tests {
     }
 
     #[test]
-    fn undecodable_membership_event_escalates_to_resubscribed() {
+    fn undecodable_membership_event_escalates_to_membership_scope_unknown() {
         // A membership event has no bucket id left to invalidate once its
         // fields fail to decode, unlike every other event kind here - so it
-        // must escalate to a wholesale re-scan rather than being dropped.
+        // must escalate to invalidating every cached bucket rather than being
+        // dropped. It must not reuse `Resubscribed`: nothing reconnected, and
+        // that variant also drives a full chain scan in two other
+        // coordinators that have nothing to do with membership.
         let event = escalate_membership_decode_failure(
             "StorageProvider",
             "MemberSet",
             42,
             "field shape drifted from the static bindings",
         );
-        assert!(matches!(event, BlockEvent::Resubscribed { at_block: 42 }));
+        assert!(matches!(
+            event,
+            BlockEvent::MembershipScopeUnknown { at_block: 42 }
+        ));
     }
 }

@@ -8,7 +8,9 @@
  *
  * Tests the provider node's signed-request guard end to end: the role ladder
  * as enforced over HTTP, rejection of unsigned/tampered/expired signatures,
- * and that granting or revoking a role on chain is honoured by the provider.
+ * that granting or revoking a role on chain is honoured by the provider, and
+ * that a signed walk of the bucket-id space is refused without disturbing a
+ * real member.
  * What this workflow adds over the Rust tests is the wiring — real client-built
  * signatures, real status codes, real chain events — not the cache mechanics,
  * which are covered deterministically in crates/providers/auth and
@@ -30,6 +32,7 @@ import {
   removeMember,
   setMember,
   signProviderRequest,
+  toHex,
   type ChainSigner,
 } from "@web3-storage/sdk";
 import { negotiateAndEstablish, runSuite, setupChain } from "./helpers.js";
@@ -53,8 +56,17 @@ const PROVIDER_URL = process.argv[3] || "http://127.0.0.1:3333";
  */
 const CHANGE_DEADLINE_MS = 40_000;
 
-const hex = (bytes: Uint8Array) =>
-  `0x${Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("")}`;
+/**
+ * How many distinct bucket ids 12.13 walks - deliberately above
+ * `--auth-cache-max-entries`' 10,000 default, so the walk reaches the cache's
+ * ceiling rather than just exercising the insert path. Sequential, one chain
+ * storage query per id: ~11s against a local dev chain.
+ *
+ * The provider does not report its cache config, so that coupling cannot be
+ * asserted here: raise the default past this number and the test quietly
+ * weakens to a smoke test.
+ */
+const SCAN_IDS = 12_000;
 
 /** Send one request and return just the status; the body is drained and dropped. */
 async function statusOf(method: string, path: string, init: RequestInit = {}): Promise<number> {
@@ -106,7 +118,7 @@ async function staleAuthHeader(
   const timestamp = String(Math.floor(Date.now() / 1000) - ageSeconds);
   const message = `web3storage:${method}:${bucketId}:${timestamp}`;
   const signature = await who.signer.signBytes(new TextEncoder().encode(message));
-  return { Authorization: `Web3Storage ${hex(who.publicKey)}:${hex(signature)}:${timestamp}` };
+  return { Authorization: `Web3Storage ${toHex(who.publicKey)}:${toHex(signature)}:${timestamp}` };
 }
 
 /** Reader-guarded endpoint: the S3 index root, which any member may read. */
@@ -121,7 +133,7 @@ function nodeBody(bucketId: bigint, text: string): string {
   const bytes = new TextEncoder().encode(text);
   return JSON.stringify({
     bucket_id: Number(bucketId),
-    hash: hex(computeCid(bytes)),
+    hash: toHex(computeCid(bytes)),
     data: bytesToBase64(bytes),
     children: null,
   });
@@ -327,6 +339,40 @@ async function main() {
       await assertChangeHonoured(200, () =>
         signedStatus(reader, "GET", readPath(bucketId), bucketId),
       );
+    },
+  });
+
+  // ── Bucket-id scan against the membership cache ───────────────────────────
+
+  tests.push({
+    name: "12.13 A signed bucket-id scan is refused and leaves a member authorized",
+    fn: async () => {
+      // Any keypair can walk the id space: auth runs before any
+      // bucket-existence check and the read routes are not rate limited, so
+      // each distinct id caches one membership entry. Past the cache's ceiling
+      // the walk must still be refused and must not cost a member their
+      // access. Resident counts are asserted in
+      // crates/providers/auth/src/membership.rs instead - the provider reports
+      // no cache size.
+      const base = bucketId + 1_000_000n; // clear of every id this suite creates
+      const started = Date.now();
+      for (let i = 0n; i < BigInt(SCAN_IDS); i++) {
+        const scanned = base + i;
+        const status = await signedStatus(stranger, "GET", readPath(scanned), scanned);
+        assert.strictEqual(status, 403, `scanned bucket ${scanned} should be refused`);
+      }
+      console.log(`          ${SCAN_IDS} ids scanned in ${Date.now() - started}ms`);
+
+      // Whether Ferdie's entry was evicted or kept is invisible here, and that
+      // is fine: an evicted entry just re-resolves from chain.
+      assert.strictEqual(
+        await signedStatus(reader, "GET", readPath(bucketId), bucketId),
+        200,
+        "a member must still be authorized after a bucket-id scan",
+      );
+
+      // Refusing every id is no good if the node dies holding them all.
+      assert.strictEqual(await statusOf("GET", "/health"), 200, "provider should still be healthy");
     },
   });
 

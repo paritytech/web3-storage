@@ -148,8 +148,9 @@ impl MembershipInvalidations for NoInvalidations {
     }
 }
 
-/// How long a resident entry survives. Keyed off *creation*, matching
-/// [`CachedMembership::age`], so a read cannot extend a stale entry's life.
+/// How long a resident entry survives, measured from its most recent fetch —
+/// so a bucket refreshed on every lookup keeps its full residency instead of
+/// counting down from whenever it first entered the cache.
 ///
 /// An entry is dropped once nothing can read it again: a non-empty set at
 /// `max_stale`, past which it is too old to be fresh and too old to serve on
@@ -160,6 +161,16 @@ struct MembershipExpiry {
     max_stale: Duration,
 }
 
+impl MembershipExpiry {
+    fn residency(&self, value: &Arc<CachedMembership>) -> Duration {
+        if value.members.is_empty() {
+            self.ttl
+        } else {
+            self.max_stale
+        }
+    }
+}
+
 impl Expiry<BucketId, Arc<CachedMembership>> for MembershipExpiry {
     fn expire_after_create(
         &self,
@@ -167,11 +178,23 @@ impl Expiry<BucketId, Arc<CachedMembership>> for MembershipExpiry {
         value: &Arc<CachedMembership>,
         _created_at: Instant,
     ) -> Option<Duration> {
-        Some(if value.members.is_empty() {
-            self.ttl
-        } else {
-            self.max_stale
-        })
+        Some(self.residency(value))
+    }
+
+    // Without this, moka's default keeps a refreshed entry's *original*
+    // expiration instant (see `Expiry::expire_after_update`'s default:
+    // `duration_until_expiry`, unchanged) - so a bucket looked up more than
+    // once would count residency down from its first insert while
+    // `CachedMembership::fetched_at` resets on every insert, and the two
+    // clocks would silently diverge.
+    fn expire_after_update(
+        &self,
+        _key: &BucketId,
+        value: &Arc<CachedMembership>,
+        _updated_at: Instant,
+        _duration_until_expiry: Option<Duration>,
+    ) -> Option<Duration> {
+        Some(self.residency(value))
     }
 }
 
@@ -197,7 +220,8 @@ pub(crate) struct MembershipCache {
     /// served when a refetch fails. Also bounds a non-empty entry's
     /// residency - see [`MembershipExpiry`].
     max_stale: Duration,
-    /// Upper bound on resident entries (review.md finding 1 / #347).
+    /// Upper bound on resident entries, so an attacker walking bucket ids
+    /// cannot grow the cache without limit.
     max_entries: u64,
     resolver: Box<dyn MembershipResolver>,
     invalidations: Box<dyn MembershipInvalidations>,
@@ -336,26 +360,21 @@ impl MembershipCache {
                 self.drain_invalidations().await;
 
                 // stale-if-error, not stale-while-revalidate: stale data is
-                // served only because a refetch failed, and only up to
-                // max_stale - never merely because the TTL lapsed.
+                // served only because a refetch failed, never merely because
+                // the TTL lapsed. `max_stale` itself has exactly one owner,
+                // `MembershipExpiry`: a resident entry is by construction no
+                // older than `max_stale` (non-empty) or `ttl` (empty), so
+                // reaching this point with an entry still in the cache and
+                // refusing once it is gone are the same event, not two
+                // separately-judged outcomes.
                 if let Some(entry) = self.cache.get(&bucket_id).await {
-                    let (age, max_stale) = (entry.age(), self.max_stale);
-                    if age <= max_stale {
-                        tracing::warn!(
-                            "Chain unreachable for bucket {} membership (age {:?}), serving stale data: {}",
-                            bucket_id,
-                            age,
-                            e
-                        );
-                        return Ok(entry.role_of(account));
-                    }
-                    tracing::error!(
-                        "Cached membership for bucket {} is {:?} old (max_stale {:?}); refusing request: {}",
+                    tracing::warn!(
+                        "Chain unreachable for bucket {} membership (age {:?}), serving stale data: {}",
                         bucket_id,
-                        age,
-                        max_stale,
+                        entry.age(),
                         e
                     );
+                    return Ok(entry.role_of(account));
                 }
                 Err(e)
             }
@@ -391,7 +410,7 @@ impl MembershipCache {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::{FlakyResolver, QueuedInvalidations};
+    use crate::test_support::{FlakyResolver, GatedResolver, QueuedInvalidations};
 
     #[test]
     fn privilege_ladder_is_exhaustive() {
@@ -520,28 +539,6 @@ mod tests {
             2,
             "the request that drains the event must itself re-resolve"
         );
-    }
-
-    /// Resolver that blocks inside `fetch_members` until told to proceed, so a
-    /// test can land an invalidation while a fetch is in flight.
-    struct GatedResolver {
-        account: AccountId32,
-        calls: Arc<AtomicUsize>,
-        proceed: Arc<AtomicBool>,
-    }
-
-    #[async_trait::async_trait]
-    impl MembershipResolver for GatedResolver {
-        async fn fetch_members(
-            &self,
-            _bucket_id: BucketId,
-        ) -> Result<Vec<Member>, MembershipError> {
-            self.calls.fetch_add(1, Ordering::SeqCst);
-            while !self.proceed.load(Ordering::SeqCst) {
-                tokio::task::yield_now().await;
-            }
-            Ok(vec![(self.account.clone(), Role::Admin).into()])
-        }
     }
 
     #[tokio::test]
@@ -793,9 +790,8 @@ mod tests {
 
     #[tokio::test]
     async fn an_undrained_event_for_this_bucket_is_not_served_stale() {
-        // The window finding 9 actually names: an event for *this* bucket
-        // arrives after this request's own drain, and no concurrent request
-        // drains it either. The cached member set is known-outdated by the
+        // The window: an event for *this* bucket arrives after this
+        // request's own drain, and no concurrent request drains it either. The cached member set is known-outdated by the
         // time the error arm runs, so it must not be served.
         let account = AccountId32::new([31u8; 32]);
         let calls = Arc::new(AtomicUsize::new(0));
@@ -840,14 +836,14 @@ mod tests {
         );
     }
 
-    // ── max_stale (stale-if-error bound, issue #347) ────────────────────────
+    // ── max_stale (stale-if-error bound) ───────────────────────────────────
 
     #[tokio::test]
     async fn stale_membership_within_max_stale_is_still_served() {
-        // Today's baseline: when the chain fails, a cached entry younger
-        // than `max_stale` is still served. Must not regress once the error
-        // arm starts consulting the bound - only the past-the-bound case
-        // (below) should start refusing.
+        // When the chain fails, a cached entry is served stale as long as it
+        // is still resident - and residency is exactly `max_stale` (see
+        // `MembershipExpiry`), so this covers the "still there" side of that
+        // one boundary.
         let account = AccountId32::new([20u8; 32]);
         let calls = Arc::new(AtomicUsize::new(0));
         let cache = MembershipCache::new(FlakyResolver {
@@ -893,9 +889,12 @@ mod tests {
         // zero bound, so this exercises real elapsed time.
         tokio::time::sleep(Duration::from_millis(100)).await;
 
-        // The lookup refetches (TTL zero), the refetch fails, and the cached
-        // member set is past max_stale - so the request must be refused
-        // rather than served stale.
+        // The lookup refetches (TTL zero), the refetch fails, and
+        // `MembershipExpiry` has already evicted the entry by this point -
+        // there is no cached member set left to fall back on, so the
+        // request is refused. Refusal is that eviction, not a separate age
+        // check: an age gate separate from the cache's own expiry could
+        // disagree with it, so the two are one and the same thing.
         let result = cache.get_role(1, &account).await;
         assert!(
             matches!(result, Err(MembershipError::Unavailable(_))),
@@ -903,15 +902,12 @@ mod tests {
         );
         assert_eq!(calls.load(Ordering::SeqCst), 2);
 
-        // Residency deliberately not asserted: `max_stale` now drives both
-        // this refusal and `cache`'s expiry, so "too old to serve" and
-        // "already evicted" are the same boundary off the same duration and
-        // cannot be observed apart. The point the old assertion protected -
-        // that a stale leftover never blocks a later successful refetch -
-        // holds regardless, since `insert` overwrites whatever was there.
+        // Residency deliberately not asserted beyond the refusal above: a
+        // later successful refetch is unaffected regardless, since `insert`
+        // overwrites whatever was there.
     }
 
-    // ── bounding the cache (review.md finding 1, issue #347 part 2) ────────
+    // ── bounding the cache ─────────────────────────────────────────────────
     //
     // The three tests below pin what the bound has to do: cap the entry
     // count, and stop holding an entry once nothing can read it again.
@@ -919,9 +915,9 @@ mod tests {
     #[tokio::test]
     async fn cache_size_is_bounded_by_max_entries() {
         // Walking `bucket_id = 1..N` with a self-signed header grows the map
-        // by one permanent entry per distinct id (`review.md:11-21`) - any
-        // keypair verifies, membership is what's checked. Once bounded,
-        // resident entries must never exceed the configured ceiling.
+        // by one permanent entry per distinct id - any keypair verifies,
+        // membership is what's checked. Once bounded, resident entries must
+        // never exceed the configured ceiling.
         let account = AccountId32::new([50u8; 32]);
         let cache = MembershipCache::new(StaticMembershipResolver(vec![(
             account.clone(),
@@ -977,13 +973,49 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_refreshed_entry_gets_a_fresh_max_stale_not_the_original_ones_remainder() {
+        // A successful refetch of an already-resident (not yet moka-expired)
+        // entry takes moka's *update* path, not create - so residency must be
+        // re-derived there too, or a bucket looked up more than once counts
+        // down from its first insert while `fetched_at` keeps resetting,
+        // silently shrinking its real stale-if-error grace toward zero.
+        let account = AccountId32::new([52u8; 32]);
+        let cache = MembershipCache::new(StaticMembershipResolver(vec![(
+            account.clone(),
+            Role::Reader,
+        )
+            .into()]))
+        .with_ttl(Duration::from_millis(50))
+        .with_max_stale(Duration::from_millis(300));
+
+        cache.get_role(1, &account).await.unwrap();
+
+        // Past ttl (not fresh) but well inside max_stale (not yet
+        // moka-expired), so this lookup refetches and *updates* the existing
+        // entry rather than creating a new one.
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        cache.get_role(1, &account).await.unwrap();
+
+        // 350ms after the original insert: past the original create-based
+        // boundary (0 + max_stale = 300ms) by a 50ms margin, but within the
+        // refreshed one (100 + max_stale = 400ms) by the same margin. Only
+        // reachable if the update above actually reset residency.
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        assert!(
+            cache.cache.get(&1).await.is_some(),
+            "a refresh must reset residency to a fresh max_stale, not leave the original \
+             creation's expiration in place"
+        );
+    }
+
+    #[tokio::test]
     async fn an_empty_member_set_expires_well_before_a_non_empty_one() {
         // A bucket that doesn't exist on chain resolves to an empty member
         // set exactly like a real, memberless one
         // (`provider-node/src/membership.rs:58-73`), and today both are
         // cached with the same lifetime as any other entry - the multiplier
-        // that makes the unbounded map remotely driveable (review.md finding
-        // 1): every id in the `u64` space is a valid key. An empty result
+        // that makes an unbounded map remotely driveable, since every id in
+        // the `u64` space is a valid key. An empty result
         // must therefore go once its TTL lapses, rather than holding a slot
         // for the whole `max_stale` window a non-empty one earns.
         struct MixedResolver {
