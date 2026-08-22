@@ -2,9 +2,11 @@
 # off-chain provider node binary, and the reference UI apps. These are
 # deployable artifacts rather than reusable libraries, so they carry the
 # copyleft GPL-3.0-only license.
-inlineHeader = "SPDX-License-Identifier: GPL-3.0-only"
+[header]
+text = "SPDX-License-Identifier: GPL-3.0-only"
 keywords = ["SPDX-License-Identifier"]
 
+[files]
 includes = [
 	"provider-node/**/*.rs",
 	"runtimes/**/*.rs",
@@ -20,8 +22,12 @@ includes = [
 ]
 excludes = [
 	"**/*.bin.ts",
+	# This generated build script carries an upstream Apache notice in addition
+	# to this project's GPL SPDX identifier.
+	"runtimes/web3-storage-paseo/build.rs",
 	"runtimes/*/src/weights/**",
 ]
 
-[mapping.DOUBLESLASH_STYLE]
+[[rules]]
 extensions = ["ts", "tsx"]
+style_out = "doubleslash"
