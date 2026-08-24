@@ -40,9 +40,7 @@ pub type ChainWatch = tokio::sync::watch::Receiver<Option<ChainHandle>>;
 pub async fn connect(transport: &ChainTransport) -> Result<ChainHandle, Error> {
     match transport {
         ChainTransport::Rpc { url } => {
-            let api = OnlineClient::<PolkadotConfig>::from_url(url)
-                .await
-                .map_err(|e| Error::Connection(e.to_string()))?;
+            let api = OnlineClient::<PolkadotConfig>::from_url(url).await?;
             Ok(ChainHandle { api })
         }
     }
@@ -72,13 +70,19 @@ mod tests {
         let Err(err) = result else {
             panic!("connect must fail against a closed port");
         };
-        assert!(err.to_string().contains("Failed to connect to chain"));
+        assert!(
+            matches!(err, Error::Connection(_)),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]
     fn current_api_errors_before_first_connect() {
         let (_tx, rx) = tokio::sync::watch::channel(None);
         let err = current_api(&rx).expect_err("no connection published yet");
-        assert!(err.to_string().contains("not established"));
+        assert!(
+            matches!(err, Error::NotConnected),
+            "unexpected error: {err}"
+        );
     }
 }

@@ -14,6 +14,7 @@ hex = { workspace = true, features = ["std"] }
 serde = { workspace = true, features = ["std"] }
 serde_with = { workspace = true }
 sp-core = { workspace = true, features = ["std"] }
+sp-crypto-hashing = { workspace = true, features = ["std"] }
 sp-runtime = { workspace = true, features = ["std"] }
 
 [dev-dependencies]

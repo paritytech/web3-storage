@@ -16,6 +16,7 @@
 
 **Workspace crate rules:**
 - When adding, splitting out, or renaming a workspace member crate, ALWAYS classify it in `scripts/coverage.sh`: add it to `COV_PACKAGES` (measured) or `COV_SKIP_PACKAGES` (skipped, with a reason comment). CI's coverage job fails on any unclassified member.
+- Prefer keeping `crates/providers/*` free of `subxt`: express what the crate needs as a trait and let `provider-node` supply the subxt-backed implementation, so swapping the chain client stays a provider-node change.
 
 **Cargo dependency rules:**
 - ALWAYS declare external dependencies in the root `[workspace.dependencies]` and inherit them in crates via `{ workspace = true }`. Never add inline-versioned dependencies (e.g. `foo = "1.2"`) to a crate's `Cargo.toml`.
@@ -31,7 +32,7 @@
 - **Validate code against the design.** When writing or changing code, check it against `docs/design/`. On any divergence, **stop and flag** — don't proceed on assumptions.
 - **Prefer flagging over quietly editing the design to match the code.** If implementation and design disagree, treat it as a *finding*: open or reference an issue and discuss before changing the spec, rather than silently reconciling the gap.
 - If something in the design looks **wrong or vulnerable**, **flag and discuss** (open an issue and ping the design owner) — don't just fix it. Changes to the design itself go through a PR reviewed per `.github/CODEOWNERS`.
-- **`docs/reference/`** is *derived* documentation and **not** gated. When you change behavior, **update the relevant `reference/` doc** so it keeps reflecting the implementation.
+- **`docs/reference/`** is *derived* documentation, but it is **review-gated** (per `.github/CODEOWNERS`) and must stay true to the code. When you change behavior, **update the relevant `reference/` doc in the same change** so it keeps reflecting the implementation.
 - **`docs/drafts/`** is unratified / WIP — don't treat it as authoritative or reason from it as if it were the spec.
 
 ## Project Overview

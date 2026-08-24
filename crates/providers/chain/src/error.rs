@@ -7,7 +7,7 @@ use thiserror::Error;
 #[derive(Error, Debug)]
 pub enum Error {
     #[error("Failed to connect to chain: {0}")]
-    Connection(String),
+    Connection(#[from] subxt::error::OnlineClientError),
 
     #[error("Chain connection not established yet")]
     NotConnected,
