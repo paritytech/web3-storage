@@ -57,20 +57,29 @@ const PROVIDER_URL = process.argv[3] || "http://127.0.0.1:3333";
 const CHANGE_DEADLINE_MS = 40_000;
 
 /**
- * How many distinct bucket ids 12.13 walks - deliberately above
- * `--auth-cache-max-entries`' 10,000 default, so the walk reaches the cache's
- * ceiling rather than just exercising the insert path. Sequential, one chain
- * storage query per id: ~11s against a local dev chain.
- *
- * The provider does not report its cache config, so that coupling cannot be
- * asserted here: raise the default past this number and the test quietly
- * weakens to a smoke test.
+ * How many distinct bucket ids 12.13 walks. Every one is a cache miss costing
+ * the provider a chain storage query, so this stays small: CI runs the provider
+ * with `--auth-cache-max-entries 64` so 200 ids cross the ceiling and exercise
+ * eviction, where chasing the 10,000 default would take ~12,000 round trips and
+ * blow the runner's 10-minute budget.
  */
-const SCAN_IDS = 12_000;
+const SCAN_IDS = 200;
+
+/**
+ * Per-request ceiling. Every probe here is a single provider call that normally
+ * answers in milliseconds, so a request still open after this is hung - and
+ * without a bound a hung request stalls the whole workflow until the runner
+ * kills it at 10 minutes, reporting nothing about where it stopped.
+ */
+const REQUEST_TIMEOUT_MS = 30_000;
 
 /** Send one request and return just the status; the body is drained and dropped. */
 async function statusOf(method: string, path: string, init: RequestInit = {}): Promise<number> {
-  const res = await fetch(new URL(path, PROVIDER_URL), { method, ...init });
+  const res = await fetch(new URL(path, PROVIDER_URL), {
+    method,
+    ...init,
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  });
   await res.text();
   return res.status;
 }
@@ -349,11 +358,11 @@ async function main() {
     fn: async () => {
       // Any keypair can walk the id space: auth runs before any
       // bucket-existence check and the read routes are not rate limited, so
-      // each distinct id caches one membership entry. Past the cache's ceiling
-      // the walk must still be refused and must not cost a member their
-      // access. Resident counts are asserted in
-      // crates/providers/auth/src/membership.rs instead - the provider reports
-      // no cache size.
+      // each distinct id caches one membership entry. What this pins is the
+      // wiring - every unknown bucket is refused, and a burst of them costs a
+      // real member nothing. How many entries stay resident is asserted in
+      // crates/providers/auth/src/membership.rs, which can size the cap; the
+      // provider reports no cache size, so it cannot be checked here.
       const base = bucketId + 1_000_000n; // clear of every id this suite creates
       const started = Date.now();
       for (let i = 0n; i < BigInt(SCAN_IDS); i++) {
@@ -363,8 +372,8 @@ async function main() {
       }
       console.log(`          ${SCAN_IDS} ids scanned in ${Date.now() - started}ms`);
 
-      // Whether Ferdie's entry was evicted or kept is invisible here, and that
-      // is fine: an evicted entry just re-resolves from chain.
+      // Whether Ferdie's entry survived the burst or was dropped and refetched
+      // is invisible here, and that is fine: either way he stays authorized.
       assert.strictEqual(
         await signedStatus(reader, "GET", readPath(bucketId), bucketId),
         200,

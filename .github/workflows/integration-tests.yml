@@ -344,6 +344,7 @@ jobs:
         uses: ./.github/actions/start-provider
         with:
           label: default
+          auth-cache-max-entries: "64"
 
       # The tracked metadata snapshot in packages/papi is the single descriptor
       # source for the whole workspace (UIs, sdk, examples). Re-fetch metadata
