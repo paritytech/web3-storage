@@ -103,7 +103,7 @@ impl SubxtChainClient {
     /// The current live connection, or an error while the chain has never
     /// been reached yet.
     fn api(&self) -> Result<subxt::OnlineClient<subxt::PolkadotConfig>, Error> {
-        Ok(chain_connection::current_api(&self.chain_rx)?)
+        chain_connection::current_api(&self.chain_rx).map_err(Into::into)
     }
 
     /// Get the current anchor block (the clock every on-chain duration is

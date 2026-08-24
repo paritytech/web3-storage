@@ -103,6 +103,9 @@ pub enum Error {
     )]
     ChainStateNotReady,
 
+    #[error("Chain connection not yet established")]
+    ChainUnavailable,
+
     #[error("Storage agreement requested 0 byte")]
     InvalidMaxBytesRequest,
 
@@ -110,11 +113,15 @@ pub enum Error {
     RateLimited,
 }
 
-/// Chain-connection failures are internal: the node cannot reach the chain,
-/// which is never the caller's fault.
+/// Chain-connection failures are never the caller's fault. A connection that
+/// has simply never been established yet is retryable (503); anything else
+/// (a failed connect attempt) is treated as internal.
 impl From<provider_chain::Error> for Error {
     fn from(e: provider_chain::Error) -> Self {
-        Error::Internal(e.to_string())
+        match e {
+            provider_chain::Error::NotConnected => Error::ChainUnavailable,
+            other => Error::Internal(other.to_string()),
+        }
     }
 }
 
@@ -395,6 +402,15 @@ impl IntoResponse for Error {
                     })),
                 },
             ),
+            Error::ChainUnavailable => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                ErrorResponse {
+                    error: "chain_unavailable".to_string(),
+                    details: Some(serde_json::json!({
+                        "message": "the node has not yet established a connection to the chain"
+                    })),
+                },
+            ),
             Error::ProviderDeregistering => (
                 StatusCode::SERVICE_UNAVAILABLE,
                 ErrorResponse {
@@ -536,6 +552,10 @@ mod tests {
         );
         assert_eq!(
             status_of(Error::NonceCounterUnavailable),
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        assert_eq!(
+            status_of(Error::ChainUnavailable),
             StatusCode::SERVICE_UNAVAILABLE
         );
     }
