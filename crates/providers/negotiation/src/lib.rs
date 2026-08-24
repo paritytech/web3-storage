@@ -14,8 +14,6 @@
 //! * [`sign_terms`] — a helper for provider-side code (tests, fixtures)
 //!   that need to sign terms without going through the full provider
 //!   keystore.
-//! * [`http_auth`] — the signed `Authorization` header format for
-//!   bucket-scoped provider HTTP requests (client builds, provider verifies).
 //!
 //! The on-chain pallet hashes `blake2_256(TERM_CONTEXT | SCALE(terms))` —
 //! `primary-term-v1:` or `replica-term-v1:` depending on the redemption
@@ -23,13 +21,9 @@
 //! public key, so the same payload has to be built on both sides —
 //! `sign_terms` enforces that via [`AgreementTerms::signing_payload`].
 
-pub mod http_auth;
-
-pub use http_auth::{auth_message, build_auth_header};
-
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr, PickFirst};
-use sp_core::hashing::blake2_256;
+use sp_crypto_hashing::blake2_256;
 use sp_runtime::{AccountId32, MultiSignature};
 use storage_primitives::{AgreementTerms, BucketId};
 

@@ -2,9 +2,11 @@
 # SDKs, precompiles, examples, and the published TypeScript packages. These
 # are meant to be freely reused, so they carry the permissive Apache-2.0
 # license (matching the wider Polkadot SDK convention for pallets/primitives).
-inlineHeader = "SPDX-License-Identifier: Apache-2.0"
+[header]
+text = "SPDX-License-Identifier: Apache-2.0"
 keywords = ["SPDX-License-Identifier"]
 
+[files]
 includes = [
 	"clients/**/*.rs",
 	"crates/pallets/**/*.rs",
@@ -21,9 +23,11 @@ includes = [
 ]
 excludes = [
 	"**/*.bin.ts",
+	"**/weights.rs",
 	"crates/storage-subxt/**/*.rs",
 	"runtimes/*/src/weights/**",
 ]
 
-[mapping.DOUBLESLASH_STYLE]
+[[rules]]
 extensions = ["js", "sol", "ts", "tsx"]
+style_out = "doubleslash"

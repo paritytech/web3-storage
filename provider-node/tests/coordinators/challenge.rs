@@ -109,7 +109,7 @@ fn test_detected_challenge() {
 #[tokio::test(start_paused = true)]
 async fn test_no_challenges() {
     let mock = Arc::new(MockChallengeChainClient::new());
-    let state = test_state();
+    let (state, _dir) = test_state();
     let config = ChallengeResponderConfig {
         poll_interval: Duration::from_millis(50),
         ..Default::default()
@@ -130,7 +130,7 @@ async fn test_no_challenges() {
 async fn test_paused_skips_poll() {
     let mock =
         Arc::new(MockChallengeChainClient::new().with_challenges(vec![make_challenge(1, 100, 0)]));
-    let state = test_state();
+    let (state, _dir) = test_state();
     let config = ChallengeResponderConfig {
         poll_interval: Duration::from_millis(50),
         ..Default::default()
@@ -152,7 +152,7 @@ async fn test_paused_skips_poll() {
 #[tokio::test(start_paused = true)]
 async fn test_stop_command() {
     let mock = MockChallengeChainClient::new();
-    let state = test_state();
+    let (state, _dir) = test_state();
     let config = ChallengeResponderConfig {
         poll_interval: Duration::from_secs(60),
         ..Default::default()
@@ -173,7 +173,7 @@ async fn test_stop_command() {
 
 #[tokio::test(start_paused = true)]
 async fn test_successful_challenge_response() {
-    let (state, challenge) = test_state_with_data();
+    let (state, challenge, _dir) = test_state_with_data();
     let mock = Arc::new(MockChallengeChainClient::new().with_challenges(vec![challenge]));
 
     let config = ChallengeResponderConfig {
@@ -207,7 +207,7 @@ async fn test_successful_challenge_response() {
 
 #[tokio::test(start_paused = true)]
 async fn test_proof_generation_failed_no_bucket() {
-    let state = test_state();
+    let (state, _dir) = test_state();
     let challenge = DetectedChallenge {
         bucket_id: 999,
         deadline: 1000,
@@ -265,7 +265,7 @@ async fn test_proof_generation_failed_no_bucket() {
 
 #[tokio::test(start_paused = true)]
 async fn test_data_not_found_bad_chunk_index() {
-    let (state, mut challenge) = test_state_with_data();
+    let (state, mut challenge, _dir) = test_state_with_data();
     challenge.chunk_index = 999;
 
     let result: Arc<Mutex<Option<ChallengeResponseResult>>> = Arc::new(Mutex::new(None));
@@ -310,7 +310,7 @@ async fn test_data_not_found_bad_chunk_index() {
 
 #[tokio::test(start_paused = true)]
 async fn test_submission_failed() {
-    let (state, challenge) = test_state_with_data();
+    let (state, challenge, _dir) = test_state_with_data();
     let mock = Arc::new(
         MockChallengeChainClient::new()
             .with_challenges(vec![challenge])
@@ -358,7 +358,7 @@ async fn test_submission_failed() {
 
 #[tokio::test(start_paused = true)]
 async fn test_callback_invoked_on_success() {
-    let (state, challenge) = test_state_with_data();
+    let (state, challenge, _dir) = test_state_with_data();
     let mock = Arc::new(MockChallengeChainClient::new().with_challenges(vec![challenge]));
 
     let result: Arc<Mutex<Option<ChallengeResponseResult>>> = Arc::new(Mutex::new(None));
@@ -407,7 +407,7 @@ async fn test_callback_invoked_on_success() {
 
 #[tokio::test(start_paused = true)]
 async fn test_resume_after_pause() {
-    let (state, challenge) = test_state_with_data();
+    let (state, challenge, _dir) = test_state_with_data();
     let mock = Arc::new(MockChallengeChainClient::new().with_challenges(vec![challenge]));
 
     let config = ChallengeResponderConfig {
