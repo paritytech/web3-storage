@@ -22,10 +22,11 @@ includes = [
 ]
 excludes = [
 	"**/*.bin.ts",
+	"**/weights.rs",
+	"runtimes/*/src/weights/**",
 	# This generated build script carries an upstream Apache notice in addition
 	# to this project's GPL SPDX identifier.
 	"runtimes/web3-storage-paseo/build.rs",
-	"runtimes/*/src/weights/**",
 ]
 
 [[rules]]
