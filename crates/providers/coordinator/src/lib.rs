@@ -181,19 +181,6 @@ impl std::fmt::Debug for NonceCounter {
 }
 
 impl NonceCounter {
-    /// Create a counter starting at `start` with a no-op store.
-    ///
-    /// All existing call sites use this constructor; no persistence occurs
-    /// (in-memory mode, or tests). The counter is *not* considered bootstrapped
-    /// until [`Self::bootstrap_from_hsn`] aligns it with the chain.
-    pub fn new(start: u64) -> Self {
-        Self {
-            counter: AtomicU64::new(start),
-            bootstrapped: AtomicBool::new(false),
-            store: Arc::new(NullNonceStore),
-        }
-    }
-
     /// Create a counter starting at `start` backed by `store` for persistence.
     ///
     /// Use this in disk mode: seed `start` from `store.load().unwrap_or(1)`

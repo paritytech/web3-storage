@@ -2,8 +2,8 @@
 
 //! Chain-backed [`MembershipResolver`].
 
-use crate::chain_connection::{self, ChainWatch};
 use provider_auth::{Member, MembershipError, MembershipResolver};
+use provider_chain::chain_connection::{self, ChainWatch};
 use sp_core::crypto::AccountId32;
 use storage_primitives::BucketId;
 use storage_subxt::api::runtime_types::pallet_storage_provider::pallet::Member as RuntimeMember;

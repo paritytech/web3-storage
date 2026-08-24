@@ -33,12 +33,6 @@ use sp_runtime::AccountId32;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
-use storage_provider_node::chain_connection::{ChainHandle, ChainTransport};
-use storage_provider_node::{
-    is_relevant_provider_event, refresh_if_relevant_event, refresh_provider_state, sync_constants,
-    ChainState, ChainStateChainClient, ChainStateCoordinator, Error, NonceCounter, PalletConstants,
-    ProviderInfo, ProviderLifecycleEvent,
-};
 
 /// Chain state over a throwaway backend's nonce store.
 fn test_chain_state() -> (ChainState, tempfile::TempDir) {

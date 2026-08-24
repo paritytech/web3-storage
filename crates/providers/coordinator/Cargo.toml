@@ -15,7 +15,9 @@ provider-chain = { workspace = true }
 provider-storage = { workspace = true }
 serde = { workspace = true, features = ["std"] }
 sp-runtime = { workspace = true, features = ["std"] }
+sp-crypto-hashing = { workspace = true, features = ["std"] }
 subxt = { workspace = true }
+tempfile = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true, features = ["std"] }
