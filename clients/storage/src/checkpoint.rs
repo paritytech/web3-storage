@@ -838,7 +838,7 @@ impl CheckpointManager {
         &self,
         bucket_id: BucketId,
     ) -> Result<Vec<ProviderInfo>, ClientError> {
-        use sp_core::twox_128;
+        use sp_crypto_hashing::twox_128;
 
         let api = self.chain_client.api();
 
@@ -846,7 +846,7 @@ impl CheckpointManager {
         let pallet_hash = twox_128(b"StorageProvider");
         let storage_hash = twox_128(b"Buckets");
         let key_bytes = bucket_id.to_le_bytes();
-        let key_hash = sp_core::blake2_128(&key_bytes);
+        let key_hash = sp_crypto_hashing::blake2_128(&key_bytes);
 
         let mut bucket_storage_key = Vec::new();
         bucket_storage_key.extend_from_slice(&pallet_hash);
@@ -902,7 +902,7 @@ impl CheckpointManager {
         &self,
         account_id: &AccountId32,
     ) -> Result<ProviderInfo, ClientError> {
-        use sp_core::twox_128;
+        use sp_crypto_hashing::twox_128;
 
         let api = self.chain_client.api();
 
@@ -910,7 +910,7 @@ impl CheckpointManager {
         let pallet_hash = twox_128(b"StorageProvider");
         let storage_hash = twox_128(b"Providers");
         let key_bytes: &[u8] = account_id.as_ref();
-        let key_hash = sp_core::blake2_128(key_bytes);
+        let key_hash = sp_crypto_hashing::blake2_128(key_bytes);
 
         let mut provider_storage_key = Vec::new();
         provider_storage_key.extend_from_slice(&pallet_hash);

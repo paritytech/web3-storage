@@ -280,7 +280,6 @@ export async function submitClientCheckpoint(
     start_seq: number | string;
     leaf_count: number | string;
     provider_signature: string;
-    nonce: number | string;
   },
   opts: SubmitOpts = {},
 ) {
@@ -292,7 +291,6 @@ export async function submitClientCheckpoint(
         start_seq: BigInt(ck.start_seq),
         leaf_count: BigInt(ck.leaf_count),
       },
-      nonce: BigInt(ck.nonce),
       signatures: [[provider.address, Enum("Sr25519", asHex(ck.provider_signature))]],
     }),
     client.signer,
@@ -311,7 +309,6 @@ export async function challengeOffchain(
     leafCount: number | string;
     leafIndex: number | string;
     providerSignature: string;
-    nonce: number | string;
   },
   opts: SubmitOpts = {},
 ) {
@@ -334,7 +331,6 @@ export async function challengeOffchain(
         leaf_index: BigInt(upload.leafIndex),
         chunk_index: 0n,
       },
-      nonce: BigInt(upload.nonce),
       provider_signature: Enum("Sr25519", asHex(upload.providerSignature)),
     }),
     client.signer,
