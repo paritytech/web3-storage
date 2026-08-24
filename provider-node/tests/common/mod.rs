@@ -4,25 +4,118 @@
 //!
 //! Tests use [`SignedClient`] to sign every request as `//Alice`.
 
-// Each integration suite compiles this module in its own test crate and exercises only
-// a subset of these helpers, so per-crate dead-code analysis flags the rest.
+// Each integration suite compiles this module in its own test crate and uses only a
+// subset of it, so per-crate analysis flags the rest.
 #![allow(dead_code)]
 
-use provider_negotiation::build_auth_header;
+use provider_auth::{build_auth_header, Authenticator, StaticMembershipResolver};
 use reqwest::{Method, RequestBuilder};
 use sp_core::{sr25519, Pair};
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
-use storage_provider_node::{create_router, ProviderState};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use storage_primitives::Role;
+pub use storage_provider_node::cli::StorageBackendKind;
+use storage_provider_node::{create_router, ProviderDeps, ProviderState};
+use tempfile::TempDir;
 
 type AccountId32 = sp_core::crypto::AccountId32;
+
+/// Seed the provider signs with when a suite wants a signing identity. Same
+/// key as the client's: the suites only need the signatures to verify, not the
+/// two sides to be distinguishable.
+pub const PROVIDER_SEED: &str = TEST_MEMBER_SEED;
+
+/// Provider serving on a random port, over its own throwaway backend.
+pub struct TestServer {
+    addr: SocketAddr,
+    pub client: SignedClient,
+    _dir: TempDir,
+}
+
+impl TestServer {
+    /// `state` picks the identity: seeded (signing) or provider-id only.
+    pub async fn start(
+        backend: StorageBackendKind,
+        state: impl FnOnce(ProviderDeps) -> ProviderState,
+    ) -> Self {
+        let dir = tempfile::Builder::new()
+            .prefix(provider_storage::TEMP_DIR_PREFIX)
+            .tempdir()
+            .expect("temp dir");
+        let (storage, nonce_store) = backend
+            .spec(dir.path().to_path_buf())
+            .build()
+            .expect("backend opens");
+        let deps = ProviderDeps {
+            storage,
+            nonce_store,
+            auth: Arc::new(Authenticator::new(
+                StaticMembershipResolver(vec![(test_member_account(), Role::Admin).into()]),
+                Duration::from_secs(60),
+                Duration::from_secs(300),
+            )),
+        };
+        let (addr, client) = serve(state(deps)).await;
+        Self {
+            addr,
+            client,
+            _dir: dir,
+        }
+    }
+
+    pub fn url(&self, path: &str) -> String {
+        format!("http://{}{}", self.addr, path)
+    }
+}
+
+/// Declare tests that run once per backend.
+///
+/// ```ignore
+/// common::backend_tests! {
+///     async fn health(backend) {
+///         let server = TestServer::new(backend).await;
+///         // ...
+///     }
+/// }
+/// ```
+///
+/// expands to one test per backend, named after it (`health::rocksdb`), so a
+/// failure says which one it happened on.
+///
+/// Allowed as unused: the suites that never parameterize by backend (auth,
+/// negotiate, chain-state) compile this module too.
+#[allow(unused_macros)]
+macro_rules! backend_tests {
+    ($(async fn $name:ident($backend:ident) $body:block)*) => {
+        $(
+            async fn $name($backend: common::StorageBackendKind) $body
+
+            mod $name {
+                #[tokio::test]
+                async fn rocksdb() {
+                    super::$name(super::common::StorageBackendKind::RocksDb).await
+                }
+            }
+        )*
+    };
+}
+
+#[allow(unused_imports)]
+pub(crate) use backend_tests;
 
 /// The account every test signs as.
 pub const TEST_MEMBER_SEED: &str = "//Alice";
 
+/// Derived once per test thread: `//Alice` is a dev *phrase*, so each call
+/// would otherwise run PBKDF2 2048 times — tens of ms in a debug build, and
+/// this is called several times per test case.
 pub fn test_member_pair() -> sr25519::Pair {
-    sr25519::Pair::from_string(TEST_MEMBER_SEED, None).expect("//Alice is a valid SURI")
+    thread_local! {
+        static PAIR: sr25519::Pair =
+            sr25519::Pair::from_string(TEST_MEMBER_SEED, None).expect("//Alice is a valid SURI");
+    }
+    PAIR.with(|pair| pair.clone())
 }
 
 pub fn test_member_account() -> AccountId32 {

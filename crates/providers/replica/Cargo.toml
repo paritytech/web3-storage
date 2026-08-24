@@ -23,7 +23,9 @@ tokio = { workspace = true }
 tracing = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
+provider-storage = { workspace = true, features = ["test-helpers"] }
 async-trait = { workspace = true }
 axum = { workspace = true }
 serde_json = { workspace = true, features = ["std"] }
+tempfile = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util", "time"] }

@@ -139,7 +139,6 @@ impl ChallengerClient {
     /// # Parameters
     /// - `commitment`: The MMR commitment (root + range) the provider signed over
     /// - `target`: Which leaf + chunk within that commitment to challenge
-    /// - `nonce`: The nonce the provider signed over (echoed from their commitment)
     /// - `provider_signature`: The provider's signature on the commitment (64 bytes for Sr25519)
     pub async fn challenge_offchain(
         &self,
@@ -147,7 +146,6 @@ impl ChallengerClient {
         provider: String,
         commitment: Commitment,
         target: ChunkLocation,
-        nonce: u64,
         provider_signature: Vec<u8>,
     ) -> ClientResult<ChallengeId> {
         let chain = self.base.chain()?;
@@ -170,7 +168,6 @@ impl ChallengerClient {
             provider_account,
             commitment,
             target,
-            nonce,
             provider_signature,
         );
 
@@ -616,35 +613,17 @@ impl ChallengerClient {
             .at_current_block()
             .await
             .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?;
-        let (addr, keys) = storage::challenges(challenge_id.deadline);
+        let (addr, keys) = storage::challenges(challenge_id.deadline, challenge_id.index);
         let thunk = at
             .storage()
             .try_fetch(addr, keys)
             .await
             .map_err(|e| ClientError::Chain(format!("Failed to fetch challenges: {e}")))?;
 
-        let Some(thunk) = thunk else {
-            // No entry at this deadline block — all challenges there were settled
-            tracing::info!(
-                "Challenge (deadline={}, index={}) has been settled (no longer in storage)",
-                challenge_id.deadline,
-                challenge_id.index
-            );
-            return Ok(None);
-        };
-
-        let value = thunk
-            .decode()
-            .map_err(|e| ClientError::Chain(format!("Failed to decode challenges: {e}")))?;
-
-        let still_exists = match &value.value {
-            ValueDef::Composite(Composite::Unnamed(items)) => {
-                (challenge_id.index as usize) < items.len()
-            }
-            _ => false,
-        };
-
-        if still_exists {
+        // `Challenges` is keyed `(deadline, index)`, so the entry's presence is
+        // itself the answer: still stored means still pending, absent means
+        // resolved and swept.
+        if thunk.is_some() {
             tracing::info!(
                 "Challenge (deadline={}, index={}) is still pending",
                 challenge_id.deadline,

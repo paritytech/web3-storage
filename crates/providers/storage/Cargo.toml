@@ -18,8 +18,12 @@ rocksdb = { workspace = true }
 serde = { workspace = true, features = ["std"] }
 serde_json = { workspace = true, features = ["std"] }
 sp-core = { workspace = true, features = ["std"] }
+tempfile = { workspace = true, optional = true }
 thiserror = { workspace = true }
 tracing = { workspace = true, features = ["std"] }
+
+[features]
+test-helpers = ["dep:tempfile"]
 
 [dev-dependencies]
 tempfile = { workspace = true }
