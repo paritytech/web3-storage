@@ -2,7 +2,8 @@
 
 //! Shared test helpers for integration tests.
 
-use provider_storage::{NullNonceStore, Storage};
+use provider_auth::{Authenticator, StaticMembershipResolver};
+use provider_storage::temp_rocksdb;
 use sp_core::crypto::Ss58Codec;
 use sp_core::Pair;
 use sp_runtime::AccountId32;
@@ -13,7 +14,6 @@ use storage_client::{
     ProviderClient, ProviderSettings, Signer, StorageUserClient,
 };
 use storage_primitives::{AgreementTerms, Role};
-use storage_provider_node::auth::{MembershipCache, StaticMembershipResolver};
 use storage_provider_node::{create_router, ProviderDeps, ProviderState};
 use tokio::net::TcpListener;
 use tokio::sync::{Mutex, MutexGuard};
@@ -241,17 +241,19 @@ pub async fn dev_discovery() -> Option<DiscoveryClient> {
 /// (`/commit`, `/commitment`, `/checkpoint-signature`, `/delete`) work end-to-end.
 /// `//Alice` is granted `Admin` on every bucket.
 pub async fn start_test_provider() -> String {
+    // The spawned server lives for the whole test binary, so its database
+    // outlives any guard this could hand back: keep the directory. It is left
+    // behind under the temp dir, named `provider_storage::TEMP_DIR_PREFIX*`.
+    let (storage, nonce_store, dir) = temp_rocksdb();
+    let _ = dir.keep();
     let deps = ProviderDeps {
-        storage: Arc::new(Storage::new()),
-        nonce_store: Arc::new(NullNonceStore),
-        membership: Arc::new(MembershipCache::new(
-            Box::new(StaticMembershipResolver(vec![(
-                dev_account("alice"),
-                Role::Admin,
-            )])),
+        storage,
+        nonce_store,
+        auth: Arc::new(Authenticator::new(
+            StaticMembershipResolver(vec![(dev_account("alice"), Role::Admin).into()]),
             Duration::from_secs(60),
+            Duration::from_secs(300),
         )),
-        auth_max_skew: Duration::from_secs(300),
     };
     let state = ProviderState::with_seed(deps, "//Alice").expect("//Alice is a valid SURI");
     let app = create_router(Arc::new(state));

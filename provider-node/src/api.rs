@@ -2,7 +2,6 @@
 
 //! HTTP API handlers for the provider node.
 
-use crate::auth::{self, RequiredRole};
 use crate::error::Error;
 use crate::fs_api;
 use crate::negotiate::{self, AgreementTermsOf, NegotiateRequest, SignedTerms};
@@ -18,6 +17,7 @@ use axum::{
 };
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use codec::Encode;
+use provider_auth::RequiredRole;
 use sp_core::H256;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -154,7 +154,7 @@ pub(crate) fn auth_header(headers: &axum::http::HeaderMap) -> Option<&str> {
         .and_then(|v| v.to_str().ok())
 }
 
-/// Convenience wrapper around `auth::require_role` using request headers.
+/// Convenience wrapper around `provider_auth::require_role` using request headers.
 pub(crate) async fn check_role(
     state: &ProviderState,
     headers: &axum::http::HeaderMap,
@@ -162,15 +162,11 @@ pub(crate) async fn check_role(
     bucket_id: u64,
     required: RequiredRole,
 ) -> Result<(), Error> {
-    auth::require_role(
-        state,
-        auth_header(headers),
-        method,
-        bucket_id,
-        required,
-        state.auth_max_skew,
-    )
-    .await
+    state
+        .auth
+        .require_role(auth_header(headers), method, bucket_id, required)
+        .await
+        .map_err(Into::into)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -396,7 +392,6 @@ async fn commit(
             start_seq,
             leaf_count,
         },
-        request.nonce,
     );
     let signature = state.sign(&payload.encode())?;
 
@@ -406,7 +401,6 @@ async fn commit(
         leaf_count,
         leaf_indices,
         provider_signature: signature,
-        nonce: request.nonce,
     }))
 }
 
@@ -477,7 +471,6 @@ async fn get_commitment(
             start_seq: bucket.start_seq,
             leaf_count: bucket.leaf_count,
         },
-        query.nonce,
     );
     let signature = state.sign(&payload.encode())?;
 
@@ -487,7 +480,6 @@ async fn get_commitment(
         start_seq: bucket.start_seq,
         leaf_count: bucket.leaf_count,
         provider_signature: signature,
-        nonce: query.nonce,
     }))
 }
 
@@ -515,7 +507,6 @@ async fn get_checkpoint_signature(
             start_seq: bucket.start_seq,
             leaf_count,
         },
-        query.nonce,
     );
     let signature = state.sign(&payload.encode())?;
 
@@ -525,7 +516,6 @@ async fn get_checkpoint_signature(
         start_seq: bucket.start_seq,
         leaf_count,
         provider_signature: signature,
-        nonce: query.nonce,
     }))
 }
 
@@ -636,7 +626,6 @@ async fn delete_data(
             start_seq,
             leaf_count,
         },
-        request.nonce,
     );
     let signature = state.sign(&payload.encode())?;
 
@@ -645,7 +634,6 @@ async fn delete_data(
         start_seq,
         leaf_count,
         provider_signature: signature,
-        nonce: request.nonce,
     }))
 }
 

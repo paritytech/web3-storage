@@ -3,18 +3,32 @@
 //! CLI argument parsing for the storage provider node.
 
 use clap::Parser;
+use provider_storage::StorageBackendSpec;
 use std::path::PathBuf;
 
 /// Placeholder provider ID used when no identity is configured.
 pub const DEFAULT_PROVIDER_ID: &str = "0x0000000000000000000000000000000000000000";
 
-/// Storage backend mode.
+/// Storage backend to run.
+///
+/// `rename_all` keeps the values lower-case instead of clap's kebab-case
+/// default, so an engine reads as `rocksdb` rather than `rocks-db`.
 #[derive(Clone, Debug, clap::ValueEnum)]
-pub enum StorageMode {
-    /// In-memory storage (data lost on restart).
-    Inmemory,
-    /// Persistent disk storage.
-    Disk,
+#[value(rename_all = "lower")]
+pub enum StorageBackendKind {
+    /// Persistent RocksDB storage.
+    RocksDb,
+}
+
+impl StorageBackendKind {
+    /// The spec for this engine, rooted at `path`.
+    ///
+    /// The only place a kind becomes a spec, so a new engine is one arm here.
+    pub fn spec(&self, path: PathBuf) -> StorageBackendSpec {
+        match self {
+            Self::RocksDb => StorageBackendSpec::RocksDb { path },
+        }
+    }
 }
 
 /// Storage Provider Node - Off-chain storage server for Web3 Storage.
@@ -44,12 +58,19 @@ pub struct Cli {
 #[derive(Debug, clap::Args)]
 pub struct StorageParams {
     /// Storage backend to use.
-    #[arg(long, value_enum, default_value_t = StorageMode::Inmemory)]
-    pub storage_mode: StorageMode,
+    #[arg(long, value_enum, default_value_t = StorageBackendKind::RocksDb)]
+    pub storage_backend: StorageBackendKind,
 
-    /// Path for persistent data (only used with --storage-mode disk).
+    /// Directory holding the chunks, the MMR state and the nonce counter.
     #[arg(long, default_value = "./provider-data", env = "STORAGE_PATH")]
     pub storage_path: PathBuf,
+}
+
+impl StorageParams {
+    /// The backend these flags describe.
+    pub fn spec(&self) -> StorageBackendSpec {
+        self.storage_backend.spec(self.storage_path.clone())
+    }
 }
 
 /// Parameters for network endpoints.
@@ -254,7 +275,12 @@ mod tests {
     #[test]
     fn default_values() {
         let cli = Cli::try_parse_from(["storage-provider-node"]).unwrap();
-        assert!(matches!(cli.storage.storage_mode, StorageMode::Inmemory));
+        // Persistence is the default: an operator who passes no storage flags
+        // must not silently get a backend that drops everything on restart.
+        assert!(matches!(
+            cli.storage.storage_backend,
+            StorageBackendKind::RocksDb
+        ));
         assert_eq!(cli.storage.storage_path, PathBuf::from("./provider-data"));
         assert_eq!(cli.rpc.bind_addr, "0.0.0.0:3333");
         assert_eq!(cli.rpc.chain_rpc, "ws://127.0.0.1:2222");
@@ -272,8 +298,8 @@ mod tests {
     fn all_args_parse() {
         let cli = Cli::try_parse_from([
             "storage-provider-node",
-            "--storage-mode",
-            "disk",
+            "--storage-backend",
+            "rocksdb",
             "--storage-path",
             "/data",
             "--bind-addr",
@@ -292,7 +318,10 @@ mod tests {
         ])
         .unwrap();
 
-        assert!(matches!(cli.storage.storage_mode, StorageMode::Disk));
+        assert!(matches!(
+            cli.storage.storage_backend,
+            StorageBackendKind::RocksDb
+        ));
         assert_eq!(cli.storage.storage_path, PathBuf::from("/data"));
         assert_eq!(cli.rpc.bind_addr, "127.0.0.1:4444");
         assert_eq!(cli.rpc.chain_rpc, "ws://example.com:9944");
@@ -304,6 +333,29 @@ mod tests {
         assert_eq!(cli.replica_sync.replica_poll_interval, 30);
         assert_eq!(cli.replica_sync.replica_sync_timeout, 600);
         assert_eq!(cli.replica_sync.replica_max_concurrent, 5);
+    }
+
+    /// Values are the engine names, and each maps to the matching spec.
+    #[test]
+    fn backend_value_is_the_engine_name() {
+        let spec = |value: &str| {
+            Cli::try_parse_from(["storage-provider-node", "--storage-backend", value])
+                .map(|cli| cli.storage.spec())
+        };
+
+        assert_eq!(
+            spec("rocksdb").unwrap(),
+            StorageBackendSpec::RocksDb {
+                path: "./provider-data".into()
+            }
+        );
+
+        for rejected in ["disk", "rocks-db", "inmemory"] {
+            assert!(
+                spec(rejected).is_err(),
+                "--storage-backend {rejected} should be rejected"
+            );
+        }
     }
 
     #[test]
