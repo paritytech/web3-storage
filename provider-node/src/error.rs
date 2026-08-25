@@ -608,4 +608,29 @@ mod tests {
             .unwrap()
             .contains("nonce counter"));
     }
+
+    #[test]
+    fn chain_errors_split_into_retryable_and_internal() {
+        // A connection that has simply not been established yet is the
+        // caller's cue to retry; a failed connect attempt is our problem.
+        let not_connected = Error::from(provider_chain::Error::NotConnected);
+        assert!(matches!(not_connected, Error::ChainUnavailable));
+        assert_eq!(status_of(not_connected), StatusCode::SERVICE_UNAVAILABLE);
+
+        let failed = Error::from(provider_chain::Error::Connection(
+            subxt::error::OnlineClientError::RpcError(subxt::rpcs::Error::InsecureUrl(
+                "ws://example".into(),
+            )),
+        ));
+        assert!(matches!(&failed, Error::Internal(msg) if msg.contains("ws://example")));
+        assert_eq!(status_of(failed), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[test]
+    fn coordinator_error_message_is_carried_across_unprefixed() {
+        // Going through `to_string()` here would yield "Internal error:
+        // Internal error: …", which is what the variant match avoids.
+        let mapped = Error::from(provider_coordinator::Error::Internal("boom".into()));
+        assert!(matches!(mapped, Error::Internal(msg) if msg == "boom"));
+    }
 }

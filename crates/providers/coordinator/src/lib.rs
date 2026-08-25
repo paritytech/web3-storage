@@ -997,6 +997,25 @@ mod tests {
         assert!(cs.nonce_counter.read().is_some());
     }
 
+    /// The hand-written `Debug` impl exists because `NonceCounter` holds an
+    /// `Arc<dyn NonceStore>`, which is not `Debug`; it must still show the two
+    /// fields that matter when a counter is logged.
+    #[test]
+    fn nonce_counter_debug_shows_counter_and_bootstrap_state() {
+        let (cs, _dir) = test_chain_state();
+        let counter = NonceCounter::with_store(7, cs.nonce_store.clone());
+
+        let before = format!("{counter:?}");
+        assert!(before.starts_with("NonceCounter"));
+        assert!(before.contains('7'), "current value missing: {before}");
+        assert!(before.contains("false"), "should not be bootstrapped");
+
+        counter.bootstrap_from_hsn(41);
+        let after = format!("{counter:?}");
+        assert!(after.contains("42"), "counter should be hsn + 1: {after}");
+        assert!(after.contains("true"), "should be bootstrapped: {after}");
+    }
+
     #[test]
     fn chain_state_constants_round_trips() {
         let (cs, _dir) = test_chain_state();
