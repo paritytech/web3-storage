@@ -241,7 +241,7 @@ async fn get_node(
     let node = state
         .storage
         .get_node(&hash)
-        .ok_or_else(|| Error::NodeNotFound(query.hash.clone()))?;
+        .ok_or_else(|| provider_storage::Error::NodeNotFound(query.hash.clone()))?;
 
     Ok(Json(DownloadNodeResponse {
         hash: query.hash,
@@ -460,7 +460,7 @@ async fn get_commitment(
     let bucket = state
         .storage
         .get_bucket(query.bucket_id)
-        .ok_or(Error::BucketNotFound(query.bucket_id))?;
+        .ok_or(provider_storage::Error::BucketNotFound(query.bucket_id))?;
 
     // Sign with the real leaf_count — the pallet's `challenge_offchain` now
     // honours leaf_count rather than hardcoding `0`.
@@ -495,7 +495,7 @@ async fn get_checkpoint_signature(
     let bucket = state
         .storage
         .get_bucket(query.bucket_id)
-        .ok_or(Error::BucketNotFound(query.bucket_id))?;
+        .ok_or(provider_storage::Error::BucketNotFound(query.bucket_id))?;
 
     let leaf_count = bucket.leaf_count;
 
@@ -665,7 +665,7 @@ async fn get_mmr_subtree(
     let bucket = state
         .storage
         .get_bucket(query.bucket_id)
-        .ok_or(Error::BucketNotFound(query.bucket_id))?;
+        .ok_or(provider_storage::Error::BucketNotFound(query.bucket_id))?;
 
     Ok(Json(MmrSubtreeResponse {
         nodes: vec![MmrNode {
@@ -723,7 +723,7 @@ async fn get_historical_roots(
     let bucket = state
         .storage
         .get_bucket(query.bucket_id)
-        .ok_or(Error::BucketNotFound(query.bucket_id))?;
+        .ok_or(provider_storage::Error::BucketNotFound(query.bucket_id))?;
 
     Ok(Json(HistoricalRootsResponse {
         bucket_id: query.bucket_id,
@@ -836,7 +836,7 @@ async fn get_replica_sync_status(
     let bucket = state
         .storage
         .get_bucket(query.bucket_id)
-        .ok_or(Error::BucketNotFound(query.bucket_id))?;
+        .ok_or(provider_storage::Error::BucketNotFound(query.bucket_id))?;
 
     Ok(Json(BucketSyncStatusResponse {
         bucket_id: query.bucket_id,
