@@ -41,18 +41,14 @@ const CHAIN_WS = process.argv[2] || "ws://127.0.0.1:2222";
 const PROVIDER_URL = process.argv[3] || "http://127.0.0.1:3333";
 
 /**
- * How long a membership change may take to reach the provider: the event feed
- * normally lands it a block or two after finality, and the membership cache's
- * TTL (`--auth-cache-ttl`, 30s by default) is the backstop if the feed ever
- * missed it — so allow for either.
- *
- * Which of the two did the work is deliberately not asserted here. Over HTTP
- * the mechanisms are separable only by timing, and only on a chain that
- * finalizes faster than the TTL, so an assertion about it would pass or fail on
- * the chain's finality speed rather than on the code. That is pinned instead
- * where it is deterministic: `membership_event_forces_the_next_lookup_to_re_resolve`
- * in provider-node/tests/coordinators/membership.rs runs with a 300s TTL, so
- * only an event can explain the re-resolve it observes.
+ * How long a membership change may take to reach the provider: normally the
+ * event feed, a block or two after finality, with the membership cache's TTL
+ * (`--auth-cache-ttl`, 30s by default) as the backstop - so allow for either.
+ * Which one did the work is not asserted: over HTTP they separate only by
+ * timing, so the assertion would turn on the chain's finality speed rather than
+ * on the code. `membership_event_forces_the_next_lookup_to_re_resolve` in
+ * provider-node/tests/coordinators/membership.rs pins it deterministically
+ * instead - a 300s TTL, so only an event explains the re-resolve.
  */
 const CHANGE_DEADLINE_MS = 40_000;
 
@@ -112,22 +108,6 @@ async function signedStatus(
   );
   if (body) headers["Content-Type"] = "application/json";
   return statusOf(method, path, { headers, body });
-}
-
-/**
- * `signProviderRequest` always stamps `now`, so a skew case has to build the
- * header by hand — same format, a timestamp `ageSeconds` in the past.
- */
-async function staleAuthHeader(
-  who: ChainSigner,
-  method: string,
-  bucketId: bigint,
-  ageSeconds: number,
-): Promise<Record<string, string>> {
-  const timestamp = String(Math.floor(Date.now() / 1000) - ageSeconds);
-  const message = `web3storage:${method}:${bucketId}:${timestamp}`;
-  const signature = await who.signer.signBytes(new TextEncoder().encode(message));
-  return { Authorization: `Web3Storage ${toHex(who.publicKey)}:${toHex(signature)}:${timestamp}` };
 }
 
 /** Reader-guarded endpoint: the S3 index root, which any member may read. */
@@ -281,7 +261,8 @@ async function main() {
     fn: async () => {
       // An hour old, against the 300s `--auth-max-skew` default: a captured
       // header must not stay replayable indefinitely.
-      const headers = await staleAuthHeader(reader, "GET", bucketId, 3600);
+      const anHourAgo = Date.now() - 3_600_000;
+      const headers = await signProviderRequest(reader.signer, "GET", bucketId, anHourAgo);
       assert.strictEqual(await statusOf("GET", readPath(bucketId), { headers }), 401);
     },
   });
