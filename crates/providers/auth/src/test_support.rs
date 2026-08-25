@@ -31,22 +31,44 @@ impl MembershipResolver for FlakyResolver {
     }
 }
 
-/// Resolver that blocks inside `fetch_members` until told to proceed, so a
-/// test can land an invalidation while a fetch is in flight.
-pub(crate) struct GatedResolver {
+/// Resolver that grants `account` an `Admin` role on every bucket and counts
+/// how many times it was actually called, so a test can tell a cache hit from
+/// a re-resolve.
+pub(crate) struct CountingResolver {
     pub(crate) account: AccountId32,
     pub(crate) calls: Arc<AtomicUsize>,
+}
+
+#[async_trait::async_trait]
+impl MembershipResolver for CountingResolver {
+    async fn fetch_members(&self, _bucket_id: BucketId) -> Result<Vec<Member>, MembershipError> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        Ok(vec![(self.account.clone(), Role::Admin).into()])
+    }
+}
+
+/// Holds `inner`'s answer back until `proceed` flips, so a test can land an
+/// invalidation while a fetch is in flight.
+///
+/// `inner` runs to completion first: its call counter ticks and its result is
+/// decided before the gate blocks. That is what lets a test spin on the
+/// counter to learn a fetch has started, and it keeps a counter-driven inner
+/// resolver such as [`FlakyResolver`] on the same call numbering it would see
+/// ungated. The gate holds the first call too, so a test that seeds a cache
+/// entry before racing one starts with `proceed` open and closes it after.
+pub(crate) struct Gated<R> {
+    pub(crate) inner: R,
     pub(crate) proceed: Arc<AtomicBool>,
 }
 
 #[async_trait::async_trait]
-impl MembershipResolver for GatedResolver {
-    async fn fetch_members(&self, _bucket_id: BucketId) -> Result<Vec<Member>, MembershipError> {
-        self.calls.fetch_add(1, Ordering::SeqCst);
+impl<R: MembershipResolver> MembershipResolver for Gated<R> {
+    async fn fetch_members(&self, bucket_id: BucketId) -> Result<Vec<Member>, MembershipError> {
+        let result = self.inner.fetch_members(bucket_id).await;
         while !self.proceed.load(Ordering::SeqCst) {
             tokio::task::yield_now().await;
         }
-        Ok(vec![(self.account.clone(), Role::Admin).into()])
+        result
     }
 }
 

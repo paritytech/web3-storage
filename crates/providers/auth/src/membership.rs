@@ -410,7 +410,7 @@ impl MembershipCache {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::{FlakyResolver, GatedResolver, QueuedInvalidations};
+    use crate::test_support::{CountingResolver, FlakyResolver, Gated, QueuedInvalidations};
 
     #[test]
     fn privilege_ladder_is_exhaustive() {
@@ -466,25 +466,6 @@ mod tests {
 
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::Arc;
-
-    /// Resolver that grants `account` an `Admin` role on every bucket and
-    /// counts how many times it was actually called, so a test can tell a
-    /// cache hit from a re-resolve.
-    struct CountingResolver {
-        account: AccountId32,
-        calls: Arc<AtomicUsize>,
-    }
-
-    #[async_trait::async_trait]
-    impl MembershipResolver for CountingResolver {
-        async fn fetch_members(
-            &self,
-            _bucket_id: BucketId,
-        ) -> Result<Vec<Member>, MembershipError> {
-            self.calls.fetch_add(1, Ordering::SeqCst);
-            Ok(vec![(self.account.clone(), Role::Admin).into()])
-        }
-    }
 
     #[tokio::test]
     async fn invalidating_a_never_cached_bucket_leaves_the_map_empty() {
@@ -554,9 +535,11 @@ mod tests {
         // so the second lookup below is a genuine in-flight race rather than a
         // cache hit that never touches the resolver.
         let cache = Arc::new(
-            MembershipCache::new(GatedResolver {
-                account: account.clone(),
-                calls: calls.clone(),
+            MembershipCache::new(Gated {
+                inner: CountingResolver {
+                    account: account.clone(),
+                    calls: calls.clone(),
+                },
                 proceed: proceed.clone(),
             })
             .with_ttl(Duration::ZERO),
@@ -617,9 +600,11 @@ mod tests {
         let calls = Arc::new(AtomicUsize::new(0));
         let proceed = Arc::new(AtomicBool::new(true));
         let cache = Arc::new(
-            MembershipCache::new(GatedResolver {
-                account: account.clone(),
-                calls: calls.clone(),
+            MembershipCache::new(Gated {
+                inner: CountingResolver {
+                    account: account.clone(),
+                    calls: calls.clone(),
+                },
                 proceed: proceed.clone(),
             })
             .with_ttl(Duration::ZERO),
@@ -671,9 +656,11 @@ mod tests {
         let calls = Arc::new(AtomicUsize::new(0));
         let proceed = Arc::new(AtomicBool::new(false));
         let cache = Arc::new(
-            MembershipCache::new(GatedResolver {
-                account: account.clone(),
-                calls: calls.clone(),
+            MembershipCache::new(Gated {
+                inner: CountingResolver {
+                    account: account.clone(),
+                    calls: calls.clone(),
+                },
                 proceed: proceed.clone(),
             })
             .with_ttl(Duration::from_secs(300)),
@@ -712,32 +699,6 @@ mod tests {
         );
     }
 
-    /// Resolver that succeeds once (to seed a cache entry), then blocks until
-    /// signaled and fails - so a test can land an invalidation while this
-    /// bucket's own refetch is in flight and about to return `Err`.
-    struct GatedFlakyResolver {
-        account: AccountId32,
-        calls: Arc<AtomicUsize>,
-        proceed: Arc<AtomicBool>,
-    }
-
-    #[async_trait::async_trait]
-    impl MembershipResolver for GatedFlakyResolver {
-        async fn fetch_members(
-            &self,
-            _bucket_id: BucketId,
-        ) -> Result<Vec<Member>, MembershipError> {
-            let call = self.calls.fetch_add(1, Ordering::SeqCst) + 1;
-            if call == 1 {
-                return Ok(vec![(self.account.clone(), Role::Admin).into()]);
-            }
-            while !self.proceed.load(Ordering::SeqCst) {
-                tokio::task::yield_now().await;
-            }
-            Err(MembershipError::Unavailable("chain down".to_string()))
-        }
-    }
-
     #[tokio::test]
     async fn an_unrelated_invalidation_still_allows_serving_stale() {
         // The other side of the bound: bucket 2's member set changing says
@@ -747,11 +708,13 @@ mod tests {
         // missing the one above, since an undrained event bumps no epoch.
         let account = AccountId32::new([30u8; 32]);
         let calls = Arc::new(AtomicUsize::new(0));
-        let proceed = Arc::new(AtomicBool::new(false));
+        let proceed = Arc::new(AtomicBool::new(true));
         let cache = Arc::new(
-            MembershipCache::new(GatedFlakyResolver {
-                account: account.clone(),
-                calls: calls.clone(),
+            MembershipCache::new(Gated {
+                inner: FlakyResolver {
+                    account: account.clone(),
+                    calls: calls.clone(),
+                },
                 proceed: proceed.clone(),
             })
             .with_ttl(Duration::ZERO)
@@ -761,6 +724,10 @@ mod tests {
         // Seed bucket 1.
         cache.get_role(1, &account).await.unwrap();
         assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+        // The gate holds every call, including the seed above - close it now so
+        // the refetch below blocks instead.
+        proceed.store(false, Ordering::SeqCst);
 
         // Second lookup refetches (TTL zero) and blocks before failing.
         let in_flight = {
@@ -795,12 +762,14 @@ mod tests {
         // time the error arm runs, so it must not be served.
         let account = AccountId32::new([31u8; 32]);
         let calls = Arc::new(AtomicUsize::new(0));
-        let proceed = Arc::new(AtomicBool::new(false));
+        let proceed = Arc::new(AtomicBool::new(true));
         let feed = QueuedInvalidations::new();
         let cache = Arc::new(
-            MembershipCache::new(GatedFlakyResolver {
-                account: account.clone(),
-                calls: calls.clone(),
+            MembershipCache::new(Gated {
+                inner: FlakyResolver {
+                    account: account.clone(),
+                    calls: calls.clone(),
+                },
                 proceed: proceed.clone(),
             })
             .with_ttl(Duration::ZERO)
@@ -810,6 +779,10 @@ mod tests {
 
         cache.get_role(1, &account).await.unwrap();
         assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+        // The gate holds every call, including the seed above - close it now so
+        // the refetch below blocks instead.
+        proceed.store(false, Ordering::SeqCst);
 
         let in_flight = {
             let cache = cache.clone();
