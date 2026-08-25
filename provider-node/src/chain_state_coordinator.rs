@@ -1514,7 +1514,7 @@ mod tests {
             );
 
             coordinator
-                .follow(ChainHandle { api })
+                .follow(ChainHandle::from_api(api))
                 .await
                 .expect("follow runs to stream end");
 
