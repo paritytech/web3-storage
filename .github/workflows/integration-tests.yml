@@ -226,6 +226,14 @@ jobs:
       - name: Run S3 integration test
         run: just drain-tx-pool-then s3-demo-ci
 
+      # Second provider (port 3433) following the same chain through the
+      # embedded smoldot light client; passes once /info reports the on-chain
+      # registration synced via light-client reads. Runs last because it signs
+      # with the same //Alice key as the RPC provider and may sync its own
+      # multiaddr on chain, which the demos above must not observe.
+      - name: Run light-client transport e2e
+        run: bash scripts/test-light-client.sh
+
       - name: Stop services
         if: always()
         run: |
@@ -241,6 +249,7 @@ jobs:
           path: |
             /tmp/zombienet.log
             /tmp/provider-*.log
+            /tmp/light-client-provider.*
             /tmp/zombie-*/*.log
             /tmp/zombie-*/**/*.log
 
