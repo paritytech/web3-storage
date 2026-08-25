@@ -7185,10 +7185,14 @@ dependencies = [
 name = "provider-chain"
 version = "0.1.0"
 dependencies = [
+ "hex",
+ "serde_json",
  "sp-runtime",
  "storage-primitives",
  "storage-subxt",
  "subxt",
+ "subxt-rpcs",
+ "tempfile",
  "thiserror 2.0.18",
  "tokio",
  "tracing",

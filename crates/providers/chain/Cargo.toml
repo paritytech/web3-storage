@@ -8,13 +8,18 @@ repository.workspace = true
 description = "Chain connection handling and typed event decoding for provider nodes"
 
 [dependencies]
+hex = { workspace = true, features = ["std"] }
+serde_json = { workspace = true }
 sp-runtime = { workspace = true, features = ["std"] }
 storage-primitives = { workspace = true, features = ["std"] }
 storage-subxt = { workspace = true }
-subxt = { workspace = true }
+subxt = { workspace = true, features = ["light-client"] }
+subxt-rpcs = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
+subxt-rpcs = { workspace = true, features = ["mock-rpc-client"] }
+tempfile = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
