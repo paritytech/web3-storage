@@ -1045,7 +1045,8 @@ impl ChallengeChainClient for SubxtChainClient {
         // `unvalidated`: see the `storage-subxt` crate docs.
         let storage_address = storage_subxt::api::storage()
             .storage_provider()
-            .challenges();
+            .challenges()
+            .unvalidated();
         let at = self
             .api()
             .map_err(|e| ChallengeError::Chain(e.to_string()))?
