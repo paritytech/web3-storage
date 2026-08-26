@@ -1398,9 +1398,10 @@ pub mod api {
                         "agreement_info",
                         (bucket_id, provider),
                         [
-                            54u8, 115u8, 72u8, 52u8, 77u8, 212u8, 24u8, 77u8, 31u8, 216u8, 163u8,
-                            8u8, 223u8, 185u8, 26u8, 78u8, 110u8, 203u8, 140u8, 2u8, 11u8, 135u8,
-                            60u8, 202u8, 238u8, 132u8, 127u8, 103u8, 228u8, 217u8, 232u8, 118u8,
+                            57u8, 95u8, 152u8, 193u8, 102u8, 124u8, 102u8, 41u8, 201u8, 197u8,
+                            128u8, 37u8, 94u8, 171u8, 17u8, 127u8, 9u8, 83u8, 1u8, 54u8, 194u8,
+                            32u8, 32u8, 170u8, 92u8, 145u8, 112u8, 104u8, 216u8, 247u8, 220u8,
+                            42u8,
                         ],
                     )
                 }
@@ -1417,9 +1418,9 @@ pub mod api {
                         "bucket_agreements",
                         (bucket_id,),
                         [
-                            39u8, 164u8, 145u8, 254u8, 45u8, 99u8, 175u8, 198u8, 122u8, 211u8, 8u8,
-                            234u8, 91u8, 215u8, 146u8, 220u8, 4u8, 65u8, 100u8, 10u8, 160u8, 58u8,
-                            139u8, 203u8, 220u8, 45u8, 184u8, 150u8, 132u8, 206u8, 195u8, 125u8,
+                            246u8, 1u8, 80u8, 135u8, 196u8, 232u8, 209u8, 88u8, 79u8, 6u8, 170u8,
+                            126u8, 232u8, 77u8, 104u8, 63u8, 199u8, 195u8, 188u8, 145u8, 130u8,
+                            132u8, 83u8, 154u8, 254u8, 94u8, 174u8, 12u8, 38u8, 181u8, 63u8, 124u8,
                         ],
                     )
                 }
@@ -1436,9 +1437,9 @@ pub mod api {
                         "provider_agreements",
                         (provider,),
                         [
-                            196u8, 169u8, 194u8, 163u8, 31u8, 208u8, 207u8, 98u8, 75u8, 88u8, 73u8,
-                            247u8, 32u8, 137u8, 47u8, 133u8, 27u8, 90u8, 189u8, 151u8, 193u8, 64u8,
-                            210u8, 154u8, 210u8, 149u8, 228u8, 25u8, 52u8, 124u8, 25u8, 222u8,
+                            244u8, 176u8, 26u8, 20u8, 158u8, 26u8, 174u8, 127u8, 145u8, 183u8,
+                            89u8, 242u8, 206u8, 194u8, 2u8, 14u8, 179u8, 172u8, 147u8, 51u8, 101u8,
+                            4u8, 44u8, 39u8, 105u8, 228u8, 45u8, 69u8, 89u8, 209u8, 55u8, 136u8,
                         ],
                     )
                 }
@@ -3414,9 +3415,9 @@ pub mod api {
             .hash();
         runtime_metadata_hash
             == [
-                88u8, 203u8, 137u8, 39u8, 60u8, 57u8, 32u8, 14u8, 224u8, 93u8, 39u8, 101u8, 100u8,
-                78u8, 13u8, 127u8, 9u8, 174u8, 208u8, 164u8, 167u8, 80u8, 124u8, 183u8, 54u8, 35u8,
-                25u8, 230u8, 29u8, 69u8, 92u8, 77u8,
+                166u8, 153u8, 67u8, 240u8, 210u8, 39u8, 5u8, 232u8, 161u8, 148u8, 71u8, 95u8,
+                107u8, 217u8, 249u8, 147u8, 98u8, 196u8, 91u8, 125u8, 24u8, 33u8, 235u8, 93u8,
+                101u8, 93u8, 125u8, 27u8, 125u8, 190u8, 174u8, 152u8,
             ]
     }
     pub mod system {
@@ -17770,9 +17771,9 @@ pub mod api {
                         "StorageProvider",
                         "StorageAgreements",
                         [
-                            49u8, 39u8, 182u8, 29u8, 245u8, 43u8, 9u8, 90u8, 253u8, 127u8, 47u8,
-                            231u8, 210u8, 148u8, 70u8, 89u8, 45u8, 180u8, 43u8, 97u8, 168u8, 57u8,
-                            138u8, 245u8, 225u8, 246u8, 104u8, 187u8, 27u8, 180u8, 92u8, 123u8,
+                            182u8, 228u8, 50u8, 253u8, 117u8, 254u8, 13u8, 172u8, 231u8, 192u8,
+                            241u8, 15u8, 138u8, 69u8, 188u8, 213u8, 78u8, 250u8, 29u8, 174u8, 90u8,
+                            153u8, 23u8, 233u8, 62u8, 103u8, 51u8, 2u8, 115u8, 202u8, 163u8, 97u8,
                         ],
                     )
                 }
@@ -17793,9 +17794,9 @@ pub mod api {
                         "StorageProvider",
                         "Challenges",
                         [
-                            40u8, 197u8, 172u8, 0u8, 60u8, 246u8, 61u8, 47u8, 121u8, 94u8, 7u8,
-                            128u8, 88u8, 47u8, 170u8, 54u8, 157u8, 96u8, 226u8, 90u8, 63u8, 235u8,
-                            77u8, 162u8, 121u8, 244u8, 57u8, 246u8, 160u8, 160u8, 187u8, 154u8,
+                            33u8, 56u8, 141u8, 123u8, 45u8, 8u8, 64u8, 217u8, 134u8, 45u8, 233u8,
+                            111u8, 210u8, 93u8, 60u8, 17u8, 93u8, 205u8, 110u8, 221u8, 176u8,
+                            224u8, 16u8, 33u8, 63u8, 64u8, 204u8, 60u8, 121u8, 110u8, 113u8, 106u8,
                         ],
                     )
                 }
@@ -25989,6 +25990,7 @@ pub mod api {
                     pub challenger: ::subxt::utils::AccountId32,
                     pub mmr_root: ::subxt::utils::H256,
                     pub start_seq: ::core::primitive::u64,
+                    pub leaf_count: ::core::primitive::u64,
                     pub target: runtime_types::storage_primitives::ChunkLocation,
                     pub deposit: ::core::primitive::u128,
                 }
@@ -26131,83 +26133,91 @@ pub mod api {
                     #[codec(index = 43)]
                     InsufficientSyncBalance,
                     #[codec(index = 44)]
-                    ChallengeNotFound,
+                    #[doc = "The replica's last sync was to a historical root whose `(start_seq,"]
+                    #[doc = "leaf_count)` range the chain does not retain, so `challenge_replica`"]
+                    #[doc = "cannot bind the proof to a leaf. Re-sync to the current snapshot (or"]
+                    #[doc = "use `challenge_offchain` with a signed commitment) to challenge it."]
+                    ReplicaSyncRangeUnknown,
                     #[codec(index = 45)]
-                    ChallengeAlreadyExists,
+                    ChallengeNotFound,
                     #[codec(index = 46)]
-                    InvalidChallengeProof,
+                    ChallengeAlreadyExists,
                     #[codec(index = 47)]
-                    ChallengeExpired,
+                    InvalidChallengeProof,
                     #[codec(index = 48)]
-                    NotChallengeProvider,
+                    ChallengeExpired,
                     #[codec(index = 49)]
-                    ProviderNotInSnapshot,
+                    NotChallengeProvider,
                     #[codec(index = 50)]
-                    LeafBeyondCanonical,
+                    ProviderNotInSnapshot,
                     #[codec(index = 51)]
-                    InvalidDeletionProof,
+                    #[doc = "Challenge `leaf_index` is out of range for the committed `leaf_count`"]
+                    #[doc = "(the leaf does not exist), so no valid proof could ever defend it."]
+                    LeafBeyondCanonical,
                     #[codec(index = 52)]
+                    InvalidDeletionProof,
+                    #[codec(index = 53)]
                     #[doc = "A provider with unresolved challenges (`PendingChallenges > 0`)"]
                     #[doc = "cannot complete deregistration — they are still slashable."]
                     ProviderHasPendingChallenges,
-                    #[codec(index = 53)]
+                    #[codec(index = 54)]
                     #[doc = "An agreement with an unresolved challenge against this"]
                     #[doc = "`(bucket, provider)` cannot be torn down until the challenge"]
                     #[doc = "resolves (defended, slashed, or timed out)."]
                     AgreementHasPendingChallenge,
-                    #[codec(index = 54)]
+                    #[codec(index = 55)]
                     #[doc = "`MaxChallengesPerDeadline` challenges have already been allocated"]
                     #[doc = "for the deadline this challenge would land on. Caps the total the"]
                     #[doc = "`on_initialize` sweep must eventually drain for a single key."]
                     TooManyChallengesThisBlock,
-                    #[codec(index = 55)]
-                    InvalidSignature,
                     #[codec(index = 56)]
-                    NoSnapshot,
+                    InvalidSignature,
                     #[codec(index = 57)]
-                    SnapshotViolatesFrozen,
+                    NoSnapshot,
                     #[codec(index = 58)]
-                    InsufficientSignatures,
+                    SnapshotViolatesFrozen,
                     #[codec(index = 59)]
-                    ArithmeticOverflow,
+                    InsufficientSignatures,
                     #[codec(index = 60)]
-                    InvalidMultiaddr,
+                    ArithmeticOverflow,
                     #[codec(index = 61)]
-                    InvalidPublicKey,
+                    InvalidMultiaddr,
                     #[codec(index = 62)]
+                    InvalidPublicKey,
+                    #[codec(index = 63)]
                     #[doc = "Account is a member of too many buckets."]
                     TooManyBucketsForMember,
-                    #[codec(index = 63)]
+                    #[codec(index = 64)]
                     #[doc = "Provider signature over the SCALE-encoded terms is invalid."]
                     InvalidProviderSignature,
-                    #[codec(index = 64)]
+                    #[codec(index = 65)]
                     #[doc = "Signed terms have passed their `valid_until` block."]
                     TermsExpired,
-                    #[codec(index = 65)]
+                    #[codec(index = 66)]
                     #[doc = "Signed terms' `valid_until` extends beyond `now + RequestTimeout` —"]
                     #[doc = "the provider-signed validity window cap enforced on-chain."]
                     TermsValidityTooLong,
-                    #[codec(index = 66)]
+                    #[codec(index = 67)]
                     #[doc = "The terms' nonce has already been consumed inside the provider's"]
                     #[doc = "replay window."]
                     NonceAlreadyUsed,
-                    #[codec(index = 67)]
+                    #[codec(index = 68)]
                     #[doc = "The terms' nonce is older than the provider's replay window"]
                     #[doc = "(distance from `hsn` ≥ [`storage_primitives::REPLAY_WINDOW_BITS`])."]
                     NonceTooOld,
-                    #[codec(index = 68)]
+                    #[codec(index = 69)]
                     #[doc = "The terms' declared owner does not match the extrinsic origin."]
                     TermsOwnerMismatch,
-                    #[codec(index = 69)]
+                    #[codec(index = 70)]
                     #[doc = "Replica terms missing from a signed quote redeemed as a replica"]
                     #[doc = "agreement."]
                     MissingReplicaTerms,
-                    #[codec(index = 70)]
+                    #[codec(index = 71)]
                     #[doc = "The terms' bucket binding does not match the redeeming extrinsic:"]
                     #[doc = "primary terms must carry no bucket, replica terms must name the"]
                     #[doc = "targeted bucket."]
                     TermsBucketMismatch,
-                    #[codec(index = 71)]
+                    #[codec(index = 72)]
                     #[doc = "Storage agreement requested 0 byte"]
                     InvalidMaxBytesRequest,
                 }
@@ -31145,7 +31155,8 @@ pub mod api {
             #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
             pub struct ReplicaSyncRecord<_0> {
-                pub commitment: runtime_types::storage_primitives::Commitment,
+                pub root: ::subxt::utils::H256,
+                pub range: ::core::option::Option<(::core::primitive::u64, ::core::primitive::u64)>,
                 pub block: _0,
             }
             #[derive(
