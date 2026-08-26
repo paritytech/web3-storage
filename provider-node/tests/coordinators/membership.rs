@@ -20,7 +20,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use storage_primitives::{BucketId, Role};
-use storage_provider_node::chain_events::BlockEvent;
+use provider_chain::chain_events::BlockEvent;
 use storage_provider_node::membership::BlockEventInvalidations;
 
 /// Resolver that counts calls, so tests can tell whether a lookup hit the cache

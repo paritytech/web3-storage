@@ -1518,7 +1518,6 @@ mod tests {
                 .await
                 .expect("follow runs to stream end");
 
-            use crate::chain_events::BlockEvent;
             let mut changed_buckets = Vec::new();
             while let Ok(event) = events_rx.try_recv() {
                 if let BlockEvent::BucketMembershipChanged { bucket_id } = event {
