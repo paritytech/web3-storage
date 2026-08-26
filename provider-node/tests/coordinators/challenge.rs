@@ -2,14 +2,14 @@
 
 //! Integration tests for the challenge responder.
 
-use super::{test_state, wait_for, ALICE_SS58};
+use super::{test_state, test_state_with_data, wait_for, ALICE_SS58};
 use sp_core::H256;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use storage_primitives::{blake2_256, BucketId};
+use storage_primitives::BucketId;
 use storage_provider_node::{
-    build_padded_merkle_tree, ChallengeChainClient, ChallengeResponder, ChallengeResponderConfig,
-    ChallengeResponseResult, DetectedChallenge, Error, ProviderState, Storage,
+    ChallengeChainClient, ChallengeResponder, ChallengeResponderConfig, ChallengeResponseResult,
+    DetectedChallenge, Error,
 };
 
 struct MockChallengeChainClient {
@@ -48,6 +48,20 @@ impl ChallengeChainClient for MockChallengeChainClient {
         Ok(self.challenges.lock().unwrap().clone())
     }
 
+    async fn fetch_challenge(
+        &self,
+        deadline: u32,
+        index: u16,
+    ) -> Result<Option<DetectedChallenge>, Error> {
+        Ok(self
+            .challenges
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|c| c.deadline == deadline && c.index == index)
+            .cloned())
+    }
+
     async fn submit_response(
         &self,
         challenge_id: (u32, u16),
@@ -79,7 +93,7 @@ fn make_challenge(bucket_id: BucketId, deadline: u32, index: u16) -> DetectedCha
 #[test]
 fn test_challenge_responder_config_default() {
     let config = ChallengeResponderConfig::default();
-    assert_eq!(config.poll_interval, Duration::from_secs(6));
+    assert_eq!(config.poll_interval, Duration::from_secs(300));
     assert!(config.auto_respond);
 }
 
@@ -94,13 +108,16 @@ fn test_detected_challenge() {
 #[tokio::test(start_paused = true)]
 async fn test_no_challenges() {
     let mock = Arc::new(MockChallengeChainClient::new());
-    let state = test_state();
+    let (state, _dir) = test_state();
     let config = ChallengeResponderConfig {
         poll_interval: Duration::from_millis(50),
         ..Default::default()
     };
     let responder = ChallengeResponder::new(config, state, Box::new(Arc::clone(&mock)));
-    let handle = responder.start(None).await.unwrap();
+    let handle = responder
+        .start(tokio::sync::broadcast::channel(16).1, None)
+        .await
+        .unwrap();
 
     tokio::time::sleep(Duration::from_millis(200)).await;
 
@@ -112,13 +129,16 @@ async fn test_no_challenges() {
 async fn test_paused_skips_poll() {
     let mock =
         Arc::new(MockChallengeChainClient::new().with_challenges(vec![make_challenge(1, 100, 0)]));
-    let state = test_state();
+    let (state, _dir) = test_state();
     let config = ChallengeResponderConfig {
         poll_interval: Duration::from_millis(50),
         ..Default::default()
     };
     let responder = ChallengeResponder::new(config, state, Box::new(Arc::clone(&mock)));
-    let handle = responder.start(None).await.unwrap();
+    let handle = responder
+        .start(tokio::sync::broadcast::channel(16).1, None)
+        .await
+        .unwrap();
 
     handle.pause().await.unwrap();
     tokio::time::sleep(Duration::from_millis(200)).await;
@@ -131,13 +151,16 @@ async fn test_paused_skips_poll() {
 #[tokio::test(start_paused = true)]
 async fn test_stop_command() {
     let mock = MockChallengeChainClient::new();
-    let state = test_state();
+    let (state, _dir) = test_state();
     let config = ChallengeResponderConfig {
         poll_interval: Duration::from_secs(60),
         ..Default::default()
     };
     let responder = ChallengeResponder::new(config, state, Box::new(mock));
-    let handle = responder.start(None).await.unwrap();
+    let handle = responder
+        .start(tokio::sync::broadcast::channel(16).1, None)
+        .await
+        .unwrap();
 
     assert!(handle.is_running());
     handle.stop().await.unwrap();
@@ -147,46 +170,9 @@ async fn test_stop_command() {
 
 // --- Tests with realistic storage data ---
 
-/// Create a provider state with a bucket containing a single committed chunk,
-/// and return the state along with a matching challenge.
-fn test_state_with_data() -> (Arc<ProviderState>, DetectedChallenge) {
-    let storage = Arc::new(Storage::new());
-    storage.init_bucket(1, 1024 * 1024);
-
-    let chunk_data = b"test-chunk-data-for-challenge";
-    let chunk_hash = blake2_256(chunk_data);
-    storage
-        .store_node(1, chunk_hash, chunk_data.to_vec(), None)
-        .unwrap();
-
-    let data_root = build_padded_merkle_tree(storage.as_ref(), 1, &[chunk_hash]);
-    assert_eq!(data_root, chunk_hash);
-
-    let (mmr_root, start_seq, _leaf_count, leaf_indices) =
-        storage.commit(1, vec![data_root]).unwrap();
-    assert_eq!(leaf_indices, vec![0]);
-
-    let challenge = DetectedChallenge {
-        bucket_id: 1,
-        deadline: 1000,
-        index: 0,
-        mmr_root,
-        start_seq,
-        leaf_index: 0,
-        chunk_index: 0,
-        challenger: ALICE_SS58.to_string(),
-    };
-
-    let state = Arc::new(ProviderState::with_provider_id(
-        storage,
-        ALICE_SS58.to_string(),
-    ));
-    (state, challenge)
-}
-
 #[tokio::test(start_paused = true)]
 async fn test_successful_challenge_response() {
-    let (state, challenge) = test_state_with_data();
+    let (state, challenge, _dir) = test_state_with_data();
     let mock = Arc::new(MockChallengeChainClient::new().with_challenges(vec![challenge]));
 
     let config = ChallengeResponderConfig {
@@ -195,7 +181,10 @@ async fn test_successful_challenge_response() {
         ..Default::default()
     };
     let responder = ChallengeResponder::new(config, state, Box::new(Arc::clone(&mock)));
-    let handle = responder.start(None).await.unwrap();
+    let handle = responder
+        .start(tokio::sync::broadcast::channel(16).1, None)
+        .await
+        .unwrap();
 
     let mock_ref = Arc::clone(&mock);
     assert!(
@@ -217,7 +206,7 @@ async fn test_successful_challenge_response() {
 
 #[tokio::test(start_paused = true)]
 async fn test_proof_generation_failed_no_bucket() {
-    let state = test_state();
+    let (state, _dir) = test_state();
     let challenge = DetectedChallenge {
         bucket_id: 999,
         deadline: 1000,
@@ -246,7 +235,10 @@ async fn test_proof_generation_failed_no_bucket() {
         ..Default::default()
     };
     let responder = ChallengeResponder::new(config, state, Box::new(Arc::clone(&mock)));
-    let handle = responder.start(Some(callback)).await.unwrap();
+    let handle = responder
+        .start(tokio::sync::broadcast::channel(16).1, Some(callback))
+        .await
+        .unwrap();
 
     let result_ref = Arc::clone(&result);
     assert!(
@@ -272,7 +264,7 @@ async fn test_proof_generation_failed_no_bucket() {
 
 #[tokio::test(start_paused = true)]
 async fn test_data_not_found_bad_chunk_index() {
-    let (state, mut challenge) = test_state_with_data();
+    let (state, mut challenge, _dir) = test_state_with_data();
     challenge.chunk_index = 999;
 
     let result: Arc<Mutex<Option<ChallengeResponseResult>>> = Arc::new(Mutex::new(None));
@@ -291,7 +283,10 @@ async fn test_data_not_found_bad_chunk_index() {
         ..Default::default()
     };
     let responder = ChallengeResponder::new(config, state, Box::new(Arc::clone(&mock)));
-    let handle = responder.start(Some(callback)).await.unwrap();
+    let handle = responder
+        .start(tokio::sync::broadcast::channel(16).1, Some(callback))
+        .await
+        .unwrap();
 
     let result_ref = Arc::clone(&result);
     assert!(
@@ -314,7 +309,7 @@ async fn test_data_not_found_bad_chunk_index() {
 
 #[tokio::test(start_paused = true)]
 async fn test_submission_failed() {
-    let (state, challenge) = test_state_with_data();
+    let (state, challenge, _dir) = test_state_with_data();
     let mock = Arc::new(
         MockChallengeChainClient::new()
             .with_challenges(vec![challenge])
@@ -336,7 +331,10 @@ async fn test_submission_failed() {
         ..Default::default()
     };
     let responder = ChallengeResponder::new(config, state, Box::new(Arc::clone(&mock)));
-    let handle = responder.start(Some(callback)).await.unwrap();
+    let handle = responder
+        .start(tokio::sync::broadcast::channel(16).1, Some(callback))
+        .await
+        .unwrap();
 
     let result_ref = Arc::clone(&result);
     assert!(
@@ -359,7 +357,7 @@ async fn test_submission_failed() {
 
 #[tokio::test(start_paused = true)]
 async fn test_callback_invoked_on_success() {
-    let (state, challenge) = test_state_with_data();
+    let (state, challenge, _dir) = test_state_with_data();
     let mock = Arc::new(MockChallengeChainClient::new().with_challenges(vec![challenge]));
 
     let result: Arc<Mutex<Option<ChallengeResponseResult>>> = Arc::new(Mutex::new(None));
@@ -377,7 +375,10 @@ async fn test_callback_invoked_on_success() {
         ..Default::default()
     };
     let responder = ChallengeResponder::new(config, state, Box::new(Arc::clone(&mock)));
-    let handle = responder.start(Some(callback)).await.unwrap();
+    let handle = responder
+        .start(tokio::sync::broadcast::channel(16).1, Some(callback))
+        .await
+        .unwrap();
 
     let result_ref = Arc::clone(&result);
     assert!(
@@ -405,7 +406,7 @@ async fn test_callback_invoked_on_success() {
 
 #[tokio::test(start_paused = true)]
 async fn test_resume_after_pause() {
-    let (state, challenge) = test_state_with_data();
+    let (state, challenge, _dir) = test_state_with_data();
     let mock = Arc::new(MockChallengeChainClient::new().with_challenges(vec![challenge]));
 
     let config = ChallengeResponderConfig {
@@ -414,7 +415,10 @@ async fn test_resume_after_pause() {
         ..Default::default()
     };
     let responder = ChallengeResponder::new(config, state, Box::new(Arc::clone(&mock)));
-    let handle = responder.start(None).await.unwrap();
+    let handle = responder
+        .start(tokio::sync::broadcast::channel(16).1, None)
+        .await
+        .unwrap();
 
     handle.pause().await.unwrap();
     tokio::time::sleep(Duration::from_millis(200)).await;

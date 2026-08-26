@@ -7,9 +7,15 @@
  */
 
 import { blake2b256 } from "@polkadot-labs/hdkd-helpers";
-import { base64ToBytes, bytesToBase64 } from "@web3-storage/core";
+import {
+  base64ToBytes,
+  bytesToBase64,
+  signProviderRequest,
+  type ProviderRequestSigner,
+} from "@web3-storage/core";
 
 import { asHex, toHex, type ParachainApi } from "./address.js";
+import type { ChainSigner } from "./signers.js";
 import { READ_OPTS } from "./tx.js";
 
 export interface ProviderFetchOpts {
@@ -22,6 +28,12 @@ export interface ProviderFetchOpts {
    */
   params?: Record<string, string | number | bigint>;
   body?: unknown;
+  /**
+   * When set, attach the signed `Authorization` header the provider verifies
+   * (`crates/providers/auth`) for a bucket-scoped, role-gated request
+   * (`PUT /node`, `POST /commit`, …). Omit for public/read endpoints.
+   */
+  sign?: { signer: ProviderRequestSigner; bucketId: bigint | number };
 }
 
 export async function providerFetch(
@@ -33,9 +45,16 @@ export async function providerFetch(
   if (opts.params) {
     for (const [k, v] of Object.entries(opts.params)) url.searchParams.set(k, String(v));
   }
+  const method = opts.method || "GET";
+  const headers: Record<string, string> = {};
+  if (opts.body) headers["Content-Type"] = "application/json";
+  // auth.rs reconstructs the message from the upper-case HTTP verb; signing with
+  // anything else would fail verification.
+  if (opts.sign)
+    Object.assign(headers, await signProviderRequest(opts.sign.signer, method.toUpperCase(), opts.sign.bucketId));
   const resp = await fetch(url, {
-    method: opts.method || "GET",
-    headers: opts.body ? { "Content-Type": "application/json" } : undefined,
+    method,
+    headers: Object.keys(headers).length ? headers : undefined,
     body: opts.body ? JSON.stringify(opts.body) : undefined,
   });
   if (!resp.ok) throw new Error(`${path}: ${resp.status} ${await resp.text()}`);
@@ -84,12 +103,17 @@ export interface PutChunkResult {
  * PUT a single chunk to the provider without requesting an MMR commitment.
  * Suitable for S3-style object uploads where the Layer 1 metadata records
  * the CID itself and no Layer 0 checkpoint follows immediately.
+ *
+ * `signer` authenticates the `PUT /node` request; it must hold a Writer/Admin
+ * role on `bucketId` (the provider always enforces this).
  */
 export async function putChunk(
   providerUrl: string,
   bucketId: bigint | number,
   data: Uint8Array | string,
+  signer: ChainSigner,
 ): Promise<PutChunkResult> {
+  const sign = { signer: signer.signer, bucketId };
   const bytes = data instanceof Uint8Array ? data : new TextEncoder().encode(data);
   const cid = blake2b256(bytes);
   const hash = toHex(cid);
@@ -101,6 +125,7 @@ export async function putChunk(
       data: bytesToBase64(bytes),
       children: null,
     },
+    sign,
   });
   return { hash, cid, size: BigInt(bytes.length), data: bytes };
 }
@@ -109,13 +134,17 @@ export async function putChunk(
  * PUT a chunk to the provider and request an MMR commitment. Returns the
  * chunk hash, original bytes, and the /commit response (mmr_root,
  * leaf_indices, start_seq, provider_signature).
+ *
+ * `signer` authenticates the `PUT /node` and `POST /commit` requests; it must
+ * hold a Writer/Admin role on `bucketId` (the provider always enforces this).
  */
 export async function uploadChunk(
   providerUrl: string,
   bucketId: bigint | number,
   data: Uint8Array | string,
-  nonce: bigint | number,
+  signer: ChainSigner,
 ): Promise<{ hash: string; data: Uint8Array; commit: any }> {
+  const sign = { signer: signer.signer, bucketId };
   const bytes = data instanceof Uint8Array ? data : new TextEncoder().encode(data);
   const hash = toHex(blake2b256(bytes));
   await providerFetch(providerUrl, "/node", {
@@ -126,14 +155,12 @@ export async function uploadChunk(
       data: bytesToBase64(bytes),
       children: null,
     },
+    sign,
   });
-  // `nonce` is the relay-chain block (see `currentRelayBlock`) at which the
-  // caller intends to submit the extrinsic consuming the resulting
-  // `provider_signature`. The pallet rejects signatures whose nonce is older
-  // than `MaxNonceAge`, so thread it into /commit.
   const commit = await providerFetch(providerUrl, "/commit", {
     method: "POST",
-    body: { bucket_id: Number(bucketId), data_roots: [hash], nonce: Number(nonce) },
+    body: { bucket_id: Number(bucketId), data_roots: [hash] },
+    sign,
   });
   return { hash, data: bytes, commit };
 }
@@ -151,40 +178,9 @@ export async function downloadChunk(
 export async function fetchCheckpointSignature(
   providerUrl: string,
   bucketId: bigint | number,
-  nonce: bigint | number,
 ): Promise<any> {
-  // The provider signs the CommitmentPayload including `nonce`; pass the
-  // relay block (see `currentRelayBlock`) the caller will submit at so the
-  // on-chain recency check passes.
   return providerFetch(providerUrl, "/checkpoint-signature", {
-    params: { bucket_id: bucketId, nonce: Number(nonce) },
-  });
-}
-
-export async function fetchCheckpointDuty(
-  providerUrl: string,
-  bucketId: bigint | number,
-): Promise<any> {
-  return providerFetch(providerUrl, "/checkpoint/duty", {
     params: { bucket_id: bucketId },
-  });
-}
-
-export async function signCheckpointProposal(
-  providerUrl: string,
-  bucketId: bigint | number,
-  duty: { mmr_root: string; start_seq: number | string; leaf_count: number | string },
-  window: number | bigint,
-): Promise<any> {
-  return providerFetch(providerUrl, "/checkpoint/sign", {
-    method: "POST",
-    body: {
-      bucket_id: Number(bucketId),
-      mmr_root: duty.mmr_root,
-      start_seq: duty.start_seq,
-      leaf_count: duty.leaf_count,
-      window: Number(window),
-    },
   });
 }
 

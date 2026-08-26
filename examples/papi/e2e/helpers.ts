@@ -247,8 +247,18 @@ export async function negotiateAndEstablish(
   owner: ChainSigner,
   provider: ChainSigner,
   opts: NegotiateOpts,
+  // Finalize the establish when an immediate provider upload follows: the
+  // provider reads bucket membership from finalized state, so an in-block
+  // establish would race it (see tx.ts — "finalized" for cross-referenced effects).
+  finalized = false,
 ): Promise<{ bucketId: bigint; signed: SignedTerms }> {
   const signed = await negotiateSigned(api, providerUrl, owner, provider, opts);
-  const { bucketId } = await establishStorageAgreement(api, owner, provider, signed);
+  const { bucketId } = await establishStorageAgreement(
+    api,
+    owner,
+    provider,
+    signed,
+    finalized ? { mode: "finalized" } : {},
+  );
   return { bucketId, signed };
 }

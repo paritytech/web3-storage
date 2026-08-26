@@ -3,22 +3,24 @@
 //! Node startup and runtime orchestration.
 
 use crate::{
-    auth::{ChainMembershipResolver, MembershipCache},
+    chain_connection::{self, ChainHandle, ChainTransport},
+    chain_events::{BlockEvent, BlockEventRx, BlockEventTx, EVENT_CHANNEL_CAPACITY},
     chain_state_coordinator::ChainStateCoordinator,
-    cli::{Cli, StorageMode, DEFAULT_PROVIDER_ID},
+    cli::{Cli, DEFAULT_PROVIDER_ID},
     create_router,
+    membership::{BlockEventInvalidations, ChainMembershipResolver},
     subxt_client::SubxtChainClient,
     ChainStateCoordinatorHandle, ChallengeResponder, ChallengeResponderConfig,
-    ChallengeResponderHandle, CheckpointCoordinator, CheckpointCoordinatorConfig,
-    CheckpointCoordinatorHandle, DiskStorage, NonceStore, NullNonceStore, ProviderState,
-    ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig, ReplicaSyncCoordinatorHandle, Storage,
-    StorageBackend,
+    ChallengeResponderHandle, ProviderDeps, ProviderState, ReplicaSyncCoordinator,
+    ReplicaSyncCoordinatorConfig, ReplicaSyncCoordinatorHandle,
 };
 use clap::Parser;
+use provider_auth::Authenticator;
 use std::net::SocketAddr;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::{broadcast, watch};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 /// Parse CLI arguments, initialize the node, and run the server.
@@ -33,32 +35,73 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     let cli = Cli::parse();
 
-    // Create storage backend and the associated nonce store (which follows the
-    // same persistence mode so the nonce counter survives disk restarts).
-    let (storage, nonce_store): (Arc<dyn StorageBackend>, Arc<dyn NonceStore>) =
-        match cli.storage.storage_mode {
-            StorageMode::Inmemory => {
-                tracing::info!("Using in-memory storage (data will be lost on restart)");
-                (Arc::new(Storage::new()), Arc::new(NullNonceStore))
-            }
-            StorageMode::Disk => {
-                tracing::info!(
-                    "Using persistent disk storage at: {}",
-                    cli.storage.storage_path.display()
-                );
-                let disk = DiskStorage::new(&cli.storage.storage_path)?;
-                let store = disk.nonce_store();
-                (Arc::new(disk), store)
-            }
-        };
+    // One chain connection for the whole node, published through a watch
+    // channel. The chain-state coordinator owns the sender and rebuilds the
+    // connection on loss or stall; every consumer (HTTP auth, the signing
+    // client, coordinators) borrows the current handle from the receiver.
+    let transport = cli.rpc.chain_transport()?;
+    let (chain_tx, chain_rx) = watch::channel::<Option<ChainHandle>>(None);
+    // Per-block event fan-out from the chain-state coordinator to the
+    // background coordinators.
+    let (events_tx, _) = broadcast::channel::<BlockEvent>(EVENT_CHANNEL_CAPACITY);
+
+    // Connect eagerly so auth lookups and the one-shot multiaddr sync work
+    // right away; failure is non-fatal (the coordinator retries in the
+    // background and republishes).
+    match chain_connection::connect(&transport).await {
+        Ok(handle) => {
+            chain_tx.send_replace(Some(handle));
+        }
+        Err(e) => tracing::warn!("Chain unreachable at startup ({e}); retrying in the background"),
+    }
+
+    let backend = cli.storage.spec();
+    tracing::info!("Storage backend: {backend}");
+    let (storage, nonce_store) = backend.build()?;
+
+    // Membership-based auth over the chain's bucket member sets, resolved
+    // through the shared watch connection. Subscribed here rather than after
+    // the chain-state coordinator starts, so the cache cannot miss the
+    // bootstrap `Resubscribed` the coordinator broadcasts on first connect.
+    let resolver = ChainMembershipResolver::new(chain_rx.clone());
+    // Incoherent, not unsafe - warn rather than clamp an explicit choice.
+    if cli.auth.auth_max_stale <= cli.auth.auth_cache_ttl {
+        tracing::warn!(
+            "--auth-max-stale ({}s) is below --auth-cache-ttl ({}s): a cached member set \
+             will never be served once the chain is unreachable",
+            cli.auth.auth_max_stale,
+            cli.auth.auth_cache_ttl
+        );
+    }
+    let auth = Arc::new(
+        Authenticator::new(resolver)
+            .with_ttl(Duration::from_secs(cli.auth.auth_cache_ttl))
+            .with_max_skew(Duration::from_secs(cli.auth.auth_max_skew))
+            .with_max_stale(Duration::from_secs(cli.auth.auth_max_stale))
+            .with_max_entries(cli.auth.auth_cache_max_entries)
+            .with_invalidations(BlockEventInvalidations::new(events_tx.subscribe())),
+    );
+    tracing::info!(
+        "Auth: membership cache_ttl={}s, max_stale={}s, max_skew={}s, max_entries={}",
+        cli.auth.auth_cache_ttl,
+        cli.auth.auth_max_stale,
+        cli.auth.auth_max_skew,
+        cli.auth.auth_cache_max_entries
+    );
+
+    let deps = ProviderDeps {
+        storage,
+        nonce_store,
+        auth,
+    };
 
     // Resolve provider identity
     let seed = cli.key.load_seed()?;
-    let mut state = match &seed {
+    let state = match &seed {
         Some(seed) => {
-            let state = ProviderState::with_seed(storage, seed)?;
+            let state = ProviderState::with_seed(deps, seed)?;
             tracing::info!("Signing enabled for account: {}", state.provider_id);
-            configure_state(state, &cli)
+            state
         }
         None => {
             let provider_id = cli
@@ -71,43 +114,42 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 provider_id
             );
 
-            configure_state(ProviderState::with_provider_id(storage, provider_id), &cli)
+            ProviderState::with_provider_id(deps, provider_id)
         }
-    };
-
-    // Install the nonce store before sharing `state` across coordinators: while
-    // it is still solely owned here, `chain_state`'s Arc has a single owner, so
-    // the in-place install succeeds.
-    state.set_nonce_store(nonce_store);
+    }
+    .with_cors_origins(cli.rpc.cors_allowed_origins.clone());
 
     let state = Arc::new(state);
 
-    // Connect a single chain client shared by every coordinator. One
-    // WebSocket connection and one signer (the provider's own account) back
-    // all on-chain actions; coordinators each get a cheap clone. Requires a
-    // signing key, so this is only available when a seed was provided.
+    // The signing chain client shared by every coordinator: one signer (the
+    // provider's own account) over the shared watch connection; coordinators
+    // each get a cheap clone. Requires a signing key, so this is only
+    // available when a seed was provided.
     let chain_client = match &seed {
-        Some(seed) => match SubxtChainClient::connect(&cli.rpc.chain_rpc, seed).await {
+        Some(seed) => match SubxtChainClient::new(chain_rx.clone(), seed) {
             Ok(client) => Some(client),
             Err(e) => {
-                tracing::error!("Failed to connect chain client: {}", e);
+                tracing::error!("Failed to create chain client: {}", e);
                 None
             }
         },
         None => None,
     };
 
+    // Subscribe the coordinators before the follower starts, so none of them
+    // can miss the initial `Resubscribed` bootstrap event.
+    let replica_events = events_tx.subscribe();
+    let challenge_events = events_tx.subscribe();
+
     // Start optional background services (failures are non-fatal)
-    let _chain_state_handle = start_chain_state_coordinator(&cli, state.clone());
-    let checkpoint_handle =
-        start_checkpoint_coordinator(&cli, chain_client.as_ref(), state.clone()).await;
-    if let Some(ref handle) = checkpoint_handle {
-        state.set_checkpoint_handle(handle);
-    }
+    let _chain_state_handle =
+        start_chain_state_coordinator(transport, chain_tx, events_tx, state.clone());
     let _replica_sync_handle =
-        start_replica_sync_coordinator(&cli, chain_client.as_ref(), state.clone()).await;
+        start_replica_sync_coordinator(&cli, chain_client.as_ref(), replica_events, state.clone())
+            .await;
     let _challenge_responder_handle =
-        start_challenge_responder(&cli, chain_client.as_ref(), state.clone()).await;
+        start_challenge_responder(&cli, chain_client.as_ref(), challenge_events, state.clone())
+            .await;
 
     // Sync the on-chain multiaddr. Reuses the chain client connected above, so
     // this only runs when that connection succeeded (which also implies a
@@ -136,46 +178,19 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// Apply CLI-derived CORS and auth settings to a freshly constructed state.
-///
-/// Authentication is enforced by default: unless the operator explicitly passed
-/// `--disable-auth-i-know-what-i-am-doing`, we wire in the on-chain membership
-/// resolver so every bucket-scoped request is checked against the caller's role.
-fn configure_state(state: ProviderState, cli: &Cli) -> ProviderState {
-    let mut state = state.with_cors_origins(cli.rpc.cors_allowed_origins.clone());
-
-    if cli.auth.disable_auth_i_know_what_i_am_doing {
-        state = state.with_auth_disabled();
-        tracing::warn!(
-            "AUTHENTICATION DISABLED via --disable-auth-i-know-what-i-am-doing: \
-             every endpoint is publicly readable and writable by anyone. \
-             Never do this outside a throwaway local environment."
-        );
-    } else {
-        let resolver = ChainMembershipResolver::new(cli.rpc.chain_rpc.clone());
-        let ttl = Duration::from_secs(cli.auth.auth_cache_ttl);
-        let cache = MembershipCache::new(Box::new(resolver), ttl);
-        state.set_auth_config(Arc::new(cache), Duration::from_secs(cli.auth.auth_max_skew));
-        tracing::info!(
-            "Auth enforced (cache_ttl={}s, max_skew={}s)",
-            cli.auth.auth_cache_ttl,
-            cli.auth.auth_max_skew
-        );
-    }
-
-    state
-}
-
 /// Start the chain-state coordinator, which keeps
 /// `chain_state.current_anchor_block` and `chain_state.provider_info` in sync
-/// with the chain.
+/// with the chain, and broadcasts bucket-membership changes on the
+/// block-event fan-out, which the auth membership cache drains.
 ///
 /// Returns `None` only when the provider id isn't a valid account. The
 /// coordinator itself never fails to start: it connects in the background and
 /// retries with a backoff if the chain is unreachable, so `current_anchor_block`
 /// is populated as soon as the chain comes up.
 fn start_chain_state_coordinator(
-    cli: &Cli,
+    transport: ChainTransport,
+    chain_tx: watch::Sender<Option<ChainHandle>>,
+    events_tx: BlockEventTx,
     state: Arc<ProviderState>,
 ) -> Option<ChainStateCoordinatorHandle> {
     let provider_account = match sp_runtime::AccountId32::from_str(&state.provider_id) {
@@ -190,53 +205,21 @@ fn start_chain_state_coordinator(
     };
 
     let coordinator = ChainStateCoordinator::new(
-        cli.rpc.chain_rpc.clone(),
+        transport,
         provider_account,
         state.chain_state.clone(),
+        chain_tx,
+        events_tx,
     );
 
     tracing::info!("Chain-state coordinator started (retries until the chain is reachable)");
     Some(coordinator.start())
 }
 
-async fn start_checkpoint_coordinator(
-    cli: &Cli,
-    chain_client: Option<&SubxtChainClient>,
-    state: Arc<ProviderState>,
-) -> Option<CheckpointCoordinatorHandle> {
-    if !cli.checkpoint.enable_checkpoint_coordinator {
-        return None;
-    }
-
-    let chain_client = match chain_client {
-        Some(c) => c.clone(),
-        None => {
-            tracing::error!(
-                "Checkpoint coordinator needs a chain client (--keyfile + reachable chain). Disabled."
-            );
-            return None;
-        }
-    };
-
-    let config = CheckpointCoordinatorConfig::default();
-
-    let coordinator = CheckpointCoordinator::new(config, state, Box::new(chain_client));
-
-    match coordinator.start(None).await {
-        Ok(handle) => {
-            tracing::info!("Checkpoint coordinator started");
-            Some(handle)
-        }
-        Err(e) => {
-            tracing::error!("Failed to start checkpoint coordinator: {}", e);
-            None
-        }
-    }
-}
-
 async fn start_replica_sync_coordinator(
     cli: &Cli,
     chain_client: Option<&SubxtChainClient>,
+    events_rx: BlockEventRx,
     state: Arc<ProviderState>,
 ) -> Option<ReplicaSyncCoordinatorHandle> {
     if !cli.replica_sync.enable_replica_sync {
@@ -262,7 +245,7 @@ async fn start_replica_sync_coordinator(
 
     let coordinator = ReplicaSyncCoordinator::new(config, state, Box::new(chain_client));
 
-    match coordinator.start(None).await {
+    match coordinator.start(events_rx, None).await {
         Ok(handle) => {
             tracing::info!("Replica sync coordinator started");
             Some(handle)
@@ -277,6 +260,7 @@ async fn start_replica_sync_coordinator(
 async fn start_challenge_responder(
     cli: &Cli,
     chain_client: Option<&SubxtChainClient>,
+    events_rx: BlockEventRx,
     state: Arc<ProviderState>,
 ) -> Option<ChallengeResponderHandle> {
     if !cli.challenge_responder.enable_challenge_responder {
@@ -300,7 +284,7 @@ async fn start_challenge_responder(
 
     let responder = ChallengeResponder::new(config, state, Box::new(chain_client));
 
-    match responder.start(None).await {
+    match responder.start(events_rx, None).await {
         Ok(handle) => {
             tracing::info!("Challenge responder started — auto-responding to challenges");
             Some(handle)

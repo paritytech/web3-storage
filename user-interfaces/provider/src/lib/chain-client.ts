@@ -293,12 +293,6 @@ export interface OnChainBucketSnapshot {
   checkpointBlock: number
 }
 
-export interface OnChainCheckpointConfig {
-  interval: number
-  gracePeriod: number
-  enabled: boolean
-}
-
 export interface OnChainBucketDetails {
   bucketId: number
   members: OnChainBucketMember[]
@@ -308,10 +302,6 @@ export interface OnChainBucketDetails {
   snapshot: OnChainBucketSnapshot | null
   historicalRoots: Array<{ position: number; root: string }>
   totalSnapshots: number
-  checkpointConfig: OnChainCheckpointConfig | null
-  lastCheckpointWindow: bigint | null
-  checkpointPoolBalance: bigint
-  checkpointReward: bigint
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -436,7 +426,6 @@ export async function getProviderCheckpoints(address: string): Promise<OnChainCh
 
 export async function getBucketDetails(
   bucketIds: number[],
-  providerAddress: string,
 ): Promise<OnChainBucketDetails[]> {
   const a = requireApi()
   const out: OnChainBucketDetails[] = []
@@ -467,39 +456,6 @@ export async function getBucketDetails(
       }
     }
 
-    let checkpointConfig: OnChainCheckpointConfig | null = null
-    try {
-      const config = await a.query.StorageProvider.CheckpointConfigs.getValue(BigInt(bucketId))
-      if (config) {
-        checkpointConfig = {
-          interval: config.interval,
-          gracePeriod: config.grace_period,
-          enabled: config.enabled,
-        }
-      }
-    } catch { /* not configured */ }
-
-    let lastCheckpointWindow: bigint | null = null
-    try {
-      const val = await a.query.StorageProvider.LastCheckpointWindow.getValue(BigInt(bucketId))
-      lastCheckpointWindow = val ?? null
-    } catch { /* not set */ }
-
-    let checkpointPoolBalance = 0n
-    try {
-      const pool = await a.query.StorageProvider.CheckpointPool.getValue(BigInt(bucketId))
-      checkpointPoolBalance = pool ?? 0n
-    } catch { /* no pool */ }
-
-    let checkpointReward = 0n
-    try {
-      const reward = await a.query.StorageProvider.CheckpointRewards.getValue(
-        providerAddress,
-        BigInt(bucketId),
-      )
-      checkpointReward = reward ?? 0n
-    } catch { /* no reward */ }
-
     out.push({
       bucketId,
       members,
@@ -509,10 +465,6 @@ export async function getBucketDetails(
       snapshot,
       historicalRoots,
       totalSnapshots: bucket.total_snapshots,
-      checkpointConfig,
-      lastCheckpointWindow,
-      checkpointPoolBalance,
-      checkpointReward,
     })
   }
   return out

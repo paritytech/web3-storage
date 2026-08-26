@@ -24,7 +24,6 @@ import {
   challengeCheckpoint,
   challengeOffchain,
   connect,
-  currentRelayBlock,
   downloadChunk,
   endAgreement,
   ensureProviderRegistered,
@@ -89,15 +88,18 @@ async function setupAgreement(
     signed.terms.valid_until
   );
   console.log("  Redeeming on-chain via establish_storage_agreement...");
-  const { bucketId } = await establishStorageAgreement(api, client, provider, signed);
+  // Finalize: the immediate upload reads bucket membership from the provider's
+  // finalized view, so an in-block establish would race it.
+  const { bucketId } = await establishStorageAgreement(api, client, provider, signed, {
+    mode: "finalized",
+  });
   console.log("  Bucket %s opened with primary agreement", bucketId);
   return bucketId;
 }
 
-async function uploadAndVerify(api: ParachainApi, bucketId: bigint) {
+async function uploadAndVerify(api: ParachainApi, bucketId: bigint, signer: ChainSigner) {
   const payload = `Hello, Web3 Storage! [${new Date().toISOString()}] provider=${PROVIDER_SEED}`;
-  const nonce = await currentRelayBlock(api);
-  const { hash, data, commit } = await uploadChunk(PROVIDER_URL, bucketId, payload, nonce);
+  const { hash, data, commit } = await uploadChunk(PROVIDER_URL, bucketId, payload, signer);
   console.log("  Uploaded %d bytes, mmr_root=%s", data.length, commit.mmr_root);
 
   const downloaded = await downloadChunk(PROVIDER_URL, hash);
@@ -114,7 +116,6 @@ async function uploadAndVerify(api: ParachainApi, bucketId: bigint) {
     startSeq: commit.start_seq,
     leafCount: commit.leaf_count,
     providerSignature: commit.provider_signature,
-    nonce: commit.nonce,
   };
 }
 
@@ -183,7 +184,7 @@ async function main() {
     const bucketId = await setupAgreement(api, PROVIDER_URL, client, provider);
 
     console.log("\n=== Step 2: Upload data ===");
-    const upload = await uploadAndVerify(api, bucketId);
+    const upload = await uploadAndVerify(api, bucketId, client);
 
     console.log("\n=== Step 3: Off-chain challenge ===");
     const offchainId = await challengeOffchain(
@@ -213,8 +214,7 @@ async function main() {
     console.log("  Challenge defended");
 
     console.log("\n=== Step 5: Submit checkpoint ===");
-    const ckNonce = await currentRelayBlock(api);
-    const ck = await fetchCheckpointSignature(PROVIDER_URL, bucketId, ckNonce);
+    const ck = await fetchCheckpointSignature(PROVIDER_URL, bucketId);
     console.log("  Checkpoint mmr_root:", ck.mmr_root);
     console.log("  Checkpoint leaf_count:", ck.leaf_count);
     await submitClientCheckpoint(api, client, provider, bucketId, ck);

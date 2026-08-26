@@ -5,6 +5,8 @@
 use serde::{Deserialize, Serialize};
 use storage_primitives::BucketId;
 
+pub use provider_storage::{BucketStats, BucketSummary};
+
 // ─────────────────────────────────────────────────────────────────────────────
 // On-chain Provider Info
 // ─────────────────────────────────────────────────────────────────────────────
@@ -102,10 +104,6 @@ pub struct CommitRequest {
     pub bucket_id: BucketId,
     /// Data roots to add to the MMR
     pub data_roots: Vec<String>,
-    /// `CommitmentPayload` nonce — anchor block at which the caller expects to
-    /// submit the resulting signature on-chain. The provider signs over
-    /// this value so the pallet's recency check passes.
-    pub nonce: u64,
 }
 
 /// Response from commit operation.
@@ -119,10 +117,6 @@ pub struct CommitResponse {
     pub leaf_indices: Vec<u64>,
     /// Provider signature over the commitment
     pub provider_signature: String,
-    /// Echo of the nonce the provider signed over (the same value the caller
-    /// passed in). Returned for symmetry so downstream code doesn't have to
-    /// thread it through manually.
-    pub nonce: u64,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -159,8 +153,6 @@ pub struct ReadResponse {
 #[derive(Debug, Clone, Deserialize)]
 pub struct CommitmentQuery {
     pub bucket_id: BucketId,
-    /// `CommitmentPayload` nonce. See [`CommitRequest::nonce`].
-    pub nonce: u64,
 }
 
 /// Response with current commitment.
@@ -171,7 +163,6 @@ pub struct CommitmentResponse {
     pub start_seq: u64,
     pub leaf_count: u64,
     pub provider_signature: String,
-    pub nonce: u64,
 }
 
 /// Response with checkpoint-compatible signature (signs with real leaf_count).
@@ -182,15 +173,6 @@ pub struct CheckpointSignatureResponse {
     pub start_seq: u64,
     pub leaf_count: u64,
     pub provider_signature: String,
-    pub nonce: u64,
-}
-
-/// Response from triggering a checkpoint via the coordinator.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TriggerCheckpointResponse {
-    pub bucket_id: BucketId,
-    pub triggered: bool,
-    pub message: String,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -263,8 +245,6 @@ pub struct MerkleProofData {
 pub struct DeleteRequest {
     pub bucket_id: BucketId,
     pub new_start_seq: u64,
-    /// `CommitmentPayload` nonce for the provider's post-deletion signature.
-    pub nonce: u64,
 }
 
 /// Response from delete operation.
@@ -274,21 +254,11 @@ pub struct DeleteResponse {
     pub start_seq: u64,
     pub leaf_count: u64,
     pub provider_signature: String,
-    pub nonce: u64,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Bucket Types
 // ─────────────────────────────────────────────────────────────────────────────
-
-/// Bucket summary info.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BucketSummary {
-    pub bucket_id: BucketId,
-    pub mmr_root: String,
-    pub start_seq: u64,
-    pub leaf_count: u64,
-}
 
 /// Response with bucket list.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -341,15 +311,6 @@ pub struct StatsResponse {
     pub total_nodes: u64,
     pub total_bytes: u64,
     pub buckets: Vec<BucketStats>,
-}
-
-/// Per-bucket statistics.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BucketStats {
-    pub bucket_id: BucketId,
-    pub leaf_count: u64,
-    pub node_count: u64,
-    pub bytes_stored: u64,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

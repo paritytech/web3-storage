@@ -105,9 +105,9 @@ export async function waitForNextBlock(papi: PolkadotClient): Promise<void> {
 /**
  * Wait until the chain's best head is strictly greater than `target`.
  *
- * Callers that need to land an extrinsic at a specific block window (e.g.
- * `provider_checkpoint`, `report_missed_checkpoint`) use this to time their
- * submission so the runtime sees the block range they computed against.
+ * Callers that need to land an extrinsic at a specific block window use this
+ * to time their submission so the runtime sees the block range they computed
+ * against.
  */
 export async function waitForBlock(
   papi: PolkadotClient,
@@ -134,10 +134,9 @@ export async function waitForBlock(
  * Current relay-chain block number, read from
  * `ParachainSystem.LastRelayChainBlockNumber` at the best block.
  *
- * Every on-chain duration (timeouts, checkpoint windows, `valid_until`,
- * `CommitmentPayload.nonce` recency) is measured in relay-chain blocks, not
- * parachain blocks — snapshot this, never `System.Number`, when building a
- * nonce or window-timed extrinsic.
+ * Every on-chain duration (timeouts, checkpoint windows, `valid_until`) is
+ * measured in relay-chain blocks, not parachain blocks — snapshot this, never
+ * `System.Number`, when building a window-timed extrinsic.
  */
 export async function currentRelayBlock(api: ParachainApi): Promise<number> {
   return Number(

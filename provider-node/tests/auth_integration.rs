@@ -2,75 +2,29 @@
 
 //! Integration tests for auth-enabled HTTP endpoints.
 //!
-//! These tests spin up a real HTTP server with `auth_enabled = true` and a
-//! `MockResolver` that returns configurable roles for test accounts.  All
-//! assertions go through real HTTP requests — the auth middleware, signature
-//! verification, membership cache lookup, and role check are exercised as a
-//! single end-to-end path.
+//! These tests spin up a real HTTP server whose membership is a fixed member
+//! set with configurable roles per test account. All assertions go through
+//! real HTTP requests — the auth middleware, signature verification,
+//! membership cache lookup, and role check are exercised as a single
+//! end-to-end path.
+
+mod common;
 
 use axum::http::StatusCode;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
+use common::{current_timestamp, make_auth_header};
+use provider_auth::{Authenticator, StaticMembershipResolver};
+use provider_storage::temp_rocksdb;
 use reqwest::Client;
 use serde_json::Value;
 use sp_core::{sr25519, Pair};
 use std::sync::Arc;
 use std::time::Duration;
 use storage_primitives::Role;
-use storage_provider_node::auth::{MembershipCache, MembershipResolver};
-use storage_provider_node::{create_router, ProviderState, Storage};
+use storage_provider_node::{create_router, ProviderDeps, ProviderState};
 use tokio::net::TcpListener;
 
 type AccountId32 = sp_core::crypto::AccountId32;
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Mock resolver (returns configurable roles, no chain needed)
-// ─────────────────────────────────────────────────────────────────────────────
-
-struct MockResolver {
-    members: std::sync::Mutex<Vec<(AccountId32, Role)>>,
-}
-
-impl MockResolver {
-    fn new(members: Vec<(AccountId32, Role)>) -> Self {
-        Self {
-            members: std::sync::Mutex::new(members),
-        }
-    }
-}
-
-#[async_trait::async_trait]
-impl MembershipResolver for MockResolver {
-    async fn fetch_members(&self, _bucket_id: u64) -> Result<Vec<(AccountId32, Role)>, String> {
-        Ok(self.members.lock().unwrap().clone())
-    }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Auth header helpers
-// ─────────────────────────────────────────────────────────────────────────────
-
-fn current_timestamp() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs()
-}
-
-fn make_auth_header(
-    keypair: &sr25519::Pair,
-    method: &str,
-    bucket_id: u64,
-    timestamp: u64,
-) -> String {
-    let message = format!("web3storage:{method}:{bucket_id}:{timestamp}");
-    let signature = keypair.sign(message.as_bytes());
-    format!(
-        "Web3Storage 0x{}:0x{}:{}",
-        hex_encode(&keypair.public().0),
-        hex_encode(&signature.0),
-        timestamp
-    )
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Test server
@@ -79,6 +33,8 @@ fn make_auth_header(
 struct AuthTestServer {
     addr: std::net::SocketAddr,
     client: Client,
+    /// This server's scratch directory; dropped with the server.
+    _dir: tempfile::TempDir,
 }
 
 impl AuthTestServer {
@@ -87,16 +43,18 @@ impl AuthTestServer {
         let alice_kp = sr25519::Pair::from_string("//Alice", None).unwrap();
         let alice_account = AccountId32::new(alice_kp.public().0);
 
-        let resolver = MockResolver::new(vec![(alice_account, alice_role)]);
-        let cache = Arc::new(MembershipCache::new(
-            Box::new(resolver),
-            Duration::from_secs(60),
-        ));
-
-        let mut state = ProviderState::with_seed(Arc::new(Storage::new()), "//Alice")
-            .expect("//Alice is valid");
-        // 300s skew keeps the default the `*_expired_timestamp` tests assume.
-        state.set_auth_config(cache, Duration::from_secs(300));
+        // The 300s skew keeps the default the `*_expired_timestamp` tests assume.
+        let (storage, nonce_store, dir) = temp_rocksdb();
+        let deps = ProviderDeps {
+            storage,
+            nonce_store,
+            auth: Arc::new(Authenticator::new(StaticMembershipResolver(vec![(
+                alice_account,
+                alice_role,
+            )
+                .into()]))),
+        };
+        let state = ProviderState::with_seed(deps, "//Alice").expect("//Alice is valid");
 
         let app = create_router(Arc::new(state));
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -107,6 +65,7 @@ impl AuthTestServer {
         Self {
             addr,
             client: Client::new(),
+            _dir: dir,
         }
     }
 
@@ -479,7 +438,7 @@ async fn delete_admin_can_prune() {
         .client
         .post(server.url("/delete"))
         .header("Authorization", &header)
-        .json(&serde_json::json!({ "bucket_id": 1, "new_start_seq": 0, "nonce": 0 }))
+        .json(&serde_json::json!({ "bucket_id": 1, "new_start_seq": 0 }))
         .send()
         .await
         .unwrap();
@@ -500,7 +459,7 @@ async fn delete_writer_blocked() {
         .client
         .post(server.url("/delete"))
         .header("Authorization", &header)
-        .json(&serde_json::json!({ "bucket_id": 1, "new_start_seq": 0, "nonce": 0 }))
+        .json(&serde_json::json!({ "bucket_id": 1, "new_start_seq": 0 }))
         .send()
         .await
         .unwrap();
@@ -515,7 +474,7 @@ async fn delete_missing_auth_returns_401() {
     let resp = server
         .client
         .post(server.url("/delete"))
-        .json(&serde_json::json!({ "bucket_id": 1, "new_start_seq": 0, "nonce": 0 }))
+        .json(&serde_json::json!({ "bucket_id": 1, "new_start_seq": 0 }))
         .send()
         .await
         .unwrap();
@@ -532,7 +491,7 @@ fn node_body(bucket_id: u64, data: &[u8]) -> Value {
     let hash = storage_primitives::blake2_256(data);
     serde_json::json!({
         "bucket_id": bucket_id,
-        "hash": format!("0x{}", hex_encode(hash.as_bytes())),
+        "hash": format!("0x{}", hex::encode(hash.as_bytes())),
         "data": BASE64.encode(data),
     })
 }
@@ -599,7 +558,7 @@ async fn commit_writer_can_commit() {
     let data = b"committed chunk";
     let hash_hex = format!(
         "0x{}",
-        hex_encode(storage_primitives::blake2_256(data).as_bytes())
+        hex::encode(storage_primitives::blake2_256(data).as_bytes())
     );
     let ts = current_timestamp();
     let header = make_auth_header(&alice, "PUT", 1, ts);
@@ -618,7 +577,7 @@ async fn commit_writer_can_commit() {
         .client
         .post(server.url("/commit"))
         .header("Authorization", &header)
-        .json(&serde_json::json!({ "bucket_id": 1, "data_roots": [hash_hex], "nonce": 0 }))
+        .json(&serde_json::json!({ "bucket_id": 1, "data_roots": [hash_hex] }))
         .send()
         .await
         .unwrap();
@@ -639,7 +598,7 @@ async fn commit_reader_blocked() {
         .client
         .post(server.url("/commit"))
         .header("Authorization", &header)
-        .json(&serde_json::json!({ "bucket_id": 1, "data_roots": [], "nonce": 0 }))
+        .json(&serde_json::json!({ "bucket_id": 1, "data_roots": [] }))
         .send()
         .await
         .unwrap();
@@ -647,10 +606,27 @@ async fn commit_reader_blocked() {
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Helpers
-// ─────────────────────────────────────────────────────────────────────────────
+/// A validly-signed request from an account that is not a member of the bucket
+/// must be rejected on the L0 write path — a correct signature only proves
+/// identity, not authorization. (The FS path has `fs_unknown_account_*`; this
+/// closes the same gap for `/node`.)
+#[tokio::test]
+async fn node_non_member_returns_forbidden() {
+    // Alice is the sole (Admin) member; Dave signs a genuine signature but is
+    // not in the member set.
+    let server = AuthTestServer::with_role(Role::Admin).await;
+    let dave = sr25519::Pair::from_string("//Dave", None).unwrap();
 
-fn hex_encode(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
+    let ts = current_timestamp();
+    let header = make_auth_header(&dave, "PUT", 1, ts);
+    let resp = server
+        .client
+        .put(server.url("/node"))
+        .header("Authorization", &header)
+        .json(&node_body(1, b"non-member payload"))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 }

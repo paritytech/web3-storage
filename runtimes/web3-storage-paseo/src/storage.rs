@@ -30,11 +30,6 @@ use crate::{
 parameter_types! {
     pub storage MinProviderStake: Balance = 1_000 * UNIT;  // 1000 tokens minimum stake
     pub storage ChallengeTimeout: BlockNumber = 48 * RC_HOURS;
-    // Replay-protection window for `CommitmentPayload::nonce`. A signature whose
-    // nonce is older than this is rejected. Set wide enough to accommodate
-    // normal off-chain choreography (provider signs, client builds & broadcasts
-    // tx, tx finalises) without forcing re-signing.
-    pub storage MaxNonceAge: BlockNumber = 24 * RC_HOURS;
     // Reserved from the challenger when opening a challenge. 1 token at 12
     // decimals = floor on spam economics. Previously hardcoded `100u32`
     // (1e-10 of a token) which made challenge spam effectively free.
@@ -43,10 +38,6 @@ parameter_types! {
     pub storage RequestTimeout: BlockNumber = 6 * RC_HOURS;
     // 1 token (1e12) per 1 GB (1e9 bytes) = 1000 per byte
     pub storage MinStakePerByte: Balance = 1_000;
-    pub storage DefaultCheckpointInterval: BlockNumber = 100; // relay blocks (~10 min)
-    pub storage DefaultCheckpointGrace: BlockNumber = 20; // relay blocks (~2 min)
-    pub storage CheckpointReward: Balance = 1_000_000_000_000; // 1 token
-    pub storage CheckpointMissPenalty: Balance = 500_000_000_000; // 0.5 token
     /// Must be `> ChallengeTimeout` so any challenge opened up to the
     /// announcement block matures (provider stays slashable) before the
     /// provider can withdraw stake, and `> RequestTimeout` so a
@@ -112,13 +103,8 @@ impl pallet_storage_provider::Config for Runtime {
     type MaxChunkSize = ConstU32<262144>; // 256 KiB
     type ChallengeTimeout = ChallengeTimeout;
     type ChallengeDeposit = ChallengeDeposit;
-    type MaxNonceAge = MaxNonceAge;
     type SettlementTimeout = SettlementTimeout;
     type RequestTimeout = RequestTimeout;
-    type DefaultCheckpointInterval = DefaultCheckpointInterval;
-    type DefaultCheckpointGrace = DefaultCheckpointGrace;
-    type CheckpointReward = CheckpointReward;
-    type CheckpointMissPenalty = CheckpointMissPenalty;
     type MaxBucketsPerMember = ConstU32<1000>;
     type DeregisterAnnouncementPeriod = DeregisterAnnouncementPeriod;
     type MaxChallengesPerDeadline = MaxChallengesPerDeadline;

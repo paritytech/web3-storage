@@ -67,31 +67,38 @@ export async function httpFetch(
   throw lastError instanceof Error ? lastError : new Error("HTTP request failed");
 }
 
-/** The keypair surface needed to sign provider requests (sr25519). */
-export interface SigningKeypair {
+/**
+ * The signing surface needed to authenticate a provider request. Matches the
+ * subset of PAPI's `PolkadotSigner` we use, so both a derived dev signer and a
+ * browser wallet extension satisfy it. `signBytes` is async and — for wallets
+ * and PAPI signers alike — wraps the payload in `<Bytes>…</Bytes>`; the provider
+ * accepts that wrapped form (see `wrap_bytes` in crates/providers/auth).
+ */
+export interface ProviderRequestSigner {
   publicKey: Uint8Array;
-  sign(input: Uint8Array): Uint8Array;
+  signBytes(input: Uint8Array): Promise<Uint8Array>;
 }
 
 /**
- * Build the `Authorization` header the provider node verifies in
- * provider-node/src/auth.rs: header `Web3Storage <pubkey>:<sig>:<timestamp>`
- * over the message `web3storage:<METHOD>:<bucket_id>:<timestamp>` — a RAW
- * sr25519 signature (no `<Bytes>` wrapping), which is why this takes a
- * keypair rather than a PolkadotSigner (signBytes may wrap).
+ * Build the `Authorization` header the provider node verifies via the
+ * crates/providers/auth crate: header `Web3Storage <pubkey>:<sig>:<timestamp>`
+ * over the message `web3storage:<METHOD>:<bucket_id>:<timestamp>`.
+ *
+ * Signs through `signBytes` so wallet-backed signers work — no raw key needed.
  */
-export function signProviderRequest(
-  keypair: SigningKeypair,
+export async function signProviderRequest(
+  signer: ProviderRequestSigner,
   method: string,
   bucketId: bigint | number,
-): Record<string, string> {
-  const timestamp = Math.floor(Date.now() / 1000).toString();
+  time: number = Date.now()
+): Promise<Record<string, string>> {
+  const timestamp = Math.floor(time / 1000).toString();
   // Interpolate the id directly (bigint/number both render as the decimal
-  // string auth.rs reconstructs); `Number(bigint)` would lose precision above
+  // string the provider reconstructs); `Number(bigint)` would lose precision above
   // 2^53 and break signature verification for large bucket ids.
   const message = `web3storage:${method}:${bucketId}:${timestamp}`;
-  const sig = keypair.sign(new TextEncoder().encode(message));
-  const pubHex = toHex(keypair.publicKey);
+  const sig = await signer.signBytes(new TextEncoder().encode(message));
+  const pubHex = toHex(signer.publicKey);
   const sigHex = toHex(sig);
   return { Authorization: `Web3Storage ${pubHex}:${sigHex}:${timestamp}` };
 }

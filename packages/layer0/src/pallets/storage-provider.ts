@@ -280,7 +280,6 @@ export async function submitClientCheckpoint(
     start_seq: number | string;
     leaf_count: number | string;
     provider_signature: string;
-    nonce: number | string;
   },
   opts: SubmitOpts = {},
 ) {
@@ -292,7 +291,6 @@ export async function submitClientCheckpoint(
         start_seq: BigInt(ck.start_seq),
         leaf_count: BigInt(ck.leaf_count),
       },
-      nonce: BigInt(ck.nonce),
       signatures: [[provider.address, Enum("Sr25519", asHex(ck.provider_signature))]],
     }),
     client.signer,
@@ -311,7 +309,6 @@ export async function challengeOffchain(
     leafCount: number | string;
     leafIndex: number | string;
     providerSignature: string;
-    nonce: number | string;
   },
   opts: SubmitOpts = {},
 ) {
@@ -334,7 +331,6 @@ export async function challengeOffchain(
         leaf_index: BigInt(upload.leafIndex),
         chunk_index: 0n,
       },
-      nonce: BigInt(upload.nonce),
       provider_signature: Enum("Sr25519", asHex(upload.providerSignature)),
     }),
     client.signer,
@@ -580,125 +576,5 @@ export async function freezeBucket(
     result.events,
     api.event.StorageProvider.BucketFrozen,
     "BucketFrozen",
-  );
-}
-
-export async function configureCheckpointWindow(
-  api: ParachainApi,
-  admin: ChainSigner,
-  bucketId: bigint,
-  {
-    interval,
-    gracePeriod,
-    enabled = true,
-  }: { interval: number; gracePeriod: number; enabled?: boolean },
-  opts: SubmitOpts = {},
-) {
-  const result = await submitTx(
-    api.tx.StorageProvider.configure_checkpoint_window({
-      bucket_id: bucketId,
-      interval,
-      grace_period: gracePeriod,
-      enabled,
-    }),
-    admin.signer,
-    { label: "configure_checkpoint_window", ...opts },
-  );
-  return requireOneEvent(
-    result.events,
-    api.event.StorageProvider.CheckpointConfigUpdated,
-    "CheckpointConfigUpdated",
-  );
-}
-
-export async function fundCheckpointPool(
-  api: ParachainApi,
-  funder: ChainSigner,
-  bucketId: bigint,
-  amount: bigint,
-  opts: SubmitOpts = {},
-) {
-  const result = await submitTx(
-    api.tx.StorageProvider.fund_checkpoint_pool({
-      bucket_id: bucketId,
-      amount,
-    }),
-    funder.signer,
-    { label: "fund_checkpoint_pool", ...opts },
-  );
-  return requireOneEvent(
-    result.events,
-    api.event.StorageProvider.CheckpointPoolFunded,
-    "CheckpointPoolFunded",
-  );
-}
-
-export async function submitProviderCheckpoint(
-  api: ParachainApi,
-  provider: ChainSigner,
-  bucketId: bigint,
-  duty: { mmr_root: string; start_seq: number | string; leaf_count: number | string },
-  signature: string,
-  window: number,
-  opts: SubmitOpts = {},
-) {
-  const result = await submitTx(
-    api.tx.StorageProvider.provider_checkpoint({
-      bucket_id: bucketId,
-      commitment: {
-        mmr_root: asHex(duty.mmr_root),
-        start_seq: BigInt(duty.start_seq),
-        leaf_count: BigInt(duty.leaf_count),
-      },
-      window: BigInt(window),
-      signatures: [[provider.address, Enum("Sr25519", asHex(signature))]],
-    }),
-    provider.signer,
-    { label: "provider_checkpoint", ...opts },
-  );
-  return requireOneEvent(
-    result.events,
-    api.event.StorageProvider.ProviderCheckpointSubmitted,
-    "ProviderCheckpointSubmitted",
-  );
-}
-
-export async function claimCheckpointRewards(
-  api: ParachainApi,
-  provider: ChainSigner,
-  bucketId: bigint,
-  opts: SubmitOpts = {},
-) {
-  const result = await submitTx(
-    api.tx.StorageProvider.claim_checkpoint_rewards({ bucket_id: bucketId }),
-    provider.signer,
-    { label: "claim_checkpoint_rewards", ...opts },
-  );
-  return requireOneEvent(
-    result.events,
-    api.event.StorageProvider.CheckpointRewardClaimed,
-    "CheckpointRewardClaimed",
-  );
-}
-
-export async function reportMissedCheckpoint(
-  api: ParachainApi,
-  reporter: ChainSigner,
-  bucketId: bigint,
-  window: number,
-  opts: SubmitOpts = {},
-) {
-  const result = await submitTx(
-    api.tx.StorageProvider.report_missed_checkpoint({
-      bucket_id: bucketId,
-      window: BigInt(window),
-    }),
-    reporter.signer,
-    { label: "report_missed_checkpoint", ...opts },
-  );
-  return requireOneEvent(
-    result.events,
-    api.event.StorageProvider.CheckpointMissPenalized,
-    "CheckpointMissPenalized",
   );
 }
