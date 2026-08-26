@@ -1,14 +1,17 @@
-//! A minimal key/value abstraction over the five candidate engines so the
+//! A minimal key/value abstraction over the candidate engines so the
 //! workloads can be written once and run against each.
 //!
 //! Fairness note (also stated in the reports): achieving *identical* durability
-//! semantics across five engines with different commit pipelines is not
+//! semantics across engines with different commit pipelines is not
 //! possible. We pick a documented, comparable baseline per engine and surface
 //! the `sync` flag on batch commits to the strongest equivalent each one
 //! offers. The exact per-engine configuration lives in each submodule and is
 //! reproduced in `03-configuration-guide.md`.
 
 mod concurrent;
+mod heed_store;
+mod jammdb_store;
+mod mdbx_store;
 mod paritydb;
 mod redb_store;
 mod rocks;
@@ -16,6 +19,13 @@ mod sled_store;
 mod sqlite;
 
 pub use concurrent::{open_shared_concurrent, Writer};
+pub use heed_store::{map_size as lmdb_map_size, set_map_size as set_lmdb_map_size};
+pub use sqlite::{
+    cache_size_kib as sqlite_cache_size_kib, mmap_size as sqlite_mmap_size,
+    page_size as sqlite_page_size, set_cache_size_kib as set_sqlite_cache_size_kib,
+    set_mmap_size as set_sqlite_mmap_size, set_page_size as set_sqlite_page_size,
+    set_split_index as set_sqlite_split_index, split_index as sqlite_split_index,
+};
 
 use clap::ValueEnum;
 use std::path::Path;
@@ -29,6 +39,12 @@ pub enum Engine {
     Paritydb,
     /// Pure-Rust copy-on-write B-tree — SQLite's index family without SQL.
     Redb,
+    /// LMDB via `heed` — mmap'd B+tree, zero background threads. Sharded only.
+    Lmdb,
+    /// libmdbx — LMDB descendant with dynamic, self-shrinking geometry. Sharded only.
+    Mdbx,
+    /// jammdb — pure-Rust BoltDB port, the same design as LMDB. Sharded only.
+    Jammdb,
 }
 
 impl Engine {
@@ -39,6 +55,9 @@ impl Engine {
             Engine::Sqlite => "sqlite",
             Engine::Paritydb => "paritydb",
             Engine::Redb => "redb",
+            Engine::Lmdb => "lmdb",
+            Engine::Mdbx => "mdbx",
+            Engine::Jammdb => "jammdb",
         }
     }
 
@@ -50,6 +69,9 @@ impl Engine {
             Engine::Sqlite => Box::new(sqlite::SqliteStore::open(path)),
             Engine::Paritydb => Box::new(paritydb::ParityStore::open(path)),
             Engine::Redb => Box::new(redb_store::RedbStore::open(path)),
+            Engine::Lmdb => Box::new(heed_store::HeedStore::open(path)),
+            Engine::Mdbx => Box::new(mdbx_store::MdbxStore::open(path)),
+            Engine::Jammdb => Box::new(jammdb_store::JammdbStore::open(path)),
         }
     }
 }

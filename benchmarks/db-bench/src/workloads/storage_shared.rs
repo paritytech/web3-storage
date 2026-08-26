@@ -6,7 +6,7 @@
 use super::*;
 use crate::engines::{open_shared_concurrent, Engine};
 use crate::metrics::{
-    directory_size_bytes, open_fd_count, process_rss_bytes, LatencyStats, Throughput,
+    directory_allocated_bytes, open_fd_count, process_rss_bytes, LatencyStats, Throughput,
 };
 use serde_json::json;
 use std::time::Instant;
@@ -57,7 +57,7 @@ fn shared_write_read(engine: Engine, context: &Context) -> Record {
 
     let fd_after = open_fd_count();
     let rss_after = process_rss_bytes();
-    let disk_bytes = directory_size_bytes(&directory);
+    let disk_bytes = directory_allocated_bytes(&directory);
     drop(store);
 
     let mut record = Record::new(COMPONENT, "shared_write", engine.name());
@@ -137,7 +137,7 @@ fn shared_bucket_delete(engine: Engine, context: &Context) -> Record {
         store.commit_batch(&batch, false);
     }
     store.flush();
-    let disk_before = directory_size_bytes(&directory);
+    let disk_before = directory_allocated_bytes(&directory);
 
     // Delete the first `to_delete` buckets, key by key (no native range delete
     // for hash-indexed engines; the contiguous key layout from Step 4 is what
@@ -152,7 +152,7 @@ fn shared_bucket_delete(engine: Engine, context: &Context) -> Record {
     let delete_elapsed = started.elapsed();
     drop(store);
     drop(engine.open(&directory)); // settle
-    let disk_after = directory_size_bytes(&directory);
+    let disk_after = directory_allocated_bytes(&directory);
 
     let mut record = Record::new(COMPONENT, "shared_bucket_delete", engine.name());
     record.params = json!({ "architecture": "shared", "buckets": buckets, "deleted_buckets": to_delete, "leaves_per_bucket": leaves });

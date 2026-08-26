@@ -38,6 +38,12 @@ pub fn open_shared_concurrent(engine: Engine, path: &Path) -> Arc<dyn Shared> {
         Engine::Sqlite => Arc::new(SqliteShared::open(path)),
         Engine::Paritydb => Arc::new(ParityShared::open(path)),
         Engine::Redb => Arc::new(RedbShared::open(path)),
+        // LMDB, mdbx and jammdb are single-writer mmap'd B+trees evaluated for
+        // the per-bucket-file model only; they are absent from the shared-DB
+        // candidate list, so this handle is never requested for them.
+        Engine::Lmdb | Engine::Mdbx | Engine::Jammdb => {
+            unreachable!("{} is a sharded-only candidate", engine.name())
+        }
     }
 }
 
@@ -194,6 +200,7 @@ impl SqliteShared {
         let file = path.join("db.sqlite");
         // Pre-create the file + table once so per-thread writers just attach.
         let connection = Connection::open(&file).expect("open sqlite shared");
+        super::sqlite::apply_page_size_for_shared(&connection);
         connection
             .pragma_update(None, "journal_mode", "WAL")
             .unwrap();
@@ -220,14 +227,26 @@ impl Shared for SqliteShared {
         connection
             .busy_timeout(std::time::Duration::from_secs(30))
             .unwrap();
-        Box::new(SqliteWriter { connection })
+        Box::new(SqliteWriter {
+            connection,
+            full_sync: false,
+        })
     }
 }
 struct SqliteWriter {
     connection: Connection,
+    full_sync: bool,
 }
 impl Writer for SqliteWriter {
-    fn commit_batch(&mut self, batch: &[(Vec<u8>, Vec<u8>)], _sync: bool) {
+    fn commit_batch(&mut self, batch: &[(Vec<u8>, Vec<u8>)], sync: bool) {
+        // Must honour `sync` identically to the sharded store: when this writer
+        // ignored the flag it made the shared architecture look far faster than
+        // sharded purely because it was skipping the durability the other side
+        // was paying for.
+        if sync != self.full_sync {
+            super::sqlite::set_full_sync(&self.connection, sync);
+            self.full_sync = sync;
+        }
         let transaction = self
             .connection
             .transaction()

@@ -1,5 +1,7 @@
 # Generated files
 /target/
+# db-bench is a standalone workspace, so it has its own target directory.
+/benchmarks/db-bench/target/
 **/*.rs.bk
 coverage
 provider-data
