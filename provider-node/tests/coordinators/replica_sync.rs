@@ -157,7 +157,7 @@ async fn test_already_synced() {
     let hash = sp_crypto_hashing::blake2_256(&data);
     let data_root = H256::from(hash);
     let _ = storage.store_node(1, data_root, data, None);
-    let (mmr_root, _, _, _) = storage.commit(1, vec![data_root]).unwrap();
+    let mmr_root = storage.commit(1, vec![data_root]).unwrap().mmr_root;
 
     let deps = ProviderDeps {
         storage,
@@ -378,7 +378,7 @@ async fn test_duties_filter_already_synced() {
     let hash = sp_crypto_hashing::blake2_256(&data);
     let data_root = H256::from(hash);
     storage.store_node(1, data_root, data, None).unwrap();
-    let (mmr_root, _, _, _) = storage.commit(1, vec![data_root]).unwrap();
+    let mmr_root = storage.commit(1, vec![data_root]).unwrap().mmr_root;
 
     let deps = ProviderDeps {
         storage,

@@ -640,17 +640,9 @@ pub mod pallet {
         pub provider: T::AccountId,
         /// Account that issued the challenge.
         pub challenger: T::AccountId,
-        /// MMR root the provider committed to.
-        pub mmr_root: H256,
-        /// Start sequence of the commitment.
-        pub start_seq: u64,
-        /// Leaf count of the committed MMR. Lets `respond_to_challenge` bind the
-        /// proof to the exact `leaf_index` (see
-        /// [`storage_primitives::verify_mmr_proof`]). Every challenge path supplies
-        /// it: the snapshot's for `challenge_checkpoint`, the signed one for
-        /// `challenge_offchain`, and the replica's synced range for
-        /// `challenge_replica`.
-        pub leaf_count: u64,
+        /// The commitment being challenged; its `leaf_count` binds the proof
+        /// to the exact `leaf_index` in `respond_to_challenge`.
+        pub commitment: Commitment,
         /// Leaf + chunk being challenged.
         pub target: ChunkLocation,
         /// Deposit locked by challenger.
@@ -883,103 +875,148 @@ pub mod pallet {
     #[pallet::error]
     pub enum Error<T> {
         // Provider errors
+        /// Account already has a provider record.
         ProviderAlreadyRegistered,
+        /// No provider record for this account.
         ProviderNotFound,
+        /// Stake below `MinProviderStake`.
         InsufficientStake,
+        /// Stake does not back the requested bytes.
         InsufficientStakeForBytes,
+        /// Provider still has live agreements.
         ProviderHasActiveAgreements,
+        /// Provider is not accepting new primary agreements.
         ProviderNotAcceptingPrimary,
+        /// Provider is not accepting replicas (`replica_sync_price` unset).
         ProviderNotAcceptingReplicas,
+        /// Provider is not accepting agreement extensions.
         ProviderNotAcceptingExtensions,
+        /// `remove_slashed` target still has stake.
         ProviderNotSlashed,
-        /// Cannot set max_capacity below current committed_bytes.
+        /// Cannot set `max_capacity` below current `committed_bytes`.
         CapacityBelowCommitted,
-        /// Provider capacity exceeded on accept (committed + request > max_capacity).
+        /// Accepting would exceed `max_capacity` (committed + request).
         CapacityExceeded,
-        /// Stake insufficient to back declared capacity.
+        /// Stake insufficient to back the declared capacity.
         InsufficientStakeForCapacity,
-        /// Provider settings specify `min_duration > max_duration
+        /// Provider settings specify `min_duration > max_duration`.
         MinDurationExceedsMaxDuration,
-        /// Provider has already announced a deregistration; the action is
-        /// rejected until they complete or cancel it.
+        /// Action blocked while a deregistration announcement is pending.
         DeregisterAnnounced,
-        /// Provider has no announced deregistration to complete or cancel.
+        /// No announced deregistration to complete or cancel.
         DeregisterNotAnnounced,
-        /// `complete_deregister` called before `DeregisterAnnouncementPeriod`
-        /// elapsed.
+        /// `DeregisterAnnouncementPeriod` has not elapsed yet.
         DeregisterPeriodNotElapsed,
 
         // Bucket errors
+        /// No bucket with this id.
         BucketNotFound,
+        /// Bucket is frozen (append-only).
         BucketFrozen,
+        /// Operation requires a frozen bucket.
         BucketNotFrozen,
+        /// Caller is not a bucket admin.
         NotBucketAdmin,
+        /// Caller is not a bucket member.
         NotBucketMember,
+        /// Caller has no write permission on the bucket.
         NotBucketWriter,
+        /// No such member in the bucket.
         MemberNotFound,
+        /// Admins cannot be demoted, only removed.
         CannotDemoteAdmin,
+        /// A bucket must keep at least one admin.
         LastAdminCannotBeRemoved,
+        /// Bucket member list is full (`MaxMembers`).
         MaxMembersReached,
+        /// Bucket primary-provider list is full (`MaxPrimaryProviders`).
         MaxPrimaryProvidersReached,
+        /// Snapshot carries fewer signatures than `min_providers`.
         MinProvidersNotMet,
+        /// `min_providers` exceeds the bucket's primary-provider count.
         InvalidMinProviders,
 
         // Agreement errors
+        /// No agreement for this `(bucket, provider)`.
         AgreementNotFound,
+        /// An agreement for this `(bucket, provider)` already exists.
         AgreementAlreadyExists,
+        /// Agreement is past its expiry block.
         AgreementExpired,
+        /// Agreement has not expired yet.
         AgreementNotExpired,
+        /// Extensions are blocked for this agreement.
         AgreementExtensionsBlocked,
+        /// Caller does not own this agreement.
         NotAgreementOwner,
+        /// Duration below the provider's `min_duration`.
         DurationTooShort,
+        /// Duration above the provider's `max_duration`.
         DurationTooLong,
+        /// Cost exceeds the caller's `max_payment` cap.
         PaymentExceedsMax,
+        /// Replica agreements run to expiry; admins cannot terminate them.
         CannotTerminateReplica,
+        /// `SettlementTimeout` passed; the payment can only be swept now.
         SettlementWindowPassed,
 
         // Replica errors
+        /// Provider is not a replica for this bucket.
         NotReplica,
+        /// Sync confirmed less than `min_sync_interval` blocks after the last.
         SyncTooFrequent,
+        /// Synced root is neither the current snapshot nor a known
+        /// historical root.
         InvalidSyncRoot,
+        /// `sync_balance` cannot cover the per-sync price.
         InsufficientSyncBalance,
-        /// The replica's last sync was to a historical root whose `(start_seq,
-        /// leaf_count)` range the chain does not retain, so `challenge_replica`
-        /// cannot bind the proof to a leaf. Re-sync to the current snapshot (or
-        /// use `challenge_offchain` with a signed commitment) to challenge it.
+        /// Last sync was to a historical root whose `(start_seq, leaf_count)`
+        /// range the chain does not retain, so `challenge_replica` cannot bind
+        /// a proof; re-sync to the current snapshot or use `challenge_offchain`.
         ReplicaSyncRangeUnknown,
 
         // Challenge errors
+        /// No challenge at this `(deadline, index)`.
         ChallengeNotFound,
+        /// A challenge already exists at this id.
         ChallengeAlreadyExists,
+        /// Response proof failed verification.
         InvalidChallengeProof,
+        /// Response arrived after the challenge deadline.
         ChallengeExpired,
+        /// Responder is not the challenged provider.
         NotChallengeProvider,
+        /// Provider did not sign the bucket's current snapshot.
         ProviderNotInSnapshot,
-        /// Challenge `leaf_index` is out of range for the committed `leaf_count`
-        /// (the leaf does not exist), so no valid proof could ever defend it.
+        /// `leaf_index` is not covered by the commitment's `leaf_count`; the
+        /// leaf does not exist, so no valid proof could ever defend it.
         LeafBeyondCanonical,
+        /// Deletion-response admin signature or range failed verification.
         InvalidDeletionProof,
-        /// A provider with unresolved challenges (`PendingChallenges > 0`)
-        /// cannot complete deregistration — they are still slashable.
+        /// Provider cannot deregister with unresolved challenges pending.
         ProviderHasPendingChallenges,
-        /// An agreement with an unresolved challenge against this
-        /// `(bucket, provider)` cannot be torn down until the challenge
-        /// resolves (defended, slashed, or timed out).
+        /// Agreement cannot be torn down with an unresolved challenge pending.
         AgreementHasPendingChallenge,
-        /// `MaxChallengesPerDeadline` challenges have already been allocated
-        /// for the deadline this challenge would land on. Caps the total the
-        /// `on_initialize` sweep must eventually drain for a single key.
+        /// `MaxChallengesPerDeadline` already allocated for this deadline;
+        /// bounds the `on_initialize` sweep's per-key drain.
         TooManyChallengesThisBlock,
 
         // Checkpoint errors
+        /// Signature does not verify against the provider's registered key.
         InvalidSignature,
+        /// Bucket has no snapshot yet.
         NoSnapshot,
+        /// Snapshot `start_seq` is below the bucket's `frozen_start_seq`.
         SnapshotViolatesFrozen,
+        /// Fewer valid signatures than the bucket's `min_providers`.
         InsufficientSignatures,
 
         // General errors
+        /// Arithmetic overflow in a balance or size computation.
         ArithmeticOverflow,
+        /// Multiaddr failed validation.
         InvalidMultiaddr,
+        /// Public key is not a valid Sr25519/Ed25519/ECDSA key.
         InvalidPublicKey,
 
         // Reverse index errors
@@ -1009,7 +1046,7 @@ pub mod pallet {
         /// primary terms must carry no bucket, replica terms must name the
         /// targeted bucket.
         TermsBucketMismatch,
-        /// Storage agreement requested 0 byte
+        /// Agreement requested zero bytes.
         InvalidMaxBytesRequest,
     }
 
@@ -2153,13 +2190,10 @@ pub mod pallet {
             origin: OriginFor<T>,
             bucket_id: BucketId,
             provider: T::AccountId,
-            // `commitment` carries the `(mmr_root, start_seq, leaf_count)` the
-            // provider signed. The challenger passes it through so the payload
-            // reconstruction matches the signed `CommitmentPayload` exactly, and
-            // so the challenge binds the proof to the exact `leaf_index` in
-            // `respond_to_challenge` (via the signed `leaf_count`).
+            // Passed through verbatim so the payload reconstruction matches
+            // what the provider signed; its `leaf_count` binds the proof to
+            // `target.leaf_index` in `respond_to_challenge`.
             commitment: Commitment,
-            // `target` is the leaf+chunk being challenged within `commitment`.
             target: ChunkLocation,
             provider_signature: sp_runtime::MultiSignature,
         ) -> DispatchResult {
@@ -2320,8 +2354,8 @@ pub mod pallet {
                     let mmr_ok = storage_primitives::verify_mmr_proof(
                         mmr_proof,
                         challenge.target.leaf_index,
-                        challenge.leaf_count,
-                        &challenge.mmr_root,
+                        challenge.commitment.leaf_count,
+                        &challenge.commitment.mmr_root,
                     );
                     if chunk_ok && mmr_ok {
                         Ok(())
@@ -2338,6 +2372,7 @@ pub mod pallet {
                     Self::ensure_admin(admin, &bucket)?;
 
                     let challenged_seq = challenge
+                        .commitment
                         .start_seq
                         .saturating_add(challenge.target.leaf_index);
                     if challenged_seq >= *new_start_seq {
@@ -2371,6 +2406,7 @@ pub mod pallet {
                         None => Err(SlashReason::InvalidSupersededClaim),
                         Some(snapshot) => {
                             let challenged_seq = challenge
+                                .commitment
                                 .start_seq
                                 .saturating_add(challenge.target.leaf_index);
                             // (a) The challenged root must NOT be the current
@@ -2379,7 +2415,7 @@ pub mod pallet {
                             // (b)+(c) The challenged seq must still sit inside
                             // the canonical range; front-rolled/deleted data
                             // has to go through the admin-signed `Deleted` path.
-                            if challenge.mmr_root != snapshot.commitment.mmr_root
+                            if challenge.commitment.mmr_root != snapshot.commitment.mmr_root
                                 && snapshot.contains_seq(challenged_seq)
                             {
                                 Ok(())

@@ -28,12 +28,6 @@ impl Mmr {
         }
     }
 
-    /// Get the current root hash (bagged peaks).
-    pub fn root(&self) -> H256 {
-        // `bag_peaks(&[])` is `H256::zero()`, covering the empty-MMR case.
-        storage_primitives::bag_peaks(&self.peaks())
-    }
-
     /// Get the peaks of the MMR (left to right, highest to lowest height).
     pub fn peaks(&self) -> Vec<H256> {
         let mut peaks = Vec::new();
@@ -140,29 +134,6 @@ impl Mmr {
         Some((siblings, path, self.peaks()))
     }
 
-    /// Verify a proof against an MMR root.
-    pub fn verify_proof(root: H256, leaf_hash: H256, proof: &MmrProof) -> bool {
-        if proof.siblings.len() != proof.path.len() {
-            return false;
-        }
-
-        let mut current = leaf_hash;
-
-        for (sibling, is_right) in proof.siblings.iter().zip(proof.path.iter()) {
-            current = if *is_right {
-                hash_children(*sibling, current)
-            } else {
-                hash_children(current, *sibling)
-            };
-        }
-
-        if !proof.peaks.contains(&current) {
-            return false;
-        }
-
-        storage_primitives::bag_peaks(&proof.peaks) == root
-    }
-
     /// Determine which peak subtree a leaf belongs to.
     ///
     /// Returns `(peak_height, local_leaf_index)` where peak_height is the
@@ -217,6 +188,32 @@ mod tests {
     use super::*;
     use storage_primitives::blake2_256;
 
+    /// Bagged root of `m`'s current peaks.
+    fn root_of(m: &Mmr) -> H256 {
+        storage_primitives::bag_peaks(&m.peaks())
+    }
+
+    /// Walk a proof to its peak and bag; test scaffolding for the local
+    /// prover's proof type (the production verifier lives in primitives and
+    /// takes the SCALE proof type).
+    fn verify_proof(root: H256, leaf_hash: H256, proof: &MmrProof) -> bool {
+        if proof.siblings.len() != proof.path.len() {
+            return false;
+        }
+        let mut current = leaf_hash;
+        for (sibling, is_right) in proof.siblings.iter().zip(proof.path.iter()) {
+            current = if *is_right {
+                hash_children(*sibling, current)
+            } else {
+                hash_children(current, *sibling)
+            };
+        }
+        if !proof.peaks.contains(&current) {
+            return false;
+        }
+        storage_primitives::bag_peaks(&proof.peaks) == root
+    }
+
     #[test]
     fn test_mmr_basic() {
         let mut mmr = Mmr::new();
@@ -234,7 +231,7 @@ mod tests {
         mmr.push(leaf3);
         assert_eq!(mmr.leaf_count(), 3);
 
-        let root = mmr.root();
+        let root = root_of(&mmr);
         assert_ne!(root, H256::zero());
     }
 
@@ -265,12 +262,12 @@ mod tests {
             mmr.push(*leaf);
         }
 
-        let root = mmr.root();
+        let root = root_of(&mmr);
 
         for (i, leaf) in leaves.iter().enumerate() {
             let proof = mmr.proof(i as u64).expect("proof should exist");
             assert!(
-                Mmr::verify_proof(root, *leaf, &proof),
+                verify_proof(root, *leaf, &proof),
                 "proof should verify for leaf {i}"
             );
         }
@@ -288,16 +285,16 @@ mod tests {
             mmr.push(*leaf);
         }
 
-        let root = mmr.root();
+        let root = root_of(&mmr);
 
         for (i, leaf) in leaves.iter().enumerate() {
             let (siblings, path, _peaks) =
                 mmr.proof_with_path(i as u64).expect("proof should exist");
 
-            // Verify via Mmr::verify_proof
+            // Verify via the local proof walker
             let proof = mmr.proof(i as u64).expect("proof should exist");
             assert!(
-                Mmr::verify_proof(root, *leaf, &proof),
+                verify_proof(root, *leaf, &proof),
                 "basic proof should verify for leaf {i}"
             );
 
@@ -309,13 +306,12 @@ mod tests {
         }
     }
 
-    // Golden values for the commitment format: pins blake2-256 of the raw
-    // chunk, the SCALE encoding of `MmrLeaf`, and the bagged root for 1- and
-    // 2-leaf MMRs. Any accidental change to the leaf encoding or hashing
-    // scheme (which would silently invalidate every existing on-chain
-    // commitment) fails these constants.
+    // Pins the wire format: blake2-256 of a raw chunk, the SCALE encoding of
+    // `MmrLeaf`, and the bagged root for 1- and 2-leaf MMRs. A change to leaf
+    // encoding or hashing would silently invalidate every commitment already
+    // signed on-chain; these constants make it loud.
     #[test]
-    fn mmr_golden_values() {
+    fn mmr_wire_format_pinned() {
         use codec::Encode;
         use storage_primitives::{hash_children, MmrLeaf};
 
@@ -339,7 +335,7 @@ mod tests {
             format!("{l0:x}"),
             "ec89c4bb9c2abf33c7d090e64b3d53f3886518930c61cf9b9a0b866eff2406c9"
         );
-        assert_eq!(mmr.root(), l0);
+        assert_eq!(root_of(&mmr), l0);
 
         // Append a second file "goodbye moon".
         let h1 = blake2_256(b"goodbye moon");
@@ -351,9 +347,9 @@ mod tests {
         let l1 = blake2_256(&leaf1.encode());
         mmr.push(l1);
 
-        assert_eq!(mmr.root(), hash_children(l0, l1));
+        assert_eq!(root_of(&mmr), hash_children(l0, l1));
         assert_eq!(
-            format!("{:x}", mmr.root()),
+            format!("{:x}", root_of(&mmr)),
             "051cfeb922130ffefe7a9f68875b61fe1fa057dd90ad33d6c8c21592d9cc9c2b"
         );
     }
@@ -381,7 +377,7 @@ mod tests {
             for &lh in window {
                 m.push(lh);
             }
-            m.root()
+            root_of(&m)
         }
 
         // Ground truth == the minimal "leaf-hash list" client: every leaf hash
@@ -546,7 +542,7 @@ mod tests {
             total += f.len() as u64;
             mmr.push(leaf_hash(f, total));
         }
-        let actual_root = mmr.root();
+        let actual_root = root_of(&mmr);
 
         assert_eq!(
             expected_root, actual_root,
@@ -596,7 +592,7 @@ mod tests {
             mmr.push(blake2_256(&leaf.encode()));
             leaves.push(leaf);
         }
-        let root = mmr.root();
+        let root = root_of(&mmr);
 
         // Build an on-chain `storage_primitives::MmrProof` for a chosen leaf index.
         let make_proof = |idx: u64| -> MmrProof {
@@ -687,7 +683,7 @@ mod tests {
             mmr.push(blake2_256(&leaf.encode()));
         }
 
-        let root = mmr.root();
+        let root = root_of(&mmr);
 
         for (i, leaf) in mmr_leaves.iter().enumerate() {
             let (siblings, path, peaks) =

@@ -326,7 +326,7 @@ impl DiskStorage {
         &self,
         bucket_id: BucketId,
         data_roots: Vec<H256>,
-    ) -> Result<(H256, u64, u64, Vec<u64>), Error> {
+    ) -> Result<super::CommitOutcome, Error> {
         // Verify all roots exist
         let cf_nodes = self
             .db
@@ -386,19 +386,19 @@ impl DiskStorage {
             bucket.leaves.push(leaf);
         }
 
-        bucket.mmr_root = mmr.root();
+        bucket.mmr_root = storage_primitives::bag_peaks(&mmr.peaks());
 
         // Update bucket
         self.update_bucket(bucket_id, &bucket)?;
 
         // leaf_count is derived from the same in-scope `bucket` as mmr_root, so the
         // returned (mmr_root, leaf_count) pair is self-consistent.
-        Ok((
-            bucket.mmr_root,
+        Ok(super::CommitOutcome {
+            mmr_root: bucket.mmr_root,
             start_seq,
-            bucket.leaf_count(),
+            leaf_count: bucket.leaf_count(),
             leaf_indices,
-        ))
+        })
     }
 
     /// Delete data before a given sequence number.
@@ -422,7 +422,7 @@ impl DiskStorage {
             for leaf in &bucket.leaves {
                 mmr.push(blake2_256(&leaf.encode()));
             }
-            bucket.mmr_root = mmr.root();
+            bucket.mmr_root = storage_primitives::bag_peaks(&mmr.peaks());
 
             self.update_bucket(bucket_id, &bucket)?;
         }
@@ -513,7 +513,7 @@ impl DiskStorage {
         // The rebuilt prefix must reproduce the cited root; a mismatch means
         // the local history diverged from what was signed, and any proof from
         // it would fail on-chain verification anyway.
-        if mmr.root() != commitment_root {
+        if storage_primitives::bag_peaks(&mmr.peaks()) != commitment_root {
             return Err(Error::NodeNotFound(format!(
                 "commitment_root 0x{} not reproducible from local leaves",
                 hex::encode(commitment_root.as_bytes())
@@ -543,7 +543,8 @@ impl DiskStorage {
             mmr.push(blake2_256(&leaf.encode()));
         }
 
-        Ok((mmr.root(), mmr.peaks()))
+        let peaks = mmr.peaks();
+        Ok((storage_primitives::bag_peaks(&peaks), peaks))
     }
 
     /// Return a nonce store backed by this DB's metadata column family.
@@ -608,7 +609,7 @@ impl StorageBackend for DiskStorage {
         &self,
         bucket_id: BucketId,
         data_roots: Vec<H256>,
-    ) -> Result<(H256, u64, u64, Vec<u64>), Error> {
+    ) -> Result<super::CommitOutcome, Error> {
         self.commit(bucket_id, data_roots)
     }
 
@@ -838,7 +839,7 @@ mod tests {
             let data = vec![i; 8];
             let hash = blake2_256(&data);
             storage.store_node(1, hash, data, None).unwrap();
-            let (root, _, _, _) = storage.commit(1, vec![hash]).unwrap();
+            let root = storage.commit(1, vec![hash]).unwrap().mmr_root;
             roots.push(root);
         }
 

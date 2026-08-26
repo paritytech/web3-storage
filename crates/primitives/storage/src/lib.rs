@@ -306,9 +306,7 @@ pub struct MmrProof {
 /// commitment over a contiguous range of leaves.
 ///
 /// One reusable type instead of three loose fields: it is a field group inside
-/// [`CommitmentPayload`] and [`BucketSnapshot`], and it is the single argument
-/// the checkpoint/challenge extrinsics take in place of passing `mmr_root`,
-/// `start_seq`, and `leaf_count` separately.
+/// [`CommitmentPayload`] and [`BucketSnapshot`].
 #[derive(
     Clone,
     Copy,
@@ -544,8 +542,8 @@ pub fn verify_merkle_proof(leaf_hash: H256, index: u64, proof: &MerkleProof, roo
 
 /// Bag a list of MMR peaks (ordered tallest → shortest) into a single root.
 ///
-/// Folds right-to-left so the tallest peak is outermost, matching the prover's
-/// `Mmr::root()`. An empty peak list bags to `H256::zero()`.
+/// Folds right-to-left so the tallest peak is outermost; shared by the prover
+/// and the on-chain verifier. An empty peak list bags to `H256::zero()`.
 pub fn bag_peaks(peaks: &[H256]) -> H256 {
     peaks
         .iter()
@@ -559,18 +557,23 @@ pub fn bag_peaks(peaks: &[H256]) -> H256 {
         .unwrap_or(H256::zero())
 }
 
+/// A leaf's canonical position within an MMR, as derived by
+/// [`mmr_leaf_position`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MmrLeafPosition {
+    /// Index of the leaf's peak in the peaks list (ordered tallest → shortest).
+    pub peak_index: usize,
+    /// 0-based index within that peak's perfect subtree; bit `k` set means
+    /// right child at level `k` of the root-ward path.
+    pub local_index: u64,
+    /// Height of that subtree — the proof's expected path length.
+    pub height: u32,
+}
+
 /// Locate a leaf within an MMR of `leaf_count` leaves.
 ///
-/// Returns `(peak_index, local_index, height)` where:
-/// - `peak_index` is the leaf's peak position in the peaks list (ordered
-///   tallest → shortest, the same order the prover and [`bag_peaks`] use),
-/// - `local_index` is the leaf's 0-based index within that peak's perfect
-///   subtree (its bits are the root-ward path: bit `k` set ⇒ right child at
-///   level `k`),
-/// - `height` is that subtree's height (== the proof's expected path length).
-///
 /// Returns `None` if `leaf_index >= leaf_count` (the leaf does not exist).
-pub fn mmr_leaf_position(leaf_index: u64, leaf_count: u64) -> Option<(usize, u64, u32)> {
+pub fn mmr_leaf_position(leaf_index: u64, leaf_count: u64) -> Option<MmrLeafPosition> {
     if leaf_index >= leaf_count {
         return None;
     }
@@ -582,7 +585,11 @@ pub fn mmr_leaf_position(leaf_index: u64, leaf_count: u64) -> Option<(usize, u64
         let height = 63 - remaining.leading_zeros();
         let subtree_leaves = 1u64 << height;
         if leaf_index < offset.saturating_add(subtree_leaves) {
-            return Some((peak_index, leaf_index - offset, height));
+            return Some(MmrLeafPosition {
+                peak_index,
+                local_index: leaf_index - offset,
+                height,
+            });
         }
         offset = offset.saturating_add(subtree_leaves);
         remaining -= subtree_leaves;
@@ -593,25 +600,20 @@ pub fn mmr_leaf_position(leaf_index: u64, leaf_count: u64) -> Option<(usize, u64
 
 /// Verify an MMR inclusion proof, **bound to the exact `(leaf_index, leaf_count)`**.
 ///
-/// This is the verification a sound challenge must use: the expected root-ward
-/// path and target peak are *derived* from `(leaf_index, leaf_count)` and checked
-/// against the proof, so a prover cannot satisfy a challenge for one leaf with a
-/// proof for a *different* leaf it happens to still hold. It checks, in order:
-/// 1. `leaf_index < leaf_count` (the leaf exists),
-/// 2. the proof has one sibling per level and one peak per set bit of `leaf_count`,
-/// 3. the leaf hashes up to the peak at its expected position, taking the direction
-///    at each level from the leaf's local index (and rejecting a mismatching path bit),
-/// 4. the peaks bag to `root`.
+/// The expected root-ward path and target peak are *derived* from
+/// `(leaf_index, leaf_count)` and checked against the proof, so a prover cannot
+/// satisfy a challenge for one leaf with a proof for a different leaf it still
+/// holds.
 pub fn verify_mmr_proof(proof: &MmrProof, leaf_index: u64, leaf_count: u64, root: &H256) -> bool {
     // Derive the leaf's canonical position; rejects out-of-range leaves.
-    let (peak_index, local_index, height) = match mmr_leaf_position(leaf_index, leaf_count) {
+    let pos = match mmr_leaf_position(leaf_index, leaf_count) {
         Some(pos) => pos,
         None => return false,
     };
 
     // One sibling per level, and one peak per set bit of leaf_count.
-    if proof.leaf_proof.siblings.len() != height as usize
-        || proof.leaf_proof.path.len() != height as usize
+    if proof.leaf_proof.siblings.len() != pos.height as usize
+        || proof.leaf_proof.path.len() != pos.height as usize
         || proof.peaks.len() != leaf_count.count_ones() as usize
     {
         return false;
@@ -629,7 +631,7 @@ pub fn verify_mmr_proof(proof: &MmrProof, leaf_index: u64, leaf_count: u64, root
         .zip(proof.leaf_proof.path.iter())
         .enumerate()
     {
-        if is_right != ((local_index >> k) & 1 == 1) {
+        if is_right != ((pos.local_index >> k) & 1 == 1) {
             return false;
         }
         current = if is_right {
@@ -638,7 +640,7 @@ pub fn verify_mmr_proof(proof: &MmrProof, leaf_index: u64, leaf_count: u64, root
             hash_children(current, sibling)
         };
     }
-    if proof.peaks.get(peak_index) != Some(&current) {
+    if proof.peaks.get(pos.peak_index) != Some(&current) {
         return false;
     }
 
@@ -774,21 +776,29 @@ mod tests {
 
     #[test]
     fn test_mmr_leaf_position() {
+        let pos = |peak_index, local_index, height| {
+            Some(MmrLeafPosition {
+                peak_index,
+                local_index,
+                height,
+            })
+        };
+
         // Out-of-range leaves do not exist.
         assert_eq!(mmr_leaf_position(0, 0), None);
         assert_eq!(mmr_leaf_position(5, 5), None);
         assert_eq!(mmr_leaf_position(7, 7), None);
 
         // Single leaf: peak 0, local 0, height 0.
-        assert_eq!(mmr_leaf_position(0, 1), Some((0, 0, 0)));
+        assert_eq!(mmr_leaf_position(0, 1), pos(0, 0, 0));
 
         // leaf_count = 7 decomposes into peaks 4 (h2) + 2 (h1) + 1 (h0),
         // ordered tallest-first.
-        assert_eq!(mmr_leaf_position(0, 7), Some((0, 0, 2)));
-        assert_eq!(mmr_leaf_position(3, 7), Some((0, 3, 2)));
-        assert_eq!(mmr_leaf_position(4, 7), Some((1, 0, 1)));
-        assert_eq!(mmr_leaf_position(5, 7), Some((1, 1, 1)));
-        assert_eq!(mmr_leaf_position(6, 7), Some((2, 0, 0)));
+        assert_eq!(mmr_leaf_position(0, 7), pos(0, 0, 2));
+        assert_eq!(mmr_leaf_position(3, 7), pos(0, 3, 2));
+        assert_eq!(mmr_leaf_position(4, 7), pos(1, 0, 1));
+        assert_eq!(mmr_leaf_position(5, 7), pos(1, 1, 1));
+        assert_eq!(mmr_leaf_position(6, 7), pos(2, 0, 0));
     }
 
     #[test]

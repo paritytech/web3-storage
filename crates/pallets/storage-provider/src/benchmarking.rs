@@ -218,29 +218,20 @@ fn add_primary_to_bucket<T: Config>(
 }
 
 /// Insert a single challenge at `deadline = 200` and return its `ChallengeId`.
-///
-/// Used by the three `respond_to_challenge_*` benchmarks to share challenge
-/// setup so each can focus on the response-variant payload it exercises.
 fn insert_challenge<T: Config>(
     bucket_id: BucketId,
     provider: &T::AccountId,
     challenger: &T::AccountId,
-    mmr_root: H256,
-    leaf_count: u64,
-    leaf_index: u64,
+    commitment: Commitment,
+    target: ChunkLocation,
 ) -> storage_primitives::ChallengeId<BlockNumberFor<T>> {
     let deadline: BlockNumberFor<T> = 200u32.into();
     let challenge = pallet::Challenge::<T> {
         bucket_id,
         provider: provider.clone(),
         challenger: challenger.clone(),
-        mmr_root,
-        start_seq: 0,
-        leaf_count,
-        target: ChunkLocation {
-            leaf_index,
-            chunk_index: 0,
-        },
+        commitment,
+        target,
         deposit: 100u32.into(),
     };
     Challenges::<T>::insert(deadline, 0u16, challenge);
@@ -930,7 +921,18 @@ mod benchmarks {
         };
 
         let challenge_id = insert_challenge::<T>(
-            bucket_id, &provider, &admin, mmr_root, leaf_count, leaf_index,
+            bucket_id,
+            &provider,
+            &admin,
+            Commitment {
+                mmr_root,
+                start_seq: 0,
+                leaf_count,
+            },
+            ChunkLocation {
+                leaf_index,
+                chunk_index: 0,
+            },
         );
 
         let response: pallet::ChallengeResponse<T> = pallet::ChallengeResponse::Proof {
@@ -960,11 +962,23 @@ mod benchmarks {
         );
         let admin_key = register_sr25519_key::<T>(&admin, KEY_TYPE, u32::MAX);
 
-        let challenge_id =
-            insert_challenge::<T>(bucket_id, &provider, &admin, H256::repeat_byte(0xCD), 1, 0);
+        let challenge_id = insert_challenge::<T>(
+            bucket_id,
+            &provider,
+            &admin,
+            Commitment {
+                mmr_root: H256::repeat_byte(0xCD),
+                start_seq: 0,
+                leaf_count: 1,
+            },
+            ChunkLocation {
+                leaf_index: 0,
+                chunk_index: 0,
+            },
+        );
 
         let new_mmr_root = H256::repeat_byte(0xEF);
-        let new_start_seq: u64 = 1; // must be > challenge.start_seq (0) + leaf_index (0)
+        let new_start_seq: u64 = 1; // must be > challenge.commitment.start_seq (0) + leaf_index (0)
         let payload = storage_primitives::CommitmentPayload::new(
             bucket_id,
             Commitment {
@@ -1021,8 +1035,20 @@ mod benchmarks {
             signatures,
         );
 
-        let challenge_id =
-            insert_challenge::<T>(bucket_id, &provider, &admin, H256::repeat_byte(0xCD), 1, 0);
+        let challenge_id = insert_challenge::<T>(
+            bucket_id,
+            &provider,
+            &admin,
+            Commitment {
+                mmr_root: H256::repeat_byte(0xCD),
+                start_seq: 0,
+                leaf_count: 1,
+            },
+            ChunkLocation {
+                leaf_index: 0,
+                chunk_index: 0,
+            },
+        );
 
         let response: pallet::ChallengeResponse<T> = pallet::ChallengeResponse::Superseded;
 
@@ -1139,9 +1165,11 @@ mod benchmarks {
                 bucket_id,
                 provider: provider.clone(),
                 challenger,
-                mmr_root: H256::zero(),
-                start_seq: 0,
-                leaf_count: 1,
+                commitment: Commitment {
+                    mmr_root: H256::zero(),
+                    start_seq: 0,
+                    leaf_count: 1,
+                },
                 target: ChunkLocation {
                     leaf_index: 0,
                     chunk_index: 0,

@@ -372,28 +372,25 @@ async fn commit(
         })
         .collect::<Result<Vec<_>, Error>>()?;
 
-    let (mmr_root, start_seq, leaf_count, leaf_indices) =
-        state.storage.commit(request.bucket_id, data_roots)?;
+    let outcome = state.storage.commit(request.bucket_id, data_roots)?;
 
-    // `leaf_count` is returned atomically by `commit` (consistent with
-    // `mmr_root`/`start_seq` under the same lock) and signed into the
-    // commitment so the signature matches what the pallet reconstructs from the
-    // challenger's args and can back a bound `challenge_offchain`.
+    // The signed commitment must match what the pallet reconstructs from the
+    // challenger's args, so it can back a bound `challenge_offchain`.
     let payload = CommitmentPayload::new(
         request.bucket_id,
         Commitment {
-            mmr_root,
-            start_seq,
-            leaf_count,
+            mmr_root: outcome.mmr_root,
+            start_seq: outcome.start_seq,
+            leaf_count: outcome.leaf_count,
         },
     );
     let signature = state.sign(&payload.encode())?;
 
     Ok(Json(CommitResponse {
-        mmr_root: format!("0x{}", hex::encode(mmr_root.as_bytes())),
-        start_seq,
-        leaf_count,
-        leaf_indices,
+        mmr_root: format!("0x{}", hex::encode(outcome.mmr_root.as_bytes())),
+        start_seq: outcome.start_seq,
+        leaf_count: outcome.leaf_count,
+        leaf_indices: outcome.leaf_indices,
         provider_signature: signature,
     }))
 }
@@ -478,11 +475,8 @@ async fn get_commitment(
     }))
 }
 
-/// Return a checkpoint-compatible signature.
-///
-/// Signs the same `CommitmentPayload` (with the real `leaf_count`) as
-/// `/commitment` — the two differ only in response shape. This one returns a
-/// `CheckpointSignatureResponse` intended for the on-chain `checkpoint` extrinsic.
+/// Return a signature over the bucket's current commitment, for the on-chain
+/// `checkpoint` extrinsic.
 async fn get_checkpoint_signature(
     State(state): State<Arc<ProviderState>>,
     Query(query): Query<CommitmentQuery>,

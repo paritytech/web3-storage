@@ -4,16 +4,12 @@
 
 extern crate alloc;
 
-/// v0 -> v1: `Challenge` gained `leaf_count` and `ReplicaSyncRecord` became
-/// `{ root, range, block }` (leaf-index binding, #301).
-///
-/// Neither value is translatable: an in-flight challenge's `leaf_count` was
-/// never recorded, and an old sync record cannot show that its commitment was
-/// the bucket's current snapshot (the pre-#301 pallet fabricated `(0, 0)`
-/// ranges for historical-root syncs). So the migration drains all pending
-/// challenges — refunding each challenger's deposit and resetting the pending
-/// counters — and drops replica `last_sync` records, so a replica must
-/// re-sync before it is challengeable again.
+/// v0 -> v1: the leaf-index binding (#301) reshaped `Challenge` and
+/// `ReplicaSyncRecord`, and neither old value is translatable — an in-flight
+/// challenge's `leaf_count` was never recorded, and an old sync record cannot
+/// show its range was the current snapshot. Drain pending challenges
+/// (refunding deposits, resetting the pending counters) and drop replica
+/// `last_sync` records so replicas re-sync before being challengeable.
 pub mod v1 {
     use crate::pallet::{
         BalanceOf, Challenges, Config, Pallet, PendingChallenges, PendingChallengesByBucket,

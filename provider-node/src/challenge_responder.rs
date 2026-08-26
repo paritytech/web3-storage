@@ -498,13 +498,13 @@ const CHALLENGE_ENTRY_SIZE: usize = 152;
 ///   bucket_id (u64)         — 8
 ///   provider (AccountId32)  — 32
 ///   challenger (AccountId32)— 32
-///   mmr_root (H256)         — 32
-///   start_seq (u64)         — 8
-///   leaf_count (u64)        — 8
-///   leaf_index (u64)        — 8
-///   chunk_index (u64)       — 8
-///   deposit (Balance u128)  — 16
-/// Total: 152 bytes.
+///   commitment.mmr_root (H256)   — 32
+///   commitment.start_seq (u64)   — 8
+///   commitment.leaf_count (u64)  — 8
+///   target.leaf_index (u64)      — 8
+///   target.chunk_index (u64)     — 8
+///   deposit (Balance u128)       — 16
+/// Total: 152 bytes (nested structs encode as plain field concatenation).
 ///
 /// `#[doc(hidden)] pub` so the fixed-offset layout is reachable from an
 /// integration test; it is an internal helper, not stable public API.

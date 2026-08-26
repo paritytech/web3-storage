@@ -83,9 +83,11 @@ fn try_state_detects_challenge_below_sweep_cursor() {
                 bucket_id: 0,
                 provider: 2,
                 challenger: 1,
-                mmr_root: sp_core::H256::zero(),
-                start_seq: 0,
-                leaf_count: 1,
+                commitment: storage_primitives::Commitment {
+                    mmr_root: sp_core::H256::zero(),
+                    start_seq: 0,
+                    leaf_count: 1,
+                },
                 target: storage_primitives::ChunkLocation {
                     leaf_index: 0,
                     chunk_index: 0,

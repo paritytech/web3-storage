@@ -329,12 +329,6 @@ fn challenge_slashes_provider_on_timeout() {
     });
 }
 
-// NOTE: the branch's `respond_to_challenge_superseded_fails_leaf_beyond_canonical`
-// was dropped here. PR #125 changed an out-of-range `Superseded` claim from
-// erroring with `LeafBeyondCanonical` to slashing the provider immediately.
-// The equivalent merged-behavior test is
-// `challenge_tests::respond_with_bogus_superseded_claim_slashes_immediately`.
-
 #[test]
 fn respond_to_challenge_superseded_cost_split_block_1() {
     new_test_ext().execute_with(|| {
@@ -1180,7 +1174,7 @@ mod challenge_tests {
             let challenge = Challenges::<Test>::get(101, 0).expect("challenge present");
             assert_eq!(challenge.provider, 2);
             assert_eq!(challenge.challenger, 3);
-            assert_eq!(challenge.mmr_root, mmr_root);
+            assert_eq!(challenge.commitment.mmr_root, mmr_root);
             // Currently a fixed `100u32`; commit 4 will change this.
             assert_eq!(challenge.deposit, 100);
 
@@ -2021,10 +2015,10 @@ mod challenge_tests {
             ));
 
             let challenge = Challenges::<Test>::get(101, 0).expect("created");
-            assert_eq!(challenge.mmr_root, last_root);
+            assert_eq!(challenge.commitment.mmr_root, last_root);
             // start_seq now reflects the value captured at sync time
             // (previously hardcoded 0u64 placeholder).
-            assert_eq!(challenge.start_seq, 7);
+            assert_eq!(challenge.commitment.start_seq, 7);
         });
     }
 
@@ -2791,7 +2785,13 @@ mod challenge_tests {
                     chunk_index: 0,
                 },
             ));
-            assert_eq!(Challenges::<Test>::get(101, 0).unwrap().leaf_count, 2);
+            assert_eq!(
+                Challenges::<Test>::get(101, 0)
+                    .unwrap()
+                    .commitment
+                    .leaf_count,
+                2
+            );
 
             // Answer the leaf-1 challenge with leaf 0's (valid-for-leaf-0) proof.
             // Its path does not bind to leaf_index 1, so it cannot defend → slash.
@@ -2885,7 +2885,13 @@ mod challenge_tests {
                 },
                 sig,
             ));
-            assert_eq!(Challenges::<Test>::get(101, 0).unwrap().leaf_count, 2);
+            assert_eq!(
+                Challenges::<Test>::get(101, 0)
+                    .unwrap()
+                    .commitment
+                    .leaf_count,
+                2
+            );
 
             // Substituted leaf-0 proof cannot defend the leaf-1 challenge → slash.
             assert_ok!(StorageProvider::respond_to_challenge(

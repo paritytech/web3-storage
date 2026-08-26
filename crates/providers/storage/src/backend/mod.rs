@@ -63,6 +63,23 @@ pub struct StoredNode {
     pub children: Option<Vec<H256>>,
 }
 
+/// Result of committing data roots to a bucket's MMR.
+///
+/// All fields are computed under one lock, so `leaf_count` is consistent with
+/// `mmr_root` — never re-read it separately, a concurrent commit/delete could
+/// desync the two.
+#[derive(Debug, Clone)]
+pub struct CommitOutcome {
+    /// MMR root after the commit.
+    pub mmr_root: H256,
+    /// First live sequence number of the bucket's window.
+    pub start_seq: u64,
+    /// Leaf count backing `mmr_root`.
+    pub leaf_count: u64,
+    /// Global sequence numbers assigned to the committed leaves.
+    pub leaf_indices: Vec<u64>,
+}
+
 /// Bucket information returned by the storage backend.
 #[derive(Debug, Clone)]
 pub struct BucketInfo {
@@ -132,15 +149,7 @@ pub trait StorageBackend: Send + Sync {
     fn check_exists(&self, bucket_id: BucketId, hashes: &[H256]) -> (Vec<H256>, Vec<H256>);
 
     /// Commit data roots to the bucket's MMR.
-    ///
-    /// Returns `(mmr_root, start_seq, leaf_count, leaf_indices)`, all computed under
-    /// the same lock so `leaf_count` is consistent with `mmr_root` (do not re-read it
-    /// separately — a concurrent commit/delete could otherwise desync the two).
-    fn commit(
-        &self,
-        bucket_id: BucketId,
-        data_roots: Vec<H256>,
-    ) -> Result<(H256, u64, u64, Vec<u64>), Error>;
+    fn commit(&self, bucket_id: BucketId, data_roots: Vec<H256>) -> Result<CommitOutcome, Error>;
 
     /// Collect actual chunk data under a data root (DFS, leaf data in order).
     fn collect_chunks(&self, root: H256) -> Vec<Vec<u8>> {

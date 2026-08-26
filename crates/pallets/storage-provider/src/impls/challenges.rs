@@ -119,6 +119,9 @@ impl<T: Config> Pallet<T> {
         count
     }
 
+    /// Shared choke point for the three `challenge_*` extrinsics: validates
+    /// the target, reserves the challenger's deposit, and stores the challenge
+    /// under a stable `(deadline, index)` id.
     pub(crate) fn create_challenge(
         challenger: T::AccountId,
         bucket_id: BucketId,
@@ -126,21 +129,16 @@ impl<T: Config> Pallet<T> {
         commitment: Commitment,
         target: ChunkLocation,
     ) -> DispatchResult {
-        // Reject a challenge for a non-existent leaf. `verify_mmr_proof` binds
-        // the response to `leaf_index` and rejects `leaf_index >= leaf_count`,
-        // so such a challenge could never be answered with a valid Proof and
-        // would resolve only by slashing the provider on timeout. Guarding here
-        // — the single choke point for all challenge_* paths — closes that
-        // griefing vector at creation time.
+        // A challenge on a non-existent leaf has no valid defense and would
+        // resolve only by timeout slash — rejecting it at creation closes that
+        // griefing vector.
         ensure!(
             target.leaf_index < commitment.leaf_count,
             Error::<T>::LeafBeyondCanonical
         );
 
-        // Deposit comes from `T::ChallengeDeposit` — a runtime constant
-        // sized to make spam expensive without pricing out legitimate
-        // challengers. Previously hardcoded `100u32` (1e-10 of a token
-        // at 12 decimals), which made challenge spam effectively free.
+        // Runtime constant sized to make spam expensive without pricing out
+        // legitimate challengers.
         let deposit: BalanceOf<T> = T::ChallengeDeposit::get();
 
         T::Currency::reserve(&challenger, deposit)?;
@@ -152,9 +150,7 @@ impl<T: Config> Pallet<T> {
             bucket_id,
             provider: provider.clone(),
             challenger: challenger.clone(),
-            mmr_root: commitment.mmr_root,
-            start_seq: commitment.start_seq,
-            leaf_count: commitment.leaf_count,
+            commitment,
             target,
             deposit,
         };

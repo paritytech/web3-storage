@@ -467,10 +467,10 @@ fn challenge_replica_binds_to_synced_range() {
         assert_eq!(Challenges::<Test>::iter_prefix(101).count(), 1);
         let c = Challenges::<Test>::get(101, 0).unwrap();
         assert_eq!(c.provider, 2);
-        assert_eq!(c.mmr_root, H256::repeat_byte(0xAB));
-        assert_eq!(c.start_seq, 0);
+        assert_eq!(c.commitment.mmr_root, H256::repeat_byte(0xAB));
+        assert_eq!(c.commitment.start_seq, 0);
         // Bound to the snapshot's real leaf_count, not a placeholder.
-        assert_eq!(c.leaf_count, 10);
+        assert_eq!(c.commitment.leaf_count, 10);
         assert_eq!(c.target.leaf_index, 3);
         assert_eq!(c.target.chunk_index, 1);
     });
