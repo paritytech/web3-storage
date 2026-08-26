@@ -144,7 +144,6 @@ mod tests {
     use super::*;
     use provider_auth::Authenticator;
     use provider_storage::temp_rocksdb;
-    use std::time::Duration;
 
     /// Deps over a throwaway backend. Keep the returned guard bound for as
     /// long as the state is used.
@@ -153,11 +152,9 @@ mod tests {
         let deps = ProviderDeps {
             storage,
             nonce_store,
-            auth: Arc::new(Authenticator::new(
-                provider_auth::StaticMembershipResolver(vec![]),
-                Duration::from_secs(60),
-                Duration::from_secs(300),
-            )),
+            auth: Arc::new(Authenticator::new(provider_auth::StaticMembershipResolver(
+                vec![],
+            ))),
         };
         (deps, dir)
     }

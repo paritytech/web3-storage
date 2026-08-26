@@ -6,7 +6,7 @@ use crate::{
     chain_state_coordinator::ChainStateCoordinator,
     cli::{Cli, DEFAULT_PROVIDER_ID},
     create_router,
-    membership::ChainMembershipResolver,
+    membership::{BlockEventInvalidations, ChainMembershipResolver},
     subxt_client::SubxtChainClient,
     ChainStateCoordinatorHandle, ChallengeResponder, ChallengeResponderConfig,
     ChallengeResponderHandle, ProviderDeps, ProviderState, ReplicaSyncCoordinator,
@@ -62,18 +62,33 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let (storage, nonce_store) = backend.build()?;
 
     // Membership-based auth over the chain's bucket member sets, resolved
-    // through the shared watch connection.
+    // through the shared watch connection. Subscribed here rather than after
+    // the chain-state coordinator starts, so the cache cannot miss the
+    // bootstrap `Resubscribed` the coordinator broadcasts on first connect.
     let resolver = ChainMembershipResolver::new(chain_rx.clone());
-    let ttl = Duration::from_secs(cli.auth.auth_cache_ttl);
-    let auth = Arc::new(Authenticator::new(
-        resolver,
-        ttl,
-        Duration::from_secs(cli.auth.auth_max_skew),
-    ));
+    // Incoherent, not unsafe - warn rather than clamp an explicit choice.
+    if cli.auth.auth_max_stale <= cli.auth.auth_cache_ttl {
+        tracing::warn!(
+            "--auth-max-stale ({}s) is below --auth-cache-ttl ({}s): a cached member set \
+             will never be served once the chain is unreachable",
+            cli.auth.auth_max_stale,
+            cli.auth.auth_cache_ttl
+        );
+    }
+    let auth = Arc::new(
+        Authenticator::new(resolver)
+            .with_ttl(Duration::from_secs(cli.auth.auth_cache_ttl))
+            .with_max_skew(Duration::from_secs(cli.auth.auth_max_skew))
+            .with_max_stale(Duration::from_secs(cli.auth.auth_max_stale))
+            .with_max_entries(cli.auth.auth_cache_max_entries)
+            .with_invalidations(BlockEventInvalidations::new(events_tx.subscribe())),
+    );
     tracing::info!(
-        "Auth: membership cache_ttl={}s, max_skew={}s",
+        "Auth: membership cache_ttl={}s, max_stale={}s, max_skew={}s, max_entries={}",
         cli.auth.auth_cache_ttl,
-        cli.auth.auth_max_skew
+        cli.auth.auth_max_stale,
+        cli.auth.auth_max_skew,
+        cli.auth.auth_cache_max_entries
     );
 
     let deps = ProviderDeps {
@@ -167,7 +182,8 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
 /// Start the chain-state coordinator, which keeps
 /// `chain_state.current_anchor_block` and `chain_state.provider_info` in sync
-/// with the chain.
+/// with the chain, and broadcasts bucket-membership changes on the
+/// block-event fan-out, which the auth membership cache drains.
 ///
 /// Returns `None` only when the provider id isn't a valid account. The
 /// coordinator itself never fails to start: it connects in the background and

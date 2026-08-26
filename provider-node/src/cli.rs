@@ -281,6 +281,24 @@ pub struct AuthParams {
         env = "AUTH_MAX_SKEW"
     )]
     pub auth_max_skew: u64,
+
+    /// Maximum age of cached membership served while the chain is unreachable.
+    #[arg(
+        long,
+        value_name = "SECONDS",
+        default_value_t = 300,
+        env = "AUTH_MAX_STALE"
+    )]
+    pub auth_max_stale: u64,
+
+    /// Maximum number of buckets' membership resident in the cache at once.
+    #[arg(
+        long,
+        value_name = "ENTRIES",
+        default_value_t = 10_000,
+        env = "AUTH_CACHE_MAX_ENTRIES"
+    )]
+    pub auth_cache_max_entries: u64,
 }
 
 /// Parameters for the challenge responder background service.
