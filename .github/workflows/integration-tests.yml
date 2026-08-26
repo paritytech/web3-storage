@@ -695,9 +695,7 @@ jobs:
       - name: Start provider (Alice)
         uses: ./.github/actions/start-provider
         with:
-          seed: "//Alice"
-          port: "3333"
-          chain-rpc: ws://127.0.0.1:2222
+          label: utils
 
       # Seed: //Bob negotiates terms and opens a bucket + primary agreement
       # against the //Alice provider, giving the CLI something to upload to.
