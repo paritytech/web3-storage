@@ -134,10 +134,9 @@ export async function waitForBlock(
  * Current relay-chain block number, read from
  * `ParachainSystem.LastRelayChainBlockNumber` at the best block.
  *
- * Every on-chain duration (timeouts, checkpoint windows, `valid_until`,
- * `CommitmentPayload.nonce` recency) is measured in relay-chain blocks, not
- * parachain blocks — snapshot this, never `System.Number`, when building a
- * nonce or window-timed extrinsic.
+ * Every on-chain duration (timeouts, checkpoint windows, `valid_until`) is
+ * measured in relay-chain blocks, not parachain blocks — snapshot this, never
+ * `System.Number`, when building a window-timed extrinsic.
  */
 export async function currentRelayBlock(api: ParachainApi): Promise<number> {
   return Number(

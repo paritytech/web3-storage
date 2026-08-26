@@ -24,7 +24,6 @@ import {
   challengeCheckpoint,
   challengeOffchain,
   connect,
-  currentRelayBlock,
   downloadChunk,
   endAgreement,
   ensureProviderRegistered,
@@ -100,8 +99,7 @@ async function setupAgreement(
 
 async function uploadAndVerify(api: ParachainApi, bucketId: bigint, signer: ChainSigner) {
   const payload = `Hello, Web3 Storage! [${new Date().toISOString()}] provider=${PROVIDER_SEED}`;
-  const nonce = await currentRelayBlock(api);
-  const { hash, data, commit } = await uploadChunk(PROVIDER_URL, bucketId, payload, nonce, signer);
+  const { hash, data, commit } = await uploadChunk(PROVIDER_URL, bucketId, payload, signer);
   console.log("  Uploaded %d bytes, mmr_root=%s", data.length, commit.mmr_root);
 
   const downloaded = await downloadChunk(PROVIDER_URL, hash);
@@ -118,7 +116,6 @@ async function uploadAndVerify(api: ParachainApi, bucketId: bigint, signer: Chai
     startSeq: commit.start_seq,
     leafCount: commit.leaf_count,
     providerSignature: commit.provider_signature,
-    nonce: commit.nonce,
   };
 }
 
@@ -217,8 +214,7 @@ async function main() {
     console.log("  Challenge defended");
 
     console.log("\n=== Step 5: Submit checkpoint ===");
-    const ckNonce = await currentRelayBlock(api);
-    const ck = await fetchCheckpointSignature(PROVIDER_URL, bucketId, ckNonce);
+    const ck = await fetchCheckpointSignature(PROVIDER_URL, bucketId);
     console.log("  Checkpoint mmr_root:", ck.mmr_root);
     console.log("  Checkpoint leaf_count:", ck.leaf_count);
     await submitClientCheckpoint(api, client, provider, bucketId, ck);
