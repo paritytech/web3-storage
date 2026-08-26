@@ -2,8 +2,8 @@
 
 //! CLI argument parsing for the storage provider node.
 
-use crate::chain_connection::{ChainTransport, SpecSource};
 use clap::Parser;
+use provider_chain::chain_connection::{ChainTransport, SpecSource};
 use provider_storage::StorageBackendSpec;
 use std::path::PathBuf;
 

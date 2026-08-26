@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! Chain-connection construction: the single place a subxt client is built.
 //!
@@ -304,7 +304,7 @@ pub struct ChainHandle {
 impl ChainHandle {
     /// Handle over an existing client with no embedded light client to keep
     /// alive: the RPC transport, and tests driving a mock connection.
-    pub(crate) fn from_api(api: OnlineClient<PolkadotConfig>) -> Self {
+    pub fn from_api(api: OnlineClient<PolkadotConfig>) -> Self {
         Self { api, _light: None }
     }
 }
@@ -321,9 +321,7 @@ pub type ChainWatch = tokio::sync::watch::Receiver<Option<ChainHandle>>;
 pub async fn connect(transport: &ChainTransport) -> Result<ChainHandle, Error> {
     match transport {
         ChainTransport::Rpc { url } => {
-            let api = OnlineClient::<PolkadotConfig>::from_url(url)
-                .await
-                .map_err(|e| Error::Internal(format!("Failed to connect to chain: {e}")))?;
+            let api = OnlineClient::<PolkadotConfig>::from_url(url).await?;
             Ok(ChainHandle::from_api(api))
         }
         ChainTransport::LightClient {
@@ -377,7 +375,7 @@ pub fn current_api(chain_rx: &ChainWatch) -> Result<OnlineClient<PolkadotConfig>
         .borrow()
         .as_ref()
         .map(|h| h.api.clone())
-        .ok_or_else(|| Error::Internal("Chain connection not established yet".to_string()))
+        .ok_or(Error::NotConnected)
 }
 
 #[cfg(test)]
@@ -387,20 +385,27 @@ mod tests {
     #[tokio::test]
     async fn rpc_connect_to_unreachable_chain_errors() {
         // Port 1 on loopback refuses immediately.
-        let err = connect(&ChainTransport::Rpc {
+        let result = connect(&ChainTransport::Rpc {
             url: "ws://127.0.0.1:1".to_string(),
         })
-        .await
-        .map(|_| ())
-        .expect_err("connect must fail against a closed port");
-        assert!(err.to_string().contains("Failed to connect to chain"));
+        .await;
+        let Err(err) = result else {
+            panic!("connect must fail against a closed port");
+        };
+        assert!(
+            matches!(err, Error::Connection(_)),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]
     fn current_api_errors_before_first_connect() {
         let (_tx, rx) = tokio::sync::watch::channel(None);
         let err = current_api(&rx).expect_err("no connection published yet");
-        assert!(err.to_string().contains("not established"));
+        assert!(
+            matches!(err, Error::NotConnected),
+            "unexpected error: {err}"
+        );
     }
 
     #[tokio::test]

@@ -7211,6 +7211,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "provider-chain"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "serde_json",
+ "sp-runtime",
+ "storage-primitives",
+ "storage-subxt",
+ "subxt",
+ "subxt-rpcs",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "provider-negotiation"
 version = "0.1.0"
 dependencies = [
@@ -10108,6 +10125,7 @@ dependencies = [
  "parity-scale-codec",
  "parking_lot",
  "provider-auth",
+ "provider-chain",
  "provider-negotiation",
  "provider-storage",
  "reqwest",
