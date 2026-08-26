@@ -954,11 +954,10 @@ pub mod pallet {
         ChallengeExpired,
         NotChallengeProvider,
         ProviderNotInSnapshot,
-        LeafBeyondCanonical,
-        InvalidDeletionProof,
         /// Challenge `leaf_index` is out of range for the committed `leaf_count`
         /// (the leaf does not exist), so no valid proof could ever defend it.
-        LeafIndexOutOfRange,
+        LeafBeyondCanonical,
+        InvalidDeletionProof,
         /// A provider with unresolved challenges (`PendingChallenges > 0`)
         /// cannot complete deregistration — they are still slashable.
         ProviderHasPendingChallenges,
@@ -2112,11 +2111,6 @@ pub mod pallet {
         ) -> DispatchResult {
             let who = ensure_signed(origin)?;
 
-            let ChunkLocation {
-                leaf_index,
-                chunk_index,
-            } = target;
-
             let bucket = Buckets::<T>::get(bucket_id).ok_or(Error::<T>::BucketNotFound)?;
             let snapshot = bucket.snapshot.as_ref().ok_or(Error::<T>::NoSnapshot)?;
 
@@ -2143,16 +2137,7 @@ pub mod pallet {
                 Error::<T>::AgreementExpired
             );
 
-            Self::create_challenge(
-                who,
-                bucket_id,
-                provider,
-                snapshot.commitment.mmr_root,
-                snapshot.commitment.start_seq,
-                snapshot.commitment.leaf_count,
-                leaf_index,
-                chunk_index,
-            )
+            Self::create_challenge(who, bucket_id, provider, snapshot.commitment, target)
         }
 
         /// Challenge off-chain commitment (requires provider signature).
@@ -2178,11 +2163,6 @@ pub mod pallet {
             provider_signature: sp_runtime::MultiSignature,
         ) -> DispatchResult {
             let who = ensure_signed(origin)?;
-
-            let ChunkLocation {
-                leaf_index,
-                chunk_index,
-            } = target;
 
             // Verify the bucket exists
             ensure!(
@@ -2219,16 +2199,7 @@ pub mod pallet {
             Self::verify_signature(&provider_signature, &encoded_payload, &provider)?;
 
             // Create the challenge
-            Self::create_challenge(
-                who,
-                bucket_id,
-                provider,
-                commitment.mmr_root,
-                commitment.start_seq,
-                commitment.leaf_count,
-                leaf_index,
-                chunk_index,
-            )
+            Self::create_challenge(who, bucket_id, provider, commitment, target)
         }
 
         /// Challenge a replica based on their on-chain sync confirmation.
@@ -2245,11 +2216,6 @@ pub mod pallet {
         ) -> DispatchResult {
             let who = ensure_signed(origin)?;
 
-            let ChunkLocation {
-                leaf_index,
-                chunk_index,
-            } = target;
-
             // Get the agreement and verify it's a replica
             let agreement = StorageAgreements::<T>::get(bucket_id, &provider)
                 .ok_or(Error::<T>::AgreementNotFound)?;
@@ -2261,7 +2227,7 @@ pub mod pallet {
                 Error::<T>::AgreementExpired
             );
 
-            let (mmr_root, start_seq, leaf_count) = match &agreement.role {
+            let commitment = match &agreement.role {
                 ProviderRole::Replica { last_sync, .. } => {
                     let record = last_sync.as_ref().ok_or(Error::<T>::InvalidSyncRoot)?;
                     // Bind the challenge to the synced range. Only a sync to the
@@ -2270,21 +2236,16 @@ pub mod pallet {
                     // challenged here (the chain doesn't retain that root's range).
                     let (start_seq, leaf_count) =
                         record.range.ok_or(Error::<T>::ReplicaSyncRangeUnknown)?;
-                    (record.root, start_seq, leaf_count)
+                    Commitment {
+                        mmr_root: record.root,
+                        start_seq,
+                        leaf_count,
+                    }
                 }
                 ProviderRole::Primary => return Err(Error::<T>::NotReplica.into()),
             };
 
-            Self::create_challenge(
-                who,
-                bucket_id,
-                provider,
-                mmr_root,
-                start_seq,
-                leaf_count,
-                leaf_index,
-                chunk_index,
-            )
+            Self::create_challenge(who, bucket_id, provider, commitment, target)
         }
 
         /// Respond to a challenge.

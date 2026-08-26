@@ -5,9 +5,8 @@ use frame_support::{
     pallet_prelude::*,
     traits::{Currency, ReservableCurrency},
 };
-use sp_core::H256;
 use sp_runtime::traits::{One, Saturating, Zero};
-use storage_primitives::{BucketId, ChallengeId, ChunkLocation, SlashReason};
+use storage_primitives::{BucketId, ChallengeId, ChunkLocation, Commitment, SlashReason};
 
 impl<T: Config> Pallet<T> {
     /// The `on_initialize` slash sweep: slash providers whose challenges expired
@@ -120,19 +119,12 @@ impl<T: Config> Pallet<T> {
         count
     }
 
-    // The challenge coordinate is intrinsically wide — mmr_root, the
-    // (start_seq, leaf_count) range binding the proof to a leaf, and the
-    // (leaf_index, chunk_index) target — plus the challenger/bucket/provider.
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn create_challenge(
         challenger: T::AccountId,
         bucket_id: BucketId,
         provider: T::AccountId,
-        mmr_root: H256,
-        start_seq: u64,
-        leaf_count: u64,
-        leaf_index: u64,
-        chunk_index: u64,
+        commitment: Commitment,
+        target: ChunkLocation,
     ) -> DispatchResult {
         // Reject a challenge for a non-existent leaf. `verify_mmr_proof` binds
         // the response to `leaf_index` and rejects `leaf_index >= leaf_count`,
@@ -140,7 +132,10 @@ impl<T: Config> Pallet<T> {
         // would resolve only by slashing the provider on timeout. Guarding here
         // — the single choke point for all challenge_* paths — closes that
         // griefing vector at creation time.
-        ensure!(leaf_index < leaf_count, Error::<T>::LeafIndexOutOfRange);
+        ensure!(
+            target.leaf_index < commitment.leaf_count,
+            Error::<T>::LeafBeyondCanonical
+        );
 
         // Deposit comes from `T::ChallengeDeposit` — a runtime constant
         // sized to make spam expensive without pricing out legitimate
@@ -157,13 +152,10 @@ impl<T: Config> Pallet<T> {
             bucket_id,
             provider: provider.clone(),
             challenger: challenger.clone(),
-            mmr_root,
-            start_seq,
-            leaf_count,
-            target: ChunkLocation {
-                leaf_index,
-                chunk_index,
-            },
+            mmr_root: commitment.mmr_root,
+            start_seq: commitment.start_seq,
+            leaf_count: commitment.leaf_count,
+            target,
             deposit,
         };
 

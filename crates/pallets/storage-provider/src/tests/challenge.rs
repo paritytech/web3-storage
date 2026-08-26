@@ -2738,7 +2738,7 @@ mod challenge_tests {
                             chunk_index: 0,
                         },
                     ),
-                    Error::<Test>::LeafIndexOutOfRange
+                    Error::<Test>::LeafBeyondCanonical
                 );
             }
             // The last in-range leaf (leaf_count - 1) is accepted.
