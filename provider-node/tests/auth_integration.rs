@@ -48,11 +48,11 @@ impl AuthTestServer {
         let deps = ProviderDeps {
             storage,
             nonce_store,
-            auth: Arc::new(Authenticator::new(
-                StaticMembershipResolver(vec![(alice_account, alice_role).into()]),
-                Duration::from_secs(60),
-                Duration::from_secs(300),
-            )),
+            auth: Arc::new(Authenticator::new(StaticMembershipResolver(vec![(
+                alice_account,
+                alice_role,
+            )
+                .into()]))),
         };
         let state = ProviderState::with_seed(deps, "//Alice").expect("//Alice is valid");
 
