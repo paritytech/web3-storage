@@ -404,6 +404,7 @@ impl ChallengeResponder {
             challenge.bucket_id,
             challenge.mmr_root,
             challenge.start_seq,
+            challenge.leaf_count,
             challenge.leaf_index,
         ) {
             Ok(proof) => proof,
