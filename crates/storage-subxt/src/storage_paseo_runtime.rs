@@ -3415,9 +3415,9 @@ pub mod api {
             .hash();
         runtime_metadata_hash
             == [
-                166u8, 153u8, 67u8, 240u8, 210u8, 39u8, 5u8, 232u8, 161u8, 148u8, 71u8, 95u8,
-                107u8, 217u8, 249u8, 147u8, 98u8, 196u8, 91u8, 125u8, 24u8, 33u8, 235u8, 93u8,
-                101u8, 93u8, 125u8, 27u8, 125u8, 190u8, 174u8, 152u8,
+                52u8, 129u8, 193u8, 16u8, 251u8, 144u8, 169u8, 37u8, 27u8, 18u8, 228u8, 82u8, 81u8,
+                173u8, 3u8, 179u8, 166u8, 254u8, 238u8, 203u8, 195u8, 229u8, 135u8, 225u8, 46u8,
+                140u8, 244u8, 25u8, 243u8, 58u8, 6u8, 74u8,
             ]
     }
     pub mod system {
@@ -17794,9 +17794,9 @@ pub mod api {
                         "StorageProvider",
                         "Challenges",
                         [
-                            33u8, 56u8, 141u8, 123u8, 45u8, 8u8, 64u8, 217u8, 134u8, 45u8, 233u8,
-                            111u8, 210u8, 93u8, 60u8, 17u8, 93u8, 205u8, 110u8, 221u8, 176u8,
-                            224u8, 16u8, 33u8, 63u8, 64u8, 204u8, 60u8, 121u8, 110u8, 113u8, 106u8,
+                            13u8, 244u8, 108u8, 115u8, 115u8, 146u8, 158u8, 131u8, 203u8, 54u8,
+                            77u8, 110u8, 214u8, 57u8, 96u8, 237u8, 150u8, 71u8, 82u8, 195u8, 93u8,
+                            32u8, 79u8, 231u8, 72u8, 71u8, 132u8, 196u8, 45u8, 163u8, 34u8, 124u8,
                         ],
                     )
                 }
@@ -20948,9 +20948,9 @@ pub mod api {
                         "Revive",
                         "EthBlockBuilderIR",
                         [
-                            62u8, 22u8, 204u8, 180u8, 89u8, 208u8, 118u8, 104u8, 70u8, 79u8, 254u8,
-                            35u8, 81u8, 30u8, 181u8, 91u8, 139u8, 0u8, 140u8, 81u8, 45u8, 123u8,
-                            181u8, 158u8, 118u8, 82u8, 95u8, 24u8, 133u8, 117u8, 33u8, 133u8,
+                            71u8, 238u8, 147u8, 189u8, 43u8, 68u8, 7u8, 59u8, 65u8, 129u8, 195u8,
+                            104u8, 36u8, 47u8, 160u8, 177u8, 141u8, 216u8, 47u8, 58u8, 4u8, 214u8,
+                            89u8, 77u8, 42u8, 174u8, 103u8, 255u8, 95u8, 196u8, 25u8, 232u8,
                         ],
                     )
                 }
@@ -25988,9 +25988,7 @@ pub mod api {
                     pub bucket_id: ::core::primitive::u64,
                     pub provider: ::subxt::utils::AccountId32,
                     pub challenger: ::subxt::utils::AccountId32,
-                    pub mmr_root: ::subxt::utils::H256,
-                    pub start_seq: ::core::primitive::u64,
-                    pub leaf_count: ::core::primitive::u64,
+                    pub commitment: runtime_types::storage_primitives::Commitment,
                     pub target: runtime_types::storage_primitives::ChunkLocation,
                     pub deposit: ::core::primitive::u128,
                 }
@@ -26036,153 +26034,198 @@ pub mod api {
                 #[doc = "The `Error` enum of this pallet."]
                 pub enum Error {
                     #[codec(index = 0)]
+                    #[doc = "Account already has a provider record."]
                     ProviderAlreadyRegistered,
                     #[codec(index = 1)]
+                    #[doc = "No provider record for this account."]
                     ProviderNotFound,
                     #[codec(index = 2)]
+                    #[doc = "Stake below `MinProviderStake`."]
                     InsufficientStake,
                     #[codec(index = 3)]
+                    #[doc = "Stake does not back the requested bytes."]
                     InsufficientStakeForBytes,
                     #[codec(index = 4)]
+                    #[doc = "Provider still has live agreements."]
                     ProviderHasActiveAgreements,
                     #[codec(index = 5)]
+                    #[doc = "Provider is not accepting new primary agreements."]
                     ProviderNotAcceptingPrimary,
                     #[codec(index = 6)]
+                    #[doc = "Provider is not accepting replicas (`replica_sync_price` unset)."]
                     ProviderNotAcceptingReplicas,
                     #[codec(index = 7)]
+                    #[doc = "Provider is not accepting agreement extensions."]
                     ProviderNotAcceptingExtensions,
                     #[codec(index = 8)]
+                    #[doc = "`remove_slashed` target still has stake."]
                     ProviderNotSlashed,
                     #[codec(index = 9)]
-                    #[doc = "Cannot set max_capacity below current committed_bytes."]
+                    #[doc = "Cannot set `max_capacity` below current `committed_bytes`."]
                     CapacityBelowCommitted,
                     #[codec(index = 10)]
-                    #[doc = "Provider capacity exceeded on accept (committed + request > max_capacity)."]
+                    #[doc = "Accepting would exceed `max_capacity` (committed + request)."]
                     CapacityExceeded,
                     #[codec(index = 11)]
-                    #[doc = "Stake insufficient to back declared capacity."]
+                    #[doc = "Stake insufficient to back the declared capacity."]
                     InsufficientStakeForCapacity,
                     #[codec(index = 12)]
-                    #[doc = "Provider settings specify `min_duration > max_duration"]
+                    #[doc = "Provider settings specify `min_duration > max_duration`."]
                     MinDurationExceedsMaxDuration,
                     #[codec(index = 13)]
-                    #[doc = "Provider has already announced a deregistration; the action is"]
-                    #[doc = "rejected until they complete or cancel it."]
+                    #[doc = "Action blocked while a deregistration announcement is pending."]
                     DeregisterAnnounced,
                     #[codec(index = 14)]
-                    #[doc = "Provider has no announced deregistration to complete or cancel."]
+                    #[doc = "No announced deregistration to complete or cancel."]
                     DeregisterNotAnnounced,
                     #[codec(index = 15)]
-                    #[doc = "`complete_deregister` called before `DeregisterAnnouncementPeriod`"]
-                    #[doc = "elapsed."]
+                    #[doc = "`DeregisterAnnouncementPeriod` has not elapsed yet."]
                     DeregisterPeriodNotElapsed,
                     #[codec(index = 16)]
+                    #[doc = "No bucket with this id."]
                     BucketNotFound,
                     #[codec(index = 17)]
+                    #[doc = "Bucket is frozen (append-only)."]
                     BucketFrozen,
                     #[codec(index = 18)]
+                    #[doc = "Operation requires a frozen bucket."]
                     BucketNotFrozen,
                     #[codec(index = 19)]
+                    #[doc = "Caller is not a bucket admin."]
                     NotBucketAdmin,
                     #[codec(index = 20)]
+                    #[doc = "Caller is not a bucket member."]
                     NotBucketMember,
                     #[codec(index = 21)]
+                    #[doc = "Caller has no write permission on the bucket."]
                     NotBucketWriter,
                     #[codec(index = 22)]
+                    #[doc = "No such member in the bucket."]
                     MemberNotFound,
                     #[codec(index = 23)]
+                    #[doc = "Admins cannot be demoted, only removed."]
                     CannotDemoteAdmin,
                     #[codec(index = 24)]
+                    #[doc = "A bucket must keep at least one admin."]
                     LastAdminCannotBeRemoved,
                     #[codec(index = 25)]
+                    #[doc = "Bucket member list is full (`MaxMembers`)."]
                     MaxMembersReached,
                     #[codec(index = 26)]
+                    #[doc = "Bucket primary-provider list is full (`MaxPrimaryProviders`)."]
                     MaxPrimaryProvidersReached,
                     #[codec(index = 27)]
+                    #[doc = "Snapshot carries fewer signatures than `min_providers`."]
                     MinProvidersNotMet,
                     #[codec(index = 28)]
+                    #[doc = "`min_providers` exceeds the bucket's primary-provider count."]
                     InvalidMinProviders,
                     #[codec(index = 29)]
+                    #[doc = "No agreement for this `(bucket, provider)`."]
                     AgreementNotFound,
                     #[codec(index = 30)]
+                    #[doc = "An agreement for this `(bucket, provider)` already exists."]
                     AgreementAlreadyExists,
                     #[codec(index = 31)]
+                    #[doc = "Agreement is past its expiry block."]
                     AgreementExpired,
                     #[codec(index = 32)]
+                    #[doc = "Agreement has not expired yet."]
                     AgreementNotExpired,
                     #[codec(index = 33)]
+                    #[doc = "Extensions are blocked for this agreement."]
                     AgreementExtensionsBlocked,
                     #[codec(index = 34)]
+                    #[doc = "Caller does not own this agreement."]
                     NotAgreementOwner,
                     #[codec(index = 35)]
+                    #[doc = "Duration below the provider's `min_duration`."]
                     DurationTooShort,
                     #[codec(index = 36)]
+                    #[doc = "Duration above the provider's `max_duration`."]
                     DurationTooLong,
                     #[codec(index = 37)]
+                    #[doc = "Cost exceeds the caller's `max_payment` cap."]
                     PaymentExceedsMax,
                     #[codec(index = 38)]
+                    #[doc = "Replica agreements run to expiry; admins cannot terminate them."]
                     CannotTerminateReplica,
                     #[codec(index = 39)]
+                    #[doc = "`SettlementTimeout` passed; the payment can only be swept now."]
                     SettlementWindowPassed,
                     #[codec(index = 40)]
+                    #[doc = "Provider is not a replica for this bucket."]
                     NotReplica,
                     #[codec(index = 41)]
+                    #[doc = "Sync confirmed less than `min_sync_interval` blocks after the last."]
                     SyncTooFrequent,
                     #[codec(index = 42)]
+                    #[doc = "Synced root is neither the current snapshot nor a known"]
+                    #[doc = "historical root."]
                     InvalidSyncRoot,
                     #[codec(index = 43)]
+                    #[doc = "`sync_balance` cannot cover the per-sync price."]
                     InsufficientSyncBalance,
                     #[codec(index = 44)]
-                    #[doc = "The replica's last sync was to a historical root whose `(start_seq,"]
-                    #[doc = "leaf_count)` range the chain does not retain, so `challenge_replica`"]
-                    #[doc = "cannot bind the proof to a leaf. Re-sync to the current snapshot (or"]
-                    #[doc = "use `challenge_offchain` with a signed commitment) to challenge it."]
+                    #[doc = "Last sync was to a historical root whose `(start_seq, leaf_count)`"]
+                    #[doc = "range the chain does not retain, so `challenge_replica` cannot bind"]
+                    #[doc = "a proof; re-sync to the current snapshot or use `challenge_offchain`."]
                     ReplicaSyncRangeUnknown,
                     #[codec(index = 45)]
+                    #[doc = "No challenge at this `(deadline, index)`."]
                     ChallengeNotFound,
                     #[codec(index = 46)]
+                    #[doc = "A challenge already exists at this id."]
                     ChallengeAlreadyExists,
                     #[codec(index = 47)]
+                    #[doc = "Response proof failed verification."]
                     InvalidChallengeProof,
                     #[codec(index = 48)]
+                    #[doc = "Response arrived after the challenge deadline."]
                     ChallengeExpired,
                     #[codec(index = 49)]
+                    #[doc = "Responder is not the challenged provider."]
                     NotChallengeProvider,
                     #[codec(index = 50)]
+                    #[doc = "Provider did not sign the bucket's current snapshot."]
                     ProviderNotInSnapshot,
                     #[codec(index = 51)]
-                    #[doc = "Challenge `leaf_index` is out of range for the committed `leaf_count`"]
-                    #[doc = "(the leaf does not exist), so no valid proof could ever defend it."]
+                    #[doc = "`leaf_index` is not covered by the commitment's `leaf_count`; the"]
+                    #[doc = "leaf does not exist, so no valid proof could ever defend it."]
                     LeafBeyondCanonical,
                     #[codec(index = 52)]
+                    #[doc = "Deletion-response admin signature or range failed verification."]
                     InvalidDeletionProof,
                     #[codec(index = 53)]
-                    #[doc = "A provider with unresolved challenges (`PendingChallenges > 0`)"]
-                    #[doc = "cannot complete deregistration — they are still slashable."]
+                    #[doc = "Provider cannot deregister with unresolved challenges pending."]
                     ProviderHasPendingChallenges,
                     #[codec(index = 54)]
-                    #[doc = "An agreement with an unresolved challenge against this"]
-                    #[doc = "`(bucket, provider)` cannot be torn down until the challenge"]
-                    #[doc = "resolves (defended, slashed, or timed out)."]
+                    #[doc = "Agreement cannot be torn down with an unresolved challenge pending."]
                     AgreementHasPendingChallenge,
                     #[codec(index = 55)]
-                    #[doc = "`MaxChallengesPerDeadline` challenges have already been allocated"]
-                    #[doc = "for the deadline this challenge would land on. Caps the total the"]
-                    #[doc = "`on_initialize` sweep must eventually drain for a single key."]
+                    #[doc = "`MaxChallengesPerDeadline` already allocated for this deadline;"]
+                    #[doc = "bounds the `on_initialize` sweep's per-key drain."]
                     TooManyChallengesThisBlock,
                     #[codec(index = 56)]
+                    #[doc = "Signature does not verify against the provider's registered key."]
                     InvalidSignature,
                     #[codec(index = 57)]
+                    #[doc = "Bucket has no snapshot yet."]
                     NoSnapshot,
                     #[codec(index = 58)]
+                    #[doc = "Snapshot `start_seq` is below the bucket's `frozen_start_seq`."]
                     SnapshotViolatesFrozen,
                     #[codec(index = 59)]
+                    #[doc = "Fewer valid signatures than the bucket's `min_providers`."]
                     InsufficientSignatures,
                     #[codec(index = 60)]
+                    #[doc = "Arithmetic overflow in a balance or size computation."]
                     ArithmeticOverflow,
                     #[codec(index = 61)]
+                    #[doc = "Multiaddr failed validation."]
                     InvalidMultiaddr,
                     #[codec(index = 62)]
+                    #[doc = "Public key is not a valid Sr25519/Ed25519/ECDSA key."]
                     InvalidPublicKey,
                     #[codec(index = 63)]
                     #[doc = "Account is a member of too many buckets."]
@@ -26218,7 +26261,7 @@ pub mod api {
                     #[doc = "targeted bucket."]
                     TermsBucketMismatch,
                     #[codec(index = 72)]
-                    #[doc = "Storage agreement requested 0 byte"]
+                    #[doc = "Agreement requested zero bytes."]
                     InvalidMaxBytesRequest,
                 }
                 #[derive(
