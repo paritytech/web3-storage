@@ -471,7 +471,7 @@ mod tests {
     async fn invalidating_a_never_cached_bucket_leaves_the_map_empty() {
         // `parse_membership_changes` filters chain-wide membership events by
         // pallet and event name only, with no is-this-our-bucket predicate
-        // (provider-node/src/chain_state_coordinator.rs), so `invalidate` is
+        // (crates/providers/coordinator/src/lib.rs), so `invalidate` is
         // routinely called for buckets this cache has never seen. It must be
         // a no-op on the map, not a slot-creating write - otherwise every
         // chain-wide membership event permanently grows the map by one entry
