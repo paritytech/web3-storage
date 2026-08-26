@@ -55,7 +55,7 @@ impl fmt::Display for StorageBackendSpec {
 }
 
 /// A stored node (chunk or internal node).
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, codec::Encode, codec::Decode)]
 pub struct StoredNode {
     /// The raw data
     pub data: Vec<u8>,

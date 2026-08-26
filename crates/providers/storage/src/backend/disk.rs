@@ -8,7 +8,7 @@
 use super::{BucketInfo, BucketStats, BucketSummary, StorageBackend, StoredNode};
 use crate::error::Error;
 use crate::nonce::NonceStore;
-use codec::Encode;
+use codec::{Decode, Encode};
 use rocksdb::{Options, DB};
 use sp_core::H256;
 use std::path::Path;
@@ -26,7 +26,7 @@ const CF_METADATA: &str = "metadata";
 const KEY_NONCE: &[u8] = b"nonce_counter";
 
 /// Bucket state managed by this provider (serialized to disk).
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Encode, Decode)]
 struct BucketState {
     mmr_root: H256,
     start_seq: u64,
@@ -91,7 +91,7 @@ impl DiskStorage {
         }
 
         let bucket = BucketState::new(max_bytes);
-        let value = bincode::serialize(&bucket).map_err(|e| Error::Serialization(e.to_string()))?;
+        let value = bucket.encode();
 
         self.db
             .put_cf(&cf, key, &value)
@@ -105,7 +105,7 @@ impl DiskStorage {
         let cf = self.db.cf_handle(CF_BUCKETS)?;
         let key = bucket_id.to_le_bytes();
         let value = self.db.get_cf(&cf, key).ok()??;
-        match bincode::deserialize(&value) {
+        match BucketState::decode(&mut &value[..]) {
             Ok(state) => Some(state),
             Err(e) => {
                 tracing::warn!(bucket_id, error = %e, "Failed to deserialize bucket state");
@@ -122,7 +122,7 @@ impl DiskStorage {
             .ok_or_else(|| Error::Storage("Buckets CF not found".to_string()))?;
 
         let key = bucket_id.to_le_bytes();
-        let value = bincode::serialize(bucket).map_err(|e| Error::Serialization(e.to_string()))?;
+        let value = bucket.encode();
 
         self.db
             .put_cf(&cf, key, &value)
@@ -146,7 +146,7 @@ impl DiskStorage {
                     return None;
                 }
                 let bucket_id = u64::from_le_bytes(key[..8].try_into().unwrap());
-                match bincode::deserialize::<BucketState>(&value) {
+                match BucketState::decode(&mut &value[..]) {
                     Ok(state) => Some(f(bucket_id, &state)),
                     Err(e) => {
                         tracing::warn!(bucket_id, error = %e, "Failed to deserialize bucket state");
@@ -270,8 +270,7 @@ impl DiskStorage {
         {
             let data_len = data.len() as u64;
             let node = StoredNode { data, children };
-            let value =
-                bincode::serialize(&node).map_err(|e| Error::Serialization(e.to_string()))?;
+            let value = node.encode();
 
             self.db
                 .put_cf(&cf_nodes, key, &value)
@@ -290,7 +289,7 @@ impl DiskStorage {
         let cf = self.db.cf_handle(CF_NODES)?;
         let key = hash.as_bytes();
         let value = self.db.get_cf(&cf, key).ok()??;
-        match bincode::deserialize(&value) {
+        match StoredNode::decode(&mut &value[..]) {
             Ok(node) => Some(node),
             Err(e) => {
                 tracing::warn!(hash = %format!("0x{}", hex::encode(hash.as_bytes())), error = %e, "Failed to deserialize node");
@@ -741,5 +740,45 @@ mod tests {
                 "reset must persist across DB reopen"
             );
         }
+    }
+
+    #[test]
+    fn bucket_state_encode_decode_round_trip() {
+        let bucket = BucketState {
+            mmr_root: H256::repeat_byte(0xab),
+            start_seq: 7,
+            leaves: vec![
+                MmrLeaf {
+                    data_root: H256::repeat_byte(0xcd),
+                    data_size: 111,
+                    total_size: 222,
+                },
+                MmrLeaf {
+                    data_root: H256::repeat_byte(0xef),
+                    data_size: 333,
+                    total_size: 555,
+                },
+            ],
+            used_bytes: 999,
+            max_bytes: 1_000_000,
+        };
+
+        let encoded = bucket.encode();
+        let decoded = BucketState::decode(&mut &encoded[..]).unwrap();
+
+        assert_eq!(decoded, bucket);
+    }
+
+    #[test]
+    fn stored_node_encode_decode_round_trip() {
+        let node = StoredNode {
+            data: vec![1, 2, 3, 4, 5],
+            children: Some(vec![H256::repeat_byte(0x11), H256::repeat_byte(0x22)]),
+        };
+
+        let encoded = node.encode();
+        let decoded = StoredNode::decode(&mut &encoded[..]).unwrap();
+
+        assert_eq!(decoded, node);
     }
 }
