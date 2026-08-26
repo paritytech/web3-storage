@@ -1,10 +1,16 @@
+# Standalone workspace on purpose: this harness is excluded from the root
+# workspace (see the root `Cargo.toml`) so its heavy database-engine
+# dependencies never reach the main workspace's Cargo.lock, builds, or CI.
+# Dependency versions are inlined here rather than inherited for that reason.
+[workspace]
+
 [package]
 name = "db-bench"
 version = "0.1.0"
-authors.workspace = true
-edition.workspace = true
-license.workspace = true
-repository.workspace = true
+authors = ["Parity Technologies <admin@parity.io>"]
+edition = "2021"
+license = "GPL-3.0-only"
+repository = "https://github.com/paritytech/web3-storage"
 description = "Database engine benchmark harness"
 publish = false
 
@@ -20,12 +26,20 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 parity-db = "0.5"
 # redb: pure-Rust copy-on-write B-tree — the maintained B-tree KV alternative to
 # sled, and the closest structural peer to SQLite without the SQL layer.
-redb = { workspace = true }
+redb = "4.2"
+# Cheap-to-multiply candidates: no background threads, single file each.
+# heed: typed LMDB wrapper — LMDB is the reference design for cheap repeated
+# opens (mmap + one meta page, zero background threads).
+heed = "0.22"
+# libmdbx: LMDB descendant with automatic compaction and stronger durability knobs.
+libmdbx = "0.6"
+# jammdb: pure-Rust BoltDB port — single mmap'd file, no background threads.
+jammdb = "0.11"
 
 # Harness plumbing
 clap = { version = "4", features = ["derive"] }
-serde = { workspace = true, features = ["derive", "std"] }
-serde_json = { workspace = true, features = ["std"] }
+serde = { version = "1.0", default-features = false, features = ["derive", "std"] }
+serde_json = { version = "1.0", default-features = false, features = ["std"] }
 rand = "0.8"
 rand_chacha = "0.3"
 tempfile = "3"

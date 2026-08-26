@@ -1,0 +1,137 @@
+{
+  "meta": {
+    "host": "localhost",
+    "page_size_assumed": 4096,
+    "scale": 1.0,
+    "seed": 13371337,
+    "note": "Third measurement pass, content_store scenario only: the per-bucket chunk store as designed in 05-per-bucket-store-design.md - 256 KiB values under random 32-byte (content-hash) keys, unsynced batch ingest, one timed flush barrier, cold/warm random point reads. ParityDB absent by design (not a sharded candidate); sled absent (OOM, see storage-provider-compaction-run.json note). Engines run as separate back-to-back processes; cross-pass comparison invalid."
+  },
+  "records": [
+    {
+      "component": "storage_provider",
+      "disk_bytes": 525471744,
+      "engine": "sqlite",
+      "extra": {
+        "amplification": 1.002135481508605,
+        "barrier_us": 113.66699999999999,
+        "cold_latency": {
+          "count": 1000,
+          "max_us": 468.667,
+          "mean_us": 312.6709110000004,
+          "p50_us": 309.291,
+          "p90_us": 348.041,
+          "p99_us": 394.29200000000003
+        },
+        "logical_bytes": 524352000
+      },
+      "latency": {
+        "count": 5000,
+        "max_us": 2117.833,
+        "mean_us": 323.8645624000012,
+        "p50_us": 316.959,
+        "p90_us": 373.25,
+        "p99_us": 452.45799999999997
+      },
+      "params": {
+        "architecture": "sharded",
+        "batch_size": 16,
+        "entries": 2000,
+        "keying": "random 32-byte (content hash)",
+        "sync": false,
+        "value_bytes": 262144
+      },
+      "scenario": "content_store",
+      "throughput": {
+        "bytes": 524352000,
+        "elapsed_s": 1.461118084,
+        "mib_per_s": 342.24546299999804,
+        "ops": 2000,
+        "ops_per_s": 1368.814760354441
+      }
+    },
+    {
+      "component": "storage_provider",
+      "disk_bytes": 1077940224,
+      "engine": "redb",
+      "extra": {
+        "amplification": 2.0557568656169902,
+        "barrier_us": 16.291999999999998,
+        "cold_latency": {
+          "count": 1000,
+          "max_us": 244.37500000000003,
+          "mean_us": 108.08901200000001,
+          "p50_us": 126.833,
+          "p90_us": 148.042,
+          "p99_us": 190.75
+        },
+        "logical_bytes": 524352000
+      },
+      "latency": {
+        "count": 5000,
+        "max_us": 6750.1669999999995,
+        "mean_us": 53.355454399999964,
+        "p50_us": 9.084,
+        "p90_us": 158.0,
+        "p99_us": 311.25
+      },
+      "params": {
+        "architecture": "sharded",
+        "batch_size": 16,
+        "entries": 2000,
+        "keying": "random 32-byte (content hash)",
+        "sync": false,
+        "value_bytes": 262144
+      },
+      "scenario": "content_store",
+      "throughput": {
+        "bytes": 524352000,
+        "elapsed_s": 1.085746543,
+        "mib_per_s": 460.56884857725953,
+        "ops": 2000,
+        "ops_per_s": 1842.0505346246357
+      }
+    },
+    {
+      "component": "storage_provider",
+      "disk_bytes": 524496275,
+      "engine": "rocksdb",
+      "extra": {
+        "amplification": 1.0002751491364579,
+        "barrier_us": 1742.959,
+        "cold_latency": {
+          "count": 1000,
+          "max_us": 864.584,
+          "mean_us": 152.6616660000001,
+          "p50_us": 93.708,
+          "p90_us": 433.5,
+          "p99_us": 658.458
+        },
+        "logical_bytes": 524352000
+      },
+      "latency": {
+        "count": 5000,
+        "max_us": 260.291,
+        "mean_us": 82.3585605999999,
+        "p50_us": 75.75,
+        "p90_us": 141.0,
+        "p99_us": 197.417
+      },
+      "params": {
+        "architecture": "sharded",
+        "batch_size": 16,
+        "entries": 2000,
+        "keying": "random 32-byte (content hash)",
+        "sync": false,
+        "value_bytes": 262144
+      },
+      "scenario": "content_store",
+      "throughput": {
+        "bytes": 524352000,
+        "elapsed_s": 0.976508876,
+        "mib_per_s": 512.0906193957114,
+        "ops": 2000,
+        "ops_per_s": 2048.112463854348
+      }
+    }
+  ]
+}

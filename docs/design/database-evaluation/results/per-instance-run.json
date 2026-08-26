@@ -1,0 +1,2667 @@
+{
+  "meta": {
+    "host": "localhost",
+    "lmdb_map_size_bytes": 1073741824,
+    "page_size_assumed": 4096,
+    "scale": 1.0,
+    "seed": 13371337,
+    "note": "Fourth measurement pass: adds the mmap'd single-file B+tree engines (LMDB via heed, libmdbx, jammdb) and the per-instance metrics the earlier passes omitted - OS threads, virtual address space, and the empty-bucket disk floor - plus sparse-aware allocated-block disk measurement. Ran on a DISK-BACKED filesystem (/var/tmp, overlay2), not the tmpfs the first three passes used: tmpfs hit ENOSPC at 3.9 GiB and its RAM use is what OOM-killed sled in passes 2-3. Consequently every write figure here is far lower (fsync now costs something) and this pass is NOT comparable record-for-record with passes 1-3 - but it is the first pass covering all eight engines in one internally consistent sweep, and the first in which sled completes. One process per engine, merged by scripts/merge-db-bench-results.py."
+  },
+  "records": [
+    {
+      "component": "storage_provider",
+      "disk_bytes": 131072,
+      "engine": "jammdb",
+      "extra": {
+        "create_us": 11586.666000000001,
+        "disk_apparent_bytes": 131072,
+        "files_per_instance": 1,
+        "projected_gib_at_1m_buckets": 122.0703125
+      },
+      "params": {
+        "architecture": "sharded",
+        "entries": 0
+      },
+      "scenario": "empty_floor"
+    },
+    {
+      "component": "storage_provider",
+      "engine": "jammdb",
+      "extra": {
+        "note": "latency = time to reopen an existing populated bucket DB"
+      },
+      "latency": {
+        "count": 50,
+        "max_us": 11192.417,
+        "mean_us": 923.0441800000001,
+        "p50_us": 172.958,
+        "p90_us": 1231.459,
+        "p99_us": 11192.417
+      },
+      "params": {
+        "architecture": "sharded",
+        "preloaded_leaves": 1024,
+        "reopen_iters": 50
+      },
+      "scenario": "open_close"
+    },
+    {
+      "component": "storage_provider",
+      "disk_bytes": 25296896,
+      "engine": "jammdb",
+      "extra": null,
+      "latency": {
+        "count": 6250,
+        "max_us": 7473.459,
+        "mean_us": 652.1773479999995,
+        "p50_us": 567.2919999999999,
+        "p90_us": 1444.042,
+        "p99_us": 2370.709
+      },
+      "params": {
+        "architecture": "sharded",
+        "batch_size": 16,
+        "entries": 100000,
+        "sync": true,
+        "value_bytes": 48
+      },
+      "scenario": "mmr_append_small",
+      "throughput": {
+        "bytes": 5600000,
+        "elapsed_s": 4.08804521,
+        "mib_per_s": 1.3063887255481208,
+        "ops": 100000,
+        "ops_per_s": 24461.569005006186
+      }
+    },
+    {
+      "component": "storage_provider",
+      "disk_bytes": 537001984,
+      "engine": "jammdb",
+      "extra": null,
+      "latency": {
+        "count": 125,
+        "max_us": 18091.625,
+        "mean_us": 7381.865608000001,
+        "p50_us": 6908.916,
+        "p90_us": 9392.166000000001,
+        "p99_us": 14909.667
+      },
+      "params": {
+        "architecture": "sharded",
+        "batch_size": 16,
+        "entries": 2000,
+        "sync": true,
+        "value_bytes": 262144
+      },
+      "scenario": "node_append_large",
+      "throughput": {
+        "bytes": 524304000,
+        "elapsed_s": 1.444872417,
+        "mib_per_s": 346.06187571027766,
+        "ops": 2000,
+        "ops_per_s": 1384.20526024894
+      }
+    },
+    {
+      "component": "storage_provider",
+      "engine": "jammdb",
+      "extra": {
+        "cold_latency": {
+          "count": 5000,
+          "max_us": 18.291,
+          "mean_us": 1.5462807999999992,
+          "p50_us": 1.375,
+          "p90_us": 1.917,
+          "p99_us": 5.375
+        }
+      },
+      "latency": {
+        "count": 50000,
+        "max_us": 19.625,
+        "mean_us": 1.070063720000271,
+        "p50_us": 1.0410000000000001,
+        "p90_us": 1.167,
+        "p99_us": 1.583
+      },
+      "params": {
+        "architecture": "sharded",
+        "leaves": 100000,
+        "reads": 50000
+      },
+      "scenario": "proof_read"
+    },
+    {
+      "component": "storage_provider",
+      "disk_bytes": 25296896,
+      "engine": "jammdb",
+      "extra": {
+        "amplification": 4.517302857142857,
+        "amplification_compacted": 4.517302857142857,
+        "disk_apparent_bytes": 25296896,
+        "disk_compacted_bytes": 25296896,
+        "has_compaction_api": false,
+        "logical_bytes": 5600000
+      },
+      "params": {
+        "architecture": "sharded",
+        "entries": 100000,
+        "value_bytes": 48
+      },
+      "scenario": "disk_small"
+    },
+    {
+      "component": "storage_provider",
+      "disk_bytes": 537006080,
+      "engine": "jammdb",
+      "extra": {
+        "amplification": 1.0242265555860721,
+        "amplification_compacted": 1.0242265555860721,
+        "disk_apparent_bytes": 537001984,
+        "disk_compacted_bytes": 537006080,
+        "has_compaction_api": false,
+        "logical_bytes": 524304000
+      },
+      "params": {
+        "architecture": "sharded",
+        "entries": 2000,
+        "value_bytes": 262144
+      },
+      "scenario": "disk_large"
+    },
+    {
+      "component": "storage_provider",
+      "disk_bytes": 578949120,
+      "engine": "jammdb",
+      "extra": {
+        "amplification": 1.1041230318564628,
+        "barrier_us": 0.75,
+        "cold_latency": {
+          "count": 1000,
+          "max_us": 262.25,
+          "mean_us": 121.64358299999998,
+          "p50_us": 121.292,
+          "p90_us": 136.208,
+          "p99_us": 165.959
+        },
+        "disk_apparent_bytes": 578945024,
+        "logical_bytes": 524352000
+      },
+      "latency": {
+        "count": 5000,
+        "max_us": 274.958,
+        "mean_us": 123.65508979999998,
+        "p50_us": 120.0,
+        "p90_us": 137.667,
+        "p99_us": 157.959
+      },
+      "params": {
+        "architecture": "sharded",
+        "batch_size": 16,
+        "entries": 2000,
+        "keying": "random 32-byte (content hash)",
+        "sync": false,
+        "value_bytes": 262144
+      },
+      "scenario": "content_store",
+      "throughput": {
+        "bytes": 524352000,
+        "elapsed_s": 3.780788544,
+        "mib_per_s": 132.2636876769615,
+        "ops": 2000,
+        "ops_per_s": 528.9901767116654
+      }
+    },
+    {
+      "component": "storage_provider",
+      "engine": "jammdb",
+      "extra": {
+        "bytes_after_compaction": 16908288,
+        "bytes_after_key_delete": 16908288,
+        "compaction_us": 0.167,
+        "delete_all_keys_us": 16333816.465999998,
+        "has_compaction_api": false,
+        "note": "rmtree models per-bucket-file cleanup; delete_all_keys models shared-DB tombstones, whose space is only returned by the subsequent compaction",
+        "rmtree_us": 932.916
+      },
+      "params": {
+        "architecture": "sharded",
+        "entries": 50000
+      },
+      "scenario": "bulk_delete"
+    },
+    {
+      "component": "storage_provider",
+      "engine": "jammdb",
+      "extra": {
+        "fd_per_instance": 1.0,
+        "open_per_instance_us": 2078.2304200000003,
+        "open_total_ms": 207.82304200000002,
+        "rss_per_instance_bytes": 28672.0,
+        "threads_added": 0,
+        "threads_per_instance": 0.0,
+        "vsize_added_bytes": 13107200,
+        "vsize_per_instance_bytes": 131072.0
+      },
+      "fd_delta": 100,
+      "params": {
+        "architecture": "sharded",
+        "instances": 100,
+        "leaves_per_instance": 64
+      },
+      "rss_delta_bytes": 2867200,
+      "scenario": "multi_instance"
+    },
+    {
+      "component": "storage_provider",
+      "engine": "jammdb",
+      "extra": {
+        "fd_per_instance": 1.0,
+        "open_per_instance_us": 2513.852334,
+        "open_total_ms": 1256.926167,
+        "rss_per_instance_bytes": 28672.0,
+        "threads_added": 0,
+        "threads_per_instance": 0.0,
+        "vsize_added_bytes": 65536000,
+        "vsize_per_instance_bytes": 131072.0
+      },
+      "fd_delta": 500,
+      "params": {
+        "architecture": "sharded",
+        "instances": 500,
+        "leaves_per_instance": 64
+      },
+      "rss_delta_bytes": 14336000,
+      "scenario": "multi_instance"
+    },
+    {
+      "component": "storage_provider",
+      "engine": "jammdb",
+      "extra": {
+        "fd_per_instance": 1.0,
+        "open_per_instance_us": 2378.8021270000004,
+        "open_total_ms": 2378.802127,
+        "rss_per_instance_bytes": 28672.0,
+        "threads_added": 0,
+        "threads_per_instance": 0.0,
+        "vsize_added_bytes": 131072000,
+        "vsize_per_instance_bytes": 131072.0
+      },
+      "fd_delta": 1000,
+      "params": {
+        "architecture": "sharded",
+        "instances": 1000,
+        "leaves_per_instance": 64
+      },
+      "rss_delta_bytes": 28672000,
+      "scenario": "multi_instance"
+    },
+    {
+      "component": "storage_provider",
+      "engine": "jammdb",
+      "extra": {
+        "aggregate_across_threads": true
+      },
+      "params": {
+        "architecture": "sharded",
+        "batch_size": 16,
+        "sync": true,
+        "threads": 8,
+        "writes_per_thread": 20000
+      },
+      "scenario": "concurrent_write",
+      "throughput": {
+        "bytes": 10240000,
+        "elapsed_s": 4.359527085,
+        "mib_per_s": 2.240065220285241,
+        "ops": 160000,
+        "ops_per_s": 36701.22856915339
+      }
+    },
+    {
+      "component": "storage_provider",
+      "disk_bytes": 12288,
+      "engine": "lmdb",
+      "extra": {
+        "create_us": 1496.292,
+        "disk_apparent_bytes": 16576,
+        "files_per_instance": 2,
+        "projected_gib_at_1m_buckets": 11.444091796875
+      },
+      "params": {
+        "architecture": "sharded",
+        "entries": 0
+      },
+      "scenario": "empty_floor"
+    },
+    {
+      "component": "storage_provider",
+      "engine": "lmdb",
+      "extra": {
+        "note": "latency = time to reopen an existing populated bucket DB"
+      },
+      "latency": {
+        "count": 50,
+        "max_us": 838.25,
+        "mean_us": 63.82996,
+        "p50_us": 45.25,
+        "p90_us": 59.0,
+        "p99_us": 838.25
+      },
+      "params": {
+        "architecture": "sharded",
+        "preloaded_leaves": 1024,
+        "reopen_iters": 50
+      },
+      "scenario": "open_close"
+    },
+    {
+      "component": "storage_provider",
+      "disk_bytes": 6918336,
+      "engine": "lmdb",
+      "extra": null,
+      "latency": {
+        "count": 6250,
+        "max_us": 48330.333000000006,
+        "mean_us": 263.7764716800006,
+        "p50_us": 193.875,
+        "p90_us": 431.916,
+        "p99_us": 541.0840000000001
+      },
+      "params": {
+        "architecture": "sharded",
+        "batch_size": 16,
+        "entries": 100000,
+        "sync": true,
+        "value_bytes": 48
+      },
+      "scenario": "mmr_append_small",
+      "throughput": {
+        "bytes": 5600000,
+        "elapsed_s": 1.660314417,
+        "mib_per_s": 3.2166053111342707,
+        "ops": 100000,
+        "ops_per_s": 60229.55590585587
+      }
+    },
+    {
+      "component": "storage_provider",
+      "disk_bytes": 532582592,
+      "engine": "lmdb",
+      "extra": null,
+      "latency": {
+        "count": 125,
+        "max_us": 18745.458,
+        "mean_us": 7352.161048000002,
+        "p50_us": 7094.375,
+        "p90_us": 9507.583999999999,
+        "p99_us": 11783.542
+      },
+      "params": {
+        "architecture": "sharded",
+        "batch_size": 16,
+        "entries": 2000,
+        "sync": true,
+        "value_bytes": 262144
+      },
+      "scenario": "node_append_large",
+      "throughput": {
+        "bytes": 524304000,
+        "elapsed_s": 1.441743459,
+        "mib_per_s": 346.81291991841283,
+        "ops": 2000,
+        "ops_per_s": 1387.209345404077
+      }
+    },
+    {
+      "component": "storage_provider",
+      "engine": "lmdb",
+      "extra": {
+        "cold_latency": {
+          "count": 5000,
+          "max_us": 13.291,
+          "mean_us": 0.5542253999999905,
+          "p50_us": 0.459,
+          "p90_us": 0.75,
+          "p99_us": 1.792
+        }
+      },
+      "latency": {
+        "count": 50000,
+        "max_us": 32.417,
+        "mean_us": 0.4714330800003094,
+        "p50_us": 0.458,
+        "p90_us": 0.5,
+        "p99_us": 0.7080000000000001
+      },
+      "params": {
+        "architecture": "sharded",
+        "leaves": 100000,
+        "reads": 50000
+      },
+      "scenario": "proof_read"
+    },
+    {
+      "component": "storage_provider",
+      "disk_bytes": 6914048,
+      "engine": "lmdb",
+      "extra": {
+        "amplification": 1.2346514285714285,
+        "amplification_compacted": 1.2346514285714285,
+        "disk_apparent_bytes": 6918336,
+        "disk_compacted_bytes": 6914048,
+        "has_compaction_api": false,
+        "logical_bytes": 5600000
+      },
+      "params": {
+        "architecture": "sharded",
+        "entries": 100000,
+        "value_bytes": 48
+      },
+      "scenario": "disk_small"
+    },
+    {
+      "component": "storage_provider",
+      "disk_bytes": 532578304,
+      "engine": "lmdb",
+      "extra": {
+        "amplification": 1.0157815008086912,
+        "amplification_compacted": 1.0157815008086912,
+        "disk_apparent_bytes": 532582592,
+        "disk_compacted_bytes": 532578304,
+        "has_compaction_api": false,
+        "logical_bytes": 524304000
+      },
+      "params": {
+        "architecture": "sharded",
+        "entries": 2000,
+        "value_bytes": 262144
+      },
+      "scenario": "disk_large"
+    },
+    {
+      "component": "storage_provider",
+      "disk_bytes": 532770816,
+      "engine": "lmdb",
+      "extra": {
+        "amplification": 1.0160556572683999,
+        "barrier_us": 197280.541,
+        "cold_latency": {
+          "count": 1000,
+          "max_us": 97.167,
+          "mean_us": 33.107419999999976,
+          "p50_us": 34.792,
+          "p90_us": 44.708,
+          "p99_us": 61.333000000000006
+        },
+        "disk_apparent_bytes": 532775104,
+        "logical_bytes": 524352000
+      },
+      "latency": {
+        "count": 5000,
+        "max_us": 169.584,
+        "mean_us": 22.022487200000015,
+        "p50_us": 18.541999999999998,
+        "p90_us": 34.833999999999996,
+        "p99_us": 48.458000000000006
+      },
+      "params": {
+        "architecture": "sharded",
+        "batch_size": 16,
+        "entries": 2000,
+        "keying": "random 32-byte (content hash)",
+        "sync": false,
+        "value_bytes": 262144
+      },
+      "scenario": "content_store",
+      "throughput": {
+        "bytes": 524352000,
+        "elapsed_s": 0.933262333,
+        "mib_per_s": 535.8204413423487,
+        "ops": 2000,
+        "ops_per_s": 2143.020166228009
+      }
+    },
+    {
+      "component": "storage_provider",
+      "engine": "lmdb",
+      "extra": {
+        "bytes_after_compaction": 3498176,
+        "bytes_after_key_delete": 3498176,
+        "compaction_us": 56.125,
+        "delete_all_keys_us": 285269.04199999996,
+        "has_compaction_api": false,
+        "note": "rmtree models per-bucket-file cleanup; delete_all_keys models shared-DB tombstones, whose space is only returned by the subsequent compaction",
+        "rmtree_us": 230.625
+      },
+      "params": {
+        "architecture": "sharded",
+        "entries": 50000
+      },
+      "scenario": "bulk_delete"
+    },
+    {
+      "component": "storage_provider",
+      "engine": "lmdb",
+      "extra": {
+        "fd_per_instance": 3.0,
+        "open_per_instance_us": 1056.43958,
+        "open_total_ms": 105.643958,
+        "rss_per_instance_bytes": 166420.48,
+        "threads_added": 0,
+        "threads_per_instance": 0.0,
+        "vsize_added_bytes": 107686981632,
+        "vsize_per_instance_bytes": 1076869816.32
+      },
+      "fd_delta": 300,
+      "params": {
+        "architecture": "sharded",
+        "instances": 100,
+        "leaves_per_instance": 64
+      },
+      "rss_delta_bytes": 16642048,
+      "scenario": "multi_instance"
+    },
+    {
+      "component": "storage_provider",
+      "engine": "lmdb",
+      "extra": {
+        "fd_per_instance": 3.0,
+        "open_per_instance_us": 1072.5924179999997,
+        "open_total_ms": 536.296209,
+        "rss_per_instance_bytes": 531972.096,
+        "threads_added": 0,
+        "threads_per_instance": 0.0,
+        "vsize_added_bytes": 538150707200,
+        "vsize_per_instance_bytes": 1076301414.4
+      },
+      "fd_delta": 1500,
+      "params": {
+        "architecture": "sharded",
+        "instances": 500,
+        "leaves_per_instance": 64
+      },
+      "rss_delta_bytes": 265986048,
+      "scenario": "multi_instance"
+    },
+    {
+      "component": "storage_provider",
+      "engine": "lmdb",
+      "extra": {
+        "fd_per_instance": 3.0,
+        "open_per_instance_us": 1614.558501,
+        "open_total_ms": 1614.558501,
+        "rss_per_instance_bytes": 917643.264,
+        "threads_added": 0,
+        "threads_per_instance": 0.0,
+        "vsize_added_bytes": 1075344621568,
+        "vsize_per_instance_bytes": 1075344621.568
+      },
+      "fd_delta": 3000,
+      "params": {
+        "architecture": "sharded",
+        "instances": 1000,
+        "leaves_per_instance": 64
+      },
+      "rss_delta_bytes": 917643264,
+      "scenario": "multi_instance"
+    },
+    {
+      "component": "storage_provider",
+      "engine": "lmdb",
+      "extra": {
+        "aggregate_across_threads": true
+      },
+      "params": {
+        "architecture": "sharded",
+        "batch_size": 16,
+        "sync": true,
+        "threads": 8,
+        "writes_per_thread": 20000
+      },
+      "scenario": "concurrent_write",
+      "throughput": {
+        "bytes": 10240000,
+        "elapsed_s": 3.017278584,
+        "mib_per_s": 3.2365672337268014,
+        "ops": 160000,
+        "ops_per_s": 53027.917557379915
+      }
+    },
+    {
+      "component": "storage_provider",
+      "disk_bytes": 262144,
+      "engine": "mdbx",
+      "extra": {
+        "create_us": 3168.541,
+        "disk_apparent_bytes": 262144,
+        "files_per_instance": 2,
+        "projected_gib_at_1m_buckets": 244.140625
+      },
+      "params": {
+        "architecture": "sharded",
+        "entries": 0
+      },
+      "scenario": "empty_floor"
+    },
+    {
+      "component": "storage_provider",
+      "engine": "mdbx",
+      "extra": {
+        "note": "latency = time to reopen an existing populated bucket DB"
+      },
+      "latency": {
+        "count": 50,
+        "max_us": 40754.334,
+        "mean_us": 3313.39338,
+        "p50_us": 814.458,
+        "p90_us": 6758.209,
+        "p99_us": 40754.334
+      },
+      "params": {
+        "architecture": "sharded",
+        "preloaded_leaves": 1024,
+        "reopen_iters": 50
+      },
+      "scenario": "open_close"
+    },
+    {
+      "component": "storage_provider",
+      "disk_bytes": 16777216,
+      "engine": "mdbx",
+      "extra": null,
+      "latency": {
+        "count": 6250,
+        "max_us": 4070.833,
+        "mean_us": 504.98708047999935,
+        "p50_us": 378.625,
+        "p90_us": 807.7909999999999,
+        "p99_us": 1870.042
+      },
+      "params": {
+        "architecture": "sharded",
+        "batch_size": 16,
+        "entries": 100000,
+        "sync": true,
+        "value_bytes": 48
+      },
+      "scenario": "mmr_append_small",
+      "throughput": {
+        "bytes": 5600000,
+        "elapsed_s": 3.169581543,
+        "mib_per_s": 1.6849467664492266,
+        "ops": 100000,
+        "ops_per_s": 31549.906081719
+      }
+    },
+    {
+      "component": "storage_provider",
+      "disk_bytes": 536870912,
+      "engine": "mdbx",
+      "extra": null,
+      "latency": {
+        "count": 125,
+        "max_us": 15241.833,
+        "mean_us": 9381.790352,
+        "p50_us": 8941.916,
+        "p90_us": 12037.333,
+        "p99_us": 14451.917
+      },
+      "params": {
+        "architecture": "sharded",
+        "batch_size": 16,
+        "entries": 2000,
+        "sync": true,
+        "value_bytes": 262144
+      },
+      "scenario": "node_append_large",
+      "throughput": {
+        "bytes": 524304000,
+        "elapsed_s": 1.8388071259999998,
+        "mib_per_s": 271.923711692785,
+        "ops": 2000,
+        "ops_per_s": 1087.6616539716413
+      }
+    },
+    {
+      "component": "storage_provider",
+      "engine": "mdbx",
+      "extra": {
+        "cold_latency": {
+          "count": 5000,
+          "max_us": 23.917,
+          "mean_us": 0.9148588000000009,
+          "p50_us": 0.75,
+          "p90_us": 1.4589999999999999,
+          "p99_us": 3.208
+        }
+      },
+      "latency": {
+        "count": 50000,
+        "max_us": 30.875,
+        "mean_us": 0.55414096000002,
+        "p50_us": 0.5,
+        "p90_us": 0.667,
+        "p99_us": 1.208
+      },
+      "params": {
+        "architecture": "sharded",
+        "leaves": 100000,
+        "reads": 50000
+      },
+      "scenario": "proof_read"
+    },
+    {
+      "component": "storage_provider",
+      "disk_bytes": 16777216,
+      "engine": "mdbx",
+      "extra": {
+        "amplification": 2.9959314285714287,
+        "amplification_compacted": 2.9959314285714287,
+        "disk_apparent_bytes": 16777216,
+        "disk_compacted_bytes": 16777216,
+        "has_compaction_api": false,
+        "logical_bytes": 5600000
+      },
+      "params": {
+        "architecture": "sharded",
+        "entries": 100000,
+        "value_bytes": 48
+      },
+      "scenario": "disk_small"
+    },
+    {
+      "component": "storage_provider",
+      "disk_bytes": 536875008,
+      "engine": "mdbx",
+      "extra": {
+        "amplification": 1.023976563215234,
+        "amplification_compacted": 1.023976563215234,
+        "disk_apparent_bytes": 536870912,
+        "disk_compacted_bytes": 536875008,
+        "has_compaction_api": false,
+        "logical_bytes": 524304000
+      },
+      "params": {
+        "architecture": "sharded",
+        "entries": 2000,
+        "value_bytes": 262144
+      },
+      "scenario": "disk_large"
+    },
+    {
+      "component": "storage_provider",
+      "disk_bytes": 553652224,
+      "engine": "mdbx",
+      "extra": {
+        "amplification": 1.0558789210301476,
+        "barrier_us": 232692.333,
+        "cold_latency": {
+          "count": 1000,
+          "max_us": 109.16699999999999,
+          "mean_us": 35.998483000000014,
+          "p50_us": 37.583000000000006,
+          "p90_us": 46.792,
+          "p99_us": 64.791
+        },
+        "disk_apparent_bytes": 553648128,
+        "logical_bytes": 524352000
+      },
+      "latency": {
+        "count": 5000,
+        "max_us": 95.5,
+        "mean_us": 22.120849199999984,
+        "p50_us": 17.916,
+        "p90_us": 36.917,
+        "p99_us": 51.041999999999994
+      },
+      "params": {
+        "architecture": "sharded",
+        "batch_size": 16,
+        "entries": 2000,
+        "keying": "random 32-byte (content hash)",
+        "sync": false,
+        "value_bytes": 262144
+      },
+      "scenario": "content_store",
+      "throughput": {
+        "bytes": 524352000,
+        "elapsed_s": 0.921045459,
+        "mib_per_s": 542.9276375773869,
+        "ops": 2000,
+        "ops_per_s": 2171.445481281071
+      }
+    },
+    {
+      "component": "storage_provider",
+      "engine": "mdbx",
+      "extra": {
+        "bytes_after_compaction": 1291845632,
+        "bytes_after_key_delete": 1291849728,
+        "compaction_us": 1.583,
+        "delete_all_keys_us": 5687930.878,
+        "has_compaction_api": false,
+        "note": "rmtree models per-bucket-file cleanup; delete_all_keys models shared-DB tombstones, whose space is only returned by the subsequent compaction",
+        "rmtree_us": 460.834
+      },
+      "params": {
+        "architecture": "sharded",
+        "entries": 50000
+      },
+      "scenario": "bulk_delete"
+    },
+    {
+      "component": "storage_provider",
+      "engine": "mdbx",
+      "extra": {
+        "fd_per_instance": 2.0,
+        "open_per_instance_us": 2298.8025,
+        "open_total_ms": 229.88025000000002,
+        "rss_per_instance_bytes": 51978.24,
+        "threads_added": 100,
+        "threads_per_instance": 1.0,
+        "vsize_added_bytes": 1293943025664,
+        "vsize_per_instance_bytes": 12939430256.64
+      },
+      "fd_delta": 200,
+      "params": {
+        "architecture": "sharded",
+        "instances": 100,
+        "leaves_per_instance": 64
+      },
+      "rss_delta_bytes": 5197824,
+      "scenario": "multi_instance"
+    },
+    {
+      "component": "storage_provider",
+      "engine": "mdbx",
+      "extra": {
+        "fd_per_instance": 2.0,
+        "open_per_instance_us": 2509.5055840000005,
+        "open_total_ms": 1254.7527920000002,
+        "rss_per_instance_bytes": 63594.496,
+        "threads_added": 500,
+        "threads_per_instance": 1.0,
+        "vsize_added_bytes": 6443521630208,
+        "vsize_per_instance_bytes": 12887043260.416
+      },
+      "fd_delta": 1000,
+      "params": {
+        "architecture": "sharded",
+        "instances": 500,
+        "leaves_per_instance": 64
+      },
+      "rss_delta_bytes": 31797248,
+      "scenario": "multi_instance"
+    },
+    {
+      "component": "storage_provider",
+      "engine": "mdbx",
+      "extra": {
+        "fd_per_instance": 2.0,
+        "open_per_instance_us": 2279.1129180000003,
+        "open_total_ms": 2279.1129180000003,
+        "rss_per_instance_bytes": 54820.864,
+        "threads_added": 1000,
+        "threads_per_instance": 1.0,
+        "vsize_added_bytes": 12887070941184,
+        "vsize_per_instance_bytes": 12887070941.184
+      },
+      "fd_delta": 2000,
+      "params": {
+        "architecture": "sharded",
+        "instances": 1000,
+        "leaves_per_instance": 64
+      },
+      "rss_delta_bytes": 54820864,
+      "scenario": "multi_instance"
+    },
+    {
+      "component": "storage_provider",
+      "engine": "mdbx",
+      "extra": {
+        "aggregate_across_threads": true
+      },
+      "params": {
+        "architecture": "sharded",
+        "batch_size": 16,
+        "sync": true,
+        "threads": 8,
+        "writes_per_thread": 20000
+      },
+      "scenario": "concurrent_write",
+      "throughput": {
+        "bytes": 10240000,
+        "elapsed_s": 4.569299461,
+        "mib_per_s": 2.1372258665363932,
+        "ops": 160000,
+        "ops_per_s": 35016.30859733227
+      }
+    },
+    {
+      "component": "storage_provider",
+      "disk_bytes": 3286923,
+      "engine": "paritydb",
+      "extra": null,
+      "fd_delta": 2,
+      "latency": {
+        "count": 1000,
+        "max_us": 1759.1670000000001,
+        "mean_us": 42.866402999999984,
+        "p50_us": 35.917,
+        "p90_us": 47.875,
+        "p99_us": 71.875
+      },
+      "params": {
+        "architecture": "shared",
+        "buckets": 1000,
+        "leaves_per_bucket": 64
+      },
+      "rss_delta_bytes": 35471360,
+      "scenario": "shared_write",
+      "throughput": {
+        "bytes": 4096000,
+        "elapsed_s": 0.053331416,
+        "mib_per_s": 73.24482065130242,
+        "ops": 64000,
+        "ops_per_s": 1200043.1415509388
+      }
+    },
+    {
+      "component": "storage_provider",
+      "engine": "paritydb",
+      "extra": null,
+      "latency": {
+        "count": 50000,
+        "max_us": 37.167,
+        "mean_us": 1.0343783199998335,
+        "p50_us": 0.792,
+        "p90_us": 1.4160000000000001,
+        "p99_us": 5.417
+      },
+      "params": {
+        "architecture": "shared",
+        "buckets": 1000,
+        "leaves_per_bucket": 64,
+        "reads": 50000
+      },
+      "scenario": "shared_proof_read"
+    },
+    {
+      "component": "storage_provider",
+      "disk_bytes": 38552964,
+      "engine": "paritydb",
+      "extra": {
+        "delete_total_ms": 34.663417,
+        "disk_after_bytes": 38552964,
+        "disk_before_bytes": 2656055,
+        "note": "shared-DB bucket clear = in-place key deletes; sharded equivalent is a file unlink (~0.1 ms, full reclaim)",
+        "reclaimed_fraction": -13.515122616060285
+      },
+      "params": {
+        "architecture": "shared",
+        "buckets": 1000,
+        "deleted_buckets": 500,
+        "leaves_per_bucket": 64
+      },
+      "scenario": "shared_bucket_delete",
+      "throughput": {
+        "bytes": 0,
+        "elapsed_s": 0.034663417,
+        "mib_per_s": 0.0,
+        "ops": 32000,
+        "ops_per_s": 923163.4607747989
+      }
+    },
+    {
+      "component": "storage_provider",
+      "engine": "paritydb",
+      "extra": {
+        "aggregate_across_threads": true
+      },
+      "params": {
+        "architecture": "shared",
+        "batch_size": 16,
+        "sync": true,
+        "threads": 8,
+        "writes_per_thread": 20000
+      },
+      "scenario": "concurrent_write",
+      "throughput": {
+        "bytes": 10240000,
+        "elapsed_s": 0.512291458,
+        "mib_per_s": 19.062634848773918,
+        "ops": 160000,
+        "ops_per_s": 312322.20936231187
+      }
+    },
+    {
+      "component": "storage_provider",
+      "disk_bytes": 32768,
+      "engine": "redb",
+      "extra": {
+        "create_us": 24971.792,
+        "disk_apparent_bytes": 1056768,
+        "files_per_instance": 1,
+        "projected_gib_at_1m_buckets": 30.517578125
+      },
+      "params": {
+        "architecture": "sharded",
+        "entries": 0
+      },
+      "scenario": "empty_floor"
+    },
+    {
+      "component": "storage_provider",
+      "engine": "redb",
+      "extra": {
+        "note": "latency = time to reopen an existing populated bucket DB"
+      },
+      "latency": {
+        "count": 50,
+        "max_us": 12124.667000000001,
+        "mean_us": 546.3183799999999,
+        "p50_us": 290.91700000000003,
+        "p90_us": 372.625,
+        "p99_us": 12124.667000000001
+      },
+      "params": {
+        "architecture": "sharded",
+        "preloaded_leaves": 1024,
+        "reopen_iters": 50
+      },
+      "scenario": "open_close"
+    },
+    {
+      "component": "storage_provider",
+      "disk_bytes": 9457664,
+      "engine": "redb",
+      "extra": null,
+      "latency": {
+        "count": 6250,
+        "max_us": 65494.666000000005,
+        "mean_us": 455.13933488000043,
+        "p50_us": 312.958,
+        "p90_us": 804.5409999999999,
+        "p99_us": 1844.75
+      },
+      "params": {
+        "architecture": "sharded",
+        "batch_size": 16,
+        "entries": 100000,
+        "sync": true,
+        "value_bytes": 48
+      },
+      "scenario": "mmr_append_small",
+      "throughput": {
+        "bytes": 5600000,
+        "elapsed_s": 2.857326959,
+        "mib_per_s": 1.8690812246926343,
+        "ops": 100000,
+        "ops_per_s": 34997.744897558994
+      }
+    },
+    {
+      "component": "storage_provider",
+      "disk_bytes": 1077940224,
+      "engine": "redb",
+      "extra": null,
+      "latency": {
+        "count": 125,
+        "max_us": 248857.708,
+        "mean_us": 15001.413016000002,
+        "p50_us": 11001.417,
+        "p90_us": 21301.25,
+        "p99_us": 38596.792
+      },
+      "params": {
+        "architecture": "sharded",
+        "batch_size": 16,
+        "entries": 2000,
+        "sync": true,
+        "value_bytes": 262144
+      },
+      "scenario": "node_append_large",
+      "throughput": {
+        "bytes": 524304000,
+        "elapsed_s": 2.444865543,
+        "mib_per_s": 204.5164652185793,
+        "ops": 2000,
+        "ops_per_s": 818.0408962473565
+      }
+    },
+    {
+      "component": "storage_provider",
+      "engine": "redb",
+      "extra": {
+        "cold_latency": {
+          "count": 5000,
+          "max_us": 32.583999999999996,
+          "mean_us": 1.4831585999999881,
+          "p50_us": 0.9169999999999999,
+          "p90_us": 2.5,
+          "p99_us": 6.25
+        }
+      },
+      "latency": {
+        "count": 50000,
+        "max_us": 42.333000000000006,
+        "mean_us": 1.0803658400001577,
+        "p50_us": 0.916,
+        "p90_us": 1.208,
+        "p99_us": 5.625
+      },
+      "params": {
+        "architecture": "sharded",
+        "leaves": 100000,
+        "reads": 50000
+      },
+      "scenario": "proof_read"
+    },
+    {
+      "component": "storage_provider",
+      "disk_bytes": 6680576,
+      "engine": "redb",
+      "extra": {
+        "amplification": 1.19296,
+        "amplification_compacted": 1.18784,
+        "disk_apparent_bytes": 8425472,
+        "disk_compacted_bytes": 6651904,
+        "has_compaction_api": true,
+        "logical_bytes": 5600000
+      },
+      "params": {
+        "architecture": "sharded",
+        "entries": 100000,
+        "value_bytes": 48
+      },
+      "scenario": "disk_small"
+    },
+    {
+      "component": "storage_provider",
+      "disk_bytes": 1048911872,
+      "engine": "redb",
+      "extra": {
+        "amplification": 2.0005795721566115,
+        "amplification_compacted": 2.0005795721566115,
+        "disk_apparent_bytes": 1077940224,
+        "disk_compacted_bytes": 1048911872,
+        "has_compaction_api": true,
+        "logical_bytes": 524304000
+      },
+      "params": {
+        "architecture": "sharded",
+        "entries": 2000,
+        "value_bytes": 262144
+      },
+      "scenario": "disk_large"
+    },
+    {
+      "component": "storage_provider",
+      "disk_bytes": 1049034752,
+      "engine": "redb",
+      "extra": {
+        "amplification": 2.0006307823751985,
+        "barrier_us": 1720139.875,
+        "cold_latency": {
+          "count": 1000,
+          "max_us": 1186.291,
+          "mean_us": 312.1625350000002,
+          "p50_us": 336.375,
+          "p90_us": 459.75,
+          "p99_us": 876.1669999999999
+        },
+        "disk_apparent_bytes": 1077940224,
+        "logical_bytes": 524352000
+      },
+      "latency": {
+        "count": 5000,
+        "max_us": 1567.5,
+        "mean_us": 118.65653940000006,
+        "p50_us": 25.5,
+        "p90_us": 467.666,
+        "p99_us": 675.9169999999999
+      },
+      "params": {
+        "architecture": "sharded",
+        "batch_size": 16,
+        "entries": 2000,
+        "keying": "random 32-byte (content hash)",
+        "sync": false,
+        "value_bytes": 262144
+      },
+      "scenario": "content_store",
+      "throughput": {
+        "bytes": 524352000,
+        "elapsed_s": 1.191376293,
+        "mib_per_s": 419.7339145443697,
+        "ops": 2000,
+        "ops_per_s": 1678.730734992055
+      }
+    },
+    {
+      "component": "storage_provider",
+      "engine": "redb",
+      "extra": {
+        "bytes_after_compaction": 32768,
+        "bytes_after_key_delete": 4214784,
+        "compaction_us": 10411.458999999999,
+        "delete_all_keys_us": 16032913.091000002,
+        "has_compaction_api": true,
+        "note": "rmtree models per-bucket-file cleanup; delete_all_keys models shared-DB tombstones, whose space is only returned by the subsequent compaction",
+        "rmtree_us": 229.667
+      },
+      "params": {
+        "architecture": "sharded",
+        "entries": 50000
+      },
+      "scenario": "bulk_delete"
+    },
+    {
+      "component": "storage_provider",
+      "engine": "redb",
+      "extra": {
+        "fd_per_instance": 1.0,
+        "open_per_instance_us": 2783.1904200000004,
+        "open_total_ms": 278.319042,
+        "rss_per_instance_bytes": 15810.56,
+        "threads_added": 0,
+        "threads_per_instance": 0.0,
+        "vsize_added_bytes": 1630208,
+        "vsize_per_instance_bytes": 16302.08
+      },
+      "fd_delta": 100,
+      "params": {
+        "architecture": "sharded",
+        "instances": 100,
+        "leaves_per_instance": 64
+      },
+      "rss_delta_bytes": 1581056,
+      "scenario": "multi_instance"
+    },
+    {
+      "component": "storage_provider",
+      "engine": "redb",
+      "extra": {
+        "fd_per_instance": 1.0,
+        "open_per_instance_us": 2974.1731680000003,
+        "open_total_ms": 1487.0865840000001,
+        "rss_per_instance_bytes": 68730.88,
+        "threads_added": 0,
+        "threads_per_instance": 0.0,
+        "vsize_added_bytes": 34467840,
+        "vsize_per_instance_bytes": 68935.68
+      },
+      "fd_delta": 500,
+      "params": {
+        "architecture": "sharded",
+        "instances": 500,
+        "leaves_per_instance": 64
+      },
+      "rss_delta_bytes": 34365440,
+      "scenario": "multi_instance"
+    },
+    {
+      "component": "storage_provider",
+      "engine": "redb",
+      "extra": {
+        "fd_per_instance": 1.0,
+        "open_per_instance_us": 3159.3468759999996,
+        "open_total_ms": 3159.346876,
+        "rss_per_instance_bytes": 42954.752,
+        "threads_added": 0,
+        "threads_per_instance": 0.0,
+        "vsize_added_bytes": 42885120,
+        "vsize_per_instance_bytes": 42885.12
+      },
+      "fd_delta": 1000,
+      "params": {
+        "architecture": "sharded",
+        "instances": 1000,
+        "leaves_per_instance": 64
+      },
+      "rss_delta_bytes": 42954752,
+      "scenario": "multi_instance"
+    },
+    {
+      "component": "storage_provider",
+      "disk_bytes": 8425472,
+      "engine": "redb",
+      "extra": null,
+      "fd_delta": 1,
+      "latency": {
+        "count": 1000,
+        "max_us": 11611.916,
+        "mean_us": 1363.010099000001,
+        "p50_us": 1230.3329999999999,
+        "p90_us": 2016.666,
+        "p99_us": 3461.333
+      },
+      "params": {
+        "architecture": "shared",
+        "buckets": 1000,
+        "leaves_per_bucket": 64
+      },
+      "rss_delta_bytes": 0,
+      "scenario": "shared_write",
+      "throughput": {
+        "bytes": 4096000,
+        "elapsed_s": 1.3720704590000001,
+        "mib_per_s": 2.8469747849880642,
+        "ops": 64000,
+        "ops_per_s": 46644.834877244444
+      }
+    },
+    {
+      "component": "storage_provider",
+      "engine": "redb",
+      "extra": null,
+      "latency": {
+        "count": 50000,
+        "max_us": 22.792,
+        "mean_us": 0.8894447199996737,
+        "p50_us": 0.833,
+        "p90_us": 0.9169999999999999,
+        "p99_us": 2.2079999999999997
+      },
+      "params": {
+        "architecture": "shared",
+        "buckets": 1000,
+        "leaves_per_bucket": 64,
+        "reads": 50000
+      },
+      "scenario": "shared_proof_read"
+    },
+    {
+      "component": "storage_provider",
+      "disk_bytes": 8425472,
+      "engine": "redb",
+      "extra": {
+        "delete_total_ms": 9344.548004,
+        "disk_after_bytes": 8425472,
+        "disk_before_bytes": 8425472,
+        "note": "shared-DB bucket clear = in-place key deletes; sharded equivalent is a file unlink (~0.1 ms, full reclaim)",
+        "reclaimed_fraction": 0.0
+      },
+      "params": {
+        "architecture": "shared",
+        "buckets": 1000,
+        "deleted_buckets": 500,
+        "leaves_per_bucket": 64
+      },
+      "scenario": "shared_bucket_delete",
+      "throughput": {
+        "bytes": 0,
+        "elapsed_s": 9.344548004,
+        "mib_per_s": 0.0,
+        "ops": 32000,
+        "ops_per_s": 3424.4566977773748
+      }
+    },
+    {
+      "component": "storage_provider",
+      "engine": "redb",
+      "extra": {
+        "aggregate_across_threads": true
+      },
+      "params": {
+        "architecture": "sharded",
+        "batch_size": 16,
+        "sync": true,
+        "threads": 8,
+        "writes_per_thread": 20000
+      },
+      "scenario": "concurrent_write",
+      "throughput": {
+        "bytes": 10240000,
+        "elapsed_s": 3.228386001,
+        "mib_per_s": 3.024924837666585,
+        "ops": 160000,
+        "ops_per_s": 49560.36854032933
+      }
+    },
+    {
+      "component": "storage_provider",
+      "engine": "redb",
+      "extra": {
+        "aggregate_across_threads": true
+      },
+      "params": {
+        "architecture": "shared",
+        "batch_size": 16,
+        "sync": true,
+        "threads": 8,
+        "writes_per_thread": 20000
+      },
+      "scenario": "concurrent_write",
+      "throughput": {
+        "bytes": 10240000,
+        "elapsed_s": 7.148083754,
+        "mib_per_s": 1.3661878254483586,
+        "ops": 160000,
+        "ops_per_s": 22383.621332145907
+      }
+    },
+    {
+      "component": "storage_provider",
+      "disk_bytes": 45056,
+      "engine": "rocksdb",
+      "extra": {
+        "create_us": 91569.125,
+        "disk_apparent_bytes": 30096,
+        "files_per_instance": 7,
+        "projected_gib_at_1m_buckets": 41.961669921875
+      },
+      "params": {
+        "architecture": "sharded",
+        "entries": 0
+      },
+      "scenario": "empty_floor"
+    },
+    {
+      "component": "storage_provider",
+      "engine": "rocksdb",
+      "extra": {
+        "note": "latency = time to reopen an existing populated bucket DB"
+      },
+      "latency": {
+        "count": 50,
+        "max_us": 7166.917,
+        "mean_us": 5058.905739999999,
+        "p50_us": 4980.541,
+        "p90_us": 6246.625,
+        "p99_us": 7166.917
+      },
+      "params": {
+        "architecture": "sharded",
+        "preloaded_leaves": 1024,
+        "reopen_iters": 50
+      },
+      "scenario": "open_close"
+    },
+    {
+      "component": "storage_provider",
+      "disk_bytes": 6162263,
+      "engine": "rocksdb",
+      "extra": null,
+      "latency": {
+        "count": 6250,
+        "max_us": 11621.125,
+        "mean_us": 691.4263291199997,
+        "p50_us": 457.791,
+        "p90_us": 1647.2920000000001,
+        "p99_us": 2488.25
+      },
+      "params": {
+        "architecture": "sharded",
+        "batch_size": 16,
+        "entries": 100000,
+        "sync": true,
+        "value_bytes": 48
+      },
+      "scenario": "mmr_append_small",
+      "throughput": {
+        "bytes": 5600000,
+        "elapsed_s": 4.33743771,
+        "mib_per_s": 1.2312744364172092,
+        "ops": 100000,
+        "ops_per_s": 23055.086132868062
+      }
+    },
+    {
+      "component": "storage_provider",
+      "disk_bytes": 524774832,
+      "engine": "rocksdb",
+      "extra": null,
+      "latency": {
+        "count": 125,
+        "max_us": 34903.625,
+        "mean_us": 17474.818704,
+        "p50_us": 17019.040999999997,
+        "p90_us": 25016.125,
+        "p99_us": 34534.792
+      },
+      "params": {
+        "architecture": "sharded",
+        "batch_size": 16,
+        "entries": 2000,
+        "sync": true,
+        "value_bytes": 262144
+      },
+      "scenario": "node_append_large",
+      "throughput": {
+        "bytes": 524304000,
+        "elapsed_s": 2.729863001,
+        "mib_per_s": 183.1649641780183,
+        "ops": 2000,
+        "ops_per_s": 732.6374983899788
+      }
+    },
+    {
+      "component": "storage_provider",
+      "engine": "rocksdb",
+      "extra": {
+        "cold_latency": {
+          "count": 5000,
+          "max_us": 59.542,
+          "mean_us": 2.6188921999999946,
+          "p50_us": 1.792,
+          "p90_us": 4.209,
+          "p99_us": 9.958
+        }
+      },
+      "latency": {
+        "count": 50000,
+        "max_us": 71.667,
+        "mean_us": 2.1295116600000683,
+        "p50_us": 1.708,
+        "p90_us": 3.458,
+        "p99_us": 7.25
+      },
+      "params": {
+        "architecture": "sharded",
+        "leaves": 100000,
+        "reads": 50000
+      },
+      "scenario": "proof_read"
+    },
+    {
+      "component": "storage_provider",
+      "disk_bytes": 6180864,
+      "engine": "rocksdb",
+      "extra": {
+        "amplification": 1.1037257142857142,
+        "amplification_compacted": 1.1044571428571428,
+        "disk_apparent_bytes": 6162250,
+        "disk_compacted_bytes": 6184960,
+        "has_compaction_api": true,
+        "logical_bytes": 5600000
+      },
+      "params": {
+        "architecture": "sharded",
+        "entries": 100000,
+        "value_bytes": 48
+      },
+      "scenario": "disk_small"
+    },
+    {
+      "component": "storage_provider",
+      "disk_bytes": 524468224,
+      "engine": "rocksdb",
+      "extra": {
+        "amplification": 1.0003132228630718,
+        "amplification_compacted": 1.0003210351246605,
+        "disk_apparent_bytes": 524441667,
+        "disk_compacted_bytes": 524472320,
+        "has_compaction_api": true,
+        "logical_bytes": 524304000
+      },
+      "params": {
+        "architecture": "sharded",
+        "entries": 2000,
+        "value_bytes": 262144
+      },
+      "scenario": "disk_large"
+    },
+    {
+      "component": "storage_provider",
+      "disk_bytes": 524529664,
+      "engine": "rocksdb",
+      "extra": {
+        "amplification": 1.0003388258269255,
+        "barrier_us": 16300.374999999998,
+        "cold_latency": {
+          "count": 1000,
+          "max_us": 7551.625,
+          "mean_us": 454.3231240000001,
+          "p50_us": 173.916,
+          "p90_us": 1301.417,
+          "p99_us": 2613.125
+        },
+        "disk_apparent_bytes": 524499636,
+        "logical_bytes": 524352000
+      },
+      "latency": {
+        "count": 5000,
+        "max_us": 1743.291,
+        "mean_us": 181.10395679999982,
+        "p50_us": 159.125,
+        "p90_us": 311.917,
+        "p99_us": 539.75
+      },
+      "params": {
+        "architecture": "sharded",
+        "batch_size": 16,
+        "entries": 2000,
+        "keying": "random 32-byte (content hash)",
+        "sync": false,
+        "value_bytes": 262144
+      },
+      "scenario": "content_store",
+      "throughput": {
+        "bytes": 524352000,
+        "elapsed_s": 1.886191043,
+        "mib_per_s": 265.116853890314,
+        "ops": 2000,
+        "ops_per_s": 1060.3379797727096
+      }
+    },
+    {
+      "component": "storage_provider",
+      "engine": "rocksdb",
+      "extra": {
+        "bytes_after_compaction": 42314,
+        "bytes_after_key_delete": 3743917,
+        "compaction_us": 10839.583,
+        "delete_all_keys_us": 72461.042,
+        "has_compaction_api": true,
+        "note": "rmtree models per-bucket-file cleanup; delete_all_keys models shared-DB tombstones, whose space is only returned by the subsequent compaction",
+        "rmtree_us": 265.54200000000003
+      },
+      "params": {
+        "architecture": "sharded",
+        "entries": 50000
+      },
+      "scenario": "bulk_delete"
+    },
+    {
+      "component": "storage_provider",
+      "engine": "rocksdb",
+      "extra": {
+        "fd_per_instance": 7.0,
+        "open_per_instance_us": 11676.41584,
+        "open_total_ms": 1167.641584,
+        "rss_per_instance_bytes": 44646.4,
+        "threads_added": 1,
+        "threads_per_instance": 0.01,
+        "vsize_added_bytes": 16003072,
+        "vsize_per_instance_bytes": 160030.72
+      },
+      "fd_delta": 700,
+      "params": {
+        "architecture": "sharded",
+        "instances": 100,
+        "leaves_per_instance": 64
+      },
+      "rss_delta_bytes": 4464640,
+      "scenario": "multi_instance"
+    },
+    {
+      "component": "storage_provider",
+      "engine": "rocksdb",
+      "extra": {
+        "fd_per_instance": 7.0,
+        "open_per_instance_us": 11071.419505999998,
+        "open_total_ms": 5535.709753,
+        "rss_per_instance_bytes": 228802.56,
+        "threads_added": 1,
+        "threads_per_instance": 0.002,
+        "vsize_added_bytes": 171991040,
+        "vsize_per_instance_bytes": 343982.08
+      },
+      "fd_delta": 3500,
+      "params": {
+        "architecture": "sharded",
+        "instances": 500,
+        "leaves_per_instance": 64
+      },
+      "rss_delta_bytes": 114401280,
+      "scenario": "multi_instance"
+    },
+    {
+      "component": "storage_provider",
+      "engine": "rocksdb",
+      "extra": {
+        "fd_per_instance": 7.0,
+        "open_per_instance_us": 7588.5122120000005,
+        "open_total_ms": 7588.5122120000005,
+        "rss_per_instance_bytes": 179171.328,
+        "threads_added": 1,
+        "threads_per_instance": 0.001,
+        "vsize_added_bytes": 212856832,
+        "vsize_per_instance_bytes": 212856.832
+      },
+      "fd_delta": 7000,
+      "params": {
+        "architecture": "sharded",
+        "instances": 1000,
+        "leaves_per_instance": 64
+      },
+      "rss_delta_bytes": 179171328,
+      "scenario": "multi_instance"
+    },
+    {
+      "component": "storage_provider",
+      "disk_bytes": 4005720,
+      "engine": "rocksdb",
+      "extra": null,
+      "fd_delta": 7,
+      "latency": {
+        "count": 1000,
+        "max_us": 5799.083,
+        "mean_us": 409.7483060000002,
+        "p50_us": 340.58299999999997,
+        "p90_us": 469.875,
+        "p99_us": 1196.625
+      },
+      "params": {
+        "architecture": "shared",
+        "buckets": 1000,
+        "leaves_per_bucket": 64
+      },
+      "rss_delta_bytes": 3985408,
+      "scenario": "shared_write",
+      "throughput": {
+        "bytes": 4096000,
+        "elapsed_s": 0.419125542,
+        "mib_per_s": 9.319999877268277,
+        "ops": 64000,
+        "ops_per_s": 152698.87798916345
+      }
+    },
+    {
+      "component": "storage_provider",
+      "engine": "rocksdb",
+      "extra": null,
+      "latency": {
+        "count": 50000,
+        "max_us": 44.625,
+        "mean_us": 1.2214895000001302,
+        "p50_us": 1.125,
+        "p90_us": 1.291,
+        "p99_us": 4.0
+      },
+      "params": {
+        "architecture": "shared",
+        "buckets": 1000,
+        "leaves_per_bucket": 64,
+        "reads": 50000
+      },
+      "scenario": "shared_proof_read"
+    },
+    {
+      "component": "storage_provider",
+      "disk_bytes": 4442408,
+      "engine": "rocksdb",
+      "extra": {
+        "delete_total_ms": 45.628750000000004,
+        "disk_after_bytes": 4442408,
+        "disk_before_bytes": 4005725,
+        "note": "shared-DB bucket clear = in-place key deletes; sharded equivalent is a file unlink (~0.1 ms, full reclaim)",
+        "reclaimed_fraction": -0.10901472267816681
+      },
+      "params": {
+        "architecture": "shared",
+        "buckets": 1000,
+        "deleted_buckets": 500,
+        "leaves_per_bucket": 64
+      },
+      "scenario": "shared_bucket_delete",
+      "throughput": {
+        "bytes": 0,
+        "elapsed_s": 0.04562875,
+        "mib_per_s": 0.0,
+        "ops": 32000,
+        "ops_per_s": 701312.2209133495
+      }
+    },
+    {
+      "component": "storage_provider",
+      "engine": "rocksdb",
+      "extra": {
+        "aggregate_across_threads": true
+      },
+      "params": {
+        "architecture": "sharded",
+        "batch_size": 16,
+        "sync": true,
+        "threads": 8,
+        "writes_per_thread": 20000
+      },
+      "scenario": "concurrent_write",
+      "throughput": {
+        "bytes": 10240000,
+        "elapsed_s": 1.354956292,
+        "mib_per_s": 7.20733580681435,
+        "ops": 160000,
+        "ops_per_s": 118084.98985884631
+      }
+    },
+    {
+      "component": "storage_provider",
+      "engine": "rocksdb",
+      "extra": {
+        "aggregate_across_threads": true
+      },
+      "params": {
+        "architecture": "shared",
+        "batch_size": 16,
+        "sync": true,
+        "threads": 8,
+        "writes_per_thread": 20000
+      },
+      "scenario": "concurrent_write",
+      "throughput": {
+        "bytes": 10240000,
+        "elapsed_s": 1.0727783340000001,
+        "mib_per_s": 9.103115425148024,
+        "ops": 160000,
+        "ops_per_s": 149145.44312562523
+      }
+    },
+    {
+      "component": "storage_provider",
+      "disk_bytes": 8192,
+      "engine": "sled",
+      "extra": {
+        "create_us": 1719.791,
+        "disk_apparent_bytes": 158,
+        "files_per_instance": 2,
+        "projected_gib_at_1m_buckets": 7.62939453125
+      },
+      "params": {
+        "architecture": "sharded",
+        "entries": 0
+      },
+      "scenario": "empty_floor"
+    },
+    {
+      "component": "storage_provider",
+      "engine": "sled",
+      "extra": {
+        "note": "latency = time to reopen an existing populated bucket DB"
+      },
+      "latency": {
+        "count": 50,
+        "max_us": 5242.417,
+        "mean_us": 1279.14586,
+        "p50_us": 1181.541,
+        "p90_us": 1401.75,
+        "p99_us": 5242.417
+      },
+      "params": {
+        "architecture": "sharded",
+        "preloaded_leaves": 1024,
+        "reopen_iters": 50
+      },
+      "scenario": "open_close"
+    },
+    {
+      "component": "storage_provider",
+      "disk_bytes": 19896313,
+      "engine": "sled",
+      "extra": null,
+      "latency": {
+        "count": 6250,
+        "max_us": 1534.667,
+        "mean_us": 169.07669248000005,
+        "p50_us": 159.5,
+        "p90_us": 215.667,
+        "p99_us": 341.375
+      },
+      "params": {
+        "architecture": "sharded",
+        "batch_size": 16,
+        "entries": 100000,
+        "sync": true,
+        "value_bytes": 48
+      },
+      "scenario": "mmr_append_small",
+      "throughput": {
+        "bytes": 5600000,
+        "elapsed_s": 1.139948126,
+        "mib_per_s": 4.684929120954579,
+        "ops": 100000,
+        "ops_per_s": 87723.28996310837
+      }
+    },
+    {
+      "component": "storage_provider",
+      "disk_bytes": 1449473462,
+      "engine": "sled",
+      "extra": null,
+      "latency": {
+        "count": 125,
+        "max_us": 139539.0,
+        "mean_us": 21583.25872,
+        "p50_us": 16739.5,
+        "p90_us": 25711.208,
+        "p99_us": 114178.708
+      },
+      "params": {
+        "architecture": "sharded",
+        "batch_size": 16,
+        "entries": 2000,
+        "sync": true,
+        "value_bytes": 262144
+      },
+      "scenario": "node_append_large",
+      "throughput": {
+        "bytes": 524304000,
+        "elapsed_s": 3.305121919,
+        "mib_per_s": 151.28496649840605,
+        "ops": 2000,
+        "ops_per_s": 605.1213991540504
+      }
+    },
+    {
+      "component": "storage_provider",
+      "engine": "sled",
+      "extra": {
+        "cold_latency": {
+          "count": 5000,
+          "max_us": 77.041,
+          "mean_us": 6.093800600000002,
+          "p50_us": 4.167,
+          "p90_us": 12.209,
+          "p99_us": 37.75
+        }
+      },
+      "latency": {
+        "count": 50000,
+        "max_us": 52.791000000000004,
+        "mean_us": 1.2834926199999992,
+        "p50_us": 0.709,
+        "p90_us": 1.916,
+        "p99_us": 9.583
+      },
+      "params": {
+        "architecture": "sharded",
+        "leaves": 100000,
+        "reads": 50000
+      },
+      "scenario": "proof_read"
+    },
+    {
+      "component": "storage_provider",
+      "disk_bytes": 17571840,
+      "engine": "sled",
+      "extra": {
+        "amplification": 3.1378285714285714,
+        "amplification_compacted": 3.1378285714285714,
+        "disk_apparent_bytes": 17567641,
+        "disk_compacted_bytes": 17571840,
+        "has_compaction_api": false,
+        "logical_bytes": 5600000
+      },
+      "params": {
+        "architecture": "sharded",
+        "entries": 100000,
+        "value_bytes": 48
+      },
+      "scenario": "disk_small"
+    },
+    {
+      "component": "storage_provider",
+      "disk_bytes": 1289908224,
+      "engine": "sled",
+      "extra": {
+        "amplification": 2.4602296072507555,
+        "amplification_compacted": 2.4602296072507555,
+        "disk_apparent_bytes": 1280383408,
+        "disk_compacted_bytes": 1289908224,
+        "has_compaction_api": false,
+        "logical_bytes": 524304000
+      },
+      "params": {
+        "architecture": "sharded",
+        "entries": 2000,
+        "value_bytes": 262144
+      },
+      "scenario": "disk_large"
+    },
+    {
+      "component": "storage_provider",
+      "disk_bytes": 1316700160,
+      "engine": "sled",
+      "extra": {
+        "amplification": 2.5110997192725497,
+        "barrier_us": 83.0,
+        "cold_latency": {
+          "count": 1000,
+          "max_us": 17365.458,
+          "mean_us": 587.9209420000001,
+          "p50_us": 19.833000000000002,
+          "p90_us": 2541.667,
+          "p99_us": 9487.292
+        },
+        "disk_apparent_bytes": 1307268920,
+        "logical_bytes": 524352000
+      },
+      "latency": {
+        "count": 5000,
+        "max_us": 2538.3329999999996,
+        "mean_us": 19.715085200000015,
+        "p50_us": 17.333000000000002,
+        "p90_us": 22.375,
+        "p99_us": 36.291999999999994
+      },
+      "params": {
+        "architecture": "sharded",
+        "batch_size": 16,
+        "entries": 2000,
+        "keying": "random 32-byte (content hash)",
+        "sync": false,
+        "value_bytes": 262144
+      },
+      "scenario": "content_store",
+      "throughput": {
+        "bytes": 524352000,
+        "elapsed_s": 2.77548846,
+        "mib_per_s": 180.1704609343791,
+        "ops": 2000,
+        "ops_per_s": 720.5938806173239
+      }
+    },
+    {
+      "component": "storage_provider",
+      "engine": "sled",
+      "extra": {
+        "bytes_after_compaction": 11671120,
+        "bytes_after_key_delete": 11671120,
+        "compaction_us": 0.375,
+        "delete_all_keys_us": 134453.45799999998,
+        "has_compaction_api": false,
+        "note": "rmtree models per-bucket-file cleanup; delete_all_keys models shared-DB tombstones, whose space is only returned by the subsequent compaction",
+        "rmtree_us": 859.333
+      },
+      "params": {
+        "architecture": "sharded",
+        "entries": 50000
+      },
+      "scenario": "bulk_delete"
+    },
+    {
+      "component": "storage_provider",
+      "engine": "sled",
+      "extra": {
+        "fd_per_instance": 1.0,
+        "open_per_instance_us": 539.73125,
+        "open_total_ms": 53.973124999999996,
+        "rss_per_instance_bytes": 295526.4,
+        "threads_added": 0,
+        "threads_per_instance": 0.0,
+        "vsize_added_bytes": 671817728,
+        "vsize_per_instance_bytes": 6718177.28
+      },
+      "fd_delta": 100,
+      "params": {
+        "architecture": "sharded",
+        "instances": 100,
+        "leaves_per_instance": 64
+      },
+      "rss_delta_bytes": 29552640,
+      "scenario": "multi_instance"
+    },
+    {
+      "component": "storage_provider",
+      "engine": "sled",
+      "extra": {
+        "fd_per_instance": 1.0,
+        "open_per_instance_us": 1991.239666,
+        "open_total_ms": 995.619833,
+        "rss_per_instance_bytes": 1510785.024,
+        "threads_added": 0,
+        "threads_per_instance": 0.0,
+        "vsize_added_bytes": 2795356160,
+        "vsize_per_instance_bytes": 5590712.32
+      },
+      "fd_delta": 500,
+      "params": {
+        "architecture": "sharded",
+        "instances": 500,
+        "leaves_per_instance": 64
+      },
+      "rss_delta_bytes": 755392512,
+      "scenario": "multi_instance"
+    },
+    {
+      "component": "storage_provider",
+      "engine": "sled",
+      "extra": {
+        "fd_per_instance": 1.0,
+        "open_per_instance_us": 3796.906043,
+        "open_total_ms": 3796.906043,
+        "rss_per_instance_bytes": 2686623.744,
+        "threads_added": 0,
+        "threads_per_instance": 0.0,
+        "vsize_added_bytes": 3499679744,
+        "vsize_per_instance_bytes": 3499679.744
+      },
+      "fd_delta": 1000,
+      "params": {
+        "architecture": "sharded",
+        "instances": 1000,
+        "leaves_per_instance": 64
+      },
+      "rss_delta_bytes": 2686623744,
+      "scenario": "multi_instance"
+    },
+    {
+      "component": "storage_provider",
+      "disk_bytes": 14960148,
+      "engine": "sled",
+      "extra": null,
+      "fd_delta": 1,
+      "latency": {
+        "count": 1000,
+        "max_us": 784.625,
+        "mean_us": 457.6980889999998,
+        "p50_us": 454.95799999999997,
+        "p90_us": 589.083,
+        "p99_us": 685.1659999999999
+      },
+      "params": {
+        "architecture": "shared",
+        "buckets": 1000,
+        "leaves_per_bucket": 64
+      },
+      "rss_delta_bytes": 1957888,
+      "scenario": "shared_write",
+      "throughput": {
+        "bytes": 4096000,
+        "elapsed_s": 0.509753792,
+        "mib_per_s": 7.663013127717939,
+        "ops": 64000,
+        "ops_per_s": 125550.80708453071
+      }
+    },
+    {
+      "component": "storage_provider",
+      "engine": "sled",
+      "extra": null,
+      "latency": {
+        "count": 50000,
+        "max_us": 184.417,
+        "mean_us": 1.4420064200000013,
+        "p50_us": 0.75,
+        "p90_us": 3.625,
+        "p99_us": 10.584000000000001
+      },
+      "params": {
+        "architecture": "shared",
+        "buckets": 1000,
+        "leaves_per_bucket": 64,
+        "reads": 50000
+      },
+      "scenario": "shared_proof_read"
+    },
+    {
+      "component": "storage_provider",
+      "disk_bytes": 17405689,
+      "engine": "sled",
+      "extra": {
+        "delete_total_ms": 92.118584,
+        "disk_after_bytes": 17405689,
+        "disk_before_bytes": 15204414,
+        "note": "shared-DB bucket clear = in-place key deletes; sharded equivalent is a file unlink (~0.1 ms, full reclaim)",
+        "reclaimed_fraction": -0.14477868071732325
+      },
+      "params": {
+        "architecture": "shared",
+        "buckets": 1000,
+        "deleted_buckets": 500,
+        "leaves_per_bucket": 64
+      },
+      "scenario": "shared_bucket_delete",
+      "throughput": {
+        "bytes": 0,
+        "elapsed_s": 0.092118584,
+        "mib_per_s": 0.0,
+        "ops": 32000,
+        "ops_per_s": 347378.33139076474
+      }
+    },
+    {
+      "component": "storage_provider",
+      "engine": "sled",
+      "extra": {
+        "aggregate_across_threads": true
+      },
+      "params": {
+        "architecture": "sharded",
+        "batch_size": 16,
+        "sync": true,
+        "threads": 8,
+        "writes_per_thread": 20000
+      },
+      "scenario": "concurrent_write",
+      "throughput": {
+        "bytes": 10240000,
+        "elapsed_s": 1.907293751,
+        "mib_per_s": 5.120147326482799,
+        "ops": 160000,
+        "ops_per_s": 83888.49379709418
+      }
+    },
+    {
+      "component": "storage_provider",
+      "engine": "sled",
+      "extra": {
+        "aggregate_across_threads": true
+      },
+      "params": {
+        "architecture": "shared",
+        "batch_size": 16,
+        "sync": true,
+        "threads": 8,
+        "writes_per_thread": 20000
+      },
+      "scenario": "concurrent_write",
+      "throughput": {
+        "bytes": 10240000,
+        "elapsed_s": 1.985763084,
+        "mib_per_s": 4.9178197936526855,
+        "ops": 160000,
+        "ops_per_s": 80573.5594992056
+      }
+    },
+    {
+      "component": "storage_provider",
+      "disk_bytes": 8192,
+      "engine": "sqlite",
+      "extra": {
+        "create_us": 56065.708,
+        "disk_apparent_bytes": 8192,
+        "files_per_instance": 1,
+        "projected_gib_at_1m_buckets": 7.62939453125
+      },
+      "params": {
+        "architecture": "sharded",
+        "entries": 0
+      },
+      "scenario": "empty_floor"
+    },
+    {
+      "component": "storage_provider",
+      "engine": "sqlite",
+      "extra": {
+        "note": "latency = time to reopen an existing populated bucket DB"
+      },
+      "latency": {
+        "count": 50,
+        "max_us": 280.75,
+        "mean_us": 96.99325999999999,
+        "p50_us": 87.0,
+        "p90_us": 123.75,
+        "p99_us": 280.75
+      },
+      "params": {
+        "architecture": "sharded",
+        "preloaded_leaves": 1024,
+        "reopen_iters": 50
+      },
+      "scenario": "open_close"
+    },
+    {
+      "component": "storage_provider",
+      "disk_bytes": 7196672,
+      "engine": "sqlite",
+      "extra": null,
+      "latency": {
+        "count": 6250,
+        "max_us": 63173.916999999994,
+        "mean_us": 2803.182855999999,
+        "p50_us": 1914.25,
+        "p90_us": 4264.25,
+        "p99_us": 16372.167
+      },
+      "params": {
+        "architecture": "sharded",
+        "batch_size": 16,
+        "entries": 100000,
+        "sync": true,
+        "value_bytes": 48
+      },
+      "scenario": "mmr_append_small",
+      "throughput": {
+        "bytes": 5600000,
+        "elapsed_s": 17.532778216,
+        "mib_per_s": 0.30460524316684257,
+        "ops": 100000,
+        "ops_per_s": 5703.602633194912
+      }
+    },
+    {
+      "component": "storage_provider",
+      "disk_bytes": 525463552,
+      "engine": "sqlite",
+      "extra": null,
+      "latency": {
+        "count": 125,
+        "max_us": 123626.083,
+        "mean_us": 31871.268743999994,
+        "p50_us": 28702.0,
+        "p90_us": 36248.125,
+        "p99_us": 120777.125
+      },
+      "params": {
+        "architecture": "sharded",
+        "batch_size": 16,
+        "entries": 2000,
+        "sync": true,
+        "value_bytes": 262144
+      },
+      "scenario": "node_append_large",
+      "throughput": {
+        "bytes": 524304000,
+        "elapsed_s": 4.559360836,
+        "mib_per_s": 109.66784090458914,
+        "ops": 2000,
+        "ops_per_s": 438.6579768392782
+      }
+    },
+    {
+      "component": "storage_provider",
+      "engine": "sqlite",
+      "extra": {
+        "cold_latency": {
+          "count": 5000,
+          "max_us": 114.083,
+          "mean_us": 5.670963999999988,
+          "p50_us": 4.667000000000001,
+          "p90_us": 9.0,
+          "p99_us": 17.375
+        }
+      },
+      "latency": {
+        "count": 50000,
+        "max_us": 362.29200000000003,
+        "mean_us": 4.681853279999867,
+        "p50_us": 4.0,
+        "p90_us": 7.209,
+        "p99_us": 12.0
+      },
+      "params": {
+        "architecture": "sharded",
+        "leaves": 100000,
+        "reads": 50000
+      },
+      "scenario": "proof_read"
+    },
+    {
+      "component": "storage_provider",
+      "disk_bytes": 7196672,
+      "engine": "sqlite",
+      "extra": {
+        "amplification": 1.28512,
+        "amplification_compacted": 1.1285942857142857,
+        "disk_apparent_bytes": 7196672,
+        "disk_compacted_bytes": 6320128,
+        "has_compaction_api": true,
+        "logical_bytes": 5600000
+      },
+      "params": {
+        "architecture": "sharded",
+        "entries": 100000,
+        "value_bytes": 48
+      },
+      "scenario": "disk_small"
+    },
+    {
+      "component": "storage_provider",
+      "disk_bytes": 525467648,
+      "engine": "sqlite",
+      "extra": {
+        "amplification": 1.0022194146907137,
+        "amplification_compacted": 1.0019537977966981,
+        "disk_apparent_bytes": 525463552,
+        "disk_compacted_bytes": 525328384,
+        "has_compaction_api": true,
+        "logical_bytes": 524304000
+      },
+      "params": {
+        "architecture": "sharded",
+        "entries": 2000,
+        "value_bytes": 262144
+      },
+      "scenario": "disk_large"
+    },
+    {
+      "component": "storage_provider",
+      "disk_bytes": 525475840,
+      "engine": "sqlite",
+      "extra": {
+        "amplification": 1.002143293055047,
+        "barrier_us": 297.75,
+        "cold_latency": {
+          "count": 1000,
+          "max_us": 1153.917,
+          "mean_us": 689.6311199999999,
+          "p50_us": 679.916,
+          "p90_us": 815.4590000000001,
+          "p99_us": 966.333
+        },
+        "disk_apparent_bytes": 525471744,
+        "logical_bytes": 524352000
+      },
+      "latency": {
+        "count": 5000,
+        "max_us": 11496.25,
+        "mean_us": 687.2097150000006,
+        "p50_us": 655.792,
+        "p90_us": 803.875,
+        "p99_us": 1149.7079999999999
+      },
+      "params": {
+        "architecture": "sharded",
+        "batch_size": 16,
+        "entries": 2000,
+        "keying": "random 32-byte (content hash)",
+        "sync": false,
+        "value_bytes": 262144
+      },
+      "scenario": "content_store",
+      "throughput": {
+        "bytes": 524352000,
+        "elapsed_s": 4.354327211,
+        "mib_per_s": 114.84231912865539,
+        "ops": 2000,
+        "ops_per_s": 459.3132080077847
+      }
+    },
+    {
+      "component": "storage_provider",
+      "engine": "sqlite",
+      "extra": {
+        "bytes_after_compaction": 8192,
+        "bytes_after_key_delete": 3637248,
+        "compaction_us": 1608.4579999999999,
+        "delete_all_keys_us": 616552.5,
+        "has_compaction_api": true,
+        "note": "rmtree models per-bucket-file cleanup; delete_all_keys models shared-DB tombstones, whose space is only returned by the subsequent compaction",
+        "rmtree_us": 330.583
+      },
+      "params": {
+        "architecture": "sharded",
+        "entries": 50000
+      },
+      "scenario": "bulk_delete"
+    },
+    {
+      "component": "storage_provider",
+      "engine": "sqlite",
+      "extra": {
+        "fd_per_instance": 3.0,
+        "open_per_instance_us": 5068.6025,
+        "open_total_ms": 506.86025,
+        "rss_per_instance_bytes": 108503.04,
+        "threads_added": 0,
+        "threads_per_instance": 0.0,
+        "vsize_added_bytes": 11001856,
+        "vsize_per_instance_bytes": 110018.56
+      },
+      "fd_delta": 300,
+      "params": {
+        "architecture": "sharded",
+        "instances": 100,
+        "leaves_per_instance": 64
+      },
+      "rss_delta_bytes": 10850304,
+      "scenario": "multi_instance"
+    },
+    {
+      "component": "storage_provider",
+      "engine": "sqlite",
+      "extra": {
+        "fd_per_instance": 3.0,
+        "open_per_instance_us": 4930.59517,
+        "open_total_ms": 2465.2975850000003,
+        "rss_per_instance_bytes": 97607.68,
+        "threads_added": 0,
+        "threads_per_instance": 0.0,
+        "vsize_added_bytes": 48726016,
+        "vsize_per_instance_bytes": 97452.032
+      },
+      "fd_delta": 1500,
+      "params": {
+        "architecture": "sharded",
+        "instances": 500,
+        "leaves_per_instance": 64
+      },
+      "rss_delta_bytes": 48803840,
+      "scenario": "multi_instance"
+    },
+    {
+      "component": "storage_provider",
+      "engine": "sqlite",
+      "extra": {
+        "fd_per_instance": 3.0,
+        "open_per_instance_us": 5142.277502999999,
+        "open_total_ms": 5142.277503,
+        "rss_per_instance_bytes": 73293.824,
+        "threads_added": 0,
+        "threads_per_instance": 0.0,
+        "vsize_added_bytes": 73289728,
+        "vsize_per_instance_bytes": 73289.728
+      },
+      "fd_delta": 3000,
+      "params": {
+        "architecture": "sharded",
+        "instances": 1000,
+        "leaves_per_instance": 64
+      },
+      "rss_delta_bytes": 73293824,
+      "scenario": "multi_instance"
+    },
+    {
+      "component": "storage_provider",
+      "disk_bytes": 5185536,
+      "engine": "sqlite",
+      "extra": null,
+      "fd_delta": 3,
+      "latency": {
+        "count": 1000,
+        "max_us": 17075.458000000002,
+        "mean_us": 2652.2072419999995,
+        "p50_us": 1926.541,
+        "p90_us": 5182.083,
+        "p99_us": 9705.5
+      },
+      "params": {
+        "architecture": "shared",
+        "buckets": 1000,
+        "leaves_per_bucket": 64
+      },
+      "rss_delta_bytes": 32768,
+      "scenario": "shared_write",
+      "throughput": {
+        "bytes": 4096000,
+        "elapsed_s": 2.662094918,
+        "mib_per_s": 1.4673593993916334,
+        "ops": 64000,
+        "ops_per_s": 24041.21639963252
+      }
+    },
+    {
+      "component": "storage_provider",
+      "engine": "sqlite",
+      "extra": null,
+      "latency": {
+        "count": 50000,
+        "max_us": 88.708,
+        "mean_us": 3.966926560000031,
+        "p50_us": 3.75,
+        "p90_us": 4.542,
+        "p99_us": 10.665999999999999
+      },
+      "params": {
+        "architecture": "shared",
+        "buckets": 1000,
+        "leaves_per_bucket": 64,
+        "reads": 50000
+      },
+      "scenario": "shared_proof_read"
+    },
+    {
+      "component": "storage_provider",
+      "disk_bytes": 5152768,
+      "engine": "sqlite",
+      "extra": {
+        "delete_total_ms": 390.08095799999995,
+        "disk_after_bytes": 5152768,
+        "disk_before_bytes": 5185536,
+        "note": "shared-DB bucket clear = in-place key deletes; sharded equivalent is a file unlink (~0.1 ms, full reclaim)",
+        "reclaimed_fraction": 0.006319115323854652
+      },
+      "params": {
+        "architecture": "shared",
+        "buckets": 1000,
+        "deleted_buckets": 500,
+        "leaves_per_bucket": 64
+      },
+      "scenario": "shared_bucket_delete",
+      "throughput": {
+        "bytes": 0,
+        "elapsed_s": 0.390080958,
+        "mib_per_s": 0.0,
+        "ops": 32000,
+        "ops_per_s": 82034.25300242419
+      }
+    },
+    {
+      "component": "storage_provider",
+      "engine": "sqlite",
+      "extra": {
+        "aggregate_across_threads": true
+      },
+      "params": {
+        "architecture": "sharded",
+        "batch_size": 16,
+        "sync": true,
+        "threads": 8,
+        "writes_per_thread": 20000
+      },
+      "scenario": "concurrent_write",
+      "throughput": {
+        "bytes": 10240000,
+        "elapsed_s": 13.442579132,
+        "mib_per_s": 0.726469593677375,
+        "ops": 160000,
+        "ops_per_s": 11902.477822810111
+      }
+    },
+    {
+      "component": "storage_provider",
+      "engine": "sqlite",
+      "extra": {
+        "aggregate_across_threads": true
+      },
+      "params": {
+        "architecture": "shared",
+        "batch_size": 16,
+        "sync": true,
+        "threads": 8,
+        "writes_per_thread": 20000
+      },
+      "scenario": "concurrent_write",
+      "throughput": {
+        "bytes": 10240000,
+        "elapsed_s": 0.550405626,
+        "mib_per_s": 17.74259662091463,
+        "ops": 160000,
+        "ops_per_s": 290694.7030370653
+      }
+    }
+  ]
+}

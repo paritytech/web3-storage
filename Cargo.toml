@@ -34,37 +34,13 @@ members = [
 	"crates/pallets/drive-registry/precompiles",
 	"crates/pallets/s3-registry/precompiles",
 	"crates/pallets/storage-provider/precompiles",
-
-	# Benchmarks (excluded from default-members; build with `-p db-bench`)
-	"benchmarks/db-bench",
 ]
 
-# Keep the heavy benchmark-only DB dependencies out of normal `cargo build`/`cargo
-# test`/CI runs. `db-bench` is built explicitly via `cargo build -p db-bench`
-# or `just db-bench`.
-default-members = [
-	"clients/file-system",
-	"clients/s3",
-	"clients/storage",
-	"crates/pallets/drive-registry",
-	"crates/pallets/drive-registry/precompiles",
-	"crates/pallets/s3-registry",
-	"crates/pallets/s3-registry/precompiles",
-	"crates/pallets/storage-provider",
-	"crates/pallets/storage-provider/precompiles",
-	"crates/primitives/file-system",
-	"crates/primitives/s3",
-	"crates/primitives/storage",
-	"crates/providers/auth",
-	"crates/providers/chain",
-	"crates/providers/negotiation",
-	"crates/providers/storage",
-	"crates/storage-subxt",
-	"crates/utils/storage-indexers",
-	"provider-node",
-	"runtimes/web3-storage-local",
-	"runtimes/web3-storage-paseo",
-]
+# The database benchmark harness is its own workspace, so its heavy engine
+# dependencies never enter this workspace's Cargo.lock or any build here.
+# Build it via `just db-bench` or
+# `cargo build --release --manifest-path benchmarks/db-bench/Cargo.toml`.
+exclude = ["benchmarks/db-bench"]
 
 [workspace.package]
 authors = ["Parity Technologies <admin@parity.io>"]
@@ -221,10 +197,6 @@ sp-keyring = { version = "48.0.0", default-features = false }
 sp-keystore = { version = "0.49.0", default-features = false }
 tempfile = "3"
 tokio-test = "0.4"
-
-# Benchmark-only database engines (inherited only by `benchmarks/db-bench`, which
-# is excluded from default-members, so normal builds never fetch these).
-redb = "4.1"
 
 [profile.release]
 opt-level = 3
