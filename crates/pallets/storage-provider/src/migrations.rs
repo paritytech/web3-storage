@@ -181,3 +181,141 @@ pub mod v1 {
         <T as frame_system::Config>::DbWeight,
     >;
 }
+
+#[cfg(test)]
+mod tests {
+    use super::v1;
+    use crate::mock::{new_test_ext, Balances, Test};
+    use crate::pallet::{
+        Challenges, PendingChallenges, PendingChallengesByBucket, StorageAgreements,
+    };
+    use codec::Encode;
+    use frame_support::storage::unhashed;
+    use frame_support::traits::{ReservableCurrency, UncheckedOnRuntimeUpgrade};
+    use sp_core::H256;
+    use storage_primitives::{ChunkLocation, Commitment, ProviderRole};
+
+    // Encode-side mirrors of the pre-#301 layouts, with the mock's concrete
+    // types (AccountId / Balance / BlockNumber = u64), used to plant raw
+    // old-layout values that the current types cannot decode.
+    #[derive(Encode)]
+    struct OldChallenge {
+        bucket_id: u64,
+        provider: u64,
+        challenger: u64,
+        mmr_root: H256,
+        start_seq: u64,
+        target: ChunkLocation,
+        deposit: u64,
+    }
+
+    #[derive(Encode)]
+    struct OldReplicaSyncRecord {
+        commitment: Commitment,
+        block: u64,
+    }
+
+    #[derive(Encode)]
+    enum OldProviderRole {
+        #[codec(index = 1)]
+        Replica {
+            sync_balance: u64,
+            sync_price: u64,
+            min_sync_interval: u64,
+            last_sync: Option<OldReplicaSyncRecord>,
+        },
+    }
+
+    #[derive(Encode)]
+    struct OldStorageAgreement {
+        owner: u64,
+        max_bytes: u64,
+        payment_locked: u64,
+        price_per_byte: u64,
+        expires_at: u64,
+        extensions_blocked: bool,
+        role: OldProviderRole,
+        started_at: u64,
+    }
+
+    #[test]
+    fn v1_drains_challenges_refunds_deposits_and_drops_sync_records() {
+        new_test_ext().execute_with(|| {
+            let challenger = 3u64;
+            let deposit = 50u64;
+            Balances::reserve(&challenger, deposit).unwrap();
+
+            let challenge = OldChallenge {
+                bucket_id: 7,
+                provider: 2,
+                challenger,
+                mmr_root: H256::repeat_byte(0xAA),
+                start_seq: 0,
+                target: ChunkLocation {
+                    leaf_index: 1,
+                    chunk_index: 0,
+                },
+                deposit,
+            };
+            unhashed::put_raw(
+                &Challenges::<Test>::hashed_key_for(100u64, 0u16),
+                &challenge.encode(),
+            );
+            PendingChallenges::<Test>::insert(2u64, 1u32);
+            PendingChallengesByBucket::<Test>::insert(7u64, 2u64, 1u32);
+
+            let agreement = OldStorageAgreement {
+                owner: 1,
+                max_bytes: 1024,
+                payment_locked: 500,
+                price_per_byte: 2,
+                expires_at: 999,
+                extensions_blocked: false,
+                role: OldProviderRole::Replica {
+                    sync_balance: 40,
+                    sync_price: 5,
+                    min_sync_interval: 10,
+                    last_sync: Some(OldReplicaSyncRecord {
+                        commitment: Commitment {
+                            mmr_root: H256::repeat_byte(0xBB),
+                            start_seq: 0,
+                            leaf_count: 3,
+                        },
+                        block: 12,
+                    }),
+                },
+                started_at: 5,
+            };
+            unhashed::put_raw(
+                &StorageAgreements::<Test>::hashed_key_for(7u64, 2u64),
+                &agreement.encode(),
+            );
+
+            v1::InnerMigrateV0ToV1::<Test>::on_runtime_upgrade();
+
+            assert!(Challenges::<Test>::iter().next().is_none());
+            assert_eq!(Balances::reserved_balance(challenger), 0);
+            assert!(PendingChallenges::<Test>::iter().next().is_none());
+            assert!(PendingChallengesByBucket::<Test>::iter().next().is_none());
+
+            let migrated = StorageAgreements::<Test>::get(7, 2)
+                .expect("agreement must decode under the new layout");
+            assert_eq!(migrated.owner, 1);
+            assert_eq!(migrated.max_bytes, 1024);
+            assert_eq!(migrated.payment_locked, 500);
+            assert_eq!(migrated.expires_at, 999);
+            match migrated.role {
+                ProviderRole::Replica {
+                    sync_balance,
+                    sync_price,
+                    min_sync_interval,
+                    last_sync,
+                } => {
+                    assert_eq!((sync_balance, sync_price, min_sync_interval), (40, 5, 10));
+                    assert!(last_sync.is_none());
+                }
+                ProviderRole::Primary => panic!("role must remain Replica"),
+            }
+        });
+    }
+}

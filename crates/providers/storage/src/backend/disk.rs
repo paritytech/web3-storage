@@ -862,6 +862,12 @@ mod tests {
         assert!(storage
             .get_mmr_proof_for_commitment(1, roots[1], 0, 3, 1)
             .is_err());
+
+        // A cited range extending past the locally held leaves is rejected
+        // before any MMR work.
+        assert!(storage
+            .get_mmr_proof_for_commitment(1, roots[1], 0, 99, 1)
+            .is_err());
     }
 
     #[test]
