@@ -551,13 +551,26 @@ impl SubxtChainClient {
                 .map_err(|_| Error::Internal("Failed to parse min_sync_interval".to_string()))?,
         ) as u64;
 
+        // last_sync: Option<ReplicaSyncRecord> where ReplicaSyncRecord is
+        // { root: H256, range: Option<(u64, u64)>, block: u32 } — the inner
+        // Option makes the record variable-length, so `block`'s offset depends
+        // on the range tag.
         let last_sync_option = remaining.get(36).copied().unwrap_or(0);
-        let last_sync = if last_sync_option == 1 && remaining.len() >= 36 + 1 + 32 + 4 {
+        let last_sync = if last_sync_option == 1 && remaining.len() >= 36 + 1 + 32 + 1 + 4 {
             let root_bytes: [u8; 32] = remaining[37..69]
                 .try_into()
                 .map_err(|_| Error::Internal("Failed to parse last_sync root".to_string()))?;
+            let block_start = match remaining[69] {
+                0 => 70,
+                1 if remaining.len() >= 86 + 4 => 86,
+                _ => {
+                    return Err(Error::Internal(
+                        "Failed to parse last_sync range".to_string(),
+                    ))
+                }
+            };
             let block = u32::from_le_bytes(
-                remaining[69..73]
+                remaining[block_start..block_start + 4]
                     .try_into()
                     .map_err(|_| Error::Internal("Failed to parse last_sync block".to_string()))?,
             ) as u64;
@@ -969,6 +982,7 @@ impl ChallengeChainClient for SubxtChainClient {
                 index,
                 mmr_root: challenge.mmr_root,
                 start_seq: challenge.start_seq,
+                leaf_count: challenge.leaf_count,
                 leaf_index: challenge.leaf_index,
                 chunk_index: challenge.chunk_index,
                 challenger: sp_core::crypto::AccountId32::from(challenge.challenger).to_ss58check(),
@@ -1025,6 +1039,7 @@ impl ChallengeChainClient for SubxtChainClient {
             index,
             mmr_root: H256::from(challenge.mmr_root.0),
             start_seq: challenge.start_seq,
+            leaf_count: challenge.leaf_count,
             leaf_index: challenge.target.leaf_index,
             chunk_index: challenge.target.chunk_index,
             challenger: sp_core::crypto::AccountId32::from(challenge.challenger.0).to_ss58check(),

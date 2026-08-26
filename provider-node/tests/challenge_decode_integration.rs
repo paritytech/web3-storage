@@ -18,6 +18,7 @@ fn build_challenge(provider: [u8; 32]) -> Vec<u8> {
     let challenger: [u8; 32] = [2u8; 32];
     let mmr_root: [u8; 32] = [3u8; 32];
     let start_seq: u64 = 100;
+    let leaf_count: u64 = 8;
     let leaf_index: u64 = 7;
     let chunk_index: u64 = 0;
     let deposit: u128 = 1_000_000_000_000;
@@ -26,6 +27,7 @@ fn build_challenge(provider: [u8; 32]) -> Vec<u8> {
     buf.extend_from_slice(&challenger);
     buf.extend_from_slice(&mmr_root);
     buf.extend_from_slice(&start_seq.to_le_bytes());
+    buf.extend_from_slice(&leaf_count.to_le_bytes());
     buf.extend_from_slice(&leaf_index.to_le_bytes());
     buf.extend_from_slice(&chunk_index.to_le_bytes());
     buf.extend_from_slice(&deposit.to_le_bytes());
@@ -44,6 +46,7 @@ fn decode_single_challenge_matching_provider() {
         .expect("matches our provider");
     assert_eq!(decoded.bucket_id, 42);
     assert_eq!(decoded.start_seq, 100);
+    assert_eq!(decoded.leaf_count, 8);
     assert_eq!(decoded.leaf_index, 7);
     assert_eq!(decoded.chunk_index, 0);
     assert_eq!(decoded.challenger, [2u8; 32]);
@@ -69,6 +72,6 @@ fn decode_single_challenge_other_provider() {
 fn decode_single_challenge_truncated() {
     let our_bytes: [u8; 32] = [9u8; 32];
     let mut encoded = build_challenge(our_bytes);
-    encoded.pop(); // one byte short of the fixed 144-byte layout
+    encoded.pop(); // one byte short of the fixed 152-byte layout
     assert!(decode_challenge_for_provider(&encoded, &our_bytes).is_err());
 }

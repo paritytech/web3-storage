@@ -56,6 +56,9 @@ pub struct DetectedChallenge {
     pub mmr_root: H256,
     /// Start sequence of the commitment.
     pub start_seq: u64,
+    /// Leaf count of the commitment; on-chain proof verification is bound to
+    /// the exact `(leaf_index, leaf_count)` position.
+    pub leaf_count: u64,
     /// Leaf index in the MMR to prove.
     pub leaf_index: u64,
     /// Chunk index within the leaf to prove.
@@ -471,13 +474,14 @@ pub struct DecodedChallenge {
     pub challenger: [u8; 32],
     pub mmr_root: H256,
     pub start_seq: u64,
+    pub leaf_count: u64,
     pub leaf_index: u64,
     pub chunk_index: u64,
 }
 
 /// Total SCALE-encoded size of a single `Challenge<T>` value (fixed-width
 /// fields only, see the layout below).
-const CHALLENGE_ENTRY_SIZE: usize = 144;
+const CHALLENGE_ENTRY_SIZE: usize = 152;
 
 /// Decode a single SCALE-encoded `Challenge` value from `Challenges` storage
 /// (the map is now a `StorageDoubleMap<BlockNumber, u16, Challenge>`, so each
@@ -491,10 +495,11 @@ const CHALLENGE_ENTRY_SIZE: usize = 144;
 ///   challenger (AccountId32)— 32
 ///   mmr_root (H256)         — 32
 ///   start_seq (u64)         — 8
+///   leaf_count (u64)        — 8
 ///   leaf_index (u64)        — 8
 ///   chunk_index (u64)       — 8
 ///   deposit (Balance u128)  — 16
-/// Total: 144 bytes.
+/// Total: 152 bytes.
 ///
 /// `#[doc(hidden)] pub` so the fixed-offset layout is reachable from an
 /// integration test; it is an internal helper, not stable public API.
@@ -520,15 +525,17 @@ pub fn decode_challenge_for_provider(
     root_bytes.copy_from_slice(&entry[72..104]);
     let mmr_root = H256::from(root_bytes);
     let start_seq = u64::from_le_bytes(entry[104..112].try_into().expect("8 bytes"));
-    let leaf_index = u64::from_le_bytes(entry[112..120].try_into().expect("8 bytes"));
-    let chunk_index = u64::from_le_bytes(entry[120..128].try_into().expect("8 bytes"));
-    // deposit at entry[128..144] — not needed for the response.
+    let leaf_count = u64::from_le_bytes(entry[112..120].try_into().expect("8 bytes"));
+    let leaf_index = u64::from_le_bytes(entry[120..128].try_into().expect("8 bytes"));
+    let chunk_index = u64::from_le_bytes(entry[128..136].try_into().expect("8 bytes"));
+    // deposit at entry[136..152] — not needed for the response.
 
     Ok(Some(DecodedChallenge {
         bucket_id,
         challenger,
         mmr_root,
         start_seq,
+        leaf_count,
         leaf_index,
         chunk_index,
     }))

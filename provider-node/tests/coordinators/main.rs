@@ -86,7 +86,7 @@ pub fn test_state_with_data() -> (Arc<ProviderState>, DetectedChallenge, TempDir
     let data_root = build_padded_merkle_tree(storage.as_ref(), 1, &[chunk_hash]);
     assert_eq!(data_root, chunk_hash);
 
-    let (mmr_root, start_seq, _leaf_count, leaf_indices) =
+    let (mmr_root, start_seq, leaf_count, leaf_indices) =
         storage.commit(1, vec![data_root]).unwrap();
     assert_eq!(leaf_indices, vec![0]);
 
@@ -96,6 +96,7 @@ pub fn test_state_with_data() -> (Arc<ProviderState>, DetectedChallenge, TempDir
         index: 0,
         mmr_root,
         start_seq,
+        leaf_count,
         leaf_index: 0,
         chunk_index: 0,
         challenger: ALICE_SS58.to_string(),
