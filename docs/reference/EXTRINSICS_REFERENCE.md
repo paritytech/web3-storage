@@ -660,7 +660,7 @@ chunkIndex: 3
 **Deposit required:** see the challenge cost note above.
 
 **Events:** `ChallengeCreated`
-**Errors:** `BucketNotFound`, `NoSnapshot`, `ProviderNotInSnapshot`, `NotAuthorizedForPrivateBucket` (private bucket; caller neither member nor primary-agreement owner)
+**Errors:** `BucketNotFound`, `NoSnapshot`, `ProviderNotInSnapshot`, `LeafBeyondCanonical` (`target.leafIndex >= leaf_count` — the leaf does not exist, so the challenge is rejected at creation), `NotAuthorizedForPrivateBucket` (private bucket; caller neither member nor primary-agreement owner)
 
 ---
 
@@ -685,7 +685,7 @@ providerSignature: 0xsig...
 ```
 
 **Events:** `ChallengeCreated`
-**Errors:** `BucketNotFound`, `AgreementNotFound`, `InvalidSignature`, `NotAuthorizedForPrivateBucket` (private bucket, primary target; caller neither member nor primary-agreement owner)
+**Errors:** `BucketNotFound`, `AgreementNotFound`, `InvalidSignature`, `LeafBeyondCanonical` (`target.leafIndex >= leafCount`), `NotAuthorizedForPrivateBucket` (private bucket, primary target; caller neither member nor primary-agreement owner)
 
 ---
 
@@ -710,7 +710,7 @@ chunkIndex: 3
 ```
 
 **Events:** `ChallengeCreated`
-**Errors:** `AgreementNotFound`, `NotReplica`, `InvalidSyncRoot`, `ReplicaSyncRangeUnknown`
+**Errors:** `AgreementNotFound`, `NotReplica`, `InvalidSyncRoot`, `ReplicaSyncRangeUnknown`, `LeafBeyondCanonical` (`leafIndex >= leaf_count` of the synced range)
 
 ---
 
@@ -748,7 +748,7 @@ Numbers are illustrative.
 | Blocks 96+ | 50 / 50 |
 
 **Events:** `ChallengeDefended`
-**Errors:** `ChallengeNotFound`, `NotChallengeProvider`, `ChallengeExpired`, `InvalidChallengeProof`, `InvalidDeletionProof`, `LeafBeyondCanonical`
+**Errors:** `ChallengeNotFound`, `NotChallengeProvider`, `ChallengeExpired`, `InvalidChallengeProof`, `InvalidDeletionProof`
 
 ---
 
@@ -978,7 +978,7 @@ Common errors you might encounter:
 | `ChallengeExpired` | Past challenge deadline | Too late to respond |
 | `NotChallengeProvider` | Caller is not the challenged provider | — |
 | `ProviderNotInSnapshot` | Provider didn't sign current snapshot | Add their signature via `extendCheckpoint` |
-| `LeafBeyondCanonical` | Challenged leaf is beyond canonical state | — |
+| `LeafBeyondCanonical` | Challenged `leafIndex` is not covered by the commitment's `leaf_count` | Challenge an existing leaf |
 | `InvalidSignature` | Signature didn't verify against registered pubkey | Check key + payload |
 | `NoSnapshot` | Bucket has no checkpoint yet | Call `checkpoint` first |
 | `SnapshotViolatesFrozen` | `startSeq < frozen_start_seq` | Use `startSeq ≥ frozen_start_seq` |

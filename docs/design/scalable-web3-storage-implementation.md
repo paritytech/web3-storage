@@ -1862,7 +1862,7 @@ Response:
 }
 
 Note: The returned signature covers a `CommitmentPayload` with the **real**
-`leaf_count` (and `nonce`), so it can back a bound `challenge_offchain` — the
+`leaf_count`, so it can back a bound `challenge_offchain` — the
 pallet reconstructs the payload from the `commitment` the challenger passes and
 verifies the signature over it, then uses that `leaf_count` to bind the proof to
 `leaf_index` in `respond_to_challenge`. The values returned here must therefore be

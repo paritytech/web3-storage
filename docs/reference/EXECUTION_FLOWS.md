@@ -444,6 +444,9 @@ sequenceDiagram
     C->>C: provider_idx = bucket.primary_providers.position(provider)?
     C->>C: ensure!(snapshot.has_provider_signed(provider_idx))
 
+    Note over C: Reject challenges on nonexistent leaves (LeafBeyondCanonical) —<br/>no proof could defend them, so they would slash via timeout
+    C->>C: ensure!(leaf_index < snapshot.leaf_count)
+
     Note over C: Visibility gate (challenged provider is a primary)
     C->>C: if bucket.visibility == Private:
     C->>C:   ensure!(is_member(challenger) || owns_primary_agreement(challenger, bucket))
@@ -454,7 +457,7 @@ sequenceDiagram
 
     Note over C: Create challenge
     C->>C: deadline = current_anchor_block + ChallengeTimeout
-    Note over C: challenge = Challenge {<br/> challenger,<br/> bucket_id,<br/> provider,<br/> mmr_root: snapshot.mmr_root,<br/> start_seq: snapshot.start_seq,<br/> leaf_index,<br/> chunk_index,<br/> deposit,<br/> authorized<br/>}
+    Note over C: challenge = Challenge {<br/> challenger,<br/> bucket_id,<br/> provider,<br/> mmr_root: snapshot.mmr_root,<br/> start_seq: snapshot.start_seq,<br/> leaf_count: snapshot.leaf_count,<br/> leaf_index,<br/> chunk_index,<br/> deposit,<br/> authorized<br/>}
 
     C->>C: Challenges::insert(deadline, next_index, challenge)
 
