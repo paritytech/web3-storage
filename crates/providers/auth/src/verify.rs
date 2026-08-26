@@ -4,7 +4,9 @@
 
 use crate::error::AuthError;
 use crate::http_auth::auth_message;
-use crate::membership::{MembershipCache, MembershipResolver, RequiredRole};
+use crate::membership::{
+    MembershipCache, MembershipInvalidations, MembershipResolver, RequiredRole,
+};
 use sp_core::{crypto::AccountId32, sr25519, Pair};
 use std::time::Duration;
 use storage_primitives::BucketId;
@@ -130,18 +132,53 @@ pub struct Authenticator {
     max_skew: Duration,
 }
 
+/// Default clock-skew tolerance. Matches `--auth-max-skew`'s default.
+const DEFAULT_MAX_SKEW: Duration = Duration::from_secs(300);
+
 impl Authenticator {
-    /// `ttl` bounds how long a resolved member set is reused; `max_skew` how far
-    /// a request timestamp may drift from the server clock.
-    pub fn new(
-        resolver: impl MembershipResolver + 'static,
-        ttl: Duration,
-        max_skew: Duration,
-    ) -> Self {
+    /// Every bound has a default; set them with the `with_*` builders. Named
+    /// rather than positional because they are all `Duration`s, so a positional
+    /// signature lets two of them be swapped silently.
+    pub fn new(resolver: impl MembershipResolver + 'static) -> Self {
         Self {
-            membership: MembershipCache::new(resolver, ttl),
-            max_skew,
+            membership: MembershipCache::new(resolver),
+            max_skew: DEFAULT_MAX_SKEW,
         }
+    }
+
+    /// Feed membership invalidations into the cache, so a change takes effect
+    /// on the next request rather than at the end of the TTL. Without this the
+    /// TTL is the only bound.
+    pub fn with_invalidations(mut self, feed: impl MembershipInvalidations + 'static) -> Self {
+        self.membership = self.membership.with_invalidations(feed);
+        self
+    }
+
+    /// How long a resolved member set is reused before the chain is rechecked.
+    pub fn with_ttl(mut self, ttl: Duration) -> Self {
+        self.membership = self.membership.with_ttl(ttl);
+        self
+    }
+
+    /// How far a request timestamp may drift from the server clock.
+    pub fn with_max_skew(mut self, max_skew: Duration) -> Self {
+        self.max_skew = max_skew;
+        self
+    }
+
+    /// How old a cached member set may be and still authorize a request while
+    /// the chain is unreachable; past it the lookup fails rather than
+    /// authorizing from an unboundedly stale snapshot. Defaults to 5 minutes.
+    pub fn with_max_stale(mut self, max_stale: Duration) -> Self {
+        self.membership = self.membership.with_max_stale(max_stale);
+        self
+    }
+
+    /// Maximum number of buckets' membership resident in the cache at once.
+    /// Defaults to 10,000.
+    pub fn with_max_entries(mut self, max_entries: u64) -> Self {
+        self.membership = self.membership.with_max_entries(max_entries);
+        self
     }
 
     /// Auth is always enforced: the caller must present a valid signed
@@ -173,9 +210,13 @@ impl Authenticator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::MembershipError;
     use crate::http_auth::build_auth_header;
     use crate::membership::{Member, StaticMembershipResolver};
+    use crate::test_support::FlakyResolver;
     use sp_core::Pair;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
     use std::time::Duration;
     use storage_primitives::Role;
 
@@ -273,11 +314,7 @@ mod tests {
     /// Run `require_role` against a bucket whose only member is `//Alice`
     /// holding `granted`, with a valid signed header from that same account.
     fn authenticator(members: Vec<Member>) -> Authenticator {
-        Authenticator::new(
-            StaticMembershipResolver(members),
-            Duration::from_secs(60),
-            Duration::from_secs(300),
-        )
+        Authenticator::new(StaticMembershipResolver(members))
     }
 
     async fn require_role_for(granted: Role, required: RequiredRole) -> Result<(), AuthError> {
@@ -334,7 +371,7 @@ mod tests {
         let account = AccountId32::new(keypair.public().0);
         let resolver = pick(true, (account, Role::Admin).into());
 
-        let auth = Authenticator::new(resolver, Duration::from_secs(60), Duration::from_secs(300));
+        let auth = Authenticator::new(resolver);
         let header = make_auth_header(&keypair, "PUT", 1, current_timestamp());
 
         assert!(auth
@@ -379,5 +416,72 @@ mod tests {
             .require_role(Some(&header), "GET", 2, RequiredRole::Reader)
             .await;
         assert!(matches!(replayed, Err(AuthError::AuthRequired)));
+    }
+
+    #[tokio::test]
+    async fn require_role_refuses_membership_past_max_stale_on_chain_failure() {
+        // With max_stale zero, once the chain fails on the second lookup the
+        // cached entry - however briefly held - is already past the bound.
+        // `require_role` must surface the exact variant the provider node
+        // maps to `503 membership_unavailable`, rather than authorizing from
+        // an unboundedly stale snapshot.
+        let keypair = sr25519::Pair::from_string("//Alice", None).unwrap();
+        let account = AccountId32::new(keypair.public().0);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let auth = Authenticator::new(FlakyResolver {
+            account: account.clone(),
+            calls: calls.clone(),
+        })
+        .with_ttl(Duration::ZERO)
+        .with_max_stale(Duration::ZERO);
+        let header = make_auth_header(&keypair, "GET", 1, current_timestamp());
+
+        // Seeds the cache via the resolver's one successful call.
+        auth.require_role(Some(&header), "GET", 1, RequiredRole::Reader)
+            .await
+            .expect("first lookup must succeed and cache the member set");
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+        let result = auth
+            .require_role(Some(&header), "GET", 1, RequiredRole::Reader)
+            .await;
+        assert!(
+            matches!(
+                result,
+                Err(AuthError::MembershipLookup(MembershipError::Unavailable(_)))
+            ),
+            "an entry past max_stale must surface Unavailable (-> 503), got {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn with_max_stale_widens_the_bound_the_ttl_would_have_set() {
+        // Same setup as the test above, which refuses with max_stale zero.
+        // Raising it via the builder must let the brief outage through -
+        // otherwise `--auth-max-stale` is decorative and the flag silently
+        // does nothing.
+        let keypair = sr25519::Pair::from_string("//Alice", None).unwrap();
+        let account = AccountId32::new(keypair.public().0);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let auth = Authenticator::new(FlakyResolver {
+            account: account.clone(),
+            calls: calls.clone(),
+        })
+        .with_ttl(Duration::ZERO)
+        .with_max_stale(Duration::from_secs(300));
+        let header = make_auth_header(&keypair, "GET", 1, current_timestamp());
+
+        auth.require_role(Some(&header), "GET", 1, RequiredRole::Reader)
+            .await
+            .expect("first lookup must succeed and cache the member set");
+
+        let result = auth
+            .require_role(Some(&header), "GET", 1, RequiredRole::Reader)
+            .await;
+        assert!(
+            result.is_ok(),
+            "within the configured max_stale the cached role must still authorize, got {result:?}"
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
     }
 }

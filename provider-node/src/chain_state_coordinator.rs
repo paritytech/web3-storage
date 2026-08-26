@@ -17,6 +17,10 @@
 //! reconnect loop; on every relevant provider event it re-fetches the full
 //! `ProviderInfo` so `committed_bytes`, `stake`, and all settings stay
 //! current — no field-patching, no partial updates, no second writer.
+//!
+//! It also broadcasts bucket-membership changes as
+//! [`BlockEvent::BucketMembershipChanged`], so the membership cache can drop
+//! stale authorization on its own rather than being told to.
 
 use crate::chain_connection::{self, ChainHandle, ChainTransport};
 use crate::chain_events::{self, BlockEvent, BlockEventTx};
@@ -420,6 +424,7 @@ impl ChainStateCoordinator {
                     tracing::warn!(
                         "chain-state coordinator: failed to get block handle for {block_number}: {e}"
                     );
+                    escalate_block_read_failure(&self.events_tx, block_number);
                     continue;
                 }
             };
@@ -446,13 +451,14 @@ impl ChainStateCoordinator {
                     tracing::warn!(
                         "chain-state coordinator: failed to fetch events for block {block_number}: {e}"
                     );
+                    escalate_block_read_failure(&self.events_tx, block_number);
                     continue;
                 }
             };
 
             // Fan out the coordinator-relevant events. Send failures just mean
             // no coordinator is subscribed.
-            for event in chain_events::decode_block_events(&events) {
+            for event in chain_events::decode_block_events(&events, block_number) {
                 let _ = self.events_tx.send(event);
             }
 
@@ -648,6 +654,18 @@ impl ChainStateCoordinatorHandle {
     }
 }
 
+/// A finalized block's handle or events could not be fetched at all, so its
+/// membership events (if any) are lost rather than merely dropped one at a
+/// time - the same "no bucket id left to invalidate" situation an undecodable
+/// event escalates to, and for the same reason: a plain `continue` here would
+/// let a revoked member keep authorizing for a full `--auth-cache-ttl` on a
+/// node that is otherwise connected and healthy.
+fn escalate_block_read_failure(events_tx: &BlockEventTx, block_number: u32) {
+    let _ = events_tx.send(BlockEvent::MembershipScopeUnknown {
+        at_block: block_number,
+    });
+}
+
 // ── dynamic-value decoding ────────────────────────────────────────────────────
 
 /// Decode a `StorageProvider::Providers` storage value into [`ProviderInfo`].
@@ -803,6 +821,16 @@ mod tests {
     fn test_chain_state() -> (ChainState, tempfile::TempDir) {
         let (_storage, nonce_store, dir) = temp_rocksdb();
         (ChainState::with_nonce_store(nonce_store), dir)
+    }
+
+    #[test]
+    fn escalate_block_read_failure_broadcasts_membership_scope_unknown() {
+        let (tx, mut rx) = tokio::sync::broadcast::channel(4);
+        escalate_block_read_failure(&tx, 99);
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(BlockEvent::MembershipScopeUnknown { at_block: 99 })
+        ));
     }
 
     fn sample_provider_info() -> ProviderInfo {
@@ -1339,6 +1367,168 @@ mod tests {
             assert_eq!(info.max_capacity, 10_000);
             assert_eq!(info.replica_sync_price, Some(7));
             assert_eq!(info.deregister_at, Some(42));
+        }
+
+        /// `System::Events` bytes holding one of each membership-changing event
+        /// (buckets 7, 7, 8, and 9) plus a `ProviderRegistered` that carries no
+        /// bucket at all, encoded against the real runtime types.
+        fn encoded_membership_events(md: &subxt::Metadata, provider: &AccountId32) -> Vec<u8> {
+            let member = Value::from_bytes([3u8; 32]);
+            let bucket_created = event_record(Value::named_variant(
+                "BucketCreated",
+                [
+                    ("bucket_id", Value::u128(9)),
+                    ("admin", Value::from_bytes([4u8; 32])),
+                ],
+            ));
+            let member_set = event_record(Value::named_variant(
+                "MemberSet",
+                [
+                    ("bucket_id", Value::u128(7)),
+                    ("member", member.clone()),
+                    (
+                        "role",
+                        Value::unnamed_variant("Writer", Vec::<Value>::new()),
+                    ),
+                ],
+            ));
+            let member_removed = event_record(Value::named_variant(
+                "MemberRemoved",
+                [("bucket_id", Value::u128(7)), ("member", member)],
+            ));
+            let bucket_deleted = event_record(Value::named_variant(
+                "BucketDeleted",
+                [("bucket_id", Value::u128(8))],
+            ));
+            let registered = event_record(Value::named_variant(
+                "ProviderRegistered",
+                [
+                    (
+                        "provider",
+                        Value::from_bytes(<AccountId32 as AsRef<[u8]>>::as_ref(provider)),
+                    ),
+                    ("stake", Value::u128(1_000)),
+                ],
+            ));
+            let ty = storage_value_type(md, "System", "Events");
+            encode_value(
+                md,
+                ty,
+                &Value::unnamed_composite([
+                    bucket_created,
+                    member_set,
+                    member_removed,
+                    bucket_deleted,
+                    registered,
+                ]),
+            )
+        }
+
+        /// The `BucketMembershipChanged` bucket ids `chain_events::decode_block_events`
+        /// produces from `events`, in encounter order.
+        fn membership_changed_bucket_ids(
+            events: &subxt::events::Events<PolkadotConfig>,
+        ) -> Vec<u64> {
+            chain_events::decode_block_events(events, 0)
+                .into_iter()
+                .filter_map(|event| match event {
+                    BlockEvent::BucketMembershipChanged { bucket_id } => Some(bucket_id),
+                    _ => None,
+                })
+                .collect()
+        }
+
+        #[tokio::test]
+        async fn membership_changes_decode_to_their_bucket_ids() {
+            let md = metadata();
+            let api = mock_api(vec![(
+                key_prefix("System", "Events"),
+                format!(
+                    "0x{}",
+                    hex::encode(encoded_membership_events(&md, &provider_account()))
+                ),
+            )])
+            .await;
+
+            let at = api.at_current_block().await.expect("block handle");
+            let events = at.events().fetch().await.expect("events fetch");
+
+            // Every membership-changing event contributes its bucket, duplicates
+            // included (invalidation is idempotent); the provider-lifecycle event
+            // carries no bucket and must be skipped.
+            assert_eq!(membership_changed_bucket_ids(&events), vec![9, 7, 7, 8]);
+        }
+
+        #[tokio::test]
+        async fn blocks_without_membership_changes_decode_to_nothing() {
+            let md = metadata();
+            let api = mock_api(vec![(
+                key_prefix("System", "Events"),
+                format!(
+                    "0x{}",
+                    hex::encode(encoded_events(&md, &provider_account()))
+                ),
+            )])
+            .await;
+
+            let at = api.at_current_block().await.expect("block handle");
+            let events = at.events().fetch().await.expect("events fetch");
+
+            assert!(membership_changed_bucket_ids(&events).is_empty());
+        }
+
+        #[tokio::test]
+        async fn follow_broadcasts_membership_changes() {
+            let md = metadata();
+            let account = provider_account();
+
+            let providers_ty = storage_value_type(&md, PALLET_NAME, "Providers");
+            let provider_bytes =
+                encode_value(&md, providers_ty, &runtime_provider_info_value(None, None));
+            let events_bytes = encoded_membership_events(&md, &account);
+
+            let api = mock_api(vec![
+                (
+                    key_prefix("System", "Events"),
+                    format!("0x{}", hex::encode(events_bytes)),
+                ),
+                (
+                    key_prefix(PALLET_NAME, "Providers"),
+                    format!("0x{}", hex::encode(provider_bytes)),
+                ),
+            ])
+            .await;
+
+            let (chain_state, _dir) = test_chain_state();
+            let chain_state = Arc::new(chain_state);
+            let (chain_tx, _chain_rx) = tokio::sync::watch::channel(None);
+            let (events_tx, mut events_rx) = tokio::sync::broadcast::channel(16);
+            let coordinator = ChainStateCoordinator::new(
+                ChainTransport::Rpc {
+                    url: "ws://unused.invalid".to_string(),
+                },
+                account,
+                chain_state,
+                chain_tx,
+                events_tx,
+            );
+
+            coordinator
+                .follow(ChainHandle::from_api(api))
+                .await
+                .expect("follow runs to stream end");
+
+            use crate::chain_events::BlockEvent;
+            let mut changed_buckets = Vec::new();
+            while let Ok(event) = events_rx.try_recv() {
+                if let BlockEvent::BucketMembershipChanged { bucket_id } = event {
+                    changed_buckets.push(bucket_id);
+                }
+            }
+            // Matches `membership_changes_decode_to_their_bucket_ids`: duplicates
+            // included (invalidation is idempotent), the provider-lifecycle event
+            // in the same block contributes nothing.
+            assert_eq!(changed_buckets, vec![9, 7, 7, 8]);
         }
 
         #[tokio::test]
