@@ -162,11 +162,7 @@ async fn test_already_synced() {
     let deps = ProviderDeps {
         storage,
         nonce_store,
-        auth: Arc::new(Authenticator::new(
-            StaticMembershipResolver(vec![]),
-            Duration::from_secs(60),
-            Duration::from_secs(300),
-        )),
+        auth: Arc::new(Authenticator::new(StaticMembershipResolver(vec![]))),
     };
     let state = Arc::new(ProviderState::with_provider_id(deps, "test".to_string()));
 
@@ -387,11 +383,7 @@ async fn test_duties_filter_already_synced() {
     let deps = ProviderDeps {
         storage,
         nonce_store,
-        auth: Arc::new(Authenticator::new(
-            StaticMembershipResolver(vec![]),
-            Duration::from_secs(60),
-            Duration::from_secs(300),
-        )),
+        auth: Arc::new(Authenticator::new(StaticMembershipResolver(vec![]))),
     };
     let state = Arc::new(ProviderState::with_provider_id(
         deps,

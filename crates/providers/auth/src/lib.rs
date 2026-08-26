@@ -11,9 +11,14 @@
 pub mod error;
 pub mod http_auth;
 pub mod membership;
+#[cfg(test)]
+mod test_support;
 pub mod verify;
 
 pub use error::{AuthError, MembershipError};
 pub use http_auth::{auth_message, build_auth_header};
-pub use membership::{Member, MembershipResolver, RequiredRole, StaticMembershipResolver};
+pub use membership::{
+    Invalidation, Member, MembershipInvalidations, MembershipResolver, RequiredRole,
+    StaticMembershipResolver,
+};
 pub use verify::Authenticator;
