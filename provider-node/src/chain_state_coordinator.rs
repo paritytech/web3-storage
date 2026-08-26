@@ -17,6 +17,10 @@
 //! reconnect loop; on every relevant provider event it re-fetches the full
 //! `ProviderInfo` so `committed_bytes`, `stake`, and all settings stay
 //! current — no field-patching, no partial updates, no second writer.
+//!
+//! It also broadcasts bucket-membership changes as
+//! [`BlockEvent::BucketMembershipChanged`], so the membership cache can drop
+//! stale authorization on its own rather than being told to.
 
 use crate::negotiate::NonceCounter;
 use crate::types::ProviderInfo;
@@ -27,6 +31,7 @@ use provider_chain::chain_connection::{self, ChainHandle, ChainTransport};
 use provider_chain::chain_events::{self, BlockEvent, BlockEventTx};
 use provider_storage::NonceStore;
 use sp_runtime::AccountId32;
+use std::future::Future;
 use std::sync::atomic::AtomicU32;
 use std::sync::Arc;
 use std::time::Duration;
@@ -37,6 +42,26 @@ use tokio::task::JoinHandle;
 
 /// Pallet whose storage, constants, and events the coordinator follows.
 const PALLET_NAME: &str = "StorageProvider";
+
+/// Run `fut` under `budget`, mapping expiry to an [`Error`] naming `what`.
+///
+/// Every wait in the reconnect loop goes through this: an operation that can
+/// hang forever (e.g. a wedged smoldot backend with no timeout of its own)
+/// must turn into an `Err` so the loop can rebuild the connection instead of
+/// hanging with a stale handle still published.
+async fn with_timeout<T>(
+    what: &str,
+    budget: Duration,
+    fut: impl Future<Output = Result<T, Error>>,
+) -> Result<T, Error> {
+    match tokio::time::timeout(budget, fut).await {
+        Ok(result) => result,
+        Err(_) => Err(Error::Internal(format!(
+            "{what} timed out after {}s",
+            budget.as_secs()
+        ))),
+    }
+}
 
 // ── ChainState ────────────────────────────────────────────────────────────────
 
@@ -296,10 +321,23 @@ impl ChainStateCoordinator {
     }
 
     /// Connect to the chain, bootstrap initial state, then drive the finalized-block
-    /// stream until it ends or stalls. Returns `Err` if connecting fails; `Ok(())`
-    /// if the stream terminates — either way the caller reconnects.
+    /// stream until it ends or stalls. Returns `Err` if connecting or bootstrapping
+    /// fails; `Ok(())` if the stream terminates — either way the caller reconnects.
     async fn connect_and_follow(&self) -> Result<(), Error> {
-        let handle = chain_connection::connect(&self.transport).await?;
+        /// Budget for building a cold connection. On the light transport,
+        /// `connect` awaits smoldot's peer discovery and warp sync with no
+        /// timeout of its own, so a wedged light client would otherwise hang
+        /// here forever — with the previous (dead) handle still published to
+        /// consumers — and the reconnect loop could never rebuild it. Generous
+        /// because killing a slow warp sync throws its progress away.
+        const CONNECT_TIMEOUT: Duration = Duration::from_secs(300);
+
+        let handle = with_timeout("Connecting to the chain", CONNECT_TIMEOUT, async {
+            chain_connection::connect(&self.transport)
+                .await
+                .map_err(Error::from)
+        })
+        .await?;
         self.follow(handle).await
     }
 
@@ -312,28 +350,40 @@ impl ChainStateCoordinator {
         /// as dead and rebuilt. Finality can pause briefly (session boundaries,
         /// backend resubscriptions), so this is several times the block time;
         /// a genuinely stalled stream otherwise hangs forever with no error.
+        /// The connection is already warp-synced by `connect`, so the first
+        /// block gets the same budget as every other.
         const STALL_TIMEOUT: Duration = Duration::from_secs(60);
+        /// Budget for subscribing and the bootstrap reads below: ordinary RPC
+        /// round-trips on an already-synced connection, but on the light
+        /// client they have no timeout of their own and a wedged backend
+        /// would otherwise hang the reconnect loop forever.
+        const BOOTSTRAP_TIMEOUT: Duration = Duration::from_secs(60);
 
-        let api = handle.api.clone();
-        let mut blocks = api
-            .stream_blocks()
-            .await
-            .map_err(|e| Error::Internal(format!("Failed to subscribe to blocks: {e}")))?;
+        let (mut blocks, chain) = with_timeout("Chain bootstrap", BOOTSTRAP_TIMEOUT, async {
+            let api = handle.api.clone();
+            let blocks = api
+                .stream_blocks()
+                .await
+                .map_err(|e| Error::Internal(format!("Failed to subscribe to blocks: {e}")))?;
 
-        // Publish the new connection only after the block stream is up, so
-        // consumers never observe a handle whose backend failed immediately.
-        self.chain_tx.send_replace(Some(handle));
-        let chain = RealChainStateClient { api };
+            // Publish the new connection only after the block stream is up, so
+            // consumers never observe a handle whose backend failed immediately.
+            self.chain_tx.send_replace(Some(handle));
+            let chain = RealChainStateClient { api };
 
-        tracing::info!("chain-state coordinator: connected; following finalized blocks");
+            tracing::info!("chain-state coordinator: connected; following finalized blocks");
 
-        // Fetch pallet constants once per connection (they only change on runtime upgrade).
-        sync_constants(&chain, &self.chain_state).await;
+            // Fetch pallet constants once per connection (they only change on runtime upgrade).
+            sync_constants(&chain, &self.chain_state).await;
 
-        // Bootstrap from any existing on-chain state so a restarted node that was
-        // already registered picks up its provider_info and nonce counter immediately
-        // rather than waiting for the next relevant event.
-        refresh_provider_state(&chain, &self.chain_state, &self.provider_account).await;
+            // Bootstrap from any existing on-chain state so a restarted node that was
+            // already registered picks up its provider_info and nonce counter immediately
+            // rather than waiting for the next relevant event.
+            refresh_provider_state(&chain, &self.chain_state, &self.provider_account).await;
+
+            Ok::<_, Error>((blocks, chain))
+        })
+        .await?;
 
         // Tell coordinators to reconcile: events emitted while the stream was
         // down were missed for good, so they re-scan chain state instead.
@@ -374,6 +424,7 @@ impl ChainStateCoordinator {
                     tracing::warn!(
                         "chain-state coordinator: failed to get block handle for {block_number}: {e}"
                     );
+                    escalate_block_read_failure(&self.events_tx, block_number);
                     continue;
                 }
             };
@@ -400,13 +451,14 @@ impl ChainStateCoordinator {
                     tracing::warn!(
                         "chain-state coordinator: failed to fetch events for block {block_number}: {e}"
                     );
+                    escalate_block_read_failure(&self.events_tx, block_number);
                     continue;
                 }
             };
 
             // Fan out the coordinator-relevant events. Send failures just mean
             // no coordinator is subscribed.
-            for event in chain_events::decode_block_events(&events) {
+            for event in chain_events::decode_block_events(&events, block_number) {
                 let _ = self.events_tx.send(event);
             }
 
@@ -602,6 +654,18 @@ impl ChainStateCoordinatorHandle {
     }
 }
 
+/// A finalized block's handle or events could not be fetched at all, so its
+/// membership events (if any) are lost rather than merely dropped one at a
+/// time - the same "no bucket id left to invalidate" situation an undecodable
+/// event escalates to, and for the same reason: a plain `continue` here would
+/// let a revoked member keep authorizing for a full `--auth-cache-ttl` on a
+/// node that is otherwise connected and healthy.
+fn escalate_block_read_failure(events_tx: &BlockEventTx, block_number: u32) {
+    let _ = events_tx.send(BlockEvent::MembershipScopeUnknown {
+        at_block: block_number,
+    });
+}
+
 // ── dynamic-value decoding ────────────────────────────────────────────────────
 
 /// Decode a `StorageProvider::Providers` storage value into [`ProviderInfo`].
@@ -757,6 +821,16 @@ mod tests {
     fn test_chain_state() -> (ChainState, tempfile::TempDir) {
         let (_storage, nonce_store, dir) = temp_rocksdb();
         (ChainState::with_nonce_store(nonce_store), dir)
+    }
+
+    #[test]
+    fn escalate_block_read_failure_broadcasts_membership_scope_unknown() {
+        let (tx, mut rx) = tokio::sync::broadcast::channel(4);
+        escalate_block_read_failure(&tx, 99);
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(BlockEvent::MembershipScopeUnknown { at_block: 99 })
+        ));
     }
 
     fn sample_provider_info() -> ProviderInfo {
@@ -1295,6 +1369,167 @@ mod tests {
             assert_eq!(info.deregister_at, Some(42));
         }
 
+        /// `System::Events` bytes holding one of each membership-changing event
+        /// (buckets 7, 7, 8, and 9) plus a `ProviderRegistered` that carries no
+        /// bucket at all, encoded against the real runtime types.
+        fn encoded_membership_events(md: &subxt::Metadata, provider: &AccountId32) -> Vec<u8> {
+            let member = Value::from_bytes([3u8; 32]);
+            let bucket_created = event_record(Value::named_variant(
+                "BucketCreated",
+                [
+                    ("bucket_id", Value::u128(9)),
+                    ("admin", Value::from_bytes([4u8; 32])),
+                ],
+            ));
+            let member_set = event_record(Value::named_variant(
+                "MemberSet",
+                [
+                    ("bucket_id", Value::u128(7)),
+                    ("member", member.clone()),
+                    (
+                        "role",
+                        Value::unnamed_variant("Writer", Vec::<Value>::new()),
+                    ),
+                ],
+            ));
+            let member_removed = event_record(Value::named_variant(
+                "MemberRemoved",
+                [("bucket_id", Value::u128(7)), ("member", member)],
+            ));
+            let bucket_deleted = event_record(Value::named_variant(
+                "BucketDeleted",
+                [("bucket_id", Value::u128(8))],
+            ));
+            let registered = event_record(Value::named_variant(
+                "ProviderRegistered",
+                [
+                    (
+                        "provider",
+                        Value::from_bytes(<AccountId32 as AsRef<[u8]>>::as_ref(provider)),
+                    ),
+                    ("stake", Value::u128(1_000)),
+                ],
+            ));
+            let ty = storage_value_type(md, "System", "Events");
+            encode_value(
+                md,
+                ty,
+                &Value::unnamed_composite([
+                    bucket_created,
+                    member_set,
+                    member_removed,
+                    bucket_deleted,
+                    registered,
+                ]),
+            )
+        }
+
+        /// The `BucketMembershipChanged` bucket ids `chain_events::decode_block_events`
+        /// produces from `events`, in encounter order.
+        fn membership_changed_bucket_ids(
+            events: &subxt::events::Events<PolkadotConfig>,
+        ) -> Vec<u64> {
+            chain_events::decode_block_events(events, 0)
+                .into_iter()
+                .filter_map(|event| match event {
+                    BlockEvent::BucketMembershipChanged { bucket_id } => Some(bucket_id),
+                    _ => None,
+                })
+                .collect()
+        }
+
+        #[tokio::test]
+        async fn membership_changes_decode_to_their_bucket_ids() {
+            let md = metadata();
+            let api = mock_api(vec![(
+                key_prefix("System", "Events"),
+                format!(
+                    "0x{}",
+                    hex::encode(encoded_membership_events(&md, &provider_account()))
+                ),
+            )])
+            .await;
+
+            let at = api.at_current_block().await.expect("block handle");
+            let events = at.events().fetch().await.expect("events fetch");
+
+            // Every membership-changing event contributes its bucket, duplicates
+            // included (invalidation is idempotent); the provider-lifecycle event
+            // carries no bucket and must be skipped.
+            assert_eq!(membership_changed_bucket_ids(&events), vec![9, 7, 7, 8]);
+        }
+
+        #[tokio::test]
+        async fn blocks_without_membership_changes_decode_to_nothing() {
+            let md = metadata();
+            let api = mock_api(vec![(
+                key_prefix("System", "Events"),
+                format!(
+                    "0x{}",
+                    hex::encode(encoded_events(&md, &provider_account()))
+                ),
+            )])
+            .await;
+
+            let at = api.at_current_block().await.expect("block handle");
+            let events = at.events().fetch().await.expect("events fetch");
+
+            assert!(membership_changed_bucket_ids(&events).is_empty());
+        }
+
+        #[tokio::test]
+        async fn follow_broadcasts_membership_changes() {
+            let md = metadata();
+            let account = provider_account();
+
+            let providers_ty = storage_value_type(&md, PALLET_NAME, "Providers");
+            let provider_bytes =
+                encode_value(&md, providers_ty, &runtime_provider_info_value(None, None));
+            let events_bytes = encoded_membership_events(&md, &account);
+
+            let api = mock_api(vec![
+                (
+                    key_prefix("System", "Events"),
+                    format!("0x{}", hex::encode(events_bytes)),
+                ),
+                (
+                    key_prefix(PALLET_NAME, "Providers"),
+                    format!("0x{}", hex::encode(provider_bytes)),
+                ),
+            ])
+            .await;
+
+            let (chain_state, _dir) = test_chain_state();
+            let chain_state = Arc::new(chain_state);
+            let (chain_tx, _chain_rx) = tokio::sync::watch::channel(None);
+            let (events_tx, mut events_rx) = tokio::sync::broadcast::channel(16);
+            let coordinator = ChainStateCoordinator::new(
+                ChainTransport::Rpc {
+                    url: "ws://unused.invalid".to_string(),
+                },
+                account,
+                chain_state,
+                chain_tx,
+                events_tx,
+            );
+
+            coordinator
+                .follow(ChainHandle::from_api(api))
+                .await
+                .expect("follow runs to stream end");
+
+            let mut changed_buckets = Vec::new();
+            while let Ok(event) = events_rx.try_recv() {
+                if let BlockEvent::BucketMembershipChanged { bucket_id } = event {
+                    changed_buckets.push(bucket_id);
+                }
+            }
+            // Matches `membership_changes_decode_to_their_bucket_ids`: duplicates
+            // included (invalidation is idempotent), the provider-lifecycle event
+            // in the same block contributes nothing.
+            assert_eq!(changed_buckets, vec![9, 7, 7, 8]);
+        }
+
         #[tokio::test]
         async fn follow_processes_finalized_blocks_and_provider_events() {
             let md = metadata();
@@ -1337,7 +1572,7 @@ mod tests {
             // `follow` bootstraps, processes the block (decoding the
             // ProviderRegistered event and refreshing state), and returns.
             coordinator
-                .follow(ChainHandle { api })
+                .follow(ChainHandle::from_api(api))
                 .await
                 .expect("follow runs to stream end");
 
@@ -1376,6 +1611,67 @@ mod tests {
             assert!(
                 saw_challenge,
                 "follow should statically decode and broadcast ChallengeCreated"
+            );
+        }
+
+        #[tokio::test(start_paused = true)]
+        async fn with_timeout_expiry_maps_to_error() {
+            // Paused time auto-advances past the budget instantly.
+            let err = with_timeout(
+                "Chain bootstrap",
+                Duration::from_secs(5),
+                std::future::pending::<Result<(), Error>>(),
+            )
+            .await
+            .expect_err("a never-ready future must hit the budget");
+            assert!(
+                err.to_string()
+                    .contains("Chain bootstrap timed out after 5s"),
+                "unexpected error: {err}"
+            );
+        }
+
+        #[tokio::test]
+        async fn with_timeout_passes_results_through() {
+            let ok = with_timeout("op", Duration::from_secs(1), async { Ok::<_, Error>(7) })
+                .await
+                .expect("value passes through");
+            assert_eq!(ok, 7);
+
+            let err = with_timeout("op", Duration::from_secs(1), async {
+                Err::<(), _>(Error::Internal("inner failure".to_string()))
+            })
+            .await
+            .expect_err("inner error passes through");
+            assert!(
+                err.to_string().contains("inner failure"),
+                "unexpected error: {err}"
+            );
+        }
+
+        #[tokio::test]
+        async fn connect_and_follow_surfaces_connect_errors() {
+            // Port 1 on loopback refuses immediately, so this exercises the
+            // budgeted connect path without waiting out any timeout.
+            let (chain_tx, _chain_rx) = tokio::sync::watch::channel(None);
+            let (events_tx, _events_rx) = tokio::sync::broadcast::channel(16);
+            let (chain_state, _dir) = test_chain_state();
+            let coordinator = ChainStateCoordinator::new(
+                ChainTransport::Rpc {
+                    url: "ws://127.0.0.1:1".to_string(),
+                },
+                provider_account(),
+                Arc::new(chain_state),
+                chain_tx,
+                events_tx,
+            );
+            let err = coordinator
+                .connect_and_follow()
+                .await
+                .expect_err("connect to a closed port must fail");
+            assert!(
+                err.to_string().contains("Failed to connect to chain"),
+                "unexpected error: {err}"
             );
         }
     }

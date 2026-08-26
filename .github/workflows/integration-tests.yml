@@ -75,7 +75,7 @@ jobs:
         run: cat .github/env >> $GITHUB_ENV
 
       - name: Rust cache
-        uses: Swatinem/rust-cache@258712b0b7b1ddf8bddc9fc3b0faca682b2736c3 # v2
+        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
           shared-key: "integration-tests-build"
           save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev' }}
@@ -139,7 +139,7 @@ jobs:
       # it also lands before the artifact download so the cached target/ can't
       # clobber it. save-if false — only the build job writes this cache.
       - name: Rust cache
-        uses: Swatinem/rust-cache@258712b0b7b1ddf8bddc9fc3b0faca682b2736c3 # v2
+        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
           shared-key: "integration-tests-build"
           save-if: false
@@ -226,6 +226,14 @@ jobs:
       - name: Run S3 integration test
         run: just drain-tx-pool-then s3-demo-ci
 
+      # Second provider (port 3433) following the same chain through the
+      # embedded smoldot light client; passes once /info reports the on-chain
+      # registration synced via light-client reads. Runs last because it signs
+      # with the same //Alice key as the RPC provider and may sync its own
+      # multiaddr on chain, which the demos above must not observe.
+      - name: Run light-client transport e2e
+        run: bash scripts/test-light-client.sh
+
       - name: Stop services
         if: always()
         run: |
@@ -241,6 +249,7 @@ jobs:
           path: |
             /tmp/zombienet.log
             /tmp/provider-*.log
+            /tmp/light-client-provider.*
             /tmp/zombie-*/*.log
             /tmp/zombie-*/**/*.log
 
@@ -285,7 +294,7 @@ jobs:
       # Before the download so the cached target/ can't clobber it. save-if
       # false — only the build job writes this cache.
       - name: Rust cache
-        uses: Swatinem/rust-cache@258712b0b7b1ddf8bddc9fc3b0faca682b2736c3 # v2
+        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
           shared-key: "integration-tests-build"
           save-if: false
@@ -344,6 +353,7 @@ jobs:
         uses: ./.github/actions/start-provider
         with:
           label: default
+          auth-cache-max-entries: "64"
 
       # The tracked metadata snapshot in packages/papi is the single descriptor
       # source for the whole workspace (UIs, sdk, examples). Re-fetch metadata
@@ -479,7 +489,7 @@ jobs:
       # it also lands before the artifact download so the cached target/ can't
       # clobber it. save-if false — only the build job writes this cache.
       - name: Rust cache
-        uses: Swatinem/rust-cache@258712b0b7b1ddf8bddc9fc3b0faca682b2736c3 # v2
+        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
           shared-key: "integration-tests-build"
           save-if: false
@@ -641,7 +651,7 @@ jobs:
       # the artifact download so the cached target/ can't clobber the freshly
       # downloaded provider + wbuild. save-if false — only the build job writes it.
       - name: Rust cache
-        uses: Swatinem/rust-cache@258712b0b7b1ddf8bddc9fc3b0faca682b2736c3 # v2
+        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
           shared-key: "integration-tests-build"
           save-if: false

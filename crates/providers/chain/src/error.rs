@@ -11,4 +11,7 @@ pub enum Error {
 
     #[error("Chain connection not established yet")]
     NotConnected,
+
+    #[error("Internal error: {0}")]
+    Internal(String),
 }

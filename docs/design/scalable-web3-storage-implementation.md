@@ -1690,8 +1690,13 @@ Rules:
   the provider's clock — otherwise `401 TimestampExpired`.
 - Required role per endpoint: `Reader` for reads of access-controlled data,
   `Writer` for uploads/commits, `Admin` for delete and other destructive ops.
-- The membership cache uses stale-while-revalidate: if the chain is briefly
-  unreachable, cached membership keeps working.
+- Membership is cached: a chain event invalidates the affected bucket
+  immediately; missing that, `--auth-cache-ttl` (default 30s) bounds the
+  delay. If a refetch then fails, the cached set is served for up to
+  `--auth-max-stale` (default 5 minutes) before the request is refused with
+  `503 membership_unavailable`.
+- A member whose `Role` the provider cannot decode is not authorized — the
+  lookup fails rather than falling back to a lesser role.
 
 ### Content-Addressed Storage
 

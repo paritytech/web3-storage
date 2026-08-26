@@ -8,7 +8,9 @@ pub mod chain_connection;
 pub mod chain_events;
 pub mod error;
 
-pub use chain_connection::{connect, current_api, ChainHandle, ChainTransport, ChainWatch};
+pub use chain_connection::{
+    connect, current_api, ChainHandle, ChainTransport, ChainWatch, SpecSource,
+};
 pub use chain_events::{
     decode_block_events, BlockEvent, BlockEventRx, BlockEventTx, EVENT_CHANNEL_CAPACITY,
 };

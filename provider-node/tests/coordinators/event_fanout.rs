@@ -186,6 +186,34 @@ async fn resubscribe_triggers_bootstrap_scan() {
 }
 
 #[tokio::test]
+async fn membership_scope_unknown_does_not_trigger_bootstrap_scan() {
+    // `MembershipScopeUnknown` is the auth cache's own escalation (an
+    // undecodable or unreachable membership event) - it says nothing about
+    // whether the challenge responder's view of chain state is stale, so it
+    // must not cost this coordinator a full scan the way `Resubscribed` does.
+    let (state, challenge, _dir) = test_state_with_data();
+    let mock = MockChallengeClient::new(challenge);
+    let responder =
+        ChallengeResponder::new(event_only_config(), state, Box::new(Arc::clone(&mock)));
+
+    let (events_tx, events_rx) = tokio::sync::broadcast::channel(16);
+    let handle = responder.start(events_rx, None).await.unwrap();
+
+    events_tx
+        .send(BlockEvent::MembershipScopeUnknown { at_block: 42 })
+        .unwrap();
+
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(
+        mock.scanned.load(Ordering::SeqCst),
+        0,
+        "a membership-only escalation must not trigger a reconciliation scan"
+    );
+
+    handle.stop().await.unwrap();
+}
+
+#[tokio::test]
 async fn event_sent_while_paused_survives_until_resume() {
     // The safety net is off here, so a dropped event would be unrecoverable:
     // the queued event is the only thing that can produce a response.
