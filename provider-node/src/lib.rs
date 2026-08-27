@@ -10,7 +10,7 @@
 //! - Syncing data between providers (for replicas)
 
 pub mod api;
-pub mod challenge_responder;
+pub mod challenge_proofs;
 pub mod cli;
 pub mod command;
 pub mod error;
@@ -24,12 +24,14 @@ pub(crate) mod subxt_client;
 pub mod types;
 
 pub use api::create_router;
-pub use challenge_responder::{
-    ChallengeChainClient, ChallengeResponder, ChallengeResponderConfig, ChallengeResponderHandle,
-    ChallengeResponseResult, DetectedChallenge, ResponderCommand,
-};
+pub use challenge_proofs::StorageProofSource;
 pub use error::Error;
 pub use negotiate::{AgreementTermsOf, NegotiateRequest, SignedTerms};
+pub use provider_challenge::{
+    self as challenge_responder, ChallengeChainClient, ChallengeError, ChallengeProofSource,
+    ChallengeResponder, ChallengeResponderConfig, ChallengeResponderHandle,
+    ChallengeResponseResult, DetectedChallenge, ResponderCommand,
+};
 /// The chain-state coordinator lives in the `provider-coordinator` crate; keep
 /// the old module path working for existing consumers.
 pub use provider_coordinator as chain_state_coordinator;
@@ -138,6 +140,12 @@ impl ProviderState {
         let keypair = self.keypair.as_ref().ok_or(Error::SigningUnavailable)?;
         let signature = keypair.sign(message);
         Ok(format!("0x{}", hex::encode(signature.0)))
+    }
+
+    /// Proof source for the challenge responder, backed by this state's
+    /// storage.
+    pub fn challenge_proof_source(&self) -> Arc<dyn ChallengeProofSource> {
+        Arc::new(StorageProofSource::new(self.storage.clone()))
     }
 }
 
