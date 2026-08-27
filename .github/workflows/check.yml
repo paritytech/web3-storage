@@ -129,6 +129,11 @@ jobs:
           cargo check --workspace --quiet
           cargo check --workspace --features=runtime-benchmarks --quiet
           cargo check --workspace --features=try-runtime --quiet
+          # provider-chain's event core must stay usable without its subxt-backed
+          # connection/decode features. Every other check above builds the crate
+          # with default (all) or --all-features, so neither exercises this path;
+          # a --workspace build can't select --no-default-features per-crate either.
+          cargo check -p provider-chain --no-default-features --quiet
 
   clippy:
     name: Cargo clippy

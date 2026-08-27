@@ -10,7 +10,7 @@
 //! on a slow safety-net interval — a missed challenge means getting slashed,
 //! so the event path is backstopped rather than trusted blindly.
 
-use provider_chain::chain_events::{BlockEvent, BlockEventRx};
+use provider_chain::{BlockEvent, BlockEventRx};
 use sp_core::H256;
 use sp_runtime::AccountId32;
 use std::sync::atomic::{AtomicBool, Ordering};

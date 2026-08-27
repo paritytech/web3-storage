@@ -16,7 +16,7 @@ use clap::Parser;
 use provider_auth::Authenticator;
 use provider_chain::{
     chain_connection::{self, ChainHandle, ChainTransport},
-    chain_events::{BlockEvent, BlockEventRx, BlockEventTx, EVENT_CHANNEL_CAPACITY},
+    BlockEvent, BlockEventRx, BlockEventTx, EVENT_CHANNEL_CAPACITY,
 };
 use std::net::SocketAddr;
 use std::str::FromStr;
