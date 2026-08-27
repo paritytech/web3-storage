@@ -13,7 +13,6 @@
 use provider_chain::chain_events::{BlockEvent, BlockEventRx};
 use sp_core::H256;
 use sp_runtime::AccountId32;
-use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -36,13 +35,9 @@ pub enum ChallengeError {
 
 /// Local proof data the responder needs to answer a challenge.
 ///
-/// Implemented by the provider node's storage backend; kept narrow so this
-/// crate stays decoupled from the full storage engine.
+/// Backed by the provider node's storage backend; kept narrow so this crate
+/// stays decoupled from the full storage engine.
 pub trait ChallengeProofSource: Send + Sync {
-    /// SS58 account of the provider this responder acts for; used to filter
-    /// `ChallengeCreated` events down to our own challenges.
-    fn provider_id(&self) -> &str;
-
     /// Generate an MMR proof for the given leaf of a bucket's commitment.
     fn get_mmr_proof(
         &self,
@@ -61,6 +56,10 @@ pub trait ChallengeProofSource: Send + Sync {
 /// Configuration for the challenge responder.
 #[derive(Clone, Debug)]
 pub struct ChallengeResponderConfig {
+    /// Account this responder acts for; used to filter `ChallengeCreated`
+    /// events down to our own challenges. Validated by the caller before the
+    /// responder starts.
+    pub provider_account: AccountId32,
     /// Safety-net interval between full `Challenges` reconciliation scans.
     /// Challenges are normally handled event-driven; zero disables the scan.
     pub poll_interval: Duration,
@@ -70,9 +69,12 @@ pub struct ChallengeResponderConfig {
     pub auto_respond: bool,
 }
 
-impl Default for ChallengeResponderConfig {
-    fn default() -> Self {
+impl ChallengeResponderConfig {
+    /// Config for `provider_account` with the default poll interval, proof
+    /// timeout and auto-respond setting.
+    pub fn new(provider_account: AccountId32) -> Self {
         Self {
+            provider_account,
             poll_interval: Duration::from_secs(300),
             proof_timeout: Duration::from_secs(30),
             auto_respond: true,
@@ -289,9 +291,6 @@ impl ChallengeResponder {
         // A closed broadcast channel (follower gone) yields `Closed` on every
         // poll; disarm the events select arm then, or the loop busy-spins.
         let mut events_open = true;
-        // Only challenges against our own account are actionable; with an
-        // unparseable provider id the point-read filter still protects us.
-        let our_account = AccountId32::from_str(self.proof_source.provider_id()).ok();
         // The safety-net interval's first tick fires immediately, doubling as
         // the startup bootstrap scan (challenges raised while the node was
         // down). With the safety net disabled, the bootstrap scan comes from
@@ -352,7 +351,8 @@ impl ChallengeResponder {
                     }
                     match event {
                         Ok(BlockEvent::ChallengeCreated { deadline, index, provider, .. }) => {
-                            if our_account.as_ref().is_some_and(|me| *me != provider) {
+                            // Only challenges against our own account are actionable.
+                            if self.config.provider_account != provider {
                                 continue;
                             }
                             match self.chain_client.fetch_challenge(deadline, index).await {

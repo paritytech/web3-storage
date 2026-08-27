@@ -11,6 +11,7 @@
 
 pub mod api;
 pub mod chain_state_coordinator;
+pub mod challenge_proofs;
 pub mod cli;
 pub mod command;
 pub mod error;
@@ -29,12 +30,13 @@ pub use chain_state_coordinator::{
     ChainState, ChainStateChainClient, ChainStateCoordinator, ChainStateCoordinatorHandle,
     PalletConstants, ProviderLifecycleEvent,
 };
+pub use challenge_proofs::StorageProofSource;
 pub use error::Error;
 pub use negotiate::{AgreementTermsOf, NegotiateRequest, NonceCounter, SignedTerms};
 pub use provider_challenge::{
-    self as challenge_responder, ChallengeChainClient, ChallengeResponder,
-    ChallengeResponderConfig, ChallengeResponderHandle, ChallengeResponseResult, DetectedChallenge,
-    ResponderCommand,
+    self as challenge_responder, ChallengeChainClient, ChallengeError, ChallengeProofSource,
+    ChallengeResponder, ChallengeResponderConfig, ChallengeResponderHandle,
+    ChallengeResponseResult, DetectedChallenge, ResponderCommand,
 };
 pub use replica_sync::ReplicaSync;
 pub use replica_sync_coordinator::{
@@ -137,32 +139,11 @@ impl ProviderState {
         let signature = keypair.sign(message);
         Ok(format!("0x{}", hex::encode(signature.0)))
     }
-}
 
-impl provider_challenge::ChallengeProofSource for ProviderState {
-    fn provider_id(&self) -> &str {
-        &self.provider_id
-    }
-
-    fn get_mmr_proof(
-        &self,
-        bucket_id: storage_primitives::BucketId,
-        leaf_index: u64,
-    ) -> Result<storage_primitives::MmrProof, provider_challenge::ChallengeError> {
-        self.storage
-            .get_mmr_proof(bucket_id, leaf_index)
-            .map_err(|e| provider_challenge::ChallengeError::Storage(e.to_string()))
-    }
-
-    fn get_chunk_at_index(
-        &self,
-        data_root: sp_core::H256,
-        chunk_index: u64,
-    ) -> Result<(Vec<u8>, storage_primitives::MerkleProof), provider_challenge::ChallengeError>
-    {
-        self.storage
-            .get_chunk_at_index(data_root, chunk_index)
-            .map_err(|e| provider_challenge::ChallengeError::Storage(e.to_string()))
+    /// Proof source for the challenge responder, backed by this state's
+    /// storage.
+    pub fn challenge_proof_source(&self) -> Arc<dyn ChallengeProofSource> {
+        Arc::new(StorageProofSource::new(self.storage.clone()))
     }
 }
 
