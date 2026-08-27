@@ -531,10 +531,9 @@ const CHALLENGE_ENTRY_SIZE: usize = 144;
 ///   deposit (Balance u128)  — 16
 /// Total: 144 bytes.
 ///
-/// This is the crate's decode helper for [`ChallengeChainClient`]
-/// implementations that read raw `Challenges` entries (the provider node's
-/// subxt client depends on it in production); the fixed-offset layout is also
-/// exercised directly by an integration test.
+/// `#[doc(hidden)] pub` so the fixed-offset layout is reachable from an
+/// integration test; it is an internal helper, not stable public API.
+#[doc(hidden)]
 pub fn decode_challenge_for_provider(
     encoded: &[u8],
     our_bytes: &[u8; 32],
