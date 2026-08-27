@@ -104,6 +104,7 @@ pub mod base;
 pub mod challenger;
 pub mod checkpoint;
 pub mod checkpoint_persistence;
+pub mod convert;
 pub mod discovery;
 pub mod encryption;
 pub mod provider;
