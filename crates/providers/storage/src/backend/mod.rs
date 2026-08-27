@@ -102,7 +102,10 @@ pub trait StorageBackend: Send + Sync {
     fn init_bucket(&self, bucket_id: BucketId, max_bytes: u64) -> Result<(), Error>;
 
     /// Get bucket information.
-    fn get_bucket(&self, bucket_id: BucketId) -> Option<BucketInfo>;
+    ///
+    /// `Ok(None)` means the bucket genuinely does not exist. `Err` means the
+    /// backend itself failed - the bucket may still be there.
+    fn get_bucket(&self, bucket_id: BucketId) -> Result<Option<BucketInfo>, Error>;
 
     /// List all buckets.
     fn list_buckets(&self) -> Vec<BucketSummary>;
@@ -126,7 +129,10 @@ pub trait StorageBackend: Send + Sync {
     ) -> Result<(), Error>;
 
     /// Get a node by hash.
-    fn get_node(&self, hash: &H256) -> Option<StoredNode>;
+    ///
+    /// `Ok(None)` means the node genuinely does not exist. `Err` means the
+    /// backend itself failed - the node may still be there.
+    fn get_node(&self, hash: &H256) -> Result<Option<StoredNode>, Error>;
 
     /// Check which hashes exist in storage.
     fn check_exists(&self, bucket_id: BucketId, hashes: &[H256]) -> (Vec<H256>, Vec<H256>);
@@ -139,6 +145,10 @@ pub trait StorageBackend: Send + Sync {
     ) -> Result<(H256, u64, Vec<u64>), Error>;
 
     /// Collect actual chunk data under a data root (DFS, leaf data in order).
+    ///
+    /// A node this cannot read is skipped rather than treated as an error:
+    /// callers use this for a best-effort listing, not for the proof path,
+    /// where a truncated result is preferable to failing the whole call.
     fn collect_chunks(&self, root: H256) -> Vec<Vec<u8>> {
         let mut chunks = Vec::new();
         let mut stack = vec![root];
@@ -147,7 +157,7 @@ pub trait StorageBackend: Send + Sync {
             if hash == H256::zero() {
                 continue;
             }
-            if let Some(node) = self.get_node(&hash) {
+            if let Ok(Some(node)) = self.get_node(&hash) {
                 if let Some(ref children) = node.children {
                     for child in children.iter().rev() {
                         stack.push(*child);
@@ -162,7 +172,13 @@ pub trait StorageBackend: Send + Sync {
     }
 
     /// Collect leaf chunk hashes under a data root (DFS, in order).
-    fn collect_chunk_hashes(&self, root: H256) -> Vec<H256> {
+    ///
+    /// Unlike [`Self::collect_chunks`], a read failure here must not
+    /// silently shorten the result: this backs [`Self::get_chunk_at_index`],
+    /// the challenge proof path, where a shortened list would make a
+    /// transient backend failure indistinguishable from the chunk actually
+    /// being missing.
+    fn collect_chunk_hashes(&self, root: H256) -> Result<Vec<H256>, Error> {
         let mut hashes = Vec::new();
         let mut stack = vec![root];
 
@@ -170,7 +186,7 @@ pub trait StorageBackend: Send + Sync {
             if hash == H256::zero() {
                 continue;
             }
-            if let Some(node) = self.get_node(&hash) {
+            if let Some(node) = self.get_node(&hash)? {
                 if let Some(ref children) = node.children {
                     for child in children.iter().rev() {
                         stack.push(*child);
@@ -181,7 +197,7 @@ pub trait StorageBackend: Send + Sync {
             }
         }
 
-        hashes
+        Ok(hashes)
     }
 
     /// Get chunk data and Merkle proof at the given index from a data root.
@@ -190,7 +206,7 @@ pub trait StorageBackend: Send + Sync {
         data_root: H256,
         chunk_index: u64,
     ) -> Result<(Vec<u8>, storage_primitives::MerkleProof), Error> {
-        let chunk_hashes = self.collect_chunk_hashes(data_root);
+        let chunk_hashes = self.collect_chunk_hashes(data_root)?;
 
         if chunk_index as usize >= chunk_hashes.len() {
             return Err(Error::NodeNotFound(format!("chunk_{chunk_index}")));
@@ -198,7 +214,7 @@ pub trait StorageBackend: Send + Sync {
 
         let chunk_hash = chunk_hashes[chunk_index as usize];
         let chunk_data = self
-            .get_node(&chunk_hash)
+            .get_node(&chunk_hash)?
             .ok_or_else(|| Error::NodeNotFound(format!("chunk_data_{chunk_index}")))?
             .data;
 
@@ -225,12 +241,16 @@ pub trait StorageBackend: Send + Sync {
     fn get_mmr_peaks(&self, bucket_id: BucketId) -> Result<(H256, Vec<H256>), Error>;
 
     /// Calculate the total data size of a content tree by traversing stored nodes.
+    ///
+    /// A node this cannot read is skipped rather than treated as an error,
+    /// same as [`Self::collect_chunks`]; this is a size estimate, not the
+    /// proof path.
     fn calculate_tree_size(&self, root: H256) -> u64 {
         let mut size = 0u64;
         let mut stack = vec![root];
 
         while let Some(hash) = stack.pop() {
-            if let Some(node) = self.get_node(&hash) {
+            if let Ok(Some(node)) = self.get_node(&hash) {
                 if let Some(ref children) = node.children {
                     stack.extend(children.iter().copied());
                 } else {
