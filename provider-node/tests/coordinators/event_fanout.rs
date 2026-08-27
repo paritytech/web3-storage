@@ -4,11 +4,10 @@
 //! reacting to [`BlockEvent`]s fanned out by the chain-state coordinator,
 //! including the bootstrap scan on `Resubscribed` and lag recovery.
 
-use super::{test_state, test_state_with_data, wait_for, ALICE_SS58};
-use provider_chain::chain_events::BlockEvent;
+use super::{alice_account, test_state, test_state_with_data, wait_for};
+use provider_chain::BlockEvent;
 use sp_core::H256;
 use sp_runtime::AccountId32;
-use std::str::FromStr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -19,10 +18,6 @@ use storage_provider_node::{
     ChallengeChainClient, ChallengeResponder, ChallengeResponderConfig, DetectedChallenge, Error,
     ReplicaSyncChainClient, ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig,
 };
-
-fn alice_account() -> AccountId32 {
-    AccountId32::from_str(ALICE_SS58).unwrap()
-}
 
 // ── challenge responder ───────────────────────────────────────────────────────
 
@@ -81,7 +76,7 @@ impl ChallengeChainClient for MockChallengeClient {
 fn event_only_config() -> ChallengeResponderConfig {
     ChallengeResponderConfig {
         poll_interval: Duration::ZERO,
-        ..Default::default()
+        ..ChallengeResponderConfig::new(alice_account())
     }
 }
 
@@ -91,8 +86,11 @@ async fn challenge_event_triggers_point_read_and_response() {
     let (deadline, index) = (challenge.deadline, challenge.index);
     let bucket_id = challenge.bucket_id;
     let mock = MockChallengeClient::new(challenge);
-    let responder =
-        ChallengeResponder::new(event_only_config(), state, Box::new(Arc::clone(&mock)));
+    let responder = ChallengeResponder::new(
+        event_only_config(),
+        state.challenge_proof_source(),
+        Box::new(Arc::clone(&mock)),
+    );
 
     let (events_tx, events_rx) = tokio::sync::broadcast::channel(16);
     let handle = responder.start(events_rx, None).await.unwrap();
@@ -132,8 +130,11 @@ async fn foreign_challenge_event_is_ignored() {
     let (deadline, index) = (challenge.deadline, challenge.index);
     let bucket_id = challenge.bucket_id;
     let mock = MockChallengeClient::new(challenge);
-    let responder =
-        ChallengeResponder::new(event_only_config(), state, Box::new(Arc::clone(&mock)));
+    let responder = ChallengeResponder::new(
+        event_only_config(),
+        state.challenge_proof_source(),
+        Box::new(Arc::clone(&mock)),
+    );
 
     let (events_tx, events_rx) = tokio::sync::broadcast::channel(16);
     let handle = responder.start(events_rx, None).await.unwrap();
@@ -162,8 +163,11 @@ async fn foreign_challenge_event_is_ignored() {
 async fn resubscribe_triggers_bootstrap_scan() {
     let (state, challenge, _dir) = test_state_with_data();
     let mock = MockChallengeClient::new(challenge);
-    let responder =
-        ChallengeResponder::new(event_only_config(), state, Box::new(Arc::clone(&mock)));
+    let responder = ChallengeResponder::new(
+        event_only_config(),
+        state.challenge_proof_source(),
+        Box::new(Arc::clone(&mock)),
+    );
 
     let (events_tx, events_rx) = tokio::sync::broadcast::channel(16);
     let handle = responder.start(events_rx, None).await.unwrap();
@@ -193,8 +197,11 @@ async fn membership_scope_unknown_does_not_trigger_bootstrap_scan() {
     // must not cost this coordinator a full scan the way `Resubscribed` does.
     let (state, challenge, _dir) = test_state_with_data();
     let mock = MockChallengeClient::new(challenge);
-    let responder =
-        ChallengeResponder::new(event_only_config(), state, Box::new(Arc::clone(&mock)));
+    let responder = ChallengeResponder::new(
+        event_only_config(),
+        state.challenge_proof_source(),
+        Box::new(Arc::clone(&mock)),
+    );
 
     let (events_tx, events_rx) = tokio::sync::broadcast::channel(16);
     let handle = responder.start(events_rx, None).await.unwrap();
@@ -221,8 +228,11 @@ async fn event_sent_while_paused_survives_until_resume() {
     let (deadline, index) = (challenge.deadline, challenge.index);
     let bucket_id = challenge.bucket_id;
     let mock = MockChallengeClient::new(challenge);
-    let responder =
-        ChallengeResponder::new(event_only_config(), state, Box::new(Arc::clone(&mock)));
+    let responder = ChallengeResponder::new(
+        event_only_config(),
+        state.challenge_proof_source(),
+        Box::new(Arc::clone(&mock)),
+    );
 
     let (events_tx, events_rx) = tokio::sync::broadcast::channel(16);
     let handle = responder.start(events_rx, None).await.unwrap();
