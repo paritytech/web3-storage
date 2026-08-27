@@ -510,3 +510,168 @@ fn query_challenger_challenges_empty_for_unknown() {
         assert!(challenges.is_empty());
     });
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// deregister_at propagation + challenge_candidates
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Give a registered provider a challenge record without running the full
+/// challenge flow, so reputation can be set precisely.
+fn set_challenge_stats(who: u64, received: u32, failed: u32) {
+    Providers::<Test>::mutate(who, |maybe| {
+        let info = maybe.as_mut().expect("provider registered");
+        info.stats.challenges_received = received;
+        info.stats.challenges_failed = failed;
+    });
+}
+
+#[test]
+fn reputation_score_matches_client_cases() {
+    use crate::runtime_api::reputation_score;
+    // No challenges yet: benefit of the doubt.
+    assert_eq!(reputation_score(0, 0), 100);
+    // Every challenge defended.
+    assert_eq!(reputation_score(10, 0), 100);
+    // Half failed.
+    assert_eq!(reputation_score(10, 5), 50);
+    // All failed.
+    assert_eq!(reputation_score(10, 10), 0);
+    // More failures than challenges cannot underflow.
+    assert_eq!(reputation_score(3, 9), 0);
+}
+
+#[test]
+fn query_provider_info_reports_deregister_at() {
+    new_test_ext().execute_with(|| {
+        register_provider(2, 200);
+        assert_eq!(
+            StorageProvider::query_provider_info(&2)
+                .unwrap()
+                .deregister_at,
+            None
+        );
+
+        assert_ok!(StorageProvider::deregister_provider(RuntimeOrigin::signed(
+            2
+        )));
+
+        let announced = Providers::<Test>::get(2).unwrap().deregister_at;
+        assert!(announced.is_some(), "announcement stamps deregister_at");
+        assert_eq!(
+            StorageProvider::query_provider_info(&2)
+                .unwrap()
+                .deregister_at,
+            announced.map(|b| b as u32),
+        );
+    });
+}
+
+#[test]
+fn query_providers_reports_deregister_at() {
+    new_test_ext().execute_with(|| {
+        register_provider(2, 200);
+        assert_ok!(StorageProvider::deregister_provider(RuntimeOrigin::signed(
+            2
+        )));
+
+        let listed = StorageProvider::query_providers(0, 10);
+        assert_eq!(listed.len(), 1);
+        assert_eq!(
+            listed[0].1.deregister_at,
+            Providers::<Test>::get(2)
+                .unwrap()
+                .deregister_at
+                .map(|b| b as u32),
+        );
+    });
+}
+
+#[test]
+fn challenge_candidates_filters_by_reputation() {
+    new_test_ext().execute_with(|| {
+        register_provider(2, 200);
+        register_provider(3, 200);
+        setup_agreement(2, 1, 50, 200);
+        setup_agreement(3, 1, 50, 200);
+
+        // Provider 2 defends everything; provider 3 fails half.
+        set_challenge_stats(2, 10, 0);
+        set_challenge_stats(3, 10, 5);
+
+        let candidates = StorageProvider::query_challenge_candidates(90, 10);
+        assert_eq!(candidates.len(), 1, "only the sub-threshold provider");
+        assert_eq!(candidates[0].provider, 3u64.encode());
+        assert_eq!(candidates[0].reputation, 50);
+        assert_eq!(candidates[0].challenges_received, 10);
+        assert_eq!(candidates[0].challenges_failed, 5);
+        assert_eq!(candidates[0].stake, 200);
+    });
+}
+
+#[test]
+fn challenge_candidates_orders_worst_first() {
+    new_test_ext().execute_with(|| {
+        for who in [2u64, 3, 4] {
+            register_provider(who, 200);
+            setup_agreement(who, 1, 50, 200);
+        }
+        set_challenge_stats(2, 10, 3); // 70
+        set_challenge_stats(3, 10, 9); // 10
+        set_challenge_stats(4, 10, 6); // 40
+
+        let candidates = StorageProvider::query_challenge_candidates(100, 10);
+        let order: Vec<u8> = candidates.iter().map(|c| c.reputation).collect();
+        assert_eq!(order, vec![10, 40, 70], "worst reputation first");
+    });
+}
+
+#[test]
+fn challenge_candidates_dedups_provider_across_buckets() {
+    new_test_ext().execute_with(|| {
+        register_provider(2, 200);
+        setup_agreement(2, 1, 50, 200);
+        setup_agreement(2, 1, 50, 200);
+        set_challenge_stats(2, 10, 10);
+
+        let candidates = StorageProvider::query_challenge_candidates(100, 10);
+        assert_eq!(
+            candidates.len(),
+            1,
+            "a provider storing for several buckets is one candidate"
+        );
+        assert_eq!(candidates[0].provider, 2u64.encode());
+    });
+}
+
+#[test]
+fn challenge_candidates_skips_providers_without_agreements() {
+    new_test_ext().execute_with(|| {
+        register_provider(2, 200);
+        set_challenge_stats(2, 10, 10); // reputation 0, but no agreement
+
+        assert!(
+            StorageProvider::query_challenge_candidates(100, 10).is_empty(),
+            "nothing to challenge without an agreement"
+        );
+    });
+}
+
+#[test]
+fn challenge_candidates_respects_limit() {
+    new_test_ext().execute_with(|| {
+        for who in [2u64, 3, 4] {
+            register_provider(who, 200);
+            setup_agreement(who, 1, 50, 200);
+            set_challenge_stats(who, 10, 10);
+        }
+
+        assert_eq!(StorageProvider::query_challenge_candidates(100, 2).len(), 2);
+        // An oversized limit is harmless: it yields everything available, and
+        // the MAX_CHALLENGE_CANDIDATES clamp only binds beyond 256 candidates,
+        // which is not worth registering 257 providers to exercise.
+        assert_eq!(
+            StorageProvider::query_challenge_candidates(100, u32::MAX).len(),
+            3,
+        );
+    });
+}

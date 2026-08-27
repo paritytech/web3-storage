@@ -27,12 +27,12 @@
 //! membership cache pulls from that feed itself.
 
 use async_trait::async_trait;
+use provider_chain::chain_connection::{ChainHandle, ChainTransport};
 use provider_storage::{temp_rocksdb, NonceStore};
 use sp_runtime::AccountId32;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
-use storage_provider_node::chain_connection::{ChainHandle, ChainTransport};
 use storage_provider_node::{
     is_relevant_provider_event, refresh_if_relevant_event, refresh_provider_state, sync_constants,
     ChainState, ChainStateChainClient, ChainStateCoordinator, Error, NonceCounter, PalletConstants,
