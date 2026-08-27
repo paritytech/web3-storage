@@ -531,7 +531,6 @@ const CHALLENGE_ENTRY_SIZE: usize = 144;
 ///   deposit (Balance u128)  — 16
 /// Total: 144 bytes.
 ///
-/// 
 /// `#[doc(hidden)] pub` so the fixed-offset layout is reachable from an
 /// integration test; it is an internal helper, not stable public API.
 #[doc(hidden)]
