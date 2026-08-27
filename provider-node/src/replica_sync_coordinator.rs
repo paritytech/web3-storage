@@ -336,9 +336,13 @@ impl ReplicaSyncCoordinator {
             BlockEvent::ReplicaAgreementEstablished { provider, .. } => {
                 our_account.as_ref().is_none_or(|me| me == provider)
             }
-            BlockEvent::BucketCheckpointed { bucket_id } => {
-                self.state.storage.get_bucket(*bucket_id).is_some()
-            }
+            BlockEvent::BucketCheckpointed { bucket_id } => self
+                .state
+                .storage
+                .get_bucket(*bucket_id)
+                .ok()
+                .flatten()
+                .is_some(),
             _ => false,
         }
     }
@@ -559,7 +563,13 @@ impl ReplicaSyncCoordinator {
                 continue;
             }
 
-            if let Some(bucket) = self.state.storage.get_bucket(agreement.bucket_id) {
+            if let Some(bucket) = self
+                .state
+                .storage
+                .get_bucket(agreement.bucket_id)
+                .ok()
+                .flatten()
+            {
                 if bucket.mmr_root == snapshot.mmr_root {
                     continue;
                 }
@@ -606,7 +616,7 @@ impl ReplicaSyncCoordinator {
     /// Perform sync and submit confirmation.
     pub async fn sync_and_confirm(&self, duty: &SyncDuty) -> SyncResult {
         // Check if we already have this root
-        if let Some(bucket) = self.state.storage.get_bucket(duty.bucket_id) {
+        if let Some(bucket) = self.state.storage.get_bucket(duty.bucket_id).ok().flatten() {
             if bucket.mmr_root == duty.target_mmr_root {
                 return SyncResult::AlreadySynced {
                     bucket_id: duty.bucket_id,
@@ -678,7 +688,7 @@ impl ReplicaSyncCoordinator {
         }
 
         // Verify final state
-        let local_bucket = match self.state.storage.get_bucket(duty.bucket_id) {
+        let local_bucket = match self.state.storage.get_bucket(duty.bucket_id).ok().flatten() {
             Some(b) => b,
             None => {
                 return SyncResult::VerificationFailed {

@@ -36,7 +36,7 @@ pub use negotiate::{AgreementTermsOf, NegotiateRequest, NonceCounter, SignedTerm
 pub use provider_challenge::{
     self as challenge_responder, ChallengeChainClient, ChallengeError, ChallengeProofSource,
     ChallengeResponder, ChallengeResponderConfig, ChallengeResponderHandle,
-    ChallengeResponseResult, DetectedChallenge, ResponderCommand,
+    ChallengeResponseResult, DetectedChallenge, ProofTarget, ResponderCommand,
 };
 pub use replica_sync::ReplicaSync;
 pub use replica_sync_coordinator::{

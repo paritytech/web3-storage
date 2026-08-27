@@ -101,16 +101,27 @@ impl DiskStorage {
     }
 
     /// Get bucket state (internal, returns full BucketState).
-    fn get_bucket(&self, bucket_id: BucketId) -> Option<BucketState> {
-        let cf = self.db.cf_handle(CF_BUCKETS)?;
+    ///
+    /// `Ok(None)` means the bucket genuinely does not exist. `Err` means the
+    /// backend itself failed (a RocksDB read error, or a stored record that
+    /// could not be decoded) - the bucket may still be there.
+    fn get_bucket(&self, bucket_id: BucketId) -> Result<Option<BucketState>, Error> {
+        let cf = self
+            .db
+            .cf_handle(CF_BUCKETS)
+            .ok_or_else(|| Error::Storage("Buckets CF not found".to_string()))?;
         let key = bucket_id.to_le_bytes();
-        let value = self.db.get_cf(&cf, key).ok()??;
+        let value = match self
+            .db
+            .get_cf(&cf, key)
+            .map_err(|e| Error::Storage(e.to_string()))?
+        {
+            Some(v) => v,
+            None => return Ok(None),
+        };
         match bincode::deserialize(&value) {
-            Ok(state) => Some(state),
-            Err(e) => {
-                tracing::warn!(bucket_id, error = %e, "Failed to deserialize bucket state");
-                None
-            }
+            Ok(state) => Ok(Some(state)),
+            Err(e) => Err(Error::Serialization(e.to_string())),
         }
     }
 
@@ -244,7 +255,7 @@ impl DiskStorage {
 
         // Check quota
         let mut bucket = self
-            .get_bucket(bucket_id)
+            .get_bucket(bucket_id)?
             .ok_or(Error::BucketNotFound(bucket_id))?;
 
         let new_size = bucket.used_bytes.saturating_add(data.len() as u64);
@@ -286,16 +297,26 @@ impl DiskStorage {
     }
 
     /// Get a node by hash.
-    pub fn get_node(&self, hash: &H256) -> Option<StoredNode> {
-        let cf = self.db.cf_handle(CF_NODES)?;
+    ///
+    /// `Ok(None)` means the node genuinely does not exist. `Err` means the
+    /// backend itself failed - the node may still be there.
+    pub fn get_node(&self, hash: &H256) -> Result<Option<StoredNode>, Error> {
+        let cf = self
+            .db
+            .cf_handle(CF_NODES)
+            .ok_or_else(|| Error::Storage("Nodes CF not found".to_string()))?;
         let key = hash.as_bytes();
-        let value = self.db.get_cf(&cf, key).ok()??;
+        let value = match self
+            .db
+            .get_cf(&cf, key)
+            .map_err(|e| Error::Storage(e.to_string()))?
+        {
+            Some(v) => v,
+            None => return Ok(None),
+        };
         match bincode::deserialize(&value) {
-            Ok(node) => Some(node),
-            Err(e) => {
-                tracing::warn!(hash = %format!("0x{}", hex::encode(hash.as_bytes())), error = %e, "Failed to deserialize node");
-                None
-            }
+            Ok(node) => Ok(Some(node)),
+            Err(e) => Err(Error::Serialization(e.to_string())),
         }
     }
 
@@ -350,7 +371,7 @@ impl DiskStorage {
 
         // Get bucket and update MMR
         let mut bucket = self
-            .get_bucket(bucket_id)
+            .get_bucket(bucket_id)?
             .ok_or(Error::BucketNotFound(bucket_id))?;
 
         let start_seq = bucket.start_seq;
@@ -401,7 +422,7 @@ impl DiskStorage {
         new_start_seq: u64,
     ) -> Result<(H256, u64, u64), Error> {
         let mut bucket = self
-            .get_bucket(bucket_id)
+            .get_bucket(bucket_id)?
             .ok_or(Error::BucketNotFound(bucket_id))?;
 
         // Remove leaves before new_start_seq
@@ -430,7 +451,7 @@ impl DiskStorage {
         leaf_index: u64,
     ) -> Result<storage_primitives::MmrProof, Error> {
         let bucket = self
-            .get_bucket(bucket_id)
+            .get_bucket(bucket_id)?
             .ok_or(Error::BucketNotFound(bucket_id))?;
 
         let leaf = bucket
@@ -459,7 +480,7 @@ impl DiskStorage {
     /// Get MMR peaks.
     pub fn get_mmr_peaks(&self, bucket_id: BucketId) -> Result<(H256, Vec<H256>), Error> {
         let bucket = self
-            .get_bucket(bucket_id)
+            .get_bucket(bucket_id)?
             .ok_or(Error::BucketNotFound(bucket_id))?;
 
         let mut mmr = crate::mmr::Mmr::new();
@@ -485,13 +506,13 @@ impl StorageBackend for DiskStorage {
         self.init_bucket(bucket_id, max_bytes)
     }
 
-    fn get_bucket(&self, bucket_id: BucketId) -> Option<BucketInfo> {
+    fn get_bucket(&self, bucket_id: BucketId) -> Result<Option<BucketInfo>, Error> {
         let state = DiskStorage::get_bucket(self, bucket_id)?;
-        Some(BucketInfo {
+        Ok(state.map(|state| BucketInfo {
             mmr_root: state.mmr_root,
             start_seq: state.start_seq,
             leaf_count: state.leaf_count(),
-        })
+        }))
     }
 
     fn list_buckets(&self) -> Vec<BucketSummary> {
@@ -520,7 +541,7 @@ impl StorageBackend for DiskStorage {
         self.store_node(bucket_id, expected_hash, data, children)
     }
 
-    fn get_node(&self, hash: &H256) -> Option<StoredNode> {
+    fn get_node(&self, hash: &H256) -> Result<Option<StoredNode>, Error> {
         self.get_node(hash)
     }
 
@@ -741,5 +762,114 @@ mod tests {
                 "reset must persist across DB reopen"
             );
         }
+    }
+
+    /// Overwrite a node's raw record with bytes that can't be decoded,
+    /// standing in for a disk-level corruption (partial write, bit flip)
+    /// rather than the node simply never having been written.
+    fn corrupt_node(storage: &DiskStorage, hash: H256) {
+        let cf = storage.db.cf_handle(CF_NODES).unwrap();
+        storage
+            .db
+            .put_cf(&cf, hash.as_bytes(), b"not a valid bincode record")
+            .unwrap();
+    }
+
+    /// Overwrite a bucket's raw record with bytes that can't be decoded,
+    /// same standing-in as [`corrupt_node`] but for `CF_BUCKETS`.
+    fn corrupt_bucket(storage: &DiskStorage, bucket_id: BucketId) {
+        let cf = storage.db.cf_handle(CF_BUCKETS).unwrap();
+        storage
+            .db
+            .put_cf(&cf, bucket_id.to_le_bytes(), b"not a valid bincode record")
+            .unwrap();
+    }
+
+    #[test]
+    fn get_mmr_proof_for_a_bucket_that_was_never_created_reports_absence() {
+        // Stands for: the client asked about a bucket id that genuinely
+        // does not exist.
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+
+        let err = storage.get_mmr_proof(42, 0).unwrap_err();
+        assert!(matches!(err, Error::BucketNotFound(42)));
+    }
+
+    #[test]
+    fn get_mmr_proof_for_a_corrupt_bucket_record_reports_a_backend_failure_not_absence() {
+        // Stands for: an operator's disk has a corrupted record (partial
+        // write, bit flip) for a bucket that really was created. This must
+        // not be reported the same way as "bucket does not exist" - that
+        // would tell a challenge responder its own committed data is gone.
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        storage.init_bucket(7, 1024 * 1024).unwrap();
+
+        corrupt_bucket(&storage, 7);
+
+        let err = storage.get_mmr_proof(7, 0).unwrap_err();
+        assert!(
+            matches!(err, Error::Serialization(_)),
+            "expected Serialization, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn get_chunk_at_index_past_the_end_of_a_healthy_root_reports_absence() {
+        // Stands for: the client asked for a chunk index that was never
+        // part of this data root.
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        storage.init_bucket(1, 1024 * 1024).unwrap();
+
+        let chunk_hash = blake2_256(b"only-chunk");
+        storage
+            .store_node(1, chunk_hash, b"only-chunk".to_vec(), None)
+            .unwrap();
+
+        let err = storage.get_chunk_at_index(chunk_hash, 5).unwrap_err();
+        assert!(matches!(err, Error::NodeNotFound(_)));
+    }
+
+    #[test]
+    fn get_chunk_at_index_with_a_corrupt_node_mid_traversal_reports_a_backend_failure_not_a_short_list(
+    ) {
+        // Stands for: an operator's disk has a corrupted record for one
+        // chunk of a multi-chunk file. Before this test existed, a failed
+        // read mid-traversal silently shortened the chunk list, so asking
+        // for a chunk that is genuinely still there could trip the
+        // "index past the end" guard and be reported as absent - the exact
+        // false "you will be slashed" signal this whole cycle exists to
+        // rule out.
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        storage.init_bucket(1, 1024 * 1024).unwrap();
+
+        let c0 = blake2_256(b"chunk-0");
+        let c1 = blake2_256(b"chunk-1");
+        storage
+            .store_node(1, c0, b"chunk-0".to_vec(), None)
+            .unwrap();
+        storage
+            .store_node(1, c1, b"chunk-1".to_vec(), None)
+            .unwrap();
+
+        let root_data = b"two-chunk-root".to_vec();
+        let root = blake2_256(&root_data);
+        storage
+            .store_node(1, root, root_data, Some(vec![c0, c1]))
+            .unwrap();
+
+        corrupt_node(&storage, c0);
+
+        // Chunk index 1 (chunk-1) is healthy and was never actually removed,
+        // but a traversal that silently skips the unreadable c0 would only
+        // see one chunk and report index 1 as past the end.
+        let err = storage.get_chunk_at_index(root, 1).unwrap_err();
+        assert!(
+            matches!(err, Error::Serialization(_)),
+            "expected Serialization, got {err:?}"
+        );
     }
 }

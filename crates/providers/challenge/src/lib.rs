@@ -19,18 +19,86 @@ use std::time::Duration;
 use storage_primitives::{BucketId, MerkleProof, MmrProof};
 use tokio::sync::{broadcast, mpsc};
 
+/// What proof data a failure was about.
+///
+/// `get_mmr_proof` and `get_chunk_at_index` identify what they're looking
+/// for differently (a bucket and leaf index vs. a data root and chunk
+/// index), so a single error payload can't share fields across both without
+/// fields that don't apply to one side or the other.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ProofTarget {
+    /// A leaf of a bucket's MMR commitment.
+    MmrLeaf {
+        bucket_id: BucketId,
+        leaf_index: u64,
+    },
+    /// A chunk under a data root.
+    Chunk { data_root: H256, chunk_index: u64 },
+}
+
 /// Errors surfaced by the challenge responder.
+///
+/// Each variant names one condition and implies one response to it, rather
+/// than only naming which layer the failure came from.
+/// [`ChallengeError::is_retryable`] and [`ChallengeError::risks_slashing`]
+/// let a caller act on that meaning without matching every variant.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum ChallengeError {
-    /// Chain interaction failed (polling or submitting).
-    #[error("chain error: {0}")]
-    Chain(String),
-    /// Local storage could not produce the requested proof data.
-    #[error("storage error: {0}")]
-    Storage(String),
-    /// Internal service error (e.g. control channel closed).
-    #[error("internal error: {0}")]
-    Internal(String),
+    /// The requested proof data is provably absent from local storage. The
+    /// challenge cannot be answered; unless the data is restored before the
+    /// deadline, the provider's entire stake is slashed. Retrying will not
+    /// help.
+    #[error("proof data is provably missing: {target:?}")]
+    ProofDataMissing {
+        /// What could not be found.
+        target: ProofTarget,
+    },
+    /// The storage backend itself failed - a database read errored, or a
+    /// stored record could not be decoded. The proof data may still be
+    /// present. Operator action: inspect, restart, or restore the backend,
+    /// then retry.
+    #[error("storage backend unavailable for {target:?}: {detail}")]
+    StorageUnavailable {
+        /// What was being looked up when the backend failed.
+        target: ProofTarget,
+        /// The backend's own error, as text.
+        detail: String,
+    },
+    /// The chain could not be reached, or the connection dropped mid-call.
+    /// Nothing is known about whether the call took effect. Retryable.
+    #[error("chain unreachable: {detail}")]
+    ChainUnavailable {
+        /// The transport failure, as text.
+        detail: String,
+    },
+    /// The chain was reached and rejected the call. Resubmitting the same
+    /// call will fail identically.
+    #[error("chain rejected the call: {detail}")]
+    ChainRejected {
+        /// The chain's rejection, as text.
+        detail: String,
+    },
+    /// The responder is shutting down; its control channel is closed.
+    #[error("challenge responder is shutting down")]
+    Shutdown,
+}
+
+impl ChallengeError {
+    /// Whether repeating the operation could plausibly succeed.
+    pub fn is_retryable(&self) -> bool {
+        matches!(
+            self,
+            Self::StorageUnavailable { .. } | Self::ChainUnavailable { .. }
+        )
+    }
+
+    /// Whether this failure, left unresolved, leads to the provider's stake
+    /// being slashed at the challenge deadline.
+    pub fn risks_slashing(&self) -> bool {
+        matches!(self, Self::ProofDataMissing { .. })
+    }
 }
 
 /// Local proof data the responder needs to answer a challenge.
@@ -111,7 +179,9 @@ pub enum ChallengeResponseResult {
         challenge_id: (u32, u16),
         block_hash: H256,
     },
-    /// Failed to gather proof data.
+    /// Gathering proof data failed for a reason other than the data being
+    /// provably absent (e.g. the storage backend itself errored). Retryable -
+    /// the next safety-net scan will try again.
     ProofGenerationFailed {
         challenge_id: (u32, u16),
         error: String,
@@ -121,7 +191,8 @@ pub enum ChallengeResponseResult {
         challenge_id: (u32, u16),
         error: String,
     },
-    /// Challenge data not found locally.
+    /// The proof data is provably absent from local storage. Unless it is
+    /// restored before the deadline, the provider's stake is slashed.
     DataNotFound {
         challenge_id: (u32, u16),
         bucket_id: BucketId,
@@ -212,7 +283,7 @@ impl ChallengeResponderHandle {
         self.command_tx
             .send(ResponderCommand::Stop)
             .await
-            .map_err(|_| ChallengeError::Internal("Responder channel closed".to_string()))
+            .map_err(|_| ChallengeError::Shutdown)
     }
 
     /// Pause automatic responses.
@@ -220,7 +291,7 @@ impl ChallengeResponderHandle {
         self.command_tx
             .send(ResponderCommand::Pause)
             .await
-            .map_err(|_| ChallengeError::Internal("Responder channel closed".to_string()))
+            .map_err(|_| ChallengeError::Shutdown)
     }
 
     /// Resume automatic responses.
@@ -228,7 +299,7 @@ impl ChallengeResponderHandle {
         self.command_tx
             .send(ResponderCommand::Resume)
             .await
-            .map_err(|_| ChallengeError::Internal("Responder channel closed".to_string()))
+            .map_err(|_| ChallengeError::Shutdown)
     }
 }
 
@@ -437,7 +508,14 @@ impl ChallengeResponder {
         {
             Ok(proof) => proof,
             Err(e) => {
-                tracing::error!("Failed to generate MMR proof: {}", e);
+                log_proof_failure(challenge, "Failed to generate MMR proof", &e);
+                if e.risks_slashing() {
+                    return ChallengeResponseResult::DataNotFound {
+                        challenge_id,
+                        bucket_id: challenge.bucket_id,
+                        leaf_index: challenge.leaf_index,
+                    };
+                }
                 return ChallengeResponseResult::ProofGenerationFailed {
                     challenge_id,
                     error: e.to_string(),
@@ -453,11 +531,17 @@ impl ChallengeResponder {
         {
             Ok(data) => data,
             Err(e) => {
-                tracing::error!("Failed to get chunk data: {}", e);
-                return ChallengeResponseResult::DataNotFound {
+                log_proof_failure(challenge, "Failed to get chunk data", &e);
+                if e.risks_slashing() {
+                    return ChallengeResponseResult::DataNotFound {
+                        challenge_id,
+                        bucket_id: challenge.bucket_id,
+                        leaf_index: challenge.leaf_index,
+                    };
+                }
+                return ChallengeResponseResult::ProofGenerationFailed {
                     challenge_id,
-                    bucket_id: challenge.bucket_id,
-                    leaf_index: challenge.leaf_index,
+                    error: e.to_string(),
                 };
             }
         };
@@ -487,6 +571,31 @@ impl ChallengeResponder {
                 }
             }
         }
+    }
+}
+
+/// Log a proof-gathering failure with the fields an operator needs to act on
+/// it, at a level that matches what the failure means: [`ChallengeError::risks_slashing`]
+/// failures are an emergency (the stake is on the line at `deadline`
+/// regardless of which step failed), everything else is a routine failure
+/// the safety-net scan will retry.
+fn log_proof_failure(challenge: &DetectedChallenge, what: &str, e: &ChallengeError) {
+    if e.risks_slashing() {
+        tracing::error!(
+            bucket_id = challenge.bucket_id,
+            leaf_index = challenge.leaf_index,
+            chunk_index = challenge.chunk_index,
+            deadline = challenge.deadline,
+            "{what}: {e}"
+        );
+    } else {
+        tracing::warn!(
+            bucket_id = challenge.bucket_id,
+            leaf_index = challenge.leaf_index,
+            chunk_index = challenge.chunk_index,
+            deadline = challenge.deadline,
+            "{what}: {e}"
+        );
     }
 }
 
@@ -568,4 +677,58 @@ pub fn decode_challenge_for_provider(
         leaf_index,
         chunk_index,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn a_target() -> ProofTarget {
+        ProofTarget::MmrLeaf {
+            bucket_id: 1,
+            leaf_index: 0,
+        }
+    }
+
+    #[test]
+    fn proof_data_missing_risks_slashing_and_is_not_retryable() {
+        let e = ChallengeError::ProofDataMissing { target: a_target() };
+        assert!(e.risks_slashing());
+        assert!(!e.is_retryable());
+    }
+
+    #[test]
+    fn storage_unavailable_is_retryable_and_does_not_risk_slashing() {
+        let e = ChallengeError::StorageUnavailable {
+            target: a_target(),
+            detail: "rocksdb read failed".to_string(),
+        };
+        assert!(e.is_retryable());
+        assert!(!e.risks_slashing());
+    }
+
+    #[test]
+    fn chain_unavailable_is_retryable_and_does_not_risk_slashing() {
+        let e = ChallengeError::ChainUnavailable {
+            detail: "connection reset".to_string(),
+        };
+        assert!(e.is_retryable());
+        assert!(!e.risks_slashing());
+    }
+
+    #[test]
+    fn chain_rejected_is_not_retryable_and_does_not_risk_slashing() {
+        let e = ChallengeError::ChainRejected {
+            detail: "bad proof".to_string(),
+        };
+        assert!(!e.is_retryable());
+        assert!(!e.risks_slashing());
+    }
+
+    #[test]
+    fn shutdown_is_not_retryable_and_does_not_risk_slashing() {
+        let e = ChallengeError::Shutdown;
+        assert!(!e.is_retryable());
+        assert!(!e.risks_slashing());
+    }
 }
