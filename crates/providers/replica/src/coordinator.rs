@@ -13,7 +13,7 @@
 
 use crate::sync::ReplicaSync;
 use crate::Error;
-use provider_chain::chain_events::{BlockEvent, BlockEventRx};
+use provider_chain::{BlockEvent, BlockEventRx};
 use provider_storage::StorageBackend;
 use sp_core::H256;
 use sp_runtime::AccountId32;

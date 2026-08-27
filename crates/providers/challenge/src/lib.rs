@@ -1,8 +1,8 @@
-// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! Challenge Responder - Automated response to on-chain challenges.
 //!
-//! This module provides a background service that reacts to
+//! This crate provides a background service that reacts to
 //! `ChallengeCreated` events (fanned out by the chain-state coordinator)
 //! against this provider and automatically responds with the required proof
 //! data. A full `Challenges` scan runs at startup and on every stream
@@ -10,20 +10,56 @@
 //! on a slow safety-net interval — a missed challenge means getting slashed,
 //! so the event path is backstopped rather than trusted blindly.
 
-use crate::{Error, ProviderState};
-use provider_chain::chain_events::{BlockEvent, BlockEventRx};
+use provider_chain::{BlockEvent, BlockEventRx};
 use sp_core::H256;
 use sp_runtime::AccountId32;
-use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use storage_primitives::BucketId;
+use storage_primitives::{BucketId, MerkleProof, MmrProof};
 use tokio::sync::{broadcast, mpsc};
+
+/// Errors surfaced by the challenge responder.
+#[derive(Debug, thiserror::Error)]
+pub enum ChallengeError {
+    /// Chain interaction failed (polling or submitting).
+    #[error("chain error: {0}")]
+    Chain(String),
+    /// Local storage could not produce the requested proof data.
+    #[error("storage error: {0}")]
+    Storage(String),
+    /// Internal service error (e.g. control channel closed).
+    #[error("internal error: {0}")]
+    Internal(String),
+}
+
+/// Local proof data the responder needs to answer a challenge.
+///
+/// Backed by the provider node's storage backend; kept narrow so this crate
+/// stays decoupled from the full storage engine.
+pub trait ChallengeProofSource: Send + Sync {
+    /// Generate an MMR proof for the given leaf of a bucket's commitment.
+    fn get_mmr_proof(
+        &self,
+        bucket_id: BucketId,
+        leaf_index: u64,
+    ) -> Result<MmrProof, ChallengeError>;
+
+    /// Fetch a chunk and its Merkle proof under the given data root.
+    fn get_chunk_at_index(
+        &self,
+        data_root: H256,
+        chunk_index: u64,
+    ) -> Result<(Vec<u8>, MerkleProof), ChallengeError>;
+}
 
 /// Configuration for the challenge responder.
 #[derive(Clone, Debug)]
 pub struct ChallengeResponderConfig {
+    /// Account this responder acts for; used to filter `ChallengeCreated`
+    /// events down to our own challenges. Validated by the caller before the
+    /// responder starts.
+    pub provider_account: AccountId32,
     /// Safety-net interval between full `Challenges` reconciliation scans.
     /// Challenges are normally handled event-driven; zero disables the scan.
     pub poll_interval: Duration,
@@ -33,9 +69,12 @@ pub struct ChallengeResponderConfig {
     pub auto_respond: bool,
 }
 
-impl Default for ChallengeResponderConfig {
-    fn default() -> Self {
+impl ChallengeResponderConfig {
+    /// Config for `provider_account` with the default poll interval, proof
+    /// timeout and auto-respond setting.
+    pub fn new(provider_account: AccountId32) -> Self {
         Self {
+            provider_account,
             poll_interval: Duration::from_secs(300),
             proof_timeout: Duration::from_secs(30),
             auto_respond: true,
@@ -94,7 +133,7 @@ pub enum ChallengeResponseResult {
 #[async_trait::async_trait]
 pub trait ChallengeChainClient: Send + Sync {
     /// Poll the chain for active challenges targeting this provider.
-    async fn poll_challenges(&self) -> Result<Vec<DetectedChallenge>, Error>;
+    async fn poll_challenges(&self) -> Result<Vec<DetectedChallenge>, ChallengeError>;
 
     /// Point-read a single challenge by id, `None` if it is gone (already
     /// responded / reaped) or targets another provider. Backs the
@@ -104,21 +143,21 @@ pub trait ChallengeChainClient: Send + Sync {
         &self,
         deadline: u32,
         index: u16,
-    ) -> Result<Option<DetectedChallenge>, Error>;
+    ) -> Result<Option<DetectedChallenge>, ChallengeError>;
 
     /// Submit a challenge response transaction.
     async fn submit_response(
         &self,
         challenge_id: (u32, u16),
         chunk_data: Vec<u8>,
-        mmr_proof: storage_primitives::MmrProof,
-        chunk_proof: storage_primitives::MerkleProof,
-    ) -> Result<H256, Error>;
+        mmr_proof: MmrProof,
+        chunk_proof: MerkleProof,
+    ) -> Result<H256, ChallengeError>;
 }
 
 #[async_trait::async_trait]
 impl<T: ChallengeChainClient> ChallengeChainClient for Arc<T> {
-    async fn poll_challenges(&self) -> Result<Vec<DetectedChallenge>, Error> {
+    async fn poll_challenges(&self) -> Result<Vec<DetectedChallenge>, ChallengeError> {
         self.as_ref().poll_challenges().await
     }
 
@@ -126,7 +165,7 @@ impl<T: ChallengeChainClient> ChallengeChainClient for Arc<T> {
         &self,
         deadline: u32,
         index: u16,
-    ) -> Result<Option<DetectedChallenge>, Error> {
+    ) -> Result<Option<DetectedChallenge>, ChallengeError> {
         self.as_ref().fetch_challenge(deadline, index).await
     }
 
@@ -134,9 +173,9 @@ impl<T: ChallengeChainClient> ChallengeChainClient for Arc<T> {
         &self,
         challenge_id: (u32, u16),
         chunk_data: Vec<u8>,
-        mmr_proof: storage_primitives::MmrProof,
-        chunk_proof: storage_primitives::MerkleProof,
-    ) -> Result<H256, Error> {
+        mmr_proof: MmrProof,
+        chunk_proof: MerkleProof,
+    ) -> Result<H256, ChallengeError> {
         self.as_ref()
             .submit_response(challenge_id, chunk_data, mmr_proof, chunk_proof)
             .await
@@ -169,34 +208,34 @@ impl ChallengeResponderHandle {
     }
 
     /// Stop the responder.
-    pub async fn stop(&self) -> Result<(), Error> {
+    pub async fn stop(&self) -> Result<(), ChallengeError> {
         self.command_tx
             .send(ResponderCommand::Stop)
             .await
-            .map_err(|_| Error::Internal("Responder channel closed".to_string()))
+            .map_err(|_| ChallengeError::Internal("Responder channel closed".to_string()))
     }
 
     /// Pause automatic responses.
-    pub async fn pause(&self) -> Result<(), Error> {
+    pub async fn pause(&self) -> Result<(), ChallengeError> {
         self.command_tx
             .send(ResponderCommand::Pause)
             .await
-            .map_err(|_| Error::Internal("Responder channel closed".to_string()))
+            .map_err(|_| ChallengeError::Internal("Responder channel closed".to_string()))
     }
 
     /// Resume automatic responses.
-    pub async fn resume(&self) -> Result<(), Error> {
+    pub async fn resume(&self) -> Result<(), ChallengeError> {
         self.command_tx
             .send(ResponderCommand::Resume)
             .await
-            .map_err(|_| Error::Internal("Responder channel closed".to_string()))
+            .map_err(|_| ChallengeError::Internal("Responder channel closed".to_string()))
     }
 }
 
 /// Challenge responder service.
 pub struct ChallengeResponder {
     config: ChallengeResponderConfig,
-    state: Arc<ProviderState>,
+    proof_source: Arc<dyn ChallengeProofSource>,
     chain_client: Box<dyn ChallengeChainClient>,
 }
 
@@ -204,12 +243,12 @@ impl ChallengeResponder {
     /// Create a new challenge responder.
     pub fn new(
         config: ChallengeResponderConfig,
-        state: Arc<ProviderState>,
+        proof_source: Arc<dyn ChallengeProofSource>,
         chain_client: Box<dyn ChallengeChainClient>,
     ) -> Self {
         Self {
             config,
-            state,
+            proof_source,
             chain_client,
         }
     }
@@ -224,7 +263,7 @@ impl ChallengeResponder {
         self,
         events_rx: BlockEventRx,
         callback: Option<Arc<dyn Fn(ChallengeResponseResult) + Send + Sync>>,
-    ) -> Result<ChallengeResponderHandle, Error> {
+    ) -> Result<ChallengeResponderHandle, ChallengeError> {
         let (command_tx, command_rx) = mpsc::channel::<ResponderCommand>(32);
         let running = Arc::new(AtomicBool::new(true));
         let running_clone = running.clone();
@@ -252,9 +291,6 @@ impl ChallengeResponder {
         // A closed broadcast channel (follower gone) yields `Closed` on every
         // poll; disarm the events select arm then, or the loop busy-spins.
         let mut events_open = true;
-        // Only challenges against our own account are actionable; with an
-        // unparseable provider id the point-read filter still protects us.
-        let our_account = AccountId32::from_str(&self.state.provider_id).ok();
         // The safety-net interval's first tick fires immediately, doubling as
         // the startup bootstrap scan (challenges raised while the node was
         // down). With the safety net disabled, the bootstrap scan comes from
@@ -315,7 +351,8 @@ impl ChallengeResponder {
                     }
                     match event {
                         Ok(BlockEvent::ChallengeCreated { deadline, index, provider, .. }) => {
-                            if our_account.as_ref().is_some_and(|me| *me != provider) {
+                            // Only challenges against our own account are actionable.
+                            if self.config.provider_account != provider {
                                 continue;
                             }
                             match self.chain_client.fetch_challenge(deadline, index).await {
@@ -395,8 +432,7 @@ impl ChallengeResponder {
 
         // Step 1: Generate MMR proof (includes the leaf with data_root)
         let mmr_proof = match self
-            .state
-            .storage
+            .proof_source
             .get_mmr_proof(challenge.bucket_id, challenge.leaf_index)
         {
             Ok(proof) => proof,
@@ -412,8 +448,7 @@ impl ChallengeResponder {
         // Step 2: Get chunk data and Merkle proof using data_root from MMR leaf
         let data_root = mmr_proof.leaf.data_root;
         let (chunk_data, chunk_proof) = match self
-            .state
-            .storage
+            .proof_source
             .get_chunk_at_index(data_root, challenge.chunk_index)
         {
             Ok(data) => data,
@@ -453,83 +488,4 @@ impl ChallengeResponder {
             }
         }
     }
-}
-
-/// Manually-decoded view of a `Challenge` struct from raw SCALE bytes.
-///
-/// We avoid the `subxt::dynamic::Value` -> typed conversion because that
-/// requires metadata-aware decoding of generic `BalanceOf<T>` etc. The byte
-/// layout of `Challenge<T>` is stable for the deployed runtimes, so we read
-/// fixed offsets.
-///
-/// Exposed (`#[doc(hidden)]`) only so the fixed-offset layout can be exercised
-/// from an integration test against the encoded `Challenge<T>` bytes — it is
-/// not part of the crate's stable public API.
-#[doc(hidden)]
-pub struct DecodedChallenge {
-    pub bucket_id: u64,
-    pub challenger: [u8; 32],
-    pub mmr_root: H256,
-    pub start_seq: u64,
-    pub leaf_index: u64,
-    pub chunk_index: u64,
-}
-
-/// Total SCALE-encoded size of a single `Challenge<T>` value (fixed-width
-/// fields only, see the layout below).
-const CHALLENGE_ENTRY_SIZE: usize = 144;
-
-/// Decode a single SCALE-encoded `Challenge` value from `Challenges` storage
-/// (the map is now a `StorageDoubleMap<BlockNumber, u16, Challenge>`, so each
-/// key holds exactly one challenge rather than a `Vec`). Returns `Some` iff
-/// the decoded `provider` field matches `our_bytes`; `None` when the
-/// challenge targets a different provider.
-///
-/// Layout of `Challenge<T>` (see `crates/pallets/storage-provider/src/lib.rs`):
-///   bucket_id (u64)         — 8
-///   provider (AccountId32)  — 32
-///   challenger (AccountId32)— 32
-///   mmr_root (H256)         — 32
-///   start_seq (u64)         — 8
-///   leaf_index (u64)        — 8
-///   chunk_index (u64)       — 8
-///   deposit (Balance u128)  — 16
-/// Total: 144 bytes.
-///
-/// `#[doc(hidden)] pub` so the fixed-offset layout is reachable from an
-/// integration test; it is an internal helper, not stable public API.
-#[doc(hidden)]
-pub fn decode_challenge_for_provider(
-    encoded: &[u8],
-    our_bytes: &[u8; 32],
-) -> Result<Option<DecodedChallenge>, &'static str> {
-    if encoded.len() < CHALLENGE_ENTRY_SIZE {
-        return Err("challenge value shorter than expected layout");
-    }
-    let entry = &encoded[..CHALLENGE_ENTRY_SIZE];
-
-    let provider = &entry[8..40];
-    if provider != our_bytes {
-        return Ok(None);
-    }
-
-    let bucket_id = u64::from_le_bytes(entry[0..8].try_into().expect("8 bytes"));
-    let mut challenger = [0u8; 32];
-    challenger.copy_from_slice(&entry[40..72]);
-    let mut root_bytes = [0u8; 32];
-    root_bytes.copy_from_slice(&entry[72..104]);
-    let mmr_root = H256::from(root_bytes);
-    let start_seq = u64::from_le_bytes(entry[104..112].try_into().expect("8 bytes"));
-    let leaf_index = u64::from_le_bytes(entry[112..120].try_into().expect("8 bytes"));
-    let chunk_index = u64::from_le_bytes(entry[120..128].try_into().expect("8 bytes"));
-    // deposit at entry[128..144] — not needed for the response.
-
-    Ok(Some(DecodedChallenge {
-        bucket_id,
-        challenger,
-        mmr_root,
-        start_seq,
-        leaf_index,
-        chunk_index,
-    }))
 }

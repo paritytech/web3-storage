@@ -9,7 +9,9 @@ description = "Off-chain provider node for scalable Web3 storage"
 
 [dependencies]
 provider-auth = { workspace = true }
-provider-chain = { workspace = true }
+provider-chain = { workspace = true, features = ["all"] }
+provider-challenge = { workspace = true }
+provider-coordinator = { workspace = true }
 provider-negotiation = { workspace = true }
 provider-replica = { workspace = true }
 provider-storage = { workspace = true }
@@ -24,7 +26,7 @@ serde_json = { workspace = true }
 sp-core = { workspace = true, features = ["std"] }
 sp-crypto-hashing = { workspace = true, features = ["std"] }
 sp-runtime = { workspace = true, features = ["std"] }
-subxt = { workspace = true }
+subxt = { workspace = true, features = ["light-client"] }
 subxt-signer = { workspace = true }
 base64 = { workspace = true }
 thiserror = { workspace = true }
@@ -41,5 +43,4 @@ async-trait = { workspace = true }
 provider-storage = { workspace = true, features = ["test-helpers"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util", "time"] }
 serde_json = { workspace = true }
-subxt-rpcs = { workspace = true, features = ["mock-rpc-client"] }
 tempfile = { workspace = true }

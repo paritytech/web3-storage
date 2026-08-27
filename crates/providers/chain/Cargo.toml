@@ -8,13 +8,35 @@ repository.workspace = true
 description = "Chain connection handling and typed event decoding for provider nodes"
 
 [dependencies]
+hex = { workspace = true, features = ["std"], optional = true }
+serde_json = { workspace = true, optional = true }
 sp-runtime = { workspace = true, features = ["std"] }
 storage-primitives = { workspace = true, features = ["std"] }
-storage-subxt = { workspace = true }
-subxt = { workspace = true }
-thiserror = { workspace = true }
+storage-subxt = { workspace = true, optional = true }
+subxt = { workspace = true, optional = true }
+subxt-rpcs = { workspace = true, optional = true }
+thiserror = { workspace = true, optional = true }
 tokio = { workspace = true }
 tracing = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
+subxt-rpcs = { workspace = true, features = ["mock-rpc-client"] }
+tempfile = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+
+[features]
+default = ["all"]
+all = ["connection", "decode"]
+# The subxt client construction (chain_connection.rs) and its Error type.
+connection = [
+	"dep:hex",
+	"dep:serde_json",
+	"dep:subxt",
+	"dep:subxt-rpcs",
+	"dep:thiserror",
+	"subxt/light-client",
+]
+# Decoding raw on-chain events (via the storage-subxt static bindings) into
+# BlockEvent. The BlockEvent enum itself is always available; this feature
+# gates only the subxt-dependent decoding on top of it.
+decode = ["dep:storage-subxt", "dep:subxt"]

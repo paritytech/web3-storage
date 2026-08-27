@@ -25,10 +25,12 @@ COV_PACKAGES=(
 	pallet-s3-registry
 	storage-provider-node
 	provider-chain
+	provider-coordinator
 	provider-negotiation
 	provider-auth
 	provider-replica
 	provider-storage
+	provider-challenge
 )
 
 # Not measured, with the reason per crate.
@@ -70,10 +72,10 @@ verify_classification() {
 
 # Exclusions: only code that structurally cannot execute in this run —
 # "untested but testable" code stays measured so the gate pushes for tests.
-# The coordinators (provider-replica's coordinator.rs, challenge_responder)
-# are deliberately NOT here: they abstract chain access behind traits and are
-# covered by mock-backed test suites (provider-replica/tests/,
-# provider-node tests/coordinators/).
+# The coordinators (provider-replica's coordinator.rs, and the challenge
+# responder, now the provider-challenge crate) are deliberately NOT here: they
+# abstract chain access behind traits and are covered by mock-backed test
+# suites (crates/providers/replica/tests/, provider-node tests/coordinators/).
 # Groups: toolchain/vendored; generated code + test scaffolding; primitives
 # crates (linked in, own tests
 # not run here); chain-access layer (needs a live chain); client SDK crates

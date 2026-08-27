@@ -6,11 +6,13 @@
 
 mod challenge;
 mod event_fanout;
+mod membership;
 
 use provider_auth::{Authenticator, StaticMembershipResolver};
 use provider_storage::{build_padded_merkle_tree, temp_rocksdb, StorageBackend};
+use sp_runtime::AccountId32;
+use std::str::FromStr;
 use std::sync::Arc;
-use std::time::Duration;
 use storage_primitives::blake2_256;
 use storage_provider_node::{DetectedChallenge, ProviderDeps, ProviderState};
 use tempfile::TempDir;
@@ -18,6 +20,11 @@ use tempfile::TempDir;
 /// Full Alice SS58 address (substrate prefix 42).
 pub const ALICE_SS58: &str = "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY";
 pub const ALICE_SEED: &str = "//Alice";
+
+/// [`ALICE_SS58`] decoded to an [`AccountId32`].
+pub fn alice_account() -> AccountId32 {
+    AccountId32::from_str(ALICE_SS58).unwrap()
+}
 
 /// Standard test dependencies around the given backend: an empty static
 /// membership set.
@@ -28,11 +35,7 @@ pub fn test_deps(
     ProviderDeps {
         storage,
         nonce_store,
-        auth: Arc::new(Authenticator::new(
-            StaticMembershipResolver(vec![]),
-            Duration::from_secs(60),
-            Duration::from_secs(300),
-        )),
+        auth: Arc::new(Authenticator::new(StaticMembershipResolver(vec![]))),
     }
 }
 

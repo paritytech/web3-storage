@@ -1,13 +1,18 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
-//! Chain-backed [`MembershipResolver`].
+//! Chain-backed [`MembershipResolver`] and [`MembershipInvalidations`].
 
-use provider_auth::{Member, MembershipError, MembershipResolver};
+use provider_auth::{
+    Invalidation, Member, MembershipError, MembershipInvalidations, MembershipResolver,
+};
 use provider_chain::chain_connection::{self, ChainWatch};
+use provider_chain::{BlockEvent, BlockEventRx};
 use sp_core::crypto::AccountId32;
+use std::sync::atomic::{AtomicBool, Ordering};
 use storage_primitives::BucketId;
 use storage_subxt::api::runtime_types::pallet_storage_provider::pallet::Member as RuntimeMember;
 use subxt::{OnlineClient, PolkadotConfig};
+use tokio::sync::broadcast::error::TryRecvError;
 
 /// Membership resolver over the node's shared chain connection, so lookups
 /// follow reconnects instead of pinning their own socket.
@@ -82,6 +87,75 @@ fn member_roles(members: Vec<RuntimeMember>) -> Vec<Member> {
         .collect()
 }
 
+/// [`MembershipInvalidations`] over the chain-state coordinator's per-block
+/// fan-out.
+///
+/// `Mutex` rather than requiring `&mut self`, because the cache drains
+/// through a shared reference; `try_recv` is synchronous, so no guard is ever
+/// held across an `.await`.
+pub struct BlockEventInvalidations {
+    events: parking_lot::Mutex<BlockEventRx>,
+    /// Set once a closed feed has been logged, so a dead follower doesn't
+    /// spam a warning on every subsequent authenticated request.
+    closed_warned: AtomicBool,
+}
+
+impl BlockEventInvalidations {
+    pub fn new(events: BlockEventRx) -> Self {
+        Self {
+            events: parking_lot::Mutex::new(events),
+            closed_warned: AtomicBool::new(false),
+        }
+    }
+}
+
+impl MembershipInvalidations for BlockEventInvalidations {
+    fn drain(&self) -> Invalidation {
+        let mut events = self.events.lock();
+        let mut buckets = Vec::new();
+        let mut all = false;
+        loop {
+            match events.try_recv() {
+                Ok(BlockEvent::BucketMembershipChanged { bucket_id }) if !all => {
+                    buckets.push(bucket_id)
+                }
+                // The follower re-read chain state wholesale, or this task
+                // fell behind the fan-out — either way, events before this
+                // point were missed for good. Keep draining rather than
+                // returning here, so the backlog actually clears instead of
+                // leaving the feed permanently lagged.
+                Ok(BlockEvent::Resubscribed { .. }) => all = true,
+                // A membership event's bucket id could not be attributed to
+                // a specific bucket (decode failure or a dropped block) - the
+                // same "trust nothing cached" reaction as Resubscribed, but
+                // it does not imply anything about the other event kinds.
+                Ok(BlockEvent::MembershipScopeUnknown { .. }) => all = true,
+                Ok(_) => {}
+                Err(TryRecvError::Lagged(_)) => all = true,
+                Err(TryRecvError::Empty) => break,
+                // The follower is gone. Degrade to TTL-only expiry rather than
+                // failing authorization closed — a dead follower must not
+                // take the node's auth path down with it.
+                Err(TryRecvError::Closed) => {
+                    if !self.closed_warned.swap(true, Ordering::Relaxed) {
+                        tracing::warn!(
+                            "membership invalidation feed closed; falling back to TTL-only expiry"
+                        );
+                    }
+                    break;
+                }
+            }
+        }
+        if all {
+            Invalidation::All
+        } else if buckets.is_empty() {
+            Invalidation::None
+        } else {
+            Invalidation::Buckets(buckets)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -127,5 +201,48 @@ mod tests {
             ]),
             expected
         );
+    }
+
+    // ── BlockEventInvalidations ─────────────────────────────────────────────
+
+    use tokio::sync::broadcast;
+
+    #[test]
+    fn a_lagged_feed_invalidates_everything() {
+        // Overflow the small buffer without ever draining, so the receiver's
+        // first read comes back `Lagged` rather than `Ok`.
+        let (tx, rx) = broadcast::channel(2);
+        for bucket_id in 0..5 {
+            let _ = tx.send(BlockEvent::BucketMembershipChanged { bucket_id });
+        }
+
+        let feed = BlockEventInvalidations::new(rx);
+        assert_eq!(feed.drain(), Invalidation::All);
+    }
+
+    #[test]
+    fn drain_clears_the_backlog_past_a_lag() {
+        let (tx, rx) = broadcast::channel(2);
+        for bucket_id in 0..5 {
+            let _ = tx.send(BlockEvent::BucketMembershipChanged { bucket_id });
+        }
+        let feed = BlockEventInvalidations::new(rx);
+        assert_eq!(feed.drain(), Invalidation::All);
+
+        // The first drain must have consumed the messages still buffered past
+        // the lag, not just flagged `All` and left them queued — otherwise a
+        // second drain with nothing new sent would still find them.
+        assert_eq!(feed.drain(), Invalidation::None);
+    }
+
+    #[test]
+    fn a_closed_feed_degrades_to_ttl_only() {
+        let (tx, rx) = broadcast::channel::<BlockEvent>(4);
+        drop(tx);
+
+        // A dead follower must not fail authorization closed: the feed simply
+        // has nothing more to report, leaving the TTL as the only bound.
+        let feed = BlockEventInvalidations::new(rx);
+        assert_eq!(feed.drain(), Invalidation::None);
     }
 }

@@ -10,8 +10,7 @@
 //! - Syncing data between providers (for replicas)
 
 pub mod api;
-pub mod chain_state_coordinator;
-pub mod challenge_responder;
+pub mod challenge_proofs;
 pub mod cli;
 pub mod command;
 pub mod error;
@@ -23,17 +22,22 @@ pub(crate) mod subxt_client;
 pub mod types;
 
 pub use api::create_router;
-pub use chain_state_coordinator::{
-    is_relevant_provider_event, refresh_if_relevant_event, refresh_provider_state, sync_constants,
-    ChainState, ChainStateChainClient, ChainStateCoordinator, ChainStateCoordinatorHandle,
-    PalletConstants, ProviderLifecycleEvent,
-};
-pub use challenge_responder::{
-    ChallengeChainClient, ChallengeResponder, ChallengeResponderConfig, ChallengeResponderHandle,
+pub use challenge_proofs::StorageProofSource;
+pub use error::Error;
+pub use negotiate::{AgreementTermsOf, NegotiateRequest, SignedTerms};
+pub use provider_challenge::{
+    self as challenge_responder, ChallengeChainClient, ChallengeError, ChallengeProofSource,
+    ChallengeResponder, ChallengeResponderConfig, ChallengeResponderHandle,
     ChallengeResponseResult, DetectedChallenge, ResponderCommand,
 };
-pub use error::Error;
-pub use negotiate::{AgreementTermsOf, NegotiateRequest, NonceCounter, SignedTerms};
+/// The chain-state coordinator lives in the `provider-coordinator` crate; keep
+/// the old module path working for existing consumers.
+pub use provider_coordinator as chain_state_coordinator;
+pub use provider_coordinator::{
+    is_relevant_provider_event, refresh_if_relevant_event, refresh_provider_state, sync_constants,
+    ChainState, ChainStateChainClient, ChainStateCoordinator, ChainStateCoordinatorHandle,
+    NonceCounter, PalletConstants, ProviderLifecycleEvent,
+};
 pub use provider_replica::{
     ReplicaSync, ReplicaSyncChainClient, ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig,
     ReplicaSyncCoordinatorHandle, SyncCommand, SyncCoordinatorStatus, SyncDuty, SyncResult,
@@ -134,6 +138,12 @@ impl ProviderState {
         let signature = keypair.sign(message);
         Ok(format!("0x{}", hex::encode(signature.0)))
     }
+
+    /// Proof source for the challenge responder, backed by this state's
+    /// storage.
+    pub fn challenge_proof_source(&self) -> Arc<dyn ChallengeProofSource> {
+        Arc::new(StorageProofSource::new(self.storage.clone()))
+    }
 }
 
 #[cfg(test)]
@@ -141,7 +151,6 @@ mod tests {
     use super::*;
     use provider_auth::Authenticator;
     use provider_storage::temp_rocksdb;
-    use std::time::Duration;
 
     /// Deps over a throwaway backend. Keep the returned guard bound for as
     /// long as the state is used.
@@ -150,11 +159,9 @@ mod tests {
         let deps = ProviderDeps {
             storage,
             nonce_store,
-            auth: Arc::new(Authenticator::new(
-                provider_auth::StaticMembershipResolver(vec![]),
-                Duration::from_secs(60),
-                Duration::from_secs(300),
-            )),
+            auth: Arc::new(Authenticator::new(provider_auth::StaticMembershipResolver(
+                vec![],
+            ))),
         };
         (deps, dir)
     }

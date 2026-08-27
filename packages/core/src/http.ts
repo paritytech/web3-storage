@@ -90,8 +90,9 @@ export async function signProviderRequest(
   signer: ProviderRequestSigner,
   method: string,
   bucketId: bigint | number,
+  time: number = Date.now()
 ): Promise<Record<string, string>> {
-  const timestamp = Math.floor(Date.now() / 1000).toString();
+  const timestamp = Math.floor(time / 1000).toString();
   // Interpolate the id directly (bigint/number both render as the decimal
   // string the provider reconstructs); `Number(bigint)` would lose precision above
   // 2^53 and break signature verification for large bucket ids.
