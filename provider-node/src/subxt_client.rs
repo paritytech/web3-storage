@@ -938,9 +938,6 @@ fn to_runtime_merkle_proof(proof: storage_primitives::MerkleProof) -> RuntimeMer
 
 /// Map an on-chain `Challenge` at `(deadline, index)` into the responder's
 /// `DetectedChallenge`, or `None` when it targets a different provider.
-///
-/// Shared by both read paths — the full `Challenges` scan and the point-read —
-/// so the two cannot drift apart on which fields they carry.
 fn detected_challenge(
     deadline: u32,
     index: u16,
@@ -1011,7 +1008,8 @@ impl ChallengeChainClient for SubxtChainClient {
     async fn poll_challenges(&self) -> Result<Vec<DetectedChallenge>, ChallengeError> {
         let payload = storage_subxt::api::runtime_apis()
             .storage_provider_api()
-            .provider_challenges(subxt::utils::AccountId32(self.signer.public_key().0));
+            .provider_challenges(subxt::utils::AccountId32(self.signer.public_key().0))
+            .unvalidated();
 
         let challenges = self
             .api()
