@@ -7228,6 +7228,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "provider-challenge"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "provider-chain",
+ "sp-core",
+ "sp-runtime",
+ "storage-primitives",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "provider-coordinator"
 version = "0.1.0"
 dependencies = [
@@ -10131,6 +10145,7 @@ dependencies = [
  "parking_lot",
  "provider-auth",
  "provider-chain",
+ "provider-challenge",
  "provider-coordinator",
  "provider-negotiation",
  "provider-storage",

@@ -16,7 +16,7 @@ use clap::Parser;
 use provider_auth::Authenticator;
 use provider_chain::{
     chain_connection::{self, ChainHandle, ChainTransport},
-    chain_events::{BlockEvent, BlockEventRx, BlockEventTx, EVENT_CHANNEL_CAPACITY},
+    BlockEvent, BlockEventRx, BlockEventTx, EVENT_CHANNEL_CAPACITY,
 };
 use std::net::SocketAddr;
 use std::str::FromStr;
@@ -279,12 +279,27 @@ async fn start_challenge_responder(
         }
     };
 
-    let config = ChallengeResponderConfig {
-        poll_interval: Duration::from_secs(cli.challenge_responder.challenge_poll_interval),
-        ..Default::default()
+    let provider_account = match sp_runtime::AccountId32::from_str(&state.provider_id) {
+        Ok(a) => a,
+        Err(e) => {
+            tracing::warn!(
+                "challenge responder: invalid provider SS58 '{}': {e:?}",
+                state.provider_id
+            );
+            return None;
+        }
     };
 
-    let responder = ChallengeResponder::new(config, state, Box::new(chain_client));
+    let config = ChallengeResponderConfig {
+        poll_interval: Duration::from_secs(cli.challenge_responder.challenge_poll_interval),
+        ..ChallengeResponderConfig::new(provider_account)
+    };
+
+    let responder = ChallengeResponder::new(
+        config,
+        state.challenge_proof_source(),
+        Box::new(chain_client),
+    );
 
     match responder.start(events_rx, None).await {
         Ok(handle) => {

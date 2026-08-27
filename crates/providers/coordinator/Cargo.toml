@@ -10,7 +10,7 @@ description = "Chain-state coordinator for provider nodes: keeps the node's view
 [dependencies]
 async-trait = { workspace = true }
 parking_lot = { workspace = true }
-provider-chain = { workspace = true }
+provider-chain = { workspace = true, features = ["all"] }
 provider-storage = { workspace = true }
 serde = { workspace = true, features = ["std"] }
 sp-runtime = { workspace = true, features = ["std"] }

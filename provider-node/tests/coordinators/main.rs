@@ -11,6 +11,8 @@ mod replica_sync;
 
 use provider_auth::{Authenticator, StaticMembershipResolver};
 use provider_storage::{build_padded_merkle_tree, temp_rocksdb, StorageBackend};
+use sp_runtime::AccountId32;
+use std::str::FromStr;
 use std::sync::Arc;
 use storage_primitives::blake2_256;
 use storage_provider_node::{DetectedChallenge, ProviderDeps, ProviderState};
@@ -19,6 +21,11 @@ use tempfile::TempDir;
 /// Full Alice SS58 address (substrate prefix 42).
 pub const ALICE_SS58: &str = "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY";
 pub const ALICE_SEED: &str = "//Alice";
+
+/// [`ALICE_SS58`] decoded to an [`AccountId32`].
+pub fn alice_account() -> AccountId32 {
+    AccountId32::from_str(ALICE_SS58).unwrap()
+}
 
 /// Standard test dependencies around the given backend: an empty static
 /// membership set.
