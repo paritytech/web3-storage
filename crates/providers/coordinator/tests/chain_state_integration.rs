@@ -20,6 +20,11 @@
 //!    Pointed at an unreachable chain it must stay up, never panic, leave
 //!    [`ChainState`] at its defaults (so `/negotiate` keeps returning 503), and
 //!    shut down cleanly when stopped.
+//!
+//! Membership invalidation is covered separately, in
+//! `tests/coordinators/membership.rs`: the coordinator only broadcasts
+//! `BlockEvent::BucketMembershipChanged`/`Resubscribed` now, and the
+//! membership cache pulls from that feed itself.
 
 use async_trait::async_trait;
 use provider_chain::chain_connection::{ChainHandle, ChainTransport};

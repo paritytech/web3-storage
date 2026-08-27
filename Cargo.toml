@@ -168,6 +168,7 @@ tracing-subscriber = { version = "=0.3.19" }
 # Async/HTTP (for provider node)
 axum = "0.7"
 dashmap = "6.0"
+moka = { version = "0.12", features = ["future"] }
 parking_lot = "0.12"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 rocksdb = { version = "0.22", default-features = false }

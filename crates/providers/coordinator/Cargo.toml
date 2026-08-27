@@ -15,9 +15,7 @@ provider-storage = { workspace = true }
 serde = { workspace = true, features = ["std"] }
 sp-runtime = { workspace = true, features = ["std"] }
 storage-subxt = { workspace = true }
-sp-crypto-hashing = { workspace = true, features = ["std"] }
 subxt = { workspace = true }
-tempfile = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true, features = ["std"] }
@@ -25,7 +23,9 @@ tracing = { workspace = true, features = ["std"] }
 [dev-dependencies]
 codec = { workspace = true, features = ["std"] }
 hex = { workspace = true, features = ["std"] }
+provider-storage = { workspace = true, features = ["test-helpers"] }
 serde_json = { workspace = true, features = ["std"] }
-sp-core = { workspace = true, features = ["std"] }
+sp-crypto-hashing = { workspace = true, features = ["std"] }
 subxt-rpcs = { workspace = true, features = ["mock-rpc-client"] }
-tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util"] }

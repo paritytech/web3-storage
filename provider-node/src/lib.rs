@@ -30,6 +30,8 @@ pub use challenge_responder::{
 };
 pub use error::Error;
 pub use negotiate::{AgreementTermsOf, NegotiateRequest, SignedTerms};
+/// The chain-state coordinator lives in the `provider-coordinator` crate; keep
+/// the old module path working for existing consumers.
 pub use provider_coordinator as chain_state_coordinator;
 pub use provider_coordinator::{
     is_relevant_provider_event, refresh_if_relevant_event, refresh_provider_state, sync_constants,
@@ -144,7 +146,6 @@ mod tests {
     use super::*;
     use provider_auth::Authenticator;
     use provider_storage::temp_rocksdb;
-    use std::time::Duration;
 
     /// Deps over a throwaway backend. Keep the returned guard bound for as
     /// long as the state is used.
@@ -153,11 +154,9 @@ mod tests {
         let deps = ProviderDeps {
             storage,
             nonce_store,
-            auth: Arc::new(Authenticator::new(
-                provider_auth::StaticMembershipResolver(vec![]),
-                Duration::from_secs(60),
-                Duration::from_secs(300),
-            )),
+            auth: Arc::new(Authenticator::new(provider_auth::StaticMembershipResolver(
+                vec![],
+            ))),
         };
         (deps, dir)
     }
