@@ -7242,6 +7242,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "provider-coordinator"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "hex",
+ "parity-scale-codec",
+ "parking_lot",
+ "provider-chain",
+ "provider-storage",
+ "serde",
+ "serde_json",
+ "sp-crypto-hashing",
+ "sp-runtime",
+ "subxt",
+ "subxt-rpcs",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "provider-negotiation"
 version = "0.1.0"
 dependencies = [
@@ -10124,6 +10146,7 @@ dependencies = [
  "provider-auth",
  "provider-chain",
  "provider-challenge",
+ "provider-coordinator",
  "provider-negotiation",
  "provider-storage",
  "reqwest",
@@ -10135,7 +10158,6 @@ dependencies = [
  "storage-primitives",
  "storage-subxt",
  "subxt",
- "subxt-rpcs",
  "subxt-signer 0.50.2",
  "tempfile",
  "thiserror 2.0.18",
