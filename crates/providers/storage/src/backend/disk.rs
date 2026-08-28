@@ -850,8 +850,11 @@ mod tests {
         assert!(storage_primitives::verify_mmr_proof(
             &proof, 1, 2, &roots[1]
         ));
-        // Current root (3 leaves) must NOT verify this two-leaf proof.
-        assert_ne!(roots[1], roots[2]);
+        // The same proof must not satisfy a challenge citing the current
+        // 3-leaf commitment: its peaks bag to the cited two-leaf root.
+        assert!(!storage_primitives::verify_mmr_proof(
+            &proof, 1, 3, &roots[2]
+        ));
 
         // A leaf index outside the cited commitment is rejected even though
         // the bucket currently holds it.
