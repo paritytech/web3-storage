@@ -129,6 +129,7 @@ jobs:
           cargo check --workspace --quiet
           cargo check --workspace --features=runtime-benchmarks --quiet
           cargo check --workspace --features=try-runtime --quiet
+          cargo check -p provider-chain --no-default-features --quiet
 
   clippy:
     name: Cargo clippy

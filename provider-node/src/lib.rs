@@ -11,7 +11,7 @@
 
 pub mod api;
 pub mod chain_state_coordinator;
-pub mod challenge_responder;
+pub mod challenge_proofs;
 pub mod cli;
 pub mod command;
 pub mod error;
@@ -30,12 +30,14 @@ pub use chain_state_coordinator::{
     ChainState, ChainStateChainClient, ChainStateCoordinator, ChainStateCoordinatorHandle,
     PalletConstants, ProviderLifecycleEvent,
 };
-pub use challenge_responder::{
-    ChallengeChainClient, ChallengeResponder, ChallengeResponderConfig, ChallengeResponderHandle,
-    ChallengeResponseResult, DetectedChallenge, ResponderCommand,
-};
+pub use challenge_proofs::StorageProofSource;
 pub use error::Error;
 pub use negotiate::{AgreementTermsOf, NegotiateRequest, NonceCounter, SignedTerms};
+pub use provider_challenge::{
+    self as challenge_responder, ChallengeChainClient, ChallengeError, ChallengeProofSource,
+    ChallengeResponder, ChallengeResponderConfig, ChallengeResponderHandle,
+    ChallengeResponseResult, DetectedChallenge, ResponderCommand,
+};
 pub use replica_sync::ReplicaSync;
 pub use replica_sync_coordinator::{
     ReplicaSyncChainClient, ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig,
@@ -136,6 +138,12 @@ impl ProviderState {
         let keypair = self.keypair.as_ref().ok_or(Error::SigningUnavailable)?;
         let signature = keypair.sign(message);
         Ok(format!("0x{}", hex::encode(signature.0)))
+    }
+
+    /// Proof source for the challenge responder, backed by this state's
+    /// storage.
+    pub fn challenge_proof_source(&self) -> Arc<dyn ChallengeProofSource> {
+        Arc::new(StorageProofSource::new(self.storage.clone()))
     }
 }
 

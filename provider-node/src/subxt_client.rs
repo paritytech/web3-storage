@@ -11,7 +11,7 @@
 //! connection).
 
 use crate::challenge_responder::{
-    decode_challenge_for_provider, ChallengeChainClient, DetectedChallenge,
+    decode_challenge_for_provider, ChallengeChainClient, ChallengeError, DetectedChallenge,
 };
 use crate::replica_sync_coordinator::{
     BucketSnapshot, ReplicaAgreementInfo, ReplicaSyncChainClient,
@@ -913,23 +913,24 @@ impl ChallengeChainClient for SubxtChainClient {
     /// Cost is bounded by `ChallengeTimeout` (storage entries past their
     /// deadline are reaped in `on_finalize`), so iteration is at worst the
     /// number of open challenges across all unexpired deadlines.
-    async fn poll_challenges(&self) -> Result<Vec<DetectedChallenge>, Error> {
+    async fn poll_challenges(&self) -> Result<Vec<DetectedChallenge>, ChallengeError> {
         // Our account's raw bytes, used to filter challenges targeting us.
         let our_bytes: [u8; 32] = self.signer.public_key().0;
 
         let storage_address =
             subxt::dynamic::storage::<(Value, Value), Value>("StorageProvider", "Challenges");
         let at = self
-            .api()?
+            .api()
+            .map_err(|e| ChallengeError::Chain(e.to_string()))?
             .at_current_block()
             .await
-            .map_err(|e| Error::Internal(format!("Failed to get storage: {e}")))?;
+            .map_err(|e| ChallengeError::Chain(format!("Failed to get storage: {e}")))?;
 
         let mut iter = at
             .storage()
             .iter(storage_address, ())
             .await
-            .map_err(|e| Error::Internal(format!("Failed to iterate Challenges: {e}")))?;
+            .map_err(|e| ChallengeError::Chain(format!("Failed to iterate Challenges: {e}")))?;
 
         let mut detected = Vec::new();
         while let Some(result) = iter.next().await {
@@ -987,7 +988,7 @@ impl ChallengeChainClient for SubxtChainClient {
         &self,
         deadline: u32,
         index: u16,
-    ) -> Result<Option<DetectedChallenge>, Error> {
+    ) -> Result<Option<DetectedChallenge>, ChallengeError> {
         let our_bytes: [u8; 32] = self.signer.public_key().0;
 
         // `unvalidated`: see the `storage-subxt` crate docs.
@@ -996,22 +997,23 @@ impl ChallengeChainClient for SubxtChainClient {
             .challenges()
             .unvalidated();
         let at = self
-            .api()?
+            .api()
+            .map_err(|e| ChallengeError::Chain(e.to_string()))?
             .at_current_block()
             .await
-            .map_err(|e| Error::Internal(format!("Failed to get storage: {e}")))?;
+            .map_err(|e| ChallengeError::Chain(format!("Failed to get storage: {e}")))?;
 
         let Some(value) = at
             .storage()
             .try_fetch(storage_address, (deadline, index))
             .await
-            .map_err(|e| Error::Internal(format!("Failed to fetch challenge: {e}")))?
+            .map_err(|e| ChallengeError::Chain(format!("Failed to fetch challenge: {e}")))?
         else {
             return Ok(None);
         };
 
         let challenge = value.decode().map_err(|e| {
-            Error::Internal(format!(
+            ChallengeError::Chain(format!(
                 "Failed to decode challenge at {deadline}/{index}: {e}"
             ))
         })?;
@@ -1037,7 +1039,7 @@ impl ChallengeChainClient for SubxtChainClient {
         chunk_data: Vec<u8>,
         mmr_proof: storage_primitives::MmrProof,
         chunk_proof: storage_primitives::MerkleProof,
-    ) -> Result<H256, Error> {
+    ) -> Result<H256, ChallengeError> {
         let challenge_id_val = value!({
             deadline: challenge_id.0 as u128,
             index: challenge_id.1 as u128
@@ -1114,7 +1116,8 @@ impl ChallengeChainClient for SubxtChainClient {
         );
 
         self.submit_and_finalize(&tx, "respond_to_challenge")
-            .await?;
+            .await
+            .map_err(|e| ChallengeError::Chain(e.to_string()))?;
 
         Ok(H256::zero())
     }
