@@ -244,9 +244,7 @@ pub trait StorageBackend: Send + Sync {
     fn get_mmr_proof_for_commitment(
         &self,
         bucket_id: BucketId,
-        commitment_root: H256,
-        commitment_start_seq: u64,
-        commitment_leaf_count: u64,
+        commitment: &storage_primitives::Commitment,
         leaf_index: u64,
     ) -> Result<storage_primitives::MmrProof, Error>;
 

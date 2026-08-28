@@ -306,7 +306,7 @@ sequenceDiagram
 
 ## Checkpoint (Commitment) Flow
 
-### Extrinsic: `submit_commitment`
+### Extrinsic: `checkpoint`
 
 This is how off-chain state becomes on-chain:
 
@@ -329,7 +329,9 @@ sequenceDiagram
 
     Note over U,C: Step 2: Submit checkpoint on-chain
 
-    U->>C: submit_commitment(bucket_id, mmr_root, start_seq, leaf_count, signatures[])
+    U->>C: checkpoint(bucket_id, commitment)
+
+    Note over C: commitment = Commitment { mmr_root, start_seq, leaf_count }
 
     Note over C: signatures = [(provider1, sig1), (provider2, sig2), ...]
 
@@ -356,7 +358,7 @@ sequenceDiagram
     Note over C: Create/update snapshot
     Note over C: bucket.snapshot = Some(BucketSnapshot {<br/> mmr_root,<br/> start_seq,<br/> leaf_count,<br/> checkpoint_block: current_block,<br/> primary_signers<br/>})
 
-    C-->>U: Event::CommitmentSubmitted { bucket_id, mmr_root, signers }
+    C-->>U: Event::BucketCheckpointed { bucket_id, commitment, providers }
 ```
 
 ### Why Signature Verification Matters

@@ -14,13 +14,13 @@
 use provider_auth::{
     build_auth_header, Authenticator, Member, MembershipError, MembershipResolver, RequiredRole,
 };
+use provider_chain::BlockEvent;
 use sp_core::{sr25519, Pair};
 use sp_runtime::AccountId32;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use storage_primitives::{BucketId, Role};
-use storage_provider_node::chain_events::BlockEvent;
 use storage_provider_node::membership::BlockEventInvalidations;
 
 /// Resolver that counts calls, so tests can tell whether a lookup hit the cache

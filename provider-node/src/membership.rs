@@ -2,11 +2,11 @@
 
 //! Chain-backed [`MembershipResolver`] and [`MembershipInvalidations`].
 
-use crate::chain_connection::{self, ChainWatch};
-use crate::chain_events::{BlockEvent, BlockEventRx};
 use provider_auth::{
     Invalidation, Member, MembershipError, MembershipInvalidations, MembershipResolver,
 };
+use provider_chain::chain_connection::{self, ChainWatch};
+use provider_chain::{BlockEvent, BlockEventRx};
 use sp_core::crypto::AccountId32;
 use std::sync::atomic::{AtomicBool, Ordering};
 use storage_primitives::BucketId;

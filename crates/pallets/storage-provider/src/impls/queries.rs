@@ -15,10 +15,8 @@ fn challenge_to_response<T: Config>(
         bucket_id: c.bucket_id,
         provider: c.provider.encode(),
         challenger: c.challenger.encode(),
-        mmr_root: c.commitment.mmr_root,
-        start_seq: c.commitment.start_seq,
-        leaf_index: c.target.leaf_index,
-        chunk_index: c.target.chunk_index,
+        commitment: c.commitment,
+        target: c.target,
         deadline: deadline.saturated_into(),
         index,
         deposit: c.deposit.saturated_into::<u128>(),
@@ -118,6 +116,11 @@ impl<T: Config> Pallet<T> {
                 challenges_failed: info.stats.challenges_failed,
                 max_capacity,
                 available_capacity,
+                deregister_at: info.deregister_at.map(|b| b.saturated_into::<u32>()),
+                reputation: crate::runtime_api::reputation_score(
+                    info.stats.challenges_received,
+                    info.stats.challenges_failed,
+                ),
             }
         })
     }
@@ -163,6 +166,11 @@ impl<T: Config> Pallet<T> {
                         challenges_failed: info.stats.challenges_failed,
                         max_capacity,
                         available_capacity,
+                        deregister_at: info.deregister_at.map(|b| b.saturated_into::<u32>()),
+                        reputation: crate::runtime_api::reputation_score(
+                            info.stats.challenges_received,
+                            info.stats.challenges_failed,
+                        ),
                     },
                 )
             })

@@ -2,14 +2,15 @@
 
 //! Integration tests for the challenge responder.
 
-use super::{test_state, test_state_with_data, wait_for, ALICE_SS58};
+use super::{alice_account, test_state, test_state_with_data, wait_for, ALICE_SS58};
 use sp_core::H256;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use storage_primitives::BucketId;
+use storage_provider_node::challenge_responder::ChallengeError;
 use storage_provider_node::{
     ChallengeChainClient, ChallengeResponder, ChallengeResponderConfig, ChallengeResponseResult,
-    DetectedChallenge, Error,
+    DetectedChallenge,
 };
 
 struct MockChallengeChainClient {
@@ -44,7 +45,7 @@ impl MockChallengeChainClient {
 
 #[async_trait::async_trait]
 impl ChallengeChainClient for MockChallengeChainClient {
-    async fn poll_challenges(&self) -> Result<Vec<DetectedChallenge>, Error> {
+    async fn poll_challenges(&self) -> Result<Vec<DetectedChallenge>, ChallengeError> {
         Ok(self.challenges.lock().unwrap().clone())
     }
 
@@ -52,7 +53,7 @@ impl ChallengeChainClient for MockChallengeChainClient {
         &self,
         deadline: u32,
         index: u16,
-    ) -> Result<Option<DetectedChallenge>, Error> {
+    ) -> Result<Option<DetectedChallenge>, ChallengeError> {
         Ok(self
             .challenges
             .lock()
@@ -68,10 +69,10 @@ impl ChallengeChainClient for MockChallengeChainClient {
         _chunk_data: Vec<u8>,
         _mmr_proof: storage_primitives::MmrProof,
         _chunk_proof: storage_primitives::MerkleProof,
-    ) -> Result<H256, Error> {
+    ) -> Result<H256, ChallengeError> {
         self.submitted.lock().unwrap().push(challenge_id);
         if let Some(err) = self.submit_error.lock().unwrap().as_ref() {
-            return Err(Error::Internal(err.clone()));
+            return Err(ChallengeError::Internal(err.clone()));
         }
         Ok(H256::zero())
     }
@@ -82,18 +83,23 @@ fn make_challenge(bucket_id: BucketId, deadline: u32, index: u16) -> DetectedCha
         bucket_id,
         deadline,
         index,
-        mmr_root: H256::zero(),
-        start_seq: 0,
-        leaf_count: 6,
-        leaf_index: 5,
-        chunk_index: 0,
+        commitment: storage_primitives::Commitment {
+            mmr_root: H256::zero(),
+            start_seq: 0,
+            leaf_count: 6,
+        },
+        target: storage_primitives::ChunkLocation {
+            leaf_index: 5,
+            chunk_index: 0,
+        },
         challenger: ALICE_SS58.to_string(),
     }
 }
 
 #[test]
-fn test_challenge_responder_config_default() {
-    let config = ChallengeResponderConfig::default();
+fn test_challenge_responder_config_new() {
+    let config = ChallengeResponderConfig::new(alice_account());
+    assert_eq!(config.provider_account, alice_account());
     assert_eq!(config.poll_interval, Duration::from_secs(300));
     assert!(config.auto_respond);
 }
@@ -103,7 +109,7 @@ fn test_detected_challenge() {
     let challenge = make_challenge(1, 1000, 0);
     assert_eq!(challenge.bucket_id, 1);
     assert_eq!(challenge.deadline, 1000);
-    assert_eq!(challenge.leaf_index, 5);
+    assert_eq!(challenge.target.leaf_index, 5);
 }
 
 #[tokio::test(start_paused = true)]
@@ -112,9 +118,13 @@ async fn test_no_challenges() {
     let (state, _dir) = test_state();
     let config = ChallengeResponderConfig {
         poll_interval: Duration::from_millis(50),
-        ..Default::default()
+        ..ChallengeResponderConfig::new(alice_account())
     };
-    let responder = ChallengeResponder::new(config, state, Box::new(Arc::clone(&mock)));
+    let responder = ChallengeResponder::new(
+        config,
+        state.challenge_proof_source(),
+        Box::new(Arc::clone(&mock)),
+    );
     let handle = responder
         .start(tokio::sync::broadcast::channel(16).1, None)
         .await
@@ -133,9 +143,13 @@ async fn test_paused_skips_poll() {
     let (state, _dir) = test_state();
     let config = ChallengeResponderConfig {
         poll_interval: Duration::from_millis(50),
-        ..Default::default()
+        ..ChallengeResponderConfig::new(alice_account())
     };
-    let responder = ChallengeResponder::new(config, state, Box::new(Arc::clone(&mock)));
+    let responder = ChallengeResponder::new(
+        config,
+        state.challenge_proof_source(),
+        Box::new(Arc::clone(&mock)),
+    );
     let handle = responder
         .start(tokio::sync::broadcast::channel(16).1, None)
         .await
@@ -155,9 +169,9 @@ async fn test_stop_command() {
     let (state, _dir) = test_state();
     let config = ChallengeResponderConfig {
         poll_interval: Duration::from_secs(60),
-        ..Default::default()
+        ..ChallengeResponderConfig::new(alice_account())
     };
-    let responder = ChallengeResponder::new(config, state, Box::new(mock));
+    let responder = ChallengeResponder::new(config, state.challenge_proof_source(), Box::new(mock));
     let handle = responder
         .start(tokio::sync::broadcast::channel(16).1, None)
         .await
@@ -179,9 +193,13 @@ async fn test_successful_challenge_response() {
     let config = ChallengeResponderConfig {
         poll_interval: Duration::from_millis(50),
         auto_respond: true,
-        ..Default::default()
+        ..ChallengeResponderConfig::new(alice_account())
     };
-    let responder = ChallengeResponder::new(config, state, Box::new(Arc::clone(&mock)));
+    let responder = ChallengeResponder::new(
+        config,
+        state.challenge_proof_source(),
+        Box::new(Arc::clone(&mock)),
+    );
     let handle = responder
         .start(tokio::sync::broadcast::channel(16).1, None)
         .await
@@ -212,11 +230,15 @@ async fn test_proof_generation_failed_no_bucket() {
         bucket_id: 999,
         deadline: 1000,
         index: 0,
-        mmr_root: H256::zero(),
-        start_seq: 0,
-        leaf_count: 1,
-        leaf_index: 0,
-        chunk_index: 0,
+        commitment: storage_primitives::Commitment {
+            mmr_root: H256::zero(),
+            start_seq: 0,
+            leaf_count: 1,
+        },
+        target: storage_primitives::ChunkLocation {
+            leaf_index: 0,
+            chunk_index: 0,
+        },
         challenger: ALICE_SS58.to_string(),
     };
 
@@ -234,9 +256,13 @@ async fn test_proof_generation_failed_no_bucket() {
     let config = ChallengeResponderConfig {
         poll_interval: Duration::from_millis(50),
         auto_respond: true,
-        ..Default::default()
+        ..ChallengeResponderConfig::new(alice_account())
     };
-    let responder = ChallengeResponder::new(config, state, Box::new(Arc::clone(&mock)));
+    let responder = ChallengeResponder::new(
+        config,
+        state.challenge_proof_source(),
+        Box::new(Arc::clone(&mock)),
+    );
     let handle = responder
         .start(tokio::sync::broadcast::channel(16).1, Some(callback))
         .await
@@ -267,7 +293,7 @@ async fn test_proof_generation_failed_no_bucket() {
 #[tokio::test(start_paused = true)]
 async fn test_data_not_found_bad_chunk_index() {
     let (state, mut challenge, _dir) = test_state_with_data();
-    challenge.chunk_index = 999;
+    challenge.target.chunk_index = 999;
 
     let result: Arc<Mutex<Option<ChallengeResponseResult>>> = Arc::new(Mutex::new(None));
     let result_clone = Arc::clone(&result);
@@ -282,9 +308,13 @@ async fn test_data_not_found_bad_chunk_index() {
     let config = ChallengeResponderConfig {
         poll_interval: Duration::from_millis(50),
         auto_respond: true,
-        ..Default::default()
+        ..ChallengeResponderConfig::new(alice_account())
     };
-    let responder = ChallengeResponder::new(config, state, Box::new(Arc::clone(&mock)));
+    let responder = ChallengeResponder::new(
+        config,
+        state.challenge_proof_source(),
+        Box::new(Arc::clone(&mock)),
+    );
     let handle = responder
         .start(tokio::sync::broadcast::channel(16).1, Some(callback))
         .await
@@ -330,9 +360,13 @@ async fn test_submission_failed() {
     let config = ChallengeResponderConfig {
         poll_interval: Duration::from_millis(50),
         auto_respond: true,
-        ..Default::default()
+        ..ChallengeResponderConfig::new(alice_account())
     };
-    let responder = ChallengeResponder::new(config, state, Box::new(Arc::clone(&mock)));
+    let responder = ChallengeResponder::new(
+        config,
+        state.challenge_proof_source(),
+        Box::new(Arc::clone(&mock)),
+    );
     let handle = responder
         .start(tokio::sync::broadcast::channel(16).1, Some(callback))
         .await
@@ -374,9 +408,13 @@ async fn test_callback_invoked_on_success() {
     let config = ChallengeResponderConfig {
         poll_interval: Duration::from_millis(50),
         auto_respond: true,
-        ..Default::default()
+        ..ChallengeResponderConfig::new(alice_account())
     };
-    let responder = ChallengeResponder::new(config, state, Box::new(Arc::clone(&mock)));
+    let responder = ChallengeResponder::new(
+        config,
+        state.challenge_proof_source(),
+        Box::new(Arc::clone(&mock)),
+    );
     let handle = responder
         .start(tokio::sync::broadcast::channel(16).1, Some(callback))
         .await
@@ -414,9 +452,13 @@ async fn test_resume_after_pause() {
     let config = ChallengeResponderConfig {
         poll_interval: Duration::from_millis(50),
         auto_respond: true,
-        ..Default::default()
+        ..ChallengeResponderConfig::new(alice_account())
     };
-    let responder = ChallengeResponder::new(config, state, Box::new(Arc::clone(&mock)));
+    let responder = ChallengeResponder::new(
+        config,
+        state.challenge_proof_source(),
+        Box::new(Arc::clone(&mock)),
+    );
     let handle = responder
         .start(tokio::sync::broadcast::channel(16).1, None)
         .await

@@ -22,13 +22,13 @@
 //! [`BlockEvent::BucketMembershipChanged`], so the membership cache can drop
 //! stale authorization on its own rather than being told to.
 
-use crate::chain_connection::{self, ChainHandle, ChainTransport};
-use crate::chain_events::{self, BlockEvent, BlockEventTx};
 use crate::negotiate::NonceCounter;
 use crate::types::ProviderInfo;
 use crate::Error;
 use async_trait::async_trait;
 use parking_lot::RwLock;
+use provider_chain::chain_connection::{self, ChainHandle, ChainTransport};
+use provider_chain::{decode_block_events, BlockEvent, BlockEventTx};
 use provider_storage::NonceStore;
 use sp_runtime::AccountId32;
 use std::future::Future;
@@ -332,11 +332,11 @@ impl ChainStateCoordinator {
         /// because killing a slow warp sync throws its progress away.
         const CONNECT_TIMEOUT: Duration = Duration::from_secs(300);
 
-        let handle = with_timeout(
-            "Connecting to the chain",
-            CONNECT_TIMEOUT,
-            chain_connection::connect(&self.transport),
-        )
+        let handle = with_timeout("Connecting to the chain", CONNECT_TIMEOUT, async {
+            chain_connection::connect(&self.transport)
+                .await
+                .map_err(Error::from)
+        })
         .await?;
         self.follow(handle).await
     }
@@ -458,7 +458,7 @@ impl ChainStateCoordinator {
 
             // Fan out the coordinator-relevant events. Send failures just mean
             // no coordinator is subscribed.
-            for event in chain_events::decode_block_events(&events, block_number) {
+            for event in decode_block_events(&events, block_number) {
                 let _ = self.events_tx.send(event);
             }
 
@@ -1424,12 +1424,12 @@ mod tests {
             )
         }
 
-        /// The `BucketMembershipChanged` bucket ids `chain_events::decode_block_events`
+        /// The `BucketMembershipChanged` bucket ids `decode_block_events`
         /// produces from `events`, in encounter order.
         fn membership_changed_bucket_ids(
             events: &subxt::events::Events<PolkadotConfig>,
         ) -> Vec<u64> {
-            chain_events::decode_block_events(events, 0)
+            decode_block_events(events, 0)
                 .into_iter()
                 .filter_map(|event| match event {
                     BlockEvent::BucketMembershipChanged { bucket_id } => Some(bucket_id),
@@ -1518,7 +1518,6 @@ mod tests {
                 .await
                 .expect("follow runs to stream end");
 
-            use crate::chain_events::BlockEvent;
             let mut changed_buckets = Vec::new();
             while let Ok(event) = events_rx.try_recv() {
                 if let BlockEvent::BucketMembershipChanged { bucket_id } = event {
@@ -1593,7 +1592,6 @@ mod tests {
             // The connection was published and the block fanned out, including
             // the statically-decoded ChallengeCreated from the block's events.
             assert!(chain_rx.borrow().is_some());
-            use crate::chain_events::BlockEvent;
             let mut saw_resubscribed = false;
             let mut saw_challenge = false;
             while let Ok(event) = events_rx.try_recv() {

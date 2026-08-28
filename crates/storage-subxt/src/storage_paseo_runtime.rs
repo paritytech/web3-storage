@@ -1283,6 +1283,12 @@ pub mod api {
             use super::root_mod;
             use super::runtime_types;
             #[doc = " Runtime API for the storage provider pallet."]
+            #[doc = ""]
+            #[doc = " v2 reshaped `ProviderInfoResponse` (`deregister_at`, `reputation`) and added"]
+            #[doc = " `challenge_candidates`. v3 reshaped `ChallengeResponse` around the embedded"]
+            #[doc = " `Commitment`/`ChunkLocation` (leaf-index binding). Declared explicitly so"]
+            #[doc = " callers can probe the version instead of decoding a shape that no longer"]
+            #[doc = " exists."]
             pub struct StorageProviderApi;
             impl StorageProviderApi {
                 #[doc = " Get provider information."]
@@ -1298,9 +1304,9 @@ pub mod api {
                         "provider_info",
                         (provider,),
                         [
-                            239u8, 251u8, 158u8, 49u8, 100u8, 13u8, 217u8, 238u8, 217u8, 47u8,
-                            161u8, 4u8, 87u8, 83u8, 144u8, 226u8, 166u8, 44u8, 155u8, 178u8, 10u8,
-                            13u8, 228u8, 125u8, 137u8, 4u8, 237u8, 58u8, 8u8, 53u8, 197u8, 83u8,
+                            59u8, 93u8, 49u8, 135u8, 15u8, 235u8, 52u8, 111u8, 25u8, 72u8, 77u8,
+                            27u8, 230u8, 4u8, 104u8, 85u8, 214u8, 72u8, 249u8, 51u8, 62u8, 208u8,
+                            211u8, 199u8, 44u8, 13u8, 186u8, 183u8, 42u8, 40u8, 236u8, 210u8,
                         ],
                     )
                 }
@@ -1318,9 +1324,9 @@ pub mod api {
                         "providers",
                         (offset, limit),
                         [
-                            97u8, 130u8, 175u8, 149u8, 151u8, 253u8, 160u8, 108u8, 35u8, 101u8,
-                            0u8, 209u8, 166u8, 33u8, 86u8, 45u8, 252u8, 236u8, 124u8, 151u8, 113u8,
-                            156u8, 174u8, 180u8, 9u8, 9u8, 149u8, 232u8, 121u8, 210u8, 41u8, 46u8,
+                            27u8, 184u8, 26u8, 232u8, 46u8, 165u8, 65u8, 136u8, 49u8, 108u8, 238u8,
+                            35u8, 106u8, 230u8, 66u8, 57u8, 58u8, 117u8, 21u8, 229u8, 44u8, 163u8,
+                            128u8, 204u8, 183u8, 58u8, 71u8, 22u8, 42u8, 207u8, 105u8, 189u8,
                         ],
                     )
                 }
@@ -1457,9 +1463,9 @@ pub mod api {
                         "challenges_at",
                         (block,),
                         [
-                            173u8, 97u8, 89u8, 253u8, 87u8, 109u8, 200u8, 3u8, 162u8, 165u8, 15u8,
-                            240u8, 136u8, 40u8, 220u8, 56u8, 21u8, 135u8, 15u8, 15u8, 169u8, 88u8,
-                            189u8, 153u8, 242u8, 199u8, 132u8, 162u8, 130u8, 85u8, 9u8, 3u8,
+                            154u8, 95u8, 170u8, 90u8, 0u8, 204u8, 25u8, 22u8, 51u8, 144u8, 22u8,
+                            158u8, 16u8, 192u8, 247u8, 57u8, 149u8, 25u8, 173u8, 162u8, 52u8, 26u8,
+                            128u8, 99u8, 238u8, 161u8, 150u8, 122u8, 41u8, 86u8, 212u8, 215u8,
                         ],
                     )
                 }
@@ -1476,9 +1482,9 @@ pub mod api {
                         "bucket_challenges",
                         (bucket_id,),
                         [
-                            74u8, 24u8, 86u8, 254u8, 75u8, 122u8, 176u8, 254u8, 51u8, 228u8, 125u8,
-                            9u8, 161u8, 85u8, 116u8, 218u8, 203u8, 129u8, 31u8, 81u8, 8u8, 209u8,
-                            180u8, 251u8, 9u8, 27u8, 217u8, 156u8, 143u8, 53u8, 1u8, 48u8,
+                            173u8, 82u8, 58u8, 215u8, 215u8, 51u8, 70u8, 252u8, 65u8, 53u8, 136u8,
+                            192u8, 11u8, 100u8, 233u8, 99u8, 137u8, 90u8, 29u8, 205u8, 246u8, 77u8,
+                            85u8, 248u8, 19u8, 242u8, 120u8, 126u8, 30u8, 119u8, 147u8, 168u8,
                         ],
                     )
                 }
@@ -1495,9 +1501,9 @@ pub mod api {
                         "provider_challenges",
                         (provider,),
                         [
-                            198u8, 162u8, 7u8, 225u8, 86u8, 110u8, 53u8, 138u8, 248u8, 47u8, 228u8,
-                            110u8, 141u8, 216u8, 213u8, 243u8, 18u8, 29u8, 229u8, 199u8, 114u8,
-                            128u8, 28u8, 44u8, 161u8, 75u8, 93u8, 55u8, 30u8, 192u8, 156u8, 229u8,
+                            233u8, 236u8, 31u8, 53u8, 51u8, 98u8, 26u8, 172u8, 75u8, 88u8, 80u8,
+                            163u8, 234u8, 88u8, 79u8, 177u8, 96u8, 238u8, 136u8, 201u8, 93u8, 77u8,
+                            81u8, 158u8, 139u8, 206u8, 223u8, 124u8, 61u8, 80u8, 34u8, 194u8,
                         ],
                     )
                 }
@@ -1514,10 +1520,10 @@ pub mod api {
                         "challenger_challenges",
                         (challenger,),
                         [
-                            72u8, 180u8, 154u8, 21u8, 162u8, 72u8, 30u8, 142u8, 74u8, 226u8, 211u8,
-                            175u8, 142u8, 30u8, 60u8, 144u8, 77u8, 137u8, 190u8, 61u8, 121u8,
-                            155u8, 213u8, 209u8, 159u8, 155u8, 195u8, 19u8, 153u8, 213u8, 123u8,
-                            75u8,
+                            116u8, 32u8, 143u8, 173u8, 164u8, 151u8, 69u8, 150u8, 43u8, 247u8,
+                            203u8, 13u8, 129u8, 153u8, 193u8, 177u8, 196u8, 111u8, 117u8, 134u8,
+                            89u8, 245u8, 199u8, 229u8, 212u8, 253u8, 87u8, 42u8, 212u8, 83u8,
+                            117u8, 224u8,
                         ],
                     )
                 }
@@ -1563,9 +1569,9 @@ pub mod api {
                         "find_matching_providers",
                         (requirements, limit),
                         [
-                            166u8, 24u8, 123u8, 132u8, 131u8, 106u8, 58u8, 240u8, 16u8, 44u8,
-                            105u8, 219u8, 209u8, 149u8, 4u8, 9u8, 205u8, 72u8, 36u8, 81u8, 51u8,
-                            11u8, 159u8, 46u8, 88u8, 43u8, 114u8, 212u8, 204u8, 100u8, 167u8, 92u8,
+                            13u8, 162u8, 123u8, 94u8, 185u8, 239u8, 230u8, 2u8, 215u8, 227u8, 43u8,
+                            215u8, 94u8, 153u8, 75u8, 67u8, 211u8, 110u8, 175u8, 70u8, 4u8, 174u8,
+                            24u8, 171u8, 250u8, 91u8, 164u8, 75u8, 65u8, 11u8, 179u8, 143u8,
                         ],
                     )
                 }
@@ -1588,10 +1594,45 @@ pub mod api {
                         "providers_with_capacity",
                         (bytes_needed, offset, limit),
                         [
-                            129u8, 122u8, 84u8, 248u8, 212u8, 51u8, 191u8, 3u8, 140u8, 218u8,
-                            138u8, 241u8, 140u8, 163u8, 7u8, 191u8, 221u8, 130u8, 220u8, 82u8,
-                            23u8, 202u8, 38u8, 246u8, 172u8, 130u8, 202u8, 222u8, 77u8, 114u8,
-                            240u8, 197u8,
+                            198u8, 45u8, 211u8, 229u8, 19u8, 115u8, 114u8, 197u8, 212u8, 66u8,
+                            144u8, 92u8, 53u8, 93u8, 216u8, 69u8, 212u8, 65u8, 174u8, 246u8, 42u8,
+                            133u8, 89u8, 56u8, 28u8, 90u8, 199u8, 4u8, 0u8, 251u8, 103u8, 12u8,
+                        ],
+                    )
+                }
+                #[doc = " Returns providers worth challenging, worst reputation first."]
+                #[doc = ""]
+                #[doc = " A provider qualifies if it holds at least one storage agreement and"]
+                #[doc = " its reputation is strictly below `max_reputation`. Each provider"]
+                #[doc = " appears once, paired with one of its buckets, so a caller challenges"]
+                #[doc = " it at most once per round."]
+                #[doc = ""]
+                #[doc = " Reputation runs from 0 to 100 (see [`reputation_score`])."]
+                #[doc = " `max_reputation` saturates outside that range instead of erroring:"]
+                #[doc = " `0` matches nothing, and any value above 100 disables the filter."]
+                #[doc = ""]
+                #[doc = " `limit` is clamped to [`MAX_CHALLENGE_CANDIDATES`]; it bounds the"]
+                #[doc = " response, not the underlying scan."]
+                pub fn challenge_candidates(
+                    &self,
+                    max_reputation: challenge_candidates::MaxReputation,
+                    limit: challenge_candidates::Limit,
+                ) -> ::subxt::runtime_apis::StaticPayload<
+                    (
+                        challenge_candidates::MaxReputation,
+                        challenge_candidates::Limit,
+                    ),
+                    challenge_candidates::output::Output,
+                > {
+                    ::subxt::runtime_apis::StaticPayload::new_static(
+                        "StorageProviderApi",
+                        "challenge_candidates",
+                        (max_reputation, limit),
+                        [
+                            243u8, 184u8, 243u8, 82u8, 59u8, 173u8, 247u8, 148u8, 229u8, 221u8,
+                            202u8, 63u8, 91u8, 139u8, 98u8, 71u8, 105u8, 131u8, 197u8, 129u8, 3u8,
+                            55u8, 145u8, 216u8, 162u8, 142u8, 58u8, 117u8, 55u8, 24u8, 106u8,
+                            169u8,
                         ],
                     )
                 }
@@ -1803,6 +1844,18 @@ pub mod api {
                         ::subxt::utils::AccountId32,
                         runtime_types::pallet_storage_provider::runtime_api::ProviderInfoResponse,
                     )>;
+                }
+            }
+            pub mod challenge_candidates {
+                use super::root_mod;
+                use super::runtime_types;
+                pub type MaxReputation = ::core::primitive::u8;
+                pub type Limit = ::core::primitive::u32;
+                pub mod output {
+                    use super::runtime_types;
+                    pub type Output = ::subxt::alloc::vec::Vec<
+                        runtime_types::pallet_storage_provider::runtime_api::ChallengeCandidate,
+                    >;
                 }
             }
             pub mod current_anchor_block {
@@ -3415,9 +3468,9 @@ pub mod api {
             .hash();
         runtime_metadata_hash
             == [
-                52u8, 129u8, 193u8, 16u8, 251u8, 144u8, 169u8, 37u8, 27u8, 18u8, 228u8, 82u8, 81u8,
-                173u8, 3u8, 179u8, 166u8, 254u8, 238u8, 203u8, 195u8, 229u8, 135u8, 225u8, 46u8,
-                140u8, 244u8, 25u8, 243u8, 58u8, 6u8, 74u8,
+                57u8, 193u8, 101u8, 23u8, 28u8, 105u8, 253u8, 229u8, 215u8, 123u8, 210u8, 134u8,
+                4u8, 41u8, 89u8, 160u8, 118u8, 231u8, 120u8, 168u8, 34u8, 4u8, 123u8, 38u8, 156u8,
+                74u8, 92u8, 21u8, 215u8, 252u8, 133u8, 89u8,
             ]
     }
     pub mod system {
@@ -20948,9 +21001,10 @@ pub mod api {
                         "Revive",
                         "EthBlockBuilderIR",
                         [
-                            71u8, 238u8, 147u8, 189u8, 43u8, 68u8, 7u8, 59u8, 65u8, 129u8, 195u8,
-                            104u8, 36u8, 47u8, 160u8, 177u8, 141u8, 216u8, 47u8, 58u8, 4u8, 214u8,
-                            89u8, 77u8, 42u8, 174u8, 103u8, 255u8, 95u8, 196u8, 25u8, 232u8,
+                            22u8, 188u8, 211u8, 103u8, 135u8, 171u8, 23u8, 29u8, 200u8, 248u8,
+                            177u8, 76u8, 194u8, 70u8, 120u8, 74u8, 254u8, 105u8, 211u8, 131u8,
+                            254u8, 73u8, 196u8, 76u8, 185u8, 26u8, 40u8, 16u8, 63u8, 150u8, 20u8,
+                            72u8,
                         ],
                     )
                 }
@@ -26576,6 +26630,7 @@ pub mod api {
                     Debug,
                     Eq,
                     PartialEq,
+                    codec :: Decode,
                 )]
                 #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
                 #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
@@ -26668,14 +26723,30 @@ pub mod api {
                 )]
                 #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
                 #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                pub struct ChallengeCandidate {
+                    pub bucket_id: ::core::primitive::u64,
+                    pub provider: ::subxt::alloc::vec::Vec<::core::primitive::u8>,
+                    pub stake: ::core::primitive::u128,
+                    pub challenges_received: ::core::primitive::u32,
+                    pub challenges_failed: ::core::primitive::u32,
+                    pub reputation: ::core::primitive::u8,
+                }
+                #[derive(
+                    :: subxt :: ext :: scale_decode :: DecodeAsType,
+                    :: subxt :: ext :: scale_encode :: EncodeAsType,
+                    Clone,
+                    Debug,
+                    Eq,
+                    PartialEq,
+                )]
+                #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
                 pub struct ChallengeResponse {
                     pub bucket_id: ::core::primitive::u64,
                     pub provider: ::subxt::alloc::vec::Vec<::core::primitive::u8>,
                     pub challenger: ::subxt::alloc::vec::Vec<::core::primitive::u8>,
-                    pub mmr_root: ::subxt::utils::H256,
-                    pub start_seq: ::core::primitive::u64,
-                    pub leaf_index: ::core::primitive::u64,
-                    pub chunk_index: ::core::primitive::u64,
+                    pub commitment: runtime_types::storage_primitives::Commitment,
+                    pub target: runtime_types::storage_primitives::ChunkLocation,
                     pub deadline: ::core::primitive::u32,
                     pub index: ::core::primitive::u16,
                     pub deposit: ::core::primitive::u128,
@@ -26750,6 +26821,8 @@ pub mod api {
                     pub challenges_failed: ::core::primitive::u32,
                     pub max_capacity: ::core::primitive::u64,
                     pub available_capacity: ::core::option::Option<::core::primitive::u64>,
+                    pub deregister_at: ::core::option::Option<::core::primitive::u32>,
+                    pub reputation: ::core::primitive::u8,
                 }
                 #[derive(
                     :: subxt :: ext :: scale_decode :: DecodeAsType,
@@ -31078,6 +31151,7 @@ pub mod api {
                 Debug,
                 Eq,
                 PartialEq,
+                codec :: Decode,
             )]
             #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
@@ -31153,6 +31227,7 @@ pub mod api {
                 Debug,
                 Eq,
                 PartialEq,
+                codec :: Decode,
             )]
             #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
@@ -31194,6 +31269,7 @@ pub mod api {
                 Debug,
                 Eq,
                 PartialEq,
+                codec :: Decode,
             )]
             #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]

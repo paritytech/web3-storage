@@ -755,6 +755,25 @@ pub struct CommitmentResponse {
     pub provider_signature: String,
 }
 
+impl CommitmentResponse {
+    #[cfg(test)]
+    pub(crate) fn new(
+        bucket_id: BucketId,
+        mmr_root: String,
+        start_seq: u64,
+        leaf_count: u64,
+        provider_signature: String,
+    ) -> Self {
+        Self {
+            bucket_id,
+            mmr_root,
+            start_seq,
+            leaf_count,
+            provider_signature,
+        }
+    }
+}
+
 #[derive(serde::Deserialize)]
 pub struct ExistsResponse {
     pub exists: Vec<String>,

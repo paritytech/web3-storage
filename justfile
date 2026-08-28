@@ -269,6 +269,10 @@ subxt-codegen URL=CHAIN_WS OUTPUT="crates/storage-subxt/src/storage_paseo_runtim
         --derive-for-type "bounded_collections::bounded_vec::BoundedVec=serde::Deserialize" \
         --derive-for-type "sp_runtime::MultiSignature=codec::Encode" \
         --derive-for-type "sp_runtime::MultiSignature=codec::Decode" \
+        --derive-for-type "pallet_storage_provider::pallet::StorageAgreement=codec::Decode" \
+        --derive-for-type "storage_primitives::ProviderRole=codec::Decode" \
+        --derive-for-type "storage_primitives::ReplicaSyncRecord=codec::Decode" \
+        --derive-for-type "storage_primitives::Commitment=codec::Decode" \
         | rustfmt --edition=2021 --emit=stdout >> "{{ OUTPUT }}"
     echo "Generated {{ OUTPUT }}"
 
