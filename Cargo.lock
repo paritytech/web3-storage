@@ -7228,6 +7228,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "provider-challenge"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "provider-chain",
+ "sp-core",
+ "sp-runtime",
+ "storage-primitives",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "provider-negotiation"
 version = "0.1.0"
 dependencies = [
@@ -8107,6 +8121,7 @@ checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
 name = "s3-client"
 version = "0.1.0"
 dependencies = [
+ "futures",
  "hex",
  "reqwest",
  "s3-primitives",
@@ -10126,6 +10141,7 @@ dependencies = [
  "parking_lot",
  "provider-auth",
  "provider-chain",
+ "provider-challenge",
  "provider-negotiation",
  "provider-storage",
  "reqwest",
