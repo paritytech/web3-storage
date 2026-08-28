@@ -5,13 +5,13 @@ authors.workspace = true
 edition.workspace = true
 license = "Apache-2.0"
 repository.workspace = true
-description = "Chain-state coordinator for provider nodes: keeps the node's view of its on-chain registration, pallet constants, anchor block, and nonce counter in sync"
+description = "Chain-state coordinator for provider nodes: keeps the node's view of on-chain state in sync"
 
 [dependencies]
 async-trait = { workspace = true }
 codec = { workspace = true, features = ["std"] }
 parking_lot = { workspace = true }
-provider-chain = { workspace = true }
+provider-chain = { workspace = true, features = ["connection", "decode"] }
 provider-storage = { workspace = true }
 serde = { workspace = true, features = ["std"] }
 sp-runtime = { workspace = true, features = ["std"] }
