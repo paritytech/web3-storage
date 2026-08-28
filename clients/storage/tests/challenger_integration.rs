@@ -93,7 +93,7 @@ async fn test_find_challenge_targets() {
     };
 
     let targets = challenger
-        .find_challenge_targets(10)
+        .find_challenge_targets(100, 10)
         .await
         .expect("find_challenge_targets should not error");
 
