@@ -997,18 +997,8 @@ fn remove_slashed_reindexes_snapshot_bitfield() {
         frame_system::Pallet::<Test>::set_block_number(1);
         let bucket_id = setup_three_primaries_snapshot();
 
-        // Slash provider 2's entire reserved stake to zero, then remove it.
-        Providers::<Test>::mutate(2, |maybe_provider| {
-            if let Some(provider) = maybe_provider {
-                let stake = provider.stake;
-                let (_, remaining) =
-                    <Balances as frame_support::traits::ReservableCurrency<u64>>::slash_reserved(
-                        &2, stake,
-                    );
-                assert_eq!(remaining, 0, "entire stake should have been slashed");
-                provider.stake = 0;
-            }
-        });
+        // Slash provider 2's entire held stake to zero, then remove it.
+        super::slash_provider_stake(2);
 
         assert_ok!(StorageProvider::remove_slashed(
             RuntimeOrigin::signed(5),

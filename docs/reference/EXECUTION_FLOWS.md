@@ -147,8 +147,8 @@ sequenceDiagram
     C->>C: ensure!(stake >= MinProviderStake)
     C->>C: ensure!(public_key is valid format)
 
-    C->>B: Currency::reserve(provider, stake)
-    Note over B: Lock stake tokens
+    C->>B: hold(HoldReason::ProviderStake, provider, stake)
+    Note over B: Stake held under its own reason,<br/>separately from any escrow or deposit<br/>on the same account
 
     C->>C: Create ProviderInfo
     Note right of C: ProviderInfo {<br/>multiaddr, <br/> public_key,<br/> stake,<br/> committed_bytes: 0, <br/> settings: Default, <br/>stats: Empty <br/>}<br/>
@@ -226,8 +226,8 @@ sequenceDiagram
     C->>C: payment = price_per_byte × max_bytes × duration
     C->>C: ensure!(payment <= max_payment)
 
-    Note over C: Reserve payment
-    C->>B: Currency::reserve(admin, payment)
+    Note over C: Escrow payment
+    C->>B: hold(HoldReason::AgreementPayment, admin, payment)
 
     Note over C: Create pending request
     C->>C: AgreementRequests::insert((bucket_id, provider), request)
@@ -519,11 +519,11 @@ sequenceDiagram
         Note over C: Provider failed to respond!
 
         C->>C: Slash provider's entire stake
-        C->>B: Currency::slash_reserved(provider, stake)
-        C->>B: resolve_creating(Treasury, slashed)
+        C->>B: slash(HoldReason::ProviderStake, provider, stake)
+        C->>B: resolve(Treasury, credit)
 
         C->>C: Refund challenger deposit (no reward)
-        C->>B: Currency::unreserve(challenger, deposit)
+        C->>B: release(HoldReason::ChallengeDeposit, challenger, deposit)
 
         C->>C: Update provider + challenger stats
 

@@ -2,6 +2,25 @@
 
 Quick reference for all available extrinsics in the storage provider pallet ([crates/pallets/storage-provider/src/lib.rs](../../crates/pallets/storage-provider/src/lib.rs)).
 
+## How funds are immobilised
+
+Funds are **held** via `fungible::MutateHold` under a tagged reason, never
+reserved:
+
+| `HoldReason` | Put up by | Held on | Released when |
+| --- | --- | --- | --- |
+| `ProviderStake` | provider | `registerProvider`, `addStake` | `completeDeregister`, or slashed on a failed challenge |
+| `AgreementPayment` | agreement owner | agreement creation, `topUpAgreement`, `extendAgreement`, `topUpReplicaSyncBalance` | settlement, which pays the provider and refunds the rest |
+| `ChallengeDeposit` | challenger | `challenge*` | challenge resolution, minus the provider's response-cost share |
+
+Two things to know when reading balances:
+
+- The three claims are independent even on one account; releasing or slashing
+  one cannot draw on another. All still count toward `reservedBalance`.
+- Escrow sits on the agreement **owner**, not whoever paid. The permissionless
+  paths move a third party's funds to the owner first, because settlement pays
+  out of the owner's hold.
+
 ## Provider Management
 
 ### `registerProvider`
@@ -36,7 +55,7 @@ stake: 1000000000000000  (1000 tokens, minimum required)
 Increase the provider's locked stake.
 
 **Parameters:**
-- `amount`: `BalanceOf<T>` - additional amount to reserve
+- `amount`: `BalanceOf<T>` - additional amount to hold under `ProviderStake`
 
 **Example:**
 ```
@@ -50,7 +69,7 @@ amount: 50000000000
 
 ### `deregisterProvider`
 
-**Step 1 of a two-step exit.** Announces deregistration: forces `acceptingPrimary` and `acceptingExtensions` to `false`, stamps `deregister_at = now + DeregisterAnnouncementPeriod`. Stake stays reserved and the provider remains slashable. Settings updates are blocked during the announcement window.
+**Step 1 of a two-step exit.** Announces deregistration: forces `acceptingPrimary` and `acceptingExtensions` to `false`, stamps `deregister_at = now + DeregisterAnnouncementPeriod`. Stake stays held and the provider remains slashable. Settings updates are blocked during the announcement window.
 
 **Parameters:** none
 
@@ -142,7 +161,7 @@ multiaddr: /ip4/203.0.113.10/tcp/3333
 
 ### `completeDeregister`
 
-**Step 2 of the two-step exit.** Unreserves stake and removes the provider record.
+**Step 2 of the two-step exit.** Releases the `ProviderStake` hold and removes the provider record.
 
 **Parameters:** none
 
@@ -354,7 +373,7 @@ Request a **replica** agreement (provider must have `replicaSyncPrice: Some(_)`)
 - `duration`: `BlockNumber` - agreement duration
 - `maxPayment`: `Balance` - safety cap; must cover `pricePerByte × maxBytes × duration`
 - `replicaParams`: `ReplicaRequestParams<Balance, BlockNumber>`
-  - `syncBalance`: `Balance` - funds reserved up-front for future sync payments
+  - `syncBalance`: `Balance` - funds escrowed up-front for future sync payments
   - `minSyncInterval`: `BlockNumber` - rate-limit between confirmed syncs
 
 **Example:**
@@ -371,7 +390,7 @@ replicaParams: {
 }
 ```
 
-Funds reserved on request: storage payment **plus** `syncBalance`. The request expires if not accepted within `RequestTimeout`.
+Funds held under `AgreementPayment` on request: storage payment **plus** `syncBalance`. The request expires if not accepted within `RequestTimeout`.
 
 **No syncability check:** a private bucket with no replicas is still accepted—an unfulfillable agreement is the funder's own risk. Rationale: design doc, "No on-chain gate on replica creation".
 
@@ -435,7 +454,7 @@ bucketId: 0
 
 ### `rejectAgreement`
 
-Provider rejects a pending request; all reserved funds (payment + sync balance) return to the requester.
+Provider rejects a pending request; the whole `AgreementPayment` hold (payment + sync balance) is released back to the requester.
 
 **Parameters:**
 - `bucketId`: `BucketId` (u64)
@@ -471,7 +490,7 @@ provider: 5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY
 
 ### `extendAgreement`
 
-Extend an active agreement. Settles elapsed time at the **old** rate, then locks new payment at the provider's **current** rate for the additional duration.
+Extend an active agreement. Settles elapsed time at the **old** rate straight out of escrow, then holds new payment at the provider's **current** rate for the additional duration. When a third party extends, their funds are escrowed on the agreement owner.
 
 **Parameters:**
 - `bucketId`: `BucketId` (u64)
@@ -785,7 +804,7 @@ _signature: 0x...
 
 ### `topUpReplicaSyncBalance`
 
-Reserve additional funds for future sync payments on a replica agreement. Permissionless.
+Escrow additional funds for future sync payments on a replica agreement. Permissionless — a third party may pay, but the funds are held on the agreement owner.
 
 **Parameters:**
 - `bucketId`: `BucketId` (u64)
@@ -912,7 +931,7 @@ challengeReplica(bucketId, provider, leafIndex, chunkIndex)
 ```
 1. deregisterProvider()        // step 1: announce (committed_bytes must be 0)
 2. // wait DeregisterAnnouncementPeriod blocks
-3. completeDeregister()        // step 2: unreserve stake, drop record
+3. completeDeregister()        // step 2: release stake hold, drop record
    // or change your mind:
    cancelDeregister()          // restores acceptingPrimary/Extensions
 ```
