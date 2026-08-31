@@ -78,7 +78,7 @@ impl<T: Config> Pallet<T> {
         Ok(())
     }
 
-    /// P0: config timing invariants. Mirror of `integrity_test`, but run
+    /// Config timing invariants. Mirror of `integrity_test`, but run
     /// against live storage so a `setStorage`/migration mutation is caught.
     fn check_timing_config() -> Result<(), TryRuntimeError> {
         ensure!(
@@ -92,7 +92,7 @@ impl<T: Config> Pallet<T> {
         Ok(())
     }
 
-    /// P1.5: no unresolved challenge sits at or below the swept cursor. The
+    /// No unresolved challenge sits at or below the swept cursor. The
     /// `on_initialize` sweep drains every deadline key up to its cursor (parking
     /// one below a key it only partly drained), and `create_challenge` always
     /// sets `deadline = now + ChallengeTimeout`, above the cursor — so anything
@@ -111,7 +111,7 @@ impl<T: Config> Pallet<T> {
         Ok(())
     }
 
-    /// P1.1: each provider's `committed_bytes` equals the sum of `max_bytes`
+    /// Each provider's `committed_bytes` equals the sum of `max_bytes`
     /// over all its storage agreements (the accounting that gates capacity and
     /// required stake).
     fn check_committed_bytes() -> Result<(), TryRuntimeError> {
@@ -143,9 +143,9 @@ impl<T: Config> Pallet<T> {
         Ok(())
     }
 
-    /// P1.3: per bucket, `primary_providers` has no duplicates and equals
+    /// Per bucket, `primary_providers` has no duplicates and equals
     /// exactly the set of `Primary`-role agreement providers.
-    /// P1.4: `MemberBuckets` is the correct and complete reverse index of
+    /// `MemberBuckets` is the correct and complete reverse index of
     /// bucket membership, with no duplicates.
     fn check_buckets_and_membership() -> Result<(), TryRuntimeError> {
         // Decode the reverse index once, up front, rejecting duplicate bucket
@@ -169,7 +169,7 @@ impl<T: Config> Pallet<T> {
         }
 
         for (bucket_id, bucket) in Buckets::<T>::iter() {
-            // P1.3
+            // No duplicates, and exactly the Primary-role agreement providers.
             let declared: BTreeSet<T::AccountId> =
                 bucket.primary_providers.iter().cloned().collect();
             ensure!(
@@ -185,7 +185,7 @@ impl<T: Config> Pallet<T> {
                 "primary_providers does not match Primary-role agreements for bucket"
             );
 
-            // P1.4 (forward): every member is indexed under MemberBuckets.
+            // Forward: every member is indexed under MemberBuckets.
             for member in bucket.members.iter() {
                 ensure!(
                     member_index
@@ -196,7 +196,7 @@ impl<T: Config> Pallet<T> {
             }
         }
 
-        // P1.4 (reverse): every reverse-index entry is a real membership.
+        // Reverse: every reverse-index entry is a real membership.
         for (account, buckets) in member_index.iter() {
             for bucket_id in buckets {
                 let bucket = Buckets::<T>::get(bucket_id)
