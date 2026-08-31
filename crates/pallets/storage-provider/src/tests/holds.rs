@@ -188,3 +188,21 @@ fn third_party_extension_escrows_on_the_owner() {
         );
     });
 }
+
+#[test]
+fn try_state_catches_bookkeeping_with_no_funds_behind_it() {
+    new_test_ext().execute_with(|| {
+        register_provider(2, 200);
+        assert_ok!(StorageProvider::do_try_state());
+
+        // Inflate the recorded stake without holding anything more: exactly the
+        // drift that an opaque `reserved` figure could not have detected.
+        Providers::<Test>::mutate(2, |maybe_provider| {
+            if let Some(info) = maybe_provider {
+                info.stake = 500;
+            }
+        });
+
+        assert!(StorageProvider::do_try_state().is_err());
+    });
+}

@@ -11,8 +11,8 @@
 
 use crate::*;
 use alloc::collections::{BTreeMap, BTreeSet};
-use frame_support::pallet_prelude::*;
-use sp_runtime::TryRuntimeError;
+use frame_support::{pallet_prelude::*, traits::fungible::InspectHold};
+use sp_runtime::{traits::Saturating, TryRuntimeError};
 use storage_primitives::{BucketId, ProviderRole};
 
 impl<T: Config> Pallet<T> {
@@ -21,6 +21,60 @@ impl<T: Config> Pallet<T> {
         Self::check_committed_bytes()?;
         Self::check_buckets_and_membership()?;
         Self::check_challenge_sweep_cursor()?;
+        Self::check_holds_back_bookkeeping()?;
+        Ok(())
+    }
+
+    /// What the pallet records as immobilised is exactly what is held, under
+    /// the right reason, on the right account.
+    ///
+    /// Exact in both directions: each reason has one producer, and the sums
+    /// aggregate per account. A record with no funds behind it and a hold with
+    /// no record behind it are both bugs; only `==` catches the second.
+    fn check_holds_back_bookkeeping() -> Result<(), TryRuntimeError> {
+        for (provider, info) in Providers::<T>::iter() {
+            let held = T::Currency::balance_on_hold(&HoldReason::ProviderStake.into(), &provider);
+            ensure!(
+                held == info.stake,
+                "ProviderStake hold does not match the recorded provider stake"
+            );
+        }
+
+        let mut escrow_by_owner: BTreeMap<T::AccountId, BalanceOf<T>> = BTreeMap::new();
+        for (_bucket_id, _provider, agreement) in StorageAgreements::<T>::iter() {
+            // A replica's unspent sync balance is escrowed alongside the
+            // storage fee, under the same reason and on the same account.
+            let mut owed = agreement.payment_locked;
+            if let ProviderRole::Replica { sync_balance, .. } = agreement.role {
+                owed = owed.saturating_add(sync_balance);
+            }
+            let total = escrow_by_owner.entry(agreement.owner).or_default();
+            *total = total.saturating_add(owed);
+        }
+        for (owner, expected) in escrow_by_owner {
+            let held = T::Currency::balance_on_hold(&HoldReason::AgreementPayment.into(), &owner);
+            ensure!(
+                held == expected,
+                "AgreementPayment hold does not match the recorded agreement escrow"
+            );
+        }
+
+        let mut deposit_by_challenger: BTreeMap<T::AccountId, BalanceOf<T>> = BTreeMap::new();
+        for (_deadline, _index, challenge) in Challenges::<T>::iter() {
+            let total = deposit_by_challenger
+                .entry(challenge.challenger)
+                .or_default();
+            *total = total.saturating_add(challenge.deposit);
+        }
+        for (challenger, expected) in deposit_by_challenger {
+            let held =
+                T::Currency::balance_on_hold(&HoldReason::ChallengeDeposit.into(), &challenger);
+            ensure!(
+                held == expected,
+                "ChallengeDeposit hold does not match the recorded challenge deposits"
+            );
+        }
+
         Ok(())
     }
 
