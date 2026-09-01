@@ -234,11 +234,11 @@ pub mod pallet {
         #[pallet::constant]
         type ChallengeTimeout: Get<BlockNumberFor<Self>>;
 
-        /// Deposit required to open a challenge. Reserved from the challenger
+        /// Deposit required to open a challenge. Held from the challenger
         /// on `challenge_*` and refunded (minus a response-time-proportional
-        /// cost share) when the provider successfully defends, or returned
-        /// in full alongside a 10% slash reward when the provider is
-        /// slashed. Sets the floor on challenge spam economics — too low
+        /// cost share paid to the provider) when the provider successfully
+        /// defends, or returned in full — with no reward — when the provider
+        /// is slashed. Sets the floor on challenge spam economics — too low
         /// and griefing is free; too high and legitimate challenges become
         /// unaffordable.
         #[pallet::constant]
@@ -1796,6 +1796,8 @@ pub mod pallet {
         }
 
         /// Extend agreement duration (immediate, no provider approval needed).
+        /// Only while the agreement is live — an expired one settles via
+        /// `end_agreement` / `claim_expired_agreement`.
         ///
         /// This:
         /// 1. Settles current period: releases payment to provider for elapsed time
@@ -1859,21 +1861,27 @@ pub mod pallet {
                     }
                     // If price same or decreased, anyone can extend (permissionless persistence)
 
-                    // Settle current period
-                    let elapsed = anchor_block.saturating_sub(agreement.started_at);
-                    let _remaining = if anchor_block < agreement.expires_at {
-                        agreement.expires_at.saturating_sub(anchor_block)
-                    } else {
-                        Zero::zero()
-                    };
+                    // An expired agreement settles via `end_agreement` /
+                    // `claim_expired_agreement`; extending it here would pay
+                    // the provider for time it was under no obligation.
+                    ensure!(
+                        anchor_block < agreement.expires_at,
+                        Error::<T>::AgreementExpired
+                    );
 
-                    // Calculate payment for elapsed time at old rate
+                    // Settle the elapsed period at the old rate, capped at
+                    // this agreement's escrow: a mid-flight top-up raises
+                    // `max_bytes` without back-paying elapsed time, and the
+                    // hold aggregates per owner, so an uncapped settle could
+                    // drain other agreements' escrow.
+                    let elapsed = anchor_block.saturating_sub(agreement.started_at);
                     let elapsed_payment = if !elapsed.is_zero() {
                         Self::calculate_payment(
                             agreement.price_per_byte,
                             agreement.max_bytes,
                             elapsed,
                         )?
+                        .min(agreement.payment_locked)
                     } else {
                         Zero::zero()
                     };

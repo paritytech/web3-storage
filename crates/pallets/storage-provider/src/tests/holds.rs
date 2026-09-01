@@ -311,3 +311,51 @@ fn bucket_cleanup_releases_the_replica_sync_balance() {
         assert_ok!(StorageProvider::do_try_state());
     });
 }
+
+#[test]
+fn extend_after_top_up_cannot_settle_more_than_the_escrow() {
+    new_test_ext().execute_with(|| {
+        // Owner 1's two escrows share one AgreementPayment hold.
+        priced_provider(2, 200);
+        priced_provider(3, 200);
+        let bucket_a = setup_agreement(2, 1, 20, 100);
+        let bucket_b = setup_agreement(3, 1, 20, 100);
+        let locked_b = StorageAgreements::<Test>::get(bucket_b, 3)
+            .unwrap()
+            .payment_locked;
+
+        // A mid-flight top-up raises max_bytes without back-paying elapsed
+        // time, so the raw elapsed payment later exceeds payment_locked.
+        run_to_block(60);
+        assert_ok!(StorageProvider::top_up_agreement(
+            RuntimeOrigin::signed(1),
+            bucket_a,
+            2,
+            30,
+            10_000,
+        ));
+        let locked_a = StorageAgreements::<Test>::get(bucket_a, 2)
+            .unwrap()
+            .payment_locked;
+
+        run_to_block(99);
+        let provider_free_before = Balances::free_balance(2);
+        assert_ok!(StorageProvider::extend_agreement(
+            RuntimeOrigin::signed(1),
+            bucket_a,
+            2,
+            50,
+            10_000,
+        ));
+
+        // The provider earned at most what agreement A had escrowed…
+        assert_eq!(Balances::free_balance(2), provider_free_before + locked_a);
+        // …and the hold still matches the bookkeeping, B's escrow intact.
+        let after = StorageAgreements::<Test>::get(bucket_a, 2).unwrap();
+        assert_eq!(
+            held(HoldReason::AgreementPayment, 1),
+            after.payment_locked + locked_b
+        );
+        assert_ok!(StorageProvider::do_try_state());
+    });
+}

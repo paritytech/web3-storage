@@ -29,8 +29,11 @@ impl<T: Config> Pallet<T> {
     /// the right reason, on the right account.
     ///
     /// Exact in both directions: each reason has one producer, and the sums
-    /// aggregate per account. A record with no funds behind it and a hold with
-    /// no record behind it are both bugs; only `==` catches the second.
+    /// aggregate per account. A record with no funds behind it and an
+    /// under-released hold are both bugs; only `==` catches the second.
+    /// Blind spot: accounts are visited via the pallet's records (holds
+    /// cannot be enumerated), so a hold on an account with no records
+    /// escapes the check.
     fn check_holds_back_bookkeeping() -> Result<(), TryRuntimeError> {
         for (provider, info) in Providers::<T>::iter() {
             let held = T::Currency::balance_on_hold(&HoldReason::ProviderStake.into(), &provider);

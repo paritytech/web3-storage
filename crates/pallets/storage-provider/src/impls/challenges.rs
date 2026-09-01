@@ -243,7 +243,9 @@ impl<T: Config> Pallet<T> {
             // Update provider stats
             provider_info.stats.challenges_failed =
                 provider_info.stats.challenges_failed.saturating_add(1);
-            provider_info.stake = Zero::zero();
+            // BestEffort slash: record what actually moved, so a residual
+            // hold can never go unaccounted (mirrors `respond_to_challenge`).
+            provider_info.stake = provider_info.stake.saturating_sub(actually_slashed);
 
             Providers::<T>::insert(&challenge.provider, provider_info);
 

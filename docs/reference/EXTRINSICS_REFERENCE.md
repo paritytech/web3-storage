@@ -7,7 +7,7 @@ Quick reference for all available extrinsics in the storage provider pallet ([cr
 Funds are **held** via `fungible::MutateHold` under a tagged reason, never
 reserved:
 
-| `HoldReason` | Put up by | Held on | Released when |
+| `HoldReason` | Put up by | Placed in | Released when |
 | --- | --- | --- | --- |
 | `ProviderStake` | provider | `registerProvider`, `addStake` | `completeDeregister`, or slashed on a failed challenge |
 | `AgreementPayment` | agreement owner | agreement creation, `topUpAgreement`, `extendAgreement`, `topUpReplicaSyncBalance` | settlement, which pays the provider and returns the rest — including a replica's unspent sync balance — to the owner |
@@ -373,7 +373,7 @@ is released back to the owner.
 
 ### `extendAgreement`
 
-Extend an active agreement. Settles elapsed time at the **old** rate straight out of escrow, then holds new payment at the provider's **current** rate for the additional duration. When a third party extends, their funds are escrowed on the agreement owner.
+Extend a **live** agreement (`AgreementExpired` once past `expires_at` — settlement then goes through `endAgreement` / `claimExpiredAgreement`). Settles elapsed time at the **old** rate straight out of escrow, capped at the agreement's remaining escrow, then holds new payment at the provider's **current** rate for the additional duration. When a third party extends, their funds are escrowed on the agreement owner.
 
 **Parameters:**
 - `bucketId`: `BucketId` (u64)
