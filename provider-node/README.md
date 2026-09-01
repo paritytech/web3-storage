@@ -26,6 +26,17 @@ Every signature leaves the node as a SCALE-encoded `MultiSignature`,
 `0x`-prefixed hex, so the scheme tag travels with it (e.g.
 `0x01<64-byte sr25519 sig>`, `0x02<65-byte ecdsa sig>`).
 
+## Storage backend
+
+`--storage-backend` picks the storage engine (default `rocksdb`). Chunks, MMR
+state and the nonce counter go under `--storage-path` (`./provider-data`, or
+`$STORAGE_PATH`) and survive a restart — a provider that forgot its data could
+not answer challenges for buckets it still has agreements for.
+
+Writes are not fsynced (RocksDB's default `WriteOptions`), so what they survive
+is a clean process restart, not a power loss or kernel panic. `DiskNonceStore`
+documents what that costs the nonce counter.
+
 ## Authentication
 
 Authentication is always enforced: every mutating Layer-0 endpoint (`PUT
@@ -60,6 +71,20 @@ The recovered public key is mapped to the bucket's on-chain role
 `Writer`, and pruning (`POST /delete`) needs `Admin`. The `timestamp` must be
 within the configured skew window of the provider's clock or the request is
 rejected as expired.
+
+Bucket roles are cached, not read fresh on every request. A membership change
+takes effect on the first request after the finalized block that carries it.
+A feed that lags or reconnects invalidates every cached bucket immediately,
+rather than waiting on the TTL; only a feed that stops running entirely (no
+chain-state coordinator) falls back to `--auth-cache-ttl` (default 30s). If
+the chain is unreachable when a lookup needs to refetch, the cached member
+set is still served, but only for up to `--auth-max-stale` (default 5
+minutes) - past that, the request is refused with `503`.
+
+Because any keypair can ask about any bucket id, the cache is also capped at
+`--auth-cache-max-entries` buckets (default 10,000), and entries are removed
+rather than left stale: a member set at the stale bound, an empty one already
+at the TTL. Eviction costs nothing but a re-resolve on the next request.
 
 ## Test
 

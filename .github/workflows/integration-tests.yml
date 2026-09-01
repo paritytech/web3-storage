@@ -23,6 +23,8 @@ env:
   # the Build job compiles and uploads.
   INTEGRATION_TEST_RUNTIME: web3-storage-paseo
 
+# Every provider is launched through .github/actions/start-provider. The e2e job
+# passes no --storage-backend, so the run also asserts the binary's default.
 jobs:
   set-image:
     uses: ./.github/workflows/set-image.yml
@@ -40,7 +42,7 @@ jobs:
           persist-credentials: false
       # paths-filter has no diff base on merge_group; run the full suite there.
       - if: github.event_name != 'merge_group'
-        uses: dorny/paths-filter@7b450fff21473bca461d4b92ce414b9d0420d706 # v3
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v3
         id: filter
         with:
           filters: |
@@ -73,7 +75,7 @@ jobs:
         run: cat .github/env >> $GITHUB_ENV
 
       - name: Rust cache
-        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
           shared-key: "integration-tests-build"
           save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev' }}
@@ -113,7 +115,9 @@ jobs:
   # ── Zombienet smoke test (FS + S3) ────────────────────────────────────────
   # Runs Layer 1 FS and S3 demos on a real relay-chain + parachain (zombienet)
   # to validate production-like topology. Single runtime (web3-storage-paseo).
-  # Layer 0 coverage is handled comprehensively by e2e-integration-tests.
+  # Layer 0 breadth is handled comprehensively by e2e-integration-tests.
+  #
+  # Pins the backend explicitly; the other jobs take the binary default.
   integration-tests:
     name: Zombienet Smoke Test
     runs-on: parity-large
@@ -135,7 +139,7 @@ jobs:
       # it also lands before the artifact download so the cached target/ can't
       # clobber it. save-if false — only the build job writes this cache.
       - name: Rust cache
-        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
           shared-key: "integration-tests-build"
           save-if: false
@@ -204,15 +208,14 @@ jobs:
       - name: Wait for parachain blocks
         uses: ./.github/actions/wait-for-parachain
 
-      - name: Start provider (inmemory) and wait for health
-        run: |
-          echo "//Alice" > /tmp/alice-key && chmod 600 /tmp/alice-key
-          nohup ./target/release/storage-provider-node \
-            --keyfile /tmp/alice-key --storage-mode inmemory \
-            --bind-addr 0.0.0.0:3333 --chain-rpc ws://127.0.0.1:2222 > /tmp/provider-inmemory.log 2>&1 &
-
-      - name: Wait for provider health
-        uses: ./.github/actions/wait-for-provider-health
+      # One provider for all three demos: the L0 demo registers //Alice on-chain
+      # and the L1 demos reuse that registration, on the justfile's default
+      # PROVIDER_URL.
+      - name: Start provider (rocksdb)
+        uses: ./.github/actions/start-provider
+        with:
+          backend: rocksdb
+          label: rocksdb
 
       - name: Run L0 demo
         run: just demo
@@ -222,6 +225,14 @@ jobs:
 
       - name: Run S3 integration test
         run: just drain-tx-pool-then s3-demo-ci
+
+      # Second provider (port 3433) following the same chain through the
+      # embedded smoldot light client; passes once /info reports the on-chain
+      # registration synced via light-client reads. Runs last because it signs
+      # with the same //Alice key as the RPC provider and may sync its own
+      # multiaddr on chain, which the demos above must not observe.
+      - name: Run light-client transport e2e
+        run: bash scripts/test-light-client.sh
 
       - name: Stop services
         if: always()
@@ -237,12 +248,14 @@ jobs:
           name: zombienet-smoke-test-logs
           path: |
             /tmp/zombienet.log
-            /tmp/provider.log
+            /tmp/provider-*.log
+            /tmp/light-client-provider.*
             /tmp/zombie-*/*.log
             /tmp/zombie-*/**/*.log
 
   # ── E2E test suite ──────────────────────────────────────────────────────────
-  # All PAPI E2E workflows against a single inmemory provider (web3-storage-paseo
+  # All PAPI E2E workflows against a single provider started with no
+  # --storage-backend, i.e. on the binary's default backend (web3-storage-paseo
   # only). Consumes the shared build artifact (provider binary + wasm) instead of
   # rebuilding — the chain-spec script's cargo build is a cache no-op. JS coverage
   # (c8) is collected here; Rust coverage (pallet + provider) is handled by the
@@ -281,7 +294,7 @@ jobs:
       # Before the download so the cached target/ can't clobber it. save-if
       # false — only the build job writes this cache.
       - name: Rust cache
-        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
           shared-key: "integration-tests-build"
           save-if: false
@@ -334,15 +347,13 @@ jobs:
       - name: Wait for parachain blocks
         uses: ./.github/actions/wait-for-parachain
 
-      - name: Start provider (inmemory)
-        run: |
-          echo "//Alice" > /tmp/alice-key && chmod 600 /tmp/alice-key
-          nohup ./target/release/storage-provider-node \
-            --keyfile /tmp/alice-key --storage-mode inmemory \
-            --bind-addr 0.0.0.0:3333 --chain-rpc ws://127.0.0.1:2222 > /tmp/provider.log 2>&1 &
-
-      - name: Wait for provider health
-        uses: ./.github/actions/wait-for-provider-health
+      # No --storage-backend on purpose: the deepest suite runs whatever the binary
+      # defaults to, so a change to that default is caught here.
+      - name: Start provider (binary default backend)
+        uses: ./.github/actions/start-provider
+        with:
+          label: default
+          auth-cache-max-entries: "64"
 
       # The tracked metadata snapshot in packages/papi is the single descriptor
       # source for the whole workspace (UIs, sdk, examples). Re-fetch metadata
@@ -452,7 +463,7 @@ jobs:
           name: e2e-integration-test-logs
           path: |
             /tmp/omni-node.log
-            /tmp/provider.log
+            /tmp/provider-*.log
 
   # ── Smart-contract demos (dev mode) ──────────────────────────────────────────
   # Runs all SC demos on a fast dev-mode chain (2s blocks, instant finality).
@@ -478,7 +489,7 @@ jobs:
       # it also lands before the artifact download so the cached target/ can't
       # clobber it. save-if false — only the build job writes this cache.
       - name: Rust cache
-        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
           shared-key: "integration-tests-build"
           save-if: false
@@ -566,15 +577,10 @@ jobs:
         with:
           log-file: /tmp/omni-node.log
 
-      - name: Start provider (inmemory) and wait for health
-        run: |
-          echo "//Alice" > /tmp/alice-key && chmod 600 /tmp/alice-key
-          nohup ./target/release/storage-provider-node \
-            --keyfile /tmp/alice-key --storage-mode inmemory \
-            --bind-addr 0.0.0.0:3333 --chain-rpc ws://127.0.0.1:2222 > /tmp/provider.log 2>&1 &
-
-      - name: Wait for provider health
-        uses: ./.github/actions/wait-for-provider-health
+      - name: Start provider
+        uses: ./.github/actions/start-provider
+        with:
+          label: sc
 
       - name: Run smart-contract end-to-end demo
         run: just sc-demo "http://127.0.0.1:3333" "//Alice" "//Bob"
@@ -602,12 +608,12 @@ jobs:
           name: sc-integration-test-logs
           path: |
             /tmp/omni-node.log
-            /tmp/provider.log
+            /tmp/provider-*.log
 
   # ── UI Playwright e2e ─────────────────────────────────────────────────────
   # Drive / console / provider UIs (Vite dev servers) exercised against a
   # standalone paseo dev chain (omni-node, 2s blocks, no relay chain) + a
-  # single inmemory provider. Like the integration-tests job, it consumes the
+  # single provider. Like the integration-tests job, it consumes the
   # prebuilt `build` artifact (provider binary + runtime wasm) instead of
   # rebuilding: the chain-spec script's `cargo build` becomes a near-no-op
   # against the warm integration-tests-build cache. The UIs are served by Vite
@@ -645,7 +651,7 @@ jobs:
       # the artifact download so the cached target/ can't clobber the freshly
       # downloaded provider + wbuild. save-if false — only the build job writes it.
       - name: Rust cache
-        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
           shared-key: "integration-tests-build"
           save-if: false
@@ -697,15 +703,10 @@ jobs:
       - name: Wait for parachain blocks
         uses: ./.github/actions/wait-for-parachain
 
-      - name: Start provider (Alice, inmemory)
-        run: |
-          echo "//Alice" > /tmp/alice-key && chmod 600 /tmp/alice-key
-          nohup ./target/release/storage-provider-node \
-            --keyfile /tmp/alice-key --storage-mode inmemory \
-            --bind-addr 0.0.0.0:3333 --chain-rpc ws://127.0.0.1:2222 > /tmp/provider.log 2>&1 &
-
-      - name: Wait for provider health
-        uses: ./.github/actions/wait-for-provider-health
+      - name: Start provider (Alice)
+        uses: ./.github/actions/start-provider
+        with:
+          label: ui
 
       - name: drive-ui e2e
         env:
@@ -742,7 +743,7 @@ jobs:
           name: ui-integration-test-logs
           path: |
             /tmp/omni-node.log
-            /tmp/provider.log
+            /tmp/provider-*.log
 
   # ── Coverage gate ─────────────────────────────────────────────────────────
   # On PRs: restores the cached JS coverage baseline from main/dev, downloads

@@ -10,15 +10,12 @@
 //! - Syncing data between providers (for replicas)
 
 pub mod api;
-pub mod auth;
-pub mod chain_connection;
-pub mod chain_events;
-pub mod chain_state_coordinator;
-pub mod challenge_responder;
+pub mod challenge_proofs;
 pub mod cli;
 pub mod command;
 pub mod error;
 pub mod fs_api;
+pub mod membership;
 pub mod negotiate;
 pub mod replica_sync;
 pub mod replica_sync_coordinator;
@@ -27,17 +24,22 @@ pub(crate) mod subxt_client;
 pub mod types;
 
 pub use api::create_router;
-pub use chain_state_coordinator::{
-    is_relevant_provider_event, refresh_if_relevant_event, refresh_provider_state, sync_constants,
-    ChainState, ChainStateChainClient, ChainStateCoordinator, ChainStateCoordinatorHandle,
-    PalletConstants, ProviderLifecycleEvent,
-};
-pub use challenge_responder::{
-    ChallengeChainClient, ChallengeResponder, ChallengeResponderConfig, ChallengeResponderHandle,
+pub use challenge_proofs::StorageProofSource;
+pub use error::Error;
+pub use negotiate::{AgreementTermsOf, NegotiateRequest, SignedTerms};
+pub use provider_challenge::{
+    self as challenge_responder, ChallengeChainClient, ChallengeError, ChallengeProofSource,
+    ChallengeResponder, ChallengeResponderConfig, ChallengeResponderHandle,
     ChallengeResponseResult, DetectedChallenge, ResponderCommand,
 };
-pub use error::Error;
-pub use negotiate::{AgreementTermsOf, NegotiateRequest, NonceCounter, SignedTerms};
+/// The chain-state coordinator lives in the `provider-coordinator` crate; keep
+/// the old module path working for existing consumers.
+pub use provider_coordinator as chain_state_coordinator;
+pub use provider_coordinator::{
+    is_relevant_provider_event, refresh_if_relevant_event, refresh_provider_state, sync_constants,
+    ChainState, ChainStateChainClient, ChainStateCoordinator, ChainStateCoordinatorHandle,
+    NonceCounter, PalletConstants, ProviderLifecycleEvent,
+};
 pub use replica_sync::ReplicaSync;
 pub use replica_sync_coordinator::{
     ReplicaSyncChainClient, ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig,
@@ -52,7 +54,6 @@ use sp_core::crypto::{ByteArray, Ss58Codec};
 use sp_core::{ecdsa, ed25519, sr25519, Pair};
 use sp_runtime::MultiSignature;
 use std::sync::Arc;
-use std::time::Duration;
 
 /// Signature scheme of the provider's signing keypair — the key registered
 /// on-chain as `public_key` and verified by the pallet via `MultiSignature`.
@@ -124,7 +125,7 @@ impl ProviderKeypair {
                 // Upstream has no `From<KeccakSignature> for MultiSignature`,
                 // so the generic helper can't cover Eth — same payload,
                 // explicit wrap.
-                let hash = sp_core::hashing::blake2_256(&terms.signing_payload());
+                let hash = sp_crypto_hashing::blake2_256(&terms.signing_payload());
                 let signature = MultiSignature::Eth(pair.sign(&hash));
                 SignedTerms { terms, signature }
             }
@@ -136,13 +137,10 @@ impl ProviderKeypair {
 pub struct ProviderDeps {
     /// Local storage backend.
     pub storage: Arc<dyn StorageBackend>,
-    /// Persistence backing for the nonce counter — [`NullNonceStore`] in
-    /// in-memory mode, the disk store in disk mode.
+    /// Persistence backing for the nonce counter.
     pub nonce_store: Arc<dyn NonceStore>,
-    /// Membership cache for role lookups.
-    pub membership: Arc<auth::MembershipCache>,
-    /// Maximum allowed clock skew for request timestamps.
-    pub auth_max_skew: Duration,
+    /// Verifies signed requests and enforces bucket roles.
+    pub auth: Arc<provider_auth::Authenticator>,
 }
 
 /// Provider node state shared across handlers.
@@ -157,10 +155,8 @@ pub struct ProviderState {
     pub s3_index: S3IndexManager,
     /// File system drive index
     pub fs_index: FsIndexManager,
-    /// Membership cache for role lookups.
-    pub membership_cache: Arc<auth::MembershipCache>,
-    /// Maximum allowed clock skew for request timestamps.
-    pub auth_max_skew: Duration,
+    /// Verifies signed requests and enforces bucket roles.
+    pub auth: Arc<provider_auth::Authenticator>,
     /// Browser origins allowed via CORS. `None` (the default) keeps the
     /// permissive policy; `Some(list)` restricts to exactly those origins.
     pub cors_allowed_origins: Option<Vec<String>>,
@@ -181,8 +177,7 @@ impl ProviderState {
         let ProviderDeps {
             storage,
             nonce_store,
-            membership,
-            auth_max_skew,
+            auth,
         } = deps;
         Self {
             storage,
@@ -190,8 +185,7 @@ impl ProviderState {
             keypair,
             s3_index: S3IndexManager::new(),
             fs_index: FsIndexManager::new(),
-            membership_cache: membership,
-            auth_max_skew,
+            auth,
             cors_allowed_origins: None,
             chain_state: Arc::new(ChainState::with_nonce_store(nonce_store)),
         }
@@ -250,12 +244,33 @@ impl ProviderState {
         let keypair = self.keypair.as_ref().ok_or(Error::SigningUnavailable)?;
         Ok(format!("0x{}", hex::encode(keypair.sign(message).encode())))
     }
+
+    /// Proof source for the challenge responder, backed by this state's
+    /// storage.
+    pub fn challenge_proof_source(&self) -> Arc<dyn ChallengeProofSource> {
+        Arc::new(StorageProofSource::new(self.storage.clone()))
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use provider_storage::NullNonceStore;
+    use provider_auth::Authenticator;
+    use provider_storage::temp_rocksdb;
+
+    /// Deps over a throwaway backend. Keep the returned guard bound for as
+    /// long as the state is used.
+    fn test_deps() -> (ProviderDeps, tempfile::TempDir) {
+        let (storage, nonce_store, dir) = temp_rocksdb();
+        let deps = ProviderDeps {
+            storage,
+            nonce_store,
+            auth: Arc::new(Authenticator::new(provider_auth::StaticMembershipResolver(
+                vec![],
+            ))),
+        };
+        (deps, dir)
+    }
 
     #[test]
     fn sign_without_keypair_refuses_with_signing_unavailable() {
@@ -263,15 +278,7 @@ mod tests {
         // contract is that `sign()` MUST return `Err(SigningUnavailable)`
         // when no keypair is configured, so the HTTP layer can map it to a
         // 503 instead of emitting a cryptographically invalid placeholder.
-        let deps = ProviderDeps {
-            storage: Arc::new(provider_storage::Storage::new()),
-            nonce_store: Arc::new(NullNonceStore),
-            membership: Arc::new(auth::MembershipCache::new(
-                Box::new(auth::StaticMembershipResolver(vec![])),
-                Duration::from_secs(60),
-            )),
-            auth_max_skew: Duration::from_secs(300),
-        };
+        let (deps, _dir) = test_deps();
         let state = ProviderState::with_provider_id(deps, "no-key-provider".to_string());
         let err = state
             .sign(b"any message")
@@ -286,15 +293,7 @@ mod tests {
         // any regression where sign() ever returns a placeholder again, and
         // also catches the more subtle case where the bytes look random but
         // aren't valid sr25519.
-        let deps = ProviderDeps {
-            storage: Arc::new(provider_storage::Storage::new()),
-            nonce_store: Arc::new(NullNonceStore),
-            membership: Arc::new(auth::MembershipCache::new(
-                Box::new(auth::StaticMembershipResolver(vec![])),
-                Duration::from_secs(60),
-            )),
-            auth_max_skew: Duration::from_secs(300),
-        };
+        let (deps, _dir) = test_deps();
         let state = ProviderState::with_seed(deps, "//Alice").unwrap();
         let message = b"commitment-payload-bytes";
 
@@ -359,7 +358,7 @@ mod tests {
                 "{scheme:?} must bundle the terms unchanged"
             );
 
-            let hash = sp_core::hashing::blake2_256(&signed.terms.signing_payload());
+            let hash = sp_crypto_hashing::blake2_256(&signed.terms.signing_payload());
             let signer = match &signed.signature {
                 MultiSignature::Sr25519(_) => {
                     MultiSigner::Sr25519(sr25519::Public::try_from(key.as_slice()).unwrap())
@@ -446,15 +445,7 @@ mod tests {
         // message produce different signatures, but both must verify. This
         // test guards against accidentally swapping to a backend that
         // returns a constant value (e.g. zero bytes).
-        let deps = ProviderDeps {
-            storage: Arc::new(provider_storage::Storage::new()),
-            nonce_store: Arc::new(NullNonceStore),
-            membership: Arc::new(auth::MembershipCache::new(
-                Box::new(auth::StaticMembershipResolver(vec![])),
-                Duration::from_secs(60),
-            )),
-            auth_max_skew: Duration::from_secs(300),
-        };
+        let (deps, _dir) = test_deps();
         let state = ProviderState::with_seed(deps, "//Alice").unwrap();
         let alice_pub = keypair_for("//Alice").public();
         let msg = b"commitment-payload";
@@ -475,24 +466,8 @@ mod tests {
         // Negative control: //Bob's signature must NOT verify under //Alice.
         // Cheap protection against a future refactor that accidentally
         // stops checking the message or the key.
-        let alice_deps = ProviderDeps {
-            storage: Arc::new(provider_storage::Storage::new()),
-            nonce_store: Arc::new(NullNonceStore),
-            membership: Arc::new(auth::MembershipCache::new(
-                Box::new(auth::StaticMembershipResolver(vec![])),
-                Duration::from_secs(60),
-            )),
-            auth_max_skew: Duration::from_secs(300),
-        };
-        let bob_deps = ProviderDeps {
-            storage: Arc::new(provider_storage::Storage::new()),
-            nonce_store: Arc::new(NullNonceStore),
-            membership: Arc::new(auth::MembershipCache::new(
-                Box::new(auth::StaticMembershipResolver(vec![])),
-                Duration::from_secs(60),
-            )),
-            auth_max_skew: Duration::from_secs(300),
-        };
+        let (alice_deps, _alice_dir) = test_deps();
+        let (bob_deps, _bob_dir) = test_deps();
         let alice = ProviderState::with_seed(alice_deps, "//Alice").unwrap();
         let bob = ProviderState::with_seed(bob_deps, "//Bob").unwrap();
         let alice_pub = keypair_for("//Alice").public();
@@ -509,15 +484,7 @@ mod tests {
     #[test]
     fn provider_state_chain_defaults_on_new() {
         use std::sync::atomic::Ordering;
-        let deps = ProviderDeps {
-            storage: Arc::new(provider_storage::Storage::new()),
-            nonce_store: Arc::new(NullNonceStore),
-            membership: Arc::new(auth::MembershipCache::new(
-                Box::new(auth::StaticMembershipResolver(vec![])),
-                Duration::from_secs(60),
-            )),
-            auth_max_skew: Duration::from_secs(300),
-        };
+        let (deps, _dir) = test_deps();
         let state = ProviderState::with_provider_id(deps, "test-provider".to_string());
         assert_eq!(
             state

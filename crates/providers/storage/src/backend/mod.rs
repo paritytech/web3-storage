@@ -2,20 +2,57 @@
 
 //! Blob persistence layer: the [`StorageBackend`] trait and its implementations.
 //!
-//! Both [`Storage`] (in-memory) and [`DiskStorage`] (persistent) implement the
-//! trait, allowing the provider node to select the storage backend at startup.
+//! [`StorageBackendSpec`] names an implementation and its configuration, and
+//! builds it — that is what the provider node selects at startup.
 
 pub mod disk;
-pub mod in_memory;
 
 pub use disk::{DiskNonceStore, DiskStorage};
-pub use in_memory::Storage;
 
 use crate::error::Error;
 use crate::merkle::build_merkle_proof;
+use crate::nonce::NonceStore;
 use serde::{Deserialize, Serialize};
 use sp_core::H256;
+use std::fmt;
+use std::path::PathBuf;
+use std::sync::Arc;
 use storage_primitives::{hash_children, BucketId};
+
+/// A built backend: the storage, and the nonce store matching its persistence.
+pub type OpenedBackend = (Arc<dyn StorageBackend>, Arc<dyn NonceStore>);
+
+/// Which backend to build, and what that backend needs.
+///
+/// Each engine carries its own configuration, so adding one does not add a
+/// sibling flag the others ignore.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StorageBackendSpec {
+    /// RocksDB rooted at `path`.
+    RocksDb { path: PathBuf },
+}
+
+impl StorageBackendSpec {
+    /// Build the backend and the nonce store matching its persistence, so the
+    /// provider's extrinsic nonce survives a restart with its data.
+    pub fn build(&self) -> Result<OpenedBackend, Error> {
+        match self {
+            Self::RocksDb { path } => {
+                let disk = DiskStorage::new(path)?;
+                let nonce_store = disk.nonce_store();
+                Ok((Arc::new(disk), nonce_store))
+            }
+        }
+    }
+}
+
+impl fmt::Display for StorageBackendSpec {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::RocksDb { path } => write!(f, "RocksDB at {}", path.display()),
+        }
+    }
+}
 
 /// A stored node (chunk or internal node).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -239,4 +276,28 @@ pub fn build_padded_merkle_tree(
     }
 
     current_level[0]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn rocksdb_pairs_with_a_nonce_store_that_survives_reopen() {
+        let dir = TempDir::new().unwrap();
+        let spec = StorageBackendSpec::RocksDb {
+            path: dir.path().to_path_buf(),
+        };
+
+        // Scoped so both halves drop and RocksDB releases the directory lock.
+        {
+            let (_storage, nonce_store) = spec.build().expect("RocksDB opens");
+            nonce_store.persist(7);
+        }
+
+        let (_storage, nonce_store) = spec.build().expect("RocksDB reopens");
+        assert_eq!(nonce_store.load(), Some(7));
+        assert!(spec.to_string().starts_with("RocksDB at "));
+    }
 }

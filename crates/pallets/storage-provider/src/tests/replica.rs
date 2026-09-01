@@ -373,7 +373,6 @@ fn setup_replica_with_snapshot() -> u64 {
                 },
                 checkpoint_block: 1,
                 primary_signers: vec![0x01],
-                commitment_nonce: 0,
             });
         }
     });
@@ -531,7 +530,6 @@ fn confirm_replica_sync_fails_insufficient_balance() {
                     },
                     checkpoint_block: 1,
                     primary_signers: vec![0x01],
-                    commitment_nonce: 0,
                 });
             }
         });

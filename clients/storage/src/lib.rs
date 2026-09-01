@@ -21,7 +21,7 @@
 //! let data_root = client.upload(1, data, ChunkingStrategy::default()).await?;
 //!
 //! // Commit to chain
-//! let commitment = client.commit(1, vec![data_root], 0u64).await?;
+//! let commitment = client.commit(1, vec![data_root]).await?;
 //!
 //! // Download and verify
 //! let retrieved = client.download(&data_root, 0, data.len() as u64).await?;
@@ -104,6 +104,7 @@ pub mod base;
 pub mod challenger;
 pub mod checkpoint;
 pub mod checkpoint_persistence;
+pub mod convert;
 pub mod discovery;
 pub mod encryption;
 pub mod provider;

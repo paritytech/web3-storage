@@ -2,33 +2,8 @@
 
 use crate::*;
 use frame_support::pallet_prelude::*;
-use sp_runtime::traits::SaturatedConversion;
 
 impl<T: Config> Pallet<T> {
-    /// Verify a MultiSignature against an encoded message using stored public key.
-    ///
-    /// This:
-    /// 1. Retrieves the provider's registered public key from storage
-    /// 2. Reconstructs the appropriate public key type from raw bytes
-    /// 3. Verifies the signature matches the message and public key
-    ///
-    /// Returns Error::InvalidSignature if verification fails.
-    /// Reject a `CommitmentPayload::nonce` that is too far behind (or ahead
-    /// of) the anchor block. This prevents an attacker who captures one
-    /// signed commitment from replaying it forever.
-    pub(crate) fn ensure_recent_nonce(nonce: u64) -> DispatchResult {
-        let anchor_block: u64 = Self::current_anchor_block().saturated_into();
-        let max_age: u64 = T::MaxNonceAge::get().saturated_into();
-        // Future-dated nonces are nonsensical — the signer can only know
-        // the anchor block at sign-time. Allow exact equality.
-        ensure!(nonce <= anchor_block, Error::<T>::CommitmentNonceTooOld);
-        ensure!(
-            anchor_block.saturating_sub(nonce) <= max_age,
-            Error::<T>::CommitmentNonceTooOld
-        );
-        Ok(())
-    }
-
     /// Derive the `AccountId32` that `MultiSignature::verify` compares
     /// against, from the provider's registered raw public key. The signature
     /// variant picks the derivation — `Eth` uses the revive-style keccak

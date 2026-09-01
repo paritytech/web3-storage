@@ -77,45 +77,45 @@ let mut client = AdminClient::new(config, Signer::from(keypair))?;
 client.connect().await?;
 ```
 
-### Dynamic Extrinsics
+### Static Extrinsics
 
-The substrate module uses dynamic extrinsics (not requiring compile-time metadata):
+The substrate module builds extrinsics through the generated `storage-subxt`
+bindings, so every call is checked against the runtime metadata at compile
+time. `src/convert.rs` holds the conversions between SDK types
+(`sp_runtime`, `storage_primitives`) and the generated runtime types:
 
 ```rust
-// Example: Register provider
-pub fn register_provider(multiaddr: Vec<u8>, public_key: Vec<u8>) -> impl Payload {
-    subxt::dynamic::tx(
-        "StorageProvider",       // Pallet name
-        "register_provider",      // Call name
-        vec![
-            subxt::dynamic::Value::from_bytes(multiaddr),
-            subxt::dynamic::Value::from_bytes(public_key),
-        ],
+// Example: Register provider (src/substrate.rs)
+pub fn register_provider(multiaddr: Vec<u8>, public_key: Vec<u8>, stake: u128) -> impl Payload {
+    api::tx().storage_provider().register_provider(
+        convert::bounded(multiaddr),
+        convert::bounded(public_key),
+        stake,
     )
 }
 ```
 
 Benefits:
-- No compile-time dependency on runtime metadata
-- Works across runtime upgrades (as long as call signatures match)
-- Easier to build and distribute
+- Compile-time type checking against the runtime metadata
+- Typed events, storage values, and storage keys — no manual decoding
+- Runtime drift surfaces as a hard `IncompatibleCodegen` error instead of
+  silently mis-decoded data
 
-Drawbacks:
-- Less type safety (errors at runtime instead of compile time)
-- Must manually keep call signatures in sync with pallet
+Trade-off: after a runtime change, regenerate the bindings with
+`just subxt-codegen` (needs a running chain).
 
-### Dynamic Storage Queries
+### Static Storage Queries
 
-Similarly, storage queries use dynamic access:
+Storage reads use the generated typed addresses directly:
 
 ```rust
-pub fn provider_info(account: &AccountId32) -> Address<subxt::dynamic::Value, (), (), ()> {
-    subxt::dynamic::storage(
-        "StorageProvider",    // Pallet name
-        "Providers",          // Storage item name
-        vec![subxt::dynamic::Value::from_bytes(account.as_ref())],
+let info = at
+    .storage()
+    .try_fetch(
+        api::storage().storage_provider().providers(),
+        (convert::account(&account_id),),
     )
-}
+    .await?; // -> Option<pallet::ProviderInfo>, fully typed
 ```
 
 ## Implementation Status
@@ -152,26 +152,21 @@ Methods marked with `// TODO: Submit extrinsic` still use placeholder logic but 
 
 ## Production Considerations
 
-### 1. Metadata Generation
+### 1. Keeping Bindings Fresh
 
-For production, generate and include runtime metadata:
+The generated bindings live in `crates/storage-subxt` (checked-in
+`subxt codegen` output). After any runtime change, regenerate them:
 
 ```bash
-# Connect to your running node
-subxt metadata -f bytes > clients/storage/metadata.scale
+# Terminal 1: run a chain with the new runtime
+just start-paseo-chain
+
+# Terminal 2: refresh metadata + generated code
+just subxt-codegen
 ```
 
-Then use the codegen macro in `substrate.rs`:
-
-```rust
-#[subxt::subxt(runtime_metadata_path = "metadata.scale")]
-pub mod runtime {}
-```
-
-This provides:
-- Compile-time type checking
-- Auto-generated types for all pallets
-- Better IDE support and documentation
+Static payloads and addresses carry validation hashes, so stale bindings
+fail fast at submission/query time rather than mis-decoding.
 
 ### 2. Signer Security
 

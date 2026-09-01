@@ -5,48 +5,8 @@
 use serde::{Deserialize, Serialize};
 use storage_primitives::BucketId;
 
+pub use provider_coordinator::ProviderInfo;
 pub use provider_storage::{BucketStats, BucketSummary};
-
-// ─────────────────────────────────────────────────────────────────────────────
-// On-chain Provider Info
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// The node's view of its on-chain provider registration.
-///
-/// Decoded from the `StorageProvider::Providers` storage entry by the
-/// chain-state coordinator; consumed by `/negotiate` validation and `/info`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProviderInfo {
-    /// Network address for connecting.
-    pub multiaddr: String,
-    /// Raw registered public key bytes. `/negotiate` refuses to sign while
-    /// this doesn't match the local signing key.
-    pub public_key: Vec<u8>,
-    /// Total stake locked.
-    pub stake: u128,
-    /// Currently committed bytes.
-    pub committed_bytes: u64,
-    /// Maximum capacity (0 = unlimited).
-    pub max_capacity: u64,
-    /// Minimum agreement duration.
-    pub min_duration: u32,
-    /// Maximum agreement duration.
-    pub max_duration: u32,
-    /// Price per byte per block.
-    pub price_per_byte: u128,
-    /// Whether accepting primary agreements.
-    pub accepting_primary: bool,
-    /// Replica sync price (None if not accepting replicas).
-    pub replica_sync_price: Option<u128>,
-    /// Whether accepting extensions.
-    pub accepting_extensions: bool,
-    /// Total agreements ever.
-    pub agreements_total: u32,
-    /// Failed challenges count.
-    pub challenges_failed: u32,
-    /// Block at which deregistration becomes finalisable (`None` = not deregistering).
-    pub deregister_at: Option<u32>,
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Node Upload/Download Types
@@ -107,10 +67,6 @@ pub struct CommitRequest {
     pub bucket_id: BucketId,
     /// Data roots to add to the MMR
     pub data_roots: Vec<String>,
-    /// `CommitmentPayload` nonce — anchor block at which the caller expects to
-    /// submit the resulting signature on-chain. The provider signs over
-    /// this value so the pallet's recency check passes.
-    pub nonce: u64,
 }
 
 /// Response from commit operation.
@@ -124,10 +80,6 @@ pub struct CommitResponse {
     pub leaf_indices: Vec<u64>,
     /// Provider signature over the commitment
     pub provider_signature: String,
-    /// Echo of the nonce the provider signed over (the same value the caller
-    /// passed in). Returned for symmetry so downstream code doesn't have to
-    /// thread it through manually.
-    pub nonce: u64,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -164,8 +116,6 @@ pub struct ReadResponse {
 #[derive(Debug, Clone, Deserialize)]
 pub struct CommitmentQuery {
     pub bucket_id: BucketId,
-    /// `CommitmentPayload` nonce. See [`CommitRequest::nonce`].
-    pub nonce: u64,
 }
 
 /// Response with current commitment.
@@ -176,7 +126,6 @@ pub struct CommitmentResponse {
     pub start_seq: u64,
     pub leaf_count: u64,
     pub provider_signature: String,
-    pub nonce: u64,
 }
 
 /// Response with checkpoint-compatible signature (signs with real leaf_count).
@@ -187,7 +136,6 @@ pub struct CheckpointSignatureResponse {
     pub start_seq: u64,
     pub leaf_count: u64,
     pub provider_signature: String,
-    pub nonce: u64,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -260,8 +208,6 @@ pub struct MerkleProofData {
 pub struct DeleteRequest {
     pub bucket_id: BucketId,
     pub new_start_seq: u64,
-    /// `CommitmentPayload` nonce for the provider's post-deletion signature.
-    pub nonce: u64,
 }
 
 /// Response from delete operation.
@@ -271,7 +217,6 @@ pub struct DeleteResponse {
     pub start_seq: u64,
     pub leaf_count: u64,
     pub provider_signature: String,
-    pub nonce: u64,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

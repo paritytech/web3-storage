@@ -214,8 +214,10 @@ impl FileSystemClient {
             .create_drive_on_chain(name, provider, &terms, &sig)
             .await?;
 
-        // Get the bucket_id for this drive
+        // Get the bucket_id for this drive, and remember it: the mapping is
+        // immutable, and every later file operation needs it.
         let bucket_id = self.query_drive_bucket_id(drive_id).await?;
+        self.drive_bucket_map.insert(drive_id, bucket_id);
 
         // Create an empty root directory and upload it to the provider
         let root_dir = DirectoryNode::new_empty(drive_id);
@@ -860,8 +862,7 @@ impl FileSystemClient {
         }
     }
 
-    // ============ Chain Interaction (Placeholder) ============
-    // NOTE: In a real implementation, these would use subxt or similar
+    // ============ Chain Interaction ============
 
     async fn create_drive_on_chain(
         &self,
@@ -911,61 +912,53 @@ impl FileSystemClient {
 
     /// Query bucket_id for a drive from on-chain storage
     async fn query_drive_bucket_id(&self, drive_id: DriveId) -> Result<u64> {
+        // A drive's bucket never changes, so a known mapping is always valid.
+        if let Some(&bucket_id) = self.drive_bucket_map.get(&drive_id) {
+            return Ok(bucket_id);
+        }
+
         let at = self
             .substrate_client
             .api()
             .at_current_block()
             .await
             .map_err(|e| FsClientError::Blockchain(format!("Storage query failed: {e}")))?;
-        let storage_client = at.storage();
 
-        // Build the storage key for Drives storage map
-        use sp_core::twox_128;
+        let drive = substrate::storage::drive_info(&at, drive_id)
+            .await?
+            .ok_or(FsClientError::DriveNotFound(drive_id))?;
 
-        let pallet_hash = twox_128(b"DriveRegistry");
-        let storage_hash = twox_128(b"Drives");
-        let key = drive_id.to_le_bytes();
-        let key_hash = sp_core::blake2_128(&key);
+        Ok(drive.bucket_id)
+    }
 
-        let mut storage_key = Vec::new();
-        storage_key.extend_from_slice(&pallet_hash);
-        storage_key.extend_from_slice(&storage_hash);
-        storage_key.extend_from_slice(&key_hash);
-        storage_key.extend_from_slice(&key);
+    /// Delete a drive on-chain, releasing its storage agreements.
+    ///
+    /// The drive's data becomes unreachable through this client afterwards.
+    pub async fn delete_drive(&mut self, drive_id: DriveId) -> Result<()> {
+        let call = substrate::extrinsics::delete_drive(drive_id);
+        let signer = self.substrate_client.signer();
 
-        // `fetch_raw` no longer returns an Option in subxt 0.50; a missing
-        // value surfaces as `StorageError::NoValueFound` instead.
-        let bytes_opt = match storage_client.fetch_raw(storage_key).await {
-            Ok(bytes) => Some(bytes),
-            Err(subxt::error::StorageError::NoValueFound) => None,
-            Err(e) => {
-                return Err(FsClientError::Blockchain(format!(
-                    "Storage fetch failed: {e}"
-                )))
-            }
-        };
+        self.substrate_client
+            .api()
+            .at_current_block()
+            .await
+            .map_err(|e| FsClientError::Blockchain(format!("Failed to submit tx: {e}")))?
+            .transactions()
+            .sign_and_submit_then_watch_default(&call, signer)
+            .await
+            .map_err(|e| FsClientError::Blockchain(format!("Failed to submit tx: {e}")))?
+            .wait_for_finalized_success()
+            .await
+            .map_err(|e| {
+                tracing::error!("delete_drive extrinsic failed: {e}");
+                FsClientError::Blockchain(format!("Extrinsic reverted: {e}"))
+            })?;
 
-        if let Some(bytes) = bytes_opt {
-            // DriveInfo structure (simplified):
-            // - owner: AccountId32 (32 bytes)
-            // - bucket_id: u64 (8 bytes)
-            // - created_at: BlockNumber (4 bytes)
-            // - ... more fields
+        self.root_cache.remove(&drive_id);
+        self.drive_bucket_map.remove(&drive_id);
 
-            if bytes.len() >= 32 + 8 {
-                // Skip owner (32 bytes), then read bucket_id (8 bytes)
-                let bucket_id_offset = 32;
-                let mut bucket_id_bytes = [0u8; 8];
-                bucket_id_bytes.copy_from_slice(&bytes[bucket_id_offset..bucket_id_offset + 8]);
-                return Ok(u64::from_le_bytes(bucket_id_bytes));
-            }
-
-            return Err(FsClientError::Blockchain(
-                "Invalid drive info encoding".to_string(),
-            ));
-        }
-
-        Err(FsClientError::DriveNotFound(drive_id))
+        tracing::info!("Drive {drive_id} deleted");
+        Ok(())
     }
 }
 

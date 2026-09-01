@@ -3,13 +3,12 @@
 //! Integration tests for the replica sync coordinator.
 
 use super::{test_state, test_state_with_seed, ALICE_SS58};
-use provider_storage::{NullNonceStore, Storage};
+use provider_auth::{Authenticator, StaticMembershipResolver};
 use sp_core::H256;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use storage_primitives::BucketId;
-use storage_provider_node::auth::{MembershipCache, StaticMembershipResolver};
 use storage_provider_node::replica_sync_coordinator::{BucketSnapshot, ReplicaAgreementInfo};
 use storage_provider_node::{
     Error, ProviderDeps, ProviderState, ReplicaSyncChainClient, ReplicaSyncCoordinator,
@@ -121,7 +120,7 @@ fn test_config_default() {
 #[tokio::test]
 async fn test_no_agreements() {
     let mock = MockReplicaSyncChainClient::new();
-    let state = test_state();
+    let (state, _dir) = test_state();
     let config = ReplicaSyncCoordinatorConfig::default();
     let coordinator = ReplicaSyncCoordinator::new(config, state, Box::new(mock));
 
@@ -148,7 +147,7 @@ async fn confirm_on_chain_attests_roots_with_signing_key() {
     };
 
     let mock = Arc::new(MockReplicaSyncChainClient::new());
-    let state = test_state_with_seed("//Alice");
+    let (state, _dir) = test_state_with_seed("//Alice");
     let config = ReplicaSyncCoordinatorConfig::default();
     let coordinator = ReplicaSyncCoordinator::new(config, state, Box::new(mock.clone()));
 
@@ -188,7 +187,7 @@ async fn confirm_on_chain_surfaces_submission_errors() {
 
     let mock = Arc::new(MockReplicaSyncChainClient::new());
     *mock.confirm_result.lock().unwrap() = Err(Error::Internal("chain rejected".to_string()));
-    let state = test_state_with_seed("//Alice");
+    let (state, _dir) = test_state_with_seed("//Alice");
     let config = ReplicaSyncCoordinatorConfig::default();
     let coordinator = ReplicaSyncCoordinator::new(config, state, Box::new(mock.clone()));
 
@@ -219,7 +218,7 @@ async fn confirm_on_chain_refuses_without_signing_key() {
     };
 
     let mock = Arc::new(MockReplicaSyncChainClient::new());
-    let state = test_state(); // provider-id mode: no keypair
+    let (state, _dir) = test_state(); // provider-id mode: no keypair
     let config = ReplicaSyncCoordinatorConfig::default();
     let coordinator = ReplicaSyncCoordinator::new(config, state, Box::new(mock.clone()));
 
@@ -252,7 +251,7 @@ async fn test_insufficient_balance() {
     };
 
     let mock = MockReplicaSyncChainClient::new();
-    let state = test_state();
+    let (state, _dir) = test_state();
     let config = ReplicaSyncCoordinatorConfig::default();
     let coordinator = ReplicaSyncCoordinator::new(config, state, Box::new(mock));
 
@@ -262,22 +261,20 @@ async fn test_insufficient_balance() {
 
 #[tokio::test]
 async fn test_already_synced() {
-    let storage = Arc::new(Storage::new());
-    storage.init_bucket(1, u64::MAX);
+    let (storage, nonce_store, _dir) = provider_storage::temp_rocksdb();
+    storage
+        .init_bucket(1, u64::MAX)
+        .expect("bucket initialises");
     let data = b"test data".to_vec();
-    let hash = sp_core::hashing::blake2_256(&data);
+    let hash = sp_crypto_hashing::blake2_256(&data);
     let data_root = H256::from(hash);
     let _ = storage.store_node(1, data_root, data, None);
     let (mmr_root, _, _) = storage.commit(1, vec![data_root]).unwrap();
 
     let deps = ProviderDeps {
         storage,
-        nonce_store: Arc::new(NullNonceStore),
-        membership: Arc::new(MembershipCache::new(
-            Box::new(StaticMembershipResolver(vec![])),
-            Duration::from_secs(60),
-        )),
-        auth_max_skew: Duration::from_secs(300),
+        nonce_store,
+        auth: Arc::new(Authenticator::new(StaticMembershipResolver(vec![]))),
     };
     let state = Arc::new(ProviderState::with_provider_id(deps, "test".to_string()));
 
@@ -314,7 +311,7 @@ async fn test_no_data_to_sync() {
     };
 
     let mock = MockReplicaSyncChainClient::new();
-    let state = test_state();
+    let (state, _dir) = test_state();
     let config = ReplicaSyncCoordinatorConfig::default();
     let coordinator = ReplicaSyncCoordinator::new(config, state, Box::new(mock));
 
@@ -336,7 +333,7 @@ async fn test_primary_unavailable() {
     };
 
     let mock = MockReplicaSyncChainClient::new();
-    let state = test_state();
+    let (state, _dir) = test_state();
     let config = ReplicaSyncCoordinatorConfig::default();
     let coordinator = ReplicaSyncCoordinator::new(config, state, Box::new(mock));
 
@@ -347,7 +344,7 @@ async fn test_primary_unavailable() {
 #[tokio::test(start_paused = true)]
 async fn test_stop_command() {
     let mock = MockReplicaSyncChainClient::new();
-    let state = test_state();
+    let (state, _dir) = test_state();
     let config = ReplicaSyncCoordinatorConfig {
         poll_interval: Duration::from_secs(60),
         ..Default::default()
@@ -368,7 +365,7 @@ async fn test_stop_command() {
 #[tokio::test(start_paused = true)]
 async fn test_pause_resume() {
     let mock = MockReplicaSyncChainClient::new();
-    let state = test_state();
+    let (state, _dir) = test_state();
     let config = ReplicaSyncCoordinatorConfig {
         poll_interval: Duration::from_millis(50),
         ..Default::default()
@@ -415,7 +412,7 @@ async fn test_duties_filter_insufficient_balance() {
             },
         );
 
-    let state = test_state();
+    let (state, _dir) = test_state();
     let config = ReplicaSyncCoordinatorConfig::default();
     let coordinator = ReplicaSyncCoordinator::new(config, state, Box::new(mock));
 
@@ -443,7 +440,7 @@ async fn test_duties_filter_sync_interval_not_elapsed() {
             },
         );
 
-    let state = test_state();
+    let (state, _dir) = test_state();
     let config = ReplicaSyncCoordinatorConfig::default();
     let coordinator = ReplicaSyncCoordinator::new(config, state, Box::new(mock));
 
@@ -474,7 +471,7 @@ async fn test_duties_filter_zero_snapshot_root() {
             },
         );
 
-    let state = test_state();
+    let (state, _dir) = test_state();
     let config = ReplicaSyncCoordinatorConfig::default();
     let coordinator = ReplicaSyncCoordinator::new(config, state, Box::new(mock));
 
@@ -484,23 +481,21 @@ async fn test_duties_filter_zero_snapshot_root() {
 
 #[tokio::test]
 async fn test_duties_filter_already_synced() {
-    let storage = Arc::new(Storage::new());
-    storage.init_bucket(1, u64::MAX);
+    let (storage, nonce_store, _dir) = provider_storage::temp_rocksdb();
+    storage
+        .init_bucket(1, u64::MAX)
+        .expect("bucket initialises");
 
     let data = b"synced data".to_vec();
-    let hash = sp_core::hashing::blake2_256(&data);
+    let hash = sp_crypto_hashing::blake2_256(&data);
     let data_root = H256::from(hash);
     storage.store_node(1, data_root, data, None).unwrap();
     let (mmr_root, _, _) = storage.commit(1, vec![data_root]).unwrap();
 
     let deps = ProviderDeps {
         storage,
-        nonce_store: Arc::new(NullNonceStore),
-        membership: Arc::new(MembershipCache::new(
-            Box::new(StaticMembershipResolver(vec![])),
-            Duration::from_secs(60),
-        )),
-        auth_max_skew: Duration::from_secs(300),
+        nonce_store,
+        auth: Arc::new(Authenticator::new(StaticMembershipResolver(vec![]))),
     };
     let state = Arc::new(ProviderState::with_provider_id(
         deps,
@@ -554,7 +549,7 @@ async fn test_duties_happy_path_returns_duty() {
         )
         .with_endpoints(42, vec!["http://primary:3333".to_string()]);
 
-    let state = test_state();
+    let (state, _dir) = test_state();
     let config = ReplicaSyncCoordinatorConfig::default();
     let coordinator = ReplicaSyncCoordinator::new(config, state, Box::new(mock));
 
@@ -577,7 +572,7 @@ async fn test_duties_happy_path_returns_duty() {
 #[tokio::test(start_paused = true)]
 async fn test_status_command() {
     let mock = MockReplicaSyncChainClient::new();
-    let state = test_state();
+    let (state, _dir) = test_state();
     let config = ReplicaSyncCoordinatorConfig {
         poll_interval: Duration::from_secs(60),
         ..Default::default()
@@ -601,7 +596,7 @@ async fn test_status_command() {
 #[tokio::test(start_paused = true)]
 async fn test_force_sync_command() {
     let mock = MockReplicaSyncChainClient::new();
-    let state = test_state();
+    let (state, _dir) = test_state();
     let config = ReplicaSyncCoordinatorConfig {
         poll_interval: Duration::from_secs(60),
         ..Default::default()

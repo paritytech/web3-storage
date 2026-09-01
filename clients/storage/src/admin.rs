@@ -11,13 +11,15 @@
 
 use crate::agreement::SignedTerms;
 use crate::base::{BaseClient, ClientConfig, ClientError, ClientResult};
-use crate::substrate::{extrinsics, storage, SubstrateClient};
+use crate::convert;
+use crate::substrate::{extrinsics, SubstrateClient};
 use crate::Signer;
 use sp_core::H256;
 use sp_runtime::AccountId32;
 use storage_primitives::{BucketId, Commitment, EndAction, Role};
+use storage_subxt::api;
+use storage_subxt::api::runtime_types::storage_primitives::ProviderRole;
 use storage_subxt::api::storage_provider::events::BucketCreated;
-use subxt::ext::scale_value::{Composite, ValueDef, Variant};
 
 /// Client for bucket administrators.
 pub struct AdminClient {
@@ -450,27 +452,32 @@ impl AdminClient {
     /// Submit a checkpoint with provider signatures.
     ///
     /// This creates a canonical on-chain snapshot of the bucket state,
-    /// enabling `challenge_checkpoint` to work against it.
+    /// enabling `challenge_checkpoint` to work against it. Each signature is
+    /// the SCALE-encoded `MultiSignature` bytes the provider emitted.
     pub async fn submit_checkpoint(
         &self,
         bucket_id: BucketId,
         commitment: Commitment,
-        nonce: u64, // nonce the providers signed over (echoed from their commitment)
-        signatures: Vec<(String, Vec<u8>)>, // (provider SS58, signature bytes)
+        signatures: Vec<(String, Vec<u8>)>, // (provider SS58, SCALE MultiSignature bytes)
     ) -> ClientResult<()> {
+        use codec::Decode;
+
         let chain = self.base.chain()?;
         let signer = chain.signer()?;
 
-        // Parse provider accounts
-        let parsed_sigs: Vec<(sp_runtime::AccountId32, Vec<u8>)> = signatures
+        // Parse provider accounts and decode the scheme-tagged signatures
+        let parsed_sigs: Vec<(sp_runtime::AccountId32, sp_runtime::MultiSignature)> = signatures
             .into_iter()
             .map(|(account_str, sig)| {
                 let account = SubstrateClient::parse_account(&account_str)?;
+                let sig = sp_runtime::MultiSignature::decode(&mut &sig[..]).map_err(|e| {
+                    ClientError::Serialization(format!("invalid SCALE MultiSignature: {e}"))
+                })?;
                 Ok((account, sig))
             })
             .collect::<ClientResult<Vec<_>>>()?;
 
-        let tx = extrinsics::checkpoint(bucket_id, commitment, nonce, parsed_sigs);
+        let tx = extrinsics::checkpoint(bucket_id, commitment, parsed_sigs);
 
         let tx_progress = chain
             .api()
@@ -503,107 +510,40 @@ impl AdminClient {
     pub async fn get_bucket_info(&self, bucket_id: BucketId) -> ClientResult<BucketInfo> {
         let chain = self.base.chain()?;
 
-        let at = chain
-            .api()
-            .at_current_block()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?;
-        let (addr, keys) = storage::bucket_info(bucket_id);
-        let thunk = at
+        let at = chain.at_current_block().await?;
+        let value = at
             .storage()
-            .try_fetch(addr, keys)
+            .try_fetch(api::storage().storage_provider().buckets(), (bucket_id,))
             .await
             .map_err(|e| ClientError::Chain(format!("Failed to fetch bucket: {e}")))?
             .ok_or_else(|| ClientError::Chain(format!("Bucket {bucket_id} not found")))?;
 
-        let value = thunk
+        let bucket = value
             .decode()
             .map_err(|e| ClientError::Chain(format!("Failed to decode bucket: {e}")))?;
 
-        let min_providers = named_field(&value, "min_providers")
-            .and_then(|v| v.as_u128())
-            .unwrap_or(0) as u32;
-
-        let frozen_start_seq =
-            named_field(&value, "frozen_start_seq").and_then(|v| match &v.value {
-                ValueDef::Variant(Variant { name, .. }) if name == "None" => None,
-                ValueDef::Variant(Variant {
-                    name,
-                    values: Composite::Unnamed(items),
-                }) if name == "Some" => items.first().and_then(|v| v.as_u128()).map(|n| n as u64),
-                _ => None,
-            });
-
-        let members = named_field(&value, "members")
-            .and_then(|v| match &v.value {
-                // BoundedVec is a newtype: Unnamed([inner_vec]) where inner_vec is Unnamed([entries...]).
-                // Peel one level to reach the actual Vec contents.
-                ValueDef::Composite(Composite::Unnamed(outer)) => {
-                    outer.first().and_then(|inner| match &inner.value {
-                        ValueDef::Composite(Composite::Unnamed(entries)) => Some(entries),
-                        _ => None,
-                    })
-                }
-                _ => None,
+        let members = bucket
+            .members
+            .0
+            .iter()
+            .map(|m| MemberInfo {
+                account: convert::account_hex(&m.account),
+                role: convert::to_sp_role(&m.role),
             })
-            .map(|items| {
-                items
-                    .iter()
-                    .filter_map(|item| {
-                        let account_bytes =
-                            named_field(item, "account").and_then(decode_account_bytes)?;
-                        let account = format!("0x{}", hex::encode(&account_bytes));
-                        let role = named_field(item, "role").and_then(|r| match &r.value {
-                            ValueDef::Variant(Variant { name, .. }) => match name.as_str() {
-                                "Admin" => Some(Role::Admin),
-                                "Writer" => Some(Role::Writer),
-                                "Reader" => Some(Role::Reader),
-                                _ => None,
-                            },
-                            _ => None,
-                        })?;
-                        Some(MemberInfo { account, role })
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
+            .collect();
 
-        let snapshot = named_field(&value, "snapshot").and_then(|v| match &v.value {
-            ValueDef::Variant(Variant { name, .. }) if name == "None" => None,
-            ValueDef::Variant(Variant {
-                name,
-                values: Composite::Unnamed(items),
-            }) if name == "Some" => {
-                let snap = items.first()?;
-                let mmr_root_bytes = named_field(snap, "mmr_root")
-                    .and_then(decode_account_bytes)
-                    .filter(|b| b.len() == 32)?;
-                let mut mmr_root = [0u8; 32];
-                mmr_root.copy_from_slice(&mmr_root_bytes);
-                let start_seq = named_field(snap, "start_seq")
-                    .and_then(|v| v.as_u128())
-                    .unwrap_or(0) as u64;
-                let leaf_count = named_field(snap, "leaf_count")
-                    .and_then(|v| v.as_u128())
-                    .unwrap_or(0) as u64;
-                let checkpoint_block = named_field(snap, "checkpoint_block")
-                    .and_then(|v| v.as_u128())
-                    .unwrap_or(0) as u32;
-                Some(SnapshotInfo {
-                    mmr_root: H256::from(mmr_root),
-                    start_seq,
-                    leaf_count,
-                    checkpoint_block,
-                })
-            }
-            _ => None,
+        let snapshot = bucket.snapshot.map(|s| SnapshotInfo {
+            mmr_root: s.commitment.mmr_root,
+            start_seq: s.commitment.start_seq,
+            leaf_count: s.commitment.leaf_count,
+            checkpoint_block: s.checkpoint_block,
         });
 
         Ok(BucketInfo {
             bucket_id,
             members,
-            frozen_start_seq,
-            min_providers,
+            frozen_start_seq: bucket.frozen_start_seq,
+            min_providers: bucket.min_providers,
             snapshot,
         })
     }
@@ -615,155 +555,58 @@ impl AdminClient {
     ) -> ClientResult<Vec<AgreementInfo>> {
         let chain = self.base.chain()?;
 
-        let at = chain
-            .api()
-            .at_current_block()
+        let at = chain.at_current_block().await?;
+
+        let agreements = at
+            .runtime_apis()
+            .call(
+                api::runtime_apis()
+                    .storage_provider_api()
+                    .bucket_agreements(bucket_id),
+            )
             .await
-            .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?;
+            .map_err(|e| {
+                ClientError::Chain(format!("bucket_agreements runtime API failed: {e}"))
+            })?;
 
-        let (addr, keys) = storage::agreements_for_bucket(bucket_id);
-        let mut iter = at
-            .storage()
-            .iter(addr, keys)
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to iterate agreements: {e}")))?;
-
-        let mut agreements = Vec::new();
-
-        while let Some(result) = iter.next().await {
-            let kv =
-                result.map_err(|e| ClientError::Chain(format!("Storage iteration error: {e}")))?;
-
-            // Key layout: [pallet_hash=16][storage_hash=16][blake2_128(bucket_id)=16][bucket_id=8]
-            //             [blake2_128(provider)=16][provider=32]; provider at [72..104]
-            let key = kv.key_bytes();
-            let provider = if key.len() >= 104 {
-                format!("0x{}", hex::encode(&key[72..104]))
-            } else {
-                String::new()
-            };
-
-            let value = match kv.value().decode() {
-                Ok(v) => v,
-                Err(e) => {
-                    tracing::warn!("Failed to decode agreement: {e}");
-                    continue;
-                }
-            };
-
-            let max_bytes = named_field(&value, "max_bytes")
-                .and_then(|v| v.as_u128())
-                .unwrap_or(0) as u64;
-
-            let payment_locked = named_field(&value, "payment_locked")
-                .and_then(|v| v.as_u128())
-                .unwrap_or(0);
-
-            let expires_at = named_field(&value, "expires_at")
-                .and_then(|v| v.as_u128())
-                .unwrap_or(0) as u32;
-
-            let is_primary = named_field(&value, "role")
-                .map(|r| {
-                    matches!(&r.value, ValueDef::Variant(Variant { name, .. }) if name == "Primary")
+        Ok(agreements
+            .into_iter()
+            .filter_map(|a| {
+                let provider = convert::account_from_runtime_api(&a.provider, "provider")?;
+                Some(AgreementInfo {
+                    provider: convert::account_hex(&provider),
+                    max_bytes: a.max_bytes,
+                    payment_locked: a.payment_locked,
+                    expires_at: a.expires_at,
+                    is_primary: matches!(a.role, ProviderRole::Primary),
                 })
-                .unwrap_or(false);
-
-            agreements.push(AgreementInfo {
-                provider,
-                max_bytes,
-                payment_locked,
-                expires_at,
-                is_primary,
-            });
-        }
-
-        Ok(agreements)
+            })
+            .collect())
     }
 
     /// Get the buckets this admin account is a member of.
     pub async fn list_my_buckets(&self) -> ClientResult<Vec<BucketId>> {
         let chain = self.base.chain()?;
 
-        let at = chain
-            .api()
-            .at_current_block()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?;
-        let (addr, keys) = storage::member_buckets(&self.admin_account());
-        let thunk = at
+        let at = chain.at_current_block().await?;
+        let value = at
             .storage()
-            .try_fetch(addr, keys)
+            .try_fetch(
+                api::storage().storage_provider().member_buckets(),
+                (convert::to_subxt_account(&self.admin_account()),),
+            )
             .await
             .map_err(|e| ClientError::Chain(format!("Failed to fetch member buckets: {e}")))?;
 
-        let Some(thunk) = thunk else {
+        let Some(value) = value else {
             return Ok(vec![]);
         };
 
-        let value = thunk
+        let bucket_ids = value
             .decode()
             .map_err(|e| ClientError::Chain(format!("Failed to decode member buckets: {e}")))?;
 
-        // BoundedVec is a newtype: Unnamed([inner_vec]) where inner_vec is Unnamed([entries...]).
-        let bucket_ids = match &value.value {
-            ValueDef::Composite(Composite::Unnamed(outer)) => outer
-                .first()
-                .and_then(|inner| match &inner.value {
-                    ValueDef::Composite(Composite::Unnamed(entries)) => Some(entries),
-                    _ => None,
-                })
-                .map(|entries| {
-                    entries
-                        .iter()
-                        .filter_map(|v| v.as_u128().map(|n| n as BucketId))
-                        .collect()
-                })
-                .unwrap_or_default(),
-            _ => vec![],
-        };
-
-        Ok(bucket_ids)
-    }
-}
-
-fn named_field<'a>(
-    value: &'a subxt::ext::scale_value::Value,
-    field: &str,
-) -> Option<&'a subxt::ext::scale_value::Value> {
-    match &value.value {
-        ValueDef::Composite(Composite::Named(fields)) => {
-            fields.iter().find(|(n, _)| n == field).map(|(_, v)| v)
-        }
-        _ => None,
-    }
-}
-
-/// Decode raw bytes from a SCALE value, handling `AccountId32`'s newtype nesting.
-///
-/// `AccountId32` is decoded by subxt as `Composite::Unnamed([Composite::Unnamed([byte × 32])])`.
-/// This function recurses through any level of `Composite::Unnamed` wrapping to collect
-/// all `Primitive::U128` leaf values as bytes.
-fn decode_account_bytes(value: &subxt::ext::scale_value::Value) -> Option<Vec<u8>> {
-    let mut buf = Vec::new();
-    collect_bytes_recursive(value, &mut buf);
-    if buf.is_empty() {
-        None
-    } else {
-        Some(buf)
-    }
-}
-
-fn collect_bytes_recursive(value: &subxt::ext::scale_value::Value, buf: &mut Vec<u8>) {
-    use subxt::ext::scale_value::Primitive;
-    match &value.value {
-        ValueDef::Primitive(Primitive::U128(n)) => buf.push(*n as u8),
-        ValueDef::Composite(Composite::Unnamed(items)) => {
-            for item in items {
-                collect_bytes_recursive(item, buf);
-            }
-        }
-        _ => {}
+        Ok(convert::unbounded(bucket_ids))
     }
 }
 

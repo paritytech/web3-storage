@@ -185,24 +185,22 @@ start-e2e-chain RUNTIME="web3-storage-paseo": check
 
 # Start the storage provider node (without registering on-chain)
 # Examples:
-#   just start-provider                                       # inmemory, //Alice key, port 3333, auth enforced
-#   just start-provider MODE=disk PORT=3334                    # disk storage on port 3334
-#   just start-provider KEYFILE=/path/to/seed MODE=disk        # custom key from file
-#   just start-provider KEY_SCHEME=ed25519                     # non-sr25519 signing key
-start-provider MODE="inmemory" PORT=PROVIDER_PORT STORAGE_PATH="./provider-data" KEYFILE="" KEY_SCHEME="": build-provider
+#   just start-provider                                            # default backend in ./provider-data, //Alice key, port 3333
+#   just start-provider BACKEND=rocksdb STORAGE_PATH=/tmp/rocks    # pick the engine and where it stores
+#   just start-provider PORT=3334 STORAGE_PATH=/tmp/p2             # second provider, separate data dir
+#   just start-provider KEYFILE=/path/to/seed                      # custom key from file
+#   just start-provider KEY_SCHEME=ed25519                         # non-sr25519 signing key
+start-provider BACKEND="rocksdb" PORT=PROVIDER_PORT STORAGE_PATH="./provider-data" KEYFILE="" KEY_SCHEME="": build-provider
     #!/usr/bin/env bash
     set -euo pipefail
     echo ""
-    echo "=== Starting Storage Provider Node ({{MODE}}) ==="
+    echo "=== Starting Storage Provider Node ({{BACKEND}}) ==="
     echo ""
     echo "Provider health: http://127.0.0.1:{{PORT}}/health"
     echo ""
     EXTRA_ARGS=""
-    if [ "{{MODE}}" = "disk" ]; then
-        EXTRA_ARGS="--storage-path {{STORAGE_PATH}}"
-    fi
     if [ -n "{{KEY_SCHEME}}" ]; then
-        EXTRA_ARGS="$EXTRA_ARGS --key-scheme {{KEY_SCHEME}}"
+        EXTRA_ARGS="--key-scheme {{KEY_SCHEME}}"
     fi
     if [ -n "{{KEYFILE}}" ]; then
         KEY_ARGS="--keyfile {{KEYFILE}}"
@@ -215,15 +213,18 @@ start-provider MODE="inmemory" PORT=PROVIDER_PORT STORAGE_PATH="./provider-data"
 
     ./target/release/storage-provider-node \
         $KEY_ARGS \
-        --storage-mode "{{MODE}}" \
+        $EXTRA_ARGS \
+        --storage-backend "{{BACKEND}}" \
+        --storage-path "{{STORAGE_PATH}}" \
         --bind-addr "0.0.0.0:{{PORT}}" \
-        --chain-rpc "{{ CHAIN_WS }}" \
-        $EXTRA_ARGS
+        --chain-rpc "{{ CHAIN_WS }}"
 
 # Register on-chain then start the provider node (original behavior)
-register-then-start-provider MODE="inmemory" PORT=PROVIDER_PORT STORAGE_PATH="./provider-data" KEYFILE="" KEY_SCHEME="":
-    just start-provider MODE="{{MODE}}" PORT="{{PORT}}" STORAGE_PATH="{{STORAGE_PATH}}" KEYFILE="{{KEYFILE}}" KEY_SCHEME="{{KEY_SCHEME}}"
+# Registration is a chain-only extrinsic, so it must run first: start-provider
+# runs in the foreground and never returns.
+register-then-start-provider BACKEND="rocksdb" PORT=PROVIDER_PORT STORAGE_PATH="./provider-data" KEYFILE="" KEY_SCHEME="":
     just register-provider "{{KEYFILE}}" "{{KEY_SCHEME}}"
+    just start-provider BACKEND="{{BACKEND}}" PORT="{{PORT}}" STORAGE_PATH="{{STORAGE_PATH}}" KEYFILE="{{KEYFILE}}" KEY_SCHEME="{{KEY_SCHEME}}"
 
 # Register provider on-chain (idempotent). Requires a running chain.
 # Called automatically by register-then-start-provider, or run standalone.
