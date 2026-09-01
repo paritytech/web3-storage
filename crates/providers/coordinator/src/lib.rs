@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! Chain-state coordinator: keeps the provider node's view of the runtime in
 //! sync via a finalized-block subscription.
@@ -22,17 +22,15 @@
 //! [`BlockEvent::BucketMembershipChanged`], so the membership cache can drop
 //! stale authorization on its own rather than being told to.
 
-use crate::negotiate::NonceCounter;
-use crate::types::ProviderInfo;
-use crate::Error;
 use async_trait::async_trait;
 use parking_lot::RwLock;
 use provider_chain::chain_connection::{self, ChainHandle, ChainTransport};
-use provider_chain::chain_events::{self, BlockEvent, BlockEventTx};
+use provider_chain::{decode_block_events, BlockEvent, BlockEventTx};
 use provider_storage::NonceStore;
+use serde::{Deserialize, Serialize};
 use sp_runtime::AccountId32;
 use std::future::Future;
-use std::sync::atomic::AtomicU32;
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use subxt::ext::scale_value::{At, Composite, Primitive, Value, ValueDef, Variant};
@@ -42,6 +40,18 @@ use tokio::task::JoinHandle;
 
 /// Pallet whose storage, constants, and events the coordinator follows.
 const PALLET_NAME: &str = "StorageProvider";
+
+// ── Error ─────────────────────────────────────────────────────────────────────
+
+/// Errors surfaced by the chain-state coordinator.
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    #[error("Internal error: {0}")]
+    Internal(String),
+
+    #[error(transparent)]
+    Chain(#[from] provider_chain::Error),
+}
 
 /// Run `fut` under `budget`, mapping expiry to an [`Error`] naming `what`.
 ///
@@ -63,11 +73,52 @@ async fn with_timeout<T>(
     }
 }
 
+// ── On-chain Provider Info ────────────────────────────────────────────────────
+
+/// The node's view of its on-chain provider registration.
+///
+/// Decoded from the `StorageProvider::Providers` storage entry by the
+/// chain-state coordinator; consumed by `/negotiate` validation and `/info`.
+///
+/// All durations and block numbers on this struct are counted in anchor
+/// (relay-chain) blocks, 6s each - the same clock the pallet reads via its
+/// `BlockNumberProvider` - not parachain blocks.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderInfo {
+    /// Network address for connecting.
+    pub multiaddr: String,
+    /// Total stake locked.
+    pub stake: u128,
+    /// Currently committed bytes.
+    pub committed_bytes: u64,
+    /// Maximum capacity (0 = unlimited).
+    pub max_capacity: u64,
+    /// Minimum agreement duration, in anchor (relay-chain) blocks.
+    pub min_duration: u32,
+    /// Maximum agreement duration, in anchor (relay-chain) blocks.
+    pub max_duration: u32,
+    /// Price per byte per anchor (relay-chain) block.
+    pub price_per_byte: u128,
+    /// Whether accepting primary agreements.
+    pub accepting_primary: bool,
+    /// Replica sync price (None if not accepting replicas).
+    pub replica_sync_price: Option<u128>,
+    /// Whether accepting extensions.
+    pub accepting_extensions: bool,
+    /// Total agreements ever.
+    pub agreements_total: u32,
+    /// Failed challenges count.
+    pub challenges_failed: u32,
+    /// Anchor (relay-chain) block at which deregistration becomes finalisable
+    /// (`None` = not deregistering).
+    pub deregister_at: Option<u32>,
+}
+
 // ── ChainState ────────────────────────────────────────────────────────────────
 
 /// Live chain state kept in sync with the runtime by the chain-state coordinator.
 ///
-/// Held behind `Arc` inside [`crate::ProviderState`] so the coordinator can hold
+/// Held behind `Arc` inside the provider node's `ProviderState` so the coordinator can hold
 /// its own handle without a back-reference to the whole node state.
 pub struct ChainState {
     /// The pallet's anchor block — the clock all on-chain durations (timeouts,
@@ -110,6 +161,140 @@ impl ChainState {
 pub struct PalletConstants {
     /// Chain-enforced validity window (in blocks) for provider-signed terms.
     pub request_timeout: u32,
+}
+
+// ── NonceCounter ──────────────────────────────────────────────────────────────
+
+/// Monotonic nonce counter for provider-signed terms.
+///
+/// Nonces are atomically allocated via [`Self::next`]. The chain-state
+/// coordinator aligns the counter with the chain's `ProviderReplayState.hsn + 1`
+/// (`hsn` = highest sequence nonce, the top of the chain's replay window) on
+/// connect and on every relevant provider event, so the counter resumes at
+/// `max(persisted_local, hsn + 1)`:
+///
+/// * **Local persistence** (disk mode): each allocation is persisted before
+///   returning, so a **clean process restart** does not reissue nonces that were
+///   signed but not yet redeemed. Power-loss/kernel-panic may lose the last write
+///   (the RocksDB WAL - write-ahead log - is not fsynced per allocation); in that
+///   case the counter falls back to `chain_hsn + 1`, which is still safe - the
+///   chain's replay window rejects any duplicate redemption.
+/// * **Chain alignment**: `bootstrap_from_hsn` advances the counter past any
+///   nonce the chain has already accepted, covering redemptions that happened
+///   while the node was down or while we weren't watching.
+///
+/// Gap-skipping is fine: unused nonces just expire from the replay window
+/// without effect. The on-chain replay window is authoritative and rejects
+/// any out-of-range reuse, so a missed nonce can never lead to a double
+/// redemption.
+///
+/// Until the first successful [`Self::bootstrap_from_hsn`] the counter has not
+/// been reconciled with the chain, so `/negotiate` must not sign with it; query
+/// [`Self::is_bootstrapped`] to gate that.
+pub struct NonceCounter {
+    counter: AtomicU64,
+    /// Set once the counter has been aligned with the chain's replay window.
+    bootstrapped: AtomicBool,
+    store: Arc<dyn NonceStore>,
+}
+
+impl std::fmt::Debug for NonceCounter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("NonceCounter")
+            .field("counter", &self.counter)
+            .field("bootstrapped", &self.bootstrapped)
+            .finish()
+    }
+}
+
+impl NonceCounter {
+    /// Create a counter starting at `start` backed by `store` for persistence.
+    ///
+    /// Seed `start` from `store.load().unwrap_or(1)` (the persisted high-water
+    /// mark), then call `bootstrap_from_hsn` to advance past the chain's replay
+    /// head. The counter is *not* considered bootstrapped until then.
+    pub fn with_store(start: u64, store: Arc<dyn NonceStore>) -> Self {
+        Self {
+            counter: AtomicU64::new(start),
+            bootstrapped: AtomicBool::new(false),
+            store,
+        }
+    }
+
+    /// Whether the counter has been reconciled with the chain's replay window
+    /// at least once. `/negotiate` gates on this so it never signs a nonce
+    /// that was not derived from on-chain state.
+    pub fn is_bootstrapped(&self) -> bool {
+        self.bootstrapped.load(Ordering::SeqCst)
+    }
+
+    /// Advance the counter to at least `hsn + 1` and mark it bootstrapped.
+    /// Idempotent — only advances forward.
+    pub fn bootstrap_from_hsn(&self, hsn: u64) {
+        self.bootstrapped.store(true, Ordering::SeqCst);
+        let target = hsn.saturating_add(1);
+        // Standard CAS loop — bump only if our target is higher than
+        // whatever is already there.
+        let mut current = self.counter.load(Ordering::SeqCst);
+        while current < target {
+            match self.counter.compare_exchange_weak(
+                current,
+                target,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            ) {
+                Ok(_) => break,
+                Err(observed) => current = observed,
+            }
+        }
+    }
+
+    /// Allocate the next nonce. Atomic: concurrent callers each get a distinct
+    /// value.
+    ///
+    /// The value *after* the increment (`nonce + 1`) is persisted as the new
+    /// high-water mark before the nonce is returned. This means the persisted
+    /// value always equals the next nonce that *will* be issued, so a counter
+    /// seeded with `store.load().unwrap_or(1)` on restart correctly resumes
+    /// above every nonce that was signed.
+    pub fn next(&self) -> u64 {
+        let nonce = self.counter.fetch_add(1, Ordering::SeqCst);
+        self.store.persist(nonce.saturating_add(1));
+        nonce
+    }
+}
+
+// ── anchor block ──────────────────────────────────────────────────────────────
+
+/// Query the pallet's `StorageProviderApi::current_anchor_block` runtime API —
+/// the block every on-chain duration (timeouts, expiries, `valid_until`, nonce
+/// age) is measured against. Reading it through the runtime API keeps the
+/// provider agnostic to whether the anchor is a relay, parachain, or other
+/// block number: the pallet decides via its `BlockNumberProvider`, and the
+/// provider no longer reaches into a specific storage item.
+///
+/// Kept here (rather than in `storage-client`) so the provider node stays
+/// dependency-light (see #275).
+pub async fn fetch_current_anchor_block<C>(
+    at: &subxt::client::ClientAtBlock<subxt::PolkadotConfig, C>,
+) -> Result<u32, Error>
+where
+    C: subxt::client::OnlineClientAtBlockT<subxt::PolkadotConfig>,
+{
+    use codec::Decode;
+    // Invoke by the runtime API's `state_call` name and decode the raw SCALE
+    // response directly as the block number. Decoding by hand (rather than
+    // through the dynamic value path) avoids depending on this API being
+    // present in the node's metadata snapshot.
+    let bytes = at
+        .runtime_apis()
+        .call_raw("StorageProviderApi_current_anchor_block", None)
+        .await
+        .map_err(|e| {
+            Error::Internal(format!("current_anchor_block runtime API call failed: {e}"))
+        })?;
+    u32::decode(&mut &bytes[..])
+        .map_err(|e| Error::Internal(format!("Failed to decode anchor block: {e}")))
 }
 
 // ── chain reads ───────────────────────────────────────────────────────────────
@@ -433,7 +618,7 @@ impl ChainStateCoordinator {
             // are measured against) at this finalized block, via its runtime
             // API — so the provider never needs to know which block notion the
             // pallet uses.
-            match crate::subxt_client::fetch_current_anchor_block(&at).await {
+            match fetch_current_anchor_block(&at).await {
                 Ok(anchor_block) => {
                     self.chain_state
                         .current_anchor_block
@@ -458,7 +643,7 @@ impl ChainStateCoordinator {
 
             // Fan out the coordinator-relevant events. Send failures just mean
             // no coordinator is subscribed.
-            for event in chain_events::decode_block_events(&events, block_number) {
+            for event in decode_block_events(&events, block_number) {
                 let _ = self.events_tx.send(event);
             }
 
@@ -1043,7 +1228,7 @@ mod tests {
         /// Tracked runtime metadata snapshot (shared with the PAPI codegen).
         const METADATA: &[u8] = include_bytes!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../packages/papi/.papi/metadata/parachain.scale"
+            "/../../../packages/papi/.papi/metadata/parachain.scale"
         ));
         const BLOCK_HASH: &str =
             "0x2222222222222222222222222222222222222222222222222222222222222222";
@@ -1424,12 +1609,12 @@ mod tests {
             )
         }
 
-        /// The `BucketMembershipChanged` bucket ids `chain_events::decode_block_events`
+        /// The `BucketMembershipChanged` bucket ids `decode_block_events`
         /// produces from `events`, in encounter order.
         fn membership_changed_bucket_ids(
             events: &subxt::events::Events<PolkadotConfig>,
         ) -> Vec<u64> {
-            chain_events::decode_block_events(events, 0)
+            decode_block_events(events, 0)
                 .into_iter()
                 .filter_map(|event| match event {
                     BlockEvent::BucketMembershipChanged { bucket_id } => Some(bucket_id),
@@ -1592,7 +1777,6 @@ mod tests {
             // The connection was published and the block fanned out, including
             // the statically-decoded ChallengeCreated from the block's events.
             assert!(chain_rx.borrow().is_some());
-            use provider_chain::chain_events::BlockEvent;
             let mut saw_resubscribed = false;
             let mut saw_challenge = false;
             while let Ok(event) = events_rx.try_recv() {
