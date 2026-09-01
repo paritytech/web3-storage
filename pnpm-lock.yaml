@@ -289,6 +289,85 @@ importers:
         specifier: ^4.1.9
         version: 4.1.10(@types/node@26.1.1)(vite@8.1.5(@types/node@26.1.1)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.1))
 
+  user-interfaces/explorer:
+    dependencies:
+      '@polkadot-api/descriptors':
+        specifier: workspace:*
+        version: link:../../packages/papi/.papi/descriptors
+      '@react-rxjs/core':
+        specifier: ^0.10.8
+        version: 0.10.8(react@19.2.8)(rxjs@7.8.2)
+      '@web3-storage/chain-client':
+        specifier: workspace:*
+        version: link:../shared/chain-client
+      '@web3-storage/network-config':
+        specifier: workspace:*
+        version: link:../shared/network-config
+      '@web3-storage/network-picker':
+        specifier: workspace:*
+        version: link:../shared/network-picker
+      '@web3-storage/sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk
+      class-variance-authority:
+        specifier: ^0.7.1
+        version: 0.7.1
+      clsx:
+        specifier: ^2.1.1
+        version: 2.1.1
+      lucide-react:
+        specifier: ^1.26.0
+        version: 1.26.0(react@19.2.8)
+      polkadot-api:
+        specifier: ^2.2.1
+        version: 2.2.1(esbuild@0.28.1)(rxjs@7.8.2)
+      react:
+        specifier: ^19.2.8
+        version: 19.2.8
+      react-dom:
+        specifier: ^19.2.8
+        version: 19.2.8(react@19.2.8)
+      react-router-dom:
+        specifier: ^7.18.1
+        version: 7.18.1(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+      rxjs:
+        specifier: ^7.8.2
+        version: 7.8.2
+      tailwind-merge:
+        specifier: ^3.6.0
+        version: 3.6.0
+    devDependencies:
+      '@playwright/test':
+        specifier: ^1.61.1
+        version: 1.61.1
+      '@tailwindcss/vite':
+        specifier: ^4.3.3
+        version: 4.3.3(vite@8.1.5(@types/node@26.1.1)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.1))
+      '@types/react':
+        specifier: ^19.2.17
+        version: 19.2.17
+      '@types/react-dom':
+        specifier: ^19.2.3
+        version: 19.2.3(@types/react@19.2.17)
+      '@vitejs/plugin-react':
+        specifier: ^6.0.4
+        version: 6.0.4(vite@8.1.5(@types/node@26.1.1)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.1))
+      '@web3-storage/test-helpers':
+        specifier: workspace:*
+        version: link:../shared/test-helpers
+      tailwindcss:
+        specifier: ^4.3.3
+        version: 4.3.3
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
+      vite:
+        specifier: ^8.1.5
+        version: 8.1.5(@types/node@26.1.1)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.1)
+      vitest:
+        specifier: ^4.1.9
+        version: 4.1.10(@types/node@26.1.1)(vite@8.1.5(@types/node@26.1.1)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.1))
+
   user-interfaces/photos:
     dependencies:
       '@polkadot-api/descriptors':
