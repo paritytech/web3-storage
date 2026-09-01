@@ -14,13 +14,12 @@ implementation reads the anchor. See the anchor-clock section in
 1. [Overview](#overview)
 2. [Why Checkpoints Require Provider Signatures](#why-checkpoints-require-provider-signatures)
 3. [Provider Registration](#provider-registration)
-4. [Bucket Creation](#bucket-creation)
-5. [Storage Agreements](#storage-agreements)
-6. [Data Upload Flow](#data-upload-flow)
-7. [Checkpoint (Commitment) Flow](#checkpoint-commitment-flow)
-8. [Data Read Flow](#data-read-flow)
-9. [Challenge Flow](#challenge-flow)
-10. [Layer 1: Drive Operations](#layer-1-drive-operations)
+4. [Storage Agreements](#storage-agreements)
+5. [Data Upload Flow](#data-upload-flow)
+6. [Checkpoint (Commitment) Flow](#checkpoint-commitment-flow)
+7. [Data Read Flow](#data-read-flow)
+8. [Challenge Flow](#challenge-flow)
+9. [Layer 1: Drive Operations](#layer-1-drive-operations)
 
 ---
 
@@ -178,89 +177,57 @@ sequenceDiagram
 
 ---
 
-## Bucket Creation
-
-### Extrinsic: `create_bucket`
-
-```mermaid
-sequenceDiagram
-    participant U as User (Admin)
-    participant C as Chain (Pallet)
-
-    U->>C: create_bucket(is_private, min_providers)
-
-    Note over C: Generate new bucket_id
-    C->>C: bucket_id = NextBucketId::get()
-    C->>C: NextBucketId::put(bucket_id + 1)
-
-    Note over C: Create bucket structure
-    Note over C: bucket = Bucket {<br/> admin: caller,<br/> is_private,<br/> min_providers,<br/> primary_providers: vec![],<br/> snapshot: None,<br/> members: BTreeMap::new()<br/>}
-
-    C->>C: Buckets::insert(bucket_id, bucket)
-    C->>C: AdminBuckets::append(admin, bucket_id)
-
-    C-->>U: Event::BucketCreated { bucket_id, admin }
-```
-
----
-
 ## Storage Agreements
 
-### Extrinsic: `request_agreement`
+There is no on-chain request/accept round-trip and no standalone bucket
+creation: the provider signs a quote (`AgreementTerms`) off-chain, and the
+future owner redeems it in a single extrinsic. Redeeming primary terms creates
+the bucket together with its primary agreement.
+
+### Extrinsic: `establish_storage_agreement`
 
 ```mermaid
 sequenceDiagram
-    participant A as Admin
+    participant P as Provider (off-chain)
+    participant O as Owner
     participant C as Chain (Pallet)
     participant B as Balances
 
-    A->>C: request_agreement(bucket_id, provider, max_bytes, duration, max_payment)
+    P-->>O: signed AgreementTerms { owner, max_bytes, duration,<br/>price_per_byte, valid_until, nonce,<br/>bucket_id: None, replica_params: None }
 
-    Note over C: Validate bucket and provider
-    C->>C: bucket = Buckets::get(bucket_id)?
-    C->>C: ensure!(bucket.admin == caller)
-    C->>C: provider_info = Providers::get(provider)?
-    C->>C: ensure!(provider_info.settings.accepting_primary)
+    O->>C: establish_storage_agreement(provider, terms, sig)
 
-    Note over C: Calculate actual payment
+    Note over C: Validate the quote
+    C->>C: ensure!(terms.owner == caller)
+    C->>C: ensure!(now <= terms.valid_until <= now + RequestTimeout)
+    C->>C: verify sig over blake2_256(PRIMARY_TERM_CONTEXT ++ SCALE(terms))
+    C->>C: replay window: try_accept(terms.nonce)
+
+    Note over C: Validate the provider
+    C->>C: ensure!(accepting_primary, duration in bounds)
+    C->>C: ensure!(committed_bytes + max_bytes fits capacity & stake)
+
+    Note over C: Escrow payment on the owner
     C->>C: payment = price_per_byte × max_bytes × duration
-    C->>C: ensure!(payment <= max_payment)
+    C->>B: hold(HoldReason::AgreementPayment, owner, payment)
 
-    Note over C: Escrow payment
-    C->>B: hold(HoldReason::AgreementPayment, admin, payment)
+    Note over C: Create bucket + agreement
+    C->>C: bucket_id = create_bucket_internal(owner, 1, Some(provider))
+    C->>C: StorageAgreements::insert(bucket_id, provider, agreement)
 
-    Note over C: Create pending request
-    C->>C: AgreementRequests::insert((bucket_id, provider), request)
-
-    C-->>A: Event::AgreementRequested { bucket_id, provider, max_bytes }
+    C-->>O: Event::BucketCreated { bucket_id, admin: owner }
+    C-->>O: Event::StorageAgreementEstablished { bucket_id, provider, owner, terms, expires_at }
 ```
 
-### Extrinsic: `accept_agreement`
+### Extrinsic: `establish_replica_agreement`
 
-```mermaid
-sequenceDiagram
-    participant P as Provider
-    participant C as Chain (Pallet)
-
-    P->>C: accept_agreement(bucket_id)
-
-    Note over C: Get pending request
-    C->>C: request = AgreementRequests::take((bucket_id, caller))?
-
-    Note over C: Create agreement
-    Note over C: agreement = StorageAgreement {<br/> provider: caller,<br/> bucket_id,<br/> max_bytes: request.max_bytes,<br/> start_block: current_block,<br/> end_block: current_block + duration,<br/> payment: request.payment,<br/> role: ProviderRole::Primary<br/>}
-
-    C->>C: StorageAgreements::insert((bucket_id, provider), agreement)
-
-    Note over C: Add to bucket's provider list
-    C->>C: bucket.primary_providers.push(provider)
-    C->>C: Buckets::insert(bucket_id, bucket)
-
-    Note over C: Update provider stats
-    C->>C: provider_info.committed_bytes += max_bytes
-
-    C-->>P: Event::AgreementAccepted { bucket_id, provider }
-```
+Same signed-quote shape against an **existing** bucket: `terms.bucket_id`
+must name the target bucket and `terms.replica_params` must be
+`Some(ReplicaTerms { sync_balance, sync_price, min_sync_interval })`. The hold
+placed on the owner is the storage payment **plus** `sync_balance`; each
+accepted `confirm_replica_sync` settles `sync_price` out of it, and whatever
+sync balance is unspent when the agreement is removed is released back to the
+owner.
 
 ---
 
@@ -446,17 +413,13 @@ sequenceDiagram
     C->>C: provider_idx = bucket.primary_providers.position(provider)?
     C->>C: ensure!(snapshot.has_provider_signed(provider_idx))
 
-    Note over C: Visibility gate (challenged provider is a primary)
-    C->>C: if bucket.visibility == Private:
-    C->>C:   ensure!(is_member(challenger) || owns_primary_agreement(challenger, bucket))
-
-    Note over C: Determine cost tier (once, at creation)
-    C->>C: authorized = is_authorized(challenger, bucket)
-    Note over C: (authorized = member or agreement owner, stored in the<br/>challenge so later membership changes don't alter the fee<br/>split on a valid response — see respond_to_challenge)
+    Note over C: Obligation gate: the agreement must still be live
+    C->>C: agreement = StorageAgreements::get(bucket_id, provider)?
+    C->>C: ensure!(now < agreement.expires_at)
 
     Note over C: Create challenge
     C->>C: deadline = current_anchor_block + ChallengeTimeout
-    Note over C: challenge = Challenge {<br/> challenger,<br/> bucket_id,<br/> provider,<br/> mmr_root: snapshot.mmr_root,<br/> start_seq: snapshot.start_seq,<br/> leaf_index,<br/> chunk_index,<br/> deposit,<br/> authorized<br/>}
+    Note over C: challenge = Challenge {<br/> challenger,<br/> bucket_id,<br/> provider,<br/> mmr_root: snapshot.mmr_root,<br/> start_seq: snapshot.start_seq,<br/> target: { leaf_index, chunk_index },<br/> deposit<br/>}
 
     C->>C: Challenges::insert(deadline, next_index, challenge)
 
@@ -496,8 +459,8 @@ sequenceDiagram
 
     Note over C: Challenge defended! Stake untouched.
     C->>C: Remove challenge
-    Note over C: Reimburse provider's response fee from deposit:<br/>public challenger → 100%, authorized → split fraction
-    C->>C: Return remaining deposit to challenger
+    Note over C: Split the deposit by response time: the provider is paid<br/>10–50% of it for the work of responding (slower response →<br/>bigger share), straight out of the ChallengeDeposit hold
+    C->>C: Release the remaining deposit to the challenger
 
     C-->>P: Event::ChallengeDefended { challenge_id }
 ```
@@ -545,44 +508,25 @@ sequenceDiagram
     participant DR as Drive Registry Pallet
     participant SP as Storage Provider Pallet
 
-    U->>DR: create_drive(name, max_capacity, storage_period, payment, min_providers, commit_strategy)
+    Note over U: Obtain provider-signed AgreementTerms off-chain
+    U->>DR: create_drive(name, provider, terms, sig)
 
     Note over DR: Validate inputs
-    DR->>DR: ensure!(max_capacity > 0)
-    DR->>DR: ensure!(storage_period > 0)
-    DR->>DR: ensure!(payment > 0)
+    DR->>DR: ensure!(name fits, drive count < MaxDrivesPerUser)
 
-    Note over DR: Auto-determine provider count if not specified
-    DR->>DR: num_providers = min_providers.unwrap_or(
-    DR->>DR:   if storage_period > 1000 { 3 } else { 1 }
-    DR->>DR: )
-
-    Note over DR: Create bucket via Layer 0
-    DR->>SP: create_bucket(is_private: true, min_providers)
+    Note over DR: Open bucket + primary agreement atomically via Layer 0
+    DR->>SP: establish_storage_agreement_internal(owner, provider, terms, sig)
+    Note over SP: signature, replay window, capacity/stake/duration<br/>checks; escrows payment; creates bucket + agreement
     SP-->>DR: bucket_id
 
-    Note over DR: Find available providers
-    DR->>SP: query_available_providers(max_capacity)
-    SP-->>DR: [provider1, provider2, provider3]
-
-    Note over DR: Request agreements with each provider
-    loop For each provider
-        DR->>SP: request_agreement(bucket_id, provider, max_capacity, storage_period, payment/n)
-        DR->>SP: [Provider accepts via accept_agreement]
-    end
-
-    Note over DR: Create empty root directory
-    DR->>DR: root_dir = DirectoryNode::new_empty(drive_id)
-    DR->>DR: root_cid = compute_cid(root_dir.encode())
-
     Note over DR: Store drive info
-    Note over DR: drive = DriveInfo {<br/> owner,<br/> bucket_id,<br/> root_cid,<br/> commit_strategy,<br/> created_at: current_block,<br/> ...<br/>}
+    Note over DR: drive = DriveInfo {<br/> owner,<br/> bucket_id,<br/> created_at,<br/> name,<br/> max_capacity: terms.max_bytes,<br/> storage_period: terms.duration,<br/> expires_at<br/>}
 
     DR->>DR: Drives::insert(drive_id, drive)
     DR->>DR: UserDrives::append(owner, drive_id)
     DR->>DR: BucketToDrive::insert(bucket_id, drive_id)
 
-    DR-->>U: Event::DriveCreated { drive_id, bucket_id, root_cid }
+    DR-->>U: Event::DriveCreated { drive_id, owner, bucket_id }
 ```
 
 ### Extrinsic: `update_root_cid`
