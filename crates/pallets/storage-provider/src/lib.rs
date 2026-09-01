@@ -194,10 +194,6 @@ pub mod pallet {
     #[pallet::config]
     pub trait Config: frame_system::Config<RuntimeEvent: From<Event<Self>>> {
         /// Currency for payments and staking.
-        ///
-        /// Singular `fungible::*`: everything here is native-token denominated.
-        /// Multi-asset would need an `AssetId` threaded through agreements,
-        /// settings and signed quotes — a design change, not a bound swap.
         type Currency: Mutate<Self::AccountId>
             + MutateHold<Self::AccountId, Reason = Self::RuntimeHoldReason>
             + BalancedHold<Self::AccountId>;
@@ -800,6 +796,7 @@ pub mod pallet {
         SlashedProviderRemoved {
             bucket_id: BucketId,
             provider: T::AccountId,
+            /// Locked payment plus, for a replica, the unspent sync balance.
             payment_returned_to_owner: BalanceOf<T>,
         },
 
@@ -1543,8 +1540,14 @@ pub mod pallet {
             let agreement = StorageAgreements::<T>::take(bucket_id, &provider)
                 .ok_or(Error::<T>::AgreementNotFound)?;
 
-            // Return locked payment to owner (provider failed their duty)
-            Self::release_payment(&agreement.owner, agreement.payment_locked)?;
+            // Return the locked payment to the owner (provider failed their
+            // duty), plus, for a replica, the unspent sync balance escrowed
+            // alongside it.
+            let mut returned = agreement.payment_locked;
+            if let ProviderRole::Replica { sync_balance, .. } = &agreement.role {
+                returned = returned.saturating_add(*sync_balance);
+            }
+            Self::release_payment(&agreement.owner, returned)?;
 
             // Update provider committed_bytes
             Providers::<T>::mutate(&provider, |maybe_provider| {
@@ -1578,7 +1581,7 @@ pub mod pallet {
             Self::deposit_event(Event::SlashedProviderRemoved {
                 bucket_id,
                 provider,
-                payment_returned_to_owner: agreement.payment_locked,
+                payment_returned_to_owner: returned,
             });
 
             Ok(())

@@ -56,9 +56,16 @@ impl<T: Config> Pallet<T> {
         };
 
         // Both arms above split `payment_locked` exactly, so these two drain
-        // the hold.
+        // the storage-fee part of the hold.
         Self::settle_payment(&agreement.owner, provider, to_provider)?;
         Self::settle_payment(&agreement.owner, &T::Treasury::get(), to_burn)?;
+
+        // A replica's unspent sync balance is escrowed alongside the fee; the
+        // agreement record is about to go, so return it to the owner rather
+        // than stranding it on hold.
+        if let ProviderRole::Replica { sync_balance, .. } = &agreement.role {
+            Self::release_payment(&agreement.owner, *sync_balance)?;
+        }
 
         // Update provider stats
         Providers::<T>::mutate(provider, |maybe_provider| {

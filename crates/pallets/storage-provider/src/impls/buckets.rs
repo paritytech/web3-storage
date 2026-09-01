@@ -6,7 +6,7 @@ use alloc::vec::Vec;
 use frame_support::pallet_prelude::*;
 use sp_core::H256;
 use sp_runtime::traits::{SaturatedConversion, Saturating, Zero};
-use storage_primitives::{BucketId, Role};
+use storage_primitives::{BucketId, ProviderRole, Role};
 
 impl<T: Config> Pallet<T> {
     /// Internal function to cleanup a bucket and all its agreements.
@@ -66,6 +66,15 @@ impl<T: Config> Pallet<T> {
 
             // Payment to provider = total locked - refund to owner
             let payment_to_provider = agreement.payment_locked.saturating_sub(refund_to_owner);
+
+            // A replica's unspent sync balance is escrowed alongside the fee
+            // and goes back to the owner with the refund.
+            let refund_to_owner = match &agreement.role {
+                ProviderRole::Replica { sync_balance, .. } => {
+                    refund_to_owner.saturating_add(*sync_balance)
+                }
+                ProviderRole::Primary => refund_to_owner,
+            };
 
             // Settle the earned portion straight out of escrow; the unspent
             // remainder is released back to the owner.

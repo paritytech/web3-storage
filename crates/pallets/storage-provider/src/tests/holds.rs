@@ -206,3 +206,108 @@ fn try_state_catches_bookkeeping_with_no_funds_behind_it() {
         assert!(StorageProvider::do_try_state().is_err());
     });
 }
+
+/// A replica-accepting provider that charges for storage, so both the fee and
+/// the sync balance escrow non-zero amounts.
+fn replica_provider(who: u64, stake: u64) {
+    register_provider_with_settings(
+        who,
+        stake,
+        ProviderSettings {
+            price_per_byte: 1,
+            accepting_primary: true,
+            replica_sync_price: Some(10),
+            ..Default::default()
+        },
+    );
+}
+
+/// Escrow shape shared by the release-path tests: a replica agreement whose
+/// hold on the owner is the storage fee plus a 100-unit sync balance. Returns
+/// `(bucket_id, fee)`.
+fn setup_replica_escrow() -> (u64, u64) {
+    replica_provider(2, 200);
+    let bucket_id = create_bucket(1, 0);
+    setup_replica_agreement(
+        2,
+        1,
+        bucket_id,
+        50,
+        100,
+        storage_primitives::ReplicaTerms {
+            sync_balance: 100,
+            min_sync_interval: 10,
+            sync_price: 10,
+        },
+    );
+    let fee = StorageAgreements::<Test>::get(bucket_id, 2)
+        .unwrap()
+        .payment_locked;
+    assert!(fee > 0, "test needs a non-zero fee to be meaningful");
+    assert_eq!(held(HoldReason::AgreementPayment, 1), fee + 100);
+    (bucket_id, fee)
+}
+
+#[test]
+fn ending_a_replica_agreement_releases_the_unspent_sync_balance() {
+    new_test_ext().execute_with(|| {
+        let (bucket_id, _fee) = setup_replica_escrow();
+        let owner_free = Balances::free_balance(1);
+
+        run_to_block(101);
+        assert_ok!(StorageProvider::end_agreement(
+            RuntimeOrigin::signed(1),
+            bucket_id,
+            2,
+            storage_primitives::EndAction::Pay,
+        ));
+
+        assert_eq!(
+            held(HoldReason::AgreementPayment, 1),
+            0,
+            "the unspent sync balance must not stay stranded on hold"
+        );
+        // The provider earned the fee out of escrow; the sync balance came
+        // back to the owner.
+        assert_eq!(Balances::free_balance(1), owner_free + 100);
+        assert_ok!(StorageProvider::do_try_state());
+    });
+}
+
+#[test]
+fn remove_slashed_releases_the_replica_escrow_and_sync_balance() {
+    new_test_ext().execute_with(|| {
+        let (bucket_id, fee) = setup_replica_escrow();
+        let owner_free = Balances::free_balance(1);
+        slash_provider_stake(2);
+
+        assert_ok!(StorageProvider::remove_slashed(
+            RuntimeOrigin::signed(5),
+            bucket_id,
+            2,
+        ));
+
+        assert_eq!(held(HoldReason::AgreementPayment, 1), 0);
+        // The provider failed their duty: fee and sync balance both return.
+        assert_eq!(Balances::free_balance(1), owner_free + fee + 100);
+        assert_ok!(StorageProvider::do_try_state());
+    });
+}
+
+#[test]
+fn bucket_cleanup_releases_the_replica_sync_balance() {
+    new_test_ext().execute_with(|| {
+        let (bucket_id, _fee) = setup_replica_escrow();
+        let owner_free = Balances::free_balance(1);
+
+        // Past expiry the whole fee is earned by the provider; only the sync
+        // balance returns to the owner.
+        run_to_block(101);
+        let refunded = StorageProvider::cleanup_bucket_internal(bucket_id, &1).unwrap();
+
+        assert_eq!(refunded, 100);
+        assert_eq!(held(HoldReason::AgreementPayment, 1), 0);
+        assert_eq!(Balances::free_balance(1), owner_free + 100);
+        assert_ok!(StorageProvider::do_try_state());
+    });
+}
