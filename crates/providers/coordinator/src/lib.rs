@@ -896,7 +896,7 @@ fn decode_provider_info(value: &Value) -> Result<ProviderInfo, Error> {
         multiaddr,
         public_key: named_field(value, "public_key")
             .map(decode_byte_vec)
-            .unwrap_or_default(),
+            .ok_or_else(|| missing("public_key"))?,
         stake,
         committed_bytes,
         max_capacity: named_field(settings, "max_capacity")
@@ -1129,8 +1129,10 @@ mod tests {
         // `BoundedVec<u8>` surfaces as a 1-field unnamed composite wrapping
         // the byte sequence.
         let multiaddr = Value::unnamed_composite([Value::from_bytes("/ip4/1.2.3.4/tcp/3333")]);
+        let public_key = Value::unnamed_composite([Value::from_bytes([1u8; 32])]);
         Value::named_composite([
             ("multiaddr", multiaddr),
+            ("public_key", public_key),
             ("stake", Value::u128(1_000)),
             ("committed_bytes", Value::u128(500)),
             ("settings", settings),
@@ -1143,6 +1145,7 @@ mod tests {
     fn decode_provider_info_full() {
         let info = decode_provider_info(&provider_info_value(Some(7), Some(42))).unwrap();
         assert_eq!(info.multiaddr, "/ip4/1.2.3.4/tcp/3333");
+        assert_eq!(info.public_key, vec![1u8; 32]);
         assert_eq!(info.stake, 1_000);
         assert_eq!(info.committed_bytes, 500);
         assert_eq!(info.max_capacity, 10_000);
@@ -1171,6 +1174,39 @@ mod tests {
         let err = decode_provider_info(&value).unwrap_err();
         assert!(
             matches!(&err, Error::Internal(msg) if msg.contains("stake")),
+            "unexpected error: {err:?}"
+        );
+    }
+
+    #[test]
+    fn decode_provider_info_missing_public_key_errors() {
+        // An empty default here would surface later as a baffling
+        // provider_key_mismatch at /negotiate — fail the decode instead.
+        let settings = Value::named_composite([
+            ("max_capacity", Value::u128(10_000)),
+            ("min_duration", Value::u128(10)),
+            ("max_duration", Value::u128(100)),
+            ("price_per_byte", Value::u128(5)),
+            ("accepting_primary", Value::bool(true)),
+            ("accepting_extensions", Value::bool(true)),
+            (
+                "replica_sync_price",
+                Value::unnamed_variant("None", Vec::<Value<()>>::new()),
+            ),
+        ]);
+        let value = Value::named_composite([
+            ("multiaddr", Value::from_bytes("/ip4/1.2.3.4")),
+            ("stake", Value::u128(1_000)),
+            ("committed_bytes", Value::u128(500)),
+            ("settings", settings),
+            (
+                "deregister_at",
+                Value::unnamed_variant("None", Vec::<Value<()>>::new()),
+            ),
+        ]);
+        let err = decode_provider_info(&value).unwrap_err();
+        assert!(
+            matches!(&err, Error::Internal(msg) if msg.contains("public_key")),
             "unexpected error: {err:?}"
         );
     }

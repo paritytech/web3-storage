@@ -1198,31 +1198,14 @@ impl CheckpointManager {
             }
         }
 
-        let mmr_root = match crate::substrate::parse_h256(&commitment.mmr_root) {
-            Ok(root) => root,
-            Err(e) => {
-                tracing::warn!(
-                    "Bucket {bucket_id}: provider {account} returned an unparsable MMR root: {e}"
-                );
-                return None;
-            }
-        };
-
-        let signature = match extrinsics::decode_multi_signature(&commitment.provider_signature) {
-            Ok(sig) => sig,
-            Err(e) => {
-                tracing::warn!(
-                    "Bucket {bucket_id}: provider {account} returned an undecodable signature: {e}"
-                );
-                return None;
-            }
-        };
-
+        // Root and signature arrived already typed — an undecodable value
+        // fails the provider's HTTP round at deserialization — so the floor
+        // check above is the only rejection left in this function.
         Some(ValidatedCommitment {
-            mmr_root,
+            mmr_root: commitment.mmr_root,
             start_seq: commitment.start_seq,
             leaf_count: commitment.leaf_count,
-            signature,
+            signature: commitment.provider_signature.clone(),
         })
     }
 
@@ -2727,40 +2710,24 @@ mod tests {
         assert_eq!(cloned.leaf_count, 10);
     }
 
-    fn test_mmr_root() -> String {
-        format!("0x{}", hex::encode([7u8; 32]))
+    fn test_mmr_root() -> H256 {
+        H256::from([7u8; 32])
     }
 
-    fn valid_signature_hex() -> String {
-        use codec::Encode;
-        let sig = sp_runtime::MultiSignature::Sr25519(sp_core::sr25519::Signature::from([9u8; 64]));
-        format!("0x{}", hex::encode(sig.encode()))
+    fn valid_signature() -> sp_runtime::MultiSignature {
+        sp_runtime::MultiSignature::Sr25519(sp_core::sr25519::Signature::from([9u8; 64]))
     }
 
     #[test]
     fn validated_commitment_accepts_matching_response() {
         let account = AccountId32::new([1u8; 32]);
-        let response = CommitmentResponse::new(1, test_mmr_root(), 5, 10, valid_signature_hex());
+        let response = CommitmentResponse::new(1, test_mmr_root(), 5, 10, valid_signature());
 
         let valid = CheckpointManager::validated_commitment(1, &account, &response, Some((5, 10)))
             .expect("a well-formed response must be accepted");
         assert_eq!(valid.mmr_root, H256::from([7u8; 32]));
         assert_eq!((valid.start_seq, valid.leaf_count), (5, 10));
-        assert_eq!(
-            valid.signature,
-            sp_runtime::MultiSignature::Sr25519(sp_core::sr25519::Signature::from([9u8; 64]))
-        );
-    }
-
-    #[test]
-    fn validated_commitment_rejects_unparsable_root() {
-        let account = AccountId32::new([1u8; 32]);
-        // One provider's garbage root must drop that provider only, never
-        // abort the whole collection round.
-        let response =
-            CommitmentResponse::new(1, "0xnot-a-root".to_string(), 5, 10, valid_signature_hex());
-
-        assert!(CheckpointManager::validated_commitment(1, &account, &response, None).is_none());
+        assert_eq!(valid.signature, valid_signature());
     }
 
     #[test]
@@ -2769,15 +2736,14 @@ mod tests {
 
         // start_seq unchanged but the range *end* moved backwards (5+9=14 < 5+10=15):
         // data disappeared with no compensating delete. Must be refused.
-        let shrunk_end = CommitmentResponse::new(1, test_mmr_root(), 5, 9, valid_signature_hex());
+        let shrunk_end = CommitmentResponse::new(1, test_mmr_root(), 5, 9, valid_signature());
         assert!(
             CheckpointManager::validated_commitment(1, &account, &shrunk_end, Some((5, 10)))
                 .is_none(),
             "a range end behind the on-chain snapshot must be refused"
         );
 
-        let rewound_start =
-            CommitmentResponse::new(1, test_mmr_root(), 4, 10, valid_signature_hex());
+        let rewound_start = CommitmentResponse::new(1, test_mmr_root(), 4, 10, valid_signature());
         assert!(CheckpointManager::validated_commitment(
             1,
             &account,
@@ -2794,7 +2760,7 @@ mod tests {
         // amount, so the range end (start_seq + leaf_count) is unchanged.
         // This must NOT be treated as a regression.
         let account = AccountId32::new([1u8; 32]);
-        let post_delete = CommitmentResponse::new(1, test_mmr_root(), 8, 7, valid_signature_hex());
+        let post_delete = CommitmentResponse::new(1, test_mmr_root(), 8, 7, valid_signature());
 
         assert!(
             CheckpointManager::validated_commitment(1, &account, &post_delete, Some((5, 10)))
@@ -2802,31 +2768,6 @@ mod tests {
             "a post-delete range with an unchanged end must be accepted"
         );
     }
-
-    #[test]
-    fn validated_commitment_rejects_unusable_signatures() {
-        let account = AccountId32::new([1u8; 32]);
-
-        let undecodable = CommitmentResponse::new(1, test_mmr_root(), 5, 10, "not-hex".to_string());
-        assert!(CheckpointManager::validated_commitment(1, &account, &undecodable, None).is_none());
-
-        // 0x01 tags Sr25519, whose signature is 64 bytes — 63 must not decode.
-        let wrong_length = CommitmentResponse::new(
-            1,
-            test_mmr_root(),
-            5,
-            10,
-            format!("0x01{}", hex::encode([9u8; 63])),
-        );
-        assert!(
-            CheckpointManager::validated_commitment(1, &account, &wrong_length, None).is_none(),
-            "a truncated signature must not reach the extrinsic builder"
-        );
-    }
-
-    // ========================================================================
-    // ProviderInfo Tests
-    // ========================================================================
 
     #[test]
     fn test_provider_info_clone() {

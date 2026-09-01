@@ -154,8 +154,8 @@ impl ChallengerClient {
     /// - `commitment`: The MMR commitment (root + range) the provider signed over
     /// - `target`: Which leaf + chunk within that commitment to challenge
     /// - `provider_signature`: The provider's scheme-tagged signature on the
-    ///   commitment — decode the node's hex wire format with
-    ///   [`extrinsics::decode_multi_signature`](crate::substrate::extrinsics::decode_multi_signature)
+    ///   commitment, as returned by
+    ///   [`CommitResponse::provider_signature`](crate::CommitResponse)
     pub async fn challenge_offchain(
         &self,
         bucket_id: BucketId,

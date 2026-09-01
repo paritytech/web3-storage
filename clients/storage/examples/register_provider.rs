@@ -109,7 +109,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let provider_info = provider_client.get_provider_info(&account).await?;
     if let Some(info) = provider_info {
-        println!("Provider already existed");
+        // Registration is keyed by account, so a second run with a different
+        // scheme or seed would silently leave the old key in force — and every
+        // signature this node then produces would fail verification. Refuse
+        // loudly instead.
+        if info.public_key != signing_key {
+            return Err(format!(
+                "provider already registered with a different key: on-chain 0x{} vs 0x{} derived \
+                 for scheme '{scheme}'. Deregister first, or rerun with the seed/scheme that \
+                 produced the registered key.",
+                hex::encode(&info.public_key),
+                hex::encode(&signing_key),
+            )
+            .into());
+        }
+        println!("Provider already registered with this key");
         println!("{info:?}");
         return Ok(());
     }

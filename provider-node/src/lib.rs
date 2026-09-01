@@ -241,8 +241,31 @@ impl ProviderState {
     /// silently emitting a zeroed placeholder signature, which would be a
     /// cryptographically invalid commitment masquerading as a real one.
     pub fn sign(&self, message: &[u8]) -> Result<String, Error> {
+        self.ensure_signing_key_registered()?;
         let keypair = self.keypair.as_ref().ok_or(Error::SigningUnavailable)?;
         Ok(format!("0x{}", hex::encode(keypair.sign(message).encode())))
+    }
+
+    /// Best-effort guard for every signing path: once the coordinator has
+    /// loaded our on-chain registration, refuse to sign with a key the chain
+    /// doesn't know — such signatures can never verify, so failing here beats
+    /// handing out dead ones. While no registration is loaded (chainless dev
+    /// mode, or before the first refresh) signing proceeds; a re-registration
+    /// heals a mismatch on the coordinator's next refresh without a restart.
+    pub fn ensure_signing_key_registered(&self) -> Result<(), Error> {
+        let (Some(keypair), Some(info)) = (
+            self.keypair.as_ref(),
+            self.chain_state.provider_info.read().as_ref().cloned(),
+        ) else {
+            return Ok(());
+        };
+        if info.public_key != keypair.public_key_bytes() {
+            let registered = hex::encode(&info.public_key);
+            let local = hex::encode(keypair.public_key_bytes());
+            tracing::warn!(%registered, %local, "local signing key does not match registered on-chain public_key");
+            return Err(Error::ProviderKeyMismatch);
+        }
+        Ok(())
     }
 
     /// Proof source for the challenge responder, backed by this state's
@@ -312,6 +335,53 @@ mod tests {
             sr25519::Pair::verify(&sig, message, &alice.public()),
             "signature did not verify under //Alice's public key"
         );
+    }
+
+    #[test]
+    fn sign_refuses_when_registered_key_differs() {
+        // Best-effort guard: with a coordinator snapshot loaded, every signing
+        // path must refuse a key the chain doesn't know rather than emit
+        // signatures that can never verify.
+        let (deps, _dir) = test_deps();
+        let state = ProviderState::with_seed(deps, "//Alice").unwrap();
+        let local_key = state.keypair.as_ref().unwrap().public_key_bytes();
+
+        let info = |public_key: Vec<u8>| provider_coordinator::ProviderInfo {
+            multiaddr: "/ip4/1.2.3.4/tcp/3333".to_string(),
+            public_key,
+            stake: 1_000,
+            committed_bytes: 0,
+            max_capacity: 0,
+            min_duration: 10,
+            max_duration: 100,
+            price_per_byte: 1,
+            accepting_primary: true,
+            replica_sync_price: None,
+            accepting_extensions: true,
+            agreements_total: 0,
+            challenges_failed: 0,
+            deregister_at: None,
+        };
+
+        state
+            .chain_state
+            .provider_info
+            .write()
+            .replace(info(vec![9u8; 32]));
+        assert!(matches!(
+            state.sign(b"msg"),
+            Err(Error::ProviderKeyMismatch)
+        ));
+
+        // No snapshot (chainless mode) and a matching snapshot both sign.
+        state.chain_state.provider_info.write().take();
+        assert!(state.sign(b"msg").is_ok());
+        state
+            .chain_state
+            .provider_info
+            .write()
+            .replace(info(local_key));
+        assert!(state.sign(b"msg").is_ok());
     }
 
     /// Decode an `0x`-prefixed SCALE `MultiSignature` hex into the inner

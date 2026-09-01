@@ -800,15 +800,10 @@ async fn negotiate_terms(
     }
 
     // Signing with a key the chain doesn't know about produces terms that can
-    // never be redeemed — fail fast instead. Compared at request time against
-    // the coordinator's latest snapshot, so a re-registration heals it on the
-    // next refresh without a restart.
-    if info.public_key != keypair.public_key_bytes() {
-        let registered = hex::encode(&info.public_key);
-        let local = hex::encode(keypair.public_key_bytes());
-        tracing::warn!(%registered, %local, "local signing key does not match registered on-chain public_key");
-        return Err(Error::ProviderKeyMismatch);
-    }
+    // never be redeemed — fail fast instead. The guard reads the coordinator's
+    // latest snapshot, so a re-registration heals it on the next refresh
+    // without a restart.
+    state.ensure_signing_key_registered()?;
 
     negotiate::validate_request(&req, &info)?;
 

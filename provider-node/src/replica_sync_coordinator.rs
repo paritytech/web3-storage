@@ -742,6 +742,12 @@ impl ReplicaSyncCoordinator {
     /// our registered public key, so a node without a signing key must not
     /// submit at all.
     pub async fn confirm_on_chain(&self, duty: &SyncDuty) -> SyncResult {
+        if let Err(e) = self.state.ensure_signing_key_registered() {
+            return SyncResult::SubmissionFailed {
+                bucket_id: duty.bucket_id,
+                error: format!("signing key does not match on-chain registration: {e}"),
+            };
+        }
         let attestation = match self.state.keypair.as_ref() {
             Some(pair) => SignedSyncRoots::sign(pair, duty.target_mmr_root),
             None => {

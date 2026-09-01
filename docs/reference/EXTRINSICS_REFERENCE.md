@@ -759,7 +759,7 @@ Replica provider confirms they have synced to one of the bucket's known MMR root
 **Parameters:**
 - `bucketId`: `BucketId` (u64)
 - `roots`: `[Option<H256>; 7]` - match candidates, indexed `[current, hist_0, hist_1, hist_2, hist_3, hist_4, hist_5]`
-- `_signature`: `MultiSignature` - placeholder, currently unused
+- `signature`: `MultiSignature` - the replica's signature over `roots.encode()`, verified against its registered `public_key` (any registered scheme: Sr25519/Ed25519/Ecdsa/Eth)
 
 **Example:**
 ```
@@ -773,13 +773,13 @@ roots: [
   None,
   None
 ]
-_signature: 0x...
+signature: Sr25519(0x...)
 ```
 
-**Validation:** matched root differs from the previously synced root; at least `minSyncInterval` blocks since last sync; `syncBalance ≥ replicaSyncPrice`.
+**Validation:** signature verifies over the SCALE-encoded `roots` under the provider's registered key; matched root differs from the previously synced root; at least `minSyncInterval` blocks since last sync; `syncBalance ≥ replicaSyncPrice`.
 
 **Events:** `ReplicaSynced { position_matched, sync_payment }`
-**Errors:** `AgreementNotFound`, `NotReplica`, `InvalidSyncRoot`, `SyncTooFrequent`, `InsufficientSyncBalance`
+**Errors:** `AgreementNotFound`, `NotReplica`, `InvalidSyncRoot`, `SyncTooFrequent`, `InsufficientSyncBalance`, `InvalidSignature`, `InvalidPublicKey`
 
 ---
 
@@ -881,7 +881,7 @@ createBucketWithStorage(maxBytes, duration, maxPricePerByte)
 2. requestAgreement(bucketId, replicaProvider, ..., replicaParams { syncBalance, minSyncInterval })
 3. [replica] acceptAgreement(bucketId)
 4. [replica syncs from primary off-chain]
-5. [replica] confirmReplicaSync(bucketId, roots, _signature)
+5. [replica] confirmReplicaSync(bucketId, roots, signature)
 ```
 
 ### 4. Client-initiated checkpoint
