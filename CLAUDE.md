@@ -135,7 +135,7 @@ just demo
 
 ### Running the UIs locally
 
-When the user says **"run locally"** (or "run the UIs", "start the UIs", "spin up the UIs"), invoke the `run-local-uis` project skill — it starts all four `user-interfaces/` apps on their canonical ports with Vite HMR, including the landing page (which needs a custom dev config to substitute its build-time placeholders and rewrite card links). Canonical ports: landing 5176, drive-ui 5174, provider 5175, s3-ui 5177.
+When the user says **"run locally"** (or "run the UIs", "start the UIs", "spin up the UIs"), invoke the `run-local-uis` project skill — it starts all six `user-interfaces/` apps on their canonical ports with Vite HMR, including the landing page (which needs a custom dev config to substitute its build-time placeholders and rewrite card links). Canonical ports: landing 5176, drive-ui 5174, provider 5175, s3-ui 5177, photos 5178, explorer 5179.
 
 ## File System (Layer 1) Commands
 
