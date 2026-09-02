@@ -504,8 +504,8 @@ impl ProviderClient {
                 challenge_id: (c.deadline, c.index),
                 bucket_id: c.bucket_id,
                 deadline: c.deadline,
-                leaf_index: c.leaf_index,
-                chunk_index: c.chunk_index,
+                leaf_index: c.target.leaf_index,
+                chunk_index: c.target.chunk_index,
             })
             .collect())
     }

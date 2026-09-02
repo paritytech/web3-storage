@@ -83,10 +83,15 @@ fn make_challenge(bucket_id: BucketId, deadline: u32, index: u16) -> DetectedCha
         bucket_id,
         deadline,
         index,
-        mmr_root: H256::zero(),
-        start_seq: 0,
-        leaf_index: 5,
-        chunk_index: 0,
+        commitment: storage_primitives::Commitment {
+            mmr_root: H256::zero(),
+            start_seq: 0,
+            leaf_count: 6,
+        },
+        target: storage_primitives::ChunkLocation {
+            leaf_index: 5,
+            chunk_index: 0,
+        },
         challenger: ALICE_SS58.to_string(),
     }
 }
@@ -104,7 +109,7 @@ fn test_detected_challenge() {
     let challenge = make_challenge(1, 1000, 0);
     assert_eq!(challenge.bucket_id, 1);
     assert_eq!(challenge.deadline, 1000);
-    assert_eq!(challenge.leaf_index, 5);
+    assert_eq!(challenge.target.leaf_index, 5);
 }
 
 #[tokio::test(start_paused = true)]
@@ -225,10 +230,15 @@ async fn test_proof_generation_failed_no_bucket() {
         bucket_id: 999,
         deadline: 1000,
         index: 0,
-        mmr_root: H256::zero(),
-        start_seq: 0,
-        leaf_index: 0,
-        chunk_index: 0,
+        commitment: storage_primitives::Commitment {
+            mmr_root: H256::zero(),
+            start_seq: 0,
+            leaf_count: 1,
+        },
+        target: storage_primitives::ChunkLocation {
+            leaf_index: 0,
+            chunk_index: 0,
+        },
         challenger: ALICE_SS58.to_string(),
     };
 
@@ -283,7 +293,7 @@ async fn test_proof_generation_failed_no_bucket() {
 #[tokio::test(start_paused = true)]
 async fn test_data_not_found_bad_chunk_index() {
     let (state, mut challenge, _dir) = test_state_with_data();
-    challenge.chunk_index = 999;
+    challenge.target.chunk_index = 999;
 
     let result: Arc<Mutex<Option<ChallengeResponseResult>>> = Arc::new(Mutex::new(None));
     let result_clone = Arc::clone(&result);

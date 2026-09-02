@@ -425,12 +425,103 @@ fn confirm_replica_sync_happy_path() {
             } => {
                 assert_eq!(*sync_balance, 490); // 500 - 10
                 assert!(last_sync.is_some());
-                let record = last_sync.unwrap();
-                assert_eq!(record.commitment.mmr_root, sp_core::H256::repeat_byte(0xAB));
+                let record = last_sync.as_ref().unwrap();
+                assert_eq!(record.root, sp_core::H256::repeat_byte(0xAB));
                 assert_eq!(record.block, 1);
+                // Synced to the current snapshot ⇒ range recorded (start_seq, leaf_count).
+                assert_eq!(record.range, Some((0, 10)));
             }
             _ => panic!("expected replica"),
         }
+    });
+}
+
+#[test]
+fn challenge_replica_binds_to_synced_range() {
+    use sp_core::H256;
+    new_test_ext().execute_with(|| {
+        frame_system::Pallet::<Test>::set_block_number(1);
+        let bucket_id = setup_replica_with_snapshot();
+
+        // Replica (provider 2) syncs to the current snapshot (start_seq 0, leaf_count 10).
+        let mut roots = [None; 7];
+        roots[0] = Some(H256::repeat_byte(0xAB));
+        assert_ok!(StorageProvider::confirm_replica_sync(
+            RuntimeOrigin::signed(2),
+            bucket_id,
+            roots,
+            sp_runtime::MultiSignature::Sr25519([0u8; 64].into()),
+        ));
+
+        // Anyone can challenge the replica; the challenge is bound to the synced range.
+        assert_ok!(StorageProvider::challenge_replica(
+            RuntimeOrigin::signed(4),
+            bucket_id,
+            2,
+            storage_primitives::ChunkLocation {
+                leaf_index: 3,
+                chunk_index: 1,
+            },
+        ));
+
+        assert_eq!(Challenges::<Test>::iter_prefix(101).count(), 1);
+        let c = Challenges::<Test>::get(101, 0).unwrap();
+        assert_eq!(c.provider, 2);
+        assert_eq!(c.commitment.mmr_root, H256::repeat_byte(0xAB));
+        assert_eq!(c.commitment.start_seq, 0);
+        // Bound to the snapshot's real leaf_count, not a placeholder.
+        assert_eq!(c.commitment.leaf_count, 10);
+        assert_eq!(c.target.leaf_index, 3);
+        assert_eq!(c.target.chunk_index, 1);
+    });
+}
+
+#[test]
+fn challenge_replica_fails_when_synced_to_historical() {
+    use sp_core::H256;
+    new_test_ext().execute_with(|| {
+        frame_system::Pallet::<Test>::set_block_number(1);
+        let bucket_id = setup_replica_with_snapshot();
+
+        // Give the bucket a historical root distinct from the current snapshot.
+        let hist_root = H256::repeat_byte(0x11);
+        Buckets::<Test>::mutate(bucket_id, |b| {
+            if let Some(b) = b {
+                b.historical_roots[0] = (1, hist_root);
+            }
+        });
+
+        // Replica syncs to the HISTORICAL root (position 1), not the current snapshot.
+        let mut roots = [None; 7];
+        roots[1] = Some(hist_root);
+        assert_ok!(StorageProvider::confirm_replica_sync(
+            RuntimeOrigin::signed(2),
+            bucket_id,
+            roots,
+            sp_runtime::MultiSignature::Sr25519([0u8; 64].into()),
+        ));
+
+        // The synced range is unknown for a historical root, so none is recorded.
+        let agreement = StorageAgreements::<Test>::get(bucket_id, 2).unwrap();
+        if let storage_primitives::ProviderRole::Replica { last_sync, .. } = &agreement.role {
+            assert_eq!(last_sync.as_ref().unwrap().range, None);
+        } else {
+            panic!("expected replica");
+        }
+
+        // challenge_replica cannot bind the proof, so it is refused.
+        assert_noop!(
+            StorageProvider::challenge_replica(
+                RuntimeOrigin::signed(4),
+                bucket_id,
+                2,
+                storage_primitives::ChunkLocation {
+                    leaf_index: 0,
+                    chunk_index: 0,
+                },
+            ),
+            Error::<Test>::ReplicaSyncRangeUnknown
+        );
     });
 }
 
@@ -659,8 +750,8 @@ fn confirm_replica_sync_after_interval_with_new_root() {
                 ..
             } => {
                 assert_eq!(*sync_balance, 480); // 500 - 10 - 10
-                let record = last_sync.unwrap();
-                assert_eq!(record.commitment.mmr_root, sp_core::H256::repeat_byte(0xCD));
+                let record = last_sync.as_ref().unwrap();
+                assert_eq!(record.root, sp_core::H256::repeat_byte(0xCD));
                 assert_eq!(record.block, 12);
             }
             _ => panic!("expected replica"),

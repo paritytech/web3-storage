@@ -5,9 +5,8 @@ use frame_support::{
     pallet_prelude::*,
     traits::{Currency, ReservableCurrency},
 };
-use sp_core::H256;
 use sp_runtime::traits::{One, Saturating, Zero};
-use storage_primitives::{BucketId, ChallengeId, ChunkLocation, SlashReason};
+use storage_primitives::{BucketId, ChallengeId, ChunkLocation, Commitment, SlashReason};
 
 impl<T: Config> Pallet<T> {
     /// The `on_initialize` slash sweep: slash providers whose challenges expired
@@ -120,19 +119,26 @@ impl<T: Config> Pallet<T> {
         count
     }
 
+    /// Shared choke point for the three `challenge_*` extrinsics: validates
+    /// the target, reserves the challenger's deposit, and stores the challenge
+    /// under a stable `(deadline, index)` id.
     pub(crate) fn create_challenge(
         challenger: T::AccountId,
         bucket_id: BucketId,
         provider: T::AccountId,
-        mmr_root: H256,
-        start_seq: u64,
-        leaf_index: u64,
-        chunk_index: u64,
+        commitment: Commitment,
+        target: ChunkLocation,
     ) -> DispatchResult {
-        // Deposit comes from `T::ChallengeDeposit` — a runtime constant
-        // sized to make spam expensive without pricing out legitimate
-        // challengers. Previously hardcoded `100u32` (1e-10 of a token
-        // at 12 decimals), which made challenge spam effectively free.
+        // A challenge on a non-existent leaf has no valid defense and would
+        // resolve only by timeout slash — rejecting it at creation closes that
+        // griefing vector.
+        ensure!(
+            target.leaf_index < commitment.leaf_count,
+            Error::<T>::LeafBeyondCanonical
+        );
+
+        // Runtime constant sized to make spam expensive without pricing out
+        // legitimate challengers.
         let deposit: BalanceOf<T> = T::ChallengeDeposit::get();
 
         T::Currency::reserve(&challenger, deposit)?;
@@ -144,12 +150,8 @@ impl<T: Config> Pallet<T> {
             bucket_id,
             provider: provider.clone(),
             challenger: challenger.clone(),
-            mmr_root,
-            start_seq,
-            target: ChunkLocation {
-                leaf_index,
-                chunk_index,
-            },
+            commitment,
+            target,
             deposit,
         };
 

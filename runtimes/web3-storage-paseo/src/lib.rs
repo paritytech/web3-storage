@@ -182,7 +182,8 @@ pub const VERSION: RuntimeVersion = RuntimeVersion {
     // * 4_002 for the breaking Challenges storage reshape (Vec -> StorageDoubleMap) (#125);
     // * 4_003 for dropping the vestigial `ChallengerStatRecord::total_earnings` field (#125);
     // * 4_004 for `StorageProviderApi` v2: `challenge_candidates`, `deregister_at`, `reputation` (#318);
-    spec_version: 4_004,
+    // * 4_005 for the leaf-index binding: Challenge/ReplicaSyncRecord reshape + v1 migration (#301).
+    spec_version: 4_005,
     impl_version: 0,
     apis: RUNTIME_API_VERSIONS,
     // Bumped whenever call encoding changes, so offline signers and stale-metadata

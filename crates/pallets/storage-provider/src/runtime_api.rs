@@ -10,8 +10,7 @@ extern crate alloc;
 use alloc::vec::Vec;
 use codec::{Decode, Encode};
 use scale_info::TypeInfo;
-use sp_core::H256;
-use storage_primitives::{BucketId, BucketSnapshot, ProviderRole, Role};
+use storage_primitives::{BucketId, BucketSnapshot, ChunkLocation, Commitment, ProviderRole, Role};
 
 /// Provider information returned by runtime API.
 #[derive(Clone, PartialEq, Eq, Encode, Decode, TypeInfo, Debug)]
@@ -165,10 +164,10 @@ pub struct ChallengeResponse {
     pub bucket_id: BucketId,
     pub provider: Vec<u8>,   // Encoded AccountId
     pub challenger: Vec<u8>, // Encoded AccountId
-    pub mmr_root: H256,
-    pub start_seq: u64,
-    pub leaf_index: u64,
-    pub chunk_index: u64,
+    /// The commitment being challenged; its `leaf_count` binds the proof.
+    pub commitment: Commitment,
+    /// Leaf + chunk being challenged.
+    pub target: ChunkLocation,
     pub deadline: u32,
     /// Stable per-deadline index, forming `ChallengeId { deadline, index }`.
     pub index: u16,
@@ -179,9 +178,11 @@ sp_api::decl_runtime_apis! {
     /// Runtime API for the storage provider pallet.
     ///
     /// v2 reshaped `ProviderInfoResponse` (`deregister_at`, `reputation`) and added
-    /// `challenge_candidates`. Declared explicitly so callers can probe the version
-    /// instead of decoding a v1 shape that no longer exists.
-    #[api_version(2)]
+    /// `challenge_candidates`. v3 reshaped `ChallengeResponse` around the embedded
+    /// `Commitment`/`ChunkLocation` (leaf-index binding). Declared explicitly so
+    /// callers can probe the version instead of decoding a shape that no longer
+    /// exists.
+    #[api_version(3)]
     pub trait StorageProviderApi<AccountId, BlockNumber, Balance>
     where
         AccountId: Encode + Decode,

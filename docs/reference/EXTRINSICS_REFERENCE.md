@@ -660,7 +660,7 @@ chunkIndex: 3
 **Deposit required:** see the challenge cost note above.
 
 **Events:** `ChallengeCreated`
-**Errors:** `BucketNotFound`, `NoSnapshot`, `ProviderNotInSnapshot`, `NotAuthorizedForPrivateBucket` (private bucket; caller neither member nor primary-agreement owner)
+**Errors:** `BucketNotFound`, `NoSnapshot`, `ProviderNotInSnapshot`, `LeafBeyondCanonical` (`target.leafIndex >= leaf_count` — the leaf does not exist, so the challenge is rejected at creation), `NotAuthorizedForPrivateBucket` (private bucket; caller neither member nor primary-agreement owner)
 
 ---
 
@@ -671,7 +671,7 @@ Challenge a provider using an **off-chain commitment signature**. Works even whe
 **Parameters:**
 - `bucketId`: `BucketId` (u64)
 - `provider`: `AccountId`
-- `commitment`: `Commitment` - `{ mmrRoot: H256, startSeq: u64, leafCount: u64 }`, passed through verbatim so the pallet's payload reconstruction matches what the provider signed
+- `commitment`: `Commitment` - `{ mmrRoot: H256, startSeq: u64, leafCount: u64 }`, passed through verbatim so the pallet's payload reconstruction matches what the provider signed; the signed `leafCount` also binds the proof to `target.leafIndex` in `respondToChallenge`
 - `target`: `ChunkLocation` - `{ leafIndex: u64, chunkIndex: u64 }`, the chunk being challenged within `commitment`
 - `providerSignature`: `MultiSignature` - provider's signature over the commitment payload
 
@@ -685,13 +685,15 @@ providerSignature: 0xsig...
 ```
 
 **Events:** `ChallengeCreated`
-**Errors:** `BucketNotFound`, `AgreementNotFound`, `InvalidSignature`, `NotAuthorizedForPrivateBucket` (private bucket, primary target; caller neither member nor primary-agreement owner)
+**Errors:** `BucketNotFound`, `AgreementNotFound`, `InvalidSignature`, `LeafBeyondCanonical` (`target.leafIndex >= leafCount`), `NotAuthorizedForPrivateBucket` (private bucket, primary target; caller neither member nor primary-agreement owner)
 
 ---
 
 ### `challengeReplica`
 
 Challenge a **replica** provider against the MMR root recorded by their last `confirmReplicaSync`. No signature needed.
+
+> **Note:** `confirmReplicaSync` records the synced `(start_seq, leaf_count)` when the replica syncs to the bucket's **current snapshot**, and `challengeReplica` binds the proof to `leafIndex` with it — same as the other paths. A replica that synced only to a **historical** root has no on-chain range, so `challengeReplica` returns `ReplicaSyncRangeUnknown`; re-sync to the current snapshot, or use `challengeOffchain` with a signed commitment.
 
 **Parameters:**
 - `bucketId`: `BucketId` (u64)
@@ -708,14 +710,14 @@ chunkIndex: 3
 ```
 
 **Events:** `ChallengeCreated`
-**Errors:** `AgreementNotFound`, `NotReplica`, `InvalidSyncRoot`
+**Errors:** `AgreementNotFound`, `NotReplica`, `InvalidSyncRoot`, `ReplicaSyncRangeUnknown`, `LeafBeyondCanonical` (`leafIndex >= leaf_count` of the synced range)
 
 ---
 
 ### `respondToChallenge`
 
 Provider defends an active challenge. Three response variants:
-- `Proof { chunk_data, mmr_proof, chunk_proof }` - present the chunk and Merkle proof
+- `Proof { chunk_data, mmr_proof, chunk_proof }` - present the chunk and Merkle proof. The proof is verified **bound to the challenged coordinate**: `chunk_index` (via `verify_merkle_proof`) and `leaf_index` (via `verify_mmr_proof`, using the challenge's `leaf_count`). A proof for any other leaf is rejected, so a provider cannot answer a challenge for one chunk with a different chunk it still holds. (All three challenge paths — checkpoint, offchain, and replica — carry `leaf_count` and bind the leaf.)
 - `Deleted { new_mmr_root, new_start_seq, admin, admin_signature }` - show the bucket admin authorized deletion
 - `Superseded` - show the challenged state was overtaken by a newer canonical state
 
@@ -746,7 +748,7 @@ Numbers are illustrative.
 | Blocks 96+ | 50 / 50 |
 
 **Events:** `ChallengeDefended`
-**Errors:** `ChallengeNotFound`, `NotChallengeProvider`, `ChallengeExpired`, `InvalidChallengeProof`, `InvalidDeletionProof`, `LeafBeyondCanonical`
+**Errors:** `ChallengeNotFound`, `NotChallengeProvider`, `ChallengeExpired`, `InvalidChallengeProof`, `InvalidDeletionProof`
 
 ---
 
@@ -976,7 +978,7 @@ Common errors you might encounter:
 | `ChallengeExpired` | Past challenge deadline | Too late to respond |
 | `NotChallengeProvider` | Caller is not the challenged provider | — |
 | `ProviderNotInSnapshot` | Provider didn't sign current snapshot | Add their signature via `extendCheckpoint` |
-| `LeafBeyondCanonical` | Challenged leaf is beyond canonical state | — |
+| `LeafBeyondCanonical` | Challenged `leafIndex` is not covered by the commitment's `leaf_count` | Challenge an existing leaf |
 | `InvalidSignature` | Signature didn't verify against registered pubkey | Check key + payload |
 | `NoSnapshot` | Bucket has no checkpoint yet | Call `checkpoint` first |
 | `SnapshotViolatesFrozen` | `startSeq < frozen_start_seq` | Use `startSeq ≥ frozen_start_seq` |

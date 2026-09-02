@@ -484,10 +484,22 @@ pub enum ProviderRole<T: Config> {
         /// Set at agreement creation based on expected bucket activity.
         /// 0 means no time-based limit (only "new root" check applies).
         min_sync_interval: BlockNumberFor<T>,
-        /// Last confirmed sync: (mmr_root, block_number).
-        /// None if replica hasn't confirmed sync yet.
-        last_sync: Option<(H256, BlockNumberFor<T>)>,
+        /// Last confirmed sync. None if the replica hasn't confirmed sync yet.
+        last_sync: Option<ReplicaSyncRecord<BlockNumberFor<T>>>,
     },
+}
+
+/// A replica's last confirmed sync.
+pub struct ReplicaSyncRecord<BlockNumber> {
+    /// MMR root the replica synced to.
+    root: H256,
+    /// (start_seq, leaf_count) of the synced root, recorded only when it was the
+    /// bucket's current snapshot (so the range is known on-chain). None if synced
+    /// only to a historical root, in which case `challenge_replica` returns
+    /// `ReplicaSyncRangeUnknown` because it cannot bind the proof to a leaf.
+    range: Option<(u64, u64)>,
+    /// Block at which the sync was confirmed.
+    block: BlockNumber,
 }
 
 /// Pending agreement requests (client → provider, awaiting acceptance)
@@ -573,6 +585,11 @@ pub struct Challenge<T: Config> {
     pub mmr_root: H256,
     /// Start sequence of the commitment (needed to compute challenged_seq = start_seq + target.leaf_index)
     pub start_seq: u64,
+    /// Leaf count of the committed MMR, used by `respond_to_challenge` to bind the
+    /// proof to the exact `leaf_index` via `verify_mmr_proof`. Every challenge path
+    /// supplies it: the snapshot's (challenge_checkpoint), the signed one
+    /// (challenge_offchain), or the replica's synced range (challenge_replica).
+    pub leaf_count: u64,
     /// Leaf + chunk being challenged (see `ChunkLocation`)
     pub target: ChunkLocation,
     /// Deposit locked by the challenger when the challenge was created.
@@ -1855,10 +1872,14 @@ Response:
   "provider_signature": "0x..."
 }
 
-Note: The returned signature covers a `CommitmentPayload` with the real
-`leaf_count`; `challenge_offchain` reconstructs the payload from the
-`commitment` the challenger passes, so the same values returned here must be
-passed on-chain unchanged.
+Note: The returned signature covers a `CommitmentPayload` with the **real**
+`leaf_count`, so it can back a bound `challenge_offchain` — the
+pallet reconstructs the payload from the `commitment` the challenger passes and
+verifies the signature over it, then uses that `leaf_count` to bind the proof to
+`leaf_index` in `respond_to_challenge`. The values returned here must therefore be
+passed on-chain unchanged. The `/commit` and `/delete` responses sign the same way
+and also return `leaf_count`; `/checkpoint-signature` is equivalent and is used for
+the on-chain `checkpoint` extrinsic.
 
 Get Checkpoint Signature (for checkpoint extrinsic)
 ───────────────────────────────────────────────────
@@ -2277,10 +2298,19 @@ fn verify_challenge_response(
             let chunk_hash = blake2_256(chunk_data);
             
             // 2. Verify chunk is in data_root
-            verify_merkle_proof(chunk_hash, challenge.chunk_index, chunk_proof, &mmr_proof.leaf.data_root)?;
+            verify_merkle_proof(chunk_hash, challenge.target.chunk_index, chunk_proof, &mmr_proof.leaf.data_root)?;
             
-            // 3. Verify data_root is in MMR
-            verify_mmr_proof(&mmr_proof, challenge.leaf_index, &challenge.mmr_root)?;
+            // 3. Verify data_root is in MMR, bound to the EXACT challenged leaf.
+            //    `leaf_count` (from the Challenge — the snapshot's for
+            //    challenge_checkpoint, the signed one for challenge_offchain) lets
+            //    verify_mmr_proof derive the expected path/peak from leaf_index, so
+            //    a provider cannot answer with a proof for a different leaf.
+            verify_mmr_proof(
+                &mmr_proof,
+                challenge.target.leaf_index,
+                challenge.leaf_count,
+                &challenge.mmr_root,
+            )?;
             
             Ok(())
         }

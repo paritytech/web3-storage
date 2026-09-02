@@ -1283,6 +1283,12 @@ pub mod api {
             use super::root_mod;
             use super::runtime_types;
             #[doc = " Runtime API for the storage provider pallet."]
+            #[doc = ""]
+            #[doc = " v2 reshaped `ProviderInfoResponse` (`deregister_at`, `reputation`) and added"]
+            #[doc = " `challenge_candidates`. v3 reshaped `ChallengeResponse` around the embedded"]
+            #[doc = " `Commitment`/`ChunkLocation` (leaf-index binding). Declared explicitly so"]
+            #[doc = " callers can probe the version instead of decoding a shape that no longer"]
+            #[doc = " exists."]
             pub struct StorageProviderApi;
             impl StorageProviderApi {
                 #[doc = " Get provider information."]
@@ -1398,9 +1404,10 @@ pub mod api {
                         "agreement_info",
                         (bucket_id, provider),
                         [
-                            54u8, 115u8, 72u8, 52u8, 77u8, 212u8, 24u8, 77u8, 31u8, 216u8, 163u8,
-                            8u8, 223u8, 185u8, 26u8, 78u8, 110u8, 203u8, 140u8, 2u8, 11u8, 135u8,
-                            60u8, 202u8, 238u8, 132u8, 127u8, 103u8, 228u8, 217u8, 232u8, 118u8,
+                            57u8, 95u8, 152u8, 193u8, 102u8, 124u8, 102u8, 41u8, 201u8, 197u8,
+                            128u8, 37u8, 94u8, 171u8, 17u8, 127u8, 9u8, 83u8, 1u8, 54u8, 194u8,
+                            32u8, 32u8, 170u8, 92u8, 145u8, 112u8, 104u8, 216u8, 247u8, 220u8,
+                            42u8,
                         ],
                     )
                 }
@@ -1417,9 +1424,9 @@ pub mod api {
                         "bucket_agreements",
                         (bucket_id,),
                         [
-                            39u8, 164u8, 145u8, 254u8, 45u8, 99u8, 175u8, 198u8, 122u8, 211u8, 8u8,
-                            234u8, 91u8, 215u8, 146u8, 220u8, 4u8, 65u8, 100u8, 10u8, 160u8, 58u8,
-                            139u8, 203u8, 220u8, 45u8, 184u8, 150u8, 132u8, 206u8, 195u8, 125u8,
+                            246u8, 1u8, 80u8, 135u8, 196u8, 232u8, 209u8, 88u8, 79u8, 6u8, 170u8,
+                            126u8, 232u8, 77u8, 104u8, 63u8, 199u8, 195u8, 188u8, 145u8, 130u8,
+                            132u8, 83u8, 154u8, 254u8, 94u8, 174u8, 12u8, 38u8, 181u8, 63u8, 124u8,
                         ],
                     )
                 }
@@ -1436,9 +1443,9 @@ pub mod api {
                         "provider_agreements",
                         (provider,),
                         [
-                            196u8, 169u8, 194u8, 163u8, 31u8, 208u8, 207u8, 98u8, 75u8, 88u8, 73u8,
-                            247u8, 32u8, 137u8, 47u8, 133u8, 27u8, 90u8, 189u8, 151u8, 193u8, 64u8,
-                            210u8, 154u8, 210u8, 149u8, 228u8, 25u8, 52u8, 124u8, 25u8, 222u8,
+                            244u8, 176u8, 26u8, 20u8, 158u8, 26u8, 174u8, 127u8, 145u8, 183u8,
+                            89u8, 242u8, 206u8, 194u8, 2u8, 14u8, 179u8, 172u8, 147u8, 51u8, 101u8,
+                            4u8, 44u8, 39u8, 105u8, 228u8, 45u8, 69u8, 89u8, 209u8, 55u8, 136u8,
                         ],
                     )
                 }
@@ -1456,9 +1463,9 @@ pub mod api {
                         "challenges_at",
                         (block,),
                         [
-                            173u8, 97u8, 89u8, 253u8, 87u8, 109u8, 200u8, 3u8, 162u8, 165u8, 15u8,
-                            240u8, 136u8, 40u8, 220u8, 56u8, 21u8, 135u8, 15u8, 15u8, 169u8, 88u8,
-                            189u8, 153u8, 242u8, 199u8, 132u8, 162u8, 130u8, 85u8, 9u8, 3u8,
+                            154u8, 95u8, 170u8, 90u8, 0u8, 204u8, 25u8, 22u8, 51u8, 144u8, 22u8,
+                            158u8, 16u8, 192u8, 247u8, 57u8, 149u8, 25u8, 173u8, 162u8, 52u8, 26u8,
+                            128u8, 99u8, 238u8, 161u8, 150u8, 122u8, 41u8, 86u8, 212u8, 215u8,
                         ],
                     )
                 }
@@ -1475,9 +1482,9 @@ pub mod api {
                         "bucket_challenges",
                         (bucket_id,),
                         [
-                            74u8, 24u8, 86u8, 254u8, 75u8, 122u8, 176u8, 254u8, 51u8, 228u8, 125u8,
-                            9u8, 161u8, 85u8, 116u8, 218u8, 203u8, 129u8, 31u8, 81u8, 8u8, 209u8,
-                            180u8, 251u8, 9u8, 27u8, 217u8, 156u8, 143u8, 53u8, 1u8, 48u8,
+                            173u8, 82u8, 58u8, 215u8, 215u8, 51u8, 70u8, 252u8, 65u8, 53u8, 136u8,
+                            192u8, 11u8, 100u8, 233u8, 99u8, 137u8, 90u8, 29u8, 205u8, 246u8, 77u8,
+                            85u8, 248u8, 19u8, 242u8, 120u8, 126u8, 30u8, 119u8, 147u8, 168u8,
                         ],
                     )
                 }
@@ -1494,9 +1501,9 @@ pub mod api {
                         "provider_challenges",
                         (provider,),
                         [
-                            198u8, 162u8, 7u8, 225u8, 86u8, 110u8, 53u8, 138u8, 248u8, 47u8, 228u8,
-                            110u8, 141u8, 216u8, 213u8, 243u8, 18u8, 29u8, 229u8, 199u8, 114u8,
-                            128u8, 28u8, 44u8, 161u8, 75u8, 93u8, 55u8, 30u8, 192u8, 156u8, 229u8,
+                            233u8, 236u8, 31u8, 53u8, 51u8, 98u8, 26u8, 172u8, 75u8, 88u8, 80u8,
+                            163u8, 234u8, 88u8, 79u8, 177u8, 96u8, 238u8, 136u8, 201u8, 93u8, 77u8,
+                            81u8, 158u8, 139u8, 206u8, 223u8, 124u8, 61u8, 80u8, 34u8, 194u8,
                         ],
                     )
                 }
@@ -1513,10 +1520,10 @@ pub mod api {
                         "challenger_challenges",
                         (challenger,),
                         [
-                            72u8, 180u8, 154u8, 21u8, 162u8, 72u8, 30u8, 142u8, 74u8, 226u8, 211u8,
-                            175u8, 142u8, 30u8, 60u8, 144u8, 77u8, 137u8, 190u8, 61u8, 121u8,
-                            155u8, 213u8, 209u8, 159u8, 155u8, 195u8, 19u8, 153u8, 213u8, 123u8,
-                            75u8,
+                            116u8, 32u8, 143u8, 173u8, 164u8, 151u8, 69u8, 150u8, 43u8, 247u8,
+                            203u8, 13u8, 129u8, 153u8, 193u8, 177u8, 196u8, 111u8, 117u8, 134u8,
+                            89u8, 245u8, 199u8, 229u8, 212u8, 253u8, 87u8, 42u8, 212u8, 83u8,
+                            117u8, 224u8,
                         ],
                     )
                 }
@@ -1593,9 +1600,16 @@ pub mod api {
                         ],
                     )
                 }
-                #[doc = " Providers holding at least one storage agreement whose reputation is"]
-                #[doc = " below `max_reputation`, worst first. Each provider appears once,"]
-                #[doc = " paired with one of its buckets."]
+                #[doc = " Returns providers worth challenging, worst reputation first."]
+                #[doc = ""]
+                #[doc = " A provider qualifies if it holds at least one storage agreement and"]
+                #[doc = " its reputation is strictly below `max_reputation`. Each provider"]
+                #[doc = " appears once, paired with one of its buckets, so a caller challenges"]
+                #[doc = " it at most once per round."]
+                #[doc = ""]
+                #[doc = " Reputation runs from 0 to 100 (see [`reputation_score`])."]
+                #[doc = " `max_reputation` saturates outside that range instead of erroring:"]
+                #[doc = " `0` matches nothing, and any value above 100 disables the filter."]
                 #[doc = ""]
                 #[doc = " `limit` is clamped to [`MAX_CHALLENGE_CANDIDATES`]; it bounds the"]
                 #[doc = " response, not the underlying scan."]
@@ -3454,9 +3468,9 @@ pub mod api {
             .hash();
         runtime_metadata_hash
             == [
-                18u8, 103u8, 148u8, 23u8, 193u8, 232u8, 233u8, 22u8, 248u8, 191u8, 128u8, 24u8,
-                232u8, 138u8, 198u8, 119u8, 51u8, 169u8, 177u8, 62u8, 75u8, 81u8, 209u8, 33u8,
-                145u8, 214u8, 196u8, 236u8, 110u8, 144u8, 205u8, 251u8,
+                57u8, 193u8, 101u8, 23u8, 28u8, 105u8, 253u8, 229u8, 215u8, 123u8, 210u8, 134u8,
+                4u8, 41u8, 89u8, 160u8, 118u8, 231u8, 120u8, 168u8, 34u8, 4u8, 123u8, 38u8, 156u8,
+                74u8, 92u8, 21u8, 215u8, 252u8, 133u8, 89u8,
             ]
     }
     pub mod system {
@@ -17810,9 +17824,9 @@ pub mod api {
                         "StorageProvider",
                         "StorageAgreements",
                         [
-                            49u8, 39u8, 182u8, 29u8, 245u8, 43u8, 9u8, 90u8, 253u8, 127u8, 47u8,
-                            231u8, 210u8, 148u8, 70u8, 89u8, 45u8, 180u8, 43u8, 97u8, 168u8, 57u8,
-                            138u8, 245u8, 225u8, 246u8, 104u8, 187u8, 27u8, 180u8, 92u8, 123u8,
+                            182u8, 228u8, 50u8, 253u8, 117u8, 254u8, 13u8, 172u8, 231u8, 192u8,
+                            241u8, 15u8, 138u8, 69u8, 188u8, 213u8, 78u8, 250u8, 29u8, 174u8, 90u8,
+                            153u8, 23u8, 233u8, 62u8, 103u8, 51u8, 2u8, 115u8, 202u8, 163u8, 97u8,
                         ],
                     )
                 }
@@ -17833,9 +17847,9 @@ pub mod api {
                         "StorageProvider",
                         "Challenges",
                         [
-                            40u8, 197u8, 172u8, 0u8, 60u8, 246u8, 61u8, 47u8, 121u8, 94u8, 7u8,
-                            128u8, 88u8, 47u8, 170u8, 54u8, 157u8, 96u8, 226u8, 90u8, 63u8, 235u8,
-                            77u8, 162u8, 121u8, 244u8, 57u8, 246u8, 160u8, 160u8, 187u8, 154u8,
+                            13u8, 244u8, 108u8, 115u8, 115u8, 146u8, 158u8, 131u8, 203u8, 54u8,
+                            77u8, 110u8, 214u8, 57u8, 96u8, 237u8, 150u8, 71u8, 82u8, 195u8, 93u8,
+                            32u8, 79u8, 231u8, 72u8, 71u8, 132u8, 196u8, 45u8, 163u8, 34u8, 124u8,
                         ],
                     )
                 }
@@ -20987,9 +21001,10 @@ pub mod api {
                         "Revive",
                         "EthBlockBuilderIR",
                         [
-                            62u8, 22u8, 204u8, 180u8, 89u8, 208u8, 118u8, 104u8, 70u8, 79u8, 254u8,
-                            35u8, 81u8, 30u8, 181u8, 91u8, 139u8, 0u8, 140u8, 81u8, 45u8, 123u8,
-                            181u8, 158u8, 118u8, 82u8, 95u8, 24u8, 133u8, 117u8, 33u8, 133u8,
+                            22u8, 188u8, 211u8, 103u8, 135u8, 171u8, 23u8, 29u8, 200u8, 248u8,
+                            177u8, 76u8, 194u8, 70u8, 120u8, 74u8, 254u8, 105u8, 211u8, 131u8,
+                            254u8, 73u8, 196u8, 76u8, 185u8, 26u8, 40u8, 16u8, 63u8, 150u8, 20u8,
+                            72u8,
                         ],
                     )
                 }
@@ -26027,8 +26042,7 @@ pub mod api {
                     pub bucket_id: ::core::primitive::u64,
                     pub provider: ::subxt::utils::AccountId32,
                     pub challenger: ::subxt::utils::AccountId32,
-                    pub mmr_root: ::subxt::utils::H256,
-                    pub start_seq: ::core::primitive::u64,
+                    pub commitment: runtime_types::storage_primitives::Commitment,
                     pub target: runtime_types::storage_primitives::ChunkLocation,
                     pub deposit: ::core::primitive::u128,
                 }
@@ -26074,181 +26088,234 @@ pub mod api {
                 #[doc = "The `Error` enum of this pallet."]
                 pub enum Error {
                     #[codec(index = 0)]
+                    #[doc = "Account already has a provider record."]
                     ProviderAlreadyRegistered,
                     #[codec(index = 1)]
+                    #[doc = "No provider record for this account."]
                     ProviderNotFound,
                     #[codec(index = 2)]
+                    #[doc = "Stake below `MinProviderStake`."]
                     InsufficientStake,
                     #[codec(index = 3)]
+                    #[doc = "Stake does not back the requested bytes."]
                     InsufficientStakeForBytes,
                     #[codec(index = 4)]
+                    #[doc = "Provider still has live agreements."]
                     ProviderHasActiveAgreements,
                     #[codec(index = 5)]
+                    #[doc = "Provider is not accepting new primary agreements."]
                     ProviderNotAcceptingPrimary,
                     #[codec(index = 6)]
+                    #[doc = "Provider is not accepting replicas (`replica_sync_price` unset)."]
                     ProviderNotAcceptingReplicas,
                     #[codec(index = 7)]
+                    #[doc = "Provider is not accepting agreement extensions."]
                     ProviderNotAcceptingExtensions,
                     #[codec(index = 8)]
+                    #[doc = "`remove_slashed` target still has stake."]
                     ProviderNotSlashed,
                     #[codec(index = 9)]
-                    #[doc = "Cannot set max_capacity below current committed_bytes."]
+                    #[doc = "Cannot set `max_capacity` below current `committed_bytes`."]
                     CapacityBelowCommitted,
                     #[codec(index = 10)]
-                    #[doc = "Provider capacity exceeded on accept (committed + request > max_capacity)."]
+                    #[doc = "Accepting would exceed `max_capacity` (committed + request)."]
                     CapacityExceeded,
                     #[codec(index = 11)]
-                    #[doc = "Stake insufficient to back declared capacity."]
+                    #[doc = "Stake insufficient to back the declared capacity."]
                     InsufficientStakeForCapacity,
                     #[codec(index = 12)]
-                    #[doc = "Provider settings specify `min_duration > max_duration"]
+                    #[doc = "Provider settings specify `min_duration > max_duration`."]
                     MinDurationExceedsMaxDuration,
                     #[codec(index = 13)]
-                    #[doc = "Provider has already announced a deregistration; the action is"]
-                    #[doc = "rejected until they complete or cancel it."]
+                    #[doc = "Action blocked while a deregistration announcement is pending."]
                     DeregisterAnnounced,
                     #[codec(index = 14)]
-                    #[doc = "Provider has no announced deregistration to complete or cancel."]
+                    #[doc = "No announced deregistration to complete or cancel."]
                     DeregisterNotAnnounced,
                     #[codec(index = 15)]
-                    #[doc = "`complete_deregister` called before `DeregisterAnnouncementPeriod`"]
-                    #[doc = "elapsed."]
+                    #[doc = "`DeregisterAnnouncementPeriod` has not elapsed yet."]
                     DeregisterPeriodNotElapsed,
                     #[codec(index = 16)]
+                    #[doc = "No bucket with this id."]
                     BucketNotFound,
                     #[codec(index = 17)]
+                    #[doc = "Bucket is frozen (append-only)."]
                     BucketFrozen,
                     #[codec(index = 18)]
+                    #[doc = "Operation requires a frozen bucket."]
                     BucketNotFrozen,
                     #[codec(index = 19)]
+                    #[doc = "Caller is not a bucket admin."]
                     NotBucketAdmin,
                     #[codec(index = 20)]
+                    #[doc = "Caller is not a bucket member."]
                     NotBucketMember,
                     #[codec(index = 21)]
+                    #[doc = "Caller has no write permission on the bucket."]
                     NotBucketWriter,
                     #[codec(index = 22)]
+                    #[doc = "No such member in the bucket."]
                     MemberNotFound,
                     #[codec(index = 23)]
+                    #[doc = "Admins cannot be demoted, only removed."]
                     CannotDemoteAdmin,
                     #[codec(index = 24)]
+                    #[doc = "A bucket must keep at least one admin."]
                     LastAdminCannotBeRemoved,
                     #[codec(index = 25)]
+                    #[doc = "Bucket member list is full (`MaxMembers`)."]
                     MaxMembersReached,
                     #[codec(index = 26)]
+                    #[doc = "Bucket primary-provider list is full (`MaxPrimaryProviders`)."]
                     MaxPrimaryProvidersReached,
                     #[codec(index = 27)]
+                    #[doc = "Snapshot carries fewer signatures than `min_providers`."]
                     MinProvidersNotMet,
                     #[codec(index = 28)]
+                    #[doc = "`min_providers` exceeds the bucket's primary-provider count."]
                     InvalidMinProviders,
                     #[codec(index = 29)]
+                    #[doc = "No agreement for this `(bucket, provider)`."]
                     AgreementNotFound,
                     #[codec(index = 30)]
+                    #[doc = "An agreement for this `(bucket, provider)` already exists."]
                     AgreementAlreadyExists,
                     #[codec(index = 31)]
+                    #[doc = "Agreement is past its expiry block."]
                     AgreementExpired,
                     #[codec(index = 32)]
+                    #[doc = "Agreement has not expired yet."]
                     AgreementNotExpired,
                     #[codec(index = 33)]
+                    #[doc = "Extensions are blocked for this agreement."]
                     AgreementExtensionsBlocked,
                     #[codec(index = 34)]
+                    #[doc = "Caller does not own this agreement."]
                     NotAgreementOwner,
                     #[codec(index = 35)]
+                    #[doc = "Duration below the provider's `min_duration`."]
                     DurationTooShort,
                     #[codec(index = 36)]
+                    #[doc = "Duration above the provider's `max_duration`."]
                     DurationTooLong,
                     #[codec(index = 37)]
+                    #[doc = "Cost exceeds the caller's `max_payment` cap."]
                     PaymentExceedsMax,
                     #[codec(index = 38)]
+                    #[doc = "Replica agreements run to expiry; admins cannot terminate them."]
                     CannotTerminateReplica,
                     #[codec(index = 39)]
+                    #[doc = "`SettlementTimeout` passed; the payment can only be swept now."]
                     SettlementWindowPassed,
                     #[codec(index = 40)]
+                    #[doc = "Provider is not a replica for this bucket."]
                     NotReplica,
                     #[codec(index = 41)]
+                    #[doc = "Sync confirmed less than `min_sync_interval` blocks after the last."]
                     SyncTooFrequent,
                     #[codec(index = 42)]
+                    #[doc = "Synced root is neither the current snapshot nor a known"]
+                    #[doc = "historical root."]
                     InvalidSyncRoot,
                     #[codec(index = 43)]
+                    #[doc = "`sync_balance` cannot cover the per-sync price."]
                     InsufficientSyncBalance,
                     #[codec(index = 44)]
-                    ChallengeNotFound,
+                    #[doc = "Last sync was to a historical root whose `(start_seq, leaf_count)`"]
+                    #[doc = "range the chain does not retain, so `challenge_replica` cannot bind"]
+                    #[doc = "a proof; re-sync to the current snapshot or use `challenge_offchain`."]
+                    ReplicaSyncRangeUnknown,
                     #[codec(index = 45)]
-                    ChallengeAlreadyExists,
+                    #[doc = "No challenge at this `(deadline, index)`."]
+                    ChallengeNotFound,
                     #[codec(index = 46)]
-                    InvalidChallengeProof,
+                    #[doc = "A challenge already exists at this id."]
+                    ChallengeAlreadyExists,
                     #[codec(index = 47)]
-                    ChallengeExpired,
+                    #[doc = "Response proof failed verification."]
+                    InvalidChallengeProof,
                     #[codec(index = 48)]
-                    NotChallengeProvider,
+                    #[doc = "Response arrived after the challenge deadline."]
+                    ChallengeExpired,
                     #[codec(index = 49)]
-                    ProviderNotInSnapshot,
+                    #[doc = "Responder is not the challenged provider."]
+                    NotChallengeProvider,
                     #[codec(index = 50)]
-                    LeafBeyondCanonical,
+                    #[doc = "Provider did not sign the bucket's current snapshot."]
+                    ProviderNotInSnapshot,
                     #[codec(index = 51)]
-                    InvalidDeletionProof,
+                    #[doc = "`leaf_index` is not covered by the commitment's `leaf_count`; the"]
+                    #[doc = "leaf does not exist, so no valid proof could ever defend it."]
+                    LeafBeyondCanonical,
                     #[codec(index = 52)]
-                    #[doc = "A provider with unresolved challenges (`PendingChallenges > 0`)"]
-                    #[doc = "cannot complete deregistration — they are still slashable."]
-                    ProviderHasPendingChallenges,
+                    #[doc = "Deletion-response admin signature or range failed verification."]
+                    InvalidDeletionProof,
                     #[codec(index = 53)]
-                    #[doc = "An agreement with an unresolved challenge against this"]
-                    #[doc = "`(bucket, provider)` cannot be torn down until the challenge"]
-                    #[doc = "resolves (defended, slashed, or timed out)."]
-                    AgreementHasPendingChallenge,
+                    #[doc = "Provider cannot deregister with unresolved challenges pending."]
+                    ProviderHasPendingChallenges,
                     #[codec(index = 54)]
-                    #[doc = "`MaxChallengesPerDeadline` challenges have already been allocated"]
-                    #[doc = "for the deadline this challenge would land on. Caps the total the"]
-                    #[doc = "`on_initialize` sweep must eventually drain for a single key."]
-                    TooManyChallengesThisBlock,
+                    #[doc = "Agreement cannot be torn down with an unresolved challenge pending."]
+                    AgreementHasPendingChallenge,
                     #[codec(index = 55)]
-                    InvalidSignature,
+                    #[doc = "`MaxChallengesPerDeadline` already allocated for this deadline;"]
+                    #[doc = "bounds the `on_initialize` sweep's per-key drain."]
+                    TooManyChallengesThisBlock,
                     #[codec(index = 56)]
-                    NoSnapshot,
+                    #[doc = "Signature does not verify against the provider's registered key."]
+                    InvalidSignature,
                     #[codec(index = 57)]
-                    SnapshotViolatesFrozen,
+                    #[doc = "Bucket has no snapshot yet."]
+                    NoSnapshot,
                     #[codec(index = 58)]
-                    InsufficientSignatures,
+                    #[doc = "Snapshot `start_seq` is below the bucket's `frozen_start_seq`."]
+                    SnapshotViolatesFrozen,
                     #[codec(index = 59)]
-                    ArithmeticOverflow,
+                    #[doc = "Fewer valid signatures than the bucket's `min_providers`."]
+                    InsufficientSignatures,
                     #[codec(index = 60)]
-                    InvalidMultiaddr,
+                    #[doc = "Arithmetic overflow in a balance or size computation."]
+                    ArithmeticOverflow,
                     #[codec(index = 61)]
-                    InvalidPublicKey,
+                    #[doc = "Multiaddr failed validation."]
+                    InvalidMultiaddr,
                     #[codec(index = 62)]
+                    #[doc = "Public key is not a valid Sr25519/Ed25519/ECDSA key."]
+                    InvalidPublicKey,
+                    #[codec(index = 63)]
                     #[doc = "Account is a member of too many buckets."]
                     TooManyBucketsForMember,
-                    #[codec(index = 63)]
+                    #[codec(index = 64)]
                     #[doc = "Provider signature over the SCALE-encoded terms is invalid."]
                     InvalidProviderSignature,
-                    #[codec(index = 64)]
+                    #[codec(index = 65)]
                     #[doc = "Signed terms have passed their `valid_until` block."]
                     TermsExpired,
-                    #[codec(index = 65)]
+                    #[codec(index = 66)]
                     #[doc = "Signed terms' `valid_until` extends beyond `now + RequestTimeout` —"]
                     #[doc = "the provider-signed validity window cap enforced on-chain."]
                     TermsValidityTooLong,
-                    #[codec(index = 66)]
+                    #[codec(index = 67)]
                     #[doc = "The terms' nonce has already been consumed inside the provider's"]
                     #[doc = "replay window."]
                     NonceAlreadyUsed,
-                    #[codec(index = 67)]
+                    #[codec(index = 68)]
                     #[doc = "The terms' nonce is older than the provider's replay window"]
                     #[doc = "(distance from `hsn` ≥ [`storage_primitives::REPLAY_WINDOW_BITS`])."]
                     NonceTooOld,
-                    #[codec(index = 68)]
+                    #[codec(index = 69)]
                     #[doc = "The terms' declared owner does not match the extrinsic origin."]
                     TermsOwnerMismatch,
-                    #[codec(index = 69)]
+                    #[codec(index = 70)]
                     #[doc = "Replica terms missing from a signed quote redeemed as a replica"]
                     #[doc = "agreement."]
                     MissingReplicaTerms,
-                    #[codec(index = 70)]
+                    #[codec(index = 71)]
                     #[doc = "The terms' bucket binding does not match the redeeming extrinsic:"]
                     #[doc = "primary terms must carry no bucket, replica terms must name the"]
                     #[doc = "targeted bucket."]
                     TermsBucketMismatch,
-                    #[codec(index = 71)]
-                    #[doc = "Storage agreement requested 0 byte"]
+                    #[codec(index = 72)]
+                    #[doc = "Agreement requested zero bytes."]
                     InvalidMaxBytesRequest,
                 }
                 #[derive(
@@ -26563,6 +26630,7 @@ pub mod api {
                     Debug,
                     Eq,
                     PartialEq,
+                    codec :: Decode,
                 )]
                 #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
                 #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
@@ -26677,10 +26745,8 @@ pub mod api {
                     pub bucket_id: ::core::primitive::u64,
                     pub provider: ::subxt::alloc::vec::Vec<::core::primitive::u8>,
                     pub challenger: ::subxt::alloc::vec::Vec<::core::primitive::u8>,
-                    pub mmr_root: ::subxt::utils::H256,
-                    pub start_seq: ::core::primitive::u64,
-                    pub leaf_index: ::core::primitive::u64,
-                    pub chunk_index: ::core::primitive::u64,
+                    pub commitment: runtime_types::storage_primitives::Commitment,
+                    pub target: runtime_types::storage_primitives::ChunkLocation,
                     pub deadline: ::core::primitive::u32,
                     pub index: ::core::primitive::u16,
                     pub deposit: ::core::primitive::u128,
@@ -31085,6 +31151,7 @@ pub mod api {
                 Debug,
                 Eq,
                 PartialEq,
+                codec :: Decode,
             )]
             #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
@@ -31160,6 +31227,7 @@ pub mod api {
                 Debug,
                 Eq,
                 PartialEq,
+                codec :: Decode,
             )]
             #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
@@ -31201,11 +31269,13 @@ pub mod api {
                 Debug,
                 Eq,
                 PartialEq,
+                codec :: Decode,
             )]
             #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
             pub struct ReplicaSyncRecord<_0> {
-                pub commitment: runtime_types::storage_primitives::Commitment,
+                pub root: ::subxt::utils::H256,
+                pub range: ::core::option::Option<(::core::primitive::u64, ::core::primitive::u64)>,
                 pub block: _0,
             }
             #[derive(

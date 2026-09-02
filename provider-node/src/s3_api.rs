@@ -78,8 +78,8 @@ pub async fn s3_put_object(
     let data_root = build_padded_merkle_tree(&*state.storage, bucket_id, &chunk_hashes);
 
     // 4. Commit data_root to MMR
-    let (_mmr_root, _start_seq, leaf_indices) = state.storage.commit(bucket_id, vec![data_root])?;
-    let leaf_index = leaf_indices[0];
+    let outcome = state.storage.commit(bucket_id, vec![data_root])?;
+    let leaf_index = outcome.leaf_indices[0];
 
     // 5. Extract metadata from headers
     let content_type = headers

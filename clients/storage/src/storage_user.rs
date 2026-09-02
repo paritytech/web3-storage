@@ -386,9 +386,8 @@ impl StorageUserClient {
 
     /// Get a checkpoint-compatible signature from the provider.
     ///
-    /// Unlike `commit` which signs with `leaf_count=0` (for `challenge_offchain`),
-    /// this returns a signature over the real `leaf_count`, suitable for submitting
-    /// an on-chain checkpoint via the `checkpoint` extrinsic.
+    /// Returns a signature over the commitment with the real `leaf_count`,
+    /// suitable for the on-chain `checkpoint` extrinsic.
     pub async fn get_checkpoint_signature(
         &self,
         bucket_id: BucketId,
@@ -703,8 +702,9 @@ struct CommitRequest {
 pub struct CommitResponse {
     pub mmr_root: String,
     pub start_seq: u64,
-    /// Leaves in the MMR after this commit. Needed when the resulting
-    /// signature is submitted via `challenge_offchain`.
+    /// Leaf count signed into the commitment; `challenge_offchain` needs it to
+    /// bind the challenged leaf. No `#[serde(default)]`: a provider omitting it
+    /// must fail loudly, not silently yield `leaf_count = 0`.
     pub leaf_count: u64,
     pub leaf_indices: Vec<u64>,
     pub provider_signature: String,

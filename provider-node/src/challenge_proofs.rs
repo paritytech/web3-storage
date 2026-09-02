@@ -18,13 +18,14 @@ impl StorageProofSource {
 }
 
 impl ChallengeProofSource for StorageProofSource {
-    fn get_mmr_proof(
+    fn get_mmr_proof_for_commitment(
         &self,
         bucket_id: storage_primitives::BucketId,
+        commitment: &storage_primitives::Commitment,
         leaf_index: u64,
     ) -> Result<storage_primitives::MmrProof, ChallengeError> {
         self.0
-            .get_mmr_proof(bucket_id, leaf_index)
+            .get_mmr_proof_for_commitment(bucket_id, commitment, leaf_index)
             .map_err(|e| ChallengeError::Storage(e.to_string()))
     }
 
@@ -73,10 +74,25 @@ mod tests {
             .unwrap();
         storage.commit(1, vec![chunk_hash]).unwrap();
 
-        let expected = storage.get_mmr_proof(1, 0).unwrap();
+        let commitment = {
+            let info = storage.get_bucket(1).unwrap();
+            storage_primitives::Commitment {
+                mmr_root: info.mmr_root,
+                start_seq: info.start_seq,
+                leaf_count: info.leaf_count,
+            }
+        };
+        let expected = storage
+            .get_mmr_proof_for_commitment(1, &commitment, 0)
+            .unwrap();
         let source = StorageProofSource::new(Arc::clone(&storage));
 
-        assert_eq!(source.get_mmr_proof(1, 0).unwrap(), expected);
+        assert_eq!(
+            source
+                .get_mmr_proof_for_commitment(1, &commitment, 0)
+                .unwrap(),
+            expected
+        );
     }
 
     #[test]

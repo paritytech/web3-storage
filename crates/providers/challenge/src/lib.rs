@@ -16,7 +16,7 @@ use sp_runtime::AccountId32;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use storage_primitives::{BucketId, MerkleProof, MmrProof};
+use storage_primitives::{BucketId, ChunkLocation, Commitment, MerkleProof, MmrProof};
 use tokio::sync::{broadcast, mpsc};
 
 /// Errors surfaced by the challenge responder.
@@ -38,10 +38,12 @@ pub enum ChallengeError {
 /// Backed by the provider node's storage backend; kept narrow so this crate
 /// stays decoupled from the full storage engine.
 pub trait ChallengeProofSource: Send + Sync {
-    /// Generate an MMR proof for the given leaf of a bucket's commitment.
-    fn get_mmr_proof(
+    /// Generate an MMR proof for `leaf_index` against the exact cited
+    /// commitment state (which later commits or prunes may have moved past).
+    fn get_mmr_proof_for_commitment(
         &self,
         bucket_id: BucketId,
+        commitment: &Commitment,
         leaf_index: u64,
     ) -> Result<MmrProof, ChallengeError>;
 
@@ -91,14 +93,11 @@ pub struct DetectedChallenge {
     pub deadline: u32,
     /// Challenge index within the deadline.
     pub index: u16,
-    /// MMR root being challenged.
-    pub mmr_root: H256,
-    /// Start sequence of the commitment.
-    pub start_seq: u64,
-    /// Leaf index in the MMR to prove.
-    pub leaf_index: u64,
-    /// Chunk index within the leaf to prove.
-    pub chunk_index: u64,
+    /// The commitment being challenged; on-chain proof verification is bound
+    /// to the exact `(target.leaf_index, commitment.leaf_count)` position.
+    pub commitment: Commitment,
+    /// Leaf + chunk to prove.
+    pub target: ChunkLocation,
     /// Challenger's account.
     pub challenger: String,
 }
@@ -430,11 +429,15 @@ impl ChallengeResponder {
             challenge.bucket_id
         );
 
-        // Step 1: Generate MMR proof (includes the leaf with data_root)
-        let mmr_proof = match self
-            .proof_source
-            .get_mmr_proof(challenge.bucket_id, challenge.leaf_index)
-        {
+        // Step 1: Generate MMR proof (includes the leaf with data_root).
+        // The challenged leaf_index is relative to the cited commitment's
+        // start_seq, and the cited root may predate later commits or prunes,
+        // so the proof is rebuilt for that exact commitment state.
+        let mmr_proof = match self.proof_source.get_mmr_proof_for_commitment(
+            challenge.bucket_id,
+            &challenge.commitment,
+            challenge.target.leaf_index,
+        ) {
             Ok(proof) => proof,
             Err(e) => {
                 tracing::error!("Failed to generate MMR proof: {}", e);
@@ -449,7 +452,7 @@ impl ChallengeResponder {
         let data_root = mmr_proof.leaf.data_root;
         let (chunk_data, chunk_proof) = match self
             .proof_source
-            .get_chunk_at_index(data_root, challenge.chunk_index)
+            .get_chunk_at_index(data_root, challenge.target.chunk_index)
         {
             Ok(data) => data,
             Err(e) => {
@@ -457,7 +460,7 @@ impl ChallengeResponder {
                 return ChallengeResponseResult::DataNotFound {
                     challenge_id,
                     bucket_id: challenge.bucket_id,
-                    leaf_index: challenge.leaf_index,
+                    leaf_index: challenge.target.leaf_index,
                 };
             }
         };

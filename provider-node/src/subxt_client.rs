@@ -20,7 +20,7 @@ use sp_core::crypto::Ss58Codec;
 use sp_core::H256;
 use std::sync::Arc;
 use std::time::Duration;
-use storage_primitives::BucketId;
+use storage_primitives::{BucketId, ChunkLocation, Commitment};
 use storage_subxt::api::runtime_types::bounded_collections::bounded_vec::BoundedVec;
 use storage_subxt::api::runtime_types::pallet_storage_provider::pallet::ChallengeResponse as RuntimeChallengeResponse;
 use storage_subxt::api::runtime_types::storage_primitives::{
@@ -488,81 +488,34 @@ impl SubxtChainClient {
         }
     }
 
-    /// Decode a storage agreement from raw SCALE-encoded bytes.
+    /// Decode a storage agreement from raw SCALE-encoded bytes via the
+    /// generated runtime type, keeping this free of hand-rolled offsets.
     fn decode_storage_agreement_bytes(
         bucket_id: BucketId,
         bytes: &[u8],
     ) -> Result<ReplicaAgreementInfo, Error> {
-        // StorageAgreement layout:
-        // - owner: AccountId (32 bytes)
-        // - max_bytes: u64 (8 bytes)
-        // - payment_locked: Balance (16 bytes)
-        // - price_per_byte: Balance (16 bytes)
-        // - expires_at: BlockNumber (4 bytes)
-        // - extensions_blocked: bool (1 byte)
-        // - role: ProviderRole (variable, enum)
-        // - started_at: BlockNumber (4 bytes)
+        use codec::Decode;
+        use storage_subxt::api::runtime_types::pallet_storage_provider::pallet::StorageAgreement;
+        use storage_subxt::api::runtime_types::storage_primitives::ProviderRole as RuntimeProviderRole;
 
-        let min_size = 32 + 8 + 16 + 16 + 4 + 1; // up to role enum
-        if bytes.len() < min_size {
-            return Err(Error::Internal("Agreement data too short".to_string()));
-        }
-
-        let role_start = 32 + 8 + 16 + 16 + 4 + 1; // Skip to role enum
-        let role_variant = bytes.get(role_start).copied().unwrap_or(0);
-
-        // Role enum: 0 = Primary, 1 = Replica
-        if role_variant != 1 {
+        let agreement = StorageAgreement::decode(&mut &bytes[..])
+            .map_err(|e| Error::Internal(format!("Failed to decode agreement: {e}")))?;
+        let RuntimeProviderRole::Replica {
+            sync_balance,
+            sync_price,
+            min_sync_interval,
+            last_sync,
+        } = agreement.role
+        else {
             return Err(Error::Internal("Not a replica agreement".to_string()));
-        }
-
-        // Parse Replica fields: sync_balance, sync_price, min_sync_interval, last_sync
-        let replica_start = role_start + 1;
-        let remaining = &bytes[replica_start..];
-
-        if remaining.len() < 16 + 16 + 4 {
-            return Err(Error::Internal("Replica data too short".to_string()));
-        }
-
-        let sync_balance = u128::from_le_bytes(
-            remaining[0..16]
-                .try_into()
-                .map_err(|_| Error::Internal("Failed to parse sync_balance".to_string()))?,
-        );
-
-        let sync_price = u128::from_le_bytes(
-            remaining[16..32]
-                .try_into()
-                .map_err(|_| Error::Internal("Failed to parse sync_price".to_string()))?,
-        );
-
-        let min_sync_interval = u32::from_le_bytes(
-            remaining[32..36]
-                .try_into()
-                .map_err(|_| Error::Internal("Failed to parse min_sync_interval".to_string()))?,
-        ) as u64;
-
-        let last_sync_option = remaining.get(36).copied().unwrap_or(0);
-        let last_sync = if last_sync_option == 1 && remaining.len() >= 36 + 1 + 32 + 4 {
-            let root_bytes: [u8; 32] = remaining[37..69]
-                .try_into()
-                .map_err(|_| Error::Internal("Failed to parse last_sync root".to_string()))?;
-            let block = u32::from_le_bytes(
-                remaining[69..73]
-                    .try_into()
-                    .map_err(|_| Error::Internal("Failed to parse last_sync block".to_string()))?,
-            ) as u64;
-            Some((H256::from(root_bytes), block))
-        } else {
-            None
         };
 
         Ok(ReplicaAgreementInfo {
             bucket_id,
             sync_balance,
             sync_price,
-            min_sync_interval,
-            last_sync,
+            min_sync_interval: u64::from(min_sync_interval),
+            last_sync: last_sync.map(|r| (H256::from(r.root.0), u64::from(r.block))),
         })
     }
 
@@ -923,10 +876,15 @@ fn detected_challenge(
         bucket_id: challenge.bucket_id,
         deadline,
         index,
-        mmr_root: H256::from(challenge.mmr_root.0),
-        start_seq: challenge.start_seq,
-        leaf_index: challenge.target.leaf_index,
-        chunk_index: challenge.target.chunk_index,
+        commitment: Commitment {
+            mmr_root: H256::from(challenge.commitment.mmr_root.0),
+            start_seq: challenge.commitment.start_seq,
+            leaf_count: challenge.commitment.leaf_count,
+        },
+        target: ChunkLocation {
+            leaf_index: challenge.target.leaf_index,
+            chunk_index: challenge.target.chunk_index,
+        },
         challenger: sp_core::crypto::AccountId32::from(challenge.challenger.0).to_ss58check(),
     })
 }
@@ -937,9 +895,8 @@ type ChallengeFromRuntimeApi =
 
 /// Map a `provider_challenges` entry into a `DetectedChallenge`.
 ///
-/// Unlike the storage-map shape this response is already flat (no nested
-/// `target`) and carries accounts as SCALE-encoded bytes, so it needs its own
-/// mapping. No provider check here: the runtime API filtered on-chain.
+/// Carries accounts as SCALE-encoded bytes, so it needs its own mapping. No
+/// provider check here: the runtime API filtered on-chain.
 fn detected_from_response(challenge: ChallengeFromRuntimeApi) -> DetectedChallenge {
     // An unreadable challenger only costs us a diagnostic field, so it must not
     // discard the challenge — failing to respond is what gets us slashed.
@@ -960,10 +917,15 @@ fn detected_from_response(challenge: ChallengeFromRuntimeApi) -> DetectedChallen
         bucket_id: challenge.bucket_id,
         deadline: challenge.deadline,
         index: challenge.index,
-        mmr_root: H256::from(challenge.mmr_root.0),
-        start_seq: challenge.start_seq,
-        leaf_index: challenge.leaf_index,
-        chunk_index: challenge.chunk_index,
+        commitment: Commitment {
+            mmr_root: H256::from(challenge.commitment.mmr_root.0),
+            start_seq: challenge.commitment.start_seq,
+            leaf_count: challenge.commitment.leaf_count,
+        },
+        target: ChunkLocation {
+            leaf_index: challenge.target.leaf_index,
+            chunk_index: challenge.target.chunk_index,
+        },
         challenger,
     }
 }
@@ -1082,7 +1044,9 @@ impl ChallengeChainClient for SubxtChainClient {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use storage_subxt::api::runtime_types::storage_primitives::ChunkLocation;
+    use storage_subxt::api::runtime_types::storage_primitives::{
+        ChunkLocation as RuntimeChunkLocation, Commitment as RuntimeCommitment,
+    };
 
     const OURS: [u8; 32] = [9u8; 32];
 
@@ -1096,9 +1060,12 @@ mod tests {
             bucket_id: 42,
             provider: subxt::utils::AccountId32(provider),
             challenger: subxt::utils::AccountId32([2u8; 32]),
-            mmr_root: subxt::utils::H256([3u8; 32]),
-            start_seq: 100,
-            target: ChunkLocation {
+            commitment: RuntimeCommitment {
+                mmr_root: subxt::utils::H256([3u8; 32]),
+                start_seq: 100,
+                leaf_count: 9,
+            },
+            target: RuntimeChunkLocation {
                 leaf_index: 7,
                 chunk_index: 5,
             },
@@ -1114,12 +1081,13 @@ mod tests {
         assert_eq!(detected.bucket_id, 42);
         assert_eq!(detected.deadline, 11);
         assert_eq!(detected.index, 3);
-        assert_eq!(detected.mmr_root.0, [3u8; 32]);
-        assert_eq!(detected.start_seq, 100);
+        assert_eq!(detected.commitment.mmr_root.0, [3u8; 32]);
+        assert_eq!(detected.commitment.start_seq, 100);
+        assert_eq!(detected.commitment.leaf_count, 9);
         // Both come from the nested `target: ChunkLocation`, and they are
         // deliberately different values so a swapped mapping is caught.
-        assert_eq!(detected.leaf_index, 7);
-        assert_eq!(detected.chunk_index, 5);
+        assert_eq!(detected.target.leaf_index, 7);
+        assert_eq!(detected.target.chunk_index, 5);
         assert_eq!(
             detected.challenger,
             sp_core::crypto::AccountId32::from([2u8; 32]).to_ss58check()
@@ -1141,10 +1109,15 @@ mod tests {
             bucket_id: 42,
             provider: OURS.to_vec(),
             challenger,
-            mmr_root: subxt::utils::H256([3u8; 32]),
-            start_seq: 100,
-            leaf_index: 7,
-            chunk_index: 5,
+            commitment: RuntimeCommitment {
+                mmr_root: subxt::utils::H256([3u8; 32]),
+                start_seq: 100,
+                leaf_count: 9,
+            },
+            target: RuntimeChunkLocation {
+                leaf_index: 7,
+                chunk_index: 5,
+            },
             deadline: 11,
             index: 3,
             deposit: 1_000_000_000_000,
@@ -1158,11 +1131,10 @@ mod tests {
         assert_eq!(detected.bucket_id, 42);
         assert_eq!(detected.deadline, 11);
         assert_eq!(detected.index, 3);
-        assert_eq!(detected.mmr_root.0, [3u8; 32]);
-        assert_eq!(detected.start_seq, 100);
-        // Flat on this shape, unlike the nested `target` on the storage value.
-        assert_eq!(detected.leaf_index, 7);
-        assert_eq!(detected.chunk_index, 5);
+        assert_eq!(detected.commitment.mmr_root.0, [3u8; 32]);
+        assert_eq!(detected.commitment.leaf_count, 9);
+        assert_eq!(detected.target.leaf_index, 7);
+        assert_eq!(detected.target.chunk_index, 5);
         assert_eq!(
             detected.challenger,
             sp_core::crypto::AccountId32::from([2u8; 32]).to_ss58check()
@@ -1177,7 +1149,7 @@ mod tests {
         // answered, since not answering is what gets the provider slashed.
         assert!(detected.challenger.is_empty());
         assert_eq!(detected.bucket_id, 42);
-        assert_eq!(detected.leaf_index, 7);
-        assert_eq!(detected.chunk_index, 5);
+        assert_eq!(detected.target.leaf_index, 7);
+        assert_eq!(detected.target.chunk_index, 5);
     }
 }

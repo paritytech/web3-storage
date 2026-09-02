@@ -151,7 +151,8 @@ impl ChallengerClient {
     /// You need to have obtained a signed commitment from the provider off-chain.
     ///
     /// # Parameters
-    /// - `commitment`: The MMR commitment (root + range) the provider signed over
+    /// - `commitment`: The signed commitment; its `leaf_count` binds the proof
+    ///   to `target.leaf_index` in `respond_to_challenge`.
     /// - `target`: Which leaf + chunk within that commitment to challenge
     /// - `provider_signature`: The provider's signature on the commitment (64 bytes for Sr25519)
     pub async fn challenge_offchain(
