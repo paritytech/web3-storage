@@ -92,11 +92,95 @@ pub struct BucketStats {
     pub bytes_stored: u64,
 }
 
-/// Trait for storage backends (in-memory, disk, etc.).
+/// View of one pruned-but-not-yet-erased leaf range (the GC work queue).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PrunedRangeInfo {
+    /// Global sequence number of the first stashed leaf.
+    pub first_seq: u64,
+    /// One past the last stashed leaf (`first_seq + len`).
+    pub end_seq: u64,
+    /// The start_seq the prune advanced the bucket to.
+    pub new_start_seq: u64,
+    /// Whether an admin-signed deletion receipt covering this range is held
+    /// (required before the range may be physically erased).
+    pub has_receipt: bool,
+}
+
+/// serde adapter that stores a SCALE type as its raw encoding, so chain
+/// types without serde impls (`MultiSignature`) can live in bincode rows.
+mod scale_bytes {
+    pub fn serialize<T, S>(value: &T, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        T: codec::Encode,
+        S: serde::Serializer,
+    {
+        serializer.serialize_bytes(&value.encode())
+    }
+
+    pub fn deserialize<'de, T, D>(deserializer: D) -> Result<T, D::Error>
+    where
+        T: codec::Decode,
+        D: serde::Deserializer<'de>,
+    {
+        let bytes = <Vec<u8> as serde::Deserialize>::deserialize(deserializer)?;
+        T::decode(&mut bytes.as_slice()).map_err(serde::de::Error::custom)
+    }
+}
+
+#[cfg(test)]
+mod scale_bytes_tests {
+    use super::DeletionReceipt;
+    use sp_core::H256;
+
+    /// The adapter's serialize/deserialize halves must agree under bincode —
+    /// the codec the disk rows actually use.
+    #[test]
+    fn deletion_receipt_round_trips_through_bincode() {
+        let receipt = DeletionReceipt {
+            mmr_root: H256::repeat_byte(3),
+            new_start_seq: 7,
+            admin: sp_core::crypto::AccountId32::new([9u8; 32]),
+            signature: sp_runtime::MultiSignature::Sr25519(sp_core::sr25519::Signature::from(
+                [1u8; 64],
+            )),
+        };
+        let bytes = bincode::serialize(&receipt).unwrap();
+        let back: DeletionReceipt = bincode::deserialize(&bytes).unwrap();
+        assert_eq!(back, receipt);
+    }
+}
+
+/// An admin-signed deletion authorization: the durable evidence for the
+/// on-chain `Deleted` challenge defense. Kept after the bytes are erased —
+/// it is what makes the erasure permanently defensible.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeletionReceipt {
+    /// The post-prune MMR root the admin signed.
+    pub mmr_root: H256,
+    /// The start_seq the deletion advanced the bucket to.
+    pub new_start_seq: u64,
+    /// The admin account that signed the deletion authorization.
+    #[serde(with = "scale_bytes")]
+    pub admin: sp_core::crypto::AccountId32,
+    /// The admin's signature over the deletion `CommitmentPayload`.
+    #[serde(with = "scale_bytes")]
+    pub signature: sp_runtime::MultiSignature,
+}
+
+/// Result of physically erasing one pruned range.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct EraseOutcome {
+    /// Nodes whose refcount reached zero and were deleted.
+    pub nodes_deleted: u64,
+    /// Bytes credited back to bucket quotas (sum over charged buckets).
+    pub bytes_freed: u64,
+}
+
+/// Trait for storage backends.
 ///
-/// Both `Storage` (in-memory) and `DiskStorage` (persistent) implement this trait,
-/// allowing the provider node to select the storage backend at startup.
-/// The disk backend is currently backed by RocksDB but the implementation may change.
+/// [`DiskStorage`](disk::DiskStorage) (RocksDB) is currently the only
+/// implementation; the trait keeps the provider node independent of the
+/// concrete store.
 pub trait StorageBackend: Send + Sync {
     /// Initialize a bucket with the given quota.
     fn init_bucket(&self, bucket_id: BucketId, max_bytes: u64) -> Result<(), Error>;
@@ -184,6 +268,32 @@ pub trait StorageBackend: Send + Sync {
         hashes
     }
 
+    /// DFS over a content tree, visiting every stored node (zero-hash padding
+    /// skipped). Fails on the first node missing from the store, so callers
+    /// can rely on "Ok = the entire tree is present".
+    fn try_walk_tree(
+        &self,
+        root: H256,
+        visit: &mut dyn FnMut(H256, &StoredNode),
+    ) -> Result<(), Error> {
+        let mut stack = vec![root];
+        while let Some(hash) = stack.pop() {
+            if hash == H256::zero() {
+                continue;
+            }
+            let node = self.get_node(&hash).ok_or_else(|| {
+                Error::NodeNotFound(format!("0x{}", hex::encode(hash.as_bytes())))
+            })?;
+            if let Some(children) = &node.children {
+                for child in children.iter().rev() {
+                    stack.push(*child);
+                }
+            }
+            visit(hash, &node);
+        }
+        Ok(())
+    }
+
     /// Get chunk data and Merkle proof at the given index from a data root.
     fn get_chunk_at_index(
         &self,
@@ -208,11 +318,62 @@ pub trait StorageBackend: Send + Sync {
     }
 
     /// Delete data before a sequence number.
+    ///
+    /// The pruned leaves are moved into a retention stash, not erased: the
+    /// provider stays able to prove challenges against commitments covering
+    /// them until an admin-signed deletion receipt is held and the canonical
+    /// checkpoint has passed the range.
     fn delete_before(
         &self,
         bucket_id: BucketId,
         new_start_seq: u64,
     ) -> Result<(H256, u64, u64), Error>;
+
+    /// Store an admin-signed deletion receipt for a stashed range (matched
+    /// by `new_start_seq`). Replaces a previous receipt for the same range.
+    fn attach_deletion_receipt(
+        &self,
+        bucket_id: BucketId,
+        receipt: DeletionReceipt,
+    ) -> Result<(), Error>;
+
+    /// The stored receipt with the smallest `new_start_seq` strictly greater
+    /// than `seq` — the evidence defending a challenge on leaf `seq` after
+    /// its bytes were erased.
+    fn deletion_receipt_covering(&self, bucket_id: BucketId, seq: u64) -> Option<DeletionReceipt>;
+
+    /// Set/refresh the bucket quota learned from the chain agreement.
+    /// Never creates a bucket; errors if it does not exist.
+    fn set_bucket_quota(&self, bucket_id: BucketId, max_bytes: u64) -> Result<(), Error>;
+
+    /// Pruned ranges awaiting physical erasure, oldest first.
+    fn pruned_ranges(&self, bucket_id: BucketId) -> Vec<PrunedRangeInfo>;
+
+    /// Whether the bucket was condemned (deleted on-chain / agreement gone).
+    fn is_condemned(&self, bucket_id: BucketId) -> bool;
+
+    /// Physically erase one stashed range: decrement refcounts along each
+    /// leaf's tree, delete zero-ref nodes, credit `used_bytes` back to each
+    /// node's charged bucket, and drop the range — one atomic write.
+    /// Idempotent: an unknown `first_seq` is a no-op `Ok`. On a condemned
+    /// bucket, removes the bucket row once nothing stashed or live remains.
+    ///
+    /// Callers are responsible for checking that liability has passed
+    /// (canonical checkpoint past the range, the admin's deletion receipt
+    /// held, no pending challenges).
+    fn erase_pruned_range(
+        &self,
+        bucket_id: BucketId,
+        first_seq: u64,
+    ) -> Result<EraseOutcome, Error>;
+
+    /// Bucket teardown, first half: stash all remaining leaves as one pruned
+    /// range and mark the bucket condemned. The second half is the caller
+    /// (the GC) invoking [`erase_pruned_range`](Self::erase_pruned_range)
+    /// once liability has passed — on a condemned bucket that also removes
+    /// the bucket row itself. Idempotent; `Ok` if the bucket is already
+    /// condemned or already gone.
+    fn condemn_bucket(&self, bucket_id: BucketId) -> Result<(), Error>;
 
     /// Get MMR proof for a leaf.
     fn get_mmr_proof(
