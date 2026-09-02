@@ -30,8 +30,14 @@ pub mod consensus {
     /// `pallet_aura`.
     pub const MILLISECS_PER_BLOCK: u64 = 2000;
 
-    /// Slot duration equals block time for this runtime.
-    pub const SLOT_DURATION: u64 = MILLISECS_PER_BLOCK;
+    /// Aura slot duration. Deliberately NOT the block time: under slot-based authoring the
+    /// block interval is `RELAY_CHAIN_SLOT_DURATION_MILLIS / BLOCK_PROCESSING_VELOCITY`, while
+    /// the slot only sets how long each author's turn lasts (all blocks within a relay slot
+    /// share one Aura slot — hence `AllowMultipleBlocksPerSlot`). The SDK's elastic-scaling
+    /// guide requires at least the relay's 6 s here, and this runtime is live with 6 s slots,
+    /// so changing the slot denomination across the upgrade would break the consensus hook's
+    /// slot check against on-chain state.
+    pub const SLOT_DURATION: u64 = RELAY_CHAIN_SLOT_DURATION_MILLIS as u64;
 
     /// Required by slot-based authoring with elastic scaling.
     pub const RELAY_PARENT_OFFSET: u32 = 1;

@@ -12,7 +12,7 @@
     "integration_tests": true,
     "try_runtime": {
       "spec_name_check": "--disable-spec-name-check",
-      "extra_flags": "--blocktime 2000 --disable-spec-version-check"
+      "extra_flags": "--blocktime 6000 --disable-spec-version-check"
     },
     "benchmarks_templates": {
       "pallet_xcm_benchmarks::generic": "templates/xcm-bench-template.hbs",
@@ -32,7 +32,7 @@
     "integration_tests": false,
     "try_runtime": {
       "spec_name_check": "--disable-spec-name-check",
-      "extra_flags": "--blocktime 2000 --disable-spec-version-check"
+      "extra_flags": "--blocktime 6000 --disable-spec-version-check"
     },
     "benchmarks_templates": {
       "pallet_xcm_benchmarks::generic": "templates/xcm-bench-template.hbs",
