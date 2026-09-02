@@ -218,6 +218,8 @@ pub mod pallet {
         /// slashed. Sets the floor on challenge spam economics — too low
         /// and griefing is free; too high and legitimate challenges become
         /// unaffordable.
+        // DRIFT-005: this config item is missing from the design doc's Config
+        // sketch.
         #[pallet::constant]
         type ChallengeDeposit: Get<BalanceOf<Self>>;
 
@@ -573,6 +575,8 @@ pub mod pallet {
         pub agreements_burned: u32,
         /// Total bytes ever committed across all agreements.
         pub total_bytes_committed: u64,
+        // DRIFT-004: design docs split this into challenges_received_authorized
+        // / _public (challenger tiers). PR #330 implements tiers.
         /// Number of challenges received.
         pub challenges_received: u32,
         /// Number of challenges where provider was slashed.
@@ -590,6 +594,9 @@ pub mod pallet {
     /// Bucket container for data with membership and storage agreements.
     #[derive(Clone, PartialEq, Eq, Encode, Decode, TypeInfo, Debug)]
     #[scale_info(skip_type_params(T))]
+    // DRIFT-003: the design docs give `Bucket` a `visibility: Visibility`
+    // field (on-chain read-gating). Not implemented on `dev`; PR #330 adds it.
+    //
     pub struct Bucket<T: Config> {
         /// Members who can interact with this bucket.
         pub members: BoundedVec<Member<T>, T::MaxMembers>,
@@ -632,6 +639,9 @@ pub mod pallet {
     /// Active challenge against a provider.
     #[derive(Clone, PartialEq, Eq, Encode, Decode, TypeInfo, MaxEncodedLen, Debug)]
     #[scale_info(skip_type_params(T))]
+    // DRIFT-004: the design docs give `Challenge` an `authorized: bool` field
+    // (challenger tier snapshot). Not implemented on `dev`; PR #330 adds it.
+    //
     pub struct Challenge<T: Config> {
         /// Bucket containing the challenged data.
         pub bucket_id: BucketId,
@@ -1307,6 +1317,9 @@ pub mod pallet {
         // Bucket Management
         // ─────────────────────────────────────────────────────────────────────
 
+        // DRIFT-001 / DRIFT-002: this signed-terms flow supersedes the design
+        // docs' on-chain request/accept round-trip and standalone create_bucket
+        // (bucket creation is folded in here).
         /// Redeem provider-signed terms: create a bucket + primary agreement
         /// in a single call.
         ///
@@ -2261,6 +2274,11 @@ pub mod pallet {
             )
         }
 
+        // DRIFT-004: on a valid response this applies one response-time split
+        // to every challenger (no authorized/public tiers) and slashes the
+        // provider's share from stake to the Treasury — the design docs
+        // describe tiers and "stake never touched on a valid response". PR #330
+        // reworks this.
         /// Respond to a challenge.
         #[pallet::call_index(41)]
         #[pallet::weight(match response {

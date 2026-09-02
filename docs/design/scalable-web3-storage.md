@@ -35,6 +35,7 @@ provider's own counterparties make it bear a share of that cost, so it serves
 them promptly; strangers fund their challenges in full. A provider's
 challenge-cost exposure is thus bounded to the accounts it chose to deal with:
 it controls its risk by vetting whom it signs agreements with.
+<!-- DRIFT-004: the counterparty-vs-stranger tier framing in the paragraph above is NOT on `dev` (one response-time split for every challenger). In-flight in PR #330; do not remove. -->
 
 Existing Web3 storage either proves too much (Filecoin's continuous proofs—heavy,
 slow, chain-bound) or/and guarantees too little (IPFS—no persistence at all). We use
@@ -405,6 +406,7 @@ This creates a spectrum:
 - **Federated**: Admin with primaries, community-funded replicas
 - **Permissionless**: Frozen bucket, anyone can add replicas, admin has no special power
 
+<!-- DRIFT-003: this entire section describes on-chain bucket visibility that is NOT on `dev` — read-gating is cooperative/off-chain via membership. In-flight in PR #330; do not remove. -->
 ### Bucket Visibility & Access
 > On a **private** bucket, primary providers serve reads only to **members**
 > (Admin, Writers, Readers). On a **public** bucket they serve anyone.
@@ -592,6 +594,7 @@ Provider
 bucket. This makes cheating economics absurd—deleting 1% of data to save $0.12/year risks losing thousands of dollars in
 stake.
 
+<!-- DRIFT-004: the two-tier challenger model (authorized vs public), the split stats, and "stake is never touched on a valid response" below are NOT on `dev` — the pallet applies one response-time split to every challenger and slashes the provider's share from stake to the Treasury; the only challenge gate is that the agreement is live. In-flight in PR #330; do not remove. -->
 ### The Challenge Game
 
 When a provider doesn't serve data, anyone can challenge on-chain (private
