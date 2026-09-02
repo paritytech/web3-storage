@@ -71,3 +71,11 @@ Screenshot.png
 
 # c8 output from `just e2e`
 examples/papi/coverage/
+
+# llvm-cov
+coverage-integration.md
+coverage-modules.md
+coverage-summary.txt
+lcov-integration.info
+lcov.info
+patch-coverage.md

@@ -24,7 +24,7 @@ extern crate alloc;
 use alloc::borrow::Cow;
 use alloc::{vec, vec::Vec};
 use cumulus_pallet_parachain_system::RelayNumberMonotonicallyIncreases;
-use cumulus_primitives_core::{AggregateMessageOrigin, ParaId};
+use cumulus_primitives_core::{AggregateMessageOrigin, ParaId, VerifySchedulingSignature};
 use frame_support::{
     derive_impl,
     dispatch::DispatchClass,
@@ -174,12 +174,23 @@ pub const VERSION: RuntimeVersion = RuntimeVersion {
     spec_name: Cow::Borrowed("web3-storage-parachain"),
     impl_name: Cow::Borrowed("web3-storage-parachain"),
     authoring_version: 1,
-    // 3 on dev (relay-clock migration lineage); 4 for 2 s blocks / 3 cores
-    // (slot-based authoring, RelayParentOffset = 1).
-    spec_version: 4,
+    // Encodes the runtime semver: major * 1_000_000 + minor * 1_000 + patch.
+    // * 0.4.1 -> 4_001 on dev (#212), released as v0.4.1-paseo and still the deployed value;
+    // * 4_002 for the breaking Challenges storage reshape (Vec -> StorageDoubleMap) (#125);
+    // * 4_003 for dropping the vestigial `ChallengerStatRecord::total_earnings` field (#125);
+    // * 4_004 for `StorageProviderApi` v2: `challenge_candidates`, `deregister_at`, `reputation` (#318);
+    // * 4_005 for 2 s blocks / 3 cores: slot-based authoring, `RelayParentOffset = 1` (#131);
+    spec_version: 4_005,
     impl_version: 0,
     apis: RUNTIME_API_VERSIONS,
-    transaction_version: 1,
+    // Bumped whenever call encoding changes, so offline signers and stale-metadata
+    // clients fail loudly rather than mis-encode a call.
+    // * 1 on the initial paseo runtime (#58);
+    // * 2 in the v0.2.0-paseo release, still the deployed value;
+    // * 3 for dropping the commitment nonce: `checkpoint` and `challenge_offchain` each lost
+    //   a `nonce` argument, and `respond_to_challenge`'s `ChallengeResponse::Deleted` variant
+    //   lost its `nonce` field (#339).
+    transaction_version: 3,
     system_version: 1,
 };
 
@@ -347,6 +358,8 @@ impl cumulus_pallet_parachain_system::Config for Runtime {
     type ConsensusHook = ConsensusHook;
     type WeightInfo = weights::cumulus_pallet_parachain_system::WeightInfo<Runtime>;
     type RelayParentOffset = ConstU32<RELAY_PARENT_OFFSET>;
+    // V3 scheduling stays off; enabling it before collators support it stalls the chain.
+    type SchedulingSignatureVerifier = ();
 }
 
 impl parachain_info::Config for Runtime {}
@@ -746,6 +759,16 @@ pallet_revive::impl_runtime_apis_plus_revive_traits!(
         fn relay_parent_offset() -> u32 {
             RELAY_PARENT_OFFSET
         }
+
+        fn max_claim_queue_offset() -> u8 {
+            cumulus_pallet_parachain_system::Pallet::<Runtime>::max_claim_queue_offset()
+        }
+    }
+
+    impl cumulus_primitives_core::SchedulingV3EnabledApi<Block> for Runtime {
+        fn scheduling_v3_enabled() -> bool {
+            <Runtime as cumulus_pallet_parachain_system::Config>::SchedulingSignatureVerifier::V3_SCHEDULING_ENABLED
+        }
     }
 
     impl cumulus_primitives_core::GetParachainInfo<Block> for Runtime {
@@ -768,7 +791,11 @@ pallet_revive::impl_runtime_apis_plus_revive_traits!(
         }
     }
 
-    impl pallet_storage_provider::runtime_api::StorageProviderApi<Block, AccountId, BlockNumber, Balance> for Runtime {
+    // The API's `BlockNumber` slot carries anchor-clock values (`challenges_at`
+    // deadlines, `current_anchor_block`), so it is instantiated with the
+    // pallet's anchor-denominated `BlockNumberFor` — the same concrete type as
+    // the runtime's `BlockNumber`, per the pallet's `Config` pin.
+    impl pallet_storage_provider::runtime_api::StorageProviderApi<Block, AccountId, pallet_storage_provider::BlockNumberFor<Runtime>, Balance> for Runtime {
         fn provider_info(provider: AccountId) -> Option<pallet_storage_provider::runtime_api::ProviderInfoResponse> {
             StorageProvider::query_provider_info(&provider)
         }
@@ -801,7 +828,7 @@ pallet_revive::impl_runtime_apis_plus_revive_traits!(
             StorageProvider::query_provider_agreements(&provider)
         }
 
-        fn challenges_at(block: BlockNumber) -> Vec<pallet_storage_provider::runtime_api::ChallengeResponse> {
+        fn challenges_at(block: pallet_storage_provider::BlockNumberFor<Runtime>) -> Vec<pallet_storage_provider::runtime_api::ChallengeResponse> {
             StorageProvider::query_challenges_at(block)
         }
 
@@ -836,7 +863,14 @@ pallet_revive::impl_runtime_apis_plus_revive_traits!(
             StorageProvider::query_providers_with_capacity(bytes_needed, offset, limit)
         }
 
-        fn current_anchor_block() -> BlockNumber {
+        fn challenge_candidates(
+            max_reputation: u8,
+            limit: u32,
+        ) -> Vec<pallet_storage_provider::runtime_api::ChallengeCandidate> {
+            StorageProvider::query_challenge_candidates(max_reputation, limit)
+        }
+
+        fn current_anchor_block() -> pallet_storage_provider::BlockNumberFor<Runtime> {
             StorageProvider::current_anchor_block()
         }
 

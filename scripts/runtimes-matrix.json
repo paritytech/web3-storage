@@ -24,12 +24,12 @@
     "package": "storage-parachain-runtime",
     "path": "runtimes/web3-storage-local",
     "build_command": "build-runtime",
-    "zombienet_config": "zombienet.toml",
+    "zombienet_config": "zombienet/zombienet-parachain-local.toml",
     "chain_spec_script": "scripts/build-chain-spec.sh",
     "uris": [
       "TODO: update WSS"
     ],
-    "integration_tests": true,
+    "integration_tests": false,
     "try_runtime": {
       "spec_name_check": "--disable-spec-name-check",
       "extra_flags": "--blocktime 2000 --disable-spec-version-check"

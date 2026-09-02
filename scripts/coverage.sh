@@ -24,7 +24,12 @@ COV_PACKAGES=(
 	pallet-drive-registry
 	pallet-s3-registry
 	storage-provider-node
+	provider-chain
+	provider-coordinator
 	provider-negotiation
+	provider-auth
+	provider-storage
+	provider-challenge
 )
 
 # Not measured, with the reason per crate.
@@ -41,6 +46,7 @@ COV_SKIP_PACKAGES=(
 	pallet-drive-registry-precompile # exercised out of process (`just sc-demo`)
 	pallet-s3-registry-precompile # exercised out of process (`just sc-demo`)
 	storage-subxt # static codegen runtime bindings
+	storage-indexers # chain-bound streams; needs a live chain to exercise
 )
 
 # Fail when the two lists and the workspace members drift apart: every member
@@ -65,9 +71,10 @@ verify_classification() {
 
 # Exclusions: only code that structurally cannot execute in this run —
 # "untested but testable" code stays measured so the gate pushes for tests.
-# The coordinators (checkpoint_coordinator, replica_sync_coordinator,
-# challenge_responder) are deliberately NOT here: they abstract chain access
-# behind traits and are covered by the mock-backed tests/coordinators/ suite.
+# The coordinators (replica_sync_coordinator, and the challenge responder,
+# now the provider-challenge crate) are deliberately NOT here: they abstract
+# chain access behind traits and are covered by the mock-backed
+# tests/coordinators/ suite.
 # Groups: toolchain/vendored; generated code + test scaffolding; primitives
 # crates (linked in, own tests
 # not run here); chain-access layer (needs a live chain); client SDK crates
@@ -75,7 +82,7 @@ verify_classification() {
 # replica_sync.rs (no chain-client trait of its own, exercised only
 # indirectly through replica_sync_coordinator — measure it once it is
 # directly testable); binary entry points.
-COV_IGNORE='(/\.cargo/|/rustc/|weights\.rs|runtime_api\.rs|mock\.rs|benchmarking\.rs|/primitives/|subxt_client\.rs|_subxt\.rs|client/src/|client/tests/|src/replica_sync\.rs|src/main\.rs|src/cli\.rs|src/command\.rs)'
+COV_IGNORE='(/\.cargo/|/rustc/|weights\.rs|runtime_api\.rs|mock\.rs|benchmarking\.rs|/primitives/|/storage-subxt/|subxt_client\.rs|_subxt\.rs|clients/[^/]+/src/|clients/[^/]+/tests/|src/replica_sync\.rs|src/main\.rs|src/cli\.rs|src/command\.rs)'
 
 REPO_ROOT="${GITHUB_WORKSPACE:-$(git rev-parse --show-toplevel)}"
 cd "$REPO_ROOT"

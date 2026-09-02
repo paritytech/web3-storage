@@ -48,7 +48,9 @@ async function createS3BucketWithStorage(
     maxBytes,
     duration,
   });
-  return createS3Bucket(api, client, name, provider, signed);
+  // Finalize: putChunk to this bucket reads membership from the provider's
+  // finalized view, so an in-block create would race it.
+  return createS3Bucket(api, client, name, provider, signed, { mode: "finalized" });
 }
 
 async function main() {
@@ -89,7 +91,7 @@ async function main() {
   tests.push({
     name: "3.2 Put object metadata",
     fn: async () => {
-      const obj = await putChunk(PROVIDER_URL, layer0BucketId, "hello from e2e test");
+      const obj = await putChunk(PROVIDER_URL, layer0BucketId, "hello from e2e test", client);
       await putObjectMetadata(api, client, s3BucketId, "test.txt", obj, "text/plain");
       const stored = (await api.query.S3Registry.Objects.getValue(
         s3BucketId,
@@ -104,7 +106,7 @@ async function main() {
   tests.push({
     name: "3.3 Put with user metadata",
     fn: async () => {
-      const obj = await putChunk(PROVIDER_URL, layer0BucketId, "data with metadata");
+      const obj = await putChunk(PROVIDER_URL, layer0BucketId, "data with metadata", client);
       await putObjectMetadata(api, client, s3BucketId, "meta.txt", obj, "text/plain", [
         ["author", "e2e-test"],
         ["version", "1"],
@@ -186,7 +188,7 @@ async function main() {
         name2,
         { maxBytes: maxCapacity, duration }
       );
-      const obj = await putChunk(PROVIDER_URL, l0, "not empty");
+      const obj = await putChunk(PROVIDER_URL, l0, "not empty", client);
       await putObjectMetadata(api, client, bid, "file.txt", obj, "text/plain");
       const tx = api.tx.S3Registry.delete_s3_bucket({ s3_bucket_id: bid });
       await submitTxExpectFailure(tx, client.signer, "BucketNotEmpty", "3.7");
@@ -260,7 +262,7 @@ async function main() {
         edgeName,
         { maxBytes: maxCapacity, duration }
       );
-      const obj = await putChunk(PROVIDER_URL, l0, "deep nested");
+      const obj = await putChunk(PROVIDER_URL, l0, "deep nested", client);
       await putObjectMetadata(api, client, bid, "a/b/c/d.txt", obj, "text/plain");
       const stored = await api.query.S3Registry.Objects.getValue(
         bid,
@@ -288,9 +290,9 @@ async function main() {
         upsertName,
         { maxBytes: maxCapacity, duration }
       );
-      const obj1 = await putChunk(PROVIDER_URL, l0, "version 1");
+      const obj1 = await putChunk(PROVIDER_URL, l0, "version 1", client);
       await putObjectMetadata(api, client, bid, "file.txt", obj1, "text/plain");
-      const obj2 = await putChunk(PROVIDER_URL, l0, "version 2 updated");
+      const obj2 = await putChunk(PROVIDER_URL, l0, "version 2 updated", client);
       await putObjectMetadata(api, client, bid, "file.txt", obj2, "text/plain");
       const stored = (await api.query.S3Registry.Objects.getValue(
         bid,

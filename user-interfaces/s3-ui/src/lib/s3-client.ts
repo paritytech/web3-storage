@@ -15,7 +15,6 @@
 import { Subscription } from "rxjs";
 import type { PolkadotSigner } from "polkadot-api";
 import { parachain } from "@polkadot-api/descriptors";
-import { ss58Decode } from "@polkadot-labs/hdkd-helpers";
 import { getSs58AddressInfo } from "@polkadot-api/substrate-bindings";
 import {
   buildSignedTermsArgs,
@@ -117,14 +116,6 @@ export interface CheckpointInfo {
   checkpointBlock: number;
 }
 
-export interface CheckpointDuty {
-  bucketId: number;
-  mmrRoot: string;
-  startSeq: number;
-  leafCount: number;
-  ready: boolean;
-}
-
 export interface ChallengeResult {
   challengeId: { deadline: number; index: number };
   respondBy: number;
@@ -188,14 +179,10 @@ export class S3Client {
     }
     let chainSigner: ChainSigner | null = null;
     if (this.signer && this.signerAddress) {
-      // s3-ui derives raw dev-account keypairs, so provider requests are
-      // signed (the SDK's S3Client reads `signer.keypair`). Fall back to the
-      // address-recovered public key if only a wallet signer is present.
-      const publicKey = this.keypair?.publicKey ?? ss58Decode(this.signerAddress)[0];
       chainSigner = {
         signer: this.signer,
         address: this.signerAddress,
-        publicKey,
+        publicKey: this.signer.publicKey,
         keypair: this.keypair ?? undefined,
       };
     }
@@ -210,13 +197,13 @@ export class S3Client {
     }
   }
 
-  setSigner(signer: Signer | null, address: string | null): void {
+  setSigner(
+    signer: Signer | null,
+    address: string | null,
+    keypair: Keypair | null,
+  ): void {
     this.signer = signer;
     this.signerAddress = address;
-    this.rebuild();
-  }
-
-  setKeypair(keypair: Keypair | null): void {
     this.keypair = keypair;
     this.rebuild();
   }
@@ -457,7 +444,7 @@ export class S3Client {
       .sort((a, b) => b.matchScore - a.matchScore);
   }
 
-  // ── Checkpoint (chain-state read + provider HTTP duty/trigger) ──────────────
+  // ── Checkpoint (chain-state read) ────────────────────────────────────────
 
   async getCheckpointInfo(bucketId: bigint): Promise<CheckpointInfo | null> {
     const api = this.requireApi();
@@ -473,31 +460,6 @@ export class S3Client {
       leafCount: snapshot.commitment.leaf_count,
       checkpointBlock: snapshot.checkpoint_block,
     };
-  }
-
-  async getCheckpointDuty(bucketId: bigint): Promise<CheckpointDuty | null> {
-    const providerUrl = await this.getProviderUrl(bucketId);
-    const response = await httpFetch(
-      `${providerUrl}/checkpoint/duty?bucket_id=${Number(bucketId)}`,
-    );
-    if (!response.ok) {
-      if (response.status === 404) return null;
-      throw new Error(`Checkpoint duty failed: ${response.status}`);
-    }
-    return response.json();
-  }
-
-  async triggerCheckpoint(bucketId: bigint): Promise<void> {
-    const providerUrl = await this.getProviderUrl(bucketId);
-    const response = await httpFetch(
-      `${providerUrl}/checkpoint/trigger?bucket_id=${Number(bucketId)}`,
-      { method: "POST" },
-    );
-    if (!response.ok) {
-      throw new Error(
-        `Checkpoint trigger failed: ${response.status} ${await response.text().catch(() => "")}`,
-      );
-    }
   }
 
   // ── Challenge (write via SDK submitTx; reads/subscriptions are chain queries) ─

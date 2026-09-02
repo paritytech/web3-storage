@@ -4,79 +4,90 @@
 //!
 //! A single [`SubxtChainClient`] holds one [`subxt::OnlineClient`] connection
 //! and one signing key, and implements every coordinator's chain-client trait
-//! (`CheckpointChainClient`, `ReplicaSyncChainClient`,
-//! `ChallengeChainClient`). Coordinators still depend on the narrow trait they
-//! need, so per-trait mocks keep working; the production wiring just hands each
-//! one a clone of the same client (a cheap `OnlineClient`/`Keypair` clone that
-//! shares the underlying WebSocket connection).
+//! (`ReplicaSyncChainClient`, `ChallengeChainClient`). Coordinators still
+//! depend on the narrow trait they need, so per-trait mocks keep working; the
+//! production wiring just hands each one a clone of the same client (a cheap
+//! `OnlineClient`/`Keypair` clone that shares the underlying WebSocket
+//! connection).
 
-use crate::challenge_responder::{
-    decode_challenge_for_provider, ChallengeChainClient, DetectedChallenge,
-};
-use crate::checkpoint_coordinator::{CheckpointChainClient, CheckpointDuty};
+use crate::challenge_responder::{ChallengeChainClient, ChallengeError, DetectedChallenge};
 use crate::replica_sync_coordinator::{
     BucketSnapshot, ReplicaAgreementInfo, ReplicaSyncChainClient,
 };
 use crate::Error;
+use provider_chain::chain_connection::{self, ChainWatch};
 use sp_core::crypto::Ss58Codec;
 use sp_core::H256;
+use std::sync::Arc;
+use std::time::Duration;
 use storage_primitives::BucketId;
+use storage_subxt::api::runtime_types::bounded_collections::bounded_vec::BoundedVec;
+use storage_subxt::api::runtime_types::pallet_storage_provider::pallet::ChallengeResponse as RuntimeChallengeResponse;
+use storage_subxt::api::runtime_types::storage_primitives::{
+    ChallengeId as RuntimeChallengeId, MerkleProof as RuntimeMerkleProof,
+    MmrLeaf as RuntimeMmrLeaf, MmrProof as RuntimeMmrProof,
+};
 use subxt::dynamic::Value;
+use subxt::error::{DispatchError, TransactionEventsError, TransactionFinalizedSuccessError};
 use subxt::ext::scale_value::value;
 
-/// Query the pallet's `StorageProviderApi::current_anchor_block` runtime API —
-/// the block every on-chain duration (timeouts, expiries, `valid_until`, nonce
-/// age) is measured against. Reading it through the runtime API keeps the
-/// provider agnostic to whether the anchor is a relay, parachain, or other
-/// block number: the pallet decides via its `BlockNumberProvider`, and the
-/// provider no longer reaches into a specific storage item.
-///
-/// Kept here (rather than in `storage-client`) so the provider node stays
-/// dependency-light (see #275).
-pub(crate) async fn fetch_current_anchor_block<C>(
-    at: &subxt::client::ClientAtBlock<subxt::PolkadotConfig, C>,
-) -> Result<u32, Error>
-where
-    C: subxt::client::OnlineClientAtBlockT<subxt::PolkadotConfig>,
-{
-    use codec::Decode;
-    // Invoke by the runtime API's `state_call` name and decode the raw SCALE
-    // response directly as the block number. Decoding by hand (rather than
-    // through the dynamic value path) avoids depending on this API being
-    // present in the node's metadata snapshot.
-    let bytes = at
-        .runtime_apis()
-        .call_raw("StorageProviderApi_current_anchor_block", None)
-        .await
-        .map_err(|e| {
-            Error::Internal(format!("current_anchor_block runtime API call failed: {e}"))
-        })?;
-    u32::decode(&mut &bytes[..])
-        .map_err(|e| Error::Internal(format!("Failed to decode anchor block: {e}")))
+/// `StorageProvider` error variants that mean "this action already happened"
+/// — a retry after a dropped transaction watch may race an earlier attempt
+/// that landed, and these rejections prove the duty is done rather than
+/// failed. Matched against the pallet + error-variant names resolved from
+/// runtime metadata (see [`SubxtChainClient::is_already_done`]).
+const ALREADY_DONE_ERRORS: [&str; 2] = [
+    "ChallengeNotFound", // respond_to_challenge: challenge was taken on defense
+    "SyncTooFrequent",   // confirm_replica_sync: a sync already confirmed
+];
+
+/// Upper bound on one submit-and-watch pass. Generous next to normal
+/// finalization (a few blocks) so a slow chain isn't mistaken for a stuck one,
+/// but it keeps [`SubxtChainClient::submit_lock`] — held until finalization —
+/// from being wedged forever by a watch that neither resolves nor errors.
+const SUBMIT_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// Outcome of one submit-and-watch pass (see
+/// [`SubxtChainClient::submit_and_finalize`]).
+enum Attempt {
+    /// The transaction landed, or a duplicate rejection proved an earlier
+    /// attempt did. Carries the finalized block hash, except on the
+    /// duplicate-rejection path: there we only learn that some earlier
+    /// submission landed, never which block took it.
+    Landed(Option<H256>),
+    /// Transport-level failure: the transaction may or may not have landed, so
+    /// resubmitting is safe only because a duplicate rejection counts as
+    /// success.
+    Retryable(Error),
+    /// The chain rejected the call itself; resubmitting would fail identically.
+    Rejected(Error),
 }
 
 /// Production implementation that talks to the chain via subxt.
 ///
-/// Cloning is cheap: `OnlineClient` shares one connection behind an `Arc`, and
-/// the `Keypair` clone is a key copy. This lets a single instance be shared
-/// across every background coordinator.
+/// Holds a receiver of the connection watch channel (owned by the chain-state
+/// coordinator) plus this provider's signing key. Cloning is cheap, so every
+/// background coordinator gets its own copy; each operation borrows the
+/// current connection, which survives follower reconnects transparently.
 #[derive(Clone)]
 pub struct SubxtChainClient {
-    api: subxt::OnlineClient<subxt::PolkadotConfig>,
+    chain_rx: ChainWatch,
     signer: subxt_signer::sr25519::Keypair,
+    /// Serializes transaction submission across all clones. subxt 0.50 reads
+    /// the nonce from state at the anchored finalized block (not the pool), so
+    /// two concurrent submissions from the same signer would pick the same
+    /// nonce and one would be rejected. Held until finalization for the same
+    /// reason: the nonce only advances once the first transaction lands.
+    // ponytail: per-node serialization; a real nonce manager if duty-tx volume ever grows.
+    submit_lock: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl SubxtChainClient {
-    /// Connect to the chain and create a signer from the seed URI.
-    ///
-    /// The signer is derived from `seed` (e.g. `//Alice` or a mnemonic), which
+    /// Create the signing chain client from the connection watch channel and
+    /// the provider's seed URI (e.g. `//Alice` or a mnemonic), which
     /// reproduces the provider's registered account — the identity every
     /// on-chain action must be signed by.
-    pub async fn connect(chain_ws_url: &str, seed: &str) -> Result<Self, Error> {
-        let api = subxt::OnlineClient::<subxt::PolkadotConfig>::from_url(chain_ws_url)
-            .await
-            .map_err(|e| Error::Internal(format!("Failed to connect to chain: {e}")))?;
-
+    pub fn new(chain_rx: ChainWatch, seed: &str) -> Result<Self, Error> {
         let uri: subxt_signer::SecretUri = seed
             .parse()
             .map_err(|e| Error::Internal(format!("Invalid seed URI: {e}")))?;
@@ -84,26 +95,176 @@ impl SubxtChainClient {
             .map_err(|e| Error::Internal(format!("Failed to create signer: {e}")))?;
 
         tracing::info!(
-            "Chain client connected to {} as {}",
-            chain_ws_url,
+            "Chain client signing as {}",
             sp_core::crypto::AccountId32::from(signer.public_key().0).to_ss58check()
         );
 
-        Ok(Self { api, signer })
+        Ok(Self {
+            chain_rx,
+            signer,
+            submit_lock: Arc::new(tokio::sync::Mutex::new(())),
+        })
     }
 
-    /// Get the current anchor block (the clock all on-chain durations, in
-    /// particular checkpoint windows, are measured against), read at the latest
-    /// finalized state via the pallet's runtime API.
+    /// The current live connection, or an error while the chain has never
+    /// been reached yet.
+    fn api(&self) -> Result<subxt::OnlineClient<subxt::PolkadotConfig>, Error> {
+        chain_connection::current_api(&self.chain_rx).map_err(Into::into)
+    }
+
+    /// Get the current anchor block (the clock every on-chain duration is
+    /// measured against), read at the latest finalized state via the pallet's
+    /// runtime API.
     ///
-    /// Backs `get_current_block` on both the checkpoint and replica-sync traits.
+    /// Backs `get_current_block` on the replica-sync trait.
     async fn current_anchor_block(&self) -> Result<u64, Error> {
         let at = self
-            .api
+            .api()?
             .at_current_block()
             .await
             .map_err(|e| Error::Internal(format!("Failed to get current block: {e}")))?;
-        fetch_current_anchor_block(&at).await.map(u64::from)
+        Ok(u64::from(
+            provider_coordinator::fetch_current_anchor_block(&at).await?,
+        ))
+    }
+
+    /// Whether the failure is the chain rejecting the call itself (a
+    /// dispatch error decoded from `System::ExtrinsicFailed`), as opposed to
+    /// the watch or transport dying before a verdict was seen.
+    fn is_dispatch_failure(e: &TransactionFinalizedSuccessError) -> bool {
+        matches!(
+            e,
+            TransactionFinalizedSuccessError::SuccessError(
+                TransactionEventsError::ExtrinsicFailed(_)
+            )
+        )
+    }
+
+    /// Whether the dispatch error is one of the pallet's duplicate
+    /// rejections ([`ALREADY_DONE_ERRORS`]): on a retry it proves the first
+    /// attempt landed and the duty is complete.
+    fn is_already_done(e: &TransactionFinalizedSuccessError) -> bool {
+        let TransactionFinalizedSuccessError::SuccessError(
+            TransactionEventsError::ExtrinsicFailed(DispatchError::Module(module_error)),
+        ) = e
+        else {
+            return false;
+        };
+        let Ok(details) = module_error.details() else {
+            return false;
+        };
+        details.pallet.name() == "StorageProvider"
+            && ALREADY_DONE_ERRORS.contains(&details.variant.name.as_str())
+    }
+
+    /// Sign, submit, and wait for finalized success, retrying once on
+    /// transport-level failures (dropped socket, backend resubscription
+    /// killing the transaction watch).
+    ///
+    /// On the retry, a duplicate rejection ([`Self::is_already_done`]) is
+    /// treated as success: it means the first submission actually landed and
+    /// the duty is complete.
+    ///
+    /// Returns the finalized block hash, or `None` when success was inferred
+    /// from a duplicate rejection rather than observed directly.
+    async fn submit_and_finalize<C: subxt::tx::Payload>(
+        &self,
+        tx: &C,
+        what: &str,
+    ) -> Result<Option<H256>, Error> {
+        const RETRY_DELAY: Duration = Duration::from_secs(6);
+
+        // One transaction at a time across every clone (see `submit_lock`).
+        let _guard = self.submit_lock.lock().await;
+
+        let first_failure = match self.try_submit(tx, what, false).await {
+            Attempt::Landed(block_hash) => return Ok(block_hash),
+            Attempt::Rejected(e) => return Err(e),
+            Attempt::Retryable(e) => e,
+        };
+
+        tracing::warn!("{what}: {first_failure}; retrying once");
+        tokio::time::sleep(RETRY_DELAY).await;
+
+        match self.try_submit(tx, what, true).await {
+            Attempt::Landed(block_hash) => Ok(block_hash),
+            Attempt::Retryable(e) | Attempt::Rejected(e) => Err(e),
+        }
+    }
+
+    /// One submit-and-watch pass, bounded by [`SUBMIT_TIMEOUT`]. `retrying`
+    /// marks the second attempt, where a duplicate rejection proves the first
+    /// one landed.
+    ///
+    /// A timed-out pass is [`Attempt::Retryable`], so a transaction that did
+    /// land while the watch hung is still recognised by the duplicate-rejection
+    /// path on the resubmit. With both passes bounded, the total `submit_lock`
+    /// hold is at most `2 * SUBMIT_TIMEOUT + RETRY_DELAY`.
+    async fn try_submit<C: subxt::tx::Payload>(
+        &self,
+        tx: &C,
+        what: &str,
+        retrying: bool,
+    ) -> Attempt {
+        match tokio::time::timeout(SUBMIT_TIMEOUT, self.submit_once(tx, what, retrying)).await {
+            Ok(attempt) => attempt,
+            Err(_) => Attempt::Retryable(Error::Internal(format!(
+                "not finalized within {}s",
+                SUBMIT_TIMEOUT.as_secs()
+            ))),
+        }
+    }
+
+    /// The single unbounded submit-and-watch pass that [`Self::try_submit`]
+    /// puts a deadline on.
+    async fn submit_once<C: subxt::tx::Payload>(
+        &self,
+        tx: &C,
+        what: &str,
+        retrying: bool,
+    ) -> Attempt {
+        let submitted = async {
+            self.api()?
+                .at_current_block()
+                .await
+                .map_err(|e| Error::Internal(format!("Failed to get current block: {e}")))?
+                .transactions()
+                .sign_and_submit_then_watch_default(tx, &self.signer)
+                .await
+                .map_err(|e| Error::Internal(format!("Failed to submit tx: {e}")))
+        }
+        .await;
+
+        let progress = match submitted {
+            Ok(progress) => progress,
+            Err(e) => return Attempt::Retryable(e),
+        };
+
+        // `wait_for_finalized_success` is split into its two stages so the block
+        // hash is available before the dispatch outcome is known; both stage
+        // errors convert into the combined type the classifiers below match on.
+        let finalized = async {
+            let in_block = progress.wait_for_finalized().await?;
+            let block_hash = in_block.block_hash();
+            in_block.wait_for_success().await?;
+            Ok::<_, TransactionFinalizedSuccessError>(block_hash)
+        }
+        .await;
+
+        match finalized {
+            Ok(block_hash) => Attempt::Landed(Some(H256::from(block_hash.0))),
+            Err(e) if retrying && Self::is_already_done(&e) => {
+                tracing::info!("{what}: duplicate rejected on retry ({e}); first attempt landed");
+                Attempt::Landed(None)
+            }
+            // Non-dispatch failure (e.g. the watch subscription died): the tx
+            // may or may not have landed, so resubmit and let the duplicate
+            // classification above decide.
+            Err(e) if !Self::is_dispatch_failure(&e) => {
+                Attempt::Retryable(Error::Internal(format!("tx watch failed: {e}")))
+            }
+            Err(e) => Attempt::Rejected(Error::Internal(format!("Transaction failed: {e}"))),
+        }
     }
 
     /// Convert a multiaddr string to an HTTP endpoint.
@@ -234,7 +395,14 @@ impl SubxtChainClient {
         let storage_query =
             subxt::dynamic::storage::<(Value,), Value>("StorageProvider", "Providers");
 
-        let at = match self.api.at_current_block().await {
+        let api = match self.api() {
+            Ok(api) => api,
+            Err(e) => {
+                tracing::warn!("Failed to query storage for multiaddr sync: {}", e);
+                return;
+            }
+        };
+        let at = match api.at_current_block().await {
             Ok(at) => at,
             Err(e) => {
                 tracing::warn!("Failed to query storage for multiaddr sync: {}", e);
@@ -311,27 +479,12 @@ impl SubxtChainClient {
             vec![Value::from_bytes(multiaddr_bytes)],
         );
 
-        let at = match self.api.at_current_block().await {
-            Ok(at) => at,
-            Err(e) => {
-                tracing::error!("Failed to submit multiaddr update: {}", e);
-                return;
-            }
-        };
-        match at
-            .transactions()
-            .sign_and_submit_then_watch_default(&tx, &self.signer)
+        match self
+            .submit_and_finalize(&tx, "update_provider_multiaddr")
             .await
         {
-            Ok(progress) => match progress.wait_for_finalized_success().await {
-                Ok(_) => {
-                    tracing::info!("Multiaddr updated on-chain to: {}", expected_multiaddr)
-                }
-                Err(e) => tracing::error!("Multiaddr update tx failed: {}", e),
-            },
-            Err(e) => {
-                tracing::error!("Failed to submit multiaddr update: {}", e);
-            }
+            Ok(_) => tracing::info!("Multiaddr updated on-chain to: {}", expected_multiaddr),
+            Err(e) => tracing::error!("Multiaddr update tx failed: {}", e),
         }
     }
 
@@ -459,113 +612,6 @@ impl SubxtChainClient {
 }
 
 #[async_trait::async_trait]
-impl CheckpointChainClient for SubxtChainClient {
-    async fn get_current_block(&self) -> Result<u64, Error> {
-        self.current_anchor_block().await
-    }
-
-    async fn fetch_checkpoint_config(
-        &self,
-        bucket_id: BucketId,
-    ) -> Result<Option<(u32, u32)>, Error> {
-        use subxt::dynamic::At;
-
-        let config_query =
-            subxt::dynamic::storage::<(Value,), Value>("StorageProvider", "CheckpointConfigs");
-        let at = self
-            .api
-            .at_current_block()
-            .await
-            .map_err(|e| Error::Internal(format!("Failed to get storage: {e}")))?;
-
-        match at
-            .storage()
-            .try_fetch(config_query, (Value::u128(bucket_id as u128),))
-            .await
-            .map_err(|e| Error::Internal(format!("Failed to fetch config: {e}")))?
-        {
-            Some(val) => {
-                let decoded = val
-                    .decode()
-                    .map_err(|e| Error::Internal(format!("Failed to decode config: {e}")))?;
-                let interval = decoded
-                    .at("interval")
-                    .and_then(|v| v.as_u128())
-                    .unwrap_or(100) as u32;
-                let grace_period = decoded
-                    .at("grace_period")
-                    .and_then(|v| v.as_u128())
-                    .unwrap_or(20) as u32;
-                Ok(Some((interval, grace_period)))
-            }
-            None => Ok(None),
-        }
-    }
-
-    async fn submit_checkpoint(
-        &self,
-        duty: &CheckpointDuty,
-        signatures: Vec<(String, String)>,
-    ) -> Result<H256, Error> {
-        let bucket_id = duty.bucket_id;
-        let mmr_root = duty.mmr_root;
-        let start_seq = duty.start_seq;
-        let leaf_count = duty.leaf_count;
-        let window = duty.window;
-
-        // Build signature tuples for the extrinsic
-        let mut sig_values = Vec::with_capacity(signatures.len());
-        for (account, sig) in &signatures {
-            let account_id: sp_core::crypto::AccountId32 =
-                sp_core::crypto::Ss58Codec::from_ss58check(account).map_err(|e| {
-                    Error::Internal(format!("Invalid SS58 account '{account}': {e:?}"))
-                })?;
-            let account_bytes: [u8; 32] = account_id.into();
-
-            let sig_bytes = hex::decode(sig.trim_start_matches("0x"))
-                .map_err(|e| Error::Internal(format!("Invalid signature hex: {e}")))?;
-
-            sig_values.push(value!((
-                Value::from_bytes(account_bytes),
-                Sr25519(Value::from_bytes(sig_bytes))
-            )));
-        }
-
-        let tx = subxt::dynamic::tx(
-            "StorageProvider",
-            "provider_checkpoint",
-            vec![
-                Value::u128(bucket_id as u128),
-                Value::named_composite(vec![
-                    ("mmr_root", Value::from_bytes(mmr_root.as_bytes())),
-                    ("start_seq", Value::u128(start_seq as u128)),
-                    ("leaf_count", Value::u128(leaf_count as u128)),
-                ]),
-                Value::u128(window as u128),
-                Value::unnamed_composite(sig_values),
-            ],
-        );
-
-        let tx_progress = self
-            .api
-            .at_current_block()
-            .await
-            .map_err(|e| Error::Internal(format!("Failed to get current block: {e}")))?
-            .transactions()
-            .sign_and_submit_then_watch_default(&tx, &self.signer)
-            .await
-            .map_err(|e| Error::Internal(format!("Failed to submit tx: {e}")))?;
-
-        let _events = tx_progress
-            .wait_for_finalized_success()
-            .await
-            .map_err(|e| Error::Internal(format!("Transaction failed: {e}")))?;
-
-        Ok(H256::zero())
-    }
-}
-
-#[async_trait::async_trait]
 impl ReplicaSyncChainClient for SubxtChainClient {
     async fn get_current_block(&self) -> Result<u64, Error> {
         self.current_anchor_block().await
@@ -583,6 +629,8 @@ impl ReplicaSyncChainClient for SubxtChainClient {
             let account_bytes = hex::decode(provider_account.trim_start_matches("0x"))
                 .map_err(|e| Error::Internal(format!("Invalid account hex: {e}")))?;
 
+            let api = self.api()?;
+
             // Query local buckets for agreements
             for bucket_id in &local_buckets {
                 let storage_address = subxt::dynamic::storage::<(Value, Value), Value>(
@@ -590,8 +638,7 @@ impl ReplicaSyncChainClient for SubxtChainClient {
                     "StorageAgreements",
                 );
 
-                let at = self
-                    .api
+                let at = api
                     .at_current_block()
                     .await
                     .map_err(|e| Error::Internal(format!("Failed to get storage: {e}")))?;
@@ -621,7 +668,7 @@ impl ReplicaSyncChainClient for SubxtChainClient {
                 "StorageAgreements",
             );
 
-            if let Ok(at) = self.api.at_current_block().await {
+            if let Ok(at) = api.at_current_block().await {
                 if let Ok(mut iter) = at.storage().iter(storage_address, ()).await {
                     while let Some(result) = iter.next().await {
                         let kv = match result {
@@ -676,7 +723,7 @@ impl ReplicaSyncChainClient for SubxtChainClient {
             subxt::dynamic::storage::<(Value,), Value>("StorageProvider", "Buckets");
 
         let at = self
-            .api
+            .api()?
             .at_current_block()
             .await
             .map_err(|e| Error::Internal(format!("Failed to get storage: {e}")))?;
@@ -721,7 +768,7 @@ impl ReplicaSyncChainClient for SubxtChainClient {
             subxt::dynamic::storage::<(Value,), Value>("StorageProvider", "Buckets");
 
         let at = self
-            .api
+            .api()?
             .at_current_block()
             .await
             .map_err(|e| Error::Internal(format!("Failed to get storage: {e}")))?;
@@ -773,7 +820,7 @@ impl ReplicaSyncChainClient for SubxtChainClient {
                 subxt::dynamic::storage::<(Value,), Value>("StorageProvider", "Providers");
 
             let at = self
-                .api
+                .api()?
                 .at_current_block()
                 .await
                 .map_err(|e| Error::Internal(format!("Failed to get storage: {e}")))?;
@@ -832,20 +879,8 @@ impl ReplicaSyncChainClient for SubxtChainClient {
             hex::encode(target_mmr_root.as_bytes())
         );
 
-        let tx_progress = self
-            .api
-            .at_current_block()
-            .await
-            .map_err(|e| Error::Internal(format!("Failed to get current block: {e}")))?
-            .transactions()
-            .sign_and_submit_then_watch_default(&tx, &self.signer)
-            .await
-            .map_err(|e| Error::Internal(format!("Failed to submit tx: {e}")))?;
-
-        let _events = tx_progress
-            .wait_for_finalized_success()
-            .await
-            .map_err(|e| Error::Internal(format!("Transaction failed: {e}")))?;
+        self.submit_and_finalize(&tx, "confirm_replica_sync")
+            .await?;
 
         tracing::info!(
             "confirm_replica_sync submitted successfully for bucket {}",
@@ -856,81 +891,154 @@ impl ReplicaSyncChainClient for SubxtChainClient {
     }
 }
 
+/// The generated `Challenge` value held in `StorageProvider::Challenges`.
+type OnChainChallenge = storage_subxt::api::storage_provider::storage::challenges::Output;
+
+/// `storage-primitives` and the generated bindings carry structurally identical
+/// proof types; only the `H256` differs (`sp_core` vs `subxt::utils`).
+fn to_runtime_hash(hash: H256) -> subxt::utils::H256 {
+    subxt::utils::H256(hash.0)
+}
+
+fn to_runtime_merkle_proof(proof: storage_primitives::MerkleProof) -> RuntimeMerkleProof {
+    RuntimeMerkleProof {
+        siblings: proof.siblings.into_iter().map(to_runtime_hash).collect(),
+        path: proof.path,
+    }
+}
+
+/// Map an on-chain `Challenge` at `(deadline, index)` into the responder's
+/// `DetectedChallenge`, or `None` when it targets a different provider.
+fn detected_challenge(
+    deadline: u32,
+    index: u16,
+    challenge: OnChainChallenge,
+    our_bytes: &[u8; 32],
+) -> Option<DetectedChallenge> {
+    if &challenge.provider.0 != our_bytes {
+        return None;
+    }
+
+    Some(DetectedChallenge {
+        bucket_id: challenge.bucket_id,
+        deadline,
+        index,
+        mmr_root: H256::from(challenge.mmr_root.0),
+        start_seq: challenge.start_seq,
+        leaf_index: challenge.target.leaf_index,
+        chunk_index: challenge.target.chunk_index,
+        challenger: sp_core::crypto::AccountId32::from(challenge.challenger.0).to_ss58check(),
+    })
+}
+
+/// One challenge as returned by the `provider_challenges` runtime API.
+type ChallengeFromRuntimeApi =
+    storage_subxt::api::runtime_types::pallet_storage_provider::runtime_api::ChallengeResponse;
+
+/// Map a `provider_challenges` entry into a `DetectedChallenge`.
+///
+/// Unlike the storage-map shape this response is already flat (no nested
+/// `target`) and carries accounts as SCALE-encoded bytes, so it needs its own
+/// mapping. No provider check here: the runtime API filtered on-chain.
+fn detected_from_response(challenge: ChallengeFromRuntimeApi) -> DetectedChallenge {
+    // An unreadable challenger only costs us a diagnostic field, so it must not
+    // discard the challenge — failing to respond is what gets us slashed.
+    let challenger = match <[u8; 32]>::try_from(challenge.challenger.as_slice()) {
+        Ok(bytes) => sp_core::crypto::AccountId32::from(bytes).to_ss58check(),
+        Err(_) => {
+            tracing::warn!(
+                "Challenge {}/{} carried a {}-byte challenger account, expected 32",
+                challenge.deadline,
+                challenge.index,
+                challenge.challenger.len()
+            );
+            String::new()
+        }
+    };
+
+    DetectedChallenge {
+        bucket_id: challenge.bucket_id,
+        deadline: challenge.deadline,
+        index: challenge.index,
+        mmr_root: H256::from(challenge.mmr_root.0),
+        start_seq: challenge.start_seq,
+        leaf_index: challenge.leaf_index,
+        chunk_index: challenge.chunk_index,
+        challenger,
+    }
+}
+
 #[async_trait::async_trait]
 impl ChallengeChainClient for SubxtChainClient {
     /// Poll for active challenges against this provider.
     ///
-    /// Iterates the on-chain `StorageProvider::Challenges` map. It is a
-    /// `StorageDoubleMap<BlockNumber deadline, u16 index, Challenge>`, so each
-    /// key holds exactly one challenge. We scan all entries, decode each
-    /// single `Challenge` from raw SCALE, and keep only the ones whose
-    /// `provider` matches our account.
-    ///
-    /// Cost is bounded by `ChallengeTimeout` (storage entries past their
-    /// deadline are reaped in `on_finalize`), so iteration is at worst the
-    /// number of open challenges across all unexpired deadlines.
-    async fn poll_challenges(&self) -> Result<Vec<DetectedChallenge>, Error> {
-        // Our account's raw bytes, used to filter challenges targeting us.
-        let our_bytes: [u8; 32] = self.signer.public_key().0;
+    /// Calls the pallet's `StorageProviderApi::provider_challenges` runtime API,
+    /// which filters the `Challenges` map to this provider on-chain. That makes
+    /// this one round trip returning only actionable challenges, rather than an
+    /// iteration over every unexpired deadline filtered client-side.
+    async fn poll_challenges(&self) -> Result<Vec<DetectedChallenge>, ChallengeError> {
+        let payload = storage_subxt::api::runtime_apis()
+            .storage_provider_api()
+            .provider_challenges(subxt::utils::AccountId32(self.signer.public_key().0))
+            .unvalidated();
 
-        let storage_address =
-            subxt::dynamic::storage::<(Value, Value), Value>("StorageProvider", "Challenges");
-        let at = self
-            .api
+        let challenges = self
+            .api()
+            .map_err(|e| ChallengeError::Chain(e.to_string()))?
             .at_current_block()
             .await
-            .map_err(|e| Error::Internal(format!("Failed to get storage: {e}")))?;
-
-        let mut iter = at
-            .storage()
-            .iter(storage_address, ())
+            .map_err(|e| ChallengeError::Chain(format!("Failed to get storage: {e}")))?
+            .runtime_apis()
+            .call(payload)
             .await
-            .map_err(|e| Error::Internal(format!("Failed to iterate Challenges: {e}")))?;
+            .map_err(|e| {
+                ChallengeError::Chain(format!("provider_challenges runtime API call failed: {e}"))
+            })?;
 
-        let mut detected = Vec::new();
-        while let Some(result) = iter.next().await {
-            let kv = match result {
-                Ok(kv) => kv,
-                Err(e) => {
-                    tracing::debug!("Error iterating Challenges: {e}");
-                    continue;
-                }
-            };
+        Ok(challenges.into_iter().map(detected_from_response).collect())
+    }
 
-            // DoubleMap key layout:
-            //   16 (pallet hash) + 16 (storage hash)
-            //   + 16 (blake2_128 of deadline) + 4 (BlockNumber u32 LE)
-            //   + 8 (twox64 of index)         + 2 (u16 index LE)
-            //   = 62 bytes total.
-            let key_bytes = kv.key_bytes();
-            if key_bytes.len() < 62 {
-                continue;
-            }
-            let deadline = u32::from_le_bytes(key_bytes[48..52].try_into().unwrap_or([0; 4]));
-            let index = u16::from_le_bytes(key_bytes[60..62].try_into().unwrap_or([0; 2]));
+    /// Point-read a single challenge at `(deadline, index)`.
+    ///
+    /// Backs the event-driven path: a `ChallengeCreated` event carries the
+    /// challenge id but not the proof parameters, so the responder fetches
+    /// the full `Challenge` value here. Returns `None` when the entry is
+    /// missing (already responded / reaped) or targets another provider.
+    async fn fetch_challenge(
+        &self,
+        deadline: u32,
+        index: u16,
+    ) -> Result<Option<DetectedChallenge>, ChallengeError> {
+        let our_bytes: [u8; 32] = self.signer.public_key().0;
 
-            let encoded = kv.value().bytes();
-            let challenge = match decode_challenge_for_provider(encoded, &our_bytes) {
-                Ok(Some(c)) => c,
-                Ok(None) => continue,
-                Err(e) => {
-                    tracing::warn!("Failed to decode challenge at {deadline}/{index}: {e}");
-                    continue;
-                }
-            };
+        // `unvalidated`: see the `storage-subxt` crate docs.
+        let storage_address = storage_subxt::api::storage()
+            .storage_provider()
+            .challenges()
+            .unvalidated();
+        let at = self
+            .api()
+            .map_err(|e| ChallengeError::Chain(e.to_string()))?
+            .at_current_block()
+            .await
+            .map_err(|e| ChallengeError::Chain(format!("Failed to get storage: {e}")))?;
 
-            detected.push(DetectedChallenge {
-                bucket_id: challenge.bucket_id,
-                deadline,
-                index,
-                mmr_root: challenge.mmr_root,
-                start_seq: challenge.start_seq,
-                leaf_index: challenge.leaf_index,
-                chunk_index: challenge.chunk_index,
-                challenger: sp_core::crypto::AccountId32::from(challenge.challenger).to_ss58check(),
-            });
-        }
-        Ok(detected)
+        let Some(value) = at
+            .storage()
+            .try_fetch(storage_address, (deadline, index))
+            .await
+            .map_err(|e| ChallengeError::Chain(format!("Failed to fetch challenge: {e}")))?
+        else {
+            return Ok(None);
+        };
+
+        let challenge = value.decode().map_err(|e| {
+            ChallengeError::Chain(format!(
+                "Failed to decode challenge at {deadline}/{index}: {e}"
+            ))
+        })?;
+
+        Ok(detected_challenge(deadline, index, challenge, &our_bytes))
     }
 
     async fn submit_response(
@@ -939,97 +1047,137 @@ impl ChallengeChainClient for SubxtChainClient {
         chunk_data: Vec<u8>,
         mmr_proof: storage_primitives::MmrProof,
         chunk_proof: storage_primitives::MerkleProof,
-    ) -> Result<H256, Error> {
-        let challenge_id_val = value!({
-            deadline: challenge_id.0 as u128,
-            index: challenge_id.1 as u128
-        });
+    ) -> Result<H256, ChallengeError> {
+        let (deadline, index) = challenge_id;
 
-        // Dynamic arrays built from iterators, then embedded in the macro
-        let peaks = Value::unnamed_composite(
-            mmr_proof
-                .peaks
-                .iter()
-                .map(|p| Value::from_bytes(p.as_bytes()))
-                .collect::<Vec<_>>(),
-        );
-        let mmr_siblings = Value::unnamed_composite(
-            mmr_proof
-                .leaf_proof
-                .siblings
-                .iter()
-                .map(|s| Value::from_bytes(s.as_bytes()))
-                .collect::<Vec<_>>(),
-        );
-        let mmr_path = Value::unnamed_composite(
-            mmr_proof
-                .leaf_proof
-                .path
-                .iter()
-                .map(|b| Value::bool(*b))
-                .collect::<Vec<_>>(),
-        );
-
-        let mmr_proof_val = value!({
-            peaks: peaks,
-            leaf: {
-                data_root: Value::from_bytes(mmr_proof.leaf.data_root.as_bytes()),
-                data_size: mmr_proof.leaf.data_size as u128,
-                total_size: mmr_proof.leaf.total_size as u128
+        let response = RuntimeChallengeResponse::Proof {
+            chunk_data: BoundedVec(chunk_data),
+            mmr_proof: RuntimeMmrProof {
+                peaks: mmr_proof.peaks.into_iter().map(to_runtime_hash).collect(),
+                leaf: RuntimeMmrLeaf {
+                    data_root: to_runtime_hash(mmr_proof.leaf.data_root),
+                    data_size: mmr_proof.leaf.data_size,
+                    total_size: mmr_proof.leaf.total_size,
+                },
+                leaf_proof: to_runtime_merkle_proof(mmr_proof.leaf_proof),
             },
-            leaf_proof: {
-                siblings: mmr_siblings,
-                path: mmr_path
-            }
-        });
+            chunk_proof: to_runtime_merkle_proof(chunk_proof),
+        };
 
-        let chunk_siblings = Value::unnamed_composite(
-            chunk_proof
-                .siblings
-                .iter()
-                .map(|s| Value::from_bytes(s.as_bytes()))
-                .collect::<Vec<_>>(),
-        );
-        let chunk_path = Value::unnamed_composite(
-            chunk_proof
-                .path
-                .iter()
-                .map(|b| Value::bool(*b))
-                .collect::<Vec<_>>(),
-        );
+        let tx = storage_subxt::api::tx()
+            .storage_provider()
+            .respond_to_challenge(RuntimeChallengeId { deadline, index }, response);
 
-        let chunk_proof_val = value!({
-            siblings: chunk_siblings,
-            path: chunk_path
-        });
-
-        let response_val = value!(Proof {
-            chunk_data: Value::from_bytes(&chunk_data),
-            mmr_proof: mmr_proof_val,
-            chunk_proof: chunk_proof_val
-        });
-
-        let tx = subxt::dynamic::tx(
-            "StorageProvider",
-            "respond_to_challenge",
-            vec![challenge_id_val, response_val],
-        );
-
-        let tx_progress = self
-            .api
-            .at_current_block()
+        // Zero only when success was inferred from a duplicate rejection, where
+        // the block that took the response is genuinely unknown.
+        let block_hash = self
+            .submit_and_finalize(&tx, "respond_to_challenge")
             .await
-            .map_err(|e| Error::Internal(format!("Failed to get current block: {e}")))?
-            .transactions()
-            .sign_and_submit_then_watch_default(&tx, &self.signer)
-            .await
-            .map_err(|e| Error::Internal(format!("Failed to submit tx: {e}")))?;
+            .map_err(|e| ChallengeError::Chain(e.to_string()))?;
 
-        let _events = tx_progress
-            .wait_for_finalized_success()
-            .await
-            .map_err(|e| Error::Internal(format!("Transaction failed: {e}")))?;
+        Ok(block_hash.unwrap_or_default())
+    }
+}
 
-        Ok(H256::zero())
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use storage_subxt::api::runtime_types::storage_primitives::ChunkLocation;
+
+    const OURS: [u8; 32] = [9u8; 32];
+
+    /// Build an on-chain `Challenge` targeting `provider`.
+    ///
+    /// Constructed from the generated type rather than from hand-rolled SCALE
+    /// bytes, so a change to the runtime's `Challenge` shape breaks the build
+    /// here instead of silently shifting a byte offset at runtime.
+    fn on_chain_challenge(provider: [u8; 32]) -> OnChainChallenge {
+        OnChainChallenge {
+            bucket_id: 42,
+            provider: subxt::utils::AccountId32(provider),
+            challenger: subxt::utils::AccountId32([2u8; 32]),
+            mmr_root: subxt::utils::H256([3u8; 32]),
+            start_seq: 100,
+            target: ChunkLocation {
+                leaf_index: 7,
+                chunk_index: 5,
+            },
+            deposit: 1_000_000_000_000,
+        }
+    }
+
+    #[test]
+    fn maps_challenge_targeting_us() {
+        let detected = detected_challenge(11, 3, on_chain_challenge(OURS), &OURS)
+            .expect("challenge targets us");
+
+        assert_eq!(detected.bucket_id, 42);
+        assert_eq!(detected.deadline, 11);
+        assert_eq!(detected.index, 3);
+        assert_eq!(detected.mmr_root.0, [3u8; 32]);
+        assert_eq!(detected.start_seq, 100);
+        // Both come from the nested `target: ChunkLocation`, and they are
+        // deliberately different values so a swapped mapping is caught.
+        assert_eq!(detected.leaf_index, 7);
+        assert_eq!(detected.chunk_index, 5);
+        assert_eq!(
+            detected.challenger,
+            sp_core::crypto::AccountId32::from([2u8; 32]).to_ss58check()
+        );
+    }
+
+    #[test]
+    fn filters_challenge_targeting_another_provider() {
+        assert!(
+            detected_challenge(11, 3, on_chain_challenge([1u8; 32]), &OURS).is_none(),
+            "challenge for another provider is filtered out"
+        );
+    }
+
+    /// Build a `provider_challenges` response entry with the given challenger
+    /// bytes, so the account-decoding path can be exercised both ways.
+    fn runtime_api_challenge(challenger: Vec<u8>) -> ChallengeFromRuntimeApi {
+        ChallengeFromRuntimeApi {
+            bucket_id: 42,
+            provider: OURS.to_vec(),
+            challenger,
+            mmr_root: subxt::utils::H256([3u8; 32]),
+            start_seq: 100,
+            leaf_index: 7,
+            chunk_index: 5,
+            deadline: 11,
+            index: 3,
+            deposit: 1_000_000_000_000,
+        }
+    }
+
+    #[test]
+    fn maps_runtime_api_challenge() {
+        let detected = detected_from_response(runtime_api_challenge([2u8; 32].to_vec()));
+
+        assert_eq!(detected.bucket_id, 42);
+        assert_eq!(detected.deadline, 11);
+        assert_eq!(detected.index, 3);
+        assert_eq!(detected.mmr_root.0, [3u8; 32]);
+        assert_eq!(detected.start_seq, 100);
+        // Flat on this shape, unlike the nested `target` on the storage value.
+        assert_eq!(detected.leaf_index, 7);
+        assert_eq!(detected.chunk_index, 5);
+        assert_eq!(
+            detected.challenger,
+            sp_core::crypto::AccountId32::from([2u8; 32]).to_ss58check()
+        );
+    }
+
+    #[test]
+    fn malformed_challenger_does_not_discard_the_challenge() {
+        let detected = detected_from_response(runtime_api_challenge(vec![7u8; 8]));
+
+        // Only the diagnostic field degrades; the challenge still has to be
+        // answered, since not answering is what gets the provider slashed.
+        assert!(detected.challenger.is_empty());
+        assert_eq!(detected.bucket_id, 42);
+        assert_eq!(detected.leaf_index, 7);
+        assert_eq!(detected.chunk_index, 5);
     }
 }

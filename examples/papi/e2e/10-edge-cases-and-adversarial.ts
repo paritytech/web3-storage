@@ -5,7 +5,8 @@
  *
  * Tests: balance accounting, capacity tracking, frozen buckets,
  * concurrent operations, data integrity, and access-control rejections
- * (non-admin writes, freeze without a checkpoint).
+ * (non-admin writes, freeze without a checkpoint, unsigned/non-member
+ * provider uploads).
  *
  * Usage: node e2e/10-edge-cases-and-adversarial.js [chain_ws] [provider_url]
  */
@@ -15,13 +16,13 @@ import { Enum } from "polkadot-api";
 import { blake2b256 } from "@polkadot-labs/hdkd-helpers";
 import {
   endAgreement,
-  currentRelayBlock,
   ensureProviderRegistered,
   fetchCheckpointSignature,
   freezeBucket,
   makeSigner,
   READ_OPTS,
   setMember,
+  signProviderRequest,
   submitClientCheckpoint,
   toHex,
   uploadChunk,
@@ -127,14 +128,17 @@ async function main() {
   tests.push({
     name: "10.5 Freeze is irreversible",
     fn: async () => {
-      const { bucketId } = await negotiateAndEstablish(api, PROVIDER_URL, bob, provider, {
-        maxBytes,
-        duration: 100,
-      });
+      const { bucketId } = await negotiateAndEstablish(
+        api,
+        PROVIDER_URL,
+        bob,
+        provider,
+        { maxBytes, duration: 100 },
+        true, // finalize: immediate upload reads finalized membership
+      );
       // freeze_bucket requires a snapshot (checkpoint) to exist.
-      const nonce = await currentRelayBlock(api);
-      await uploadChunk(PROVIDER_URL, bucketId, "data for snapshot", nonce);
-      const ck = await fetchCheckpointSignature(PROVIDER_URL, bucketId, nonce);
+      await uploadChunk(PROVIDER_URL, bucketId, "data for snapshot", bob);
+      const ck = await fetchCheckpointSignature(PROVIDER_URL, bucketId);
       await submitClientCheckpoint(api, bob, provider, bucketId, ck);
       await freezeBucket(api, bob, bucketId);
       const bucket = (await api.query.StorageProvider.Buckets.getValue(bucketId, READ_OPTS))!;
@@ -149,23 +153,25 @@ async function main() {
   tests.push({
     name: "10.6 Checkpoint after freeze",
     fn: async () => {
-      const { bucketId } = await negotiateAndEstablish(api, PROVIDER_URL, bob, provider, {
-        maxBytes,
-        duration: 100,
-      });
+      const { bucketId } = await negotiateAndEstablish(
+        api,
+        PROVIDER_URL,
+        bob,
+        provider,
+        { maxBytes, duration: 100 },
+        true, // finalize: immediate upload reads finalized membership
+      );
       // Upload some data.
-      const nonce1 = await currentRelayBlock(api);
-      await uploadChunk(PROVIDER_URL, bucketId, "pre-freeze data", nonce1);
+      await uploadChunk(PROVIDER_URL, bucketId, "pre-freeze data", bob);
       // Checkpoint before freeze.
-      const ck1 = await fetchCheckpointSignature(PROVIDER_URL, bucketId, nonce1);
+      const ck1 = await fetchCheckpointSignature(PROVIDER_URL, bucketId);
       await submitClientCheckpoint(api, bob, provider, bucketId, ck1);
       // Freeze.
       await freezeBucket(api, bob, bucketId);
       // Upload more data.
-      const nonce2 = await currentRelayBlock(api);
-      await uploadChunk(PROVIDER_URL, bucketId, "post-freeze data", nonce2);
+      await uploadChunk(PROVIDER_URL, bucketId, "post-freeze data", bob);
       // Checkpoint after freeze — should still work (captures frozen_start_seq).
-      const ck2 = await fetchCheckpointSignature(PROVIDER_URL, bucketId, nonce2);
+      const ck2 = await fetchCheckpointSignature(PROVIDER_URL, bucketId);
       const result = await submitClientCheckpoint(api, bob, provider, bucketId, ck2);
       const events = api.event.StorageProvider.BucketCheckpointed.filter(result.events as never);
       assert.strictEqual(events.length, 1, "Checkpoint after freeze should emit event");
@@ -207,15 +213,18 @@ async function main() {
   tests.push({
     name: "10.8 Upload verify blake2-256",
     fn: async () => {
-      const { bucketId } = await negotiateAndEstablish(api, PROVIDER_URL, bob, provider, {
-        maxBytes,
-        duration: 100,
-      });
+      const { bucketId } = await negotiateAndEstablish(
+        api,
+        PROVIDER_URL,
+        bob,
+        provider,
+        { maxBytes, duration: 100 },
+        true, // finalize: immediate upload reads finalized membership
+      );
       const data = "integrity check data for blake2-256";
       const bytes = new TextEncoder().encode(data);
       const expectedHash = toHex(blake2b256(bytes));
-      const nonce = await currentRelayBlock(api);
-      const { hash } = await uploadChunk(PROVIDER_URL, bucketId, data, nonce);
+      const { hash } = await uploadChunk(PROVIDER_URL, bucketId, data, bob);
       assert.strictEqual(hash, expectedHash, "Provider hash should match local blake2-256");
     },
   });
@@ -223,14 +232,17 @@ async function main() {
   tests.push({
     name: "10.9 Identical content → same hash, different MMR leaves",
     fn: async () => {
-      const { bucketId } = await negotiateAndEstablish(api, PROVIDER_URL, bob, provider, {
-        maxBytes,
-        duration: 100,
-      });
+      const { bucketId } = await negotiateAndEstablish(
+        api,
+        PROVIDER_URL,
+        bob,
+        provider,
+        { maxBytes, duration: 100 },
+        true, // finalize: immediate upload reads finalized membership
+      );
       const data = "identical content for dedup test";
-      const nonce = await currentRelayBlock(api);
-      const r1 = await uploadChunk(PROVIDER_URL, bucketId, data, nonce);
-      const r2 = await uploadChunk(PROVIDER_URL, bucketId, data, nonce);
+      const r1 = await uploadChunk(PROVIDER_URL, bucketId, data, bob);
+      const r2 = await uploadChunk(PROVIDER_URL, bucketId, data, bob);
       assert.strictEqual(r1.hash, r2.hash, "Hashes should match for identical content");
       assert.notStrictEqual(
         r1.commit.leaf_indices[0],
@@ -283,6 +295,46 @@ async function main() {
       // Bob is the admin (passes ensure_admin); freeze then trips NoSnapshot.
       const tx = api.tx.StorageProvider.freeze_bucket({ bucket_id: bucketId });
       await submitTxExpectFailure(tx, bob.signer, "NoSnapshot", "10.12");
+    },
+  });
+
+  tests.push({
+    name: "10.13 Provider rejects unsigned and non-member uploads",
+    fn: async () => {
+      const { bucketId } = await negotiateAndEstablish(
+        api,
+        PROVIDER_URL,
+        bob,
+        provider,
+        { maxBytes, duration: 100 },
+        true, // finalize: the provider resolves membership from finalized state
+      );
+      const bytes = new TextEncoder().encode("must not land");
+      const body = JSON.stringify({
+        bucket_id: Number(bucketId),
+        hash: toHex(blake2b256(bytes)),
+        data: Buffer.from(bytes).toString("base64"),
+        children: null,
+      });
+
+      // No Authorization header at all → 401.
+      const unsigned = await fetch(`${PROVIDER_URL}/node`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body,
+      });
+      assert.strictEqual(unsigned.status, 401, "unsigned upload must be rejected with 401");
+
+      // Valid signature from Eve, who holds no role on the bucket → 403.
+      const eveSigned = await fetch(`${PROVIDER_URL}/node`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          ...(await signProviderRequest(eve.signer, "PUT", bucketId)),
+        },
+        body,
+      });
+      assert.strictEqual(eveSigned.status, 403, "non-member upload must be rejected with 403");
     },
   });
 

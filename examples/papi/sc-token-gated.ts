@@ -75,7 +75,7 @@ async function main() {
 
     // Publisher is the demo's "client" account (default //Bob), NOT the
     // storage provider. Using the provider account here would race the
-    // checkpoint coordinator that signs background extrinsics from the
+    // provider node's background workers that sign extrinsics from the
     // same key, surfacing as `Invalid::Stale` on the mempool side.
     const provider = makeSigner(providerSeed); // //Alice — storage provider only
     const publisher = makeSigner(clientSeed); // //Bob — deploys + publishes
