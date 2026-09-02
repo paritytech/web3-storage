@@ -14,6 +14,7 @@ import {
   S3Client,
   type AvailableProvider,
   type BucketInfo,
+  type BucketUsage,
   type MatchingProviders,
   type QueryMatchingProvidersParams,
   type S3ObjectInfo,
@@ -127,7 +128,11 @@ selectedBucket$.subscribe((b) => {
 // Hooks
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** Per-bucket usage read from each bucket's provider (keyed by s3BucketId string). */
+const bucketUsage$ = new BehaviorSubject<Map<string, BucketUsage>>(new Map());
+
 export const [useBuckets] = bind(buckets$, []);
+export const [useBucketUsage] = bind(bucketUsage$, new Map<string, BucketUsage>());
 export const [useSelectedBucket] = bind(selectedBucket$, null);
 export const [useCurrentPrefix] = bind(currentPrefix$, "");
 export const [useObjects] = bind(objects$, []);
@@ -148,6 +153,9 @@ export async function refreshBuckets(): Promise<void> {
   try {
     const list = await client.listBuckets();
     buckets$.next(list);
+    // Provider-side usage is a can-fail enrichment: fire and forget so an
+    // unreachable provider never blocks or fails the bucket list itself.
+    void refreshBucketUsage(list);
 
     const sel = selectedBucket$.getValue();
     if (sel) {
@@ -426,9 +434,30 @@ export async function queryMatchingProviders(
   return client.queryMatchingProviders(query, limit);
 }
 
-export async function deleteBucket(s3BucketId: bigint): Promise<void> {
-  if (!client.hasApi() || !client.hasSigner()) return;
-  await client.deleteBucket(s3BucketId);
+/** Fetch per-bucket usage from each provider; failures leave a bucket absent. */
+async function refreshBucketUsage(
+  list: { s3BucketId: bigint; layer0BucketId: bigint }[],
+): Promise<void> {
+  const results = await Promise.allSettled(
+    list.map(
+      async (b) =>
+        [b.s3BucketId.toString(), await client.getBucketUsage(b.layer0BucketId)] as const,
+    ),
+  );
+  const map = new Map<string, BucketUsage>();
+  for (const r of results) {
+    if (r.status === "fulfilled") map.set(r.value[0], r.value[1]);
+  }
+  bucketUsage$.next(map);
+}
+
+/**
+ * Empty the bucket, delete it (tearing down the Layer 0 bucket and its
+ * agreements), and resolve with the prorated refund from the event.
+ */
+export async function deleteBucket(s3BucketId: bigint): Promise<bigint | null> {
+  if (!client.hasApi() || !client.hasSigner()) return null;
+  const { refunded } = await client.deleteBucket(s3BucketId);
   if (selectedBucket$.getValue()?.s3BucketId === s3BucketId) {
     selectedBucket$.next(null);
     objects$.next([]);
@@ -436,6 +465,7 @@ export async function deleteBucket(s3BucketId: bigint): Promise<void> {
   }
   await refreshBuckets();
   await refreshBalance();
+  return refunded;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -165,6 +165,137 @@ export async function uploadChunk(
   return { hash, data: bytes, commit };
 }
 
+export interface DeleteDataResponse {
+  mmr_root: string;
+  start_seq: number;
+  leaf_count: number;
+  provider_signature: string;
+  nonce: number;
+}
+
+/**
+ * POST /delete — Layer 0 prune (Admin only): drops every leaf below
+ * `newStartSeq` from the bucket's MMR and returns the provider-signed
+ * post-prune commitment. The response is exactly the `ck` argument of
+ * `submitClientCheckpoint`. The deletion becomes canonical once that
+ * checkpoint lands, and the provider physically erases the pruned bytes
+ * (returning the quota headroom) once it also holds the admin's deletion
+ * authorization — see `confirmDeletion` and the composed
+ * `pruneAndCheckpoint`. Frozen buckets are refused (403).
+ */
+export async function deleteData(
+  providerUrl: string,
+  bucketId: bigint | number,
+  newStartSeq: bigint | number,
+  signer: ChainSigner,
+): Promise<DeleteDataResponse> {
+  return providerFetch(providerUrl, "/delete", {
+    method: "POST",
+    body: {
+      bucket_id: Number(bucketId),
+      new_start_seq: Number(newStartSeq),
+    },
+    sign: { signer: signer.signer, bucketId },
+  });
+}
+
+/**
+ * SCALE-encode the deletion `CommitmentPayload` the pallet's `Deleted`
+ * challenge defense verifies: `version(1) | bucket_id u64 LE | mmr_root |
+ * start_seq u64 LE | leaf_count u64 LE (pinned 0)` — 57 bytes.
+ */
+export function encodeDeletionPayload(
+  bucketId: bigint | number,
+  mmrRootHex: string,
+  newStartSeq: bigint | number,
+): Uint8Array {
+  const out = new Uint8Array(57);
+  const view = new DataView(out.buffer);
+  out[0] = 1; // CommitmentPayload::CURRENT_VERSION
+  view.setBigUint64(1, BigInt(bucketId), true);
+  const root = mmrRootHex.startsWith("0x") ? mmrRootHex.slice(2) : mmrRootHex;
+  for (let i = 0; i < 32; i++) out[9 + i] = parseInt(root.substr(i * 2, 2), 16);
+  view.setBigUint64(41, BigInt(newStartSeq), true);
+  view.setBigUint64(49, 0n, true); // leaf_count pinned to 0 for deletions
+  return out;
+}
+
+/**
+ * POST /delete/confirm — hand the provider the admin's signed deletion
+ * authorization (the `Deleted` challenge defense). Requires a raw-signing
+ * keypair on the signer: wallet-extension signers wrap messages in
+ * `<Bytes>…</Bytes>`, which the pallet's verifier does not accept.
+ */
+export async function confirmDeletion(
+  providerUrl: string,
+  bucketId: bigint | number,
+  ck: { mmr_root: string; start_seq: number | string },
+  admin: ChainSigner,
+): Promise<void> {
+  if (!admin.keypair) {
+    throw new Error(
+      "confirmDeletion requires a raw-signing keypair (admin.keypair); " +
+        "wallet-extension signers cannot produce the pallet's deletion signature",
+    );
+  }
+  const payload = encodeDeletionPayload(bucketId, ck.mmr_root, BigInt(ck.start_seq));
+  const raw = admin.keypair.sign(payload);
+  // SCALE MultiSignature: variant 1 = Sr25519, then the 64 signature bytes.
+  const multi = new Uint8Array(65);
+  multi[0] = 1;
+  multi.set(raw, 1);
+  await providerFetch(providerUrl, "/delete/confirm", {
+    method: "POST",
+    body: {
+      bucket_id: Number(bucketId),
+      mmr_root: ck.mmr_root,
+      new_start_seq: Number(ck.start_seq),
+      admin: toHex(admin.publicKey),
+      signature: toHex(multi),
+    },
+    sign: { signer: admin.signer, bucketId },
+  });
+}
+
+export interface BucketUsage {
+  /**
+   * Bytes physically on the provider's disk and charged to this bucket,
+   * including pruned data stashed until its checkpoint lands and the
+   * deletion receipt is held. Decreases when the GC physically erases.
+   */
+  usedBytes: bigint;
+  /** Quota from the chain agreement (meaningful only when `quotaSynced`). */
+  maxBytes: bigint;
+  /**
+   * False while the provider still reports the unlimited sentinel
+   * (`u64::MAX`), i.e. it has not yet synced a quota from an agreement.
+   */
+  quotaSynced: boolean;
+}
+
+/**
+ * Read one bucket's usage against its paid quota from `GET /buckets`.
+ * Throws if the provider does not know the bucket.
+ */
+export async function fetchBucketUsage(
+  providerUrl: string,
+  bucketId: bigint | number,
+): Promise<BucketUsage> {
+  const resp = await providerFetch(providerUrl, "/buckets");
+  const bucket = (resp.buckets ?? []).find(
+    (b: any) => BigInt(b.bucket_id) === BigInt(bucketId),
+  );
+  if (!bucket) throw new Error(`bucket ${bucketId} not found on provider`);
+  // u64::MAX survives JSON as an imprecise float; anything >= 2^63 can only
+  // be the sentinel (real quotas are far below 2^53, where JSON is exact).
+  const quotaSynced = Number(bucket.max_bytes) < 2 ** 63;
+  return {
+    usedBytes: BigInt(bucket.used_bytes),
+    maxBytes: BigInt(bucket.max_bytes),
+    quotaSynced,
+  };
+}
+
 export async function downloadChunk(
   providerUrl: string,
   chunkHashHex: string,

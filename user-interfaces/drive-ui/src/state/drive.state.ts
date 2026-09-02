@@ -15,6 +15,7 @@ import {
   MatchingProviders,
   QueryMatchingProvidersParams,
   type AvailableProvider,
+  type BucketUsage,
   type DriveInfo,
   type FsEntry,
   type SignedTerms,
@@ -126,7 +127,11 @@ selectedDrive$.subscribe((d) => {
 // Hooks
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** Per-drive usage read from each drive's provider (keyed by driveId string). */
+const driveUsage$ = new BehaviorSubject<Map<string, BucketUsage>>(new Map());
+
 export const [useDrives] = bind(drives$, []);
+export const [useDriveUsage] = bind(driveUsage$, new Map<string, BucketUsage>());
 export const [useSelectedDrive] = bind(selectedDrive$, null);
 export const [useCurrentPath] = bind(currentPath$, "/");
 export const [useEntries] = bind(entries$, []);
@@ -146,6 +151,9 @@ export async function refreshDrives(): Promise<void> {
   try {
     const list = await client.listDrives();
     drives$.next(list);
+    // Provider-side usage is a can-fail enrichment: fire and forget so an
+    // unreachable provider never blocks or fails the drive list itself.
+    void refreshDriveUsage(list);
 
     // Reconcile selected drive with refreshed list
     const sel = selectedDrive$.getValue();
@@ -390,9 +398,22 @@ export async function queryMatchingProviders(query: QueryMatchingProvidersParams
 }
 
 
-export async function deleteDrive(driveId: bigint): Promise<void> {
-  if (!client.hasApi() || !client.hasSigner()) return;
-  await client.deleteDrive(driveId);
+/** Fetch per-drive usage from each provider; failures leave a drive absent. */
+async function refreshDriveUsage(list: DriveInfo[]): Promise<void> {
+  const results = await Promise.allSettled(
+    list.map(async (d) => [d.driveId.toString(), await client.getDriveUsage(d.driveId)] as const),
+  );
+  const map = new Map<string, BucketUsage>();
+  for (const r of results) {
+    if (r.status === "fulfilled") map.set(r.value[0], r.value[1]);
+  }
+  driveUsage$.next(map);
+}
+
+/** Delete the drive; resolves with the prorated refund from the event. */
+export async function deleteDrive(driveId: bigint): Promise<bigint | null> {
+  if (!client.hasApi() || !client.hasSigner()) return null;
+  const { refunded } = await client.deleteDrive(driveId);
   if (selectedDrive$.getValue()?.driveId === driveId) {
     selectedDrive$.next(null);
     entries$.next([]);
@@ -400,6 +421,7 @@ export async function deleteDrive(driveId: bigint): Promise<void> {
   }
   await refreshDrives();
   await refreshBalance();
+  return refunded;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

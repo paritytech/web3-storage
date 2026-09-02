@@ -17,6 +17,7 @@ import {
   negotiateTerms,
   parseMultiaddrToUrl,
   toSs58,
+  type BucketUsage,
   type ChainSigner,
   type Keypair,
   type NegotiateRequest,
@@ -30,7 +31,7 @@ export type Signer = PolkadotSigner;
 // Re-export the SDK negotiate primitives + types the create-drive components
 // (NewDriveDialog, ProviderPickerPanel) and the state layer import from here.
 export { buildSignedTermsArgs, negotiateTerms };
-export type { NegotiateRequest, SignedTerms };
+export type { BucketUsage, NegotiateRequest, SignedTerms };
 
 /** `parseMultiaddrToHttp` is the SDK's `parseMultiaddrToUrl` under the old name. */
 export const parseMultiaddrToHttp = parseMultiaddrToUrl;
@@ -397,8 +398,14 @@ export class DriveClient {
     return this.requireFs().getDrive(driveId);
   }
 
-  async deleteDrive(driveId: bigint): Promise<void> {
-    await this.requireFs().deleteDrive(driveId);
+  /** Delete the drive; resolves with the prorated refund from the event. */
+  deleteDrive(driveId: bigint): Promise<{ refunded: bigint }> {
+    return this.requireFs().deleteDrive(driveId);
+  }
+
+  /** Physical usage vs paid quota, read from the drive's provider node. */
+  getDriveUsage(driveId: bigint): Promise<BucketUsage> {
+    return this.requireFs().getDriveUsage(driveId);
   }
 
   // ── FS HTTP operations ────────────────────────────────────────────────────

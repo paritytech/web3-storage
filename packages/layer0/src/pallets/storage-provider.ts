@@ -13,7 +13,7 @@ import { Enum } from "polkadot-api";
 import type { SignedTerms } from "@web3-storage/core";
 
 import { asHex, bytesEq, hexToBytes, type ParachainApi } from "../address.js";
-import { getProviderNodeInfo } from "../provider-http.js";
+import { confirmDeletion, deleteData, getProviderNodeInfo } from "../provider-http.js";
 import type { ChainSigner } from "../signers.js";
 import { READ_OPTS, requireOneEvent, submitTx, submitTxFinalized, type SubmitOpts } from "../tx.js";
 
@@ -296,6 +296,42 @@ export async function submitClientCheckpoint(
     client.signer,
     { label: "checkpoint", ...opts },
   );
+}
+
+/**
+ * Prune a bucket's history below `newStartSeq` and make it canonical:
+ * `POST /delete` on the provider (Admin-signed), hand back the admin's
+ * signed deletion authorization (`/delete/confirm` — the on-chain `Deleted`
+ * challenge defense), then submit the returned provider-signed commitment
+ * via `checkpoint`. Once the checkpoint lands and the receipt is held, the
+ * provider physically erases the pruned bytes and the quota headroom
+ * returns.
+ *
+ * Bundled because a prune alone leaves the deletion in limbo: without the
+ * checkpoint the on-chain liability never shrinks and the erasure
+ * conditions can never be met, and without the confirmation the receipt is
+ * missing — so the three calls are one logical operation. The pieces stay
+ * exported individually for flows this helper cannot serve — notably
+ * multi-primary buckets, where `checkpoint` needs `minProviders`
+ * signatures: call `deleteData` per provider and submit one aggregate
+ * checkpoint. This helper is the single-primary path.
+ *
+ * `client` must be a bucket Admin with a raw-signing keypair (the deletion
+ * authorization cannot be produced by wallet-extension signers); `provider`
+ * is the primary whose signature backs the checkpoint.
+ */
+export async function pruneAndCheckpoint(
+  api: ParachainApi,
+  providerUrl: string,
+  client: ChainSigner,
+  provider: ChainSigner | { address: string },
+  bucketId: bigint,
+  newStartSeq: bigint | number,
+  opts: SubmitOpts = {},
+) {
+  const ck = await deleteData(providerUrl, bucketId, newStartSeq, client);
+  await confirmDeletion(providerUrl, bucketId, ck, client);
+  return submitClientCheckpoint(api, client, provider, bucketId, ck, opts);
 }
 
 export async function challengeOffchain(

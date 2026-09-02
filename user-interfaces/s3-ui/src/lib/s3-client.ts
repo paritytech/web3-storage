@@ -26,6 +26,7 @@ import {
   setMember as setMemberTx,
   submitTx,
   toSs58,
+  type BucketUsage,
   type ChainSigner,
   type Keypair,
   type NegotiateRequest,
@@ -40,7 +41,7 @@ export type Signer = PolkadotSigner;
 // Re-export the SDK negotiate primitives + types the create-bucket components
 // (NewBucketDialog, ProviderPickerPanel) and the state layer import from here.
 export { buildSignedTermsArgs, negotiateTerms };
-export type { NegotiateRequest, SignedTerms };
+export type { BucketUsage, NegotiateRequest, SignedTerms };
 
 /** `parseMultiaddrToHttp` is the SDK's `parseMultiaddrToUrl` under the old name. */
 export const parseMultiaddrToHttp = parseMultiaddrToUrl;
@@ -286,8 +287,44 @@ export class S3Client {
     }));
   }
 
-  async deleteBucket(s3BucketId: bigint): Promise<void> {
-    await this.requireS3().deleteBucket(s3BucketId);
+  /**
+   * Empty the bucket, then delete it. The chain refuses deleting a bucket
+   * whose `object_count` is non-zero, so every on-chain metadata row is
+   * cleared first (the authoritative set — the provider's index entries are
+   * removed best-effort; the Layer 0 teardown erases provider data anyway).
+   * Resolves with the prorated refund for the remaining paid period
+   * (payment buys bytes for a number of blocks; teardown refunds the
+   * blocks not yet elapsed).
+   */
+  // Sequential one-transaction-per-object metadata deletes — fine for the
+  // bucket sizes the UI handles; switch to utility.batch if bulk deletion
+  // of large buckets ever matters.
+  async deleteBucket(s3BucketId: bigint): Promise<{ refunded: bigint }> {
+    const api = this.requireApi();
+    const s3 = this.requireS3();
+
+    const info = await api.query.S3Registry.S3Buckets.getValue(s3BucketId);
+    const entries = await api.query.S3Registry.Objects.getEntries(s3BucketId);
+    for (const entry of entries) {
+      const key = new TextDecoder().decode(entry.keyArgs[1]);
+      if (info) {
+        try {
+          await s3.deleteObject({ layer0BucketId: info.layer0_bucket_id }, key);
+        } catch {
+          // Provider unreachable or index already gone — only the chain
+          // rows block the deletion, and the L0 teardown reclaims provider
+          // data anyway.
+        }
+      }
+      await s3.deleteObjectMetadata(s3BucketId, key);
+    }
+
+    return this.requireS3().deleteBucket(s3BucketId);
+  }
+
+  /** Physical usage vs paid quota, read from the bucket's provider node. */
+  getBucketUsage(layer0BucketId: bigint): Promise<BucketUsage> {
+    return this.requireS3().getBucketUsage(layer0BucketId);
   }
 
   // ── S3 Object operations (HTTP, via the SDK's S3Client) ─────────────────────

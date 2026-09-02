@@ -242,7 +242,7 @@ minProviders: 3
 
 ### `freezeBucket`
 
-Freeze a bucket at the current snapshot's `start_seq`. Append-only afterwards; irreversible.
+Freeze a bucket at the current snapshot's `start_seq`. Append-only afterwards; irreversible. A frozen bucket refuses every deletion path: checkpoints must keep `startSeq` pinned to the frozen value, the provider rejects `POST /delete`, and bucket teardown (`delete_drive` / `delete_s3_bucket`) fails with `BucketFrozen`.
 
 **Parameters:**
 - `bucketId`: `BucketId` (u64)
@@ -588,7 +588,9 @@ signatures: [
 **Requirements:**
 - Caller is bucket writer or admin
 - At least `minProviders` valid signatures, each signer being a current primary
-- If the bucket is frozen, `startSeq ≥ frozen_start_seq`
+- If the bucket is frozen, `startSeq == frozen_start_seq` (append-only: only `leafCount` may grow)
+
+**Deletion record:** a checkpoint whose `startSeq` advanced past the previous snapshot's is the on-chain deletion record — the pruned leaves leave the canonical range, ending the provider's checkpoint liability for them. The provider physically erases the pruned bytes (and the quota headroom returns) once it also holds the admin's signed deletion receipt; see `POST /delete` / `POST /delete/confirm` in the provider HTTP API and the design doc's erasure lifecycle.
 
 **Events:** `BucketCheckpointed`
 **Errors:** `BucketNotFound`, `NotBucketWriter`, `SnapshotViolatesFrozen`, `ProviderNotInSnapshot`, `InvalidSignature`, `InsufficientSignatures`
@@ -979,7 +981,7 @@ Common errors you might encounter:
 | `LeafBeyondCanonical` | Challenged leaf is beyond canonical state | — |
 | `InvalidSignature` | Signature didn't verify against registered pubkey | Check key + payload |
 | `NoSnapshot` | Bucket has no checkpoint yet | Call `checkpoint` first |
-| `SnapshotViolatesFrozen` | `startSeq < frozen_start_seq` | Use `startSeq ≥ frozen_start_seq` |
+| `SnapshotViolatesFrozen` | `startSeq ≠ frozen_start_seq` on a frozen bucket | Keep `startSeq` pinned; only `leafCount` may grow |
 | `InsufficientSignatures` | Fewer signatures than `minProviders` | Collect more |
 | `NoMatchingProvider` | `createBucketWithStorage` couldn't find a fit | Relax constraints |
 | `InvalidMultiaddr` / `InvalidPublicKey` | Malformed input | Fix the value |
