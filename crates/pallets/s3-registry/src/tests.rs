@@ -4,7 +4,7 @@
 
 mod try_state;
 
-use crate::{mock::*, Error, S3Buckets};
+use crate::{mock::*, Error, Event, S3Buckets};
 use frame_support::{assert_noop, assert_ok, traits::ConstU32, BoundedVec};
 use pallet_storage_provider::{AgreementTermsOf, ProviderSettings};
 use sp_core::crypto::KeyTypeId;
@@ -244,11 +244,64 @@ fn create_s3_bucket_fails_duplicate_name() {
 fn delete_s3_bucket_works() {
     new_test_ext().execute_with(|| {
         let s3_bucket_id = setup_provider_and_s3_bucket(1, 1);
+        let l0_bucket_id = S3Registry::get_layer0_bucket_id(s3_bucket_id).unwrap();
+        assert!(pallet_storage_provider::Buckets::<Test>::get(l0_bucket_id).is_some());
+
         assert_ok!(S3Registry::delete_s3_bucket(
             RuntimeOrigin::signed(1),
             s3_bucket_id
         ));
         assert!(S3Buckets::<Test>::get(s3_bucket_id).is_none());
+
+        // The Layer 0 bucket and its agreements are torn down with it —
+        // otherwise the bucket and locked payments would leak.
+        assert!(pallet_storage_provider::Buckets::<Test>::get(l0_bucket_id).is_none());
+        assert_eq!(
+            pallet_storage_provider::StorageAgreements::<Test>::iter_prefix(l0_bucket_id).count(),
+            0
+        );
+        // The event reports the prorated refund.
+        assert!(System::events().iter().any(|record| matches!(
+            &record.event,
+            RuntimeEvent::S3Registry(Event::S3BucketDeleted { s3_bucket_id: id, .. })
+                if *id == s3_bucket_id
+        )));
+    });
+}
+
+#[test]
+fn delete_s3_bucket_refuses_frozen_l0_bucket() {
+    new_test_ext().execute_with(|| {
+        let s3_bucket_id = setup_provider_and_s3_bucket(1, 1);
+        let l0_bucket_id = S3Registry::get_layer0_bucket_id(s3_bucket_id).unwrap();
+
+        // Checkpoint (min_providers 0 needs no signatures) then freeze the
+        // underlying bucket: append-only forever.
+        assert_ok!(pallet_storage_provider::Pallet::<Test>::set_min_providers(
+            RuntimeOrigin::signed(1),
+            l0_bucket_id,
+            0
+        ));
+        assert_ok!(pallet_storage_provider::Pallet::<Test>::checkpoint(
+            RuntimeOrigin::signed(1),
+            l0_bucket_id,
+            storage_primitives::Commitment {
+                mmr_root: sp_core::H256::repeat_byte(0xAA),
+                start_seq: 0,
+                leaf_count: 1,
+            },
+            Default::default(),
+        ));
+        assert_ok!(pallet_storage_provider::Pallet::<Test>::freeze_bucket(
+            RuntimeOrigin::signed(1),
+            l0_bucket_id
+        ));
+
+        assert_noop!(
+            S3Registry::delete_s3_bucket(RuntimeOrigin::signed(1), s3_bucket_id),
+            pallet_storage_provider::Error::<Test>::BucketFrozen
+        );
+        assert!(S3Buckets::<Test>::get(s3_bucket_id).is_some());
     });
 }
 

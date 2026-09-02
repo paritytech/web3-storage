@@ -2072,10 +2072,9 @@ pub mod api {
                         "dry_run_call",
                         (origin, call, result_xcms_version),
                         [
-                            32u8, 81u8, 66u8, 68u8, 236u8, 47u8, 78u8, 60u8, 232u8, 230u8, 31u8,
-                            145u8, 199u8, 108u8, 227u8, 19u8, 220u8, 35u8, 65u8, 40u8, 186u8,
-                            137u8, 97u8, 252u8, 17u8, 103u8, 118u8, 185u8, 199u8, 60u8, 142u8,
-                            161u8,
+                            46u8, 122u8, 102u8, 36u8, 37u8, 89u8, 137u8, 88u8, 178u8, 167u8, 96u8,
+                            153u8, 186u8, 73u8, 151u8, 35u8, 46u8, 223u8, 89u8, 231u8, 22u8, 96u8,
+                            5u8, 192u8, 252u8, 4u8, 84u8, 229u8, 209u8, 159u8, 86u8, 193u8,
                         ],
                     )
                 }
@@ -2093,9 +2092,9 @@ pub mod api {
                         "dry_run_xcm",
                         (origin_location, xcm),
                         [
-                            62u8, 249u8, 219u8, 182u8, 170u8, 136u8, 13u8, 220u8, 107u8, 80u8,
-                            229u8, 193u8, 174u8, 47u8, 95u8, 3u8, 151u8, 207u8, 104u8, 95u8, 216u8,
-                            143u8, 120u8, 30u8, 95u8, 0u8, 214u8, 23u8, 132u8, 32u8, 237u8, 242u8,
+                            23u8, 67u8, 10u8, 97u8, 182u8, 166u8, 212u8, 135u8, 220u8, 51u8, 215u8,
+                            11u8, 206u8, 171u8, 66u8, 42u8, 140u8, 21u8, 36u8, 242u8, 13u8, 225u8,
+                            191u8, 95u8, 139u8, 192u8, 95u8, 125u8, 201u8, 222u8, 97u8, 206u8,
                         ],
                     )
                 }
@@ -4444,9 +4443,10 @@ pub mod api {
                         "System",
                         "Events",
                         [
-                            203u8, 0u8, 25u8, 250u8, 152u8, 79u8, 62u8, 88u8, 26u8, 1u8, 181u8,
-                            73u8, 166u8, 51u8, 108u8, 24u8, 217u8, 101u8, 171u8, 172u8, 72u8, 16u8,
-                            126u8, 232u8, 20u8, 166u8, 63u8, 49u8, 212u8, 244u8, 84u8, 109u8,
+                            206u8, 234u8, 193u8, 54u8, 239u8, 105u8, 31u8, 188u8, 57u8, 210u8,
+                            255u8, 236u8, 70u8, 223u8, 199u8, 115u8, 140u8, 240u8, 25u8, 107u8,
+                            168u8, 4u8, 56u8, 147u8, 45u8, 1u8, 232u8, 169u8, 26u8, 22u8, 239u8,
+                            39u8,
                         ],
                     )
                 }
@@ -19271,13 +19271,15 @@ pub mod api {
             )]
             #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-            #[doc = "S3 bucket deleted."]
+            #[doc = "S3 bucket deleted, along with its Layer 0 bucket and agreements."]
             pub struct S3BucketDeleted {
                 pub s3_bucket_id: s3_bucket_deleted::S3BucketId,
+                pub refunded: s3_bucket_deleted::Refunded,
             }
             pub mod s3_bucket_deleted {
                 use super::runtime_types;
                 pub type S3BucketId = ::core::primitive::u64;
+                pub type Refunded = ::core::primitive::u128;
             }
             impl S3BucketDeleted {
                 const PALLET_NAME: &'static str = "S3Registry";
@@ -20987,9 +20989,9 @@ pub mod api {
                         "Revive",
                         "EthBlockBuilderIR",
                         [
-                            62u8, 22u8, 204u8, 180u8, 89u8, 208u8, 118u8, 104u8, 70u8, 79u8, 254u8,
-                            35u8, 81u8, 30u8, 181u8, 91u8, 139u8, 0u8, 140u8, 81u8, 45u8, 123u8,
-                            181u8, 158u8, 118u8, 82u8, 95u8, 24u8, 133u8, 117u8, 33u8, 133u8,
+                            179u8, 162u8, 199u8, 87u8, 83u8, 149u8, 103u8, 85u8, 27u8, 198u8, 37u8,
+                            64u8, 199u8, 203u8, 177u8, 180u8, 196u8, 63u8, 141u8, 255u8, 63u8,
+                            215u8, 198u8, 51u8, 46u8, 222u8, 214u8, 240u8, 58u8, 11u8, 84u8, 51u8,
                         ],
                     )
                 }
@@ -25551,9 +25553,10 @@ pub mod api {
                         owner: ::subxt::utils::AccountId32,
                     },
                     #[codec(index = 1)]
-                    #[doc = "S3 bucket deleted."]
+                    #[doc = "S3 bucket deleted, along with its Layer 0 bucket and agreements."]
                     S3BucketDeleted {
                         s3_bucket_id: ::core::primitive::u64,
+                        refunded: ::core::primitive::u128,
                     },
                     #[codec(index = 2)]
                     #[doc = "Object metadata stored."]

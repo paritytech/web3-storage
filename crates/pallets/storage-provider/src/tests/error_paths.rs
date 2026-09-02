@@ -153,6 +153,80 @@ fn set_min_providers_fails_exceeds_providers() {
 }
 
 #[test]
+fn frozen_bucket_pins_checkpoint_start_seq() {
+    new_test_ext().execute_with(|| {
+        create_bucket(1, 0);
+
+        assert_ok!(StorageProvider::checkpoint(
+            RuntimeOrigin::signed(1),
+            0,
+            Commitment {
+                mmr_root: sp_core::H256::repeat_byte(0xAA),
+                start_seq: 0,
+                leaf_count: 10,
+            },
+            Default::default(),
+        ));
+        assert_ok!(StorageProvider::freeze_bucket(RuntimeOrigin::signed(1), 0));
+
+        // Advancing start_seq would delete history: append-only means the
+        // frozen start_seq is pinned exactly, not merely a floor.
+        assert_noop!(
+            StorageProvider::checkpoint(
+                RuntimeOrigin::signed(1),
+                0,
+                Commitment {
+                    mmr_root: sp_core::H256::repeat_byte(0xBB),
+                    start_seq: 1,
+                    leaf_count: 9,
+                },
+                Default::default(),
+            ),
+            Error::<Test>::SnapshotViolatesFrozen
+        );
+
+        // Appending (same start_seq, more leaves) stays allowed.
+        assert_ok!(StorageProvider::checkpoint(
+            RuntimeOrigin::signed(1),
+            0,
+            Commitment {
+                mmr_root: sp_core::H256::repeat_byte(0xCC),
+                start_seq: 0,
+                leaf_count: 20,
+            },
+            Default::default(),
+        ));
+    });
+}
+
+#[test]
+fn cleanup_refuses_frozen_bucket() {
+    new_test_ext().execute_with(|| {
+        create_bucket(1, 0);
+
+        assert_ok!(StorageProvider::checkpoint(
+            RuntimeOrigin::signed(1),
+            0,
+            Commitment {
+                mmr_root: sp_core::H256::repeat_byte(0xAA),
+                start_seq: 0,
+                leaf_count: 10,
+            },
+            Default::default(),
+        ));
+        assert_ok!(StorageProvider::freeze_bucket(RuntimeOrigin::signed(1), 0));
+
+        // Bucket teardown deletes every leaf at once — the biggest possible
+        // deletion — and must be refused on a frozen (append-only) bucket.
+        assert_err!(
+            StorageProvider::cleanup_bucket_internal(0, &1),
+            Error::<Test>::BucketFrozen
+        );
+        assert!(Buckets::<Test>::get(0).is_some());
+    });
+}
+
+#[test]
 fn freeze_bucket_already_frozen() {
     new_test_ext().execute_with(|| {
         create_bucket(1, 0);

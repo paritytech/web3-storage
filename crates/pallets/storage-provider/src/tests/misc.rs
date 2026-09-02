@@ -382,3 +382,49 @@ fn end_agreement_emits_event() {
         assert!(found);
     });
 }
+
+#[test]
+fn plain_account_signature_verifies_against_the_account_key_bytes() {
+    use sp_core::Pair as _;
+
+    // The `Deleted` defense's signer is the bucket admin — a plain,
+    // unregistered account. On AccountId32 runtimes the account's SCALE
+    // encoding IS its public key, so a signature by the account's own
+    // key must verify against exactly those bytes.
+    let pair = sp_core::sr25519::Pair::from_seed(&[42u8; 32]);
+    let message = b"deletion payload";
+    let sig = sp_runtime::MultiSignature::Sr25519(pair.sign(message));
+    let key_bytes = pair.public().0; // == AccountId32::from(pair.public()).encode()
+
+    use crate::impls::signatures::plain_account_verifies;
+    assert_eq!(
+        plain_account_verifies(&sig, message, &key_bytes),
+        Some(true)
+    );
+    assert_eq!(
+        plain_account_verifies(&sig, b"tampered", &key_bytes),
+        Some(false)
+    );
+    // An account whose encoding is not 32 bytes has no plain-account
+    // identity to verify against (e.g. this mock's u64 AccountId, whose
+    // SCALE encoding is its 8 LE bytes).
+    assert_eq!(
+        plain_account_verifies(&sig, message, &999u64.to_le_bytes()),
+        None
+    );
+}
+
+#[test]
+fn verify_signature_unregistered_signer_maps_plain_account_errors() {
+    new_test_ext().execute_with(|| {
+        let sig = sp_runtime::MultiSignature::Sr25519(sp_core::sr25519::Signature::from([0u8; 64]));
+        // An unregistered signer must fall through to the plain-account
+        // path (not error with ProviderNotFound). The mock's u64
+        // AccountId has no 32-byte identity, so the fallback reports
+        // InvalidPublicKey.
+        assert_noop!(
+            StorageProvider::verify_signature(&sig, b"msg", &999),
+            Error::<Test>::InvalidPublicKey
+        );
+    });
+}
