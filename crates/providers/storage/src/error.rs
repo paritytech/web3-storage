@@ -15,6 +15,13 @@ pub enum Error {
     #[error("Quota exceeded: used {used}, max {max}")]
     QuotaExceeded { used: u64, max: u64 },
 
+    #[error("Invalid start_seq: requested {requested}, valid range {current}..={end}")]
+    InvalidStartSeq {
+        requested: u64,
+        current: u64,
+        end: u64,
+    },
+
     #[error("Bucket not found: {0}")]
     BucketNotFound(u64),
 

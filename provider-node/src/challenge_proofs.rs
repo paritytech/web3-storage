@@ -18,13 +18,15 @@ impl StorageProofSource {
 }
 
 impl ChallengeProofSource for StorageProofSource {
-    fn get_mmr_proof(
+    fn get_mmr_proof_for_commitment(
         &self,
         bucket_id: storage_primitives::BucketId,
+        mmr_root: sp_core::H256,
+        start_seq: u64,
         leaf_index: u64,
     ) -> Result<storage_primitives::MmrProof, ChallengeError> {
         self.0
-            .get_mmr_proof(bucket_id, leaf_index)
+            .get_mmr_proof_for_commitment(bucket_id, mmr_root, start_seq, leaf_index)
             .map_err(|e| ChallengeError::Storage(e.to_string()))
     }
 
@@ -64,7 +66,7 @@ mod tests {
     }
 
     #[test]
-    fn get_mmr_proof_matches_the_backend() {
+    fn get_mmr_proof_for_commitment_matches_the_backend() {
         let (storage, _nonce_store, _dir) = temp_rocksdb();
         storage.init_bucket(1, 1024 * 1024).unwrap();
         let chunk_hash = blake2_256(b"mmr-proof-test-chunk");
@@ -72,11 +74,19 @@ mod tests {
             .store_node(1, chunk_hash, b"mmr-proof-test-chunk".to_vec(), None)
             .unwrap();
         storage.commit(1, vec![chunk_hash]).unwrap();
+        let info = storage.get_bucket(1).unwrap();
 
-        let expected = storage.get_mmr_proof(1, 0).unwrap();
+        let expected = storage
+            .get_mmr_proof_for_commitment(1, info.mmr_root, info.start_seq, 0)
+            .unwrap();
         let source = StorageProofSource::new(Arc::clone(&storage));
 
-        assert_eq!(source.get_mmr_proof(1, 0).unwrap(), expected);
+        assert_eq!(
+            source
+                .get_mmr_proof_for_commitment(1, info.mmr_root, info.start_seq, 0)
+                .unwrap(),
+            expected
+        );
     }
 
     #[test]

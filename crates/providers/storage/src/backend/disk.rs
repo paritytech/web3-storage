@@ -54,6 +54,15 @@ impl BucketState {
 /// Disk-based storage backend using RocksDB.
 pub struct DiskStorage {
     db: Arc<DB>,
+    /// Serializes the read-modify-write paths (`init_bucket`, `store_node`,
+    /// `commit`, `delete_before`): they read `BucketState`, mutate it, and
+    /// write several keys, so two concurrent writers would lose updates
+    /// (e.g. a `used_bytes` increment). Reads never take this lock —
+    /// RocksDB handles concurrent reads itself.
+    ///
+    /// Deliberately one global lock: write volume is far below contention
+    /// territory; switch to per-bucket locks if that ever changes.
+    write_lock: parking_lot::Mutex<()>,
 }
 
 impl DiskStorage {
@@ -69,11 +78,21 @@ impl DiskStorage {
         let db = DB::open_cf(&opts, path, &cf_names)
             .map_err(|e| Error::Storage(format!("Failed to open RocksDB: {e}")))?;
 
-        Ok(Self { db: Arc::new(db) })
+        Ok(Self {
+            db: Arc::new(db),
+            write_lock: parking_lot::Mutex::new(()),
+        })
+    }
+
+    /// Acquire the write lock serializing read-modify-write paths (the
+    /// guard protects no in-memory state — everything lives in RocksDB).
+    fn lock_writes(&self) -> parking_lot::MutexGuard<'_, ()> {
+        self.write_lock.lock()
     }
 
     /// Initialize a bucket with the given quota.
     pub fn init_bucket(&self, bucket_id: BucketId, max_bytes: u64) -> Result<(), Error> {
+        let _guard = self.lock_writes();
         let cf = self
             .db
             .cf_handle(CF_BUCKETS)
@@ -207,6 +226,8 @@ impl DiskStorage {
         data: Vec<u8>,
         children: Option<Vec<H256>>,
     ) -> Result<(), Error> {
+        let _guard = self.lock_writes();
+
         // Verify hash
         let actual_hash = blake2_256(&data);
         if actual_hash != expected_hash {
@@ -273,13 +294,22 @@ impl DiskStorage {
             let value =
                 bincode::serialize(&node).map_err(|e| Error::Serialization(e.to_string()))?;
 
-            self.db
-                .put_cf(&cf_nodes, key, &value)
-                .map_err(|e| Error::Storage(e.to_string()))?;
-
-            // Update quota
+            // Node and quota update land atomically: a crash between two
+            // separate puts would leak an uncharged node.
             bucket.used_bytes = bucket.used_bytes.saturating_add(data_len);
-            self.update_bucket(bucket_id, &bucket)?;
+            let cf_buckets = self
+                .db
+                .cf_handle(CF_BUCKETS)
+                .ok_or_else(|| Error::Storage("Buckets CF not found".to_string()))?;
+            let bucket_value =
+                bincode::serialize(&bucket).map_err(|e| Error::Serialization(e.to_string()))?;
+
+            let mut batch = rocksdb::WriteBatch::default();
+            batch.put_cf(&cf_nodes, key, &value);
+            batch.put_cf(&cf_buckets, bucket_id.to_le_bytes(), &bucket_value);
+            self.db
+                .write(batch)
+                .map_err(|e| Error::Storage(e.to_string()))?;
         }
 
         Ok(())
@@ -327,6 +357,8 @@ impl DiskStorage {
         bucket_id: BucketId,
         data_roots: Vec<H256>,
     ) -> Result<(H256, u64, Vec<u64>), Error> {
+        let _guard = self.lock_writes();
+
         // Verify all roots exist
         let cf_nodes = self
             .db
@@ -400,13 +432,26 @@ impl DiskStorage {
         bucket_id: BucketId,
         new_start_seq: u64,
     ) -> Result<(H256, u64, u64), Error> {
+        let _guard = self.lock_writes();
+
         let mut bucket = self
             .get_bucket(bucket_id)
             .ok_or(Error::BucketNotFound(bucket_id))?;
 
+        // start_seq can only advance, and no further than one past the last
+        // leaf; a rewind or overshoot is a caller error, never a silent no-op.
+        let end_seq = bucket.start_seq.saturating_add(bucket.leaf_count());
+        if new_start_seq < bucket.start_seq || new_start_seq > end_seq {
+            return Err(Error::InvalidStartSeq {
+                requested: new_start_seq,
+                current: bucket.start_seq,
+                end: end_seq,
+            });
+        }
+
         // Remove leaves before new_start_seq
         let to_remove = (new_start_seq - bucket.start_seq) as usize;
-        if to_remove > 0 && to_remove <= bucket.leaves.len() {
+        if to_remove > 0 {
             bucket.leaves.drain(0..to_remove);
             bucket.start_seq = new_start_seq;
 
@@ -445,6 +490,80 @@ impl DiskStorage {
             mmr.push(blake2_256(&l.encode()));
         }
 
+        let (siblings, path, peaks) = mmr
+            .proof_with_path(leaf_index)
+            .ok_or(Error::NodeNotFound(format!("mmr_proof_{leaf_index}")))?;
+
+        Ok(storage_primitives::MmrProof {
+            peaks,
+            leaf,
+            leaf_proof: storage_primitives::MerkleProof { siblings, path },
+        })
+    }
+
+    /// Rebuild the MMR proof for the exact commitment a challenge cites.
+    ///
+    /// The cited commitment covers leaves `[commitment_start_seq, …)` up to
+    /// whatever leaf count reproduces `commitment_root`. Later commits grow
+    /// the MMR (different root) and prunes shift the window, so the proof is
+    /// generated by replaying the leaf history from `commitment_start_seq`
+    /// until the root matches, then proving `leaf_index` inside that state.
+    pub fn get_mmr_proof_for_commitment(
+        &self,
+        bucket_id: BucketId,
+        commitment_root: H256,
+        commitment_start_seq: u64,
+        leaf_index: u64,
+    ) -> Result<storage_primitives::MmrProof, Error> {
+        let bucket = self
+            .get_bucket(bucket_id)
+            .ok_or(Error::BucketNotFound(bucket_id))?;
+
+        // Rebase the commitment window onto the local leaf vector, which
+        // covers [bucket.start_seq, bucket.start_seq + leaves.len()).
+        if commitment_start_seq < bucket.start_seq {
+            return Err(Error::NodeNotFound(format!(
+                "leaves from seq {commitment_start_seq} pruned (local start_seq {})",
+                bucket.start_seq
+            )));
+        }
+        let offset = (commitment_start_seq - bucket.start_seq) as usize;
+        if offset > bucket.leaves.len() {
+            return Err(Error::NodeNotFound(format!(
+                "no leaves at seq {commitment_start_seq} (local end {})",
+                bucket.start_seq.saturating_add(bucket.leaf_count())
+            )));
+        }
+        let window = &bucket.leaves[offset..];
+
+        // The commitment is some prefix of `window`; replay until the root
+        // matches. First match wins: a longer prefix hashes differently.
+        // Linear scan with one root recompute per pushed leaf — fine at
+        // current bucket sizes; cache (root -> leaf_count) if buckets grow
+        // past ~10^4 leaves.
+        let mut mmr = crate::mmr::Mmr::new();
+        let mut matched_count = None;
+        for (i, leaf) in window.iter().enumerate() {
+            mmr.push(blake2_256(&leaf.encode()));
+            if mmr.root() == commitment_root {
+                matched_count = Some(i + 1);
+                break;
+            }
+        }
+        let matched_count = matched_count.ok_or_else(|| {
+            Error::NodeNotFound(format!(
+                "commitment_root 0x{} not reproducible from local leaves",
+                hex::encode(commitment_root.as_bytes())
+            ))
+        })?;
+
+        if leaf_index as usize >= matched_count {
+            return Err(Error::NodeNotFound(format!(
+                "leaf_{leaf_index} outside commitment ({matched_count} leaves)"
+            )));
+        }
+
+        let leaf = window[leaf_index as usize].clone();
         let (siblings, path, peaks) = mmr
             .proof_with_path(leaf_index)
             .ok_or(Error::NodeNotFound(format!("mmr_proof_{leaf_index}")))?;
@@ -550,6 +669,21 @@ impl StorageBackend for DiskStorage {
         leaf_index: u64,
     ) -> Result<storage_primitives::MmrProof, Error> {
         self.get_mmr_proof(bucket_id, leaf_index)
+    }
+
+    fn get_mmr_proof_for_commitment(
+        &self,
+        bucket_id: BucketId,
+        commitment_root: H256,
+        commitment_start_seq: u64,
+        leaf_index: u64,
+    ) -> Result<storage_primitives::MmrProof, Error> {
+        self.get_mmr_proof_for_commitment(
+            bucket_id,
+            commitment_root,
+            commitment_start_seq,
+            leaf_index,
+        )
     }
 
     fn get_mmr_peaks(&self, bucket_id: BucketId) -> Result<(H256, Vec<H256>), Error> {
@@ -719,6 +853,156 @@ mod tests {
         // Persist at a low value must now succeed (watermark was zeroed by reset).
         store.persist(2);
         assert_eq!(store.load(), Some(2));
+    }
+
+    /// Create a bucket and commit `n` single-node leaves, returning their roots.
+    fn bucket_with_leaves(storage: &DiskStorage, bucket_id: BucketId, n: usize) -> Vec<H256> {
+        storage.init_bucket(bucket_id, u64::MAX).unwrap();
+        (0..n)
+            .map(|i| {
+                let data = vec![i as u8; 8];
+                let hash = blake2_256(&data);
+                storage.store_node(bucket_id, hash, data, None).unwrap();
+                storage.commit(bucket_id, vec![hash]).unwrap();
+                hash
+            })
+            .collect()
+    }
+
+    #[test]
+    fn delete_before_rejects_rewind_and_overshoot() {
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        bucket_with_leaves(&storage, 1, 3);
+
+        storage.delete_before(1, 2).unwrap();
+
+        // Rewind below the current start_seq must be rejected, not wrap.
+        let err = storage.delete_before(1, 1).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                Error::InvalidStartSeq {
+                    requested: 1,
+                    current: 2,
+                    end: 3
+                }
+            ),
+            "unexpected error: {err:?}"
+        );
+
+        // Advancing past the last leaf + 1 must be rejected, not silently Ok.
+        let err = storage.delete_before(1, 4).unwrap_err();
+        assert!(
+            matches!(err, Error::InvalidStartSeq { requested: 4, .. }),
+            "unexpected error: {err:?}"
+        );
+    }
+
+    #[test]
+    fn delete_before_noop_at_current_start_seq() {
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        bucket_with_leaves(&storage, 1, 2);
+        let before = storage.get_bucket(1).unwrap();
+
+        let (root, start_seq, leaf_count) = storage.delete_before(1, before.start_seq).unwrap();
+
+        assert_eq!(root, before.mmr_root);
+        assert_eq!(start_seq, before.start_seq);
+        assert_eq!(leaf_count, before.leaf_count());
+    }
+
+    #[test]
+    fn delete_before_prunes_prefix_and_rebuilds_mmr() {
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        bucket_with_leaves(&storage, 1, 3);
+        let before = storage.get_bucket(1).unwrap();
+
+        let (root, start_seq, leaf_count) = storage.delete_before(1, 2).unwrap();
+
+        assert_eq!(start_seq, 2);
+        assert_eq!(leaf_count, 1);
+        assert_ne!(root, before.mmr_root);
+        // The new root must equal an MMR built from the surviving leaf alone.
+        let after = storage.get_bucket(1).unwrap();
+        let mut mmr = crate::mmr::Mmr::new();
+        for leaf in &after.leaves {
+            mmr.push(blake2_256(&leaf.encode()));
+        }
+        assert_eq!(root, mmr.root());
+        // Deleting up to the end (empty bucket) is a valid full prune.
+        let (_, start_seq, leaf_count) = storage.delete_before(1, 3).unwrap();
+        assert_eq!((start_seq, leaf_count), (3, 0));
+    }
+
+    #[test]
+    fn proof_for_older_commitment_matches_cited_root() {
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        storage.init_bucket(1, u64::MAX).unwrap();
+
+        // Three commits; the challenge cites the root after the second.
+        let mut roots = Vec::new();
+        for i in 0..3u8 {
+            let data = vec![i; 8];
+            let hash = blake2_256(&data);
+            storage.store_node(1, hash, data, None).unwrap();
+            let (root, _, _) = storage.commit(1, vec![hash]).unwrap();
+            roots.push(root);
+        }
+
+        let proof = storage
+            .get_mmr_proof_for_commitment(1, roots[1], 0, 1)
+            .unwrap();
+        assert!(storage_primitives::verify_mmr_proof(&proof, &roots[1]));
+        // Current root (3 leaves) must NOT verify this two-leaf proof.
+        assert_ne!(roots[1], roots[2]);
+
+        // A leaf index outside the cited commitment is rejected even though
+        // the bucket currently holds it.
+        assert!(storage
+            .get_mmr_proof_for_commitment(1, roots[1], 0, 2)
+            .is_err());
+    }
+
+    #[test]
+    fn proof_after_prune_rebases_leaf_index() {
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        bucket_with_leaves(&storage, 1, 3);
+        let expected = storage.get_bucket(1).unwrap().leaves[2].clone();
+
+        let (post_prune_root, start_seq, _) = storage.delete_before(1, 1).unwrap();
+        assert_eq!(start_seq, 1);
+
+        // Challenge cites the post-prune commitment (start_seq 1); its
+        // leaf_index 1 is global seq 2 — the third leaf ever committed.
+        let proof = storage
+            .get_mmr_proof_for_commitment(1, post_prune_root, 1, 1)
+            .unwrap();
+        assert_eq!(proof.leaf.data_root, expected.data_root);
+        assert!(storage_primitives::verify_mmr_proof(
+            &proof,
+            &post_prune_root
+        ));
+    }
+
+    #[test]
+    fn proof_for_pruned_commitment_errors() {
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        bucket_with_leaves(&storage, 1, 2);
+        let old_root = storage.get_bucket(1).unwrap().mmr_root;
+
+        storage.delete_before(1, 2).unwrap();
+
+        // The cited commitment starts below the local start_seq: its leaves
+        // are gone (until a retention stash exists), so this must error.
+        assert!(storage
+            .get_mmr_proof_for_commitment(1, old_root, 0, 0)
+            .is_err());
     }
 
     #[test]
