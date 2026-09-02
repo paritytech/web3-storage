@@ -238,6 +238,8 @@ impl DiskStorage {
             mmr_root: format!("0x{}", hex::encode(state.mmr_root.as_bytes())),
             start_seq: state.start_seq,
             leaf_count: state.leaf_count(),
+            used_bytes: state.used_bytes,
+            max_bytes: state.max_bytes,
         })
     }
 
