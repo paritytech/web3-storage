@@ -116,7 +116,10 @@ impl MembershipInvalidations for BlockEventInvalidations {
         let mut all = false;
         loop {
             match events.try_recv() {
-                Ok(BlockEvent::BucketMembershipChanged { bucket_id }) if !all => {
+                Ok(BlockEvent::BucketMembershipChanged { bucket_id })
+                | Ok(BlockEvent::BucketDeleted { bucket_id })
+                    if !all =>
+                {
                     buckets.push(bucket_id)
                 }
                 // The follower re-read chain state wholesale, or this task
