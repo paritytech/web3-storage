@@ -107,7 +107,6 @@ export async function connect(wsEndpoint?: string): Promise<void> {
     // (the safe direction — nothing shows as expired) until the first
     // finalized block refreshes it.
     blockNumber$.next(1)
-    void refreshAnchorBlock(1)
   } catch (error) {
     connectionStatus$.next('error')
     connectionError$.next(error instanceof Error ? error.message : 'Connection failed')
