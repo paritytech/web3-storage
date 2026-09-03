@@ -8,7 +8,7 @@
 use super::{BucketInfo, BucketStats, BucketSummary, StorageBackend, StoredNode};
 use crate::error::Error;
 use crate::nonce::NonceStore;
-use codec::{Decode, Encode};
+use codec::{Decode, DecodeAll, Encode};
 use rocksdb::{Options, DB};
 use sp_core::H256;
 use std::path::Path;
@@ -105,7 +105,7 @@ impl DiskStorage {
         let cf = self.db.cf_handle(CF_BUCKETS)?;
         let key = bucket_id.to_le_bytes();
         let value = self.db.get_cf(&cf, key).ok()??;
-        match BucketState::decode(&mut &value[..]) {
+        match BucketState::decode_all(&mut &value[..]) {
             Ok(state) => Some(state),
             Err(e) => {
                 tracing::warn!(bucket_id, error = %e, "Failed to deserialize bucket state");
@@ -146,7 +146,7 @@ impl DiskStorage {
                     return None;
                 }
                 let bucket_id = u64::from_le_bytes(key[..8].try_into().unwrap());
-                match BucketState::decode(&mut &value[..]) {
+                match BucketState::decode_all(&mut &value[..]) {
                     Ok(state) => Some(f(bucket_id, &state)),
                     Err(e) => {
                         tracing::warn!(bucket_id, error = %e, "Failed to deserialize bucket state");
@@ -289,7 +289,7 @@ impl DiskStorage {
         let cf = self.db.cf_handle(CF_NODES)?;
         let key = hash.as_bytes();
         let value = self.db.get_cf(&cf, key).ok()??;
-        match StoredNode::decode(&mut &value[..]) {
+        match StoredNode::decode_all(&mut &value[..]) {
             Ok(node) => Some(node),
             Err(e) => {
                 tracing::warn!(hash = %format!("0x{}", hex::encode(hash.as_bytes())), error = %e, "Failed to deserialize node");
@@ -780,5 +780,21 @@ mod tests {
         let decoded = StoredNode::decode(&mut &encoded[..]).unwrap();
 
         assert_eq!(decoded, node);
+    }
+
+    #[test]
+    fn decode_all_rejects_trailing_bytes() {
+        let bucket = BucketState::new(1_000);
+        let mut encoded = bucket.encode();
+        encoded.extend_from_slice(&[0xff, 0xff]);
+        assert!(BucketState::decode_all(&mut &encoded[..]).is_err());
+
+        let node = StoredNode {
+            data: vec![1, 2, 3],
+            children: None,
+        };
+        let mut encoded = node.encode();
+        encoded.push(0x00);
+        assert!(StoredNode::decode_all(&mut &encoded[..]).is_err());
     }
 }

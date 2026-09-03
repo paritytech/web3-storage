@@ -5,9 +5,9 @@
 //! [`StorageBackendSpec`] names an implementation and its configuration, and
 //! builds it — that is what the provider node selects at startup.
 
-pub mod disk;
+pub mod rocksdb;
 
-pub use disk::{DiskNonceStore, DiskStorage};
+pub use rocksdb::{DiskNonceStore, DiskStorage};
 
 use crate::error::Error;
 use crate::merkle::build_merkle_proof;
