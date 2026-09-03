@@ -299,6 +299,9 @@ jobs:
           MIN_PATCH_COV: '80'
         run: |
           set -euo pipefail
+          # The job runs in a container as a different uid than the checkout,
+          # so git refuses to touch the repo without this.
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
           # origin/<base> comes from the full-depth checkout (fetch-depth: 0);
           # no extra fetch here — unauthenticated fetches get rate-limited.
           echo "HEAD:               $(git log --oneline -1)"
