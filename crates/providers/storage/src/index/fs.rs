@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use storage_primitives::{blake2_256, hash_children, BucketId};
 
 /// Per-entry metadata stored in the FS index.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct FsEntryMeta {
     /// Entry type: "file" or "directory"
     pub entry_type: String,
@@ -43,7 +43,7 @@ pub struct FsListEntry {
 }
 
 /// Per-drive sorted path→metadata index.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 pub struct DriveIndex {
     entries: BTreeMap<String, FsEntryMeta>,
     pub file_count: u64,
@@ -418,6 +418,7 @@ fn current_timestamp() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::TempDir;
 
     fn make_file_meta(size: u64) -> FsEntryMeta {
         FsEntryMeta {
@@ -605,5 +606,103 @@ mod tests {
         // Delete
         assert!(manager.delete_entry(1, "/hello.txt").is_some());
         assert!(manager.get_entry(1, "/hello.txt").is_none());
+    }
+
+    fn drive_index_fixture() -> DriveIndex {
+        DriveIndex {
+            entries: BTreeMap::from([
+                (
+                    "docs".to_string(),
+                    FsEntryMeta {
+                        entry_type: "directory".to_string(),
+                        data_root: H256::zero(),
+                        size: 0,
+                        content_type: String::new(),
+                        mtime: 1_600_000_000,
+                        leaf_index: 0,
+                    },
+                ),
+                (
+                    "docs/report.txt".to_string(),
+                    FsEntryMeta {
+                        entry_type: "file".to_string(),
+                        data_root: H256::repeat_byte(0xab),
+                        size: 1234,
+                        content_type: "text/plain".to_string(),
+                        mtime: 1_700_000_000,
+                        leaf_index: 7,
+                    },
+                ),
+            ]),
+            file_count: 1,
+            dir_count: 1,
+            total_size: 1234,
+        }
+    }
+
+    /// Golden document: exactly what [`FsIndexPersistence::save`] writes for
+    /// [`drive_index_fixture`].
+    ///
+    /// JSON is more forgiving than SCALE, but not forgiving enough: serde
+    /// rejects a document that is *missing* a field, so adding a field to
+    /// `DriveIndex` or `FsEntryMeta` - or renaming one - makes every index file
+    /// an existing provider already wrote unloadable. `load_all` only warns on a
+    /// parse failure, so that provider restarts believing its drives are empty.
+    /// Treat a failure here as an on-disk format break rather than a stale
+    /// literal; see the encoding-stability note on [`crate::backend::types`].
+    const DRIVE_INDEX_JSON: &str = r#"{
+  "entries": {
+    "docs": {
+      "entry_type": "directory",
+      "data_root": "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "size": 0,
+      "content_type": "",
+      "mtime": 1600000000,
+      "leaf_index": 0
+    },
+    "docs/report.txt": {
+      "entry_type": "file",
+      "data_root": "0xabababababababababababababababababababababababababababababababab",
+      "size": 1234,
+      "content_type": "text/plain",
+      "mtime": 1700000000,
+      "leaf_index": 7
+    }
+  },
+  "file_count": 1,
+  "dir_count": 1,
+  "total_size": 1234
+}"#;
+
+    #[test]
+    fn drive_index_on_disk_json_is_stable() {
+        assert_eq!(
+            serde_json::to_string_pretty(&drive_index_fixture()).unwrap(),
+            DRIVE_INDEX_JSON,
+            "serialized shape changed",
+        );
+        assert_eq!(
+            serde_json::from_str::<DriveIndex>(DRIVE_INDEX_JSON).unwrap(),
+            drive_index_fixture(),
+            "pinned document no longer loads",
+        );
+    }
+
+    /// [`FsIndexPersistence::load_all`] discovers indexes by directory and
+    /// filename, so both are on-disk format too: change either and files an
+    /// existing provider wrote are silently stranded, not reported missing.
+    #[test]
+    fn drive_index_file_naming_is_stable() {
+        let dir = TempDir::new().unwrap();
+        let persistence = FsIndexPersistence::new(dir.path()).unwrap();
+        persistence.save(42, &drive_index_fixture()).unwrap();
+
+        let path = dir.path().join("fs_indices").join("drive_42_index.json");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), DRIVE_INDEX_JSON);
+        assert_eq!(
+            persistence.load_all().unwrap().len(),
+            1,
+            "a freshly written index is discoverable"
+        );
     }
 }
