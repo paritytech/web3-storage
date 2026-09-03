@@ -661,7 +661,7 @@ chunkIndex: 3
 **Deposit required:** see the challenge cost note above.
 
 **Events:** `ChallengeCreated`
-**Errors:** `BucketNotFound`, `NoSnapshot`, `ProviderNotInSnapshot`, `NotAuthorizedForPrivateBucket` (private bucket; caller neither member nor primary-agreement owner)
+**Errors:** `BucketNotFound`, `NoSnapshot`, `ProviderNotInSnapshot`, `SelfChallenge` (caller is the challenged provider), `NotAuthorizedForPrivateBucket` (private bucket; caller neither member nor primary-agreement owner)
 
 ---
 
@@ -686,7 +686,7 @@ providerSignature: 0xsig...
 ```
 
 **Events:** `ChallengeCreated`
-**Errors:** `BucketNotFound`, `AgreementNotFound`, `InvalidSignature`, `NotAuthorizedForPrivateBucket` (private bucket, primary target; caller neither member nor primary-agreement owner)
+**Errors:** `BucketNotFound`, `AgreementNotFound`, `InvalidSignature`, `SelfChallenge` (caller is the challenged provider), `NotAuthorizedForPrivateBucket` (private bucket, primary target; caller neither member nor primary-agreement owner)
 
 ---
 
@@ -709,7 +709,7 @@ chunkIndex: 3
 ```
 
 **Events:** `ChallengeCreated`
-**Errors:** `AgreementNotFound`, `NotReplica`, `InvalidSyncRoot`
+**Errors:** `AgreementNotFound`, `NotReplica`, `InvalidSyncRoot`, `SelfChallenge` (caller is the challenged provider)
 
 ---
 
@@ -987,6 +987,7 @@ Common errors you might encounter:
 | `ChallengeExpired` | Past challenge deadline | Too late to respond |
 | `NotChallengeProvider` | Caller is not the challenged provider | — |
 | `ProviderNotInSnapshot` | Provider didn't sign current snapshot | Add their signature via `extendCheckpoint` |
+| `SelfChallenge` | Caller is the provider it is challenging | — |
 | `LeafBeyondCanonical` | Challenged leaf is beyond canonical state | — |
 | `InvalidSignature` | Signature didn't verify against registered pubkey | Check key + payload |
 | `NoSnapshot` | Bucket has no checkpoint yet | Call `checkpoint` first |

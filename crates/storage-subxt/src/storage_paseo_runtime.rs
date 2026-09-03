@@ -3466,9 +3466,9 @@ pub mod api {
             .hash();
         runtime_metadata_hash
             == [
-                94u8, 253u8, 142u8, 119u8, 130u8, 200u8, 157u8, 87u8, 155u8, 189u8, 193u8, 5u8,
-                5u8, 126u8, 215u8, 79u8, 20u8, 27u8, 28u8, 239u8, 127u8, 118u8, 43u8, 201u8, 188u8,
-                147u8, 2u8, 119u8, 3u8, 159u8, 244u8, 71u8,
+                6u8, 204u8, 190u8, 245u8, 201u8, 153u8, 144u8, 2u8, 230u8, 73u8, 185u8, 77u8, 60u8,
+                23u8, 88u8, 171u8, 124u8, 135u8, 235u8, 243u8, 164u8, 143u8, 42u8, 144u8, 11u8,
+                124u8, 230u8, 122u8, 74u8, 142u8, 178u8, 181u8,
             ]
     }
     pub mod system {
@@ -21115,10 +21115,9 @@ pub mod api {
                         "Revive",
                         "EthBlockBuilderIR",
                         [
-                            22u8, 188u8, 211u8, 103u8, 135u8, 171u8, 23u8, 29u8, 200u8, 248u8,
-                            177u8, 76u8, 194u8, 70u8, 120u8, 74u8, 254u8, 105u8, 211u8, 131u8,
-                            254u8, 73u8, 196u8, 76u8, 185u8, 26u8, 40u8, 16u8, 63u8, 150u8, 20u8,
-                            72u8,
+                            71u8, 238u8, 147u8, 189u8, 43u8, 68u8, 7u8, 59u8, 65u8, 129u8, 195u8,
+                            104u8, 36u8, 47u8, 160u8, 177u8, 141u8, 216u8, 47u8, 58u8, 4u8, 214u8,
+                            89u8, 77u8, 42u8, 174u8, 103u8, 255u8, 95u8, 196u8, 25u8, 232u8,
                         ],
                     )
                 }
@@ -26324,83 +26323,88 @@ pub mod api {
                     #[codec(index = 44)]
                     InsufficientSyncBalance,
                     #[codec(index = 45)]
-                    ChallengeNotFound,
+                    #[doc = "The challenger is the challenged provider. A self-challenge costs"]
+                    #[doc = "nothing (the response refunds the challenger's own deposit) and"]
+                    #[doc = "would pad the defended-challenge counters behind reputation."]
+                    SelfChallenge,
                     #[codec(index = 46)]
-                    ChallengeAlreadyExists,
+                    ChallengeNotFound,
                     #[codec(index = 47)]
-                    InvalidChallengeProof,
+                    ChallengeAlreadyExists,
                     #[codec(index = 48)]
-                    ChallengeExpired,
+                    InvalidChallengeProof,
                     #[codec(index = 49)]
-                    NotChallengeProvider,
+                    ChallengeExpired,
                     #[codec(index = 50)]
-                    ProviderNotInSnapshot,
+                    NotChallengeProvider,
                     #[codec(index = 51)]
-                    LeafBeyondCanonical,
+                    ProviderNotInSnapshot,
                     #[codec(index = 52)]
-                    InvalidDeletionProof,
+                    LeafBeyondCanonical,
                     #[codec(index = 53)]
+                    InvalidDeletionProof,
+                    #[codec(index = 54)]
                     #[doc = "A provider with unresolved challenges (`PendingChallenges > 0`)"]
                     #[doc = "cannot complete deregistration — they are still slashable."]
                     ProviderHasPendingChallenges,
-                    #[codec(index = 54)]
+                    #[codec(index = 55)]
                     #[doc = "An agreement with an unresolved challenge against this"]
                     #[doc = "`(bucket, provider)` cannot be torn down until the challenge"]
                     #[doc = "resolves (defended, slashed, or timed out)."]
                     AgreementHasPendingChallenge,
-                    #[codec(index = 55)]
+                    #[codec(index = 56)]
                     #[doc = "`MaxChallengesPerDeadline` challenges have already been allocated"]
                     #[doc = "for the deadline this challenge would land on. Caps the total the"]
                     #[doc = "`on_initialize` sweep must eventually drain for a single key."]
                     TooManyChallengesThisBlock,
-                    #[codec(index = 56)]
-                    InvalidSignature,
                     #[codec(index = 57)]
-                    NoSnapshot,
+                    InvalidSignature,
                     #[codec(index = 58)]
-                    SnapshotViolatesFrozen,
+                    NoSnapshot,
                     #[codec(index = 59)]
-                    InsufficientSignatures,
+                    SnapshotViolatesFrozen,
                     #[codec(index = 60)]
-                    ArithmeticOverflow,
+                    InsufficientSignatures,
                     #[codec(index = 61)]
-                    InvalidMultiaddr,
+                    ArithmeticOverflow,
                     #[codec(index = 62)]
-                    InvalidPublicKey,
+                    InvalidMultiaddr,
                     #[codec(index = 63)]
+                    InvalidPublicKey,
+                    #[codec(index = 64)]
                     #[doc = "Account is a member of too many buckets."]
                     TooManyBucketsForMember,
-                    #[codec(index = 64)]
+                    #[codec(index = 65)]
                     #[doc = "Provider signature over the SCALE-encoded terms is invalid."]
                     InvalidProviderSignature,
-                    #[codec(index = 65)]
+                    #[codec(index = 66)]
                     #[doc = "Signed terms have passed their `valid_until` block."]
                     TermsExpired,
-                    #[codec(index = 66)]
+                    #[codec(index = 67)]
                     #[doc = "Signed terms' `valid_until` extends beyond `now + RequestTimeout` —"]
                     #[doc = "the provider-signed validity window cap enforced on-chain."]
                     TermsValidityTooLong,
-                    #[codec(index = 67)]
+                    #[codec(index = 68)]
                     #[doc = "The terms' nonce has already been consumed inside the provider's"]
                     #[doc = "replay window."]
                     NonceAlreadyUsed,
-                    #[codec(index = 68)]
+                    #[codec(index = 69)]
                     #[doc = "The terms' nonce is older than the provider's replay window"]
                     #[doc = "(distance from `hsn` ≥ [`storage_primitives::REPLAY_WINDOW_BITS`])."]
                     NonceTooOld,
-                    #[codec(index = 69)]
+                    #[codec(index = 70)]
                     #[doc = "The terms' declared owner does not match the extrinsic origin."]
                     TermsOwnerMismatch,
-                    #[codec(index = 70)]
+                    #[codec(index = 71)]
                     #[doc = "Replica terms missing from a signed quote redeemed as a replica"]
                     #[doc = "agreement."]
                     MissingReplicaTerms,
-                    #[codec(index = 71)]
+                    #[codec(index = 72)]
                     #[doc = "The terms' bucket binding does not match the redeeming extrinsic:"]
                     #[doc = "primary terms must carry no bucket, replica terms must name the"]
                     #[doc = "targeted bucket."]
                     TermsBucketMismatch,
-                    #[codec(index = 72)]
+                    #[codec(index = 73)]
                     #[doc = "Storage agreement requested 0 byte"]
                     InvalidMaxBytesRequest,
                 }

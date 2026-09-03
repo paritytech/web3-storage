@@ -976,6 +976,10 @@ pub mod pallet {
         InsufficientSyncBalance,
 
         // Challenge errors
+        /// The challenger is the challenged provider. A self-challenge costs
+        /// nothing (the response refunds the challenger's own deposit) and
+        /// would pad the defended-challenge counters behind reputation.
+        SelfChallenge,
         ChallengeNotFound,
         ChallengeAlreadyExists,
         InvalidChallengeProof,

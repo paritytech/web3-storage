@@ -1439,7 +1439,9 @@ impl<T: Config> Pallet<T> {
     // where nobody has recent signatures or doesn't bother to dig them up.
     //
     // **Who may challenge, and at what cost (all three modes):**
-    // Any signed account may challenge, with one restriction: on a `Private`
+    // Any signed account may challenge, except the challenged provider
+    // itself (`SelfChallenge`: a free response that would pad its own
+    // defended counters), with one restriction: on a `Private`
     // bucket, challenging a provider whose agreement role is `Primary`
     // requires being a bucket member or the owner of a primary agreement on
     // the bucket (`NotAuthorizedForPrivateBucket`; replica-agreement owners

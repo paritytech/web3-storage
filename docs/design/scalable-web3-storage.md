@@ -265,7 +265,7 @@ What if you don't trust aggregate metrics? What if you have strict requirements?
 trust, pay them directly, verify them yourself. Now you have at least one replica whose reliability you've personally
 established.
 
-Or simply **challenge directly.** Anyone can challenge any provider for any data they have a commitment for (exception: a private bucket's primaries accept challenges only from members and primary-agreement owners). Don't trust
+Or simply **challenge directly.** Anyone can challenge any provider for any data they have a commitment for (exceptions: a provider cannot challenge itself, and a private bucket's primaries accept challenges only from members and primary-agreement owners). Don't trust
 that a provider still has the data? Fetch one random chunk. If they respond, you've verified (and recovered that chunk).
 If they don't, you challenge, they get slashed, and the world learns they're unreliable.
 

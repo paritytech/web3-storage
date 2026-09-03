@@ -130,6 +130,8 @@ impl<T: Config> Pallet<T> {
         commitment: Commitment,
         target: ChunkLocation,
     ) -> DispatchResult {
+        ensure!(challenger != provider, Error::<T>::SelfChallenge);
+
         // Private-bucket gate: the public has no legitimate reliance on data
         // it cannot read, and must not be able to force private bytes
         // on-chain via the response. Keyed on the challenged provider's role

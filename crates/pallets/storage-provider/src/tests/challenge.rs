@@ -48,6 +48,29 @@ pub(super) fn advance_snapshot_root(bucket_id: u64) {
 }
 
 #[test]
+fn provider_cannot_challenge_itself() {
+    new_test_ext().execute_with(|| {
+        frame_system::Pallet::<Test>::set_block_number(1);
+        let bucket_id = setup_with_snapshot(2, 1);
+
+        // Every challenge mode funnels through `create_challenge`, so one
+        // mode covers the guard.
+        assert_noop!(
+            StorageProvider::challenge_checkpoint(
+                RuntimeOrigin::signed(2),
+                bucket_id,
+                2,
+                ChunkLocation {
+                    leaf_index: 0,
+                    chunk_index: 0,
+                },
+            ),
+            Error::<Test>::SelfChallenge
+        );
+    });
+}
+
+#[test]
 fn challenge_checkpoint_works() {
     new_test_ext().execute_with(|| {
         frame_system::Pallet::<Test>::set_block_number(1);
