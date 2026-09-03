@@ -21,9 +21,10 @@ pub mod consensus {
     /// parachain block time and continues to produce a slot every 6 s.
     pub const RELAY_CHAIN_SLOT_DURATION_MILLIS: u32 = 6000;
 
-    /// Average expected block time targeted by the parachain. Picked up by `pallet_timestamp` and
-    /// `pallet_aura`.
-    pub const MILLISECS_PER_BLOCK: u64 = 2000;
+    /// Parachain block time: one candidate per core per relay slot. Only used to
+    /// denominate `time::MINUTES`/`HOURS`.
+    pub const MILLISECS_PER_BLOCK: u64 =
+        (RELAY_CHAIN_SLOT_DURATION_MILLIS / BLOCK_PROCESSING_VELOCITY) as u64;
 
     /// Aura slot duration — the author-rotation period, not the block time (that is
     /// relay slot / velocity). The elastic-scaling guide requires at least the relay's 6 s.
@@ -44,19 +45,10 @@ pub mod consensus {
         use super::{BLOCK_PROCESSING_VELOCITY, RELAY_PARENT_OFFSET};
 
         /// Maximum number of blocks simultaneously accepted by the Runtime, not yet included
-        /// into the relay chain.
-        ///
-        /// Sized in relay slots, then converted to parachain blocks. A candidate takes ~2 relay
-        /// slots to be backed and included under async backing; `RELAY_PARENT_OFFSET` adds the
-        /// extra relay parents the offset lets us build against, and `+ 1` is the in-flight slot.
-        /// Multiplying by `BLOCK_PROCESSING_VELOCITY` turns relay slots into parachain blocks.
-        /// With offset 1 and velocity 3 this is `(3 + 1) * 3 = 12`.
+        /// into the relay chain: 3 relay slots of backing/inclusion pipeline plus the
+        /// relay-parent offset, converted to parachain blocks.
         pub const UNINCLUDED_SEGMENT_CAPACITY: u32 =
-            (RELAY_SLOTS_OF_CAPACITY + RELAY_PARENT_OFFSET) * BLOCK_PROCESSING_VELOCITY;
-
-        /// Relay slots of unincluded data to buffer, before accounting for the relay-parent
-        /// offset: 2 slots for the backing+inclusion pipeline plus 1 in-flight slot.
-        const RELAY_SLOTS_OF_CAPACITY: u32 = 3;
+            (3 + RELAY_PARENT_OFFSET) * BLOCK_PROCESSING_VELOCITY;
     }
 }
 

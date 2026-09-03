@@ -183,7 +183,6 @@ pub const VERSION: RuntimeVersion = RuntimeVersion {
     // * 4_003 for dropping the vestigial `ChallengerStatRecord::total_earnings` field (#125);
     // * 4_004 for `StorageProviderApi` v2: `challenge_candidates`, `deregister_at`, `reputation` (#318);
     // * 4_005 for 2 s blocks / 3 cores: slot-based authoring, `RelayParentOffset = 1` (#131).
-    // Must stay > the deployed value so the upgrade is accepted and migrations run.
     spec_version: 4_005,
     impl_version: 0,
     apis: RUNTIME_API_VERSIONS,

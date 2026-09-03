@@ -8,7 +8,8 @@ default_command = "{{PROJECT_ROOT}}/.bin/polkadot"
 chain = "westend-local"
 default_args = ["-lruntime=info"]
 
-# Relay cores come from the parachain's `num_cores`; zombienet assigns them at genesis.
+# Ancestry/depth headroom for the parachain's unincluded segment (zombienet assigns
+# the relay cores themselves at genesis, from the parachain's `num_cores` below).
 [relaychain.genesis.runtimeGenesis.patch.configuration.config.async_backing_params]
 allowed_ancestry_len = 6
 max_candidate_depth = 6

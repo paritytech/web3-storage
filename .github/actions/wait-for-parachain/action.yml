@@ -66,10 +66,10 @@ runs:
         done
 
         if [ "$MIN_BLOCKS_PER_MINUTE" -gt 0 ]; then
-          START_BLOCK=$(best_block)
-          sleep 30
+          WINDOW=30
+          sleep "$WINDOW"
           END_BLOCK=$(best_block)
-          RATE=$(((END_BLOCK - START_BLOCK) * 2))
+          RATE=$(((END_BLOCK - BLOCK_NUM) * 60 / WINDOW))
           echo "Block rate: $RATE/min (>= ${MIN_BLOCKS_PER_MINUTE}/min required)"
           if [ "$RATE" -lt "$MIN_BLOCKS_PER_MINUTE" ]; then
             echo "FAIL: block production too slow."
