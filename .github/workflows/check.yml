@@ -299,10 +299,10 @@ jobs:
           MIN_PATCH_COV: '80'
         run: |
           set -euo pipefail
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
-          # Make origin/<base> available for the diff. The checkout is full-depth
-          # (fetch-depth: 0), so this stays unshallow and the merge-base is reachable.
-          git fetch --no-tags origin "$BASE_REF"
+          # origin/<base> comes from the full-depth checkout (fetch-depth: 0);
+          # no extra fetch here — unauthenticated fetches get rate-limited.
+          echo "HEAD:               $(git log --oneline -1)"
+          echo "origin/${BASE_REF}: $(git log --oneline -1 "origin/${BASE_REF}")"
 
           set +e
           COMPARE_BRANCH="origin/${BASE_REF}" scripts/coverage.sh gate
