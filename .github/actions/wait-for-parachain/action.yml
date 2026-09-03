@@ -41,13 +41,16 @@ runs:
         LOG_FILE: ${{ inputs.log-file }}
         MIN_BLOCKS_PER_MINUTE: ${{ inputs.min-blocks-per-minute }}
       run: |
+        # Prints the best block number, or nothing while the RPC is unreachable.
+        # Always exits 0: the step runs under `set -e`, so a non-zero return from
+        # a failed poll would silently kill the whole loop.
         best_block() {
           local header hex
           header=$(curl -s -H "Content-Type: application/json" \
             -d '{"id":1,"jsonrpc":"2.0","method":"chain_getHeader","params":[]}' \
             "$RPC_URL" 2>/dev/null) || true
-          hex=$(echo "$header" | jq -r '.result.number // empty' 2>/dev/null)
-          [ -n "$hex" ] && echo $((hex))
+          hex=$(echo "$header" | jq -r '.result.number // empty' 2>/dev/null) || true
+          if [ -n "$hex" ]; then echo $((hex)); fi
         }
 
         echo "Waiting for parachain to produce blocks (min #${MIN_BLOCK})..."
@@ -69,7 +72,7 @@ runs:
           WINDOW=30
           sleep "$WINDOW"
           END_BLOCK=$(best_block)
-          RATE=$(((END_BLOCK - BLOCK_NUM) * 60 / WINDOW))
+          RATE=$(((${END_BLOCK:-0} - BLOCK_NUM) * 60 / WINDOW))
           echo "Block rate: $RATE/min (>= ${MIN_BLOCKS_PER_MINUTE}/min required)"
           if [ "$RATE" -lt "$MIN_BLOCKS_PER_MINUTE" ]; then
             echo "FAIL: block production too slow."
