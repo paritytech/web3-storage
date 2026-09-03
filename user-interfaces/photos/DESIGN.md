@@ -193,7 +193,7 @@ than reinventing.
 ## Data mutability & editing
 
 Storage is **copy-on-write**: blobs are immutable (content-addressed by blake2-256, committed to
-an append-only MMR — `crates/providers/storage/src/backend/disk.rs`). You never edit bytes in place; a
+an append-only MMR — `crates/providers/storage/src/backend/rocksdb.rs`). You never edit bytes in place; a
 `PUT` to a path writes a **new** blob (new CID) and repoints that path in the tree. The album
 tree's root changes, so each mutation ends with a freshly **recomputed** root → `setRoot`.
 
