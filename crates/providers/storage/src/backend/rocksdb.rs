@@ -742,44 +742,144 @@ mod tests {
         }
     }
 
-    #[test]
-    fn bucket_state_encode_decode_round_trip() {
-        let bucket = BucketState {
-            mmr_root: H256::repeat_byte(0xab),
-            start_seq: 7,
-            leaves: vec![
+    /// Pins the exact bytes this module persists. A failure here means
+    /// existing provider databases can no longer be decoded — a storage
+    /// version/migration is required
+    /// (see <https://github.com/paritytech/web3-storage/issues/375>).
+    mod compatibility_tests {
+        use super::*;
+
+        /// `value` must encode exactly to the `golden` hex, and the golden
+        /// bytes must decode back to `value`.
+        fn assert_golden<T: Encode + DecodeAll + PartialEq + std::fmt::Debug>(
+            value: T,
+            golden: &str,
+        ) {
+            assert_eq!(hex::encode(value.encode()), golden, "encoding changed");
+            let bytes = hex::decode(golden).unwrap();
+            assert_eq!(T::decode_all(&mut &bytes[..]).unwrap(), value);
+        }
+
+        #[test]
+        fn bucket_state() {
+            assert_golden(
+                BucketState {
+                    mmr_root: H256::repeat_byte(0xab),
+                    start_seq: 7,
+                    leaves: vec![MmrLeaf {
+                        data_root: H256::repeat_byte(0xcd),
+                        data_size: 111,
+                        total_size: 222,
+                    }],
+                    used_bytes: 999,
+                    max_bytes: 1_000_000,
+                },
+                concat!(
+                    // mmr_root: H256 (0xab * 32)
+                    "abababababababababababababababababababababababababababababababab",
+                    // start_seq: u64 = 7 (little-endian)
+                    "0700000000000000",
+                    // leaves: Vec<MmrLeaf>, compact length 1
+                    "04",
+                    // leaves[0]: data_root (0xcd * 32), data_size = 111, total_size = 222
+                    "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+                    "6f00000000000000",
+                    "de00000000000000",
+                    // used_bytes: u64 = 999
+                    "e703000000000000",
+                    // max_bytes: u64 = 1_000_000
+                    "40420f0000000000",
+                ),
+            );
+        }
+
+        #[test]
+        fn stored_node() {
+            assert_golden(
+                StoredNode {
+                    data: vec![1, 2, 3, 4, 5],
+                    children: Some(vec![H256::repeat_byte(0x11)]),
+                },
+                concat!(
+                    // data: Vec<u8>, compact length 5, then the bytes
+                    "14",
+                    "0102030405",
+                    // children: Option<Vec<H256>> = Some, compact length 1
+                    "01",
+                    "04",
+                    "1111111111111111111111111111111111111111111111111111111111111111",
+                ),
+            );
+            assert_golden(
+                StoredNode {
+                    data: vec![],
+                    children: None,
+                },
+                "0000",
+            );
+        }
+
+        #[test]
+        fn mmr_leaf() {
+            // Also hashed (`blake2_256(leaf.encode())`) to build the MMR, so a
+            // layout change breaks on-chain MMR root reproducibility too.
+            assert_golden(
                 MmrLeaf {
                     data_root: H256::repeat_byte(0xcd),
                     data_size: 111,
                     total_size: 222,
                 },
-                MmrLeaf {
-                    data_root: H256::repeat_byte(0xef),
-                    data_size: 333,
-                    total_size: 555,
-                },
-            ],
-            used_bytes: 999,
-            max_bytes: 1_000_000,
-        };
+                concat!(
+                    // data_root: H256 (0xcd * 32)
+                    "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+                    // data_size: u64 = 111 (little-endian)
+                    "6f00000000000000",
+                    // total_size: u64 = 222
+                    "de00000000000000",
+                ),
+            );
+        }
 
-        let encoded = bucket.encode();
-        let decoded = BucketState::decode(&mut &encoded[..]).unwrap();
+        #[test]
+        fn on_disk_bytes() {
+            // Raw keys and values as written through the public API.
+            let dir = TempDir::new().unwrap();
+            let storage = DiskStorage::new(dir.path()).unwrap();
 
-        assert_eq!(decoded, bucket);
-    }
+            // CF_BUCKETS: key = bucket_id as u64 little-endian, value = SCALE(BucketState).
+            let bucket_id: BucketId = 0x0102030405060708;
+            storage.init_bucket(bucket_id, 1_000).unwrap();
+            let cf = storage.db.cf_handle(CF_BUCKETS).unwrap();
+            let key = hex::decode("0807060504030201").unwrap();
+            let raw = storage
+                .db
+                .get_cf(&cf, key)
+                .unwrap()
+                .expect("bucket must be stored under the little-endian bucket_id key");
+            assert_eq!(
+                hex::encode(&raw),
+                // BucketState::new(1_000): zero root, no leaves, max_bytes = 1_000
+                "0000000000000000000000000000000000000000000000000000000000000000\
+                 0000000000000000\
+                 00\
+                 0000000000000000\
+                 e803000000000000"
+            );
 
-    #[test]
-    fn stored_node_encode_decode_round_trip() {
-        let node = StoredNode {
-            data: vec![1, 2, 3, 4, 5],
-            children: Some(vec![H256::repeat_byte(0x11), H256::repeat_byte(0x22)]),
-        };
+            // CF_NODES: key = blake2_256(data), value = SCALE(StoredNode).
+            let data = vec![1u8, 2, 3, 4, 5];
+            let hash = blake2_256(&data);
+            storage.store_node(bucket_id, hash, data, None).unwrap();
+            let cf = storage.db.cf_handle(CF_NODES).unwrap();
+            let raw = storage.db.get_cf(&cf, hash.as_bytes()).unwrap().unwrap();
+            assert_eq!(hex::encode(&raw), "14010203040500");
 
-        let encoded = node.encode();
-        let decoded = StoredNode::decode(&mut &encoded[..]).unwrap();
-
-        assert_eq!(decoded, node);
+            // CF_METADATA / KEY_NONCE: raw u64 little-endian (not SCALE).
+            storage.nonce_store().persist(42);
+            let cf = storage.db.cf_handle(CF_METADATA).unwrap();
+            let raw = storage.db.get_cf(&cf, KEY_NONCE).unwrap().unwrap();
+            assert_eq!(hex::encode(&raw), "2a00000000000000");
+        }
     }
 
     #[test]
