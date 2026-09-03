@@ -42,6 +42,12 @@ pub struct ProviderInfoResponse {
     pub max_capacity: u64,
     /// Available capacity in bytes (None if unlimited).
     pub available_capacity: Option<u64>,
+    /// Anchor block at which deregistration becomes finalisable
+    /// (`None` = not deregistering).
+    pub deregister_at: Option<u32>,
+    /// Reputation 0-100, from [`reputation_score`]. Carried here so clients
+    /// never re-implement the formula.
+    pub reputation: u8,
 }
 
 /// Storage requirements for provider matching.
@@ -126,6 +132,43 @@ pub struct AgreementResponse {
     pub started_at: u32,
 }
 
+/// Upper bound on the number of candidates `challenge_candidates` returns, so
+/// a caller-supplied `limit` cannot ask for an unbounded response.
+pub const MAX_CHALLENGE_CANDIDATES: u32 = 256;
+
+/// A provider worth challenging: it holds at least one storage agreement and
+/// its reputation is below the caller's threshold.
+#[derive(Clone, PartialEq, Eq, Encode, Decode, TypeInfo, Debug)]
+#[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
+pub struct ChallengeCandidate {
+    /// One of the buckets this provider stores for — the challenge target.
+    pub bucket_id: BucketId,
+    pub provider: Vec<u8>, // Encoded AccountId
+    pub stake: u128,
+    /// Successfully defended challenges from authorized challengers
+    /// (member/agreement owner at creation). Counted at resolution.
+    pub challenges_received_authorized: u32,
+    /// Same, for general-public challengers.
+    pub challenges_received_public: u32,
+    pub challenges_failed: u32,
+    /// Reputation 0–100, from [`reputation_score`].
+    pub reputation: u8,
+}
+
+/// A provider's 0–100 reputation from its on-chain challenge record: the
+/// share of resolved challenges it defended. Both counters are tallied at
+/// resolution, so pending challenges never count against a provider.
+///
+/// Providers with no resolved challenges score 100 — benefit of the doubt, so
+/// a newly registered provider is not immediately challenge-worthy.
+pub fn reputation_score(challenges_defended: u32, challenges_failed: u32) -> u8 {
+    let total = challenges_defended as u64 + challenges_failed as u64;
+    if total == 0 {
+        return 100;
+    }
+    ((challenges_defended as u64 * 100) / total).min(100) as u8
+}
+
 /// Challenge information.
 #[derive(Clone, PartialEq, Eq, Encode, Decode, TypeInfo, Debug)]
 #[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
@@ -147,6 +190,11 @@ pub struct ChallengeResponse {
 
 sp_api::decl_runtime_apis! {
     /// Runtime API for the storage provider pallet.
+    ///
+    /// v2 reshaped `ProviderInfoResponse` (`deregister_at`, `reputation`) and added
+    /// `challenge_candidates`. Declared explicitly so callers can probe the version
+    /// instead of decoding a v1 shape that no longer exists.
+    #[api_version(3)]
     pub trait StorageProviderApi<AccountId, BlockNumber, Balance>
     where
         AccountId: Encode + Decode,
@@ -199,6 +247,21 @@ sp_api::decl_runtime_apis! {
 
         /// Get providers with sufficient capacity for the given bytes (paginated).
         fn providers_with_capacity(bytes_needed: u64, offset: u32, limit: u32) -> Vec<(AccountId, ProviderInfoResponse)>;
+
+        /// Returns providers worth challenging, worst reputation first.
+        ///
+        /// A provider qualifies if it holds at least one storage agreement and
+        /// its reputation is strictly below `max_reputation`. Each provider
+        /// appears once, paired with one of its buckets, so a caller challenges
+        /// it at most once per round.
+        ///
+        /// Reputation runs from 0 to 100 (see [`reputation_score`]).
+        /// `max_reputation` saturates outside that range instead of erroring:
+        /// `0` matches nothing, and any value above 100 disables the filter.
+        ///
+        /// `limit` is clamped to [`MAX_CHALLENGE_CANDIDATES`]; it bounds the
+        /// response, not the underlying scan.
+        fn challenge_candidates(max_reputation: u8, limit: u32) -> Vec<ChallengeCandidate>;
 
         /// The anchor block every on-chain duration (timeouts, expiries,
         /// `valid_until`, nonce age) is measured against. Off-chain actors read

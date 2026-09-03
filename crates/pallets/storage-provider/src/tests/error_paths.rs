@@ -71,7 +71,6 @@ fn freeze_bucket_fails_min_providers_not_met() {
                 start_seq: 0,
                 leaf_count: 10,
             },
-            0, // nonce
             Default::default(),
         ));
 
@@ -172,7 +171,6 @@ fn freeze_bucket_already_frozen() {
                 start_seq: 0,
                 leaf_count: 10,
             },
-            0, // nonce
             Default::default(),
         ));
 

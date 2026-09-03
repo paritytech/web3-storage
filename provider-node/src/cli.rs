@@ -3,18 +3,33 @@
 //! CLI argument parsing for the storage provider node.
 
 use clap::Parser;
+use provider_chain::chain_connection::{ChainTransport, SpecSource};
+use provider_storage::StorageBackendSpec;
 use std::path::PathBuf;
 
 /// Placeholder provider ID used when no identity is configured.
 pub const DEFAULT_PROVIDER_ID: &str = "0x0000000000000000000000000000000000000000";
 
-/// Storage backend mode.
+/// Storage backend to run.
+///
+/// `rename_all` keeps the values lower-case instead of clap's kebab-case
+/// default, so an engine reads as `rocksdb` rather than `rocks-db`.
 #[derive(Clone, Debug, clap::ValueEnum)]
-pub enum StorageMode {
-    /// In-memory storage (data lost on restart).
-    Inmemory,
-    /// Persistent disk storage.
-    Disk,
+#[value(rename_all = "lower")]
+pub enum StorageBackendKind {
+    /// Persistent RocksDB storage.
+    RocksDb,
+}
+
+impl StorageBackendKind {
+    /// The spec for this engine, rooted at `path`.
+    ///
+    /// The only place a kind becomes a spec, so a new engine is one arm here.
+    pub fn spec(&self, path: PathBuf) -> StorageBackendSpec {
+        match self {
+            Self::RocksDb => StorageBackendSpec::RocksDb { path },
+        }
+    }
 }
 
 /// Storage Provider Node - Off-chain storage server for Web3 Storage.
@@ -44,12 +59,19 @@ pub struct Cli {
 #[derive(Debug, clap::Args)]
 pub struct StorageParams {
     /// Storage backend to use.
-    #[arg(long, value_enum, default_value_t = StorageMode::Inmemory)]
-    pub storage_mode: StorageMode,
+    #[arg(long, value_enum, default_value_t = StorageBackendKind::RocksDb)]
+    pub storage_backend: StorageBackendKind,
 
-    /// Path for persistent data (only used with --storage-mode disk).
+    /// Directory holding the chunks, the MMR state and the nonce counter.
     #[arg(long, default_value = "./provider-data", env = "STORAGE_PATH")]
     pub storage_path: PathBuf,
+}
+
+impl StorageParams {
+    /// The backend these flags describe.
+    pub fn spec(&self) -> StorageBackendSpec {
+        self.storage_backend.spec(self.storage_path.clone())
+    }
 }
 
 /// Parameters for network endpoints.
@@ -73,6 +95,31 @@ pub struct RpcParams {
     )]
     pub chain_rpc: String,
 
+    /// How to talk to the chain: an external RPC node or the embedded smoldot
+    /// light client (which needs no operated RPC infrastructure).
+    #[arg(
+        long,
+        value_enum,
+        value_name = "TRANSPORT",
+        default_value_t = TransportKind::Rpc,
+        env = "CHAIN_TRANSPORT"
+    )]
+    pub chain_transport: TransportKind,
+
+    /// Relay-chain spec for the light transport: a spec file path (a raw
+    /// spec with reachable boot nodes — the trust-preserving option), or a
+    /// ws:// / wss:// node URL to fetch it from at startup (dev convenience;
+    /// trusts that node).
+    #[arg(long, value_name = "FILE|WS_URL", env = "RELAY_CHAIN_SPEC")]
+    pub relay_chain_spec: Option<String>,
+
+    /// Parachain spec for the light transport: a spec file path (a raw spec
+    /// with boot nodes serving the light request-response protocols), or a
+    /// ws:// / wss:// node URL to fetch it from. Defaults to fetching from
+    /// --chain-rpc (dev only).
+    #[arg(long, value_name = "FILE|WS_URL", env = "PARA_CHAIN_SPEC")]
+    pub para_chain_spec: Option<String>,
+
     /// Public multiaddr to advertise on chain instead of the bind-derived one.
     ///
     /// On hosted deployments the bind address (e.g. `0.0.0.0:3333`) is not
@@ -94,6 +141,53 @@ pub struct RpcParams {
         value_delimiter = ','
     )]
     pub cors_allowed_origins: Option<Vec<String>>,
+}
+
+/// Chain transport selection for `--chain-transport`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum TransportKind {
+    /// External RPC node over WebSocket (`--chain-rpc`).
+    Rpc,
+    /// Embedded smoldot light client. Chain specs come from
+    /// `--relay-chain-spec` / `--para-chain-spec` — a spec file path, or a
+    /// ws:// URL to fetch from (dev only); the parachain spec defaults to
+    /// fetching from `--chain-rpc`.
+    Light,
+}
+
+/// A spec argument is a node URL to fetch from when it looks like a
+/// WebSocket URL, and a spec file path otherwise.
+fn spec_source(value: &str) -> SpecSource {
+    if value.starts_with("ws://") || value.starts_with("wss://") {
+        SpecSource::FetchFromRpc(value.to_string())
+    } else {
+        SpecSource::File(PathBuf::from(value))
+    }
+}
+
+impl RpcParams {
+    /// Resolve the CLI flags into a concrete [`ChainTransport`].
+    ///
+    /// Errors when the light transport has no relay spec source.
+    pub fn chain_transport(&self) -> Result<ChainTransport, String> {
+        match self.chain_transport {
+            TransportKind::Rpc => Ok(ChainTransport::Rpc {
+                url: self.chain_rpc.clone(),
+            }),
+            TransportKind::Light => Ok(ChainTransport::LightClient {
+                relay_spec: self.relay_chain_spec.as_deref().map(spec_source).ok_or(
+                    "--chain-transport light needs --relay-chain-spec (a spec file, or, \
+                     for dev, a ws:// node URL to fetch it from)"
+                        .to_string(),
+                )?,
+                para_spec: self
+                    .para_chain_spec
+                    .as_deref()
+                    .map(spec_source)
+                    .unwrap_or_else(|| SpecSource::FetchFromRpc(self.chain_rpc.clone())),
+            }),
+        }
+    }
 }
 
 /// Parameters for provider identity and signing keys.
@@ -187,6 +281,24 @@ pub struct AuthParams {
         env = "AUTH_MAX_SKEW"
     )]
     pub auth_max_skew: u64,
+
+    /// Maximum age of cached membership served while the chain is unreachable.
+    #[arg(
+        long,
+        value_name = "SECONDS",
+        default_value_t = 300,
+        env = "AUTH_MAX_STALE"
+    )]
+    pub auth_max_stale: u64,
+
+    /// Maximum number of buckets' membership resident in the cache at once.
+    #[arg(
+        long,
+        value_name = "ENTRIES",
+        default_value_t = 10_000,
+        env = "AUTH_CACHE_MAX_ENTRIES"
+    )]
+    pub auth_cache_max_entries: u64,
 }
 
 /// Parameters for the challenge responder background service.
@@ -254,7 +366,12 @@ mod tests {
     #[test]
     fn default_values() {
         let cli = Cli::try_parse_from(["storage-provider-node"]).unwrap();
-        assert!(matches!(cli.storage.storage_mode, StorageMode::Inmemory));
+        // Persistence is the default: an operator who passes no storage flags
+        // must not silently get a backend that drops everything on restart.
+        assert!(matches!(
+            cli.storage.storage_backend,
+            StorageBackendKind::RocksDb
+        ));
         assert_eq!(cli.storage.storage_path, PathBuf::from("./provider-data"));
         assert_eq!(cli.rpc.bind_addr, "0.0.0.0:3333");
         assert_eq!(cli.rpc.chain_rpc, "ws://127.0.0.1:2222");
@@ -272,8 +389,8 @@ mod tests {
     fn all_args_parse() {
         let cli = Cli::try_parse_from([
             "storage-provider-node",
-            "--storage-mode",
-            "disk",
+            "--storage-backend",
+            "rocksdb",
             "--storage-path",
             "/data",
             "--bind-addr",
@@ -292,7 +409,10 @@ mod tests {
         ])
         .unwrap();
 
-        assert!(matches!(cli.storage.storage_mode, StorageMode::Disk));
+        assert!(matches!(
+            cli.storage.storage_backend,
+            StorageBackendKind::RocksDb
+        ));
         assert_eq!(cli.storage.storage_path, PathBuf::from("/data"));
         assert_eq!(cli.rpc.bind_addr, "127.0.0.1:4444");
         assert_eq!(cli.rpc.chain_rpc, "ws://example.com:9944");
@@ -304,6 +424,98 @@ mod tests {
         assert_eq!(cli.replica_sync.replica_poll_interval, 30);
         assert_eq!(cli.replica_sync.replica_sync_timeout, 600);
         assert_eq!(cli.replica_sync.replica_max_concurrent, 5);
+    }
+
+    /// Values are the engine names, and each maps to the matching spec.
+    #[test]
+    fn backend_value_is_the_engine_name() {
+        let spec = |value: &str| {
+            Cli::try_parse_from(["storage-provider-node", "--storage-backend", value])
+                .map(|cli| cli.storage.spec())
+        };
+
+        assert_eq!(
+            spec("rocksdb").unwrap(),
+            StorageBackendSpec::RocksDb {
+                path: "./provider-data".into()
+            }
+        );
+
+        for rejected in ["disk", "rocks-db", "inmemory"] {
+            assert!(
+                spec(rejected).is_err(),
+                "--storage-backend {rejected} should be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn transport_defaults_to_rpc() {
+        let cli = Cli::try_parse_from(["storage-provider-node"]).unwrap();
+        assert!(matches!(cli.rpc.chain_transport, TransportKind::Rpc));
+        let transport = cli.rpc.chain_transport().unwrap();
+        assert!(matches!(transport, ChainTransport::Rpc { url } if url == "ws://127.0.0.1:2222"));
+    }
+
+    #[test]
+    fn light_transport_resolves_spec_sources() {
+        // Spec files win over RPC fetching.
+        let cli = Cli::try_parse_from([
+            "storage-provider-node",
+            "--chain-transport",
+            "light",
+            "--relay-chain-spec",
+            "/specs/relay.json",
+            "--para-chain-spec",
+            "/specs/para.json",
+        ])
+        .unwrap();
+        let ChainTransport::LightClient {
+            relay_spec,
+            para_spec,
+        } = cli.rpc.chain_transport().unwrap()
+        else {
+            panic!("expected light transport");
+        };
+        assert!(
+            matches!(relay_spec, SpecSource::File(p) if p == PathBuf::from("/specs/relay.json").as_path())
+        );
+        assert!(
+            matches!(para_spec, SpecSource::File(p) if p == PathBuf::from("/specs/para.json").as_path())
+        );
+
+        // A ws:// spec argument means "fetch from this node"; without a para
+        // spec at all, the para spec fetches from --chain-rpc.
+        let cli = Cli::try_parse_from([
+            "storage-provider-node",
+            "--chain-transport",
+            "light",
+            "--relay-chain-spec",
+            "ws://127.0.0.1:9900",
+        ])
+        .unwrap();
+        let ChainTransport::LightClient {
+            relay_spec,
+            para_spec,
+        } = cli.rpc.chain_transport().unwrap()
+        else {
+            panic!("expected light transport");
+        };
+        assert!(
+            matches!(relay_spec, SpecSource::FetchFromRpc(url) if url == "ws://127.0.0.1:9900")
+        );
+        assert!(matches!(para_spec, SpecSource::FetchFromRpc(url) if url == "ws://127.0.0.1:2222"));
+    }
+
+    #[test]
+    fn light_transport_without_relay_source_errors() {
+        let cli =
+            Cli::try_parse_from(["storage-provider-node", "--chain-transport", "light"]).unwrap();
+        let err = cli.rpc.chain_transport().unwrap_err();
+        assert!(
+            err.contains("--relay-chain-spec"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]

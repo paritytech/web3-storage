@@ -8,7 +8,10 @@
 #
 # See: https://docs.github.com/articles/about-code-owners
 
-# Design documents require review from @eskimor.
-# `/**` matches every file in docs/design/ recursively — all subdirectories,
-# all file types, no exceptions.
+# Canonical documentation — docs/design is the core design and requires
+# @eskimor's review; docs/reference must stay true to the code and requires
+# sign-off from any one of its owners.
+# `/**` matches every file under the preceding directory recursively — all
+# subdirectories, all file types, no exceptions.
 /docs/design/**              @eskimor
+/docs/reference/**           @eskimor @mudigal @bkontur

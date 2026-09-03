@@ -149,9 +149,7 @@ impl S3Client {
         let storage_client = storage_client::StorageUserClient::new(config, signer.clone())
             .map_err(|e| S3ClientError::ProviderError(e.to_string()))?;
 
-        let substrate_client = SubstrateClient::new(chain_url, signer)
-            .await
-            .map_err(|e| S3ClientError::ChainError(e.to_string()))?;
+        let substrate_client = SubstrateClient::new(chain_url, signer).await?;
 
         Ok(Self {
             storage_client,
@@ -183,15 +181,13 @@ impl S3Client {
         let s3_bucket_id = self
             .substrate_client
             .create_s3_bucket(name, provider, &terms, &sig, visibility)
-            .await
-            .map_err(S3ClientError::ChainError)?;
+            .await?;
 
         // Fetch the created bucket info to get the layer0_bucket_id
         let bucket_info = self
             .substrate_client
             .get_bucket_info(s3_bucket_id)
-            .await
-            .map_err(S3ClientError::ChainError)?
+            .await?
             .ok_or_else(|| {
                 S3ClientError::InternalError("Bucket created but not found".to_string())
             })?;
@@ -214,10 +210,7 @@ impl S3Client {
             .await?
             .ok_or_else(|| S3ClientError::BucketNotFound(name.to_string()))?;
 
-        self.substrate_client
-            .delete_s3_bucket(bucket_id)
-            .await
-            .map_err(|e| S3ClientError::ChainError(e.to_string()))?;
+        self.substrate_client.delete_s3_bucket(bucket_id).await?;
 
         info!("Bucket deleted: {}", name);
         Ok(())
@@ -233,8 +226,7 @@ impl S3Client {
 
         self.substrate_client
             .get_bucket_info(bucket_id)
-            .await
-            .map_err(|e| S3ClientError::ChainError(e.to_string()))?
+            .await?
             .ok_or_else(|| S3ClientError::BucketNotFound(name.to_string()))
     }
 
@@ -300,8 +292,7 @@ impl S3Client {
                 &content_type,
                 metadata_vec,
             )
-            .await
-            .map_err(|e| S3ClientError::ChainError(e.to_string()))?;
+            .await?;
 
         let etag = hex::encode(cid.as_bytes());
         info!("Object uploaded: {}/{} (etag={})", bucket, key, etag);
@@ -322,8 +313,7 @@ impl S3Client {
         let metadata = self
             .substrate_client
             .get_object_metadata(bucket_info.s3_bucket_id, key)
-            .await
-            .map_err(|e| S3ClientError::ChainError(e.to_string()))?
+            .await?
             .ok_or_else(|| S3ClientError::ObjectNotFound {
                 bucket: bucket.to_string(),
                 key: key.to_string(),
@@ -370,8 +360,7 @@ impl S3Client {
 
         self.substrate_client
             .delete_object_metadata(bucket_info.s3_bucket_id, key)
-            .await
-            .map_err(|e| S3ClientError::ChainError(e.to_string()))?;
+            .await?;
 
         info!("Object deleted: {}/{}", bucket, key);
         Ok(())
@@ -400,15 +389,13 @@ impl S3Client {
                 dst_bucket_info.s3_bucket_id,
                 dst_key,
             )
-            .await
-            .map_err(|e| S3ClientError::ChainError(e.to_string()))?;
+            .await?;
 
         // Read the copied object's metadata from the destination
         let dst_metadata = self
             .substrate_client
             .get_object_metadata(dst_bucket_info.s3_bucket_id, dst_key)
-            .await
-            .map_err(|e| S3ClientError::ChainError(e.to_string()))?
+            .await?
             .ok_or_else(|| S3ClientError::ObjectNotFound {
                 bucket: dst_bucket.to_string(),
                 key: dst_key.to_string(),

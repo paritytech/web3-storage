@@ -635,7 +635,7 @@ pub struct DriveInfo<
 
 /// Compute blake2-256 CID for data
 pub fn compute_cid(data: &[u8]) -> Cid {
-    sp_core::hashing::blake2_256(data).into()
+    sp_crypto_hashing::blake2_256(data).into()
 }
 
 /// Convert CID to hex string (for protobuf storage)

@@ -72,7 +72,7 @@ export async function httpFetch(
  * subset of PAPI's `PolkadotSigner` we use, so both a derived dev signer and a
  * browser wallet extension satisfy it. `signBytes` is async and — for wallets
  * and PAPI signers alike — wraps the payload in `<Bytes>…</Bytes>`; the provider
- * accepts that wrapped form (see `wrap_bytes` in provider-node/src/auth.rs).
+ * accepts that wrapped form (see `wrap_bytes` in crates/providers/auth).
  */
 export interface ProviderRequestSigner {
   publicKey: Uint8Array;
@@ -80,8 +80,8 @@ export interface ProviderRequestSigner {
 }
 
 /**
- * Build the `Authorization` header the provider node verifies in
- * provider-node/src/auth.rs: header `Web3Storage <pubkey>:<sig>:<timestamp>`
+ * Build the `Authorization` header the provider node verifies via the
+ * crates/providers/auth crate: header `Web3Storage <pubkey>:<sig>:<timestamp>`
  * over the message `web3storage:<METHOD>:<bucket_id>:<timestamp>`.
  *
  * Signs through `signBytes` so wallet-backed signers work — no raw key needed.
@@ -90,10 +90,11 @@ export async function signProviderRequest(
   signer: ProviderRequestSigner,
   method: string,
   bucketId: bigint | number,
+  time: number = Date.now()
 ): Promise<Record<string, string>> {
-  const timestamp = Math.floor(Date.now() / 1000).toString();
+  const timestamp = Math.floor(time / 1000).toString();
   // Interpolate the id directly (bigint/number both render as the decimal
-  // string auth.rs reconstructs); `Number(bigint)` would lose precision above
+  // string the provider reconstructs); `Number(bigint)` would lose precision above
   // 2^53 and break signature verification for large bucket ids.
   const message = `web3storage:${method}:${bucketId}:${timestamp}`;
   const sig = await signer.signBytes(new TextEncoder().encode(message));

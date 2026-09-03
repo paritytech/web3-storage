@@ -32,7 +32,8 @@ use crate::challenger::{ChallengeId, ChallengerClient};
 use crate::checkpoint_persistence::{
     CheckpointPersistence, PersistedCheckpointState, PersistenceConfig, StateBuilder,
 };
-use crate::substrate::SubstrateClient;
+use crate::convert;
+use crate::substrate::{extrinsics, SubstrateClient};
 use crate::{ClientError, CommitmentResponse};
 use sp_core::H256;
 use sp_runtime::AccountId32;
@@ -40,8 +41,8 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use storage_primitives::{BucketId, ChunkLocation};
-use subxt::dynamic::Value;
+use storage_primitives::{BucketId, ChunkLocation, Commitment};
+use storage_subxt::api;
 use tokio::sync::{mpsc, RwLock};
 
 // ============================================================================
@@ -239,6 +240,19 @@ pub struct CommitmentCollection {
     pub disagreeing_providers: Vec<(AccountId32, H256)>,
     /// Providers that couldn't be reached.
     pub unreachable_providers: Vec<AccountId32>,
+}
+
+/// Length of an sr25519 signature; the only scheme providers sign with.
+const SR25519_SIGNATURE_LEN: usize = 64;
+
+/// A provider response that cleared every ingestion check, reduced to the
+/// values the consensus pass consumes.
+#[derive(Clone)]
+struct ValidatedCommitment {
+    mmr_root: H256,
+    start_seq: u64,
+    leaf_count: u64,
+    signature: Vec<u8>,
 }
 
 /// Detected conflict between providers.
@@ -798,20 +812,39 @@ impl CheckpointManager {
             }
         }
 
-        // If we have manually configured endpoints, use those
+        // If we have manually configured endpoints, use those. Their accounts
+        // must come from the nodes themselves: the checkpoint extrinsic pairs
+        // each signature with an account and the pallet rejects any signer that
+        // is not in the bucket's snapshot.
         if !self.provider_endpoints.is_empty() {
-            let providers: Vec<ProviderInfo> = self
-                .provider_endpoints
-                .iter()
-                .enumerate()
-                .map(|(i, endpoint)| ProviderInfo {
-                    account_id: AccountId32::new([i as u8; 32]), // Placeholder
-                    endpoint: endpoint.clone(),
-                    public_key: Vec::new(),
-                    last_seen: None,
-                    status: ProviderStatus::Unknown,
-                })
-                .collect();
+            let ids = futures::future::join_all(
+                self.provider_endpoints
+                    .iter()
+                    .map(|endpoint| crate::ProviderClient::fetch_provider_id(endpoint)),
+            )
+            .await;
+
+            let mut providers = Vec::new();
+            for (endpoint, id) in self.provider_endpoints.iter().zip(ids) {
+                match id {
+                    Ok(account_id) => providers.push(ProviderInfo {
+                        account_id,
+                        endpoint: endpoint.clone(),
+                        public_key: Vec::new(),
+                        last_seen: None,
+                        status: ProviderStatus::Unknown,
+                    }),
+                    Err(e) => tracing::warn!(
+                        "Skipping provider {endpoint}: could not read its account from /info: {e}"
+                    ),
+                }
+            }
+
+            if providers.is_empty() {
+                return Err(ClientError::Chain(
+                    "No configured provider endpoint reported a usable account id".to_string(),
+                ));
+            }
 
             // Update cache
             self.update_provider_cache(bucket_id, providers.clone())
@@ -838,37 +871,21 @@ impl CheckpointManager {
         &self,
         bucket_id: BucketId,
     ) -> Result<Vec<ProviderInfo>, ClientError> {
-        use sp_core::twox_128;
+        let at = self.chain_client.at_current_block().await?;
 
-        let api = self.chain_client.api();
-
-        // Build storage key for Buckets map
-        let pallet_hash = twox_128(b"StorageProvider");
-        let storage_hash = twox_128(b"Buckets");
-        let key_bytes = bucket_id.to_le_bytes();
-        let key_hash = sp_core::blake2_128(&key_bytes);
-
-        let mut bucket_storage_key = Vec::new();
-        bucket_storage_key.extend_from_slice(&pallet_hash);
-        bucket_storage_key.extend_from_slice(&storage_hash);
-        bucket_storage_key.extend_from_slice(&key_hash);
-        bucket_storage_key.extend_from_slice(&key_bytes);
-
-        let at = api
-            .at_current_block()
+        let bucket = at
+            .storage()
+            .try_fetch(api::storage().storage_provider().buckets(), (bucket_id,))
             .await
-            .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?;
+            .map_err(|e| ClientError::Chain(format!("Failed to fetch bucket: {e}")))?
+            .ok_or_else(|| ClientError::Chain(format!("Bucket {bucket_id} not found")))?
+            .decode()
+            .map_err(|e| ClientError::Chain(format!("Failed to decode bucket: {e}")))?;
 
-        let bucket_bytes = match at.storage().fetch_raw(bucket_storage_key).await {
-            Ok(bytes) => bytes,
-            Err(subxt::error::StorageError::NoValueFound) => {
-                return Err(ClientError::Chain(format!("Bucket {bucket_id} not found")))
-            }
-            Err(e) => return Err(ClientError::Chain(format!("Failed to fetch bucket: {e}"))),
-        };
-
-        // Extract primary_providers from bucket raw bytes
-        let provider_accounts = self.extract_primary_providers_from_raw(&bucket_bytes)?;
+        let provider_accounts: Vec<AccountId32> = convert::unbounded(bucket.primary_providers)
+            .iter()
+            .map(convert::to_sp_account)
+            .collect();
 
         if provider_accounts.is_empty() {
             return Err(ClientError::Chain(format!(
@@ -876,213 +893,46 @@ impl CheckpointManager {
             )));
         }
 
-        // Query each provider for their info
+        // Read every provider at the same block, validating the address once.
+        let entry = at
+            .storage()
+            .entry(api::storage().storage_provider().providers())
+            .map_err(|e| ClientError::Chain(format!("Failed to prepare provider query: {e}")))?;
+
         let mut providers = Vec::new();
         for account_id in provider_accounts {
-            match self.query_provider_info(&account_id).await {
-                Ok(info) => providers.push(info),
-                Err(_e) => {
-                    // Failed to get provider info, include with unknown status
-                    providers.push(ProviderInfo {
-                        account_id,
-                        endpoint: String::new(),
-                        public_key: Vec::new(),
-                        last_seen: None,
-                        status: ProviderStatus::Unknown,
-                    });
+            // A provider that is unreadable or unreachable still belongs in the
+            // list, flagged Unknown, so callers see the full membership.
+            let mut info = ProviderInfo {
+                account_id: account_id.clone(),
+                endpoint: String::new(),
+                public_key: Vec::new(),
+                last_seen: None,
+                status: ProviderStatus::Unknown,
+            };
+
+            if let Ok(Some(value)) = entry
+                .try_fetch((convert::to_subxt_account(&account_id),))
+                .await
+            {
+                if let Ok(registration) = value.decode() {
+                    match Self::parse_multiaddr_to_http(&convert::unbounded(registration.multiaddr))
+                    {
+                        Ok(endpoint) => {
+                            info.endpoint = endpoint;
+                            info.public_key = convert::unbounded(registration.public_key);
+                        }
+                        Err(e) => {
+                            tracing::warn!("Provider {account_id} has an unusable multiaddr: {e}")
+                        }
+                    }
                 }
             }
+
+            providers.push(info);
         }
 
         Ok(providers)
-    }
-
-    /// Query provider info from chain using raw storage.
-    async fn query_provider_info(
-        &self,
-        account_id: &AccountId32,
-    ) -> Result<ProviderInfo, ClientError> {
-        use sp_core::twox_128;
-
-        let api = self.chain_client.api();
-
-        // Build storage key for Providers map
-        let pallet_hash = twox_128(b"StorageProvider");
-        let storage_hash = twox_128(b"Providers");
-        let key_bytes: &[u8] = account_id.as_ref();
-        let key_hash = sp_core::blake2_128(key_bytes);
-
-        let mut provider_storage_key = Vec::new();
-        provider_storage_key.extend_from_slice(&pallet_hash);
-        provider_storage_key.extend_from_slice(&storage_hash);
-        provider_storage_key.extend_from_slice(&key_hash);
-        provider_storage_key.extend_from_slice(key_bytes);
-
-        let at = api
-            .at_current_block()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?;
-
-        let provider_bytes = match at.storage().fetch_raw(provider_storage_key).await {
-            Ok(bytes) => bytes,
-            Err(subxt::error::StorageError::NoValueFound) => {
-                return Err(ClientError::Chain(format!(
-                    "Provider {account_id:?} not found on chain"
-                )))
-            }
-            Err(e) => return Err(ClientError::Chain(format!("Failed to fetch provider: {e}"))),
-        };
-
-        // Extract multiaddr and public_key from provider raw bytes
-        let (multiaddr_bytes, public_key) =
-            self.extract_provider_fields_from_raw(&provider_bytes)?;
-
-        // Parse multiaddr to HTTP endpoint
-        let endpoint = Self::parse_multiaddr_to_http(&multiaddr_bytes)?;
-
-        Ok(ProviderInfo {
-            account_id: account_id.clone(),
-            endpoint,
-            public_key,
-            last_seen: None,
-            status: ProviderStatus::Unknown,
-        })
-    }
-
-    /// Extract primary_providers from bucket raw bytes.
-    ///
-    /// Uses raw storage fetch and manual SCALE decoding.
-    fn extract_primary_providers_from_raw(
-        &self,
-        raw_bytes: &[u8],
-    ) -> Result<Vec<AccountId32>, ClientError> {
-        // Bucket SCALE structure (simplified):
-        // - members: BoundedVec<Member> - compact length + members
-        // - frozen_start_seq: Option<u64> - 1 byte tag + optional 8 bytes
-        // - min_providers: u32 - 4 bytes
-        // - primary_providers: BoundedVec<AccountId> - compact length + 32-byte AccountIds
-        //
-        // We need to skip to primary_providers and decode the list.
-        // This is complex because Member has variable size.
-        //
-        // For now, we'll scan for a pattern: a compact length followed by 32-byte chunks.
-        // This is a simplified heuristic.
-
-        let mut accounts = Vec::new();
-
-        // Try to find sequences of 32-byte account IDs
-        // Look for patterns where we have compact-encoded length followed by N * 32 bytes
-        if raw_bytes.len() >= 33 {
-            // Try different starting positions to find the primary_providers array
-            for start in 0..raw_bytes.len().saturating_sub(33) {
-                // Check if this looks like a compact-encoded length
-                let (count, offset) = match raw_bytes[start] {
-                    0..=63 => (raw_bytes[start] as usize / 4, 1), // Single byte compact
-                    _ => continue,
-                };
-
-                // Verify we have enough bytes for 'count' account IDs
-                if start + offset + count * 32 <= raw_bytes.len() && count > 0 && count <= 10 {
-                    let mut potential_accounts = Vec::new();
-                    let mut valid = true;
-
-                    for i in 0..count {
-                        let acc_start = start + offset + i * 32;
-                        let acc_end = acc_start + 32;
-                        if acc_end <= raw_bytes.len() {
-                            let mut arr = [0u8; 32];
-                            arr.copy_from_slice(&raw_bytes[acc_start..acc_end]);
-                            // Basic sanity check - account ID shouldn't be all zeros or all 0xFF
-                            if arr != [0u8; 32] && arr != [0xFF; 32] {
-                                potential_accounts.push(AccountId32::from(arr));
-                            } else {
-                                valid = false;
-                                break;
-                            }
-                        }
-                    }
-
-                    if valid && potential_accounts.len() == count {
-                        accounts = potential_accounts;
-                        break;
-                    }
-                }
-            }
-        }
-
-        Ok(accounts)
-    }
-
-    /// Extract multiaddr and public_key from provider raw bytes.
-    fn extract_provider_fields_from_raw(
-        &self,
-        raw_bytes: &[u8],
-    ) -> Result<(Vec<u8>, Vec<u8>), ClientError> {
-        // ProviderInfo SCALE structure:
-        // - multiaddr: BoundedVec<u8> - compact length + bytes
-        // - public_key: BoundedVec<u8> - compact length + bytes
-        // - stake: u128 - 16 bytes
-        // - ...
-        //
-        // multiaddr is the first field, so we can decode it directly.
-
-        if raw_bytes.is_empty() {
-            return Ok((Vec::new(), Vec::new()));
-        }
-
-        // Decode multiaddr (first field)
-        let (multiaddr, multiaddr_end) = self.decode_bounded_vec(raw_bytes, 0)?;
-
-        // Decode public_key (second field)
-        let (public_key, _) = self.decode_bounded_vec(raw_bytes, multiaddr_end)?;
-
-        Ok((multiaddr, public_key))
-    }
-
-    /// Decode a compact-prefixed bounded vec from raw bytes.
-    fn decode_bounded_vec(
-        &self,
-        bytes: &[u8],
-        start: usize,
-    ) -> Result<(Vec<u8>, usize), ClientError> {
-        if start >= bytes.len() {
-            return Ok((Vec::new(), start));
-        }
-
-        // Read compact length
-        let first_byte = bytes[start];
-        let (length, header_size) = match first_byte & 0b11 {
-            0b00 => ((first_byte >> 2) as usize, 1),
-            0b01 => {
-                if start + 2 > bytes.len() {
-                    return Ok((Vec::new(), start));
-                }
-                let val = u16::from_le_bytes([bytes[start], bytes[start + 1]]);
-                ((val >> 2) as usize, 2)
-            }
-            0b10 => {
-                if start + 4 > bytes.len() {
-                    return Ok((Vec::new(), start));
-                }
-                let val = u32::from_le_bytes([
-                    bytes[start],
-                    bytes[start + 1],
-                    bytes[start + 2],
-                    bytes[start + 3],
-                ]);
-                ((val >> 2) as usize, 4)
-            }
-            _ => return Ok((Vec::new(), start)), // Big integer mode not supported
-        };
-
-        let data_start = start + header_size;
-        let data_end = data_start + length;
-
-        if data_end > bytes.len() {
-            return Ok((Vec::new(), start));
-        }
-
-        Ok((bytes[data_start..data_end].to_vec(), data_end))
     }
 
     /// Parse a libp2p multiaddr to an HTTP(S) base URL.
@@ -1194,7 +1044,9 @@ impl CheckpointManager {
 
     /// Collect commitments from all providers for a bucket.
     ///
-    /// This queries all providers in parallel and categorizes results.
+    /// Responses that cannot be part of a checkpoint (unusable signature,
+    /// unparsable root, a range that regresses below the on-chain snapshot)
+    /// are dropped rather than allowed to spoil the batch.
     pub async fn collect_commitments(
         &self,
         bucket_id: BucketId,
@@ -1208,31 +1060,47 @@ impl CheckpointManager {
             )));
         }
 
+        let at = self
+            .chain_client
+            .api()
+            .at_current_block()
+            .await
+            .map_err(|e| ClientError::Chain(format!("Failed to read chain state: {e}")))?;
+        let floor = Self::snapshot_floor(&at, bucket_id).await?;
+
         // Query all providers in parallel
-        let futures: Vec<_> = providers
+        let provider_commitment_futures: Vec<_> = providers
             .iter()
             .map(|p| self.query_provider_commitment(p, bucket_id))
             .collect();
 
-        let results = futures::future::join_all(futures).await;
+        let provider_commitment_results =
+            futures::future::join_all(provider_commitment_futures).await;
 
-        // Categorize results by MMR root
-        let mut commitments_by_root: HashMap<H256, Vec<(AccountId32, CommitmentResponse)>> =
+        // Categorize results by MMR root, keeping only usable responses
+        let mut commitments_by_root: HashMap<H256, Vec<(AccountId32, ValidatedCommitment)>> =
             HashMap::new();
         let mut unreachable = Vec::new();
 
-        for (provider, result) in providers.iter().zip(results) {
-            match result {
-                Ok(commitment) => {
-                    let mmr_root = self.parse_h256(&commitment.mmr_root)?;
+        for (provider, provider_commitment_result) in
+            providers.iter().zip(provider_commitment_results)
+        {
+            let account = provider.account_id.clone();
+            let Ok(commitment) = provider_commitment_result else {
+                unreachable.push(account);
+                continue;
+            };
+
+            match Self::validated_commitment(bucket_id, &account, &commitment, floor) {
+                Some(valid) => {
                     commitments_by_root
-                        .entry(mmr_root)
+                        .entry(valid.mmr_root)
                         .or_default()
-                        .push((provider.account_id.clone(), commitment));
+                        .push((account, valid));
                 }
-                Err(_) => {
-                    unreachable.push(provider.account_id.clone());
-                }
+                // An unusable response is no better than no response: the
+                // provider contributes nothing this round.
+                None => unreachable.push(account),
             }
         }
 
@@ -1255,20 +1123,14 @@ impl CheckpointManager {
             })
             .collect();
 
-        // Extract signature bytes from agreeing providers
         let signatures: Vec<_> = agreeing
             .iter()
-            .map(|(id, c)| {
-                let sig_bytes = self
-                    .decode_signature(&c.provider_signature)
-                    .unwrap_or_default();
-                (id.clone(), sig_bytes)
-            })
+            .map(|(id, valid)| (id.clone(), valid.signature.clone()))
             .collect();
 
         let (start_seq, leaf_count) = agreeing
             .first()
-            .map(|(_, c)| (c.start_seq, c.leaf_count))
+            .map(|(_, valid)| (valid.start_seq, valid.leaf_count))
             .unwrap_or((0, 0));
 
         Ok(CommitmentCollection {
@@ -1280,6 +1142,98 @@ impl CheckpointManager {
             agreeing_providers: agreeing.iter().map(|(id, _)| id.clone()).collect(),
             disagreeing_providers: disagreeing,
             unreachable_providers: unreachable,
+        })
+    }
+
+    /// The committed range already on chain, if any: a checkpoint must never
+    /// move backwards from it.
+    async fn snapshot_floor<C>(
+        at: &subxt::client::ClientAtBlock<subxt::PolkadotConfig, C>,
+        bucket_id: BucketId,
+    ) -> Result<Option<(u64, u64)>, ClientError>
+    where
+        C: subxt::client::OnlineClientAtBlockT<subxt::PolkadotConfig>,
+    {
+        let bucket = at
+            .storage()
+            .try_fetch(api::storage().storage_provider().buckets(), (bucket_id,))
+            .await
+            .map_err(|e| ClientError::Chain(format!("Failed to fetch bucket: {e}")))?;
+
+        let Some(bucket) = bucket else {
+            return Ok(None);
+        };
+        let bucket = bucket
+            .decode()
+            .map_err(|e| ClientError::Chain(format!("Failed to decode bucket: {e}")))?;
+
+        Ok(bucket
+            .snapshot
+            .map(|s| (s.commitment.start_seq, s.commitment.leaf_count)))
+    }
+
+    /// Reduce a provider response to the values consensus needs, or `None`
+    /// (with a warning) when the response cannot be part of a checkpoint.
+    fn validated_commitment(
+        bucket_id: BucketId,
+        account: &AccountId32,
+        commitment: &CommitmentResponse,
+        floor: Option<(u64, u64)>,
+    ) -> Option<ValidatedCommitment> {
+        // A shrinking range would narrow what the provider can be challenged
+        // over — never accept it, whatever the majority says. The range is
+        // `[start_seq, start_seq + leaf_count)` (design: "Canonical range");
+        // delete only ever moves `start_seq` forward, so `leaf_count` legitimately
+        // *drops* on every delete and is not itself a floor - the invariant that
+        // must hold is that neither end of the range moves backwards.
+        if let Some((floor_start_seq, floor_leaf_count)) = floor {
+            let floor_end = floor_start_seq.saturating_add(floor_leaf_count);
+            let commitment_end = commitment.start_seq.saturating_add(commitment.leaf_count);
+            if commitment.start_seq < floor_start_seq || commitment_end < floor_end {
+                tracing::warn!(
+                    "Bucket {bucket_id}: provider {account} reported range (start_seq={}, \
+                     leaf_count={}) behind the on-chain snapshot (start_seq={floor_start_seq}, \
+                     leaf_count={floor_leaf_count})",
+                    commitment.start_seq,
+                    commitment.leaf_count
+                );
+                return None;
+            }
+        }
+
+        let mmr_root = match crate::substrate::parse_h256(&commitment.mmr_root) {
+            Ok(root) => root,
+            Err(e) => {
+                tracing::warn!(
+                    "Bucket {bucket_id}: provider {account} returned an unparsable MMR root: {e}"
+                );
+                return None;
+            }
+        };
+
+        let signature = match Self::decode_signature(&commitment.provider_signature) {
+            Ok(sig) if sig.len() == SR25519_SIGNATURE_LEN => sig,
+            Ok(sig) => {
+                tracing::warn!(
+                    "Bucket {bucket_id}: provider {account} returned a {}-byte signature, \
+                     expected {SR25519_SIGNATURE_LEN}",
+                    sig.len()
+                );
+                return None;
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "Bucket {bucket_id}: provider {account} returned an undecodable signature: {e}"
+                );
+                return None;
+            }
+        };
+
+        Some(ValidatedCommitment {
+            mmr_root,
+            start_seq: commitment.start_seq,
+            leaf_count: commitment.leaf_count,
+            signature,
         })
     }
 
@@ -1422,7 +1376,13 @@ impl CheckpointManager {
         }
     }
 
-    /// Submit the commitment transaction on-chain.
+    /// Submit the commitment transaction on-chain via the `checkpoint`
+    /// extrinsic.
+    ///
+    /// Providers excluded from this batch can be appended later via the
+    /// pallet's `extend_checkpoint`, which verifies late signatures against the
+    /// payload reconstructed from the stored snapshot's commitment (this SDK
+    /// does not expose that extrinsic yet).
     async fn submit_commitment_onchain(
         &self,
         collection: &CommitmentCollection,
@@ -1430,38 +1390,15 @@ impl CheckpointManager {
         let api = self.chain_client.api();
         let signer = self.chain_client.signer()?;
 
-        // Build signatures array for the extrinsic
-        // Format: Vec<(AccountId, MultiSignature)>
-        let signatures_value: Vec<Value> = collection
-            .signatures
-            .iter()
-            .map(|(account_id, sig_bytes)| {
-                // Create tuple (AccountId, MultiSignature)
-                Value::unnamed_composite(vec![
-                    Value::from_bytes(account_id.as_ref() as &[u8]),
-                    // MultiSignature::Sr25519(Signature)
-                    Value::unnamed_variant("Sr25519", vec![Value::from_bytes(sig_bytes)]),
-                ])
-            })
-            .collect();
-
-        // Build the extrinsic
-        let tx = subxt::dynamic::tx(
-            "StorageProvider",
-            "submit_commitment",
-            vec![
-                // bucket_id: u64
-                Value::u128(collection.bucket_id as u128),
-                // mmr_root: H256
-                Value::from_bytes(collection.mmr_root.as_bytes()),
-                // start_seq: u64
-                Value::u128(collection.start_seq as u128),
-                // leaf_count: u64
-                Value::u128(collection.leaf_count as u128),
-                // signatures: Vec<(AccountId, MultiSignature)>
-                Value::unnamed_composite(signatures_value),
-            ],
-        );
+        let tx = extrinsics::checkpoint(
+            collection.bucket_id,
+            Commitment {
+                mmr_root: collection.mmr_root,
+                start_seq: collection.start_seq,
+                leaf_count: collection.leaf_count,
+            },
+            collection.signatures.clone(),
+        )?;
 
         // Submit and wait for finalization
         let tx_progress = api
@@ -1486,22 +1423,8 @@ impl CheckpointManager {
     // Helpers
     // ========================================================================
 
-    /// Parse a hex string to H256.
-    fn parse_h256(&self, hex_str: &str) -> Result<H256, ClientError> {
-        let s = hex_str.strip_prefix("0x").unwrap_or(hex_str);
-        let bytes = hex::decode(s).map_err(|e| ClientError::Serialization(e.to_string()))?;
-        if bytes.len() != 32 {
-            return Err(ClientError::Serialization(
-                "Invalid H256 length".to_string(),
-            ));
-        }
-        let mut arr = [0u8; 32];
-        arr.copy_from_slice(&bytes);
-        Ok(H256::from(arr))
-    }
-
     /// Decode a hex signature string to bytes.
-    fn decode_signature(&self, sig_str: &str) -> Result<Vec<u8>, ClientError> {
+    fn decode_signature(sig_str: &str) -> Result<Vec<u8>, ClientError> {
         let s = sig_str.strip_prefix("0x").unwrap_or(sig_str);
         hex::decode(s).map_err(|e| ClientError::Serialization(e.to_string()))
     }
@@ -2819,6 +2742,97 @@ mod tests {
         let cloned = collection.clone();
         assert_eq!(cloned.bucket_id, 1);
         assert_eq!(cloned.leaf_count, 10);
+    }
+
+    fn test_mmr_root() -> String {
+        format!("0x{}", hex::encode([7u8; 32]))
+    }
+
+    fn valid_signature_hex() -> String {
+        format!("0x{}", hex::encode([9u8; SR25519_SIGNATURE_LEN]))
+    }
+
+    #[test]
+    fn validated_commitment_accepts_matching_response() {
+        let account = AccountId32::new([1u8; 32]);
+        let response = CommitmentResponse::new(1, test_mmr_root(), 5, 10, valid_signature_hex());
+
+        let valid = CheckpointManager::validated_commitment(1, &account, &response, Some((5, 10)))
+            .expect("a well-formed response must be accepted");
+        assert_eq!(valid.mmr_root, H256::from([7u8; 32]));
+        assert_eq!((valid.start_seq, valid.leaf_count), (5, 10));
+        assert_eq!(valid.signature, vec![9u8; SR25519_SIGNATURE_LEN]);
+    }
+
+    #[test]
+    fn validated_commitment_rejects_unparsable_root() {
+        let account = AccountId32::new([1u8; 32]);
+        // One provider's garbage root must drop that provider only, never
+        // abort the whole collection round.
+        let response =
+            CommitmentResponse::new(1, "0xnot-a-root".to_string(), 5, 10, valid_signature_hex());
+
+        assert!(CheckpointManager::validated_commitment(1, &account, &response, None).is_none());
+    }
+
+    #[test]
+    fn validated_commitment_rejects_range_regression() {
+        let account = AccountId32::new([1u8; 32]);
+
+        // start_seq unchanged but the range *end* moved backwards (5+9=14 < 5+10=15):
+        // data disappeared with no compensating delete. Must be refused.
+        let shrunk_end = CommitmentResponse::new(1, test_mmr_root(), 5, 9, valid_signature_hex());
+        assert!(
+            CheckpointManager::validated_commitment(1, &account, &shrunk_end, Some((5, 10)))
+                .is_none(),
+            "a range end behind the on-chain snapshot must be refused"
+        );
+
+        let rewound_start =
+            CommitmentResponse::new(1, test_mmr_root(), 4, 10, valid_signature_hex());
+        assert!(CheckpointManager::validated_commitment(
+            1,
+            &account,
+            &rewound_start,
+            Some((5, 10))
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn validated_commitment_accepts_legitimate_delete() {
+        // Design: "Delete: Increase start_seq (old leaves no longer in range)".
+        // A delete moves start_seq forward and leaf_count down by the same
+        // amount, so the range end (start_seq + leaf_count) is unchanged.
+        // This must NOT be treated as a regression.
+        let account = AccountId32::new([1u8; 32]);
+        let post_delete = CommitmentResponse::new(1, test_mmr_root(), 8, 7, valid_signature_hex());
+
+        assert!(
+            CheckpointManager::validated_commitment(1, &account, &post_delete, Some((5, 10)))
+                .is_some(),
+            "a post-delete range with an unchanged end must be accepted"
+        );
+    }
+
+    #[test]
+    fn validated_commitment_rejects_unusable_signatures() {
+        let account = AccountId32::new([1u8; 32]);
+
+        let undecodable = CommitmentResponse::new(1, test_mmr_root(), 5, 10, "not-hex".to_string());
+        assert!(CheckpointManager::validated_commitment(1, &account, &undecodable, None).is_none());
+
+        let wrong_length = CommitmentResponse::new(
+            1,
+            test_mmr_root(),
+            5,
+            10,
+            format!("0x{}", hex::encode([9u8; 63])),
+        );
+        assert!(
+            CheckpointManager::validated_commitment(1, &account, &wrong_length, None).is_none(),
+            "a short signature must not reach the extrinsic builder"
+        );
     }
 
     // ========================================================================

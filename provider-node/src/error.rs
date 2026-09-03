@@ -7,25 +7,14 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
+use provider_auth::{AuthError, MembershipError};
 use serde::Serialize;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum Error {
-    #[error("Node not found: {0}")]
-    NodeNotFound(String),
-
-    #[error("Children missing: {0:?}")]
-    ChildrenMissing(Vec<String>),
-
-    #[error("Quota exceeded: used {used}, max {max}")]
-    QuotaExceeded { used: u64, max: u64 },
-
-    #[error("Bucket not found: {0}")]
-    BucketNotFound(u64),
-
-    #[error("Root not found: {0}")]
-    RootNotFound(String),
+    #[error(transparent)]
+    Backend(#[from] provider_storage::Error),
 
     #[error("Invalid hash: expected {expected}, got {actual}")]
     InvalidHash { expected: String, actual: String },
@@ -60,14 +49,8 @@ pub enum Error {
     #[error("Invalid path: {0}")]
     InvalidPath(String),
 
-    #[error("Authentication required")]
-    AuthRequired,
-
-    #[error("Timestamp expired or too far in the future")]
-    TimestampExpired,
-
-    #[error("Insufficient role for this operation")]
-    InsufficientRole,
+    #[error(transparent)]
+    Auth(#[from] AuthError),
 
     #[error("Signing unavailable: provider has no keypair configured")]
     SigningUnavailable,
@@ -108,31 +91,17 @@ pub enum Error {
     )]
     ChainStateNotReady,
 
+    #[error(transparent)]
+    Chain(#[from] provider_chain::Error),
+
+    #[error(transparent)]
+    Coordinator(#[from] provider_coordinator::Error),
+
     #[error("Storage agreement requested 0 byte")]
     InvalidMaxBytesRequest,
 
     #[error("Too many requests")]
     RateLimited,
-}
-
-/// Map storage-engine errors onto the node's error space one-to-one so the
-/// HTTP status/JSON mapping below stays the single source of truth.
-impl From<provider_storage::Error> for Error {
-    fn from(e: provider_storage::Error) -> Self {
-        use provider_storage::Error as StorageError;
-        match e {
-            StorageError::NodeNotFound(hash) => Error::NodeNotFound(hash),
-            StorageError::ChildrenMissing(children) => Error::ChildrenMissing(children),
-            StorageError::QuotaExceeded { used, max } => Error::QuotaExceeded { used, max },
-            StorageError::BucketNotFound(id) => Error::BucketNotFound(id),
-            StorageError::RootNotFound(root) => Error::RootNotFound(root),
-            StorageError::InvalidHash { expected, actual } => {
-                Error::InvalidHash { expected, actual }
-            }
-            StorageError::Storage(msg) => Error::Storage(msg),
-            StorageError::Serialization(msg) => Error::Serialization(msg),
-        }
-    }
 }
 
 #[derive(Serialize)]
@@ -144,42 +113,73 @@ struct ErrorResponse {
 
 impl IntoResponse for Error {
     fn into_response(self) -> Response {
+        use provider_chain::Error as ChainError;
+        use provider_coordinator::Error as CoordinatorError;
+        use provider_storage::Error as StorageError;
         let (status, error_response) = match &self {
-            Error::NodeNotFound(hash) => (
-                StatusCode::NOT_FOUND,
-                ErrorResponse {
-                    error: "not_found".to_string(),
-                    details: Some(serde_json::json!({ "hash": hash })),
-                },
-            ),
-            Error::ChildrenMissing(children) => (
-                StatusCode::BAD_REQUEST,
-                ErrorResponse {
-                    error: "children_missing".to_string(),
-                    details: Some(serde_json::json!({ "missing": children })),
-                },
-            ),
-            Error::QuotaExceeded { used, max } => (
-                StatusCode::INSUFFICIENT_STORAGE,
-                ErrorResponse {
-                    error: "quota_exceeded".to_string(),
-                    details: Some(serde_json::json!({ "used": used, "max": max })),
-                },
-            ),
-            Error::BucketNotFound(id) => (
-                StatusCode::NOT_FOUND,
-                ErrorResponse {
-                    error: "bucket_not_found".to_string(),
-                    details: Some(serde_json::json!({ "bucket_id": id })),
-                },
-            ),
-            Error::RootNotFound(root) => (
-                StatusCode::NOT_FOUND,
-                ErrorResponse {
-                    error: "root_not_found".to_string(),
-                    details: Some(serde_json::json!({ "data_root": root })),
-                },
-            ),
+            // Exhaustive on purpose — no wildcard — so a new storage variant
+            // fails compilation until it gets an explicit status.
+            Error::Backend(e) => match e {
+                StorageError::NodeNotFound(hash) => (
+                    StatusCode::NOT_FOUND,
+                    ErrorResponse {
+                        error: "not_found".to_string(),
+                        details: Some(serde_json::json!({ "hash": hash })),
+                    },
+                ),
+                StorageError::ChildrenMissing(children) => (
+                    StatusCode::BAD_REQUEST,
+                    ErrorResponse {
+                        error: "children_missing".to_string(),
+                        details: Some(serde_json::json!({ "missing": children })),
+                    },
+                ),
+                StorageError::QuotaExceeded { used, max } => (
+                    StatusCode::INSUFFICIENT_STORAGE,
+                    ErrorResponse {
+                        error: "quota_exceeded".to_string(),
+                        details: Some(serde_json::json!({ "used": used, "max": max })),
+                    },
+                ),
+                StorageError::BucketNotFound(id) => (
+                    StatusCode::NOT_FOUND,
+                    ErrorResponse {
+                        error: "bucket_not_found".to_string(),
+                        details: Some(serde_json::json!({ "bucket_id": id })),
+                    },
+                ),
+                StorageError::RootNotFound(root) => (
+                    StatusCode::NOT_FOUND,
+                    ErrorResponse {
+                        error: "root_not_found".to_string(),
+                        details: Some(serde_json::json!({ "data_root": root })),
+                    },
+                ),
+                StorageError::InvalidHash { expected, actual } => (
+                    StatusCode::BAD_REQUEST,
+                    ErrorResponse {
+                        error: "invalid_hash".to_string(),
+                        details: Some(serde_json::json!({
+                            "expected": expected,
+                            "actual": actual
+                        })),
+                    },
+                ),
+                StorageError::Storage(msg) => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    ErrorResponse {
+                        error: "internal_error".to_string(),
+                        details: Some(serde_json::json!({ "message": msg })),
+                    },
+                ),
+                StorageError::Serialization(msg) => (
+                    StatusCode::BAD_REQUEST,
+                    ErrorResponse {
+                        error: "serialization_error".to_string(),
+                        details: Some(serde_json::json!({ "message": msg })),
+                    },
+                ),
+            },
             Error::InvalidHash { expected, actual } => (
                 StatusCode::BAD_REQUEST,
                 ErrorResponse {
@@ -253,18 +253,33 @@ impl IntoResponse for Error {
                     details: Some(serde_json::json!({ "message": msg })),
                 },
             ),
-            Error::AuthRequired | Error::TimestampExpired => (
+            Error::Auth(AuthError::AuthRequired | AuthError::TimestampExpired) => (
                 StatusCode::UNAUTHORIZED,
                 ErrorResponse {
                     error: "auth_required".to_string(),
                     details: Some(serde_json::json!({ "message": self.to_string() })),
                 },
             ),
-            Error::InsufficientRole => (
+            Error::Auth(AuthError::InsufficientRole) => (
                 StatusCode::FORBIDDEN,
                 ErrorResponse {
                     error: "insufficient_role".to_string(),
                     details: None,
+                },
+            ),
+            // Transient and worth retrying, unlike a decode failure.
+            Error::Auth(err @ AuthError::MembershipLookup(MembershipError::Unavailable(_))) => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                ErrorResponse {
+                    error: "membership_unavailable".to_string(),
+                    details: Some(serde_json::json!({ "message": err.to_string() })),
+                },
+            ),
+            Error::Auth(err @ AuthError::MembershipLookup(_)) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                ErrorResponse {
+                    error: "internal_error".to_string(),
+                    details: Some(serde_json::json!({ "message": err.to_string() })),
                 },
             ),
             Error::SigningUnavailable => (
@@ -365,6 +380,35 @@ impl IntoResponse for Error {
                     })),
                 },
             ),
+            // A chain error reaching us through the coordinator is the same
+            // failure as a direct one, so both map to the same status.
+            Error::Chain(err) | Error::Coordinator(CoordinatorError::Chain(err)) => match err {
+                ChainError::NotConnected => (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    ErrorResponse {
+                        error: "chain_unavailable".to_string(),
+                        details: Some(serde_json::json!({
+                            "message": "the node has not yet established a connection to the chain"
+                        })),
+                    },
+                ),
+                ChainError::Connection(_) | ChainError::Internal(_) => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    ErrorResponse {
+                        error: "internal_error".to_string(),
+                        details: Some(serde_json::json!({ "message": err.to_string() })),
+                    },
+                ),
+            },
+            // Destructured rather than stringified: the inner message is already
+            // the full text, so `to_string()` would prefix it a second time.
+            Error::Coordinator(CoordinatorError::Internal(msg)) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                ErrorResponse {
+                    error: "internal_error".to_string(),
+                    details: Some(serde_json::json!({ "message": msg })),
+                },
+            ),
             Error::ProviderDeregistering => (
                 StatusCode::SERVICE_UNAVAILABLE,
                 ErrorResponse {
@@ -401,20 +445,33 @@ mod tests {
     #[test]
     fn test_all_error_variants_status_codes() {
         assert_eq!(
-            status_of(Error::NodeNotFound("x".into())),
+            status_of(Error::from(provider_storage::Error::NodeNotFound(
+                "x".into()
+            ))),
             StatusCode::NOT_FOUND
         );
+        // Storage-engine errors route through the transparent Backend variant.
         assert_eq!(
-            status_of(Error::ChildrenMissing(vec![])),
+            status_of(Error::from(provider_storage::Error::ChildrenMissing(
+                vec![]
+            ))),
             StatusCode::BAD_REQUEST
         );
         assert_eq!(
-            status_of(Error::QuotaExceeded { used: 0, max: 0 }),
+            status_of(Error::from(provider_storage::Error::QuotaExceeded {
+                used: 0,
+                max: 0
+            })),
             StatusCode::INSUFFICIENT_STORAGE
         );
-        assert_eq!(status_of(Error::BucketNotFound(1)), StatusCode::NOT_FOUND);
         assert_eq!(
-            status_of(Error::RootNotFound("x".into())),
+            status_of(Error::from(provider_storage::Error::BucketNotFound(1))),
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(
+            status_of(Error::from(provider_storage::Error::RootNotFound(
+                "x".into()
+            ))),
             StatusCode::NOT_FOUND
         );
         assert_eq!(
@@ -470,9 +527,36 @@ mod tests {
             status_of(Error::InvalidPath("p".into())),
             StatusCode::BAD_REQUEST
         );
-        assert_eq!(status_of(Error::AuthRequired), StatusCode::UNAUTHORIZED);
-        assert_eq!(status_of(Error::TimestampExpired), StatusCode::UNAUTHORIZED);
-        assert_eq!(status_of(Error::InsufficientRole), StatusCode::FORBIDDEN);
+        assert_eq!(
+            status_of(AuthError::AuthRequired.into()),
+            StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(
+            status_of(AuthError::TimestampExpired.into()),
+            StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(
+            status_of(AuthError::InsufficientRole.into()),
+            StatusCode::FORBIDDEN
+        );
+        // A chain blip is retryable; a decode failure is a bug. They must not
+        // share a status code.
+        assert_eq!(
+            status_of(
+                AuthError::MembershipLookup(MembershipError::Unavailable("down".into())).into()
+            ),
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        assert_eq!(
+            status_of(
+                AuthError::MembershipLookup(MembershipError::Decode {
+                    bucket_id: 1,
+                    reason: "unexpected shape".into(),
+                })
+                .into()
+            ),
+            StatusCode::INTERNAL_SERVER_ERROR
+        );
         assert_eq!(
             status_of(Error::SigningUnavailable),
             StatusCode::SERVICE_UNAVAILABLE
@@ -481,11 +565,26 @@ mod tests {
             status_of(Error::NonceCounterUnavailable),
             StatusCode::SERVICE_UNAVAILABLE
         );
+        // A connection that was never established is retryable; a failed
+        // connect attempt is a bug. They must not share a status code.
+        assert_eq!(
+            status_of(provider_chain::Error::NotConnected.into()),
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        assert_eq!(
+            status_of(provider_chain::Error::Internal("boom".into()).into()),
+            StatusCode::INTERNAL_SERVER_ERROR
+        );
+        assert_eq!(
+            status_of(provider_coordinator::Error::Internal("boom".into()).into()),
+            StatusCode::INTERNAL_SERVER_ERROR
+        );
     }
 
     #[test]
     fn test_error_response_json_structure() {
-        let resp = Error::NodeNotFound("0xabc".into()).into_response();
+        let resp =
+            Error::from(provider_storage::Error::NodeNotFound("0xabc".into())).into_response();
         let (parts, body) = resp.into_parts();
         assert_eq!(parts.status, StatusCode::NOT_FOUND);
 

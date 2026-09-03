@@ -13,7 +13,7 @@ inputs:
     required: false
     default: "60"
   label:
-    description: Human label for log messages (e.g. "inmemory", "disk").
+    description: Human label for log messages (e.g. the backend, or the job).
     required: false
     default: Provider
   log-file:

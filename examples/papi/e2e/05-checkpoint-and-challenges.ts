@@ -14,7 +14,6 @@ import assert from "node:assert";
 import {
   challengeCheckpoint,
   challengeOffchain,
-  currentRelayBlock,
   ensureProviderRegistered,
   fetchChallengeProof,
   fetchCheckpointSignature,
@@ -53,15 +52,13 @@ async function main() {
   );
 
   const payload = `checkpoint-test @ ${Date.now()}`;
-  const uploadNonce = await currentRelayBlock(api);
-  const upload = await uploadChunk(PROVIDER_URL, bucketId, payload, uploadNonce, client);
+  const upload = await uploadChunk(PROVIDER_URL, bucketId, payload, client);
   const uploadInfo = {
     leafIndex: upload.commit.leaf_indices[0],
     mmrRoot: upload.commit.mmr_root,
     startSeq: upload.commit.start_seq,
     leafCount: upload.commit.leaf_count,
     providerSignature: upload.commit.provider_signature,
-    nonce: upload.commit.nonce,
   };
 
   const tests: Array<{ name: string; fn: () => Promise<void> }> = [];
@@ -71,8 +68,7 @@ async function main() {
   tests.push({
     name: "5.1 Client checkpoint",
     fn: async () => {
-      const ckNonce = await currentRelayBlock(api);
-      const ck = await fetchCheckpointSignature(PROVIDER_URL, bucketId, ckNonce);
+      const ck = await fetchCheckpointSignature(PROVIDER_URL, bucketId);
       assert.ok(ck.mmr_root, "Checkpoint should have mmr_root");
       const result = await submitClientCheckpoint(api, client, provider, bucketId, ck);
       const events = api.event.StorageProvider.BucketCheckpointed.filter(result.events as never);

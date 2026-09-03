@@ -153,7 +153,7 @@ fn private_bucket_gates_offchain_challenges() {
             start_seq: 0,
             leaf_count: 10,
         };
-        let payload = CommitmentPayload::new(bucket_id, commitment, 1);
+        let payload = CommitmentPayload::new(bucket_id, commitment);
         let sig = sp_runtime::MultiSignature::Sr25519(pair.sign(&payload.encode()));
 
         assert_noop!(
@@ -163,7 +163,6 @@ fn private_bucket_gates_offchain_challenges() {
                 2,
                 commitment,
                 CHUNK,
-                1,
                 sig.clone()
             ),
             Error::<Test>::NotAuthorizedForPrivateBucket
@@ -176,7 +175,6 @@ fn private_bucket_gates_offchain_challenges() {
             2,
             commitment,
             CHUNK,
-            1,
             sig
         ));
     });

@@ -4,24 +4,20 @@
 //! reacting to [`BlockEvent`]s fanned out by the chain-state coordinator,
 //! including the bootstrap scan on `Resubscribed` and lag recovery.
 
-use super::{test_state, test_state_with_data, wait_for, ALICE_SS58};
+use super::{alice_account, test_state, test_state_with_data, wait_for};
+use provider_chain::BlockEvent;
 use sp_core::H256;
 use sp_runtime::AccountId32;
-use std::str::FromStr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use storage_primitives::BucketId;
-use storage_provider_node::chain_events::BlockEvent;
+use storage_provider_node::challenge_responder::ChallengeError;
 use storage_provider_node::replica_sync_coordinator::{BucketSnapshot, ReplicaAgreementInfo};
 use storage_provider_node::{
     ChallengeChainClient, ChallengeResponder, ChallengeResponderConfig, DetectedChallenge, Error,
     ReplicaSyncChainClient, ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig,
 };
-
-fn alice_account() -> AccountId32 {
-    AccountId32::from_str(ALICE_SS58).unwrap()
-}
 
 // ── challenge responder ───────────────────────────────────────────────────────
 
@@ -46,7 +42,7 @@ impl MockChallengeClient {
 
 #[async_trait::async_trait]
 impl ChallengeChainClient for MockChallengeClient {
-    async fn poll_challenges(&self) -> Result<Vec<DetectedChallenge>, Error> {
+    async fn poll_challenges(&self) -> Result<Vec<DetectedChallenge>, ChallengeError> {
         self.scanned.fetch_add(1, Ordering::SeqCst);
         Ok(vec![])
     }
@@ -55,7 +51,7 @@ impl ChallengeChainClient for MockChallengeClient {
         &self,
         deadline: u32,
         index: u16,
-    ) -> Result<Option<DetectedChallenge>, Error> {
+    ) -> Result<Option<DetectedChallenge>, ChallengeError> {
         self.fetched.fetch_add(1, Ordering::SeqCst);
         if (deadline, index) == (self.challenge.deadline, self.challenge.index) {
             Ok(Some(self.challenge.clone()))
@@ -70,7 +66,7 @@ impl ChallengeChainClient for MockChallengeClient {
         _chunk_data: Vec<u8>,
         _mmr_proof: storage_primitives::MmrProof,
         _chunk_proof: storage_primitives::MerkleProof,
-    ) -> Result<H256, Error> {
+    ) -> Result<H256, ChallengeError> {
         self.submitted.lock().unwrap().push(challenge_id);
         Ok(H256::zero())
     }
@@ -80,18 +76,21 @@ impl ChallengeChainClient for MockChallengeClient {
 fn event_only_config() -> ChallengeResponderConfig {
     ChallengeResponderConfig {
         poll_interval: Duration::ZERO,
-        ..Default::default()
+        ..ChallengeResponderConfig::new(alice_account())
     }
 }
 
 #[tokio::test]
 async fn challenge_event_triggers_point_read_and_response() {
-    let (state, challenge) = test_state_with_data();
+    let (state, challenge, _dir) = test_state_with_data();
     let (deadline, index) = (challenge.deadline, challenge.index);
     let bucket_id = challenge.bucket_id;
     let mock = MockChallengeClient::new(challenge);
-    let responder =
-        ChallengeResponder::new(event_only_config(), state, Box::new(Arc::clone(&mock)));
+    let responder = ChallengeResponder::new(
+        event_only_config(),
+        state.challenge_proof_source(),
+        Box::new(Arc::clone(&mock)),
+    );
 
     let (events_tx, events_rx) = tokio::sync::broadcast::channel(16);
     let handle = responder.start(events_rx, None).await.unwrap();
@@ -127,12 +126,15 @@ async fn challenge_event_triggers_point_read_and_response() {
 
 #[tokio::test]
 async fn foreign_challenge_event_is_ignored() {
-    let (state, challenge) = test_state_with_data();
+    let (state, challenge, _dir) = test_state_with_data();
     let (deadline, index) = (challenge.deadline, challenge.index);
     let bucket_id = challenge.bucket_id;
     let mock = MockChallengeClient::new(challenge);
-    let responder =
-        ChallengeResponder::new(event_only_config(), state, Box::new(Arc::clone(&mock)));
+    let responder = ChallengeResponder::new(
+        event_only_config(),
+        state.challenge_proof_source(),
+        Box::new(Arc::clone(&mock)),
+    );
 
     let (events_tx, events_rx) = tokio::sync::broadcast::channel(16);
     let handle = responder.start(events_rx, None).await.unwrap();
@@ -159,10 +161,13 @@ async fn foreign_challenge_event_is_ignored() {
 
 #[tokio::test]
 async fn resubscribe_triggers_bootstrap_scan() {
-    let (state, challenge) = test_state_with_data();
+    let (state, challenge, _dir) = test_state_with_data();
     let mock = MockChallengeClient::new(challenge);
-    let responder =
-        ChallengeResponder::new(event_only_config(), state, Box::new(Arc::clone(&mock)));
+    let responder = ChallengeResponder::new(
+        event_only_config(),
+        state.challenge_proof_source(),
+        Box::new(Arc::clone(&mock)),
+    );
 
     let (events_tx, events_rx) = tokio::sync::broadcast::channel(16);
     let handle = responder.start(events_rx, None).await.unwrap();
@@ -185,15 +190,49 @@ async fn resubscribe_triggers_bootstrap_scan() {
 }
 
 #[tokio::test]
+async fn membership_scope_unknown_does_not_trigger_bootstrap_scan() {
+    // `MembershipScopeUnknown` is the auth cache's own escalation (an
+    // undecodable or unreachable membership event) - it says nothing about
+    // whether the challenge responder's view of chain state is stale, so it
+    // must not cost this coordinator a full scan the way `Resubscribed` does.
+    let (state, challenge, _dir) = test_state_with_data();
+    let mock = MockChallengeClient::new(challenge);
+    let responder = ChallengeResponder::new(
+        event_only_config(),
+        state.challenge_proof_source(),
+        Box::new(Arc::clone(&mock)),
+    );
+
+    let (events_tx, events_rx) = tokio::sync::broadcast::channel(16);
+    let handle = responder.start(events_rx, None).await.unwrap();
+
+    events_tx
+        .send(BlockEvent::MembershipScopeUnknown { at_block: 42 })
+        .unwrap();
+
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(
+        mock.scanned.load(Ordering::SeqCst),
+        0,
+        "a membership-only escalation must not trigger a reconciliation scan"
+    );
+
+    handle.stop().await.unwrap();
+}
+
+#[tokio::test]
 async fn event_sent_while_paused_survives_until_resume() {
     // The safety net is off here, so a dropped event would be unrecoverable:
     // the queued event is the only thing that can produce a response.
-    let (state, challenge) = test_state_with_data();
+    let (state, challenge, _dir) = test_state_with_data();
     let (deadline, index) = (challenge.deadline, challenge.index);
     let bucket_id = challenge.bucket_id;
     let mock = MockChallengeClient::new(challenge);
-    let responder =
-        ChallengeResponder::new(event_only_config(), state, Box::new(Arc::clone(&mock)));
+    let responder = ChallengeResponder::new(
+        event_only_config(),
+        state.challenge_proof_source(),
+        Box::new(Arc::clone(&mock)),
+    );
 
     let (events_tx, events_rx) = tokio::sync::broadcast::channel(16);
     let handle = responder.start(events_rx, None).await.unwrap();
@@ -289,8 +328,8 @@ async fn replica_agreement_event_triggers_duty_pass() {
         poll_interval: Duration::ZERO,
         ..Default::default()
     };
-    let coordinator =
-        ReplicaSyncCoordinator::new(config, test_state(), Box::new(Arc::clone(&mock)));
+    let (state, _dir) = test_state();
+    let coordinator = ReplicaSyncCoordinator::new(config, state, Box::new(Arc::clone(&mock)));
 
     let (events_tx, events_rx) = tokio::sync::broadcast::channel(16);
     let handle = coordinator.start(events_rx, None).await.unwrap();
@@ -330,8 +369,11 @@ async fn bucket_checkpointed_event_drives_duty_through_sync_attempt() {
     // A client checkpoint on a bucket we hold locally must trigger a duty pass, and
     // the resulting duty (new root, no reachable primaries) must surface as
     // PrimaryUnavailable through the callback — all without any network.
-    let state = test_state();
-    state.storage.init_bucket(7, 1024 * 1024).unwrap();
+    let (state, _dir) = test_state();
+    state
+        .storage
+        .init_bucket(7, 1024 * 1024)
+        .expect("bucket initialises");
 
     let mock = Arc::new(MockReplicaClient {
         duty_passes: AtomicUsize::new(0),

@@ -86,10 +86,9 @@ pub mod pallet {
         BlockNumberFor<T>,
     >;
 
-    /// In-code storage version. v1 backfills the `commitment_nonce` field added
-    /// to `BucketSnapshot` by #125; v2 covers the challenger-tier / visibility
+    /// In-code storage version. v1 covers the challenger-tier / visibility
     /// layout changes of #330. See [`crate::migrations`].
-    const STORAGE_VERSION: StorageVersion = StorageVersion::new(2);
+    const STORAGE_VERSION: StorageVersion = StorageVersion::new(1);
 
     #[pallet::pallet]
     #[pallet::storage_version(STORAGE_VERSION)]
@@ -224,15 +223,6 @@ pub mod pallet {
         /// unaffordable.
         #[pallet::constant]
         type ChallengeDeposit: Get<BalanceOf<Self>>;
-
-        /// Maximum age of a `CommitmentPayload::nonce` (in relay chain
-        /// blocks) the pallet will accept on inbound signatures. The nonce is
-        /// the relay chain block number (per
-        /// [`Config::BlockNumberProvider`]) at which the signer signed;
-        /// values older than this are rejected to prevent indefinite
-        /// signature replay.
-        #[pallet::constant]
-        type MaxNonceAge: Get<BlockNumberFor<Self>>;
 
         /// Settlement window (in relay chain blocks) after agreement expiry
         /// for owner to call end_agreement.
@@ -605,6 +595,14 @@ pub mod pallet {
         pub challenges_failed: u32,
     }
 
+    impl<T: Config> ProviderStats<T> {
+        /// Successfully defended challenges across both challenger tiers.
+        pub fn challenges_defended(&self) -> u32 {
+            self.challenges_received_authorized
+                .saturating_add(self.challenges_received_public)
+        }
+    }
+
     /// Bucket member with role.
     #[derive(Clone, PartialEq, Eq, Encode, Decode, TypeInfo, MaxEncodedLen, Debug)]
     #[scale_info(skip_type_params(T))]
@@ -707,10 +705,6 @@ pub mod pallet {
         Deleted {
             new_mmr_root: H256,
             new_start_seq: u64,
-            /// Block at which the admin signed the deletion commitment. Used
-            /// as the `nonce` in `CommitmentPayload` and recency-checked by
-            /// the pallet to prevent signature replay.
-            nonce: u64,
             admin: T::AccountId,
             admin_signature: sp_runtime::MultiSignature,
         },
@@ -1005,10 +999,6 @@ pub mod pallet {
         NoSnapshot,
         SnapshotViolatesFrozen,
         InsufficientSignatures,
-        /// `CommitmentPayload::nonce` is older than `T::MaxNonceAge` blocks
-        /// behind the current block, or refers to a future block. Rejected
-        /// to prevent replay of captured signatures.
-        CommitmentNonceTooOld,
 
         // General errors
         ArithmeticOverflow,
@@ -2007,17 +1997,12 @@ pub mod pallet {
             origin: OriginFor<T>,
             bucket_id: BucketId,
             commitment: Commitment,
-            // `nonce` is the `CommitmentPayload` nonce — the block at which
-            // all `signatures` signed. Recency-checked to prevent replay.
-            nonce: u64,
             signatures: BoundedVec<
                 (T::AccountId, sp_runtime::MultiSignature),
                 T::MaxPrimaryProviders,
             >,
         ) -> DispatchResult {
             let who = ensure_signed(origin)?;
-
-            Self::ensure_recent_nonce(nonce)?;
 
             Buckets::<T>::try_mutate(bucket_id, |maybe_bucket| -> DispatchResult {
                 let bucket = maybe_bucket.as_mut().ok_or(Error::<T>::BucketNotFound)?;
@@ -2034,7 +2019,7 @@ pub mod pallet {
                 }
 
                 // Verify signatures and build signer bitfield
-                let payload = CommitmentPayload::new(bucket_id, commitment, nonce);
+                let payload = CommitmentPayload::new(bucket_id, commitment);
                 let encoded_payload = payload.encode();
 
                 // Create bitfield using Vec<u8>
@@ -2078,7 +2063,6 @@ pub mod pallet {
                     commitment,
                     checkpoint_block: anchor_block,
                     primary_signers,
-                    commitment_nonce: nonce,
                 });
 
                 bucket.total_snapshots = bucket.total_snapshots.saturating_add(1);
@@ -2119,13 +2103,9 @@ pub mod pallet {
                 let snapshot = bucket.snapshot.as_mut().ok_or(Error::<T>::NoSnapshot)?;
 
                 // Verify and add signatures. The late signer signs the same
-                // payload the original signers signed — including the nonce
-                // captured in the snapshot.
-                let payload = CommitmentPayload::new(
-                    bucket_id,
-                    snapshot.commitment,
-                    snapshot.commitment_nonce,
-                );
+                // payload the original signers signed, reconstructed from the
+                // snapshot's commitment.
+                let payload = CommitmentPayload::new(bucket_id, snapshot.commitment);
                 let encoded_payload = payload.encode();
 
                 let mut primary_signers = snapshot.primary_signers.clone();
@@ -2246,14 +2226,9 @@ pub mod pallet {
             commitment: Commitment,
             // `target` is the leaf+chunk being challenged within `commitment`.
             target: ChunkLocation,
-            // `nonce` is the `CommitmentPayload` nonce — the block at which
-            // the provider signed. Recency-checked to prevent replay.
-            nonce: u64,
             provider_signature: sp_runtime::MultiSignature,
         ) -> DispatchResult {
             let who = ensure_signed(origin)?;
-
-            Self::ensure_recent_nonce(nonce)?;
 
             // Verify the bucket exists (loaded in full: the private-bucket
             // gate and the challenger tier read its visibility and members).
@@ -2272,7 +2247,16 @@ pub mod pallet {
             );
 
             // Build the commitment payload that the provider signed.
-            let payload = CommitmentPayload::new(bucket_id, commitment, nonce);
+            //
+            // TODO(#316): the liveness check above is keyed `(bucket_id,
+            // provider)`, which a re-join reuses, so it cannot tell a
+            // commitment signed under the previous agreement from one signed
+            // under the current one. A provider that left, legitimately
+            // deleted the data and re-joined is still slashable on the old
+            // commitment. The removed nonce recency window (#337) used to cap
+            // that at 24h; the real bound is the agreement's lifetime, which
+            // arrives with `agreement_id` in #316.
+            let payload = CommitmentPayload::new(bucket_id, commitment);
             let encoded_payload = payload.encode();
 
             // Verify the provider's signature on this commitment
@@ -2416,11 +2400,9 @@ pub mod pallet {
                 ChallengeResponse::Deleted {
                     new_mmr_root,
                     new_start_seq,
-                    nonce,
                     admin,
                     admin_signature,
                 } => {
-                    Self::ensure_recent_nonce(*nonce)?;
                     Self::ensure_admin(admin, &bucket)?;
 
                     let challenged_seq = challenge
@@ -2439,7 +2421,6 @@ pub mod pallet {
                                 start_seq: *new_start_seq,
                                 leaf_count: 0, // not needed for deletion proof
                             },
-                            *nonce,
                         );
                         let encoded = deletion_payload.encode();
                         if Self::verify_signature(admin_signature, &encoded, admin).is_ok() {

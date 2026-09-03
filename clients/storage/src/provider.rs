@@ -10,13 +10,15 @@
 //! - Monitoring earnings and performance
 
 use crate::base::{BaseClient, ClientConfig, ClientError, ClientResult};
+use crate::convert;
 use crate::discovery::ProviderInfo;
-use crate::substrate::{constants, extrinsics, storage, SubstrateClient};
+use crate::substrate::{extrinsics, SubstrateClient};
 use crate::Signer;
 use sp_core::H256;
 use sp_runtime::AccountId32;
 use storage_primitives::BucketId;
-use subxt::ext::scale_value::{Composite, ValueDef, Variant};
+use storage_subxt::api;
+use storage_subxt::api::runtime_types::storage_primitives::ProviderRole;
 
 /// Client for storage providers.
 pub struct ProviderClient {
@@ -126,100 +128,18 @@ impl ProviderClient {
     ) -> ClientResult<Option<ProviderInfo>> {
         let chain = self.base.chain()?;
 
-        let at = chain
-            .api()
-            .at_current_block()
+        let at = chain.at_current_block().await?;
+        let info = at
+            .runtime_apis()
+            .call(
+                api::runtime_apis()
+                    .storage_provider_api()
+                    .provider_info(convert::to_subxt_account(account)),
+            )
             .await
-            .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?;
-        let (addr, keys) = storage::provider_info(account);
-        let thunk = at
-            .storage()
-            .try_fetch(addr, keys)
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to fetch provider: {e}")))?;
+            .map_err(|e| ClientError::Chain(format!("provider_info runtime API failed: {e}")))?;
 
-        let Some(thunk) = thunk else {
-            return Ok(None);
-        };
-
-        let value = thunk
-            .decode()
-            .map_err(|e| ClientError::Chain(format!("Failed to decode provider: {e}")))?;
-
-        // Decode top-level fields.
-        let multiaddr = named_field(&value, "multiaddr")
-            .map(|v| String::from_utf8_lossy(&decode_byte_vec(v)).into_owned())
-            .unwrap_or_default();
-
-        let stake = named_field(&value, "stake")
-            .and_then(|v| v.as_u128())
-            .ok_or_else(|| ClientError::Chain("Missing 'stake'".to_string()))?;
-
-        let committed_bytes = named_field(&value, "committed_bytes")
-            .and_then(|v| v.as_u128())
-            .ok_or_else(|| ClientError::Chain("Missing 'committed_bytes'".to_string()))?
-            as u64;
-
-        // Decode settings sub-composite.
-        let settings = named_field(&value, "settings")
-            .ok_or_else(|| ClientError::Chain("Missing 'settings' in ProviderInfo".to_string()))?;
-
-        let replica_sync_price =
-            named_field(settings, "replica_sync_price").and_then(|v| match &v.value {
-                ValueDef::Variant(Variant { name, values }) if name == "Some" => {
-                    values.values().next().and_then(|v| v.as_u128())
-                }
-                _ => None,
-            });
-
-        // Decode stats sub-composite.
-        let stats = named_field(&value, "stats");
-        let agreements_total = stats
-            .and_then(|s| named_field(s, "agreements_total"))
-            .and_then(|v| v.as_u128())
-            .unwrap_or(0) as u32;
-        let challenges_failed = stats
-            .and_then(|s| named_field(s, "challenges_failed"))
-            .and_then(|v| v.as_u128())
-            .unwrap_or(0) as u32;
-
-        Ok(Some(ProviderInfo {
-            multiaddr,
-            stake,
-            committed_bytes,
-            max_capacity: named_field(settings, "max_capacity")
-                .and_then(|v| v.as_u128())
-                .ok_or_else(|| ClientError::Chain("Missing 'max_capacity'".to_string()))?
-                as u64,
-            min_duration: named_field(settings, "min_duration")
-                .and_then(|v| v.as_u128())
-                .ok_or_else(|| ClientError::Chain("Missing 'min_duration'".to_string()))?
-                as u32,
-            max_duration: named_field(settings, "max_duration")
-                .and_then(|v| v.as_u128())
-                .ok_or_else(|| ClientError::Chain("Missing 'max_duration'".to_string()))?
-                as u32,
-            price_per_byte: named_field(settings, "price_per_byte")
-                .and_then(|v| v.as_u128())
-                .ok_or_else(|| ClientError::Chain("Missing 'price_per_byte'".to_string()))?,
-            accepting_primary: named_field(settings, "accepting_primary")
-                .and_then(|v| v.as_bool())
-                .ok_or_else(|| ClientError::Chain("Missing 'accepting_primary'".to_string()))?,
-            replica_sync_price,
-            accepting_extensions: named_field(settings, "accepting_extensions")
-                .and_then(|v| v.as_bool())
-                .ok_or_else(|| ClientError::Chain("Missing 'accepting_extensions'".to_string()))?,
-            agreements_total,
-            challenges_failed,
-            deregister_at: named_field(&value, "deregister_at").and_then(|v| match &v.value {
-                ValueDef::Variant(Variant { name, values }) if name == "Some" => values
-                    .values()
-                    .next()
-                    .and_then(|v| v.as_u128())
-                    .map(|n| n as u32),
-                _ => None,
-            }),
-        }))
+        Ok(info.map(ProviderInfo::from))
     }
 
     /// Update provider settings.
@@ -330,34 +250,31 @@ impl ProviderClient {
         provider: &AccountId32,
     ) -> ClientResult<Option<u64>> {
         let chain = SubstrateClient::connect(chain_ws_url).await?;
-        let at = chain
-            .api()
-            .at_current_block()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?;
-        let (addr, keys) = storage::provider_replay_state(provider);
-        let thunk = at
+        let at = chain.at_current_block().await?;
+        let value = at
             .storage()
-            .try_fetch(addr, keys)
+            .try_fetch(
+                api::storage().storage_provider().provider_replay_states(),
+                (convert::to_subxt_account(provider),),
+            )
             .await
             .map_err(|e| ClientError::Chain(format!("Failed to fetch replay state: {e}")))?;
 
-        let Some(thunk) = thunk else {
+        let Some(value) = value else {
             return Ok(None);
         };
-        let decoded = thunk
+        let window = value
             .decode()
             .map_err(|e| ClientError::Chain(format!("Failed to decode replay state: {e}")))?;
-        Ok(named_field(&decoded, "hsn")
-            .and_then(|v| v.as_u128())
-            .map(|h| h as u64))
+        Ok(Some(window.hsn))
     }
 
     /// Read the chain's `StorageProvider::RequestTimeout` runtime constant —
     /// the validity window (in blocks) applied to provider-signed terms.
     ///
-    /// Returns `Ok(None)` if the constant is absent from the node's metadata.
-    pub async fn fetch_request_timeout(chain_ws_url: &str) -> ClientResult<Option<u32>> {
+    /// Errors if the node's metadata does not carry the constant (i.e. the
+    /// generated bindings have drifted from the runtime).
+    pub async fn fetch_request_timeout(chain_ws_url: &str) -> ClientResult<u32> {
         let chain = SubstrateClient::connect(chain_ws_url).await?;
         let value = chain
             .api()
@@ -365,10 +282,14 @@ impl ProviderClient {
             .await
             .map_err(|e| ClientError::Chain(format!("Failed to read RequestTimeout: {e}")))?
             .constants()
-            .entry(constants::request_timeout())
+            .entry(
+                storage_subxt::api::constants()
+                    .storage_provider()
+                    .request_timeout(),
+            )
             .map_err(|e| ClientError::Chain(format!("Failed to decode RequestTimeout: {e}")))?;
 
-        Ok(value.as_u128().map(|v| v as u32))
+        Ok(value)
     }
 
     /// Negotiate provider-signed agreement terms over HTTP.
@@ -434,79 +355,35 @@ impl ProviderClient {
     /// List all active agreements for this provider.
     pub async fn list_active_agreements(&self) -> ClientResult<Vec<ActiveAgreement>> {
         let chain = self.base.chain()?;
-        let provider_account = self.provider_account();
-        let provider_bytes: &[u8] = provider_account.as_ref();
+        let provider = convert::to_subxt_account(&self.provider_account());
 
-        let at = chain
-            .api()
-            .at_current_block()
+        let at = chain.at_current_block().await?;
+
+        let agreements = at
+            .runtime_apis()
+            .call(
+                api::runtime_apis()
+                    .storage_provider_api()
+                    .provider_agreements(provider),
+            )
             .await
-            .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?;
+            .map_err(|e| {
+                ClientError::Chain(format!("provider_agreements runtime API failed: {e}"))
+            })?;
 
-        let mut iter = at
-            .storage()
-            .iter(storage::all_storage_agreements(), ())
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to iterate agreements: {e}")))?;
-
-        let mut agreements = Vec::new();
-
-        while let Some(result) = iter.next().await {
-            let kv =
-                result.map_err(|e| ClientError::Chain(format!("Storage iteration error: {e}")))?;
-
-            // Key layout: [twox128(pallet)=16][twox128(storage)=16]
-            //             [blake2_128(bucket_id)=16][bucket_id=8]
-            //             [blake2_128(provider)=16][provider=32]
-            // bucket_id at [48..56], provider at [72..104]
-            let key = kv.key_bytes();
-            if key.len() < 104 {
-                continue;
-            }
-            if &key[72..104] != provider_bytes {
-                continue;
-            }
-
-            let bucket_id =
-                u64::from_le_bytes(key[48..56].try_into().unwrap_or([0u8; 8])) as BucketId;
-
-            let value = match kv.value().decode() {
-                Ok(v) => v,
-                Err(e) => {
-                    tracing::warn!("Failed to decode agreement: {e}");
-                    continue;
-                }
-            };
-
-            let owner = named_field(&value, "owner")
-                .and_then(decode_account_bytes)
-                .map(|b| format!("0x{}", hex::encode(b)))
-                .unwrap_or_default();
-
-            let max_bytes = named_field(&value, "max_bytes")
-                .and_then(|v| v.as_u128())
-                .unwrap_or(0) as u64;
-
-            let expires_at = named_field(&value, "expires_at")
-                .and_then(|v| v.as_u128())
-                .unwrap_or(0) as u32;
-
-            let is_primary = named_field(&value, "role")
-                .map(|r| {
-                    matches!(&r.value, ValueDef::Variant(Variant { name, .. }) if name == "Primary")
+        Ok(agreements
+            .into_iter()
+            .filter_map(|a| {
+                let owner = convert::account_from_runtime_api(&a.owner, "owner")?;
+                Some(ActiveAgreement {
+                    bucket_id: a.bucket_id,
+                    owner: convert::account_hex(&owner),
+                    max_bytes: a.max_bytes,
+                    expires_at: a.expires_at,
+                    is_primary: matches!(a.role, ProviderRole::Primary),
                 })
-                .unwrap_or(false);
-
-            agreements.push(ActiveAgreement {
-                bucket_id,
-                owner,
-                max_bytes,
-                expires_at,
-                is_primary,
-            });
-        }
-
-        Ok(agreements)
+            })
+            .collect())
     }
 
     /// Confirm replica sync to receive payment.
@@ -528,7 +405,7 @@ impl ProviderClient {
             mmr_roots.iter().filter(|r| r.is_some()).count()
         );
 
-        let tx = extrinsics::confirm_replica_sync(bucket_id, mmr_roots, signature);
+        let tx = extrinsics::confirm_replica_sync(bucket_id, mmr_roots, signature)?;
 
         chain
             .api()
@@ -603,83 +480,34 @@ impl ProviderClient {
     /// List all active challenges against this provider.
     pub async fn list_active_challenges(&self) -> ClientResult<Vec<ChallengeInfo>> {
         let chain = self.base.chain()?;
-        let provider_account = self.provider_account();
-        let provider_bytes: Vec<u8> = AsRef::<[u8]>::as_ref(&provider_account).to_vec();
+        let provider = convert::to_subxt_account(&self.provider_account());
 
-        let at = chain
-            .api()
-            .at_current_block()
+        let at = chain.at_current_block().await?;
+
+        let challenges = at
+            .runtime_apis()
+            .call(
+                api::runtime_apis()
+                    .storage_provider_api()
+                    .provider_challenges(provider),
+            )
             .await
-            .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?;
+            .map_err(|e| {
+                ClientError::Chain(format!("provider_challenges runtime API failed: {e}"))
+            })?;
 
-        let mut iter = at
-            .storage()
-            .iter(storage::all_challenges(), ())
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to iterate challenges: {e}")))?;
-
-        let mut challenges = Vec::new();
-
-        while let Some(result) = iter.next().await {
-            let kv =
-                result.map_err(|e| ClientError::Chain(format!("Storage iteration error: {e}")))?;
-
-            // Key layout: [twox128(pallet)=16][twox128(storage)=16]
-            //             [blake2_128(deadline)=16][deadline=4]; deadline at [48..52]
-            let key = kv.key_bytes();
-            if key.len() < 52 {
-                continue;
-            }
-            let deadline = u32::from_le_bytes(key[48..52].try_into().unwrap_or([0u8; 4]));
-
-            let value = match kv.value().decode() {
-                Ok(v) => v,
-                Err(e) => {
-                    tracing::warn!("Failed to decode challenges at block {deadline}: {e}");
-                    continue;
-                }
-            };
-
-            // Value is Vec<Challenge>, decoded as an unnamed Composite
-            let ValueDef::Composite(Composite::Unnamed(items)) = &value.value else {
-                continue;
-            };
-            let items: Vec<_> = items.iter().collect();
-
-            for (index, item) in items.iter().enumerate() {
-                let Some(pv) = named_field(item, "provider") else {
-                    continue;
-                };
-                let Some(pv_bytes) = decode_account_bytes(pv) else {
-                    continue;
-                };
-                if pv_bytes != provider_bytes {
-                    continue;
-                }
-
-                let bucket_id = named_field(item, "bucket_id")
-                    .and_then(|v| v.as_u128())
-                    .unwrap_or(0) as BucketId;
-
-                let leaf_index = named_field(item, "leaf_index")
-                    .and_then(|v| v.as_u128())
-                    .unwrap_or(0) as u64;
-
-                let chunk_index = named_field(item, "chunk_index")
-                    .and_then(|v| v.as_u128())
-                    .unwrap_or(0) as u64;
-
-                challenges.push(ChallengeInfo {
-                    challenge_id: (deadline, index as u16),
-                    bucket_id,
-                    deadline,
-                    leaf_index,
-                    chunk_index,
-                });
-            }
-        }
-
-        Ok(challenges)
+        Ok(challenges
+            .into_iter()
+            .map(|c| ChallengeInfo {
+                // The stable index is carried by the response, never derived
+                // from result position.
+                challenge_id: (c.deadline, c.index),
+                bucket_id: c.bucket_id,
+                deadline: c.deadline,
+                leaf_index: c.leaf_index,
+                chunk_index: c.chunk_index,
+            })
+            .collect())
     }
 
     // ═════════════════════════════════════════════════════════════════════════
@@ -691,76 +519,40 @@ impl ProviderClient {
         let chain = self.base.chain()?;
         let provider_account = self.provider_account();
 
-        let at = chain
-            .api()
-            .at_current_block()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?;
-        let (addr, keys) = storage::provider_info(&provider_account);
-        let thunk = at
+        let at = chain.at_current_block().await?;
+        let value = at
             .storage()
-            .try_fetch(addr, keys)
+            .try_fetch(
+                api::storage().storage_provider().providers(),
+                (convert::to_subxt_account(&provider_account),),
+            )
             .await
             .map_err(|e| ClientError::Chain(format!("Failed to fetch provider: {e}")))?;
 
-        let Some(thunk) = thunk else {
+        let Some(value) = value else {
             return Ok(ProviderStats::default());
         };
 
-        let value = thunk
+        let info = value
             .decode()
             .map_err(|e| ClientError::Chain(format!("Failed to decode provider: {e}")))?;
 
-        let stake = named_field(&value, "stake")
-            .and_then(|v| v.as_u128())
-            .unwrap_or(0);
-
-        let committed_bytes = named_field(&value, "committed_bytes")
-            .and_then(|v| v.as_u128())
-            .unwrap_or(0) as u64;
-
-        let stats = named_field(&value, "stats");
-
-        let agreements_total = stats
-            .and_then(|s| named_field(s, "agreements_total"))
-            .and_then(|v| v.as_u128())
-            .unwrap_or(0) as u32;
-
-        let agreements_extended = stats
-            .and_then(|s| named_field(s, "agreements_extended"))
-            .and_then(|v| v.as_u128())
-            .unwrap_or(0) as u32;
-
-        let challenges_received_authorized = stats
-            .and_then(|s| named_field(s, "challenges_received_authorized"))
-            .and_then(|v| v.as_u128())
-            .unwrap_or(0) as u32;
-
-        let challenges_received_public = stats
-            .and_then(|s| named_field(s, "challenges_received_public"))
-            .and_then(|v| v.as_u128())
-            .unwrap_or(0) as u32;
-
-        let challenges_failed = stats
-            .and_then(|s| named_field(s, "challenges_failed"))
-            .and_then(|v| v.as_u128())
-            .unwrap_or(0) as u32;
-
-        let reputation = if agreements_total > 0 {
-            let failure_rate = challenges_failed as f64 / agreements_total as f64;
+        let reputation = if info.stats.agreements_total > 0 {
+            let failure_rate =
+                info.stats.challenges_failed as f64 / info.stats.agreements_total as f64;
             ((1.0 - failure_rate) * 100.0).clamp(0.0, 100.0) as u8
         } else {
             100
         };
 
         Ok(ProviderStats {
-            stake,
-            committed_bytes,
-            agreements_total,
-            agreements_extended,
-            challenges_received_authorized,
-            challenges_received_public,
-            challenges_failed,
+            stake: info.stake,
+            committed_bytes: info.committed_bytes,
+            agreements_total: info.stats.agreements_total,
+            agreements_extended: info.stats.agreements_extended,
+            challenges_received_authorized: info.stats.challenges_received_authorized,
+            challenges_received_public: info.stats.challenges_received_public,
+            challenges_failed: info.stats.challenges_failed,
             reputation,
         })
     }
@@ -777,19 +569,17 @@ impl ProviderClient {
         let chain = self.base.chain()?;
         let provider_account = self.provider_account();
 
-        let at = chain
-            .api()
-            .at_current_block()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?;
-        let (addr, keys) = storage::provider_info(&provider_account);
-        let thunk = at
+        let at = chain.at_current_block().await?;
+        let value = at
             .storage()
-            .try_fetch(addr, keys)
+            .try_fetch(
+                api::storage().storage_provider().providers(),
+                (convert::to_subxt_account(&provider_account),),
+            )
             .await
             .map_err(|e| ClientError::Chain(format!("Failed to fetch provider: {e}")))?;
 
-        let Some(thunk) = thunk else {
+        let Some(value) = value else {
             return Ok(CapacityInfo {
                 committed_bytes: 0,
                 available_bytes: 0,
@@ -798,31 +588,19 @@ impl ProviderClient {
             });
         };
 
-        let value = thunk
+        let info = value
             .decode()
             .map_err(|e| ClientError::Chain(format!("Failed to decode provider: {e}")))?;
 
-        let stake = named_field(&value, "stake")
-            .and_then(|v| v.as_u128())
-            .unwrap_or(0);
-
-        let committed_bytes = named_field(&value, "committed_bytes")
-            .and_then(|v| v.as_u128())
-            .unwrap_or(0) as u64;
-
-        let settings = named_field(&value, "settings");
-
-        let max_capacity = settings
-            .and_then(|s| named_field(s, "max_capacity"))
-            .and_then(|v| v.as_u128())
-            .unwrap_or(0) as u64;
-
-        let available_bytes = max_capacity.saturating_sub(committed_bytes);
+        let available_bytes = info
+            .settings
+            .max_capacity
+            .saturating_sub(info.committed_bytes);
 
         Ok(CapacityInfo {
-            committed_bytes,
+            committed_bytes: info.committed_bytes,
             available_bytes,
-            stake,
+            stake: info.stake,
             required_stake: 0,
         })
     }
@@ -832,53 +610,6 @@ impl ProviderClient {
         let stats = self.get_stats().await?;
         Ok(stats.reputation)
     }
-}
-
-fn named_field<'a>(
-    value: &'a subxt::ext::scale_value::Value,
-    field: &str,
-) -> Option<&'a subxt::ext::scale_value::Value> {
-    match &value.value {
-        ValueDef::Composite(Composite::Named(fields)) => {
-            fields.iter().find(|(n, _)| n == field).map(|(_, v)| v)
-        }
-        _ => None,
-    }
-}
-
-/// Decode an AccountId32 from a scale_value unnamed composite of 32 u8 items.
-fn decode_account_bytes(value: &subxt::ext::scale_value::Value) -> Option<Vec<u8>> {
-    match &value.value {
-        ValueDef::Composite(Composite::Unnamed(items)) if items.len() == 32 => {
-            items.iter().map(|b| b.as_u128().map(|n| n as u8)).collect()
-        }
-        _ => None,
-    }
-}
-
-/// Decode a `Vec<u8>` / `BoundedVec<u8, _>` from a scale_value composite.
-///
-/// `BoundedVec<T, N>` serializes its `TypeInfo` as a 1-field unnamed composite
-/// wrapping the inner `Vec<T>`, so scale_value surfaces it as
-/// `Composite::Unnamed([inner_vec])`. This helper drills through that wrapper
-/// if present, then collects the bytes.
-fn decode_byte_vec(value: &subxt::ext::scale_value::Value) -> Vec<u8> {
-    let ValueDef::Composite(Composite::Unnamed(items)) = &value.value else {
-        return Vec::new();
-    };
-    // Direct sequence of byte primitives.
-    let bytes: Vec<u8> = items
-        .iter()
-        .filter_map(|b| b.as_u128().map(|n| n as u8))
-        .collect();
-    if !items.is_empty() && bytes.len() == items.len() {
-        return bytes;
-    }
-    // BoundedVec wrapper: single inner field holds the actual sequence.
-    if items.len() == 1 {
-        return decode_byte_vec(&items[0]);
-    }
-    Vec::new()
 }
 
 // Types

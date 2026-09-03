@@ -3,19 +3,21 @@
 //! Node startup and runtime orchestration.
 
 use crate::{
-    auth::{ChainMembershipResolver, MembershipCache},
-    chain_connection::{self, ChainHandle, ChainTransport},
-    chain_events::{BlockEvent, BlockEventRx, BlockEventTx, EVENT_CHANNEL_CAPACITY},
     chain_state_coordinator::ChainStateCoordinator,
-    cli::{Cli, StorageMode, DEFAULT_PROVIDER_ID},
+    cli::{Cli, DEFAULT_PROVIDER_ID},
     create_router,
+    membership::{BlockEventInvalidations, ChainMembershipResolver},
     subxt_client::SubxtChainClient,
     ChainStateCoordinatorHandle, ChallengeResponder, ChallengeResponderConfig,
     ChallengeResponderHandle, ProviderDeps, ProviderState, ReplicaSyncCoordinator,
     ReplicaSyncCoordinatorConfig, ReplicaSyncCoordinatorHandle,
 };
 use clap::Parser;
-use provider_storage::{DiskStorage, NonceStore, NullNonceStore, Storage, StorageBackend};
+use provider_auth::Authenticator;
+use provider_chain::{
+    chain_connection::{self, ChainHandle, ChainTransport},
+    BlockEvent, BlockEventRx, BlockEventTx, EVENT_CHANNEL_CAPACITY,
+};
 use std::net::SocketAddr;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -39,9 +41,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // channel. The chain-state coordinator owns the sender and rebuilds the
     // connection on loss or stall; every consumer (HTTP auth, the signing
     // client, coordinators) borrows the current handle from the receiver.
-    let transport = ChainTransport::Rpc {
-        url: cli.rpc.chain_rpc.clone(),
-    };
+    let transport = cli.rpc.chain_transport()?;
     let (chain_tx, chain_rx) = watch::channel::<Option<ChainHandle>>(None);
     // Per-block event fan-out from the chain-state coordinator to the
     // background coordinators.
@@ -57,41 +57,44 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         Err(e) => tracing::warn!("Chain unreachable at startup ({e}); retrying in the background"),
     }
 
-    // Create storage backend and the associated nonce store (which follows the
-    // same persistence mode so the nonce counter survives disk restarts).
-    let (storage, nonce_store): (Arc<dyn StorageBackend>, Arc<dyn NonceStore>) =
-        match cli.storage.storage_mode {
-            StorageMode::Inmemory => {
-                tracing::info!("Using in-memory storage (data will be lost on restart)");
-                (Arc::new(Storage::new()), Arc::new(NullNonceStore))
-            }
-            StorageMode::Disk => {
-                tracing::info!(
-                    "Using persistent disk storage at: {}",
-                    cli.storage.storage_path.display()
-                );
-                let disk = DiskStorage::new(&cli.storage.storage_path)?;
-                let store = disk.nonce_store();
-                (Arc::new(disk), store)
-            }
-        };
+    let backend = cli.storage.spec();
+    tracing::info!("Storage backend: {backend}");
+    let (storage, nonce_store) = backend.build()?;
 
     // Membership-based auth over the chain's bucket member sets, resolved
-    // through the shared watch connection.
+    // through the shared watch connection. Subscribed here rather than after
+    // the chain-state coordinator starts, so the cache cannot miss the
+    // bootstrap `Resubscribed` the coordinator broadcasts on first connect.
     let resolver = ChainMembershipResolver::new(chain_rx.clone());
-    let ttl = Duration::from_secs(cli.auth.auth_cache_ttl);
-    let membership = Arc::new(MembershipCache::new(Box::new(resolver), ttl));
+    // Incoherent, not unsafe - warn rather than clamp an explicit choice.
+    if cli.auth.auth_max_stale <= cli.auth.auth_cache_ttl {
+        tracing::warn!(
+            "--auth-max-stale ({}s) is below --auth-cache-ttl ({}s): a cached member set \
+             will never be served once the chain is unreachable",
+            cli.auth.auth_max_stale,
+            cli.auth.auth_cache_ttl
+        );
+    }
+    let auth = Arc::new(
+        Authenticator::new(resolver)
+            .with_ttl(Duration::from_secs(cli.auth.auth_cache_ttl))
+            .with_max_skew(Duration::from_secs(cli.auth.auth_max_skew))
+            .with_max_stale(Duration::from_secs(cli.auth.auth_max_stale))
+            .with_max_entries(cli.auth.auth_cache_max_entries)
+            .with_invalidations(BlockEventInvalidations::new(events_tx.subscribe())),
+    );
     tracing::info!(
-        "Auth: membership cache_ttl={}s, max_skew={}s",
+        "Auth: membership cache_ttl={}s, max_stale={}s, max_skew={}s, max_entries={}",
         cli.auth.auth_cache_ttl,
-        cli.auth.auth_max_skew
+        cli.auth.auth_max_stale,
+        cli.auth.auth_max_skew,
+        cli.auth.auth_cache_max_entries
     );
 
     let deps = ProviderDeps {
         storage,
         nonce_store,
-        membership,
-        auth_max_skew: Duration::from_secs(cli.auth.auth_max_skew),
+        auth,
     };
 
     // Resolve provider identity
@@ -179,7 +182,8 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
 /// Start the chain-state coordinator, which keeps
 /// `chain_state.current_anchor_block` and `chain_state.provider_info` in sync
-/// with the chain.
+/// with the chain, and broadcasts bucket-membership changes on the
+/// block-event fan-out, which the auth membership cache drains.
 ///
 /// Returns `None` only when the provider id isn't a valid account. The
 /// coordinator itself never fails to start: it connects in the background and
@@ -275,12 +279,27 @@ async fn start_challenge_responder(
         }
     };
 
-    let config = ChallengeResponderConfig {
-        poll_interval: Duration::from_secs(cli.challenge_responder.challenge_poll_interval),
-        ..Default::default()
+    let provider_account = match sp_runtime::AccountId32::from_str(&state.provider_id) {
+        Ok(a) => a,
+        Err(e) => {
+            tracing::warn!(
+                "challenge responder: invalid provider SS58 '{}': {e:?}",
+                state.provider_id
+            );
+            return None;
+        }
     };
 
-    let responder = ChallengeResponder::new(config, state, Box::new(chain_client));
+    let config = ChallengeResponderConfig {
+        poll_interval: Duration::from_secs(cli.challenge_responder.challenge_poll_interval),
+        ..ChallengeResponderConfig::new(provider_account)
+    };
+
+    let responder = ChallengeResponder::new(
+        config,
+        state.challenge_proof_source(),
+        Box::new(chain_client),
+    );
 
     match responder.start(events_rx, None).await {
         Ok(handle) => {

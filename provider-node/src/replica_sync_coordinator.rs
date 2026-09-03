@@ -11,9 +11,9 @@
 //! 4. Submits `confirm_replica_sync` transactions to receive payment
 //! 5. Handles historical roots matching for late syncs
 
-use crate::chain_events::{BlockEvent, BlockEventRx};
 use crate::replica_sync::ReplicaSync;
 use crate::{Error, ProviderState};
+use provider_chain::{BlockEvent, BlockEventRx};
 use sp_core::H256;
 use sp_runtime::AccountId32;
 use std::collections::HashMap;
