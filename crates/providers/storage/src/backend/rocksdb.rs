@@ -1,14 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! Disk-based persistent storage backend using RocksDB.
+//! RocksDB-backed [`StorageBackend`]: persists the [`types`] records to disk.
 //!
-//! This provides the same interface as the in-memory storage but persists
-//! all data to disk for production use.
+//! Only the engine lives here - the record shapes it reads and writes are
+//! defined in [`types`], which owns their on-disk encoding.
+//!
+//! [`types`]: super::types
 
-use super::{BucketInfo, BucketStats, BucketSummary, StorageBackend, StoredNode};
+use super::{BucketInfo, BucketState, BucketStats, BucketSummary, StorageBackend, StoredNode};
 use crate::error::Error;
 use crate::nonce::NonceStore;
-use codec::{Decode, DecodeAll, Encode};
+use codec::{DecodeAll, Encode};
 use rocksdb::{Options, DB};
 use sp_core::H256;
 use std::path::Path;
@@ -24,32 +26,6 @@ const CF_METADATA: &str = "metadata";
 
 /// RocksDB key for the persisted nonce counter highest sequence nonce.
 const KEY_NONCE: &[u8] = b"nonce_counter";
-
-/// Bucket state managed by this provider (serialized to disk).
-#[derive(Debug, Clone, PartialEq, Encode, Decode)]
-struct BucketState {
-    mmr_root: H256,
-    start_seq: u64,
-    leaves: Vec<MmrLeaf>,
-    used_bytes: u64,
-    max_bytes: u64,
-}
-
-impl BucketState {
-    fn new(max_bytes: u64) -> Self {
-        Self {
-            mmr_root: H256::zero(),
-            start_seq: 0,
-            leaves: Vec::new(),
-            used_bytes: 0,
-            max_bytes,
-        }
-    }
-
-    fn leaf_count(&self) -> u64 {
-        self.leaves.len() as u64
-    }
-}
 
 /// Disk-based storage backend using RocksDB.
 pub struct DiskStorage {
@@ -658,6 +634,60 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
+    /// Pins the raw keys and values this engine writes. A failure here means
+    /// existing provider databases can no longer be read - a storage
+    /// version/migration is required
+    /// (see <https://github.com/paritytech/web3-storage/issues/375>).
+    ///
+    /// The record encodings themselves are pinned in [`super::types`].
+    #[test]
+    fn on_disk_bytes() {
+        // Raw keys and values as written through the public API.
+        assert_eq!(
+            [CF_NODES, CF_BUCKETS, CF_ROOT_TO_BUCKET, CF_METADATA],
+            ["nodes", "buckets", "root_to_bucket", "metadata"],
+            "column-family names locate every record on disk",
+        );
+        assert_eq!(KEY_NONCE, b"nonce_counter");
+
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+
+        // CF_BUCKETS: key = bucket_id as u64 little-endian, value = SCALE(BucketState).
+        let bucket_id: BucketId = 0x0102030405060708;
+        storage.init_bucket(bucket_id, 1_000).unwrap();
+        let cf = storage.db.cf_handle(CF_BUCKETS).unwrap();
+        let key = hex::decode("0807060504030201").unwrap();
+        let raw = storage
+            .db
+            .get_cf(&cf, key)
+            .unwrap()
+            .expect("bucket must be stored under the little-endian bucket_id key");
+        assert_eq!(
+            hex::encode(&raw),
+            // BucketState::new(1_000): zero root, no leaves, max_bytes = 1_000
+            "0000000000000000000000000000000000000000000000000000000000000000\
+             0000000000000000\
+             00\
+             0000000000000000\
+             e803000000000000"
+        );
+
+        // CF_NODES: key = blake2_256(data), value = SCALE(StoredNode).
+        let data = vec![1u8, 2, 3, 4, 5];
+        let hash = blake2_256(&data);
+        storage.store_node(bucket_id, hash, data, None).unwrap();
+        let cf = storage.db.cf_handle(CF_NODES).unwrap();
+        let raw = storage.db.get_cf(&cf, hash.as_bytes()).unwrap().unwrap();
+        assert_eq!(hex::encode(&raw), "14010203040500");
+
+        // CF_METADATA / KEY_NONCE: raw u64 little-endian (not SCALE).
+        storage.nonce_store().persist(42);
+        let cf = storage.db.cf_handle(CF_METADATA).unwrap();
+        let raw = storage.db.get_cf(&cf, KEY_NONCE).unwrap().unwrap();
+        assert_eq!(hex::encode(&raw), "2a00000000000000");
+    }
+
     #[test]
     fn nonce_store_persist_and_load_round_trip() {
         let dir = TempDir::new().unwrap();
@@ -740,161 +770,5 @@ mod tests {
                 "reset must persist across DB reopen"
             );
         }
-    }
-
-    /// Pins the exact bytes this module persists. A failure here means
-    /// existing provider databases can no longer be decoded — a storage
-    /// version/migration is required
-    /// (see <https://github.com/paritytech/web3-storage/issues/375>).
-    mod compatibility_tests {
-        use super::*;
-
-        /// `value` must encode exactly to the `golden` hex, and the golden
-        /// bytes must decode back to `value`.
-        fn assert_golden<T: Encode + DecodeAll + PartialEq + std::fmt::Debug>(
-            value: T,
-            golden: &str,
-        ) {
-            assert_eq!(hex::encode(value.encode()), golden, "encoding changed");
-            let bytes = hex::decode(golden).unwrap();
-            assert_eq!(T::decode_all(&mut &bytes[..]).unwrap(), value);
-        }
-
-        #[test]
-        fn bucket_state() {
-            assert_golden(
-                BucketState {
-                    mmr_root: H256::repeat_byte(0xab),
-                    start_seq: 7,
-                    leaves: vec![MmrLeaf {
-                        data_root: H256::repeat_byte(0xcd),
-                        data_size: 111,
-                        total_size: 222,
-                    }],
-                    used_bytes: 999,
-                    max_bytes: 1_000_000,
-                },
-                concat!(
-                    // mmr_root: H256 (0xab * 32)
-                    "abababababababababababababababababababababababababababababababab",
-                    // start_seq: u64 = 7 (little-endian)
-                    "0700000000000000",
-                    // leaves: Vec<MmrLeaf>, compact length 1
-                    "04",
-                    // leaves[0]: data_root (0xcd * 32), data_size = 111, total_size = 222
-                    "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
-                    "6f00000000000000",
-                    "de00000000000000",
-                    // used_bytes: u64 = 999
-                    "e703000000000000",
-                    // max_bytes: u64 = 1_000_000
-                    "40420f0000000000",
-                ),
-            );
-        }
-
-        #[test]
-        fn stored_node() {
-            assert_golden(
-                StoredNode {
-                    data: vec![1, 2, 3, 4, 5],
-                    children: Some(vec![H256::repeat_byte(0x11)]),
-                },
-                concat!(
-                    // data: Vec<u8>, compact length 5, then the bytes
-                    "14",
-                    "0102030405",
-                    // children: Option<Vec<H256>> = Some, compact length 1
-                    "01",
-                    "04",
-                    "1111111111111111111111111111111111111111111111111111111111111111",
-                ),
-            );
-            assert_golden(
-                StoredNode {
-                    data: vec![],
-                    children: None,
-                },
-                "0000",
-            );
-        }
-
-        #[test]
-        fn mmr_leaf() {
-            // Also hashed (`blake2_256(leaf.encode())`) to build the MMR, so a
-            // layout change breaks on-chain MMR root reproducibility too.
-            assert_golden(
-                MmrLeaf {
-                    data_root: H256::repeat_byte(0xcd),
-                    data_size: 111,
-                    total_size: 222,
-                },
-                concat!(
-                    // data_root: H256 (0xcd * 32)
-                    "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
-                    // data_size: u64 = 111 (little-endian)
-                    "6f00000000000000",
-                    // total_size: u64 = 222
-                    "de00000000000000",
-                ),
-            );
-        }
-
-        #[test]
-        fn on_disk_bytes() {
-            // Raw keys and values as written through the public API.
-            let dir = TempDir::new().unwrap();
-            let storage = DiskStorage::new(dir.path()).unwrap();
-
-            // CF_BUCKETS: key = bucket_id as u64 little-endian, value = SCALE(BucketState).
-            let bucket_id: BucketId = 0x0102030405060708;
-            storage.init_bucket(bucket_id, 1_000).unwrap();
-            let cf = storage.db.cf_handle(CF_BUCKETS).unwrap();
-            let key = hex::decode("0807060504030201").unwrap();
-            let raw = storage
-                .db
-                .get_cf(&cf, key)
-                .unwrap()
-                .expect("bucket must be stored under the little-endian bucket_id key");
-            assert_eq!(
-                hex::encode(&raw),
-                // BucketState::new(1_000): zero root, no leaves, max_bytes = 1_000
-                "0000000000000000000000000000000000000000000000000000000000000000\
-                 0000000000000000\
-                 00\
-                 0000000000000000\
-                 e803000000000000"
-            );
-
-            // CF_NODES: key = blake2_256(data), value = SCALE(StoredNode).
-            let data = vec![1u8, 2, 3, 4, 5];
-            let hash = blake2_256(&data);
-            storage.store_node(bucket_id, hash, data, None).unwrap();
-            let cf = storage.db.cf_handle(CF_NODES).unwrap();
-            let raw = storage.db.get_cf(&cf, hash.as_bytes()).unwrap().unwrap();
-            assert_eq!(hex::encode(&raw), "14010203040500");
-
-            // CF_METADATA / KEY_NONCE: raw u64 little-endian (not SCALE).
-            storage.nonce_store().persist(42);
-            let cf = storage.db.cf_handle(CF_METADATA).unwrap();
-            let raw = storage.db.get_cf(&cf, KEY_NONCE).unwrap().unwrap();
-            assert_eq!(hex::encode(&raw), "2a00000000000000");
-        }
-    }
-
-    #[test]
-    fn decode_all_rejects_trailing_bytes() {
-        let bucket = BucketState::new(1_000);
-        let mut encoded = bucket.encode();
-        encoded.extend_from_slice(&[0xff, 0xff]);
-        assert!(BucketState::decode_all(&mut &encoded[..]).is_err());
-
-        let node = StoredNode {
-            data: vec![1, 2, 3],
-            children: None,
-        };
-        let mut encoded = node.encode();
-        encoded.push(0x00);
-        assert!(StoredNode::decode_all(&mut &encoded[..]).is_err());
     }
 }
