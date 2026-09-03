@@ -86,8 +86,10 @@ pub mod pallet {
         BlockNumberFor<T>,
     >;
 
-    /// In-code storage version. v1 covers the challenger-tier / visibility
-    /// layout changes of #330. See [`crate::migrations`].
+    /// In-code storage version. One entry per bump, in the shape the runtimes
+    /// use for their version notes; the migrations live in [`crate::migrations`].
+    /// - v1: challenger tier and bucket visibility — split `ProviderStats`
+    ///   counters, `Bucket.visibility`, `Challenge.authorized` (#330)
     const STORAGE_VERSION: StorageVersion = StorageVersion::new(1);
 
     #[pallet::pallet]
