@@ -78,7 +78,7 @@ pub use pallet_storage_provider;
 use paseo_constants::{
     consensus::{
         async_backing::UNINCLUDED_SEGMENT_CAPACITY, BLOCK_PROCESSING_VELOCITY,
-        MAXIMUM_BLOCK_WEIGHT, RELAY_CHAIN_SLOT_DURATION_MILLIS, SLOT_DURATION,
+        MAXIMUM_BLOCK_WEIGHT, RELAY_CHAIN_SLOT_DURATION_MILLIS, RELAY_PARENT_OFFSET, SLOT_DURATION,
     },
     currency::{EXISTENTIAL_DEPOSIT, MICROUNIT},
     system::{AVERAGE_ON_INITIALIZE_RATIO, NORMAL_DISPATCH_RATIO},
@@ -182,10 +182,11 @@ pub const VERSION: RuntimeVersion = RuntimeVersion {
     // * 4_002 for the breaking Challenges storage reshape (Vec -> StorageDoubleMap) (#125);
     // * 4_003 for dropping the vestigial `ChallengerStatRecord::total_earnings` field (#125);
     // * 4_004 for `StorageProviderApi` v2: `challenge_candidates`, `deregister_at`, `reputation` (#318);
-    // * 4_005 for the challenger tier and bucket visibility: split `ProviderStats` counters,
+    // * 4_005 for 2 s blocks / 3 cores: slot-based authoring, `RelayParentOffset = 1` (#131);
+    // * 4_006 for the challenger tier and bucket visibility: split `ProviderStats` counters,
     //   `Bucket.visibility`, `Challenge.authorized`, `set_bucket_visibility`, and
-    //   `StorageProviderApi` v3 with the split counters in its responses (#330);
-    spec_version: 4_005,
+    //   `StorageProviderApi` v3 with the split counters in its responses (#330).
+    spec_version: 4_006,
     impl_version: 0,
     apis: RUNTIME_API_VERSIONS,
     // Bumped whenever call encoding changes, so offline signers and stale-metadata
@@ -365,7 +366,7 @@ impl cumulus_pallet_parachain_system::Config for Runtime {
     type CheckAssociatedRelayNumber = RelayNumberMonotonicallyIncreases;
     type ConsensusHook = ConsensusHook;
     type WeightInfo = weights::cumulus_pallet_parachain_system::WeightInfo<Runtime>;
-    type RelayParentOffset = ConstU32<0>;
+    type RelayParentOffset = ConstU32<RELAY_PARENT_OFFSET>;
     // V3 scheduling stays off; enabling it before collators support it stalls the chain.
     type SchedulingSignatureVerifier = ();
 }
@@ -765,7 +766,7 @@ pallet_revive::impl_runtime_apis_plus_revive_traits!(
 
     impl cumulus_primitives_core::RelayParentOffsetApi<Block> for Runtime {
         fn relay_parent_offset() -> u32 {
-            0
+            RELAY_PARENT_OFFSET
         }
 
         fn max_claim_queue_offset() -> u8 {
