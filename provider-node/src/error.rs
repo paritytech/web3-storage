@@ -409,15 +409,6 @@ impl IntoResponse for Error {
                     details: Some(serde_json::json!({ "message": msg })),
                 },
             ),
-            // Destructured rather than stringified: the inner message is already
-            // the full text, so `to_string()` would prefix it a second time.
-            Error::Coordinator(CoordinatorError::Internal(msg)) => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                ErrorResponse {
-                    error: "internal_error".to_string(),
-                    details: Some(serde_json::json!({ "message": msg })),
-                },
-            ),
             Error::ProviderDeregistering => (
                 StatusCode::SERVICE_UNAVAILABLE,
                 ErrorResponse {
