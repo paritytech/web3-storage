@@ -22,7 +22,6 @@ extern crate alloc;
 pub use pallet::*;
 
 pub mod impls;
-pub mod migrations;
 pub mod runtime_api;
 pub mod weights;
 pub use weights::WeightInfo;
@@ -86,11 +85,7 @@ pub mod pallet {
         BlockNumberFor<T>,
     >;
 
-    /// In-code storage version. One entry per bump, in the shape the runtimes
-    /// use for their version notes; the migrations live in [`crate::migrations`].
-    /// - v1: challenger tier and bucket visibility — split `ProviderStats`
-    ///   counters, `Bucket.visibility`, `Challenge.authorized` (#330)
-    const STORAGE_VERSION: StorageVersion = StorageVersion::new(1);
+    const STORAGE_VERSION: StorageVersion = StorageVersion::new(0);
 
     #[pallet::pallet]
     #[pallet::storage_version(STORAGE_VERSION)]
