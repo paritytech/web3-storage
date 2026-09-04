@@ -182,20 +182,31 @@ export function buildSignedTermsArgs(
 }
 
 /**
+ * Bucket read visibility. Wrappers that omit the choice default to
+ * `"Private"` — the design's fail-safe rule: an unset choice protects data,
+ * it does not expose it.
+ */
+export type Visibility = "Public" | "Private";
+
+/**
  * Redeem provider-signed terms via `establish_storage_agreement`: opens the
  * bucket and its primary agreement atomically. Replaces the old create_bucket
  * + request_agreement + accept_agreement dance (#105). `signed` comes from
  * {@link negotiateTerms} against the provider's /negotiate endpoint.
+ * `opts.visibility` sets the new bucket's read visibility (default Private).
  */
 export async function establishStorageAgreement(
   api: ParachainApi,
   client: ChainSigner,
   provider: ChainSigner | { address: string },
   signed: SignedTerms,
-  opts: SubmitOpts = {},
+  opts: SubmitOpts & { visibility?: Visibility } = {},
 ) {
   const result = await submitTx(
-    api.tx.StorageProvider.establish_storage_agreement(buildSignedTermsArgs(provider, signed)),
+    api.tx.StorageProvider.establish_storage_agreement({
+      ...buildSignedTermsArgs(provider, signed),
+      visibility: Enum(opts.visibility ?? "Private"),
+    }),
     client.signer,
     { label: "establish_storage_agreement", ...opts },
   );
@@ -589,5 +600,42 @@ export async function freezeBucket(
     result.events,
     api.event.StorageProvider.BucketFrozen,
     "BucketFrozen",
+  );
+}
+
+/** Read a bucket's visibility; throws when the bucket does not exist. */
+export async function getBucketVisibility(
+  api: ParachainApi,
+  bucketId: bigint,
+): Promise<Visibility> {
+  const bucket = await api.query.StorageProvider.Buckets.getValue(bucketId);
+  if (!bucket) throw new Error(`Bucket ${bucketId} not found`);
+  return bucket.visibility.type;
+}
+
+/**
+ * Set bucket read visibility via `set_bucket_visibility` (admin only).
+ * Flips `Public` ⇄ `Private` unconditionally in both directions; publicizing
+ * cannot recall data already disclosed.
+ */
+export async function setBucketVisibility(
+  api: ParachainApi,
+  client: ChainSigner,
+  bucketId: bigint,
+  visibility: Visibility,
+  opts: SubmitOpts = {},
+) {
+  const result = await submitTx(
+    api.tx.StorageProvider.set_bucket_visibility({
+      bucket_id: bucketId,
+      visibility: Enum(visibility),
+    }),
+    client.signer,
+    { label: "set_bucket_visibility", ...opts },
+  );
+  return requireOneEvent(
+    result.events,
+    api.event.StorageProvider.BucketVisibilityChanged,
+    "BucketVisibilityChanged",
   );
 }

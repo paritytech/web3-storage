@@ -20,7 +20,7 @@ import {
   useCreations,
   type CreationStatus,
 } from "@/state";
-import { type AvailableProvider } from "@/lib/s3-client";
+import { type AvailableProvider, type Visibility } from "@/lib/s3-client";
 import { formatBytes } from "@/lib/utils";
 import ProviderPickerPanel from "./ProviderPickerPanel";
 import { negotiateProviderTerms } from "@web3-storage/sdk";
@@ -103,6 +103,7 @@ export default function NewBucketDialog({ open, onOpenChange }: NewBucketDialogP
   const [capacity, setCapacity] = useState("10485760");
   const [duration, setDuration] = useState("10000");
   const [pricePerByte, setPricePerByte] = useState("0");
+  const [visibility, setVisibility] = useState<Visibility>("Private");
   const [submitting, setSubmitting] = useState(false);
   const [negotiateError, setNegotiateError] = useState<string | null>(null);
   const [isShowProviderPicker, setIsShowProviderPicker] = useState<boolean>(false);
@@ -135,6 +136,7 @@ export default function NewBucketDialog({ open, onOpenChange }: NewBucketDialogP
         provider,
         url: result.url,
         signed: result.signed,
+        visibility,
       });
       if (bucket) {
         setName("");
@@ -197,6 +199,22 @@ export default function NewBucketDialog({ open, onOpenChange }: NewBucketDialogP
                 onChange={(e) => setPricePerByte(e.target.value)}
               />
             </div>
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-xs font-medium">Visibility</label>
+            <select
+              data-testid="new-bucket-visibility"
+              value={visibility}
+              onChange={(e) => setVisibility(e.target.value as Visibility)}
+              className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring sm:max-w-48"
+            >
+              <option value="Private">Private</option>
+              <option value="Public">Public</option>
+            </select>
+            <p className="text-xs text-muted-foreground">
+              Private: providers serve reads only to members.
+            </p>
           </div>
 
           {isShowProviderPicker ? (

@@ -277,6 +277,8 @@ export interface OnChainChallenge {
   startSeq: number
   status: 'pending' | 'responded' | 'slashed' | 'expired'
   challengeType?: 'offchain' | 'checkpoint' | 'unknown'
+  // Optional: event payloads don't carry the tier, only storage entries do.
+  authorized?: boolean
   createdAt: number
   deadline: number
 }
@@ -302,6 +304,7 @@ export interface OnChainBucketDetails {
   snapshot: OnChainBucketSnapshot | null
   historicalRoots: Array<{ position: number; root: string }>
   totalSnapshots: number
+  visibility: 'Public' | 'Private'
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -465,6 +468,7 @@ export async function getBucketDetails(
       snapshot,
       historicalRoots,
       totalSnapshots: bucket.total_snapshots,
+      visibility: bucket.visibility.type,
     })
   }
   return out
@@ -491,6 +495,7 @@ export async function getProviderChallenges(address: string): Promise<OnChainCha
       mmrRoot: ch.mmr_root,
       startSeq: Number(ch.start_seq),
       status: anchorBlock > deadline ? 'expired' : 'pending',
+      authorized: ch.authorized,
       createdAt: 0,
       deadline,
     })

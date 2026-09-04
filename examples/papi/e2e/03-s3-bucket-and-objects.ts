@@ -11,6 +11,7 @@
  */
 
 import assert from "node:assert";
+import { Enum } from "polkadot-api";
 import {
   buildSignedTermsArgs,
   copyObjectMetadata,
@@ -241,6 +242,7 @@ async function main() {
       const tx = api.tx.S3Registry.create_s3_bucket({
         name: new TextEncoder().encode(dupName),
         ...buildSignedTermsArgs(provider, signed),
+        visibility: Enum("Private"),
       });
       await submitTxExpectFailure(tx, client.signer, "BucketNameExists", "3.9");
     },
