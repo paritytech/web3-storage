@@ -63,6 +63,7 @@ pub trait WeightInfo {
 	fn block_extensions() -> Weight;
 	fn update_provider_multiaddr() -> Weight;
 	fn set_bucket_min_providers() -> Weight;
+	fn set_bucket_visibility() -> Weight;
 	fn freeze_bucket() -> Weight;
 	fn set_bucket_member() -> Weight;
 	fn remove_bucket_member() -> Weight;
@@ -192,6 +193,14 @@ impl<T: frame_system::Config> WeightInfo for SubstrateWeight<T> {
 		//  Measured:  `358`
 		//  Estimated: `3823`
 		// Minimum execution time: 5_000_000 picoseconds.
+		Weight::from_parts(6_000_000, 3823)
+			.saturating_add(T::DbWeight::get().reads(1_u64))
+			.saturating_add(T::DbWeight::get().writes(1_u64))
+	}
+	/// Placeholder mirroring `set_bucket_min_providers` (same 1-read/1-write
+	/// shape); not benchmarked — regenerate via the CI bench flow.
+	fn set_bucket_visibility() -> Weight {
+		// Placeholder — see doc comment above.
 		Weight::from_parts(6_000_000, 3823)
 			.saturating_add(T::DbWeight::get().reads(1_u64))
 			.saturating_add(T::DbWeight::get().writes(1_u64))
@@ -637,6 +646,14 @@ impl WeightInfo for () {
 		//  Measured:  `358`
 		//  Estimated: `3823`
 		// Minimum execution time: 5_000_000 picoseconds.
+		Weight::from_parts(6_000_000, 3823)
+			.saturating_add(RocksDbWeight::get().reads(1_u64))
+			.saturating_add(RocksDbWeight::get().writes(1_u64))
+	}
+	/// Placeholder mirroring `set_bucket_min_providers` (same 1-read/1-write
+	/// shape); not benchmarked — regenerate via the CI bench flow.
+	fn set_bucket_visibility() -> Weight {
+		// Placeholder — see doc comment above.
 		Weight::from_parts(6_000_000, 3823)
 			.saturating_add(RocksDbWeight::get().reads(1_u64))
 			.saturating_add(RocksDbWeight::get().writes(1_u64))

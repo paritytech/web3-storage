@@ -182,8 +182,11 @@ pub const VERSION: RuntimeVersion = RuntimeVersion {
     // * 4_002 for the breaking Challenges storage reshape (Vec -> StorageDoubleMap) (#125);
     // * 4_003 for dropping the vestigial `ChallengerStatRecord::total_earnings` field (#125);
     // * 4_004 for `StorageProviderApi` v2: `challenge_candidates`, `deregister_at`, `reputation` (#318);
-    // * 4_005 for 2 s blocks / 3 cores: slot-based authoring, `RelayParentOffset = 1` (#131).
-    spec_version: 4_005,
+    // * 4_005 for 2 s blocks / 3 cores: slot-based authoring, `RelayParentOffset = 1` (#131);
+    // * 4_006 for the challenger tier and bucket visibility: split `ProviderStats` counters,
+    //   `Bucket.visibility`, `Challenge.authorized`, `set_bucket_visibility`, and
+    //   `StorageProviderApi` v3 with the split counters in its responses (#330).
+    spec_version: 4_006,
     impl_version: 0,
     apis: RUNTIME_API_VERSIONS,
     // Bumped whenever call encoding changes, so offline signers and stale-metadata
@@ -192,8 +195,10 @@ pub const VERSION: RuntimeVersion = RuntimeVersion {
     // * 2 in the v0.2.0-paseo release, still the deployed value;
     // * 3 for dropping the commitment nonce: `checkpoint` and `challenge_offchain` each lost
     //   a `nonce` argument, and `respond_to_challenge`'s `ChallengeResponse::Deleted` variant
-    //   lost its `nonce` field (#339).
-    transaction_version: 3,
+    //   lost its `nonce` field (#339);
+    // * 4 for the `visibility` argument appended to `establish_storage_agreement`,
+    //   `create_drive` and `create_s3_bucket` (#330).
+    transaction_version: 4,
     system_version: 1,
 };
 

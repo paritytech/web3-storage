@@ -78,7 +78,10 @@ export class FileSystemClient extends Layer1Client {
       readOpts: this.readOpts,
       fetchOpts: this.fetchOpts,
     });
-    return createDriveTx(this.api, signer, options.name ?? "", provider, signedTerms, this.submitOpts());
+    return createDriveTx(this.api, signer, options.name ?? "", provider, signedTerms, {
+      ...this.submitOpts(),
+      visibility: options.visibility,
+    });
   }
 
   async getDrive(driveId: bigint): Promise<DriveInfo | null> {
