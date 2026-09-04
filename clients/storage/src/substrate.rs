@@ -404,9 +404,11 @@ pub async fn fetch_current_anchor_block<C>(
 where
     C: subxt::client::OnlineClientAtBlockT<PolkadotConfig>,
 {
+    // `unvalidated`: see the `storage-subxt` crate docs.
     let payload = storage_subxt::api::runtime_apis()
         .storage_provider_api()
-        .current_anchor_block();
+        .current_anchor_block()
+        .unvalidated();
     at.runtime_apis().call(payload).await.map_err(|e| {
         ClientError::Chain(format!("current_anchor_block runtime API call failed: {e}"))
     })
