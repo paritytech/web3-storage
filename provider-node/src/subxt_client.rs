@@ -625,7 +625,10 @@ impl ReplicaSyncChainClient for SubxtChainClient {
 
             let account_bytes =
                 hex::decode(provider_account.trim_start_matches("0x")).map_err(|e| {
-                    provider_replica::Error::Internal(format!("Invalid account hex: {e}"))
+                    provider_replica::Error::InvalidAccount {
+                        account: provider_account.clone(),
+                        reason: e.to_string(),
+                    }
                 })?;
 
             let api = self.api()?;
@@ -637,9 +640,10 @@ impl ReplicaSyncChainClient for SubxtChainClient {
                     "StorageAgreements",
                 );
 
-                let at = api.at_current_block().await.map_err(|e| {
-                    provider_replica::Error::Internal(format!("Failed to get storage: {e}"))
-                })?;
+                let at = api
+                    .at_current_block()
+                    .await
+                    .map_err(|e| provider_replica::Error::chain_query("current block", e))?;
 
                 if let Ok(Some(value)) = at
                     .storage()
@@ -723,9 +727,11 @@ impl ReplicaSyncChainClient for SubxtChainClient {
         let storage_address =
             subxt::dynamic::storage::<(Value,), Value>("StorageProvider", "Buckets");
 
-        let at = self.api()?.at_current_block().await.map_err(|e| {
-            provider_replica::Error::Internal(format!("Failed to get storage: {e}"))
-        })?;
+        let at = self
+            .api()?
+            .at_current_block()
+            .await
+            .map_err(|e| provider_replica::Error::chain_query("current block", e))?;
 
         match at
             .storage()
@@ -734,9 +740,9 @@ impl ReplicaSyncChainClient for SubxtChainClient {
         {
             Ok(Some(value)) => {
                 use subxt::ext::scale_value::At;
-                let decoded = value.decode().map_err(|e| {
-                    provider_replica::Error::Internal(format!("Failed to decode bucket: {e}"))
-                })?;
+                let decoded = value
+                    .decode()
+                    .map_err(|e| provider_replica::Error::decode("bucket", e))?;
 
                 if let Some(snapshot_opt) = decoded.at(4) {
                     if let ValueDef::Variant(variant) = &snapshot_opt.value {
@@ -769,9 +775,11 @@ impl ReplicaSyncChainClient for SubxtChainClient {
         let storage_address =
             subxt::dynamic::storage::<(Value,), Value>("StorageProvider", "Buckets");
 
-        let at = self.api()?.at_current_block().await.map_err(|e| {
-            provider_replica::Error::Internal(format!("Failed to get storage: {e}"))
-        })?;
+        let at = self
+            .api()?
+            .at_current_block()
+            .await
+            .map_err(|e| provider_replica::Error::chain_query("current block", e))?;
 
         let bucket_value = match at
             .storage()
@@ -782,9 +790,9 @@ impl ReplicaSyncChainClient for SubxtChainClient {
             _ => return Ok(vec![]),
         };
 
-        let decoded = bucket_value.decode().map_err(|e| {
-            provider_replica::Error::Internal(format!("Failed to decode bucket: {e}"))
-        })?;
+        let decoded = bucket_value
+            .decode()
+            .map_err(|e| provider_replica::Error::decode("bucket", e))?;
 
         let mut provider_bytes_list = Vec::new();
 
@@ -819,9 +827,11 @@ impl ReplicaSyncChainClient for SubxtChainClient {
             let provider_addr =
                 subxt::dynamic::storage::<(Value,), Value>("StorageProvider", "Providers");
 
-            let at = self.api()?.at_current_block().await.map_err(|e| {
-                provider_replica::Error::Internal(format!("Failed to get storage: {e}"))
-            })?;
+            let at = self
+                .api()?
+                .at_current_block()
+                .await
+                .map_err(|e| provider_replica::Error::chain_query("current block", e))?;
 
             if let Ok(Some(value)) = at
                 .storage()
