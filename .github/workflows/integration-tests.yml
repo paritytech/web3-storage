@@ -205,8 +205,11 @@ jobs:
         with:
           config: ${{ env.ZOMBIENET_CONFIG }}
 
+      # Fail fast if the multi-core setup degrades to a slower block rate.
       - name: Wait for parachain blocks
         uses: ./.github/actions/wait-for-parachain
+        with:
+          min-blocks-per-minute: "20"
 
       # One provider for all three demos: the L0 demo registers //Alice on-chain
       # and the L1 demos reuse that registration, on the justfile's default

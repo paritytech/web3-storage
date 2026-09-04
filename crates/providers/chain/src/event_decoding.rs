@@ -72,6 +72,14 @@ impl From<provider_events::BucketDeleted> for BlockEvent {
     }
 }
 
+impl From<provider_events::BucketVisibilityChanged> for BlockEvent {
+    fn from(ev: provider_events::BucketVisibilityChanged) -> Self {
+        BlockEvent::BucketMembershipChanged {
+            bucket_id: ev.bucket_id,
+        }
+    }
+}
+
 /// Decode one block's events into the coordinator-relevant [`BlockEvent`]s.
 ///
 /// A membership-changing event whose fields fail to decode is escalated
@@ -108,6 +116,12 @@ pub fn decode_block_events(
                 })
                 .or_else(|| {
                     decode_membership::<provider_events::BucketDeleted>(&event, block_number)
+                })
+                .or_else(|| {
+                    decode_membership::<provider_events::BucketVisibilityChanged>(
+                        &event,
+                        block_number,
+                    )
                 })
         })
         .collect()
@@ -302,6 +316,20 @@ mod tests {
         assert!(matches!(
             BlockEvent::from(ev),
             BlockEvent::BucketMembershipChanged { bucket_id: 8 }
+        ));
+    }
+
+    #[test]
+    fn bucket_visibility_changed_maps_bucket_id() {
+        use storage_subxt::api::runtime_types::storage_primitives::Visibility;
+
+        let ev = provider_events::BucketVisibilityChanged {
+            bucket_id: 6,
+            visibility: Visibility::Private,
+        };
+        assert!(matches!(
+            BlockEvent::from(ev),
+            BlockEvent::BucketMembershipChanged { bucket_id: 6 }
         ));
     }
 

@@ -95,6 +95,7 @@ fn setup_provider_and_s3_bucket(owner: u64, nonce: u64) -> u64 {
         3,
         terms,
         sig,
+        storage_primitives::Visibility::Public,
     ));
     0
 }
@@ -134,6 +135,7 @@ fn create_s3_bucket_works() {
             3,
             terms,
             sig,
+            storage_primitives::Visibility::Public,
         ));
 
         let bucket = S3Buckets::<Test>::get(0).unwrap();
@@ -169,6 +171,7 @@ fn create_s3_bucket_surfaces_layer0_signature_errors() {
                 3,
                 terms,
                 sig,
+                storage_primitives::Visibility::Public,
             ),
             pallet_storage_provider::Error::<Test>::ProviderNotFound
         );
@@ -191,6 +194,7 @@ fn create_s3_bucket_fails_invalid_name() {
                 3,
                 terms.clone(),
                 sig.clone(),
+                storage_primitives::Visibility::Public,
             ),
             Error::<Test>::InvalidBucketName
         );
@@ -203,6 +207,7 @@ fn create_s3_bucket_fails_invalid_name() {
                 3,
                 terms,
                 sig,
+                storage_primitives::Visibility::Public,
             ),
             Error::<Test>::InvalidBucketName
         );
@@ -221,6 +226,7 @@ fn create_s3_bucket_fails_duplicate_name() {
             3,
             terms,
             sig,
+            storage_primitives::Visibility::Public,
         ));
 
         // Second attempt uses a fresh nonce so Layer 0 *would* accept it,
@@ -234,6 +240,7 @@ fn create_s3_bucket_fails_duplicate_name() {
                 3,
                 terms2,
                 sig2,
+                storage_primitives::Visibility::Public,
             ),
             Error::<Test>::BucketNameExists
         );

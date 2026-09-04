@@ -201,6 +201,7 @@ impl FileSystemClient {
     ///     provider_account,
     ///     signed.terms,
     ///     signed.signature,
+    ///     storage_client::Visibility::Private,
     /// ).await?;
     /// ```
     pub async fn create_drive(
@@ -209,9 +210,10 @@ impl FileSystemClient {
         provider: AccountId32,
         terms: storage_client::AgreementTermsOf,
         sig: sp_runtime::MultiSignature,
+        visibility: storage_client::Visibility,
     ) -> Result<DriveId> {
         let drive_id = self
-            .create_drive_on_chain(name, provider, &terms, &sig)
+            .create_drive_on_chain(name, provider, &terms, &sig, visibility)
             .await?;
 
         // Get the bucket_id for this drive, and remember it: the mapping is
@@ -870,11 +872,13 @@ impl FileSystemClient {
         provider: AccountId32,
         terms: &storage_client::AgreementTermsOf,
         sig: &sp_runtime::MultiSignature,
+        visibility: storage_client::Visibility,
     ) -> Result<DriveId> {
         let name_bytes = name.map(|n| n.as_bytes().to_vec());
 
         // Build the extrinsic
-        let call = substrate::extrinsics::create_drive(name_bytes, provider, terms, sig);
+        let call =
+            substrate::extrinsics::create_drive(name_bytes, provider, terms, sig, visibility);
 
         // Sign and submit
         let signer = self.substrate_client.signer();

@@ -26,7 +26,6 @@ A **bucket** is the fundamental unit of storage organization. It defines:
   read access without write. Membership is the read access list for private
   buckets; see **Visibility** below.
 
-<!-- DRIFT-003: on-chain bucket visibility (this section, the `Visibility` enum, `Bucket.visibility`, `set_bucket_visibility`) is NOT on `dev` — read-gating is cooperative/off-chain. In-flight in PR #330; do not remove. -->
 **Visibility**: A bucket is `Public` or `Private`. On a private bucket, primaries
 serve reads only to members; on a public bucket, to anyone. This is a cooperative
 request to honest primaries, **not enforced on-chain**, and it does not constrain
@@ -290,8 +289,6 @@ pub struct ProviderStats<T: Config> {
     /// Challenges from authorized challengers (member/agreement owner at
     /// challenge creation) that the provider responded to. Counted at
     /// resolution—cancelled challenges are not counted.
-    // DRIFT-004: `dev` has a single `challenges_received` (no authorized/public
-    // split). In-flight in PR #330; do not remove.
     pub challenges_received_authorized: u32,
     /// Same, for general-public challengers.
     pub challenges_received_public: u32,
@@ -357,8 +354,6 @@ pub enum Role {
     Reader,
 }
 
-// DRIFT-003: no `Visibility` enum on `dev`. In-flight in PR #330; do not
-// remove.
 /// Whether primaries serve reads to anyone, or only to members.
 pub enum Visibility {
     /// Primaries serve reads to anyone.
@@ -377,8 +372,6 @@ pub struct Bucket<T: Config> {
     /// Read visibility (see `Visibility`). On-chain, only the challenge
     /// extrinsics read it: `Private` restricts primary challenges to members
     /// and primary-agreement owners.
-    // DRIFT-003: `Bucket` has no `visibility` field on `dev`. In-flight in PR
-    // #330; do not remove.
     pub visibility: Visibility,
     /// If Some, bucket is append-only from this start_seq.
     /// Checkpoints with start_seq < frozen_start_seq are rejected (prevents deletions).
@@ -596,8 +589,6 @@ pub struct Challenge<T: Config> {
     /// via `is_authorized`) at challenge creation. Snapshotted here so
     /// membership/agreement changes between creation and response cannot alter
     /// the fee split applied in `respond_to_challenge`.
-    // DRIFT-004: no `authorized` field on `dev` (no tiers). In-flight in PR
-    // #330; do not remove.
     pub authorized: bool,
 }
 
@@ -925,8 +916,8 @@ winding-down provider from an active one without a second storage read.
 `find_matching_providers`: both fold a whole-map scan plus a scoring pass into
 one call so the SDK never pages a storage map to rank providers. Reputation is
 defined once, on-chain, by `runtime_api::reputation_score` — a provider with no
-recorded challenges scores 100, otherwise the score is the share of challenges
-it defended. `limit` is clamped to `MAX_CHALLENGE_CANDIDATES`; it bounds the
+resolved challenges scores 100, otherwise the score is the share of resolved
+challenges it defended (both tallied at resolution, so pending ones never count). `limit` is clamped to `MAX_CHALLENGE_CANDIDATES`; it bounds the
 response, not the scan.
 
 ### Extrinsics
@@ -1112,8 +1103,6 @@ impl<T: Config> Pallet<T> {
     /// Requires snapshot with min_providers acknowledgments
     pub fn freeze_bucket(origin: OriginFor<T>, bucket_id: BucketId) -> DispatchResult;
 
-    // DRIFT-003: no set_bucket_visibility on `dev`. In-flight in PR #330; do
-    // not remove.
     /// Set bucket read visibility (admin only).
     ///
     /// Flips `Public` ⇄ `Private` unconditionally in both directions—a
@@ -1464,12 +1453,10 @@ impl<T: Config> Pallet<T> {
     // challenge_offchain. The snapshot primarily protects cold/archival data
     // where nobody has recent signatures or doesn't bother to dig them up.
     //
-    // DRIFT-004: the two-tier (authorized/public) cost model described here and
-    // below is NOT on `dev` — the pallet applies one response-time split to
-    // every challenger and gates only on the agreement being live. In-flight in
-    // PR #330; do not remove.
     // **Who may challenge, and at what cost (all three modes):**
-    // Any signed account may challenge, with one restriction: on a `Private`
+    // Any signed account may challenge, except the challenged provider
+    // itself (`SelfChallenge`: a free response that would pad its own
+    // defended counters), with one restriction: on a `Private`
     // bucket, challenging a provider whose agreement role is `Primary`
     // requires being a bucket member or the owner of a primary agreement on
     // the bucket (`NotAuthorizedForPrivateBucket`; replica-agreement owners
@@ -2242,7 +2229,6 @@ pub struct MmrProof {
 
 ---
 
-<!-- DRIFT-004: the challenge timeline / cost-model / "why this cost model" below describe the two-tier model NOT on `dev` (one response-time split, no tiers, provider's share slashed from stake). In-flight in PR #330; do not remove. -->
 ## Challenge Protocol
 
 ### Timeline
