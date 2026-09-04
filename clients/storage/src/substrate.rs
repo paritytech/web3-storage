@@ -160,12 +160,24 @@ pub mod extrinsics {
         provider: AccountId32,
         terms: &crate::agreement::AgreementTermsOf,
         sig: &sp_runtime::MultiSignature,
+        visibility: storage_primitives::Visibility,
     ) -> impl Payload {
         api::tx().storage_provider().establish_storage_agreement(
             convert::to_subxt_account(&provider),
             convert::agreement_terms(terms),
             convert::multisig(sig),
+            convert::visibility(visibility),
         )
+    }
+
+    /// Build a `set_bucket_visibility` extrinsic payload (admin only).
+    pub fn set_bucket_visibility(
+        bucket_id: u64,
+        visibility: storage_primitives::Visibility,
+    ) -> impl Payload {
+        api::tx()
+            .storage_provider()
+            .set_bucket_visibility(bucket_id, convert::visibility(visibility))
     }
 
     /// Create a checkpoint extrinsic payload to submit an on-chain snapshot.

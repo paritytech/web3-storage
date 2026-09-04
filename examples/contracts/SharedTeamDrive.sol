@@ -63,7 +63,10 @@ contract SharedTeamDrive {
         require(msg.value > 0, "must fund agreement");
         require(!terms.hasBucketId, "primary terms must not be bucket-bound");
         admin = msg.sender;
-        driveId = DRIVE_REGISTRY.createDrive(name, provider, terms, signature);
+        // Team drives are member-only by default.
+        driveId = DRIVE_REGISTRY.createDrive(
+            name, provider, terms, signature, IDriveRegistry.Visibility.Private
+        );
         emit TeamCreated(msg.sender, driveId);
         return driveId;
     }
@@ -71,7 +74,7 @@ contract SharedTeamDrive {
     /// Add a member to the drive at the given role.
     function invite(bytes32 member, uint8 role) external onlyAdmin {
         require(admin != address(0), "no team");
-        DRIVE_REGISTRY.shareDrive(driveId, member, role);
+        DRIVE_REGISTRY.shareDrive(driveId, member, IDriveRegistry.Role(role));
         // memberRole keyed by EVM address; for off-chain UX, callers can
         // pass either an empty-mapped address (substrate-only member) or
         // the H160-mapped equivalent. v1 simply records the bytes32 hash

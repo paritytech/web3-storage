@@ -84,6 +84,8 @@ export interface Challenge {
   startSeq: number
   status: 'pending' | 'responded' | 'slashed' | 'expired'
   challengeType?: 'offchain' | 'checkpoint' | 'unknown'
+  // Optional: challenges built from event payloads don't carry the tier.
+  authorized?: boolean
   createdAt: number
   deadline: number
 }
@@ -116,6 +118,7 @@ export interface BucketDetail {
   minProviders: number
   primaryProviders: string[]
   totalSnapshots: number
+  visibility: 'Public' | 'Private'
   snapshot: { mmrRoot: string; startSeq: number; leafCount: number; checkpointBlock: number } | null
   historicalRoots: Array<{ position: number; root: string }>
   agreement: {
@@ -667,6 +670,7 @@ function convertChallenge(chain: OnChainChallenge): Challenge {
     startSeq: chain.startSeq,
     status: chain.status,
     challengeType: chain.challengeType,
+    authorized: chain.authorized,
     createdAt: chain.createdAt,
     deadline: chain.deadline,
   }
@@ -683,6 +687,7 @@ function convertBucketDetail(
     minProviders: chain.minProviders,
     primaryProviders: chain.primaryProviders,
     totalSnapshots: chain.totalSnapshots,
+    visibility: chain.visibility,
     snapshot: chain.snapshot,
     historicalRoots: chain.historicalRoots,
     agreement: agreement ? {

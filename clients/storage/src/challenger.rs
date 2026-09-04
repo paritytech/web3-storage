@@ -330,17 +330,17 @@ impl ChallengerClient {
             .await
             .map_err(|e| ClientError::Chain(format!("provider_info runtime API failed: {e}")))?;
 
-        let (challenges_received, challenges_failed, reputation) = if let Some(info) = provider_info
+        let (challenges_defended, challenges_failed, reputation) = if let Some(info) = provider_info
         {
             (
-                info.challenges_received,
+                info.challenges_received_authorized
+                    .saturating_add(info.challenges_received_public),
                 info.challenges_failed,
                 info.reputation,
             )
         } else {
             return Err(ClientError::Chain(format!("Provider {provider} not found")));
         };
-
         // Compute checkpoint age from bucket snapshot
         let last_checkpoint_age = {
             // `checkpoint_block` is on the pallet's anchor clock (relay
@@ -370,11 +370,11 @@ impl ChallengerClient {
             }
         };
 
-        let challenge_success_rate = if challenges_received == 0 {
+        let total_resolved = challenges_defended.saturating_add(challenges_failed);
+        let challenge_success_rate = if total_resolved == 0 {
             100.0
         } else {
-            let defended = challenges_received.saturating_sub(challenges_failed);
-            defended as f64 / challenges_received as f64 * 100.0
+            challenges_defended as f64 / total_resolved as f64 * 100.0
         };
 
         let recommendation = if reputation < 60 {
@@ -631,17 +631,20 @@ impl ChallengerClient {
 
         for (bucket_id, provider, candidate) in &candidates {
             let stake = candidate.stake;
-            let received = candidate.challenges_received;
+            let defended = candidate
+                .challenges_received_authorized
+                .saturating_add(candidate.challenges_received_public);
             let failed = candidate.challenges_failed;
 
             // Rough reward estimate: ~10% of stake gets slashed on failure
             let potential_reward = stake / 10;
 
             // Success probability is inverse of their historic defense rate
-            let fail_rate = if received == 0 {
+            let total_resolved = defended.saturating_add(failed);
+            let fail_rate = if total_resolved == 0 {
                 0.1 // assume 10% base risk for untested providers
             } else {
-                failed as f64 / received as f64
+                failed as f64 / total_resolved as f64
             };
             // Higher fail_rate = higher success probability for challenger
             let success_probability = (fail_rate * 0.8 + 0.1).min(1.0);

@@ -1012,6 +1012,7 @@ mod tests {
                 chunk_index: 5,
             },
             deposit: 1_000_000_000_000,
+            authorized: false,
         }
     }
 
@@ -1057,6 +1058,7 @@ mod tests {
             deadline: 11,
             index: 3,
             deposit: 1_000_000_000_000,
+            authorized: false,
         }
     }
 
