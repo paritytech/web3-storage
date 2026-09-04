@@ -113,16 +113,46 @@ jobs:
             target/release/wbuild/*/*.compact.compressed.wasm
 
   # ── Zombienet smoke test (FS + S3) ────────────────────────────────────────
-  # Runs Layer 1 FS and S3 demos on a real relay-chain + parachain (zombienet)
-  # to validate production-like topology. Single runtime (web3-storage-paseo).
-  # Layer 0 breadth is handled comprehensively by e2e-integration-tests.
+  # Runs the L0 demo and the Layer 1 FS and S3 demos on a real relay-chain +
+  # parachain (zombienet) to validate production-like topology. Single runtime
+  # (web3-storage-paseo). Layer 0 breadth is handled comprehensively by
+  # e2e-integration-tests.
+  #
+  # One leg per provider chain transport, each with a single provider running
+  # every demo. `rpc` follows the collator over WebSocket; `light-fetch` embeds
+  # smoldot and fetches both chain specs from the nodes (the dev path);
+  # `light-file` embeds smoldot on spec files assembled from zombienet's own
+  # output (the production path: no node is trusted for the spec). Only this
+  # job can host the light legs: smoldot needs the relay chain that the other
+  # jobs' standalone omni-node does not have.
   #
   # Pins the backend explicitly; the other jobs take the binary default.
   integration-tests:
-    name: Zombienet Smoke Test
+    name: Zombienet Smoke Test (${{ matrix.name }})
     runs-on: parity-large
     timeout-minutes: 30
     needs: [set-image, build]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: rpc
+            transport: rpc
+            relay_spec: ""
+            para_spec: ""
+            health_attempts: "60"
+          # smoldot warp-syncs before the HTTP server binds, so the light legs
+          # get 300s of /health polling instead of the default 120s.
+          - name: light-fetch
+            transport: light
+            relay_spec: ws://127.0.0.1:9900
+            para_spec: ""
+            health_attempts: "150"
+          - name: light-file
+            transport: light
+            relay_spec: /tmp/light-client-specs/relay.json
+            para_spec: /tmp/light-client-specs/para.json
+            health_attempts: "150"
     container:
       image: ${{ needs.set-image.outputs.CI_IMAGE }}
     steps:
@@ -200,10 +230,13 @@ jobs:
           echo "Using zombienet config: $CONFIG"
           echo "ZOMBIENET_CONFIG=$CONFIG" >> $GITHUB_ENV
 
+      # Pinned base dir so the spec step below can find the raw specs zombie-cli
+      # writes for its own nodes.
       - name: Start chain
         uses: ./.github/actions/start-zombienet
         with:
           config: ${{ env.ZOMBIENET_CONFIG }}
+          base-dir: /tmp/zombie-ci
 
       # Fail fast if the multi-core setup degrades to a slower block rate.
       - name: Wait for parachain blocks
@@ -211,14 +244,23 @@ jobs:
         with:
           min-blocks-per-minute: "20"
 
-      # One provider for all three demos: the L0 demo registers //Alice on-chain
-      # and the L1 demos reuse that registration, on the justfile's default
-      # PROVIDER_URL.
-      - name: Start provider (rocksdb)
+      # Spec files for the light-file leg. Runs in every leg so the script stays
+      # exercised; the other legs just ignore the output.
+      - name: Generate light-client chain specs
+        run: bash scripts/light-client-specs.sh /tmp/zombie-ci /tmp/light-client-specs
+
+      # One provider for all three demos, on this leg's chain transport: the L0
+      # demo registers //Alice on-chain and the L1 demos reuse that
+      # registration, on the justfile's default PROVIDER_URL.
+      - name: Start provider (rocksdb, ${{ matrix.name }})
         uses: ./.github/actions/start-provider
         with:
           backend: rocksdb
-          label: rocksdb
+          label: ${{ matrix.name }}
+          chain-transport: ${{ matrix.transport }}
+          relay-chain-spec: ${{ matrix.relay_spec }}
+          para-chain-spec: ${{ matrix.para_spec }}
+          health-attempts: ${{ matrix.health_attempts }}
 
       - name: Run L0 demo
         run: just demo
@@ -228,14 +270,6 @@ jobs:
 
       - name: Run S3 integration test
         run: just drain-tx-pool-then s3-demo-ci
-
-      # Second provider (port 3433) following the same chain through the
-      # embedded smoldot light client; passes once /info reports the on-chain
-      # registration synced via light-client reads. Runs last because it signs
-      # with the same //Alice key as the RPC provider and may sync its own
-      # multiaddr on chain, which the demos above must not observe.
-      - name: Run light-client transport e2e
-        run: bash scripts/test-light-client.sh
 
       - name: Stop services
         if: always()
@@ -248,11 +282,11 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: zombienet-smoke-test-logs
+          name: zombienet-smoke-test-logs-${{ matrix.name }}
           path: |
             /tmp/zombienet.log
             /tmp/provider-*.log
-            /tmp/light-client-provider.*
+            /tmp/light-client-specs/*.json
             /tmp/zombie-*/*.log
             /tmp/zombie-*/**/*.log
 
