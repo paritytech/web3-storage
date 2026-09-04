@@ -245,7 +245,12 @@ async fn start_replica_sync_coordinator(
         auto_confirm: true,
     };
 
-    let coordinator = ReplicaSyncCoordinator::new(config, state, Box::new(chain_client));
+    let coordinator = ReplicaSyncCoordinator::new(
+        config,
+        state.storage.clone(),
+        state.provider_id.clone(),
+        Box::new(chain_client),
+    );
 
     match coordinator.start(events_rx, None).await {
         Ok(handle) => {

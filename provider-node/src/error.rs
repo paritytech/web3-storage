@@ -97,11 +97,38 @@ pub enum Error {
     #[error(transparent)]
     Coordinator(#[from] provider_coordinator::Error),
 
+    #[error(transparent)]
+    Replica(#[from] provider_replica::Error),
+
     #[error("Storage agreement requested 0 byte")]
     InvalidMaxBytesRequest,
 
     #[error("Too many requests")]
     RateLimited,
+}
+
+/// Reverse of [`Error::Replica`]: `SubxtChainClient`'s `ReplicaSyncChainClient`
+/// impl (in `subxt_client.rs`) shares chain-connection and submission helpers
+/// with `ChallengeChainClient`, which return this node's `Error`, but the
+/// replica trait's methods return `provider_replica::Error`. This direction
+/// stays hand-written: `provider_replica` cannot name this crate's `Error`
+/// without a dependency cycle, so it has no variant to `#[from]`.
+impl From<Error> for provider_replica::Error {
+    fn from(e: Error) -> Self {
+        match e {
+            Error::Replica(err) => err,
+            // `provider_replica` maps the storage error space one-to-one.
+            Error::Backend(err) => err.into(),
+            Error::Chain(err) => provider_replica::Error::Chain(err),
+            Error::InvalidHash { expected, actual } => {
+                provider_replica::Error::InvalidHash { expected, actual }
+            }
+            Error::Storage(msg) => provider_replica::Error::Storage(msg),
+            Error::Serialization(msg) => provider_replica::Error::Serialization(msg),
+            Error::Internal(msg) => provider_replica::Error::Internal(msg),
+            other => provider_replica::Error::Internal(other.to_string()),
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -409,6 +436,16 @@ impl IntoResponse for Error {
                     details: Some(serde_json::json!({ "message": msg })),
                 },
             ),
+            // Replica sync runs on the background chain-client path, never
+            // behind a request, so this is a catch-all for a case no handler
+            // reaches rather than a considered per-variant status.
+            Error::Replica(err) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                ErrorResponse {
+                    error: "internal_error".to_string(),
+                    details: Some(serde_json::json!({ "message": err.to_string() })),
+                },
+            ),
             Error::ProviderDeregistering => (
                 StatusCode::SERVICE_UNAVAILABLE,
                 ErrorResponse {
@@ -579,6 +616,10 @@ mod tests {
             status_of(provider_coordinator::Error::Internal("boom".into()).into()),
             StatusCode::INTERNAL_SERVER_ERROR
         );
+        assert_eq!(
+            status_of(provider_replica::Error::ChannelClosed.into()),
+            StatusCode::INTERNAL_SERVER_ERROR
+        );
     }
 
     #[test]
@@ -612,6 +653,70 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("signer is not available."));
+    }
+
+    #[test]
+    fn test_replica_error_round_trips_through_the_node_error() {
+        use provider_replica::Error as ReplicaError;
+
+        let original = ReplicaError::chain_query("current block", "timed out");
+        let message = original.to_string();
+
+        let node_err: Error = original.into();
+        let back: ReplicaError = node_err.into();
+
+        assert!(matches!(back, ReplicaError::ChainQuery { .. }));
+        assert_eq!(back.to_string(), message);
+    }
+
+    #[test]
+    fn test_from_error_for_provider_replica_error_maps_one_to_one() {
+        use provider_replica::Error as ReplicaError;
+
+        use provider_storage::Error as StorageError;
+
+        let cases: Vec<(Error, &str)> = vec![
+            (
+                Error::Backend(StorageError::NodeNotFound("h".into())),
+                "Node not found: h",
+            ),
+            (
+                Error::Backend(StorageError::ChildrenMissing(vec!["a".into()])),
+                "Children missing: [\"a\"]",
+            ),
+            (
+                Error::Backend(StorageError::QuotaExceeded { used: 1, max: 2 }),
+                "Quota exceeded: used 1, max 2",
+            ),
+            (
+                Error::Backend(StorageError::BucketNotFound(7)),
+                "Bucket not found: 7",
+            ),
+            (
+                Error::Backend(StorageError::RootNotFound("r".into())),
+                "Root not found: r",
+            ),
+            (
+                Error::InvalidHash {
+                    expected: "e".into(),
+                    actual: "a".into(),
+                },
+                "Invalid hash: expected e, got a",
+            ),
+            (Error::Storage("s".into()), "Storage error: s"),
+            (Error::Serialization("z".into()), "Serialization error: z"),
+            (Error::Internal("i".into()), "Internal error: i"),
+        ];
+
+        for (node_err, expected_message) in cases {
+            let mapped: ReplicaError = node_err.into();
+            assert_eq!(mapped.to_string(), expected_message);
+        }
+
+        // Every other node `Error` variant is unreachable from the replica
+        // trait's methods but still mapped defensively via `Display`.
+        let mapped: ReplicaError = Error::InvalidSignature.into();
+        assert!(matches!(mapped, ReplicaError::Internal(msg) if msg == "Invalid signature"));
     }
 
     #[test]

@@ -6,6 +6,7 @@
 
 use super::{alice_account, test_state, test_state_with_data, wait_for};
 use provider_chain::BlockEvent;
+use provider_replica::coordinator::{BucketSnapshot, ReplicaAgreementInfo};
 use sp_core::H256;
 use sp_runtime::AccountId32;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -13,9 +14,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use storage_primitives::BucketId;
 use storage_provider_node::challenge_responder::ChallengeError;
-use storage_provider_node::replica_sync_coordinator::{BucketSnapshot, ReplicaAgreementInfo};
 use storage_provider_node::{
-    ChallengeChainClient, ChallengeResponder, ChallengeResponderConfig, DetectedChallenge, Error,
+    ChallengeChainClient, ChallengeResponder, ChallengeResponderConfig, DetectedChallenge,
     ReplicaSyncChainClient, ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig,
 };
 
@@ -283,7 +283,7 @@ struct MockReplicaClient {
 
 #[async_trait::async_trait]
 impl ReplicaSyncChainClient for MockReplicaClient {
-    async fn get_current_block(&self) -> Result<u64, Error> {
+    async fn get_current_block(&self) -> Result<u64, provider_replica::Error> {
         Ok(100)
     }
 
@@ -291,19 +291,25 @@ impl ReplicaSyncChainClient for MockReplicaClient {
         &self,
         _provider_account: &str,
         _local_buckets: Vec<BucketId>,
-    ) -> Result<Vec<ReplicaAgreementInfo>, Error> {
+    ) -> Result<Vec<ReplicaAgreementInfo>, provider_replica::Error> {
         self.duty_passes.fetch_add(1, Ordering::SeqCst);
         Ok(self.agreement.clone().into_iter().collect())
     }
 
-    async fn fetch_bucket_snapshot(&self, _bucket_id: BucketId) -> Result<BucketSnapshot, Error> {
+    async fn fetch_bucket_snapshot(
+        &self,
+        _bucket_id: BucketId,
+    ) -> Result<BucketSnapshot, provider_replica::Error> {
         Ok(BucketSnapshot {
             mmr_root: self.snapshot_root,
             leaf_count: 1,
         })
     }
 
-    async fn fetch_primary_endpoints(&self, _bucket_id: BucketId) -> Result<Vec<String>, Error> {
+    async fn fetch_primary_endpoints(
+        &self,
+        _bucket_id: BucketId,
+    ) -> Result<Vec<String>, provider_replica::Error> {
         Ok(vec![])
     }
 
@@ -311,7 +317,7 @@ impl ReplicaSyncChainClient for MockReplicaClient {
         &self,
         _bucket_id: BucketId,
         _target_mmr_root: H256,
-    ) -> Result<(u8, u128), Error> {
+    ) -> Result<(u8, u128), provider_replica::Error> {
         Ok((0, 0))
     }
 }
@@ -328,8 +334,13 @@ async fn replica_agreement_event_triggers_duty_pass() {
         poll_interval: Duration::ZERO,
         ..Default::default()
     };
-    let (state, _dir) = test_state();
-    let coordinator = ReplicaSyncCoordinator::new(config, state, Box::new(Arc::clone(&mock)));
+    let state = test_state();
+    let coordinator = ReplicaSyncCoordinator::new(
+        config,
+        state.0.storage.clone(),
+        state.0.provider_id.clone(),
+        Box::new(Arc::clone(&mock)),
+    );
 
     let (events_tx, events_rx) = tokio::sync::broadcast::channel(16);
     let handle = coordinator.start(events_rx, None).await.unwrap();
@@ -390,7 +401,12 @@ async fn bucket_checkpointed_event_drives_duty_through_sync_attempt() {
         poll_interval: Duration::ZERO,
         ..Default::default()
     };
-    let coordinator = ReplicaSyncCoordinator::new(config, state, Box::new(Arc::clone(&mock)));
+    let coordinator = ReplicaSyncCoordinator::new(
+        config,
+        state.storage.clone(),
+        state.provider_id.clone(),
+        Box::new(Arc::clone(&mock)),
+    );
 
     let results: Arc<Mutex<Vec<storage_provider_node::SyncResult>>> =
         Arc::new(Mutex::new(Vec::new()));

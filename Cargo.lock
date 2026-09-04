@@ -7264,6 +7264,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "provider-replica"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "axum",
+ "base64",
+ "hex",
+ "provider-chain",
+ "provider-storage",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sp-core",
+ "sp-runtime",
+ "storage-primitives",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "provider-storage"
 version = "0.1.0"
 dependencies = [
@@ -10118,6 +10140,7 @@ dependencies = [
  "provider-challenge",
  "provider-coordinator",
  "provider-negotiation",
+ "provider-replica",
  "provider-storage",
  "reqwest",
  "serde",

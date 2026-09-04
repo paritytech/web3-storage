@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! Replica synchronization protocol.
 //!
@@ -7,9 +7,9 @@
 //! 2. Top-down chunk fetching
 //! 3. On-chain sync confirmation
 
-use crate::error::Error;
-use crate::StorageBackend;
+use crate::Error;
 use base64::Engine;
+use provider_storage::StorageBackend;
 use reqwest::Client;
 use sp_core::H256;
 use std::sync::Arc;

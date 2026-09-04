@@ -1,0 +1,31 @@
+[package]
+name = "provider-replica"
+version = "0.1.0"
+authors.workspace = true
+edition.workspace = true
+license = "Apache-2.0"
+repository.workspace = true
+description = "Replica synchronization protocol and background coordinator for provider nodes"
+
+[dependencies]
+provider-chain = { workspace = true, features = ["connection"] }
+provider-storage = { workspace = true }
+storage-primitives = { workspace = true, features = ["std"] }
+async-trait = { workspace = true }
+base64 = { workspace = true }
+hex = { workspace = true, features = ["std"] }
+reqwest = { workspace = true }
+serde = { workspace = true, features = ["std"] }
+sp-core = { workspace = true, features = ["std"] }
+sp-runtime = { workspace = true, features = ["std"] }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true, features = ["std"] }
+
+[dev-dependencies]
+provider-storage = { workspace = true, features = ["test-helpers"] }
+async-trait = { workspace = true }
+axum = { workspace = true }
+serde_json = { workspace = true, features = ["std"] }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util", "time"] }

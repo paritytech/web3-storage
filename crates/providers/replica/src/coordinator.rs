@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! Replica Sync Coordinator - Autonomous replica synchronization service.
 //!
@@ -11,9 +11,10 @@
 //! 4. Submits `confirm_replica_sync` transactions to receive payment
 //! 5. Handles historical roots matching for late syncs
 
-use crate::replica_sync::ReplicaSync;
-use crate::{Error, ProviderState};
+use crate::sync::ReplicaSync;
+use crate::Error;
 use provider_chain::{BlockEvent, BlockEventRx};
+use provider_storage::StorageBackend;
 use sp_core::H256;
 use sp_runtime::AccountId32;
 use std::collections::HashMap;
@@ -276,7 +277,8 @@ impl ReplicaSyncCoordinatorHandle {
 /// Replica sync coordinator service.
 pub struct ReplicaSyncCoordinator {
     config: ReplicaSyncCoordinatorConfig,
-    state: Arc<ProviderState>,
+    storage: Arc<dyn StorageBackend>,
+    provider_id: String,
     chain_client: Box<dyn ReplicaSyncChainClient>,
     replica_sync: ReplicaSync,
     /// Track active sync operations by bucket.
@@ -287,14 +289,16 @@ impl ReplicaSyncCoordinator {
     /// Create a new replica sync coordinator.
     pub fn new(
         config: ReplicaSyncCoordinatorConfig,
-        state: Arc<ProviderState>,
+        storage: Arc<dyn StorageBackend>,
+        provider_id: String,
         chain_client: Box<dyn ReplicaSyncChainClient>,
     ) -> Self {
-        let replica_sync = ReplicaSync::new(state.storage.clone());
+        let replica_sync = ReplicaSync::new(storage.clone());
 
         Self {
             config,
-            state,
+            storage,
+            provider_id,
             chain_client,
             replica_sync,
             active_syncs: HashMap::new(),
@@ -337,7 +341,7 @@ impl ReplicaSyncCoordinator {
                 our_account.as_ref().is_none_or(|me| me == provider)
             }
             BlockEvent::BucketCheckpointed { bucket_id } => {
-                self.state.storage.get_bucket(*bucket_id).is_some()
+                self.storage.get_bucket(*bucket_id).is_some()
             }
             _ => false,
         }
@@ -355,7 +359,7 @@ impl ReplicaSyncCoordinator {
         // A closed broadcast channel (follower gone) yields `Closed` on every
         // poll; disarm the events select arm then, or the loop busy-spins.
         let mut events_open = true;
-        let our_account = AccountId32::from_str(&self.state.provider_id).ok();
+        let our_account = AccountId32::from_str(&self.provider_id).ok();
         // The safety-net interval's first tick fires immediately, doubling as
         // the startup bootstrap pass (duties accrued while the node was
         // down). With the safety net disabled, the bootstrap pass comes from
@@ -497,8 +501,7 @@ impl ReplicaSyncCoordinator {
 
     /// Get list of bucket IDs we're tracking as replica.
     fn get_tracked_buckets(&self) -> Vec<BucketId> {
-        self.state
-            .storage
+        self.storage
             .list_buckets()
             .into_iter()
             .map(|b| b.bucket_id)
@@ -512,14 +515,13 @@ impl ReplicaSyncCoordinator {
         let anchor_block = self.chain_client.get_current_block().await?;
 
         let local_buckets: Vec<u64> = self
-            .state
             .storage
             .list_buckets()
             .into_iter()
             .map(|b| b.bucket_id)
             .collect();
 
-        let provider_account = self.state.provider_id.clone();
+        let provider_account = self.provider_id.clone();
 
         let agreements = self
             .chain_client
@@ -559,7 +561,7 @@ impl ReplicaSyncCoordinator {
                 continue;
             }
 
-            if let Some(bucket) = self.state.storage.get_bucket(agreement.bucket_id) {
+            if let Some(bucket) = self.storage.get_bucket(agreement.bucket_id) {
                 if bucket.mmr_root == snapshot.mmr_root {
                     continue;
                 }
@@ -606,7 +608,7 @@ impl ReplicaSyncCoordinator {
     /// Perform sync and submit confirmation.
     pub async fn sync_and_confirm(&self, duty: &SyncDuty) -> SyncResult {
         // Check if we already have this root
-        if let Some(bucket) = self.state.storage.get_bucket(duty.bucket_id) {
+        if let Some(bucket) = self.storage.get_bucket(duty.bucket_id) {
             if bucket.mmr_root == duty.target_mmr_root {
                 return SyncResult::AlreadySynced {
                     bucket_id: duty.bucket_id,
@@ -678,7 +680,7 @@ impl ReplicaSyncCoordinator {
         }
 
         // Verify final state
-        let local_bucket = match self.state.storage.get_bucket(duty.bucket_id) {
+        let local_bucket = match self.storage.get_bucket(duty.bucket_id) {
             Some(b) => b,
             None => {
                 return SyncResult::VerificationFailed {
