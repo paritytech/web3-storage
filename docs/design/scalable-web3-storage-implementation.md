@@ -1706,6 +1706,14 @@ Rules:
   delay. If a refetch then fails, the cached set is served for up to
   `--auth-max-stale` (default 5 minutes) before the request is refused with
   `503 membership_unavailable`.
+- Membership is read at the provider's finalized head. A bucket unknown there
+  is not refused at once: the provider waits up to `--auth-finality-grace`
+  (default 12s) for that bucket's creation event before answering
+  `403 insufficient_role`, because a client that has just watched its
+  `create_bucket` finalize can be a finality step ahead of a provider whose
+  embedded light client learns finality a few seconds after a full node. A
+  bucket that exists without the account is refused immediately; the grace
+  only delays "no such bucket" answers, which any signed request can trigger.
 - A member whose `Role` the provider cannot decode is not authorized — the
   lookup fails rather than falling back to a lesser role.
 
