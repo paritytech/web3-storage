@@ -8,7 +8,7 @@ repository.workspace = true
 description = "Replica synchronization protocol and background coordinator for provider nodes"
 
 [dependencies]
-provider-chain = { workspace = true }
+provider-chain = { workspace = true, features = ["connection"] }
 provider-storage = { workspace = true }
 storage-primitives = { workspace = true, features = ["std"] }
 async-trait = { workspace = true }
