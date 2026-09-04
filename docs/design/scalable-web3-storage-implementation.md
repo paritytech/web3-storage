@@ -908,8 +908,8 @@ winding-down provider from an active one without a second storage read.
 `find_matching_providers`: both fold a whole-map scan plus a scoring pass into
 one call so the SDK never pages a storage map to rank providers. Reputation is
 defined once, on-chain, by `runtime_api::reputation_score` — a provider with no
-recorded challenges scores 100, otherwise the score is the share of challenges
-it defended. `limit` is clamped to `MAX_CHALLENGE_CANDIDATES`; it bounds the
+resolved challenges scores 100, otherwise the score is the share of resolved
+challenges it defended (both tallied at resolution, so pending ones never count). `limit` is clamped to `MAX_CHALLENGE_CANDIDATES`; it bounds the
 response, not the scan.
 
 ### Extrinsics
@@ -1439,7 +1439,9 @@ impl<T: Config> Pallet<T> {
     // where nobody has recent signatures or doesn't bother to dig them up.
     //
     // **Who may challenge, and at what cost (all three modes):**
-    // Any signed account may challenge, with one restriction: on a `Private`
+    // Any signed account may challenge, except the challenged provider
+    // itself (`SelfChallenge`: a free response that would pad its own
+    // defended counters), with one restriction: on a `Private`
     // bucket, challenging a provider whose agreement role is `Primary`
     // requires being a bucket member or the owner of a primary agreement on
     // the bucket (`NotAuthorizedForPrivateBucket`; replica-agreement owners

@@ -43,7 +43,7 @@ import {
   encodeCall,
   ensureAccountMapped,
 } from "@web3-storage/sdk/revive";
-import { h160ToSubstrate, negotiatePrecompileTerms } from "./sc-support.js";
+import { h160ToSubstrate, negotiatePrecompileTerms, SolRole } from "./sc-support.js";
 import {
   ensureSoleAcceptingProvider,
   parseProviderClientArgs,
@@ -136,7 +136,7 @@ async function main() {
 
     // 3) invite Charlie as Writer.
     console.log("\n[3/4] invite(Charlie, Writer)");
-    const inviteData = encodeCall(abi, "invite", [toHex(member.publicKey), 1]);
+    const inviteData = encodeCall(abi, "invite", [toHex(member.publicKey), SolRole.Writer]);
     r = await callContract(api, client, deployed.addressBytes, inviteData);
     requireOneEvent(
       r.events,

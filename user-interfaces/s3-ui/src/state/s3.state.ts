@@ -18,6 +18,7 @@ import {
   type QueryMatchingProvidersParams,
   type S3ObjectInfo,
   type SignedTerms,
+  type Visibility,
 } from "@/lib/s3-client";
 import { EncryptionKey, hexToBytes } from "@/lib/encryption";
 import { api$$, getApi } from "@/state/chain.state";
@@ -43,6 +44,8 @@ export interface CreateBucketInput {
   provider: AvailableProvider;
   url: string;
   signed: SignedTerms;
+  /** Read visibility of the underlying Layer 0 bucket (default Private). */
+  visibility?: Visibility;
 }
 
 export type ViewMode = "list" | "grid";
@@ -353,6 +356,7 @@ interface RetryCtx {
   provider: AvailableProvider;
   url: string;
   signed: SignedTerms;
+  visibility?: Visibility;
 }
 const retryCtx = new Map<string, RetryCtx>();
 
@@ -365,7 +369,7 @@ async function runChainSubmit(id: string, ctx: RetryCtx): Promise<BucketInfo | n
   try {
     // Name lives on the creation record (keyed by id), not the retry context.
     const name = creations$.getValue().find((c) => c.id === id)?.name ?? "";
-    const bucket = await client.createBucket(name, ctx.provider.account, ctx.url, ctx.signed);
+    const bucket = await client.createBucket(name, ctx.provider.account, ctx.url, ctx.signed, ctx.visibility);
     updateCreation(id, { stage: "ready", s3BucketId: bucket.s3BucketId });
     retryCtx.delete(id);
     await refreshBuckets();
@@ -395,6 +399,7 @@ export async function createBucket(input: CreateBucketInput): Promise<BucketInfo
     provider: input.provider,
     url: input.url,
     signed: input.signed,
+    visibility: input.visibility,
   };
   retryCtx.set(id, ctx);
   return runChainSubmit(id, ctx);
@@ -457,6 +462,14 @@ export async function addMember(
 
 export async function removeMember(bucketId: bigint, account: string): Promise<void> {
   await client.removeMember(bucketId, account);
+}
+
+export async function fetchVisibility(bucketId: bigint): Promise<Visibility> {
+  return client.getBucketVisibility(bucketId);
+}
+
+export async function setBucketVisibility(bucketId: bigint, visibility: Visibility): Promise<void> {
+  await client.setBucketVisibility(bucketId, visibility);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
