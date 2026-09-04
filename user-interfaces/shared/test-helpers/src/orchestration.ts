@@ -20,7 +20,7 @@ const KNOWN_DEV_SEEDS = Object.values(devSigners).map((s) => s.seed);
 
 /**
  * Make `keep` the only provider that will be picked by auto-matching
- * extrinsics (`create_bucket_with_storage`, `create_s3_bucket_with_storage`,
+ * extrinsics (`establish_storage_agreement`, `create_s3_bucket`,
  * `create_drive`).
  *
  * The Layer 1 paths select via `query_available_providers[0]`, which iterates

@@ -130,6 +130,7 @@ fn create_drive_for<T: Config>(
         provider.clone(),
         terms,
         sig,
+        storage_primitives::Visibility::Private,
     );
     let drive_id = NextDriveId::<T>::get().saturating_sub(1);
     let drive = Drives::<T>::get(drive_id).expect("create_drive just inserted this");
@@ -176,7 +177,14 @@ mod benchmarks {
         let sig = sign_terms::<T>(&provider_pk, &terms);
 
         #[extrinsic_call]
-        create_drive(RawOrigin::Signed(user), Some(name), provider, terms, sig);
+        create_drive(
+            RawOrigin::Signed(user),
+            Some(name),
+            provider,
+            terms,
+            sig,
+            storage_primitives::Visibility::Private,
+        );
     }
 
     /// Worst case for `cleanup_bucket_internal`:

@@ -244,6 +244,25 @@ bucketId: 0
 
 ---
 
+### `setBucketVisibility`
+
+Flip a bucket between `Public` and `Private` (admin only). Always allowed in both directions; effects are asymmetric—privatizing does not recall data already replicated, publicizing cannot be undone. See "Transitions" in the design doc's Bucket Visibility & Access section.
+
+**Parameters:**
+- `bucketId`: `BucketId` (u64)
+- `visibility`: `Public | Private`
+
+**Example:**
+```
+bucketId: 0
+visibility: Public
+```
+
+**Events:** `BucketVisibilityChanged`
+**Errors:** `BucketNotFound`, `NotBucketAdmin`
+
+---
+
 ### `setMember`
 
 Add a member or update an existing member's role.
@@ -519,10 +538,17 @@ additionalSignatures: [
 ---
 
 > **Who may challenge, and what it costs** (applies to `challengeCheckpoint`,
-> `challengeOffchain`, and `challengeReplica`). Any signed account may
-> challenge; the only gate is that the challenged agreement is still live
+> `challengeOffchain`, and `challengeReplica`). Any signed account other than
+> the challenged provider itself (`SelfChallenge`) may challenge, subject to
+> two gates. First, the challenged agreement must still be live
 > (`now < expires_at`), so a provider whose obligation has ended cannot be
-> challenged into the settlement window.
+> challenged into the settlement window (`AgreementExpired`). Second, on a
+> `Private` bucket, challenging a **primary** provider requires being a bucket
+> member or the owner of a primary agreement on the bucket
+> (`NotAuthorizedForPrivateBucket`; replica-agreement owners deliberately
+> excluded). That second gate keys on the challenged provider's role in its
+> current agreement, whichever extrinsic is used; challenging a replica is open
+> to everyone.
 > The challenger locks a deposit covering the provider's on-chain response
 > (over-estimated; excess refunded on resolution). On a valid response the
 > provider's **stake is never touched**—only its response tx fee is at issue:
@@ -559,7 +585,7 @@ chunkIndex: 3
 **Deposit required:** see the challenge cost note above.
 
 **Events:** `ChallengeCreated`
-**Errors:** `BucketNotFound`, `NoSnapshot`, `ProviderNotInSnapshot`, `AgreementNotFound`, `AgreementExpired`
+**Errors:** `BucketNotFound`, `NoSnapshot`, `ProviderNotInSnapshot`, `AgreementNotFound`, `AgreementExpired`, `SelfChallenge` (caller is the challenged provider), `NotAuthorizedForPrivateBucket` (private bucket; caller neither member nor primary-agreement owner)
 
 ---
 
@@ -584,7 +610,7 @@ providerSignature: 0xsig...
 ```
 
 **Events:** `ChallengeCreated`
-**Errors:** `BucketNotFound`, `AgreementNotFound`, `AgreementExpired`, `InvalidSignature`
+**Errors:** `BucketNotFound`, `AgreementNotFound`, `AgreementExpired`, `InvalidSignature`, `SelfChallenge` (caller is the challenged provider), `NotAuthorizedForPrivateBucket` (private bucket, primary target; caller neither member nor primary-agreement owner)
 
 ---
 
@@ -607,7 +633,7 @@ chunkIndex: 3
 ```
 
 **Events:** `ChallengeCreated`
-**Errors:** `AgreementNotFound`, `NotReplica`, `InvalidSyncRoot`
+**Errors:** `AgreementNotFound`, `NotReplica`, `InvalidSyncRoot`, `SelfChallenge` (caller is the challenged provider)
 
 ---
 
@@ -713,6 +739,16 @@ enum Role { Admin, Writer, Reader }
 - **Admin** - manage members, request primary agreements, configure the bucket, terminate primaries
 - **Writer** - submit checkpoints
 - **Reader** - read-only
+
+### `Visibility`
+
+```rust
+enum Visibility { Public, Private }
+```
+- **Public** - primaries serve reads to anyone; anyone may challenge primaries
+- **Private** - primaries serve reads only to members (cooperative, not chain-enforced); on-chain, primary challenges are restricted to members and primary-agreement owners
+
+Every bucket-creating extrinsic (`establish_storage_agreement`, `create_drive`, `create_s3_bucket`) takes a `visibility` parameter; wrappers that omit the choice default to `Private` (fail-safe).
 
 ### `EndAction`
 
@@ -875,6 +911,7 @@ Common errors you might encounter:
 | `ChallengeExpired` | Past challenge deadline | Too late to respond |
 | `NotChallengeProvider` | Caller is not the challenged provider | — |
 | `ProviderNotInSnapshot` | Provider didn't sign current snapshot | Add their signature via `extendCheckpoint` |
+| `SelfChallenge` | Caller is the provider it is challenging | — |
 | `LeafBeyondCanonical` | Challenged leaf is beyond canonical state | — |
 | `InvalidSignature` | Signature didn't verify against registered pubkey | Check key + payload |
 | `NoSnapshot` | Bucket has no checkpoint yet | Call `checkpoint` first |

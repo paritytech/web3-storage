@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 import { useState, Fragment } from 'react'
-import { Database, ChevronDown, ChevronUp, Users, Lock, CheckCircle } from 'lucide-react'
+import { Database, ChevronDown, ChevronUp, Users, Lock, Globe, CheckCircle } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/Card'
 import { Badge } from '@/components/ui/Badge'
 import {
@@ -104,6 +104,14 @@ function BucketsContent() {
                             {bucket.frozenStartSeq != null && (
                               <Lock className="h-3 w-3 text-blue-400" />
                             )}
+                            <Badge variant="secondary" className="text-xs">
+                              {bucket.visibility === 'Public' ? (
+                                <Globe className="h-3 w-3 mr-1" />
+                              ) : (
+                                <Lock className="h-3 w-3 mr-1" />
+                              )}
+                              {bucket.visibility}
+                            </Badge>
                           </div>
                         </TableCell>
                         <TableCell>

@@ -125,6 +125,13 @@ pub fn to_sp_role(r: &rt::Role) -> storage_primitives::Role {
 }
 
 /// [`storage_primitives::EndAction`] → generated twin.
+pub fn visibility(v: storage_primitives::Visibility) -> rt::Visibility {
+    match v {
+        storage_primitives::Visibility::Public => rt::Visibility::Public,
+        storage_primitives::Visibility::Private => rt::Visibility::Private,
+    }
+}
+
 pub fn end_action(a: storage_primitives::EndAction) -> rt::EndAction {
     match a {
         storage_primitives::EndAction::Pay => rt::EndAction::Pay,

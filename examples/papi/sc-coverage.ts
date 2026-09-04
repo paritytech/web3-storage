@@ -49,7 +49,7 @@ import {
   encodeCall,
   ensureAccountMapped,
 } from "@web3-storage/sdk/revive";
-import { negotiatePrecompileTerms } from "./sc-support.js";
+import { negotiatePrecompileTerms, SolRole, SolVisibility } from "./sc-support.js";
 import {
   ensureSoleAcceptingProvider,
   parseProviderClientArgs,
@@ -147,6 +147,7 @@ async function main() {
       toHex(providerBytes32),
       signedA.terms,
       signedA.signature,
+      SolVisibility.Private, // wrapper-default tier
     ]);
     const created = assertEvent(r.events, "StorageProvider", "BucketCreated", "establishStorageAgreement");
     assertEvent(r.events, "StorageProvider", "StorageAgreementEstablished", "establishStorageAgreement");
@@ -159,7 +160,7 @@ async function main() {
     r = await callPrecompile(api, client, WEB3_STORAGE_ADDR, iWeb3, "setMember", [
       bucketA,
       toHex(memberBytes32),
-      1, // Writer
+      SolRole.Writer,
     ]);
     assertEvent(r.events, "StorageProvider", "MemberSet", "setMember");
     const bucket = (await api.query.StorageProvider.Buckets.getValue(
@@ -225,6 +226,7 @@ async function main() {
       toHex(providerBytes32),
       signedB.terms,
       signedB.signature,
+      SolVisibility.Private,
     ]);
     const createdB = assertEvent(r.events, "StorageProvider", "BucketCreated", "establishStorageAgreement");
     const bucketB = createdB.bucket_id;
@@ -262,7 +264,7 @@ async function main() {
       WEB3_STORAGE_ADDR,
       iWeb3,
       "establishStorageAgreement",
-      [toHex(providerBytes32), signedC.terms, signedC.signature],
+      [toHex(providerBytes32), signedC.terms, signedC.signature, SolVisibility.Private],
       { finalized: true },
     );
     const createdC = assertEvent(r.events, "StorageProvider", "BucketCreated", "establishStorageAgreement");
@@ -292,6 +294,14 @@ async function main() {
     r = await callPrecompile(api, client, WEB3_STORAGE_ADDR, iWeb3, "freezeBucket", [bucketC]);
     assertEvent(r.events, "StorageProvider", "BucketFrozen", "freezeBucket");
 
+    // 10a. setBucketVisibility -------------------------------------------
+    console.log("\n[10a] IWeb3Storage.setBucketVisibility(bucketC, Public)");
+    r = await callPrecompile(api, client, WEB3_STORAGE_ADDR, iWeb3, "setBucketVisibility", [
+      bucketC,
+      SolVisibility.Public,
+    ]);
+    assertEvent(r.events, "StorageProvider", "BucketVisibilityChanged", "setBucketVisibility");
+
     // ====================================================================
     // Drive-registry precompile (0x…09020000)
     // ====================================================================
@@ -309,6 +319,7 @@ async function main() {
       toHex(providerBytes32),
       signedD.terms,
       signedD.signature,
+      SolVisibility.Private,
     ]);
     const driveEvt = assertEvent(r.events, "DriveRegistry", "DriveCreated", "createDrive");
     const driveId = driveEvt.drive_id;
@@ -320,7 +331,7 @@ async function main() {
     r = await callPrecompile(api, client, DRIVE_REGISTRY_ADDR, iDrive, "shareDrive", [
       driveId,
       toHex(memberBytes32),
-      2, // Reader
+      SolRole.Reader,
     ]);
     assertEvent(r.events, "DriveRegistry", "DriveShared", "shareDrive");
 

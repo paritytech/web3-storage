@@ -3,7 +3,9 @@
 use crate::*;
 use frame_support::pallet_prelude::*;
 use sp_runtime::traits::{CheckedAdd, CheckedMul, SaturatedConversion, Saturating, Zero};
-use storage_primitives::{BucketId, EndAction, ProviderRole, RemovalReason, ReplayError};
+use storage_primitives::{
+    BucketId, EndAction, ProviderRole, RemovalReason, ReplayError, Visibility,
+};
 
 impl<T: Config> Pallet<T> {
     pub(crate) fn validate_duration(
@@ -139,6 +141,7 @@ impl<T: Config> Pallet<T> {
         provider: &T::AccountId,
         terms: AgreementTermsOf<T>,
         sig: &sp_runtime::MultiSignature,
+        visibility: Visibility,
     ) -> Result<BucketId, DispatchError> {
         // Origin must match the owner the provider signed for.
         ensure!(&terms.owner == owner, Error::<T>::TermsOwnerMismatch);
@@ -216,7 +219,7 @@ impl<T: Config> Pallet<T> {
         // Bucket creation folded in: owner is sole admin, provider is the
         // bucket's single primary. `create_bucket_internal` emits
         // `BucketCreated` for us.
-        let bucket_id = Self::create_bucket_internal(owner, 1, Some(provider))?;
+        let bucket_id = Self::create_bucket_internal(owner, 1, Some(provider), visibility)?;
 
         let expires_at = anchor_block.saturating_add(terms.duration);
         let agreement = StorageAgreement {
