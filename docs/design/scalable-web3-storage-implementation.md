@@ -1707,13 +1707,15 @@ Rules:
   `--auth-max-stale` (default 5 minutes) before the request is refused with
   `503 membership_unavailable`.
 - Membership is read at the provider's finalized head. A bucket unknown there
-  is not refused at once: the provider waits up to `--auth-finality-grace`
-  (default 12s) for that bucket's creation event before answering
-  `403 insufficient_role`, because a client that has just watched its
-  `create_bucket` finalize can be a finality step ahead of a provider whose
-  embedded light client learns finality a few seconds after a full node. A
-  bucket that exists without the account is refused immediately; the grace
-  only delays "no such bucket" answers, which any signed request can trigger.
+  whose id the chain has not handed out yet (at or within a few dozen ids
+  above `NextBucketId` at that head) is not refused at once: the provider
+  waits up to `--auth-finality-grace` (default 12s) for that bucket's creation
+  event before answering `403 insufficient_role`, because a client that has
+  just watched its `create_bucket` finalize can be a finality step ahead of a
+  provider whose embedded light client learns finality a few seconds after a
+  full node. A bucket that exists without the account, a deleted bucket (id
+  below the counter) or a probe (id far above it) is refused immediately, so
+  a signed id scan cannot park more than a window's worth of requests.
 - A member whose `Role` the provider cannot decode is not authorized — the
   lookup fails rather than falling back to a lesser role.
 
