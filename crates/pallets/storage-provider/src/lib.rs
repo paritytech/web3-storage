@@ -2045,6 +2045,12 @@ pub mod pallet {
                     let byte_idx = idx / 8;
                     let bit_idx = idx % 8;
                     primary_signers[byte_idx] |= 1 << bit_idx;
+                    // TODO(https://github.com/paritytech/web3-storage/issues/388):
+                    // this counts signature entries, not distinct providers, so
+                    // one provider's signature repeated N times satisfies
+                    // `min_providers = N`. Count `primary_signers` (which ORs,
+                    // so it is duplicate-free) the way the freeze path does, or
+                    // reject a repeated signer outright.
                     signing_count += 1;
                     signing_providers.push(signer.clone());
                 }
