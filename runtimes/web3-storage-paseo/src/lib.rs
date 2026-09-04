@@ -78,7 +78,7 @@ pub use pallet_storage_provider;
 use paseo_constants::{
     consensus::{
         async_backing::UNINCLUDED_SEGMENT_CAPACITY, BLOCK_PROCESSING_VELOCITY,
-        MAXIMUM_BLOCK_WEIGHT, RELAY_CHAIN_SLOT_DURATION_MILLIS, SLOT_DURATION,
+        MAXIMUM_BLOCK_WEIGHT, RELAY_CHAIN_SLOT_DURATION_MILLIS, RELAY_PARENT_OFFSET, SLOT_DURATION,
     },
     currency::{EXISTENTIAL_DEPOSIT, MICROUNIT},
     system::{AVERAGE_ON_INITIALIZE_RATIO, NORMAL_DISPATCH_RATIO},
@@ -180,8 +180,10 @@ pub const VERSION: RuntimeVersion = RuntimeVersion {
     // Encodes the runtime semver: major * 1_000_000 + minor * 1_000 + patch.
     // * 0.4.1 -> 4_001 on dev (#212), released as v0.4.1-paseo and still the deployed value;
     // * 4_002 for the breaking Challenges storage reshape (Vec -> StorageDoubleMap) (#125);
-    // * 4_003 for dropping the vestigial `ChallengerStatRecord::total_earnings` field (#125).
-    spec_version: 4_003,
+    // * 4_003 for dropping the vestigial `ChallengerStatRecord::total_earnings` field (#125);
+    // * 4_004 for `StorageProviderApi` v2: `challenge_candidates`, `deregister_at`, `reputation` (#318);
+    // * 4_005 for 2 s blocks / 3 cores: slot-based authoring, `RelayParentOffset = 1` (#131).
+    spec_version: 4_005,
     impl_version: 0,
     apis: RUNTIME_API_VERSIONS,
     // Bumped whenever call encoding changes, so offline signers and stale-metadata
@@ -359,7 +361,7 @@ impl cumulus_pallet_parachain_system::Config for Runtime {
     type CheckAssociatedRelayNumber = RelayNumberMonotonicallyIncreases;
     type ConsensusHook = ConsensusHook;
     type WeightInfo = weights::cumulus_pallet_parachain_system::WeightInfo<Runtime>;
-    type RelayParentOffset = ConstU32<0>;
+    type RelayParentOffset = ConstU32<RELAY_PARENT_OFFSET>;
     // V3 scheduling stays off; enabling it before collators support it stalls the chain.
     type SchedulingSignatureVerifier = ();
 }
@@ -759,7 +761,7 @@ pallet_revive::impl_runtime_apis_plus_revive_traits!(
 
     impl cumulus_primitives_core::RelayParentOffsetApi<Block> for Runtime {
         fn relay_parent_offset() -> u32 {
-            0
+            RELAY_PARENT_OFFSET
         }
 
         fn max_claim_queue_offset() -> u8 {
@@ -863,6 +865,13 @@ pallet_revive::impl_runtime_apis_plus_revive_traits!(
             limit: u32,
         ) -> Vec<(AccountId, pallet_storage_provider::runtime_api::ProviderInfoResponse)> {
             StorageProvider::query_providers_with_capacity(bytes_needed, offset, limit)
+        }
+
+        fn challenge_candidates(
+            max_reputation: u8,
+            limit: u32,
+        ) -> Vec<pallet_storage_provider::runtime_api::ChallengeCandidate> {
+            StorageProvider::query_challenge_candidates(max_reputation, limit)
         }
 
         fn current_anchor_block() -> pallet_storage_provider::BlockNumberFor<Runtime> {

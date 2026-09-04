@@ -48,12 +48,9 @@ const PALLET_NAME: &str = "StorageProvider";
 pub enum Error {
     #[error("Internal error: {0}")]
     Internal(String),
-}
 
-impl From<provider_chain::Error> for Error {
-    fn from(e: provider_chain::Error) -> Self {
-        Error::Internal(e.to_string())
-    }
+    #[error(transparent)]
+    Chain(#[from] provider_chain::Error),
 }
 
 /// Run `fut` under `budget`, mapping expiry to an [`Error`] naming `what`.
@@ -82,6 +79,10 @@ async fn with_timeout<T>(
 ///
 /// Decoded from the `StorageProvider::Providers` storage entry by the
 /// chain-state coordinator; consumed by `/negotiate` validation and `/info`.
+///
+/// All durations and block numbers on this struct are counted in anchor
+/// (relay-chain) blocks, 6s each - the same clock the pallet reads via its
+/// `BlockNumberProvider` - not parachain blocks.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderInfo {
     /// Network address for connecting.
@@ -92,11 +93,11 @@ pub struct ProviderInfo {
     pub committed_bytes: u64,
     /// Maximum capacity (0 = unlimited).
     pub max_capacity: u64,
-    /// Minimum agreement duration.
+    /// Minimum agreement duration, in anchor (relay-chain) blocks.
     pub min_duration: u32,
-    /// Maximum agreement duration.
+    /// Maximum agreement duration, in anchor (relay-chain) blocks.
     pub max_duration: u32,
-    /// Price per byte per block.
+    /// Price per byte per anchor (relay-chain) block.
     pub price_per_byte: u128,
     /// Whether accepting primary agreements.
     pub accepting_primary: bool,
@@ -108,7 +109,8 @@ pub struct ProviderInfo {
     pub agreements_total: u32,
     /// Failed challenges count.
     pub challenges_failed: u32,
-    /// Block at which deregistration becomes finalisable (`None` = not deregistering).
+    /// Anchor (relay-chain) block at which deregistration becomes finalisable
+    /// (`None` = not deregistering).
     pub deregister_at: Option<u32>,
 }
 
@@ -140,9 +142,8 @@ impl From<RuntimeProviderInfo> for ProviderInfo {
 
 /// Live chain state kept in sync with the runtime by the chain-state coordinator.
 ///
-/// Held behind `Arc` inside the provider node's `ProviderState` so the
-/// coordinator can hold its own handle without a back-reference to the whole
-/// node state.
+/// Held behind `Arc` inside the provider node's `ProviderState` so the coordinator can hold
+/// its own handle without a back-reference to the whole node state.
 pub struct ChainState {
     /// The pallet's anchor block — the clock all on-chain durations (timeouts,
     /// `valid_until`, nonce age) are measured against — read via the
@@ -192,15 +193,16 @@ pub struct PalletConstants {
 ///
 /// Nonces are atomically allocated via [`Self::next`]. The chain-state
 /// coordinator aligns the counter with the chain's `ProviderReplayState.hsn + 1`
-/// (on connect and on every relevant provider event), so the counter resumes at
+/// (`hsn` = highest sequence nonce, the top of the chain's replay window) on
+/// connect and on every relevant provider event, so the counter resumes at
 /// `max(persisted_local, hsn + 1)`:
 ///
 /// * **Local persistence** (disk mode): each allocation is persisted before
 ///   returning, so a **clean process restart** does not reissue nonces that were
 ///   signed but not yet redeemed. Power-loss/kernel-panic may lose the last write
-///   (RocksDB WAL is not fsynced per allocation); in that case the counter falls
-///   back to `chain_hsn + 1`, which is still safe — the chain's replay window
-///   rejects any duplicate redemption.
+///   (the RocksDB WAL - write-ahead log - is not fsynced per allocation); in that
+///   case the counter falls back to `chain_hsn + 1`, which is still safe - the
+///   chain's replay window rejects any duplicate redemption.
 /// * **Chain alignment**: `bootstrap_from_hsn` advances the counter past any
 ///   nonce the chain has already accepted, covering redemptions that happened
 ///   while the node was down or while we weren't watching.
@@ -1434,7 +1436,9 @@ mod tests {
                 .get_provider_info(&provider_account())
                 .await
                 .expect_err("malformed Providers bytes must not decode");
-            let Error::Internal(msg) = &err;
+            let Error::Internal(msg) = &err else {
+                panic!("unexpected error: {err:?}")
+            };
             assert!(
                 msg.contains("decode Providers"),
                 "unexpected error: {err:?}"
@@ -1458,7 +1462,9 @@ mod tests {
                 .fetch_replay_hsn(&provider_account())
                 .await
                 .expect_err("malformed ProviderReplayStates bytes must not decode");
-            let Error::Internal(msg) = &err;
+            let Error::Internal(msg) = &err else {
+                panic!("unexpected error: {err:?}")
+            };
             assert!(
                 msg.contains("decode ProviderReplayStates"),
                 "unexpected error: {err:?}"
