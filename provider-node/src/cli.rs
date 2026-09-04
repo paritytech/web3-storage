@@ -300,11 +300,11 @@ pub struct AuthParams {
     )]
     pub auth_cache_max_entries: u64,
 
-    /// Seconds a bucket unknown at the provider's finalized head may wait for
-    /// its creation event before authorization fails. A client whose node
-    /// reported finality before this node's did (an embedded light client
-    /// lags a full node by a few seconds) is otherwise refused for a bucket
-    /// that does exist. 0 refuses at once.
+    /// Seconds a bucket unknown at the provider's finalized head, but not yet
+    /// handed out by the chain there, may wait for its creation event before
+    /// authorization fails. A client whose node reported finality before this
+    /// node's did (an embedded light client lags a full node by a few seconds)
+    /// is otherwise refused for a bucket that does exist. 0 refuses at once.
     #[arg(
         long,
         value_name = "SECONDS",
