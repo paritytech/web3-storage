@@ -305,11 +305,13 @@ pub async fn fetch_current_anchor_block<C>(
 where
     C: subxt::client::OnlineClientAtBlockT<subxt::PolkadotConfig>,
 {
+    // `unvalidated`: see the `storage-subxt` crate docs.
     at.runtime_apis()
         .call(
             storage_subxt::api::runtime_apis()
                 .storage_provider_api()
-                .current_anchor_block(),
+                .current_anchor_block()
+                .unvalidated(),
         )
         .await
         .map_err(|e| Error::Internal(format!("current_anchor_block runtime API call failed: {e}")))
@@ -352,7 +354,11 @@ fn subxt_account(who: &AccountId32) -> subxt::utils::AccountId32 {
 #[async_trait]
 impl ChainStateChainClient for RealChainStateClient {
     async fn get_provider_info(&self, who: &AccountId32) -> Result<Option<ProviderInfo>, Error> {
-        let addr = storage_subxt::api::storage().storage_provider().providers();
+        // `unvalidated`: see the `storage-subxt` crate docs.
+        let addr = storage_subxt::api::storage()
+            .storage_provider()
+            .providers()
+            .unvalidated();
         let at = self
             .api
             .at_current_block()
@@ -373,9 +379,11 @@ impl ChainStateChainClient for RealChainStateClient {
     }
 
     async fn fetch_replay_hsn(&self, who: &AccountId32) -> Result<Option<u64>, Error> {
+        // `unvalidated`: see the `storage-subxt` crate docs.
         let addr = storage_subxt::api::storage()
             .storage_provider()
-            .provider_replay_states();
+            .provider_replay_states()
+            .unvalidated();
         let at = self
             .api
             .at_current_block()
@@ -402,10 +410,12 @@ impl ChainStateChainClient for RealChainStateClient {
             .await
             .map_err(|e| Error::Internal(format!("Failed to get current block: {e}")))?;
 
+        // `unvalidated`: see the `storage-subxt` crate docs.
         match at.constants().entry(
             storage_subxt::api::constants()
                 .storage_provider()
-                .request_timeout(),
+                .request_timeout()
+                .unvalidated(),
         ) {
             Ok(timeout) => Ok(Some(timeout)),
             // A runtime without the constant is a different thing from a failed
@@ -448,47 +458,67 @@ impl ProviderLifecycleEvent {
     }
 }
 
+/// Names of the `StorageProvider` events that affect [`ProviderLifecycleEvent`],
+/// paired with whether the event confirms a deregistration. Every one of these
+/// carries a named `provider` field decodable as [`LifecycleProvider`].
+const LIFECYCLE_EVENT_NAMES: &[(&str, bool)] = &[
+    ("ProviderDeregistered", true),
+    ("ProviderRegistered", false),
+    ("ProviderSettingsUpdated", false),
+    ("ProviderMultiaddrUpdated", false),
+    ("DeregisterAnnounced", false),
+    ("DeregisterCancelled", false),
+];
+
+/// The only field the coordinator reads out of a provider-lifecycle event.
+///
+/// Decoding just this field, rather than the whole generated event struct,
+/// keeps the coordinator working across runtime changes that reshape fields it
+/// never reads. `ProviderSettingsUpdated` in particular carries the full
+/// `ProviderSettings`, so decoding it whole would break on any change to that
+/// struct.
+#[derive(subxt::ext::scale_decode::DecodeAsType)]
+#[decode_as_type(crate_path = "::subxt::ext::scale_decode")]
+struct LifecycleProvider {
+    provider: subxt::utils::AccountId32,
+}
+
 /// Decode a finalized block's events down to the provider-lifecycle events.
 fn parse_provider_lifecycle_events(
     events: &subxt::events::Events<PolkadotConfig>,
 ) -> Vec<ProviderLifecycleEvent> {
-    use storage_subxt::api::storage_provider::events as ev;
-
-    let updated = |account: subxt::utils::AccountId32| ProviderLifecycleEvent::Updated {
-        provider: AccountId32::new(account.0),
-    };
-
     events
         .iter()
         .filter_map(|event| event.ok())
         .filter(|event| event.pallet_name() == PALLET_NAME)
         .filter_map(|event| {
-            decode::<ev::ProviderDeregistered>(&event)
-                .map(|e| ProviderLifecycleEvent::Deregistered {
-                    provider: AccountId32::new(e.provider.0),
-                })
-                .or_else(|| decode::<ev::ProviderRegistered>(&event).map(|e| updated(e.provider)))
-                .or_else(|| {
-                    decode::<ev::ProviderSettingsUpdated>(&event).map(|e| updated(e.provider))
-                })
-                .or_else(|| {
-                    decode::<ev::ProviderMultiaddrUpdated>(&event).map(|e| updated(e.provider))
-                })
-                .or_else(|| decode::<ev::DeregisterAnnounced>(&event).map(|e| updated(e.provider)))
-                .or_else(|| decode::<ev::DeregisterCancelled>(&event).map(|e| updated(e.provider)))
+            let deregistered = LIFECYCLE_EVENT_NAMES
+                .iter()
+                .find(|(name, _)| *name == event.event_name())
+                .map(|(_, deregistered)| *deregistered)?;
+            let provider = decode_provider(&event)?;
+            Some(if deregistered {
+                ProviderLifecycleEvent::Deregistered { provider }
+            } else {
+                ProviderLifecycleEvent::Updated { provider }
+            })
         })
         .collect()
 }
 
-/// Statically decode `event` as `E` when its pallet/event identity matches;
-/// `None` otherwise. An event that matches but fails to decode (a runtime whose
-/// event shape drifted from the bindings) is logged and skipped — the next
-/// relevant event, or the next reconnect's bootstrap refresh, covers the miss.
-fn decode<E: subxt::events::DecodeAsEvent>(
-    event: &subxt::events::Event<'_, PolkadotConfig>,
-) -> Option<E> {
-    match event.decode_fields_as::<E>()? {
-        Ok(decoded) => Some(decoded),
+/// Decode the `provider` field out of a `StorageProvider` lifecycle event.
+///
+/// A shape mismatch (a runtime whose event fields drifted from the bindings)
+/// is logged and skipped. For most of these events that is recoverable: the
+/// next relevant event still triggers a fresh `refresh_provider_state`. A
+/// missed `ProviderDeregistered` is the exception - a deregistered provider
+/// emits nothing further, so only the next reconnect's bootstrap refresh
+/// corrects it. The persisted nonce watermark is unaffected either way: its
+/// reset is gated on a successfully decoded `Deregistered` in
+/// [`refresh_if_relevant_event`], so a missed decode simply leaves it as-is.
+fn decode_provider(event: &subxt::events::Event<'_, PolkadotConfig>) -> Option<AccountId32> {
+    match event.decode_fields_unchecked_as::<LifecycleProvider>() {
+        Ok(LifecycleProvider { provider }) => Some(AccountId32::new(provider.0)),
         Err(e) => {
             tracing::warn!(
                 "chain-state coordinator: failed to decode {}::{} against the static bindings: {e}",
@@ -1039,9 +1069,9 @@ mod tests {
     // These tests drive [`RealChainStateClient`] and [`ChainStateCoordinator::follow`]
     // through a real `OnlineClient` (legacy backend) backed by canned RPC
     // responses, using the repo's tracked runtime metadata snapshot. Storage
-    // values and events are round-tripped through `scale_value` encoding
-    // against the actual runtime types, so these exercise the same dynamic
-    // decode paths as a live chain — without one.
+    // values and events are encoded with `scale_value` against the actual
+    // runtime types, so these exercise the same static decode paths - the
+    // generated `storage-subxt` bindings - as a live chain, without one.
     mod real_client {
         use super::*;
         use std::sync::atomic::Ordering;
@@ -1152,9 +1182,9 @@ mod tests {
         }
 
         /// `System::Events` bytes holding a `ProviderRegistered` (exercising
-        /// the dynamic lifecycle decoding) and a `ChallengeCreated`
-        /// (exercising the static fan-out decoding) for `provider`, encoded
-        /// against the real runtime types.
+        /// the lifecycle decoding) and a `ChallengeCreated` (exercising the
+        /// fan-out decoding) for `provider`, encoded against the real runtime
+        /// types.
         fn encoded_events(md: &subxt::Metadata, provider: &AccountId32) -> Vec<u8> {
             let provider_bytes = <AccountId32 as AsRef<[u8]>>::as_ref(provider);
             let registered = event_record(Value::named_variant(
@@ -1656,6 +1686,70 @@ mod tests {
             assert!(
                 store.0.load(Ordering::SeqCst),
                 "a confirmed ProviderDeregistered must reset the persisted nonce watermark"
+            );
+        }
+
+        /// Decoding only the `provider` field must keep working even when the
+        /// rest of an event's fields change shape - proving the fix for
+        /// decoding whole event structs, which would have broken here since
+        /// `ProviderSettingsUpdated` carries the full `ProviderSettings`.
+        #[tokio::test]
+        async fn lifecycle_events_decode_despite_unrelated_field_changes() {
+            let md = metadata();
+            let account = provider_account();
+            let account_bytes = <AccountId32 as AsRef<[u8]>>::as_ref(&account);
+
+            let settings_updated = event_record(Value::named_variant(
+                "ProviderSettingsUpdated",
+                [
+                    ("provider", Value::from_bytes(account_bytes)),
+                    (
+                        "settings",
+                        Value::named_composite([
+                            ("min_duration", Value::u128(10)),
+                            ("max_duration", Value::u128(100)),
+                            ("price_per_byte", Value::u128(5)),
+                            ("accepting_primary", Value::bool(true)),
+                            (
+                                "replica_sync_price",
+                                Value::unnamed_variant("None", Vec::<Value>::new()),
+                            ),
+                            ("accepting_extensions", Value::bool(true)),
+                            ("max_capacity", Value::u128(10_000)),
+                        ]),
+                    ),
+                ],
+            ));
+            let deregistered = event_record(Value::named_variant(
+                "ProviderDeregistered",
+                [
+                    ("provider", Value::from_bytes(account_bytes)),
+                    ("stake_returned", Value::u128(1_000)),
+                ],
+            ));
+            let events_ty = storage_value_type(&md, "System", "Events");
+            let events_bytes = encode_value(
+                &md,
+                events_ty,
+                &Value::unnamed_composite([settings_updated, deregistered]),
+            );
+
+            let api = mock_api(vec![(
+                key_prefix("System", "Events"),
+                format!("0x{}", hex::encode(events_bytes)),
+            )])
+            .await;
+            let at = api.at_current_block().await.expect("block handle");
+            let events = at.events().fetch().await.expect("events fetch");
+
+            assert_eq!(
+                parse_provider_lifecycle_events(&events),
+                vec![
+                    ProviderLifecycleEvent::Updated {
+                        provider: account.clone()
+                    },
+                    ProviderLifecycleEvent::Deregistered { provider: account },
+                ]
             );
         }
 
