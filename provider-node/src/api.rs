@@ -756,7 +756,9 @@ async fn get_historical_roots(
 ///   restart needed.
 /// - `provider_key_mismatch` — the local signing key differs from the registered
 ///   on-chain `public_key`; signed terms would never verify. Clears on the next
-///   provider-info refresh once the keys agree.
+///   provider-info refresh once the keys agree. Not specific to this endpoint:
+///   the guard sits in [`ProviderState::sign`], so `/commit`, `/commitment`,
+///   `/checkpoint-signature` and deletion proofs return it too.
 /// - `nonce_counter_unavailable` — counter not yet aligned with the chain's replay
 ///   window.
 /// - `provider_deregistering` — provider has announced deregistration and no longer

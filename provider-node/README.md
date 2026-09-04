@@ -17,8 +17,12 @@ just health           # check provider is up
 The node signs commitments, checkpoint co-signatures, negotiated terms, and
 replica sync attestations with the keypair derived from `--keyfile`. The
 scheme is selected with `--key-scheme` (`sr25519` default, `ed25519`,
-`ecdsa`, or `eth`) and must match the `public_key` registered on-chain —
-`/negotiate` returns `503 provider_key_mismatch` while they differ.
+`ecdsa`, or `eth`) and must match the `public_key` registered on-chain.
+While they differ, every signing endpoint — `/negotiate`, `/commit`,
+`/commitment`, `/checkpoint-signature`, and deletion proofs — returns
+`503 provider_key_mismatch` rather than hand out a signature the chain
+could never verify. The registered key cannot be changed, so a mismatch is
+fixed by pointing the node at the original key, not by re-registering.
 Extrinsics are always submitted from the sr25519 account derived from the
 same seed, which is the provider's on-chain identity.
 

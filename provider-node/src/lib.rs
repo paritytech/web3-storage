@@ -253,16 +253,21 @@ impl ProviderState {
     /// mode, or before the first refresh) signing proceeds; a re-registration
     /// heals a mismatch on the coordinator's next refresh without a restart.
     pub fn ensure_signing_key_registered(&self) -> Result<(), Error> {
-        let (Some(keypair), Some(info)) = (
-            self.keypair.as_ref(),
-            self.chain_state.provider_info.read().as_ref().cloned(),
-        ) else {
+        let Some(keypair) = self.keypair.as_ref() else {
             return Ok(());
         };
-        if info.public_key != keypair.public_key_bytes() {
-            let registered = hex::encode(&info.public_key);
-            let local = hex::encode(keypair.public_key_bytes());
-            tracing::warn!(%registered, %local, "local signing key does not match registered on-chain public_key");
+        // Derived before taking the lock so the guard covers only the compare.
+        let local = keypair.public_key_bytes();
+        let info = self.chain_state.provider_info.read();
+        let Some(info) = info.as_ref() else {
+            return Ok(());
+        };
+        if info.public_key != local {
+            tracing::warn!(
+                registered = %hex::encode(&info.public_key),
+                local = %hex::encode(&local),
+                "local signing key does not match registered on-chain public_key"
+            );
             return Err(Error::ProviderKeyMismatch);
         }
         Ok(())

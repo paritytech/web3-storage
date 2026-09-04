@@ -57,6 +57,32 @@ fn registration_rejects_unverifiable_key_lengths() {
     });
 }
 
+/// A 64-byte key was accepted by registration before #274, so live chains can
+/// still hold one. No scheme derives a signer from it, so every variant must
+/// fail closed with `InvalidPublicKey` — before verification is even attempted.
+#[test]
+fn verify_signature_rejects_legacy_64_byte_stored_key() {
+    new_test_ext().execute_with(|| {
+        register_provider(2, 200);
+        crate::Providers::<Test>::mutate(2, |maybe_p| {
+            let p = maybe_p.as_mut().expect("provider 2 is registered");
+            p.public_key = vec![1u8; 64].try_into().expect("64 fits the bound");
+        });
+
+        for sig in [
+            MultiSignature::Sr25519(sr25519::Signature::from_raw([0u8; 64])),
+            MultiSignature::Ed25519(ed25519::Signature::from_raw([0u8; 64])),
+            MultiSignature::Ecdsa(ecdsa::Signature::from_raw([0u8; 65])),
+            MultiSignature::Eth(ecdsa::KeccakSignature::from_raw([0u8; 65])),
+        ] {
+            assert_err!(
+                StorageProvider::verify_signature(&sig, MSG, &2),
+                Error::<Test>::InvalidPublicKey
+            );
+        }
+    });
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // verify_signature (raw message) — positive round-trip per scheme
 // ─────────────────────────────────────────────────────────────────────────
