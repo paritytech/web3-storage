@@ -19,7 +19,7 @@
 //! THIS FILE WAS AUTO-GENERATED USING THE SUBSTRATE BENCHMARK CLI VERSION 58.0.0
 //! DATE: 2026-09-04, STEPS: `50`, REPEAT: `20`, LOW RANGE: `[]`, HIGH RANGE: `[]`
 //! WORST CASE MAP SIZE: `1000000`
-//! HOSTNAME: `d9c3de6e89f2`, CPU: `Intel(R) Xeon(R) CPU @ 2.60GHz`
+//! HOSTNAME: `21252171025e`, CPU: `Intel(R) Xeon(R) CPU @ 2.60GHz`
 //! WASM-EXECUTION: `Compiled`, CHAIN: `None`, DB CACHE: 1024
 
 // Executed Command:
@@ -56,6 +56,8 @@ impl<T: frame_system::Config> pallet_storage_provider::WeightInfo for WeightInfo
 	/// Proof: UNKNOWN KEY `0xe2b214baf521fc80c0dec1598aca8d6f` (r:1 w:0)
 	/// Storage: `System::Account` (r:1 w:1)
 	/// Proof: `System::Account` (`max_values`: None, `max_size`: Some(128), added: 2603, mode: `MaxEncodedLen`)
+	/// Storage: `Balances::Holds` (r:1 w:1)
+	/// Proof: `Balances::Holds` (`max_values`: None, `max_size`: Some(193), added: 2668, mode: `MaxEncodedLen`)
 	/// Storage: `ParachainSystem::ValidationData` (r:1 w:0)
 	/// Proof: `ParachainSystem::ValidationData` (`max_values`: Some(1), `max_size`: None, mode: `Measured`)
 	/// Storage: `ParachainSystem::LastRelayChainBlockNumber` (r:1 w:0)
@@ -66,11 +68,11 @@ impl<T: frame_system::Config> pallet_storage_provider::WeightInfo for WeightInfo
 		// Proof Size summary in bytes:
 		//  Measured:  `221`
 		//  Estimated: `3829`
-		// Minimum execution time: 32_965_000 picoseconds.
-		Weight::from_parts(34_759_000, 0)
+		// Minimum execution time: 60_116_000 picoseconds.
+		Weight::from_parts(62_668_000, 0)
 			.saturating_add(Weight::from_parts(0, 3829))
-			.saturating_add(T::DbWeight::get().reads(5))
-			.saturating_add(T::DbWeight::get().writes(3))
+			.saturating_add(T::DbWeight::get().reads(6))
+			.saturating_add(T::DbWeight::get().writes(4))
 	}
 	/// Storage: `ParachainSystem::ValidationData` (r:1 w:0)
 	/// Proof: `ParachainSystem::ValidationData` (`max_values`: Some(1), `max_size`: None, mode: `Measured`)
@@ -84,8 +86,8 @@ impl<T: frame_system::Config> pallet_storage_provider::WeightInfo for WeightInfo
 		// Proof Size summary in bytes:
 		//  Measured:  `421`
 		//  Estimated: `3886`
-		// Minimum execution time: 16_628_000 picoseconds.
-		Weight::from_parts(17_606_000, 0)
+		// Minimum execution time: 16_883_000 picoseconds.
+		Weight::from_parts(18_025_000, 0)
 			.saturating_add(Weight::from_parts(0, 3886))
 			.saturating_add(T::DbWeight::get().reads(4))
 			.saturating_add(T::DbWeight::get().writes(1))
@@ -98,17 +100,19 @@ impl<T: frame_system::Config> pallet_storage_provider::WeightInfo for WeightInfo
 	/// Proof: `StorageProvider::PendingChallenges` (`max_values`: None, `max_size`: Some(52), added: 2527, mode: `MaxEncodedLen`)
 	/// Storage: `System::Account` (r:1 w:1)
 	/// Proof: `System::Account` (`max_values`: None, `max_size`: Some(128), added: 2603, mode: `MaxEncodedLen`)
+	/// Storage: `Balances::Holds` (r:1 w:1)
+	/// Proof: `Balances::Holds` (`max_values`: None, `max_size`: Some(193), added: 2668, mode: `MaxEncodedLen`)
 	/// Storage: `StorageProvider::ProviderReplayStates` (r:0 w:1)
 	/// Proof: `StorageProvider::ProviderReplayStates` (`max_values`: None, `max_size`: Some(184), added: 2659, mode: `MaxEncodedLen`)
 	fn complete_deregister() -> Weight {
 		// Proof Size summary in bytes:
-		//  Measured:  `497`
+		//  Measured:  `552`
 		//  Estimated: `3829`
-		// Minimum execution time: 33_863_000 picoseconds.
-		Weight::from_parts(35_461_000, 0)
+		// Minimum execution time: 52_331_000 picoseconds.
+		Weight::from_parts(55_281_000, 0)
 			.saturating_add(Weight::from_parts(0, 3829))
-			.saturating_add(T::DbWeight::get().reads(4))
-			.saturating_add(T::DbWeight::get().writes(3))
+			.saturating_add(T::DbWeight::get().reads(5))
+			.saturating_add(T::DbWeight::get().writes(4))
 	}
 	/// Storage: `StorageProvider::Providers` (r:1 w:1)
 	/// Proof: `StorageProvider::Providers` (`max_values`: None, `max_size`: Some(364), added: 2839, mode: `MaxEncodedLen`)
@@ -116,8 +120,8 @@ impl<T: frame_system::Config> pallet_storage_provider::WeightInfo for WeightInfo
 		// Proof Size summary in bytes:
 		//  Measured:  `365`
 		//  Estimated: `3829`
-		// Minimum execution time: 12_813_000 picoseconds.
-		Weight::from_parts(13_610_000, 0)
+		// Minimum execution time: 12_690_000 picoseconds.
+		Weight::from_parts(13_633_000, 0)
 			.saturating_add(Weight::from_parts(0, 3829))
 			.saturating_add(T::DbWeight::get().reads(1))
 			.saturating_add(T::DbWeight::get().writes(1))
@@ -130,8 +134,8 @@ impl<T: frame_system::Config> pallet_storage_provider::WeightInfo for WeightInfo
 		// Proof Size summary in bytes:
 		//  Measured:  `361`
 		//  Estimated: `3829`
-		// Minimum execution time: 13_506_000 picoseconds.
-		Weight::from_parts(14_316_000, 0)
+		// Minimum execution time: 13_624_000 picoseconds.
+		Weight::from_parts(14_489_000, 0)
 			.saturating_add(Weight::from_parts(0, 3829))
 			.saturating_add(T::DbWeight::get().reads(2))
 			.saturating_add(T::DbWeight::get().writes(1))
@@ -140,15 +144,17 @@ impl<T: frame_system::Config> pallet_storage_provider::WeightInfo for WeightInfo
 	/// Proof: `StorageProvider::Providers` (`max_values`: None, `max_size`: Some(364), added: 2839, mode: `MaxEncodedLen`)
 	/// Storage: `System::Account` (r:1 w:1)
 	/// Proof: `System::Account` (`max_values`: None, `max_size`: Some(128), added: 2603, mode: `MaxEncodedLen`)
+	/// Storage: `Balances::Holds` (r:1 w:1)
+	/// Proof: `Balances::Holds` (`max_values`: None, `max_size`: Some(193), added: 2668, mode: `MaxEncodedLen`)
 	fn add_stake() -> Weight {
 		// Proof Size summary in bytes:
-		//  Measured:  `464`
+		//  Measured:  `519`
 		//  Estimated: `3829`
-		// Minimum execution time: 27_207_000 picoseconds.
-		Weight::from_parts(28_643_000, 0)
+		// Minimum execution time: 56_003_000 picoseconds.
+		Weight::from_parts(58_696_000, 0)
 			.saturating_add(Weight::from_parts(0, 3829))
-			.saturating_add(T::DbWeight::get().reads(2))
-			.saturating_add(T::DbWeight::get().writes(2))
+			.saturating_add(T::DbWeight::get().reads(3))
+			.saturating_add(T::DbWeight::get().writes(3))
 	}
 	/// Storage: `StorageProvider::Providers` (r:1 w:0)
 	/// Proof: `StorageProvider::Providers` (`max_values`: None, `max_size`: Some(364), added: 2839, mode: `MaxEncodedLen`)
@@ -162,8 +168,8 @@ impl<T: frame_system::Config> pallet_storage_provider::WeightInfo for WeightInfo
 		// Proof Size summary in bytes:
 		//  Measured:  `395`
 		//  Estimated: `3829`
-		// Minimum execution time: 20_367_000 picoseconds.
-		Weight::from_parts(22_400_000, 0)
+		// Minimum execution time: 20_552_000 picoseconds.
+		Weight::from_parts(22_753_000, 0)
 			.saturating_add(Weight::from_parts(0, 3829))
 			.saturating_add(T::DbWeight::get().reads(4))
 			.saturating_add(T::DbWeight::get().writes(1))
@@ -174,8 +180,8 @@ impl<T: frame_system::Config> pallet_storage_provider::WeightInfo for WeightInfo
 		// Proof Size summary in bytes:
 		//  Measured:  `361`
 		//  Estimated: `3829`
-		// Minimum execution time: 13_406_000 picoseconds.
-		Weight::from_parts(14_163_000, 0)
+		// Minimum execution time: 13_621_000 picoseconds.
+		Weight::from_parts(14_463_000, 0)
 			.saturating_add(Weight::from_parts(0, 3829))
 			.saturating_add(T::DbWeight::get().reads(1))
 			.saturating_add(T::DbWeight::get().writes(1))
@@ -186,8 +192,8 @@ impl<T: frame_system::Config> pallet_storage_provider::WeightInfo for WeightInfo
 		// Proof Size summary in bytes:
 		//  Measured:  `430`
 		//  Estimated: `3895`
-		// Minimum execution time: 10_520_000 picoseconds.
-		Weight::from_parts(11_338_000, 0)
+		// Minimum execution time: 10_652_000 picoseconds.
+		Weight::from_parts(11_423_000, 0)
 			.saturating_add(Weight::from_parts(0, 3895))
 			.saturating_add(T::DbWeight::get().reads(1))
 			.saturating_add(T::DbWeight::get().writes(1))
@@ -198,8 +204,8 @@ impl<T: frame_system::Config> pallet_storage_provider::WeightInfo for WeightInfo
 		// Proof Size summary in bytes:
 		//  Measured:  `430`
 		//  Estimated: `3895`
-		// Minimum execution time: 13_776_000 picoseconds.
-		Weight::from_parts(14_654_000, 0)
+		// Minimum execution time: 13_748_000 picoseconds.
+		Weight::from_parts(14_623_000, 0)
 			.saturating_add(Weight::from_parts(0, 3895))
 			.saturating_add(T::DbWeight::get().reads(1))
 			.saturating_add(T::DbWeight::get().writes(1))
@@ -210,8 +216,8 @@ impl<T: frame_system::Config> pallet_storage_provider::WeightInfo for WeightInfo
 		// Proof Size summary in bytes:
 		//  Measured:  `615`
 		//  Estimated: `4080`
-		// Minimum execution time: 16_266_000 picoseconds.
-		Weight::from_parts(17_912_000, 0)
+		// Minimum execution time: 16_628_000 picoseconds.
+		Weight::from_parts(18_263_000, 0)
 			.saturating_add(Weight::from_parts(0, 4080))
 			.saturating_add(T::DbWeight::get().reads(1))
 			.saturating_add(T::DbWeight::get().writes(1))
@@ -224,8 +230,8 @@ impl<T: frame_system::Config> pallet_storage_provider::WeightInfo for WeightInfo
 		// Proof Size summary in bytes:
 		//  Measured:  `508`
 		//  Estimated: `11515`
-		// Minimum execution time: 19_241_000 picoseconds.
-		Weight::from_parts(20_561_000, 0)
+		// Minimum execution time: 19_090_000 picoseconds.
+		Weight::from_parts(20_445_000, 0)
 			.saturating_add(Weight::from_parts(0, 11515))
 			.saturating_add(T::DbWeight::get().reads(2))
 			.saturating_add(T::DbWeight::get().writes(2))
@@ -238,8 +244,8 @@ impl<T: frame_system::Config> pallet_storage_provider::WeightInfo for WeightInfo
 		// Proof Size summary in bytes:
 		//  Measured:  `603`
 		//  Estimated: `11515`
-		// Minimum execution time: 20_817_000 picoseconds.
-		Weight::from_parts(22_108_000, 0)
+		// Minimum execution time: 20_764_000 picoseconds.
+		Weight::from_parts(21_971_000, 0)
 			.saturating_add(Weight::from_parts(0, 11515))
 			.saturating_add(T::DbWeight::get().reads(2))
 			.saturating_add(T::DbWeight::get().writes(2))
@@ -250,17 +256,19 @@ impl<T: frame_system::Config> pallet_storage_provider::WeightInfo for WeightInfo
 	/// Proof: `StorageProvider::StorageAgreements` (`max_values`: None, `max_size`: Some(243), added: 2718, mode: `MaxEncodedLen`)
 	/// Storage: `System::Account` (r:1 w:1)
 	/// Proof: `System::Account` (`max_values`: None, `max_size`: Some(128), added: 2603, mode: `MaxEncodedLen`)
+	/// Storage: `Balances::Holds` (r:1 w:1)
+	/// Proof: `Balances::Holds` (`max_values`: None, `max_size`: Some(193), added: 2668, mode: `MaxEncodedLen`)
 	/// Storage: `StorageProvider::Buckets` (r:1 w:1)
 	/// Proof: `StorageProvider::Buckets` (`max_values`: None, `max_size`: None, mode: `Measured`)
 	fn remove_slashed() -> Weight {
 		// Proof Size summary in bytes:
-		//  Measured:  `1023`
-		//  Estimated: `4488`
-		// Minimum execution time: 47_207_000 picoseconds.
-		Weight::from_parts(51_850_000, 0)
-			.saturating_add(Weight::from_parts(0, 4488))
-			.saturating_add(T::DbWeight::get().reads(4))
-			.saturating_add(T::DbWeight::get().writes(4))
+		//  Measured:  `1116`
+		//  Estimated: `4581`
+		// Minimum execution time: 70_636_000 picoseconds.
+		Weight::from_parts(78_424_000, 0)
+			.saturating_add(Weight::from_parts(0, 4581))
+			.saturating_add(T::DbWeight::get().reads(5))
+			.saturating_add(T::DbWeight::get().writes(5))
 	}
 	/// Storage: `ParachainSystem::ValidationData` (r:1 w:0)
 	/// Proof: `ParachainSystem::ValidationData` (`max_values`: Some(1), `max_size`: None, mode: `Measured`)
@@ -276,6 +284,8 @@ impl<T: frame_system::Config> pallet_storage_provider::WeightInfo for WeightInfo
 	/// Proof: UNKNOWN KEY `0x8e94bed737a44672f7249003a287f4f2` (r:1 w:0)
 	/// Storage: `System::Account` (r:1 w:1)
 	/// Proof: `System::Account` (`max_values`: None, `max_size`: Some(128), added: 2603, mode: `MaxEncodedLen`)
+	/// Storage: `Balances::Holds` (r:1 w:1)
+	/// Proof: `Balances::Holds` (`max_values`: None, `max_size`: Some(193), added: 2668, mode: `MaxEncodedLen`)
 	/// Storage: `StorageProvider::NextBucketId` (r:1 w:1)
 	/// Proof: `StorageProvider::NextBucketId` (`max_values`: Some(1), `max_size`: Some(8), added: 503, mode: `MaxEncodedLen`)
 	/// Storage: `StorageProvider::MemberBuckets` (r:1 w:1)
@@ -286,13 +296,13 @@ impl<T: frame_system::Config> pallet_storage_provider::WeightInfo for WeightInfo
 	/// Proof: `StorageProvider::StorageAgreements` (`max_values`: None, `max_size`: Some(243), added: 2718, mode: `MaxEncodedLen`)
 	fn establish_storage_agreement() -> Weight {
 		// Proof Size summary in bytes:
-		//  Measured:  `885`
+		//  Measured:  `940`
 		//  Estimated: `11515`
-		// Minimum execution time: 113_650_000 picoseconds.
-		Weight::from_parts(117_101_000, 0)
+		// Minimum execution time: 134_848_000 picoseconds.
+		Weight::from_parts(140_503_000, 0)
 			.saturating_add(Weight::from_parts(0, 11515))
-			.saturating_add(T::DbWeight::get().reads(9))
-			.saturating_add(T::DbWeight::get().writes(7))
+			.saturating_add(T::DbWeight::get().reads(10))
+			.saturating_add(T::DbWeight::get().writes(8))
 	}
 	/// Storage: `ParachainSystem::ValidationData` (r:1 w:0)
 	/// Proof: `ParachainSystem::ValidationData` (`max_values`: Some(1), `max_size`: None, mode: `Measured`)
@@ -312,14 +322,38 @@ impl<T: frame_system::Config> pallet_storage_provider::WeightInfo for WeightInfo
 	/// Proof: UNKNOWN KEY `0x8e94bed737a44672f7249003a287f4f2` (r:1 w:0)
 	/// Storage: `System::Account` (r:1 w:1)
 	/// Proof: `System::Account` (`max_values`: None, `max_size`: Some(128), added: 2603, mode: `MaxEncodedLen`)
+	/// Storage: `Balances::Holds` (r:1 w:1)
+	/// Proof: `Balances::Holds` (`max_values`: None, `max_size`: Some(193), added: 2668, mode: `MaxEncodedLen`)
 	fn establish_replica_agreement() -> Weight {
 		// Proof Size summary in bytes:
-		//  Measured:  `1121`
-		//  Estimated: `4586`
-		// Minimum execution time: 105_083_000 picoseconds.
-		Weight::from_parts(108_713_000, 0)
-			.saturating_add(Weight::from_parts(0, 4586))
-			.saturating_add(T::DbWeight::get().reads(9))
+		//  Measured:  `1248`
+		//  Estimated: `4713`
+		// Minimum execution time: 136_968_000 picoseconds.
+		Weight::from_parts(141_402_000, 0)
+			.saturating_add(Weight::from_parts(0, 4713))
+			.saturating_add(T::DbWeight::get().reads(10))
+			.saturating_add(T::DbWeight::get().writes(5))
+	}
+	/// Storage: `StorageProvider::Providers` (r:1 w:1)
+	/// Proof: `StorageProvider::Providers` (`max_values`: None, `max_size`: Some(364), added: 2839, mode: `MaxEncodedLen`)
+	/// Storage: `StorageProvider::StorageAgreements` (r:1 w:1)
+	/// Proof: `StorageProvider::StorageAgreements` (`max_values`: None, `max_size`: Some(243), added: 2718, mode: `MaxEncodedLen`)
+	/// Storage: `ParachainSystem::ValidationData` (r:1 w:0)
+	/// Proof: `ParachainSystem::ValidationData` (`max_values`: Some(1), `max_size`: None, mode: `Measured`)
+	/// Storage: `ParachainSystem::LastRelayChainBlockNumber` (r:1 w:0)
+	/// Proof: `ParachainSystem::LastRelayChainBlockNumber` (`max_values`: Some(1), `max_size`: None, mode: `Measured`)
+	/// Storage: `System::Account` (r:1 w:1)
+	/// Proof: `System::Account` (`max_values`: None, `max_size`: Some(128), added: 2603, mode: `MaxEncodedLen`)
+	/// Storage: `Balances::Holds` (r:1 w:1)
+	/// Proof: `Balances::Holds` (`max_values`: None, `max_size`: Some(193), added: 2668, mode: `MaxEncodedLen`)
+	fn top_up_agreement() -> Weight {
+		// Proof Size summary in bytes:
+		//  Measured:  `736`
+		//  Estimated: `3829`
+		// Minimum execution time: 72_132_000 picoseconds.
+		Weight::from_parts(79_543_000, 0)
+			.saturating_add(Weight::from_parts(0, 3829))
+			.saturating_add(T::DbWeight::get().reads(6))
 			.saturating_add(T::DbWeight::get().writes(4))
 	}
 	/// Storage: `StorageProvider::Providers` (r:1 w:1)
@@ -332,35 +366,17 @@ impl<T: frame_system::Config> pallet_storage_provider::WeightInfo for WeightInfo
 	/// Proof: `ParachainSystem::LastRelayChainBlockNumber` (`max_values`: Some(1), `max_size`: None, mode: `Measured`)
 	/// Storage: `System::Account` (r:1 w:1)
 	/// Proof: `System::Account` (`max_values`: None, `max_size`: Some(128), added: 2603, mode: `MaxEncodedLen`)
-	fn top_up_agreement() -> Weight {
-		// Proof Size summary in bytes:
-		//  Measured:  `643`
-		//  Estimated: `3829`
-		// Minimum execution time: 39_428_000 picoseconds.
-		Weight::from_parts(43_666_000, 0)
-			.saturating_add(Weight::from_parts(0, 3829))
-			.saturating_add(T::DbWeight::get().reads(5))
-			.saturating_add(T::DbWeight::get().writes(3))
-	}
-	/// Storage: `StorageProvider::Providers` (r:1 w:1)
-	/// Proof: `StorageProvider::Providers` (`max_values`: None, `max_size`: Some(364), added: 2839, mode: `MaxEncodedLen`)
-	/// Storage: `StorageProvider::StorageAgreements` (r:1 w:1)
-	/// Proof: `StorageProvider::StorageAgreements` (`max_values`: None, `max_size`: Some(243), added: 2718, mode: `MaxEncodedLen`)
-	/// Storage: `ParachainSystem::ValidationData` (r:1 w:0)
-	/// Proof: `ParachainSystem::ValidationData` (`max_values`: Some(1), `max_size`: None, mode: `Measured`)
-	/// Storage: `ParachainSystem::LastRelayChainBlockNumber` (r:1 w:0)
-	/// Proof: `ParachainSystem::LastRelayChainBlockNumber` (`max_values`: Some(1), `max_size`: None, mode: `Measured`)
-	/// Storage: `System::Account` (r:1 w:1)
-	/// Proof: `System::Account` (`max_values`: None, `max_size`: Some(128), added: 2603, mode: `MaxEncodedLen`)
+	/// Storage: `Balances::Holds` (r:1 w:1)
+	/// Proof: `Balances::Holds` (`max_values`: None, `max_size`: Some(193), added: 2668, mode: `MaxEncodedLen`)
 	fn extend_agreement() -> Weight {
 		// Proof Size summary in bytes:
-		//  Measured:  `643`
+		//  Measured:  `736`
 		//  Estimated: `3829`
-		// Minimum execution time: 39_904_000 picoseconds.
-		Weight::from_parts(43_550_000, 0)
+		// Minimum execution time: 73_754_000 picoseconds.
+		Weight::from_parts(79_182_000, 0)
 			.saturating_add(Weight::from_parts(0, 3829))
-			.saturating_add(T::DbWeight::get().reads(5))
-			.saturating_add(T::DbWeight::get().writes(3))
+			.saturating_add(T::DbWeight::get().reads(6))
+			.saturating_add(T::DbWeight::get().writes(4))
 	}
 	/// Storage: `StorageProvider::StorageAgreements` (r:1 w:1)
 	/// Proof: `StorageProvider::StorageAgreements` (`max_values`: None, `max_size`: Some(243), added: 2718, mode: `MaxEncodedLen`)
@@ -372,6 +388,8 @@ impl<T: frame_system::Config> pallet_storage_provider::WeightInfo for WeightInfo
 	/// Proof: `ParachainSystem::LastRelayChainBlockNumber` (`max_values`: Some(1), `max_size`: None, mode: `Measured`)
 	/// Storage: `StorageProvider::Buckets` (r:1 w:1)
 	/// Proof: `StorageProvider::Buckets` (`max_values`: None, `max_size`: None, mode: `Measured`)
+	/// Storage: `Balances::Holds` (r:1 w:1)
+	/// Proof: `Balances::Holds` (`max_values`: None, `max_size`: Some(193), added: 2668, mode: `MaxEncodedLen`)
 	/// Storage: `System::Account` (r:3 w:3)
 	/// Proof: `System::Account` (`max_values`: None, `max_size`: Some(128), added: 2603, mode: `MaxEncodedLen`)
 	/// Storage: `StorageProvider::Providers` (r:1 w:1)
@@ -379,16 +397,16 @@ impl<T: frame_system::Config> pallet_storage_provider::WeightInfo for WeightInfo
 	/// The range of component `a` is `[0, 1]`.
 	fn end_agreement(a: u32, ) -> Weight {
 		// Proof Size summary in bytes:
-		//  Measured:  `1126 + a * (103 ±0)`
+		//  Measured:  `1219 + a * (103 ±0)`
 		//  Estimated: `6196 + a * (2603 ±0)`
-		// Minimum execution time: 92_487_000 picoseconds.
-		Weight::from_parts(101_187_520, 0)
+		// Minimum execution time: 87_015_000 picoseconds.
+		Weight::from_parts(95_017_997, 0)
 			.saturating_add(Weight::from_parts(0, 6196))
-			// Standard Error: 287_774
-			.saturating_add(Weight::from_parts(38_668_679, 0).saturating_mul(a.into()))
-			.saturating_add(T::DbWeight::get().reads(8))
+			// Standard Error: 287_886
+			.saturating_add(Weight::from_parts(38_653_302, 0).saturating_mul(a.into()))
+			.saturating_add(T::DbWeight::get().reads(9))
 			.saturating_add(T::DbWeight::get().reads((1_u64).saturating_mul(a.into())))
-			.saturating_add(T::DbWeight::get().writes(5))
+			.saturating_add(T::DbWeight::get().writes(6))
 			.saturating_add(T::DbWeight::get().writes((1_u64).saturating_mul(a.into())))
 			.saturating_add(Weight::from_parts(0, 2603).saturating_mul(a.into()))
 	}
@@ -400,6 +418,8 @@ impl<T: frame_system::Config> pallet_storage_provider::WeightInfo for WeightInfo
 	/// Proof: `ParachainSystem::ValidationData` (`max_values`: Some(1), `max_size`: None, mode: `Measured`)
 	/// Storage: UNKNOWN KEY `0x97b9a1825097a548d5a5699955279fdf` (r:1 w:0)
 	/// Proof: UNKNOWN KEY `0x97b9a1825097a548d5a5699955279fdf` (r:1 w:0)
+	/// Storage: `Balances::Holds` (r:1 w:1)
+	/// Proof: `Balances::Holds` (`max_values`: None, `max_size`: Some(193), added: 2668, mode: `MaxEncodedLen`)
 	/// Storage: `System::Account` (r:2 w:2)
 	/// Proof: `System::Account` (`max_values`: None, `max_size`: Some(128), added: 2603, mode: `MaxEncodedLen`)
 	/// Storage: `StorageProvider::Providers` (r:1 w:1)
@@ -408,13 +428,13 @@ impl<T: frame_system::Config> pallet_storage_provider::WeightInfo for WeightInfo
 	/// Proof: `StorageProvider::Buckets` (`max_values`: None, `max_size`: None, mode: `Measured`)
 	fn claim_expired_agreement() -> Weight {
 		// Proof Size summary in bytes:
-		//  Measured:  `1155`
+		//  Measured:  `1248`
 		//  Estimated: `6196`
-		// Minimum execution time: 92_711_000 picoseconds.
-		Weight::from_parts(100_592_000, 0)
+		// Minimum execution time: 87_111_000 picoseconds.
+		Weight::from_parts(94_733_000, 0)
 			.saturating_add(Weight::from_parts(0, 6196))
-			.saturating_add(T::DbWeight::get().reads(8))
-			.saturating_add(T::DbWeight::get().writes(5))
+			.saturating_add(T::DbWeight::get().reads(9))
+			.saturating_add(T::DbWeight::get().writes(6))
 	}
 	/// Storage: `StorageProvider::Buckets` (r:1 w:1)
 	/// Proof: `StorageProvider::Buckets` (`max_values`: None, `max_size`: None, mode: `Measured`)
@@ -428,8 +448,8 @@ impl<T: frame_system::Config> pallet_storage_provider::WeightInfo for WeightInfo
 		// Proof Size summary in bytes:
 		//  Measured:  `1822`
 		//  Estimated: `15185`
-		// Minimum execution time: 268_505_000 picoseconds.
-		Weight::from_parts(276_628_000, 0)
+		// Minimum execution time: 264_039_000 picoseconds.
+		Weight::from_parts(268_869_000, 0)
 			.saturating_add(Weight::from_parts(0, 15185))
 			.saturating_add(T::DbWeight::get().reads(8))
 			.saturating_add(T::DbWeight::get().writes(1))
@@ -442,8 +462,8 @@ impl<T: frame_system::Config> pallet_storage_provider::WeightInfo for WeightInfo
 		// Proof Size summary in bytes:
 		//  Measured:  `1876`
 		//  Estimated: `15185`
-		// Minimum execution time: 263_384_000 picoseconds.
-		Weight::from_parts(272_548_000, 0)
+		// Minimum execution time: 258_301_000 picoseconds.
+		Weight::from_parts(264_069_000, 0)
 			.saturating_add(Weight::from_parts(0, 15185))
 			.saturating_add(T::DbWeight::get().reads(6))
 			.saturating_add(T::DbWeight::get().writes(1))
@@ -460,6 +480,8 @@ impl<T: frame_system::Config> pallet_storage_provider::WeightInfo for WeightInfo
 	/// Proof: UNKNOWN KEY `0x8c53fe1e0b4d5fae363bc84b9a9b966f` (r:1 w:0)
 	/// Storage: `System::Account` (r:1 w:1)
 	/// Proof: `System::Account` (`max_values`: None, `max_size`: Some(128), added: 2603, mode: `MaxEncodedLen`)
+	/// Storage: `Balances::Holds` (r:1 w:1)
+	/// Proof: `Balances::Holds` (`max_values`: None, `max_size`: Some(193), added: 2668, mode: `MaxEncodedLen`)
 	/// Storage: UNKNOWN KEY `0xf9d872bee99dc2ce8d32b673102353a4` (r:1 w:0)
 	/// Proof: UNKNOWN KEY `0xf9d872bee99dc2ce8d32b673102353a4` (r:1 w:0)
 	/// Storage: `StorageProvider::NextChallengeIndex` (r:1 w:1)
@@ -476,13 +498,13 @@ impl<T: frame_system::Config> pallet_storage_provider::WeightInfo for WeightInfo
 	/// Proof: `StorageProvider::Challenges` (`max_values`: None, `max_size`: Some(175), added: 2650, mode: `MaxEncodedLen`)
 	fn challenge_checkpoint() -> Weight {
 		// Proof Size summary in bytes:
-		//  Measured:  `903`
-		//  Estimated: `4368`
-		// Minimum execution time: 58_048_000 picoseconds.
-		Weight::from_parts(63_289_000, 0)
-			.saturating_add(Weight::from_parts(0, 4368))
-			.saturating_add(T::DbWeight::get().reads(12))
-			.saturating_add(T::DbWeight::get().writes(6))
+		//  Measured:  `996`
+		//  Estimated: `4461`
+		// Minimum execution time: 93_143_000 picoseconds.
+		Weight::from_parts(100_144_000, 0)
+			.saturating_add(Weight::from_parts(0, 4461))
+			.saturating_add(T::DbWeight::get().reads(13))
+			.saturating_add(T::DbWeight::get().writes(7))
 	}
 	/// Storage: `StorageProvider::Buckets` (r:1 w:0)
 	/// Proof: `StorageProvider::Buckets` (`max_values`: None, `max_size`: None, mode: `Measured`)
@@ -498,6 +520,8 @@ impl<T: frame_system::Config> pallet_storage_provider::WeightInfo for WeightInfo
 	/// Proof: UNKNOWN KEY `0x8c53fe1e0b4d5fae363bc84b9a9b966f` (r:1 w:0)
 	/// Storage: `System::Account` (r:1 w:1)
 	/// Proof: `System::Account` (`max_values`: None, `max_size`: Some(128), added: 2603, mode: `MaxEncodedLen`)
+	/// Storage: `Balances::Holds` (r:1 w:1)
+	/// Proof: `Balances::Holds` (`max_values`: None, `max_size`: Some(193), added: 2668, mode: `MaxEncodedLen`)
 	/// Storage: UNKNOWN KEY `0xf9d872bee99dc2ce8d32b673102353a4` (r:1 w:0)
 	/// Proof: UNKNOWN KEY `0xf9d872bee99dc2ce8d32b673102353a4` (r:1 w:0)
 	/// Storage: `StorageProvider::NextChallengeIndex` (r:1 w:1)
@@ -514,13 +538,13 @@ impl<T: frame_system::Config> pallet_storage_provider::WeightInfo for WeightInfo
 	/// Proof: `StorageProvider::Challenges` (`max_values`: None, `max_size`: Some(175), added: 2650, mode: `MaxEncodedLen`)
 	fn challenge_off_chain() -> Weight {
 		// Proof Size summary in bytes:
-		//  Measured:  `1062`
-		//  Estimated: `4527`
-		// Minimum execution time: 108_240_000 picoseconds.
-		Weight::from_parts(111_963_000, 0)
-			.saturating_add(Weight::from_parts(0, 4527))
-			.saturating_add(T::DbWeight::get().reads(13))
-			.saturating_add(T::DbWeight::get().writes(6))
+		//  Measured:  `1155`
+		//  Estimated: `4620`
+		// Minimum execution time: 139_269_000 picoseconds.
+		Weight::from_parts(143_722_000, 0)
+			.saturating_add(Weight::from_parts(0, 4620))
+			.saturating_add(T::DbWeight::get().reads(14))
+			.saturating_add(T::DbWeight::get().writes(7))
 	}
 	/// Storage: `StorageProvider::StorageAgreements` (r:1 w:0)
 	/// Proof: `StorageProvider::StorageAgreements` (`max_values`: None, `max_size`: Some(243), added: 2718, mode: `MaxEncodedLen`)
@@ -534,6 +558,8 @@ impl<T: frame_system::Config> pallet_storage_provider::WeightInfo for WeightInfo
 	/// Proof: UNKNOWN KEY `0x8c53fe1e0b4d5fae363bc84b9a9b966f` (r:1 w:0)
 	/// Storage: `System::Account` (r:1 w:1)
 	/// Proof: `System::Account` (`max_values`: None, `max_size`: Some(128), added: 2603, mode: `MaxEncodedLen`)
+	/// Storage: `Balances::Holds` (r:1 w:1)
+	/// Proof: `Balances::Holds` (`max_values`: None, `max_size`: Some(193), added: 2668, mode: `MaxEncodedLen`)
 	/// Storage: UNKNOWN KEY `0xf9d872bee99dc2ce8d32b673102353a4` (r:1 w:0)
 	/// Proof: UNKNOWN KEY `0xf9d872bee99dc2ce8d32b673102353a4` (r:1 w:0)
 	/// Storage: `StorageProvider::NextChallengeIndex` (r:1 w:1)
@@ -550,13 +576,13 @@ impl<T: frame_system::Config> pallet_storage_provider::WeightInfo for WeightInfo
 	/// Proof: `StorageProvider::Challenges` (`max_values`: None, `max_size`: Some(175), added: 2650, mode: `MaxEncodedLen`)
 	fn challenge_replica() -> Weight {
 		// Proof Size summary in bytes:
-		//  Measured:  `1031`
-		//  Estimated: `4496`
-		// Minimum execution time: 61_227_000 picoseconds.
-		Weight::from_parts(65_659_000, 0)
-			.saturating_add(Weight::from_parts(0, 4496))
-			.saturating_add(T::DbWeight::get().reads(12))
-			.saturating_add(T::DbWeight::get().writes(6))
+		//  Measured:  `1158`
+		//  Estimated: `4623`
+		// Minimum execution time: 95_798_000 picoseconds.
+		Weight::from_parts(102_158_000, 0)
+			.saturating_add(Weight::from_parts(0, 4623))
+			.saturating_add(T::DbWeight::get().reads(13))
+			.saturating_add(T::DbWeight::get().writes(7))
 	}
 	/// Storage: `StorageProvider::Challenges` (r:1 w:1)
 	/// Proof: `StorageProvider::Challenges` (`max_values`: None, `max_size`: Some(175), added: 2650, mode: `MaxEncodedLen`)
@@ -572,7 +598,9 @@ impl<T: frame_system::Config> pallet_storage_provider::WeightInfo for WeightInfo
 	/// Proof: `StorageProvider::Buckets` (`max_values`: None, `max_size`: None, mode: `Measured`)
 	/// Storage: UNKNOWN KEY `0xf9d872bee99dc2ce8d32b673102353a4` (r:1 w:0)
 	/// Proof: UNKNOWN KEY `0xf9d872bee99dc2ce8d32b673102353a4` (r:1 w:0)
-	/// Storage: `System::Account` (r:2 w:2)
+	/// Storage: `Balances::Holds` (r:1 w:1)
+	/// Proof: `Balances::Holds` (`max_values`: None, `max_size`: Some(193), added: 2668, mode: `MaxEncodedLen`)
+	/// Storage: `System::Account` (r:2 w:1)
 	/// Proof: `System::Account` (`max_values`: None, `max_size`: Some(128), added: 2603, mode: `MaxEncodedLen`)
 	/// Storage: `StorageProvider::Providers` (r:1 w:1)
 	/// Proof: `StorageProvider::Providers` (`max_values`: None, `max_size`: Some(364), added: 2839, mode: `MaxEncodedLen`)
@@ -580,12 +608,12 @@ impl<T: frame_system::Config> pallet_storage_provider::WeightInfo for WeightInfo
 	/// Proof: `StorageProvider::ChallengerStats` (`max_values`: None, `max_size`: Some(60), added: 2535, mode: `MaxEncodedLen`)
 	fn respond_to_challenge_proof() -> Weight {
 		// Proof Size summary in bytes:
-		//  Measured:  `1218`
+		//  Measured:  `1311`
 		//  Estimated: `6196`
-		// Minimum execution time: 1_153_748_000 picoseconds.
-		Weight::from_parts(1_169_578_000, 0)
+		// Minimum execution time: 1_173_479_000 picoseconds.
+		Weight::from_parts(1_179_952_000, 0)
 			.saturating_add(Weight::from_parts(0, 6196))
-			.saturating_add(T::DbWeight::get().reads(11))
+			.saturating_add(T::DbWeight::get().reads(12))
 			.saturating_add(T::DbWeight::get().writes(7))
 	}
 	/// Storage: `StorageProvider::Challenges` (r:1 w:1)
@@ -604,18 +632,20 @@ impl<T: frame_system::Config> pallet_storage_provider::WeightInfo for WeightInfo
 	/// Proof: `StorageProvider::Providers` (`max_values`: None, `max_size`: Some(364), added: 2839, mode: `MaxEncodedLen`)
 	/// Storage: UNKNOWN KEY `0xf9d872bee99dc2ce8d32b673102353a4` (r:1 w:0)
 	/// Proof: UNKNOWN KEY `0xf9d872bee99dc2ce8d32b673102353a4` (r:1 w:0)
-	/// Storage: `System::Account` (r:2 w:2)
+	/// Storage: `Balances::Holds` (r:1 w:1)
+	/// Proof: `Balances::Holds` (`max_values`: None, `max_size`: Some(193), added: 2668, mode: `MaxEncodedLen`)
+	/// Storage: `System::Account` (r:2 w:1)
 	/// Proof: `System::Account` (`max_values`: None, `max_size`: Some(128), added: 2603, mode: `MaxEncodedLen`)
 	/// Storage: `StorageProvider::ChallengerStats` (r:1 w:1)
 	/// Proof: `StorageProvider::ChallengerStats` (`max_values`: None, `max_size`: Some(60), added: 2535, mode: `MaxEncodedLen`)
 	fn respond_to_challenge_deleted() -> Weight {
 		// Proof Size summary in bytes:
-		//  Measured:  `1435`
+		//  Measured:  `1547`
 		//  Estimated: `6668`
-		// Minimum execution time: 128_013_000 picoseconds.
-		Weight::from_parts(132_433_000, 0)
+		// Minimum execution time: 141_089_000 picoseconds.
+		Weight::from_parts(145_602_000, 0)
 			.saturating_add(Weight::from_parts(0, 6668))
-			.saturating_add(T::DbWeight::get().reads(12))
+			.saturating_add(T::DbWeight::get().reads(13))
 			.saturating_add(T::DbWeight::get().writes(7))
 	}
 	/// Storage: `StorageProvider::Challenges` (r:1 w:1)
@@ -632,7 +662,9 @@ impl<T: frame_system::Config> pallet_storage_provider::WeightInfo for WeightInfo
 	/// Proof: `StorageProvider::Buckets` (`max_values`: None, `max_size`: None, mode: `Measured`)
 	/// Storage: UNKNOWN KEY `0xf9d872bee99dc2ce8d32b673102353a4` (r:1 w:0)
 	/// Proof: UNKNOWN KEY `0xf9d872bee99dc2ce8d32b673102353a4` (r:1 w:0)
-	/// Storage: `System::Account` (r:2 w:2)
+	/// Storage: `Balances::Holds` (r:1 w:1)
+	/// Proof: `Balances::Holds` (`max_values`: None, `max_size`: Some(193), added: 2668, mode: `MaxEncodedLen`)
+	/// Storage: `System::Account` (r:2 w:1)
 	/// Proof: `System::Account` (`max_values`: None, `max_size`: Some(128), added: 2603, mode: `MaxEncodedLen`)
 	/// Storage: `StorageProvider::Providers` (r:1 w:1)
 	/// Proof: `StorageProvider::Providers` (`max_values`: None, `max_size`: Some(364), added: 2839, mode: `MaxEncodedLen`)
@@ -640,12 +672,12 @@ impl<T: frame_system::Config> pallet_storage_provider::WeightInfo for WeightInfo
 	/// Proof: `StorageProvider::ChallengerStats` (`max_values`: None, `max_size`: Some(60), added: 2535, mode: `MaxEncodedLen`)
 	fn respond_to_challenge_superseded() -> Weight {
 		// Proof Size summary in bytes:
-		//  Measured:  `1272`
+		//  Measured:  `1365`
 		//  Estimated: `6196`
-		// Minimum execution time: 78_291_000 picoseconds.
-		Weight::from_parts(87_665_000, 0)
+		// Minimum execution time: 94_603_000 picoseconds.
+		Weight::from_parts(99_758_000, 0)
 			.saturating_add(Weight::from_parts(0, 6196))
-			.saturating_add(T::DbWeight::get().reads(11))
+			.saturating_add(T::DbWeight::get().reads(12))
 			.saturating_add(T::DbWeight::get().writes(7))
 	}
 	/// Storage: `StorageProvider::Buckets` (r:1 w:0)
@@ -656,31 +688,35 @@ impl<T: frame_system::Config> pallet_storage_provider::WeightInfo for WeightInfo
 	/// Proof: `ParachainSystem::ValidationData` (`max_values`: Some(1), `max_size`: None, mode: `Measured`)
 	/// Storage: `ParachainSystem::LastRelayChainBlockNumber` (r:1 w:0)
 	/// Proof: `ParachainSystem::LastRelayChainBlockNumber` (`max_values`: Some(1), `max_size`: None, mode: `Measured`)
+	/// Storage: `Balances::Holds` (r:1 w:1)
+	/// Proof: `Balances::Holds` (`max_values`: None, `max_size`: Some(193), added: 2668, mode: `MaxEncodedLen`)
 	/// Storage: `System::Account` (r:2 w:2)
 	/// Proof: `System::Account` (`max_values`: None, `max_size`: Some(128), added: 2603, mode: `MaxEncodedLen`)
 	fn confirm_replica_sync() -> Weight {
 		// Proof Size summary in bytes:
-		//  Measured:  `1042`
+		//  Measured:  `1169`
 		//  Estimated: `6196`
-		// Minimum execution time: 81_354_000 picoseconds.
-		Weight::from_parts(88_254_000, 0)
+		// Minimum execution time: 74_419_000 picoseconds.
+		Weight::from_parts(80_147_000, 0)
 			.saturating_add(Weight::from_parts(0, 6196))
-			.saturating_add(T::DbWeight::get().reads(6))
-			.saturating_add(T::DbWeight::get().writes(3))
+			.saturating_add(T::DbWeight::get().reads(7))
+			.saturating_add(T::DbWeight::get().writes(4))
 	}
-	/// Storage: `System::Account` (r:1 w:1)
-	/// Proof: `System::Account` (`max_values`: None, `max_size`: Some(128), added: 2603, mode: `MaxEncodedLen`)
 	/// Storage: `StorageProvider::StorageAgreements` (r:1 w:1)
 	/// Proof: `StorageProvider::StorageAgreements` (`max_values`: None, `max_size`: Some(243), added: 2718, mode: `MaxEncodedLen`)
+	/// Storage: `System::Account` (r:1 w:1)
+	/// Proof: `System::Account` (`max_values`: None, `max_size`: Some(128), added: 2603, mode: `MaxEncodedLen`)
+	/// Storage: `Balances::Holds` (r:1 w:1)
+	/// Proof: `Balances::Holds` (`max_values`: None, `max_size`: Some(193), added: 2668, mode: `MaxEncodedLen`)
 	fn top_up_replica_sync_balance() -> Weight {
 		// Proof Size summary in bytes:
-		//  Measured:  `506`
+		//  Measured:  `633`
 		//  Estimated: `3708`
-		// Minimum execution time: 32_138_000 picoseconds.
-		Weight::from_parts(35_351_000, 0)
+		// Minimum execution time: 62_871_000 picoseconds.
+		Weight::from_parts(68_365_000, 0)
 			.saturating_add(Weight::from_parts(0, 3708))
-			.saturating_add(T::DbWeight::get().reads(2))
-			.saturating_add(T::DbWeight::get().writes(2))
+			.saturating_add(T::DbWeight::get().reads(3))
+			.saturating_add(T::DbWeight::get().writes(3))
 	}
 	/// Storage: `ParachainSystem::ValidationData` (r:1 w:0)
 	/// Proof: `ParachainSystem::ValidationData` (`max_values`: Some(1), `max_size`: None, mode: `Measured`)
@@ -696,6 +732,8 @@ impl<T: frame_system::Config> pallet_storage_provider::WeightInfo for WeightInfo
 	/// Proof: `StorageProvider::PendingChallengesByBucket` (`max_values`: None, `max_size`: Some(76), added: 2551, mode: `MaxEncodedLen`)
 	/// Storage: `StorageProvider::Providers` (r:100 w:100)
 	/// Proof: `StorageProvider::Providers` (`max_values`: None, `max_size`: Some(364), added: 2839, mode: `MaxEncodedLen`)
+	/// Storage: `Balances::Holds` (r:200 w:200)
+	/// Proof: `Balances::Holds` (`max_values`: None, `max_size`: Some(193), added: 2668, mode: `MaxEncodedLen`)
 	/// Storage: `System::Account` (r:201 w:201)
 	/// Proof: `System::Account` (`max_values`: None, `max_size`: Some(128), added: 2603, mode: `MaxEncodedLen`)
 	/// Storage: `StorageProvider::ChallengerStats` (r:100 w:100)
@@ -705,17 +743,17 @@ impl<T: frame_system::Config> pallet_storage_provider::WeightInfo for WeightInfo
 	/// The range of component `c` is `[0, 100]`.
 	fn on_initialize_slash_challenges(c: u32, ) -> Weight {
 		// Proof Size summary in bytes:
-		//  Measured:  `122 + c * (808 ±0)`
-		//  Estimated: `3640 + c * (5206 ±0)`
-		// Minimum execution time: 12_336_000 picoseconds.
-		Weight::from_parts(12_637_000, 0)
+		//  Measured:  `107 + c * (955 ±0)`
+		//  Estimated: `3640 + c * (5336 ±0)`
+		// Minimum execution time: 12_050_000 picoseconds.
+		Weight::from_parts(12_366_000, 0)
 			.saturating_add(Weight::from_parts(0, 3640))
-			// Standard Error: 38_848
-			.saturating_add(Weight::from_parts(67_896_939, 0).saturating_mul(c.into()))
+			// Standard Error: 42_448
+			.saturating_add(Weight::from_parts(98_361_163, 0).saturating_mul(c.into()))
 			.saturating_add(T::DbWeight::get().reads(5))
-			.saturating_add(T::DbWeight::get().reads((7_u64).saturating_mul(c.into())))
+			.saturating_add(T::DbWeight::get().reads((9_u64).saturating_mul(c.into())))
 			.saturating_add(T::DbWeight::get().writes(3))
-			.saturating_add(T::DbWeight::get().writes((7_u64).saturating_mul(c.into())))
-			.saturating_add(Weight::from_parts(0, 5206).saturating_mul(c.into()))
+			.saturating_add(T::DbWeight::get().writes((9_u64).saturating_mul(c.into())))
+			.saturating_add(Weight::from_parts(0, 5336).saturating_mul(c.into()))
 	}
 }
