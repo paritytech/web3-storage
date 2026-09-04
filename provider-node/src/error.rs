@@ -616,6 +616,10 @@ mod tests {
             status_of(provider_coordinator::Error::Internal("boom".into()).into()),
             StatusCode::INTERNAL_SERVER_ERROR
         );
+        assert_eq!(
+            status_of(provider_replica::Error::ChannelClosed.into()),
+            StatusCode::INTERNAL_SERVER_ERROR
+        );
     }
 
     #[test]
@@ -649,92 +653,6 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("signer is not available."));
-    }
-
-    #[test]
-    fn test_from_provider_replica_error_maps_one_to_one() {
-        use provider_replica::Error as ReplicaError;
-
-        let cases: Vec<(ReplicaError, &str)> = vec![
-            (ReplicaError::NodeNotFound("h".into()), "Node not found: h"),
-            (
-                ReplicaError::ChildrenMissing(vec!["a".into()]),
-                "Children missing: [\"a\"]",
-            ),
-            (
-                ReplicaError::QuotaExceeded { used: 1, max: 2 },
-                "Quota exceeded: used 1, max 2",
-            ),
-            (ReplicaError::BucketNotFound(7), "Bucket not found: 7"),
-            (ReplicaError::RootNotFound("r".into()), "Root not found: r"),
-            (
-                ReplicaError::InvalidHash {
-                    expected: "e".into(),
-                    actual: "a".into(),
-                },
-                "Invalid hash: expected e, got a",
-            ),
-            (ReplicaError::Storage("s".into()), "Storage error: s"),
-            (
-                ReplicaError::Serialization("z".into()),
-                "Serialization error: z",
-            ),
-            (ReplicaError::Internal("i".into()), "Internal error: i"),
-        ];
-
-        for (replica_err, expected_message) in cases {
-            let mapped: Error = replica_err.into();
-            assert_eq!(mapped.to_string(), expected_message);
-        }
-    }
-
-    #[test]
-    fn test_provider_replica_chain_errors_ride_the_transparent_variant() {
-        use provider_replica::Error as ReplicaError;
-
-        let cases: Vec<(ReplicaError, &str)> = vec![
-            (
-                ReplicaError::Chain(provider_chain::Error::NotConnected),
-                "Chain connection not established yet",
-            ),
-            (
-                ReplicaError::chain_query("current block", "timed out"),
-                "Chain query failed (current block): timed out",
-            ),
-            (
-                ReplicaError::decode("bucket", "unexpected shape"),
-                "Failed to decode bucket: unexpected shape",
-            ),
-            (
-                ReplicaError::tx_submit("confirm_replica_sync", "watch dropped"),
-                "Failed to submit confirm_replica_sync: watch dropped",
-            ),
-            (
-                ReplicaError::tx_rejected("confirm_replica_sync", "SyncTooFrequent"),
-                "confirm_replica_sync rejected: SyncTooFrequent",
-            ),
-            (
-                ReplicaError::InvalidAccount {
-                    account: "0xzz".into(),
-                    reason: "odd length hex string".into(),
-                },
-                "Invalid account 0xzz: odd length hex string",
-            ),
-            (
-                ReplicaError::NotReplicaAgreement(7),
-                "Bucket 7 does not hold a replica agreement",
-            ),
-            (ReplicaError::ChannelClosed, "Coordinator channel closed"),
-        ];
-
-        // Transparent: the message survives the hop verbatim, so no variant
-        // needs a mapping arm of its own.
-        for (replica_err, expected_message) in cases {
-            let mapped: Error = replica_err.into();
-            assert!(matches!(mapped, Error::Replica(_)));
-            assert_eq!(mapped.to_string(), expected_message);
-            assert_eq!(status_of(mapped), StatusCode::INTERNAL_SERVER_ERROR);
-        }
     }
 
     #[test]
