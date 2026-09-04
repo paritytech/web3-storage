@@ -1109,11 +1109,30 @@ common::backend_tests! {
         let body: Value = resp.json().await.unwrap();
         assert_eq!(body["start_seq"], 1);
         assert_eq!(body["leaf_count"], 1);
-        assert!(body["mmr_root"].is_string());
-        assert!(body["provider_signature"]
-            .as_str()
-            .unwrap()
-            .starts_with("0x"));
+
+        // The deletion proof is the one signing path with no consumer in this
+        // repo, so nothing else would catch it regressing. Verify it like the
+        // /commit proofs: a real signature, in the SCALE MultiSignature wire
+        // format, over the *post-delete* commitment. A zero placeholder or a
+        // raw untagged signature both pass a `starts_with("0x")` check.
+        let mmr_root = H256::from_slice(&hex_decode(body["mmr_root"].as_str().unwrap()).unwrap());
+        let sig = expect_sr25519(decode_provider_signature(
+            body["provider_signature"].as_str().unwrap(),
+        ));
+        assert_ne!(sig.0, [0u8; 64], "delete returned a zeroed placeholder");
+
+        let payload = CommitmentPayload::new(
+            1,
+            Commitment {
+                mmr_root,
+                start_seq: 1,
+                leaf_count: 1,
+            },
+        );
+        assert!(
+            sr25519::Pair::verify(&sig, payload.encode(), &alice_public()),
+            "delete proof did not verify against //Alice over the post-delete commitment"
+        );
     }
 }
 
