@@ -199,7 +199,8 @@ fn establish_with<P: sp_core::Pair>(wrap: impl Fn(P::Signature) -> MultiSignatur
             RuntimeOrigin::signed(1),
             2,
             terms,
-            sig
+            sig,
+            storage_primitives::Visibility::Public
         ));
         assert!(StorageAgreements::<Test>::get(0, 2).is_some());
     });
@@ -230,7 +231,13 @@ fn terms_redemption_rejects_scheme_key_mismatch() {
         let hash = sp_io::hashing::blake2_256(&terms.signing_payload());
         let sig = MultiSignature::Ecdsa(ecdsa_pair.sign(&hash));
         assert_noop!(
-            StorageProvider::establish_storage_agreement(RuntimeOrigin::signed(1), 2, terms, sig),
+            StorageProvider::establish_storage_agreement(
+                RuntimeOrigin::signed(1),
+                2,
+                terms,
+                sig,
+                storage_primitives::Visibility::Public
+            ),
             Error::<Test>::InvalidPublicKey
         );
     });
