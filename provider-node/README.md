@@ -64,6 +64,14 @@ the chain is unreachable when a lookup needs to refetch, the cached member
 set is still served, but only for up to `--auth-max-stale` (default 5
 minutes) - past that, the request is refused with `503`.
 
+A bucket the provider does not know yet, and whose id the chain has not handed
+out yet at the provider's finalized head, is given `--auth-finality-grace`
+(default 12s) for its creation event to arrive before the request is refused
+with `403`: a client that has just watched `create_bucket` finalize on its own
+node can be a finality step ahead of a provider on the embedded light client,
+which learns finality a few seconds later. Deleted buckets and ids far above
+the counter are refused at once. `0` refuses everything unknown at once.
+
 Because any keypair can ask about any bucket id, the cache is also capped at
 `--auth-cache-max-entries` buckets (default 10,000), and entries are removed
 rather than left stale: a member set at the stale bound, an empty one already
