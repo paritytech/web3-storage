@@ -104,10 +104,114 @@ Primary providers don't sync with each other. Clients are responsible for upload
 1. Client uploads data to Primary A, B, C (separately)
 2. Client triggers commit on each provider, collects signatures
 3. Client checkpoints on-chain with collected signatures
-4. Primaries not in the snapshot should sync (client re-uploads)
+4. Primaries not in the snapshot should sync (client re-uploads, or the
+   provider pulls via the sync protocol — see "Changing or adding a primary")
 5. After checkpoint, providers can prune non-canonical roots
 
 **Liability**: A provider is only liable for MMR states they acknowledged (signed). Challenges against the canonical checkpoint only work for providers listed in the snapshot's provider bitfield.
+
+**Concurrent writers (divergence and arbitration)**: The chain does not
+sequence appends — ordering the MMR is the writer set's responsibility (this
+is why writes are restricted to writer and admin accounts). The mental model
+is two-phase commit: off-chain commits are the *prepare* phase — cheap,
+per-provider, binding on no one else — and the checkpoint is the *commit
+point*, the moment a single canonical state exists. There is no rollback
+primitive because none is needed: an un-checkpointed tail binds no one, and
+its only cost is the writer's own quota ("providers must keep all signed
+data").
+
+If uncoordinated writers commit concurrently against different providers in
+different orders, the providers' MMRs diverge: every copy is internally
+valid — mountain shapes depend only on leaf count — but the leaf *order*,
+and therefore the roots, differ, and no checkpointable quorum exists.
+
+Example — all providers at `leaf_count 5`; writer C1 commits leaf `LA` in
+order X→Y, while writer C2 concurrently commits leaf `LB` in order Y→X:
+
+```
+X appends LA then LB → […, LA, LB]   LA at leaf index 5
+Y appends LB then LA → […, LB, LA]   LA at leaf index 6
+```
+
+Same mountain shapes (7 leaves each), different roots. Detection is
+immediate and free: C1 sees `leaf_indices [5]` from X but `[6]` from Y —
+the `/commit` responses disagree in front of the writers.
+
+Divergence cannot be repaired by appending: `/commit` appends to the
+provider's single current state, so a divergent un-checkpointed suffix
+poisons every subsequent root — and the canonical leaf *order* is not
+derivable from a checkpointed root alone. Two situations:
+
+- **A quorum ordering exists.** If some subset of providers received the
+  same order and meets `min_providers`, a writer checkpoints that ordering
+  and it becomes canonical. Providers outside the snapshot cannot rejoin by
+  appending; they need their un-checkpointed suffix replaced with the
+  canonical one (the "should sync" in the flow above). No mechanism for
+  that replacement is currently specified — until one is, an out-of-snapshot
+  divergent provider is recovered the same way as the no-quorum case below.
+- **No quorum exists** (e.g. two providers, two orders, `min_providers = 2`):
+  no checkpoint can be formed at all. The recovery that works with the
+  current protocol surface is a reset: the admin performs a destructive
+  write — new MMR with `start_seq >= old_start_seq + old_leaf_count` (see
+  Delete Data) — and one writer re-commits every live data_root to every
+  provider in a single chosen order. This is metadata-only (all chunks are
+  already local and content-addressed); the abandoned divergent tails were
+  never checkpointed and their signed commitments expire with their nonces.
+  The cost is the quota consumed by the abandoned tails.
+
+Divergence recovery is deliberately blunt because it should never run:
+prevention is the rule. Recommended write topologies, in order of
+preference:
+
+- **A single writer per bucket**, serializing its own commits: never issue
+  commit N+1 before commit N is acknowledged by every provider it targets
+  (uploads may parallelize freely — only commit order matters).
+- **Multiple logical writers behind one sequencer** — same provider order,
+  same nonce everywhere. The sequencer is an ordering/liveness role, not a
+  trust role: it cannot forge content or liability, only delay or reorder.
+  It need not be a fixed party: writers can rotate leadership
+  deterministically per anchor-block window, computed from the on-chain
+  writer set with no election traffic — the same pattern Tendermint uses
+  for proposers, and the same anchor-block election the (removed)
+  provider-initiated checkpoints used. An offline leader costs one idle
+  window, never a deadlock. See
+  [docs/drafts/multi-writer-coordination.md](../drafts/multi-writer-coordination.md).
+- **Per-writer logs inside one bucket** (*multi-log bucket — proposed
+  protocol extension, pending design review*): each writer appends to its
+  own sub-MMR, and the bucket commitment becomes a small Merkle map
+  `writer → sub-MMR root`. Contention is removed by construction —
+  concurrent commits by different writers cannot interleave, so the
+  divergence above cannot be constructed. Specified in the same draft; not
+  yet part of the protocol.
+
+**Changing or adding a primary (migration)**: Bringing a new primary up to
+speed does not require routing the data through the client. Chunks are
+content-addressed and self-verifying against the
+committed MMR root, so the *source* of bytes is trust-irrelevant, and the
+replica sync protocol (peaks, subtree, bulk node fetch) is a general
+provider-to-provider transfer surface; `replica_sync_price` compensates the
+serving provider. The flow:
+
+1. Open the new (primary) agreement.
+2. The new provider pulls the bucket from any existing data holder via the
+   sync protocol, paying the source's sync price.
+3. The client verifies the new provider's state against the canonical
+   commitment (equality or extension check per "Verifying the Bucket Root"),
+   costing metadata only.
+4. The new provider signs the current canonical commitment; anyone submits
+   `extend_checkpoint` — liability attaches with no new checkpoint and no
+   re-upload.
+5. The old agreement runs to expiry (agreements are binding; data there
+   stays enforceable until then).
+
+A provider can also onboard as a *replica* first — replicas sync
+autonomously by design — and take over a primary agreement once the data is
+local, at zero additional transfer cost.
+
+Fallback hierarchy when no cooperative source exists: replicas (their
+purpose), a client-held copy, and last of all challenge-based extraction —
+deliberately priced as a last resort. A bucket whose data matters should
+fund at least one replica precisely so migration never reaches that point.
 
 **Replica providers** sync autonomously from primaries or other replicas. They confirm sync on-chain and are liable for the roots they've confirmed.
 
@@ -1793,9 +1897,124 @@ Response (200 OK):
   "provider_signature": "0x..."
 }
 
+Retries are idempotent — a repeated request with the same data_roots and
+nonce returns the original signed state without appending again (see
+"Retry & Idempotency" below).
+
 Response (400 Bad Request):
 { "error": "root_not_found", "missing": ["0xroot2..."] }
 ```
+
+### Retry & Idempotency (intermittent clients)
+
+Clients — mobile apps and browsers in particular — can drop offline at any
+point in the upload → commit → checkpoint sequence, including *after* a request
+was processed but *before* its response arrived. Every step is safely
+retryable:
+
+**Uploads are idempotent.** Nodes are content-addressed; re-uploading an
+existing node is a no-op. A resuming client calls `POST /exists` to discover
+what is missing and uploads only that (see Sync Protocol above).
+
+**Commits are idempotent per `(bucket_id, data_roots, nonce)`.** If the client
+misses the response (connection dropped after the provider already appended),
+a retry with the same `data_roots` and `nonce` must not append duplicate
+leaves: the provider recognizes the repeated request, leaves the MMR
+untouched, and returns the same signed state it produced the first time. A
+retry after the nonce has aged out behaves like `GET /commitment` — current
+state, fresh signature, no re-append. The append happens at most once.
+
+**Signatures are refreshable without re-appending.** `CommitmentPayload.nonce`
+is recency-checked on-chain, so signatures collected before a long offline
+period may expire. `GET /commitment?bucket_id=…&nonce=…` re-issues a signature
+over the provider's current MMR state under a fresh nonce at any time; a
+recovered client re-fetches signatures and retries `checkpoint` — nothing is
+re-uploaded.
+
+**Checkpoints tolerate partial signature collection.** `checkpoint` needs only
+`min_providers` signatures, and the permissionless `extend_checkpoint` lets
+the recovered client — or anyone else — attach straggler signatures later.
+
+**What the client must persist.** Until a checkpoint lands on-chain, the
+provider-signed commitments are the client's only enforcement handle
+(`challenge_offchain`); client software must store pending signatures durably
+(a few hundred bytes) and should checkpoint promptly on environments with
+evictable storage (browsers). Everything else — MMR peaks, leaf indices,
+manifests — is recoverable from any provider and verifiable against the last
+on-chain checkpoint root (`hash(peaks) == mmr_root`).
+
+### Verifying the Bucket Root (fresh vs. stale anchors)
+
+Before accepting a provider's signed commitment, the client independently
+derives the expected bucket root. That derivation needs a trusted starting
+point — an **anchor**:
+
+**Anchor selection.** The client's anchor is the freshest state it can trust:
+the last on-chain checkpoint (`BucketSnapshot.commitment`), or — if newer — the
+latest provider-signed `CommitmentPayload` it holds. A signed commitment is as
+authoritative for its holder as a checkpoint: it is enforceable via
+`challenge_offchain`.
+
+**Fresh anchor (leaf counts match).** If the anchor's `leaf_count` equals the
+provider's current leaf count, verification is equality: fetch
+`GET /mmr_peaks` and check `hash(peaks) == anchor root`.
+
+**Stale anchor (commits happened since).** If the provider's state has more
+leaves than the anchor — other writers committed since, or the client lost
+local state — equality cannot hold; this is not a failure. The client
+verifies **extension** instead: using the node-fetch endpoints from the
+replica sync protocol, it obtains the interior nodes of the current forest
+that correspond to the anchor's peaks, then checks that (a) those nodes bag to
+the anchor root, and (b) the same nodes hash upward into the current peaks.
+Both together prove that the current state contains the anchored history
+unmodified, with the newer leaves appended on top — the standard append-only
+consistency check (as in Certificate Transparency logs), costing O(log n)
+hashes. Only then does the client append its own leaves to the verified
+current peaks to predict the post-commit root.
+
+Example — anchor at 5 leaves, provider now at 8 (one perfect tree, peak `Q`).
+The provider supplies the connecting nodes: `P4` (summit over leaves 0–3),
+`l4`, `l5`, and `N67 = H(l6‖l7)`:
+
+```
+(a) H(P4 ‖ l4) == R0                    anchored summits are genuine
+(b) H(P4 ‖ H(H(l4‖l5) ‖ N67)) == Q      and embedded in the current root
+```
+
+Both hold → leaves 0–4 sit unmodified inside the current state; leaves 5–7
+are additions on top. Altering any old leaf would require a different `P4`
+that still bags to `R0` — a hash collision.
+
+**Cold-start recovery (all local state lost).** A client that lost everything
+but its signing key — cleared browser storage, reinstalled app, new device —
+recovers entirely from the chain and the providers, using the last on-chain
+checkpoint as its (stale) anchor:
+
+1. Buckets, agreements, and the last `BucketSnapshot.commitment` are read from
+   the chain — this is the trust anchor, however old.
+2. The provider's current state is verified against it with the extension
+   check above; peaks, leaf indices, and manifests are re-fetched from any
+   provider and verified the same way. The stored data itself never needed to
+   exist locally.
+3. Enforcement for leaves committed *after* the last checkpoint is re-armed by
+   fetching a fresh signed commitment over the current state
+   (`GET /commitment` under a fresh nonce) — an honest provider re-signs
+   immediately, and the client should then checkpoint to make the protection
+   public rather than rely on local persistence again.
+
+The genuine exposure is narrow but real: leaves committed after the last
+checkpoint, where the client lost the signed commitment *and* the provider
+refuses to re-sign — the client then holds nothing to challenge with for
+those leaves. This is the strongest argument for checkpointing promptly:
+an on-chain checkpoint is the only enforcement handle that survives total
+client-side loss.
+
+**Backstop.** Every primary maintains the same MMR from the same ordered
+commits, and the next `checkpoint` requires `min_providers` signatures over an
+identical commitment. A provider that rewrote or injected history diverges
+from the other primaries and is excluded from — or blocks — the snapshot,
+while each writer of the intervening leaves still holds its own enforceable
+signed commitment for the data it committed.
 
 ### Read
 
@@ -1932,6 +2151,28 @@ Response (403 Forbidden):
 Note: Only bucket admins can delete data. This triggers deletion of data before
 new_start_seq. Provider returns new commitment covering remaining data. Admin
 signature authorizes the deletion and serves as proof if challenged later.
+
+Pruning order (deletion and compaction): the provider should not physically
+discard pruned data until a checkpoint carrying the advanced `start_seq` is
+final on-chain. Until then, the old snapshot remains the canonical,
+publicly challengeable state — the provider's only defense for already-pruned
+leaves is the admin-signed `Deleted` response, whose nonce is recency-checked
+and therefore goes stale. The safe sequence for a compaction (rewriting live
+data past dead middle leaves) is:
+
+1. Re-commit the surviving data_roots as fresh leaves in the new MMR
+   (`start_seq >= old_start_seq + old_leaf_count`). Content addressing makes
+   this metadata-only: every chunk already exists on the provider, so
+   `/exists` dedups all data bytes.
+2. Collect provider signatures over the new commitment and submit
+   `checkpoint` — the `start_seq` advance is carried inside the checkpoint's
+   `Commitment`; there is no separate on-chain delete.
+3. Only after that checkpoint is final: garbage-collect chunks unreachable
+   from any canonical leaf's data_root.
+
+Layer-1 metadata survives compaction untouched (manifests reference
+data_roots, not leaf positions); clients refresh cached leaf indices from the
+new commit responses.
 
 List Buckets
 ────────────

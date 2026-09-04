@@ -4,13 +4,14 @@
 | --- | --- |
 | **Authors** | eskimor |
 | **Status** | Draft |
-| **Version** | 2.3 |
+| **Version** | 2.4 |
 | **Related** | [Implementation Details](./scalable-web3-storage-implementation.md), [Proof-of-DOT Infrastructure Strategy](https://docs.google.com/document/d/1fNv75FCEBFkFoG__s_Xu10UZd0QsGIE9AKnrouzz-U8/) |
 
 ## Version History
 
 | Version | Changes |
 |---------|---------|
+| 2.4 | Client protocol semantics made normative (implementation doc): retry & commit idempotency for intermittent clients; bucket-root verification against fresh and stale anchors (append-only extension check); cold-start recovery from chain + providers; pruning order for deletion/compaction (no physical discard before the superseding checkpoint); concurrent-writer divergence and its recovery limits; recommended write topologies; primary migration via provider-to-provider sync. **Read**: implementation doc — "Retry & Idempotency", "Verifying the Bucket Root", "Multi-Provider Coordination", the `POST /delete` pruning-order note. |
 | 2.3 | Private buckets clarified (visibility flag, Reader role, primary challenges gated to members + primary-agreement owners, tier-split challenge stats). **Read**: new "Bucket Visibility & Access" section; "The Challenge Game". |
 | 2.2 | Challenge cost model reworked and clarified: a valid response never touches the provider's stake. The challenger's deposit covers the on-chain response cost; authorized challengers (bucket members + agreement owners) get a split where the provider bears a fraction (challenger's share floored at 50%, as leverage—not cheap recovery), while the general public pays in full (anti-DoS, since a provider can't serve everyone equally). Stake is slashed only on a missing/invalid response. |
 | 2.1 | Clarification on rewards for the challenger: There should be none, just refund. Plus some corrections with regards to PDP and Filecoin. |
@@ -494,7 +495,11 @@ In normal operation, clients and providers interact directly:
 The chain is touched only for:
 - **Bucket creation**: Once
 - **Agreement setup**: Per provider
-- **Checkpoints**: Can be made infrequent, depending on use case
+- **Checkpoints**: Can be made infrequent, depending on use case. One
+  consideration bounds the cadence: the on-chain checkpoint is the only
+  enforcement handle that survives total client-side loss (a signed
+  commitment lives in client storage), so clients on fragile storage —
+  browsers especially — should checkpoint promptly rather than rarely
 - **Sync confirmations**: Replicas confirm they've synced to a checkpoint - frequency depending on use case
 - **Disputes**: Rare, expensive, avoided by rational actors
 
