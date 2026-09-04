@@ -104,6 +104,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             provider,
             signed.terms,
             signed.signature,
+            storage_client::Visibility::Private,
         )
         .await?;
     println!("  Drive created: ID = {drive_id}");

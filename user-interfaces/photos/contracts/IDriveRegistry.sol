@@ -7,12 +7,23 @@ pragma solidity ^0.8.34;
 ///         precompile. Substrate `AccountId32` values cross the boundary as
 ///         `bytes32`; the EVM caller's substrate-mapped account becomes the
 ///         drive owner.
-///
-/// Role tags: 0 = Admin, 1 = Writer, 2 = Reader.
+interface IDriveRegistry {
+    /// Drive member role.
 //
 // Vendored verbatim from `examples/contracts/IDriveRegistry.sol` so the Photos
 // app is self-contained. Keep in sync if the canonical interface changes.
-interface IDriveRegistry {
+    enum Role {
+        Admin,
+        Writer,
+        Reader
+    }
+
+    /// Read visibility of the drive's underlying Layer 0 bucket.
+    enum Visibility {
+        Public,
+        Private
+    }
+
     // TODO: Find out way to make it re-useable
     struct PrimitiveReplicaTerms {
         /// Balance reserved by the owner to fund per-sync confirmations.
@@ -57,20 +68,22 @@ interface IDriveRegistry {
     ///   `terms.owner` must be the caller's substrate-mapped account.
     /// - `signature` is the SCALE-encoded `MultiSignature` from the provider's
     ///   `/negotiate` response (variant byte + raw signature bytes).
+    /// - `visibility` sets the underlying Layer 0 bucket's read visibility.
     ///
     /// Returns the new drive id.
     function createDrive(
         string calldata name,
         bytes32 provider,
         PrimitiveAgreementTerms calldata terms,
-        bytes calldata signature
+        bytes calldata signature,
+        Visibility visibility
     ) external returns (uint64 driveId);
 
     /// Delete a drive, refunding any remaining payment to the owner.
     function deleteDrive(uint64 driveId) external;
 
     /// Share a drive with another account.
-    function shareDrive(uint64 driveId, bytes32 member, uint8 role) external;
+    function shareDrive(uint64 driveId, bytes32 member, Role role) external;
 
     /// Remove a previously-shared member from a drive.
     function unshareDrive(uint64 driveId, bytes32 member) external;
