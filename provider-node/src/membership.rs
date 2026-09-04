@@ -3,7 +3,8 @@
 //! Chain-backed [`MembershipResolver`] and [`MembershipInvalidations`].
 
 use provider_auth::{
-    Invalidation, Member, MembershipError, MembershipInvalidations, MembershipResolver,
+    BucketAccess, Invalidation, Member, MembershipError, MembershipInvalidations,
+    MembershipResolver,
 };
 use provider_chain::chain_connection::{self, ChainWatch};
 use provider_chain::{BlockEvent, BlockEventRx};
@@ -106,7 +107,10 @@ impl ChainMembershipResolver {
             tracing::debug!(bucket_id, count = members.len(), "auth: resolved members");
         }
 
-        Ok(Lookup::Found(members))
+        Ok(Lookup::Found(BucketAccess {
+            members,
+            visibility: bucket.visibility.into(),
+        }))
     }
 }
 
@@ -117,7 +121,7 @@ impl ChainMembershipResolver {
 const PENDING_ID_WINDOW: BucketId = 64;
 
 enum Lookup {
-    Found(Vec<Member>),
+    Found(BucketAccess),
     /// No such bucket at the finalized head; `pending` when it may still be
     /// created in blocks this node has not seen.
     Absent {
@@ -127,15 +131,16 @@ enum Lookup {
 
 #[async_trait::async_trait]
 impl MembershipResolver for ChainMembershipResolver {
-    async fn fetch_members(&self, bucket_id: BucketId) -> Result<Vec<Member>, MembershipError> {
+    async fn fetch_access(&self, bucket_id: BucketId) -> Result<BucketAccess, MembershipError> {
         // Subscribed before the read, so a creation event landing between the
         // read and the wait below cannot be missed.
         let events = self.events.resubscribe();
+        // A missing bucket is memberless and member-only, so nobody gets in.
         match self.lookup(bucket_id).await? {
-            Lookup::Found(members) => return Ok(members),
-            Lookup::Absent { pending: false } => return Ok(vec![]),
+            Lookup::Found(access) => return Ok(access),
+            Lookup::Absent { pending: false } => return Ok(BucketAccess::private(Vec::new())),
             Lookup::Absent { pending: true } if self.finality_grace.is_zero() => {
-                return Ok(vec![]);
+                return Ok(BucketAccess::private(Vec::new()));
             }
             Lookup::Absent { pending: true } => {}
         }
@@ -145,8 +150,8 @@ impl MembershipResolver for ChainMembershipResolver {
         // event that long to arrive before answering "not a member".
         await_bucket_event(events, bucket_id, self.finality_grace).await;
         match self.lookup(bucket_id).await? {
-            Lookup::Found(members) => Ok(members),
-            Lookup::Absent { .. } => Ok(vec![]),
+            Lookup::Found(access) => Ok(access),
+            Lookup::Absent { .. } => Ok(BucketAccess::private(Vec::new())),
         }
     }
 }
@@ -262,7 +267,7 @@ mod tests {
         let (_events_tx, events_rx) = tokio::sync::broadcast::channel(1);
         let resolver = ChainMembershipResolver::new(rx, events_rx, Duration::ZERO);
         let err = resolver
-            .fetch_members(1)
+            .fetch_access(1)
             .await
             .expect_err("no connection published yet");
         // Retryable, not a decode bug — the node maps this onto a 503.
@@ -388,6 +393,7 @@ mod tests {
         use storage_subxt::api::runtime_types::bounded_collections::bounded_vec::BoundedVec;
         use storage_subxt::api::runtime_types::pallet_storage_provider::pallet::Bucket;
         use storage_subxt::api::runtime_types::storage_primitives::Role as RuntimeRole;
+        use storage_subxt::api::runtime_types::storage_primitives::Visibility as RuntimeVisibility;
         use subxt::backend::LegacyBackend;
         use subxt_rpcs::client::mock_rpc_client::Json;
         use subxt_rpcs::client::{MockRpcClient, RpcClient};
@@ -436,6 +442,7 @@ mod tests {
                 snapshot: None,
                 historical_roots: [(0, subxt::utils::H256([0u8; 32])); 6],
                 total_snapshots: 0,
+                visibility: RuntimeVisibility::Private,
             };
             let bytes = bucket
                 .encode_as_type(value_ty, md.types())
@@ -584,17 +591,14 @@ mod tests {
             }
         }
 
-        fn admin_only() -> Vec<Member> {
-            vec![(AccountId32::new(ADMIN), Role::Admin).into()]
+        fn admin_only() -> BucketAccess {
+            BucketAccess::private(vec![(AccountId32::new(ADMIN), Role::Admin).into()])
         }
 
         #[tokio::test(start_paused = true)]
         async fn a_known_bucket_resolves_on_the_first_read() {
             let h = harness(true, BUCKET + 1, Duration::from_secs(12)).await;
-            assert_eq!(
-                h.resolver.fetch_members(BUCKET).await.unwrap(),
-                admin_only()
-            );
+            assert_eq!(h.resolver.fetch_access(BUCKET).await.unwrap(), admin_only());
             assert_eq!(h.reads.load(Ordering::Relaxed), 1);
         }
 
@@ -614,10 +618,7 @@ mod tests {
                     .unwrap();
             });
             let start = tokio::time::Instant::now();
-            assert_eq!(
-                h.resolver.fetch_members(BUCKET).await.unwrap(),
-                admin_only()
-            );
+            assert_eq!(h.resolver.fetch_access(BUCKET).await.unwrap(), admin_only());
             assert_eq!(h.reads.load(Ordering::Relaxed), 2);
             assert!(
                 start.elapsed() < Duration::from_secs(12),
@@ -629,7 +630,13 @@ mod tests {
         async fn an_unknown_bucket_is_empty_once_the_grace_runs_out() {
             let h = harness(false, BUCKET, Duration::from_secs(12)).await;
             let start = tokio::time::Instant::now();
-            assert!(h.resolver.fetch_members(BUCKET).await.unwrap().is_empty());
+            assert!(h
+                .resolver
+                .fetch_access(BUCKET)
+                .await
+                .unwrap()
+                .members
+                .is_empty());
             // Re-read after the grace, in case the event was simply not fanned out.
             assert_eq!(h.reads.load(Ordering::Relaxed), 2);
             assert_eq!(start.elapsed(), Duration::from_secs(12));
@@ -638,7 +645,13 @@ mod tests {
         #[tokio::test(start_paused = true)]
         async fn zero_grace_answers_unknown_buckets_at_once() {
             let h = harness(false, BUCKET, Duration::ZERO).await;
-            assert!(h.resolver.fetch_members(BUCKET).await.unwrap().is_empty());
+            assert!(h
+                .resolver
+                .fetch_access(BUCKET)
+                .await
+                .unwrap()
+                .members
+                .is_empty());
             assert_eq!(h.reads.load(Ordering::Relaxed), 1);
         }
 
@@ -647,7 +660,13 @@ mod tests {
             // The chain has moved past BUCKET, so its absence is final.
             let h = harness(false, BUCKET + 20, Duration::from_secs(12)).await;
             let start = tokio::time::Instant::now();
-            assert!(h.resolver.fetch_members(BUCKET).await.unwrap().is_empty());
+            assert!(h
+                .resolver
+                .fetch_access(BUCKET)
+                .await
+                .unwrap()
+                .members
+                .is_empty());
             assert_eq!(h.reads.load(Ordering::Relaxed), 1);
             assert_eq!(start.elapsed(), Duration::ZERO);
         }
@@ -658,16 +677,18 @@ mod tests {
             let start = tokio::time::Instant::now();
             assert!(h
                 .resolver
-                .fetch_members(1_000_007)
+                .fetch_access(1_000_007)
                 .await
                 .unwrap()
+                .members
                 .is_empty());
             // First id past the window: no grace either.
             assert!(h
                 .resolver
-                .fetch_members(1 + PENDING_ID_WINDOW)
+                .fetch_access(1 + PENDING_ID_WINDOW)
                 .await
                 .unwrap()
+                .members
                 .is_empty());
             assert_eq!(h.reads.load(Ordering::Relaxed), 2);
             assert_eq!(start.elapsed(), Duration::ZERO);

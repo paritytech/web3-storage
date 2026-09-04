@@ -193,6 +193,7 @@ pub mod pallet {
         /// - `provider`: Explicit provider account that signed the terms.
         /// - `terms`: Provider-signed agreement terms.
         /// - `sig`: Provider signature over the SCALE-encoded terms.
+        /// - `visibility`: Read visibility of the underlying Layer 0 bucket.
         #[pallet::call_index(0)]
         #[pallet::weight(<T as Config>::WeightInfo::create_s3_bucket())]
         pub fn create_s3_bucket(
@@ -201,6 +202,7 @@ pub mod pallet {
             provider: T::AccountId,
             terms: pallet_storage_provider::AgreementTermsOf<T>,
             sig: sp_runtime::MultiSignature,
+            visibility: storage_primitives::Visibility,
         ) -> DispatchResult {
             let who = ensure_signed(origin)?;
 
@@ -231,7 +233,7 @@ pub mod pallet {
             // directly so callers can act on them.
             let layer0_bucket_id =
                 pallet_storage_provider::Pallet::<T>::establish_storage_agreement_internal(
-                    &who, &provider, terms, &sig,
+                    &who, &provider, terms, &sig, visibility,
                 )?;
 
             // Generate new S3 bucket ID

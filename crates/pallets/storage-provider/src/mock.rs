@@ -335,10 +335,19 @@ pub fn signed_replica_terms(
 }
 
 /// Helper: create a bare bucket (no agreement). Returns bucket_id.
+///
+/// Public visibility: the existing suite exercises stranger challenges and
+/// was written under pre-visibility (open) semantics. Private-bucket tests
+/// create their buckets explicitly.
 #[allow(dead_code)]
 pub fn create_bucket(admin: u64, min_providers: u32) -> u64 {
-    StorageProvider::create_bucket_internal(&admin, min_providers, None)
-        .expect("create_bucket_internal succeeds")
+    StorageProvider::create_bucket_internal(
+        &admin,
+        min_providers,
+        None,
+        storage_primitives::Visibility::Public,
+    )
+    .expect("create_bucket_internal succeeds")
 }
 
 /// Helper: redeem signed primary terms, creating the bucket together with
@@ -350,7 +359,10 @@ pub fn setup_agreement(provider: u64, client: u64, max_bytes: u64, duration: u64
         RuntimeOrigin::signed(client),
         provider,
         terms,
-        sig
+        sig,
+        // Public: preserves the open (pre-visibility) semantics the existing
+        // suite was written under; Private-bucket tests opt in explicitly.
+        storage_primitives::Visibility::Public,
     ));
     crate::NextBucketId::<Test>::get() - 1
 }

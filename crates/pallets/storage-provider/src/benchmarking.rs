@@ -14,7 +14,7 @@ use sp_core::H256;
 use sp_runtime::traits::{Bounded, SaturatedConversion};
 use sp_runtime::Saturating;
 use storage_primitives::{
-    AgreementTerms, BucketId, ChunkLocation, Commitment, ProviderRole, ReplicaTerms,
+    AgreementTerms, BucketId, ChunkLocation, Commitment, ProviderRole, ReplicaTerms, Visibility,
 };
 
 const SEED: u32 = 0;
@@ -73,7 +73,8 @@ fn create_provider<T: Config>(index: u32) -> T::AccountId {
 
 fn setup_bucket<T: Config>(admin: &T::AccountId) -> BucketId {
     // Use min_providers=0 so benchmarks can create checkpoints with empty signatures
-    Pallet::<T>::create_bucket_internal(admin, 0, None).expect("create_bucket_internal succeeds")
+    Pallet::<T>::create_bucket_internal(admin, 0, None, Visibility::Private)
+        .expect("create_bucket_internal succeeds")
 }
 
 /// Build primary [`AgreementTerms`] suitable for a benchmark agreement.
@@ -146,8 +147,14 @@ fn setup_primary_agreement<T: Config>(
         provider_index as u64 + 1,
     );
     let sig = sign_terms::<T>(&key, &terms);
-    Pallet::<T>::establish_storage_agreement_internal(admin, provider, terms, &sig)
-        .expect("establish_storage_agreement_internal succeeds")
+    Pallet::<T>::establish_storage_agreement_internal(
+        admin,
+        provider,
+        terms,
+        &sig,
+        Visibility::Private,
+    )
+    .expect("establish_storage_agreement_internal succeeds")
 }
 
 /// Open a replica agreement against an existing bucket.
@@ -239,6 +246,7 @@ fn insert_challenge<T: Config>(
             chunk_index: 0,
         },
         deposit: 100u32.into(),
+        authorized: true,
     };
     Challenges::<T>::insert(deadline, 0u16, challenge);
     storage_primitives::ChallengeId { deadline, index: 0 }
@@ -393,6 +401,15 @@ mod benchmarks {
     }
 
     #[benchmark]
+    fn set_bucket_visibility() {
+        let admin = funded_account::<T>("admin", 0);
+        let bucket_id = setup_bucket::<T>(&admin);
+
+        #[extrinsic_call]
+        set_bucket_visibility(RawOrigin::Signed(admin), bucket_id, Visibility::Public);
+    }
+
+    #[benchmark]
     fn freeze_bucket() {
         let admin = funded_account::<T>("admin", 0);
         let provider = create_provider::<T>(0);
@@ -493,7 +510,13 @@ mod benchmarks {
         let signature = sign_terms::<T>(&key, &terms);
 
         #[extrinsic_call]
-        establish_storage_agreement(RawOrigin::Signed(admin), provider, terms, signature);
+        establish_storage_agreement(
+            RawOrigin::Signed(admin),
+            provider,
+            terms,
+            signature,
+            Visibility::Private,
+        );
     }
 
     /// Worst case: replica signature verification + replay-window
@@ -1120,6 +1143,7 @@ mod benchmarks {
                     chunk_index: 0,
                 },
                 deposit,
+                authorized: false,
             };
             Challenges::<T>::insert(deadline, i as u16, challenge);
             PendingChallenges::<T>::insert(&provider, 1u32);
