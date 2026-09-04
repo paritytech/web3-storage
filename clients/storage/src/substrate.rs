@@ -153,14 +153,18 @@ pub mod extrinsics {
     /// Decode a provider-emitted signature — `0x`-prefixed hex of a
     /// SCALE-encoded [`sp_runtime::MultiSignature`], the wire format every
     /// provider-node signing endpoint uses — back into the typed value.
+    ///
+    /// Decoding must consume the input exactly: a value with trailing bytes is
+    /// rejected rather than silently truncated, so this agrees with the JS
+    /// SDK's per-variant length check on the same wire format.
     pub fn decode_multi_signature(
         sig_hex: &str,
     ) -> Result<sp_runtime::MultiSignature, crate::base::ClientError> {
-        use codec::Decode;
+        use codec::DecodeAll;
         let s = sig_hex.strip_prefix("0x").unwrap_or(sig_hex);
         let bytes =
             hex::decode(s).map_err(|e| crate::base::ClientError::Serialization(e.to_string()))?;
-        sp_runtime::MultiSignature::decode(&mut &bytes[..]).map_err(|e| {
+        sp_runtime::MultiSignature::decode_all(&mut &bytes[..]).map_err(|e| {
             crate::base::ClientError::Serialization(format!("invalid SCALE MultiSignature: {e}"))
         })
     }

@@ -779,8 +779,10 @@ signature: Sr25519(0x...)
 
 **Validation:** signature verifies over the SCALE-encoded `roots` under the provider's registered key; matched root differs from the previously synced root; at least `minSyncInterval` blocks since last sync; `syncBalance ≥ replicaSyncPrice`.
 
+Signature verification runs first, so an origin that is not a registered provider fails with `ProviderNotFound` before the bucket and agreement lookups are reached.
+
 **Events:** `ReplicaSynced { position_matched, sync_payment }`
-**Errors:** `AgreementNotFound`, `NotReplica`, `InvalidSyncRoot`, `SyncTooFrequent`, `InsufficientSyncBalance`, `InvalidSignature`, `InvalidPublicKey`
+**Errors:** `ProviderNotFound`, `InvalidPublicKey`, `InvalidSignature`, `BucketNotFound`, `AgreementNotFound`, `NotReplica`, `InvalidSyncRoot`, `SyncTooFrequent`, `InsufficientSyncBalance`
 
 ---
 

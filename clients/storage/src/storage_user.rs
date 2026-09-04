@@ -845,6 +845,14 @@ mod tests {
                 .is_err(),
             "a truncated signature must fail at the wire, not downstream"
         );
+        // Trailing bytes past a well-formed signature must be refused too,
+        // not silently ignored — the JS SDK rejects the same value.
+        let overlong = format!("0x01{}", hex::encode([9u8; 65]));
+        assert!(
+            serde_json::from_str::<CommitmentResponse>(&commitment_json(&root_hex, &overlong))
+                .is_err(),
+            "trailing bytes must not be silently truncated"
+        );
     }
 
     #[test]
