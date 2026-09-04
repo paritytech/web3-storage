@@ -613,6 +613,129 @@ jobs:
             /tmp/omni-node.log
             /tmp/provider-*.log
 
+  # ── Utils CLI tooling ─────────────────────────────────────────────
+  utils-integration-tests:
+    name: Utils Integration Tests
+    runs-on: parity-large
+    timeout-minutes: 30
+    needs: [set-image, build]
+    container:
+      image: ${{ needs.set-image.outputs.CI_IMAGE }}
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Load common environment variables via env file
+        run: cat .github/env >> $GITHUB_ENV
+
+      - name: Install just
+        run: cargo install just --locked || true
+
+      - name: Cache Polkadot SDK binaries
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5
+        id: sdk-cache
+        with:
+          path: |
+            .bin/polkadot
+            .bin/polkadot-execute-worker
+            .bin/polkadot-prepare-worker
+            .bin/polkadot-omni-node
+            .bin/chain-spec-builder
+          key: polkadot-sdk-${{ env.POLKADOT_SDK_VERSION }}
+
+      - name: Download Polkadot SDK binaries
+        if: steps.sdk-cache.outputs.cache-hit != 'true'
+        run: just polkadot_version="$POLKADOT_SDK_VERSION" download-polkadot-sdk-binaries
+
+      - name: Resolve chain-spec script
+        run: |
+          RUNTIME="$INTEGRATION_TEST_RUNTIME"
+          SCRIPT=$(jq -r --arg r "$RUNTIME" '.[] | select(.name==$r) | .chain_spec_script // empty' scripts/runtimes-matrix.json)
+          if [ -z "$SCRIPT" ]; then
+            echo "ERROR: no chain_spec_script for runtime '$RUNTIME' in scripts/runtimes-matrix.json"
+            exit 1
+          fi
+          echo "Using chain-spec script: $SCRIPT"
+          echo "CHAIN_SPEC_SCRIPT=$SCRIPT" >> $GITHUB_ENV
+
+      # Before the download so the cached target/ can't clobber it. save-if
+      # false — only the build job writes this cache.
+      - name: Rust cache
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          shared-key: "integration-tests-build"
+          save-if: false
+
+      # Extract into target/release so the artifact's contents land back at
+      # their original paths (chmod, chain_spec_command scripts).
+      - name: Download build artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v6
+        with:
+          name: build
+          path: target/release
+
+      - name: Restore executable bits
+        run: chmod +x target/release/storage-provider-node
+
+      - name: Start chain (dev mode, 2s blocks)
+        uses: ./.github/actions/start-e2e-chain
+        with:
+          chain-spec-script: ${{ env.CHAIN_SPEC_SCRIPT }}
+
+      - name: Wait for parachain blocks
+        uses: ./.github/actions/wait-for-parachain
+        with:
+          log-file: /tmp/omni-node.log
+
+      - name: Register provider on-chain
+        run: |
+          echo "//Alice" > /tmp/alice-key && chmod 600 /tmp/alice-key
+          cargo run --release -p storage-client --example register_provider \
+            ws://127.0.0.1:2222 http://127.0.0.1:3333 /ip4/127.0.0.1/tcp/3333 /tmp/alice-key
+
+      - name: Start provider (Alice)
+        uses: ./.github/actions/start-provider
+        with:
+          label: utils
+
+      # Seed: //Bob negotiates terms and opens a bucket + primary agreement
+      # against the //Alice provider, giving the CLI something to upload to.
+      - name: Seed bucket + agreement (//Bob → //Alice provider)
+        run: |
+          cargo run --release -p storage-client --example complete_workflow \
+            ws://127.0.0.1:2222 http://127.0.0.1:3333 //Bob
+
+      # Run the CLI's stress-test upload command against the //Alice provider using 
+      # the //Bob key.
+      - name: storage-cli stress-test upload
+        run: |
+          cargo run --release -p storage-cli -- \
+            --suri //Bob \
+            stress-test upload \
+            --provider 5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY \
+            --users 2 \
+            --uploads-per-user 5 \
+            --payload-size 1048576 \
+            --parallel-uploads
+
+      - name: Stop services
+        if: always()
+        run: |
+          pkill -f "polkadot-omni-node" 2>/dev/null || true
+          pkill -f "polkadot" 2>/dev/null || true
+          pkill -f "storage-provider-node" 2>/dev/null || true
+
+      - name: Upload logs (on failure)
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: utils-integration-test-logs
+          path: |
+            /tmp/omni-node.log
+            /tmp/provider-*.log
+
   # ── UI Playwright e2e ─────────────────────────────────────────────────────
   # Drive / console / provider UIs (Vite dev servers) exercised against a
   # standalone paseo dev chain (omni-node, 2s blocks, no relay chain) + a
@@ -798,7 +921,7 @@ jobs:
 
   integration-tests-complete:
     name: Integration Tests
-    needs: [changes, build, integration-tests, e2e-integration-tests, sc-integration-tests, ui-integration-tests, coverage-gate]
+    needs: [changes, build, integration-tests, e2e-integration-tests, sc-integration-tests, ui-integration-tests, utils-integration-tests, coverage-gate]
     if: always()
     runs-on: ubuntu-latest
     steps:

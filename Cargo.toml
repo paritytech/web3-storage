@@ -20,6 +20,7 @@ members = [
 	"crates/providers/storage",
 
 	"crates/storage-subxt",
+	"crates/utils/storage-cli",
 	"crates/utils/storage-indexers",
 	"provider-node",
 
@@ -153,6 +154,7 @@ scale-info = { version = "2.11.6", default-features = false, features = [
 ] }
 
 # External dependencies
+anyhow = { version = "1.0" }
 async-trait = "0.1"
 base64 = "0.22"
 clap = { version = "4" }
@@ -194,6 +196,7 @@ sp-keyring = { version = "48.0.0", default-features = false }
 sp-keystore = { version = "0.49.0", default-features = false }
 tempfile = "3"
 tokio-test = "0.4"
+
 
 [profile.release]
 opt-level = 3
