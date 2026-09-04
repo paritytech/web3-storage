@@ -52,6 +52,11 @@ impl<T: Config> Pallet<T> {
         bucket: &Bucket<T>,
     ) -> bool {
         Self::is_member(who, bucket)
+            // TODO(https://github.com/paritytech/web3-storage/issues/299):
+            // unbounded — replica agreements per bucket are uncapped, and this runs on
+            // every challenge. The benchmark challenges as a member, so `||`
+            // short-circuits and the weights charge nothing for the scan. Replace with
+            // an agreement-owner reverse index (point read) and re-bench as a non-member.
             || StorageAgreements::<T>::iter_prefix(bucket_id).any(|(_, a)| &a.owner == who)
     }
 
