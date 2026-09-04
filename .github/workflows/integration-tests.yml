@@ -135,20 +135,26 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # `name` is the check's display name; `id` names the leg's files and
+        # log artifact, so it stays a plain token.
         include:
-          - name: rpc
+          - name: Provider + RPC node
+            id: rpc
             transport: rpc
             relay_spec: ""
             para_spec: ""
             health_attempts: "60"
           # smoldot warp-syncs before the HTTP server binds, so the light legs
-          # get 300s of /health polling instead of the default 120s.
-          - name: light-fetch
+          # get 150 attempts x 2s = 300s of /health polling instead of the
+          # default 60 x 2s = 120s.
+          - name: Provider + light-client (DEV init from RPC node)
+            id: light-fetch
             transport: light
             relay_spec: ws://127.0.0.1:9900
             para_spec: ""
             health_attempts: "150"
-          - name: light-file
+          - name: Provider + light-client (PROD-like init from chain specs)
+            id: light-file
             transport: light
             relay_spec: /tmp/light-client-specs/relay.json
             para_spec: /tmp/light-client-specs/para.json
@@ -252,11 +258,11 @@ jobs:
       # One provider for all three demos, on this leg's chain transport: the L0
       # demo registers //Alice on-chain and the L1 demos reuse that
       # registration, on the justfile's default PROVIDER_URL.
-      - name: Start provider (rocksdb, ${{ matrix.name }})
+      - name: Start provider (rocksdb, ${{ matrix.id }})
         uses: ./.github/actions/start-provider
         with:
           backend: rocksdb
-          label: ${{ matrix.name }}
+          label: ${{ matrix.id }}
           chain-transport: ${{ matrix.transport }}
           relay-chain-spec: ${{ matrix.relay_spec }}
           para-chain-spec: ${{ matrix.para_spec }}
@@ -282,7 +288,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: zombienet-smoke-test-logs-${{ matrix.name }}
+          name: zombienet-smoke-test-logs-${{ matrix.id }}
           path: |
             /tmp/zombienet.log
             /tmp/provider-*.log
