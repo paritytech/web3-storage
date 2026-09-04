@@ -243,7 +243,7 @@ jobs:
           save-if: false
 
       - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@82cd3e7658a6f96c86c0234aeeda1748937cb0a1 # v2.85.13
+        uses: taiki-e/install-action@37f7c5781271959fb65b6b35224e28652ff2b63d # v2.87.0
         with:
           tool: cargo-llvm-cov
 
@@ -299,10 +299,13 @@ jobs:
           MIN_PATCH_COV: '80'
         run: |
           set -euo pipefail
+          # The job runs in a container as a different uid than the checkout,
+          # so git refuses to touch the repo without this.
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
-          # Make origin/<base> available for the diff. The checkout is full-depth
-          # (fetch-depth: 0), so this stays unshallow and the merge-base is reachable.
-          git fetch --no-tags origin "$BASE_REF"
+          # origin/<base> comes from the full-depth checkout (fetch-depth: 0);
+          # no extra fetch here — unauthenticated fetches get rate-limited.
+          echo "HEAD:               $(git log --oneline -1)"
+          echo "origin/${BASE_REF}: $(git log --oneline -1 "origin/${BASE_REF}")"
 
           set +e
           COMPARE_BRANCH="origin/${BASE_REF}" scripts/coverage.sh gate
