@@ -64,6 +64,7 @@ Users who create conflicts without checkpointing waste their quota—providers m
 
 ### Provider Lifecycle in Bucket
 
+<!-- DRIFT-001: the request/accept round-trip below is superseded on `dev` by off-chain signed terms redeemed via establish_storage_agreement / establish_replica_agreement (#105). -->
 **Adding a provider:**
 1. Admin calls `request_primary_agreement` with the provider
 2. Provider calls `accept_agreement` → `StorageAgreement` created, added to `bucket.primary_providers`
@@ -168,6 +169,8 @@ pub trait Config: frame_system::Config<RuntimeEvent: From<Event<Self>>> {
 
     /// Timeout for challenge response (e.g., ~48 hours, in anchor blocks — see
     /// the anchor-clock note above).
+    // DRIFT-005: `Config::ChallengeDeposit` exists in code (reserved from the
+    // challenger in create_challenge) but is missing from this sketch.
     #[pallet::constant]
     type ChallengeTimeout: Get<BlockNumberFor<Self>>;
 
@@ -493,6 +496,8 @@ pub enum ProviderRole<T: Config> {
 
 /// Pending agreement requests (client → provider, awaiting acceptance)
 /// Keyed by (provider, bucket) so providers can efficiently query their pending requests
+// DRIFT-001: no `AgreementRequests` on `dev` — the signed-terms flow keeps a
+// `ProviderReplayStates` replay window instead (#105).
 #[pallet::storage]
 pub type AgreementRequests<T: Config> = StorageDoubleMap<
     _,
@@ -762,6 +767,9 @@ pub enum Event<T: Config> {
     // Agreement events
     // ─────────────────────────────────────────────────────────────
     
+    // DRIFT-001: `dev` emits StorageAgreementEstablished / ReplicaAgreementEstablished
+    // instead of the Requested/Accepted/Rejected/RequestWithdrawn events (#105).
+    //
     AgreementRequested {
         bucket_id: BucketId,
         provider: T::AccountId,
@@ -1048,6 +1056,9 @@ impl<T: Config> Pallet<T> {
     // Bucket management
     // ─────────────────────────────────────────────────────────────
 
+    // DRIFT-002: no standalone create_bucket / create_bucket_with_storage on
+    // `dev` — a bucket is created by establish_storage_agreement redeeming
+    // primary terms (#105).
     /// Create a new bucket.
     /// 
     /// The caller becomes the bucket admin. The bucket starts empty with no
@@ -1164,6 +1175,10 @@ impl<T: Config> Pallet<T> {
     // ─────────────────────────────────────────────────────────────
     // Storage agreements (per bucket, per provider)
     // ─────────────────────────────────────────────────────────────
+    // DRIFT-001: request_agreement / accept_agreement / reject_agreement /
+    // withdraw_agreement_request / request_primary_agreement are superseded on
+    // `dev` by establish_storage_agreement / establish_replica_agreement, which
+    // redeem provider-signed AgreementTerms (#105).
 
     /// Request a replica storage agreement (anyone can request).
     /// 
