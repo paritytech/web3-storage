@@ -2,6 +2,29 @@
 
 Quick reference for all available extrinsics in the storage provider pallet ([crates/pallets/storage-provider/src/lib.rs](../../crates/pallets/storage-provider/src/lib.rs)).
 
+## How funds are immobilised
+
+Funds are **held** via `fungible::MutateHold` under a tagged reason, never
+reserved:
+
+| `HoldReason` | Put up by | Placed in | Released when |
+| --- | --- | --- | --- |
+| `ProviderStake` | provider | `registerProvider`, `addStake` | `completeDeregister`, or slashed on a failed challenge |
+| `AgreementPayment` | agreement owner | agreement creation, `topUpAgreement`, `extendAgreement`, `topUpReplicaSyncBalance` | settlement, which pays the provider and returns the rest — including a replica's unspent sync balance — to the owner |
+| `ChallengeDeposit` | challenger | `challenge*` | challenge resolution, minus the provider's response-cost share |
+
+Three things to know when reading balances:
+
+- The three claims are independent even on one account; releasing or slashing
+  one cannot draw on another. All still count toward `reservedBalance`.
+- Escrow sits on the agreement **owner**, not whoever paid. The permissionless
+  paths move a third party's funds to the owner first, because settlement pays
+  out of the owner's hold.
+- A hold must leave the existential deposit spendable: `registerProvider`
+  needs `stake + ED` of free balance, and likewise every escrow and deposit.
+  An account with any hold cannot be reaped. (Under the old `reserve`, the
+  reserved part itself could cover the ED — that no longer counts.)
+
 ## Provider Management
 
 ### `registerProvider`
@@ -36,7 +59,7 @@ stake: 1000000000000000  (1000 tokens, minimum required)
 Increase the provider's locked stake.
 
 **Parameters:**
-- `amount`: `BalanceOf<T>` - additional amount to reserve
+- `amount`: `BalanceOf<T>` - additional amount to hold under `ProviderStake`
 
 **Example:**
 ```
@@ -50,7 +73,7 @@ amount: 50000000000
 
 ### `deregisterProvider`
 
-**Step 1 of a two-step exit.** Announces deregistration: forces `acceptingPrimary` and `acceptingExtensions` to `false`, stamps `deregister_at = now + DeregisterAnnouncementPeriod`. Stake stays reserved and the provider remains slashable. Settings updates are blocked during the announcement window.
+**Step 1 of a two-step exit.** Announces deregistration: forces `acceptingPrimary` and `acceptingExtensions` to `false`, stamps `deregister_at = now + DeregisterAnnouncementPeriod`. Stake stays held and the provider remains slashable. Settings updates are blocked during the announcement window.
 
 **Parameters:** none
 
@@ -142,7 +165,7 @@ multiaddr: /ip4/203.0.113.10/tcp/3333
 
 ### `completeDeregister`
 
-**Step 2 of the two-step exit.** Unreserves stake and removes the provider record.
+**Step 2 of the two-step exit.** Releases the `ProviderStake` hold and removes the provider record.
 
 **Parameters:** none
 
@@ -178,49 +201,11 @@ cancelDeregister()
 
 ## Bucket Management
 
-### `createBucket`
-
-Create an empty bucket; caller becomes its sole admin.
-
-**Parameters:**
-- `minProviders`: `u32` - minimum primary-provider signatures required for a valid checkpoint
-- `visibility`: `Public | Private` - whether primaries serve reads to anyone or only to members (cooperative, not on-chain-enforced; full semantics in the design doc's "Bucket Visibility & Access"). Wrappers omitting the choice must default to `Private` (fail-safe).
-
-**Example:**
-```
-minProviders: 2
-visibility: Private
-```
-
-**Returns:** Emits `BucketCreated` event with assigned `bucketId`.
-
-**Events:** `BucketCreated { bucket_id, admin }`
-**Errors:** `MaxMembersReached`, `TooManyBucketsForMember`
-
----
-
-### `createBucketWithStorage`
-
-One-shot helper: create a bucket, find the cheapest matching provider, and accept the primary agreement, all atomically.
-
-**Parameters:**
-- `maxBytes`: `u64` - desired storage size
-- `duration`: `BlockNumber` - agreement duration
-- `maxPricePerByte`: `Balance` - cap on provider's `pricePerByte`
-- `visibility`: `Public | Private` - see `createBucket`
-
-**Example:**
-```
-maxBytes: 1073741824   // 1 GB
-duration: 500
-maxPricePerByte: 1000000
-visibility: Private
-```
-
-**Events:** `BucketCreated`, `AgreementAccepted`, `ProviderAddedToBucket`
-**Errors:** `NoMatchingProvider`, `PaymentExceedsMax`, `InsufficientStakeForBytes`, `CapacityExceeded`, `MaxMembersReached`, `TooManyBucketsForMember`
-
----
+There is no standalone bucket-creation extrinsic. A bucket is created when
+[`establishStorageAgreement`](#establishstorageagreement) redeems a
+provider-signed quote — the caller becomes the bucket's sole admin and the
+provider its single primary — or by a higher-layer pallet (e.g. the drive
+registry) folding bucket creation into its own flow.
 
 ### `setMinProviders`
 
@@ -325,7 +310,7 @@ member: 5FHneW46xGXgs5mUiveU4sbTyGBzmstUspZC92UhjJM694ty
 
 ### `removeSlashed`
 
-**Permissionless cleanup.** Anyone can call this to evict a slashed provider (one with `stake == 0`) from a bucket. The agreement's locked payment is returned to its owner; if the provider was a primary, it's removed from the bucket's primary list.
+**Permissionless cleanup.** Anyone can call this to evict a slashed provider (one with `stake == 0`) from a bucket. The agreement's locked payment — plus, for a replica, the unspent sync balance — is returned to its owner; if the provider was a primary, it's removed from the bucket's primary list.
 
 **Parameters:**
 - `bucketId`: `BucketId` (u64)
@@ -344,135 +329,70 @@ provider: 5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY
 
 ## Agreement Management
 
-### `requestAgreement`
+Agreements are opened by redeeming a **provider-signed quote** (`AgreementTerms`),
+not by an on-chain request/accept round-trip. The provider signs the SCALE-encoded
+terms off-chain; the future owner submits them. Replay is rejected via the
+provider's sliding nonce window, and a quote is only redeemable while
+`validUntil` is within `now + RequestTimeout`.
 
-Request a **replica** agreement (provider must have `replicaSyncPrice: Some(_)`).
+### `establishStorageAgreement`
+
+Redeem provider-signed **primary** terms: creates a new bucket and its primary
+agreement in a single call. The caller becomes the bucket's sole admin, the
+provider its single primary.
 
 **Parameters:**
-- `bucketId`: `BucketId` (u64)
-- `provider`: `AccountId` - replica provider
-- `maxBytes`: `u64` - storage size
-- `duration`: `BlockNumber` - agreement duration
-- `maxPayment`: `Balance` - safety cap; must cover `pricePerByte × maxBytes × duration`
-- `replicaParams`: `ReplicaRequestParams<Balance, BlockNumber>`
-  - `syncBalance`: `Balance` - funds reserved up-front for future sync payments
-  - `minSyncInterval`: `BlockNumber` - rate-limit between confirmed syncs
+- `provider`: `AccountId` - the provider that signed the terms
+- `terms`: `AgreementTerms` - the signed quote:
+  - `owner`: `AccountId` - must equal the caller
+  - `maxBytes`: `u64` - storage quota
+  - `duration`: `BlockNumber` - agreement duration in anchor (relay-chain) blocks
+  - `pricePerByte`: `Balance` - price locked at quote time
+  - `validUntil`: `BlockNumber` - last anchor block the quote is redeemable at
+  - `nonce`: `u64` - provider-chosen replay-protection nonce
+  - `bucketId`: must be `None` (the bucket is created at redemption)
+  - `replicaParams`: must be `None`
+- `sig`: `MultiSignature` - provider's signature over `blake2_256(PRIMARY_TERM_CONTEXT ++ SCALE(terms))`
 
-**Example:**
-```
-bucketId: 0
-provider: 5FHneW46xGXgs5mUiveU4sbTyGBzmstUspZC92UhjJM694ty
-maxBytes: 1073741824   // 1 GB
-duration: 500
-maxPayment: 600000000000000000
-replicaParams: {
-  syncBalance: 50000000,
-  minSyncInterval: 100
-  syncPrice: 1000000,
-}
-```
+**Payment:** `pricePerByte × maxBytes × duration`, held under `AgreementPayment`
+on the caller. There is no `maxPayment` cap — the price is whatever the provider
+signed. See [Payment Calculator](./PAYMENT_CALCULATOR.md).
 
-Funds reserved on request: storage payment **plus** `syncBalance`. The request expires if not accepted within `RequestTimeout`.
+**Events:** `BucketCreated`, `StorageAgreementEstablished`
+**Errors:** `TermsOwnerMismatch`, `TermsBucketMismatch`, `InvalidMaxBytesRequest`, `TermsExpired`, `TermsValidityTooLong`, `ProviderNotFound`, `InvalidProviderSignature`, `NonceAlreadyUsed`, `NonceTooOld`, `DeregisterAnnounced`, `ProviderNotAcceptingPrimary`, `DurationTooShort`, `DurationTooLong`, `CapacityExceeded`, `InsufficientStakeForBytes`
+
+---
+
+### `establishReplicaAgreement`
+
+Redeem provider-signed **replica** terms against an existing bucket (the
+provider must have `replicaSyncPrice: Some(_)`).
+
+**Parameters:**
+- `bucketId`: `BucketId` (u64) - existing bucket to replicate
+- `provider`: `AccountId` - the replica provider that signed the terms
+- `terms`: `AgreementTerms` - as above, except:
+  - `bucketId`: must be `Some(bucketId)` matching the extrinsic argument
+  - `replicaParams`: must be `Some(ReplicaTerms)`:
+    - `syncBalance`: `Balance` - funds escrowed up-front for future sync payments
+    - `syncPrice`: `Balance` - price per confirmed sync
+    - `minSyncInterval`: `BlockNumber` - rate-limit between confirmed syncs
+- `sig`: `MultiSignature` - provider's signature over `blake2_256(REPLICA_TERM_CONTEXT ++ SCALE(terms))`
+
+Funds held under `AgreementPayment` on the caller: storage payment **plus**
+`syncBalance`. Whatever sync balance is unspent when the agreement is removed
+is released back to the owner.
 
 **No syncability check:** a private bucket with no replicas is still accepted—an unfulfillable agreement is the funder's own risk. Rationale: design doc, "No on-chain gate on replica creation".
 
-**Events:** `AgreementRequested`
-**Errors:** `BucketNotFound`, `ProviderNotFound`, `DeregisterAnnounced`, `ProviderNotAcceptingReplicas`, `DurationTooShort`, `DurationTooLong`, `PaymentExceedsMax`, `AgreementRequestAlreadyExists`
-
----
-
-### `requestPrimaryAgreement`
-
-Request a **primary** storage agreement. Caller must be a bucket admin.
-
-**Parameters:**
-- `bucketId`: `BucketId` (u64)
-- `provider`: `AccountId`
-- `maxBytes`: `u64` - maximum storage size
-- `duration`: `BlockNumber` - agreement duration in anchor (relay-chain) blocks
-- `maxPayment`: `Balance` - maximum payment willing to pay (safety cap)
-
-**Example:**
-```
-bucketId: 0
-provider: 5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY
-maxBytes: 1073741824   // 1 GB
-duration: 500
-maxPayment: 600000000000000000
-```
-
-**Payment calculation:**
-```
-payment = pricePerByte × maxBytes × duration
-payment = 1,000,000 × 1,073,741,824 × 500
-payment = 536,870,912,000,000,000
-```
-
-**Important:** `maxPayment` must be ≥ calculated payment, or you'll get `PaymentExceedsMax`. Add a 10-20% buffer. See [Payment Calculator](./PAYMENT_CALCULATOR.md).
-
-**Events:** `AgreementRequested`
-**Errors:** `BucketNotFound`, `NotBucketAdmin`, `MaxPrimaryProvidersReached`, `ProviderNotFound`, `DeregisterAnnounced`, `ProviderNotAcceptingPrimary`, `DurationTooShort`, `DurationTooLong`, `PaymentExceedsMax`, `AgreementRequestAlreadyExists`
-
----
-
-### `acceptAgreement`
-
-Provider accepts a pending agreement request. Creates the `StorageAgreement`, starts the clock, and (for primaries) adds the provider to the bucket's primary list.
-
-**Parameters:**
-- `bucketId`: `BucketId` (u64)
-
-**Example:**
-```
-bucketId: 0
-```
-
-**Note:** Caller must be the provider specified in the request. Validates request hasn't expired (`RequestTimeout`) and that the provider has capacity headroom and enough stake (`stake ≥ committed_bytes × MinStakePerByte`).
-
-**Events:** `AgreementAccepted`, plus `ProviderAddedToBucket` for primaries
-**Errors:** `ProviderNotFound`, `DeregisterAnnounced`, `AgreementRequestNotFound`, `RequestExpired`, `InsufficientStakeForBytes`, `CapacityExceeded`, `MaxPrimaryProvidersReached`
-
----
-
-### `rejectAgreement`
-
-Provider rejects a pending request; all reserved funds (payment + sync balance) return to the requester.
-
-**Parameters:**
-- `bucketId`: `BucketId` (u64)
-
-**Example:**
-```
-bucketId: 0
-```
-
-**Events:** `AgreementRejected`
-**Errors:** `AgreementRequestNotFound`
-
----
-
-### `withdrawAgreementRequest`
-
-Original requester rescinds a pending request before acceptance.
-
-**Parameters:**
-- `bucketId`: `BucketId` (u64)
-- `provider`: `AccountId`
-
-**Example:**
-```
-bucketId: 0
-provider: 5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY
-```
-
-**Events:** `AgreementRequestWithdrawn`
-**Errors:** `AgreementRequestNotFound`, `NotAgreementOwner`
+**Events:** `ReplicaAgreementEstablished`
+**Errors:** as `establishStorageAgreement` (with `TermsBucketMismatch` for a quote bound to a different bucket), plus `BucketNotFound`, `AgreementAlreadyExists`, `MissingReplicaTerms`, `ProviderNotAcceptingReplicas`
 
 ---
 
 ### `extendAgreement`
 
-Extend an active agreement. Settles elapsed time at the **old** rate, then locks new payment at the provider's **current** rate for the additional duration.
+Extend a **live** agreement (`AgreementExpired` once past `expires_at` — settlement then goes through `endAgreement` / `claimExpiredAgreement`). Settles elapsed time at the **old** rate straight out of escrow, capped at the agreement's remaining escrow, then holds new payment at the provider's **current** rate for the additional duration. When a third party extends, their funds are escrowed on the agreement owner.
 
 **Parameters:**
 - `bucketId`: `BucketId` (u64)
@@ -618,13 +538,17 @@ additionalSignatures: [
 ---
 
 > **Who may challenge, and what it costs** (applies to `challengeCheckpoint`,
-> `challengeOffchain`, and `challengeReplica`). Any signed account may
-> challenge, with one restriction: on a `Private` bucket, challenging a
-> **primary** provider requires being a bucket member or the owner of a primary
-> agreement on the bucket (`NotAuthorizedForPrivateBucket`; replica-agreement
-> owners deliberately excluded). The gate keys on the challenged provider's
-> role in its current agreement, whichever extrinsic is used; challenging a
-> replica is open to everyone.
+> `challengeOffchain`, and `challengeReplica`). Any signed account other than
+> the challenged provider itself (`SelfChallenge`) may challenge, subject to
+> two gates. First, the challenged agreement must still be live
+> (`now < expires_at`), so a provider whose obligation has ended cannot be
+> challenged into the settlement window (`AgreementExpired`). Second, on a
+> `Private` bucket, challenging a **primary** provider requires being a bucket
+> member or the owner of a primary agreement on the bucket
+> (`NotAuthorizedForPrivateBucket`; replica-agreement owners deliberately
+> excluded). That second gate keys on the challenged provider's role in its
+> current agreement, whichever extrinsic is used; challenging a replica is open
+> to everyone.
 > The challenger locks a deposit covering the provider's on-chain response
 > (over-estimated; excess refunded on resolution). On a valid response the
 > provider's **stake is never touched**—only its response tx fee is at issue:
@@ -661,7 +585,7 @@ chunkIndex: 3
 **Deposit required:** see the challenge cost note above.
 
 **Events:** `ChallengeCreated`
-**Errors:** `BucketNotFound`, `NoSnapshot`, `ProviderNotInSnapshot`, `SelfChallenge` (caller is the challenged provider), `NotAuthorizedForPrivateBucket` (private bucket; caller neither member nor primary-agreement owner)
+**Errors:** `BucketNotFound`, `NoSnapshot`, `ProviderNotInSnapshot`, `AgreementNotFound`, `AgreementExpired`, `SelfChallenge` (caller is the challenged provider), `NotAuthorizedForPrivateBucket` (private bucket; caller neither member nor primary-agreement owner)
 
 ---
 
@@ -686,7 +610,7 @@ providerSignature: 0xsig...
 ```
 
 **Events:** `ChallengeCreated`
-**Errors:** `BucketNotFound`, `AgreementNotFound`, `InvalidSignature`, `SelfChallenge` (caller is the challenged provider), `NotAuthorizedForPrivateBucket` (private bucket, primary target; caller neither member nor primary-agreement owner)
+**Errors:** `BucketNotFound`, `AgreementNotFound`, `AgreementExpired`, `InvalidSignature`, `SelfChallenge` (caller is the challenged provider), `NotAuthorizedForPrivateBucket` (private bucket, primary target; caller neither member nor primary-agreement owner)
 
 ---
 
@@ -786,7 +710,7 @@ signature: Sr25519(0x...)
 
 ### `topUpReplicaSyncBalance`
 
-Reserve additional funds for future sync payments on a replica agreement. Permissionless.
+Escrow additional funds for future sync payments on a replica agreement. Permissionless — a third party may pay, but the funds are held on the agreement owner.
 
 **Parameters:**
 - `bucketId`: `BucketId` (u64)
@@ -871,26 +795,20 @@ For testing on local development network:
 2. updateProviderSettings(settings)  ← required to accept agreements!
 ```
 
-### 2. Create bucket & request storage
+### 2. Buy storage (bucket + primary agreement)
 
 ```
-1. createBucket(minProviders: 2)
-2. requestPrimaryAgreement(bucketId, provider, maxBytes, duration, maxPayment)
-3. [provider] acceptAgreement(bucketId)
-```
-
-Or in a single call:
-
-```
-createBucketWithStorage(maxBytes, duration, maxPricePerByte)
+1. [off-chain] provider signs AgreementTerms (a quote) for the owner
+2. establishStorageAgreement(provider, terms, sig)
+   // creates the bucket (caller = sole admin) + the primary agreement
 ```
 
 ### 3. Add replica provider
 
 ```
 1. [provider with replicaSyncPrice=Some(p)] updateProviderSettings(...)
-2. requestAgreement(bucketId, replicaProvider, ..., replicaParams { syncBalance, minSyncInterval })
-3. [replica] acceptAgreement(bucketId)
+2. [off-chain] replica provider signs AgreementTerms with replicaParams { syncBalance, syncPrice, minSyncInterval }
+3. establishReplicaAgreement(bucketId, replicaProvider, terms, sig)
 4. [replica syncs from primary off-chain]
 5. [replica] confirmReplicaSync(bucketId, roots, signature)
 ```
@@ -923,7 +841,7 @@ challengeReplica(bucketId, provider, leafIndex, chunkIndex)
 ```
 1. deregisterProvider()        // step 1: announce (committed_bytes must be 0)
 2. // wait DeregisterAnnouncementPeriod blocks
-3. completeDeregister()        // step 2: unreserve stake, drop record
+3. completeDeregister()        // step 2: release stake hold, drop record
    // or change your mind:
    cancelDeregister()          // restores acceptingPrimary/Extensions
 ```
@@ -961,21 +879,27 @@ Common errors you might encounter:
 | `BucketNotFound` | Invalid bucket ID | Check bucket exists |
 | `BucketFrozen` / `BucketNotFrozen` | Operation requires opposite state | — |
 | `NotBucketAdmin` / `NotBucketMember` / `NotBucketWriter` | Caller lacks role | Have an admin assign the role |
-| `NotAuthorizedForPrivateBucket` | Private bucket: primary challenged by caller who is neither member nor primary-agreement owner | Become a member, or challenge a replica |
 | `MemberNotFound` | Member not in bucket | Add first via `setMember` |
 | `CannotDemoteAdmin` | Tried to demote/remove **another** admin | Only an admin can demote themselves |
 | `LastAdminCannotBeRemoved` | Demote/remove would leave bucket with zero admins | Promote another admin first |
 | `MaxMembersReached` / `MaxPrimaryProvidersReached` / `TooManyBucketsForMember` | Bound hit | — |
 | `MinProvidersNotMet` | Snapshot lacks `minProviders` signers | Collect more signatures |
 | `InvalidMinProviders` | `minProviders > primary_count` | Lower threshold or add primaries |
-| `AgreementNotFound` / `AgreementRequestNotFound` | No matching (bucket, provider) | Create the agreement/request first |
-| `AgreementAlreadyExists` / `AgreementRequestAlreadyExists` | One already exists | — |
+| `AgreementNotFound` | No matching (bucket, provider) agreement | Establish the agreement first |
+| `AgreementAlreadyExists` | One already exists | — |
 | `AgreementExpired` / `AgreementNotExpired` | Wrong lifecycle state | — |
 | `AgreementExtensionsBlocked` | `setExtensionsBlocked(true)` is active for this agreement | Use a different provider |
 | `NotAgreementOwner` | Caller is not the requester | — |
 | `DurationTooShort` / `DurationTooLong` | Outside provider's `minDuration` / `maxDuration` | Adjust duration |
 | `PaymentExceedsMax` | Calculated payment > `maxPayment` | Calculate `price × bytes × duration`, add 10-20% buffer |
-| `RequestExpired` | Request older than `RequestTimeout` | Resubmit |
+| `TermsExpired` | Quote's `validUntil` has passed | Get a fresh quote from the provider |
+| `TermsValidityTooLong` | `validUntil` beyond `now + RequestTimeout` | Use a shorter validity window |
+| `TermsOwnerMismatch` | Caller is not the `owner` in the signed terms | Submit from the quoted account |
+| `TermsBucketMismatch` | Quote's `bucketId` doesn't match the flavour/target | Primary terms: `None`; replica terms: the target bucket |
+| `MissingReplicaTerms` | Replica redemption without `replicaParams` | Have the provider sign replica terms |
+| `InvalidMaxBytesRequest` | `maxBytes == 0` | Quote a non-zero size |
+| `InvalidProviderSignature` | Terms signature didn't verify | Check key, context and SCALE payload |
+| `NonceAlreadyUsed` / `NonceTooOld` | Replay-window rejection | Use a fresh, recent nonce |
 | `CannotTerminateReplica` | `endAgreement` early-termination tried on a replica | Replicas can't be terminated early |
 | `SettlementWindowPassed` | Owner did not call `endAgreement` in time | Provider must use `claimExpiredAgreement` |
 | `NotReplica` | Operation requires a replica agreement | — |
@@ -993,7 +917,6 @@ Common errors you might encounter:
 | `NoSnapshot` | Bucket has no checkpoint yet | Call `checkpoint` first |
 | `SnapshotViolatesFrozen` | `startSeq < frozen_start_seq` | Use `startSeq ≥ frozen_start_seq` |
 | `InsufficientSignatures` | Fewer signatures than `minProviders` | Collect more |
-| `NoMatchingProvider` | `createBucketWithStorage` couldn't find a fit | Relax constraints |
 | `InvalidMultiaddr` / `InvalidPublicKey` | Malformed input | Fix the value |
 | `ArithmeticOverflow` | Internal overflow | Report; should not occur |
 

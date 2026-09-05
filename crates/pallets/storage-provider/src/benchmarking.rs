@@ -7,7 +7,7 @@ use super::{Pallet as StorageProvider, *};
 use frame_benchmarking::v2::*;
 use frame_support::{
     pallet_prelude::*,
-    traits::{Currency, Hooks, ReservableCurrency},
+    traits::{fungible::Mutate, Hooks},
 };
 use frame_system::{Pallet as System, RawOrigin};
 use sp_core::H256;
@@ -31,10 +31,21 @@ fn set_block_number<T: Config>(n: BlockNumberFor<T>) {
 /// Key type used by the benchmarking keystore for provider signing material.
 const KEY_TYPE: sp_core::crypto::KeyTypeId = sp_core::crypto::KeyTypeId(*b"bnch");
 
+/// What every benchmark account is funded with, here and in the pallets that
+/// build on this one.
+///
+/// Not `max_value() / 2`: `set_balance` actually mints, so funding a handful of
+/// accounts that way overflows `TotalIssuance` and the later ones silently end
+/// up broke. This is still far more than any benchmark can spend, and every
+/// other "effectively unbounded" amount is derived from it so the two cannot
+/// drift apart.
+pub fn funding<T: Config>() -> BalanceOf<T> {
+    BalanceOf::<T>::max_value() / 1_000_000u32.into()
+}
+
 fn funded_account<T: Config>(name: &'static str, index: u32) -> T::AccountId {
     let account: T::AccountId = account(name, index, SEED);
-    let amount = BalanceOf::<T>::max_value() / 2u32.into();
-    let _ = T::Currency::make_free_balance_be(&account, amount);
+    let _ = T::Currency::set_balance(&account, funding::<T>());
     account
 }
 
@@ -115,7 +126,7 @@ fn build_replica_terms<T: Config>(
         nonce,
         bucket_id: Some(bucket_id),
         replica_params: Some(ReplicaTerms {
-            sync_balance: BalanceOf::<T>::max_value() / 20u32.into(),
+            sync_balance: funding::<T>() / 20u32.into(),
             min_sync_interval: 10u32.into(),
             sync_price: 10u32.into(),
         }),
@@ -561,7 +572,7 @@ mod benchmarks {
         let bucket_id = setup_primary_agreement::<T>(&admin, &provider, 0);
 
         let additional_bytes = 500_000u64;
-        let max_payment = BalanceOf::<T>::max_value() / 10u32.into();
+        let max_payment = funding::<T>() / 10u32.into();
 
         #[extrinsic_call]
         top_up_agreement(
@@ -580,7 +591,7 @@ mod benchmarks {
         let bucket_id = setup_primary_agreement::<T>(&admin, &provider, 0);
 
         let additional_duration: BlockNumberFor<T> = 50u32.into();
-        let max_payment = BalanceOf::<T>::max_value() / 10u32.into();
+        let max_payment = funding::<T>() / 10u32.into();
 
         #[extrinsic_call]
         extend_agreement(
@@ -606,13 +617,10 @@ mod benchmarks {
             _ => storage_primitives::EndAction::Burn { burn_percent: 50 },
         };
 
-        // Ensure the treasury account exists so the burn-path transfer
-        // (KeepAlive) doesn't fail with "Account cannot exist with the
-        // funds that would be given".
-        let _ = T::Currency::make_free_balance_be(
-            &T::Treasury::get(),
-            BalanceOf::<T>::max_value() / 2u32.into(),
-        );
+        // Ensure the treasury account exists so the burn-path settlement
+        // doesn't fail with "Account cannot exist with the funds that would be
+        // given".
+        let _ = T::Currency::set_balance(&T::Treasury::get(), funding::<T>());
 
         #[extrinsic_call]
         end_agreement(RawOrigin::Signed(admin), bucket_id, provider, action);
@@ -1098,7 +1106,7 @@ mod benchmarks {
         // Open the replica agreement via the signed-terms helper.
         setup_replica_agreement::<T>(&admin, bucket_id, &replica_provider, 1);
 
-        let top_up_amount = BalanceOf::<T>::max_value() / 50u32.into();
+        let top_up_amount = funding::<T>() / 50u32.into();
 
         #[extrinsic_call]
         top_up_replica_sync_balance(
@@ -1140,8 +1148,8 @@ mod benchmarks {
             // `ChallengerStats`, and pending-counter entry).
             let provider = create_provider::<T>(i);
             let challenger = funded_account::<T>("challenger", i);
-            // The slash unreserves the challenger's deposit, so reserve it.
-            let _ = T::Currency::reserve(&challenger, deposit);
+            // The slash releases the challenger's deposit, so hold it first.
+            let _ = StorageProvider::<T>::hold_challenge_deposit(&challenger, deposit);
             let bucket_id: BucketId = i as u64;
             let challenge = pallet::Challenge::<T> {
                 bucket_id,

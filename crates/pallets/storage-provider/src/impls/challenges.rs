@@ -1,10 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::*;
-use frame_support::{
-    pallet_prelude::*,
-    traits::{Currency, ReservableCurrency},
-};
+use frame_support::pallet_prelude::*;
 use sp_runtime::traits::{One, Saturating, Zero};
 use storage_primitives::{
     BucketId, ChallengeId, ChunkLocation, Commitment, ProviderRole, SlashReason, Visibility,
@@ -157,7 +154,7 @@ impl<T: Config> Pallet<T> {
         // at 12 decimals), which made challenge spam effectively free.
         let deposit: BalanceOf<T> = T::ChallengeDeposit::get();
 
-        T::Currency::reserve(&challenger, deposit)?;
+        Self::hold_challenge_deposit(&challenger, deposit)?;
 
         let anchor_block = Self::current_anchor_block();
         let deadline = anchor_block.saturating_add(T::ChallengeTimeout::get());
@@ -244,26 +241,23 @@ impl<T: Config> Pallet<T> {
             // Slash the provider's entire stake
             let slashed_amount = provider_info.stake;
 
-            // Slash the provider's stake, capturing the imbalance so we can
-            // settle it into the Treasury instead of burning it.
-            let (slashed_imbalance, remaining) =
-                T::Currency::slash_reserved(&challenge.provider, slashed_amount);
-            let actually_slashed = slashed_amount.saturating_sub(remaining);
+            // Slash the provider's held stake into the Treasury rather than
+            // burning it, keeping total issuance whole.
+            let actually_slashed =
+                Self::slash_stake_to_treasury(&challenge.provider, slashed_amount);
 
             // Per the design, a successful challenger receives NO reward —
-            // only their deposit back. Refund the deposit and route the
-            // entire slashed amount to the Treasury. Paying the challenger
-            // a cut of the slash would create a profit-from-slashing
-            // incentive (the "refund me or I burn" blackmail channel the
-            // design explicitly closes). `resolve_creating` restores the
-            // issuance burned by `slash_reserved`, keeping issuance whole.
-            T::Currency::unreserve(&challenge.challenger, challenge.deposit);
-            T::Currency::resolve_creating(&T::Treasury::get(), slashed_imbalance);
+            // only their deposit back. Paying the challenger a cut of the slash
+            // would create a profit-from-slashing incentive (the "refund me or
+            // I burn" blackmail channel the design explicitly closes).
+            Self::release_challenge_deposit(&challenge.challenger, challenge.deposit);
 
             // Update provider stats
             provider_info.stats.challenges_failed =
                 provider_info.stats.challenges_failed.saturating_add(1);
-            provider_info.stake = Zero::zero();
+            // BestEffort slash: record what actually moved, so a residual
+            // hold can never go unaccounted (mirrors `respond_to_challenge`).
+            provider_info.stake = provider_info.stake.saturating_sub(actually_slashed);
 
             Providers::<T>::insert(&challenge.provider, provider_info);
 

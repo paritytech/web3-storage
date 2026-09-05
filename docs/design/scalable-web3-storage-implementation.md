@@ -134,8 +134,14 @@ anchor.
 ```rust
 #[pallet::config]
 pub trait Config: frame_system::Config<RuntimeEvent: From<Event<Self>>> {
-    /// Currency type for payments and staking.
-    type Currency: ReservableCurrency<Self::AccountId>;
+    /// Currency for payments and staking. Funds are immobilised with
+    /// `fungible` holds (see "Funds on hold" below), never `reserve`.
+    type Currency: Mutate<Self::AccountId>
+        + MutateHold<Self::AccountId, Reason = Self::RuntimeHoldReason>
+        + BalancedHold<Self::AccountId>;
+
+    /// The runtime's overarching hold reason.
+    type RuntimeHoldReason: From<HoldReason>;
 
     /// Treasury account to receive burned payments.
     type Treasury: Get<Self::AccountId>;
@@ -232,6 +238,32 @@ parachain `HOURS`:
 | `MaxChallengesPerDeadline` | `1_000` |
 | `AnchorBlockTimeMillis` | `6_000` |
 | `Treasury` | derived from `PalletId(*b"py/trsry")` |
+
+### Funds on Hold
+
+Funds are immobilised with `fungible` **holds** under a tagged reason, so the
+claims stay separable on one account and `try_state` can check them against the
+pallet's bookkeeping:
+
+```rust
+#[pallet::composite_enum]
+pub enum HoldReason {
+    /// Provider collateral. The only hold that is ever slashed.
+    ProviderStake,
+    /// An agreement's prepaid fee, held on its owner (plus, for replicas,
+    /// the sync balance) until settlement.
+    AgreementPayment,
+    /// A challenger's anti-spam deposit, refunded on resolution minus the
+    /// provider's response-cost share.
+    ChallengeDeposit,
+}
+```
+
+An agreement's escrow always sits on its **owner** (permissionless top-ups move
+a third party's funds there first, since settlement pays out of the owner's
+hold), and — unlike `reserve` — a hold must leave the existential deposit
+spendable, so registering needs `stake + ED` of free balance and an account
+with a hold cannot be reaped.
 
 ### Storage Items
 
@@ -658,7 +690,7 @@ pub enum Event<T: Config> {
         stake_returned: BalanceOf<T>,
     },
     /// First step of the two-step exit — provider declared intent to leave.
-    /// Stake stays reserved and they remain slashable until `complete_after`.
+    /// Stake stays held and they remain slashable until `complete_after`.
     DeregisterAnnounced {
         provider: T::AccountId,
         complete_after: BlockNumberFor<T>,
@@ -971,7 +1003,7 @@ impl<T: Config> Pallet<T> {
     ///
     /// Stamps `deregister_at = now + T::DeregisterAnnouncementPeriod`, freezes
     /// `accepting_primary` / `accepting_extensions` to `false`, and keeps the
-    /// stake reserved. The provider remains on-chain and fully slashable for
+    /// stake held. The provider remains on-chain and fully slashable for
     /// any challenge created up to the announcement block.
     ///
     /// Fails if `committed_bytes > 0`: providers must let active agreements
@@ -984,8 +1016,8 @@ impl<T: Config> Pallet<T> {
     /// Finalise a previously-announced deregistration (step 2 of 2).
     ///
     /// Callable once `T::DeregisterAnnouncementPeriod` has elapsed since
-    /// `deregister_provider`. Unreserves the remaining stake and removes the
-    /// provider record. Still requires `committed_bytes == 0`.
+    /// `deregister_provider`. Releases the remaining stake hold and removes
+    /// the provider record. Still requires `committed_bytes == 0`.
     #[pallet::weight(...)]
     pub fn complete_deregister(origin: OriginFor<T>) -> DispatchResult;
 
@@ -1072,7 +1104,7 @@ impl<T: Config> Pallet<T> {
     ///    against on-chain provider settings.
     /// 2. Creates a bucket with `min_providers = 1` and the matched provider
     ///    pushed straight into `primary_providers` (no pending request flow).
-    /// 3. Reserves `provider.price_per_byte * max_bytes * duration` from the
+    /// 3. Holds `provider.price_per_byte * max_bytes * duration` from the
     ///    caller as locked payment.
     ///
     /// Providers who set `accepting_primary: true` have pre-consented to
@@ -1260,7 +1292,10 @@ impl<T: Config> Pallet<T> {
     ) -> DispatchResult;
 
     /// Extend agreement duration (immediate, no provider approval needed).
-    /// 1. Settles current period: releases payment to provider for elapsed time
+    /// Only while the agreement is live — an expired one settles via
+    /// `end_agreement` / `claim_expired_agreement`, never here.
+    /// 1. Settles current period: pays provider for elapsed time out of
+    ///    escrow, capped at the agreement's `payment_locked`
     /// 2. Calculates and locks new payment for extension at current provider prices
     /// 3. Updates end date to now + additional_duration
     /// 4. Updates agreement.price_per_byte (and sync_price for replicas) to current prices
@@ -1276,6 +1311,7 @@ impl<T: Config> Pallet<T> {
     /// Fails if calculated payment > max_payment.
     /// 
     /// Also fails if:
+    /// - The agreement has expired (`AgreementExpired`)
     /// - Duration below provider's min_duration or above max_duration
     /// - Provider has globally paused extensions (settings.accepting_extensions == false)
     /// - Provider has blocked extensions for this specific bucket (agreement.extensions_blocked == true)
