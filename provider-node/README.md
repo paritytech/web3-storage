@@ -14,21 +14,20 @@ just health           # check provider is up
 
 ## Signing key
 
-The node signs commitments, checkpoint co-signatures, negotiated terms, and
-replica sync attestations with the keypair derived from `--keyfile`. The
-scheme is selected with `--key-scheme` (`sr25519` default, `ed25519`,
-`ecdsa`, or `eth`) and must match the `public_key` registered on-chain.
-While they differ, every signing endpoint — `/negotiate`, `/commit`,
-`/commitment`, `/checkpoint-signature`, and deletion proofs — returns
-`503 provider_key_mismatch` rather than hand out a signature the chain
-could never verify. The registered key cannot be changed, so a mismatch is
-fixed by pointing the node at the original key, not by re-registering.
-Extrinsics are always submitted from the sr25519 account derived from the
-same seed, which is the provider's on-chain identity.
+The keypair derived from `--keyfile` signs commitments, checkpoint
+co-signatures, negotiated terms, and replica sync attestations.
+`--key-scheme` picks its scheme (`sr25519` default, `ed25519`, `ecdsa`,
+`eth`), which must match the `public_key` registered on-chain — while they
+differ, every signing endpoint returns `503 provider_key_mismatch`. The
+registered key cannot be changed, so fix a mismatch by pointing the node at
+the original key.
 
-Every signature leaves the node as a SCALE-encoded `MultiSignature`,
-`0x`-prefixed hex, so the scheme tag travels with it (e.g.
-`0x01<64-byte sr25519 sig>`, `0x02<65-byte ecdsa sig>`).
+Extrinsics are always submitted from the sr25519 account derived from the
+same seed: the provider's on-chain identity, independent of `--key-scheme`.
+
+Signatures leave the node as SCALE-encoded `MultiSignature` in `0x` hex, so
+the scheme tag travels with them (`0x01<64-byte sr25519>`,
+`0x02<65-byte ecdsa>`).
 
 ## Storage backend
 
@@ -52,10 +51,9 @@ whether they should require the `Reader` role is tracked in
 [#228](https://github.com/paritytech/web3-storage/issues/228).
 
 The client signs an sr25519 message binding the request to a bucket and a
-timestamp. Client auth is sr25519-only for now (unlike on-chain provider
-signature verification, which is multi-scheme); extending it is part of the
-header redesign tracked in
-[#304](https://github.com/paritytech/web3-storage/issues/304):
+timestamp. Unlike provider signatures, client auth is sr25519-only;
+[#304](https://github.com/paritytech/web3-storage/issues/304) tracks
+extending it:
 
 ```text
 signed message:  web3storage:<METHOD>:<bucket_id>:<timestamp>

@@ -371,14 +371,12 @@ sequenceDiagram
 │  1. Provider registers with public_key                                   │
 │     Providers::insert(provider_id, { public_key, ... })                  │
 │                                                                          │
-│  2. Provider signs commitment off-chain (any supported scheme:          │
-│     Sr25519 / Ed25519 / Ecdsa / Eth)                                     │
+│  2. Provider signs commitment off-chain (Sr25519/Ed25519/Ecdsa/Eth)      │
 │     signature = MultiSignature::<scheme>(sign(key, payload.encode()))    │
 │                                                                          │
 │  3. On-chain verification                                                │
 │     signature.verify(payload, account_from(stored_public_key))           │
-│     — the signature's variant picks the account derivation from the     │
-│     registered raw key (see the design doc's ratified matrix)            │
+│     — the variant picks how the account is derived from the raw key      │
 │                                                                          │
 │  This ensures:                                                           │
 │  • Only the registered provider could have signed                        │

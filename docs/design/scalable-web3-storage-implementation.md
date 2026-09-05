@@ -607,10 +607,8 @@ Sr25519/Ed25519, 33 bytes for compressed Ecdsa/Eth). All on-chain signature
 verification uses `sp_runtime::MultiSignature` against this key, so a single
 provider can use any of the supported schemes.
 
-The ratified matrix
-([#274](https://github.com/paritytech/web3-storage/issues/274)) — the
-signature's variant picks how the expected signer account is derived from the
-registered key (via `MultiSigner::into_account()`):
+The ratified matrix — the signature's variant picks how the expected signer
+account is derived from the registered key (via `MultiSigner::into_account()`):
 
 | Scheme    | Registered key      | Message digest | Expected signer account                                              |
 | --------- | ------------------- | -------------- | -------------------------------------------------------------------- |
@@ -623,11 +621,7 @@ Registration accepts only 32- and 33-byte keys. The `BoundedVec` keeps 64
 bytes of capacity reserved for future schemes, but no supported scheme
 verifies against a longer key, so any other length is rejected at
 registration (`InvalidPublicKey`) instead of registering a provider that
-could never pass verification. The tracked candidate for a future scheme is
-BLS-aggregated checkpoint co-signing
-([#338](https://github.com/paritytech/web3-storage/issues/338)); note that
-`sp-core`'s current BLS381 public-key encoding is 144 bytes, so adopting it
-would widen this bound.
+could never pass verification.
 
 The provider node signs with any of the four schemes (`--key-scheme`,
 default sr25519) and emits every signature as SCALE-encoded `MultiSignature`

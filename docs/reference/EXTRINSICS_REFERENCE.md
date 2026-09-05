@@ -10,10 +10,10 @@ Register a new storage provider.
 
 **Parameters:**
 - `multiaddr`: `BoundedVec<u8, T::MaxMultiaddrLength>` - network address (e.g. `/ip4/127.0.0.1/tcp/3333`)
-- `publicKey`: `BoundedVec<u8, ConstU32<64>>` - raw public key: 32 bytes for Sr25519/Ed25519 or 33 bytes for compressed Ecdsa/Eth. Any other length fails with `InvalidPublicKey` (the 64-byte capacity is reserved for future schemes). The signature scheme is chosen per submitted signature — the provider node's `--key-scheme` must produce signatures matching this key.
+- `publicKey`: `BoundedVec<u8, ConstU32<64>>` - raw public key: 32 bytes (Sr25519/Ed25519) or 33 (compressed Ecdsa/Eth); any other length fails with `InvalidPublicKey`. Must match the provider node's `--key-scheme`.
 - `stake`: `BalanceOf<T>` - Amount to stake (must be ≥ `MinProviderStake`)
 
-**Example** (an sr25519 dev key — any supported scheme works the same way):
+**Example** (sr25519 dev key; any scheme works the same way):
 ```
 multiaddr: /ip4/127.0.0.1/tcp/3333
 publicKey: 0xd43593c715fdd31c61141abd04a99fd6822c8558854ccde39a5684e7a56da27d
@@ -760,7 +760,7 @@ Replica provider confirms they have synced to one of the bucket's known MMR root
 **Parameters:**
 - `bucketId`: `BucketId` (u64)
 - `roots`: `[Option<H256>; 7]` - match candidates, indexed `[current, hist_0, hist_1, hist_2, hist_3, hist_4, hist_5]`
-- `signature`: `MultiSignature` - the replica's signature over `roots.encode()`, verified against its registered `public_key` (any registered scheme: Sr25519/Ed25519/Ecdsa/Eth)
+- `signature`: `MultiSignature` - the replica's signature over `roots.encode()`, verified against its registered `public_key`
 
 **Example:**
 ```
@@ -777,9 +777,7 @@ roots: [
 signature: Sr25519(0x...)
 ```
 
-**Validation:** signature verifies over the SCALE-encoded `roots` under the provider's registered key; matched root differs from the previously synced root; at least `minSyncInterval` blocks since last sync; `syncBalance ≥ replicaSyncPrice`.
-
-Signature verification runs first, so an origin that is not a registered provider fails with `ProviderNotFound` before the bucket and agreement lookups are reached.
+**Validation:** signature verifies over the SCALE-encoded `roots` under the provider's registered key; matched root differs from the previously synced root; at least `minSyncInterval` blocks since last sync; `syncBalance ≥ replicaSyncPrice`. Verification runs before the bucket and agreement lookups, so a non-provider origin fails with `ProviderNotFound`.
 
 **Events:** `ReplicaSynced { position_matched, sync_payment }`
 **Errors:** `ProviderNotFound`, `InvalidPublicKey`, `InvalidSignature`, `BucketNotFound`, `AgreementNotFound`, `NotReplica`, `InvalidSyncRoot`, `SyncTooFrequent`, `InsufficientSyncBalance`
