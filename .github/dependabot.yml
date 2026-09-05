@@ -1,0 +1,47 @@
+version: 2
+updates:
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7
+    ignore:
+      - dependency-name: "*"
+
+  # Single pnpm workspace: one lockfile at the repo root covers every member
+  # (user-interfaces/*, packages/*, examples/papi). Dependabot must target the
+  # root `/` so it regenerates that one pnpm-lock.yaml in the same PR; pointing
+  # at subdirectories bumps their package.json but leaves the root lockfile
+  # stale, which breaks CI's `pnpm install --frozen-lockfile`.
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7
+    groups:
+      npm-deps:
+        applies-to: version-updates
+        patterns:
+          - "*"
+      npm-security:
+        applies-to: security-updates
+        patterns:
+          - "*"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7
+    groups:
+      github-actions-deps:
+        applies-to: version-updates
+        patterns:
+          - "*"
+      github-actions-security:
+        applies-to: security-updates
+        patterns:
+          - "*"

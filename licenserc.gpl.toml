@@ -1,0 +1,34 @@
+# License header config for runtime/node crates: the parachain runtimes, the
+# off-chain provider node binary, and the reference UI apps. These are
+# deployable artifacts rather than reusable libraries, so they carry the
+# copyleft GPL-3.0-only license.
+[header]
+text = "SPDX-License-Identifier: GPL-3.0-only"
+keywords = ["SPDX-License-Identifier"]
+
+[files]
+includes = [
+	"provider-node/**/*.rs",
+	"runtimes/**/*.rs",
+	"user-interfaces/drive-ui/**/*.ts",
+	"user-interfaces/drive-ui/**/*.tsx",
+	"user-interfaces/photos/scripts/**/*.ts",
+	"user-interfaces/provider/**/*.ts",
+	"user-interfaces/provider/**/*.tsx",
+	"user-interfaces/s3-ui/**/*.ts",
+	"user-interfaces/s3-ui/**/*.tsx",
+	"user-interfaces/shared/**/*.ts",
+	"user-interfaces/shared/**/*.tsx",
+]
+excludes = [
+	"**/*.bin.ts",
+	"**/weights.rs",
+	"runtimes/*/src/weights/**",
+	# This generated build script carries an upstream Apache notice in addition
+	# to this project's GPL SPDX identifier.
+	"runtimes/web3-storage-paseo/build.rs",
+]
+
+[[rules]]
+extensions = ["ts", "tsx"]
+style_out = "doubleslash"

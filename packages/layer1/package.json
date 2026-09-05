@@ -1,0 +1,26 @@
+{
+  "name": "@web3-storage/layer1",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Layer-1 storage interfaces (#123 layout): FileSystemClient (drives) and S3Client (buckets/objects) over the layer-0 chain binding + provider HTTP. Depends on @web3-storage/layer0 and @web3-storage/core only.",
+  "type": "module",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./fs": "./src/fs/index.ts",
+    "./s3": "./src/s3/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test:unit": "vitest run"
+  },
+  "dependencies": {
+    "@web3-storage/core": "workspace:*",
+    "@web3-storage/layer0": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^26.0.1",
+    "typescript": "~7.0.2",
+    "vitest": "^4.1.9"
+  }
+}

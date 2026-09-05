@@ -1,0 +1,82 @@
+name: Wait for parachain blocks
+description: >-
+  Poll the parachain RPC best head until it reaches a minimum block height.
+  Uses the best head (chain_getHeader with no params), which is immune to
+  finality lag — readiness only needs the chain to be producing blocks, not
+  finalizing them. Optionally asserts a minimum block-production rate.
+
+inputs:
+  rpc-url:
+    description: Parachain HTTP RPC endpoint to poll.
+    required: false
+    default: http://127.0.0.1:2222
+  min-block:
+    description: >-
+      Minimum best-block height to wait for. Default 1 is a pure liveness gate
+      ("the chain is producing blocks"). Mortal-tx era safety is left to the
+      tests themselves (e.g. waitForMinBlock), so the gate stays minimal.
+    required: false
+    default: "1"
+  attempts:
+    description: Number of poll attempts, 5s apart (180 ≈ 15min).
+    required: false
+    default: "180"
+  log-file:
+    description: Log to cat on timeout (for post-mortem); skipped if absent.
+    required: false
+    default: /tmp/zombienet.log
+  min-blocks-per-minute:
+    description: If > 0, measure the block-production rate after the liveness gate and fail below this rate. 0 disables.
+    required: false
+    default: "0"
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        MIN_BLOCK: ${{ inputs.min-block }}
+        ATTEMPTS: ${{ inputs.attempts }}
+        RPC_URL: ${{ inputs.rpc-url }}
+        LOG_FILE: ${{ inputs.log-file }}
+        MIN_BLOCKS_PER_MINUTE: ${{ inputs.min-blocks-per-minute }}
+      run: |
+        # Prints the best block number, or nothing while the RPC is unreachable.
+        # Always exits 0: the step runs under `set -e`, so a non-zero return from
+        # a failed poll would silently kill the whole loop.
+        best_block() {
+          local header hex
+          header=$(curl -s -H "Content-Type: application/json" \
+            -d '{"id":1,"jsonrpc":"2.0","method":"chain_getHeader","params":[]}' \
+            "$RPC_URL" 2>/dev/null) || true
+          hex=$(echo "$header" | jq -r '.result.number // empty' 2>/dev/null) || true
+          if [ -n "$hex" ]; then echo $((hex)); fi
+        }
+
+        echo "Waiting for parachain to produce blocks (min #${MIN_BLOCK})..."
+        for i in $(seq 1 "$ATTEMPTS"); do
+          BLOCK_NUM=$(best_block)
+          if [ -n "$BLOCK_NUM" ] && [ "$BLOCK_NUM" -ge "$MIN_BLOCK" ]; then
+            echo "Parachain best block: #$BLOCK_NUM (attempt $i)"
+            break
+          fi
+          if [ "$i" -eq "$ATTEMPTS" ]; then
+            echo "TIMEOUT: parachain did not produce block #${MIN_BLOCK}"
+            cat "$LOG_FILE" 2>/dev/null || true
+            exit 1
+          fi
+          sleep 5
+        done
+
+        if [ "$MIN_BLOCKS_PER_MINUTE" -gt 0 ]; then
+          WINDOW=30
+          sleep "$WINDOW"
+          END_BLOCK=$(best_block)
+          RATE=$(((${END_BLOCK:-0} - BLOCK_NUM) * 60 / WINDOW))
+          echo "Block rate: $RATE/min (>= ${MIN_BLOCKS_PER_MINUTE}/min required)"
+          if [ "$RATE" -lt "$MIN_BLOCKS_PER_MINUTE" ]; then
+            echo "FAIL: block production too slow."
+            cat "$LOG_FILE" 2>/dev/null || true
+            exit 1
+          fi
+        fi

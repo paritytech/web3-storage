@@ -1,0 +1,151 @@
+name: UI Checks
+
+# No top-level `paths:` filter so the `UI Checks` gate always reports and is
+# safe to require in branch protection. The expensive jobs skip (via `changes`)
+# when the UI is untouched, instead of the whole workflow being filtered out.
+on:
+  push:
+    branches: [main, dev]
+  # No base-branch filter: stacked PRs (base = another feature branch)
+  # must get the same CI as dev-targeted PRs.
+  pull_request:
+  merge_group:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  changes:
+    name: Detect UI changes
+    runs-on: ubuntu-latest
+    outputs:
+      ui: ${{ github.event_name == 'workflow_dispatch' || github.event_name == 'merge_group' || steps.filter.outputs.ui == 'true' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+        with:
+          persist-credentials: false
+      # paths-filter has no diff base on merge_group; run the full suite there.
+      - if: github.event_name != 'merge_group'
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v3
+        id: filter
+        with:
+          filters: |
+            ui:
+              - 'user-interfaces/**'
+              - 'packages/**'
+              - 'examples/papi/**'
+              - 'pnpm-lock.yaml'
+              - 'pnpm-workspace.yaml'
+              - 'package.json'
+              - '.github/actions/setup-pnpm/**'
+              - '.github/workflows/ui-checks.yml'
+
+  unit-tests:
+    name: Unit tests (Vitest)
+    needs: changes
+    if: needs.changes.outputs.ui == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+        with:
+          persist-credentials: false
+
+      - name: Load common environment variables via env file
+        run: cat .github/env >> $GITHUB_ENV
+
+      - name: Setup pnpm workspace
+        uses: ./.github/actions/setup-pnpm
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Typecheck sdk packages + examples
+        run: pnpm run typecheck:packages
+
+      - name: Run unit tests
+        run: pnpm run test:unit
+
+  build:
+    name: Typecheck + build (${{ matrix.ui }})
+    needs: changes
+    if: needs.changes.outputs.ui == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - ui: drive-ui
+            filter: "@web3-storage/drive-ui"
+          - ui: s3-ui
+            filter: "@web3-storage/s3-ui"
+          - ui: provider
+            filter: provider-dashboard
+          - ui: photos
+            filter: "@web3-storage/photos"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+        with:
+          persist-credentials: false
+
+      - name: Load common environment variables via env file
+        run: cat .github/env >> $GITHUB_ENV
+
+      - name: Setup pnpm workspace
+        uses: ./.github/actions/setup-pnpm
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Build
+        run: pnpm --filter ${{ matrix.filter }} run build
+
+  # The landing page is a static HTML file (not a workspace package), so the
+  # matrix `build` above never touches it. Run its production substitution here
+  # so problems — e.g. inject-config.mjs failing to extract a sentinel — are
+  # caught in UI Checks instead of only at deploy time.
+  landing:
+    name: Landing page build
+    needs: changes
+    if: needs.changes.outputs.ui == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+        with:
+          persist-credentials: false
+
+      - name: Load common environment variables via env file
+        run: cat .github/env >> $GITHUB_ENV
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Build landing page (substitute config)
+        working-directory: user-interfaces
+        run: |
+          # inject-config.mjs exits non-zero if it can't resolve a sentinel.
+          node landing/inject-config.mjs landing/index.html /tmp/landing.html
+          # Belt-and-suspenders: fail if any sentinel survived into the output.
+          if grep -qE '__(NETWORKS_JSON|DEFAULT_NETWORK_ID|VALID_IDS_JSON)__' /tmp/landing.html; then
+            echo "ERROR: landing page still contains unsubstituted placeholders:"
+            grep -nE '__(NETWORKS_JSON|DEFAULT_NETWORK_ID|VALID_IDS_JSON)__' /tmp/landing.html
+            exit 1
+          fi
+          echo "Landing page built OK"
+
+  # Aggregate gate — the stable check to require in branch protection. Stays
+  # green when the UI is untouched (skips aren't failures), red on real failure.
+  ui-checks:
+    name: UI Checks
+    needs: [changes, unit-tests, build, landing]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Decide outcome
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: |
+          echo "UI checks failed or were cancelled"
+          exit 1

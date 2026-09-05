@@ -1,378 +1,343 @@
 # Scalable Web3 Storage
 
+> [!WARNING]
+> This is a prototype/proof-of-concept. It has **not been audited**, is under active development, and is not production-ready. Use at your own risk.
+
 A decentralized storage system built on Substrate with game-theoretic guarantees. Storage providers lock stake and face slashing for data loss, while the chain acts as a credible threat rather than the hot path.
 
-## Overview
+[![License: GPL-3.0-only](https://img.shields.io/badge/License-GPL--3.0--only-blue.svg)](LICENSE-GPL3)
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE-APACHE2)
+[![Security: unaudited](https://img.shields.io/badge/security-unaudited-red.svg)](https://github.com/paritytech/web3-storage/security)
+[![Status: prototype](https://img.shields.io/badge/status-experimental-yellow.svg)](#)
+[![Substrate](https://img.shields.io/badge/built%20with-Substrate-green.svg)](#)
 
-This system provides bucket-based storage where:
-- **Providers** register with stake and offer storage services
-- **Clients** create buckets to organize their data
+## What It Does
+
+- **Storage providers** register with stake and offer storage services
+- **Clients** create buckets and upload data off-chain
 - **Storage agreements** bind providers to store data for agreed durations
 - **Challenges** enforce accountability through slashing
 
-Normal operations (reads, writes, storage) happen off-chain between clients and providers. The chain is only touched for setup, checkpoints, and disputes.
+Normal operations (reads, writes) happen off-chain. The chain is only touched for setup, checkpoints, and disputes.
 
-## Design Documents
+## Quick Start
 
-- [Scalable Web3 Storage](./docs/scalable-web3-storage.md) - High-level design and rationale
-- [Implementation Details](./docs/scalable-web3-storage-implementation.md) - On-chain and off-chain interfaces
+Get running in 5 minutes:
+
+```bash
+# Install just (command runner)
+cargo install just
+
+# One-time setup: downloads binaries + builds everything
+just setup
+
+# Start blockchain network + provider node
+just start-chain     # Terminal 1
+just start-provider  # Terminal 2
+
+# Terminal 2:
+# Setup (register provider, create bucket, establish agreement)
+# Upload test data + challenge
+just demo
+```
+
+**That's it!** Your local network is running with a provider ready to accept data.
+
+### What Just Did
+
+- Downloaded: `polkadot`, `polkadot-omni-node`, `zombienet`, `chain-spec-builder`
+- Built: runtime, pallet, provider node, client SDK
+- Started: Relay chain (2 validators) + Parachain (1 collator) + Provider node
+
+### Next Steps
+
+1. **`just demo`** drives the full Layer-0 happy path against an already-running
+   chain + provider: registers a provider, creates a bucket, opens an agreement,
+   uploads data, fires two challenges, and asserts the provider defends both.
+   This is also what CI runs. It does **not** start the chain or provider for
+   you — keep `just start-chain` and `just start-provider` running in two other
+   terminals first.
+
+2. **Inspect chain health**: `bash scripts/check-chain.sh` (relay + parachain
+   status), `just health` (provider node health), `just stats` (provider stats).
+
+3. **Build something on top**: see [Client Documentation](./clients/storage/README.md)
+   for the Layer-0 SDK, or [`FILE_SYSTEM_QUICKSTART.md`](./docs/getting-started/FILE_SYSTEM_QUICKSTART.md)
+   for the Layer-1 file-system interface.
+
+## File System Interface (Layer 1)
+
+> [!NOTE]
+> **Layer 1 design is under triage.** Its design/implementation notes have been
+> split into a draft — [`docs/drafts/L1_design_implementation.md`](./docs/drafts/L1_design_implementation.md) —
+> pending a decision on the layered architecture (what belongs on-chain vs.
+> provider-only). See [#51](https://github.com/paritytech/web3-storage/issues/51).
+
+The Layer 1 File System Interface provides a familiar file/folder abstraction
+over Layer 0's raw blob storage.
+
+### Quick Start with File System
+
+```bash
+# In separate terminals:
+just start-chain            # Terminal 1: relay + parachain
+just start-provider         # Terminal 2: provider node
+
+# Then run the file-system integration example:
+just fs-demo-ci             # Terminal 3
+```
+
+**What you get:**
+- ✅ Familiar file/folder interface
+- ✅ Automatic provider selection
+- ✅ Built-in blockchain integration
+
+### File System Commands
+
+```bash
+just fs-test-all            # Run all unit tests across primitives, pallet, client
+just fs-demo-ci             # Integration example against a running chain + provider
+```
+
+**Complete guide**: [FILE_SYSTEM_QUICKSTART.md](./docs/getting-started/FILE_SYSTEM_QUICKSTART.md)
+
+### When to Use Layer 0 vs Layer 1
+
+**Use Layer 1 (File System)** if you:
+- Want a familiar file/folder interface
+- Need automatic setup and provider selection
+- Are building a general-purpose file storage app
+- Prefer simplicity over low-level control
+
+**Use Layer 0 (Direct Storage)** if you:
+- Need full control over storage operations
+- Are building custom storage logic
+- Want to implement your own data structures
+- Need direct access to buckets and agreements
+
+## Common Commands
+
+```bash
+# General
+just --list                  # Show all available commands
+just build                   # Build the project
+just setup                   # One-time: download binaries + build everything
+
+# Infrastructure
+just start-chain             # Start relay + parachain
+just start-provider          # Start provider node
+just health                  # Check provider health
+just stats                   # Provider storage stats
+
+# End-to-end demos (require chain + provider running)
+just demo                    # Layer-0 PAPI demo: setup, upload, 2 challenges
+just fs-demo-ci              # Layer-1 file-system integration example
+just s3-demo-ci              # Layer-1 S3-compatible integration example
+
+# Tests
+cargo test --workspace       # All unit + integration tests
+just fs-test-all             # File-system layer only
+just s3-test-all             # S3 layer only
+```
+
+## Documentation
+
+📚 **[Full Documentation](./docs/README.md)** - Complete documentation index
+
+### Quick Links
+
+| Document | Description |
+|----------|-------------|
+| **[Layer 1 Quick Start](./docs/getting-started/LAYER1_QUICKSTART.md)** | **Three-terminal setup + SDK examples (recommended)** |
+| [File System Quick Start](./docs/getting-started/FILE_SYSTEM_QUICKSTART.md) | File-system-only quickstart |
+| [File System Docs](./docs/filesystems/README.md) | Complete Layer 1 documentation |
+| [Extrinsics Reference](./docs/reference/EXTRINSICS_REFERENCE.md) | Complete blockchain API |
+| [Payment Calculator](./docs/reference/PAYMENT_CALCULATOR.md) | Calculate agreement costs |
+| [Architecture Design](./docs/design/scalable-web3-storage.md) | System design, economics, common concerns |
+| [Implementation Details](./docs/design/scalable-web3-storage-implementation.md) | Technical specs |
+| [Photos dApp](./user-interfaces/photos/README.md) | Example photo-storage dApp — Layer 1 + a custom contract ([design](./user-interfaces/photos/DESIGN.md)) |
 
 ## Architecture
 
+Two types of nodes work together:
+
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                           ON-CHAIN                                  │
-│                                                                     │
-│  ┌───────────────────────────────────────────────────────────────┐  │
-│  │                    pallet-storage-provider                    │  │
-│  │  ├── Providers: registration, stake, settings                 │  │
-│  │  ├── Buckets: membership, snapshots, agreements               │  │
-│  │  ├── StorageAgreements: primary & replica contracts           │  │
-│  │  └── Challenges: dispute resolution, slashing                 │  │
-│  └───────────────────────────────────────────────────────────────┘  │
-│                                                                     │
-│    Chain touched for: bucket creation, agreement setup,             │
-│    checkpoints (infrequent), disputes (rare)                        │
-│                                                                     │
-└─────────────────────────────────────────────────────────────────────┘
-                                    ▲
-                                    │ rare interactions
-                                    │
-┌─────────────────────────────────────────────────────────────────────┐
-│                          OFF-CHAIN                                  │
-│                                                                     │
-│   ┌─────────────┐    writes     ┌─────────────────────────────┐    │
-│   │   Client    │ ────────────► │    Provider Node            │    │
-│   │  (storage-  │               │  (storage-provider-node)    │    │
-│   │   client)   │ ◄──────────── │                             │    │
-│   └─────────────┘    reads      │  • HTTP API                 │    │
-│                                 │  • Content-addressed store  │    │
-│                                 │  • MMR commitments          │    │
-│                                 └─────────────────────────────┘    │
-│                                                                     │
-└─────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────┐     ┌──────────────────────────┐
+│   BLOCKCHAIN LAYER       │     │    STORAGE LAYER         │
+│                          │     │                          │
+│  Parachain Node          │────▶│  Provider Node           │
+│  (Polkadot Omni Node)    │ RPC │  (HTTP Server)           │
+│                          │     │                          │
+│  • Stake & registration  │     │  • Data storage          │
+│  • Agreements            │     │  • MMR commitments       │
+│  • Checkpoints           │     │  • Chunk serving         │
+│  • Challenges/slashing   │     │  • Replica sync          │
+└──────────────────────────┘     └──────────────────────────┘
+      Infrequent                        Hot path
+   (setup, disputes)               (all data operations)
 ```
+
+### Two Nodes, Two Purposes
+
+| Node | Purpose | Run by |
+|------|---------|--------|
+| **Parachain Node** (Omni Node + Runtime) | Blockchain consensus, state transitions, finality | Collators (parachain validators) |
+| **Provider Node** (HTTP Server) | Store actual data, serve clients, respond to challenges | Storage providers |
+
+**Storage providers run both nodes:**
+- Parachain node: Participates in blockchain consensus
+- Provider node: Handles actual data storage/serving
 
 ## Project Structure
 
 ```
-scalable-web3-storage/
-├── primitives/           # Shared types (BucketId, Role, MMR types, etc.)
-├── pallet/               # Substrate pallet (on-chain logic)
-├── provider-node/        # Off-chain provider node (HTTP server)
-├── client/               # Client library for storage operations
-└── docs/                 # Design documents
+web3-storage/
+├── crates/
+│   ├── pallets/            # FRAME pallets: storage-provider, drive-registry, s3-registry
+│   │                       #   each with a precompiles/ subfolder (pallet_revive precompiles)
+│   ├── primitives/         # Shared types: storage, file-system, s3
+│   ├── providers/          # Provider-node library crates
+│   └── storage-subxt/      # Static subxt runtime bindings
+├── runtimes/               # Parachain runtimes: web3-storage-local, web3-storage-paseo
+├── provider-node/          # Off-chain HTTP storage server
+├── clients/                # Rust client SDKs: storage (Layer 0), file-system, s3 (Layer 1)
+├── packages/               # JS/TS workspace: @web3-storage/{core,layer0,layer1,papi,sdk}
+├── user-interfaces/        # Web apps: landing, drive-ui, provider, s3-ui, photos, shared
+├── examples/               # contracts/ (Solidity dApps), papi/ (end-to-end PAPI demos)
+├── scripts/                # Helper scripts (chain spec, health checks, smoke test)
+├── chain-specs/            # Chain specification files
+├── zombienet/              # Local relay+parachain network configs (zombienet-parachain-local.toml, storage-paseo-local.toml)
+└── docs/                   # getting-started, reference, design (review-gated), drafts, filesystems
 ```
 
-## Building
+## Development
 
 ### Prerequisites
 
-- Rust 1.74 or later
+- Rust toolchain: 
+   ```toml
+   channel = "1.93.0"
+   targets = ["wasm32v1-none"]
+   components = ["clippy", "rust-src", "rustfmt"]
+   ```
 - Cargo
 
-### Build all crates
+### Build
 
 ```bash
+# Build everything
 cargo build --release
+
+# Or use just
+just build
 ```
 
-### Build individual crates
+### Testing
 
 ```bash
-cargo build -p storage-primitives
-cargo build -p pallet-storage-provider
-cargo build -p storage-provider-node
-cargo build -p storage-client
-```
-
-## Testing
-
-### Run all tests
-
-```bash
+# Unit tests
 cargo test
+
+# Integration tests with running system
+just start-chain            # Terminal 1
+just start-provider         # Terminal 2
+just demo  # Terminal 3
 ```
 
-### Run tests for specific crates
+### Provider Node Configuration
 
-```bash
-# Pallet unit tests
-cargo test -p pallet-storage-provider
-
-# Provider node tests (unit + integration)
-cargo test -p storage-provider-node
-
-# Client tests (unit + integration)
-cargo test -p storage-client
-
-# Primitives tests
-cargo test -p storage-primitives
-```
-
-### Run integration tests only
-
-```bash
-cargo test --test api_integration -p storage-provider-node
-cargo test --test client_integration -p storage-client
-```
-
-## Running the Provider Node
-
-### Start a provider node
-
-```bash
-# Default configuration (port 3000)
-cargo run -p storage-provider-node
-
-# Custom port and provider ID
-BIND_ADDR=0.0.0.0:8080 PROVIDER_ID=0xYourProviderAddress cargo run -p storage-provider-node
-```
-
-### Environment variables
+The provider node uses environment variables for configuration:
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `BIND_ADDR` | Address to bind the HTTP server | `0.0.0.0:3000` |
-| `PROVIDER_ID` | Provider's on-chain account ID | `0x0000...` |
-| `RUST_LOG` | Log level | `storage_provider_node=debug` |
+| `PROVIDER_ID` | Provider's on-chain account ID (SS58 format) | **Required** |
+| `CHAIN_RPC` | Parachain WebSocket RPC endpoint | `ws://127.0.0.1:2222` |
+| `BIND_ADDR` | HTTP server bind address | `0.0.0.0:3333` |
+| `DATA_DIR` | Directory for storing data | `./data` |
+| `RUST_LOG` | Log level configuration | `storage_provider_node=debug` |
 
-### Health check
-
-```bash
-curl http://localhost:3000/health
-# {"status":"healthy","version":"0.1.0"}
-```
-
-## Client Usage
-
-### Adding the client library
-
-```toml
-[dependencies]
-storage-client = { path = "path/to/scalable-web3-storage/client" }
-```
-
-### Basic usage
+## Example: Basic Upload Flow
 
 ```rust
-use storage_client::{StorageClient, ChunkingStrategy};
-use sp_core::H256;
+use storage_client::{Signer, StorageUserClient};
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Connect to a provider node
-    let client = StorageClient::new("http://localhost:3000");
+// Connect to provider
+let client = StorageUserClient::new(config, Signer::from_seed("//Alice")?)?;
 
-    // Check provider health
-    let health = client.health().await?;
-    println!("Provider status: {}", health.status);
+// Upload data (off-chain)
+let data = b"Hello, decentralized storage!";
+let result = client.upload(bucket_id, data).await?;
 
-    // Upload data to a bucket
-    let bucket_id = 1;
-    let data = b"Hello, decentralized world!";
-
-    let data_root = client
-        .upload(bucket_id, data, ChunkingStrategy::default())
-        .await?;
-
-    println!("Data root: {:?}", data_root);
-
-    // Commit the data to the bucket's MMR
-    let commit = client.commit(bucket_id, vec![data_root]).await?;
-    println!("MMR root: {}", commit.mmr_root);
-    println!("Leaf index: {}", commit.leaf_indices[0]);
-
-    // Read data back
-    let read_data = client
-        .read(&data_root, 0, data.len() as u64)
-        .await?;
-
-    assert_eq!(read_data, data);
-    println!("Data verified!");
-
-    Ok(())
-}
+// Verify upload
+let downloaded = client.download(bucket_id, result.seq).await?;
+assert_eq!(data, downloaded);
 ```
 
-### Upload large files
+See [Client README](./clients/storage/README.md) for complete examples.
 
-```rust
-use storage_client::{StorageClient, ChunkingStrategy};
-use std::fs;
+## Key Features
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let client = StorageClient::new("http://localhost:3000");
-    let bucket_id = 1;
+- **Off-chain storage**: All data operations happen off-chain via HTTP
+- **On-chain accountability**: Stake-based provider registration with slashing
+- **Content-addressed**: All data is blake2-256 content-addressed
+- **MMR commitments**: Merkle Mountain Range for efficient proofs
+- **Challenge mechanism**: Anyone can challenge providers to prove data possession
+- **Replica support**: Primary providers can sync to replica providers
+- **Flexible agreements**: Customizable duration, capacity, pricing per provider
 
-    // Read a file
-    let file_data = fs::read("my_file.pdf")?;
+## Workflow
 
-    // Upload with default 256 KiB chunks
-    let data_root = client
-        .upload(bucket_id, &file_data, ChunkingStrategy::default())
-        .await?;
-
-    // Or specify custom chunk size
-    let data_root = client
-        .upload(bucket_id, &file_data, ChunkingStrategy::Fixed(1024 * 1024)) // 1 MiB chunks
-        .await?;
-
-    // Commit
-    let commit = client.commit(bucket_id, vec![data_root]).await?;
-
-    println!("File stored at leaf index: {}", commit.leaf_indices[0]);
-
-    Ok(())
-}
-```
-
-### Check data existence
-
-```rust
-let hashes = vec![data_root1, data_root2, data_root3];
-let result = client.check_exists(bucket_id, hashes).await?;
-
-println!("Existing: {:?}", result.exists);
-println!("Missing: {:?}", result.missing);
-```
-
-### Get bucket commitment
-
-```rust
-let commitment = client.get_commitment(bucket_id).await?;
-
-println!("Bucket ID: {}", commitment.bucket_id);
-println!("MMR root: {}", commitment.mmr_root);
-println!("Start seq: {}", commitment.start_seq);
-println!("Leaf count: {}", commitment.leaf_count);
-```
-
-## Provider Node API
-
-### Endpoints
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/health` | Health check |
-| `GET` | `/info` | Provider information |
-| `PUT` | `/node` | Upload a node (chunk or internal) |
-| `GET` | `/node?hash=0x...` | Download a node |
-| `POST` | `/exists` | Check which nodes exist |
-| `POST` | `/commit` | Commit data roots to MMR |
-| `GET` | `/read?data_root=...&offset=...&length=...` | Read chunks |
-| `GET` | `/commitment?bucket_id=...` | Get current commitment |
-| `GET` | `/mmr_proof?bucket_id=...&leaf_index=...` | Get MMR proof |
-| `GET` | `/chunk_proof?data_root=...&chunk_index=...` | Get chunk proof |
-| `GET` | `/buckets` | List all buckets |
-| `POST` | `/delete` | Delete data (admin only) |
-| `GET` | `/mmr_peaks?bucket_id=...` | Get MMR peaks (for replica sync) |
-| `POST` | `/fetch_nodes` | Fetch multiple nodes (for replica sync) |
-
-### Example: Upload and commit via curl
-
-```bash
-# 1. Upload a chunk
-DATA=$(echo -n "Hello, World!" | base64)
-HASH=$(echo -n "Hello, World!" | b2sum -l 256 | cut -d' ' -f1)
-
-curl -X PUT http://localhost:3000/node \
-  -H "Content-Type: application/json" \
-  -d "{
-    \"bucket_id\": 1,
-    \"hash\": \"0x$HASH\",
-    \"data\": \"$DATA\",
-    \"children\": null
-  }"
-
-# 2. Commit to MMR
-curl -X POST http://localhost:3000/commit \
-  -H "Content-Type: application/json" \
-  -d "{
-    \"bucket_id\": 1,
-    \"data_roots\": [\"0x$HASH\"]
-  }"
-
-# 3. Get commitment
-curl "http://localhost:3000/commitment?bucket_id=1"
-```
-
-## On-Chain Integration
-
-### Pallet configuration
-
-```rust
-impl pallet_storage_provider::Config for Runtime {
-    type RuntimeEvent = RuntimeEvent;
-    type Currency = Balances;
-    type MaxMultiaddrLength = ConstU32<128>;
-    type MaxMembers = ConstU32<100>;
-    type MaxPrimaryProviders = ConstU32<5>;
-    type MinProviderStake = ConstU64<1_000_000_000_000>; // 1 DOT
-    type MaxChunkSize = ConstU32<262144>; // 256 KiB
-    type ChallengeTimeout = ConstU64<14400>; // ~48 hours at 12s blocks
-    type SettlementTimeout = ConstU64<7200>; // ~24 hours
-    type RequestTimeout = ConstU64<1800>; // ~6 hours
-}
-```
-
-### Key extrinsics
-
-```rust
-// Provider registration
-StorageProvider::register_provider(origin, multiaddr, stake);
-StorageProvider::add_stake(origin, amount);
-StorageProvider::update_provider_settings(origin, settings);
-
-// Bucket management
-StorageProvider::create_bucket(origin, min_providers);
-StorageProvider::set_member(origin, bucket_id, member, role);
-StorageProvider::freeze_bucket(origin, bucket_id);
-
-// Storage agreements
-StorageProvider::request_primary_agreement(origin, bucket_id, provider, max_bytes, duration, max_payment);
-StorageProvider::request_agreement(origin, bucket_id, provider, max_bytes, duration, max_payment, replica_params);
-StorageProvider::accept_agreement(origin, bucket_id);
-StorageProvider::end_agreement(origin, bucket_id, provider, action);
-
-// Checkpoints
-StorageProvider::checkpoint(origin, bucket_id, mmr_root, start_seq, leaf_count, signatures);
-
-// Challenges
-StorageProvider::challenge_checkpoint(origin, bucket_id, provider, leaf_index, chunk_index);
-StorageProvider::respond_to_challenge(origin, challenge_id, response);
-```
-
-## Typical Workflow
-
-1. **Provider setup** (on-chain)
+1. **Provider Setup (on-chain)**
    - Provider registers with stake
    - Provider configures settings (pricing, duration limits)
 
-2. **Bucket creation** (on-chain)
+2. **Bucket Creation (on-chain)**
    - Client creates bucket
    - Client adds members (writers, readers)
    - Client requests storage agreement with provider
    - Provider accepts agreement
 
-3. **Data storage** (off-chain)
-   - Client uploads chunks to provider
-   - Client commits data roots to MMR
+3. **Data Storage (off-chain)**
+   - Client uploads chunks to provider via HTTP
+   - Provider stores and builds MMR commitment
    - Provider signs commitment
 
-4. **Checkpoint** (on-chain)
+4. **Checkpoint (on-chain)**
    - Client submits checkpoint with provider signatures
    - Providers become liable for committed data
 
-5. **Verification** (off-chain)
+5. **Verification (off-chain)**
    - Client spot-checks random chunks periodically
    - Client verifies data integrity via hashes
 
-6. **Dispute** (on-chain, rare)
+6. **Dispute (on-chain, rare)**
    - If provider fails to serve data, client challenges
    - Provider must respond with proof or be slashed
 
+## Deployment
+
+For local dev, follow [Layer 1 Quick Start](./docs/getting-started/LAYER1_QUICKSTART.md). For testnet/production, no canonical guide exists yet — see `chain-specs/` and `zombienet/zombienet-parachain-local.toml` for current local network shape.
+
+## Contributing
+
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for setup instructions, PR process,
+code style, and licensing details.
+
+## Security
+
+The security policy for this project is governed by the
+[paritytech organization-level security policy](https://github.com/paritytech/.github/blob/master/SECURITY.md).
+If you discover a vulnerability, please follow the responsible disclosure process described there.
+
 ## License
 
-Apache-2.0
+This project is dual-licensed:
+
+- **Runtime, provider node, and user-interface applications** are licensed under
+  [GPL-3.0-only](LICENSE-GPL3).
+- **Pallets, primitives, client SDKs, and shared libraries** are licensed under
+  [Apache-2.0](LICENSE-APACHE2).
+
+Each crate and package declares its applicable license in its `Cargo.toml` or
+`package.json`. See the individual LICENSE files at the repository root for the
+full license texts.

@@ -1,0 +1,339 @@
+name: Basic checks
+
+on:
+  push:
+    branches: [main, dev]
+  # No base-branch filter: stacked PRs (base = another feature branch)
+  # must get the same CI as dev-targeted PRs.
+  pull_request:
+  merge_group:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  set-image:
+    uses: ./.github/workflows/set-image.yml
+
+  # Skip expensive jobs when only docs/markdown/non-Rust files changed.
+  # The aggregate gate (basic-checks) always reports, so branch protection
+  # stays safe even when jobs are skipped.
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    outputs:
+      rust: ${{ github.event_name == 'workflow_dispatch' || github.event_name == 'merge_group' || steps.filter.outputs.rust == 'true' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # paths-filter has no diff base on merge_group; run the full suite there.
+      - if: github.event_name != 'merge_group'
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v3
+        id: filter
+        with:
+          filters: |
+            rust:
+              - '**/*.rs'
+              - '**/Cargo.toml'
+              - 'Cargo.lock'
+              - '.config/**'
+              - 'rust-toolchain.toml'
+              - '.github/workflows/check.yml'
+              - '.github/workflows/set-image.yml'
+              - '.github/env'
+
+  check-fmt:
+    runs-on: parity-default
+    timeout-minutes: 20
+    needs: [set-image, changes]
+    if: needs.changes.outputs.rust == 'true'
+    container:
+      image: ${{ needs.set-image.outputs.CI_IMAGE }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Cargo fmt
+        run: |
+          rustup component add --toolchain nightly-x86_64-unknown-linux-gnu rustfmt
+          cargo +nightly fmt --all -- --check
+
+      - name: Check TOML format
+        run: |
+          cargo install taplo-cli && taplo --version
+          if ! taplo format --check --config .config/taplo.toml; then
+            echo "Please run 'taplo format --config .config/taplo.toml' to fix any TOML formatting issues"
+            exit 1
+          fi
+          cargo install --locked zepter && zepter --version
+          if ! zepter run check --config .config/zepter.yaml; then
+            echo "Please run 'zepter run --config .config/zepter.yaml' to fix any TOML formatting issues"
+            exit 1
+          fi
+
+      - name: Check license headers
+        run: |
+          cargo install --locked hawkeye && hawkeye --version
+          if ! hawkeye check --config licenserc.apache.toml; then
+            echo "Please run 'hawkeye format --config licenserc.apache.toml' to fix any license header issues"
+            exit 1
+          fi
+          if ! hawkeye check --config licenserc.gpl.toml; then
+            echo "Please run 'hawkeye format --config licenserc.gpl.toml' to fix any license header issues"
+            exit 1
+          fi
+
+  check-workspace-inheritance:
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check workspace dependency inheritance
+        uses: RomarQ/cargo-workspace-inheritance-check@ca470feb48c8ca8d62c25c72bc5a4cad4a1775b5 # v1.3.0
+        with:
+          promotion-failure: true
+          promotion-threshold: 1
+
+  check:
+    name: Cargo check
+    runs-on: parity-large
+    needs: [set-image, changes]
+    if: needs.changes.outputs.rust == 'true'
+    container:
+      image: ${{ needs.set-image.outputs.CI_IMAGE }}
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        with:
+          shared-key: "web3-storage-cache-check"
+          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev' }}
+
+      - name: Cargo check
+        run: |
+          cargo check --workspace --quiet
+          cargo check --workspace --features=runtime-benchmarks --quiet
+          cargo check --workspace --features=try-runtime --quiet
+          cargo check -p provider-chain --no-default-features --quiet
+
+  clippy:
+    name: Cargo clippy
+    runs-on: parity-default
+    needs: [set-image, check]
+    container:
+      image: ${{ needs.set-image.outputs.CI_IMAGE }}
+    env:
+      RUSTFLAGS: "-D warnings"
+      SKIP_WASM_BUILD: 1
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        with:
+          shared-key: "web3-storage-cache-clippy"
+          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev' }}
+
+      - name: Cargo clippy
+        run: |
+          cargo clippy --all-targets --locked --workspace --quiet
+          cargo clippy --all-targets --all-features --locked --workspace --quiet
+
+  test:
+    name: Test
+    runs-on: parity-large
+    timeout-minutes: 60
+    needs: [set-image, check]
+    container:
+      image: ${{ needs.set-image.outputs.CI_IMAGE }}
+    env:
+      SKIP_WASM_BUILD: 1
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        with:
+          shared-key: "web3-storage-cache-tests"
+          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev' }}
+
+      - name: Run tests
+        run: |
+          cargo test --workspace
+
+  benchmarks:
+    name: Check Benchmarks
+    runs-on: parity-large
+    timeout-minutes: 60
+    needs: [set-image, check]
+    container:
+      image: ${{ needs.set-image.outputs.CI_IMAGE }}
+    env:
+      SKIP_WASM_BUILD: 1
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        with:
+          shared-key: "web3-storage-cache-benchmarks"
+          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev' }}
+
+      - name: Run test pallet-storage-provider
+        run: |
+          cargo test -p pallet-storage-provider --features runtime-benchmarks
+
+      - name: Run test pallet-s3-registry
+        run: |
+          cargo test -p pallet-s3-registry --features runtime-benchmarks
+
+      - name: Run test pallet-drive-registry
+        run: |
+          cargo test -p pallet-drive-registry --features runtime-benchmarks
+
+  coverage:
+    name: Rust coverage
+    runs-on: parity-large
+    timeout-minutes: 60
+    needs: [set-image, check]
+    if: github.event_name == 'pull_request'
+    container:
+      image: ${{ needs.set-image.outputs.CI_IMAGE }}
+    env:
+      SKIP_WASM_BUILD: 1
+      CARGO_INCREMENTAL: '0'
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout PR sources (with base branch history)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        with:
+          shared-key: "web3-storage-cache-coverage"
+          save-if: false
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@37f7c5781271959fb65b6b35224e28652ff2b63d # v2.87.0
+        with:
+          tool: cargo-llvm-cov
+
+      - name: Install diff-cover
+        # Drives the patch-coverage gate. Minimum version comes from
+        # .github/env, shared with the local check in scripts/coverage.sh.
+        # The bullseye CI image ships an unmanaged pip and runs as root, so
+        # a plain system-wide install works.
+        run: |
+          source .github/env
+          python3 -m pip install --quiet "diff-cover>=${DIFF_COVER_MIN_VERSION}"
+
+      - name: Measure coverage
+        # Package list + exclusions live in scripts/coverage.sh, shared with
+        # `just coverage` so the gate is reproducible locally.
+        run: |
+          set -euo pipefail
+          scripts/coverage.sh measure
+
+          # Per-module table + collapsed per-file table -> job summary.
+          {
+            echo "## Rust coverage (per module)"
+            echo ""
+            cat coverage-modules.md
+            echo ""
+            echo "<details><summary>Per-file table</summary>"
+            echo ""
+            echo '```'
+            cat coverage-summary.txt
+            echo '```'
+            echo "</details>"
+            echo ""
+            echo "## Integration-only coverage (public-API view)"
+            echo ""
+            cat coverage-integration.md
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload coverage artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: rust-coverage
+          path: |
+            lcov.info
+            lcov-integration.info
+            target/llvm-cov-html
+          if-no-files-found: warn
+
+      - name: Patch coverage gate
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          # Minimum coverage of the lines this PR changes. Tune as the suite grows.
+          MIN_PATCH_COV: '80'
+        run: |
+          set -euo pipefail
+          # The job runs in a container as a different uid than the checkout,
+          # so git refuses to touch the repo without this.
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          # origin/<base> comes from the full-depth checkout (fetch-depth: 0);
+          # no extra fetch here — unauthenticated fetches get rate-limited.
+          echo "HEAD:               $(git log --oneline -1)"
+          echo "origin/${BASE_REF}: $(git log --oneline -1 "origin/${BASE_REF}")"
+
+          set +e
+          COMPARE_BRANCH="origin/${BASE_REF}" scripts/coverage.sh gate
+          STATUS=$?
+          set -e
+
+          {
+            echo "## Patch coverage vs \`${BASE_REF}\` (gate: ${MIN_PATCH_COV}%)"
+            echo ""
+            if [ -s patch-coverage.md ]; then cat patch-coverage.md; fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$STATUS" -ne 0 ]; then
+            echo "::error::Patch coverage below ${MIN_PATCH_COV}% — add tests for the new/changed lines listed in the job summary."
+            exit 1
+          fi
+          echo "Patch coverage meets the ${MIN_PATCH_COV}% threshold."
+
+  # Aggregate gate — the stable check to require in branch protection, instead
+  # of pinning each job (fmt/check/clippy/test/benchmarks) individually.
+  basic-checks:
+    name: Basic checks
+    needs: [changes, check-fmt, check-workspace-inheritance, check, clippy, test, benchmarks, coverage]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Decide outcome
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: |
+          echo "Basic checks failed or were cancelled"
+          exit 1

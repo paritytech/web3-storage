@@ -1,0 +1,809 @@
+name: Integration Tests
+
+on:
+  push:
+    branches: [main, dev]
+  # No base-branch filter: stacked PRs (base = another feature branch)
+  # must get the same CI as dev-targeted PRs.
+  pull_request:
+  merge_group:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # Which runtime the test jobs run against (the chain-spec resolve steps and the
+  # zombienet config key on it). Must be one of the runtimes flagged
+  # integration_tests=true in scripts/runtimes-matrix.json, since those are what
+  # the Build job compiles and uploads.
+  INTEGRATION_TEST_RUNTIME: web3-storage-paseo
+
+# Every provider is launched through .github/actions/start-provider. The e2e job
+# passes no --storage-backend, so the run also asserts the binary's default.
+jobs:
+  set-image:
+    uses: ./.github/workflows/set-image.yml
+
+  # Skip expensive jobs when only docs/markdown changed. The aggregate gate
+  # (integration-tests-complete) always reports for branch protection.
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    outputs:
+      src: ${{ github.event_name == 'workflow_dispatch' || github.event_name == 'merge_group' || steps.filter.outputs.src == 'true' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # paths-filter has no diff base on merge_group; run the full suite there.
+      - if: github.event_name != 'merge_group'
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v3
+        id: filter
+        with:
+          filters: |
+            src:
+              - '**'
+              - '!**/*.md'
+              - '!docs/**'
+              - '!.claude/**'
+              - '!LICENSE'
+
+  # ── Build once ────────────────────────────────────────────────────────────
+  # Build the shared artifacts once (provider binary + one compressed wasm per
+  # tested runtime) so both test jobs download instead of rebuilding. The test
+  # jobs still compile the fs/s3 examples and sc contracts via the shared cache.
+  build:
+    name: Build
+    runs-on: parity-large
+    timeout-minutes: 60
+    needs: [set-image, changes]
+    if: needs.changes.outputs.src == 'true'
+    container:
+      image: ${{ needs.set-image.outputs.CI_IMAGE }}
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+        with:
+          persist-credentials: false
+
+      - name: Load common environment variables via env file
+        run: cat .github/env >> $GITHUB_ENV
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        with:
+          shared-key: "integration-tests-build"
+          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev' }}
+
+      - name: Install just
+        run: cargo install just --locked || true
+
+      # Build the wasm for every runtime flagged integration_tests=true in the
+      # matrix. The test jobs run against INTEGRATION_TEST_RUNTIME, which must be
+      # one of them. Uploaded below so the test jobs download instead of
+      # rebuilding.
+      - name: Build integration-test runtimes
+        run: |
+          for cmd in $(jq -r '.[] | select(.integration_tests == true) | .build_command' scripts/runtimes-matrix.json); do
+            echo "::group::just $cmd"
+            just "$cmd"
+            echo "::endgroup::"
+          done
+
+      - name: Build provider
+        run: just build-provider
+
+      # Upload only what the test jobs consume: provider binary + the final
+      # compressed wasm per runtime. NOT the full wbuild tree (~900 MiB Cargo
+      # scratch). Both paths sit under target/release, so the artifact is rooted
+      # there (LCA) and the download steps extract back into target/release.
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: build
+          retention-days: 1
+          if-no-files-found: error
+          path: |
+            target/release/storage-provider-node
+            target/release/wbuild/*/*.compact.compressed.wasm
+
+  # ── Zombienet smoke test (FS + S3) ────────────────────────────────────────
+  # Runs Layer 1 FS and S3 demos on a real relay-chain + parachain (zombienet)
+  # to validate production-like topology. Single runtime (web3-storage-paseo).
+  # Layer 0 breadth is handled comprehensively by e2e-integration-tests.
+  #
+  # Pins the backend explicitly; the other jobs take the binary default.
+  integration-tests:
+    name: Zombienet Smoke Test
+    runs-on: parity-large
+    timeout-minutes: 30
+    needs: [set-image, build]
+    container:
+      image: ${{ needs.set-image.outputs.CI_IMAGE }}
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+        with:
+          persist-credentials: false
+
+      - name: Load common environment variables via env file
+        run: cat .github/env >> $GITHUB_ENV
+
+      # Restore the Rust cache before installing just so the build job's cached
+      # ~/.cargo/bin makes the install a fast no-op instead of a ~60s recompile;
+      # it also lands before the artifact download so the cached target/ can't
+      # clobber it. save-if false — only the build job writes this cache.
+      - name: Rust cache
+        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        with:
+          shared-key: "integration-tests-build"
+          save-if: false
+
+      - name: Install just
+        run: cargo install just --locked || true
+
+      - name: Cache Polkadot SDK binaries
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5
+        id: sdk-cache
+        with:
+          path: |
+            .bin/polkadot
+            .bin/polkadot-execute-worker
+            .bin/polkadot-prepare-worker
+            .bin/polkadot-omni-node
+            .bin/chain-spec-builder
+          key: polkadot-sdk-${{ env.POLKADOT_SDK_VERSION }}
+
+      - name: Download Polkadot SDK binaries
+        if: steps.sdk-cache.outputs.cache-hit != 'true'
+        run: just polkadot_version="$POLKADOT_SDK_VERSION" download-polkadot-sdk-binaries
+
+      - name: Cache zombienet
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5
+        id: zombienet-cache
+        with:
+          path: .bin/zombienet
+          key: zombienet-${{ env.ZOMBIENET_VERSION }}
+
+      - name: Download zombienet
+        if: steps.zombienet-cache.outputs.cache-hit != 'true'
+        run: just zombienet_version="$ZOMBIENET_VERSION" download-zombienet
+
+      - name: Setup pnpm workspace
+        uses: ./.github/actions/setup-pnpm
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      # Extract into target/release so the artifact's contents land back at
+      # their original paths (chmod, chain_spec_command scripts, demos).
+      - name: Download build artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v6
+        with:
+          name: build
+          path: target/release
+
+      - name: Restore executable bits
+        run: chmod +x target/release/storage-provider-node
+
+      - name: Resolve zombienet config from matrix
+        run: |
+          CONFIG=$(jq -r --arg r "$INTEGRATION_TEST_RUNTIME" '.[] | select(.name==$r) | .zombienet_config // empty' scripts/runtimes-matrix.json)
+          if [ -z "$CONFIG" ]; then
+            echo "ERROR: no zombienet_config for runtime '$INTEGRATION_TEST_RUNTIME' in scripts/runtimes-matrix.json"
+            exit 1
+          fi
+          echo "Using zombienet config: $CONFIG"
+          echo "ZOMBIENET_CONFIG=$CONFIG" >> $GITHUB_ENV
+
+      - name: Start chain
+        uses: ./.github/actions/start-zombienet
+        with:
+          config: ${{ env.ZOMBIENET_CONFIG }}
+
+      # Fail fast if the multi-core setup degrades to a slower block rate.
+      - name: Wait for parachain blocks
+        uses: ./.github/actions/wait-for-parachain
+        with:
+          min-blocks-per-minute: "20"
+
+      # One provider for all three demos: the L0 demo registers //Alice on-chain
+      # and the L1 demos reuse that registration, on the justfile's default
+      # PROVIDER_URL.
+      - name: Start provider (rocksdb)
+        uses: ./.github/actions/start-provider
+        with:
+          backend: rocksdb
+          label: rocksdb
+
+      - name: Run L0 demo
+        run: just demo
+
+      - name: Run file system integration test
+        run: just drain-tx-pool-then fs-demo-ci
+
+      - name: Run S3 integration test
+        run: just drain-tx-pool-then s3-demo-ci
+
+      # Second provider (port 3433) following the same chain through the
+      # embedded smoldot light client; passes once /info reports the on-chain
+      # registration synced via light-client reads. Runs last because it signs
+      # with the same //Alice key as the RPC provider and may sync its own
+      # multiaddr on chain, which the demos above must not observe.
+      - name: Run light-client transport e2e
+        run: bash scripts/test-light-client.sh
+
+      - name: Stop services
+        if: always()
+        run: |
+          pkill -f "polkadot-omni-node" 2>/dev/null || true
+          pkill -f "polkadot" 2>/dev/null || true
+          pkill -f "storage-provider-node" 2>/dev/null || true
+
+      - name: Upload logs (on failure)
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: zombienet-smoke-test-logs
+          path: |
+            /tmp/zombienet.log
+            /tmp/provider-*.log
+            /tmp/light-client-provider.*
+            /tmp/zombie-*/*.log
+            /tmp/zombie-*/**/*.log
+
+  # ── E2E test suite ──────────────────────────────────────────────────────────
+  # All PAPI E2E workflows against a single provider started with no
+  # --storage-backend, i.e. on the binary's default backend (web3-storage-paseo
+  # only). Consumes the shared build artifact (provider binary + wasm) instead of
+  # rebuilding — the chain-spec script's cargo build is a cache no-op. JS coverage
+  # (c8) is collected here; Rust coverage (pallet + provider) is handled by the
+  # coverage job in check.yml.
+  e2e-integration-tests:
+    name: E2E Integration Tests
+    runs-on: parity-large
+    timeout-minutes: 60
+    needs: [set-image, build]
+    # actions: write is required by the push-only "gh cache delete" step below.
+    permissions:
+      contents: read
+      actions: write
+    container:
+      image: ${{ needs.set-image.outputs.CI_IMAGE }}
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+        with:
+          persist-credentials: false
+
+      - name: Load common environment variables via env file
+        run: cat .github/env >> $GITHUB_ENV
+
+      - name: Resolve chain-spec script from matrix
+        run: |
+          RUNTIME="$INTEGRATION_TEST_RUNTIME"
+          SCRIPT=$(jq -r --arg r "$RUNTIME" '.[] | select(.name==$r) | .chain_spec_script // empty' scripts/runtimes-matrix.json)
+          if [ -z "$SCRIPT" ]; then
+            echo "ERROR: no chain_spec_script for runtime '$RUNTIME' in scripts/runtimes-matrix.json"
+            exit 1
+          fi
+          echo "Using chain-spec script: $SCRIPT"
+          echo "E2E_CHAIN_SPEC_SCRIPT=$SCRIPT" >> $GITHUB_ENV
+
+      # Before the download so the cached target/ can't clobber it. save-if
+      # false — only the build job writes this cache.
+      - name: Rust cache
+        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        with:
+          shared-key: "integration-tests-build"
+          save-if: false
+
+      - name: Install just
+        run: cargo install just --locked || true
+
+      - name: Cache Polkadot SDK binaries
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5
+        id: sdk-cache
+        with:
+          path: |
+            .bin/polkadot
+            .bin/polkadot-execute-worker
+            .bin/polkadot-prepare-worker
+            .bin/polkadot-omni-node
+            .bin/chain-spec-builder
+          key: polkadot-sdk-${{ env.POLKADOT_SDK_VERSION }}
+
+      - name: Download Polkadot SDK binaries
+        if: steps.sdk-cache.outputs.cache-hit != 'true'
+        run: just polkadot_version="$POLKADOT_SDK_VERSION" download-polkadot-sdk-binaries
+
+      - name: Log binary versions
+        run: |
+          .bin/polkadot-omni-node --version
+          .bin/chain-spec-builder --version 2>/dev/null || true
+
+      - name: Setup pnpm workspace
+        uses: ./.github/actions/setup-pnpm
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      # Extract into target/release so the artifact's contents land back at
+      # their original paths (chmod, chain_spec_command scripts, demos).
+      - name: Download build artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v6
+        with:
+          name: build
+          path: target/release
+
+      - name: Restore executable bits
+        run: chmod +x target/release/storage-provider-node
+
+      - name: Start chain (dev mode, 2s blocks)
+        uses: ./.github/actions/start-e2e-chain
+        with:
+          chain-spec-script: ${{ env.E2E_CHAIN_SPEC_SCRIPT }}
+
+      - name: Wait for parachain blocks
+        uses: ./.github/actions/wait-for-parachain
+
+      # No --storage-backend on purpose: the deepest suite runs whatever the binary
+      # defaults to, so a change to that default is caught here.
+      - name: Start provider (binary default backend)
+        uses: ./.github/actions/start-provider
+        with:
+          label: default
+          auth-cache-max-entries: "64"
+
+      # The tracked metadata snapshot in packages/papi is the single descriptor
+      # source for the whole workspace (UIs, sdk, examples). Re-fetch metadata
+      # from the live chain and fail loudly when the committed snapshot has
+      # drifted from the runtime — descriptors would otherwise silently
+      # disagree with what the chain actually exposes.
+      # Hash-compare instead of `git diff`: git refuses to discover the
+      # host-owned checkout from inside the CI container ("Not a git
+      # repository" via the dubious-ownership guard), and a content hash of
+      # the one tracked snapshot is the precise signal anyway.
+      - name: SDK descriptors match the runtime (regen from live chain + typecheck)
+        run: |
+          # SCALE metadata is NOT byte-reproducible across runtime builds — the
+          # same runtime source emits different bytes run-to-run — so a byte
+          # compare of the committed snapshot can never pass. What actually
+          # matters is the API surface the SDK is built against: regenerate
+          # descriptors straight from the live chain and typecheck the SDK +
+          # examples against them. A failure here is a real runtime-API change
+          # the SDK doesn't handle (e.g. a new/renamed extrinsic field) — not
+          # byte noise.
+          pnpm --filter @web3-storage/papi run papi:generate
+          pnpm run typecheck:packages || {
+            echo "::error::SDK no longer typechecks against the live runtime metadata — a runtime API changed."
+            echo "::error::Fix the SDK wrappers for the new API, then refresh the committed snapshot (any current bytes; the API is what matters):"
+            echo "::error::  (with a local chain running) pnpm --filter @web3-storage/papi run papi:generate"
+            echo "::error::  git add packages/papi/.papi && git commit -m 'chore(papi): refresh metadata for runtime change'"
+            exit 1
+          }
+          echo "SDK typechecks against the live runtime descriptors."
+
+      - name: Run E2E test suite
+        run: just e2e "http://127.0.0.1:3333"
+
+      - name: Print JS coverage
+        if: always()
+        run: |
+          # No data when an earlier step failed before the suite ran — skip
+          # instead of crashing this always() step on a missing directory.
+          if [ ! -d examples/papi/coverage/tmp ]; then
+            echo "No coverage data (E2E suite did not run)."
+            exit 0
+          fi
+          echo ""
+          echo "═══════════════════════════════════════════════════════════"
+          echo "  JS Coverage (E2E suite + @web3-storage/sdk)"
+          echo "═══════════════════════════════════════════════════════════"
+          npx c8 report --reporter=text --report-dir=examples/papi/coverage \
+            --include="examples/papi/**" --include="packages/sdk/src/**" \
+            --temp-directory=examples/papi/coverage/tmp
+          echo ""
+
+      - name: Extract JS coverage summary
+        if: always()
+        run: |
+          mkdir -p /tmp/coverage/report
+          JS_COV="0"
+          if [ -f examples/papi/coverage/coverage-final.json ]; then
+            JS_COV=$(npx c8 report --reporter=text --report-dir=examples/papi/coverage \
+              --include="examples/papi/**" --include="packages/sdk/src/**" \
+              --temp-directory=examples/papi/coverage/tmp 2>/dev/null \
+              | grep 'All files' | awk '{print $10}' | tr -d '%' || echo "0")
+          fi
+          echo "{\"js\": ${JS_COV:-0}}" > /tmp/coverage/report/coverage-summary.json
+          echo "JS line coverage: ${JS_COV}%"
+
+      - name: Cache JS coverage baseline (main/dev only)
+        if: always() && github.event_name == 'push'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5
+        with:
+          path: /tmp/coverage/report/coverage-summary.json
+          key: coverage-baseline-${{ github.sha }}
+
+      - name: Update latest JS coverage baseline (main/dev only)
+        if: always() && github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh cache delete "coverage-baseline-latest" -R "$GITHUB_REPOSITORY" 2>/dev/null || true
+
+      - name: Save latest JS coverage baseline (main/dev only)
+        if: always() && github.event_name == 'push'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5
+        with:
+          path: /tmp/coverage/report/coverage-summary.json
+          key: coverage-baseline-latest
+
+      - name: Upload JS coverage
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: e2e-coverage
+          path: |
+            examples/papi/coverage/
+            /tmp/coverage/report/coverage-summary.json
+
+      - name: Stop services
+        if: always()
+        run: |
+          pkill -f "storage-provider-node" 2>/dev/null || true
+          pkill -f "polkadot-omni-node" 2>/dev/null || true
+          pkill -f "polkadot" 2>/dev/null || true
+
+      - name: Upload logs (on failure)
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: e2e-integration-test-logs
+          path: |
+            /tmp/omni-node.log
+            /tmp/provider-*.log
+
+  # ── Smart-contract demos (dev mode) ──────────────────────────────────────────
+  # Runs all SC demos on a fast dev-mode chain (2s blocks, instant finality).
+  # Single runtime (web3-storage-paseo). Parallel with zombienet smoke test.
+  sc-integration-tests:
+    name: SC Integration Tests
+    runs-on: parity-large
+    timeout-minutes: 30
+    needs: [set-image, build]
+    container:
+      image: ${{ needs.set-image.outputs.CI_IMAGE }}
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+        with:
+          persist-credentials: false
+
+      - name: Load common environment variables via env file
+        run: cat .github/env >> $GITHUB_ENV
+
+      # Restore the Rust cache before installing just so the build job's cached
+      # ~/.cargo/bin makes the install a fast no-op instead of a ~60s recompile;
+      # it also lands before the artifact download so the cached target/ can't
+      # clobber it. save-if false — only the build job writes this cache.
+      - name: Rust cache
+        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        with:
+          shared-key: "integration-tests-build"
+          save-if: false
+
+      - name: Install just
+        run: cargo install just --locked || true
+
+      - name: Cache Polkadot SDK binaries
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5
+        id: sdk-cache
+        with:
+          path: |
+            .bin/polkadot
+            .bin/polkadot-execute-worker
+            .bin/polkadot-prepare-worker
+            .bin/polkadot-omni-node
+            .bin/chain-spec-builder
+          key: polkadot-sdk-${{ env.POLKADOT_SDK_VERSION }}
+
+      - name: Download Polkadot SDK binaries
+        if: steps.sdk-cache.outputs.cache-hit != 'true'
+        run: just polkadot_version="$POLKADOT_SDK_VERSION" download-polkadot-sdk-binaries
+
+      - name: Resolve chain-spec script
+        run: |
+          RUNTIME="$INTEGRATION_TEST_RUNTIME"
+          SCRIPT=$(jq -r --arg r "$RUNTIME" '.[] | select(.name==$r) | .chain_spec_script // empty' scripts/runtimes-matrix.json)
+          if [ -z "$SCRIPT" ]; then
+            echo "ERROR: no chain_spec_script for runtime '$RUNTIME' in scripts/runtimes-matrix.json"
+            exit 1
+          fi
+          echo "Using chain-spec script: $SCRIPT"
+          echo "CHAIN_SPEC_SCRIPT=$SCRIPT" >> $GITHUB_ENV
+
+      - name: Setup pnpm workspace
+        uses: ./.github/actions/setup-pnpm
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      # Extract into target/release so the artifact's contents land back at
+      # their original paths (chmod, chain_spec_command scripts, demos).
+      - name: Download build artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v6
+        with:
+          name: build
+          path: target/release
+
+      - name: Restore executable bits
+        run: chmod +x target/release/storage-provider-node
+
+      - name: Install solc and resolc
+        run: |
+          for bin_url in \
+            "/usr/local/bin/solc https://github.com/ethereum/solidity/releases/download/v${SOLC_VERSION}/solc-static-linux" \
+            "/usr/local/bin/resolc https://github.com/paritytech/revive/releases/download/v${RESOLC_VERSION}/resolc-x86_64-unknown-linux-musl"; do
+            dest="${bin_url%% *}"
+            url="${bin_url#* }"
+            for attempt in 1 2 3; do
+              echo "Downloading $dest (attempt $attempt/3)..."
+              if curl -L --retry 2 --retry-delay 5 --connect-timeout 30 --max-time 600 \
+                  -o "$dest" "$url"; then
+                break
+              fi
+              if [ "$attempt" -eq 3 ]; then
+                echo "Failed to download $dest after 3 attempts"
+                exit 1
+              fi
+              sleep $((attempt * 5))
+            done
+          done
+          chmod +x /usr/local/bin/solc /usr/local/bin/resolc
+          solc --version
+          resolc --version
+
+      - name: Build example contracts
+        run: just build-contracts
+
+      - name: Start chain (dev mode, 2s blocks)
+        uses: ./.github/actions/start-e2e-chain
+        with:
+          chain-spec-script: ${{ env.CHAIN_SPEC_SCRIPT }}
+
+      - name: Wait for parachain blocks
+        uses: ./.github/actions/wait-for-parachain
+        with:
+          log-file: /tmp/omni-node.log
+
+      - name: Start provider
+        uses: ./.github/actions/start-provider
+        with:
+          label: sc
+
+      - name: Run smart-contract end-to-end demo
+        run: just sc-demo "http://127.0.0.1:3333" "//Alice" "//Bob"
+
+      - name: Run smart-contract precompile-coverage e2e
+        run: just drain-tx-pool-then sc-coverage "http://127.0.0.1:3333" "//Alice" "//Bob"
+
+      - name: Run SharedTeamDrive dApp e2e
+        run: just drain-tx-pool-then sc-team-drive "http://127.0.0.1:3333" "//Alice" "//Bob"
+
+      - name: Run TokenGatedDrive dApp e2e
+        run: just drain-tx-pool-then sc-token-gated "http://127.0.0.1:3333" "//Alice" "//Bob"
+
+      - name: Stop services
+        if: always()
+        run: |
+          pkill -f "polkadot-omni-node" 2>/dev/null || true
+          pkill -f "polkadot" 2>/dev/null || true
+          pkill -f "storage-provider-node" 2>/dev/null || true
+
+      - name: Upload logs (on failure)
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: sc-integration-test-logs
+          path: |
+            /tmp/omni-node.log
+            /tmp/provider-*.log
+
+  # ── UI Playwright e2e ─────────────────────────────────────────────────────
+  # Drive / console / provider UIs (Vite dev servers) exercised against a
+  # standalone paseo dev chain (omni-node, 2s blocks, no relay chain) + a
+  # single provider. Like the integration-tests job, it consumes the
+  # prebuilt `build` artifact (provider binary + runtime wasm) instead of
+  # rebuilding: the chain-spec script's `cargo build` becomes a near-no-op
+  # against the warm integration-tests-build cache. The UIs are served by Vite
+  # dev servers (Playwright `webServer`), so no UI build is needed. Runs in
+  # parallel with the other artifact-consuming test jobs.
+  ui-integration-tests:
+    name: UI E2E run
+    runs-on: parity-large
+    timeout-minutes: 60
+    needs: [set-image, build]
+    container:
+      image: ${{ needs.set-image.outputs.CI_IMAGE }}
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+        with:
+          persist-credentials: false
+
+      - name: Load common environment variables via env file
+        run: cat .github/env >> $GITHUB_ENV
+
+      - name: Resolve chain-spec script from matrix
+        run: |
+          RUNTIME="$INTEGRATION_TEST_RUNTIME"
+          SCRIPT=$(jq -r --arg r "$RUNTIME" '.[] | select(.name==$r) | .chain_spec_script // empty' scripts/runtimes-matrix.json)
+          if [ -z "$SCRIPT" ]; then
+            echo "ERROR: no chain_spec_script for runtime '$RUNTIME' in scripts/runtimes-matrix.json"
+            exit 1
+          fi
+          echo "Using chain-spec script: $SCRIPT"
+          echo "E2E_CHAIN_SPEC_SCRIPT=$SCRIPT" >> $GITHUB_ENV
+
+      # Restored before installing just so the build job's cached ~/.cargo/bin
+      # makes the install a fast no-op instead of a ~60s recompile; also before
+      # the artifact download so the cached target/ can't clobber the freshly
+      # downloaded provider + wbuild. save-if false — only the build job writes it.
+      - name: Rust cache
+        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        with:
+          shared-key: "integration-tests-build"
+          save-if: false
+
+      - name: Install just
+        run: cargo install just --locked || true
+
+      - name: Cache Polkadot SDK binaries
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5
+        id: sdk-cache
+        with:
+          path: |
+            .bin/polkadot
+            .bin/polkadot-execute-worker
+            .bin/polkadot-prepare-worker
+            .bin/polkadot-omni-node
+            .bin/chain-spec-builder
+          key: polkadot-sdk-${{ env.POLKADOT_SDK_VERSION }}
+
+      - name: Download Polkadot SDK binaries
+        if: steps.sdk-cache.outputs.cache-hit != 'true'
+        run: just polkadot_version="$POLKADOT_SDK_VERSION" download-polkadot-sdk-binaries
+
+      # Extract into target/release so the artifact's target/release-rooted
+      # contents land back at their original paths (provider binary + per-runtime
+      # wbuild wasm consumed by the chain-spec script).
+      - name: Download build artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v6
+        with:
+          name: build
+          path: target/release
+
+      - name: Restore executable bits
+        run: chmod +x target/release/storage-provider-node
+
+      - name: Setup pnpm workspace
+        uses: ./.github/actions/setup-pnpm
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install Playwright browsers
+        run: pnpm --filter @web3-storage/drive-ui exec playwright install --with-deps chromium
+
+      - name: Start chain (dev mode, 2s blocks)
+        uses: ./.github/actions/start-e2e-chain
+        with:
+          chain-spec-script: ${{ env.E2E_CHAIN_SPEC_SCRIPT }}
+
+      - name: Wait for parachain blocks
+        uses: ./.github/actions/wait-for-parachain
+
+      - name: Start provider (Alice)
+        uses: ./.github/actions/start-provider
+        with:
+          label: ui
+
+      - name: drive-ui e2e
+        env:
+          CI: "true"
+        run: pnpm run test:e2e:drive-ui
+
+      - name: provider e2e
+        env:
+          CI: "true"
+        run: pnpm run test:e2e:provider
+
+      - name: Stop services
+        if: always()
+        run: |
+          pkill -f "polkadot-omni-node" 2>/dev/null || true
+          pkill -f "polkadot" 2>/dev/null || true
+          pkill -f "storage-provider-node" 2>/dev/null || true
+
+      - name: Upload Playwright reports
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: playwright-reports
+          path: |
+            user-interfaces/drive-ui/playwright-report
+            user-interfaces/drive-ui/test-results
+            user-interfaces/provider/playwright-report
+            user-interfaces/provider/test-results
+
+      - name: Upload chain + provider logs
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: ui-integration-test-logs
+          path: |
+            /tmp/omni-node.log
+            /tmp/provider-*.log
+
+  # ── Coverage gate ─────────────────────────────────────────────────────────
+  # On PRs: restores the cached JS coverage baseline from main/dev, downloads
+  # the PR's summary, and fails if JS coverage decreased.
+  coverage-gate:
+    name: Coverage gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [e2e-integration-tests]
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Restore coverage baseline
+        id: baseline
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5
+        with:
+          path: /tmp/coverage/report/coverage-summary.json
+          key: coverage-baseline-latest
+
+      - name: Download PR coverage artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v6
+        with:
+          name: e2e-coverage
+          path: /tmp/pr-coverage
+
+      - name: Compare JS coverage
+        run: |
+          echo ""
+          echo "═══════════════════════════════════════════════════════════"
+          echo "  JS Coverage Comparison (base → PR)"
+          echo "═══════════════════════════════════════════════════════════"
+
+          if [ ! -f /tmp/coverage/report/coverage-summary.json ]; then
+            echo "::warning::No JS coverage baseline found (first run or evicted cache) — regression check skipped, not enforced this run."
+            cat /tmp/pr-coverage/coverage-summary.json 2>/dev/null || true
+            exit 0
+          fi
+
+          BASE_JS=$(python3 -c "import json; print(json.load(open('/tmp/coverage/report/coverage-summary.json')).get('js', 0))")
+          PR_JS=$(python3 -c "import json; print(json.load(open('/tmp/pr-coverage/coverage-summary.json')).get('js', 0))")
+
+          DECREASED=$(awk "BEGIN { print ($PR_JS < $BASE_JS) ? 1 : 0 }")
+          if [ "$DECREASED" = "1" ]; then
+            echo "FAIL: JS coverage decreased: ${BASE_JS}% → ${PR_JS}%"
+            echo "Add tests to cover new or modified code."
+            exit 1
+          else
+            echo "PASS: JS coverage: ${BASE_JS}% → ${PR_JS}%"
+          fi
+
+  integration-tests-complete:
+    name: Integration Tests
+    needs: [changes, build, integration-tests, e2e-integration-tests, sc-integration-tests, ui-integration-tests, coverage-gate]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Decide outcome
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: |
+          echo "Integration tests failed or were cancelled"
+          exit 1

@@ -1,202 +1,208 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 //! Integration tests for the provider node HTTP API.
 //!
 //! These tests spin up a real HTTP server and test the full request/response cycle.
 
+mod common;
+
 use axum::http::StatusCode;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
-use reqwest::Client;
+use codec::Encode;
+use reqwest::Method;
 use serde_json::{json, Value};
-use std::net::SocketAddr;
-use std::sync::Arc;
-use storage_provider_node::{create_router, ProviderState, Storage};
-use tokio::net::TcpListener;
+use sp_core::crypto::Ss58Codec;
+use sp_core::{sr25519, Pair, H256};
+use storage_primitives::{Commitment, CommitmentPayload};
+use storage_provider_node::{KeyScheme, ProviderState};
 
-/// Test server helper that starts the provider node on a random port.
-struct TestServer {
-    addr: SocketAddr,
-    client: Client,
-}
+use common::{StorageBackendKind, TestServer};
 
 impl TestServer {
-    async fn new() -> Self {
-        let storage = Arc::new(Storage::new());
-        let state = Arc::new(ProviderState::new(
-            storage,
-            "0xtest_provider".to_string(),
-        ));
-
-        let app = create_router(state);
-
-        // Bind to port 0 to get a random available port
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-
-        // Spawn the server
-        tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
-        });
-
-        // Give the server a moment to start
-        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
-
-        Self {
-            addr,
-            client: Client::new(),
-        }
+    /// Signing provider (`//Alice`): endpoints that sign commitments work.
+    async fn new(backend: StorageBackendKind) -> Self {
+        Self::new_with_scheme(backend, KeyScheme::Sr25519).await
     }
 
-    fn url(&self, path: &str) -> String {
-        format!("http://{}{}", self.addr, path)
+    /// Signing provider (`//Alice`) under the given scheme.
+    async fn new_with_scheme(backend: StorageBackendKind, scheme: KeyScheme) -> Self {
+        Self::start(backend, move |deps| {
+            ProviderState::with_seed_scheme(deps, common::PROVIDER_SEED, scheme)
+                .expect("//Alice is a valid SURI")
+        })
+        .await
+    }
+
+    /// No signing key, so signing-bound endpoints must answer 503 rather than
+    /// emit zero-byte placeholder signatures.
+    async fn new_unsigned(backend: StorageBackendKind) -> Self {
+        Self::start(backend, |deps| {
+            ProviderState::with_provider_id(deps, "0xtest_provider".to_string())
+        })
+        .await
     }
 }
 
-#[tokio::test]
-async fn test_health_endpoint() {
-    let server = TestServer::new().await;
+common::backend_tests! {
+    async fn test_health_endpoint(backend) {
+        let server = TestServer::new(backend).await;
 
-    let response = server
-        .client
-        .get(server.url("/health"))
-        .send()
-        .await
-        .unwrap();
+        let response = server
+            .client
+            .get(server.url("/health"))
+            .send()
+            .await
+            .unwrap();
 
-    assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.status(), StatusCode::OK);
 
-    let body: Value = response.json().await.unwrap();
-    assert_eq!(body["status"], "healthy");
-    assert!(body["version"].is_string());
+        let body: Value = response.json().await.unwrap();
+        assert_eq!(body["status"], "healthy");
+        assert!(body["version"].is_string());
+    }
 }
 
-#[tokio::test]
-async fn test_info_endpoint() {
-    let server = TestServer::new().await;
+common::backend_tests! {
+    async fn test_info_endpoint(backend) {
+        let server = TestServer::new(backend).await;
 
-    let response = server
-        .client
-        .get(server.url("/info"))
-        .send()
-        .await
-        .unwrap();
+        let response = server.client.get(server.url("/info")).send().await.unwrap();
 
-    assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.status(), StatusCode::OK);
 
-    let body: Value = response.json().await.unwrap();
-    assert_eq!(body["status"], "healthy");
+        let expect_provider_id = sr25519::Pair::from_string(common::PROVIDER_SEED, None)
+            .expect("Invalid provider seed")
+            .public()
+            .to_ss58check();
+
+        let body: Value = response.json().await.unwrap();
+        assert_eq!(body["provider_id"], expect_provider_id);
+
+        // `TestServer::new` seeds a signing key but wires up neither the nonce
+        // counter nor on-chain provider info (those need a live chain at startup),
+        // so the readiness flags must reflect "can sign, not yet ready to negotiate".
+        assert_eq!(body["readiness"]["signing_configured"], true);
+        assert_eq!(body["readiness"]["nonce_counter_ready"], false);
+        assert_eq!(body["readiness"]["provider_info_loaded"], false);
+    }
 }
 
-#[tokio::test]
-async fn test_upload_and_download_node() {
-    let server = TestServer::new().await;
+common::backend_tests! {
+    async fn test_upload_and_download_node(backend) {
+        let server = TestServer::new(backend).await;
 
-    // Create test data
-    let data = b"Hello, World!";
-    let hash = storage_primitives::blake2_256(data);
-    let hash_hex = format!("0x{}", hex_encode(hash.as_bytes()));
+        // Create test data
+        let data = b"Hello, World!";
+        let hash = storage_primitives::blake2_256(data);
+        let hash_hex = format!("0x{}", hex_encode(hash.as_bytes()));
 
-    // Upload node
-    let upload_response = server
-        .client
-        .put(server.url("/node"))
-        .json(&json!({
-            "bucket_id": 1,
-            "hash": hash_hex,
-            "data": BASE64.encode(data),
-            "children": null
-        }))
-        .send()
-        .await
-        .unwrap();
+        // Upload node
+        let upload_response = server
+            .client
+            .put(server.url("/node"))
+            .json(&json!({
+                "bucket_id": 1,
+                "hash": hash_hex,
+                "data": BASE64.encode(data),
+                "children": null
+            }))
+            .send()
+            .await
+            .unwrap();
 
-    assert_eq!(upload_response.status(), StatusCode::OK);
+        assert_eq!(upload_response.status(), StatusCode::OK);
 
-    let body: Value = upload_response.json().await.unwrap();
-    assert_eq!(body["stored"], true);
+        let body: Value = upload_response.json().await.unwrap();
+        assert_eq!(body["stored"], true);
 
-    // Download node
-    let download_response = server
-        .client
-        .get(server.url(&format!("/node?hash={}", hash_hex)))
-        .send()
-        .await
-        .unwrap();
+        // Download node
+        let download_response = server
+            .client
+            .get(server.url(&format!("/node?hash={hash_hex}")))
+            .send()
+            .await
+            .unwrap();
 
-    assert_eq!(download_response.status(), StatusCode::OK);
+        assert_eq!(download_response.status(), StatusCode::OK);
 
-    let body: Value = download_response.json().await.unwrap();
-    assert_eq!(body["hash"], hash_hex);
+        let body: Value = download_response.json().await.unwrap();
+        assert_eq!(body["hash"], hash_hex);
 
-    let downloaded_data = BASE64.decode(body["data"].as_str().unwrap()).unwrap();
-    assert_eq!(downloaded_data, data);
+        let downloaded_data = BASE64.decode(body["data"].as_str().unwrap()).unwrap();
+        assert_eq!(downloaded_data, data);
+    }
 }
 
-#[tokio::test]
-async fn test_check_exists() {
-    let server = TestServer::new().await;
+common::backend_tests! {
+    async fn test_check_exists(backend) {
+        let server = TestServer::new(backend).await;
 
-    // Upload a node first
-    let data = b"Test data for exists check";
-    let hash = storage_primitives::blake2_256(data);
-    let hash_hex = format!("0x{}", hex_encode(hash.as_bytes()));
+        // Upload a node first
+        let data = b"Test data for exists check";
+        let hash = storage_primitives::blake2_256(data);
+        let hash_hex = format!("0x{}", hex_encode(hash.as_bytes()));
 
-    server
-        .client
-        .put(server.url("/node"))
-        .json(&json!({
-            "bucket_id": 1,
-            "hash": hash_hex,
-            "data": BASE64.encode(data),
-            "children": null
-        }))
-        .send()
-        .await
-        .unwrap();
+        server
+            .client
+            .put(server.url("/node"))
+            .json(&json!({
+                "bucket_id": 1,
+                "hash": hash_hex,
+                "data": BASE64.encode(data),
+                "children": null
+            }))
+            .send()
+            .await
+            .unwrap();
 
-    // Check exists
-    let non_existent_hash = "0x0000000000000000000000000000000000000000000000000000000000000001";
+        // Check exists
+        let non_existent_hash = "0x0000000000000000000000000000000000000000000000000000000000000001";
 
-    let response = server
-        .client
-        .post(server.url("/exists"))
-        .json(&json!({
-            "bucket_id": 1,
-            "hashes": [hash_hex, non_existent_hash]
-        }))
-        .send()
-        .await
-        .unwrap();
+        let response = server
+            .client
+            .post(server.url("/exists"))
+            .json(&json!({
+                "bucket_id": 1,
+                "hashes": [hash_hex, non_existent_hash]
+            }))
+            .send()
+            .await
+            .unwrap();
 
-    assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.status(), StatusCode::OK);
 
-    let body: Value = response.json().await.unwrap();
-    let exists = body["exists"].as_array().unwrap();
-    let missing = body["missing"].as_array().unwrap();
+        let body: Value = response.json().await.unwrap();
+        let exists = body["exists"].as_array().unwrap();
+        let missing = body["missing"].as_array().unwrap();
 
-    assert!(exists.iter().any(|h| h.as_str().unwrap() == hash_hex));
-    assert!(missing.iter().any(|h| h.as_str().unwrap() == non_existent_hash));
+        assert!(exists.iter().any(|h| h.as_str().unwrap() == hash_hex));
+        assert!(missing
+            .iter()
+            .any(|h| h.as_str().unwrap() == non_existent_hash));
+    }
 }
 
-#[tokio::test]
-async fn test_commit_and_get_commitment() {
-    let server = TestServer::new().await;
+common::backend_tests! {
+    async fn test_commit_and_get_commitment(backend) {
+        let server = TestServer::new(backend).await;
 
-    // Upload a data root (leaf chunk)
-    let data = b"Chunk data for commit test";
-    let hash = storage_primitives::blake2_256(data);
-    let hash_hex = format!("0x{}", hex_encode(hash.as_bytes()));
+        // Upload a data root (leaf chunk)
+        let data = b"Chunk data for commit test";
+        let hash = storage_primitives::blake2_256(data);
+        let hash_hex = format!("0x{}", hex_encode(hash.as_bytes()));
 
-    server
-        .client
-        .put(server.url("/node"))
-        .json(&json!({
-            "bucket_id": 1,
-            "hash": hash_hex,
-            "data": BASE64.encode(data),
-            "children": null
-        }))
-        .send()
-        .await
-        .unwrap();
+        server
+            .client
+            .put(server.url("/node"))
+            .json(&json!({
+                "bucket_id": 1,
+                "hash": hash_hex,
+                "data": BASE64.encode(data),
+                "children": null
+            }))
+            .send()
+            .await
+            .unwrap();
 
     // Commit
     let commit_response = server
@@ -204,19 +210,19 @@ async fn test_commit_and_get_commitment() {
         .post(server.url("/commit"))
         .json(&json!({
             "bucket_id": 1,
-            "data_roots": [hash_hex]
+            "data_roots": [hash_hex],
         }))
         .send()
         .await
         .unwrap();
 
-    assert_eq!(commit_response.status(), StatusCode::OK);
+        assert_eq!(commit_response.status(), StatusCode::OK);
 
-    let body: Value = commit_response.json().await.unwrap();
-    assert!(body["mmr_root"].is_string());
-    assert_eq!(body["start_seq"], 0);
-    assert_eq!(body["leaf_indices"], json!([0]));
-    assert!(body["provider_signature"].is_string());
+        let body: Value = commit_response.json().await.unwrap();
+        assert!(body["mmr_root"].is_string());
+        assert_eq!(body["start_seq"], 0);
+        assert_eq!(body["leaf_indices"], json!([0]));
+        assert!(body["provider_signature"].is_string());
 
     // Get commitment
     let commitment_response = server
@@ -226,121 +232,92 @@ async fn test_commit_and_get_commitment() {
         .await
         .unwrap();
 
-    assert_eq!(commitment_response.status(), StatusCode::OK);
+        assert_eq!(commitment_response.status(), StatusCode::OK);
 
-    let body: Value = commitment_response.json().await.unwrap();
-    assert_eq!(body["bucket_id"], 1);
-    assert_eq!(body["leaf_count"], 1);
+        let body: Value = commitment_response.json().await.unwrap();
+        assert_eq!(body["bucket_id"], 1);
+        assert_eq!(body["leaf_count"], 1);
+    }
 }
 
-#[tokio::test]
-async fn test_list_buckets() {
-    let server = TestServer::new().await;
+common::backend_tests! {
+    async fn test_list_buckets(backend) {
+        let server = TestServer::new(backend).await;
 
-    // Upload to bucket 1 to create it
-    let data = b"Data for bucket 1";
-    let hash = storage_primitives::blake2_256(data);
-    let hash_hex = format!("0x{}", hex_encode(hash.as_bytes()));
-
-    server
-        .client
-        .put(server.url("/node"))
-        .json(&json!({
-            "bucket_id": 1,
-            "hash": hash_hex,
-            "data": BASE64.encode(data),
-            "children": null
-        }))
-        .send()
-        .await
-        .unwrap();
-
-    // List buckets
-    let response = server
-        .client
-        .get(server.url("/buckets"))
-        .send()
-        .await
-        .unwrap();
-
-    assert_eq!(response.status(), StatusCode::OK);
-
-    let body: Value = response.json().await.unwrap();
-    assert!(body["buckets"].is_array());
-}
-
-#[tokio::test]
-async fn test_upload_with_invalid_hash_fails() {
-    let server = TestServer::new().await;
-
-    let data = b"Some data";
-    let wrong_hash = "0x0000000000000000000000000000000000000000000000000000000000000001";
-
-    let response = server
-        .client
-        .put(server.url("/node"))
-        .json(&json!({
-            "bucket_id": 1,
-            "hash": wrong_hash,
-            "data": BASE64.encode(data),
-            "children": null
-        }))
-        .send()
-        .await
-        .unwrap();
-
-    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-
-    let body: Value = response.json().await.unwrap();
-    assert_eq!(body["error"], "invalid_hash");
-}
-
-#[tokio::test]
-async fn test_upload_internal_node_with_missing_children_fails() {
-    let server = TestServer::new().await;
-
-    let child1 = "0x0000000000000000000000000000000000000000000000000000000000000001";
-    let child2 = "0x0000000000000000000000000000000000000000000000000000000000000002";
-
-    // Create internal node data (child hashes concatenated)
-    let mut node_data = Vec::new();
-    node_data.extend_from_slice(&hex_decode(child1).unwrap());
-    node_data.extend_from_slice(&hex_decode(child2).unwrap());
-
-    let hash = storage_primitives::blake2_256(&node_data);
-    let hash_hex = format!("0x{}", hex_encode(hash.as_bytes()));
-
-    let response = server
-        .client
-        .put(server.url("/node"))
-        .json(&json!({
-            "bucket_id": 1,
-            "hash": hash_hex,
-            "data": BASE64.encode(&node_data),
-            "children": [child1, child2]
-        }))
-        .send()
-        .await
-        .unwrap();
-
-    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-
-    let body: Value = response.json().await.unwrap();
-    assert_eq!(body["error"], "children_missing");
-}
-
-#[tokio::test]
-async fn test_full_upload_commit_read_flow() {
-    let server = TestServer::new().await;
-
-    // Step 1: Upload multiple chunks
-    let chunks: Vec<&[u8]> = vec![b"Chunk 1 data", b"Chunk 2 data", b"Chunk 3 data"];
-    let mut chunk_hashes = Vec::new();
-
-    for chunk in &chunks {
-        let hash = storage_primitives::blake2_256(chunk);
+        // Upload to bucket 1 to create it
+        let data = b"Data for bucket 1";
+        let hash = storage_primitives::blake2_256(data);
         let hash_hex = format!("0x{}", hex_encode(hash.as_bytes()));
-        chunk_hashes.push(hash_hex.clone());
+
+        server
+            .client
+            .put(server.url("/node"))
+            .json(&json!({
+                "bucket_id": 1,
+                "hash": hash_hex,
+                "data": BASE64.encode(data),
+                "children": null
+            }))
+            .send()
+            .await
+            .unwrap();
+
+        // List buckets
+        let response = server
+            .client
+            .get(server.url("/buckets"))
+            .send()
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body: Value = response.json().await.unwrap();
+        assert!(body["buckets"].is_array());
+    }
+}
+
+common::backend_tests! {
+    async fn test_upload_with_invalid_hash_fails(backend) {
+        let server = TestServer::new(backend).await;
+
+        let data = b"Some data";
+        let wrong_hash = "0x0000000000000000000000000000000000000000000000000000000000000001";
+
+        let response = server
+            .client
+            .put(server.url("/node"))
+            .json(&json!({
+                "bucket_id": 1,
+                "hash": wrong_hash,
+                "data": BASE64.encode(data),
+                "children": null
+            }))
+            .send()
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+        let body: Value = response.json().await.unwrap();
+        assert_eq!(body["error"], "invalid_hash");
+    }
+}
+
+common::backend_tests! {
+    async fn test_upload_internal_node_with_missing_children_fails(backend) {
+        let server = TestServer::new(backend).await;
+
+        let child1 = "0x0000000000000000000000000000000000000000000000000000000000000001";
+        let child2 = "0x0000000000000000000000000000000000000000000000000000000000000002";
+
+        // Create internal node data (child hashes concatenated)
+        let mut node_data = Vec::new();
+        node_data.extend_from_slice(&hex_decode(child1).unwrap());
+        node_data.extend_from_slice(&hex_decode(child2).unwrap());
+
+        let hash = storage_primitives::blake2_256(&node_data);
+        let hash_hex = format!("0x{}", hex_encode(hash.as_bytes()));
 
         let response = server
             .client
@@ -348,18 +325,51 @@ async fn test_full_upload_commit_read_flow() {
             .json(&json!({
                 "bucket_id": 1,
                 "hash": hash_hex,
-                "data": BASE64.encode(chunk),
-                "children": null
+                "data": BASE64.encode(&node_data),
+                "children": [child1, child2]
             }))
             .send()
             .await
             .unwrap();
 
-        assert_eq!(response.status(), StatusCode::OK);
-    }
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 
-    // Step 2: Build a simple internal node (just use first chunk as root for simplicity)
-    let data_root = &chunk_hashes[0];
+        let body: Value = response.json().await.unwrap();
+        assert_eq!(body["error"], "children_missing");
+    }
+}
+
+common::backend_tests! {
+    async fn test_full_upload_commit_read_flow(backend) {
+        let server = TestServer::new(backend).await;
+
+        // Step 1: Upload multiple chunks
+        let chunks: Vec<&[u8]> = vec![b"Chunk 1 data", b"Chunk 2 data", b"Chunk 3 data"];
+        let mut chunk_hashes = Vec::new();
+
+        for chunk in &chunks {
+            let hash = storage_primitives::blake2_256(chunk);
+            let hash_hex = format!("0x{}", hex_encode(hash.as_bytes()));
+            chunk_hashes.push(hash_hex.clone());
+
+            let response = server
+                .client
+                .put(server.url("/node"))
+                .json(&json!({
+                    "bucket_id": 1,
+                    "hash": hash_hex,
+                    "data": BASE64.encode(chunk),
+                    "children": null
+                }))
+                .send()
+                .await
+                .unwrap();
+
+            assert_eq!(response.status(), StatusCode::OK);
+        }
+
+        // Step 2: Build a simple internal node (just use first chunk as root for simplicity)
+        let data_root = &chunk_hashes[0];
 
     // Step 3: Commit
     let commit_response = server
@@ -367,43 +377,978 @@ async fn test_full_upload_commit_read_flow() {
         .post(server.url("/commit"))
         .json(&json!({
             "bucket_id": 1,
-            "data_roots": [data_root]
+            "data_roots": [data_root],
         }))
         .send()
         .await
         .unwrap();
 
-    assert_eq!(commit_response.status(), StatusCode::OK);
+        assert_eq!(commit_response.status(), StatusCode::OK);
 
-    let commit_body: Value = commit_response.json().await.unwrap();
-    assert!(commit_body["mmr_root"].is_string());
+        let commit_body: Value = commit_response.json().await.unwrap();
+        assert!(commit_body["mmr_root"].is_string());
 
-    // Step 4: Read back
-    let read_response = server
+        // Step 4: Read back
+        let read_response = server
+            .client
+            .get(server.url(&format!("/read?data_root={data_root}&offset=0&length=100")))
+            .send()
+            .await
+            .unwrap();
+
+        assert_eq!(read_response.status(), StatusCode::OK);
+
+        let read_body: Value = read_response.json().await.unwrap();
+        assert!(read_body["chunks"].is_array());
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Signing security: commit/commitment endpoints must never emit a placeholder
+// 64-zero-byte "signature" when the provider has no keypair configured.
+// They must refuse with 503 Service Unavailable instead.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Upload a single chunk and commit it. Returns the chunk hash hex and
+/// the parsed commit-response body.
+async fn upload_and_commit(server: &TestServer, bucket_id: u64) -> (String, Value) {
+    let data = b"chunk-for-signature-tests";
+    let hash = storage_primitives::blake2_256(data);
+    let hash_hex = format!("0x{}", hex_encode(hash.as_bytes()));
+
+    let resp = server
         .client
-        .get(server.url(&format!(
-            "/read?data_root={}&offset=0&length=100",
-            data_root
-        )))
+        .request_bucket(Method::PUT, server.url("/node"), bucket_id)
+        .json(&json!({
+            "bucket_id": bucket_id,
+            "hash": hash_hex,
+            "data": BASE64.encode(data),
+            "children": null,
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let commit_resp = server
+        .client
+        .request_bucket(Method::POST, server.url("/commit"), bucket_id)
+        .json(&json!({
+            "bucket_id": bucket_id,
+            "data_roots": [hash_hex],
+        }))
         .send()
         .await
         .unwrap();
 
-    assert_eq!(read_response.status(), StatusCode::OK);
+    let status = commit_resp.status();
+    let body: Value = commit_resp.json().await.unwrap();
+    assert_eq!(status, StatusCode::OK, "commit failed: {body:?}");
+    (hash_hex, body)
+}
 
-    let read_body: Value = read_response.json().await.unwrap();
-    assert!(read_body["chunks"].is_array());
+/// `//Alice`'s sr25519 public key, used to verify signatures from the server.
+fn alice_public() -> sr25519::Public {
+    common::test_member_pair().public()
+}
+
+/// Decode a `provider_signature` field: 0x-prefixed hex of a SCALE-encoded
+/// `MultiSignature`, as emitted by `ProviderState::sign`.
+fn decode_provider_signature(sig_hex: &str) -> sp_runtime::MultiSignature {
+    use codec::Decode;
+    let bytes = hex_decode(sig_hex).expect("signature hex parses");
+    sp_runtime::MultiSignature::decode(&mut &bytes[..]).expect("valid SCALE MultiSignature")
+}
+
+/// Expect the signature to be the Sr25519 variant and unwrap it.
+fn expect_sr25519(sig: sp_runtime::MultiSignature) -> sr25519::Signature {
+    match sig {
+        sp_runtime::MultiSignature::Sr25519(sig) => sig,
+        other => panic!("expected an Sr25519 signature, got {other:?}"),
+    }
+}
+
+common::backend_tests! {
+    async fn commit_returns_valid_sr25519_signature_over_commitment_payload(backend) {
+        // The whole point of the zero-byte-signing fix: when a key IS configured,
+        // the server must produce a real sr25519 signature that verifies under the
+        // provider's public key against the exact bytes the pallet will hash.
+        let server = TestServer::new(backend).await;
+        let bucket_id = 7;
+
+        let (_chunk_hash, body) = upload_and_commit(&server, bucket_id).await;
+
+        let mmr_root_hex = body["mmr_root"].as_str().expect("mmr_root present");
+        let start_seq = body["start_seq"].as_u64().expect("start_seq present");
+        let sig_hex = body["provider_signature"]
+            .as_str()
+            .expect("provider_signature present");
+
+        // Defensive: if the zero-byte placeholder ever returns, this catches it.
+        let sig = expect_sr25519(decode_provider_signature(sig_hex));
+        assert_ne!(
+            sig.0, [0u8; 64],
+            "server returned zero-byte placeholder instead of a real signature"
+        );
+
+        // Reconstruct exactly what the handler signed: CommitmentPayload with
+        // the real post-commit leaf_count (no longer hardcoded 0).
+        let mmr_root_bytes = hex_decode(mmr_root_hex).unwrap();
+        let mmr_root = H256::from_slice(&mmr_root_bytes);
+        let leaf_count = body["leaf_count"]
+            .as_u64()
+            .expect("leaf_count present in /commit response");
+        let payload = CommitmentPayload::new(
+            bucket_id,
+            Commitment {
+                mmr_root,
+                start_seq,
+                leaf_count,
+            },
+        );
+        let encoded = payload.encode();
+
+        assert!(
+            sr25519::Pair::verify(&sig, &encoded, &alice_public()),
+            "signature did not verify against //Alice over the expected commitment payload"
+        );
+    }
+}
+
+common::backend_tests! {
+    async fn checkpoint_signature_verifies_with_real_leaf_count(backend) {
+        // `/checkpoint-signature` signs the payload with the *real* leaf_count
+        // (unlike /commit which uses 0). Verify both that a real signature comes
+        // back and that it round-trips against the public key.
+        let server = TestServer::new(backend).await;
+        let bucket_id = 8;
+
+        upload_and_commit(&server, bucket_id).await;
+
+        let resp = server
+            .client
+            .get(server.url(&format!("/checkpoint-signature?bucket_id={bucket_id}")))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body: Value = resp.json().await.unwrap();
+
+        let mmr_root = H256::from_slice(&hex_decode(body["mmr_root"].as_str().unwrap()).unwrap());
+        let start_seq = body["start_seq"].as_u64().unwrap();
+        let leaf_count = body["leaf_count"].as_u64().unwrap();
+        assert!(leaf_count > 0, "leaf_count must be the real on-disk value");
+
+        let sig = expect_sr25519(decode_provider_signature(
+            body["provider_signature"].as_str().unwrap(),
+        ));
+        assert_ne!(sig.0, [0u8; 64]);
+
+        let payload = CommitmentPayload::new(
+            bucket_id,
+            Commitment {
+                mmr_root,
+                start_seq,
+                leaf_count,
+            },
+        );
+        assert!(sr25519::Pair::verify(
+            &sig,
+            payload.encode(),
+            &alice_public()
+        ));
+    }
+}
+
+common::backend_tests! {
+    async fn commitment_signature_does_not_verify_under_a_different_key(backend) {
+        // Negative control: //Bob must not be able to take credit for //Alice's
+        // signature. Catches accidental no-op verifiers.
+        let server = TestServer::new(backend).await;
+        let bucket_id = 9;
+
+        let (_h, body) = upload_and_commit(&server, bucket_id).await;
+        let mmr_root = H256::from_slice(&hex_decode(body["mmr_root"].as_str().unwrap()).unwrap());
+        let start_seq = body["start_seq"].as_u64().unwrap();
+        let sig = expect_sr25519(decode_provider_signature(
+            body["provider_signature"].as_str().unwrap(),
+        ));
+        let encoded = CommitmentPayload::new(
+            bucket_id,
+            Commitment {
+                mmr_root,
+                start_seq,
+                leaf_count: 0,
+            },
+        )
+        .encode();
+
+        let bob = sr25519::Pair::from_string("//Bob", None).unwrap().public();
+        assert!(
+            !sr25519::Pair::verify(&sig, &encoded, &bob),
+            "Alice's signature wrongly verifies under Bob's key"
+        );
+    }
+}
+
+#[tokio::test]
+async fn commit_signs_with_configured_ed25519_scheme() {
+    // A node started with --key-scheme ed25519 must emit Ed25519-tagged
+    // MultiSignatures that verify under the ed25519 key derived from the
+    // same seed — the full multi-scheme wire path.
+    use sp_core::ed25519;
+
+    let server = TestServer::new_with_scheme(StorageBackendKind::RocksDb, KeyScheme::Ed25519).await;
+    let bucket_id = 11;
+
+    let (_h, body) = upload_and_commit(&server, bucket_id).await;
+    let mmr_root = H256::from_slice(&hex_decode(body["mmr_root"].as_str().unwrap()).unwrap());
+    let start_seq = body["start_seq"].as_u64().unwrap();
+    let leaf_count = body["leaf_count"].as_u64().unwrap();
+
+    let sig = match decode_provider_signature(body["provider_signature"].as_str().unwrap()) {
+        sp_runtime::MultiSignature::Ed25519(sig) => sig,
+        other => panic!("expected an Ed25519 signature, got {other:?}"),
+    };
+
+    let payload = CommitmentPayload::new(
+        bucket_id,
+        Commitment {
+            mmr_root,
+            start_seq,
+            leaf_count,
+        },
+    );
+    let alice_ed = ed25519::Pair::from_string(common::PROVIDER_SEED, None)
+        .unwrap()
+        .public();
+    assert!(
+        ed25519::Pair::verify(&sig, payload.encode(), &alice_ed),
+        "Ed25519 signature did not verify under the ed25519 //Alice key"
+    );
+}
+
+common::backend_tests! {
+    async fn commit_returns_503_when_no_signing_key_configured(backend) {
+        // The pre-fix behaviour silently returned 64 zero bytes here. Post-fix,
+        // the handler must refuse with 503 Service Unavailable so callers do not
+        // mistake a placeholder for a real provider commitment.
+        let server = TestServer::new_unsigned(backend).await;
+
+        let data = b"chunk-without-key";
+        let hash = storage_primitives::blake2_256(data);
+        let hash_hex = format!("0x{}", hex_encode(hash.as_bytes()));
+
+        server
+            .client
+            .put(server.url("/node"))
+            .json(&json!({
+                "bucket_id": 1,
+                "hash": hash_hex,
+                "data": BASE64.encode(data),
+                "children": null,
+            }))
+            .send()
+            .await
+            .unwrap();
+
+        let resp = server
+            .client
+            .post(server.url("/commit"))
+            .json(&json!({ "bucket_id": 1, "data_roots": [hash_hex] }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let body: Value = resp.json().await.unwrap();
+        assert_eq!(body["error"], "signing_unavailable");
+    }
+}
+
+common::backend_tests! {
+    async fn commitment_endpoint_returns_503_when_no_signing_key(backend) {
+        // GET /commitment also signs the response — it must also refuse rather
+        // than emit zero bytes.
+        let server = TestServer::new_unsigned(backend).await;
+
+        // Seed the bucket via storage so the bucket-lookup gate passes and the
+        // handler actually reaches the signing step. Calling /commit on the
+        // unsigned server returns 503 but still mutates storage, which is enough
+        // to make /commitment reach state.sign(...).
+        let data = b"chunk-for-commitment-503";
+        let hash = storage_primitives::blake2_256(data);
+        let hash_hex = format!("0x{}", hex_encode(hash.as_bytes()));
+        server
+            .client
+            .put(server.url("/node"))
+            .json(&json!({
+                "bucket_id": 1,
+                "hash": hash_hex,
+                "data": BASE64.encode(data),
+                "children": null,
+            }))
+            .send()
+            .await
+            .unwrap();
+        server
+            .client
+            .post(server.url("/commit"))
+            .json(&json!({ "bucket_id": 1, "data_roots": [hash_hex] }))
+            .send()
+            .await
+            .unwrap();
+
+        let resp = server
+            .client
+            .get(server.url("/commitment?bucket_id=1"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let body: Value = resp.json().await.unwrap();
+        assert_eq!(body["error"], "signing_unavailable");
+    }
+}
+
+common::backend_tests! {
+    async fn delete_endpoint_returns_503_when_no_signing_key(backend) {
+        let server = TestServer::new_unsigned(backend).await;
+
+        // Seed and commit so the delete handler can reach its sign() call.
+        let data = b"chunk-for-delete-503";
+        let hash = storage_primitives::blake2_256(data);
+        let hash_hex = format!("0x{}", hex_encode(hash.as_bytes()));
+        server
+            .client
+            .put(server.url("/node"))
+            .json(&json!({
+                "bucket_id": 1,
+                "hash": hash_hex,
+                "data": BASE64.encode(data),
+                "children": null,
+            }))
+            .send()
+            .await
+            .unwrap();
+        server
+            .client
+            .post(server.url("/commit"))
+            .json(&json!({ "bucket_id": 1, "data_roots": [hash_hex] }))
+            .send()
+            .await
+            .unwrap();
+
+        let resp = server
+            .client
+            .post(server.url("/delete"))
+            .json(&json!({
+                "bucket_id": 1,
+                "new_start_seq": 1,
+                "admin_signature": "0x00",
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let body: Value = resp.json().await.unwrap();
+        assert_eq!(body["error"], "signing_unavailable");
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Stats endpoint
+// ─────────────────────────────────────────────────────────────────────────────
+
+common::backend_tests! {
+    async fn test_stats_endpoint_empty(backend) {
+        let server = TestServer::new(backend).await;
+
+        let resp = server
+            .client
+            .get(server.url("/stats"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let body: Value = resp.json().await.unwrap();
+        assert_eq!(body["total_buckets"], 0);
+        assert_eq!(body["total_nodes"], 0);
+        assert_eq!(body["total_bytes"], 0);
+        assert!(body["buckets"].as_array().unwrap().is_empty());
+    }
+}
+
+common::backend_tests! {
+    async fn test_stats_endpoint(backend) {
+        let server = TestServer::new(backend).await;
+
+        // Upload data so stats are non-zero
+        upload_and_commit(&server, 1).await;
+
+        let resp = server
+            .client
+            .get(server.url("/stats"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let body: Value = resp.json().await.unwrap();
+        assert_eq!(body["total_buckets"], 1);
+        assert!(body["total_nodes"].as_u64().unwrap() > 0);
+        assert!(body["total_bytes"].as_u64().unwrap() > 0);
+        let buckets = body["buckets"].as_array().unwrap();
+        assert_eq!(buckets.len(), 1);
+        assert_eq!(buckets[0]["bucket_id"], 1);
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Chunk proof endpoint
+// ─────────────────────────────────────────────────────────────────────────────
+
+common::backend_tests! {
+    async fn test_chunk_proof_endpoint(backend) {
+        let server = TestServer::new(backend).await;
+        let (hash_hex, _body) = upload_and_commit(&server, 1).await;
+
+        let resp = server
+            .client
+            .get(server.url(&format!("/chunk_proof?data_root={hash_hex}&chunk_index=0")))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let body: Value = resp.json().await.unwrap();
+        assert!(body["chunk_hash"].is_string());
+        assert!(body["chunk_data"].is_string()); // base64
+        assert!(body["proof"]["siblings"].is_array());
+        assert!(body["proof"]["path"].is_array());
+    }
+}
+
+common::backend_tests! {
+    async fn test_chunk_proof_invalid_root(backend) {
+        let server = TestServer::new(backend).await;
+
+        let fake_root = "0x0000000000000000000000000000000000000000000000000000000000000001";
+        let resp = server
+            .client
+            .get(server.url(&format!("/chunk_proof?data_root={fake_root}&chunk_index=0")))
+            .send()
+            .await
+            .unwrap();
+
+        assert!(resp.status().is_client_error() || resp.status().is_server_error());
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MMR peaks and subtree
+// ─────────────────────────────────────────────────────────────────────────────
+
+common::backend_tests! {
+    async fn test_mmr_proof_endpoint(backend) {
+        let server = TestServer::new(backend).await;
+        upload_and_commit(&server, 1).await;
+
+        let resp = server
+            .client
+            .get(server.url("/mmr_proof?bucket_id=1&leaf_index=0"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let body: Value = resp.json().await.unwrap();
+        assert!(body["leaf"]["data_root"].is_string());
+        assert!(body["proof"]["peaks"].is_array());
+    }
+}
+
+common::backend_tests! {
+    async fn test_mmr_peaks_endpoint(backend) {
+        let server = TestServer::new(backend).await;
+        upload_and_commit(&server, 1).await;
+
+        let resp = server
+            .client
+            .get(server.url("/mmr_peaks?bucket_id=1"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let body: Value = resp.json().await.unwrap();
+        assert!(body["mmr_root"].is_string());
+        let peaks = body["peaks"].as_array().unwrap();
+        assert!(!peaks.is_empty());
+    }
+}
+
+common::backend_tests! {
+    async fn test_mmr_peaks_nonexistent_bucket(backend) {
+        let server = TestServer::new(backend).await;
+
+        let resp = server
+            .client
+            .get(server.url("/mmr_peaks?bucket_id=999"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+
+        let body: Value = resp.json().await.unwrap();
+        assert_eq!(body["error"], "bucket_not_found");
+    }
+}
+
+common::backend_tests! {
+    async fn test_mmr_subtree_endpoint(backend) {
+        let server = TestServer::new(backend).await;
+        upload_and_commit(&server, 1).await;
+
+        let resp = server
+            .client
+            .get(server.url("/mmr_subtree?bucket_id=1&peak_index=0&depth=1"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let body: Value = resp.json().await.unwrap();
+        let nodes = body["nodes"].as_array().unwrap();
+        assert!(!nodes.is_empty());
+        assert!(nodes[0]["hash"].is_string());
+        // position is a number
+        assert!(nodes[0]["position"].is_number());
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Fetch nodes
+// ─────────────────────────────────────────────────────────────────────────────
+
+common::backend_tests! {
+    async fn test_fetch_nodes_endpoint(backend) {
+        let server = TestServer::new(backend).await;
+
+        let data = b"fetch-nodes-test-data";
+        let hash = storage_primitives::blake2_256(data);
+        let hash_hex = format!("0x{}", hex_encode(hash.as_bytes()));
+
+        server
+            .client
+            .put(server.url("/node"))
+            .json(&json!({
+                "bucket_id": 1,
+                "hash": hash_hex,
+                "data": BASE64.encode(data),
+                "children": null,
+            }))
+            .send()
+            .await
+            .unwrap();
+
+        let resp = server
+            .client
+            .post(server.url("/fetch_nodes"))
+            .json(&json!({
+                "bucket_id": 1,
+                "hashes": [hash_hex],
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let body: Value = resp.json().await.unwrap();
+        let nodes = body["nodes"].as_array().unwrap();
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0]["hash"], hash_hex);
+        // data should be base64-encoded original data
+        let decoded = BASE64.decode(nodes[0]["data"].as_str().unwrap()).unwrap();
+        assert_eq!(decoded, data);
+    }
+}
+
+common::backend_tests! {
+    async fn test_fetch_nodes_unknown_hashes(backend) {
+        let server = TestServer::new(backend).await;
+
+        let fake = "0x0000000000000000000000000000000000000000000000000000000000000042";
+        let resp = server
+            .client
+            .post(server.url("/fetch_nodes"))
+            .json(&json!({
+                "bucket_id": 1,
+                "hashes": [fake],
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let body: Value = resp.json().await.unwrap();
+        let nodes = body["nodes"].as_array().unwrap();
+        assert!(nodes.is_empty());
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Replica sync status endpoints
+// ─────────────────────────────────────────────────────────────────────────────
+
+common::backend_tests! {
+    async fn test_historical_roots_endpoint(backend) {
+        let server = TestServer::new(backend).await;
+        upload_and_commit(&server, 1).await;
+
+        let resp = server
+            .client
+            .get(server.url("/replica/historical_roots?bucket_id=1"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let body: Value = resp.json().await.unwrap();
+        assert_eq!(body["bucket_id"], 1);
+        // current_root should be a non-zero hash
+        let current_root = body["current_root"].as_str().unwrap();
+        assert_ne!(
+            current_root,
+            "0x0000000000000000000000000000000000000000000000000000000000000000"
+        );
+        // historical_roots is an array of 6 empty strings (provider doesn't track them)
+        let hist = body["historical_roots"].as_array().unwrap();
+        assert_eq!(hist.len(), 6);
+    }
+}
+
+common::backend_tests! {
+    async fn test_replica_sync_status_endpoint(backend) {
+        let server = TestServer::new(backend).await;
+        upload_and_commit(&server, 1).await;
+
+        let resp = server
+            .client
+            .get(server.url("/replica/sync_status?bucket_id=1"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let body: Value = resp.json().await.unwrap();
+        assert_eq!(body["bucket_id"], 1);
+        assert!(body["local_mmr_root"].is_string());
+        assert!(body["local_leaf_count"].as_u64().unwrap() > 0);
+        assert_eq!(body["syncing"], false);
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Delete happy path
+// ─────────────────────────────────────────────────────────────────────────────
+
+common::backend_tests! {
+    async fn test_delete_happy_path(backend) {
+        let server = TestServer::new(backend).await;
+
+        // Commit two data roots
+        let data1 = b"chunk-for-delete-1";
+        let hash1 = storage_primitives::blake2_256(data1);
+        let hash1_hex = format!("0x{}", hex_encode(hash1.as_bytes()));
+
+        let data2 = b"chunk-for-delete-2";
+        let hash2 = storage_primitives::blake2_256(data2);
+        let hash2_hex = format!("0x{}", hex_encode(hash2.as_bytes()));
+
+        for (hash_hex, data) in [(&hash1_hex, &data1[..]), (&hash2_hex, &data2[..])] {
+            server
+                .client
+                .put(server.url("/node"))
+                .json(&json!({
+                    "bucket_id": 1,
+                    "hash": hash_hex,
+                    "data": BASE64.encode(data),
+                    "children": null,
+                }))
+                .send()
+                .await
+                .unwrap();
+        }
+
+    server
+        .client
+        .post(server.url("/commit"))
+        .json(&json!({
+            "bucket_id": 1,
+            "data_roots": [hash1_hex, hash2_hex],
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    // Delete with new_start_seq=1 (removes first leaf)
+    let resp = server
+        .client
+        .post(server.url("/delete"))
+        .json(&json!({
+            "bucket_id": 1,
+            "new_start_seq": 1,
+            "admin_signature": "0x00",
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+        let body: Value = resp.json().await.unwrap();
+        assert_eq!(body["start_seq"], 1);
+        assert_eq!(body["leaf_count"], 1);
+
+        // The deletion proof is the one signing path with no consumer in this
+        // repo, so nothing else would catch it regressing. Verify it like the
+        // /commit proofs: a real signature, in the SCALE MultiSignature wire
+        // format, over the *post-delete* commitment. A zero placeholder or a
+        // raw untagged signature both pass a `starts_with("0x")` check.
+        let mmr_root = H256::from_slice(&hex_decode(body["mmr_root"].as_str().unwrap()).unwrap());
+        let sig = expect_sr25519(decode_provider_signature(
+            body["provider_signature"].as_str().unwrap(),
+        ));
+        assert_ne!(sig.0, [0u8; 64], "delete returned a zeroed placeholder");
+
+        let payload = CommitmentPayload::new(
+            1,
+            Commitment {
+                mmr_root,
+                start_seq: 1,
+                leaf_count: 1,
+            },
+        );
+        assert!(
+            sr25519::Pair::verify(&sig, payload.encode(), &alice_public()),
+            "delete proof did not verify against //Alice over the post-delete commitment"
+        );
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Error path tests: invalid hex, invalid base64, missing data
+// ─────────────────────────────────────────────────────────────────────────────
+
+common::backend_tests! {
+    async fn test_get_node_invalid_hex(backend) {
+        let server = TestServer::new(backend).await;
+
+        let resp = server
+            .client
+            .get(server.url("/node?hash=not_hex_at_all"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+        let body: Value = resp.json().await.unwrap();
+        assert_eq!(body["error"], "invalid_hash");
+    }
+}
+
+common::backend_tests! {
+    async fn test_get_node_not_found(backend) {
+        let server = TestServer::new(backend).await;
+
+        let valid_but_absent = "0x0000000000000000000000000000000000000000000000000000000000000099";
+        let resp = server
+            .client
+            .get(server.url(&format!("/node?hash={valid_but_absent}")))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+
+        let body: Value = resp.json().await.unwrap();
+        assert_eq!(body["error"], "not_found");
+    }
+}
+
+common::backend_tests! {
+    async fn test_upload_node_invalid_base64(backend) {
+        let server = TestServer::new(backend).await;
+
+        let hash = "0x0000000000000000000000000000000000000000000000000000000000000001";
+        let resp = server
+            .client
+            .put(server.url("/node"))
+            .json(&json!({
+                "bucket_id": 1,
+                "hash": hash,
+                "data": "!!!not_base64!!!",
+                "children": null
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+        let body: Value = resp.json().await.unwrap();
+        assert_eq!(body["error"], "serialization_error");
+    }
+}
+
+common::backend_tests! {
+    async fn test_upload_node_invalid_hex_children(backend) {
+        let server = TestServer::new(backend).await;
+
+        let data = b"child test data";
+        let hash = storage_primitives::blake2_256(data);
+        let hash_hex = format!("0x{}", hex_encode(hash.as_bytes()));
+
+        let resp = server
+            .client
+            .put(server.url("/node"))
+            .json(&json!({
+                "bucket_id": 1,
+                "hash": hash_hex,
+                "data": BASE64.encode(data),
+                "children": ["zzz_invalid_hex"]
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+        let body: Value = resp.json().await.unwrap();
+        assert_eq!(body["error"], "invalid_hash");
+    }
+}
+
+common::backend_tests! {
+    async fn test_commit_invalid_hex_data_root(backend) {
+        let server = TestServer::new(backend).await;
+
+    let resp = server
+        .client
+        .post(server.url("/commit"))
+        .json(&json!({
+            "bucket_id": 1,
+            "data_roots": ["not_hex"],
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+        let body: Value = resp.json().await.unwrap();
+        assert_eq!(body["error"], "invalid_hash");
+    }
+}
+
+common::backend_tests! {
+    async fn test_commit_without_signing_key(backend) {
+        let server = TestServer::new_unsigned(backend).await;
+
+        // Upload a valid node first (upload doesn't need signing)
+        let data = b"commit-no-key";
+        let hash = storage_primitives::blake2_256(data);
+        let hash_hex = format!("0x{}", hex_encode(hash.as_bytes()));
+
+        server
+            .client
+            .put(server.url("/node"))
+            .json(&json!({
+                "bucket_id": 1,
+                "hash": hash_hex,
+                "data": BASE64.encode(data),
+                "children": null,
+            }))
+            .send()
+            .await
+            .unwrap();
+
+    let resp = server
+        .client
+        .post(server.url("/commit"))
+        .json(&json!({
+            "bucket_id": 1,
+            "data_roots": [hash_hex],
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+
+        let body: Value = resp.json().await.unwrap();
+        assert_eq!(body["error"], "signing_unavailable");
+    }
+}
+
+common::backend_tests! {
+    async fn test_read_chunks_invalid_hex(backend) {
+        let server = TestServer::new(backend).await;
+
+        let resp = server
+            .client
+            .get(server.url("/read?data_root=not_hex&offset=0&length=100"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+        let body: Value = resp.json().await.unwrap();
+        assert_eq!(body["error"], "invalid_hash");
+    }
+}
+
+common::backend_tests! {
+    async fn test_read_chunks_nonexistent_root(backend) {
+        let server = TestServer::new(backend).await;
+
+        let valid_hex = "0x0000000000000000000000000000000000000000000000000000000000000001";
+        let resp = server
+            .client
+            .get(server.url(&format!("/read?data_root={valid_hex}&offset=0&length=100")))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        // No chunks found for nonexistent root → empty chunks array
+        let body: Value = resp.json().await.unwrap();
+        let chunks = body["chunks"].as_array().unwrap();
+        assert!(chunks.is_empty());
+    }
+}
+
+common::backend_tests! {
+    async fn test_chunk_proof_invalid_hex(backend) {
+        let server = TestServer::new(backend).await;
+
+        let resp = server
+            .client
+            .get(server.url("/chunk_proof?data_root=not_hex&chunk_index=0"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+        let body: Value = resp.json().await.unwrap();
+        assert_eq!(body["error"], "invalid_hash");
+    }
 }
 
 // Helper functions
 
 fn hex_encode(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{:02x}", b)).collect()
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 fn hex_decode(s: &str) -> Result<Vec<u8>, &'static str> {
     let s = s.strip_prefix("0x").unwrap_or(s);
-    if s.len() % 2 != 0 {
+    if !s.len().is_multiple_of(2) {
         return Err("invalid hex length");
     }
 

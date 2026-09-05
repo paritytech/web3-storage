@@ -1,8 +1,12 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 //! API types for the provider node.
 
 use serde::{Deserialize, Serialize};
-use sp_core::H256;
 use storage_primitives::BucketId;
+
+pub use provider_coordinator::ProviderInfo;
+pub use provider_storage::{BucketStats, BucketSummary};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Node Upload/Download Types
@@ -70,6 +74,8 @@ pub struct CommitRequest {
 pub struct CommitResponse {
     pub mmr_root: String,
     pub start_seq: u64,
+    /// Number of leaves in the MMR after the commit.
+    pub leaf_count: u64,
     /// Leaf indices assigned to each data root
     pub leaf_indices: Vec<u64>,
     /// Provider signature over the commitment
@@ -122,6 +128,16 @@ pub struct CommitmentResponse {
     pub provider_signature: String,
 }
 
+/// Response with checkpoint-compatible signature (signs with real leaf_count).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CheckpointSignatureResponse {
+    pub bucket_id: BucketId,
+    pub mmr_root: String,
+    pub start_seq: u64,
+    pub leaf_count: u64,
+    pub provider_signature: String,
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Proof Types
 // ─────────────────────────────────────────────────────────────────────────────
@@ -153,6 +169,7 @@ pub struct MmrProofResponse {
 pub struct MmrProofData {
     pub peaks: Vec<String>,
     pub siblings: Vec<String>,
+    pub path: Vec<bool>,
 }
 
 /// Query for chunk proof.
@@ -166,6 +183,9 @@ pub struct ChunkProofQuery {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChunkProofResponse {
     pub chunk_hash: String,
+    /// Base64-encoded chunk data (included for challenge responses)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub chunk_data: Option<String>,
     pub proof: MerkleProofData,
 }
 
@@ -181,12 +201,13 @@ pub struct MerkleProofData {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Request to delete data (admin only).
+///
+/// Authorization is carried in the `Authorization` header (`Web3Storage …`,
+/// verified against the bucket's Admin members), not in the body.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeleteRequest {
     pub bucket_id: BucketId,
     pub new_start_seq: u64,
-    /// Admin signature authorizing deletion
-    pub admin_signature: String,
 }
 
 /// Response from delete operation.
@@ -202,15 +223,6 @@ pub struct DeleteResponse {
 // Bucket Types
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Bucket summary info.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BucketSummary {
-    pub bucket_id: BucketId,
-    pub mmr_root: String,
-    pub start_seq: u64,
-    pub leaf_count: u64,
-}
-
 /// Response with bucket list.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ListBucketsResponse {
@@ -224,8 +236,27 @@ pub struct ListBucketsResponse {
 /// Provider info response.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InfoResponse {
-    pub status: String,
-    pub version: String,
+    pub provider_id: String,
+    pub provider_registration_info: Option<ProviderInfo>,
+    /// Readiness of the signing-bound endpoints (e.g. `/negotiate`). A
+    /// provider can be registered and accepting agreements yet still reject
+    /// `/negotiate` if these are not all `true`.
+    pub readiness: ProviderReadiness,
+}
+
+/// Readiness flags for signing-bound endpoints, surfaced via `/info` so the
+/// reason `/negotiate` is unavailable can be diagnosed without reading logs.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderReadiness {
+    /// A signing keypair is configured (node started with `--keyfile`).
+    pub signing_configured: bool,
+    /// The nonce counter is bootstrapped from on-chain replay state.
+    pub nonce_counter_ready: bool,
+    /// On-chain provider registration info has been loaded.
+    pub provider_info_loaded: bool,
+    /// The provider has announced deregistration; `/negotiate` is disabled and
+    /// returns 503 even when every other flag is `true`.
+    pub deregistering: bool,
 }
 
 /// Health check response.
@@ -233,6 +264,16 @@ pub struct InfoResponse {
 pub struct HealthResponse {
     pub status: String,
     pub version: String,
+}
+
+/// Provider statistics response.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StatsResponse {
+    pub provider_id: String,
+    pub total_buckets: usize,
+    pub total_nodes: u64,
+    pub total_bytes: u64,
+    pub buckets: Vec<BucketStats>,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -294,4 +335,73 @@ pub struct FetchedNode {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FetchNodesResponse {
     pub nodes: Vec<FetchedNode>,
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Replica Sync Coordinator Types
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Query for historical roots.
+#[derive(Debug, Clone, Deserialize)]
+pub struct HistoricalRootsQuery {
+    pub bucket_id: BucketId,
+}
+
+/// Response with current and historical roots.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HistoricalRootsResponse {
+    pub bucket_id: BucketId,
+    /// Current MMR root (position 0).
+    pub current_root: String,
+    /// Historical roots (positions 1-6).
+    pub historical_roots: [String; 6],
+    /// Block number of the snapshot.
+    pub snapshot_block: u64,
+}
+
+/// Query for bucket sync status.
+#[derive(Debug, Clone, Deserialize)]
+pub struct BucketSyncStatusQuery {
+    pub bucket_id: BucketId,
+}
+
+/// Response with bucket sync status.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BucketSyncStatusResponse {
+    pub bucket_id: BucketId,
+    /// Local MMR root.
+    pub local_mmr_root: String,
+    /// Local leaf count.
+    pub local_leaf_count: u64,
+    /// Block number of last sync (if any).
+    pub last_sync_block: Option<u64>,
+    /// Whether sync is in progress.
+    pub syncing: bool,
+}
+
+/// Request to force sync a bucket.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ForceSyncRequest {
+    pub bucket_id: BucketId,
+}
+
+/// Response from force sync.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ForceSyncResponse {
+    pub bucket_id: BucketId,
+    pub queued: bool,
+    pub message: String,
+}
+
+/// Response with overall replica sync coordinator status.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReplicaSyncCoordinatorStatusResponse {
+    /// Whether coordinator is running.
+    pub running: bool,
+    /// Whether coordinator is paused.
+    pub paused: bool,
+    /// Number of active sync operations.
+    pub active_syncs: usize,
+    /// Buckets being tracked as replica.
+    pub tracked_buckets: Vec<BucketId>,
 }
