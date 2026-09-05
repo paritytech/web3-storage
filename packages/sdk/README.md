@@ -80,7 +80,10 @@ only the final one.
 Provider requests are signed (`Web3Storage <pubkey>:<sig>:<timestamp>` per
 the `crates/providers/auth` crate) whenever the signer carries a raw keypair
 (`makeSigner` populates it). Wallet-extension signers can't produce the raw
-sr25519 signature — unauthenticated providers still work.
+sr25519 signature — unauthenticated providers still work. Client auth is
+sr25519-only ([#304](https://github.com/paritytech/web3-storage/issues/304)
+tracks extending it); *provider* signatures are multi-scheme and arrive as
+SCALE-encoded `MultiSignature` hex, decoded by `decodeMultiSignature`.
 
 ## Deliberately NOT in this package
 

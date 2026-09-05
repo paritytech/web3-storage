@@ -172,12 +172,37 @@ pub trait ReplicaSyncChainClient: Send + Sync {
     /// Fetch primary provider HTTP endpoints for a bucket.
     async fn fetch_primary_endpoints(&self, bucket_id: BucketId) -> Result<Vec<String>, Error>;
 
-    /// Submit a confirm_replica_sync extrinsic.
+    /// Submit a confirm_replica_sync extrinsic carrying the replica's
+    /// signed roots attestation — the pallet verifies it against the
+    /// registered `public_key`.
     async fn submit_sync_confirmation(
         &self,
         bucket_id: BucketId,
-        target_mmr_root: H256,
+        attestation: SignedSyncRoots,
     ) -> Result<(u8, u128), Error>;
+}
+
+/// A replica's signed attestation of the sync roots it claims. Bundling the
+/// array with the signature over its SCALE encoding keeps the signed and the
+/// submitted payload one value — they cannot drift apart.
+#[derive(Clone, Debug)]
+pub struct SignedSyncRoots {
+    /// The roots shape `confirm_replica_sync` expects: target root in
+    /// position 0, positions 1–6 map to the bucket's prime-bucketed
+    /// historical slots (unused by the node today).
+    pub roots: [Option<H256>; 7],
+    /// Scheme-tagged signature over `SCALE(roots)` by the registered key.
+    pub signature: sp_runtime::MultiSignature,
+}
+
+impl SignedSyncRoots {
+    /// Attest the target root with the provider's signing keypair.
+    pub fn sign(keypair: &crate::ProviderKeypair, target_mmr_root: H256) -> Self {
+        let mut roots = [None; 7];
+        roots[0] = Some(target_mmr_root);
+        let signature = keypair.sign(&codec::Encode::encode(&roots));
+        Self { roots, signature }
+    }
 }
 
 #[async_trait::async_trait]
@@ -207,10 +232,10 @@ impl<T: ReplicaSyncChainClient> ReplicaSyncChainClient for Arc<T> {
     async fn submit_sync_confirmation(
         &self,
         bucket_id: BucketId,
-        target_mmr_root: H256,
+        attestation: SignedSyncRoots,
     ) -> Result<(u8, u128), Error> {
         self.as_ref()
-            .submit_sync_confirmation(bucket_id, target_mmr_root)
+            .submit_sync_confirmation(bucket_id, attestation)
             .await
     }
 }
@@ -701,22 +726,7 @@ impl ReplicaSyncCoordinator {
 
         // Submit on-chain confirmation if auto_confirm is enabled
         if self.config.auto_confirm {
-            match self
-                .chain_client
-                .submit_sync_confirmation(duty.bucket_id, duty.target_mmr_root)
-                .await
-            {
-                Ok((position, payment)) => SyncResult::Success {
-                    bucket_id: duty.bucket_id,
-                    mmr_root: duty.target_mmr_root,
-                    position_matched: position,
-                    payment,
-                },
-                Err(e) => SyncResult::SubmissionFailed {
-                    bucket_id: duty.bucket_id,
-                    error: e.to_string(),
-                },
-            }
+            self.confirm_on_chain(duty).await
         } else {
             SyncResult::Success {
                 bucket_id: duty.bucket_id,
@@ -724,6 +734,44 @@ impl ReplicaSyncCoordinator {
                 position_matched: 0,
                 payment: 0,
             }
+        }
+    }
+
+    /// Attest the synced roots and submit `confirm_replica_sync`. The pallet
+    /// verifies the signature over the SCALE-encoded `roots` array against
+    /// our registered public key, so a node without a signing key must not
+    /// submit at all.
+    pub async fn confirm_on_chain(&self, duty: &SyncDuty) -> SyncResult {
+        if let Err(e) = self.state.ensure_signing_key_registered() {
+            return SyncResult::SubmissionFailed {
+                bucket_id: duty.bucket_id,
+                error: format!("signing key does not match on-chain registration: {e}"),
+            };
+        }
+        let attestation = match self.state.keypair.as_ref() {
+            Some(pair) => SignedSyncRoots::sign(pair, duty.target_mmr_root),
+            None => {
+                return SyncResult::SubmissionFailed {
+                    bucket_id: duty.bucket_id,
+                    error: "no signing key configured; cannot attest sync roots".to_string(),
+                };
+            }
+        };
+        match self
+            .chain_client
+            .submit_sync_confirmation(duty.bucket_id, attestation)
+            .await
+        {
+            Ok((position, payment)) => SyncResult::Success {
+                bucket_id: duty.bucket_id,
+                mmr_root: duty.target_mmr_root,
+                position_matched: position,
+                payment,
+            },
+            Err(e) => SyncResult::SubmissionFailed {
+                bucket_id: duty.bucket_id,
+                error: e.to_string(),
+            },
         }
     }
 

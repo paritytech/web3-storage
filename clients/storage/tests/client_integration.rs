@@ -122,7 +122,7 @@ async fn test_upload_then_commit() {
 
     let commit = client.commit(1, vec![data_root]).await.unwrap();
 
-    assert!(!commit.mmr_root.is_empty());
+    assert_ne!(commit.mmr_root, sp_core::H256::zero());
     assert_eq!(commit.start_seq, 0);
     assert_eq!(commit.leaf_indices, vec![0]);
 }
@@ -435,7 +435,7 @@ async fn test_get_commitment_reflects_uploads() {
     assert_eq!(commitment.bucket_id, 1);
     assert_eq!(commitment.leaf_count, 1);
     assert_eq!(commitment.start_seq, 0);
-    assert!(!commitment.mmr_root.is_empty());
+    assert_ne!(commitment.mmr_root, sp_core::H256::zero());
 }
 
 #[tokio::test]

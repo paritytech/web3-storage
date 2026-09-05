@@ -10,10 +10,10 @@ Register a new storage provider.
 
 **Parameters:**
 - `multiaddr`: `BoundedVec<u8, T::MaxMultiaddrLength>` - network address (e.g. `/ip4/127.0.0.1/tcp/3333`)
-- `publicKey`: `BoundedVec<u8, ConstU32<64>>` - raw public key (32 bytes for Sr25519/Ed25519, 33 bytes for ECDSA)
+- `publicKey`: `BoundedVec<u8, ConstU32<64>>` - raw public key: 32 bytes (Sr25519/Ed25519) or 33 (compressed Ecdsa/Eth); any other length fails with `InvalidPublicKey`. Must match the provider node's `--key-scheme`.
 - `stake`: `BalanceOf<T>` - Amount to stake (must be ≥ `MinProviderStake`)
 
-**Example:**
+**Example** (sr25519 dev key; any scheme works the same way):
 ```
 multiaddr: /ip4/127.0.0.1/tcp/3333
 publicKey: 0xd43593c715fdd31c61141abd04a99fd6822c8558854ccde39a5684e7a56da27d
@@ -760,7 +760,7 @@ Replica provider confirms they have synced to one of the bucket's known MMR root
 **Parameters:**
 - `bucketId`: `BucketId` (u64)
 - `roots`: `[Option<H256>; 7]` - match candidates, indexed `[current, hist_0, hist_1, hist_2, hist_3, hist_4, hist_5]`
-- `_signature`: `MultiSignature` - placeholder, currently unused
+- `signature`: `MultiSignature` - the replica's signature over `roots.encode()`, verified against its registered `public_key`
 
 **Example:**
 ```
@@ -774,13 +774,13 @@ roots: [
   None,
   None
 ]
-_signature: 0x...
+signature: Sr25519(0x...)
 ```
 
-**Validation:** matched root differs from the previously synced root; at least `minSyncInterval` blocks since last sync; `syncBalance ≥ replicaSyncPrice`.
+**Validation:** signature verifies over the SCALE-encoded `roots` under the provider's registered key; matched root differs from the previously synced root; at least `minSyncInterval` blocks since last sync; `syncBalance ≥ replicaSyncPrice`. Verification runs before the bucket and agreement lookups, so a non-provider origin fails with `ProviderNotFound`.
 
 **Events:** `ReplicaSynced { position_matched, sync_payment }`
-**Errors:** `AgreementNotFound`, `NotReplica`, `InvalidSyncRoot`, `SyncTooFrequent`, `InsufficientSyncBalance`
+**Errors:** `ProviderNotFound`, `InvalidPublicKey`, `InvalidSignature`, `BucketNotFound`, `AgreementNotFound`, `NotReplica`, `InvalidSyncRoot`, `SyncTooFrequent`, `InsufficientSyncBalance`
 
 ---
 
@@ -892,7 +892,7 @@ createBucketWithStorage(maxBytes, duration, maxPricePerByte)
 2. requestAgreement(bucketId, replicaProvider, ..., replicaParams { syncBalance, minSyncInterval })
 3. [replica] acceptAgreement(bucketId)
 4. [replica syncs from primary off-chain]
-5. [replica] confirmReplicaSync(bucketId, roots, _signature)
+5. [replica] confirmReplicaSync(bucketId, roots, signature)
 ```
 
 ### 4. Client-initiated checkpoint

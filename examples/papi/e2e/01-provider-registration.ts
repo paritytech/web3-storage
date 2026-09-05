@@ -64,7 +64,7 @@ async function matchEntry(
     50,
     READ_OPTS,
   );
-  // find_matching_providers returns `account` as the raw 32-byte public key
+  // find_matching_providers returns `account` as the raw 32-byte AccountId32
   // (a Uint8Array), not an SS58 string or a Binary — compare bytes directly.
   return matches.find((m: any) => bytesEq(m.account, who.publicKey));
 }

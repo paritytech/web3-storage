@@ -181,28 +181,21 @@ pub mod extrinsics {
     }
 
     /// Create a checkpoint extrinsic payload to submit an on-chain snapshot.
-    ///
-    /// Fails if any signature is not exactly 64 bytes (sr25519).
     pub fn checkpoint(
         bucket_id: u64,
         commitment: Commitment,
-        signatures: Vec<(AccountId32, Vec<u8>)>,
-    ) -> Result<impl Payload, ClientError> {
+        signatures: &[(AccountId32, sp_runtime::MultiSignature)],
+    ) -> impl Payload {
         let sigs = signatures
-            .into_iter()
-            .map(|(account, sig)| {
-                Ok((
-                    convert::to_subxt_account(&account),
-                    convert::sr25519_signature(sig)?,
-                ))
-            })
-            .collect::<Result<Vec<_>, ClientError>>()?;
+            .iter()
+            .map(|(account, sig)| (convert::to_subxt_account(account), convert::multisig(sig)))
+            .collect();
 
-        Ok(api::tx().storage_provider().checkpoint(
+        api::tx().storage_provider().checkpoint(
             bucket_id,
             convert::commitment(&commitment),
             convert::bounded(sigs),
-        ))
+        )
     }
 
     /// Create a challenge_checkpoint extrinsic payload.
@@ -221,21 +214,20 @@ pub mod extrinsics {
     /// Create a challenge_offchain extrinsic payload.
     ///
     /// Uses the provider's off-chain signature instead of an on-chain checkpoint.
-    /// Fails if the signature is not exactly 64 bytes (sr25519).
     pub fn challenge_offchain(
         bucket_id: u64,
         provider: AccountId32,
         commitment: Commitment,
         target: ChunkLocation,
-        provider_signature: Vec<u8>,
-    ) -> Result<impl Payload, ClientError> {
-        Ok(api::tx().storage_provider().challenge_offchain(
+        provider_signature: &sp_runtime::MultiSignature,
+    ) -> impl Payload {
+        api::tx().storage_provider().challenge_offchain(
             bucket_id,
             convert::to_subxt_account(&provider),
             convert::commitment(&commitment),
             convert::chunk_location(&target),
-            convert::sr25519_signature(provider_signature)?,
-        ))
+            convert::multisig(provider_signature),
+        )
     }
 
     /// Create an add_stake extrinsic payload.
@@ -249,18 +241,16 @@ pub mod extrinsics {
     }
 
     /// Create a confirm_replica_sync extrinsic payload.
-    ///
-    /// Fails if the signature is not exactly 64 bytes (sr25519).
     pub fn confirm_replica_sync(
         bucket_id: u64,
         roots: [Option<H256>; 7],
-        signature: Vec<u8>,
-    ) -> Result<impl Payload, ClientError> {
-        Ok(api::tx().storage_provider().confirm_replica_sync(
+        signature: &sp_runtime::MultiSignature,
+    ) -> impl Payload {
+        api::tx().storage_provider().confirm_replica_sync(
             bucket_id,
             roots,
-            convert::sr25519_signature(signature)?,
-        ))
+            convert::multisig(signature),
+        )
     }
 
     /// Create a challenge_replica extrinsic payload.
@@ -410,6 +400,21 @@ where
     at.runtime_apis().call(payload).await.map_err(|e| {
         ClientError::Chain(format!("current_anchor_block runtime API call failed: {e}"))
     })
+}
+
+/// Decode a provider-emitted signature — `0x`-prefixed hex of a SCALE-encoded
+/// [`sp_runtime::MultiSignature`], the wire format every provider-node signing
+/// endpoint uses — back into the typed value.
+///
+/// Decoding must consume the input exactly: a value with trailing bytes is
+/// rejected rather than silently truncated, so this agrees with the JS SDK's
+/// per-variant length check on the same wire format.
+pub fn decode_multi_signature(sig_hex: &str) -> Result<sp_runtime::MultiSignature, ClientError> {
+    use codec::DecodeAll;
+    let s = sig_hex.strip_prefix("0x").unwrap_or(sig_hex);
+    let bytes = hex::decode(s).map_err(|e| ClientError::Serialization(e.to_string()))?;
+    sp_runtime::MultiSignature::decode_all(&mut &bytes[..])
+        .map_err(|e| ClientError::Serialization(format!("invalid SCALE MultiSignature: {e}")))
 }
 
 /// Parse a hex string to H256.

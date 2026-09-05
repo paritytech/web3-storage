@@ -6,17 +6,24 @@
 //! `examples/papi/full-flow.js`: registers the provider if not already present,
 //! then sets price_per_byte=1 and accepting_primary=true.
 //!
-//! Usage: cargo run --example register_provider [chain_ws] [provider_url] [multiaddr] [keyfile]
+//! Usage: cargo run --example register_provider [chain_ws] [provider_url] [multiaddr] [keyfile] [scheme]
 //!
 //! Arguments:
 //!   chain_ws      - WebSocket URL for parachain   (default: ws://127.0.0.1:2222)
 //!   provider_url  - HTTP URL for provider node    (default: http://127.0.0.1:3333)
 //!   multiaddr     - Provider multiaddr            (default: /ip4/127.0.0.1/tcp/3333)
 //!   keyfile       - Path to file containing seed  (default: dev seed //Alice)
+//!   scheme        - Signing-key scheme registered as public_key:
+//!                   sr25519|ed25519|ecdsa|eth     (default: sr25519)
+//!
+//! Extrinsics are always submitted from the sr25519 account derived from the
+//! seed; `scheme` only selects the signing key registered on-chain (what the
+//! provider node signs commitments/terms with — its --key-scheme must match).
 
 use sp_core::crypto::Ss58Codec;
 use std::env;
 use storage_client::{ClientConfig, ProviderClient, ProviderSettings};
+use storage_provider_node::{KeyScheme, ProviderKeypair};
 use subxt_signer::{sr25519::Keypair, SecretUri};
 
 const DEFAULT_CHAIN_WS: &str = "ws://127.0.0.1:2222";
@@ -39,16 +46,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .cloned()
         .unwrap_or_else(|| DEFAULT_PROVIDER_MULTIADDR.to_string());
 
-    // Load keypair from keyfile seed (e.g. "//Alice") or fall back to //Alice.
+    // Load the seed from a keyfile (e.g. "//Alice") or fall back to //Alice.
     // The keyfile format matches start-provider: a single seed phrase per line.
-    let keypair = if let Some(keyfile) = args.get(4) {
-        let seed = std::fs::read_to_string(keyfile)
-            .map_err(|e| format!("Failed to read keyfile {keyfile}: {e}"))?;
-        let uri: SecretUri = seed.trim().parse()?;
-        Keypair::from_uri(&uri)?
+    let seed = if let Some(keyfile) = args.get(4) {
+        std::fs::read_to_string(keyfile)
+            .map_err(|e| format!("Failed to read keyfile {keyfile}: {e}"))?
+            .trim()
+            .to_string()
     } else {
-        Keypair::from_uri(&DEFAULT_KEYRING.parse::<SecretUri>()?)?
+        DEFAULT_KEYRING.to_string()
     };
+    let keypair = Keypair::from_uri(&seed.parse::<SecretUri>()?)?;
+
+    // The registered public_key is the signing key of the chosen scheme,
+    // derived from the same seed; the submission account stays sr25519.
+    // Derived through the node's own `ProviderKeypair` so the key registered
+    // here is byte-identical to the one `--key-scheme` will sign with — two
+    // independent derivations of this pair are exactly what must never drift.
+    let scheme = args.get(5).map(String::as_str).unwrap_or("sr25519");
+    let key_scheme = match scheme {
+        "sr25519" => KeyScheme::Sr25519,
+        "ed25519" => KeyScheme::Ed25519,
+        "ecdsa" => KeyScheme::Ecdsa,
+        "eth" => KeyScheme::Eth,
+        other => {
+            return Err(format!("Unknown scheme '{other}' (sr25519|ed25519|ecdsa|eth)").into())
+        }
+    };
+    let signing_key = ProviderKeypair::from_seed(&seed, key_scheme)?.public_key_bytes();
 
     // Derive SS58 address from the keypair for display and ProviderClient identity.
     let public_key_bytes = keypair.public_key().0;
@@ -60,6 +85,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Provider URL:    {provider_url}");
     println!("Multiaddr:       {multiaddr}");
     println!("Account (SS58):  {ss58_address}");
+    println!("Key scheme:      {scheme}");
     println!();
 
     let config = ClientConfig {
@@ -75,14 +101,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let provider_info = provider_client.get_provider_info(&account).await?;
     if let Some(info) = provider_info {
-        println!("Provider already existed");
+        // Registration is keyed by account, so a second run with a different
+        // scheme or seed would silently leave the old key in force — and every
+        // signature this node then produces would fail verification. Refuse
+        // loudly instead.
+        if info.public_key != signing_key {
+            return Err(format!(
+                "provider already registered with a different key: on-chain 0x{} vs 0x{} derived \
+                 for scheme '{scheme}'. Deregister first, or rerun with the seed/scheme that \
+                 produced the registered key.",
+                hex::encode(&info.public_key),
+                hex::encode(&signing_key),
+            )
+            .into());
+        }
+        println!("Provider already registered with this key");
         println!("{info:?}");
         return Ok(());
     }
 
     println!("Registering provider...");
     match provider_client
-        .register(multiaddr, public_key_bytes.to_vec(), STAKE)
+        .register(multiaddr, signing_key, STAKE)
         .await
     {
         Ok(()) => println!("  Provider registered"),
