@@ -21,9 +21,9 @@
 //! provider node signs commitments/terms with — its --key-scheme must match).
 
 use sp_core::crypto::Ss58Codec;
-use sp_core::Pair as _;
 use std::env;
 use storage_client::{ClientConfig, ProviderClient, ProviderSettings};
+use storage_provider_node::{KeyScheme, ProviderKeypair};
 use subxt_signer::{sr25519::Keypair, SecretUri};
 
 const DEFAULT_CHAIN_WS: &str = "ws://127.0.0.1:2222";
@@ -60,28 +60,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // The registered public_key is the signing key of the chosen scheme,
     // derived from the same seed; the submission account stays sr25519.
+    // Derived through the node's own `ProviderKeypair` so the key registered
+    // here is byte-identical to the one `--key-scheme` will sign with — two
+    // independent derivations of this pair are exactly what must never drift.
     let scheme = args.get(5).map(String::as_str).unwrap_or("sr25519");
-    let signing_key: Vec<u8> = match scheme {
-        "sr25519" => sp_core::sr25519::Pair::from_string(&seed, None)?
-            .public()
-            .0
-            .to_vec(),
-        "ed25519" => sp_core::ed25519::Pair::from_string(&seed, None)?
-            .public()
-            .0
-            .to_vec(),
-        "ecdsa" => sp_core::ecdsa::Pair::from_string(&seed, None)?
-            .public()
-            .0
-            .to_vec(),
-        "eth" => sp_core::ecdsa::KeccakPair::from_string(&seed, None)?
-            .public()
-            .0
-            .to_vec(),
+    let key_scheme = match scheme {
+        "sr25519" => KeyScheme::Sr25519,
+        "ed25519" => KeyScheme::Ed25519,
+        "ecdsa" => KeyScheme::Ecdsa,
+        "eth" => KeyScheme::Eth,
         other => {
             return Err(format!("Unknown scheme '{other}' (sr25519|ed25519|ecdsa|eth)").into())
         }
     };
+    let signing_key = ProviderKeypair::from_seed(&seed, key_scheme)?.public_key_bytes();
 
     // Derive SS58 address from the keypair for display and ProviderClient identity.
     let public_key_bytes = keypair.public_key().0;

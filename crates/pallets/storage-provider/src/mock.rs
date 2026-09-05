@@ -281,7 +281,7 @@ pub fn sign_sync_roots(
     use codec::Encode;
     use sp_core::Pair as _;
     let pair = provider_signer(provider);
-    sp_runtime::MultiSignature::Sr25519(pair.sign(&roots.encode()))
+    pair.sign(&roots.encode()).into()
 }
 
 /// Helper: primary terms

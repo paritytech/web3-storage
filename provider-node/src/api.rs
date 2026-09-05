@@ -802,10 +802,10 @@ async fn negotiate_terms(
     }
 
     // Signing with a key the chain doesn't know about produces terms that can
-    // never be redeemed — fail fast instead. The guard reads the coordinator's
-    // latest snapshot, so a re-registration heals it on the next refresh
-    // without a restart.
-    state.ensure_signing_key_registered()?;
+    // never be redeemed — fail fast instead. Checked against the snapshot this
+    // request is already using, so a re-registration heals it on the next
+    // refresh without a restart.
+    state.ensure_signing_key_matches(&info)?;
 
     negotiate::validate_request(&req, &info)?;
 

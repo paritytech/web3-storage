@@ -708,7 +708,7 @@ where
     D: serde::Deserializer<'de>,
 {
     let hex_str = <String as serde::Deserialize>::deserialize(de)?;
-    crate::substrate::extrinsics::decode_multi_signature(&hex_str).map_err(serde::de::Error::custom)
+    crate::substrate::decode_multi_signature(&hex_str).map_err(serde::de::Error::custom)
 }
 
 /// Deserialize a `0x`-prefixed 32-byte hex string into an `H256`, failing the

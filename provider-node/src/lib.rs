@@ -116,20 +116,14 @@ impl ProviderKeypair {
     }
 
     /// Sign negotiated terms, bundling terms + scheme-tagged signature.
+    ///
+    /// The digest is the one `provider_negotiation` defines; signing goes
+    /// through [`Self::sign`] rather than the generic helper there, which
+    /// cannot cover `Eth` (upstream has no `From<KeccakSignature>` for
+    /// `MultiSignature`).
     pub fn sign_terms(&self, terms: AgreementTermsOf) -> SignedTerms {
-        match self {
-            Self::Sr25519(pair) => provider_negotiation::sign_terms(pair, terms),
-            Self::Ed25519(pair) => provider_negotiation::sign_terms(pair, terms),
-            Self::Ecdsa(pair) => provider_negotiation::sign_terms(pair, terms),
-            Self::Eth(pair) => {
-                // Upstream has no `From<KeccakSignature> for MultiSignature`,
-                // so the generic helper can't cover Eth — same payload,
-                // explicit wrap.
-                let hash = sp_crypto_hashing::blake2_256(&terms.signing_payload());
-                let signature = MultiSignature::Eth(pair.sign(&hash));
-                SignedTerms { terms, signature }
-            }
-        }
+        let signature = self.sign(&sp_crypto_hashing::blake2_256(&terms.signing_payload()));
+        SignedTerms { terms, signature }
     }
 }
 
@@ -151,6 +145,9 @@ pub struct ProviderState {
     pub provider_id: String,
     /// Signing keypair (optional, for dev/testing)
     pub keypair: Option<ProviderKeypair>,
+    /// `keypair`'s raw public key, derived once at construction — it is
+    /// compared against the registered on-chain key on every signed request.
+    signing_public_key: Option<Vec<u8>>,
     /// S3-compatible object index
     pub s3_index: S3IndexManager,
     /// File system drive index
@@ -182,6 +179,8 @@ impl ProviderState {
         Self {
             storage,
             provider_id,
+            // Derived once: the guard below runs on every signed request.
+            signing_public_key: keypair.as_ref().map(ProviderKeypair::public_key_bytes),
             keypair,
             s3_index: S3IndexManager::new(),
             fs_index: FsIndexManager::new(),
@@ -253,19 +252,28 @@ impl ProviderState {
     /// mode, or before the first refresh) signing proceeds; a re-registration
     /// heals a mismatch on the coordinator's next refresh without a restart.
     pub fn ensure_signing_key_registered(&self) -> Result<(), Error> {
-        let Some(keypair) = self.keypair.as_ref() else {
-            return Ok(());
-        };
-        // Derived before taking the lock so the guard covers only the compare.
-        let local = keypair.public_key_bytes();
         let info = self.chain_state.provider_info.read();
-        let Some(info) = info.as_ref() else {
+        match info.as_ref() {
+            Some(info) => self.ensure_signing_key_matches(info),
+            None => Ok(()),
+        }
+    }
+
+    /// The same guard against a registration snapshot the caller already
+    /// holds: skips a second lock acquisition, and — more importantly — checks
+    /// the very snapshot the rest of the request is being served from, rather
+    /// than one that may have been refreshed in between.
+    pub fn ensure_signing_key_matches(
+        &self,
+        info: &provider_coordinator::ProviderInfo,
+    ) -> Result<(), Error> {
+        let Some(local) = self.signing_public_key.as_ref() else {
             return Ok(());
         };
-        if info.public_key != local {
+        if &info.public_key != local {
             tracing::warn!(
                 registered = %hex::encode(&info.public_key),
-                local = %hex::encode(&local),
+                local = %hex::encode(local),
                 "local signing key does not match registered on-chain public_key"
             );
             return Err(Error::ProviderKeyMismatch);
@@ -403,10 +411,28 @@ mod tests {
     /// sign_terms produces, for every scheme, a signature the pallet's
     /// terms verification accepts: over `blake2_256(signing_payload())`,
     /// against the account derived from the raw registered key.
+    /// The account the pallet will verify against, derived from the raw
+    /// registered key the way `Pallet::expected_signer_account` does — the
+    /// signature's variant picks the derivation.
+    fn expected_signer(key: &[u8], sig: &MultiSignature) -> sp_runtime::AccountId32 {
+        use sp_runtime::{traits::IdentifyAccount, MultiSigner};
+        match sig {
+            MultiSignature::Sr25519(_) => {
+                MultiSigner::Sr25519(sr25519::Public::try_from(key).unwrap())
+            }
+            MultiSignature::Ed25519(_) => {
+                MultiSigner::Ed25519(ed25519::Public::try_from(key).unwrap())
+            }
+            MultiSignature::Ecdsa(_) => MultiSigner::Ecdsa(ecdsa::Public::try_from(key).unwrap()),
+            MultiSignature::Eth(_) => MultiSigner::Eth(ecdsa::KeccakPublic::try_from(key).unwrap()),
+        }
+        .into_account()
+    }
+
     #[test]
     fn sign_terms_round_trips_for_every_scheme() {
-        use sp_runtime::traits::{IdentifyAccount, Verify};
-        use sp_runtime::{AccountId32, MultiSigner};
+        use sp_runtime::traits::Verify;
+        use sp_runtime::AccountId32;
 
         let terms = AgreementTermsOf {
             owner: AccountId32::new([7u8; 32]),
@@ -434,22 +460,10 @@ mod tests {
             );
 
             let hash = sp_crypto_hashing::blake2_256(&signed.terms.signing_payload());
-            let signer = match &signed.signature {
-                MultiSignature::Sr25519(_) => {
-                    MultiSigner::Sr25519(sr25519::Public::try_from(key.as_slice()).unwrap())
-                }
-                MultiSignature::Ed25519(_) => {
-                    MultiSigner::Ed25519(ed25519::Public::try_from(key.as_slice()).unwrap())
-                }
-                MultiSignature::Ecdsa(_) => {
-                    MultiSigner::Ecdsa(ecdsa::Public::try_from(key.as_slice()).unwrap())
-                }
-                MultiSignature::Eth(_) => {
-                    MultiSigner::Eth(ecdsa::KeccakPublic::try_from(key.as_slice()).unwrap())
-                }
-            };
             assert!(
-                signed.signature.verify(&hash[..], &signer.into_account()),
+                signed
+                    .signature
+                    .verify(&hash[..], &expected_signer(&key, &signed.signature)),
                 "{scheme:?} terms signature failed verification"
             );
         }
@@ -461,8 +475,7 @@ mod tests {
     #[test]
     fn sign_round_trips_for_every_scheme() {
         use codec::Decode;
-        use sp_runtime::traits::{IdentifyAccount, Verify};
-        use sp_runtime::MultiSigner;
+        use sp_runtime::traits::Verify;
 
         let msg = b"scheme-round-trip";
         for (scheme, key_len) in [
@@ -488,22 +501,8 @@ mod tests {
 
             // Verify the same way the pallet does: derive the expected
             // account from the raw key bytes for this scheme.
-            let signer = match &sig {
-                MultiSignature::Sr25519(_) => {
-                    MultiSigner::Sr25519(sr25519::Public::try_from(key.as_slice()).unwrap())
-                }
-                MultiSignature::Ed25519(_) => {
-                    MultiSigner::Ed25519(ed25519::Public::try_from(key.as_slice()).unwrap())
-                }
-                MultiSignature::Ecdsa(_) => {
-                    MultiSigner::Ecdsa(ecdsa::Public::try_from(key.as_slice()).unwrap())
-                }
-                MultiSignature::Eth(_) => {
-                    MultiSigner::Eth(ecdsa::KeccakPublic::try_from(key.as_slice()).unwrap())
-                }
-            };
             assert!(
-                sig.verify(&msg[..], &signer.into_account()),
+                sig.verify(&msg[..], &expected_signer(&key, &sig)),
                 "{scheme:?} signature failed verification"
             );
         }

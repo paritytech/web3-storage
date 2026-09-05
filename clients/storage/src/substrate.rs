@@ -150,25 +150,6 @@ pub mod extrinsics {
             .update_provider_settings(settings)
     }
 
-    /// Decode a provider-emitted signature — `0x`-prefixed hex of a
-    /// SCALE-encoded [`sp_runtime::MultiSignature`], the wire format every
-    /// provider-node signing endpoint uses — back into the typed value.
-    ///
-    /// Decoding must consume the input exactly: a value with trailing bytes is
-    /// rejected rather than silently truncated, so this agrees with the JS
-    /// SDK's per-variant length check on the same wire format.
-    pub fn decode_multi_signature(
-        sig_hex: &str,
-    ) -> Result<sp_runtime::MultiSignature, crate::base::ClientError> {
-        use codec::DecodeAll;
-        let s = sig_hex.strip_prefix("0x").unwrap_or(sig_hex);
-        let bytes =
-            hex::decode(s).map_err(|e| crate::base::ClientError::Serialization(e.to_string()))?;
-        sp_runtime::MultiSignature::decode_all(&mut &bytes[..]).map_err(|e| {
-            crate::base::ClientError::Serialization(format!("invalid SCALE MultiSignature: {e}"))
-        })
-    }
-
     /// Build an `establish_storage_agreement` extrinsic payload.
     ///
     /// Bundles the SCALE-encoded provider-signed terms and signature into
@@ -203,7 +184,7 @@ pub mod extrinsics {
     pub fn checkpoint(
         bucket_id: u64,
         commitment: Commitment,
-        signatures: Vec<(AccountId32, sp_runtime::MultiSignature)>,
+        signatures: &[(AccountId32, sp_runtime::MultiSignature)],
     ) -> impl Payload {
         let sigs = signatures
             .iter()
@@ -419,6 +400,21 @@ where
     at.runtime_apis().call(payload).await.map_err(|e| {
         ClientError::Chain(format!("current_anchor_block runtime API call failed: {e}"))
     })
+}
+
+/// Decode a provider-emitted signature — `0x`-prefixed hex of a SCALE-encoded
+/// [`sp_runtime::MultiSignature`], the wire format every provider-node signing
+/// endpoint uses — back into the typed value.
+///
+/// Decoding must consume the input exactly: a value with trailing bytes is
+/// rejected rather than silently truncated, so this agrees with the JS SDK's
+/// per-variant length check on the same wire format.
+pub fn decode_multi_signature(sig_hex: &str) -> Result<sp_runtime::MultiSignature, ClientError> {
+    use codec::DecodeAll;
+    let s = sig_hex.strip_prefix("0x").unwrap_or(sig_hex);
+    let bytes = hex::decode(s).map_err(|e| ClientError::Serialization(e.to_string()))?;
+    sp_runtime::MultiSignature::decode_all(&mut &bytes[..])
+        .map_err(|e| ClientError::Serialization(format!("invalid SCALE MultiSignature: {e}")))
 }
 
 /// Parse a hex string to H256.

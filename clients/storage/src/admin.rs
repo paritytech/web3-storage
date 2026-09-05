@@ -507,7 +507,7 @@ impl AdminClient {
             })
             .collect::<ClientResult<Vec<_>>>()?;
 
-        let tx = extrinsics::checkpoint(bucket_id, commitment, parsed_sigs);
+        let tx = extrinsics::checkpoint(bucket_id, commitment, &parsed_sigs);
 
         let tx_progress = chain
             .api()
