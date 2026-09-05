@@ -140,11 +140,11 @@ sequenceDiagram
     participant C as Chain (Pallet)
     participant B as Balances
 
-    P->>C: register_provider(multiaddr, public_key, capacity, stake)
+    P->>C: register_provider(multiaddr, public_key, stake)
 
     Note over C: Validate inputs
     C->>C: ensure!(stake >= MinProviderStake)
-    C->>C: ensure!(public_key is valid format)
+    C->>C: ensure!(public_key is 32 bytes (Sr25519/Ed25519)<br/>or 33 bytes (compressed Ecdsa/Eth))
 
     C->>B: hold(HoldReason::ProviderStake, provider, stake)
     Note over B: Stake held under its own reason,<br/>separately from any escrow or deposit<br/>on the same account
@@ -338,11 +338,12 @@ sequenceDiagram
 │  1. Provider registers with public_key                                   │
 │     Providers::insert(provider_id, { public_key, ... })                  │
 │                                                                          │
-│  2. Provider signs commitment off-chain                                  │
-│     signature = sr25519_sign(private_key, CommitmentPayload.encode())    │
+│  2. Provider signs commitment off-chain (Sr25519/Ed25519/Ecdsa/Eth)      │
+│     signature = MultiSignature::<scheme>(sign(key, payload.encode()))    │
 │                                                                          │
 │  3. On-chain verification                                                │
-│     sr25519_verify(signature, payload, stored_public_key)                │
+│     signature.verify(payload, account_from(stored_public_key))           │
+│     — the variant picks how the account is derived from the raw key      │
 │                                                                          │
 │  This ensures:                                                           │
 │  • Only the registered provider could have signed                        │

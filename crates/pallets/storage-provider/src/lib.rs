@@ -2083,6 +2083,12 @@ pub mod pallet {
                     let byte_idx = idx / 8;
                     let bit_idx = idx % 8;
                     primary_signers[byte_idx] |= 1 << bit_idx;
+                    // TODO(#388): this counts signature entries, not distinct
+                    // providers, so one provider's signature repeated N times
+                    // satisfies `min_providers = N`. Count `primary_signers`
+                    // (which ORs, so it is duplicate-free) the way the freeze
+                    // path does, or reject a repeated signer outright.
+                    // https://github.com/paritytech/web3-storage/issues/388
                     signing_count += 1;
                     signing_providers.push(signer.clone());
                 }
@@ -2610,9 +2616,16 @@ pub mod pallet {
             origin: OriginFor<T>,
             bucket_id: BucketId,
             roots: [Option<H256>; 7],
-            _signature: sp_runtime::MultiSignature,
+            signature: sp_runtime::MultiSignature,
         ) -> DispatchResult {
             let who = ensure_signed(origin)?;
+
+            // The replica attests which roots it actually holds by signing
+            // the SCALE-encoded `roots` array with its registered key.
+            // There is no nonce: a replayed confirmation re-attests the same
+            // roots, and the new-root / sync-interval checks below already
+            // make that a no-op.
+            Self::verify_signature(&signature, &roots.encode(), &who)?;
 
             let bucket = Buckets::<T>::get(bucket_id).ok_or(Error::<T>::BucketNotFound)?;
 

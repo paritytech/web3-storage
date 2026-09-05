@@ -12,7 +12,7 @@
 
 use crate::challenge_responder::{ChallengeChainClient, ChallengeError, DetectedChallenge};
 use crate::replica_sync_coordinator::{
-    BucketSnapshot, ReplicaAgreementInfo, ReplicaSyncChainClient,
+    BucketSnapshot, ReplicaAgreementInfo, ReplicaSyncChainClient, SignedSyncRoots,
 };
 use crate::Error;
 use provider_chain::chain_connection::{self, ChainWatch};
@@ -61,6 +61,18 @@ enum Attempt {
     Retryable(Error),
     /// The chain rejected the call itself; resubmitting would fail identically.
     Rejected(Error),
+}
+
+/// Encode a `MultiSignature` as the dynamic variant value the runtime's
+/// `MultiSignature` type expects, preserving the scheme tag.
+pub(crate) fn multi_signature_value(signature: &sp_runtime::MultiSignature) -> Value {
+    use sp_runtime::MultiSignature as MS;
+    match signature {
+        MS::Ed25519(s) => value!(Ed25519(Value::from_bytes(s.0))),
+        MS::Sr25519(s) => value!(Sr25519(Value::from_bytes(s.0))),
+        MS::Ecdsa(s) => value!(Ecdsa(Value::from_bytes(s.0))),
+        MS::Eth(s) => value!(Eth(Value::from_bytes(s.0))),
+    }
 }
 
 /// Production implementation that talks to the chain via subxt.
@@ -848,20 +860,16 @@ impl ReplicaSyncChainClient for SubxtChainClient {
     async fn submit_sync_confirmation(
         &self,
         bucket_id: BucketId,
-        target_mmr_root: H256,
+        attestation: SignedSyncRoots,
     ) -> Result<(u8, u128), Error> {
-        // Build roots array: position 0 = current root, rest = None
-        let roots_value: Vec<Value> = (0..7)
-            .map(|i| {
-                if i == 0 {
-                    value!(Some(Value::from_bytes(target_mmr_root.as_bytes())))
-                } else {
-                    value!(None())
-                }
+        let roots_value: Vec<Value> = attestation
+            .roots
+            .iter()
+            .map(|root| match root {
+                Some(root) => value!(Some(Value::from_bytes(root.as_bytes()))),
+                None => value!(None()),
             })
             .collect();
-
-        let signature = value!(Sr25519(Value::from_bytes([0u8; 64])));
 
         let tx = subxt::dynamic::tx(
             "StorageProvider",
@@ -869,14 +877,14 @@ impl ReplicaSyncChainClient for SubxtChainClient {
             vec![
                 Value::u128(bucket_id as u128),
                 Value::unnamed_composite(roots_value),
-                signature,
+                multi_signature_value(&attestation.signature),
             ],
         );
 
         tracing::info!(
-            "Submitting confirm_replica_sync for bucket {} with root 0x{}",
+            "Submitting confirm_replica_sync for bucket {} with roots {:?}",
             bucket_id,
-            hex::encode(target_mmr_root.as_bytes())
+            attestation.roots
         );
 
         self.submit_and_finalize(&tx, "confirm_replica_sync")

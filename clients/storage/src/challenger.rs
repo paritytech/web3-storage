@@ -153,14 +153,16 @@ impl ChallengerClient {
     /// # Parameters
     /// - `commitment`: The MMR commitment (root + range) the provider signed over
     /// - `target`: Which leaf + chunk within that commitment to challenge
-    /// - `provider_signature`: The provider's signature on the commitment (64 bytes for Sr25519)
+    /// - `provider_signature`: The provider's scheme-tagged signature on the
+    ///   commitment, as returned by
+    ///   [`CommitResponse::provider_signature`](crate::CommitResponse)
     pub async fn challenge_offchain(
         &self,
         bucket_id: BucketId,
         provider: String,
         commitment: Commitment,
         target: ChunkLocation,
-        provider_signature: Vec<u8>,
+        provider_signature: sp_runtime::MultiSignature,
     ) -> ClientResult<ChallengeId> {
         let chain = self.base.chain()?;
         let signer = chain.signer()?;
@@ -182,8 +184,8 @@ impl ChallengerClient {
             provider_account,
             commitment,
             target,
-            provider_signature,
-        )?;
+            &provider_signature,
+        );
 
         let tx_progress = chain
             .api()

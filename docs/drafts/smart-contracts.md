@@ -75,7 +75,7 @@ Both use `HAS_CONTRACT_INFO = false` (no storage deposits or contract metadata; 
 | `BucketId` / `DriveId` (`u64`) | `uint64`   | Synthesized pre-dispatch from `NextBucketId` / `NextDriveId` so the contract gets back the id assigned to *this* call.            |
 | `BlockNumberFor<T>` (`u32`)    | `uint32`   |                                                                                                                                    |
 | `BalanceOf<T>` (`u128`)        | `uint128`  | Substrate atomic units — not eth wei.                                                                                              |
-| `AccountId` (`AccountId32`)    | `bytes32`  | Raw 32-byte sr25519 pubkey. Substrate-only providers can't be safely round-tripped through `AccountId32Mapper.to_address()`.       |
+| `AccountId` (`AccountId32`)    | `bytes32`  | Raw 32-byte `AccountId32` (the account id, not a public key). Substrate-only providers can't be safely round-tripped through `AccountId32Mapper.to_address()`. |
 | `Role`             | `uint8`    | 0 = Admin, 1 = Writer, 2 = Reader.                                                                                                 |
 | `EndAction`        | (split)    | `endAgreementPay` / `endAgreementBurn(uint8 burnPercent)` — cleaner Solidity than encoding the Rust enum directly.                 |
 | `Option<Vec<u8>>` (drive name) | `string`   | Empty string ⇒ `None`.                                                                                                             |
