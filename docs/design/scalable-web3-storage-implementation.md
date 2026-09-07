@@ -832,31 +832,10 @@ pub enum Event<T: Config> {
     // Agreement events
     // ─────────────────────────────────────────────────────────────
     
-    // DRIFT-001: `dev` emits StorageAgreementEstablished / ReplicaAgreementEstablished
-    // instead of the Requested/Accepted/Rejected/RequestWithdrawn events (#105).
-    //
-    AgreementRequested {
-        bucket_id: BucketId,
-        provider: T::AccountId,
-        requester: T::AccountId,
-        max_bytes: u64,
-        payment_locked: BalanceOf<T>,
-        duration: BlockNumberFor<T>,
-    },
     AgreementAccepted {
         bucket_id: BucketId,
         provider: T::AccountId,
         expires_at: BlockNumberFor<T>,
-    },
-    AgreementRejected {
-        bucket_id: BucketId,
-        provider: T::AccountId,
-        payment_returned: BalanceOf<T>,
-    },
-    AgreementRequestWithdrawn {
-        bucket_id: BucketId,
-        provider: T::AccountId,
-        payment_returned: BalanceOf<T>,
     },
     AgreementToppedUp {
         bucket_id: BucketId,
@@ -886,6 +865,24 @@ pub enum Event<T: Config> {
         bucket_id: BucketId,
         provider: T::AccountId,
         payment_to_provider: BalanceOf<T>,
+    },
+    /// Owner redeemed provider-signed terms; bucket created and agreement
+    /// opened atomically.
+    StorageAgreementEstablished {
+        bucket_id: BucketId,
+        provider: T::AccountId,
+        owner: T::AccountId,
+        terms: AgreementTermsOf<T>,
+        expires_at: BlockNumberFor<T>,
+    },
+    /// Owner redeemed provider-signed replica terms; replica agreement
+    /// opened against an existing bucket.
+    ReplicaAgreementEstablished {
+        bucket_id: BucketId,
+        provider: T::AccountId,
+        owner: T::AccountId,
+        terms: AgreementTermsOf<T>,
+        expires_at: BlockNumberFor<T>,
     },
 
     // ─────────────────────────────────────────────────────────────
@@ -1139,7 +1136,7 @@ impl<T: Config> Pallet<T> {
 
     // DRIFT-002: no standalone create_bucket / create_bucket_with_storage on
     // `dev` — a bucket is created by establish_storage_agreement redeeming
-    // primary terms (#105).
+    // primary terms (#105). Note: remove from impl. doc?
     /// Create a new bucket.
     /// 
     /// The caller becomes the bucket admin. The bucket starts empty with no
