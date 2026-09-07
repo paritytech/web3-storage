@@ -9,7 +9,7 @@ use frame_support::{
 };
 use sp_core::H256;
 use sp_runtime::traits::{SaturatedConversion, Saturating, Zero};
-use storage_primitives::{BucketId, Role};
+use storage_primitives::{BucketId, Role, Visibility};
 
 impl<T: Config> Pallet<T> {
     /// Internal function to cleanup a bucket and all its agreements.
@@ -139,12 +139,15 @@ impl<T: Config> Pallet<T> {
     ///   `establish_storage_agreement_internal` to atomically create the
     ///   bucket together with its primary agreement; pass `None` for
     ///   buckets that will register primaries later.
+    /// - `visibility`: Read visibility. Creation surfaces that omit the
+    ///   choice must pass `Visibility::Private` (fail-safe default).
     ///
     /// Returns: bucket_id
     pub(crate) fn create_bucket_internal(
         admin: &T::AccountId,
         min_providers: u32,
         initial_primary: Option<&T::AccountId>,
+        visibility: Visibility,
     ) -> Result<BucketId, DispatchError> {
         let bucket_id = NextBucketId::<T>::get();
         NextBucketId::<T>::put(bucket_id.saturating_add(1));
@@ -174,6 +177,7 @@ impl<T: Config> Pallet<T> {
             snapshot: None,
             historical_roots: [(0, H256::zero()); 6],
             total_snapshots: 0,
+            visibility,
         };
 
         Buckets::<T>::insert(bucket_id, bucket);

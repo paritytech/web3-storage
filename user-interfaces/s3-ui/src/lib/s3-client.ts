@@ -23,6 +23,8 @@ import {
   parseMultiaddrToUrl,
   removeMember as removeMemberTx,
   requireOneEvent,
+  getBucketVisibility as getBucketVisibilityQuery,
+  setBucketVisibility as setBucketVisibilityTx,
   setMember as setMemberTx,
   submitTx,
   toSs58,
@@ -30,6 +32,7 @@ import {
   type Keypair,
   type NegotiateRequest,
   type SignedTerms,
+  type Visibility,
 } from "@web3-storage/sdk";
 import { S3Client as SdkS3Client } from "@web3-storage/sdk/s3";
 import type { PrimaryProviderInfo } from "@web3-storage/sdk/s3";
@@ -40,7 +43,7 @@ export type Signer = PolkadotSigner;
 // Re-export the SDK negotiate primitives + types the create-bucket components
 // (NewBucketDialog, ProviderPickerPanel) and the state layer import from here.
 export { buildSignedTermsArgs, negotiateTerms };
-export type { NegotiateRequest, SignedTerms };
+export type { NegotiateRequest, SignedTerms, Visibility };
 
 /** `parseMultiaddrToHttp` is the SDK's `parseMultiaddrToUrl` under the old name. */
 export const parseMultiaddrToHttp = parseMultiaddrToUrl;
@@ -98,7 +101,8 @@ export interface MatchingProviders extends AvailableProvider {
   agreementsExtended: number;
   agreementsNotExtended: number;
   agreementsBurned: number;
-  challengesReceived: number;
+  /** Challenges resolved in the provider's favor (authorized + public tiers). */
+  challengesDefended: number;
   challengesFailed: number;
 }
 
@@ -257,12 +261,14 @@ export class S3Client {
     providerAccount: string,
     providerUrl: string,
     signed: SignedTerms,
+    visibility?: Visibility,
   ): Promise<BucketInfo> {
     const info = await this.requireS3().createBucket(name, {
       maxCapacity: BigInt(signed.terms.max_bytes),
       duration: signed.terms.duration,
       provider: { address: providerAccount, url: providerUrl },
       signedTerms: signed,
+      visibility,
     });
     return {
       s3BucketId: info.s3BucketId,
@@ -350,6 +356,14 @@ export class S3Client {
     await removeMemberTx(this.requireApi(), this.requireOwner(), bucketId, { address: account });
   }
 
+  async getBucketVisibility(bucketId: bigint): Promise<Visibility> {
+    return getBucketVisibilityQuery(this.requireApi(), bucketId);
+  }
+
+  async setBucketVisibility(bucketId: bigint, visibility: Visibility): Promise<void> {
+    await setBucketVisibilityTx(this.requireApi(), this.requireOwner(), bucketId, visibility);
+  }
+
   // ── Provider discovery (UI-side; raw `StorageProvider.Providers` + the
   // `find_matching_providers` runtime API — not modelled by the SDK) ──────────
 
@@ -435,7 +449,8 @@ export class S3Client {
           agreementsExtended: info.agreements_extended ?? 0,
           agreementsNotExtended: info.agreements_not_extended ?? 0,
           agreementsBurned: info.agreements_burned ?? 0,
-          challengesReceived: info.challenges_received ?? 0,
+          challengesDefended:
+            (info.challenges_received_authorized ?? 0) + (info.challenges_received_public ?? 0),
           challengesFailed: info.challenges_failed ?? 0,
           matchScore: match.match_score,
           partialReason: match.partial_reason?.type ?? "",

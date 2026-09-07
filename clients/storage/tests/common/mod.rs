@@ -177,7 +177,13 @@ pub async fn chain_setup() -> Option<ChainSetup> {
     };
     let signed_terms = sign_terms(&alice_keypair, terms);
     let bucket_id = admin
-        .establish_storage_agreement(alice_ss58.clone(), signed_terms)
+        .establish_storage_agreement(
+            alice_ss58.clone(),
+            signed_terms,
+            // Public: the shared harness backs suites written under the open
+            // (pre-visibility) challenge semantics.
+            storage_client::Visibility::Public,
+        )
         .await
         .ok()?;
 

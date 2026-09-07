@@ -135,8 +135,8 @@ contract Photos {
 ```
 
 Notes:
-- `bytes32 provider` / `bytes32 userAccount` are substrate `AccountId32`s (raw 32-byte sr25519
-  pubkeys), per the precompile's type-encoding rules. `userAccount` is the signed-in user's own
+- `bytes32 provider` / `bytes32 userAccount` are substrate `AccountId32`s (raw 32-byte account
+  ids), per the precompile's type-encoding rules. `userAccount` is the signed-in user's own
   substrate account — the one their wallet signs `/fs` requests with.
 - `terms` is the precompile's `PrimitiveAgreementTerms`; `terms.owner` must be the contract's
   substrate-mapped account (the drive owner). For a primary agreement, `hasBucketId = false` and
@@ -193,7 +193,7 @@ than reinventing.
 ## Data mutability & editing
 
 Storage is **copy-on-write**: blobs are immutable (content-addressed by blake2-256, committed to
-an append-only MMR — `crates/providers/storage/src/backend/disk.rs`). You never edit bytes in place; a
+an append-only MMR — `crates/providers/storage/src/backend/rocksdb.rs`). You never edit bytes in place; a
 `PUT` to a path writes a **new** blob (new CID) and repoints that path in the tree. The album
 tree's root changes, so each mutation ends with a freshly **recomputed** root → `setRoot`.
 

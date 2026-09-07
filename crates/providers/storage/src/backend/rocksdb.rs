@@ -1,14 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! Disk-based persistent storage backend using RocksDB.
+//! RocksDB-backed [`StorageBackend`]: persists the [`types`] records to disk.
 //!
-//! This provides the same interface as the in-memory storage but persists
-//! all data to disk for production use.
+//! Only the engine lives here - the record shapes it reads and writes are
+//! defined in [`types`], which owns their on-disk encoding.
+//!
+//! [`types`]: super::types
 
-use super::{BucketInfo, BucketStats, BucketSummary, StorageBackend, StoredNode};
+use super::{BucketInfo, BucketState, BucketStats, BucketSummary, StorageBackend, StoredNode};
 use crate::error::Error;
 use crate::nonce::NonceStore;
-use codec::Encode;
+use codec::{DecodeAll, Encode};
 use rocksdb::{Options, DB};
 use sp_core::H256;
 use std::path::Path;
@@ -24,32 +26,6 @@ const CF_METADATA: &str = "metadata";
 
 /// RocksDB key for the persisted nonce counter highest sequence nonce.
 const KEY_NONCE: &[u8] = b"nonce_counter";
-
-/// Bucket state managed by this provider (serialized to disk).
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-struct BucketState {
-    mmr_root: H256,
-    start_seq: u64,
-    leaves: Vec<MmrLeaf>,
-    used_bytes: u64,
-    max_bytes: u64,
-}
-
-impl BucketState {
-    fn new(max_bytes: u64) -> Self {
-        Self {
-            mmr_root: H256::zero(),
-            start_seq: 0,
-            leaves: Vec::new(),
-            used_bytes: 0,
-            max_bytes,
-        }
-    }
-
-    fn leaf_count(&self) -> u64 {
-        self.leaves.len() as u64
-    }
-}
 
 /// Disk-based storage backend using RocksDB.
 pub struct DiskStorage {
@@ -91,7 +67,7 @@ impl DiskStorage {
         }
 
         let bucket = BucketState::new(max_bytes);
-        let value = bincode::serialize(&bucket).map_err(|e| Error::Serialization(e.to_string()))?;
+        let value = bucket.encode();
 
         self.db
             .put_cf(&cf, key, &value)
@@ -105,7 +81,7 @@ impl DiskStorage {
         let cf = self.db.cf_handle(CF_BUCKETS)?;
         let key = bucket_id.to_le_bytes();
         let value = self.db.get_cf(&cf, key).ok()??;
-        match bincode::deserialize(&value) {
+        match BucketState::decode_all(&mut &value[..]) {
             Ok(state) => Some(state),
             Err(e) => {
                 tracing::warn!(bucket_id, error = %e, "Failed to deserialize bucket state");
@@ -122,7 +98,7 @@ impl DiskStorage {
             .ok_or_else(|| Error::Storage("Buckets CF not found".to_string()))?;
 
         let key = bucket_id.to_le_bytes();
-        let value = bincode::serialize(bucket).map_err(|e| Error::Serialization(e.to_string()))?;
+        let value = bucket.encode();
 
         self.db
             .put_cf(&cf, key, &value)
@@ -146,7 +122,7 @@ impl DiskStorage {
                     return None;
                 }
                 let bucket_id = u64::from_le_bytes(key[..8].try_into().unwrap());
-                match bincode::deserialize::<BucketState>(&value) {
+                match BucketState::decode_all(&mut &value[..]) {
                     Ok(state) => Some(f(bucket_id, &state)),
                     Err(e) => {
                         tracing::warn!(bucket_id, error = %e, "Failed to deserialize bucket state");
@@ -270,8 +246,7 @@ impl DiskStorage {
         {
             let data_len = data.len() as u64;
             let node = StoredNode { data, children };
-            let value =
-                bincode::serialize(&node).map_err(|e| Error::Serialization(e.to_string()))?;
+            let value = node.encode();
 
             self.db
                 .put_cf(&cf_nodes, key, &value)
@@ -290,7 +265,7 @@ impl DiskStorage {
         let cf = self.db.cf_handle(CF_NODES)?;
         let key = hash.as_bytes();
         let value = self.db.get_cf(&cf, key).ok()??;
-        match bincode::deserialize(&value) {
+        match StoredNode::decode_all(&mut &value[..]) {
             Ok(node) => Some(node),
             Err(e) => {
                 tracing::warn!(hash = %format!("0x{}", hex::encode(hash.as_bytes())), error = %e, "Failed to deserialize node");
@@ -658,6 +633,60 @@ impl NonceStore for DiskNonceStore {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    /// Pins the raw keys and values this engine writes. A failure here means
+    /// existing provider databases can no longer be read - a storage
+    /// version/migration is required
+    /// (see <https://github.com/paritytech/web3-storage/issues/375>).
+    ///
+    /// The record encodings themselves are pinned in [`super::types`].
+    #[test]
+    fn on_disk_bytes() {
+        // Raw keys and values as written through the public API.
+        assert_eq!(
+            [CF_NODES, CF_BUCKETS, CF_ROOT_TO_BUCKET, CF_METADATA],
+            ["nodes", "buckets", "root_to_bucket", "metadata"],
+            "column-family names locate every record on disk",
+        );
+        assert_eq!(KEY_NONCE, b"nonce_counter");
+
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+
+        // CF_BUCKETS: key = bucket_id as u64 little-endian, value = SCALE(BucketState).
+        let bucket_id: BucketId = 0x0102030405060708;
+        storage.init_bucket(bucket_id, 1_000).unwrap();
+        let cf = storage.db.cf_handle(CF_BUCKETS).unwrap();
+        let key = hex::decode("0807060504030201").unwrap();
+        let raw = storage
+            .db
+            .get_cf(&cf, key)
+            .unwrap()
+            .expect("bucket must be stored under the little-endian bucket_id key");
+        assert_eq!(
+            hex::encode(&raw),
+            // BucketState::new(1_000): zero root, no leaves, max_bytes = 1_000
+            "0000000000000000000000000000000000000000000000000000000000000000\
+             0000000000000000\
+             00\
+             0000000000000000\
+             e803000000000000"
+        );
+
+        // CF_NODES: key = blake2_256(data), value = SCALE(StoredNode).
+        let data = vec![1u8, 2, 3, 4, 5];
+        let hash = blake2_256(&data);
+        storage.store_node(bucket_id, hash, data, None).unwrap();
+        let cf = storage.db.cf_handle(CF_NODES).unwrap();
+        let raw = storage.db.get_cf(&cf, hash.as_bytes()).unwrap().unwrap();
+        assert_eq!(hex::encode(&raw), "14010203040500");
+
+        // CF_METADATA / KEY_NONCE: raw u64 little-endian (not SCALE).
+        storage.nonce_store().persist(42);
+        let cf = storage.db.cf_handle(CF_METADATA).unwrap();
+        let raw = storage.db.get_cf(&cf, KEY_NONCE).unwrap().unwrap();
+        assert_eq!(hex::encode(&raw), "2a00000000000000");
+    }
 
     #[test]
     fn nonce_store_persist_and_load_round_trip() {
