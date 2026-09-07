@@ -34,7 +34,11 @@ export function Challenges() {
     const q = query.trim().toLowerCase()
     if (!q) return snapshot.openChallenges
     return snapshot.openChallenges.filter((c) =>
-      `${c.provider} ${c.challenger} ${c.bucketId} ${c.deadline}`.toLowerCase().includes(q)
+      `${c.provider} ${c.challenger} ${c.bucketId} ${c.deadline} ${
+        c.authorized ? 'authorized' : 'public'
+      }`
+        .toLowerCase()
+        .includes(q)
     )
   }, [snapshot, query])
 
@@ -137,6 +141,23 @@ export function Challenges() {
                     </TableCell>
                     <TableCell>
                       <AddressCell address={c.challenger} mine={isMine(c.challenger)} />
+                      {c.authorized ? (
+                        <Badge
+                          className="ml-1"
+                          variant="success"
+                          title="Bucket member or agreement owner at challenge creation"
+                        >
+                          authorized
+                        </Badge>
+                      ) : (
+                        <Badge
+                          className="ml-1"
+                          variant="outline"
+                          title="General-public challenger"
+                        >
+                          public
+                        </Badge>
+                      )}
                     </TableCell>
                     <TableCell className="text-gray-400">
                       leaf {c.leafIndex}, chunk {c.chunkIndex}

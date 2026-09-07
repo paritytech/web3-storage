@@ -39,6 +39,7 @@ export function Buckets() {
     return snapshot.buckets.filter((b) => {
       const haystack = [
         String(b.id),
+        b.visibility ?? '',
         ...b.members.map((m) => `${m.account} ${m.role}`),
         ...b.primaryProviders,
       ]
@@ -118,6 +119,16 @@ export function Buckets() {
                         {mine && (
                           <Badge className="ml-2" variant="default">
                             you
+                          </Badge>
+                        )}
+                        {/* Private is the on-chain default — badge only the exception. */}
+                        {b.visibility === 'Public' && (
+                          <Badge
+                            className="ml-2"
+                            variant="secondary"
+                            title="Primaries serve reads to anyone (replicas serve everyone regardless of visibility)"
+                          >
+                            public
                           </Badge>
                         )}
                         {b.frozen && (

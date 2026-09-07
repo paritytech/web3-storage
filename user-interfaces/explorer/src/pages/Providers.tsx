@@ -206,8 +206,11 @@ function ProviderDetails({ provider: p }: { provider: ProviderRow }) {
               </dd>
               <dt className="text-gray-400">Lifetime bytes committed</dt>
               <dd className="text-gray-200">{formatBytes(p.stats.totalBytesCommitted)}</dd>
-              <dt className="text-gray-400">Challenges received</dt>
-              <dd className="text-gray-200">{p.stats.challengesReceived.toLocaleString()}</dd>
+              <dt className="text-gray-400">Challenges defended (authorized / public)</dt>
+              <dd className="text-gray-200">
+                {p.stats.challengesDefendedAuthorized.toLocaleString()} /{' '}
+                {p.stats.challengesDefendedPublic.toLocaleString()}
+              </dd>
               <dt className="text-gray-400">Challenges failed</dt>
               <dd className="text-gray-200">{p.stats.challengesFailed.toLocaleString()}</dd>
             </dl>

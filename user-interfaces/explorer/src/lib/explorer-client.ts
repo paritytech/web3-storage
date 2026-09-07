@@ -40,7 +40,11 @@ export interface ProviderStats {
   agreementsBurned: number
   /** Lifetime cumulative quota ever committed — NOT current usage. */
   totalBytesCommitted: bigint
-  challengesReceived: number
+  /** Successfully defended challenges from authorized (member/owner) challengers. */
+  challengesDefendedAuthorized: number
+  /** Successfully defended challenges from general-public challengers. */
+  challengesDefendedPublic: number
+  /** Challenges the provider lost (slashed). */
   challengesFailed: number
 }
 
@@ -84,6 +88,12 @@ export interface BucketRow {
   hasSnapshot: boolean
   totalSnapshots: number
   frozen: boolean
+  /**
+   * Read visibility. 'Private' asks honest primaries to serve reads only to
+   * members — a cooperative request, not on-chain enforced (replicas serve
+   * everyone regardless). `undefined` on runtimes that predate the field.
+   */
+  visibility: 'Public' | 'Private' | undefined
 }
 
 export interface ChallengeRow {
@@ -96,6 +106,8 @@ export interface ChallengeRow {
   leafIndex: number
   chunkIndex: number
   deposit: bigint
+  /** Challenger was a bucket member / agreement owner at creation (affects the fee split). */
+  authorized: boolean
 }
 
 /**
@@ -169,7 +181,10 @@ export async function loadNetworkSnapshot(): Promise<NetworkSnapshot> {
             agreementsNotExtended: value.stats.agreements_not_extended,
             agreementsBurned: value.stats.agreements_burned,
             totalBytesCommitted: BigInt(value.stats.total_bytes_committed),
-            challengesReceived: value.stats.challenges_received,
+            // ?? 0: on a runtime predating the authorized/public tier split
+            // the fields are absent; missing must not read as a render crash.
+            challengesDefendedAuthorized: value.stats.challenges_received_authorized ?? 0,
+            challengesDefendedPublic: value.stats.challenges_received_public ?? 0,
             challengesFailed: value.stats.challenges_failed,
           },
           deregisterAt: value.deregister_at ?? undefined,
@@ -202,6 +217,9 @@ export async function loadNetworkSnapshot(): Promise<NetworkSnapshot> {
           hasSnapshot: value.snapshot !== undefined,
           totalSnapshots: value.total_snapshots,
           frozen: value.frozen_start_seq !== undefined,
+          // Optional chain: absent on runtimes predating the field, and one
+          // missing badge must not cost the whole buckets section.
+          visibility: value.visibility?.type,
         }))
       }),
 
@@ -218,6 +236,7 @@ export async function loadNetworkSnapshot(): Promise<NetworkSnapshot> {
             leafIndex: Number(value.target.leaf_index),
             chunkIndex: Number(value.target.chunk_index),
             deposit: value.deposit,
+            authorized: value.authorized ?? false,
           }))
           .sort((a, b) => a.deadline - b.deadline)
       }),
