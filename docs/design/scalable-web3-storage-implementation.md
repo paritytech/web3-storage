@@ -421,8 +421,7 @@ pub struct Bucket<T: Config> {
     pub total_snapshots: u32,
     /// Read visibility (see `Visibility`). On-chain, only the challenge
     /// extrinsics read it: `Private` restricts primary challenges to members
-    /// and primary-agreement owners. Last field on purpose — the sketch
-    /// mirrors the struct's actual SCALE field order.
+    /// and primary-agreement owners.
     pub visibility: Visibility,
 }
 
@@ -1803,8 +1802,7 @@ The provider node exposes a JSON-over-HTTP API (axum) on, by default,
 The node additionally serves the Layer-1 endpoints (`/s3/:bucket_id/*`,
 `/fs/:bucket_id/*`) and the agreement-negotiation endpoint (`/negotiate`);
 those are specified elsewhere (Layer 1: `docs/filesystems/`), not in this
-Layer-0 section. In JSON bodies and query strings, `bucket_id` is always the
-numeric `u64` (never a hex string).
+Layer-0 section.
 
 ### Authentication & RBAC
 
