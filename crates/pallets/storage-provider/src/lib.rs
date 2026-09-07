@@ -616,6 +616,10 @@ pub mod pallet {
     pub struct Bucket<T: Config> {
         /// Members who can interact with this bucket.
         pub members: BoundedVec<Member<T>, T::MaxMembers>,
+        /// Read visibility (see `Visibility`). On-chain, only challenge
+        /// creation reads it: `Private` restricts primary challenges to
+        /// members and primary-agreement owners.
+        pub visibility: Visibility,
         /// If Some, bucket is append-only from this start_seq.
         pub frozen_start_seq: Option<u64>,
         /// Minimum primary provider signatures required for checkpoint.
@@ -628,10 +632,6 @@ pub mod pallet {
         pub historical_roots: [(u32, H256); 6],
         /// Total snapshots created for this bucket.
         pub total_snapshots: u32,
-        /// Read visibility (see `Visibility`). On-chain, only challenge
-        /// creation reads it: `Private` restricts primary challenges to
-        /// members and primary-agreement owners.
-        pub visibility: Visibility,
     }
 
     /// Storage agreement between bucket and provider.

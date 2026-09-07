@@ -379,10 +379,6 @@ pub struct Bucket<T: Config> {
     /// Read visibility (see `Visibility`). On-chain, only the challenge
     /// extrinsics read it: `Private` restricts primary challenges to members
     /// and primary-agreement owners.
-    // DRIFT-014 (cosmetic): on `dev`, `visibility` is the struct's LAST field
-    // (after `total_snapshots`), so this sketch misstates the SCALE order;
-    // `Visibility` also derives `#[default] Private` as the fail-safe when a
-    // creation surface (e.g. genesis) omits the choice.
     pub visibility: Visibility,
     /// If Some, bucket is append-only from this start_seq.
     /// Checkpoints with start_seq < frozen_start_seq are rejected (prevents deletions).
