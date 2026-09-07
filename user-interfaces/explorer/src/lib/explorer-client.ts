@@ -288,6 +288,19 @@ export function agreementStatus(a: AgreementRow, anchorBlock: number): Agreement
   return 'active'
 }
 
+/**
+ * A provider's 0-100 reputation: the share of resolved challenges it
+ * defended. Mirrors the pallet's `reputation_score` (runtime_api.rs) over the
+ * same stats fields, so no extra RPC is needed. Providers with no resolved
+ * challenges score 100 — benefit of the doubt, matching the chain.
+ */
+export function reputationScore(stats: ProviderStats): number {
+  const defended = stats.challengesDefendedAuthorized + stats.challengesDefendedPublic
+  const total = defended + stats.challengesFailed
+  if (total === 0) return 100
+  return Math.min(Math.floor((defended * 100) / total), 100)
+}
+
 export interface SummaryStats {
   providerCount: number
   totalStake: bigint

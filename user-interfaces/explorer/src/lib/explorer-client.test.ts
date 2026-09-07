@@ -4,6 +4,7 @@ import { describe, it, expect } from 'vitest'
 import {
   agreementStatus,
   bucketQuotas,
+  reputationScore,
   summarize,
   type AgreementRow,
   type NetworkSnapshot,
@@ -91,6 +92,27 @@ describe('bucketQuotas', () => {
     ])
     expect(quotas.get(1)).toBe(1149n)
     expect(quotas.get(2)).toBe(7n)
+  })
+})
+
+// Mirrors the pallet's reputation_score (runtime_api.rs) — keep in lockstep.
+describe('reputationScore', () => {
+  const stats = (authorized: number, pub_: number, failed: number) => ({
+    ...provider({}).stats,
+    challengesDefendedAuthorized: authorized,
+    challengesDefendedPublic: pub_,
+    challengesFailed: failed,
+  })
+
+  it('scores 100 with no resolved challenges (benefit of the doubt)', () => {
+    expect(reputationScore(stats(0, 0, 0))).toBe(100)
+  })
+
+  it('is the floored share of resolved challenges defended, both tiers counted', () => {
+    expect(reputationScore(stats(2, 1, 1))).toBe(75)
+    expect(reputationScore(stats(1, 0, 2))).toBe(33)
+    expect(reputationScore(stats(0, 0, 5))).toBe(0)
+    expect(reputationScore(stats(4, 3, 0))).toBe(100)
   })
 })
 

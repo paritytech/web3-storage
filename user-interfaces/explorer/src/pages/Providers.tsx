@@ -17,7 +17,7 @@ import { SearchInput } from '@/components/SearchInput'
 import { SectionUnavailable } from '@/components/SectionUnavailable'
 import { useSnapshot } from '@/state/explorer.state'
 import { useIsMine } from '@/state/wallet.state'
-import { type ProviderRow } from '@/lib/explorer-client'
+import { reputationScore, type ProviderRow } from '@/lib/explorer-client'
 import {
   formatAddress,
   formatBytes,
@@ -77,6 +77,7 @@ export function Providers() {
                 <TableHead>Stake</TableHead>
                 <TableHead>Committed / Capacity</TableHead>
                 <TableHead>Price per byte</TableHead>
+                <TableHead>Reputation</TableHead>
                 <TableHead>Accepting</TableHead>
               </TableRow>
             </TableHeader>
@@ -130,6 +131,9 @@ export function Providers() {
                       </TableCell>
                       <TableCell>{formatTokens(p.settings.pricePerByte)}</TableCell>
                       <TableCell>
+                        <ReputationBadge stats={p.stats} />
+                      </TableCell>
+                      <TableCell>
                         <div className="flex gap-1">
                           {p.settings.acceptingPrimary && <Badge variant="success">primary</Badge>}
                           {p.settings.replicaSyncPrice !== undefined && (
@@ -161,7 +165,7 @@ function ProviderDetails({ provider: p }: { provider: ProviderRow }) {
   const s = p.settings
   return (
     <TableRow className="bg-gray-900/80 hover:bg-gray-900/80">
-      <TableCell colSpan={6}>
+      <TableCell colSpan={7}>
         <div className="grid gap-6 py-2 md:grid-cols-2">
           <div>
             <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">
@@ -218,6 +222,24 @@ function ProviderDetails({ provider: p }: { provider: ProviderRow }) {
         </div>
       </TableCell>
     </TableRow>
+  )
+}
+
+function ReputationBadge({ stats }: { stats: ProviderRow['stats'] }) {
+  const score = reputationScore(stats)
+  const resolved =
+    stats.challengesDefendedAuthorized + stats.challengesDefendedPublic + stats.challengesFailed
+  return (
+    <Badge
+      variant={score >= 90 ? 'success' : score >= 50 ? 'warning' : 'destructive'}
+      title={
+        resolved === 0
+          ? 'No resolved challenges yet — providers start at 100'
+          : `Defended ${resolved - stats.challengesFailed} of ${resolved} resolved challenges`
+      }
+    >
+      {score}
+    </Badge>
   )
 }
 
