@@ -911,19 +911,18 @@ pub mod pallet {
             challenger: T::AccountId,
             respond_by: BlockNumberFor<T>,
         },
-        /// The provider proved it holds the data; the challenger's deposit
-        /// covers the provider's response cost. The two `*_cost` fields say
-        /// who *bears* that cost (whose pocket it comes from), not who
-        /// receives money — together they always sum to the deposit.
+        /// The provider proved it holds the data. The two `*_cost` fields
+        /// say who pays which part of the response cost, not who receives
+        /// money — together they always sum to the deposit.
         ChallengeDefended {
             challenge_id: ChallengeId<BlockNumberFor<T>>,
             provider: T::AccountId,
             response_time_blocks: BlockNumberFor<T>,
-            /// Share borne by the challenger: moved from their deposit to the
-            /// provider as reimbursement for responding.
+            /// Part paid by the challenger: moved from their deposit to the
+            /// provider to cover the cost of responding.
             challenger_cost: BalanceOf<T>,
-            /// Share borne by the provider: simply not reimbursed — no funds
-            /// move, and the remainder of the deposit returns to the
+            /// Part paid by the provider itself: simply not refunded — no
+            /// funds move, and this amount of the deposit goes back to the
             /// challenger.
             provider_cost: BalanceOf<T>,
         },
