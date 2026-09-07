@@ -15,8 +15,8 @@
 //!    `price_per_byte` setting (read from chain), and
 //!    `valid_until = current_anchor_block + valid_until_offset`.
 //! 3. Signs `blake2_256(TERM_CONTEXT | SCALE(terms))` with the provider's
-//!    existing sr25519 checkpoint key (the same one used to sign
-//!    commitments). The context is `primary-term-v1:` or
+//!    signing keypair (the same one used to sign commitments; any
+//!    [`crate::KeyScheme`]). The context is `primary-term-v1:` or
 //!    `replica-term-v1:` depending on the quote's flavour.
 
 use crate::error::Error;

@@ -394,7 +394,7 @@ impl ProviderClient {
         &self,
         bucket_id: BucketId,
         mmr_roots: [Option<H256>; 7],
-        signature: Vec<u8>,
+        signature: &sp_runtime::MultiSignature,
     ) -> ClientResult<()> {
         let chain = self.base.chain()?;
         let signer = chain.signer()?;
@@ -405,7 +405,7 @@ impl ProviderClient {
             mmr_roots.iter().filter(|r| r.is_some()).count()
         );
 
-        let tx = extrinsics::confirm_replica_sync(bucket_id, mmr_roots, signature)?;
+        let tx = extrinsics::confirm_replica_sync(bucket_id, mmr_roots, signature);
 
         chain
             .api()

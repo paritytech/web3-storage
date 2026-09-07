@@ -501,19 +501,25 @@ impl<T: frame_system::Config> WeightInfo for SubstrateWeight<T> {
 			.saturating_add(T::DbWeight::get().reads(5_u64))
 			.saturating_add(T::DbWeight::get().writes(4_u64))
 	}
+	/// Storage: `StorageProvider::Providers` (r:1 w:0)
+	/// Proof: `StorageProvider::Providers` (`max_values`: None, `max_size`: Some(364), added: 2839, mode: `MaxEncodedLen`)
 	/// Storage: `StorageProvider::Buckets` (r:1 w:0)
 	/// Proof: `StorageProvider::Buckets` (`max_values`: None, `max_size`: None, mode: `Measured`)
 	/// Storage: `StorageProvider::StorageAgreements` (r:1 w:1)
-	/// Proof: `StorageProvider::StorageAgreements` (`max_values`: None, `max_size`: Some(227), added: 2702, mode: `MaxEncodedLen`)
+	/// Proof: `StorageProvider::StorageAgreements` (`max_values`: None, `max_size`: Some(243), added: 2718, mode: `MaxEncodedLen`)
+	/// Storage: `ParachainSystem::ValidationData` (r:1 w:0)
+	/// Proof: `ParachainSystem::ValidationData` (`max_values`: Some(1), `max_size`: None, mode: `Measured`)
+	/// Storage: `ParachainSystem::LastRelayChainBlockNumber` (r:1 w:0)
+	/// Proof: `ParachainSystem::LastRelayChainBlockNumber` (`max_values`: Some(1), `max_size`: None, mode: `Measured`)
 	/// Storage: `System::Account` (r:2 w:2)
 	/// Proof: `System::Account` (`max_values`: None, `max_size`: Some(128), added: 2603, mode: `MaxEncodedLen`)
 	fn confirm_replica_sync() -> Weight {
 		// Proof Size summary in bytes:
-		//  Measured:  `973`
+		//  Measured:  `1221`
 		//  Estimated: `6196`
-		// Minimum execution time: 44_000_000 picoseconds.
-		Weight::from_parts(49_000_000, 6196)
-			.saturating_add(T::DbWeight::get().reads(4_u64))
+		// Minimum execution time: 128_275_000 picoseconds.
+		Weight::from_parts(134_764_000, 6196)
+			.saturating_add(T::DbWeight::get().reads(7_u64))
 			.saturating_add(T::DbWeight::get().writes(3_u64))
 	}
 	/// Storage: `System::Account` (r:1 w:1)
@@ -954,19 +960,25 @@ impl WeightInfo for () {
 			.saturating_add(RocksDbWeight::get().reads(5_u64))
 			.saturating_add(RocksDbWeight::get().writes(4_u64))
 	}
+	/// Storage: `StorageProvider::Providers` (r:1 w:0)
+	/// Proof: `StorageProvider::Providers` (`max_values`: None, `max_size`: Some(364), added: 2839, mode: `MaxEncodedLen`)
 	/// Storage: `StorageProvider::Buckets` (r:1 w:0)
 	/// Proof: `StorageProvider::Buckets` (`max_values`: None, `max_size`: None, mode: `Measured`)
 	/// Storage: `StorageProvider::StorageAgreements` (r:1 w:1)
-	/// Proof: `StorageProvider::StorageAgreements` (`max_values`: None, `max_size`: Some(227), added: 2702, mode: `MaxEncodedLen`)
+	/// Proof: `StorageProvider::StorageAgreements` (`max_values`: None, `max_size`: Some(243), added: 2718, mode: `MaxEncodedLen`)
+	/// Storage: `ParachainSystem::ValidationData` (r:1 w:0)
+	/// Proof: `ParachainSystem::ValidationData` (`max_values`: Some(1), `max_size`: None, mode: `Measured`)
+	/// Storage: `ParachainSystem::LastRelayChainBlockNumber` (r:1 w:0)
+	/// Proof: `ParachainSystem::LastRelayChainBlockNumber` (`max_values`: Some(1), `max_size`: None, mode: `Measured`)
 	/// Storage: `System::Account` (r:2 w:2)
 	/// Proof: `System::Account` (`max_values`: None, `max_size`: Some(128), added: 2603, mode: `MaxEncodedLen`)
 	fn confirm_replica_sync() -> Weight {
 		// Proof Size summary in bytes:
-		//  Measured:  `973`
+		//  Measured:  `1221`
 		//  Estimated: `6196`
-		// Minimum execution time: 44_000_000 picoseconds.
-		Weight::from_parts(49_000_000, 6196)
-			.saturating_add(RocksDbWeight::get().reads(4_u64))
+		// Minimum execution time: 128_275_000 picoseconds.
+		Weight::from_parts(134_764_000, 6196)
+			.saturating_add(RocksDbWeight::get().reads(7_u64))
 			.saturating_add(RocksDbWeight::get().writes(3_u64))
 	}
 	/// Storage: `System::Account` (r:1 w:1)
