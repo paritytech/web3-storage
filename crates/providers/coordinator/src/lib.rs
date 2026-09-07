@@ -87,6 +87,9 @@ async fn with_timeout<T>(
 pub struct ProviderInfo {
     /// Network address for connecting.
     pub multiaddr: String,
+    /// Raw registered public key bytes. `/negotiate` refuses to sign while
+    /// this doesn't match the local signing key.
+    pub public_key: Vec<u8>,
     /// Total stake locked.
     pub stake: u128,
     /// Currently committed bytes.
@@ -117,11 +120,12 @@ pub struct ProviderInfo {
 impl From<RuntimeProviderInfo> for ProviderInfo {
     /// Flatten the runtime's nested `ProviderInfo` into the node's view.
     ///
-    /// `public_key` and the six unused `stats` counters are deliberately
-    /// dropped — they are not part of what `/negotiate` or `/info` expose.
+    /// The six unused `stats` counters are deliberately dropped — they are not
+    /// part of what `/negotiate` or `/info` expose.
     fn from(info: RuntimeProviderInfo) -> Self {
         Self {
             multiaddr: String::from_utf8_lossy(&info.multiaddr.0).into_owned(),
+            public_key: info.public_key.0,
             stake: info.stake,
             committed_bytes: info.committed_bytes,
             max_capacity: info.settings.max_capacity,
@@ -971,6 +975,7 @@ mod tests {
     fn sample_provider_info() -> ProviderInfo {
         ProviderInfo {
             multiaddr: "/ip4/1.2.3.4/tcp/3333".to_string(),
+            public_key: vec![1u8; 32],
             stake: 1_000,
             committed_bytes: 500,
             max_capacity: 10_000,

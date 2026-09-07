@@ -135,8 +135,8 @@ contract Photos {
 ```
 
 Notes:
-- `bytes32 provider` / `bytes32 userAccount` are substrate `AccountId32`s (raw 32-byte sr25519
-  pubkeys), per the precompile's type-encoding rules. `userAccount` is the signed-in user's own
+- `bytes32 provider` / `bytes32 userAccount` are substrate `AccountId32`s (raw 32-byte account
+  ids), per the precompile's type-encoding rules. `userAccount` is the signed-in user's own
   substrate account — the one their wallet signs `/fs` requests with.
 - `terms` is the precompile's `PrimitiveAgreementTerms`; `terms.owner` must be the contract's
   substrate-mapped account (the drive owner). For a primary agreement, `hasBucketId = false` and
