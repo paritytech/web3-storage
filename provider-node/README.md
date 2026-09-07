@@ -12,6 +12,19 @@ just start-provider   # requires a running chain (just start-chain)
 just health           # check provider is up
 ```
 
+## Chain transport
+
+`--chain-transport` (`$CHAIN_TRANSPORT`) picks how the node follows the chain:
+`rpc` (default) subscribes to the node at `--chain-rpc` over WebSocket; `light`
+embeds a smoldot light client, so no RPC node has to be operated or trusted.
+The light transport needs `--relay-chain-spec` (`$RELAY_CHAIN_SPEC`) and takes
+`--para-chain-spec` (`$PARA_CHAIN_SPEC`). Each is a spec file, or a `ws://` node
+URL to fetch it from at startup: the relay spec via the node's sync-state RPC
+with the node's own address injected as boot node, the parachain spec assembled
+from ordinary RPC calls (genesis state root, boot-node addresses, para id).
+Fetching trusts that node, which defeats the point; use spec files in
+production. `--para-chain-spec` defaults to fetching from `--chain-rpc`.
+
 ## Storage backend
 
 `--storage-backend` picks the storage engine (default `rocksdb`). Chunks, MMR
@@ -82,6 +95,28 @@ at the TTL. Eviction costs nothing but a re-resolve on the next request.
 ```bash
 cargo test -p storage-provider-node
 ```
+
+### Light client against a local zombienet
+
+With `just start-paseo-chain` running, the fetch path is:
+
+```bash
+CHAIN_TRANSPORT=light RELAY_CHAIN_SPEC=ws://127.0.0.1:9900 just start-provider
+```
+
+and the spec-file path, with `<base_dir>` from the `base_dir:` line zombie-cli
+prints at spawn:
+
+```bash
+scripts/light-client-specs.sh <base_dir> /tmp/light-client-specs
+CHAIN_TRANSPORT=light RELAY_CHAIN_SPEC=/tmp/light-client-specs/relay.json \
+  PARA_CHAIN_SPEC=/tmp/light-client-specs/para.json just start-provider
+```
+
+The script patches zombie-cli's own raw specs (empty `bootNodes`, `relay_chain`
+naming the relay by name instead of by spec id, genesis values without the
+`0x` prefix) into files smoldot accepts. CI runs both paths as the light legs
+of the Zombienet Smoke Test.
 
 ## License
 

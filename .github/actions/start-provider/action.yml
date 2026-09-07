@@ -40,6 +40,30 @@ inputs:
       binary's own default (10,000).
     required: false
     default: ""
+  chain-transport:
+    description: >-
+      Chain transport (rpc or light), or "" to pass no --chain-transport and
+      exercise the binary's own default.
+    required: false
+    default: ""
+  relay-chain-spec:
+    description: >-
+      Relay chain spec for the light transport: a file path, or a ws:// relay
+      node URL to fetch it from (dev only). "" passes no flag.
+    required: false
+    default: ""
+  para-chain-spec:
+    description: >-
+      Parachain spec for the light transport: a file path, or a ws:// node URL
+      to assemble it from. "" passes no flag and assembles it from chain-rpc.
+    required: false
+    default: ""
+  health-attempts:
+    description: >-
+      /health poll attempts, 2s apart. The light transport warp-syncs before
+      the HTTP server binds, so give it more than the default.
+    required: false
+    default: "60"
 
 runs:
   using: composite
@@ -53,6 +77,12 @@ runs:
         CHAIN_RPC: ${{ inputs.chain-rpc }}
         LABEL: ${{ inputs.label }}
         AUTH_CACHE_ENTRIES: ${{ inputs.auth-cache-max-entries }}
+        # Deliberately not CHAIN_TRANSPORT / RELAY_CHAIN_SPEC / PARA_CHAIN_SPEC:
+        # the binary reads those names from its environment, and an empty value
+        # must reach it as "no flag", not as an empty setting.
+        TRANSPORT: ${{ inputs.chain-transport }}
+        RELAY_SPEC: ${{ inputs.relay-chain-spec }}
+        PARA_SPEC: ${{ inputs.para-chain-spec }}
       run: |
         set -euo pipefail
         KEYFILE="/tmp/provider-${LABEL}.key"
@@ -61,13 +91,16 @@ runs:
         printf '%s\n' "$SEED" > "$KEYFILE"
         chmod 600 "$KEYFILE"
 
-        echo "Starting ${LABEL} provider on :${PORT} (backend: ${BACKEND:-<binary default>})"
+        echo "Starting ${LABEL} provider on :${PORT} (backend: ${BACKEND:-<binary default>}, transport: ${TRANSPORT:-<binary default>})"
         # ${BACKEND:+...} expands to nothing when it is empty, so the run gets no
         # --storage-backend flag and exercises the binary's default.
         nohup ./target/release/storage-provider-node \
           --keyfile "$KEYFILE" \
           ${BACKEND:+--storage-backend "$BACKEND"} \
           ${AUTH_CACHE_ENTRIES:+--auth-cache-max-entries "$AUTH_CACHE_ENTRIES"} \
+          ${TRANSPORT:+--chain-transport "$TRANSPORT"} \
+          ${RELAY_SPEC:+--relay-chain-spec "$RELAY_SPEC"} \
+          ${PARA_SPEC:+--para-chain-spec "$PARA_SPEC"} \
           --storage-path "$STORAGE_PATH" \
           --bind-addr "0.0.0.0:${PORT}" \
           --chain-rpc "$CHAIN_RPC" \
@@ -86,5 +119,6 @@ runs:
     - uses: ./.github/actions/wait-for-provider-health
       with:
         url: http://127.0.0.1:${{ inputs.port }}
+        attempts: ${{ inputs.health-attempts }}
         label: ${{ inputs.label }}
         log-file: /tmp/provider-${{ inputs.label }}.log
