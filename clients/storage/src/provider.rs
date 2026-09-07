@@ -283,7 +283,6 @@ impl ProviderClient {
             .map_err(|e| ClientError::Chain(format!("Failed to read RequestTimeout: {e}")))?
             .constants()
             .entry(
-                // `unvalidated`: see the `storage-subxt` crate docs.
                 storage_subxt::api::constants()
                     .storage_provider()
                     .request_timeout()
