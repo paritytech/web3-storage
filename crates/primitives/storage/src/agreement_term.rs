@@ -27,6 +27,7 @@ pub const REPLICA_TERM_CONTEXT: &[u8] = b"replica-term-v1:";
 )]
 // DRIFT-001: the off-chain signed-terms quote that supersedes the design docs'
 // on-chain request/accept flow (AgreementRequest).
+// Proposal: keep; document this type in the design.
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct AgreementTerms<AccountId, Balance, BlockNumber> {
     /// Owner that will be bound by these terms (must match the extrinsic

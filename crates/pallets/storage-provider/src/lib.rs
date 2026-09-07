@@ -219,7 +219,7 @@ pub mod pallet {
         /// and griefing is free; too high and legitimate challenges become
         /// unaffordable.
         // DRIFT-005: this config item is missing from the design doc's Config
-        // sketch.
+        // sketch. Proposal: keep; add it to the design's sketch and values table.
         #[pallet::constant]
         type ChallengeDeposit: Get<BalanceOf<Self>>;
 
@@ -1351,6 +1351,7 @@ pub mod pallet {
         // DRIFT-001 / DRIFT-002: this signed-terms flow supersedes the design
         // docs' on-chain request/accept round-trip and standalone create_bucket
         // (bucket creation is folded in here).
+        // Proposal: keep this flow; realign the design docs to it.
         /// Redeem provider-signed terms: create a bucket + primary agreement
         /// in a single call.
         ///

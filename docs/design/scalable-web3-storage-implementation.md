@@ -64,7 +64,7 @@ Users who create conflicts without checkpointing waste their quota—providers m
 
 ### Provider Lifecycle in Bucket
 
-<!-- DRIFT-001: the request/accept round-trip below is superseded on `dev` by off-chain signed terms redeemed via establish_storage_agreement / establish_replica_agreement (#105). -->
+<!-- DRIFT-001: the request/accept round-trip below is superseded on `dev` by off-chain signed terms redeemed via establish_storage_agreement / establish_replica_agreement (#105). Proposal: remove from design; document the signed-terms flow instead. -->
 **Adding a provider:**
 1. Admin calls `request_primary_agreement` with the provider
 2. Provider calls `accept_agreement` → `StorageAgreement` created, added to `bucket.primary_providers`
@@ -171,6 +171,7 @@ pub trait Config: frame_system::Config<RuntimeEvent: From<Event<Self>>> {
     /// the anchor-clock note above).
     // DRIFT-005: `Config::ChallengeDeposit` exists in code (reserved from the
     // challenger in create_challenge) but is missing from this sketch.
+    // Proposal: keep code; add it to this sketch and the values table.
     #[pallet::constant]
     type ChallengeTimeout: Get<BlockNumberFor<Self>>;
 
@@ -203,6 +204,7 @@ pub trait Config: frame_system::Config<RuntimeEvent: From<Event<Self>>> {
     // `min(MaxChallengesPerDeadline, MAX_SWEEP_SLASH_BUDGET = 100)` — so the
     // runtime value 1_000 yields a real per-block budget of 100
     // (crates/pallets/storage-provider/src/lib.rs).
+    // Proposal: keep code; document the clamps here.
     #[pallet::constant]
     type MaxChallengesPerDeadline: Get<u16>;
 
@@ -504,6 +506,7 @@ pub enum ProviderRole<T: Config> {
 /// Keyed by (provider, bucket) so providers can efficiently query their pending requests
 // DRIFT-001: no `AgreementRequests` on `dev` — the signed-terms flow keeps a
 // `ProviderReplayStates` replay window instead (#105).
+// Proposal: remove from design; sketch `ProviderReplayStates` instead.
 #[pallet::storage]
 pub type AgreementRequests<T: Config> = StorageDoubleMap<
     _,
@@ -599,7 +602,8 @@ pub struct Challenge<T: Config> {
     pub authorized: bool,
 }
 
-// DRIFT-007: `dev` has three storage items this section doesn't sketch:
+// DRIFT-007: `dev` has three storage items this section doesn't sketch.
+// Proposal: keep code; adopt the definitions below into the sketch.
 //
 // /// Number of unresolved challenges currently outstanding against a
 // /// provider, summed across every bucket. Incremented in `create_challenge`
@@ -689,7 +693,9 @@ blake2_256(context | terms.encode()) with PRIMARY_TERM_CONTEXT /
 REPLICA_TERM_CONTEXT domain separation; (b) only CommitmentPayload carries a
 `version: u8` — the replica `roots` array is signed bare, with no version
 byte. Same stale "both payloads carry a version" claim at the Signed
-Commitment note in Data Structures. -->
+Commitment note in Data Structures.
+Proposal: realign this paragraph to list all three payloads; whether the other
+two should also gain a version byte is a separate protocol decision. -->
 
 Two on-chain signed payloads exist (all SCALE-encoded, all carry an explicit
 `version: u8` so the protocol can evolve without breaking existing signatures):
@@ -978,7 +984,8 @@ sp_api::decl_runtime_apis! {
         fn challenger_challenges(challenger: AccountId) -> Vec<ChallengeResponse>;
         fn challenge_candidates(max_reputation: u8, limit: u32) -> Vec<ChallengeCandidate>;
 
-        // DRIFT-009: `dev` additionally exposes the two anchor-clock methods
+        // DRIFT-009: `dev` additionally exposes the two anchor-clock methods.
+        // Proposal: resolved (added below) — drop this marker.
         fn current_anchor_block() -> BlockNumber;
         fn anchor_block_time_millis() -> u64;
     }
@@ -1069,6 +1076,7 @@ impl<T: Config> Pallet<T> {
     // (`ProviderHasPendingChallenges`) — the stake stays slashable until
     // every open challenge matures. Implied by the Config section's
     // announcement-period rationale, but absent from this contract.
+    // Proposal: keep code; document the guard here.
     #[pallet::weight(...)]
     pub fn complete_deregister(origin: OriginFor<T>) -> DispatchResult;
 
@@ -1120,6 +1128,7 @@ impl<T: Config> Pallet<T> {
     // DRIFT-011: `dev` also requires a registered provider
     // (`ProviderNotFound`) with a live agreement on the bucket
     // (`AgreementNotFound`, `AgreementExpired`).
+    // Proposal: keep code; document the preconditions here.
     #[pallet::weight(...)]
     pub fn set_extensions_blocked(
         origin: OriginFor<T>,
@@ -1136,7 +1145,9 @@ impl<T: Config> Pallet<T> {
 
     // DRIFT-002: no standalone create_bucket / create_bucket_with_storage on
     // `dev` — a bucket is created by establish_storage_agreement redeeming
-    // primary terms (#105). Note: remove from impl. doc?
+    // primary terms (#105). Proposal: remove from design (bucket creation is
+    // atomic inside establish_storage_agreement; a standalone call has no
+    // consumer).
     /// Create a new bucket.
     /// 
     /// The caller becomes the bucket admin. The bucket starts empty with no
@@ -1218,6 +1229,7 @@ impl<T: Config> Pallet<T> {
     // DRIFT-011: on `dev`, self-demotion (and self-removal below) is refused
     // for the bucket's only admin (`LastAdminCannotBeRemoved`): a bucket
     // always keeps ≥ 1 admin. This invariant appears nowhere in the doc.
+    // Proposal: keep code; document the invariant here.
     /// 
     /// This prevents a single compromised admin from seizing control.
     ///
@@ -1260,6 +1272,9 @@ impl<T: Config> Pallet<T> {
     // withdraw_agreement_request / request_primary_agreement are superseded on
     // `dev` by establish_storage_agreement / establish_replica_agreement, which
     // redeem provider-signed AgreementTerms (#105).
+    // Proposal: remove the five calls from the design and document the
+    // signed-terms flow (establish_* + AgreementTerms/ReplicaTerms +
+    // ProviderReplayStates) in their place.
 
     /// Request a replica storage agreement (anyone can request).
     /// 
@@ -1292,6 +1307,7 @@ impl<T: Config> Pallet<T> {
     ///   - `min_sync_interval`: Minimum blocks between sync confirmations. Set based
     ///     on expected bucket activity. 0 for no time-based limit.
     // DRIFT-001: not on `dev` — remove from impl doc or implement?
+    // Proposal: remove (superseded by the signed-terms flow).
     #[pallet::weight(...)]
     pub fn request_agreement(
         origin: OriginFor<T>,
@@ -1312,6 +1328,7 @@ impl<T: Config> Pallet<T> {
     /// Parameters:
     /// - `bucket_id`: The bucket with the pending request
     // DRIFT-001: not on `dev` — remove from impl doc or implement?
+    // Proposal: remove (superseded by the signed-terms flow).
     #[pallet::weight(...)]
     pub fn accept_agreement(
         origin: OriginFor<T>,
@@ -1325,6 +1342,7 @@ impl<T: Config> Pallet<T> {
     /// Parameters:
     /// - `bucket_id`: The bucket with the pending request to reject
     // DRIFT-001: not on `dev` — remove from impl doc or implement?
+    // Proposal: remove (superseded by the signed-terms flow).
     #[pallet::weight(...)]
     pub fn reject_agreement(
         origin: OriginFor<T>,
@@ -1339,6 +1357,7 @@ impl<T: Config> Pallet<T> {
     /// - `bucket_id`: The bucket with the pending request
     /// - `provider`: The provider the request was made to
     // DRIFT-001: not on `dev` — remove from impl doc or implement?
+    // Proposal: remove (superseded by the signed-terms flow).
     #[pallet::weight(...)]
     pub fn withdraw_agreement_request(
         origin: OriginFor<T>,
@@ -1431,6 +1450,7 @@ impl<T: Config> Pallet<T> {
     // challenge against (bucket, provider) is unresolved
     // (`AgreementHasPendingChallenge`, via PendingChallengesByBucket): an
     // agreement cannot be settled out from under a live slashable challenge.
+    // Proposal: keep code; document the guard here.
     #[pallet::weight(...)]
     pub fn end_agreement(
         origin: OriginFor<T>,
@@ -1466,6 +1486,7 @@ impl<T: Config> Pallet<T> {
     ///   as `provider.price_per_byte * max_bytes * duration`. Fails if this exceeds
     ///   `max_payment` (protects against price changes between query and submission).
     // DRIFT-001: not on `dev` — remove from impl doc or implement?
+    // Proposal: remove (superseded by the signed-terms flow).
     #[pallet::weight(...)]
     pub fn request_primary_agreement(
         origin: OriginFor<T>,
@@ -1513,6 +1534,7 @@ impl<T: Config> Pallet<T> {
         // DRIFT-014 (cosmetic): the `Signature` alias in these sketches is
         // never defined; `dev` uses `sp_runtime::MultiSignature` everywhere
         // (as the signature-type section above states).
+        // Proposal: replace `Signature` with `MultiSignature` in the sketches.
         signatures: BoundedVec<(T::AccountId, Signature), T::MaxPrimaryProviders>,
     ) -> DispatchResult;
 
@@ -2290,7 +2312,8 @@ pub struct ChunkLocation {
 <!-- DRIFT-010: "Both payloads" / "each carry a version" is stale — see the
 marker in the signature-type section: only CommitmentPayload exists here and
 carries a version byte; the replica roots array is signed without one, and
-the signed AgreementTerms/ReplicaTerms are a third payload. -->
+the signed AgreementTerms/ReplicaTerms are a third payload.
+Proposal: realign this note together with the signature-type section. -->
 
 Both payloads live in `storage_primitives` so the pallet, provider node, and
 client SDK encode/decode identically. They each carry a `version: u8` for
@@ -2335,7 +2358,8 @@ pub struct MerkleProof {
 pub struct MmrProof {
     /// Peaks of the MMR
     pub peaks: Vec<H256>,
-    // DRIFT-013: this field was missing from the sketch
+    // DRIFT-013: this field was missing from the sketch.
+    // Proposal: resolved (added below) — drop this marker.
     /// The leaf being proven. Verification hashes `leaf.encode()` as the
     /// proof's starting point, so the leaf content is part of the proof.
     pub leaf: MmrLeaf,
