@@ -550,8 +550,7 @@ pub struct ReplicaRequestParams<T: Config> {
 pub type Challenges<T: Config> = StorageDoubleMap<
     _,
     Blake2_128Concat, BlockNumberFor<T>, // deadline (anchor block)
-    // DRIFT-014 (cosmetic): `dev` hashes the u16 index with Twox64Concat.
-    Blake2_128Concat, u16,               // index within the deadline
+    Twox64Concat, u16,                   // index within the deadline
     Challenge<T>,
 >;
 
@@ -605,14 +604,48 @@ pub struct Challenge<T: Config> {
 }
 
 // DRIFT-007: `dev` has three storage items this section doesn't sketch:
-// - `PendingChallenges: StorageMap<AccountId, u32>` — unresolved challenges
-//   per provider; gates `complete_deregister` (a provider cannot exit while
-//   still slashable).
-// - `PendingChallengesByBucket: StorageDoubleMap<BucketId, AccountId, u32>` —
-//   same per (bucket, provider); gates `end_agreement` /
-//   `claim_expired_agreement` / bucket cleanup.
-// - `ChallengerStats: StorageMap<AccountId, ChallengerStatRecord>` —
-//   per-challenger totals (opened / provider-slashed / defended) for the SDK.
+//
+// /// Number of unresolved challenges currently outstanding against a
+// /// provider, summed across every bucket. Incremented in `create_challenge`
+// /// and decremented exactly once per resolution (defended/invalid-response
+// /// in `respond_to_challenge`, or timeout in the `on_initialize` sweep).
+// /// Gates `complete_deregister`: a provider cannot exit while still
+// /// slashable for a pending challenge.
+// #[pallet::storage]
+// pub type PendingChallenges<T: Config> =
+//     StorageMap<_, Blake2_128Concat, T::AccountId, u32, ValueQuery>;
+//
+// /// Number of unresolved challenges outstanding against a specific
+// /// `(bucket, provider)` pair. Maintained in lockstep with
+// /// `PendingChallenges` and gates that bucket's agreement teardown
+// /// (`end_agreement`, `claim_expired_agreement`, `cleanup_bucket_internal`).
+// #[pallet::storage]
+// pub type PendingChallengesByBucket<T: Config> = StorageDoubleMap<
+//     _,
+//     Blake2_128Concat, BucketId,
+//     Blake2_128Concat, T::AccountId,
+//     u32,
+//     ValueQuery,
+// >;
+//
+// /// Per-challenger aggregates so the SDK doesn't have to scan historical
+// /// events. Updated by `create_challenge`, the defended path of
+// /// `respond_to_challenge`, and `slash_provider_for_failed_challenge`.
+// #[pallet::storage]
+// pub type ChallengerStats<T: Config> =
+//     StorageMap<_, Blake2_128Concat, T::AccountId, ChallengerStatRecord, ValueQuery>;
+//
+// /// Defined in `storage_primitives`.
+// pub struct ChallengerStatRecord {
+//     /// Total challenges the challenger has ever opened.
+//     pub total_challenges: u32,
+//     /// Challenges where the provider was slashed (invalid response or
+//     /// timeout). The challenger is only made whole (deposit refunded), no
+//     /// reward — the slashed stake goes entirely to the Treasury.
+//     pub successful_challenges: u32,
+//     /// Challenges where the provider successfully defended.
+//     pub failed_challenges: u32,
+// }
 
 /// Reverse index: account → bucket IDs they are a member of.
 /// Bounded by `T::MaxBucketsPerMember` to keep iteration costs predictable.
@@ -711,10 +744,9 @@ pub enum Event<T: Config> {
         provider: T::AccountId,
         settings: ProviderSettings<T>,
     },
-    // DRIFT-008: on `dev` this event also carries the new
-    // `multiaddr: BoundedVec<u8, T::MaxMultiaddrLength>`.
     ProviderMultiaddrUpdated {
         provider: T::AccountId,
+        multiaddr: BoundedVec<u8, T::MaxMultiaddrLength>,
     },
     ExtensionsBlocked {
         bucket_id: BucketId,
@@ -737,9 +769,11 @@ pub enum Event<T: Config> {
     BucketDeleted {
         bucket_id: BucketId,
     },
-    // DRIFT-008: `dev` also emits (from #330's set_bucket_visibility, which
-    // this doc documents — only this Events listing was left behind):
-    //   BucketVisibilityChanged { bucket_id: BucketId, visibility: Visibility }
+    /// Admin flipped the bucket's read visibility.
+    BucketVisibilityChanged {
+        bucket_id: BucketId,
+        visibility: Visibility,
+    },
     MemberSet {
         bucket_id: BucketId,
         member: T::AccountId,
@@ -884,15 +918,16 @@ pub enum Event<T: Config> {
         challenger_cost: BalanceOf<T>,
         provider_cost: BalanceOf<T>,
     },
-    /// Provider failed to respond or provided invalid proof - slashed
-    // DRIFT-008: on `dev` this event also carries
-    // `challenger_reward: BalanceOf<T>` (always zero under the no-reward
-    // model) and `reason: SlashReason` (Timeout / InvalidProof /
-    // InvalidDeletionClaim / InvalidSupersededClaim).
+    /// Provider failed to respond or provided invalid proof - slashed.
+    /// `challenger_reward` is always zero under the no-reward challenge model;
+    /// `reason` distinguishes a timeout from a demonstrably-false response
+    /// (Timeout / InvalidProof / InvalidDeletionClaim / InvalidSupersededClaim).
     ChallengeSlashed {
         challenge_id: ChallengeId<BlockNumberFor<T>>,
         provider: T::AccountId,
         slashed_amount: BalanceOf<T>,
+        challenger_reward: BalanceOf<T>,
+        reason: SlashReason,
     },
 
 }
@@ -951,10 +986,8 @@ sp_api::decl_runtime_apis! {
         fn challenge_candidates(max_reputation: u8, limit: u32) -> Vec<ChallengeCandidate>;
 
         // DRIFT-009: `dev` additionally exposes the two anchor-clock methods
-        // this doc's own anchor-clock section references but this listing
-        // omits:
-        //   fn current_anchor_block() -> BlockNumber;
-        //   fn anchor_block_time_millis() -> u64;
+        fn current_anchor_block() -> BlockNumber;
+        fn anchor_block_time_millis() -> u64;
     }
 }
 ```
@@ -1767,23 +1800,6 @@ The provider node exposes a JSON-over-HTTP API (axum) on, by default,
 3. **Replica sync** — peaks, subtree, bulk node fetch, sync status. Used by
    replica providers; read-only.
 
-<!-- DRIFT-012: this section trails the `dev` provider node in several places:
-- the node also serves the Layer-1 endpoints (/s3/:bucket_id/*,
-  /fs/:bucket_id/*) and /negotiate (the DRIFT-001 flow), none mentioned here;
-  S3/FS deletes are Writer-level, so "Admin for delete" below holds only for
-  the Layer-0 /delete prune;
-- GET /info returns { provider_id, provider_registration_info,
-  readiness: { signing_configured, nonce_counter_ready, provider_info_loaded,
-  deregistering } }, not { status, version } (those live on /health);
-- error payloads nest extras under "details" ({ error, details: {...} });
-  /commit's missing root is 404 root_not_found with details.data_root (not
-  400 with a "missing" array); /chunk_proof's 404 is "root_not_found";
-  /delete auth failures are 401 auth_required / 403 insufficient_role;
-- /chunk_proof also returns optional base64 chunk_data (for challenge
-  responses); /stats per-bucket fields are leaf_count / node_count /
-  bytes_stored;
-- bucket_id is a JSON number (u64) in every request; the "0x..." bucket_id
-  strings in several examples below would fail deserialization. -->
 
 ### Authentication & RBAC
 
@@ -1927,8 +1943,6 @@ Response:
 ```
 Provider Info
 ─────────────
-# DRIFT-012: stale — see the marker at the top of this section for the
-# actual /info response on `dev`.
 GET /info
 
 Response:
