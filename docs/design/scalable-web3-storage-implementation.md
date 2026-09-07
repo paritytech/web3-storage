@@ -2337,9 +2337,10 @@ pub struct MerkleProof {
 pub struct MmrProof {
     /// Peaks of the MMR
     pub peaks: Vec<H256>,
-    // DRIFT-013: `dev` has a `leaf: MmrLeaf` field here — verification hashes
-    // `leaf.encode()` as the proof's starting point, so the leaf content is
-    // part of the proof (this doc's own /mmr_proof example already shows it).
+    // DRIFT-013: this field was missing from the sketch
+    /// The leaf being proven. Verification hashes `leaf.encode()` as the
+    /// proof's starting point, so the leaf content is part of the proof.
+    pub leaf: MmrLeaf,
     /// Proof from leaf to peak
     pub leaf_proof: MerkleProof,
 }
