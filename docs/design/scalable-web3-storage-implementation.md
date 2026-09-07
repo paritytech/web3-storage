@@ -197,6 +197,12 @@ pub trait Config: frame_system::Config<RuntimeEvent: From<Event<Self>>> {
 
     /// Caps the challenges sharing one deadline (anchor block) and the
     /// `on_initialize` sweep's per-block slash budget.
+    // DRIFT-006: `dev` additionally clamps the sweep with two pallet-internal
+    // constants absent from this doc: at most `MAX_SWEEP_SPAN = 32` deadline
+    // keys probed per block, and an effective slash budget of
+    // `min(MaxChallengesPerDeadline, MAX_SWEEP_SLASH_BUDGET = 100)` — so the
+    // runtime value 1_000 yields a real per-block budget of 100
+    // (crates/pallets/storage-provider/src/lib.rs).
     #[pallet::constant]
     type MaxChallengesPerDeadline: Get<u16>;
 
@@ -373,6 +379,10 @@ pub struct Bucket<T: Config> {
     /// Read visibility (see `Visibility`). On-chain, only the challenge
     /// extrinsics read it: `Private` restricts primary challenges to members
     /// and primary-agreement owners.
+    // DRIFT-014 (cosmetic): on `dev`, `visibility` is the struct's LAST field
+    // (after `total_snapshots`), so this sketch misstates the SCALE order;
+    // `Visibility` also derives `#[default] Private` as the fail-safe when a
+    // creation surface (e.g. genesis) omits the choice.
     pub visibility: Visibility,
     /// If Some, bucket is append-only from this start_seq.
     /// Checkpoints with start_seq < frozen_start_seq are rejected (prevents deletions).
@@ -540,6 +550,7 @@ pub struct ReplicaRequestParams<T: Config> {
 pub type Challenges<T: Config> = StorageDoubleMap<
     _,
     Blake2_128Concat, BlockNumberFor<T>, // deadline (anchor block)
+    // DRIFT-014 (cosmetic): `dev` hashes the u16 index with Twox64Concat.
     Blake2_128Concat, u16,               // index within the deadline
     Challenge<T>,
 >;
@@ -593,6 +604,16 @@ pub struct Challenge<T: Config> {
     pub authorized: bool,
 }
 
+// DRIFT-007: `dev` has three storage items this section doesn't sketch:
+// - `PendingChallenges: StorageMap<AccountId, u32>` — unresolved challenges
+//   per provider; gates `complete_deregister` (a provider cannot exit while
+//   still slashable).
+// - `PendingChallengesByBucket: StorageDoubleMap<BucketId, AccountId, u32>` —
+//   same per (bucket, provider); gates `end_agreement` /
+//   `claim_expired_agreement` / bucket cleanup.
+// - `ChallengerStats: StorageMap<AccountId, ChallengerStatRecord>` —
+//   per-challenger totals (opened / provider-slashed / defended) for the SDK.
+
 /// Reverse index: account → bucket IDs they are a member of.
 /// Bounded by `T::MaxBucketsPerMember` to keep iteration costs predictable.
 #[pallet::storage]
@@ -631,6 +652,15 @@ could never pass verification.
 The provider node signs with any of the four schemes (`--key-scheme`,
 default sr25519) and emits every signature as SCALE-encoded `MultiSignature`
 hex, so the scheme tag travels with the signature on every wire path.
+
+<!-- DRIFT-010: on `dev` this list is wrong in both directions: (a) a THIRD
+provider-signed payload exists — the AgreementTerms/ReplicaTerms redeemed by
+establish_*_agreement (the DRIFT-001 flow), signed as
+blake2_256(context | terms.encode()) with PRIMARY_TERM_CONTEXT /
+REPLICA_TERM_CONTEXT domain separation; (b) only CommitmentPayload carries a
+`version: u8` — the replica `roots` array is signed bare, with no version
+byte. Same stale "both payloads carry a version" claim at the Signed
+Commitment note in Data Structures. -->
 
 Two on-chain signed payloads exist (all SCALE-encoded, all carry an explicit
 `version: u8` so the protocol can evolve without breaking existing signatures):
@@ -681,6 +711,8 @@ pub enum Event<T: Config> {
         provider: T::AccountId,
         settings: ProviderSettings<T>,
     },
+    // DRIFT-008: on `dev` this event also carries the new
+    // `multiaddr: BoundedVec<u8, T::MaxMultiaddrLength>`.
     ProviderMultiaddrUpdated {
         provider: T::AccountId,
     },
@@ -705,6 +737,9 @@ pub enum Event<T: Config> {
     BucketDeleted {
         bucket_id: BucketId,
     },
+    // DRIFT-008: `dev` also emits (from #330's set_bucket_visibility, which
+    // this doc documents — only this Events listing was left behind):
+    //   BucketVisibilityChanged { bucket_id: BucketId, visibility: Visibility }
     MemberSet {
         bucket_id: BucketId,
         member: T::AccountId,
@@ -850,6 +885,10 @@ pub enum Event<T: Config> {
         provider_cost: BalanceOf<T>,
     },
     /// Provider failed to respond or provided invalid proof - slashed
+    // DRIFT-008: on `dev` this event also carries
+    // `challenger_reward: BalanceOf<T>` (always zero under the no-reward
+    // model) and `reason: SlashReason` (Timeout / InvalidProof /
+    // InvalidDeletionClaim / InvalidSupersededClaim).
     ChallengeSlashed {
         challenge_id: ChallengeId<BlockNumberFor<T>>,
         provider: T::AccountId,
@@ -910,6 +949,12 @@ sp_api::decl_runtime_apis! {
         fn provider_challenges(provider: AccountId) -> Vec<ChallengeResponse>;
         fn challenger_challenges(challenger: AccountId) -> Vec<ChallengeResponse>;
         fn challenge_candidates(max_reputation: u8, limit: u32) -> Vec<ChallengeCandidate>;
+
+        // DRIFT-009: `dev` additionally exposes the two anchor-clock methods
+        // this doc's own anchor-clock section references but this listing
+        // omits:
+        //   fn current_anchor_block() -> BlockNumber;
+        //   fn anchor_block_time_millis() -> u64;
     }
 }
 ```
@@ -994,6 +1039,10 @@ impl<T: Config> Pallet<T> {
     /// Callable once `T::DeregisterAnnouncementPeriod` has elapsed since
     /// `deregister_provider`. Unreserves the remaining stake and removes the
     /// provider record. Still requires `committed_bytes == 0`.
+    // DRIFT-011: `dev` additionally requires `PendingChallenges == 0`
+    // (`ProviderHasPendingChallenges`) — the stake stays slashable until
+    // every open challenge matures. Implied by the Config section's
+    // announcement-period rationale, but absent from this contract.
     #[pallet::weight(...)]
     pub fn complete_deregister(origin: OriginFor<T>) -> DispatchResult;
 
@@ -1042,6 +1091,9 @@ impl<T: Config> Pallet<T> {
     /// Block or unblock extensions for a specific bucket (provider only).
     /// Allows provider to stop a specific bucket from extending while
     /// continuing to accept extensions from other buckets.
+    // DRIFT-011: `dev` also requires a registered provider
+    // (`ProviderNotFound`) with a live agreement on the bucket
+    // (`AgreementNotFound`, `AgreementExpired`).
     #[pallet::weight(...)]
     pub fn set_extensions_blocked(
         origin: OriginFor<T>,
@@ -1137,6 +1189,9 @@ impl<T: Config> Pallet<T> {
     /// - Add new members (any role)
     /// - Update non-admin members' roles
     /// - Demote themselves (remove own admin status)
+    // DRIFT-011: on `dev`, self-demotion (and self-removal below) is refused
+    // for the bucket's only admin (`LastAdminCannotBeRemoved`): a bucket
+    // always keeps ≥ 1 admin. This invariant appears nowhere in the doc.
     /// 
     /// This prevents a single compromised admin from seizing control.
     ///
@@ -1342,6 +1397,10 @@ impl<T: Config> Pallet<T> {
     /// 
     /// Note: For primary agreements, admin is the owner (created via request_primary_agreement).
     /// Admin has no special privileges over replica agreements.
+    // DRIFT-011: `dev` blocks this (and claim_expired_agreement below) while a
+    // challenge against (bucket, provider) is unresolved
+    // (`AgreementHasPendingChallenge`, via PendingChallengesByBucket): an
+    // agreement cannot be settled out from under a live slashable challenge.
     #[pallet::weight(...)]
     pub fn end_agreement(
         origin: OriginFor<T>,
@@ -1420,6 +1479,9 @@ impl<T: Config> Pallet<T> {
         origin: OriginFor<T>,
         bucket_id: BucketId,
         commitment: Commitment,
+        // DRIFT-014 (cosmetic): the `Signature` alias in these sketches is
+        // never defined; `dev` uses `sp_runtime::MultiSignature` everywhere
+        // (as the signature-type section above states).
         signatures: BoundedVec<(T::AccountId, Signature), T::MaxPrimaryProviders>,
     ) -> DispatchResult;
 
@@ -1705,6 +1767,24 @@ The provider node exposes a JSON-over-HTTP API (axum) on, by default,
 3. **Replica sync** — peaks, subtree, bulk node fetch, sync status. Used by
    replica providers; read-only.
 
+<!-- DRIFT-012: this section trails the `dev` provider node in several places:
+- the node also serves the Layer-1 endpoints (/s3/:bucket_id/*,
+  /fs/:bucket_id/*) and /negotiate (the DRIFT-001 flow), none mentioned here;
+  S3/FS deletes are Writer-level, so "Admin for delete" below holds only for
+  the Layer-0 /delete prune;
+- GET /info returns { provider_id, provider_registration_info,
+  readiness: { signing_configured, nonce_counter_ready, provider_info_loaded,
+  deregistering } }, not { status, version } (those live on /health);
+- error payloads nest extras under "details" ({ error, details: {...} });
+  /commit's missing root is 404 root_not_found with details.data_root (not
+  400 with a "missing" array); /chunk_proof's 404 is "root_not_found";
+  /delete auth failures are 401 auth_required / 403 insufficient_role;
+- /chunk_proof also returns optional base64 chunk_data (for challenge
+  responses); /stats per-bucket fields are leaf_count / node_count /
+  bytes_stored;
+- bucket_id is a JSON number (u64) in every request; the "0x..." bucket_id
+  strings in several examples below would fail deserialization. -->
+
 ### Authentication & RBAC
 
 Mutating Layer-0 endpoints (`PUT /node`, `POST /commit`, `POST /delete`) and
@@ -1847,6 +1927,8 @@ Response:
 ```
 Provider Info
 ─────────────
+# DRIFT-012: stale — see the marker at the top of this section for the
+# actual /info response on `dev`.
 GET /info
 
 Response:
@@ -2193,6 +2275,11 @@ pub struct ChunkLocation {
 
 ### Signed Commitment
 
+<!-- DRIFT-010: "Both payloads" / "each carry a version" is stale — see the
+marker in the signature-type section: only CommitmentPayload exists here and
+carries a version byte; the replica roots array is signed without one, and
+the signed AgreementTerms/ReplicaTerms are a third payload. -->
+
 Both payloads live in `storage_primitives` so the pallet, provider node, and
 client SDK encode/decode identically. They each carry a `version: u8` for
 forward compatibility.
@@ -2236,6 +2323,9 @@ pub struct MerkleProof {
 pub struct MmrProof {
     /// Peaks of the MMR
     pub peaks: Vec<H256>,
+    // DRIFT-013: `dev` has a `leaf: MmrLeaf` field here — verification hashes
+    // `leaf.encode()` as the proof's starting point, so the leaf content is
+    // part of the proof (this doc's own /mmr_proof example already shows it).
     /// Proof from leaf to peak
     pub leaf_proof: MerkleProof,
 }
