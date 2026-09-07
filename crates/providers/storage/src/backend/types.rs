@@ -18,9 +18,10 @@
 //!
 //! [`StorageBackend`]: super::StorageBackend
 
+use crate::error::Error;
 use codec::{Decode, Encode};
 use sp_core::H256;
-use storage_primitives::MmrLeaf;
+use storage_primitives::{hash_children, MmrLeaf};
 
 /// Per-bucket state a backend persists: the bucket's MMR and its quota usage.
 #[derive(Debug, Clone, PartialEq, Encode, Decode)]
@@ -55,13 +56,56 @@ impl BucketState {
     }
 }
 
-/// A stored node: a chunk (no children) or an internal Merkle node.
+/// A node in a bucket's content-addressed chunk tree: a leaf chunk, or an
+/// internal node over exactly two children.
+///
+/// An internal node's preimage (`concat(children)`) is derived rather than
+/// stored, so a node whose children disagree with its data is unrepresentable,
+/// it cannot be constructed, encoded, or decoded.
 #[derive(Debug, Clone, PartialEq, Encode, Decode)]
-pub struct StoredNode {
-    /// The raw data
-    pub data: Vec<u8>,
-    /// Child hashes for internal nodes
-    pub children: Option<Vec<H256>>,
+pub enum ChunkTreeNode {
+    /// Leaf: hash = blake2_256(data)
+    Chunk(Vec<u8>),
+    /// Internal: hash = hash_children(children[0], children[1])
+    Internal([H256; 2]),
+}
+
+impl ChunkTreeNode {
+    /// Build an internal node from a child list of unproven length, as it
+    /// arrives over the wire.
+    ///
+    /// A list that is not exactly two hashes describes a node this type cannot
+    /// represent, so it is rejected here - at the boundary where untrusted
+    /// input enters - rather than anywhere deeper.
+    pub fn internal(children: Vec<H256>) -> Result<Self, Error> {
+        let count = children.len();
+        children
+            .try_into()
+            .map(Self::Internal)
+            .map_err(|_| Error::InvalidChildCount(count))
+    }
+
+    /// The bytes that hash to this node's identity: `data` for a chunk,
+    /// `concat(children)` for an internal node.
+    pub fn preimage(&self) -> Vec<u8> {
+        match self {
+            Self::Chunk(data) => data.clone(),
+            Self::Internal(children) => {
+                let mut bytes = Vec::with_capacity(64);
+                bytes.extend_from_slice(children[0].as_bytes());
+                bytes.extend_from_slice(children[1].as_bytes());
+                bytes
+            }
+        }
+    }
+
+    /// This node's content hash.
+    pub fn hash(&self) -> H256 {
+        match self {
+            Self::Chunk(data) => storage_primitives::blake2_256(data),
+            Self::Internal(children) => hash_children(children[0], children[1]),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -124,28 +168,27 @@ mod tests {
         }
 
         #[test]
-        fn stored_node() {
+        fn chunk_tree_node() {
             assert_golden(
-                StoredNode {
-                    data: vec![1, 2, 3, 4, 5],
-                    children: Some(vec![H256::repeat_byte(0x11)]),
-                },
+                ChunkTreeNode::Chunk(vec![1, 2, 3, 4, 5]),
                 concat!(
+                    // variant 0 (Chunk)
+                    "00",
                     // data: Vec<u8>, compact length 5, then the bytes
                     "14",
                     "0102030405",
-                    // children: Option<Vec<H256>> = Some, compact length 1
-                    "01",
-                    "04",
-                    "1111111111111111111111111111111111111111111111111111111111111111",
                 ),
             );
+            assert_golden(ChunkTreeNode::Chunk(vec![]), "0000");
             assert_golden(
-                StoredNode {
-                    data: vec![],
-                    children: None,
-                },
-                "0000",
+                ChunkTreeNode::Internal([H256::repeat_byte(0x11), H256::repeat_byte(0x22)]),
+                concat!(
+                    // variant 1 (Internal)
+                    "01",
+                    // children: [H256; 2], fixed-size, no length prefix
+                    "1111111111111111111111111111111111111111111111111111111111111111",
+                    "2222222222222222222222222222222222222222222222222222222222222222",
+                ),
             );
         }
 
@@ -176,13 +219,9 @@ mod tests {
             encoded.extend_from_slice(&[0xff, 0xff]);
             assert!(BucketState::decode_all(&mut &encoded[..]).is_err());
 
-            let mut encoded = StoredNode {
-                data: vec![1, 2, 3],
-                children: None,
-            }
-            .encode();
+            let mut encoded = ChunkTreeNode::Chunk(vec![1, 2, 3]).encode();
             encoded.push(0x00);
-            assert!(StoredNode::decode_all(&mut &encoded[..]).is_err());
+            assert!(ChunkTreeNode::decode_all(&mut &encoded[..]).is_err());
         }
     }
 
@@ -203,5 +242,41 @@ mod tests {
             total_size: 222,
         });
         assert_eq!(bucket.leaf_count(), 1);
+    }
+
+    #[test]
+    fn chunk_preimage_and_hash_are_its_data() {
+        let node = ChunkTreeNode::Chunk(vec![1, 2, 3]);
+        assert_eq!(node.preimage(), vec![1, 2, 3]);
+        assert_eq!(node.hash(), storage_primitives::blake2_256(&[1, 2, 3]));
+    }
+
+    #[test]
+    fn internal_accepts_exactly_two_children_and_rejects_anything_else() {
+        let left = H256::repeat_byte(0x11);
+        let right = H256::repeat_byte(0x22);
+
+        assert_eq!(
+            ChunkTreeNode::internal(vec![left, right]).unwrap(),
+            ChunkTreeNode::Internal([left, right])
+        );
+
+        for children in [vec![], vec![left], vec![left, right, left]] {
+            let count = children.len();
+            let err = ChunkTreeNode::internal(children).unwrap_err();
+            assert!(matches!(err, Error::InvalidChildCount(n) if n == count));
+        }
+    }
+
+    #[test]
+    fn internal_preimage_and_hash_are_derived_from_children() {
+        let left = H256::repeat_byte(0x11);
+        let right = H256::repeat_byte(0x22);
+        let node = ChunkTreeNode::Internal([left, right]);
+
+        let mut expected_preimage = left.as_bytes().to_vec();
+        expected_preimage.extend_from_slice(right.as_bytes());
+        assert_eq!(node.preimage(), expected_preimage);
+        assert_eq!(node.hash(), hash_children(left, right));
     }
 }

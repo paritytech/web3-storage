@@ -9,7 +9,7 @@ pub mod rocksdb;
 pub mod types;
 
 pub use rocksdb::{DiskNonceStore, DiskStorage};
-pub use types::{BucketState, StoredNode};
+pub use types::{BucketState, ChunkTreeNode};
 
 use crate::error::Error;
 use crate::merkle::build_merkle_proof;
@@ -109,17 +109,16 @@ pub trait StorageBackend: Send + Sync {
     /// Get total bytes stored across all nodes.
     fn total_bytes(&self) -> u64;
 
-    /// Store a node (chunk or internal node).
+    /// Store a node under the hash the caller claims for it.
     fn store_node(
         &self,
         bucket_id: BucketId,
         expected_hash: H256,
-        data: Vec<u8>,
-        children: Option<Vec<H256>>,
+        node: ChunkTreeNode,
     ) -> Result<(), Error>;
 
     /// Get a node by hash.
-    fn get_node(&self, hash: &H256) -> Option<StoredNode>;
+    fn get_node(&self, hash: &H256) -> Option<ChunkTreeNode>;
 
     /// Check which hashes exist in storage.
     fn check_exists(&self, bucket_id: BucketId, hashes: &[H256]) -> (Vec<H256>, Vec<H256>);
@@ -141,12 +140,13 @@ pub trait StorageBackend: Send + Sync {
                 continue;
             }
             if let Some(node) = self.get_node(&hash) {
-                if let Some(ref children) = node.children {
-                    for child in children.iter().rev() {
-                        stack.push(*child);
+                match node {
+                    ChunkTreeNode::Internal(children) => {
+                        for child in children.into_iter().rev() {
+                            stack.push(child);
+                        }
                     }
-                } else {
-                    chunks.push(node.data.clone());
+                    ChunkTreeNode::Chunk(data) => chunks.push(data),
                 }
             }
         }
@@ -164,12 +164,13 @@ pub trait StorageBackend: Send + Sync {
                 continue;
             }
             if let Some(node) = self.get_node(&hash) {
-                if let Some(ref children) = node.children {
-                    for child in children.iter().rev() {
-                        stack.push(*child);
+                match node {
+                    ChunkTreeNode::Internal(children) => {
+                        for child in children.into_iter().rev() {
+                            stack.push(child);
+                        }
                     }
-                } else {
-                    hashes.push(hash);
+                    ChunkTreeNode::Chunk(_) => hashes.push(hash),
                 }
             }
         }
@@ -190,10 +191,12 @@ pub trait StorageBackend: Send + Sync {
         }
 
         let chunk_hash = chunk_hashes[chunk_index as usize];
-        let chunk_data = self
-            .get_node(&chunk_hash)
-            .ok_or_else(|| Error::NodeNotFound(format!("chunk_data_{chunk_index}")))?
-            .data;
+        let chunk_data = match self.get_node(&chunk_hash) {
+            Some(ChunkTreeNode::Chunk(data)) => data,
+            Some(ChunkTreeNode::Internal(_)) | None => {
+                return Err(Error::NodeNotFound(format!("chunk_data_{chunk_index}")));
+            }
+        };
 
         let proof = build_merkle_proof(&chunk_hashes, chunk_index as usize);
 
@@ -224,10 +227,9 @@ pub trait StorageBackend: Send + Sync {
 
         while let Some(hash) = stack.pop() {
             if let Some(node) = self.get_node(&hash) {
-                if let Some(ref children) = node.children {
-                    stack.extend(children.iter().copied());
-                } else {
-                    size = size.saturating_add(node.data.len() as u64);
+                match node {
+                    ChunkTreeNode::Internal(children) => stack.extend(children),
+                    ChunkTreeNode::Chunk(data) => size = size.saturating_add(data.len() as u64),
                 }
             }
         }
@@ -259,10 +261,11 @@ pub fn build_padded_merkle_tree(
         let mut next_level = Vec::new();
         for pair in current_level.chunks(2) {
             let parent = hash_children(pair[0], pair[1]);
-            let mut node_data = Vec::new();
-            node_data.extend_from_slice(pair[0].as_bytes());
-            node_data.extend_from_slice(pair[1].as_bytes());
-            let _ = storage.store_node(bucket_id, parent, node_data, Some(vec![pair[0], pair[1]]));
+            let _ = storage.store_node(
+                bucket_id,
+                parent,
+                ChunkTreeNode::Internal([pair[0], pair[1]]),
+            );
             next_level.push(parent);
         }
         current_level = next_level;

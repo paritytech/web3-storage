@@ -7,7 +7,7 @@
 //!
 //! [`types`]: super::types
 
-use super::{BucketInfo, BucketState, BucketStats, BucketSummary, StorageBackend, StoredNode};
+use super::{BucketInfo, BucketState, BucketStats, BucketSummary, ChunkTreeNode, StorageBackend};
 use crate::error::Error;
 use crate::nonce::NonceStore;
 use codec::{DecodeAll, Encode};
@@ -175,16 +175,17 @@ impl DiskStorage {
             .sum()
     }
 
-    /// Store a node (chunk or internal node).
+    /// Store a node under the hash the caller claims for it.
     pub fn store_node(
         &self,
         bucket_id: BucketId,
         expected_hash: H256,
-        data: Vec<u8>,
-        children: Option<Vec<H256>>,
+        node: ChunkTreeNode,
     ) -> Result<(), Error> {
-        // Verify hash
-        let actual_hash = blake2_256(&data);
+        // Verify hash: derived from the children for an internal node, so a
+        // node whose children don't match its claimed identity is rejected
+        // here rather than trusted.
+        let actual_hash = node.hash();
         if actual_hash != expected_hash {
             return Err(Error::InvalidHash {
                 expected: format!("0x{}", hex::encode(expected_hash.as_bytes())),
@@ -193,7 +194,7 @@ impl DiskStorage {
         }
 
         // If internal node, verify children exist
-        if let Some(ref child_hashes) = children {
+        if let ChunkTreeNode::Internal(child_hashes) = &node {
             let cf_nodes = self
                 .db
                 .cf_handle(CF_NODES)
@@ -218,12 +219,18 @@ impl DiskStorage {
             }
         }
 
-        // Check quota
+        // Check quota. An internal node costs a fixed 64 B (two H256
+        // children) regardless of what it once cost to store its preimage.
         let mut bucket = self
             .get_bucket(bucket_id)
             .ok_or(Error::BucketNotFound(bucket_id))?;
 
-        let new_size = bucket.used_bytes.saturating_add(data.len() as u64);
+        let charge: u64 = match &node {
+            ChunkTreeNode::Chunk(data) => data.len() as u64,
+            ChunkTreeNode::Internal(_) => 64,
+        };
+
+        let new_size = bucket.used_bytes.saturating_add(charge);
         if new_size > bucket.max_bytes {
             return Err(Error::QuotaExceeded {
                 used: bucket.used_bytes,
@@ -244,8 +251,6 @@ impl DiskStorage {
             .map_err(|e| Error::Storage(e.to_string()))?
             .is_none()
         {
-            let data_len = data.len() as u64;
-            let node = StoredNode { data, children };
             let value = node.encode();
 
             self.db
@@ -253,7 +258,7 @@ impl DiskStorage {
                 .map_err(|e| Error::Storage(e.to_string()))?;
 
             // Update quota
-            bucket.used_bytes = bucket.used_bytes.saturating_add(data_len);
+            bucket.used_bytes = bucket.used_bytes.saturating_add(charge);
             self.update_bucket(bucket_id, &bucket)?;
         }
 
@@ -261,11 +266,11 @@ impl DiskStorage {
     }
 
     /// Get a node by hash.
-    pub fn get_node(&self, hash: &H256) -> Option<StoredNode> {
+    pub fn get_node(&self, hash: &H256) -> Option<ChunkTreeNode> {
         let cf = self.db.cf_handle(CF_NODES)?;
         let key = hash.as_bytes();
         let value = self.db.get_cf(&cf, key).ok()??;
-        match StoredNode::decode_all(&mut &value[..]) {
+        match ChunkTreeNode::decode_all(&mut &value[..]) {
             Ok(node) => Some(node),
             Err(e) => {
                 tracing::warn!(hash = %format!("0x{}", hex::encode(hash.as_bytes())), error = %e, "Failed to deserialize node");
@@ -489,13 +494,12 @@ impl StorageBackend for DiskStorage {
         &self,
         bucket_id: BucketId,
         expected_hash: H256,
-        data: Vec<u8>,
-        children: Option<Vec<H256>>,
+        node: ChunkTreeNode,
     ) -> Result<(), Error> {
-        self.store_node(bucket_id, expected_hash, data, children)
+        self.store_node(bucket_id, expected_hash, node)
     }
 
-    fn get_node(&self, hash: &H256) -> Option<StoredNode> {
+    fn get_node(&self, hash: &H256) -> Option<ChunkTreeNode> {
         self.get_node(hash)
     }
 
@@ -673,13 +677,48 @@ mod tests {
              e803000000000000"
         );
 
-        // CF_NODES: key = blake2_256(data), value = SCALE(StoredNode).
+        // CF_NODES: key = blake2_256(data), value = SCALE(ChunkTreeNode).
         let data = vec![1u8, 2, 3, 4, 5];
-        let hash = blake2_256(&data);
-        storage.store_node(bucket_id, hash, data, None).unwrap();
+        let chunk_hash = blake2_256(&data);
+        storage
+            .store_node(bucket_id, chunk_hash, ChunkTreeNode::Chunk(data))
+            .unwrap();
         let cf = storage.db.cf_handle(CF_NODES).unwrap();
-        let raw = storage.db.get_cf(&cf, hash.as_bytes()).unwrap().unwrap();
-        assert_eq!(hex::encode(&raw), "14010203040500");
+        let raw = storage
+            .db
+            .get_cf(&cf, chunk_hash.as_bytes())
+            .unwrap()
+            .unwrap();
+        // variant 0 (Chunk), compact length 5, then the bytes
+        assert_eq!(hex::encode(&raw), "00140102030405");
+
+        // CF_NODES: an internal node's value is exactly 64 B - variant tag
+        // plus the two child hashes, no stored preimage.
+        let other_hash = blake2_256(&[9u8]);
+        storage
+            .store_node(bucket_id, other_hash, ChunkTreeNode::Chunk(vec![9]))
+            .unwrap();
+        let internal_hash = storage_primitives::hash_children(chunk_hash, other_hash);
+        storage
+            .store_node(
+                bucket_id,
+                internal_hash,
+                ChunkTreeNode::Internal([chunk_hash, other_hash]),
+            )
+            .unwrap();
+        let raw = storage
+            .db
+            .get_cf(&cf, internal_hash.as_bytes())
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            hex::encode(&raw),
+            format!(
+                "01{}{}",
+                hex::encode(chunk_hash.as_bytes()),
+                hex::encode(other_hash.as_bytes())
+            )
+        );
 
         // CF_METADATA / KEY_NONCE: raw u64 little-endian (not SCALE).
         storage.nonce_store().persist(42);
@@ -770,5 +809,124 @@ mod tests {
                 "reset must persist across DB reopen"
             );
         }
+    }
+
+    #[test]
+    fn store_node_rejects_internal_node_whose_children_disagree_with_expected_hash() {
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        let bucket_id: BucketId = 1;
+        storage.init_bucket(bucket_id, 1_000).unwrap();
+
+        let left = H256::zero();
+        let right = H256::zero();
+        let claimed_hash = H256::repeat_byte(0xaa);
+        assert_ne!(claimed_hash, storage_primitives::hash_children(left, right));
+
+        let err = storage
+            .store_node(
+                bucket_id,
+                claimed_hash,
+                ChunkTreeNode::Internal([left, right]),
+            )
+            .unwrap_err();
+        assert!(matches!(err, Error::InvalidHash { .. }));
+    }
+
+    #[test]
+    fn store_node_rejects_missing_child_but_exempts_zero_padding() {
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        let bucket_id: BucketId = 1;
+        storage.init_bucket(bucket_id, 1_000).unwrap();
+
+        let missing_child = H256::repeat_byte(0x42);
+        let hash = storage_primitives::hash_children(missing_child, H256::zero());
+        let err = storage
+            .store_node(
+                bucket_id,
+                hash,
+                ChunkTreeNode::Internal([missing_child, H256::zero()]),
+            )
+            .unwrap_err();
+        assert!(matches!(err, Error::ChildrenMissing(_)));
+
+        // The zero sentinel alone (both children padding) needs no existing node.
+        let padded_hash = storage_primitives::hash_children(H256::zero(), H256::zero());
+        storage
+            .store_node(
+                bucket_id,
+                padded_hash,
+                ChunkTreeNode::Internal([H256::zero(), H256::zero()]),
+            )
+            .expect("an all-zero-children internal node has nothing to look up");
+    }
+
+    #[test]
+    fn internal_node_charges_the_same_64_bytes_as_before_the_refactor() {
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        let bucket_id: BucketId = 1;
+        storage.init_bucket(bucket_id, 1_000).unwrap();
+
+        // Zero-padding children need no existing node, so this isolates the
+        // quota charge from the children-exist check.
+        let hash = storage_primitives::hash_children(H256::zero(), H256::zero());
+        storage
+            .store_node(
+                bucket_id,
+                hash,
+                ChunkTreeNode::Internal([H256::zero(), H256::zero()]),
+            )
+            .unwrap();
+
+        let bucket = storage.get_bucket(bucket_id).unwrap();
+        assert_eq!(bucket.used_bytes, 64);
+    }
+
+    #[test]
+    fn get_node_round_trips_both_variants() {
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        let bucket_id: BucketId = 1;
+        storage.init_bucket(bucket_id, 1_000).unwrap();
+
+        let chunk_data = vec![7u8, 8, 9];
+        let chunk_hash = blake2_256(&chunk_data);
+        storage
+            .store_node(
+                bucket_id,
+                chunk_hash,
+                ChunkTreeNode::Chunk(chunk_data.clone()),
+            )
+            .unwrap();
+        assert_eq!(
+            storage.get_node(&chunk_hash),
+            Some(ChunkTreeNode::Chunk(chunk_data))
+        );
+
+        let left_data = vec![1u8];
+        let left = blake2_256(&left_data);
+        storage
+            .store_node(bucket_id, left, ChunkTreeNode::Chunk(left_data))
+            .unwrap();
+        let right_data = vec![2u8];
+        let right = blake2_256(&right_data);
+        storage
+            .store_node(bucket_id, right, ChunkTreeNode::Chunk(right_data))
+            .unwrap();
+
+        let internal_hash = storage_primitives::hash_children(left, right);
+        storage
+            .store_node(
+                bucket_id,
+                internal_hash,
+                ChunkTreeNode::Internal([left, right]),
+            )
+            .unwrap();
+        assert_eq!(
+            storage.get_node(&internal_hash),
+            Some(ChunkTreeNode::Internal([left, right]))
+        );
     }
 }
