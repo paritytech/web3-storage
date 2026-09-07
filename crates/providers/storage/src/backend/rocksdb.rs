@@ -27,6 +27,17 @@ const CF_METADATA: &str = "metadata";
 /// RocksDB key for the persisted nonce counter highest sequence nonce.
 const KEY_NONCE: &[u8] = b"nonce_counter";
 
+/// RocksDB key for the persisted format version.
+const KEY_FORMAT_VERSION: &[u8] = b"format_version";
+
+/// Current on-disk format version.
+///
+/// Bump this whenever a change alters what `ChunkTreeNode` or `BucketState`
+/// encode to, so this build fails loudly on an incompatible database instead
+/// of silently misreading its bytes.
+/// See <https://github.com/paritytech/web3-storage/issues/375>.
+const FORMAT_VERSION: u32 = 1;
+
 /// Disk-based storage backend using RocksDB.
 pub struct DiskStorage {
     db: Arc<DB>,
@@ -45,7 +56,69 @@ impl DiskStorage {
         let db = DB::open_cf(&opts, path, &cf_names)
             .map_err(|e| Error::Storage(format!("Failed to open RocksDB: {e}")))?;
 
+        Self::check_format_version(&db)?;
+
         Ok(Self { db: Arc::new(db) })
+    }
+
+    /// Verify the on-disk format version, seeding it on a genuinely fresh
+    /// database.
+    ///
+    /// A database with no recorded version is compatible only if every
+    /// column family is empty; otherwise it predates format versioning and
+    /// this build's decoders cannot be trusted to read it. A recorded version
+    /// that disagrees with [`FORMAT_VERSION`] always fails - silently reading
+    /// its buckets as missing would look like data loss, not a format error.
+    fn check_format_version(db: &DB) -> Result<(), Error> {
+        let cf = db
+            .cf_handle(CF_METADATA)
+            .ok_or_else(|| Error::Storage("Metadata CF not found".to_string()))?;
+
+        match db
+            .get_cf(&cf, KEY_FORMAT_VERSION)
+            .map_err(|e| Error::Storage(e.to_string()))?
+        {
+            Some(raw) => {
+                let stored = u32::from_le_bytes(
+                    raw.as_slice()
+                        .try_into()
+                        .map_err(|_| Error::Storage("Corrupt format_version value".to_string()))?,
+                );
+                if stored != FORMAT_VERSION {
+                    return Err(Error::Storage(format!(
+                        "database format version {stored} is incompatible with this build \
+                         (expects {FORMAT_VERSION}); a migration is required"
+                    )));
+                }
+                Ok(())
+            }
+            None if Self::is_empty(db)? => db
+                .put_cf(&cf, KEY_FORMAT_VERSION, FORMAT_VERSION.to_le_bytes())
+                .map_err(|e| Error::Storage(e.to_string())),
+            None => Err(Error::Storage(
+                "database has data but no recorded format version - it predates format \
+                 versioning and cannot be safely opened by this build"
+                    .to_string(),
+            )),
+        }
+    }
+
+    /// Whether every column family this engine uses is empty.
+    fn is_empty(db: &DB) -> Result<bool, Error> {
+        for cf_name in [CF_NODES, CF_BUCKETS, CF_ROOT_TO_BUCKET, CF_METADATA] {
+            let cf = db
+                .cf_handle(cf_name)
+                .ok_or_else(|| Error::Storage(format!("{cf_name} CF not found")))?;
+            if db
+                .iterator_cf(&cf, rocksdb::IteratorMode::Start)
+                .flatten()
+                .next()
+                .is_some()
+            {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 
     /// Initialize a bucket with the given quota.
@@ -928,5 +1001,88 @@ mod tests {
             storage.get_node(&internal_hash),
             Some(ChunkTreeNode::Internal([left, right]))
         );
+    }
+
+    #[test]
+    fn a_fresh_database_records_the_current_format_version() {
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+
+        let cf = storage.db.cf_handle(CF_METADATA).unwrap();
+        let raw = storage
+            .db
+            .get_cf(&cf, KEY_FORMAT_VERSION)
+            .unwrap()
+            .expect("a fresh database must record a format version");
+        assert_eq!(
+            u32::from_le_bytes(raw.as_slice().try_into().unwrap()),
+            FORMAT_VERSION
+        );
+    }
+
+    #[test]
+    fn reopening_a_database_this_build_created_succeeds() {
+        let dir = TempDir::new().unwrap();
+        DiskStorage::new(dir.path()).unwrap();
+        DiskStorage::new(dir.path()).expect("reopening this build's own database must succeed");
+    }
+
+    #[test]
+    fn opening_a_database_with_a_different_format_version_fails() {
+        let dir = TempDir::new().unwrap();
+        DiskStorage::new(dir.path()).unwrap();
+
+        // Corrupt the recorded version directly, bypassing DiskStorage::new.
+        let mut opts = Options::default();
+        opts.create_if_missing(true);
+        opts.create_missing_column_families(true);
+        let db = DB::open_cf(
+            &opts,
+            dir.path(),
+            [CF_NODES, CF_BUCKETS, CF_ROOT_TO_BUCKET, CF_METADATA],
+        )
+        .unwrap();
+        let cf = db.cf_handle(CF_METADATA).unwrap();
+        db.put_cf(&cf, KEY_FORMAT_VERSION, 9999u32.to_le_bytes())
+            .unwrap();
+        drop(db);
+
+        match DiskStorage::new(dir.path()) {
+            Err(Error::Storage(_)) => {}
+            other => panic!(
+                "expected an incompatible-format error, got {}",
+                other.is_ok()
+            ),
+        }
+    }
+
+    #[test]
+    fn opening_a_non_empty_pre_versioning_database_fails() {
+        let dir = TempDir::new().unwrap();
+
+        // Simulate a database written before format versioning existed: real
+        // data, but no format_version key - bypassing DiskStorage::new so no
+        // version ever gets recorded.
+        let mut opts = Options::default();
+        opts.create_if_missing(true);
+        opts.create_missing_column_families(true);
+        let db = DB::open_cf(
+            &opts,
+            dir.path(),
+            [CF_NODES, CF_BUCKETS, CF_ROOT_TO_BUCKET, CF_METADATA],
+        )
+        .unwrap();
+        let cf = db.cf_handle(CF_BUCKETS).unwrap();
+        db.put_cf(&cf, 1u64.to_le_bytes(), BucketState::new(1_000).encode())
+            .unwrap();
+        drop(db);
+
+        match DiskStorage::new(dir.path()) {
+            Err(Error::Storage(_)) => {}
+            other => panic!(
+                "expected an incompatible-format error, got {}",
+                other.is_ok()
+            ),
+        }
     }
 }

@@ -172,15 +172,16 @@ impl ReplicaSync {
                 None => ChunkTreeNode::Chunk(data),
             };
 
-            // Store locally
-            self.storage.store_node(bucket_id, root_hash, node)?;
-
-            // Recursively fetch children
+            // Fetch children before storing the parent: store_node rejects an
+            // internal node whose non-zero children aren't already present.
             if let Some(child_hashes) = children {
                 for child in child_hashes {
                     self.fetch_subtree(bucket_id, child, primary_url).await?;
                 }
             }
+
+            // Store locally
+            self.storage.store_node(bucket_id, root_hash, node)?;
 
             Ok(())
         })
@@ -257,4 +258,88 @@ struct DownloadNodeResponse {
 fn hex_decode(s: &str) -> Result<Vec<u8>, Error> {
     let s = s.strip_prefix("0x").unwrap_or(s);
     hex::decode(s).map_err(|e| Error::Serialization(format!("Invalid hex: {e}")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{create_router, ProviderDeps, ProviderState};
+    use provider_auth::{Authenticator, StaticMembershipResolver};
+    use provider_storage::temp_rocksdb;
+    use storage_primitives::{blake2_256, hash_children};
+
+    /// Serve `storage` as a real provider and return its base URL.
+    ///
+    /// No membership is registered - fine here, since the only endpoint this
+    /// test exercises is the unauthenticated `GET /node`.
+    async fn serve(storage: Arc<dyn StorageBackend>) -> String {
+        let (_unused_storage, nonce_store, _dir) = temp_rocksdb();
+        let deps = ProviderDeps {
+            storage,
+            nonce_store,
+            auth: Arc::new(Authenticator::new(StaticMembershipResolver(vec![]))),
+        };
+        let state = Arc::new(ProviderState::with_provider_id(deps, "primary".to_string()));
+        let app = create_router(state);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        while tokio::net::TcpStream::connect(addr).await.is_err() {
+            tokio::task::yield_now().await;
+        }
+        format!("http://{addr}")
+    }
+
+    #[tokio::test]
+    async fn fetch_subtree_stores_an_internal_node_after_its_children_exist() {
+        let bucket_id: BucketId = 1;
+
+        // Primary: a real two-leaf internal node.
+        let (primary_storage, _primary_nonce, _primary_dir) = temp_rocksdb();
+        primary_storage.init_bucket(bucket_id, 1_000_000).unwrap();
+
+        let left_data = b"left-chunk".to_vec();
+        let left_hash = blake2_256(&left_data);
+        primary_storage
+            .store_node(bucket_id, left_hash, ChunkTreeNode::Chunk(left_data))
+            .unwrap();
+
+        let right_data = b"right-chunk".to_vec();
+        let right_hash = blake2_256(&right_data);
+        primary_storage
+            .store_node(bucket_id, right_hash, ChunkTreeNode::Chunk(right_data))
+            .unwrap();
+
+        let root_hash = hash_children(left_hash, right_hash);
+        primary_storage
+            .store_node(
+                bucket_id,
+                root_hash,
+                ChunkTreeNode::Internal([left_hash, right_hash]),
+            )
+            .unwrap();
+
+        let primary_url = serve(primary_storage.clone()).await;
+
+        // Replica: empty storage, syncing this subtree over real HTTP. This
+        // is the exact call `sync_from_primary` makes once it has a real
+        // content root - store_node previously rejected the parent here
+        // because it was stored before its children were fetched.
+        let (replica_storage, _replica_nonce, _replica_dir) = temp_rocksdb();
+        replica_storage.init_bucket(bucket_id, 1_000_000).unwrap();
+        let replica = ReplicaSync::new(replica_storage.clone());
+
+        replica
+            .fetch_subtree(bucket_id, root_hash, &primary_url)
+            .await
+            .unwrap();
+
+        for hash in [left_hash, right_hash, root_hash] {
+            assert_eq!(
+                replica_storage.get_node(&hash),
+                primary_storage.get_node(&hash),
+                "replica's record for {hash:?} must match the primary's"
+            );
+        }
+    }
 }
