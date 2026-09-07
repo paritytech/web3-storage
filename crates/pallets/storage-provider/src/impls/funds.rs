@@ -114,27 +114,31 @@ impl<T: Config> Pallet<T> {
         );
     }
 
-    /// Pay the provider their share of a deposit for the work of responding.
-    /// Returns what moved, so the caller refunds the rest instead of stranding
-    /// it.
-    pub(crate) fn pay_challenge_deposit(
+    /// Split a challenger's deposit after a defended challenge: pay the
+    /// provider its share from the held deposit and give the rest back to
+    /// the challenger. If some part could not be moved (should not happen),
+    /// it also goes back to the challenger, so nothing stays on hold.
+    pub(crate) fn settle_challenge_deposit(
         challenger: &T::AccountId,
         provider: &T::AccountId,
-        amount: BalanceOf<T>,
-    ) -> BalanceOf<T> {
-        if amount.is_zero() {
-            return Zero::zero();
-        }
-        T::Currency::transfer_on_hold(
-            &HoldReason::ChallengeDeposit.into(),
-            challenger,
-            provider,
-            amount,
-            Precision::BestEffort,
-            Restriction::Free,
-            Fortitude::Polite,
-        )
-        .unwrap_or_else(|_| Zero::zero())
+        deposit: BalanceOf<T>,
+        provider_share: BalanceOf<T>,
+    ) {
+        let moved = if provider_share.is_zero() {
+            Zero::zero()
+        } else {
+            T::Currency::transfer_on_hold(
+                &HoldReason::ChallengeDeposit.into(),
+                challenger,
+                provider,
+                provider_share,
+                Precision::BestEffort,
+                Restriction::Free,
+                Fortitude::Polite,
+            )
+            .unwrap_or_else(|_| Zero::zero())
+        };
+        Self::release_challenge_deposit(challenger, deposit.saturating_sub(moved));
     }
 
     /// Slash held collateral into the treasury, leaving total issuance

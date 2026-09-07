@@ -2560,24 +2560,19 @@ pub mod pallet {
             };
 
             let challenger_cost = challenge.deposit * challenger_percent.into() / 100u32.into();
-            // The provider's share is borne by simply not being reimbursed for
-            // it — no funds move from the provider, and its stake stays intact.
+            // The provider pays its share by simply not being refunded for it
+            // — no funds move from the provider, and its stake stays intact.
             let provider_cost = challenge.deposit.saturating_sub(challenger_cost);
 
-            // Challenger forfeits `challenger_cost` to the provider as
-            // compensation for the work of responding: move it straight from
-            // the challenger's held deposit into the provider's spendable
-            // balance.
-            let moved = Self::pay_challenge_deposit(
+            // Pay `challenger_cost` to the provider for the work of
+            // responding and give the rest of the deposit back to the
+            // challenger.
+            Self::settle_challenge_deposit(
                 &challenge.challenger,
                 &challenge.provider,
+                challenge.deposit,
                 challenger_cost,
             );
-            // Refund the challenger the rest of their deposit. Anything that
-            // could not be moved (should not happen) is released back to them
-            // too, so no funds stay stuck on hold.
-            let refund = challenge.deposit.saturating_sub(moved);
-            Self::release_challenge_deposit(&challenge.challenger, refund);
 
             // Count the responded-to challenge per tier (resolution-time
             // stats; creation leaves no trace).
