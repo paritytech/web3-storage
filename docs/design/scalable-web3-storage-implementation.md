@@ -1291,6 +1291,7 @@ impl<T: Config> Pallet<T> {
     ///     `top_up_replica_sync_balance`.
     ///   - `min_sync_interval`: Minimum blocks between sync confirmations. Set based
     ///     on expected bucket activity. 0 for no time-based limit.
+    // DRIFT-001: not on `dev` — remove from impl doc or implement?
     #[pallet::weight(...)]
     pub fn request_agreement(
         origin: OriginFor<T>,
@@ -1310,6 +1311,7 @@ impl<T: Config> Pallet<T> {
     /// 
     /// Parameters:
     /// - `bucket_id`: The bucket with the pending request
+    // DRIFT-001: not on `dev` — remove from impl doc or implement?
     #[pallet::weight(...)]
     pub fn accept_agreement(
         origin: OriginFor<T>,
@@ -1322,6 +1324,7 @@ impl<T: Config> Pallet<T> {
     /// 
     /// Parameters:
     /// - `bucket_id`: The bucket with the pending request to reject
+    // DRIFT-001: not on `dev` — remove from impl doc or implement?
     #[pallet::weight(...)]
     pub fn reject_agreement(
         origin: OriginFor<T>,
@@ -1335,6 +1338,7 @@ impl<T: Config> Pallet<T> {
     /// Parameters:
     /// - `bucket_id`: The bucket with the pending request
     /// - `provider`: The provider the request was made to
+    // DRIFT-001: not on `dev` — remove from impl doc or implement?
     #[pallet::weight(...)]
     pub fn withdraw_agreement_request(
         origin: OriginFor<T>,
@@ -1461,6 +1465,7 @@ impl<T: Config> Pallet<T> {
     /// - `max_payment`: Upper bound on storage payment. Actual payment is calculated
     ///   as `provider.price_per_byte * max_bytes * duration`. Fails if this exceeds
     ///   `max_payment` (protects against price changes between query and submission).
+    // DRIFT-001: not on `dev` — remove from impl doc or implement?
     #[pallet::weight(...)]
     pub fn request_primary_agreement(
         origin: OriginFor<T>,
