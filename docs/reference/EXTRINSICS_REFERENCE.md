@@ -11,7 +11,7 @@ reserved:
 | --- | --- | --- | --- |
 | `ProviderStake` | provider | `registerProvider`, `addStake` | `completeDeregister`, or slashed on a failed challenge |
 | `AgreementPayment` | agreement owner | agreement creation, `topUpAgreement`, `extendAgreement`, `topUpReplicaSyncBalance` | settlement, which pays the provider and returns the rest — including a replica's unspent sync balance — to the owner |
-| `ChallengeDeposit` | challenger | `challenge*` | challenge resolution, minus the provider's response-cost share |
+| `ChallengeDeposit` | challenger | `challenge*` | challenge resolution, minus the share paid to the provider to reimburse its response cost |
 
 Three things to know when reading balances:
 

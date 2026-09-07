@@ -460,7 +460,7 @@ sequenceDiagram
 
     Note over C: Challenge defended! Stake untouched.
     C->>C: Remove challenge
-    Note over C: Split the deposit by response time: the provider is paid<br/>10–50% of it for the work of responding (slower response →<br/>bigger share), straight out of the ChallengeDeposit hold
+    Note over C: Reimburse the provider's response cost from the deposit,<br/>straight out of the ChallengeDeposit hold: public challenger →<br/>100%; authorized → 90% down to 50% by response time (slower<br/>response → the provider bears a bigger share, up to 50%)
     C->>C: Release the remaining deposit to the challenger
 
     C-->>P: Event::ChallengeDefended { challenge_id }
