@@ -62,10 +62,15 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let (storage, nonce_store) = backend.build()?;
 
     // Membership-based auth over the chain's bucket member sets, resolved
-    // through the shared watch connection. Subscribed here rather than after
-    // the chain-state coordinator starts, so the cache cannot miss the
-    // bootstrap `Resubscribed` the coordinator broadcasts on first connect.
-    let resolver = ChainMembershipResolver::new(chain_rx.clone());
+    // through the shared watch connection. Both the resolver and the cache
+    // subscribe to the event fan-out here rather than after the chain-state
+    // coordinator starts, so neither can miss the bootstrap `Resubscribed` the
+    // coordinator broadcasts on first connect.
+    let resolver = ChainMembershipResolver::new(
+        chain_rx.clone(),
+        events_tx.subscribe(),
+        Duration::from_secs(cli.auth.auth_finality_grace),
+    );
     // Incoherent, not unsafe - warn rather than clamp an explicit choice.
     if cli.auth.auth_max_stale <= cli.auth.auth_cache_ttl {
         tracing::warn!(
@@ -84,11 +89,13 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
             .with_invalidations(BlockEventInvalidations::new(events_tx.subscribe())),
     );
     tracing::info!(
-        "Auth: membership cache_ttl={}s, max_stale={}s, max_skew={}s, max_entries={}",
+        "Auth: membership cache_ttl={}s, max_stale={}s, max_skew={}s, max_entries={}, \
+         finality_grace={}s",
         cli.auth.auth_cache_ttl,
         cli.auth.auth_max_stale,
         cli.auth.auth_max_skew,
-        cli.auth.auth_cache_max_entries
+        cli.auth.auth_cache_max_entries,
+        cli.auth.auth_finality_grace
     );
 
     let deps = ProviderDeps {

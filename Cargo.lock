@@ -10127,6 +10127,7 @@ dependencies = [
  "storage-primitives",
  "storage-subxt",
  "subxt",
+ "subxt-rpcs",
  "subxt-signer 0.50.2",
  "tempfile",
  "thiserror 2.0.18",

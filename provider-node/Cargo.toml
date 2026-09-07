@@ -40,6 +40,7 @@ async-trait = { workspace = true }
 
 [dev-dependencies]
 provider-storage = { workspace = true, features = ["test-helpers"] }
+subxt-rpcs = { workspace = true, features = ["mock-rpc-client"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util", "time"] }
 serde_json = { workspace = true }
 tempfile = { workspace = true }
