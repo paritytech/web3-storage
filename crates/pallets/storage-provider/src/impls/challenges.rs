@@ -236,15 +236,15 @@ impl<T: Config> Pallet<T> {
         challenge_id: ChallengeId<BlockNumberFor<T>>,
         reason: SlashReason,
     ) {
-        // Get provider info
-        if let Some(mut provider_info) = Providers::<T>::get(&challenge.provider) {
-            // Slash the provider's entire stake
-            let slashed_amount = provider_info.stake;
+        Providers::<T>::mutate(&challenge.provider, |maybe_provider| {
+            let Some(provider_info) = maybe_provider else {
+                return;
+            };
 
-            // Slash the provider's held stake into the Treasury rather than
-            // burning it, keeping total issuance whole.
+            // Slash the provider's entire held stake into the Treasury rather
+            // than burning it, keeping total issuance whole.
             let actually_slashed =
-                Self::slash_stake_to_treasury(&challenge.provider, slashed_amount);
+                Self::slash_stake_to_treasury(&challenge.provider, provider_info.stake);
 
             // Per the design, a successful challenger receives NO reward —
             // only their deposit back. Paying the challenger a cut of the slash
@@ -252,14 +252,13 @@ impl<T: Config> Pallet<T> {
             // I burn" blackmail channel the design explicitly closes).
             Self::release_challenge_deposit(&challenge.challenger, challenge.deposit);
 
-            // Update provider stats
             provider_info.stats.challenges_failed =
                 provider_info.stats.challenges_failed.saturating_add(1);
-            // BestEffort slash: record what actually moved, so a residual
-            // hold can never go unaccounted (mirrors `respond_to_challenge`).
+            // BestEffort slash: record what actually moved, so a residual hold
+            // can never go unaccounted. An under-slash (ruled out by
+            // `try_state`) would keep `remove_slashed` gated on purpose —
+            // bookkeeping honesty over guaranteed cleanup.
             provider_info.stake = provider_info.stake.saturating_sub(actually_slashed);
-
-            Providers::<T>::insert(&challenge.provider, provider_info);
 
             // Bump the challenger's successful-challenge count. Challengers
             // earn no reward (the slashed stake goes entirely to the
@@ -268,7 +267,6 @@ impl<T: Config> Pallet<T> {
                 stats.successful_challenges = stats.successful_challenges.saturating_add(1);
             });
 
-            // Emit event
             Self::deposit_event(Event::ChallengeSlashed {
                 challenge_id,
                 provider: challenge.provider.clone(),
@@ -276,7 +274,7 @@ impl<T: Config> Pallet<T> {
                 challenger_reward: Zero::zero(),
                 reason,
             });
-        }
+        });
     }
 
     /// Decrement both pending-challenge counters for a resolved
