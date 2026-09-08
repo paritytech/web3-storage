@@ -1186,6 +1186,10 @@ impl<T: Config> Pallet<T> {
     /// - Add new members (any role)
     /// - Update non-admin members' roles
     /// - Demote themselves (remove own admin status)
+    ///
+    /// Self-demotion (and self-removal via `remove_member`) is refused for
+    /// the bucket's only admin (`LastAdminCannotBeRemoved`): a bucket always
+    /// keeps ≥ 1 admin.
     /// 
     /// This prevents a single compromised admin from seizing control.
     ///
@@ -1204,7 +1208,8 @@ impl<T: Config> Pallet<T> {
     /// 
     /// Admins cannot remove other admins - they can only:
     /// - Remove non-admin members
-    /// - Remove themselves
+    /// - Remove themselves (refused for the bucket's only admin,
+    ///   `LastAdminCannotBeRemoved` — a bucket always keeps ≥ 1 admin)
     /// 
     /// This prevents a single compromised admin from seizing control.
     /// 
