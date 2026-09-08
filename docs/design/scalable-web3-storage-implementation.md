@@ -1091,6 +1091,9 @@ impl<T: Config> Pallet<T> {
     /// Block or unblock extensions for a specific bucket (provider only).
     /// Allows provider to stop a specific bucket from extending while
     /// continuing to accept extensions from other buckets.
+    ///
+    /// Requires a registered provider (`ProviderNotFound`) with a live
+    /// agreement on the bucket (`AgreementNotFound`, `AgreementExpired`).
     #[pallet::weight(...)]
     pub fn set_extensions_blocked(
         origin: OriginFor<T>,
