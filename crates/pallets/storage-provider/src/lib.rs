@@ -841,6 +841,10 @@ pub mod pallet {
             new_expires_at: BlockNumberFor<T>,
             payment: BalanceOf<T>,
         },
+        // DRIFT-015: declared but never emitted — the design's
+        // transfer_agreement_ownership extrinsic was never implemented.
+        // Proposal: implement the extrinsic (moving the owner-held escrow to
+        // the new owner with it) rather than dropping the event.
         AgreementOwnershipTransferred {
             bucket_id: BucketId,
             provider: T::AccountId,

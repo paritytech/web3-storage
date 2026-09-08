@@ -1416,6 +1416,11 @@ impl<T: Config> Pallet<T> {
     /// - `bucket_id`: The bucket containing the agreement
     /// - `provider`: The provider of the agreement to transfer
     /// - `new_owner`: Account that will become the new agreement owner
+    // DRIFT-015: not on `dev` — remove from impl doc or implement?
+    // Proposal: implement. `dev` already declares the (never-emitted)
+    // AgreementOwnershipTransferred event, and the agreement escrow sits on
+    // the owner's account, so the transfer must move those funds to
+    // `new_owner` too (see PR #372 review discussion).
     #[pallet::weight(...)]
     pub fn transfer_agreement_ownership(
         origin: OriginFor<T>,
