@@ -15,6 +15,7 @@ pub mod cli;
 pub mod command;
 pub mod error;
 pub mod fs_api;
+pub mod gc_coordinator;
 pub mod membership;
 pub mod negotiate;
 pub mod replica_sync;
@@ -26,6 +27,9 @@ pub mod types;
 pub use api::create_router;
 pub use challenge_proofs::StorageProofSource;
 pub use error::Error;
+pub use gc_coordinator::{
+    CanonicalBucketState, GcChainClient, GcCoordinator, GcCoordinatorConfig, GcCoordinatorHandle,
+};
 pub use negotiate::{AgreementTermsOf, NegotiateRequest, SignedTerms};
 pub use provider_challenge::{
     self as challenge_responder, ChallengeChainClient, ChallengeError, ChallengeProofSource,

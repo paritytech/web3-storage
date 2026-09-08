@@ -6,6 +6,7 @@
 
 mod challenge;
 mod event_fanout;
+mod gc;
 mod membership;
 mod replica_sync;
 
