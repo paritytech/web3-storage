@@ -13,36 +13,18 @@ mod common;
 use axum::http::StatusCode;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use common::{current_timestamp, make_auth_header};
-use provider_auth::{
-    Authenticator, BucketAccess, Member, MembershipError, MembershipResolver,
-    StaticMembershipResolver,
-};
+use provider_auth::{Authenticator, BucketAccess, MembershipResolver, StaticMembershipResolver};
 use provider_storage::temp_rocksdb;
 use reqwest::Client;
 use serde_json::Value;
 use sp_core::{sr25519, Pair};
 use std::sync::Arc;
 use std::time::Duration;
-use storage_primitives::{BucketId, Role, Visibility};
+use storage_primitives::{Role, Visibility};
 use storage_provider_node::{create_router, ProviderDeps, ProviderState};
 use tokio::net::TcpListener;
 
 type AccountId32 = sp_core::crypto::AccountId32;
-
-/// A resolver whose buckets are all `Public` — exercises the
-/// visibility-aware Reader gate (anonymous reads allowed, writes still
-/// authenticated).
-struct PublicBucketResolver(Vec<Member>);
-
-#[async_trait::async_trait]
-impl MembershipResolver for PublicBucketResolver {
-    async fn fetch_access(&self, _bucket_id: BucketId) -> Result<BucketAccess, MembershipError> {
-        Ok(BucketAccess {
-            members: self.0.clone(),
-            visibility: Visibility::Public,
-        })
-    }
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Test server
@@ -61,9 +43,11 @@ impl AuthTestServer {
     async fn with_role(alice_role: Role) -> Self {
         let alice_kp = sr25519::Pair::from_string("//Alice", None).unwrap();
         let alice_account = AccountId32::new(alice_kp.public().0);
-        Self::with_resolver(StaticMembershipResolver(vec![
-            (alice_account, alice_role).into()
-        ]))
+        Self::with_resolver(StaticMembershipResolver::private(vec![(
+            alice_account,
+            alice_role,
+        )
+            .into()]))
         .await
     }
 
@@ -71,19 +55,33 @@ impl AuthTestServer {
     async fn public_with_role(alice_role: Role) -> Self {
         let alice_kp = sr25519::Pair::from_string("//Alice", None).unwrap();
         let alice_account = AccountId32::new(alice_kp.public().0);
-        Self::with_resolver(PublicBucketResolver(vec![
-            (alice_account, alice_role).into()
-        ]))
+        Self::with_resolver(StaticMembershipResolver::new(BucketAccess {
+            members: vec![(alice_account, alice_role).into()],
+            visibility: Visibility::Public,
+        }))
         .await
     }
 
     async fn with_resolver(resolver: impl MembershipResolver + 'static) -> Self {
+        Self::with_authenticator(Authenticator::new(resolver)).await
+    }
+
+    /// Same, but the authenticator knows the node's own provider account
+    /// (operator self-auth).
+    async fn with_resolver_and_self(
+        resolver: impl MembershipResolver + 'static,
+        self_account: AccountId32,
+    ) -> Self {
+        Self::with_authenticator(Authenticator::new(resolver).with_self_account(self_account)).await
+    }
+
+    async fn with_authenticator(authenticator: Authenticator) -> Self {
         // The 300s skew keeps the default the `*_expired_timestamp` tests assume.
         let (storage, nonce_store, dir) = temp_rocksdb();
         let deps = ProviderDeps {
             storage,
             nonce_store,
-            auth: Arc::new(Authenticator::new(resolver)),
+            auth: Arc::new(authenticator),
         };
         let state = ProviderState::with_seed(deps, "//Alice").expect("//Alice is valid");
 
@@ -723,4 +721,240 @@ async fn node_non_member_returns_forbidden() {
         .unwrap();
 
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Layer-0 read gates: bucket-bound reads are Reader-gated; hash-keyed
+// reads stay open as capability lookups.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Upload one chunk to bucket 1 and commit it, signing as `keypair` (which
+/// must hold Writer). Returns the chunk hash hex.
+async fn upload_and_commit_as(server: &AuthTestServer, keypair: &sr25519::Pair) -> String {
+    let data = b"l0-gate-test-data";
+    let hash = storage_primitives::blake2_256(data);
+    let hash_hex = format!("0x{}", hex::encode(hash.as_bytes()));
+
+    let header = make_auth_header(keypair, "PUT", 1, current_timestamp());
+    let resp = server
+        .client
+        .put(server.url("/node"))
+        .header("Authorization", &header)
+        .json(&node_body(1, data))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK, "upload must succeed");
+
+    let header = make_auth_header(keypair, "POST", 1, current_timestamp());
+    let resp = server
+        .client
+        .post(server.url("/commit"))
+        .header("Authorization", &header)
+        .json(&serde_json::json!({ "bucket_id": 1, "data_roots": [hash_hex] }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK, "commit must succeed");
+
+    hash_hex
+}
+
+/// Every bucket-bound L0 read answers 401 to an anonymous request on a
+/// private bucket. One test walks the whole surface so a newly added
+/// endpoint that forgets its gate is caught by extending this list.
+#[tokio::test]
+async fn l0_reads_require_auth_on_private_bucket() {
+    let server = AuthTestServer::with_role(Role::Admin).await;
+
+    for path in [
+        "/mmr_peaks?bucket_id=1",
+        "/commitment?bucket_id=1",
+        "/checkpoint-signature?bucket_id=1",
+        "/mmr_proof?bucket_id=1&leaf_index=0",
+        "/replica/historical_roots?bucket_id=1",
+        "/replica/sync_status?bucket_id=1",
+    ] {
+        let resp = server.client.get(server.url(path)).send().await.unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::UNAUTHORIZED,
+            "anonymous GET {path} must be refused"
+        );
+    }
+
+    let resp = server
+        .client
+        .post(server.url("/exists"))
+        .json(&serde_json::json!({ "bucket_id": 1, "hashes": [] }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::UNAUTHORIZED,
+        "anonymous POST /exists must be refused"
+    );
+}
+
+/// A member holding Reader (here: Admin, which subsumes it) passes the same
+/// gates with a signed header.
+#[tokio::test]
+async fn l0_member_reads_private_bucket() {
+    let server = AuthTestServer::with_role(Role::Admin).await;
+    let alice = sr25519::Pair::from_string("//Alice", None).unwrap();
+    upload_and_commit_as(&server, &alice).await;
+
+    for path in [
+        "/mmr_peaks?bucket_id=1",
+        "/commitment?bucket_id=1",
+        "/checkpoint-signature?bucket_id=1",
+        "/replica/historical_roots?bucket_id=1",
+        "/replica/sync_status?bucket_id=1",
+    ] {
+        let header = make_auth_header(&alice, "GET", 1, current_timestamp());
+        let resp = server
+            .client
+            .get(server.url(path))
+            .header("Authorization", &header)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK, "signed GET {path} must pass");
+    }
+}
+
+/// Public buckets keep serving the bucket-bound reads anonymously.
+#[tokio::test]
+async fn l0_reads_open_on_public_bucket() {
+    let server = AuthTestServer::public_with_role(Role::Writer).await;
+    let alice = sr25519::Pair::from_string("//Alice", None).unwrap();
+    upload_and_commit_as(&server, &alice).await;
+
+    let resp = server
+        .client
+        .get(server.url("/mmr_peaks?bucket_id=1"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+}
+
+/// Hash-keyed reads (`GET /node`, `POST /fetch_nodes`) are capability
+/// lookups: they stay open even on a private bucket, because a blake2-256
+/// hash is unguessable and the enumeration surfaces above are gated. See
+/// "Bucket Visibility & Access" in the design doc.
+#[tokio::test]
+async fn hash_keyed_reads_stay_open_on_private_bucket() {
+    let server = AuthTestServer::with_role(Role::Admin).await;
+    let alice = sr25519::Pair::from_string("//Alice", None).unwrap();
+    let hash_hex = upload_and_commit_as(&server, &alice).await;
+
+    let resp = server
+        .client
+        .get(server.url(&format!("/node?hash={hash_hex}")))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "GET /node is a capability read"
+    );
+
+    let resp = server
+        .client
+        .post(server.url("/fetch_nodes"))
+        .json(&serde_json::json!({ "hashes": [hash_hex] }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "POST /fetch_nodes is a capability read"
+    );
+}
+
+/// The node's own provider account passes Reader gates on buckets it is not
+/// a member of — the challenged provider's tooling (dashboard) fetches
+/// `/mmr_proof` this way, since provider accounts are never members.
+#[tokio::test]
+async fn self_account_reads_private_bucket_proofs() {
+    // Membership: Bob (Admin) only. The server's identity is //Alice (the
+    // harness seeds ProviderState with it), and the authenticator is told so.
+    let bob = sr25519::Pair::from_string("//Bob", None).unwrap();
+    let alice = sr25519::Pair::from_string("//Alice", None).unwrap();
+    let server = AuthTestServer::with_resolver_and_self(
+        StaticMembershipResolver::private(vec![
+            (AccountId32::new(bob.public().0), Role::Admin).into()
+        ]),
+        AccountId32::new(alice.public().0),
+    )
+    .await;
+    upload_and_commit_as(&server, &bob).await;
+
+    // Alice is not a member, but is the node's own account: Reader passes.
+    let header = make_auth_header(&alice, "GET", 1, current_timestamp());
+    let resp = server
+        .client
+        .get(server.url("/mmr_proof?bucket_id=1&leaf_index=0"))
+        .header("Authorization", &header)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "self-account Reader must pass"
+    );
+
+    // Self-auth stops at Reader: Alice still cannot write.
+    let header = make_auth_header(&alice, "PUT", 1, current_timestamp());
+    let resp = server
+        .client
+        .put(server.url("/node"))
+        .header("Authorization", &header)
+        .json(&node_body(1, b"self-cannot-write"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+}
+
+/// A private bucket this node holds as a *replica* serves reads to everyone
+/// — the design's "replicas always serve everyone" rule (visibility gates
+/// primaries only), and what lets replicas seed further replicas.
+#[tokio::test]
+async fn replica_served_private_bucket_reads_anonymously() {
+    let alice = sr25519::Pair::from_string("//Alice", None).unwrap();
+    let server = AuthTestServer::with_resolver(
+        StaticMembershipResolver::private(vec![
+            (AccountId32::new(alice.public().0), Role::Writer).into()
+        ])
+        .with_replica_here(),
+    )
+    .await;
+    upload_and_commit_as(&server, &alice).await;
+
+    let resp = server
+        .client
+        .get(server.url("/mmr_peaks?bucket_id=1"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "a replica serves private-bucket reads to anyone"
+    );
+
+    // L1 reads follow the same rule through the shared authenticator.
+    let resp = server
+        .client
+        .get(server.url("/s3/1/objects"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
 }

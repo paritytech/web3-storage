@@ -73,17 +73,26 @@ impl RequiredRole {
     }
 }
 
-/// Cached access entry for a bucket.
+/// Cached access entry for a bucket: the bucket's own state plus this node's
+/// standing on it. Kept as separate fields — [`BucketAccess`] is bucket state,
+/// `replica_here` is the node's relationship to the bucket — but cached as one
+/// value because both resolve from the same chain read-through and expire and
+/// invalidate together.
 #[derive(Debug, Clone)]
 pub(crate) struct CachedMembership {
     pub(crate) access: BucketAccess,
+    /// This node serves the bucket under a replica agreement, so Reader
+    /// checks pass without auth (replicas serve reads to everyone —
+    /// visibility gates primaries only).
+    pub(crate) replica_here: bool,
     fetched_at: Instant,
 }
 
 impl CachedMembership {
-    fn new(access: BucketAccess) -> Self {
+    fn new(access: BucketAccess, replica_here: bool) -> Self {
         Self {
             access,
+            replica_here,
             fetched_at: Instant::now(),
         }
     }
@@ -114,6 +123,14 @@ pub trait MembershipResolver: Send + Sync {
     /// empty member set means nobody is a member — either the bucket does not
     /// exist, or it holds no members.
     async fn fetch_access(&self, bucket_id: BucketId) -> Result<BucketAccess, MembershipError>;
+
+    /// Whether *this node* holds `bucket_id` under a replica agreement.
+    /// Replicas serve reads to everyone — visibility gates primaries only —
+    /// so `true` passes Reader checks without auth. Defaults to `false`, the
+    /// right answer for a resolver with no node identity.
+    async fn fetch_replica_here(&self, _bucket_id: BucketId) -> Result<bool, MembershipError> {
+        Ok(false)
+    }
 }
 
 /// So a boxed resolver still satisfies the `impl MembershipResolver` bound.
@@ -122,17 +139,48 @@ impl<T: MembershipResolver + ?Sized> MembershipResolver for Box<T> {
     async fn fetch_access(&self, bucket_id: BucketId) -> Result<BucketAccess, MembershipError> {
         (**self).fetch_access(bucket_id).await
     }
+
+    async fn fetch_replica_here(&self, bucket_id: BucketId) -> Result<bool, MembershipError> {
+        (**self).fetch_replica_here(bucket_id).await
+    }
 }
 
-/// A [`MembershipResolver`] that returns a fixed member set for every bucket.
-/// Used by integration tests across crates. Buckets resolve as `Private`
-/// (auth always required), matching the fail-safe default.
-pub struct StaticMembershipResolver(pub Vec<Member>);
+/// A [`MembershipResolver`] that returns the same fixed answers for every
+/// bucket. Used by tests across crates; [`Self::private`] is the fail-safe
+/// member-only shape.
+pub struct StaticMembershipResolver {
+    pub access: BucketAccess,
+    pub replica_here: bool,
+}
+
+impl StaticMembershipResolver {
+    pub fn new(access: BucketAccess) -> Self {
+        Self {
+            access,
+            replica_here: false,
+        }
+    }
+
+    /// Member-only buckets (auth always required) with the given members.
+    pub fn private(members: Vec<Member>) -> Self {
+        Self::new(BucketAccess::private(members))
+    }
+
+    /// Resolve every bucket as replica-held by this node.
+    pub fn with_replica_here(mut self) -> Self {
+        self.replica_here = true;
+        self
+    }
+}
 
 #[async_trait::async_trait]
 impl MembershipResolver for StaticMembershipResolver {
     async fn fetch_access(&self, _bucket_id: BucketId) -> Result<BucketAccess, MembershipError> {
-        Ok(BucketAccess::private(self.0.clone()))
+        Ok(self.access.clone())
+    }
+
+    async fn fetch_replica_here(&self, _bucket_id: BucketId) -> Result<bool, MembershipError> {
+        Ok(self.replica_here)
     }
 }
 
@@ -361,10 +409,20 @@ impl MembershipCache {
         // invalidation landed while the resolver call was in flight.
         let epoch_before = self.epoch.load(Ordering::SeqCst);
 
-        // Cache miss or stale — fetch from chain
-        match self.resolver.fetch_access(bucket_id).await {
-            Ok(access) => {
-                let entry = Arc::new(CachedMembership::new(access));
+        // Cache miss or stale — fetch from chain. Both halves resolve or the
+        // entry does not: a failed standing lookup takes the same
+        // stale-if-error path as a failed member lookup.
+        let fetched = match self.resolver.fetch_access(bucket_id).await {
+            Ok(access) => self
+                .resolver
+                .fetch_replica_here(bucket_id)
+                .await
+                .map(|replica_here| (access, replica_here)),
+            Err(e) => Err(e),
+        };
+        match fetched {
+            Ok((access, replica_here)) => {
+                let entry = Arc::new(CachedMembership::new(access, replica_here));
                 // Cache it only if no invalidation landed during the fetch,
                 // then check again: no lock spans the insert, so a bump can
                 // still slip between the two lines. `invalidate` bumps
@@ -472,11 +530,14 @@ mod tests {
         let bob = AccountId32::new([2u8; 32]);
         let charlie = AccountId32::new([3u8; 32]);
 
-        let entry = CachedMembership::new(BucketAccess::private(vec![
-            (alice.clone(), Role::Admin).into(),
-            (bob.clone(), Role::Writer).into(),
-            (charlie.clone(), Role::Reader).into(),
-        ]));
+        let entry = CachedMembership::new(
+            BucketAccess::private(vec![
+                (alice.clone(), Role::Admin).into(),
+                (bob.clone(), Role::Writer).into(),
+                (charlie.clone(), Role::Reader).into(),
+            ]),
+            false,
+        );
 
         assert_eq!(entry.role_of(&alice), Some(Role::Admin));
         assert_eq!(entry.role_of(&bob), Some(Role::Writer));
@@ -488,7 +549,7 @@ mod tests {
 
     #[test]
     fn entries_go_stale_once_the_ttl_elapses() {
-        let entry = CachedMembership::new(BucketAccess::private(vec![]));
+        let entry = CachedMembership::new(BucketAccess::private(vec![]), false);
         assert!(entry.is_fresh(Duration::from_secs(60)));
         assert!(!entry.is_fresh(Duration::ZERO));
     }
@@ -508,7 +569,7 @@ mod tests {
         // map, not a slot-creating write - otherwise every chain-wide
         // membership event permanently grows the map by one entry for a
         // bucket that will never be looked up.
-        let cache = MembershipCache::new(StaticMembershipResolver(vec![]))
+        let cache = MembershipCache::new(StaticMembershipResolver::private(vec![]))
             .with_ttl(Duration::from_secs(300));
 
         cache.invalidate(42).await;
@@ -924,7 +985,7 @@ mod tests {
         // membership is what's checked. Once bounded, resident entries must
         // never exceed the configured ceiling.
         let account = AccountId32::new([50u8; 32]);
-        let cache = MembershipCache::new(StaticMembershipResolver(vec![(
+        let cache = MembershipCache::new(StaticMembershipResolver::private(vec![(
             account.clone(),
             Role::Reader,
         )
@@ -955,7 +1016,7 @@ mod tests {
         // resident for the life of the process. Once bounded, an entry past
         // `max_stale` must be gone, not merely unserved.
         let account = AccountId32::new([51u8; 32]);
-        let cache = MembershipCache::new(StaticMembershipResolver(vec![(
+        let cache = MembershipCache::new(StaticMembershipResolver::private(vec![(
             account.clone(),
             Role::Reader,
         )
@@ -985,7 +1046,7 @@ mod tests {
         // down from its first insert while `fetched_at` keeps resetting,
         // silently shrinking its real stale-if-error grace toward zero.
         let account = AccountId32::new([52u8; 32]);
-        let cache = MembershipCache::new(StaticMembershipResolver(vec![(
+        let cache = MembershipCache::new(StaticMembershipResolver::private(vec![(
             account.clone(),
             Role::Reader,
         )

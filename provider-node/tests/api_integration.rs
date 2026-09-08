@@ -240,42 +240,7 @@ common::backend_tests! {
     }
 }
 
-common::backend_tests! {
-    async fn test_list_buckets(backend) {
-        let server = TestServer::new(backend).await;
-
-        // Upload to bucket 1 to create it
-        let data = b"Data for bucket 1";
-        let hash = storage_primitives::blake2_256(data);
-        let hash_hex = format!("0x{}", hex_encode(hash.as_bytes()));
-
-        server
-            .client
-            .put(server.url("/node"))
-            .json(&json!({
-                "bucket_id": 1,
-                "hash": hash_hex,
-                "data": BASE64.encode(data),
-                "children": null
-            }))
-            .send()
-            .await
-            .unwrap();
-
-        // List buckets
-        let response = server
-            .client
-            .get(server.url("/buckets"))
-            .send()
-            .await
-            .unwrap();
-
-        assert_eq!(response.status(), StatusCode::OK);
-
-        let body: Value = response.json().await.unwrap();
-        assert!(body["buckets"].is_array());
-    }
-}
+common::backend_tests! {}
 
 common::backend_tests! {
     async fn test_upload_with_invalid_hash_fails(backend) {
@@ -775,7 +740,9 @@ common::backend_tests! {
         assert_eq!(body["total_buckets"], 0);
         assert_eq!(body["total_nodes"], 0);
         assert_eq!(body["total_bytes"], 0);
-        assert!(body["buckets"].as_array().unwrap().is_empty());
+        // No per-bucket breakdown: /stats is unauthenticated, and bucket ids
+        // would sidestep the per-bucket read gates.
+        assert!(body.get("buckets").is_none());
     }
 }
 
@@ -798,9 +765,9 @@ common::backend_tests! {
         assert_eq!(body["total_buckets"], 1);
         assert!(body["total_nodes"].as_u64().unwrap() > 0);
         assert!(body["total_bytes"].as_u64().unwrap() > 0);
-        let buckets = body["buckets"].as_array().unwrap();
-        assert_eq!(buckets.len(), 1);
-        assert_eq!(buckets[0]["bucket_id"], 1);
+        // No per-bucket breakdown: /stats is unauthenticated, and bucket ids
+        // would sidestep the per-bucket read gates.
+        assert!(body.get("buckets").is_none());
     }
 }
 
@@ -905,27 +872,7 @@ common::backend_tests! {
     }
 }
 
-common::backend_tests! {
-    async fn test_mmr_subtree_endpoint(backend) {
-        let server = TestServer::new(backend).await;
-        upload_and_commit(&server, 1).await;
-
-        let resp = server
-            .client
-            .get(server.url("/mmr_subtree?bucket_id=1&peak_index=0&depth=1"))
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(resp.status(), StatusCode::OK);
-
-        let body: Value = resp.json().await.unwrap();
-        let nodes = body["nodes"].as_array().unwrap();
-        assert!(!nodes.is_empty());
-        assert!(nodes[0]["hash"].is_string());
-        // position is a number
-        assert!(nodes[0]["position"].is_number());
-    }
-}
+common::backend_tests! {}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Fetch nodes
@@ -956,7 +903,6 @@ common::backend_tests! {
             .client
             .post(server.url("/fetch_nodes"))
             .json(&json!({
-                "bucket_id": 1,
                 "hashes": [hash_hex],
             }))
             .send()
@@ -983,7 +929,6 @@ common::backend_tests! {
             .client
             .post(server.url("/fetch_nodes"))
             .json(&json!({
-                "bucket_id": 1,
                 "hashes": [fake],
             }))
             .send()

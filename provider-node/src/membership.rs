@@ -12,6 +12,7 @@ use sp_core::crypto::AccountId32;
 use std::sync::atomic::{AtomicBool, Ordering};
 use storage_primitives::BucketId;
 use storage_subxt::api::runtime_types::pallet_storage_provider::pallet::Member as RuntimeMember;
+use storage_subxt::api::runtime_types::storage_primitives::ProviderRole;
 use subxt::{OnlineClient, PolkadotConfig};
 use tokio::sync::broadcast::error::TryRecvError;
 
@@ -19,11 +20,18 @@ use tokio::sync::broadcast::error::TryRecvError;
 /// follow reconnects instead of pinning their own socket.
 pub struct ChainMembershipResolver {
     chain_rx: ChainWatch,
+    /// This node's provider account, for resolving whether it holds the
+    /// bucket as a replica (replicas serve reads to everyone). `None` (no
+    /// identity configured) makes every bucket resolve as not replica-held.
+    own_account: Option<AccountId32>,
 }
 
 impl ChainMembershipResolver {
-    pub fn new(chain_rx: ChainWatch) -> Self {
-        Self { chain_rx }
+    pub fn new(chain_rx: ChainWatch, own_account: Option<AccountId32>) -> Self {
+        Self {
+            chain_rx,
+            own_account,
+        }
     }
 
     /// Resolved per lookup so reconnects are picked up.
@@ -81,6 +89,49 @@ impl MembershipResolver for ChainMembershipResolver {
             visibility: bucket.visibility.into(),
         })
     }
+
+    /// Whether this node holds `bucket_id` under a replica agreement.
+    ///
+    /// Existence of a `Replica` agreement is the proxy — expiry is not
+    /// re-checked here, so a lapsed-but-unpruned agreement keeps serving until
+    /// the entry is invalidated or falls out of the TTL, the same freshness
+    /// bound the member set lives under.
+    async fn fetch_replica_here(&self, bucket_id: BucketId) -> Result<bool, MembershipError> {
+        let Some(own) = &self.own_account else {
+            return Ok(false);
+        };
+        let api = self.api()?;
+
+        let storage_address = storage_subxt::api::storage()
+            .storage_provider()
+            .storage_agreements()
+            .unvalidated();
+
+        let at = api
+            .at_current_block()
+            .await
+            .map_err(|e| MembershipError::Unavailable(e.to_string()))?;
+        let result = at
+            .storage()
+            .try_fetch(
+                storage_address,
+                (bucket_id, subxt::utils::AccountId32(own.clone().into())),
+            )
+            .await
+            .map_err(|e| MembershipError::Unavailable(e.to_string()))?;
+
+        let Some(agreement_value) = result else {
+            return Ok(false);
+        };
+        let agreement = agreement_value
+            .decode()
+            .map_err(|e| MembershipError::Decode {
+                bucket_id,
+                reason: e.to_string(),
+            })?;
+
+        Ok(matches!(agreement.role, ProviderRole::Replica { .. }))
+    }
 }
 
 fn member_roles(members: Vec<RuntimeMember>) -> Vec<Member> {
@@ -120,6 +171,12 @@ impl MembershipInvalidations for BlockEventInvalidations {
         loop {
             match events.try_recv() {
                 Ok(BlockEvent::BucketMembershipChanged { bucket_id }) if !all => {
+                    buckets.push(bucket_id)
+                }
+                // A new replica agreement changes the resolver's `replica_here`
+                // answer for the bucket, whoever the replica is (cheaper to
+                // drop the entry than to check whether it is us).
+                Ok(BlockEvent::ReplicaAgreementEstablished { bucket_id, .. }) if !all => {
                     buckets.push(bucket_id)
                 }
                 // The follower re-read chain state wholesale, or this task
@@ -169,7 +226,7 @@ mod tests {
         // Before the chain-state coordinator publishes a connection, auth
         // lookups must surface a retryable error rather than panic or hang.
         let (_tx, rx) = tokio::sync::watch::channel(None);
-        let resolver = ChainMembershipResolver::new(rx);
+        let resolver = ChainMembershipResolver::new(rx, None);
         let err = resolver
             .fetch_access(1)
             .await
@@ -209,6 +266,20 @@ mod tests {
     // ── BlockEventInvalidations ─────────────────────────────────────────────
 
     use tokio::sync::broadcast;
+
+    #[test]
+    fn a_replica_agreement_invalidates_its_bucket() {
+        // `replica_here` is resolved into the cached BucketAccess, so a new
+        // replica agreement must drop the bucket's entry like a member change.
+        let (tx, rx) = broadcast::channel(4);
+        let _ = tx.send(BlockEvent::ReplicaAgreementEstablished {
+            bucket_id: 5,
+            provider: AccountId32::new([1u8; 32]),
+        });
+
+        let feed = BlockEventInvalidations::new(rx);
+        assert_eq!(feed.drain(), Invalidation::Buckets(vec![5]));
+    }
 
     #[test]
     fn a_lagged_feed_invalidates_everything() {
