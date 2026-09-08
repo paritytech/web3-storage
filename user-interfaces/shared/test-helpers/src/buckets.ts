@@ -27,6 +27,8 @@ export interface CreateBucketOptions {
   duration?: number;
   /** Max price per byte per block to accept from the provider. */
   pricePerByte?: bigint;
+  /** Read visibility of the underlying Layer 0 bucket (default Private). */
+  visibility?: "Public" | "Private";
 }
 
 export interface BucketHandle {
@@ -55,6 +57,7 @@ export async function createBucketViaApi(
   const { s3BucketId, layer0BucketId } = await client.createBucket(opts.name, {
     maxCapacity: opts.maxBytes ?? DEFAULT_MAX_BYTES,
     duration: opts.duration ?? DEFAULT_DURATION,
+    visibility: opts.visibility,
   });
   return { s3BucketId, layer0BucketId, name: opts.name };
 }
@@ -115,6 +118,8 @@ export interface CreateDriveOptions {
   duration?: number;
   /** Max price per byte per block to accept from the provider. */
   pricePerByte?: bigint;
+  /** Read visibility of the underlying Layer 0 bucket (default Private). */
+  visibility?: "Public" | "Private";
 }
 
 export interface DriveHandle {
@@ -143,6 +148,7 @@ export async function createDriveViaApi(
     name: opts.name,
     maxCapacity: opts.maxCapacity ?? opts.maxBytes ?? DEFAULT_MAX_BYTES,
     storagePeriod: opts.storagePeriod ?? opts.duration ?? DEFAULT_DURATION,
+    visibility: opts.visibility,
   });
   const handle: DriveHandle = { driveId, bucketId, name: opts.name };
 

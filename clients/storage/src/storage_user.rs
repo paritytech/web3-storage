@@ -699,15 +699,39 @@ struct CommitRequest {
     data_roots: Vec<String>,
 }
 
+/// Deserialize the provider node's signature wire format — `0x`-prefixed hex
+/// of a SCALE-encoded `MultiSignature` — into the typed value. Decoding at
+/// the HTTP boundary means a malformed signature fails the request itself;
+/// code past deserialization only ever sees valid, scheme-tagged signatures.
+fn multi_signature_from_hex<'de, D>(de: D) -> Result<sp_runtime::MultiSignature, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let hex_str = <String as serde::Deserialize>::deserialize(de)?;
+    crate::substrate::decode_multi_signature(&hex_str).map_err(serde::de::Error::custom)
+}
+
+/// Deserialize a `0x`-prefixed 32-byte hex string into an `H256`, failing the
+/// request at the HTTP boundary like [`multi_signature_from_hex`].
+fn h256_from_hex<'de, D>(de: D) -> Result<H256, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let hex_str = <String as serde::Deserialize>::deserialize(de)?;
+    crate::substrate::parse_h256(&hex_str).map_err(serde::de::Error::custom)
+}
+
 #[derive(serde::Deserialize)]
 pub struct CommitResponse {
-    pub mmr_root: String,
+    #[serde(deserialize_with = "h256_from_hex")]
+    pub mmr_root: H256,
     pub start_seq: u64,
     /// Leaves in the MMR after this commit. Needed when the resulting
     /// signature is submitted via `challenge_offchain`.
     pub leaf_count: u64,
     pub leaf_indices: Vec<u64>,
-    pub provider_signature: String,
+    #[serde(deserialize_with = "multi_signature_from_hex")]
+    pub provider_signature: sp_runtime::MultiSignature,
 }
 
 #[derive(serde::Deserialize)]
@@ -734,10 +758,12 @@ struct NodeResponse {
 #[derive(serde::Deserialize)]
 pub struct CheckpointSignatureResponse {
     pub bucket_id: u64,
-    pub mmr_root: String,
+    #[serde(deserialize_with = "h256_from_hex")]
+    pub mmr_root: H256,
     pub start_seq: u64,
     pub leaf_count: u64,
-    pub provider_signature: String,
+    #[serde(deserialize_with = "multi_signature_from_hex")]
+    pub provider_signature: sp_runtime::MultiSignature,
 }
 
 #[derive(serde::Deserialize)]
@@ -749,20 +775,22 @@ pub struct HealthResponse {
 #[derive(Clone, Debug, serde::Deserialize)]
 pub struct CommitmentResponse {
     pub bucket_id: BucketId,
-    pub mmr_root: String,
+    #[serde(deserialize_with = "h256_from_hex")]
+    pub mmr_root: H256,
     pub start_seq: u64,
     pub leaf_count: u64,
-    pub provider_signature: String,
+    #[serde(deserialize_with = "multi_signature_from_hex")]
+    pub provider_signature: sp_runtime::MultiSignature,
 }
 
 impl CommitmentResponse {
     #[cfg(test)]
     pub(crate) fn new(
         bucket_id: BucketId,
-        mmr_root: String,
+        mmr_root: H256,
         start_seq: u64,
         leaf_count: u64,
-        provider_signature: String,
+        provider_signature: sp_runtime::MultiSignature,
     ) -> Self {
         Self {
             bucket_id,
@@ -771,6 +799,69 @@ impl CommitmentResponse {
             leaf_count,
             provider_signature,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn commitment_json(mmr_root: &str, signature: &str) -> String {
+        format!(
+            r#"{{"bucket_id":1,"mmr_root":"{mmr_root}","start_seq":5,"leaf_count":10,"provider_signature":"{signature}"}}"#
+        )
+    }
+
+    fn sr25519_signature_hex() -> String {
+        use codec::Encode;
+        let sig = sp_runtime::MultiSignature::Sr25519(sp_core::sr25519::Signature::from([9u8; 64]));
+        format!("0x{}", hex::encode(sig.encode()))
+    }
+
+    #[test]
+    fn commitment_response_deserializes_typed_root_and_signature() {
+        let root_hex = format!("0x{}", hex::encode([7u8; 32]));
+        let resp: CommitmentResponse =
+            serde_json::from_str(&commitment_json(&root_hex, &sr25519_signature_hex())).unwrap();
+        assert_eq!(resp.mmr_root, H256::from([7u8; 32]));
+        assert_eq!(
+            resp.provider_signature,
+            sp_runtime::MultiSignature::Sr25519(sp_core::sr25519::Signature::from([9u8; 64]))
+        );
+    }
+
+    #[test]
+    fn commitment_response_rejects_undecodable_signature() {
+        // Not hex at all.
+        let root_hex = format!("0x{}", hex::encode([7u8; 32]));
+        assert!(
+            serde_json::from_str::<CommitmentResponse>(&commitment_json(&root_hex, "not-hex"))
+                .is_err()
+        );
+        // 0x01 tags Sr25519, whose signature is 64 bytes — 63 must not decode.
+        let truncated = format!("0x01{}", hex::encode([9u8; 63]));
+        assert!(
+            serde_json::from_str::<CommitmentResponse>(&commitment_json(&root_hex, &truncated))
+                .is_err(),
+            "a truncated signature must fail at the wire, not downstream"
+        );
+        // Trailing bytes past a well-formed signature must be refused too,
+        // not silently ignored — the JS SDK rejects the same value.
+        let overlong = format!("0x01{}", hex::encode([9u8; 65]));
+        assert!(
+            serde_json::from_str::<CommitmentResponse>(&commitment_json(&root_hex, &overlong))
+                .is_err(),
+            "trailing bytes must not be silently truncated"
+        );
+    }
+
+    #[test]
+    fn commitment_response_rejects_unparsable_root() {
+        assert!(serde_json::from_str::<CommitmentResponse>(&commitment_json(
+            "0xnot-a-root",
+            &sr25519_signature_hex()
+        ))
+        .is_err());
     }
 }
 

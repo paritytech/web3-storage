@@ -104,6 +104,7 @@ fn create_drive_surfaces_layer0_signature_errors() {
                 3,
                 terms,
                 sig,
+                storage_primitives::Visibility::Public,
             ),
             pallet_storage_provider::Error::<Test>::ProviderNotFound
         );
@@ -124,7 +125,8 @@ fn create_drive_name_too_long_fails() {
                 Some(long_name),
                 provider,
                 terms,
-                sig
+                sig,
+                storage_primitives::Visibility::Public
             ),
             Error::<Test>::DriveNameTooLong
         );
@@ -153,6 +155,7 @@ fn delete_drive_not_owner_fails() {
             provider,
             terms,
             sig,
+            storage_primitives::Visibility::Public,
         ));
         // Bob is not the owner.
         assert_noop!(
@@ -234,7 +237,8 @@ fn create_drive_works() {
             None,
             provider,
             terms,
-            sig
+            sig,
+            storage_primitives::Visibility::Public
         ));
 
         // Verify drive state
@@ -273,7 +277,8 @@ fn create_drive_with_name_works() {
             Some(b"My Documents".to_vec()),
             provider,
             terms,
-            sig
+            sig,
+            storage_primitives::Visibility::Public
         ));
 
         let drive = DriveRegistry::get_drive(0).expect("drive should exist");
@@ -298,7 +303,8 @@ fn delete_drive_works() {
             None,
             provider,
             terms,
-            sig
+            sig,
+            storage_primitives::Visibility::Public
         ));
 
         let drive = DriveRegistry::get_drive(0).expect("drive should exist");
@@ -341,7 +347,8 @@ fn delete_drive_refuses_frozen_bucket() {
             None,
             provider,
             terms,
-            sig
+            sig,
+            storage_primitives::Visibility::Public,
         ));
         let bucket_id = DriveRegistry::get_drive(0).expect("drive exists").bucket_id;
 
@@ -393,7 +400,8 @@ fn share_drive_works() {
             None,
             provider,
             terms,
-            sig
+            sig,
+            storage_primitives::Visibility::Public
         ));
 
         assert_ok!(DriveRegistry::share_drive(
@@ -431,7 +439,8 @@ fn unshare_drive_works() {
             None,
             provider,
             terms,
-            sig
+            sig,
+            storage_primitives::Visibility::Public
         ));
 
         // Share then unshare
@@ -475,7 +484,8 @@ fn share_drive_admin_can_share() {
             None,
             provider,
             terms,
-            sig
+            sig,
+            storage_primitives::Visibility::Public
         ));
 
         // Alice adds Bob as Admin
@@ -521,7 +531,8 @@ fn list_user_drives_after_create() {
             None,
             provider,
             terms,
-            sig
+            sig,
+            storage_primitives::Visibility::Public
         ));
 
         let drives = DriveRegistry::list_user_drives(&alice);
@@ -543,7 +554,8 @@ fn delete_drive_removes_from_list() {
             None,
             provider,
             terms,
-            sig
+            sig,
+            storage_primitives::Visibility::Public
         ));
 
         assert_eq!(DriveRegistry::list_user_drives(&alice), vec![0]);

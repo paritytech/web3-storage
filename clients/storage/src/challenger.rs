@@ -153,14 +153,16 @@ impl ChallengerClient {
     /// # Parameters
     /// - `commitment`: The MMR commitment (root + range) the provider signed over
     /// - `target`: Which leaf + chunk within that commitment to challenge
-    /// - `provider_signature`: The provider's signature on the commitment (64 bytes for Sr25519)
+    /// - `provider_signature`: The provider's scheme-tagged signature on the
+    ///   commitment, as returned by
+    ///   [`CommitResponse::provider_signature`](crate::CommitResponse)
     pub async fn challenge_offchain(
         &self,
         bucket_id: BucketId,
         provider: String,
         commitment: Commitment,
         target: ChunkLocation,
-        provider_signature: Vec<u8>,
+        provider_signature: sp_runtime::MultiSignature,
     ) -> ClientResult<ChallengeId> {
         let chain = self.base.chain()?;
         let signer = chain.signer()?;
@@ -182,8 +184,8 @@ impl ChallengerClient {
             provider_account,
             commitment,
             target,
-            provider_signature,
-        )?;
+            &provider_signature,
+        );
 
         let tx_progress = chain
             .api()
@@ -330,17 +332,17 @@ impl ChallengerClient {
             .await
             .map_err(|e| ClientError::Chain(format!("provider_info runtime API failed: {e}")))?;
 
-        let (challenges_received, challenges_failed, reputation) = if let Some(info) = provider_info
+        let (challenges_defended, challenges_failed, reputation) = if let Some(info) = provider_info
         {
             (
-                info.challenges_received,
+                info.challenges_received_authorized
+                    .saturating_add(info.challenges_received_public),
                 info.challenges_failed,
                 info.reputation,
             )
         } else {
             return Err(ClientError::Chain(format!("Provider {provider} not found")));
         };
-
         // Compute checkpoint age from bucket snapshot
         let last_checkpoint_age = {
             // `checkpoint_block` is on the pallet's anchor clock (relay
@@ -370,11 +372,11 @@ impl ChallengerClient {
             }
         };
 
-        let challenge_success_rate = if challenges_received == 0 {
+        let total_resolved = challenges_defended.saturating_add(challenges_failed);
+        let challenge_success_rate = if total_resolved == 0 {
             100.0
         } else {
-            let defended = challenges_received.saturating_sub(challenges_failed);
-            defended as f64 / challenges_received as f64 * 100.0
+            challenges_defended as f64 / total_resolved as f64 * 100.0
         };
 
         let recommendation = if reputation < 60 {
@@ -631,17 +633,20 @@ impl ChallengerClient {
 
         for (bucket_id, provider, candidate) in &candidates {
             let stake = candidate.stake;
-            let received = candidate.challenges_received;
+            let defended = candidate
+                .challenges_received_authorized
+                .saturating_add(candidate.challenges_received_public);
             let failed = candidate.challenges_failed;
 
             // Rough reward estimate: ~10% of stake gets slashed on failure
             let potential_reward = stake / 10;
 
             // Success probability is inverse of their historic defense rate
-            let fail_rate = if received == 0 {
+            let total_resolved = defended.saturating_add(failed);
+            let fail_rate = if total_resolved == 0 {
                 0.1 // assume 10% base risk for untested providers
             } else {
-                failed as f64 / received as f64
+                failed as f64 / total_resolved as f64
             };
             // Higher fail_rate = higher success probability for challenger
             let success_probability = (fail_rate * 0.8 + 0.1).min(1.0);
