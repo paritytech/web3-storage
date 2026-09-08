@@ -12,7 +12,7 @@
 import { Enum, type PolkadotClient, type Transaction, type TxFinalizedPayload } from 'polkadot-api'
 import { type InjectedPolkadotAccount } from 'polkadot-api/pjs-signer'
 import { BehaviorSubject } from 'rxjs'
-import { getSs58Prefix, isSameAddress, submitTx } from '@web3-storage/sdk'
+import { getSs58Prefix, isSameAddress, signProviderRequest, submitTx } from '@web3-storage/sdk'
 import {
   clientReady$,
   connectToChain,
@@ -611,16 +611,25 @@ export interface ChallengeProofData {
 
 /**
  * Fetch MMR proof + chunk proof from the provider node HTTP API.
+ *
+ * `signer` is the provider's own wallet account: `GET /mmr_proof` is
+ * Reader-gated on private buckets, and the node grants its own provider
+ * account every Reader check (operator self-auth), so the challenged
+ * provider can always build its defense. `GET /chunk_proof` is hash-keyed
+ * (a capability read) and needs no signature.
  */
 export async function fetchChallengeProof(
   providerHttp: string,
   bucketId: number,
   leafIndex: number,
   chunkIndex: number,
+  signer: InjectedPolkadotAccount,
 ): Promise<ChallengeProofData> {
   // Step 1: MMR proof
+  const headers = await signProviderRequest(signer.polkadotSigner, 'GET', bucketId)
   const mmrRes = await fetch(
     `${providerHttp}/mmr_proof?bucket_id=${bucketId}&leaf_index=${leafIndex}`,
+    { headers },
   )
   if (!mmrRes.ok) {
     throw new Error(`MMR proof fetch failed: ${mmrRes.status} ${await mmrRes.text()}`)

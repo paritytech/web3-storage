@@ -254,11 +254,9 @@ pub async fn start_test_provider() -> String {
     let deps = ProviderDeps {
         storage,
         nonce_store,
-        auth: Arc::new(Authenticator::new(StaticMembershipResolver(vec![(
-            dev_account("alice"),
-            Role::Admin,
-        )
-            .into()]))),
+        auth: Arc::new(Authenticator::new(StaticMembershipResolver::private(vec![
+            (dev_account("alice"), Role::Admin).into(),
+        ]))),
     };
     let state = ProviderState::with_seed(deps, "//Alice").expect("//Alice is a valid SURI");
     let app = create_router(Arc::new(state));

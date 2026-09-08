@@ -1207,10 +1207,18 @@ impl CheckpointManager {
         loop {
             let url = format!("{}/commitment?bucket_id={}", provider.endpoint, bucket_id);
 
-            let result = tokio::time::timeout(self.config.provider_timeout, async {
-                self.http_client.get(&url).send().await
-            })
-            .await;
+            // `GET /commitment` is Reader-gated on private buckets; sign when
+            // a signer is configured (public buckets serve it anonymously, so
+            // a signer-less manager still works there). Rebuilt per attempt so
+            // the timestamp stays inside the provider's skew window.
+            let mut req = self.http_client.get(&url);
+            if let Ok(signer) = self.chain_client.signer() {
+                req = signer.sign_request(req, "GET", bucket_id);
+            }
+
+            let result =
+                tokio::time::timeout(self.config.provider_timeout, async { req.send().await })
+                    .await;
 
             match result {
                 Ok(Ok(response)) => {
