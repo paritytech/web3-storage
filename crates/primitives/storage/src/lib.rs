@@ -59,6 +59,36 @@ pub enum Role {
     Reader,
 }
 
+/// Whether primaries serve reads to anyone, or only to members.
+///
+/// The members-only restriction of `Private` is a cooperative request to
+/// honest primaries, not on-chain-enforced; replicas serve everyone
+/// regardless. On-chain, `Private` restricts primary challenges to bucket
+/// members and primary-agreement owners.
+#[derive(
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Default,
+    Encode,
+    Decode,
+    DecodeWithMemTracking,
+    TypeInfo,
+    MaxEncodedLen,
+    Debug,
+)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum Visibility {
+    /// Primaries serve reads to anyone.
+    Public,
+    /// Primaries serve reads only to members (Admin/Writer/Reader). The
+    /// fail-safe default: creation surfaces that omit the choice must
+    /// protect data, not expose it.
+    #[default]
+    Private,
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Provider Types
 // ─────────────────────────────────────────────────────────────────────────────

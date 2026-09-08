@@ -249,8 +249,9 @@ pub struct ProviderInfo<T: Config> {
     /// Multiaddr for connecting to this provider
     pub multiaddr: BoundedVec<u8, T::MaxMultiaddrLength>,
     /// Public key for signature verification. Raw bytes so multiple key types
-    /// are supported: 32 bytes for Sr25519/Ed25519, 33 for compressed Ecdsa,
-    /// 64 reserved for future schemes.
+    /// are supported: 32 bytes for Sr25519/Ed25519, 33 for compressed
+    /// Ecdsa/Eth. The 64-byte capacity is reserved for future schemes;
+    /// registration currently rejects anything but 32 or 33 bytes.
     pub public_key: BoundedVec<u8, ConstU32<64>>,
     /// Total stake locked by this provider
     pub stake: BalanceOf<T>,
@@ -602,17 +603,29 @@ pub type MemberBuckets<T: Config> = StorageMap<
 ### Provider Public Key & Signature Type
 
 Providers register a raw public key alongside their multiaddr (32 bytes for
-Sr25519/Ed25519, 33 bytes for compressed Ecdsa). All on-chain signature
+Sr25519/Ed25519, 33 bytes for compressed Ecdsa/Eth). All on-chain signature
 verification uses `sp_runtime::MultiSignature` against this key, so a single
 provider can use any of the supported schemes.
 
-> **⚠️ Scheme asymmetry — [#274](https://github.com/paritytech/web3-storage/issues/274).**
-> On-chain verification is multi-scheme (`MultiSignature`:
-> Sr25519/Ed25519/Ecdsa), but the provider node's off-chain HTTP auth (see
-> [Authentication & RBAC](#authentication--rbac)) verifies **sr25519 only**, and
-> only sr25519 is exercised end-to-end. The supported matrix (incl. the reserved
-> 64-byte / `Eth` shapes the pallet accepts but can't verify) is **unratified** —
-> this doc should be updated once #274 decides it.
+The ratified matrix — the signature's variant picks how the expected signer
+account is derived from the registered key (via `MultiSigner::into_account()`):
+
+| Scheme    | Registered key      | Message digest | Expected signer account                                              |
+| --------- | ------------------- | -------------- | -------------------------------------------------------------------- |
+| `Sr25519` | 32 raw bytes        | none           | the key bytes as `AccountId32`                                        |
+| `Ed25519` | 32 raw bytes        | none           | the key bytes as `AccountId32`                                        |
+| `Ecdsa`   | 33 bytes compressed | blake2-256     | `blake2_256(key)`                                                     |
+| `Eth`     | 33 bytes compressed | keccak-256     | `keccak_256(key)[12..]` in a `0xEE`-filled `AccountId32` (the `pallet_revive` address-mapping convention — Ethereum-wallet tooling) |
+
+Registration accepts only 32- and 33-byte keys. The `BoundedVec` keeps 64
+bytes of capacity reserved for future schemes, but no supported scheme
+verifies against a longer key, so any other length is rejected at
+registration (`InvalidPublicKey`) instead of registering a provider that
+could never pass verification.
+
+The provider node signs with any of the four schemes (`--key-scheme`,
+default sr25519) and emits every signature as SCALE-encoded `MultiSignature`
+hex, so the scheme tag travels with the signature on every wire path.
 
 Two on-chain signed payloads exist (all SCALE-encoded, all carry an explicit
 `version: u8` so the protocol can evolve without breaking existing signatures):
@@ -908,8 +921,8 @@ winding-down provider from an active one without a second storage read.
 `find_matching_providers`: both fold a whole-map scan plus a scoring pass into
 one call so the SDK never pages a storage map to rank providers. Reputation is
 defined once, on-chain, by `runtime_api::reputation_score` — a provider with no
-recorded challenges scores 100, otherwise the score is the share of challenges
-it defended. `limit` is clamped to `MAX_CHALLENGE_CANDIDATES`; it bounds the
+resolved challenges scores 100, otherwise the score is the share of resolved
+challenges it defended (both tallied at resolution, so pending ones never count). `limit` is clamped to `MAX_CHALLENGE_CANDIDATES`; it bounds the
 response, not the scan.
 
 ### Extrinsics
@@ -929,8 +942,9 @@ impl<T: Config> Pallet<T> {
     /// Parameters:
     /// - `multiaddr`: Network address where clients can connect to this provider
     /// - `public_key`: Raw public key bytes — 32 for Sr25519/Ed25519, 33 for
-    ///   compressed Ecdsa, 64 reserved. Used to verify provider signatures
-    ///   (commitments, checkpoints, replica sync) on-chain.
+    ///   compressed Ecdsa/Eth; other lengths are rejected (the 64-byte
+    ///   capacity stays reserved for future schemes). Used to verify provider
+    ///   signatures (commitments, checkpoints, replica sync) on-chain.
     /// - `stake`: Initial stake to lock (must meet minimum, provides sybil resistance)
     #[pallet::weight(...)]
     pub fn register_provider(
@@ -1439,7 +1453,9 @@ impl<T: Config> Pallet<T> {
     // where nobody has recent signatures or doesn't bother to dig them up.
     //
     // **Who may challenge, and at what cost (all three modes):**
-    // Any signed account may challenge, with one restriction: on a `Private`
+    // Any signed account may challenge, except the challenged provider
+    // itself (`SelfChallenge`: a free response that would pad its own
+    // defended counters), with one restriction: on a `Private`
     // bucket, challenging a provider whose agreement role is `Primary`
     // requires being a bucket member or the owner of a primary agreement on
     // the bucket (`NotAuthorizedForPrivateBucket`; replica-agreement owners
