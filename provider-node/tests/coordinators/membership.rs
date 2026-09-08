@@ -12,7 +12,8 @@
 //! involved: the drain is synchronous on the request path.
 
 use provider_auth::{
-    build_auth_header, Authenticator, Member, MembershipError, MembershipResolver, RequiredRole,
+    build_auth_header, Authenticator, BucketAccess, MembershipError, MembershipResolver,
+    RequiredRole,
 };
 use provider_chain::BlockEvent;
 use sp_core::{sr25519, Pair};
@@ -33,9 +34,13 @@ struct CountingMembershipResolver {
 
 #[async_trait::async_trait]
 impl MembershipResolver for CountingMembershipResolver {
-    async fn fetch_members(&self, _bucket_id: BucketId) -> Result<Vec<Member>, MembershipError> {
+    async fn fetch_access(&self, _bucket_id: BucketId) -> Result<BucketAccess, MembershipError> {
         self.calls.fetch_add(1, Ordering::SeqCst);
-        Ok(vec![(self.account.clone(), Role::Admin).into()])
+        Ok(BucketAccess::private(vec![(
+            self.account.clone(),
+            Role::Admin,
+        )
+            .into()]))
     }
 }
 

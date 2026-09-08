@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 use storage_primitives::{blake2_256, hash_children, BucketId};
 
 /// Per-object metadata stored in the index.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ObjectMeta {
     /// Merkle tree root of the chunked data
     pub data_root: H256,
@@ -53,7 +53,7 @@ pub struct ListResult {
 }
 
 /// Per-bucket sorted key→metadata index.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 pub struct BucketIndex {
     objects: BTreeMap<String, ObjectMeta>,
     pub object_count: u64,
@@ -465,6 +465,7 @@ fn increment_last_byte(s: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::TempDir;
 
     fn make_meta(size: u64) -> ObjectMeta {
         ObjectMeta {
@@ -661,5 +662,87 @@ mod tests {
         // Delete
         assert!(manager.delete_object(1, "hello.txt").is_some());
         assert!(manager.get_object(1, "hello.txt").is_none());
+    }
+
+    fn bucket_index_fixture() -> BucketIndex {
+        BucketIndex {
+            objects: BTreeMap::from([(
+                "photos/cat.png".to_string(),
+                ObjectMeta {
+                    data_root: H256::repeat_byte(0xab),
+                    size: 1234,
+                    content_type: "image/png".to_string(),
+                    etag: "0xabab".to_string(),
+                    last_modified: 1_700_000_000,
+                    user_metadata: vec![("owner".to_string(), "alice".to_string())],
+                    leaf_index: 7,
+                },
+            )]),
+            object_count: 1,
+            total_size: 1234,
+        }
+    }
+
+    /// Golden document: exactly what [`IndexPersistence::save`] writes for
+    /// [`bucket_index_fixture`].
+    ///
+    /// JSON is more forgiving than SCALE, but not forgiving enough: serde
+    /// rejects a document that is *missing* a field, so adding a field to
+    /// `BucketIndex` or `ObjectMeta` - or renaming one - makes every index file
+    /// an existing provider already wrote unloadable. `load_all` only warns on a
+    /// parse failure, so that provider restarts believing its buckets are empty.
+    /// Treat a failure here as an on-disk format break rather than a stale
+    /// literal; see the encoding-stability note on [`crate::backend::types`].
+    const BUCKET_INDEX_JSON: &str = r#"{
+  "objects": {
+    "photos/cat.png": {
+      "data_root": "0xabababababababababababababababababababababababababababababababab",
+      "size": 1234,
+      "content_type": "image/png",
+      "etag": "0xabab",
+      "last_modified": 1700000000,
+      "user_metadata": [
+        [
+          "owner",
+          "alice"
+        ]
+      ],
+      "leaf_index": 7
+    }
+  },
+  "object_count": 1,
+  "total_size": 1234
+}"#;
+
+    #[test]
+    fn bucket_index_on_disk_json_is_stable() {
+        assert_eq!(
+            serde_json::to_string_pretty(&bucket_index_fixture()).unwrap(),
+            BUCKET_INDEX_JSON,
+            "serialized shape changed",
+        );
+        assert_eq!(
+            serde_json::from_str::<BucketIndex>(BUCKET_INDEX_JSON).unwrap(),
+            bucket_index_fixture(),
+            "pinned document no longer loads",
+        );
+    }
+
+    /// [`IndexPersistence::load_all`] discovers indexes by directory and
+    /// filename, so both are on-disk format too: change either and files an
+    /// existing provider wrote are silently stranded, not reported missing.
+    #[test]
+    fn bucket_index_file_naming_is_stable() {
+        let dir = TempDir::new().unwrap();
+        let persistence = IndexPersistence::new(dir.path()).unwrap();
+        persistence.save(42, &bucket_index_fixture()).unwrap();
+
+        let path = dir.path().join("s3_indices").join("bucket_42_index.json");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), BUCKET_INDEX_JSON);
+        assert_eq!(
+            persistence.load_all().unwrap().len(),
+            1,
+            "a freshly written index is discoverable"
+        );
     }
 }

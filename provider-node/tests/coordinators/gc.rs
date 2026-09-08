@@ -129,12 +129,26 @@ fn start_gc(
     storage_provider_node::GcCoordinatorHandle,
     tokio::sync::broadcast::Sender<provider_chain::BlockEvent>,
 ) {
+    let (handle, tx, _mock) = start_gc_shared(state, Arc::new(mock));
+    (handle, tx)
+}
+
+/// Like [`start_gc`], but hands the mock back so a test can mutate chain
+/// truth (e.g. a top-up raising the agreement's max_bytes) mid-flight.
+fn start_gc_shared(
+    state: Arc<ProviderState>,
+    mock: Arc<MockGcChainClient>,
+) -> (
+    storage_provider_node::GcCoordinatorHandle,
+    tokio::sync::broadcast::Sender<provider_chain::BlockEvent>,
+    Arc<MockGcChainClient>,
+) {
     let (tx, rx) = tokio::sync::broadcast::channel(EVENT_CHANNEL_CAPACITY);
     let config = GcCoordinatorConfig {
         scan_interval: Duration::from_millis(50),
     };
-    let handle = GcCoordinator::new(config, state, Arc::new(mock)).start(rx);
-    (handle, tx)
+    let handle = GcCoordinator::new(config, state, Arc::clone(&mock) as Arc<_>).start(rx);
+    (handle, tx, mock)
 }
 
 #[tokio::test]
@@ -305,5 +319,54 @@ async fn converges_local_prune_on_canonical_start_seq() {
     // The converged prune is stashed like any other; without an admin
     // receipt it stays stashed.
     assert_eq!(state.storage.pruned_ranges(1).len(), 1);
+    handle.stop();
+}
+
+/// #382 acceptance: after a top-up raises the on-chain agreement's
+/// max_bytes, the same upload that bounced on the old quota succeeds —
+/// the node picks the raise up from the agreement event.
+#[tokio::test]
+async fn top_up_raises_the_enforced_quota() {
+    let (state, _dir) = test_state();
+    seed_bucket(&state, 1, 1); // 8 bytes used
+
+    let mock = Arc::new(
+        MockGcChainClient::new()
+            .with_bucket(1, Some(0))
+            .with_agreement(1, 10),
+    );
+    let (handle, tx, mock) = start_gc_shared(state.clone(), Arc::clone(&mock));
+
+    // Quota 10 lands and blocks the next 8-byte store (8 used + 8 > 10).
+    let data = vec![9u8; 8];
+    let hash = blake2_256(&data);
+    assert!(
+        wait_for(5, 25, || async {
+            matches!(
+                state.storage.store_node(1, hash, vec![9u8; 8], None),
+                Err(provider_storage::Error::QuotaExceeded { .. })
+            )
+        })
+        .await,
+        "the pre-top-up quota should be enforced first"
+    );
+
+    // Top-up on chain, announced by its agreement event.
+    mock.agreements.lock().insert(1, 100);
+    let _ = tx.send(provider_chain::BlockEvent::AgreementChanged {
+        bucket_id: 1,
+        provider: sp_runtime::AccountId32::new([0u8; 32]),
+    });
+
+    assert!(
+        wait_for(5, 25, || async {
+            state
+                .storage
+                .store_node(1, hash, vec![9u8; 8], None)
+                .is_ok()
+        })
+        .await,
+        "the exact upload refused before the top-up should now fit"
+    );
     handle.stop();
 }

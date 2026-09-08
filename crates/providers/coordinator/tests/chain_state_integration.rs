@@ -78,6 +78,7 @@ fn provider_account() -> sp_runtime::AccountId32 {
 fn sample_provider_info() -> ProviderInfo {
     ProviderInfo {
         multiaddr: "/ip4/1.2.3.4/tcp/3333".to_string(),
+        public_key: vec![1u8; 32],
         stake: 1_000,
         committed_bytes: 500,
         max_capacity: 10_000,

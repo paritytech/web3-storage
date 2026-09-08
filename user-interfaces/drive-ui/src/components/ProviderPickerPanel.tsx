@@ -191,7 +191,7 @@ export default function ProviderPickerPanel({
                             : "text-muted-foreground"
                         }
                       >
-                        {p.challengesFailed}/{p.challengesReceived} challenges failed
+                        {p.challengesFailed} failed · {p.challengesDefended} defended
                       </div>
                     </td>
                     <td className="px-3 py-2 text-right">

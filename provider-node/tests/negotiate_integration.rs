@@ -129,6 +129,9 @@ impl TestServer {
 fn provider_info() -> ProviderInfo {
     ProviderInfo {
         multiaddr: "/ip4/127.0.0.1/tcp/3333".to_string(),
+        // Must match the server's signing key (//Alice sr25519) — /negotiate
+        // refuses to sign when the registered key differs.
+        public_key: alice_public().0.to_vec(),
         stake: 1_000_000_000_000,
         committed_bytes: 0,
         max_capacity: 0,
@@ -379,6 +382,21 @@ async fn negotiate_503_when_provider_deregistering() {
     assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
     let body: Value = resp.json().await.unwrap();
     assert_eq!(body["error"], "provider_deregistering");
+}
+
+#[tokio::test]
+async fn negotiate_503_when_registered_key_differs_from_local() {
+    // Every prerequisite satisfied, but the on-chain public_key is not the
+    // node's signing key: signed terms could never be redeemed, so the node
+    // must refuse instead of quoting.
+    let mut info = provider_info();
+    info.public_key = vec![9u8; 32];
+    let server = TestServer::ready(info).await;
+
+    let resp = server.negotiate(&primary_request()).await;
+    assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "provider_key_mismatch");
 }
 
 // ─── /info readiness flag tests ──────────────────────────────────────────────
