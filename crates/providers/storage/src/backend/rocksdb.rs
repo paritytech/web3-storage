@@ -475,8 +475,7 @@ impl DiskStorage {
                 encode_refcount(count.saturating_add(n), charged_bucket, size),
             );
         }
-        let bucket_value =
-            bucket.encode();
+        let bucket_value = bucket.encode();
         batch.put_cf(&cf_buckets, bucket_id.to_le_bytes(), &bucket_value);
         self.db
             .write(batch)
@@ -997,11 +996,7 @@ impl StorageBackend for DiskStorage {
         self.attach_deletion_receipt(bucket_id, receipt)
     }
 
-    fn deletion_receipt_covering(
-        &self,
-        bucket_id: BucketId,
-        seq: u64,
-    ) -> Option<DeletionReceipt> {
+    fn deletion_receipt_covering(&self, bucket_id: BucketId, seq: u64) -> Option<DeletionReceipt> {
         self.deletion_receipt_covering(bucket_id, seq)
     }
 
@@ -1660,5 +1655,28 @@ mod tests {
                 "reset must persist across DB reopen"
             );
         }
+    }
+    /// #382 acceptance: a quota synced from the chain agreement must survive
+    /// a node restart — never silently reset to unlimited.
+    #[test]
+    fn bucket_quota_survives_reopen() {
+        let dir = tempfile::tempdir().unwrap();
+        {
+            let storage = DiskStorage::new(dir.path()).unwrap();
+            storage.init_bucket(1, u64::MAX).unwrap();
+            storage.set_bucket_quota(1, 100).unwrap();
+        }
+
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        let stats = storage.get_bucket_stats();
+        assert_eq!(stats.len(), 1);
+        // The quota is still enforced after reopen: a store larger than the
+        // persisted max_bytes bounces.
+        let data = vec![7u8; 128];
+        let hash = storage_primitives::blake2_256(&data);
+        assert!(matches!(
+            storage.store_node(1, hash, data, None),
+            Err(Error::QuotaExceeded { max: 100, .. })
+        ));
     }
 }
