@@ -118,12 +118,13 @@ impl<T: Config> Pallet<T> {
     /// provider its share from the held deposit and give the rest back to
     /// the challenger. If some part could not be moved (should not happen),
     /// it also goes back to the challenger, so nothing stays on hold.
+    /// Returns what actually reached the provider.
     pub(crate) fn settle_challenge_deposit(
         challenger: &T::AccountId,
         provider: &T::AccountId,
         deposit: BalanceOf<T>,
         provider_share: BalanceOf<T>,
-    ) {
+    ) -> BalanceOf<T> {
         let moved = if provider_share.is_zero() {
             Zero::zero()
         } else {
@@ -139,6 +140,7 @@ impl<T: Config> Pallet<T> {
             .unwrap_or_else(|_| Zero::zero())
         };
         Self::release_challenge_deposit(challenger, deposit.saturating_sub(moved));
+        moved
     }
 
     /// Slash held collateral into the treasury, leaving total issuance

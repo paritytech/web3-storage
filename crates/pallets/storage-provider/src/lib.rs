@@ -2559,20 +2559,21 @@ pub mod pallet {
                 50u32
             };
 
-            let challenger_cost = challenge.deposit * challenger_percent.into() / 100u32.into();
-            // The provider pays its share by simply not being refunded for it
-            // — no funds move from the provider, and its stake stays intact.
-            let provider_cost = challenge.deposit.saturating_sub(challenger_cost);
+            let challenger_share = challenge.deposit * challenger_percent.into() / 100u32.into();
 
-            // Pay `challenger_cost` to the provider for the work of
+            // Pay the challenger's share to the provider for the work of
             // responding and give the rest of the deposit back to the
-            // challenger.
-            Self::settle_challenge_deposit(
+            // challenger. The event reports what actually moved (mirrors
+            // `ChallengeSlashed`).
+            let challenger_cost = Self::settle_challenge_deposit(
                 &challenge.challenger,
                 &challenge.provider,
                 challenge.deposit,
-                challenger_cost,
+                challenger_share,
             );
+            // The provider pays its share by simply not being refunded for it
+            // — no funds move from the provider, and its stake stays intact.
+            let provider_cost = challenge.deposit.saturating_sub(challenger_cost);
 
             // Count the responded-to challenge per tier (resolution-time
             // stats; creation leaves no trace).
