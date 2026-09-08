@@ -754,6 +754,11 @@ async fn get_historical_roots(
 /// - `provider_info_unavailable` — provider not registered on chain yet; the
 ///   chain-state coordinator clears this automatically once registration lands, no
 ///   restart needed.
+/// - `provider_key_mismatch` — the local signing key differs from the registered
+///   on-chain `public_key`; signed terms would never verify. Clears on the next
+///   provider-info refresh once the keys agree. Not specific to this endpoint:
+///   the guard sits in [`ProviderState::sign`], so `/commit`, `/commitment`,
+///   `/checkpoint-signature` and deletion proofs return it too.
 /// - `nonce_counter_unavailable` — counter not yet aligned with the chain's replay
 ///   window.
 /// - `provider_deregistering` — provider has announced deregistration and no longer
@@ -796,6 +801,12 @@ async fn negotiate_terms(
         return Err(Error::ProviderDeregistering);
     }
 
+    // Signing with a key the chain doesn't know about produces terms that can
+    // never be redeemed — fail fast instead. Checked against the snapshot this
+    // request is already using, so a re-registration heals it on the next
+    // refresh without a restart.
+    state.ensure_signing_key_matches(&info)?;
+
     negotiate::validate_request(&req, &info)?;
 
     // Guard on both presence and bootstrap status: during the transient window
@@ -823,7 +834,7 @@ async fn negotiate_terms(
         bucket_id: req.bucket_id,
         replica_params: req.replica_params,
     };
-    Ok(Json(provider_negotiation::sign_terms(keypair, terms)))
+    Ok(Json(keypair.sign_terms(terms)))
 }
 
 /// Get replica sync status for a bucket.

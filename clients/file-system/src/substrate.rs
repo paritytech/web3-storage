@@ -76,12 +76,14 @@ pub mod extrinsics {
         provider: AccountId32,
         terms: &AgreementTermsOf,
         sig: &sp_runtime::MultiSignature,
+        visibility: storage_client::Visibility,
     ) -> impl Payload {
         api::tx().drive_registry().create_drive(
             name,
             convert::to_subxt_account(&provider),
             convert::agreement_terms(terms),
             convert::multisig(sig),
+            convert::visibility(visibility),
         )
     }
 

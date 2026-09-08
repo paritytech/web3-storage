@@ -517,10 +517,10 @@ fn query_challenger_challenges_empty_for_unknown() {
 
 /// Give a registered provider a challenge record without running the full
 /// challenge flow, so reputation can be set precisely.
-fn set_challenge_stats(who: u64, received: u32, failed: u32) {
+fn set_challenge_stats(who: u64, defended: u32, failed: u32) {
     Providers::<Test>::mutate(who, |maybe| {
         let info = maybe.as_mut().expect("provider registered");
-        info.stats.challenges_received = received;
+        info.stats.challenges_received_public = defended;
         info.stats.challenges_failed = failed;
     });
 }
@@ -528,16 +528,16 @@ fn set_challenge_stats(who: u64, received: u32, failed: u32) {
 #[test]
 fn reputation_score_matches_client_cases() {
     use crate::runtime_api::reputation_score;
-    // No challenges yet: benefit of the doubt.
+    // No resolved challenges yet: benefit of the doubt.
     assert_eq!(reputation_score(0, 0), 100);
     // Every challenge defended.
     assert_eq!(reputation_score(10, 0), 100);
     // Half failed.
-    assert_eq!(reputation_score(10, 5), 50);
+    assert_eq!(reputation_score(5, 5), 50);
     // All failed.
-    assert_eq!(reputation_score(10, 10), 0);
-    // More failures than challenges cannot underflow.
-    assert_eq!(reputation_score(3, 9), 0);
+    assert_eq!(reputation_score(0, 10), 0);
+    // Mostly failed: floor of the defended share.
+    assert_eq!(reputation_score(3, 9), 25);
 }
 
 #[test]
@@ -596,13 +596,14 @@ fn challenge_candidates_filters_by_reputation() {
 
         // Provider 2 defends everything; provider 3 fails half.
         set_challenge_stats(2, 10, 0);
-        set_challenge_stats(3, 10, 5);
+        set_challenge_stats(3, 5, 5);
 
         let candidates = StorageProvider::query_challenge_candidates(90, 10);
         assert_eq!(candidates.len(), 1, "only the sub-threshold provider");
         assert_eq!(candidates[0].provider, 3u64.encode());
         assert_eq!(candidates[0].reputation, 50);
-        assert_eq!(candidates[0].challenges_received, 10);
+        assert_eq!(candidates[0].challenges_received_authorized, 0);
+        assert_eq!(candidates[0].challenges_received_public, 5);
         assert_eq!(candidates[0].challenges_failed, 5);
         assert_eq!(candidates[0].stake, 200);
     });
@@ -615,9 +616,9 @@ fn challenge_candidates_orders_worst_first() {
             register_provider(who, 200);
             setup_agreement(who, 1, 50, 200);
         }
-        set_challenge_stats(2, 10, 3); // 70
-        set_challenge_stats(3, 10, 9); // 10
-        set_challenge_stats(4, 10, 6); // 40
+        set_challenge_stats(2, 7, 3); // 70
+        set_challenge_stats(3, 1, 9); // 10
+        set_challenge_stats(4, 4, 6); // 40
 
         let candidates = StorageProvider::query_challenge_candidates(100, 10);
         let order: Vec<u8> = candidates.iter().map(|c| c.reputation).collect();

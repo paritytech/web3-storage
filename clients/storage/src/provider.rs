@@ -394,7 +394,7 @@ impl ProviderClient {
         &self,
         bucket_id: BucketId,
         mmr_roots: [Option<H256>; 7],
-        signature: Vec<u8>,
+        signature: &sp_runtime::MultiSignature,
     ) -> ClientResult<()> {
         let chain = self.base.chain()?;
         let signer = chain.signer()?;
@@ -405,7 +405,7 @@ impl ProviderClient {
             mmr_roots.iter().filter(|r| r.is_some()).count()
         );
 
-        let tx = extrinsics::confirm_replica_sync(bucket_id, mmr_roots, signature)?;
+        let tx = extrinsics::confirm_replica_sync(bucket_id, mmr_roots, signature);
 
         chain
             .api()
@@ -550,7 +550,8 @@ impl ProviderClient {
             committed_bytes: info.committed_bytes,
             agreements_total: info.stats.agreements_total,
             agreements_extended: info.stats.agreements_extended,
-            challenges_received: info.stats.challenges_received,
+            challenges_received_authorized: info.stats.challenges_received_authorized,
+            challenges_received_public: info.stats.challenges_received_public,
             challenges_failed: info.stats.challenges_failed,
             reputation,
         })
@@ -659,7 +660,11 @@ pub struct ProviderStats {
     pub committed_bytes: u64,
     pub agreements_total: u32,
     pub agreements_extended: u32,
-    pub challenges_received: u32,
+    /// Successfully defended challenges from authorized challengers
+    /// (member/agreement owner at creation). Counted at resolution.
+    pub challenges_received_authorized: u32,
+    /// Same, for general-public challengers.
+    pub challenges_received_public: u32,
     pub challenges_failed: u32,
     pub reputation: u8,
 }
