@@ -184,7 +184,8 @@ pub trait Config: frame_system::Config<RuntimeEvent: From<Event<Self>>> {
     #[pallet::constant]
     type SettlementTimeout: Get<BlockNumberFor<Self>>;
 
-    /// Maximum duration an agreement request can sit unanswered before it expires.
+    /// Maximum validity window of a provider-signed terms quote: redemption
+    /// requires `terms.valid_until <= now + RequestTimeout`.
     #[pallet::constant]
     type RequestTimeout: Get<BlockNumberFor<Self>>;
 
@@ -500,41 +501,67 @@ pub enum ProviderRole<T: Config> {
     },
 }
 
-/// Pending agreement requests (client → provider, awaiting acceptance)
-/// Keyed by (provider, bucket) so providers can efficiently query their pending requests
+/// Per-provider sliding replay window over signed agreement-term nonces.
+/// Advanced by `establish_storage_agreement` / `establish_replica_agreement`,
+/// reset at registration, removed at `complete_deregister`.
 #[pallet::storage]
-pub type AgreementRequests<T: Config> = StorageDoubleMap<
-    _,
-    Blake2_128Concat,
-    T::AccountId,  // provider (first key for efficient provider queries)
-    Blake2_128Concat,
-    BucketId,
-    AgreementRequest<T>,
->;
+pub type ProviderReplayStates<T: Config> =
+    StorageMap<_, Blake2_128Concat, T::AccountId, ReplayWindow, ValueQuery>;
 
-pub struct AgreementRequest<T: Config> {
-    /// Who requested the agreement
-    pub requester: T::AccountId,
-    /// Maximum bytes requested
-    pub max_bytes: u64,
-    /// Payment locked by requester
-    pub payment_locked: BalanceOf<T>,
-    /// Requested duration
-    pub duration: BlockNumberFor<T>,
-    /// Block at which request expires if not accepted/rejected
-    pub expires_at: BlockNumberFor<T>,
-    /// Replica-specific parameters, None for primary agreements.
-    /// Presence distinguishes the agreement type at request time.
-    pub replica_params: Option<ReplicaRequestParams<T>>,
+/// Defined in `storage_primitives`. Sliding window over the most recent
+/// `REPLAY_WINDOW_BITS` (1024) nonces accepted from a provider: nonces more
+/// than 1024 slots behind the highest accepted nonce are rejected outright
+/// (`NonceTooOld`); nonces inside the window are accepted at most once
+/// (`NonceAlreadyUsed`).
+pub struct ReplayWindow {
+    /// Highest sequence nonce ever accepted for this provider (window anchor).
+    pub hsn: u64,
+    /// 1024-bit acceptance bitmap; bit `i` is set iff nonce `hsn - i`
+    /// has been accepted.
+    pub bitmap: [u8; 128],
 }
 
-/// Parameters specific to replica agreement requests.
-pub struct ReplicaRequestParams<T: Config> {
-    /// Initial sync balance to fund per-sync payments
-    pub sync_balance: BalanceOf<T>,
-    /// Minimum blocks between sync confirmations.
+/// Defined in `storage_primitives`: the off-chain quote a provider signs and
+/// the owner redeems on-chain (see `establish_storage_agreement` /
+/// `establish_replica_agreement`). The provider signs
+/// `blake2_256(context | SCALE(terms))`, where `context` is
+/// `PRIMARY_TERM_CONTEXT` (`"primary-term-v1:"`) or `REPLICA_TERM_CONTEXT`
+/// (`"replica-term-v1:"`) — domain separation between the two flavours.
+pub struct AgreementTerms<AccountId, Balance, BlockNumber> {
+    /// Owner that will be bound by these terms (must match the extrinsic
+    /// origin at redemption).
+    pub owner: AccountId,
+    /// Storage quota committed by the provider, in bytes.
+    pub max_bytes: u64,
+    /// Agreement duration in blocks from activation.
+    pub duration: BlockNumber,
+    /// Price per byte per block locked at quote time.
+    pub price_per_byte: Balance,
+    /// Block number after which the quote is no longer redeemable.
+    pub valid_until: BlockNumber,
+    /// Provider-chosen replay-protection nonce; uniqueness is enforced
+    /// through the provider's sliding replay window.
+    pub nonce: u64,
+    /// Bucket the quote is bound to:
+    /// - `None` for primary terms (the bucket is created at redemption)
+    /// - `Some(id)` for replica terms — must match the bucket targeted by
+    ///   the extrinsic.
+    pub bucket_id: Option<BucketId>,
+    /// `None` for primary terms; `Some(_)` for replica terms, carrying the
+    /// per-sync funding parameters.
+    pub replica_params: Option<ReplicaTerms<Balance, BlockNumber>>,
+}
+
+/// Replica-specific parameters of a signed quote.
+pub struct ReplicaTerms<Balance, BlockNumber> {
+    /// Balance reserved by the owner to fund per-sync confirmations. The
+    /// pallet draws down `sync_price` from this on each accepted sync.
+    pub sync_balance: Balance,
+    /// Minimum blocks between sync confirmations the provider commits to.
     /// 0 means no time-based limit (only "new root" check applies).
-    pub min_sync_interval: BlockNumberFor<T>,
+    pub min_sync_interval: BlockNumber,
+    /// Price per sync locked at creation/last extension.
+    pub sync_price: Balance,
 }
 
 /// Pending challenges, keyed by (deadline anchor block, per-deadline index).
@@ -1230,8 +1257,55 @@ impl<T: Config> Pallet<T> {
     // Storage agreements (per bucket, per provider)
     // ─────────────────────────────────────────────────────────────
 
-    /// Request a replica storage agreement (anyone can request).
-    /// 
+    // Agreements are established by redeeming provider-signed AgreementTerms
+    // (see the storage section) — there is no on-chain request/accept
+    // round-trip. The provider quotes and signs terms off-chain; the owner
+    // submits them in a single call. Both establish_* calls share the same
+    // validation skeleton:
+    // - `terms.owner` must match the origin (`TermsOwnerMismatch`)
+    // - `terms.max_bytes > 0` (`InvalidMaxBytesRequest`)
+    // - `now <= terms.valid_until <= now + T::RequestTimeout`
+    //   (`TermsExpired` / `TermsValidityTooLong`)
+    // - the signature must verify against the provider's registered key over
+    //   `blake2_256(context | SCALE(terms))` with the flavour's context
+    // - `terms.nonce` must pass the provider's sliding replay window
+    //   (`NonceAlreadyUsed` / `NonceTooOld`), which is advanced on success
+    // - the provider must be active (registered, not deregistering), within
+    //   its duration bounds, and the added `terms.max_bytes` must fit its
+    //   declared capacity (`CapacityExceeded`) and stake
+    //   (`InsufficientStakeForBytes`)
+    //
+    // Payment `terms.price_per_byte * terms.max_bytes * terms.duration` is
+    // reserved from the owner at the price the provider signed for — the
+    // quote itself is the price protection; there is no `max_payment`
+    // parameter.
+
+    /// Redeem provider-signed primary terms: create a bucket + primary
+    /// agreement in a single call.
+    ///
+    /// In addition to the shared checks above:
+    /// - `terms.bucket_id` must be `None` — the bucket is created at
+    ///   redemption (`TermsBucketMismatch`)
+    /// - `terms.replica_params` must be `None`
+    /// - the provider must be accepting primaries
+    ///   (`ProviderNotAcceptingPrimary`)
+    ///
+    /// The bucket is created with the owner as sole admin and the provider
+    /// as its single primary. `visibility` sets the new bucket's read
+    /// visibility; it is the owner's choice and not part of the
+    /// provider-signed terms.
+    #[pallet::weight(...)]
+    pub fn establish_storage_agreement(
+        origin: OriginFor<T>,
+        provider: T::AccountId,
+        terms: AgreementTerms<T>,
+        sig: MultiSignature,
+        visibility: Visibility,
+    ) -> DispatchResult;
+
+    /// Redeem provider-signed replica terms: open a replica agreement on an
+    /// existing bucket (anyone the provider quoted for can redeem).
+    ///
     /// Creates a replica provider agreement:
     /// - Does NOT count toward min_providers for checkpoints
     /// - Syncs data autonomously from primaries or other replicas
@@ -1241,74 +1315,31 @@ impl<T: Config> Pallet<T> {
     /// No syncability check—a private bucket with zero replicas is accepted;
     /// an unfulfillable agreement is the funder's own risk. Rationale: design
     /// doc, "No on-chain gate on replica creation".
-    /// 
-    /// The requester becomes the agreement owner (can top up, transfer
+    ///
+    /// The redeemer becomes the agreement owner (can top up, transfer
     /// ownership).
-    /// 
-    /// Parameters:
-    /// - `bucket_id`: The bucket to add a replica for
-    /// - `provider`: The provider to request an agreement with
-    /// - `max_bytes`: Maximum storage quota for this agreement
-    /// - `duration`: How long the agreement should last
-    /// - `max_payment`: Upper bound on storage payment. Actual payment is calculated
-    ///   as `provider.price_per_byte * max_bytes * duration`. Fails if this exceeds
-    ///   `max_payment` (protects against price changes between query and submission).
-    /// - `replica_params`: Replica-specific parameters:
-    ///   - `sync_balance`: Transferred from requester to fund per-sync payments at
-    ///     the provider's `replica_sync_price`. When exhausted, replica stops
-    ///     receiving sync payments but remains bound until expiry. Can top up via
-    ///     `top_up_replica_sync_balance`.
-    ///   - `min_sync_interval`: Minimum blocks between sync confirmations. Set based
-    ///     on expected bucket activity. 0 for no time-based limit.
+    ///
+    /// In addition to the shared checks above:
+    /// - the bucket must exist (`BucketNotFound`) and carry no existing
+    ///   agreement for this provider (`AgreementAlreadyExists`)
+    /// - `terms.bucket_id` must be `Some(bucket_id)` — the quote is bound to
+    ///   the targeted bucket (`TermsBucketMismatch`)
+    /// - `terms.replica_params` must be `Some(_)` (`MissingReplicaTerms`):
+    ///   - `sync_balance`: Reserved from the owner on top of the storage
+    ///     payment to fund per-sync payments at the signed `sync_price`.
+    ///     When exhausted, replica stops receiving sync payments but remains
+    ///     bound until expiry. Can top up via `top_up_replica_sync_balance`.
+    ///   - `min_sync_interval`: Minimum blocks between sync confirmations.
+    ///     0 for no time-based limit.
+    /// - the provider must be accepting replicas, i.e. have a
+    ///   `replica_sync_price` set (`ProviderNotAcceptingReplicas`)
     #[pallet::weight(...)]
-    pub fn request_agreement(
+    pub fn establish_replica_agreement(
         origin: OriginFor<T>,
         bucket_id: BucketId,
         provider: T::AccountId,
-        max_bytes: u64,
-        duration: BlockNumberFor<T>,
-        max_payment: BalanceOf<T>,
-        replica_params: ReplicaRequestParams<T>,
-    ) -> DispatchResult;
-
-    /// Accept a pending agreement request (provider only).
-    /// 
-    /// Creates the storage agreement and adds the provider to the bucket.
-    /// For primary agreements: provider is added to `bucket.primary_providers`.
-    /// For replica agreements: provider can start syncing immediately.
-    /// 
-    /// Parameters:
-    /// - `bucket_id`: The bucket with the pending request
-    #[pallet::weight(...)]
-    pub fn accept_agreement(
-        origin: OriginFor<T>,
-        bucket_id: BucketId,
-    ) -> DispatchResult;
-
-    /// Reject a pending agreement request (provider only).
-    /// 
-    /// Refunds the locked payment to the original requester.
-    /// 
-    /// Parameters:
-    /// - `bucket_id`: The bucket with the pending request to reject
-    #[pallet::weight(...)]
-    pub fn reject_agreement(
-        origin: OriginFor<T>,
-        bucket_id: BucketId,
-    ) -> DispatchResult;
-
-    /// Withdraw a pending agreement request before provider accepts.
-    /// 
-    /// Only the original requester can withdraw. Refunds the locked payment.
-    /// 
-    /// Parameters:
-    /// - `bucket_id`: The bucket with the pending request
-    /// - `provider`: The provider the request was made to
-    #[pallet::weight(...)]
-    pub fn withdraw_agreement_request(
-        origin: OriginFor<T>,
-        bucket_id: BucketId,
-        provider: T::AccountId,
+        terms: AgreementTerms<T>,
+        sig: MultiSignature,
     ) -> DispatchResult;
 
     /// Top up quota for an existing agreement (owner only).
@@ -1390,7 +1421,7 @@ impl<T: Config> Pallet<T> {
     /// well - they shouldn't find the bucket dead the next day because someone
     /// terminated agreements early. If unhappy with a provider, simply don't extend.
     /// 
-    /// Note: For primary agreements, admin is the owner (created via request_primary_agreement).
+    /// Note: For primary agreements, admin is the owner (created via establish_storage_agreement).
     /// Admin has no special privileges over replica agreements.
     #[pallet::weight(...)]
     pub fn end_agreement(
@@ -1407,33 +1438,6 @@ impl<T: Config> Pallet<T> {
     pub fn claim_expired_agreement(
         origin: OriginFor<T>,
         bucket_id: BucketId,
-    ) -> DispatchResult;
-
-    /// Request a primary storage agreement (admin only).
-    /// 
-    /// Creates a primary (admin-added) provider agreement:
-    /// - Counts toward min_providers for checkpoints
-    /// - Stored in bucket.primary_providers (limited to T::MaxPrimaryProviders)
-    /// - Can be early-terminated by admin
-    /// 
-    /// Fails if bucket has reached T::MaxPrimaryProviders limit.
-    /// 
-    /// Parameters:
-    /// - `bucket_id`: The bucket to add a primary provider for
-    /// - `provider`: The provider to request an agreement with
-    /// - `max_bytes`: Maximum storage quota for this agreement
-    /// - `duration`: How long the agreement should last
-    /// - `max_payment`: Upper bound on storage payment. Actual payment is calculated
-    ///   as `provider.price_per_byte * max_bytes * duration`. Fails if this exceeds
-    ///   `max_payment` (protects against price changes between query and submission).
-    #[pallet::weight(...)]
-    pub fn request_primary_agreement(
-        origin: OriginFor<T>,
-        bucket_id: BucketId,
-        provider: T::AccountId,
-        max_bytes: u64,
-        duration: BlockNumberFor<T>,
-        max_payment: BalanceOf<T>,
     ) -> DispatchResult;
 
     /// Remove a slashed provider from a bucket (anyone can call).
