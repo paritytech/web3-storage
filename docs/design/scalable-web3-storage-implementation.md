@@ -64,26 +64,35 @@ Users who create conflicts without checkpointing waste their quota—providers m
 
 ### Provider Lifecycle in Bucket
 
+Agreements are established by redeeming provider-signed terms: the provider
+quotes `AgreementTerms` off-chain (e.g. over HTTP), signs them, and the
+client submits the signed quote on-chain in a single call — there is no
+on-chain request/accept round-trip.
+
 **Adding a provider:**
-1. Admin calls `request_primary_agreement` with the provider
-2. Provider calls `accept_agreement` → `StorageAgreement` created, added to `bucket.primary_providers`
+1. Provider quotes primary `AgreementTerms` off-chain and signs them
+2. Owner calls `establish_storage_agreement` with the signed terms → bucket
+   created with the owner as sole admin, `StorageAgreement` created, provider
+   added to `bucket.primary_providers`
 3. Client uploads data to provider
 4. Client requests commit, provider signs → client has provider signature
 5. Client calls `checkpoint` with provider signature → provider added to `snapshot.primary_signers` bitfield
 
 **Adding a replica provider (optional, permissionless):**
-1. Anyone calls `request_agreement` with the provider and sync_balance
-2. Provider calls `accept_agreement` → `StorageAgreement` created with `ProviderRole::Replica`
+1. Provider quotes replica `AgreementTerms` (with `replica_params`: sync
+   funding and interval) off-chain and signs them
+2. Anyone calls `establish_replica_agreement` with the signed terms on an
+   existing bucket → `StorageAgreement` created with `ProviderRole::Replica`
 3. Replica syncs data autonomously from primaries, other replicas, or any data
    holder willing to push it (everything is content-addressed and self-verifying)
 4. Replica calls `confirm_replica_sync` on-chain → receives per-sync payment, becomes challengeable
 
 **Binding contract:**
 
-Once accepted, agreements are binding for both parties until expiry:
+Once established, agreements are binding for both parties until expiry:
 - **No early exit for providers**: Providers cannot voluntarily leave. They committed to store data for the agreed duration.
 - **No early cancellation for clients**: Clients cannot cancel and reclaim locked payment. They committed to pay for the agreed duration.
-- **Provider's protection**: Before accepting, providers can set `max_duration` and review the terms. They can also block future extensions via `set_extensions_blocked`.
+- **Provider's protection**: Providers author every quote they sign — price, quota, duration, and a `valid_until` expiry — so nothing binds them that they didn't explicitly offer. They can also block future extensions via `set_extensions_blocked`.
 - **Client's protection**: Clients can challenge if provider loses data (slashing). At settlement, clients can burn payment to signal poor service.
 
 **Agreement expiry:**
