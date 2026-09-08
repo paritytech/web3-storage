@@ -487,18 +487,19 @@ impl AdminClient {
     /// Submit a checkpoint with provider signatures.
     ///
     /// This creates a canonical on-chain snapshot of the bucket state,
-    /// enabling `challenge_checkpoint` to work against it.
+    /// enabling `challenge_checkpoint` to work against it. Signatures arrive
+    /// already typed (the SDK's provider responses deserialize them), so the
+    /// only thing left to parse here is the SS58 account strings.
     pub async fn submit_checkpoint(
         &self,
         bucket_id: BucketId,
         commitment: Commitment,
-        signatures: Vec<(String, Vec<u8>)>, // (provider SS58, signature bytes)
+        signatures: Vec<(String, sp_runtime::MultiSignature)>, // (provider SS58, signature)
     ) -> ClientResult<()> {
         let chain = self.base.chain()?;
         let signer = chain.signer()?;
 
-        // Parse provider accounts
-        let parsed_sigs: Vec<(sp_runtime::AccountId32, Vec<u8>)> = signatures
+        let parsed_sigs: Vec<(sp_runtime::AccountId32, sp_runtime::MultiSignature)> = signatures
             .into_iter()
             .map(|(account_str, sig)| {
                 let account = SubstrateClient::parse_account(&account_str)?;
@@ -506,7 +507,7 @@ impl AdminClient {
             })
             .collect::<ClientResult<Vec<_>>>()?;
 
-        let tx = extrinsics::checkpoint(bucket_id, commitment, parsed_sigs)?;
+        let tx = extrinsics::checkpoint(bucket_id, commitment, &parsed_sigs);
 
         let tx_progress = chain
             .api()

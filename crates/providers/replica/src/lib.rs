@@ -8,7 +8,8 @@ pub mod sync;
 
 pub use coordinator::{
     ReplicaSyncChainClient, ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig,
-    ReplicaSyncCoordinatorHandle, SyncCommand, SyncCoordinatorStatus, SyncDuty, SyncResult,
+    ReplicaSyncCoordinatorHandle, RootSigner, SignedSyncRoots, SyncCommand, SyncCoordinatorStatus,
+    SyncDuty, SyncResult,
 };
 pub use sync::ReplicaSync;
 

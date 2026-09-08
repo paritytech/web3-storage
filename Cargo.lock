@@ -7271,6 +7271,7 @@ dependencies = [
  "axum",
  "base64",
  "hex",
+ "parity-scale-codec",
  "provider-chain",
  "provider-storage",
  "reqwest",
