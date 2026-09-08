@@ -207,7 +207,7 @@ fs_client.delete_file(
 println!("✅ File deleted: /old_document.pdf");
 ```
 
-**Note:** Deletion updates the directory structure but doesn't immediately remove the data from storage (chunks remain until garbage collected).
+**Note:** Deleting a file updates the directory structure only — the chunks stay in storage and keep counting against the drive's quota. Space is physically reclaimed at Layer 0 granularity: pruning the bucket's history (`POST /delete` + admin confirmation + checkpoint — the SDK's `pruneAndCheckpoint` does all three) or deleting the whole drive. The provider erases the bytes once the on-chain record lands — for a prune, when the checkpoint passes the pruned range and the admin's deletion receipt is held; for a drive delete, when the bucket is gone from chain — at which point the quota headroom returns.
 
 ---
 

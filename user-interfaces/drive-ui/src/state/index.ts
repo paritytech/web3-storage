@@ -51,6 +51,7 @@ export type { DevAccount, AccountBalance } from "./wallet.state";
 
 export {
   useDrives,
+  useDriveUsage,
   useSelectedDrive,
   useCurrentPath,
   useEntries,

@@ -219,6 +219,10 @@ print(f"maxPayment (with 10% buffer): {max_payment}")
 
 ## Common Mistakes
 
+❌ **Expecting money back for deleting data**
+
+Deleting data (advancing `start_seq`) reclaims quota *headroom* under the agreement's unchanged `max_bytes` — never money. Payments are fixed by `price_per_byte × max_bytes × duration` regardless of how much is actually stored. Prorated refunds exist only when the whole bucket is torn down (`delete_drive` / `delete_s3_bucket`).
+
 ❌ **Forgetting maxPayment parameter**
 ```
 requestPrimaryAgreement(0, provider, 1073741824, 500)
