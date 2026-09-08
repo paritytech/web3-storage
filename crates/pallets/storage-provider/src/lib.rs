@@ -432,8 +432,8 @@ pub mod pallet {
     )]
     #[serde(bound(serialize = "", deserialize = ""), rename_all = "camelCase")]
     pub struct GenesisProvider<T: Config> {
-        /// Provider account; must be endowed with at least `stake` by the
-        /// balances genesis.
+        /// Provider account; must be endowed with at least `stake` plus the
+        /// existential deposit by the balances genesis.
         pub account: T::AccountId,
         /// Multiaddr for connecting to this provider, hex-encoded in JSON
         /// ("0x..."); must fit `T::MaxMultiaddrLength`.
@@ -442,7 +442,7 @@ pub mod pallet {
         /// Raw public key bytes (32, 33 or 64), hex-encoded in JSON.
         #[serde(with = "sp_core::bytes")]
         pub public_key: Vec<u8>,
-        /// Stake to reserve; must be at least `T::MinProviderStake`.
+        /// Stake to hold; must be at least `T::MinProviderStake`.
         pub stake: BalanceOf<T>,
         /// Provider settings, validated like `update_provider_settings`.
         pub settings: ProviderSettings<T>,
@@ -454,8 +454,8 @@ pub mod pallet {
     pub struct GenesisConfig<T: Config> {
         /// Buckets to create at genesis: (admin_account, min_providers).
         pub buckets: Vec<(T::AccountId, u32)>,
-        /// Providers to register at genesis. Their stake is reserved from
-        /// the balances-genesis endowment.
+        /// Providers to register at genesis. Their stake is held from the
+        /// balances-genesis endowment.
         pub providers: Vec<GenesisProvider<T>>,
     }
 
