@@ -590,12 +590,17 @@ mod benchmarks {
         let provider = create_provider::<T>(0);
         let bucket_id = setup_primary_agreement::<T>(&admin, &provider, 0);
 
+        // Worst case: a third-party payer after some elapsed blocks.
+        let payer = funded_account::<T>("payer", 0);
+        let elapsed_at = StorageProvider::<T>::current_anchor_block().saturating_add(10u32.into());
+        set_block_number::<T>(elapsed_at);
+
         let additional_duration: BlockNumberFor<T> = 50u32.into();
         let max_payment = funding::<T>() / 10u32.into();
 
         #[extrinsic_call]
         extend_agreement(
-            RawOrigin::Signed(admin),
+            RawOrigin::Signed(payer),
             bucket_id,
             provider,
             additional_duration,
@@ -1106,11 +1111,13 @@ mod benchmarks {
         // Open the replica agreement via the signed-terms helper.
         setup_replica_agreement::<T>(&admin, bucket_id, &replica_provider, 1);
 
+        // Worst case: a third-party payer.
+        let payer = funded_account::<T>("payer", 0);
         let top_up_amount = funding::<T>() / 50u32.into();
 
         #[extrinsic_call]
         top_up_replica_sync_balance(
-            RawOrigin::Signed(admin),
+            RawOrigin::Signed(payer),
             bucket_id,
             replica_provider,
             top_up_amount,
