@@ -283,6 +283,7 @@ mod benchmarks {
             provider,
             terms,
             sig,
+            storage_primitives::Visibility::Public,
         )
         .expect("create_s3_bucket succeeds in benchmark setup");
         let s3_bucket_id = BucketNameToId::<T>::get(&bounded_name).expect("bucket just created");
