@@ -431,7 +431,6 @@ mod tests {
     }
 
     #[test]
-    #[test]
     fn bucket_visibility_changed_maps_bucket_id() {
         use storage_subxt::api::runtime_types::storage_primitives::Visibility;
 
