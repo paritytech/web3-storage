@@ -85,6 +85,8 @@ export {
   fetchMembers,
   addMember,
   removeMember,
+  fetchVisibility,
+  setBucketVisibility,
   setEncryptionKey,
   clearEncryptionKey,
   getS3Client,

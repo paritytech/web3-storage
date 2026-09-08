@@ -3,6 +3,7 @@
 /** S3-style interface types (bucket/object storage). */
 
 import type { SignedTerms } from "@web3-storage/core";
+import type { Visibility } from "@web3-storage/layer0";
 
 import type { ProviderChoice } from "../provider-url.js";
 
@@ -41,6 +42,8 @@ export interface CreateBucketOptions {
   provider?: ProviderChoice;
   /** Pre-negotiated terms (skips /negotiate). Requires provider.address. */
   signedTerms?: SignedTerms;
+  /** Read visibility of the underlying Layer 0 bucket (default Private). */
+  visibility?: Visibility;
 }
 
 export interface ObjectMetadata {

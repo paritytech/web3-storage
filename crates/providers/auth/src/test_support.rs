@@ -5,7 +5,7 @@
 //! `verify` isn't defined twice.
 
 use crate::error::MembershipError;
-use crate::membership::{Invalidation, Member, MembershipInvalidations, MembershipResolver};
+use crate::membership::{BucketAccess, Invalidation, MembershipInvalidations, MembershipResolver};
 use sp_core::crypto::AccountId32;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -21,10 +21,14 @@ pub(crate) struct FlakyResolver {
 
 #[async_trait::async_trait]
 impl MembershipResolver for FlakyResolver {
-    async fn fetch_members(&self, _bucket_id: BucketId) -> Result<Vec<Member>, MembershipError> {
+    async fn fetch_access(&self, _bucket_id: BucketId) -> Result<BucketAccess, MembershipError> {
         let call = self.calls.fetch_add(1, Ordering::SeqCst) + 1;
         if call == 1 {
-            Ok(vec![(self.account.clone(), Role::Admin).into()])
+            Ok(BucketAccess::private(vec![(
+                self.account.clone(),
+                Role::Admin,
+            )
+                .into()]))
         } else {
             Err(MembershipError::Unavailable("chain down".to_string()))
         }
@@ -41,9 +45,13 @@ pub(crate) struct CountingResolver {
 
 #[async_trait::async_trait]
 impl MembershipResolver for CountingResolver {
-    async fn fetch_members(&self, _bucket_id: BucketId) -> Result<Vec<Member>, MembershipError> {
+    async fn fetch_access(&self, _bucket_id: BucketId) -> Result<BucketAccess, MembershipError> {
         self.calls.fetch_add(1, Ordering::SeqCst);
-        Ok(vec![(self.account.clone(), Role::Admin).into()])
+        Ok(BucketAccess::private(vec![(
+            self.account.clone(),
+            Role::Admin,
+        )
+            .into()]))
     }
 }
 
@@ -63,8 +71,8 @@ pub(crate) struct Gated<R> {
 
 #[async_trait::async_trait]
 impl<R: MembershipResolver> MembershipResolver for Gated<R> {
-    async fn fetch_members(&self, bucket_id: BucketId) -> Result<Vec<Member>, MembershipError> {
-        let result = self.inner.fetch_members(bucket_id).await;
+    async fn fetch_access(&self, bucket_id: BucketId) -> Result<BucketAccess, MembershipError> {
+        let result = self.inner.fetch_access(bucket_id).await;
         while !self.proceed.load(Ordering::SeqCst) {
             tokio::task::yield_now().await;
         }

@@ -5,9 +5,11 @@
 //! [`StorageBackendSpec`] names an implementation and its configuration, and
 //! builds it — that is what the provider node selects at startup.
 
-pub mod disk;
+pub mod rocksdb;
+pub mod types;
 
-pub use disk::{DiskNonceStore, DiskStorage};
+pub use rocksdb::{DiskNonceStore, DiskStorage};
+pub use types::{BucketState, DeletionReceipt, PrunedRange, StoredNode};
 
 use crate::error::Error;
 use crate::merkle::build_merkle_proof;
@@ -52,15 +54,6 @@ impl fmt::Display for StorageBackendSpec {
             Self::RocksDb { path } => write!(f, "RocksDB at {}", path.display()),
         }
     }
-}
-
-/// A stored node (chunk or internal node).
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct StoredNode {
-    /// The raw data
-    pub data: Vec<u8>,
-    /// Child hashes for internal nodes
-    pub children: Option<Vec<H256>>,
 }
 
 /// Bucket information returned by the storage backend.
@@ -112,67 +105,6 @@ pub struct PrunedRangeInfo {
     /// Whether an admin-signed deletion receipt covering this range is held
     /// (required before the range may be physically erased).
     pub has_receipt: bool,
-}
-
-/// serde adapter that stores a SCALE type as its raw encoding, so chain
-/// types without serde impls (`MultiSignature`) can live in bincode rows.
-mod scale_bytes {
-    pub fn serialize<T, S>(value: &T, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        T: codec::Encode,
-        S: serde::Serializer,
-    {
-        serializer.serialize_bytes(&value.encode())
-    }
-
-    pub fn deserialize<'de, T, D>(deserializer: D) -> Result<T, D::Error>
-    where
-        T: codec::Decode,
-        D: serde::Deserializer<'de>,
-    {
-        let bytes = <Vec<u8> as serde::Deserialize>::deserialize(deserializer)?;
-        T::decode(&mut bytes.as_slice()).map_err(serde::de::Error::custom)
-    }
-}
-
-#[cfg(test)]
-mod scale_bytes_tests {
-    use super::DeletionReceipt;
-    use sp_core::H256;
-
-    /// The adapter's serialize/deserialize halves must agree under bincode —
-    /// the codec the disk rows actually use.
-    #[test]
-    fn deletion_receipt_round_trips_through_bincode() {
-        let receipt = DeletionReceipt {
-            mmr_root: H256::repeat_byte(3),
-            new_start_seq: 7,
-            admin: sp_core::crypto::AccountId32::new([9u8; 32]),
-            signature: sp_runtime::MultiSignature::Sr25519(sp_core::sr25519::Signature::from(
-                [1u8; 64],
-            )),
-        };
-        let bytes = bincode::serialize(&receipt).unwrap();
-        let back: DeletionReceipt = bincode::deserialize(&bytes).unwrap();
-        assert_eq!(back, receipt);
-    }
-}
-
-/// An admin-signed deletion authorization: the durable evidence for the
-/// on-chain `Deleted` challenge defense. Kept after the bytes are erased —
-/// it is what makes the erasure permanently defensible.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct DeletionReceipt {
-    /// The post-prune MMR root the admin signed.
-    pub mmr_root: H256,
-    /// The start_seq the deletion advanced the bucket to.
-    pub new_start_seq: u64,
-    /// The admin account that signed the deletion authorization.
-    #[serde(with = "scale_bytes")]
-    pub admin: sp_core::crypto::AccountId32,
-    /// The admin's signature over the deletion `CommitmentPayload`.
-    #[serde(with = "scale_bytes")]
-    pub signature: sp_runtime::MultiSignature,
 }
 
 /// Result of physically erasing one pruned range.

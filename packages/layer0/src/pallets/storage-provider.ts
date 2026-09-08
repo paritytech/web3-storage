@@ -12,7 +12,7 @@ import { Enum } from "polkadot-api";
 
 import type { SignedTerms } from "@web3-storage/core";
 
-import { asHex, bytesEq, hexToBytes, type ParachainApi } from "../address.js";
+import { asHex, hexToBytes, type ParachainApi } from "../address.js";
 import { confirmDeletion, deleteData, getProviderNodeInfo } from "../provider-http.js";
 import type { ChainSigner } from "../signers.js";
 import { READ_OPTS, requireOneEvent, submitTx, submitTxFinalized, type SubmitOpts } from "../tx.js";
@@ -53,9 +53,12 @@ export async function updateProviderSettings(
 /**
  * Ensure a provider is registered and configured to accept primary
  * agreements. Idempotent: safe to call when an earlier script on the same
- * chain already registered the provider. Fails loudly when the on-chain
- * public key differs from the signer's — off-chain signatures would fail to
- * verify much later otherwise.
+ * chain already registered the provider — the registered `public_key` may
+ * legitimately differ from the signer's account key (a non-sr25519 scheme,
+ * or a distinct signing key), so no key equality is asserted. A key that
+ * doesn't match the node's is caught authoritatively by the node itself:
+ * `/negotiate` returns 503 `provider_key_mismatch` (#300 adds an explicit
+ * intended-key parameter to registration helpers).
  */
 export async function ensureProviderRegistered(
   api: ParachainApi,
@@ -74,13 +77,6 @@ export async function ensureProviderRegistered(
   if (!existing) {
     console.log("  Registering provider", provider.address);
     await registerProvider(api, provider, providerUrl, undefined, opts);
-  } else {
-    if (!bytesEq(existing.public_key, provider.publicKey)) {
-      throw new Error(
-        `Provider ${provider.address} is already registered with a different public_key. ` +
-          `Restart the chain, or run this script with a fresh provider seed.`,
-      );
-    }
   }
   // Always (re)apply settings so price/acceptance are correct for this run.
   await updateProviderSettings(
@@ -118,34 +114,51 @@ export async function ensureProviderRegistered(
   );
 }
 
-const MULTI_SIGNATURE_VARIANT: Record<number, string> = {
-  0: "Ed25519",
-  1: "Sr25519",
-  2: "ecdsa",
-  3: "eth",
+// SCALE variant ordering of sp_runtime::MultiSignature, with the inner
+// signature length per scheme.
+const MULTI_SIGNATURE_VARIANTS: Record<number, { name: string; sigLen: number }> = {
+  0: { name: "Ed25519", sigLen: 64 },
+  1: { name: "Sr25519", sigLen: 64 },
+  2: { name: "Ecdsa", sigLen: 65 },
+  3: { name: "Eth", sigLen: 65 },
 };
 
 /**
+ * Decode a provider-emitted signature — 0x-hex of a SCALE-encoded
+ * `MultiSignature`, the wire format of every provider-node signing endpoint
+ * (`/negotiate`, `/commit`, `/checkpoint-signature`) — into the PAPI Enum the
+ * extrinsics expect, preserving the scheme tag.
+ *
+ * The variant value is a fixed `[u8; N]` — PAPI v2 takes it as `0x`-hex
+ * (asHex), not a `Uint8Array`.
+ */
+export function decodeMultiSignature(sigHex: string) {
+  const sigBytes = hexToBytes(sigHex);
+  if (sigBytes.length < 1) {
+    throw new Error("signature too short to contain a MultiSignature variant byte");
+  }
+  const variant = MULTI_SIGNATURE_VARIANTS[sigBytes[0]];
+  if (!variant) {
+    throw new Error(`unknown MultiSignature variant byte: ${sigBytes[0]}`);
+  }
+  const inner = sigBytes.slice(1);
+  if (inner.length !== variant.sigLen) {
+    throw new Error(
+      `${variant.name} signature must be ${variant.sigLen} bytes, got ${inner.length}`,
+    );
+  }
+  return Enum(variant.name as never, asHex(inner));
+}
+
+/**
  * Shape a provider's SignedTerms into the `{ provider, terms, sig }` argument
- * the establish_* extrinsics (and create_drive / create_s3_bucket) expect. The
- * signature arrives as a SCALE-encoded MultiSignature hex; strip its variant
- * byte and re-wrap the raw bytes into the PAPI Enum.
+ * the establish_* extrinsics (and create_drive / create_s3_bucket) expect.
  */
 export function buildSignedTermsArgs(
   provider: ChainSigner | { address: string },
   signed: SignedTerms,
 ) {
-  const sigBytes = hexToBytes(signed.signature);
-  if (sigBytes.length < 1) {
-    throw new Error("signature too short to contain a MultiSignature variant byte");
-  }
-  const variantName = MULTI_SIGNATURE_VARIANT[sigBytes[0]];
-  if (!variantName) {
-    throw new Error(`unknown MultiSignature variant byte: ${sigBytes[0]}`);
-  }
-  // The Sr25519 variant value is a fixed [u8; 64] — PAPI v2 takes it as 0x-hex
-  // (asHex), the same convention the checkpoint/challenge wrappers use.
-  const sig = Enum(variantName as never, asHex(sigBytes.slice(1)));
+  const sig = decodeMultiSignature(signed.signature);
   const t = signed.terms;
   const terms = {
     owner: t.owner,
@@ -169,20 +182,31 @@ export function buildSignedTermsArgs(
 }
 
 /**
+ * Bucket read visibility. Wrappers that omit the choice default to
+ * `"Private"` — the design's fail-safe rule: an unset choice protects data,
+ * it does not expose it.
+ */
+export type Visibility = "Public" | "Private";
+
+/**
  * Redeem provider-signed terms via `establish_storage_agreement`: opens the
  * bucket and its primary agreement atomically. Replaces the old create_bucket
  * + request_agreement + accept_agreement dance (#105). `signed` comes from
  * {@link negotiateTerms} against the provider's /negotiate endpoint.
+ * `opts.visibility` sets the new bucket's read visibility (default Private).
  */
 export async function establishStorageAgreement(
   api: ParachainApi,
   client: ChainSigner,
   provider: ChainSigner | { address: string },
   signed: SignedTerms,
-  opts: SubmitOpts = {},
+  opts: SubmitOpts & { visibility?: Visibility } = {},
 ) {
   const result = await submitTx(
-    api.tx.StorageProvider.establish_storage_agreement(buildSignedTermsArgs(provider, signed)),
+    api.tx.StorageProvider.establish_storage_agreement({
+      ...buildSignedTermsArgs(provider, signed),
+      visibility: Enum(opts.visibility ?? "Private"),
+    }),
     client.signer,
     { label: "establish_storage_agreement", ...opts },
   );
@@ -291,7 +315,7 @@ export async function submitClientCheckpoint(
         start_seq: BigInt(ck.start_seq),
         leaf_count: BigInt(ck.leaf_count),
       },
-      signatures: [[provider.address, Enum("Sr25519", asHex(ck.provider_signature))]],
+      signatures: [[provider.address, decodeMultiSignature(ck.provider_signature)]],
     }),
     client.signer,
     { label: "checkpoint", ...opts },
@@ -367,7 +391,7 @@ export async function challengeOffchain(
         leaf_index: BigInt(upload.leafIndex),
         chunk_index: 0n,
       },
-      provider_signature: Enum("Sr25519", asHex(upload.providerSignature)),
+      provider_signature: decodeMultiSignature(upload.providerSignature),
     }),
     client.signer,
     { label: "challenge_offchain", ...opts },
@@ -612,5 +636,42 @@ export async function freezeBucket(
     result.events,
     api.event.StorageProvider.BucketFrozen,
     "BucketFrozen",
+  );
+}
+
+/** Read a bucket's visibility; throws when the bucket does not exist. */
+export async function getBucketVisibility(
+  api: ParachainApi,
+  bucketId: bigint,
+): Promise<Visibility> {
+  const bucket = await api.query.StorageProvider.Buckets.getValue(bucketId);
+  if (!bucket) throw new Error(`Bucket ${bucketId} not found`);
+  return bucket.visibility.type;
+}
+
+/**
+ * Set bucket read visibility via `set_bucket_visibility` (admin only).
+ * Flips `Public` ⇄ `Private` unconditionally in both directions; publicizing
+ * cannot recall data already disclosed.
+ */
+export async function setBucketVisibility(
+  api: ParachainApi,
+  client: ChainSigner,
+  bucketId: bigint,
+  visibility: Visibility,
+  opts: SubmitOpts = {},
+) {
+  const result = await submitTx(
+    api.tx.StorageProvider.set_bucket_visibility({
+      bucket_id: bucketId,
+      visibility: Enum(visibility),
+    }),
+    client.signer,
+    { label: "set_bucket_visibility", ...opts },
+  );
+  return requireOneEvent(
+    result.events,
+    api.event.StorageProvider.BucketVisibilityChanged,
+    "BucketVisibilityChanged",
   );
 }

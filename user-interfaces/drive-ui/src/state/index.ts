@@ -79,6 +79,8 @@ export {
   fetchMembers,
   addMember,
   removeMember,
+  fetchVisibility,
+  setBucketVisibility,
   dismissCreation,
   getDrives,
   getSelectedDrive,
