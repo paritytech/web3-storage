@@ -307,6 +307,10 @@ impl ReplicaSyncChainClient for MockReplicaClient {
         Ok(vec![])
     }
 
+    async fn fetch_replica_endpoints(&self, _bucket_id: BucketId) -> Result<Vec<String>, Error> {
+        Ok(vec![])
+    }
+
     async fn submit_sync_confirmation(
         &self,
         _bucket_id: BucketId,
@@ -368,7 +372,7 @@ async fn replica_agreement_event_triggers_duty_pass() {
 async fn bucket_checkpointed_event_drives_duty_through_sync_attempt() {
     // A client checkpoint on a bucket we hold locally must trigger a duty pass, and
     // the resulting duty (new root, no reachable primaries) must surface as
-    // PrimaryUnavailable through the callback — all without any network.
+    // SourcesUnavailable through the callback — all without any network.
     let (state, _dir) = test_state();
     state
         .storage
@@ -429,7 +433,7 @@ async fn bucket_checkpointed_event_drives_duty_through_sync_attempt() {
     assert!(
         matches!(
             results.lock().unwrap()[0],
-            storage_provider_node::SyncResult::PrimaryUnavailable { bucket_id: 7, .. }
+            storage_provider_node::SyncResult::SourcesUnavailable { bucket_id: 7, .. }
         ),
         "unexpected result: {:?}",
         results.lock().unwrap()[0]

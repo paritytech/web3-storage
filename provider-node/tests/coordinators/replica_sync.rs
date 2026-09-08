@@ -23,6 +23,7 @@ struct MockReplicaSyncChainClient {
     confirmations: Mutex<Vec<BucketId>>,
     attestations: Mutex<Vec<SignedSyncRoots>>,
     confirm_result: Mutex<Result<(u8, u128), Error>>,
+    replica_endpoints: Mutex<Result<Vec<String>, Error>>,
 }
 
 impl MockReplicaSyncChainClient {
@@ -35,6 +36,7 @@ impl MockReplicaSyncChainClient {
             confirmations: Mutex::new(Vec::new()),
             attestations: Mutex::new(Vec::new()),
             confirm_result: Mutex::new(Ok((0, 1000))),
+            replica_endpoints: Mutex::new(Ok(Vec::new())),
         }
     }
 
@@ -50,6 +52,13 @@ impl MockReplicaSyncChainClient {
         map.insert(bucket_id, snapshot);
         Self {
             snapshots: Mutex::new(map),
+            ..self
+        }
+    }
+
+    fn with_replica_endpoints(self, result: Result<Vec<String>, Error>) -> Self {
+        Self {
+            replica_endpoints: Mutex::new(result),
             ..self
         }
     }
@@ -92,6 +101,15 @@ impl ReplicaSyncChainClient for MockReplicaSyncChainClient {
     async fn fetch_primary_endpoints(&self, bucket_id: BucketId) -> Result<Vec<String>, Error> {
         let endpoints = self.endpoints.lock().unwrap();
         Ok(endpoints.get(&bucket_id).cloned().unwrap_or_default())
+    }
+
+    async fn fetch_replica_endpoints(&self, _bucket_id: BucketId) -> Result<Vec<String>, Error> {
+        self.replica_endpoints
+            .lock()
+            .unwrap()
+            .as_ref()
+            .cloned()
+            .map_err(|e| Error::Internal(e.to_string()))
     }
 
     async fn submit_sync_confirmation(
@@ -139,7 +157,7 @@ async fn confirm_on_chain_attests_roots_with_signing_key() {
         bucket_id: 42,
         target_mmr_root: target,
         target_leaf_count: 10,
-        primary_endpoints: vec![],
+        source_endpoints: vec![],
         sync_balance: 1_000,
         sync_price: 100,
         min_sync_interval: 0,
@@ -178,7 +196,7 @@ async fn confirm_on_chain_surfaces_submission_errors() {
         bucket_id: 9,
         target_mmr_root: H256::repeat_byte(0xEF),
         target_leaf_count: 1,
-        primary_endpoints: vec![],
+        source_endpoints: vec![],
         sync_balance: 1_000,
         sync_price: 100,
         min_sync_interval: 0,
@@ -210,7 +228,7 @@ async fn confirm_on_chain_refuses_without_signing_key() {
         bucket_id: 7,
         target_mmr_root: H256::repeat_byte(0xCD),
         target_leaf_count: 1,
-        primary_endpoints: vec![],
+        source_endpoints: vec![],
         sync_balance: 1_000,
         sync_price: 100,
         min_sync_interval: 0,
@@ -243,7 +261,7 @@ async fn test_insufficient_balance() {
         bucket_id: 1,
         target_mmr_root: H256::repeat_byte(0xAA),
         target_leaf_count: 10,
-        primary_endpoints: vec![],
+        source_endpoints: vec![],
         sync_balance: 50,
         sync_price: 100,
         min_sync_interval: 0,
@@ -274,7 +292,9 @@ async fn test_already_synced() {
     let deps = ProviderDeps {
         storage,
         nonce_store,
-        auth: Arc::new(Authenticator::new(StaticMembershipResolver(vec![]))),
+        auth: Arc::new(Authenticator::new(StaticMembershipResolver::private(
+            vec![],
+        ))),
     };
     let state = Arc::new(ProviderState::with_provider_id(deps, "test".to_string()));
 
@@ -282,7 +302,7 @@ async fn test_already_synced() {
         bucket_id: 1,
         target_mmr_root: mmr_root,
         target_leaf_count: 1,
-        primary_endpoints: vec![],
+        source_endpoints: vec![],
         sync_balance: 1000,
         sync_price: 100,
         min_sync_interval: 0,
@@ -303,7 +323,7 @@ async fn test_no_data_to_sync() {
         bucket_id: 1,
         target_mmr_root: H256::zero(),
         target_leaf_count: 0,
-        primary_endpoints: vec![],
+        source_endpoints: vec![],
         sync_balance: 1000,
         sync_price: 100,
         min_sync_interval: 0,
@@ -325,7 +345,7 @@ async fn test_primary_unavailable() {
         bucket_id: 1,
         target_mmr_root: H256::repeat_byte(0xAA),
         target_leaf_count: 10,
-        primary_endpoints: vec!["http://127.0.0.1:19999".to_string()],
+        source_endpoints: vec!["http://127.0.0.1:19999".to_string()],
         sync_balance: 1000,
         sync_price: 100,
         min_sync_interval: 0,
@@ -338,7 +358,7 @@ async fn test_primary_unavailable() {
     let coordinator = ReplicaSyncCoordinator::new(config, state, Box::new(mock));
 
     let result = coordinator.sync_and_confirm(&duty).await;
-    assert!(matches!(result, SyncResult::PrimaryUnavailable { .. }));
+    assert!(matches!(result, SyncResult::SourcesUnavailable { .. }));
 }
 
 #[tokio::test(start_paused = true)]
@@ -495,7 +515,9 @@ async fn test_duties_filter_already_synced() {
     let deps = ProviderDeps {
         storage,
         nonce_store,
-        auth: Arc::new(Authenticator::new(StaticMembershipResolver(vec![]))),
+        auth: Arc::new(Authenticator::new(StaticMembershipResolver::private(
+            vec![],
+        ))),
     };
     let state = Arc::new(ProviderState::with_provider_id(
         deps,
@@ -560,9 +582,84 @@ async fn test_duties_happy_path_returns_duty() {
     assert_eq!(duty.bucket_id, 42);
     assert_eq!(duty.target_mmr_root, target_root);
     assert_eq!(duty.target_leaf_count, 10);
-    assert_eq!(duty.primary_endpoints, vec!["http://primary:3333"]);
+    assert_eq!(duty.source_endpoints, vec!["http://primary:3333"]);
     assert_eq!(duty.sync_balance, 1000);
     assert_eq!(duty.sync_price, 100);
+}
+
+#[tokio::test]
+async fn test_duty_sources_append_replicas_after_primaries_deduped() {
+    // Primaries come first (most current); the bucket's other replicas follow
+    // as the fallback for private buckets, and an endpoint that is both never
+    // appears twice.
+    let agreement = ReplicaAgreementInfo {
+        bucket_id: 42,
+        sync_balance: 1000,
+        sync_price: 100,
+        min_sync_interval: 0,
+        last_sync: None,
+    };
+    let mock = MockReplicaSyncChainClient::new()
+        .with_agreements(vec![agreement])
+        .with_snapshot(
+            42,
+            BucketSnapshot {
+                mmr_root: H256::repeat_byte(0xCC),
+                leaf_count: 10,
+            },
+        )
+        .with_endpoints(42, vec!["http://primary:3333".to_string()])
+        .with_replica_endpoints(Ok(vec![
+            "http://primary:3333".to_string(),
+            "http://replica:3334".to_string(),
+        ]));
+
+    let (state, _dir) = test_state();
+    let coordinator = ReplicaSyncCoordinator::new(
+        ReplicaSyncCoordinatorConfig::default(),
+        state,
+        Box::new(mock),
+    );
+
+    let duties = coordinator.get_active_replica_duties().await.unwrap();
+    assert_eq!(
+        duties[0].source_endpoints,
+        vec!["http://primary:3333", "http://replica:3334"]
+    );
+}
+
+#[tokio::test]
+async fn test_duty_sources_degrade_to_primaries_when_replica_listing_fails() {
+    // Listing replicas is best-effort: a failure only shrinks the fallback
+    // set, it must not sink the whole duty.
+    let agreement = ReplicaAgreementInfo {
+        bucket_id: 42,
+        sync_balance: 1000,
+        sync_price: 100,
+        min_sync_interval: 0,
+        last_sync: None,
+    };
+    let mock = MockReplicaSyncChainClient::new()
+        .with_agreements(vec![agreement])
+        .with_snapshot(
+            42,
+            BucketSnapshot {
+                mmr_root: H256::repeat_byte(0xCC),
+                leaf_count: 10,
+            },
+        )
+        .with_endpoints(42, vec!["http://primary:3333".to_string()])
+        .with_replica_endpoints(Err(Error::Internal("chain down".to_string())));
+
+    let (state, _dir) = test_state();
+    let coordinator = ReplicaSyncCoordinator::new(
+        ReplicaSyncCoordinatorConfig::default(),
+        state,
+        Box::new(mock),
+    );
+
+    let duties = coordinator.get_active_replica_duties().await.unwrap();
+    assert_eq!(duties[0].source_endpoints, vec!["http://primary:3333"]);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
