@@ -12,7 +12,7 @@ pub mod mmr;
 pub mod nonce;
 
 pub use backend::{
-    build_padded_merkle_tree, BucketInfo, BucketStats, BucketSummary, DeletionReceipt,
+    build_padded_merkle_tree, BucketInfo, BucketState, BucketStats, BucketSummary, DeletionReceipt,
     DiskNonceStore, DiskStorage, OpenedBackend, StorageBackend, StorageBackendSpec, StoredNode,
 };
 pub use error::Error;

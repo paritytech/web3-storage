@@ -5,12 +5,13 @@
 //! One entry per stored node: how many committed leaves (live or stashed,
 //! across all buckets) reach it, plus which bucket's `used_bytes` was
 //! charged when the node was first stored — so erasure credits the exact
-//! payer. Encoded with bincode like every other value in this backend
+//! payer. SCALE-encoded like every other value in this backend
 //! (three fixed-width LE u64s, 24 bytes).
 
 use crate::error::Error;
+use codec::{Decode, DecodeAll, Encode};
 
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Encode, Decode)]
 struct RefcountEntry {
     count: u64,
     charged_bucket: u64,
@@ -19,17 +20,17 @@ struct RefcountEntry {
 
 /// Encode a CF_REFCOUNTS value.
 pub(super) fn encode_refcount(count: u64, charged_bucket: u64, size: u64) -> Vec<u8> {
-    bincode::serialize(&RefcountEntry {
+    RefcountEntry {
         count,
         charged_bucket,
         size,
-    })
-    .expect("serializing three u64s cannot fail")
+    }
+    .encode()
 }
 
 /// Decode a CF_REFCOUNTS value into `(count, charged_bucket, size)`.
 pub(super) fn decode_refcount(value: &[u8]) -> Result<(u64, u64, u64), Error> {
-    let entry: RefcountEntry = bincode::deserialize(value)
+    let entry = RefcountEntry::decode_all(&mut &value[..])
         .map_err(|e| Error::Storage(format!("corrupt refcount entry: {e}")))?;
     Ok((entry.count, entry.charged_bucket, entry.size))
 }

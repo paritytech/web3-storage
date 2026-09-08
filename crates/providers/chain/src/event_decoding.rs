@@ -73,6 +73,14 @@ impl From<provider_events::BucketDeleted> for BlockEvent {
     }
 }
 
+impl From<provider_events::BucketVisibilityChanged> for BlockEvent {
+    fn from(ev: provider_events::BucketVisibilityChanged) -> Self {
+        BlockEvent::BucketMembershipChanged {
+            bucket_id: ev.bucket_id,
+        }
+    }
+}
+
 /// Every agreement-lifecycle event carries the same two fields and means
 /// the same thing to consumers — "reconcile this bucket" — so they all
 /// collapse into [`BlockEvent::AgreementChanged`].
@@ -133,6 +141,12 @@ pub fn decode_block_events(
                 })
                 .or_else(|| {
                     decode_membership::<provider_events::BucketDeleted>(&event, block_number)
+                })
+                .or_else(|| {
+                    decode_membership::<provider_events::BucketVisibilityChanged>(
+                        &event,
+                        block_number,
+                    )
                 })
                 .or_else(|| {
                     decode::<provider_events::AgreementAccepted>(&event).map(BlockEvent::from)
@@ -413,6 +427,21 @@ mod tests {
         assert!(matches!(
             BlockEvent::from(ev),
             BlockEvent::BucketMembershipChanged { bucket_id: 7 }
+        ));
+    }
+
+    #[test]
+    #[test]
+    fn bucket_visibility_changed_maps_bucket_id() {
+        use storage_subxt::api::runtime_types::storage_primitives::Visibility;
+
+        let ev = provider_events::BucketVisibilityChanged {
+            bucket_id: 6,
+            visibility: Visibility::Private,
+        };
+        assert!(matches!(
+            BlockEvent::from(ev),
+            BlockEvent::BucketMembershipChanged { bucket_id: 6 }
         ));
     }
 
