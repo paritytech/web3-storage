@@ -7,7 +7,7 @@
 import { ss58Address, ss58Decode } from '@polkadot-labs/hdkd-helpers'
 import { multiaddrToUri } from "@multiformats/multiaddr-to-uri";
 import { parachain } from "@polkadot-api/descriptors";
-import { Enum, type TypedApi } from "polkadot-api";
+import { type TypedApi } from "polkadot-api";
 import { fromHex, toHex } from "@polkadot-api/utils";
 
 /** Typed parachain API, shared by every UI that talks to the chain. */
@@ -217,50 +217,6 @@ export async function httpFetch(
     }
   }
   throw lastError instanceof Error ? lastError : new Error("HTTP request failed");
-}
-
-// SCALE variant ordering of sp_runtime::MultiSignature.
-const MULTI_SIGNATURE_VARIANT: Record<number, string> = {
-  0: "Ed25519",
-  1: "Sr25519",
-  2: "Ecdsa",
-  3: "Eth",
-};
-
-/**
- * Build the `{ provider, terms, sig }` args shared by every signed-terms
- * extrinsic.
- *
- * The inner of `MultiSignature::Sr25519` is `[u8; 64]`, which PAPI v2 encodes
- * as `SizedBytes(64) = Codec<string>` — so the signature payload is passed as a
- * `0x`-prefixed hex string (via `toHex`), not a `Uint8Array`.
- */
-export function buildSignedTermsArgs(providerAccount: string, signed: SignedTerms) {
-  const sigBytes = fromHex(signed.signature);
-  if (sigBytes.length < 1) {
-    throw new Error("signature too short to contain a MultiSignature variant byte");
-  }
-  const variantByte = sigBytes[0]!;
-  const variantName = MULTI_SIGNATURE_VARIANT[variantByte];
-  if (!variantName) {
-    throw new Error(`unknown MultiSignature variant byte: ${variantByte}`);
-  }
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const sig = Enum(variantName as any, toHex(sigBytes.slice(1)));
-
-  const t = signed.terms;
-  const terms = {
-    owner: t.owner,
-    max_bytes: BigInt(t.max_bytes),
-    duration: t.duration,
-    price_per_byte: BigInt(t.price_per_byte),
-    valid_until: t.valid_until,
-    nonce: BigInt(t.nonce),
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    replica_params: (t.replica_params ?? undefined) as any,
-    bucket_id: t.bucket_id ? BigInt(t.bucket_id) : undefined,
-  };
-  return { provider: providerAccount, terms, sig };
 }
 
 /**
