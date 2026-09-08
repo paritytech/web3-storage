@@ -1036,7 +1036,13 @@ impl<T: Config> Pallet<T> {
     ///
     /// Callable once `T::DeregisterAnnouncementPeriod` has elapsed since
     /// `deregister_provider`. Unreserves the remaining stake and removes the
-    /// provider record. Still requires `committed_bytes == 0`.
+    /// provider record. Still requires `committed_bytes == 0`, and also
+    /// `PendingChallenges == 0` (`ProviderHasPendingChallenges`): the stake
+    /// stays slashable until every open challenge matures, so a provider
+    /// cannot exit and unreserve while still slashable. The
+    /// `DeregisterAnnouncementPeriod > ChallengeTimeout` invariant guarantees
+    /// any challenge created up to the announcement block resolves before the
+    /// wait window elapses, so this only blocks genuinely-live challenges.
     #[pallet::weight(...)]
     pub fn complete_deregister(origin: OriginFor<T>) -> DispatchResult;
 
