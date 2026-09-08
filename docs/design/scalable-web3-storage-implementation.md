@@ -1423,6 +1423,11 @@ impl<T: Config> Pallet<T> {
     /// 
     /// Note: For primary agreements, admin is the owner (created via establish_storage_agreement).
     /// Admin has no special privileges over replica agreements.
+    ///
+    /// Blocked while a challenge against `(bucket, provider)` is unresolved
+    /// (`AgreementHasPendingChallenge`, via `PendingChallengesByBucket`): an
+    /// agreement cannot be settled out from under a live slashable challenge.
+    /// The same guard applies to `claim_expired_agreement` below.
     #[pallet::weight(...)]
     pub fn end_agreement(
         origin: OriginFor<T>,
@@ -1434,6 +1439,9 @@ impl<T: Config> Pallet<T> {
     /// Claim payment for expired agreement (provider only).
     /// Can only be called after agreement expired + T::SettlementTimeout.
     /// Client forfeited their right to burn by not acting in time.
+    /// Blocked while a challenge against `(bucket, provider)` is unresolved
+    /// (`AgreementHasPendingChallenge`): the provider must not claim and
+    /// exit while still slashable.
     #[pallet::weight(...)]
     pub fn claim_expired_agreement(
         origin: OriginFor<T>,
