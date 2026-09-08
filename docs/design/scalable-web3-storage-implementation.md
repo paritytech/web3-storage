@@ -597,6 +597,48 @@ pub struct Challenge<T: Config> {
     pub authorized: bool,
 }
 
+/// Number of unresolved challenges currently outstanding against a
+/// provider, summed across every bucket. Incremented in `create_challenge`
+/// and decremented exactly once per resolution (defended/invalid-response
+/// in `respond_to_challenge`, or timeout in the `on_initialize` sweep).
+/// Gates `complete_deregister`: a provider cannot exit while still
+/// slashable for a pending challenge.
+#[pallet::storage]
+pub type PendingChallenges<T: Config> =
+    StorageMap<_, Blake2_128Concat, T::AccountId, u32, ValueQuery>;
+
+/// Number of unresolved challenges outstanding against a specific
+/// `(bucket, provider)` pair. Maintained in lockstep with
+/// `PendingChallenges` and gates that bucket's agreement teardown
+/// (`end_agreement`, `claim_expired_agreement`, `cleanup_bucket_internal`).
+#[pallet::storage]
+pub type PendingChallengesByBucket<T: Config> = StorageDoubleMap<
+    _,
+    Blake2_128Concat, BucketId,
+    Blake2_128Concat, T::AccountId,
+    u32,
+    ValueQuery,
+>;
+
+/// Per-challenger aggregates so the SDK doesn't have to scan historical
+/// events. Updated by `create_challenge`, the defended path of
+/// `respond_to_challenge`, and `slash_provider_for_failed_challenge`.
+#[pallet::storage]
+pub type ChallengerStats<T: Config> =
+    StorageMap<_, Blake2_128Concat, T::AccountId, ChallengerStatRecord, ValueQuery>;
+
+/// Defined in `storage_primitives`.
+pub struct ChallengerStatRecord {
+    /// Total challenges the challenger has ever opened.
+    pub total_challenges: u32,
+    /// Challenges where the provider was slashed (invalid response or
+    /// timeout). The challenger is only made whole (deposit refunded), no
+    /// reward — the slashed stake goes entirely to the Treasury.
+    pub successful_challenges: u32,
+    /// Challenges where the provider successfully defended.
+    pub failed_challenges: u32,
+}
+
 /// Reverse index: account → bucket IDs they are a member of.
 /// Bounded by `T::MaxBucketsPerMember` to keep iteration costs predictable.
 #[pallet::storage]
