@@ -18,7 +18,7 @@ import { SectionUnavailable } from '@/components/SectionUnavailable'
 import { useSnapshot } from '@/state/explorer.state'
 import { useIsMine } from '@/state/wallet.state'
 import { bucketQuotas, type BucketRow } from '@/lib/explorer-client'
-import { formatAddress, formatBytes } from '@/utils/format'
+import { formatAddress, formatBytes } from '@web3-storage/format'
 import { cn } from '@/utils/cn'
 
 export function Buckets() {

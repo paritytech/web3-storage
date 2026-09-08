@@ -34,9 +34,10 @@ The UIs are members of the repo-root **pnpm** workspace (`/pnpm-workspace.yaml`,
 
 The harness is shared across the UIs (drive-ui, provider, and explorer have e2e suites today). Layout:
 
-- **Vitest** for pure-function unit tests (drive-ui's `src/lib/__tests__/multiaddr.test.ts`, provider's `src/lib/chain-client.test.ts` + `src/utils/format.test.ts`, explorer's `src/lib/explorer-client.test.ts` + `src/utils/format.test.ts`).
+- **Vitest** for pure-function unit tests (drive-ui's `src/lib/__tests__/multiaddr.test.ts`, provider's `src/state/challengeKey.test.ts`, explorer's `src/lib/explorer-client.test.ts`, and the shared formatters' suite in `shared/format/src/index.test.ts`).
 - **Playwright** for E2E smoke + feature tests against a real local chain + provider. Each UI has its own `playwright.config.ts` and `e2e/` directory.
 - Shared helpers in `shared/test-helpers/` (`makeLocalPageFixture`, `waitForConnection`, `waitForMinBlock`, `probeProviderHealth`).
+- Shared display formatters in `shared/format/` (`@web3-storage/format`) — the single home for token/byte/address/time formatting; apps must import from it instead of hand-rolling copies.
 
 ### Running
 
@@ -55,7 +56,7 @@ just test-ui
 
 ### Adding a new test
 
-1. **Unit (drive-ui, provider, or explorer):** add `src/**/*.test.{ts,tsx}` next to the code. Uses Vitest config in each package.
+1. **Unit (drive-ui, provider, explorer, or shared/format):** add `src/**/*.test.{ts,tsx}` next to the code. Uses Vitest config in each package.
 2. **E2E (any UI):** add `e2e/integration/<feature>.spec.ts`. Use the local fixture: `import { test, expect } from "../fixtures";`. Reach for `localPage` to get a hydrated, connected page.
 
 ### Test-id naming convention

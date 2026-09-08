@@ -27,7 +27,7 @@ import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { Spinner } from '@/components/ui/Spinner'
 import { Badge } from '@/components/ui/Badge'
-import { bytesFromUnit, formatAddress, formatBytes, formatTokens, type ByteUnit } from '@/utils/format'
+import { bytesFromUnit, formatAddress, formatAmount, formatBytesBinary, type ByteUnit } from '@web3-storage/format'
 
 interface Props {
   account: InjectedPolkadotAccount
@@ -288,7 +288,7 @@ function ProviderList({
                 </code>
                 {eligible ? (
                   <Badge variant="secondary">
-                    {p.maxCapacity === 0n ? 'unmetered' : formatBytes(p.availableCapacity)} free
+                    {p.maxCapacity === 0n ? 'unmetered' : formatBytesBinary(p.availableCapacity)} free
                   </Badge>
                 ) : (
                   <Badge variant="warning">{reasons[0]}</Badge>
@@ -296,10 +296,10 @@ function ProviderList({
               </div>
               {inputsValid && (
                 <div className="text-xs text-gray-500">
-                  ~{formatTokens(value)} tokens
+                  ~{formatAmount(value)} tokens
                   <span className="text-gray-600">
                     {' '}
-                    (agreement {formatTokens(payment)}, rest a refundable buffer)
+                    (agreement {formatAmount(payment)}, rest a refundable buffer)
                   </span>
                 </div>
               )}

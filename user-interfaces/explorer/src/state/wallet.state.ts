@@ -62,8 +62,8 @@ export const [useIsMine] = bind(
 
 /**
  * Update the SS58 prefix from the runtime and re-derive dev addresses so they
- * compare and display under the chain's encoding. Called (via dynamic import)
- * from configureFromChain after the chain connects.
+ * compare and display under the chain's encoding. Called from chain.state
+ * after the chain connects.
  */
 export async function updateSs58Prefix(prefix: number): Promise<void> {
   if (prefix === getSs58Prefix()) return

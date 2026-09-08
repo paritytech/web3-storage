@@ -23,7 +23,7 @@ import {
   formatBytes,
   formatDuration,
   formatTokens,
-} from '@/utils/format'
+} from '@web3-storage/format'
 import { cn } from '@/utils/cn'
 
 export function Providers() {

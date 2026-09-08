@@ -19,7 +19,7 @@ import { useAnchorBlock } from '@/state/chain.state'
 import { useSnapshot } from '@/state/explorer.state'
 import { useIsMine } from '@/state/wallet.state'
 import { agreementStatus, type AgreementStatus } from '@/lib/explorer-client'
-import { formatAddress, formatBytes, formatTokens } from '@/utils/format'
+import { formatAddress, formatBytes, formatTokens } from '@web3-storage/format'
 import { cn } from '@/utils/cn'
 
 const statusVariant: Record<AgreementStatus, 'success' | 'secondary'> = {

@@ -20,7 +20,7 @@ import { AddressCell } from '@/pages/Agreements'
 import { useAnchorBlock } from '@/state/chain.state'
 import { useSnapshot } from '@/state/explorer.state'
 import { useIsMine } from '@/state/wallet.state'
-import { formatDuration, formatTokens } from '@/utils/format'
+import { formatDuration, formatTokens } from '@web3-storage/format'
 import { cn } from '@/utils/cn'
 
 export function Challenges() {

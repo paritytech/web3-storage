@@ -5,7 +5,7 @@ import { StatTile } from '@/components/StatTile'
 import { useAnchorBlock } from '@/state/chain.state'
 import { useSnapshot } from '@/state/explorer.state'
 import { summarize } from '@/lib/explorer-client'
-import { formatBytes, formatTokens } from '@/utils/format'
+import { formatBytes, formatTokens } from '@web3-storage/format'
 
 export function Summary() {
   const snapshot = useSnapshot()

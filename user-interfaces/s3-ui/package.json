@@ -19,6 +19,7 @@
     "@radix-ui/react-slot": "^1.3.1",
     "@radix-ui/react-toast": "^1.2.21",
     "@react-rxjs/core": "^0.10.7",
+    "@web3-storage/format": "workspace:*",
     "@web3-storage/network-config": "workspace:*",
     "@web3-storage/network-picker": "workspace:*",
     "@web3-storage/sdk": "workspace:*",
