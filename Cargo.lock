@@ -7274,6 +7274,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sp-core",
+ "sp-runtime",
  "storage-primitives",
  "tempfile",
  "thiserror 2.0.18",

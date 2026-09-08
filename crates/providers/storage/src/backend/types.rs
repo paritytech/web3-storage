@@ -20,9 +20,38 @@
 
 use codec::{Decode, Encode};
 use sp_core::H256;
+use std::collections::BTreeMap;
 use storage_primitives::MmrLeaf;
 
-/// Per-bucket state a backend persists: the bucket's MMR and its quota usage.
+/// One pruned-but-not-yet-erased leaf range: the retention stash keeping
+/// challenges over the range provable until erasure is permitted.
+#[derive(Debug, Clone, PartialEq, Encode, Decode)]
+pub struct PrunedRange {
+    /// Global sequence number of `leaves[0]`.
+    pub first_seq: u64,
+    /// The removed leaves, contiguous from `first_seq`.
+    pub leaves: Vec<MmrLeaf>,
+    /// The start_seq this prune advanced the bucket to.
+    pub new_start_seq: u64,
+}
+
+/// An admin-signed deletion authorization: the durable evidence for the
+/// on-chain `Deleted` challenge defense. Kept after the bytes are erased —
+/// it is what makes the erasure permanently defensible.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub struct DeletionReceipt {
+    /// The post-prune MMR root the admin signed.
+    pub mmr_root: H256,
+    /// The start_seq the deletion advanced the bucket to.
+    pub new_start_seq: u64,
+    /// The admin account that signed the deletion authorization.
+    pub admin: sp_core::crypto::AccountId32,
+    /// The admin's signature over the deletion `CommitmentPayload`.
+    pub signature: sp_runtime::MultiSignature,
+}
+
+/// Per-bucket state a backend persists: the bucket's MMR, its quota usage,
+/// and its deletion lifecycle (stash, receipts, condemnation).
 #[derive(Debug, Clone, PartialEq, Encode, Decode)]
 pub struct BucketState {
     /// Root of the MMR over `leaves`.
@@ -35,6 +64,15 @@ pub struct BucketState {
     pub used_bytes: u64,
     /// Quota agreed on-chain for this bucket.
     pub max_bytes: u64,
+    /// Pruned-but-not-yet-erased leaf ranges (the pending-erasure queue).
+    pub pruned: Vec<PrunedRange>,
+    /// Admin-signed deletion receipts keyed by `new_start_seq` (one per
+    /// prune point), kept even after their ranges are erased — permanent
+    /// evidence for the on-chain `Deleted` defense.
+    pub deletion_receipts: BTreeMap<u64, DeletionReceipt>,
+    /// Set when the bucket was deleted on-chain (or the agreement ended).
+    /// The bucket row is removed once `leaves` and `pruned` are both empty.
+    pub condemned: bool,
 }
 
 impl BucketState {
@@ -46,6 +84,9 @@ impl BucketState {
             leaves: Vec::new(),
             used_bytes: 0,
             max_bytes,
+            pruned: Vec::new(),
+            deletion_receipts: BTreeMap::new(),
+            condemned: false,
         }
     }
 
@@ -103,6 +144,9 @@ mod tests {
                     }],
                     used_bytes: 999,
                     max_bytes: 1_000_000,
+                    pruned: Vec::new(),
+                    deletion_receipts: BTreeMap::new(),
+                    condemned: false,
                 },
                 concat!(
                     // mmr_root: H256 (0xab * 32)
@@ -119,6 +163,12 @@ mod tests {
                     "e703000000000000",
                     // max_bytes: u64 = 1_000_000
                     "40420f0000000000",
+                    // pruned: Vec<PrunedRange>, compact length 0
+                    "00",
+                    // deletion_receipts: BTreeMap, compact length 0
+                    "00",
+                    // condemned: bool = false
+                    "00",
                 ),
             );
         }
