@@ -26,6 +26,10 @@ impl<T: Config> Pallet<T> {
         // Verify caller is an admin of the bucket
         Self::ensure_admin(owner, &bucket)?;
 
+        // A frozen bucket is append-only forever by design; tearing it down
+        // would delete every leaf at once, so the whole call is refused.
+        ensure!(bucket.frozen_start_seq.is_none(), Error::<T>::BucketFrozen);
+
         let mut total_refunded: BalanceOf<T> = Zero::zero();
 
         // End all agreements for this bucket (pay providers fairly)

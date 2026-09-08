@@ -19399,13 +19399,15 @@ pub mod api {
             )]
             #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-            #[doc = "S3 bucket deleted."]
+            #[doc = "S3 bucket deleted, along with its Layer 0 bucket and agreements."]
             pub struct S3BucketDeleted {
                 pub s3_bucket_id: s3_bucket_deleted::S3BucketId,
+                pub refunded: s3_bucket_deleted::Refunded,
             }
             pub mod s3_bucket_deleted {
                 use super::runtime_types;
                 pub type S3BucketId = ::core::primitive::u64;
+                pub type Refunded = ::core::primitive::u128;
             }
             impl S3BucketDeleted {
                 const PALLET_NAME: &'static str = "S3Registry";
@@ -25683,9 +25685,10 @@ pub mod api {
                         owner: ::subxt::utils::AccountId32,
                     },
                     #[codec(index = 1)]
-                    #[doc = "S3 bucket deleted."]
+                    #[doc = "S3 bucket deleted, along with its Layer 0 bucket and agreements."]
                     S3BucketDeleted {
                         s3_bucket_id: ::core::primitive::u64,
+                        refunded: ::core::primitive::u128,
                     },
                     #[codec(index = 2)]
                     #[doc = "Object metadata stored."]
