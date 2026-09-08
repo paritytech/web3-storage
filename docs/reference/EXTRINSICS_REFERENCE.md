@@ -10,10 +10,10 @@ Register a new storage provider.
 
 **Parameters:**
 - `multiaddr`: `BoundedVec<u8, T::MaxMultiaddrLength>` - network address (e.g. `/ip4/127.0.0.1/tcp/3333`)
-- `publicKey`: `BoundedVec<u8, ConstU32<64>>` - raw public key (32 bytes for Sr25519/Ed25519, 33 bytes for ECDSA)
+- `publicKey`: `BoundedVec<u8, ConstU32<64>>` - raw public key: 32 bytes (Sr25519/Ed25519) or 33 (compressed Ecdsa/Eth); any other length fails with `InvalidPublicKey`. Must match the provider node's `--key-scheme`.
 - `stake`: `BalanceOf<T>` - Amount to stake (must be ≥ `MinProviderStake`)
 
-**Example:**
+**Example** (sr25519 dev key; any scheme works the same way):
 ```
 multiaddr: /ip4/127.0.0.1/tcp/3333
 publicKey: 0xd43593c715fdd31c61141abd04a99fd6822c8558854ccde39a5684e7a56da27d
@@ -273,6 +273,7 @@ bucketId: 0
 visibility: Public
 ```
 
+**Events:** `BucketVisibilityChanged`
 **Errors:** `BucketNotFound`, `NotBucketAdmin`
 
 ---
@@ -660,7 +661,7 @@ chunkIndex: 3
 **Deposit required:** see the challenge cost note above.
 
 **Events:** `ChallengeCreated`
-**Errors:** `BucketNotFound`, `NoSnapshot`, `ProviderNotInSnapshot`, `NotAuthorizedForPrivateBucket` (private bucket; caller neither member nor primary-agreement owner)
+**Errors:** `BucketNotFound`, `NoSnapshot`, `ProviderNotInSnapshot`, `SelfChallenge` (caller is the challenged provider), `NotAuthorizedForPrivateBucket` (private bucket; caller neither member nor primary-agreement owner)
 
 ---
 
@@ -685,7 +686,7 @@ providerSignature: 0xsig...
 ```
 
 **Events:** `ChallengeCreated`
-**Errors:** `BucketNotFound`, `AgreementNotFound`, `InvalidSignature`, `NotAuthorizedForPrivateBucket` (private bucket, primary target; caller neither member nor primary-agreement owner)
+**Errors:** `BucketNotFound`, `AgreementNotFound`, `InvalidSignature`, `SelfChallenge` (caller is the challenged provider), `NotAuthorizedForPrivateBucket` (private bucket, primary target; caller neither member nor primary-agreement owner)
 
 ---
 
@@ -708,7 +709,7 @@ chunkIndex: 3
 ```
 
 **Events:** `ChallengeCreated`
-**Errors:** `AgreementNotFound`, `NotReplica`, `InvalidSyncRoot`
+**Errors:** `AgreementNotFound`, `NotReplica`, `InvalidSyncRoot`, `SelfChallenge` (caller is the challenged provider)
 
 ---
 
@@ -759,7 +760,7 @@ Replica provider confirms they have synced to one of the bucket's known MMR root
 **Parameters:**
 - `bucketId`: `BucketId` (u64)
 - `roots`: `[Option<H256>; 7]` - match candidates, indexed `[current, hist_0, hist_1, hist_2, hist_3, hist_4, hist_5]`
-- `_signature`: `MultiSignature` - placeholder, currently unused
+- `signature`: `MultiSignature` - the replica's signature over `roots.encode()`, verified against its registered `public_key`
 
 **Example:**
 ```
@@ -773,13 +774,13 @@ roots: [
   None,
   None
 ]
-_signature: 0x...
+signature: Sr25519(0x...)
 ```
 
-**Validation:** matched root differs from the previously synced root; at least `minSyncInterval` blocks since last sync; `syncBalance ≥ replicaSyncPrice`.
+**Validation:** signature verifies over the SCALE-encoded `roots` under the provider's registered key; matched root differs from the previously synced root; at least `minSyncInterval` blocks since last sync; `syncBalance ≥ replicaSyncPrice`. Verification runs before the bucket and agreement lookups, so a non-provider origin fails with `ProviderNotFound`.
 
 **Events:** `ReplicaSynced { position_matched, sync_payment }`
-**Errors:** `AgreementNotFound`, `NotReplica`, `InvalidSyncRoot`, `SyncTooFrequent`, `InsufficientSyncBalance`
+**Errors:** `ProviderNotFound`, `InvalidPublicKey`, `InvalidSignature`, `BucketNotFound`, `AgreementNotFound`, `NotReplica`, `InvalidSyncRoot`, `SyncTooFrequent`, `InsufficientSyncBalance`
 
 ---
 
@@ -814,6 +815,16 @@ enum Role { Admin, Writer, Reader }
 - **Admin** - manage members, request primary agreements, configure the bucket, terminate primaries
 - **Writer** - submit checkpoints
 - **Reader** - read-only
+
+### `Visibility`
+
+```rust
+enum Visibility { Public, Private }
+```
+- **Public** - primaries serve reads to anyone; anyone may challenge primaries
+- **Private** - primaries serve reads only to members (cooperative, not chain-enforced); on-chain, primary challenges are restricted to members and primary-agreement owners
+
+Every bucket-creating extrinsic (`establish_storage_agreement`, `create_drive`, `create_s3_bucket`) takes a `visibility` parameter; wrappers that omit the choice default to `Private` (fail-safe).
 
 ### `EndAction`
 
@@ -881,7 +892,7 @@ createBucketWithStorage(maxBytes, duration, maxPricePerByte)
 2. requestAgreement(bucketId, replicaProvider, ..., replicaParams { syncBalance, minSyncInterval })
 3. [replica] acceptAgreement(bucketId)
 4. [replica syncs from primary off-chain]
-5. [replica] confirmReplicaSync(bucketId, roots, _signature)
+5. [replica] confirmReplicaSync(bucketId, roots, signature)
 ```
 
 ### 4. Client-initiated checkpoint
@@ -976,6 +987,7 @@ Common errors you might encounter:
 | `ChallengeExpired` | Past challenge deadline | Too late to respond |
 | `NotChallengeProvider` | Caller is not the challenged provider | — |
 | `ProviderNotInSnapshot` | Provider didn't sign current snapshot | Add their signature via `extendCheckpoint` |
+| `SelfChallenge` | Caller is the provider it is challenging | — |
 | `LeafBeyondCanonical` | Challenged leaf is beyond canonical state | — |
 | `InvalidSignature` | Signature didn't verify against registered pubkey | Check key + payload |
 | `NoSnapshot` | Bucket has no checkpoint yet | Call `checkpoint` first |

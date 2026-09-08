@@ -239,7 +239,14 @@ mod benchmarks {
         let sig = sign_terms::<T>(&provider_pk, &terms);
 
         #[extrinsic_call]
-        create_s3_bucket(RawOrigin::Signed(user), name, provider, terms, sig);
+        create_s3_bucket(
+            RawOrigin::Signed(user),
+            name,
+            provider,
+            terms,
+            sig,
+            storage_primitives::Visibility::Private,
+        );
     }
 
     /// Worst case:
@@ -276,6 +283,7 @@ mod benchmarks {
             provider,
             terms,
             sig,
+            storage_primitives::Visibility::Public,
         )
         .expect("create_s3_bucket succeeds in benchmark setup");
         let s3_bucket_id = BucketNameToId::<T>::get(&bounded_name).expect("bucket just created");

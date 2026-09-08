@@ -93,7 +93,7 @@ export class S3Client extends Layer1Client {
       name,
       provider,
       signedTerms,
-      this.submitOpts(),
+      { ...this.submitOpts(), visibility: opts.visibility },
     );
     return {
       s3BucketId,

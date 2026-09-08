@@ -145,7 +145,10 @@ export interface SignedTerms {
     bucket_id?: bigint | number | string | null;
     replica_params?: ReplicaTermsWire | null;
   };
-  /** SCALE-encoded MultiSignature as 0x-hex, e.g. `0x01<64-byte sr25519 sig>`. */
+  /**
+   * SCALE-encoded MultiSignature as 0x-hex — the variant byte tags the
+   * scheme, e.g. `0x01<64-byte sr25519 sig>` or `0x02<65-byte ecdsa sig>`.
+   */
   signature: string;
 }
 
