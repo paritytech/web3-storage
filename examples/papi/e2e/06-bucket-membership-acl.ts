@@ -11,12 +11,14 @@
  */
 
 import assert from "node:assert";
+import { Enum } from "polkadot-api";
 import {
   ensureProviderRegistered,
   makeSigner,
   READ_OPTS,
   removeMember,
   sameAddress,
+  setBucketVisibility,
   setMember,
 } from "@web3-storage/sdk";
 import { negotiateAndEstablish, runSuite, submitTxExpectFailure, setupChain } from "./helpers.js";
@@ -171,6 +173,36 @@ async function main() {
         member: admin.address,
       });
       await submitTxExpectFailure(tx, writer.signer, "NotBucketAdmin", "6.9");
+    },
+  });
+
+  tests.push({
+    name: "6.10 Non-admin cannot change visibility",
+    fn: async () => {
+      const tx = api.tx.StorageProvider.set_bucket_visibility({
+        bucket_id: bucketId,
+        visibility: Enum("Public"),
+      });
+      await submitTxExpectFailure(tx, writer.signer, "NotBucketAdmin", "6.10");
+    },
+  });
+
+  tests.push({
+    name: "6.11 Admin flips visibility both ways",
+    fn: async () => {
+      // The bucket was born Private (wrapper default).
+      let bucket = await api.query.StorageProvider.Buckets.getValue(bucketId, READ_OPTS);
+      assert.strictEqual(bucket?.visibility.type, "Private", "wrapper default is Private");
+
+      const changed = await setBucketVisibility(api, admin, bucketId, "Public");
+      assert.strictEqual(changed.visibility.type, "Public");
+      bucket = await api.query.StorageProvider.Buckets.getValue(bucketId, READ_OPTS);
+      assert.strictEqual(bucket?.visibility.type, "Public");
+
+      // Unconditionally reversible.
+      await setBucketVisibility(api, admin, bucketId, "Private");
+      bucket = await api.query.StorageProvider.Buckets.getValue(bucketId, READ_OPTS);
+      assert.strictEqual(bucket?.visibility.type, "Private");
     },
   });
 

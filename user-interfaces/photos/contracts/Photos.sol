@@ -23,7 +23,6 @@ contract Photos {
     IDriveRegistry constant DRIVES =
         IDriveRegistry(0x0000000000000000000000000000000009020000);
 
-    uint8 constant ROLE_WRITER = 1; // 0 = Admin, 1 = Writer, 2 = Reader
 
     struct Library {
         uint64 driveId;
@@ -58,8 +57,11 @@ contract Photos {
     ) external payable returns (uint64 driveId) {
         require(!libraries[msg.sender].exists, "library exists");
         require(!terms.hasBucketId, "primary terms must not be bucket-bound");
-        driveId = DRIVES.createDrive(name, provider, terms, signature);
-        DRIVES.shareDrive(driveId, userAccount, ROLE_WRITER);
+        // A photo library is member-only by default.
+        driveId = DRIVES.createDrive(
+            name, provider, terms, signature, IDriveRegistry.Visibility.Private
+        );
+        DRIVES.shareDrive(driveId, userAccount, IDriveRegistry.Role.Writer);
         libraries[msg.sender] = Library(driveId, bytes32(0), true);
         driveOwner[driveId] = msg.sender;
         emit LibraryCreated(msg.sender, driveId, provider);

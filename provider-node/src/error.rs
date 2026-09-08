@@ -86,6 +86,9 @@ pub enum Error {
     #[error("Provider is deregistering; not accepting new agreements")]
     ProviderDeregistering,
 
+    #[error("Local signing key does not match the registered on-chain public_key")]
+    ProviderKeyMismatch,
+
     #[error(
         "Chain state not ready: current_anchor_block and request_timeout must both be non-zero"
     )]
@@ -416,6 +419,17 @@ impl IntoResponse for Error {
                     details: Some(serde_json::json!({
                         "message": "provider has announced deregistration and is no \
                                     longer accepting new storage agreements"
+                    })),
+                },
+            ),
+            Error::ProviderKeyMismatch => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                ErrorResponse {
+                    error: "provider_key_mismatch".to_string(),
+                    details: Some(serde_json::json!({
+                        "message": "the node's signing key does not match the public_key \
+                                    registered on-chain; signatures would never verify — \
+                                    check --keyfile / --key-scheme against the registration"
                     })),
                 },
             ),

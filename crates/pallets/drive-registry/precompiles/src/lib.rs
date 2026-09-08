@@ -79,15 +79,26 @@ where
     })
 }
 
-fn decode_role(tag: u8) -> Result<Role, Error> {
-    match tag {
-        0 => Ok(Role::Admin),
-        1 => Ok(Role::Writer),
-        2 => Ok(Role::Reader),
-        other => Err(revert(
-            &other,
-            "Invalid role tag (expected 0=Admin, 1=Writer, 2=Reader)",
-        )),
+/// The Solidity-side enums decode fallibly in `alloy`, so out-of-range
+/// bytes revert before dispatch; the `__Invalid` arm is defensive only.
+fn to_role(role: IDriveRegistry::Role) -> Result<Role, Error> {
+    match role {
+        IDriveRegistry::Role::Admin => Ok(Role::Admin),
+        IDriveRegistry::Role::Writer => Ok(Role::Writer),
+        IDriveRegistry::Role::Reader => Ok(Role::Reader),
+        // Rejected by ABI decoding already; kept total to stay panic-free.
+        IDriveRegistry::Role::__Invalid => Err(revert(&"__Invalid", "Invalid role")),
+    }
+}
+
+fn to_visibility(
+    visibility: IDriveRegistry::Visibility,
+) -> Result<storage_primitives::Visibility, Error> {
+    match visibility {
+        IDriveRegistry::Visibility::Public => Ok(storage_primitives::Visibility::Public),
+        IDriveRegistry::Visibility::Private => Ok(storage_primitives::Visibility::Private),
+        // Rejected by ABI decoding already; kept total to stay panic-free.
+        IDriveRegistry::Visibility::__Invalid => Err(revert(&"__Invalid", "Invalid visibility")),
     }
 }
 
@@ -132,6 +143,7 @@ where
                 provider,
                 terms,
                 signature,
+                visibility,
             }) => {
                 env.charge(<Runtime as pallet_drive_registry::Config>::WeightInfo::create_drive())?;
                 let provider = decode_account::<Runtime>(&provider.0)?;
@@ -158,6 +170,7 @@ where
                     provider,
                     terms,
                     sig,
+                    to_visibility(*visibility)?,
                 )
                 .map_err(|e| revert(&e, "createDrive failed"))?;
                 Ok(drive_id.abi_encode())
@@ -177,7 +190,7 @@ where
             }) => {
                 env.charge(<Runtime as pallet_drive_registry::Config>::WeightInfo::share_drive())?;
                 let member = decode_account::<Runtime>(&member.0)?;
-                let role = decode_role(*role)?;
+                let role = to_role(*role)?;
                 pallet_drive_registry::Pallet::<Runtime>::share_drive(
                     frame_origin,
                     *driveId,
