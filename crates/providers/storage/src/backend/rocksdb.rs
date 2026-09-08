@@ -8,8 +8,8 @@
 //! [`types`]: super::types
 
 use super::{
-    BucketInfo, BucketState, BucketStats, BucketSummary, DeletionReceipt, EraseOutcome,
-    PrunedRange, PrunedRangeInfo, StorageBackend, StoredNode,
+    BucketInfo, BucketState, BucketStats, BucketSummary, DeletionReceipt, PrunedRange,
+    StorageBackend, StoredNode,
 };
 use crate::error::Error;
 use crate::nonce::NonceStore;
