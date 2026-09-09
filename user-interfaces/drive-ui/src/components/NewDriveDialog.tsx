@@ -22,7 +22,7 @@ import {
 } from "@/state";
 import { type AvailableProvider, type Visibility } from "@/lib/drive-client";
 import { negotiateProviderTerms } from "@web3-storage/sdk";
-import { formatBytes } from "@/lib/utils";
+import { formatBytes } from "@web3-storage/format";
 import ProviderPickerPanel from "./ProviderPickerPanel";
 
 interface NewDriveDialogProps {

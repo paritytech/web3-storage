@@ -22,7 +22,7 @@ import {
   useNetworkList,
   getSelectedNetwork,
 } from "@/state";
-import { formatTokens, truncateHash } from "@/lib/utils";
+import { formatUnits, truncateHash } from "@web3-storage/format";
 
 export default function Layout() {
   const connected = useIsConnected();
@@ -115,7 +115,7 @@ export default function Layout() {
             >
               <p className="text-sm font-medium">{signerName ?? truncateHash(signerAddress)}</p>
               <p className="text-xs text-muted-foreground">
-                {balance ? formatTokens(balance.free) : "..."} tokens
+                {balance ? formatUnits(balance.free) : "..."} tokens
               </p>
             </button>
           )}
