@@ -13,7 +13,7 @@ use crate::{
     constants::{
         consensus::RELAY_CHAIN_SLOT_DURATION_MILLIS, currency::UNIT, relay_time::RC_HOURS,
     },
-    AccountId, Balance, Balances, BlockNumber, Runtime, RuntimeEvent,
+    AccountId, Balance, Balances, BlockNumber, Runtime, RuntimeEvent, RuntimeHoldReason,
 };
 
 // Every duration below is measured in RELAY chain blocks (6s), not parachain
@@ -86,6 +86,7 @@ impl pallet_s3_registry::Config for Runtime {
 
 impl pallet_storage_provider::Config for Runtime {
     type Currency = Balances;
+    type RuntimeHoldReason = RuntimeHoldReason;
     type Treasury = TreasuryAccount;
     type MinStakePerByte = MinStakePerByte;
     type MaxMultiaddrLength = ConstU32<128>;

@@ -4,6 +4,7 @@ pub mod agreements;
 pub mod buckets;
 pub mod challenges;
 pub mod checkpoints;
+pub mod funds;
 pub mod marketplace;
 pub mod members;
 pub mod providers;

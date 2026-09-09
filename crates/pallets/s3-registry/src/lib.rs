@@ -46,11 +46,9 @@ pub mod pallet {
     pub type S3BucketInfoOf<T> =
         S3BucketInfo<<T as frame_system::Config>::AccountId, BlockNumberFor<T>>;
 
-    /// Balance type (inherited from the storage provider pallet's Currency).
-    pub type BalanceOf<T> =
-        <<T as pallet_storage_provider::Config>::Currency as frame_support::traits::Currency<
-            <T as frame_system::Config>::AccountId,
-        >>::Balance;
+    /// Balance type, taken from the storage provider pallet so the two cannot
+    /// drift apart.
+    pub type BalanceOf<T> = pallet_storage_provider::BalanceOf<T>;
 
     #[pallet::pallet]
     pub struct Pallet<T>(_);
