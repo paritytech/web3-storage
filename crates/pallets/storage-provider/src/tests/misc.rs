@@ -44,6 +44,85 @@ fn update_provider_multiaddr_fails_not_registered() {
 }
 
 #[test]
+fn lifetime_revenue_survives_a_slash() {
+    new_test_ext().execute_with(|| {
+        register_provider_with_settings(
+            2,
+            200,
+            ProviderSettings {
+                price_per_byte: 1,
+                accepting_primary: true,
+                ..Default::default()
+            },
+        );
+        let bucket_id = setup_agreement(2, 1, 10, 100); // payment = 1000
+        run_to_block(101);
+        assert_ok!(StorageProvider::end_agreement(
+            RuntimeOrigin::signed(1),
+            bucket_id,
+            2,
+            storage_primitives::EndAction::Pay
+        ));
+
+        let revenue_before = Providers::<Test>::get(2).unwrap().stats.lifetime_revenue;
+        assert_eq!(revenue_before, 1000);
+
+        super::slash_provider_stake(2);
+
+        // Stake is gone, but revenue history is untouched: it's a permanent
+        // record, not a live balance.
+        let provider = Providers::<Test>::get(2).unwrap();
+        assert_eq!(provider.stake, 0);
+        assert_eq!(provider.stats.lifetime_revenue, revenue_before);
+    });
+}
+
+#[test]
+fn lifetime_revenue_accumulates_across_agreements() {
+    new_test_ext().execute_with(|| {
+        register_provider_with_settings(
+            2,
+            200,
+            ProviderSettings {
+                price_per_byte: 1,
+                accepting_primary: true,
+                ..Default::default()
+            },
+        );
+
+        // First agreement, own bucket, ended in full.
+        let bucket_a = setup_agreement(2, 1, 10, 100); // payment = 1000
+        run_to_block(101);
+        assert_ok!(StorageProvider::end_agreement(
+            RuntimeOrigin::signed(1),
+            bucket_a,
+            2,
+            storage_primitives::EndAction::Pay
+        ));
+        assert_eq!(
+            Providers::<Test>::get(2).unwrap().stats.lifetime_revenue,
+            1000
+        );
+
+        // Second, unrelated agreement with a different owner, on the same
+        // provider: the total must add, not overwrite.
+        let bucket_b = setup_agreement(2, 3, 5, 50); // payment = 1 * 5 * 50 = 250
+        run_to_block(151); // 101 + 50
+        assert_ok!(StorageProvider::end_agreement(
+            RuntimeOrigin::signed(3),
+            bucket_b,
+            2,
+            storage_primitives::EndAction::Pay
+        ));
+
+        assert_eq!(
+            Providers::<Test>::get(2).unwrap().stats.lifetime_revenue,
+            1250
+        );
+    });
+}
+
+#[test]
 fn remove_slashed_works() {
     new_test_ext().execute_with(|| {
         register_provider(2, 200);

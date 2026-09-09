@@ -436,6 +436,10 @@ fn respond_to_challenge_superseded_cost_split_block_1() {
         let stats = Providers::<Test>::get(2).unwrap().stats;
         assert_eq!(stats.challenges_received_authorized, 1);
         assert_eq!(stats.challenges_received_public, 0);
+
+        // The settled challenger_cost counts as lifetime revenue too: it's
+        // real money the provider earned for responding.
+        assert_eq!(stats.lifetime_revenue, 90);
     });
 }
 

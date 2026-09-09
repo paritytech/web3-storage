@@ -38,6 +38,9 @@ pub struct ProviderInfoResponse {
     /// Same, for general-public challengers.
     pub challenges_received_public: u32,
     pub challenges_failed: u32,
+    /// Total payment ever received for storage service. Never resets, not
+    /// even on a slash.
+    pub lifetime_revenue: u128,
     /// Maximum storage capacity in bytes (0 = unlimited).
     pub max_capacity: u64,
     /// Available capacity in bytes (None if unlimited).

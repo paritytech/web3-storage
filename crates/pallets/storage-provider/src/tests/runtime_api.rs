@@ -567,6 +567,75 @@ fn query_provider_info_reports_deregister_at() {
 }
 
 #[test]
+fn query_provider_info_reports_lifetime_revenue() {
+    new_test_ext().execute_with(|| {
+        register_provider_with_settings(
+            2,
+            200,
+            ProviderSettings {
+                price_per_byte: 1,
+                accepting_primary: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            StorageProvider::query_provider_info(&2)
+                .unwrap()
+                .lifetime_revenue,
+            0
+        );
+
+        let bucket_id = setup_agreement(2, 1, 10, 100); // payment = 1 * 10 * 100 = 1000
+        run_to_block(101);
+        assert_ok!(StorageProvider::end_agreement(
+            RuntimeOrigin::signed(1),
+            bucket_id,
+            2,
+            storage_primitives::EndAction::Pay
+        ));
+
+        let revenue = Providers::<Test>::get(2).unwrap().stats.lifetime_revenue;
+        assert_eq!(revenue, 1000, "sanity check on the underlying storage");
+        assert_eq!(
+            StorageProvider::query_provider_info(&2)
+                .unwrap()
+                .lifetime_revenue,
+            revenue as u128,
+        );
+    });
+}
+
+#[test]
+fn query_providers_reports_lifetime_revenue() {
+    new_test_ext().execute_with(|| {
+        register_provider_with_settings(
+            2,
+            200,
+            ProviderSettings {
+                price_per_byte: 1,
+                accepting_primary: true,
+                ..Default::default()
+            },
+        );
+        let bucket_id = setup_agreement(2, 1, 10, 100);
+        run_to_block(101);
+        assert_ok!(StorageProvider::end_agreement(
+            RuntimeOrigin::signed(1),
+            bucket_id,
+            2,
+            storage_primitives::EndAction::Pay
+        ));
+
+        let listed = StorageProvider::query_providers(0, 10);
+        assert_eq!(listed.len(), 1);
+        assert_eq!(
+            listed[0].1.lifetime_revenue,
+            Providers::<Test>::get(2).unwrap().stats.lifetime_revenue as u128,
+        );
+    });
+}
+
+#[test]
 fn query_providers_reports_deregister_at() {
     new_test_ext().execute_with(|| {
         register_provider(2, 200);
