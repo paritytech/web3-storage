@@ -581,6 +581,7 @@ fn query_provider_info_reports_lifetime_revenue() {
         assert_eq!(
             StorageProvider::query_provider_info(&2)
                 .unwrap()
+                .stats
                 .lifetime_revenue,
             0
         );
@@ -599,6 +600,7 @@ fn query_provider_info_reports_lifetime_revenue() {
         assert_eq!(
             StorageProvider::query_provider_info(&2)
                 .unwrap()
+                .stats
                 .lifetime_revenue,
             revenue as u128,
         );
@@ -629,7 +631,7 @@ fn query_providers_reports_lifetime_revenue() {
         let listed = StorageProvider::query_providers(0, 10);
         assert_eq!(listed.len(), 1);
         assert_eq!(
-            listed[0].1.lifetime_revenue,
+            listed[0].1.stats.lifetime_revenue,
             Providers::<Test>::get(2).unwrap().stats.lifetime_revenue as u128,
         );
     });

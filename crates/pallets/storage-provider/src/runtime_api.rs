@@ -27,6 +27,26 @@ pub struct ProviderInfoResponse {
     pub accepting_primary: bool,
     pub replica_sync_price: Option<u128>,
     pub accepting_extensions: bool,
+    /// Historical, quality-signal statistics for this provider.
+    pub stats: ProviderStatsInfo,
+    /// Maximum storage capacity in bytes (0 = unlimited).
+    pub max_capacity: u64,
+    /// Available capacity in bytes (None if unlimited).
+    pub available_capacity: Option<u64>,
+    /// Anchor block at which deregistration becomes finalisable
+    /// (`None` = not deregistering).
+    pub deregister_at: Option<u32>,
+    /// Reputation 0-100, from [`reputation_score`]. Carried here so clients
+    /// never re-implement the formula.
+    pub reputation: u8,
+}
+
+/// Historical, quality-signal statistics for a provider, returned as a
+/// group by runtime API so clients can consume "track record" separately
+/// from settings and connection info.
+#[derive(Clone, PartialEq, Eq, Encode, Decode, TypeInfo, Debug)]
+#[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
+pub struct ProviderStatsInfo {
     pub registered_at: u32,
     pub agreements_total: u32,
     pub agreements_extended: u32,
@@ -41,16 +61,6 @@ pub struct ProviderInfoResponse {
     /// Total payment ever received for storage service. Never resets, not
     /// even on a slash.
     pub lifetime_revenue: u128,
-    /// Maximum storage capacity in bytes (0 = unlimited).
-    pub max_capacity: u64,
-    /// Available capacity in bytes (None if unlimited).
-    pub available_capacity: Option<u64>,
-    /// Anchor block at which deregistration becomes finalisable
-    /// (`None` = not deregistering).
-    pub deregister_at: Option<u32>,
-    /// Reputation 0-100, from [`reputation_score`]. Carried here so clients
-    /// never re-implement the formula.
-    pub reputation: u8,
 }
 
 /// Storage requirements for provider matching.
