@@ -3,13 +3,10 @@
 use crate::Member;
 use crate::*;
 use alloc::vec::Vec;
-use frame_support::{
-    pallet_prelude::*,
-    traits::{Currency, ExistenceRequirement, ReservableCurrency},
-};
+use frame_support::pallet_prelude::*;
 use sp_core::H256;
 use sp_runtime::traits::{SaturatedConversion, Saturating, Zero};
-use storage_primitives::{BucketId, Role, Visibility};
+use storage_primitives::{BucketId, ProviderRole, Role, Visibility};
 
 impl<T: Config> Pallet<T> {
     /// Internal function to cleanup a bucket and all its agreements.
@@ -70,18 +67,19 @@ impl<T: Config> Pallet<T> {
             // Payment to provider = total locked - refund to owner
             let payment_to_provider = agreement.payment_locked.saturating_sub(refund_to_owner);
 
-            // Unreserve from owner
-            T::Currency::unreserve(&agreement.owner, agreement.payment_locked);
+            // A replica's unspent sync balance is escrowed alongside the fee
+            // and goes back to the owner with the refund.
+            let refund_to_owner = match &agreement.role {
+                ProviderRole::Replica { sync_balance, .. } => {
+                    refund_to_owner.saturating_add(*sync_balance)
+                }
+                ProviderRole::Primary => refund_to_owner,
+            };
 
-            // Pay provider their earned portion
-            if !payment_to_provider.is_zero() {
-                T::Currency::transfer(
-                    &agreement.owner,
-                    &provider,
-                    payment_to_provider,
-                    ExistenceRequirement::KeepAlive,
-                )?;
-            }
+            // Settle the earned portion straight out of escrow; the unspent
+            // remainder is released back to the owner.
+            Self::settle_payment(&agreement.owner, &provider, payment_to_provider)?;
+            Self::release_payment(&agreement.owner, refund_to_owner)?;
 
             // Track total refunded (owner keeps the unspent portion)
             total_refunded = total_refunded.saturating_add(refund_to_owner);

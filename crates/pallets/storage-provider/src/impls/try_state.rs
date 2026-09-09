@@ -11,8 +11,8 @@
 
 use crate::*;
 use alloc::collections::{BTreeMap, BTreeSet};
-use frame_support::pallet_prelude::*;
-use sp_runtime::TryRuntimeError;
+use frame_support::{pallet_prelude::*, traits::fungible::InspectHold};
+use sp_runtime::{traits::Saturating, TryRuntimeError};
 use storage_primitives::{BucketId, ProviderRole};
 
 impl<T: Config> Pallet<T> {
@@ -21,10 +21,67 @@ impl<T: Config> Pallet<T> {
         Self::check_committed_bytes()?;
         Self::check_buckets_and_membership()?;
         Self::check_challenge_sweep_cursor()?;
+        Self::check_holds_back_bookkeeping()?;
         Ok(())
     }
 
-    /// P0: config timing invariants. Mirror of `integrity_test`, but run
+    /// What the pallet records as immobilised is exactly what is held, under
+    /// the right reason, on the right account.
+    ///
+    /// Exact in both directions: each reason has one producer, and the sums
+    /// aggregate per account. A record with no funds behind it and an
+    /// under-released hold are both bugs; only `==` catches the second.
+    /// Blind spot: accounts are visited via the pallet's records (holds
+    /// cannot be enumerated), so a hold on an account with no records
+    /// escapes the check.
+    fn check_holds_back_bookkeeping() -> Result<(), TryRuntimeError> {
+        for (provider, info) in Providers::<T>::iter() {
+            let held = T::Currency::balance_on_hold(&HoldReason::ProviderStake.into(), &provider);
+            ensure!(
+                held == info.stake,
+                "ProviderStake hold does not match the recorded provider stake"
+            );
+        }
+
+        let mut escrow_by_owner: BTreeMap<T::AccountId, BalanceOf<T>> = BTreeMap::new();
+        for (_bucket_id, _provider, agreement) in StorageAgreements::<T>::iter() {
+            // A replica's unspent sync balance is escrowed alongside the
+            // storage fee, under the same reason and on the same account.
+            let mut owed = agreement.payment_locked;
+            if let ProviderRole::Replica { sync_balance, .. } = agreement.role {
+                owed = owed.saturating_add(sync_balance);
+            }
+            let total = escrow_by_owner.entry(agreement.owner).or_default();
+            *total = total.saturating_add(owed);
+        }
+        for (owner, expected) in escrow_by_owner {
+            let held = T::Currency::balance_on_hold(&HoldReason::AgreementPayment.into(), &owner);
+            ensure!(
+                held == expected,
+                "AgreementPayment hold does not match the recorded agreement escrow"
+            );
+        }
+
+        let mut deposit_by_challenger: BTreeMap<T::AccountId, BalanceOf<T>> = BTreeMap::new();
+        for (_deadline, _index, challenge) in Challenges::<T>::iter() {
+            let total = deposit_by_challenger
+                .entry(challenge.challenger)
+                .or_default();
+            *total = total.saturating_add(challenge.deposit);
+        }
+        for (challenger, expected) in deposit_by_challenger {
+            let held =
+                T::Currency::balance_on_hold(&HoldReason::ChallengeDeposit.into(), &challenger);
+            ensure!(
+                held == expected,
+                "ChallengeDeposit hold does not match the recorded challenge deposits"
+            );
+        }
+
+        Ok(())
+    }
+
+    /// Config timing invariants. Mirror of `integrity_test`, but run
     /// against live storage so a `setStorage`/migration mutation is caught.
     fn check_timing_config() -> Result<(), TryRuntimeError> {
         ensure!(
@@ -38,7 +95,7 @@ impl<T: Config> Pallet<T> {
         Ok(())
     }
 
-    /// P1.5: no unresolved challenge sits at or below the swept cursor. The
+    /// No unresolved challenge sits at or below the swept cursor. The
     /// `on_initialize` sweep drains every deadline key up to its cursor (parking
     /// one below a key it only partly drained), and `create_challenge` always
     /// sets `deadline = now + ChallengeTimeout`, above the cursor — so anything
@@ -57,7 +114,7 @@ impl<T: Config> Pallet<T> {
         Ok(())
     }
 
-    /// P1.1: each provider's `committed_bytes` equals the sum of `max_bytes`
+    /// Each provider's `committed_bytes` equals the sum of `max_bytes`
     /// over all its storage agreements (the accounting that gates capacity and
     /// required stake).
     fn check_committed_bytes() -> Result<(), TryRuntimeError> {
@@ -89,9 +146,9 @@ impl<T: Config> Pallet<T> {
         Ok(())
     }
 
-    /// P1.3: per bucket, `primary_providers` has no duplicates and equals
+    /// Per bucket, `primary_providers` has no duplicates and equals
     /// exactly the set of `Primary`-role agreement providers.
-    /// P1.4: `MemberBuckets` is the correct and complete reverse index of
+    /// `MemberBuckets` is the correct and complete reverse index of
     /// bucket membership, with no duplicates.
     fn check_buckets_and_membership() -> Result<(), TryRuntimeError> {
         // Decode the reverse index once, up front, rejecting duplicate bucket
@@ -115,7 +172,7 @@ impl<T: Config> Pallet<T> {
         }
 
         for (bucket_id, bucket) in Buckets::<T>::iter() {
-            // P1.3
+            // No duplicates, and exactly the Primary-role agreement providers.
             let declared: BTreeSet<T::AccountId> =
                 bucket.primary_providers.iter().cloned().collect();
             ensure!(
@@ -131,7 +188,7 @@ impl<T: Config> Pallet<T> {
                 "primary_providers does not match Primary-role agreements for bucket"
             );
 
-            // P1.4 (forward): every member is indexed under MemberBuckets.
+            // Forward: every member is indexed under MemberBuckets.
             for member in bucket.members.iter() {
                 ensure!(
                     member_index
@@ -142,7 +199,7 @@ impl<T: Config> Pallet<T> {
             }
         }
 
-        // P1.4 (reverse): every reverse-index entry is a real membership.
+        // Reverse: every reverse-index entry is a real membership.
         for (account, buckets) in member_index.iter() {
             for bucket_id in buckets {
                 let bucket = Buckets::<T>::get(bucket_id)
