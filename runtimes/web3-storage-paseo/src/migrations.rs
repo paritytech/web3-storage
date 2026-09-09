@@ -15,7 +15,6 @@ parameter_types! {
     /// `RemoveStorage` cleanups below.
     pub const StorageProviderPalletName: &'static str = "StorageProvider";
     pub const AgreementRequestsStorageName: &'static str = "AgreementRequests";
-    pub const ChallengerStatsStorageName: &'static str = "ChallengerStats";
 }
 
 /// Storage migrations run on runtime upgrade, in order.
