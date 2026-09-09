@@ -47,6 +47,7 @@ COV_SKIP_PACKAGES=(
 	pallet-s3-registry-precompile # exercised out of process (`just sc-demo`)
 	storage-subxt # static codegen runtime bindings
 	storage-indexers # chain-bound streams; needs a live chain to exercise
+	pallet-storage-provider-mbt # test-only harness for specs/quint; the replay target needs the quint CLI
 )
 
 # Fail when the two lists and the workspace members drift apart: every member
