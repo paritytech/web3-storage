@@ -21,7 +21,7 @@
 //! let data_root = client.upload(1, data, ChunkingStrategy::default()).await?;
 //!
 //! // Commit to chain
-//! let commitment = client.commit(1, vec![data_root], 0u64).await?;
+//! let commitment = client.commit(1, vec![data_root]).await?;
 //!
 //! // Download and verify
 //! let retrieved = client.download(&data_root, 0, data.len() as u64).await?;
@@ -75,6 +75,7 @@
 //! let bucket_id = client.establish_storage_agreement(
 //!     "5FHneW46...".to_string(), // provider account
 //!     signed,
+//!     storage_primitives::Visibility::Private,
 //! ).await?;
 //! # Ok(())
 //! # }
@@ -104,6 +105,7 @@ pub mod base;
 pub mod challenger;
 pub mod checkpoint;
 pub mod checkpoint_persistence;
+pub mod convert;
 pub mod discovery;
 pub mod encryption;
 pub mod provider;
@@ -158,7 +160,7 @@ pub use verification::ClientVerifier;
 // Commitment / ChunkLocation appear in the public challenge & checkpoint method
 // signatures, so re-export them rather than make callers depend on
 // storage_primitives directly.
-pub use storage_primitives::{ChunkLocation, Commitment};
+pub use storage_primitives::{ChunkLocation, Commitment, Visibility};
 
 // Encryption re-exports
 pub use encryption::{Cipher, EncryptionKey, XChaCha20Poly1305Cipher, ENCRYPTION_OVERHEAD};

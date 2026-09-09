@@ -44,20 +44,18 @@ async fn test_checkpoint_signature_available_after_commit() {
         )
         .await
         .unwrap();
-    client
-        .commit(bucket_id, vec![data_root], 0u64)
-        .await
-        .unwrap();
+    client.commit(bucket_id, vec![data_root]).await.unwrap();
 
-    let sig = client
-        .get_checkpoint_signature(bucket_id, 0u64)
-        .await
-        .unwrap();
+    let sig = client.get_checkpoint_signature(bucket_id).await.unwrap();
 
     assert_eq!(sig.bucket_id, bucket_id);
     assert_eq!(sig.leaf_count, 1);
-    assert!(!sig.mmr_root.is_empty());
-    assert!(!sig.provider_signature.is_empty());
+    assert_ne!(sig.mmr_root, sp_core::H256::zero());
+    // Deserialization already proves the signature decodes; pin the scheme.
+    assert!(matches!(
+        sig.provider_signature,
+        sp_runtime::MultiSignature::Sr25519(_)
+    ));
 }
 
 // ============================================================================
@@ -78,9 +76,9 @@ async fn test_multiple_providers_track_commitments_independently() {
             .upload(bucket_id, data.as_bytes(), ChunkingStrategy::default())
             .await
             .unwrap();
-        client.commit(bucket_id, vec![root], 0u64).await.unwrap();
+        client.commit(bucket_id, vec![root]).await.unwrap();
 
-        let commitment = client.get_commitment(bucket_id, 0u64).await.unwrap();
+        let commitment = client.get_commitment(bucket_id).await.unwrap();
         assert_eq!(commitment.bucket_id, bucket_id);
         assert_eq!(commitment.leaf_count, 1);
     }
@@ -88,7 +86,7 @@ async fn test_multiple_providers_track_commitments_independently() {
     // Cross-check: provider 0's URL does not know about provider 1's bucket.
     let client0 = make_client(urls[0].clone());
     assert!(
-        client0.get_commitment(2, 0u64).await.is_err(),
+        client0.get_commitment(2).await.is_err(),
         "provider 0 should not have bucket 2's data"
     );
 }

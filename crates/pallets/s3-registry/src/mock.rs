@@ -68,7 +68,7 @@ impl pallet_balances::Config for Test {
     type WeightInfo = ();
     type FreezeIdentifier = ();
     type MaxFreezes = ();
-    type RuntimeHoldReason = ();
+    type RuntimeHoldReason = RuntimeHoldReason;
     type RuntimeFreezeReason = ();
     type DoneSlashHandler = ();
 }
@@ -82,7 +82,6 @@ parameter_types! {
     pub const MaxChunkSize: u32 = 262144;
     pub const ChallengeTimeout: u64 = 100;
     pub const ChallengeDeposit: u64 = 100;
-    pub const MaxNonceAge: u64 = 200;
     pub const SettlementTimeout: u64 = 50;
     pub const RequestTimeout: u64 = 25;
     pub TreasuryAccount: u64 = 999;
@@ -90,6 +89,7 @@ parameter_types! {
 
 impl pallet_storage_provider::Config for Test {
     type Currency = Balances;
+    type RuntimeHoldReason = RuntimeHoldReason;
     type Treasury = TreasuryAccount;
     type MinStakePerByte = MinStakePerByte;
     type MaxMultiaddrLength = ConstU32<128>;
@@ -100,7 +100,6 @@ impl pallet_storage_provider::Config for Test {
     type MaxChunkSize = ConstU32<262144>;
     type ChallengeTimeout = ChallengeTimeout;
     type ChallengeDeposit = ChallengeDeposit;
-    type MaxNonceAge = MaxNonceAge;
     type SettlementTimeout = SettlementTimeout;
     type RequestTimeout = RequestTimeout;
     // Must be > ChallengeTimeout (100) AND > RequestTimeout (25) per the

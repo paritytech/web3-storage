@@ -7,7 +7,7 @@ use frame_support::{
     derive_impl,
     traits::{ConstU16, ConstU32, ConstU64, Hooks},
 };
-use sp_core::{Get, Pair as _, H256};
+use sp_core::{Get, H256};
 use sp_runtime::{
     traits::{BlakeTwo256, IdentityLookup},
     BuildStorage,
@@ -63,7 +63,7 @@ impl pallet_balances::Config for Test {
     type WeightInfo = ();
     type FreezeIdentifier = ();
     type MaxFreezes = ();
-    type RuntimeHoldReason = ();
+    type RuntimeHoldReason = RuntimeHoldReason;
     type RuntimeFreezeReason = ();
     type DoneSlashHandler = ();
 }
@@ -78,6 +78,7 @@ impl frame_support::traits::Get<u64> for TestTreasury {
 
 impl pallet_storage_provider::Config for Test {
     type Currency = Balances;
+    type RuntimeHoldReason = RuntimeHoldReason;
     type Treasury = TestTreasury;
     type MinStakePerByte = ConstU64<1>; // 1 unit per byte
     type MaxMultiaddrLength = ConstU32<128>;
@@ -87,7 +88,6 @@ impl pallet_storage_provider::Config for Test {
     type MaxChunkSize = ConstU32<262144>; // 256 KiB
     type ChallengeTimeout = ConstU64<100>;
     type ChallengeDeposit = ConstU64<100>; // same value as pre-fix hardcoded constant — keeps existing tests' math intact
-    type MaxNonceAge = ConstU64<200>;
     type SettlementTimeout = ConstU64<50>;
     type RequestTimeout = ConstU64<50>;
     type MaxBucketsPerMember = ConstU32<100>;
@@ -229,17 +229,38 @@ pub fn next_terms_nonce() -> u64 {
     TERMS_NONCE.fetch_add(1, Ordering::Relaxed)
 }
 
+/// Helper: deterministic keypair of any scheme for `provider`, stamped into
+/// the provider's on-chain `public_key` so signatures verify.
+pub fn provider_signer_with<P: sp_core::Pair>(provider: u64) -> P {
+    use sp_core::crypto::ByteArray;
+    let pair = P::from_seed_slice(&[provider as u8; 32]).expect("32-byte seed is valid");
+    crate::Providers::<Test>::mutate(provider, |maybe_p| {
+        if let Some(p) = maybe_p {
+            p.public_key = pair.public().to_raw_vec().try_into().unwrap();
+        }
+    });
+    pair
+}
+
 /// Helper: deterministic sr25519 keypair for `provider`, stamped into the
 /// provider's on-chain `public_key` so terms signatures verify.
 #[allow(dead_code)]
 pub fn provider_signer(provider: u64) -> sp_core::sr25519::Pair {
-    let pair = sp_core::sr25519::Pair::from_seed(&[provider as u8; 32]);
-    crate::Providers::<Test>::mutate(provider, |maybe_p| {
-        if let Some(p) = maybe_p {
-            p.public_key = pair.public().0.to_vec().try_into().unwrap();
-        }
-    });
-    pair
+    provider_signer_with(provider)
+}
+
+/// Helper: sign SCALE-encoded terms the way a provider quotes off-chain,
+/// with any scheme whose signature converts into a `MultiSignature`
+/// (`Eth`/`KeccakPair` has no such conversion — wrap it explicitly).
+pub fn sign_terms_with<P: sp_core::Pair>(
+    pair: &P,
+    terms: &crate::AgreementTermsOf<Test>,
+) -> sp_runtime::MultiSignature
+where
+    P::Signature: Into<sp_runtime::MultiSignature>,
+{
+    let hash = sp_io::hashing::blake2_256(&terms.signing_payload());
+    pair.sign(&hash).into()
 }
 
 /// Helper: sign SCALE-encoded terms the way a provider quotes off-chain.
@@ -248,8 +269,20 @@ pub fn sign_terms(
     pair: &sp_core::sr25519::Pair,
     terms: &crate::AgreementTermsOf<Test>,
 ) -> sp_runtime::MultiSignature {
-    let hash = sp_io::hashing::blake2_256(&terms.signing_payload());
-    sp_runtime::MultiSignature::Sr25519(pair.sign(&hash))
+    sign_terms_with(pair, terms)
+}
+
+/// Helper: attest sync roots the way a replica does for
+/// `confirm_replica_sync` — a signature over the SCALE-encoded array from
+/// the pair stamped as the provider's registered key.
+pub fn sign_sync_roots(
+    provider: u64,
+    roots: &[Option<sp_core::H256>; 7],
+) -> sp_runtime::MultiSignature {
+    use codec::Encode;
+    use sp_core::Pair as _;
+    let pair = provider_signer(provider);
+    pair.sign(&roots.encode()).into()
 }
 
 /// Helper: primary terms
@@ -336,10 +369,19 @@ pub fn signed_replica_terms(
 }
 
 /// Helper: create a bare bucket (no agreement). Returns bucket_id.
+///
+/// Public visibility: the existing suite exercises stranger challenges and
+/// was written under pre-visibility (open) semantics. Private-bucket tests
+/// create their buckets explicitly.
 #[allow(dead_code)]
 pub fn create_bucket(admin: u64, min_providers: u32) -> u64 {
-    StorageProvider::create_bucket_internal(&admin, min_providers, None)
-        .expect("create_bucket_internal succeeds")
+    StorageProvider::create_bucket_internal(
+        &admin,
+        min_providers,
+        None,
+        storage_primitives::Visibility::Public,
+    )
+    .expect("create_bucket_internal succeeds")
 }
 
 /// Helper: redeem signed primary terms, creating the bucket together with
@@ -351,7 +393,10 @@ pub fn setup_agreement(provider: u64, client: u64, max_bytes: u64, duration: u64
         RuntimeOrigin::signed(client),
         provider,
         terms,
-        sig
+        sig,
+        // Public: preserves the open (pre-visibility) semantics the existing
+        // suite was written under; Private-bucket tests opt in explicitly.
+        storage_primitives::Visibility::Public,
     ));
     crate::NextBucketId::<Test>::get() - 1
 }

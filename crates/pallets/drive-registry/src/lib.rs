@@ -102,11 +102,9 @@ pub mod pallet {
         type WeightInfo: WeightInfo;
     }
 
-    /// Balance type for this pallet (inherited from Currency)
-    pub type BalanceOf<T> =
-        <<T as pallet_storage_provider::Config>::Currency as frame_support::traits::Currency<
-            <T as frame_system::Config>::AccountId,
-        >>::Balance;
+    /// Balance type, taken from the storage provider pallet so the two cannot
+    /// drift apart.
+    pub type BalanceOf<T> = pallet_storage_provider::BalanceOf<T>;
 
     /// Maps bucket ID to drive ID (1-to-1 mapping)
     #[pallet::storage]
@@ -207,6 +205,7 @@ pub mod pallet {
         /// - `provider`: Provider account that signed the terms.
         /// - `terms`: Provider-signed agreement terms.
         /// - `sig`: Provider signature over the SCALE-encoded terms.
+        /// - `visibility`: Read visibility of the underlying Layer 0 bucket.
         #[pallet::call_index(0)]
         #[pallet::weight(<T as Config>::WeightInfo::create_drive())]
         pub fn create_drive(
@@ -215,6 +214,7 @@ pub mod pallet {
             provider: T::AccountId,
             terms: pallet_storage_provider::AgreementTermsOf<T>,
             sig: sp_runtime::MultiSignature,
+            visibility: storage_primitives::Visibility,
         ) -> DispatchResult {
             let who = ensure_signed(origin)?;
 
@@ -242,7 +242,7 @@ pub mod pallet {
             // surface directly via `?`.
             let bucket_id =
                 pallet_storage_provider::Pallet::<T>::establish_storage_agreement_internal(
-                    &who, &provider, terms, &sig,
+                    &who, &provider, terms, &sig, visibility,
                 )?;
 
             // Get next drive ID

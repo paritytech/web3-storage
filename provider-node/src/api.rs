@@ -241,7 +241,7 @@ async fn get_node(
     let node = state
         .storage
         .get_node(&hash)
-        .ok_or_else(|| Error::NodeNotFound(query.hash.clone()))?;
+        .ok_or_else(|| provider_storage::Error::NodeNotFound(query.hash.clone()))?;
 
     Ok(Json(DownloadNodeResponse {
         hash: query.hash,
@@ -392,7 +392,6 @@ async fn commit(
             start_seq,
             leaf_count,
         },
-        request.nonce,
     );
     let signature = state.sign(&payload.encode())?;
 
@@ -402,7 +401,6 @@ async fn commit(
         leaf_count,
         leaf_indices,
         provider_signature: signature,
-        nonce: request.nonce,
     }))
 }
 
@@ -462,7 +460,7 @@ async fn get_commitment(
     let bucket = state
         .storage
         .get_bucket(query.bucket_id)
-        .ok_or(Error::BucketNotFound(query.bucket_id))?;
+        .ok_or(provider_storage::Error::BucketNotFound(query.bucket_id))?;
 
     // Sign with the real leaf_count — the pallet's `challenge_offchain` now
     // honours leaf_count rather than hardcoding `0`.
@@ -473,7 +471,6 @@ async fn get_commitment(
             start_seq: bucket.start_seq,
             leaf_count: bucket.leaf_count,
         },
-        query.nonce,
     );
     let signature = state.sign(&payload.encode())?;
 
@@ -483,7 +480,6 @@ async fn get_commitment(
         start_seq: bucket.start_seq,
         leaf_count: bucket.leaf_count,
         provider_signature: signature,
-        nonce: query.nonce,
     }))
 }
 
@@ -499,7 +495,7 @@ async fn get_checkpoint_signature(
     let bucket = state
         .storage
         .get_bucket(query.bucket_id)
-        .ok_or(Error::BucketNotFound(query.bucket_id))?;
+        .ok_or(provider_storage::Error::BucketNotFound(query.bucket_id))?;
 
     let leaf_count = bucket.leaf_count;
 
@@ -511,7 +507,6 @@ async fn get_checkpoint_signature(
             start_seq: bucket.start_seq,
             leaf_count,
         },
-        query.nonce,
     );
     let signature = state.sign(&payload.encode())?;
 
@@ -521,7 +516,6 @@ async fn get_checkpoint_signature(
         start_seq: bucket.start_seq,
         leaf_count,
         provider_signature: signature,
-        nonce: query.nonce,
     }))
 }
 
@@ -632,7 +626,6 @@ async fn delete_data(
             start_seq,
             leaf_count,
         },
-        request.nonce,
     );
     let signature = state.sign(&payload.encode())?;
 
@@ -641,7 +634,6 @@ async fn delete_data(
         start_seq,
         leaf_count,
         provider_signature: signature,
-        nonce: request.nonce,
     }))
 }
 
@@ -673,7 +665,7 @@ async fn get_mmr_subtree(
     let bucket = state
         .storage
         .get_bucket(query.bucket_id)
-        .ok_or(Error::BucketNotFound(query.bucket_id))?;
+        .ok_or(provider_storage::Error::BucketNotFound(query.bucket_id))?;
 
     Ok(Json(MmrSubtreeResponse {
         nodes: vec![MmrNode {
@@ -731,7 +723,7 @@ async fn get_historical_roots(
     let bucket = state
         .storage
         .get_bucket(query.bucket_id)
-        .ok_or(Error::BucketNotFound(query.bucket_id))?;
+        .ok_or(provider_storage::Error::BucketNotFound(query.bucket_id))?;
 
     Ok(Json(HistoricalRootsResponse {
         bucket_id: query.bucket_id,
@@ -762,6 +754,11 @@ async fn get_historical_roots(
 /// - `provider_info_unavailable` — provider not registered on chain yet; the
 ///   chain-state coordinator clears this automatically once registration lands, no
 ///   restart needed.
+/// - `provider_key_mismatch` — the local signing key differs from the registered
+///   on-chain `public_key`; signed terms would never verify. Clears on the next
+///   provider-info refresh once the keys agree. Not specific to this endpoint:
+///   the guard sits in [`ProviderState::sign`], so `/commit`, `/commitment`,
+///   `/checkpoint-signature` and deletion proofs return it too.
 /// - `nonce_counter_unavailable` — counter not yet aligned with the chain's replay
 ///   window.
 /// - `provider_deregistering` — provider has announced deregistration and no longer
@@ -804,6 +801,12 @@ async fn negotiate_terms(
         return Err(Error::ProviderDeregistering);
     }
 
+    // Signing with a key the chain doesn't know about produces terms that can
+    // never be redeemed — fail fast instead. Checked against the snapshot this
+    // request is already using, so a re-registration heals it on the next
+    // refresh without a restart.
+    state.ensure_signing_key_matches(&info)?;
+
     negotiate::validate_request(&req, &info)?;
 
     // Guard on both presence and bootstrap status: during the transient window
@@ -831,7 +834,7 @@ async fn negotiate_terms(
         bucket_id: req.bucket_id,
         replica_params: req.replica_params,
     };
-    Ok(Json(provider_negotiation::sign_terms(keypair, terms)))
+    Ok(Json(keypair.sign_terms(terms)))
 }
 
 /// Get replica sync status for a bucket.
@@ -844,7 +847,7 @@ async fn get_replica_sync_status(
     let bucket = state
         .storage
         .get_bucket(query.bucket_id)
-        .ok_or(Error::BucketNotFound(query.bucket_id))?;
+        .ok_or(provider_storage::Error::BucketNotFound(query.bucket_id))?;
 
     Ok(Json(BucketSyncStatusResponse {
         bucket_id: query.bucket_id,

@@ -13,7 +13,7 @@ use crate::{
     constants::{
         consensus::RELAY_CHAIN_SLOT_DURATION_MILLIS, currency::UNIT, relay_time::RC_HOURS,
     },
-    AccountId, Balance, Balances, BlockNumber, Runtime, RuntimeEvent,
+    AccountId, Balance, Balances, BlockNumber, Runtime, RuntimeEvent, RuntimeHoldReason,
 };
 
 // Every duration below is measured in RELAY chain blocks (6s), not parachain
@@ -23,11 +23,6 @@ use crate::{
 parameter_types! {
     pub const MinProviderStake: Balance = 1_000 * UNIT;  // 1000 tokens minimum stake
     pub const ChallengeTimeout: BlockNumber = 48 * RC_HOURS;  // 48 hours to respond
-    // Replay-protection window for `CommitmentPayload::nonce`. A signature whose
-    // nonce is older than this is rejected. Set wide enough to accommodate
-    // normal off-chain choreography (provider signs, client builds & broadcasts
-    // tx, tx finalises) without forcing re-signing.
-    pub const MaxNonceAge: BlockNumber = 24 * RC_HOURS;
     // Reserved from the challenger when opening a challenge. 1 token at 12
     // decimals = floor on spam economics. Previously hardcoded `100u32`
     // (1e-10 of a token) which made challenge spam effectively free.
@@ -91,6 +86,7 @@ impl pallet_s3_registry::Config for Runtime {
 
 impl pallet_storage_provider::Config for Runtime {
     type Currency = Balances;
+    type RuntimeHoldReason = RuntimeHoldReason;
     type Treasury = TreasuryAccount;
     type MinStakePerByte = MinStakePerByte;
     type MaxMultiaddrLength = ConstU32<128>;
@@ -100,7 +96,6 @@ impl pallet_storage_provider::Config for Runtime {
     type MaxChunkSize = ConstU32<262144>; // 256 KiB
     type ChallengeTimeout = ChallengeTimeout;
     type ChallengeDeposit = ChallengeDeposit;
-    type MaxNonceAge = MaxNonceAge;
     type SettlementTimeout = SettlementTimeout;
     type RequestTimeout = RequestTimeout;
     type MaxBucketsPerMember = ConstU32<1000>;

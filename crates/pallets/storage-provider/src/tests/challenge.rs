@@ -2,10 +2,10 @@
 
 use super::*;
 use sp_core::H256;
-use storage_primitives::{BucketSnapshot, ChallengeId, ChunkLocation, Commitment};
+use storage_primitives::{BucketSnapshot, ChallengeId, ChunkLocation, Commitment, Role};
 
 /// Setup: register provider, create agreement, and insert a snapshot with provider signed.
-fn setup_with_snapshot(provider: u64, client: u64) -> u64 {
+pub(super) fn setup_with_snapshot(provider: u64, client: u64) -> u64 {
     register_provider(provider, 200);
     let bucket_id = setup_agreement(provider, client, 50, 200);
 
@@ -20,7 +20,6 @@ fn setup_with_snapshot(provider: u64, client: u64) -> u64 {
                 },
                 checkpoint_block: 1,
                 primary_signers: vec![0x01], // bit 0 set = provider at index 0 signed
-                commitment_nonce: 0,
             });
         }
     });
@@ -33,7 +32,7 @@ fn setup_with_snapshot(provider: u64, client: u64) -> u64 {
 /// genuinely superseded. Required for a `Superseded` defense to be valid under
 /// the tightened soundness rule (challenged root must differ from the live
 /// canonical root, and the challenged seq must still be in range).
-fn advance_snapshot_root(bucket_id: u64) {
+pub(super) fn advance_snapshot_root(bucket_id: u64) {
     Buckets::<Test>::mutate(bucket_id, |maybe_bucket| {
         let bucket = maybe_bucket.as_mut().expect("bucket exists");
         bucket.snapshot = Some(BucketSnapshot {
@@ -44,8 +43,30 @@ fn advance_snapshot_root(bucket_id: u64) {
             },
             checkpoint_block: 1,
             primary_signers: vec![0x01],
-            commitment_nonce: 1,
         });
+    });
+}
+
+#[test]
+fn provider_cannot_challenge_itself() {
+    new_test_ext().execute_with(|| {
+        frame_system::Pallet::<Test>::set_block_number(1);
+        let bucket_id = setup_with_snapshot(2, 1);
+
+        // Every challenge mode funnels through `create_challenge`, so one
+        // mode covers the guard.
+        assert_noop!(
+            StorageProvider::challenge_checkpoint(
+                RuntimeOrigin::signed(2),
+                bucket_id,
+                2,
+                ChunkLocation {
+                    leaf_index: 0,
+                    chunk_index: 0,
+                },
+            ),
+            Error::<Test>::SelfChallenge
+        );
     });
 }
 
@@ -150,7 +171,6 @@ fn challenge_checkpoint_fails_provider_not_signed() {
                     },
                     checkpoint_block: 1,
                     primary_signers: vec![0x01], // only bit 0 set
-                    commitment_nonce: 0,
                 });
             }
         });
@@ -191,7 +211,6 @@ fn challenge_offchain_fails_no_agreement() {
                     leaf_index: 0,
                     chunk_index: 0,
                 },
-                0,
                 sp_runtime::MultiSignature::Sr25519([0u8; 64].into()),
             ),
             Error::<Test>::AgreementNotFound
@@ -290,7 +309,6 @@ fn respond_to_challenge_superseded_works() {
                 },
                 checkpoint_block: 1,
                 primary_signers: vec![0x01],
-                commitment_nonce: 1,
             });
         });
 
@@ -346,6 +364,15 @@ fn respond_to_challenge_superseded_cost_split_block_1() {
         frame_system::Pallet::<Test>::set_block_number(1);
         let bucket_id = setup_with_snapshot(2, 1);
 
+        // Authorize the challenger (Reader member): the split table applies
+        // only to the authorized tier — a public stranger pays 100%.
+        assert_ok!(StorageProvider::set_member(
+            RuntimeOrigin::signed(1),
+            bucket_id,
+            3,
+            Role::Reader,
+        ));
+
         // Treasury account is 999 in the mock (TestTreasury).
         const TREASURY: u64 = 999;
 
@@ -393,19 +420,22 @@ fn respond_to_challenge_superseded_cost_split_block_1() {
         // free balance as compensation for responding.
         assert_eq!(Balances::free_balance(2), provider_balance_before + 90);
 
-        // Provider stake decreased by 10
+        // A valid response never touches the provider's stake: the provider
+        // bears its 10% share by not being reimbursed for it.
         let provider_stake_after = Providers::<Test>::get(2).unwrap().stake;
-        assert_eq!(provider_stake_after, provider_stake_before - 10);
+        assert_eq!(provider_stake_after, provider_stake_before);
 
-        // The slashed provider_cost (10) is routed to the Treasury, not burned.
-        assert_eq!(
-            Balances::free_balance(TREASURY),
-            treasury_balance_before + 10
-        );
+        // Nothing flows to the Treasury on a defense.
+        assert_eq!(Balances::free_balance(TREASURY), treasury_balance_before);
 
-        // Slash + resolve is net-zero: total issuance is unchanged. The
-        // repatriated challenger_cost is an internal transfer, also net-zero.
+        // The repatriated challenger_cost is an internal transfer: total
+        // issuance is unchanged.
         assert_eq!(Balances::total_issuance(), total_issuance_before);
+
+        // The defense is counted, at resolution, under the authorized tier.
+        let stats = Providers::<Test>::get(2).unwrap().stats;
+        assert_eq!(stats.challenges_received_authorized, 1);
+        assert_eq!(stats.challenges_received_public, 0);
     });
 }
 
@@ -414,6 +444,15 @@ fn respond_to_challenge_superseded_cost_split_block_5() {
     new_test_ext().execute_with(|| {
         frame_system::Pallet::<Test>::set_block_number(1);
         let bucket_id = setup_with_snapshot(2, 1);
+
+        // Authorize the challenger (Reader member): the split table applies
+        // only to the authorized tier — a public stranger pays 100%.
+        assert_ok!(StorageProvider::set_member(
+            RuntimeOrigin::signed(1),
+            bucket_id,
+            3,
+            Role::Reader,
+        ));
 
         let challenger_balance_before = Balances::free_balance(3);
         let provider_stake_before = Providers::<Test>::get(2).unwrap().stake;
@@ -447,8 +486,10 @@ fn respond_to_challenge_superseded_cost_split_block_5() {
 
         // challenger_cost = 80, provider_cost = 20
         assert_eq!(Balances::free_balance(3), challenger_balance_before - 80);
+        // Stake untouched: the provider bears its share by not being
+        // reimbursed for it.
         let provider_stake_after = Providers::<Test>::get(2).unwrap().stake;
-        assert_eq!(provider_stake_after, provider_stake_before - 20);
+        assert_eq!(provider_stake_after, provider_stake_before);
     });
 }
 
@@ -457,6 +498,15 @@ fn respond_to_challenge_superseded_cost_split_block_24() {
     new_test_ext().execute_with(|| {
         frame_system::Pallet::<Test>::set_block_number(1);
         let bucket_id = setup_with_snapshot(2, 1);
+
+        // Authorize the challenger (Reader member): the split table applies
+        // only to the authorized tier — a public stranger pays 100%.
+        assert_ok!(StorageProvider::set_member(
+            RuntimeOrigin::signed(1),
+            bucket_id,
+            3,
+            Role::Reader,
+        ));
 
         let challenger_balance_before = Balances::free_balance(3);
         let provider_stake_before = Providers::<Test>::get(2).unwrap().stake;
@@ -490,8 +540,10 @@ fn respond_to_challenge_superseded_cost_split_block_24() {
 
         // challenger_cost = 70, provider_cost = 30
         assert_eq!(Balances::free_balance(3), challenger_balance_before - 70);
+        // Stake untouched: the provider bears its share by not being
+        // reimbursed for it.
         let provider_stake_after = Providers::<Test>::get(2).unwrap().stake;
-        assert_eq!(provider_stake_after, provider_stake_before - 30);
+        assert_eq!(provider_stake_after, provider_stake_before);
     });
 }
 
@@ -500,6 +552,15 @@ fn respond_to_challenge_superseded_cost_split_block_95() {
     new_test_ext().execute_with(|| {
         frame_system::Pallet::<Test>::set_block_number(1);
         let bucket_id = setup_with_snapshot(2, 1);
+
+        // Authorize the challenger (Reader member): the split table applies
+        // only to the authorized tier — a public stranger pays 100%.
+        assert_ok!(StorageProvider::set_member(
+            RuntimeOrigin::signed(1),
+            bucket_id,
+            3,
+            Role::Reader,
+        ));
 
         let challenger_balance_before = Balances::free_balance(3);
         let provider_stake_before = Providers::<Test>::get(2).unwrap().stake;
@@ -533,8 +594,10 @@ fn respond_to_challenge_superseded_cost_split_block_95() {
 
         // challenger_cost = 60, provider_cost = 40
         assert_eq!(Balances::free_balance(3), challenger_balance_before - 60);
+        // Stake untouched: the provider bears its share by not being
+        // reimbursed for it.
         let provider_stake_after = Providers::<Test>::get(2).unwrap().stake;
-        assert_eq!(provider_stake_after, provider_stake_before - 40);
+        assert_eq!(provider_stake_after, provider_stake_before);
     });
 }
 
@@ -543,6 +606,15 @@ fn respond_to_challenge_superseded_cost_split_block_96_plus() {
     new_test_ext().execute_with(|| {
         frame_system::Pallet::<Test>::set_block_number(1);
         let bucket_id = setup_with_snapshot(2, 1);
+
+        // Authorize the challenger (Reader member): the split table applies
+        // only to the authorized tier — a public stranger pays 100%.
+        assert_ok!(StorageProvider::set_member(
+            RuntimeOrigin::signed(1),
+            bucket_id,
+            3,
+            Role::Reader,
+        ));
 
         let challenger_balance_before = Balances::free_balance(3);
         let provider_balance_before = Balances::free_balance(2);
@@ -585,8 +657,10 @@ fn respond_to_challenge_superseded_cost_split_block_96_plus() {
         // free balance as compensation for responding.
         assert_eq!(Balances::free_balance(2), provider_balance_before + 50);
 
+        // Stake untouched: the provider bears its share by not being
+        // reimbursed for it.
         let provider_stake_after = Providers::<Test>::get(2).unwrap().stake;
-        assert_eq!(provider_stake_after, provider_stake_before - 50);
+        assert_eq!(provider_stake_after, provider_stake_before);
     });
 }
 
@@ -615,7 +689,6 @@ fn challenge_slashes_multiple_challenges_in_sweep() {
                     },
                     checkpoint_block: 1,
                     primary_signers: vec![0x03], // bits 0 and 1 set
-                    commitment_nonce: 0,
                 });
             }
         });
@@ -688,7 +761,6 @@ fn responding_to_sibling_preserves_other_challenge_index() {
                     },
                     checkpoint_block: 1,
                     primary_signers: vec![0x03],
-                    commitment_nonce: 0,
                 });
             }
         });
@@ -729,7 +801,6 @@ fn responding_to_sibling_preserves_other_challenge_index() {
                 },
                 checkpoint_block: 1,
                 primary_signers: vec![0x03],
-                commitment_nonce: 1,
             });
         });
 
@@ -870,7 +941,6 @@ fn respond_to_challenge_superseded_emits_defended_event() {
                 },
                 checkpoint_block: 1,
                 primary_signers: vec![0x01],
-                commitment_nonce: 1,
             });
         });
 
@@ -880,13 +950,15 @@ fn respond_to_challenge_superseded_emits_defended_event() {
             crate::ChallengeResponse::Superseded,
         ));
 
-        // Verify ChallengeDefended event
+        // Verify ChallengeDefended event. Challenger 3 is a public stranger,
+        // so the deposit reimburses the provider in full and the provider
+        // bears nothing.
         let expected_event = RuntimeEvent::StorageProvider(crate::Event::ChallengeDefended {
             challenge_id,
             provider: 2,
             response_time_blocks: 1,
-            challenger_cost: 90,
-            provider_cost: 10,
+            challenger_cost: 100,
+            provider_cost: 0,
         });
         assert!(frame_system::Pallet::<Test>::events()
             .iter()
@@ -932,7 +1004,6 @@ fn setup_three_primaries_snapshot() -> u64 {
             checkpoint_block: 1,
             // bits {0, 2} set: provider 2 (idx 0) and 4 (idx 2) signed.
             primary_signers: vec![0b0000_0101],
-            commitment_nonce: 0,
         });
     });
 
@@ -1007,18 +1078,8 @@ fn remove_slashed_reindexes_snapshot_bitfield() {
         frame_system::Pallet::<Test>::set_block_number(1);
         let bucket_id = setup_three_primaries_snapshot();
 
-        // Slash provider 2's entire reserved stake to zero, then remove it.
-        Providers::<Test>::mutate(2, |maybe_provider| {
-            if let Some(provider) = maybe_provider {
-                let stake = provider.stake;
-                let (_, remaining) =
-                    <Balances as frame_support::traits::ReservableCurrency<u64>>::slash_reserved(
-                        &2, stake,
-                    );
-                assert_eq!(remaining, 0, "entire stake should have been slashed");
-                provider.stake = 0;
-            }
-        });
+        // Slash provider 2's entire held stake to zero, then remove it.
+        super::slash_provider_stake(2);
 
         assert_ok!(StorageProvider::remove_slashed(
             RuntimeOrigin::signed(5),
@@ -1083,10 +1144,7 @@ fn challenge_count_per_deadline_is_capped() {
 // PR #125 challenge-overhaul tests.
 //
 // Kept in a nested module so they coexist with dev's top-level challenge tests
-// above without name collisions. Adaptations from the original PR #125 file:
-//   * The replay-recency gate surfaces `Error::CommitmentNonceTooOld` in the
-//     merged pallet (PR #125 originally named it `NonceTooOld`), so the three
-//     nonce-rejection tests assert `CommitmentNonceTooOld`.
+// above without name collisions.
 // ─────────────────────────────────────────────────────────────────────────────
 mod challenge_tests {
     use super::*;
@@ -1160,7 +1218,6 @@ mod challenge_tests {
             },
             checkpoint_block: System::block_number(),
             primary_signers: vec![0b0000_0001],
-            commitment_nonce: System::block_number(),
         };
         Buckets::<Test>::mutate(0u64, |bucket| {
             let bucket = bucket.as_mut().expect("bucket exists");
@@ -1197,10 +1254,13 @@ mod challenge_tests {
             assert_eq!(challenge.mmr_root, mmr_root);
             // Currently a fixed `100u32`; commit 4 will change this.
             assert_eq!(challenge.deposit, 100);
+            // Challenger 3 is a stranger (not a member, owns no agreement).
+            assert!(!challenge.authorized);
 
-            // Provider stats reflect received challenge.
+            // Received counters move at resolution, never at creation.
             let provider = Providers::<Test>::get(2).unwrap();
-            assert_eq!(provider.stats.challenges_received, 1);
+            assert_eq!(provider.stats.challenges_received_authorized, 0);
+            assert_eq!(provider.stats.challenges_received_public, 0);
         });
     }
 
@@ -1288,13 +1348,14 @@ mod challenge_tests {
 
             // Challenge cleared from storage.
             assert!(Challenges::<Test>::get(101, 0).is_none());
-            // Defended path slashes a fraction of the deposit from the
-            // provider's stake based on response time. At block 1 (challenge
-            // also created at block 1) the response is within "block 1" → 10%
-            // of the 100-deposit = 10 deducted, stake drops 200 → 190.
+            // A valid defense never touches stake. Challenger 3 is a public
+            // stranger, so the whole deposit reimburses the provider and the
+            // defense is counted under the public tier.
             let provider = Providers::<Test>::get(2).unwrap();
-            assert_eq!(provider.stake, 190);
+            assert_eq!(provider.stake, 200);
             assert_eq!(provider.stats.challenges_failed, 0);
+            assert_eq!(provider.stats.challenges_received_public, 1);
+            assert_eq!(provider.stats.challenges_received_authorized, 0);
         });
     }
 
@@ -1517,7 +1578,6 @@ mod challenge_tests {
                     },
                     checkpoint_block: 1,
                     primary_signers: vec![0b0000_0001],
-                    commitment_nonce: 1,
                 });
             });
 
@@ -1605,7 +1665,6 @@ mod challenge_tests {
                     },
                     checkpoint_block: 1,
                     primary_signers: vec![0b0000_0001],
-                    commitment_nonce: 1,
                 });
             });
 
@@ -2036,113 +2095,6 @@ mod challenge_tests {
         });
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // Replay protection — `CommitmentPayload::nonce` recency
-    // ─────────────────────────────────────────────────────────────────────────
-
-    /// Pre-replay-protection, a provider's signature was valid forever. With
-    /// `T::MaxNonceAge` enforcement, a nonce older than that window is
-    /// rejected before signature verification fires — so the test can use a
-    /// dummy signature and still observe the rejection.
-    #[test]
-    fn challenge_offchain_rejects_old_nonce() {
-        new_test_ext().execute_with(|| {
-            // Mock `MaxNonceAge = 200`. Place us far enough ahead that nonce=1
-            // is outside the window.
-            System::set_block_number(500);
-            let (mmr_root, _, _) = single_chunk_proof(b"chunk-0");
-            setup_primary_with_snapshot(mmr_root, 0, 1);
-
-            let dummy_sig =
-                sp_runtime::MultiSignature::Sr25519(sp_core::sr25519::Signature::from([0u8; 64]));
-            assert_noop!(
-                StorageProvider::challenge_offchain(
-                    RuntimeOrigin::signed(3),
-                    0,
-                    2,
-                    Commitment {
-                        mmr_root,
-                        start_seq: 0,
-                        leaf_count: 1,
-                    },
-                    ChunkLocation {
-                        leaf_index: 0,
-                        chunk_index: 0,
-                    },
-                    1,
-                    dummy_sig,
-                ),
-                Error::<Test>::CommitmentNonceTooOld
-            );
-        });
-    }
-
-    /// A future-dated nonce is nonsensical (the signer can't know future
-    /// blocks at sign-time) and is rejected the same way.
-    #[test]
-    fn challenge_offchain_rejects_future_nonce() {
-        new_test_ext().execute_with(|| {
-            System::set_block_number(10);
-            let (mmr_root, _, _) = single_chunk_proof(b"chunk-0");
-            setup_primary_with_snapshot(mmr_root, 0, 1);
-
-            let dummy_sig =
-                sp_runtime::MultiSignature::Sr25519(sp_core::sr25519::Signature::from([0u8; 64]));
-            assert_noop!(
-                StorageProvider::challenge_offchain(
-                    RuntimeOrigin::signed(3),
-                    0,
-                    2,
-                    Commitment {
-                        mmr_root,
-                        start_seq: 0,
-                        leaf_count: 1,
-                    },
-                    ChunkLocation {
-                        leaf_index: 0,
-                        chunk_index: 0,
-                    },
-                    9999,
-                    dummy_sig,
-                ),
-                Error::<Test>::CommitmentNonceTooOld
-            );
-        });
-    }
-
-    /// The same recency gate fires on the multi-signature `checkpoint`
-    /// extrinsic, before any per-signature work happens. Same dummy-signature
-    /// trick works here.
-    #[test]
-    fn checkpoint_rejects_old_nonce() {
-        new_test_ext().execute_with(|| {
-            System::set_block_number(500);
-            // No snapshot needed — the recency check runs before bucket
-            // resolution.
-            let dummy_sig =
-                sp_runtime::MultiSignature::Sr25519(sp_core::sr25519::Signature::from([0u8; 64]));
-            let sigs: frame_support::BoundedVec<
-                (u64, sp_runtime::MultiSignature),
-                <Test as Config>::MaxPrimaryProviders,
-            > = vec![(2, dummy_sig)].try_into().unwrap();
-
-            assert_noop!(
-                StorageProvider::checkpoint(
-                    RuntimeOrigin::signed(1),
-                    0,
-                    Commitment {
-                        mmr_root: H256::zero(),
-                        start_seq: 0,
-                        leaf_count: 0,
-                    },
-                    1,
-                    sigs,
-                ),
-                Error::<Test>::CommitmentNonceTooOld
-            );
-        });
-    }
-
     #[test]
     fn challenge_replica_fails_without_last_sync() {
         new_test_ext().execute_with(|| {
@@ -2202,7 +2154,6 @@ mod challenge_tests {
         mmr_root: H256,
         start_seq: u64,
         leaf_count: u64,
-        nonce: u64,
     ) -> sp_runtime::MultiSignature {
         let pair = provider_signer(provider);
         let payload = storage_primitives::CommitmentPayload::new(
@@ -2212,7 +2163,6 @@ mod challenge_tests {
                 start_seq,
                 leaf_count,
             },
-            nonce,
         );
         // `verify_signature` checks the raw encoded payload (sr25519 hashes
         // internally), so sign the encoding directly — no extra blake2 round.
@@ -2352,7 +2302,7 @@ mod challenge_tests {
             // While active (block 5 < expires_at 101): a valid signature opens
             // the challenge.
             System::set_block_number(5);
-            let sig = signed_offchain_commitment(2, 0, mmr_root, 0, 1, 5);
+            let sig = signed_offchain_commitment(2, 0, mmr_root, 0, 1);
             assert_ok!(StorageProvider::challenge_offchain(
                 RuntimeOrigin::signed(3),
                 0,
@@ -2366,7 +2316,6 @@ mod challenge_tests {
                     leaf_index: 0,
                     chunk_index: 0,
                 },
-                5,
                 sig,
             ));
 
@@ -2389,7 +2338,6 @@ mod challenge_tests {
                         leaf_index: 0,
                         chunk_index: 0,
                     },
-                    101,
                     dummy,
                 ),
                 Error::<Test>::AgreementExpired

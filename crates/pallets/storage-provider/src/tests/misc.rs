@@ -49,18 +49,9 @@ fn remove_slashed_works() {
         register_provider(2, 200);
         let bucket_id = setup_agreement(2, 1, 50, 200);
 
-        // Slash provider's entire reserved stake (mirrors production slash_provider_for_failed_challenge)
-        Providers::<Test>::mutate(2, |maybe_provider| {
-            if let Some(provider) = maybe_provider {
-                let stake = provider.stake;
-                let (_, remaining) =
-                    <Balances as frame_support::traits::ReservableCurrency<u64>>::slash_reserved(
-                        &2, stake,
-                    );
-                assert_eq!(remaining, 0, "entire stake should have been slashed");
-                provider.stake = 0;
-            }
-        });
+        // Slash provider's entire held stake (mirrors production
+        // `slash_provider_for_failed_challenge`).
+        super::slash_provider_stake(2);
 
         let owner_balance_before = Balances::free_balance(1);
         let agreement = StorageAgreements::<Test>::get(bucket_id, 2).unwrap();
@@ -109,10 +100,7 @@ fn remove_slashed_fails_no_agreement() {
         // Zero out stake
         Providers::<Test>::mutate(2, |maybe_provider| {
             if let Some(provider) = maybe_provider {
-                <Balances as frame_support::traits::ReservableCurrency<u64>>::unreserve(
-                    &2,
-                    provider.stake,
-                );
+                assert_ok!(StorageProvider::release_stake(&2, provider.stake));
                 provider.stake = 0;
             }
         });
@@ -249,7 +237,6 @@ fn challenge_checkpoint_emits_event() {
                     },
                     checkpoint_block: 1,
                     primary_signers: vec![0x01],
-                    commitment_nonce: 0,
                 });
             }
         });
@@ -294,7 +281,6 @@ fn checkpoint_emits_event() {
                 start_seq: 0,
                 leaf_count: 10,
             },
-            1, // nonce
             Default::default(),
         ));
 
@@ -329,7 +315,6 @@ fn extend_checkpoint_emits_event() {
             RuntimeOrigin::signed(1),
             bucket_id,
             commitment,
-            1, // nonce
             Default::default(),
         ));
 

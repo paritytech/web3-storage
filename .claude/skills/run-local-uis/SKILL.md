@@ -1,6 +1,6 @@
 ---
 name: run-local-uis
-description: Start all five UIs (landing + drive-ui + provider-dashboard + s3-ui + photos) locally with hot reload and print the ports table. Use when the user says "run locally", "run the UIs", "start the UIs", "spin up the UIs", or similar — covers any time the goal is to drive the user-interfaces apps in a browser, including verifying changes to the shared network-picker, the landing page, or any individual UI.
+description: Start all six UIs (landing + drive-ui + provider-dashboard + s3-ui + photos + explorer) locally with hot reload and print the ports table. Use when the user says "run locally", "run the UIs", "start the UIs", "spin up the UIs", or similar — covers any time the goal is to drive the user-interfaces apps in a browser, including verifying changes to the shared network-picker, the landing page, or any individual UI.
 ---
 
 Spin up every `user-interfaces/` app on its dedicated port with Vite HMR, then
@@ -19,6 +19,7 @@ in-memory and rewrites the card links to point at the local dev ports.
 | Provider Dashboard | http://127.0.0.1:5175/ | `provider-dashboard` |
 | S3 UI | http://127.0.0.1:5177/ | `@web3-storage/s3-ui` |
 | Photos | http://127.0.0.1:5178/ | `@web3-storage/photos` |
+| Explorer | http://127.0.0.1:5179/ | `@web3-storage/explorer` |
 
 These ports are the canonical ones — `user-interfaces/README.md` and each
 app's `vite.config.ts` are aligned to them. 5176 is reserved for the landing
@@ -30,7 +31,7 @@ page by this skill.
    already has running:
 
    ```bash
-   for p in 5174 5175 5176 5177 5178; do
+   for p in 5174 5175 5176 5177 5178 5179; do
      ss -ltn "sport = :$p" 2>/dev/null | grep -q LISTEN && echo "$p: up" || echo "$p: free"
    done
    ```
@@ -44,23 +45,28 @@ page by this skill.
    cd /home/bparity/parity/web3-storage/user-interfaces
 
    # Drive UI — vite.config.ts pins 5174
-   nohup pnpm --filter @web3-storage/drive-ui run dev -- --host 127.0.0.1 \
+   nohup pnpm --filter @web3-storage/drive-ui run dev --host 127.0.0.1 \
      > /tmp/run-local-uis/drive-ui.log 2>&1 &
    disown
 
    # Provider dashboard — vite.config.ts pins 5175
-   nohup pnpm --filter provider-dashboard run dev -- --host 127.0.0.1 \
+   nohup pnpm --filter provider-dashboard run dev --host 127.0.0.1 \
      > /tmp/run-local-uis/provider.log 2>&1 &
    disown
 
    # S3 UI — vite.config.ts pins 5177
-   nohup pnpm --filter @web3-storage/s3-ui run dev -- --host 127.0.0.1 \
+   nohup pnpm --filter @web3-storage/s3-ui run dev --host 127.0.0.1 \
      > /tmp/run-local-uis/s3-ui.log 2>&1 &
    disown
 
    # Photos — vite.config.ts pins 5178
-   nohup pnpm --filter @web3-storage/photos run dev -- --host 127.0.0.1 \
+   nohup pnpm --filter @web3-storage/photos run dev --host 127.0.0.1 \
      > /tmp/run-local-uis/photos.log 2>&1 &
+   disown
+
+   # Explorer — vite.config.ts pins 5179
+   nohup pnpm --filter @web3-storage/explorer run dev --host 127.0.0.1 \
+     > /tmp/run-local-uis/explorer.log 2>&1 &
    disown
 
    # Landing — no package.json. Borrow any per-app vite binary (they're all
@@ -79,7 +85,7 @@ page by this skill.
 
    ```bash
    sleep 5
-   ss -ltn 2>/dev/null | grep -E ':51(74|75|76|77|78)\b'
+   ss -ltn 2>/dev/null | grep -E ':51(74|75|76|77|78|79)\b'
    ```
 
    If a port is still missing, `tail -30 /tmp/run-local-uis/<app>.log` to find
@@ -88,18 +94,18 @@ page by this skill.
 
 4. **Confirm the landing page's substitution worked.** The raw HTML contains
    `__NETWORKS_JSON__`, `__DEFAULT_NETWORK_ID__`, `__VALID_IDS_JSON__` and
-   relative `./console/` style links — if any of those survive into the served
+   relative `./provider/` style links — if any of those survive into the served
    HTML, the vite config didn't run:
 
    ```bash
    body=$(curl -s --max-time 5 http://127.0.0.1:5176/)
    echo "stale placeholders: $(grep -cE '__(NETWORKS_JSON|DEFAULT_NETWORK_ID|VALID_IDS_JSON)__' <<<"$body")"
-   echo "stale relative cards: $(grep -cE \"['\\\"]\\\\./(provider|drive|s3|photos)/['\\\"]\" <<<"$body")"
+   echo "stale relative cards: $(grep -cE \"['\\\"]\\\\./(provider|drive|s3|photos|explorer)/['\\\"]\" <<<"$body")"
    ```
 
    Both counts should be `0`.
 
-5. **Print the table.** Show the user the four URLs above as a compact markdown
+5. **Print the table.** Show the user the URLs above as a compact markdown
    table so they can click into any of them. Mention that hot reload is wired
    for every app (Vite HMR for the React apps; the landing's HMR also covers
    `user-interfaces/shared/network-config/src/{networks,types}.ts` via the
@@ -110,7 +116,7 @@ page by this skill.
    and silently kills your shell):
 
    ```bash
-   for p in 5174 5175 5176 5177 5178; do
+   for p in 5174 5175 5176 5177 5178 5179; do
      pid=$(ss -ltnp 2>/dev/null | sed -n "s/.*:$p .*pid=\([0-9]*\).*/\1/p" | head -1)
      [ -n "$pid" ] && kill "$pid"
    done
@@ -120,7 +126,7 @@ page by this skill.
 
 - **Hot reload coverage**: edits anywhere under each app's `src/` HMR-update
   the app; edits in `user-interfaces/shared/network-picker/src/` HMR-update
-  all four React apps that import it as source. The landing page's plugin
+  all five React apps that import it as source. The landing page's plugin
   watches `shared/network-config/src/{networks,types}.ts` and triggers full
   reload on change.
 - **Why a custom vite config for landing?** `landing/index.html` has sentinel
@@ -128,8 +134,11 @@ page by this skill.
   `user-interfaces/landing/inject-config.mjs` rewrites at build/deploy time.
   Serving the raw file would surface JS syntax errors. The skill's config
   reproduces the substitution as an in-memory `transformIndexHtml` plugin and
-  additionally rewrites the relative card links (`./provider/`, `./drive/`,
-  `./s3/`) to absolute dev-server URLs so the landing's cards open the
-  local apps instead of falling through to the landing's own port.
+  additionally rewrites the relative card links (`./explorer/`, `./provider/`,
+  `./drive/`, `./s3/`, `./photos/`) to absolute dev-server URLs so the
+  landing's cards open the local apps instead of falling through to the
+  landing's own port. The config's `DEV_BASES` table must stay in lockstep
+  with `BASES` in `user-interfaces/landing/index.html` — add both when adding
+  an app.
 - **First-time setup** (only if `pnpm install` hasn't been run in this clone
   yet): `cd user-interfaces && pnpm install`.

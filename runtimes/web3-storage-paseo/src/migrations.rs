@@ -3,42 +3,19 @@
 //! Single-block storage migrations for the Paseo Web3 Storage runtime.
 //!
 //! Wired into the runtime via `frame_system::Config::SingleBlockMigrations`.
-//! Each entry is idempotent (a `VersionedMigration` or an idempotent SDK
-//! built-in), so the tuple is safe to leave in place across releases.
+//! Each entry is gated on an on-chain storage version, so the tuple is safe to
+//! leave in place across releases.
 
 use crate::Runtime;
-use frame_support::{parameter_types, weights::constants::RocksDbWeight};
-
-parameter_types! {
-    /// `StorageProvider`'s `AgreementRequests` and `ChallengerStats` maps were
-    /// deleted (#105 and the challenger-stats removal); these name them for the
-    /// `RemoveStorage` cleanups below.
-    pub const StorageProviderPalletName: &'static str = "StorageProvider";
-    pub const AgreementRequestsStorageName: &'static str = "AgreementRequests";
-}
 
 /// Storage migrations run on runtime upgrade, in order.
 pub type Migrations = (
-    // Purge the orphaned `AgreementRequests` entries left by #105. The SDK
-    // built-in is idempotent (a no-op once the prefix is empty), so it needs no
-    // storage-version gating and is safe to leave in place.
-    frame_support::migrations::RemoveStorage<
-        StorageProviderPalletName,
-        AgreementRequestsStorageName,
-        RocksDbWeight,
-    >,
-    // Purge the orphaned `ChallengerStats` entries left by the challenger-stats
-    // removal. Idempotent for the same reason as the cleanup above.
-    frame_support::migrations::RemoveStorage<
-        StorageProviderPalletName,
-        ChallengerStatsStorageName,
-        RocksDbWeight,
-    >,
     // Drop the `payment` field from `DriveInfo` (#105). A real data transform,
     // so it stays a `VersionedMigration` gated on the pallet's storage version.
     pallet_drive_registry::migrations::v1::MigrateV0ToV1<Runtime>,
-    // Backfill the `commitment_nonce` field added to `BucketSnapshot` by the
-    // challenge flow overhaul (#125). A real data transform, so it stays a
-    // `VersionedMigration` gated on the pallet's storage version.
-    pallet_storage_provider::migrations::v1::MigrateV0ToV1<Runtime>,
+    // SDK `polkadot-stable2606` bumped both pallets' in-code storage versions.
+    // Each migration is gated on the on-chain version, so both are no-ops once
+    // applied.
+    cumulus_pallet_parachain_system::migration::Migration<Runtime>,
+    cumulus_pallet_xcmp_queue::migration::v7::MigrateV6ToV7<Runtime>,
 );

@@ -220,7 +220,7 @@ pub enum S3Error {
 
 /// Compute CID from data using blake2-256.
 pub fn compute_cid(data: &[u8]) -> H256 {
-    sp_core::hashing::blake2_256(data).into()
+    sp_crypto_hashing::blake2_256(data).into()
 }
 
 /// Compute ETag from CID (hex string without 0x prefix).

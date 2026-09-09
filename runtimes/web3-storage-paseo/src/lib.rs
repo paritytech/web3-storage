@@ -25,7 +25,7 @@ extern crate alloc;
 use alloc::borrow::Cow;
 use alloc::{vec, vec::Vec};
 use cumulus_pallet_parachain_system::RelayNumberMonotonicallyIncreases;
-use cumulus_primitives_core::{AggregateMessageOrigin, ParaId};
+use cumulus_primitives_core::{AggregateMessageOrigin, ParaId, VerifySchedulingSignature};
 use frame_support::{
     derive_impl,
     dispatch::DispatchClass,
@@ -78,7 +78,7 @@ pub use pallet_storage_provider;
 use paseo_constants::{
     consensus::{
         async_backing::UNINCLUDED_SEGMENT_CAPACITY, BLOCK_PROCESSING_VELOCITY,
-        MAXIMUM_BLOCK_WEIGHT, RELAY_CHAIN_SLOT_DURATION_MILLIS, SLOT_DURATION,
+        MAXIMUM_BLOCK_WEIGHT, RELAY_CHAIN_SLOT_DURATION_MILLIS, RELAY_PARENT_OFFSET, SLOT_DURATION,
     },
     currency::{EXISTENTIAL_DEPOSIT, MICROUNIT},
     system::{AVERAGE_ON_INITIALIZE_RATIO, NORMAL_DISPATCH_RATIO},
@@ -178,14 +178,28 @@ pub const VERSION: RuntimeVersion = RuntimeVersion {
     impl_name: Cow::Borrowed("paseo-web3-storage-runtime"),
     authoring_version: 1,
     // Encodes the runtime semver: major * 1_000_000 + minor * 1_000 + patch.
-    // 0.4.1 -> 4_001 on dev; 4_002 for the breaking Challenges storage reshape
-    // (Vec -> StorageDoubleMap); 4_003 for dropping the vestigial
-    // `ChallengerStatRecord::total_earnings` field. Must stay > the deployed
-    // value so the upgrade is accepted and migrations run.
-    spec_version: 4_003,
+    // * 0.4.1 -> 4_001 on dev (#212), released as v0.4.1-paseo and still the deployed value;
+    // * 4_002 for the breaking Challenges storage reshape (Vec -> StorageDoubleMap) (#125);
+    // * 4_003 for dropping the vestigial `ChallengerStatRecord::total_earnings` field (#125);
+    // * 4_004 for `StorageProviderApi` v2: `challenge_candidates`, `deregister_at`, `reputation` (#318);
+    // * 4_005 for 2 s blocks / 3 cores: slot-based authoring, `RelayParentOffset = 1` (#131);
+    // * 4_006 for the challenger tier and bucket visibility: split `ProviderStats` counters,
+    //   `Bucket.visibility`, `Challenge.authorized`, `set_bucket_visibility`, and
+    //   `StorageProviderApi` v3 with the split counters in its responses (#330);
+    // * 4_007 for dropping the `ChallengerStats` map and its `ChallengerStatRecord` (#400).
+    spec_version: 4_007,
     impl_version: 0,
     apis: RUNTIME_API_VERSIONS,
-    transaction_version: 2,
+    // Bumped whenever call encoding changes, so offline signers and stale-metadata
+    // clients fail loudly rather than mis-encode a call.
+    // * 1 on the initial paseo runtime (#58);
+    // * 2 in the v0.2.0-paseo release, still the deployed value;
+    // * 3 for dropping the commitment nonce: `checkpoint` and `challenge_offchain` each lost
+    //   a `nonce` argument, and `respond_to_challenge`'s `ChallengeResponse::Deleted` variant
+    //   lost its `nonce` field (#339);
+    // * 4 for the `visibility` argument appended to `establish_storage_agreement`,
+    //   `create_drive` and `create_s3_bucket` (#330).
+    transaction_version: 4,
     system_version: 1,
 };
 
@@ -353,7 +367,9 @@ impl cumulus_pallet_parachain_system::Config for Runtime {
     type CheckAssociatedRelayNumber = RelayNumberMonotonicallyIncreases;
     type ConsensusHook = ConsensusHook;
     type WeightInfo = weights::cumulus_pallet_parachain_system::WeightInfo<Runtime>;
-    type RelayParentOffset = ConstU32<0>;
+    type RelayParentOffset = ConstU32<RELAY_PARENT_OFFSET>;
+    // V3 scheduling stays off; enabling it before collators support it stalls the chain.
+    type SchedulingSignatureVerifier = ();
 }
 
 impl parachain_info::Config for Runtime {}
@@ -751,7 +767,17 @@ pallet_revive::impl_runtime_apis_plus_revive_traits!(
 
     impl cumulus_primitives_core::RelayParentOffsetApi<Block> for Runtime {
         fn relay_parent_offset() -> u32 {
-            0
+            RELAY_PARENT_OFFSET
+        }
+
+        fn max_claim_queue_offset() -> u8 {
+            cumulus_pallet_parachain_system::Pallet::<Runtime>::max_claim_queue_offset()
+        }
+    }
+
+    impl cumulus_primitives_core::SchedulingV3EnabledApi<Block> for Runtime {
+        fn scheduling_v3_enabled() -> bool {
+            <Runtime as cumulus_pallet_parachain_system::Config>::SchedulingSignatureVerifier::V3_SCHEDULING_ENABLED
         }
     }
 
@@ -845,6 +871,13 @@ pallet_revive::impl_runtime_apis_plus_revive_traits!(
             limit: u32,
         ) -> Vec<(AccountId, pallet_storage_provider::runtime_api::ProviderInfoResponse)> {
             StorageProvider::query_providers_with_capacity(bytes_needed, offset, limit)
+        }
+
+        fn challenge_candidates(
+            max_reputation: u8,
+            limit: u32,
+        ) -> Vec<pallet_storage_provider::runtime_api::ChallengeCandidate> {
+            StorageProvider::query_challenge_candidates(max_reputation, limit)
         }
 
         fn current_anchor_block() -> pallet_storage_provider::BlockNumberFor<Runtime> {

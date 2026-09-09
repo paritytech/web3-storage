@@ -256,12 +256,13 @@ fn confirm_replica_sync_fails_not_replica() {
         register_provider(2, 200);
         let bucket_id = setup_agreement(2, 1, 50, 200);
 
+        let roots = [None; 7];
         assert_noop!(
             StorageProvider::confirm_replica_sync(
                 RuntimeOrigin::signed(2),
                 bucket_id,
-                [None; 7],
-                sp_runtime::MultiSignature::Sr25519([0u8; 64].into()),
+                roots,
+                sign_sync_roots(2, &roots),
             ),
             Error::<Test>::NotReplica
         );
@@ -372,7 +373,6 @@ fn setup_replica_with_snapshot() -> u64 {
                 },
                 checkpoint_block: 1,
                 primary_signers: vec![0x01],
-                commitment_nonce: 0,
             });
         }
     });
@@ -410,7 +410,7 @@ fn confirm_replica_sync_happy_path() {
             RuntimeOrigin::signed(2),
             bucket_id,
             roots,
-            sp_runtime::MultiSignature::Sr25519([0u8; 64].into()),
+            sign_sync_roots(2, &roots),
         ));
 
         // Provider should receive sync_price (10)
@@ -435,6 +435,39 @@ fn confirm_replica_sync_happy_path() {
     });
 }
 
+/// The roots attestation is actually verified: a zeroed signature (what a
+/// non-attesting node used to submit) and a signature over different roots
+/// are both rejected.
+#[test]
+fn confirm_replica_sync_rejects_bad_roots_signature() {
+    new_test_ext().execute_with(|| {
+        frame_system::Pallet::<Test>::set_block_number(1);
+        let bucket_id = setup_replica_with_snapshot();
+
+        let mut roots = [None; 7];
+        roots[0] = Some(sp_core::H256::repeat_byte(0xAB));
+
+        // Zeroed signature.
+        provider_signer(2);
+        assert_noop!(
+            StorageProvider::confirm_replica_sync(
+                RuntimeOrigin::signed(2),
+                bucket_id,
+                roots,
+                sp_runtime::MultiSignature::Sr25519([0u8; 64].into()),
+            ),
+            Error::<Test>::InvalidSignature
+        );
+
+        // Valid signature, but over a different roots array.
+        let sig = sign_sync_roots(2, &[None; 7]);
+        assert_noop!(
+            StorageProvider::confirm_replica_sync(RuntimeOrigin::signed(2), bucket_id, roots, sig),
+            Error::<Test>::InvalidSignature
+        );
+    });
+}
+
 #[test]
 fn confirm_replica_sync_fails_sync_too_frequent() {
     new_test_ext().execute_with(|| {
@@ -448,7 +481,7 @@ fn confirm_replica_sync_fails_sync_too_frequent() {
             RuntimeOrigin::signed(2),
             bucket_id,
             roots,
-            sp_runtime::MultiSignature::Sr25519([0u8; 64].into()),
+            sign_sync_roots(2, &roots),
         ));
 
         // Update snapshot to a new root so we don't hit InvalidSyncRoot
@@ -470,7 +503,7 @@ fn confirm_replica_sync_fails_sync_too_frequent() {
                 RuntimeOrigin::signed(2),
                 bucket_id,
                 roots2,
-                sp_runtime::MultiSignature::Sr25519([0u8; 64].into()),
+                sign_sync_roots(2, &roots2),
             ),
             Error::<Test>::SyncTooFrequent
         );
@@ -497,7 +530,6 @@ fn confirm_replica_sync_fails_insufficient_balance() {
                     },
                     checkpoint_block: 1,
                     primary_signers: vec![0x01],
-                    commitment_nonce: 0,
                 });
             }
         });
@@ -524,7 +556,7 @@ fn confirm_replica_sync_fails_insufficient_balance() {
                 RuntimeOrigin::signed(2),
                 bucket_id,
                 roots,
-                sp_runtime::MultiSignature::Sr25519([0u8; 64].into()),
+                sign_sync_roots(2, &roots),
             ),
             Error::<Test>::InsufficientSyncBalance
         );
@@ -546,7 +578,7 @@ fn confirm_replica_sync_fails_invalid_root() {
                 RuntimeOrigin::signed(2),
                 bucket_id,
                 roots,
-                sp_runtime::MultiSignature::Sr25519([0u8; 64].into()),
+                sign_sync_roots(2, &roots),
             ),
             Error::<Test>::InvalidSyncRoot
         );
@@ -566,7 +598,7 @@ fn confirm_replica_sync_fails_same_root() {
             RuntimeOrigin::signed(2),
             bucket_id,
             roots,
-            sp_runtime::MultiSignature::Sr25519([0u8; 64].into()),
+            sign_sync_roots(2, &roots),
         ));
 
         // Advance past min_sync_interval
@@ -578,7 +610,7 @@ fn confirm_replica_sync_fails_same_root() {
                 RuntimeOrigin::signed(2),
                 bucket_id,
                 roots,
-                sp_runtime::MultiSignature::Sr25519([0u8; 64].into()),
+                sign_sync_roots(2, &roots),
             ),
             Error::<Test>::InvalidSyncRoot
         );
@@ -598,7 +630,7 @@ fn confirm_replica_sync_emits_event() {
             RuntimeOrigin::signed(2),
             bucket_id,
             roots,
-            sp_runtime::MultiSignature::Sr25519([0u8; 64].into()),
+            sign_sync_roots(2, &roots),
         ));
 
         let expected = RuntimeEvent::StorageProvider(crate::Event::ReplicaSynced {
@@ -627,7 +659,7 @@ fn confirm_replica_sync_after_interval_with_new_root() {
             RuntimeOrigin::signed(2),
             bucket_id,
             roots,
-            sp_runtime::MultiSignature::Sr25519([0u8; 64].into()),
+            sign_sync_roots(2, &roots),
         ));
 
         // Update snapshot root
@@ -649,7 +681,7 @@ fn confirm_replica_sync_after_interval_with_new_root() {
             RuntimeOrigin::signed(2),
             bucket_id,
             roots2,
-            sp_runtime::MultiSignature::Sr25519([0u8; 64].into()),
+            sign_sync_roots(2, &roots2),
         ));
 
         // Verify last_sync updated

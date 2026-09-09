@@ -13,7 +13,7 @@ use reqwest::{Method, RequestBuilder};
 use sp_core::{sr25519, Pair};
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 use storage_primitives::Role;
 pub use storage_provider_node::cli::StorageBackendKind;
 use storage_provider_node::{create_router, ProviderDeps, ProviderState};
@@ -50,11 +50,11 @@ impl TestServer {
         let deps = ProviderDeps {
             storage,
             nonce_store,
-            auth: Arc::new(Authenticator::new(
-                StaticMembershipResolver(vec![(test_member_account(), Role::Admin).into()]),
-                Duration::from_secs(60),
-                Duration::from_secs(300),
-            )),
+            auth: Arc::new(Authenticator::new(StaticMembershipResolver(vec![(
+                test_member_account(),
+                Role::Admin,
+            )
+                .into()]))),
         };
         let (addr, client) = serve(state(deps)).await;
         Self {

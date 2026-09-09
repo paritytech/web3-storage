@@ -207,7 +207,13 @@ let requirements = StorageRequirements {
     primary_only: true,
 };
 
-// Find matching providers
+// Find matching providers. This is one `find_matching_providers` runtime API
+// call — the chain does the scan, the scoring and the ranking.
+//
+// Results are ranked, not filtered: a provider above `max_price_per_byte` is
+// still returned, with a reduced `match_score` and `PartialMatchReason::PriceTooHigh`.
+// Check `info.price_per_byte` yourself if you need a budget guarantee.
+// Providers that have announced deregistration are excluded outright.
 let providers = client.find_providers(requirements, 10).await?;
 
 // Or get the best match directly

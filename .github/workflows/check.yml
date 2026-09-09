@@ -119,7 +119,7 @@ jobs:
           persist-credentials: false
 
       - name: Rust cache
-        uses: Swatinem/rust-cache@258712b0b7b1ddf8bddc9fc3b0faca682b2736c3 # v2
+        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
           shared-key: "web3-storage-cache-check"
           save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev' }}
@@ -129,6 +129,7 @@ jobs:
           cargo check --workspace --quiet
           cargo check --workspace --features=runtime-benchmarks --quiet
           cargo check --workspace --features=try-runtime --quiet
+          cargo check -p provider-chain --no-default-features --quiet
 
   clippy:
     name: Cargo clippy
@@ -146,7 +147,7 @@ jobs:
           persist-credentials: false
 
       - name: Rust cache
-        uses: Swatinem/rust-cache@258712b0b7b1ddf8bddc9fc3b0faca682b2736c3 # v2
+        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
           shared-key: "web3-storage-cache-clippy"
           save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev' }}
@@ -172,7 +173,7 @@ jobs:
           persist-credentials: false
 
       - name: Rust cache
-        uses: Swatinem/rust-cache@258712b0b7b1ddf8bddc9fc3b0faca682b2736c3 # v2
+        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
           shared-key: "web3-storage-cache-tests"
           save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev' }}
@@ -197,7 +198,7 @@ jobs:
           persist-credentials: false
 
       - name: Rust cache
-        uses: Swatinem/rust-cache@258712b0b7b1ddf8bddc9fc3b0faca682b2736c3 # v2
+        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
           shared-key: "web3-storage-cache-benchmarks"
           save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev' }}
@@ -236,13 +237,13 @@ jobs:
           persist-credentials: false
 
       - name: Rust cache
-        uses: Swatinem/rust-cache@258712b0b7b1ddf8bddc9fc3b0faca682b2736c3 # v2
+        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
           shared-key: "web3-storage-cache-coverage"
           save-if: false
 
       - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@6c6fd71fe4fb72c3697d269963d0e15df8adedad # v2.85.10
+        uses: taiki-e/install-action@37f7c5781271959fb65b6b35224e28652ff2b63d # v2.87.0
         with:
           tool: cargo-llvm-cov
 
@@ -298,10 +299,13 @@ jobs:
           MIN_PATCH_COV: '80'
         run: |
           set -euo pipefail
+          # The job runs in a container as a different uid than the checkout,
+          # so git refuses to touch the repo without this.
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
-          # Make origin/<base> available for the diff. The checkout is full-depth
-          # (fetch-depth: 0), so this stays unshallow and the merge-base is reachable.
-          git fetch --no-tags origin "$BASE_REF"
+          # origin/<base> comes from the full-depth checkout (fetch-depth: 0);
+          # no extra fetch here — unauthenticated fetches get rate-limited.
+          echo "HEAD:               $(git log --oneline -1)"
+          echo "origin/${BASE_REF}: $(git log --oneline -1 "origin/${BASE_REF}")"
 
           set +e
           COMPARE_BRANCH="origin/${BASE_REF}" scripts/coverage.sh gate

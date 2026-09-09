@@ -51,7 +51,7 @@ import {
   type ProviderSettings,
   type TxStatus,
 } from '@/state/provider.state'
-import { formatTokens, parseTokens, formatBytes } from '@/utils/format'
+import { formatTokens, parseTokens, formatBytes } from '@web3-storage/format'
 
 // Min stake is fetched from chain constants at connection time.
 // Falls back to 1000 tokens if not yet loaded.

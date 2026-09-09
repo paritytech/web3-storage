@@ -73,7 +73,11 @@ contract TokenGatedDrive {
         require(msg.value > 0, "must fund agreement");
         require(!terms.hasBucketId, "primary terms must not be bucket-bound");
         publisher = msg.sender;
-        s3BucketId = S3_REGISTRY.createS3Bucket(name, provider, terms, signature);
+        // Reads are token-gated, so the underlying bucket must not be
+        // served openly by honest primaries.
+        s3BucketId = S3_REGISTRY.createS3Bucket(
+            name, provider, terms, signature, IS3Registry.Visibility.Private
+        );
         emit Initialized(msg.sender, s3BucketId);
         return s3BucketId;
     }

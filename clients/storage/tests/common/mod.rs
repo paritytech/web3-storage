@@ -8,7 +8,6 @@ use sp_core::crypto::Ss58Codec;
 use sp_core::Pair;
 use sp_runtime::AccountId32;
 use std::sync::{Arc, OnceLock};
-use std::time::Duration;
 use storage_client::{
     sign_terms, AdminClient, AgreementTermsOf, ChallengerClient, ClientConfig, DiscoveryClient,
     ProviderClient, ProviderSettings, Signer, StorageUserClient,
@@ -178,7 +177,13 @@ pub async fn chain_setup() -> Option<ChainSetup> {
     };
     let signed_terms = sign_terms(&alice_keypair, terms);
     let bucket_id = admin
-        .establish_storage_agreement(alice_ss58.clone(), signed_terms)
+        .establish_storage_agreement(
+            alice_ss58.clone(),
+            signed_terms,
+            // Public: the shared harness backs suites written under the open
+            // (pre-visibility) challenge semantics.
+            storage_client::Visibility::Public,
+        )
         .await
         .ok()?;
 
@@ -249,11 +254,11 @@ pub async fn start_test_provider() -> String {
     let deps = ProviderDeps {
         storage,
         nonce_store,
-        auth: Arc::new(Authenticator::new(
-            StaticMembershipResolver(vec![(dev_account("alice"), Role::Admin).into()]),
-            Duration::from_secs(60),
-            Duration::from_secs(300),
-        )),
+        auth: Arc::new(Authenticator::new(StaticMembershipResolver(vec![(
+            dev_account("alice"),
+            Role::Admin,
+        )
+            .into()]))),
     };
     let state = ProviderState::with_seed(deps, "//Alice").expect("//Alice is a valid SURI");
     let app = create_router(Arc::new(state));

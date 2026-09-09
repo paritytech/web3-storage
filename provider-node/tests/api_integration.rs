@@ -12,17 +12,23 @@ use codec::Encode;
 use reqwest::Method;
 use serde_json::{json, Value};
 use sp_core::crypto::Ss58Codec;
-use sp_core::{sr25519, ByteArray, Pair, H256};
+use sp_core::{sr25519, Pair, H256};
 use storage_primitives::{Commitment, CommitmentPayload};
-use storage_provider_node::ProviderState;
+use storage_provider_node::{KeyScheme, ProviderState};
 
 use common::{StorageBackendKind, TestServer};
 
 impl TestServer {
     /// Signing provider (`//Alice`): endpoints that sign commitments work.
     async fn new(backend: StorageBackendKind) -> Self {
-        Self::start(backend, |deps| {
-            ProviderState::with_seed(deps, common::PROVIDER_SEED).expect("//Alice is a valid SURI")
+        Self::new_with_scheme(backend, KeyScheme::Sr25519).await
+    }
+
+    /// Signing provider (`//Alice`) under the given scheme.
+    async fn new_with_scheme(backend: StorageBackendKind, scheme: KeyScheme) -> Self {
+        Self::start(backend, move |deps| {
+            ProviderState::with_seed_scheme(deps, common::PROVIDER_SEED, scheme)
+                .expect("//Alice is a valid SURI")
         })
         .await
     }
@@ -198,18 +204,17 @@ common::backend_tests! {
             .await
             .unwrap();
 
-        // Commit
-        let commit_response = server
-            .client
-            .post(server.url("/commit"))
-            .json(&json!({
-                "bucket_id": 1,
-                "data_roots": [hash_hex],
-                "nonce": 0u64,
-            }))
-            .send()
-            .await
-            .unwrap();
+    // Commit
+    let commit_response = server
+        .client
+        .post(server.url("/commit"))
+        .json(&json!({
+            "bucket_id": 1,
+            "data_roots": [hash_hex],
+        }))
+        .send()
+        .await
+        .unwrap();
 
         assert_eq!(commit_response.status(), StatusCode::OK);
 
@@ -219,13 +224,13 @@ common::backend_tests! {
         assert_eq!(body["leaf_indices"], json!([0]));
         assert!(body["provider_signature"].is_string());
 
-        // Get commitment
-        let commitment_response = server
-            .client
-            .get(server.url("/commitment?bucket_id=1&nonce=0"))
-            .send()
-            .await
-            .unwrap();
+    // Get commitment
+    let commitment_response = server
+        .client
+        .get(server.url("/commitment?bucket_id=1"))
+        .send()
+        .await
+        .unwrap();
 
         assert_eq!(commitment_response.status(), StatusCode::OK);
 
@@ -366,18 +371,17 @@ common::backend_tests! {
         // Step 2: Build a simple internal node (just use first chunk as root for simplicity)
         let data_root = &chunk_hashes[0];
 
-        // Step 3: Commit
-        let commit_response = server
-            .client
-            .post(server.url("/commit"))
-            .json(&json!({
-                "bucket_id": 1,
-                "data_roots": [data_root],
-                "nonce": 0u64,
-            }))
-            .send()
-            .await
-            .unwrap();
+    // Step 3: Commit
+    let commit_response = server
+        .client
+        .post(server.url("/commit"))
+        .json(&json!({
+            "bucket_id": 1,
+            "data_roots": [data_root],
+        }))
+        .send()
+        .await
+        .unwrap();
 
         assert_eq!(commit_response.status(), StatusCode::OK);
 
@@ -432,7 +436,6 @@ async fn upload_and_commit(server: &TestServer, bucket_id: u64) -> (String, Valu
         .json(&json!({
             "bucket_id": bucket_id,
             "data_roots": [hash_hex],
-            "nonce": 0u64,
         }))
         .send()
         .await
@@ -447,6 +450,22 @@ async fn upload_and_commit(server: &TestServer, bucket_id: u64) -> (String, Valu
 /// `//Alice`'s sr25519 public key, used to verify signatures from the server.
 fn alice_public() -> sr25519::Public {
     common::test_member_pair().public()
+}
+
+/// Decode a `provider_signature` field: 0x-prefixed hex of a SCALE-encoded
+/// `MultiSignature`, as emitted by `ProviderState::sign`.
+fn decode_provider_signature(sig_hex: &str) -> sp_runtime::MultiSignature {
+    use codec::Decode;
+    let bytes = hex_decode(sig_hex).expect("signature hex parses");
+    sp_runtime::MultiSignature::decode(&mut &bytes[..]).expect("valid SCALE MultiSignature")
+}
+
+/// Expect the signature to be the Sr25519 variant and unwrap it.
+fn expect_sr25519(sig: sp_runtime::MultiSignature) -> sr25519::Signature {
+    match sig {
+        sp_runtime::MultiSignature::Sr25519(sig) => sig,
+        other => panic!("expected an Sr25519 signature, got {other:?}"),
+    }
 }
 
 common::backend_tests! {
@@ -465,22 +484,17 @@ common::backend_tests! {
             .as_str()
             .expect("provider_signature present");
 
-        // Defensive: the zero-byte placeholder this PR removes was exactly 64
-        // hex-encoded zero bytes. If it ever returns, this catches it.
-        let sig_bytes = hex_decode(sig_hex).expect("signature hex parses");
-        assert_eq!(sig_bytes.len(), 64, "sr25519 signatures are 64 bytes");
+        // Defensive: if the zero-byte placeholder ever returns, this catches it.
+        let sig = expect_sr25519(decode_provider_signature(sig_hex));
         assert_ne!(
-            sig_bytes,
-            vec![0u8; 64],
+            sig.0, [0u8; 64],
             "server returned zero-byte placeholder instead of a real signature"
         );
 
         // Reconstruct exactly what the handler signed: CommitmentPayload with
-        // the real post-commit leaf_count (no longer hardcoded 0) and the nonce
-        // echoed back from the response.
+        // the real post-commit leaf_count (no longer hardcoded 0).
         let mmr_root_bytes = hex_decode(mmr_root_hex).unwrap();
         let mmr_root = H256::from_slice(&mmr_root_bytes);
-        let nonce = body["nonce"].as_u64().expect("nonce echoed in response");
         let leaf_count = body["leaf_count"]
             .as_u64()
             .expect("leaf_count present in /commit response");
@@ -491,11 +505,9 @@ common::backend_tests! {
                 start_seq,
                 leaf_count,
             },
-            nonce,
         );
         let encoded = payload.encode();
 
-        let sig = sr25519::Signature::from_slice(&sig_bytes).expect("64-byte signature");
         assert!(
             sr25519::Pair::verify(&sig, &encoded, &alice_public()),
             "signature did not verify against //Alice over the expected commitment payload"
@@ -515,9 +527,7 @@ common::backend_tests! {
 
         let resp = server
             .client
-            .get(server.url(&format!(
-                "/checkpoint-signature?bucket_id={bucket_id}&nonce=0"
-            )))
+            .get(server.url(&format!("/checkpoint-signature?bucket_id={bucket_id}")))
             .send()
             .await
             .unwrap();
@@ -527,11 +537,12 @@ common::backend_tests! {
         let mmr_root = H256::from_slice(&hex_decode(body["mmr_root"].as_str().unwrap()).unwrap());
         let start_seq = body["start_seq"].as_u64().unwrap();
         let leaf_count = body["leaf_count"].as_u64().unwrap();
-        let nonce = body["nonce"].as_u64().unwrap();
         assert!(leaf_count > 0, "leaf_count must be the real on-disk value");
 
-        let sig_bytes = hex_decode(body["provider_signature"].as_str().unwrap()).unwrap();
-        assert_ne!(sig_bytes, vec![0u8; 64]);
+        let sig = expect_sr25519(decode_provider_signature(
+            body["provider_signature"].as_str().unwrap(),
+        ));
+        assert_ne!(sig.0, [0u8; 64]);
 
         let payload = CommitmentPayload::new(
             bucket_id,
@@ -540,9 +551,7 @@ common::backend_tests! {
                 start_seq,
                 leaf_count,
             },
-            nonce,
         );
-        let sig = sr25519::Signature::from_slice(&sig_bytes).unwrap();
         assert!(sr25519::Pair::verify(
             &sig,
             payload.encode(),
@@ -561,11 +570,9 @@ common::backend_tests! {
         let (_h, body) = upload_and_commit(&server, bucket_id).await;
         let mmr_root = H256::from_slice(&hex_decode(body["mmr_root"].as_str().unwrap()).unwrap());
         let start_seq = body["start_seq"].as_u64().unwrap();
-        let sig = sr25519::Signature::from_slice(
-            &hex_decode(body["provider_signature"].as_str().unwrap()).unwrap(),
-        )
-        .unwrap();
-        let nonce = body["nonce"].as_u64().unwrap();
+        let sig = expect_sr25519(decode_provider_signature(
+            body["provider_signature"].as_str().unwrap(),
+        ));
         let encoded = CommitmentPayload::new(
             bucket_id,
             Commitment {
@@ -573,7 +580,6 @@ common::backend_tests! {
                 start_seq,
                 leaf_count: 0,
             },
-            nonce,
         )
         .encode();
 
@@ -583,6 +589,43 @@ common::backend_tests! {
             "Alice's signature wrongly verifies under Bob's key"
         );
     }
+}
+
+#[tokio::test]
+async fn commit_signs_with_configured_ed25519_scheme() {
+    // A node started with --key-scheme ed25519 must emit Ed25519-tagged
+    // MultiSignatures that verify under the ed25519 key derived from the
+    // same seed — the full multi-scheme wire path.
+    use sp_core::ed25519;
+
+    let server = TestServer::new_with_scheme(StorageBackendKind::RocksDb, KeyScheme::Ed25519).await;
+    let bucket_id = 11;
+
+    let (_h, body) = upload_and_commit(&server, bucket_id).await;
+    let mmr_root = H256::from_slice(&hex_decode(body["mmr_root"].as_str().unwrap()).unwrap());
+    let start_seq = body["start_seq"].as_u64().unwrap();
+    let leaf_count = body["leaf_count"].as_u64().unwrap();
+
+    let sig = match decode_provider_signature(body["provider_signature"].as_str().unwrap()) {
+        sp_runtime::MultiSignature::Ed25519(sig) => sig,
+        other => panic!("expected an Ed25519 signature, got {other:?}"),
+    };
+
+    let payload = CommitmentPayload::new(
+        bucket_id,
+        Commitment {
+            mmr_root,
+            start_seq,
+            leaf_count,
+        },
+    );
+    let alice_ed = ed25519::Pair::from_string(common::PROVIDER_SEED, None)
+        .unwrap()
+        .public();
+    assert!(
+        ed25519::Pair::verify(&sig, payload.encode(), &alice_ed),
+        "Ed25519 signature did not verify under the ed25519 //Alice key"
+    );
 }
 
 common::backend_tests! {
@@ -612,7 +655,7 @@ common::backend_tests! {
         let resp = server
             .client
             .post(server.url("/commit"))
-            .json(&json!({ "bucket_id": 1, "data_roots": [hash_hex], "nonce": 0u64 }))
+            .json(&json!({ "bucket_id": 1, "data_roots": [hash_hex] }))
             .send()
             .await
             .unwrap();
@@ -650,14 +693,14 @@ common::backend_tests! {
         server
             .client
             .post(server.url("/commit"))
-            .json(&json!({ "bucket_id": 1, "data_roots": [hash_hex], "nonce": 0u64 }))
+            .json(&json!({ "bucket_id": 1, "data_roots": [hash_hex] }))
             .send()
             .await
             .unwrap();
 
         let resp = server
             .client
-            .get(server.url("/commitment?bucket_id=1&nonce=0"))
+            .get(server.url("/commitment?bucket_id=1"))
             .send()
             .await
             .unwrap();
@@ -690,7 +733,7 @@ common::backend_tests! {
         server
             .client
             .post(server.url("/commit"))
-            .json(&json!({ "bucket_id": 1, "data_roots": [hash_hex], "nonce": 0u64 }))
+            .json(&json!({ "bucket_id": 1, "data_roots": [hash_hex] }))
             .send()
             .await
             .unwrap();
@@ -702,7 +745,6 @@ common::backend_tests! {
                 "bucket_id": 1,
                 "new_start_seq": 1,
                 "admin_signature": "0x00",
-                "nonce": 0u64,
             }))
             .send()
             .await
@@ -1039,41 +1081,58 @@ common::backend_tests! {
                 .unwrap();
         }
 
-        server
-            .client
-            .post(server.url("/commit"))
-            .json(&json!({
-                "bucket_id": 1,
-                "data_roots": [hash1_hex, hash2_hex],
-                "nonce": 0u64,
-            }))
-            .send()
-            .await
-            .unwrap();
+    server
+        .client
+        .post(server.url("/commit"))
+        .json(&json!({
+            "bucket_id": 1,
+            "data_roots": [hash1_hex, hash2_hex],
+        }))
+        .send()
+        .await
+        .unwrap();
 
-        // Delete with new_start_seq=1 (removes first leaf)
-        let resp = server
-            .client
-            .post(server.url("/delete"))
-            .json(&json!({
-                "bucket_id": 1,
-                "new_start_seq": 1,
-                "admin_signature": "0x00",
-                "nonce": 0u64,
-            }))
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(resp.status(), StatusCode::OK);
+    // Delete with new_start_seq=1 (removes first leaf)
+    let resp = server
+        .client
+        .post(server.url("/delete"))
+        .json(&json!({
+            "bucket_id": 1,
+            "new_start_seq": 1,
+            "admin_signature": "0x00",
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
 
         let body: Value = resp.json().await.unwrap();
         assert_eq!(body["start_seq"], 1);
         assert_eq!(body["leaf_count"], 1);
-        assert!(body["mmr_root"].is_string());
-        assert!(body["provider_signature"]
-            .as_str()
-            .unwrap()
-            .starts_with("0x"));
+
+        // The deletion proof is the one signing path with no consumer in this
+        // repo, so nothing else would catch it regressing. Verify it like the
+        // /commit proofs: a real signature, in the SCALE MultiSignature wire
+        // format, over the *post-delete* commitment. A zero placeholder or a
+        // raw untagged signature both pass a `starts_with("0x")` check.
+        let mmr_root = H256::from_slice(&hex_decode(body["mmr_root"].as_str().unwrap()).unwrap());
+        let sig = expect_sr25519(decode_provider_signature(
+            body["provider_signature"].as_str().unwrap(),
+        ));
+        assert_ne!(sig.0, [0u8; 64], "delete returned a zeroed placeholder");
+
+        let payload = CommitmentPayload::new(
+            1,
+            Commitment {
+                mmr_root,
+                start_seq: 1,
+                leaf_count: 1,
+            },
+        );
+        assert!(
+            sr25519::Pair::verify(&sig, payload.encode(), &alice_public()),
+            "delete proof did not verify against //Alice over the post-delete commitment"
+        );
     }
 }
 
@@ -1171,18 +1230,17 @@ common::backend_tests! {
     async fn test_commit_invalid_hex_data_root(backend) {
         let server = TestServer::new(backend).await;
 
-        let resp = server
-            .client
-            .post(server.url("/commit"))
-            .json(&json!({
-                "bucket_id": 1,
-                "data_roots": ["not_hex"],
-                "nonce": 0u64,
-            }))
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let resp = server
+        .client
+        .post(server.url("/commit"))
+        .json(&json!({
+            "bucket_id": 1,
+            "data_roots": ["not_hex"],
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 
         let body: Value = resp.json().await.unwrap();
         assert_eq!(body["error"], "invalid_hash");
@@ -1211,18 +1269,17 @@ common::backend_tests! {
             .await
             .unwrap();
 
-        let resp = server
-            .client
-            .post(server.url("/commit"))
-            .json(&json!({
-                "bucket_id": 1,
-                "data_roots": [hash_hex],
-                "nonce": 0u64,
-            }))
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let resp = server
+        .client
+        .post(server.url("/commit"))
+        .json(&json!({
+            "bucket_id": 1,
+            "data_roots": [hash_hex],
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
 
         let body: Value = resp.json().await.unwrap();
         assert_eq!(body["error"], "signing_unavailable");
