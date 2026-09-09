@@ -665,73 +665,6 @@ impl ChallengerClient {
     // Analytics
     // ═════════════════════════════════════════════════════════════════════════
 
-    /// Get aggregated stats for this account's challenge activity.
-    ///
-    /// Pulls counters from on-chain `ChallengerStats`. The pallet maintains
-    /// these on `create_challenge`, on `ChallengeDefended`, and on each
-    /// `slash_provider_for_failed_challenge` call.
-    pub async fn get_challenge_stats(&self) -> ClientResult<ChallengeStats> {
-        let stats = self.fetch_challenger_stats().await?;
-        Ok(ChallengeStats {
-            total_challenges: stats.total_challenges,
-            successful_challenges: stats.successful_challenges,
-            failed_challenges: stats.failed_challenges,
-            // The pallet doesn't yet track an average response time per
-            // challenger; leave at 0 until that aggregate is added.
-            avg_response_time: 0,
-        })
-    }
-
-    /// Read this account's `ChallengerStats` record from chain. Returns a
-    /// zeroed record (matching the pallet's `ValueQuery` default) if the
-    /// account has never opened a challenge.
-    async fn fetch_challenger_stats(&self) -> ClientResult<FetchedChallengerStats> {
-        let chain = self.base.chain()?;
-        let challenger_account = self.challenger_account();
-        let challenger_bytes: &[u8] = challenger_account.as_ref();
-
-        let at = chain
-            .api()
-            .at_current_block()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?;
-
-        let query = subxt::dynamic::storage::<(subxt::dynamic::Value,), subxt::dynamic::Value>(
-            "StorageProvider",
-            "ChallengerStats",
-        );
-
-        let value = match at
-            .storage()
-            .try_fetch(
-                query,
-                (subxt::dynamic::Value::from_bytes(challenger_bytes),),
-            )
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to fetch ChallengerStats: {e}")))?
-        {
-            Some(v) => v,
-            None => return Ok(FetchedChallengerStats::default()),
-        };
-
-        let decoded = value
-            .decode()
-            .map_err(|e| ClientError::Chain(format!("Decode ChallengerStats: {e}")))?;
-
-        fn read_u128(value: &subxt::ext::scale_value::Value, field: &str) -> Option<u128> {
-            named_field(value, field).and_then(|v| match &v.value {
-                ValueDef::Primitive(subxt::ext::scale_value::Primitive::U128(n)) => Some(*n),
-                _ => None,
-            })
-        }
-
-        Ok(FetchedChallengerStats {
-            total_challenges: read_u128(&decoded, "total_challenges").unwrap_or(0) as u32,
-            successful_challenges: read_u128(&decoded, "successful_challenges").unwrap_or(0) as u32,
-            failed_challenges: read_u128(&decoded, "failed_challenges").unwrap_or(0) as u32,
-        })
-    }
-
     /// Find the most profitable providers to challenge, ranked by expected value.
     ///
     /// Scores all providers by reputation (from on-chain stats) and stake.
@@ -981,24 +914,6 @@ pub enum ChallengeRecommendation {
     Monitor,
     /// Don't challenge (provider is reliable)
     Skip,
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct ChallengeStats {
-    pub total_challenges: u32,
-    pub successful_challenges: u32,
-    pub failed_challenges: u32,
-    pub avg_response_time: u32,
-}
-
-/// Internal: the raw `ChallengerStatRecord` shape pulled from chain.
-/// Public callers see `ChallengeStats` which wraps these counters with the
-/// `avg_response_time` field the SDK historically exposed.
-#[derive(Debug, Clone, Default)]
-struct FetchedChallengerStats {
-    total_challenges: u32,
-    successful_challenges: u32,
-    failed_challenges: u32,
 }
 
 #[derive(Debug, Clone)]

@@ -191,12 +191,6 @@ impl<T: Config> Pallet<T> {
             }
         });
 
-        // Bump challenger's total_challenges aggregate so the SDK's
-        // `get_challenge_stats` doesn't have to scan event history.
-        ChallengerStats::<T>::mutate(&challenger, |stats| {
-            stats.total_challenges = stats.total_challenges.saturating_add(1);
-        });
-
         let challenge_id = ChallengeId { deadline, index };
 
         Self::deposit_event(Event::ChallengeCreated {
@@ -254,13 +248,6 @@ impl<T: Config> Pallet<T> {
             provider_info.stake = Zero::zero();
 
             Providers::<T>::insert(&challenge.provider, provider_info);
-
-            // Bump the challenger's successful-challenge count. Challengers
-            // earn no reward (the slashed stake goes entirely to the
-            // Treasury), so only the counter moves here.
-            ChallengerStats::<T>::mutate(&challenge.challenger, |stats| {
-                stats.successful_challenges = stats.successful_challenges.saturating_add(1);
-            });
 
             // Emit event
             Self::deposit_event(Event::ChallengeSlashed {

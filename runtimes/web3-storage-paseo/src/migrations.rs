@@ -10,10 +10,12 @@ use crate::Runtime;
 use frame_support::{parameter_types, weights::constants::RocksDbWeight};
 
 parameter_types! {
-    /// `StorageProvider`'s `AgreementRequests` map was deleted in #105; these
-    /// name it for the `RemoveStorage` cleanup below.
+    /// `StorageProvider`'s `AgreementRequests` and `ChallengerStats` maps were
+    /// deleted (#105 and the challenger-stats removal); these name them for the
+    /// `RemoveStorage` cleanups below.
     pub const StorageProviderPalletName: &'static str = "StorageProvider";
     pub const AgreementRequestsStorageName: &'static str = "AgreementRequests";
+    pub const ChallengerStatsStorageName: &'static str = "ChallengerStats";
 }
 
 /// Storage migrations run on runtime upgrade, in order.
@@ -24,6 +26,13 @@ pub type Migrations = (
     frame_support::migrations::RemoveStorage<
         StorageProviderPalletName,
         AgreementRequestsStorageName,
+        RocksDbWeight,
+    >,
+    // Purge the orphaned `ChallengerStats` entries left by the challenger-stats
+    // removal. Idempotent for the same reason as the cleanup above.
+    frame_support::migrations::RemoveStorage<
+        StorageProviderPalletName,
+        ChallengerStatsStorageName,
         RocksDbWeight,
     >,
     // Drop the `payment` field from `DriveInfo` (#105). A real data transform,

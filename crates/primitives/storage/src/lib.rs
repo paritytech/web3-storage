@@ -169,36 +169,6 @@ pub enum RemovalReason {
 // Challenge Types
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Aggregated per-challenger statistics kept on-chain so the SDK can answer
-/// "how many challenges have I issued / won / lost / earned" without scanning
-/// historical events. Updated on `create_challenge`, on `ChallengeDefended`,
-/// and on `ChallengeSlashed`.
-#[derive(
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Encode,
-    Decode,
-    DecodeWithMemTracking,
-    TypeInfo,
-    MaxEncodedLen,
-    Default,
-    Debug,
-)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct ChallengerStatRecord {
-    /// Total challenges the challenger has ever opened.
-    pub total_challenges: u32,
-    /// Challenges where the provider was slashed (either invalid response or
-    /// timeout). The challenger is only made whole (deposit refunded) and earns
-    /// no reward — the slashed stake goes entirely to the Treasury, per the
-    /// design's challenge model.
-    pub successful_challenges: u32,
-    /// Challenges where the provider successfully defended.
-    pub failed_challenges: u32,
-}
-
 /// Why a provider was slashed via the challenge mechanism.
 ///
 /// Emitted in `ChallengeSlashed` so observers can distinguish a provider that

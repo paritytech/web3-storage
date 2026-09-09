@@ -1117,8 +1117,8 @@ mod benchmarks {
         let deposit: BalanceOf<T> = 100u32.into();
         for i in 0..c {
             // Distinct slashable provider (stake reserved) + challenger per
-            // challenge — the worst case (each touches a distinct `Providers`,
-            // `ChallengerStats`, and pending-counter entry).
+            // challenge — the worst case (each touches a distinct `Providers`
+            // and pending-counter entry).
             let provider = create_provider::<T>(i);
             let challenger = funded_account::<T>("challenger", i);
             // The slash unreserves the challenger's deposit, so reserve it.
