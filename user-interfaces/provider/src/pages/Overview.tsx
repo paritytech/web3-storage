@@ -25,7 +25,7 @@ import { useSelectedAccount } from '@/state/wallet.state'
 import { useSelectedNetwork, useSelectedNetworkId } from '@/state/network.state'
 import { useChainInfo, useConnectionStatus, useAnchorBlock } from '@/state/chain.state'
 import { RequireProvider } from '@/components/RequireProvider'
-import { formatBytes, formatTokens, formatDuration, formatHash } from '@/utils/format'
+import { formatBytes, formatTokens, formatDuration, formatHash } from '@web3-storage/format'
 
 function StatCard({
   title,

@@ -11,7 +11,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { useActiveChallenge, useShowOutcomeModal, dismissChallengeResult } from "@/state/challenge.state";
 import { useEndpoint } from "@/state";
-import { formatTokens } from "@/lib/utils";
+import { formatUnits } from "@web3-storage/format";
 
 export default function ChallengeOutcomeDialog() {
   const showModal = useShowOutcomeModal();
@@ -57,9 +57,9 @@ export default function ChallengeOutcomeDialog() {
               <div className="rounded-md border p-3 space-y-2 text-sm">
                 <div className="grid grid-cols-2 gap-x-4 gap-y-1">
                   <span className="text-muted-foreground">Your cost</span>
-                  <span className="text-right font-medium">{formatTokens(defense.challengerCost)} tokens</span>
+                  <span className="text-right font-medium">{formatUnits(defense.challengerCost)} tokens</span>
                   <span className="text-muted-foreground">Provider cost</span>
-                  <span className="text-right font-medium">{formatTokens(defense.providerCost)} tokens</span>
+                  <span className="text-right font-medium">{formatUnits(defense.providerCost)} tokens</span>
                 </div>
                 <div className="border-t pt-2 text-xs text-muted-foreground">
                   Block:{" "}
@@ -85,9 +85,9 @@ export default function ChallengeOutcomeDialog() {
               <div className="rounded-md border p-3 space-y-2 text-sm">
                 <div className="grid grid-cols-2 gap-x-4 gap-y-1">
                   <span className="text-muted-foreground">Slashed amount</span>
-                  <span className="text-right font-medium">{formatTokens(slash.slashedAmount)} tokens</span>
+                  <span className="text-right font-medium">{formatUnits(slash.slashedAmount)} tokens</span>
                   <span className="text-muted-foreground">Your reward</span>
-                  <span className="text-right font-medium">{formatTokens(slash.challengerReward)} tokens</span>
+                  <span className="text-right font-medium">{formatUnits(slash.challengerReward)} tokens</span>
                 </div>
                 <div className="border-t pt-2 text-xs text-muted-foreground">
                   Block:{" "}
