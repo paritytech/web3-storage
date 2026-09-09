@@ -8,9 +8,20 @@ pragma solidity ^0.8.34;
 ///         values (32-byte sr25519 public keys) cross the boundary as `bytes32`;
 ///         the EVM caller's substrate-mapped account is derived from
 ///         `msg.sender` via `AccountId32Mapper`.
-///
-/// Role tags: 0 = Admin, 1 = Writer, 2 = Reader.
 interface IWeb3Storage {
+    /// Bucket member role.
+    enum Role {
+        Admin,
+        Writer,
+        Reader
+    }
+
+    /// Bucket read visibility.
+    enum Visibility {
+        Public,
+        Private
+    }
+
     // TODO: Find out way to make it re-useable
     struct PrimitiveReplicaTerms {
         /// Balance reserved by the owner to fund per-sync confirmations.
@@ -54,20 +65,27 @@ interface IWeb3Storage {
     /// provider signed; `terms.owner` must be the caller's substrate-mapped
     /// account. `signature` is the SCALE-encoded `MultiSignature` from the
     /// provider's `/negotiate` response (variant byte + raw signature bytes).
-    /// Returns the new bucket id.
+    /// `visibility` sets the new bucket's read visibility. Returns the new
+    /// bucket id.
     function establishStorageAgreement(
         bytes32 provider,
         PrimitiveAgreementTerms calldata terms,
-        bytes calldata signature
+        bytes calldata signature,
+        Visibility visibility
     ) external returns (uint64 bucketId);
 
     /// Freeze a bucket — append-only, irreversible.
     function freezeBucket(uint64 bucketId) external;
 
+    /// Set bucket read visibility (admin only).
+    /// Always reversible on-chain, but publicizing cannot recall data
+    /// already disclosed.
+    function setBucketVisibility(uint64 bucketId, Visibility visibility) external;
+
     // --- Membership ---------------------------------------------------------
 
     /// Add or update a bucket member.
-    function setMember(uint64 bucketId, bytes32 member, uint8 role) external;
+    function setMember(uint64 bucketId, bytes32 member, Role role) external;
 
     /// Remove a member from a bucket.
     function removeMember(uint64 bucketId, bytes32 member) external;

@@ -1,13 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::*;
-use frame_support::{
-    pallet_prelude::*,
-    traits::{Currency, ReservableCurrency},
-};
-use sp_core::H256;
+use frame_support::pallet_prelude::*;
 use sp_runtime::traits::{One, Saturating, Zero};
-use storage_primitives::{BucketId, ChallengeId, ChunkLocation, SlashReason};
+use storage_primitives::{
+    BucketId, ChallengeId, ChunkLocation, Commitment, ProviderRole, SlashReason, Visibility,
+};
 
 impl<T: Config> Pallet<T> {
     /// The `on_initialize` slash sweep: slash providers whose challenges expired
@@ -123,19 +121,40 @@ impl<T: Config> Pallet<T> {
     pub(crate) fn create_challenge(
         challenger: T::AccountId,
         bucket_id: BucketId,
+        bucket: &Bucket<T>,
         provider: T::AccountId,
-        mmr_root: H256,
-        start_seq: u64,
-        leaf_index: u64,
-        chunk_index: u64,
+        provider_role: &ProviderRole<BalanceOf<T>, BlockNumberFor<T>>,
+        commitment: Commitment,
+        target: ChunkLocation,
     ) -> DispatchResult {
+        ensure!(challenger != provider, Error::<T>::SelfChallenge);
+
+        // Private-bucket gate: the public has no legitimate reliance on data
+        // it cannot read, and must not be able to force private bytes
+        // on-chain via the response. Keyed on the challenged provider's role
+        // in its *current* agreement; replicas stay challengeable by anyone
+        // (their content is public — the anti-censorship guarantee).
+        if bucket.visibility == Visibility::Private
+            && matches!(provider_role, ProviderRole::Primary)
+        {
+            ensure!(
+                Self::is_authorized_for_private(&challenger, bucket_id, bucket),
+                Error::<T>::NotAuthorizedForPrivateBucket
+            );
+        }
+
+        // Challenger tier, evaluated once here and snapshotted in the
+        // challenge: membership/agreement changes between creation and
+        // response cannot alter the fee split in `respond_to_challenge`.
+        let authorized = Self::is_authorized(&challenger, bucket_id, bucket);
+
         // Deposit comes from `T::ChallengeDeposit` — a runtime constant
         // sized to make spam expensive without pricing out legitimate
         // challengers. Previously hardcoded `100u32` (1e-10 of a token
         // at 12 decimals), which made challenge spam effectively free.
         let deposit: BalanceOf<T> = T::ChallengeDeposit::get();
 
-        T::Currency::reserve(&challenger, deposit)?;
+        Self::hold_challenge_deposit(&challenger, deposit)?;
 
         let anchor_block = Self::current_anchor_block();
         let deadline = anchor_block.saturating_add(T::ChallengeTimeout::get());
@@ -144,13 +163,11 @@ impl<T: Config> Pallet<T> {
             bucket_id,
             provider: provider.clone(),
             challenger: challenger.clone(),
-            mmr_root,
-            start_seq,
-            target: ChunkLocation {
-                leaf_index,
-                chunk_index,
-            },
+            mmr_root: commitment.mmr_root,
+            start_seq: commitment.start_seq,
+            target,
             deposit,
+            authorized,
         };
 
         // Cap the number of challenges that can share this deadline so the
@@ -182,14 +199,6 @@ impl<T: Config> Pallet<T> {
         // escape a live challenge.
         PendingChallenges::<T>::mutate(&provider, |n| *n = n.saturating_add(1));
         PendingChallengesByBucket::<T>::mutate(bucket_id, &provider, |n| *n = n.saturating_add(1));
-
-        // Update provider stats
-        Providers::<T>::mutate(&provider, |maybe_provider| {
-            if let Some(provider_info) = maybe_provider {
-                provider_info.stats.challenges_received =
-                    provider_info.stats.challenges_received.saturating_add(1);
-            }
-        });
 
         // Bump challenger's total_challenges aggregate so the SDK's
         // `get_challenge_stats` doesn't have to scan event history.
@@ -227,33 +236,29 @@ impl<T: Config> Pallet<T> {
         challenge_id: ChallengeId<BlockNumberFor<T>>,
         reason: SlashReason,
     ) {
-        // Get provider info
-        if let Some(mut provider_info) = Providers::<T>::get(&challenge.provider) {
-            // Slash the provider's entire stake
-            let slashed_amount = provider_info.stake;
+        Providers::<T>::mutate(&challenge.provider, |maybe_provider| {
+            let Some(provider_info) = maybe_provider else {
+                return;
+            };
 
-            // Slash the provider's stake, capturing the imbalance so we can
-            // settle it into the Treasury instead of burning it.
-            let (slashed_imbalance, remaining) =
-                T::Currency::slash_reserved(&challenge.provider, slashed_amount);
-            let actually_slashed = slashed_amount.saturating_sub(remaining);
+            // Slash the provider's entire held stake into the Treasury rather
+            // than burning it, keeping total issuance whole.
+            let actually_slashed =
+                Self::slash_stake_to_treasury(&challenge.provider, provider_info.stake);
 
             // Per the design, a successful challenger receives NO reward —
-            // only their deposit back. Refund the deposit and route the
-            // entire slashed amount to the Treasury. Paying the challenger
-            // a cut of the slash would create a profit-from-slashing
-            // incentive (the "refund me or I burn" blackmail channel the
-            // design explicitly closes). `resolve_creating` restores the
-            // issuance burned by `slash_reserved`, keeping issuance whole.
-            T::Currency::unreserve(&challenge.challenger, challenge.deposit);
-            T::Currency::resolve_creating(&T::Treasury::get(), slashed_imbalance);
+            // only their deposit back. Paying the challenger a cut of the slash
+            // would create a profit-from-slashing incentive (the "refund me or
+            // I burn" blackmail channel the design explicitly closes).
+            Self::release_challenge_deposit(&challenge.challenger, challenge.deposit);
 
-            // Update provider stats
             provider_info.stats.challenges_failed =
                 provider_info.stats.challenges_failed.saturating_add(1);
-            provider_info.stake = Zero::zero();
-
-            Providers::<T>::insert(&challenge.provider, provider_info);
+            // BestEffort slash: record what actually moved, so a residual hold
+            // can never go unaccounted. An under-slash (ruled out by
+            // `try_state`) would keep `remove_slashed` gated on purpose —
+            // bookkeeping honesty over guaranteed cleanup.
+            provider_info.stake = provider_info.stake.saturating_sub(actually_slashed);
 
             // Bump the challenger's successful-challenge count. Challengers
             // earn no reward (the slashed stake goes entirely to the
@@ -262,7 +267,6 @@ impl<T: Config> Pallet<T> {
                 stats.successful_challenges = stats.successful_challenges.saturating_add(1);
             });
 
-            // Emit event
             Self::deposit_event(Event::ChallengeSlashed {
                 challenge_id,
                 provider: challenge.provider.clone(),
@@ -270,7 +274,7 @@ impl<T: Config> Pallet<T> {
                 challenger_reward: Zero::zero(),
                 reason,
             });
-        }
+        });
     }
 
     /// Decrement both pending-challenge counters for a resolved

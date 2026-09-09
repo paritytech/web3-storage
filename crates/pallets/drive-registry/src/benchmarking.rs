@@ -25,12 +25,12 @@ use alloc::vec::Vec;
 use file_system_primitives::DriveId;
 use frame_benchmarking::v2::*;
 use frame_support::{
-    traits::{Currency, Get},
+    traits::{fungible::Mutate, Get},
     BoundedVec,
 };
 use frame_system::RawOrigin;
 use pallet_storage_provider::{AgreementTermsOf, Pallet as StorageProvider, ProviderSettings};
-use sp_runtime::traits::{Bounded, SaturatedConversion, Saturating};
+use sp_runtime::traits::{SaturatedConversion, Saturating};
 use storage_primitives::{AgreementTerms, Role};
 
 const SEED: u32 = 0;
@@ -41,9 +41,8 @@ const KEY_TYPE: sp_core::crypto::KeyTypeId = sp_core::crypto::KeyTypeId(*b"drbn"
 /// Create an account with effectively unbounded balance.
 fn funded_account<T: Config>(name: &'static str, index: u32) -> T::AccountId {
     let account: T::AccountId = account(name, index, SEED);
-    let amount = BalanceOf::<T>::max_value() / 2u32.into();
-    let _ =
-        <T as pallet_storage_provider::Config>::Currency::make_free_balance_be(&account, amount);
+    let amount = pallet_storage_provider::benchmarking::funding::<T>();
+    let _ = <T as pallet_storage_provider::Config>::Currency::set_balance(&account, amount);
     account
 }
 
@@ -131,6 +130,7 @@ fn create_drive_for<T: Config>(
         provider.clone(),
         terms,
         sig,
+        storage_primitives::Visibility::Private,
     );
     let drive_id = NextDriveId::<T>::get().saturating_sub(1);
     let drive = Drives::<T>::get(drive_id).expect("create_drive just inserted this");
@@ -177,7 +177,14 @@ mod benchmarks {
         let sig = sign_terms::<T>(&provider_pk, &terms);
 
         #[extrinsic_call]
-        create_drive(RawOrigin::Signed(user), Some(name), provider, terms, sig);
+        create_drive(
+            RawOrigin::Signed(user),
+            Some(name),
+            provider,
+            terms,
+            sig,
+            storage_primitives::Visibility::Private,
+        );
     }
 
     /// Worst case for `cleanup_bucket_internal`:

@@ -5,7 +5,7 @@
 //! including the bootstrap scan on `Resubscribed` and lag recovery.
 
 use super::{alice_account, test_state, test_state_with_data, wait_for};
-use provider_chain::chain_events::BlockEvent;
+use provider_chain::BlockEvent;
 use sp_core::H256;
 use sp_runtime::AccountId32;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -310,7 +310,7 @@ impl ReplicaSyncChainClient for MockReplicaClient {
     async fn submit_sync_confirmation(
         &self,
         _bucket_id: BucketId,
-        _target_mmr_root: H256,
+        _attestation: storage_provider_node::SignedSyncRoots,
     ) -> Result<(u8, u128), Error> {
         Ok((0, 0))
     }

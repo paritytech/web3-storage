@@ -18,6 +18,7 @@ sp-core = { workspace = true, features = ["std"] }
 sp-runtime = { workspace = true, features = ["std"] }
 
 # Async/HTTP
+futures = { workspace = true }
 reqwest = { workspace = true }
 tokio = { workspace = true }
 

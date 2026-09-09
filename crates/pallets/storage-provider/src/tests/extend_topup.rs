@@ -220,3 +220,21 @@ fn top_up_agreement_fails_payment_exceeds_max() {
         );
     });
 }
+
+#[test]
+fn extend_agreement_fails_after_expiry() {
+    new_test_ext().execute_with(|| {
+        register_provider(2, 200);
+        let bucket_id = setup_agreement(2, 1, 50, 100);
+        let agreement = StorageAgreements::<Test>::get(bucket_id, 2).unwrap();
+
+        run_to_block(agreement.expires_at);
+
+        // Expired agreements settle via end_agreement /
+        // claim_expired_agreement; extending would pay for dead time.
+        assert_noop!(
+            StorageProvider::extend_agreement(RuntimeOrigin::signed(1), bucket_id, 2, 50, 10_000),
+            Error::<Test>::AgreementExpired
+        );
+    });
+}

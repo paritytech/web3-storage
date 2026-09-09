@@ -22,6 +22,7 @@ fn challenge_to_response<T: Config>(
         deadline: deadline.saturated_into(),
         index,
         deposit: c.deposit.saturated_into::<u128>(),
+        authorized: c.authorized,
     }
 }
 
@@ -113,10 +114,16 @@ impl<T: Config> Pallet<T> {
                 agreements_extended: info.stats.agreements_extended,
                 agreements_not_extended: info.stats.agreements_not_extended,
                 agreements_burned: info.stats.agreements_burned,
-                challenges_received: info.stats.challenges_received,
+                challenges_received_authorized: info.stats.challenges_received_authorized,
+                challenges_received_public: info.stats.challenges_received_public,
                 challenges_failed: info.stats.challenges_failed,
                 max_capacity,
                 available_capacity,
+                deregister_at: info.deregister_at.map(|b| b.saturated_into::<u32>()),
+                reputation: crate::runtime_api::reputation_score(
+                    info.stats.challenges_defended(),
+                    info.stats.challenges_failed,
+                ),
             }
         })
     }
@@ -158,10 +165,16 @@ impl<T: Config> Pallet<T> {
                         agreements_extended: info.stats.agreements_extended,
                         agreements_not_extended: info.stats.agreements_not_extended,
                         agreements_burned: info.stats.agreements_burned,
-                        challenges_received: info.stats.challenges_received,
+                        challenges_received_authorized: info.stats.challenges_received_authorized,
+                        challenges_received_public: info.stats.challenges_received_public,
                         challenges_failed: info.stats.challenges_failed,
                         max_capacity,
                         available_capacity,
+                        deregister_at: info.deregister_at.map(|b| b.saturated_into::<u32>()),
+                        reputation: crate::runtime_api::reputation_score(
+                            info.stats.challenges_defended(),
+                            info.stats.challenges_failed,
+                        ),
                     },
                 )
             })
@@ -193,6 +206,7 @@ impl<T: Config> Pallet<T> {
                 primary_signers: s.primary_signers.clone(),
             }),
             total_snapshots: bucket.total_snapshots,
+            visibility: bucket.visibility,
         })
     }
 

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! Integration tests for the chain-state coordinator that need no blockchain.
 //!
@@ -28,16 +28,16 @@
 
 use async_trait::async_trait;
 use provider_chain::chain_connection::{ChainHandle, ChainTransport};
+use provider_coordinator::{
+    is_relevant_provider_event, refresh_if_relevant_event, refresh_provider_state, sync_constants,
+    ChainState, ChainStateChainClient, ChainStateCoordinator, Error, NonceCounter, PalletConstants,
+    ProviderInfo, ProviderLifecycleEvent,
+};
 use provider_storage::{temp_rocksdb, NonceStore};
 use sp_runtime::AccountId32;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
-use storage_provider_node::{
-    is_relevant_provider_event, refresh_if_relevant_event, refresh_provider_state, sync_constants,
-    ChainState, ChainStateChainClient, ChainStateCoordinator, Error, NonceCounter, PalletConstants,
-    ProviderInfo, ProviderLifecycleEvent,
-};
 
 /// Chain state over a throwaway backend's nonce store.
 fn test_chain_state() -> (ChainState, tempfile::TempDir) {
@@ -78,6 +78,7 @@ fn provider_account() -> sp_runtime::AccountId32 {
 fn sample_provider_info() -> ProviderInfo {
     ProviderInfo {
         multiaddr: "/ip4/1.2.3.4/tcp/3333".to_string(),
+        public_key: vec![1u8; 32],
         stake: 1_000,
         committed_bytes: 500,
         max_capacity: 10_000,

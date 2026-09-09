@@ -17,6 +17,7 @@
 mod common;
 
 use common::{chain_guard, chain_setup, dev_discovery};
+use storage_client::discovery::PartialMatchReason;
 use storage_client::StorageRequirements;
 
 // ─── list_providers ───────────────────────────────────────────────────────────
@@ -335,18 +336,28 @@ async fn test_find_providers_price_filter_excludes_alice() {
         .await
         .expect("find_providers with price=0 should not error");
 
-    let accounts: Vec<&str> = matched.iter().map(|m| m.account.as_str()).collect();
+    // `max_price_per_byte` ranks, it does not filter: an over-budget provider
+    // is still returned, scored down and flagged. Callers needing a budget
+    // guarantee check `price_per_byte` themselves.
+    let alice = matched
+        .iter()
+        .find(|m| m.account == setup.alice_ss58)
+        .expect("Alice is over budget but must still be returned, scored down");
+
     assert!(
-        !accounts.contains(&setup.alice_ss58.as_str()),
-        "Alice (price=1_000_000) should not match max_price_per_byte=0"
+        alice.info.price_per_byte > 0,
+        "Alice's price should exceed the zero ceiling this test asks for"
+    );
+    assert!(
+        alice.match_score < 100,
+        "an over-budget provider must not score a perfect match, got {}",
+        alice.match_score
+    );
+    assert_eq!(
+        alice.partial_reason,
+        Some(PartialMatchReason::PriceTooHigh),
+        "the reason an over-budget provider lost points must be surfaced"
     );
 
-    for m in &matched {
-        assert_eq!(
-            m.info.price_per_byte, 0,
-            "all matched providers should have price_per_byte=0"
-        );
-    }
-
-    println!("free providers: {}", matched.len());
+    println!("matched providers: {}", matched.len());
 }
