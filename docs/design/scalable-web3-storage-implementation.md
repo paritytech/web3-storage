@@ -327,6 +327,11 @@ pub struct ProviderStats<T: Config> {
     /// resolves into exactly one of received_authorized / received_public
     /// (successfully defended), failed (slashed), or nothing (cancelled).
     pub challenges_failed: u32,
+    /// Total payment ever received by this provider for storage service:
+    /// agreement settlements, extension payments, and replica sync
+    /// payments. Monotonically increasing, never reset by a slash or
+    /// anything else. A historical record, not a live balance.
+    pub lifetime_revenue: BalanceOf<T>,
 }
 
 pub struct ProviderSettings<T: Config> {
