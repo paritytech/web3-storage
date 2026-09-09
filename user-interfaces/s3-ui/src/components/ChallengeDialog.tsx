@@ -14,7 +14,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useCheckpointInfo, useSelectedBucket, getS3Client } from "@/state";
 import { submitChallenge } from "@/state/challenge.state";
-import { truncateHash } from "@/lib/utils";
+import { truncateHash } from "@web3-storage/format";
 import { toast } from "@/components/ui/toaster";
 
 interface ChallengeDialogProps {
