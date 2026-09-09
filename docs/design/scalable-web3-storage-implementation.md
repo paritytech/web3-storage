@@ -659,25 +659,6 @@ pub type PendingChallengesByBucket<T: Config> = StorageDoubleMap<
     ValueQuery,
 >;
 
-/// Per-challenger aggregates so the SDK doesn't have to scan historical
-/// events. Updated by `create_challenge`, the defended path of
-/// `respond_to_challenge`, and `slash_provider_for_failed_challenge`.
-#[pallet::storage]
-pub type ChallengerStats<T: Config> =
-    StorageMap<_, Blake2_128Concat, T::AccountId, ChallengerStatRecord, ValueQuery>;
-
-/// Defined in `storage_primitives`.
-pub struct ChallengerStatRecord {
-    /// Total challenges the challenger has ever opened.
-    pub total_challenges: u32,
-    /// Challenges where the provider was slashed (invalid response or
-    /// timeout). The challenger is only made whole (deposit refunded), no
-    /// reward — the slashed stake goes entirely to the Treasury.
-    pub successful_challenges: u32,
-    /// Challenges where the provider successfully defended.
-    pub failed_challenges: u32,
-}
-
 /// Reverse index: account → bucket IDs they are a member of.
 /// Bounded by `T::MaxBucketsPerMember` to keep iteration costs predictable.
 #[pallet::storage]
