@@ -6,7 +6,7 @@ Five React + Vite + Polkadot-API single-page apps:
 - **`s3-ui/`** (port `5177`) — Layer 0 S3-style object store. Buckets, objects, client-side encryption, checkpoints.
 - **`provider/`** (port `5175`) — Provider operator dashboard. Registration, agreements, checkpoints, challenges, earnings.
 - **`photos/`** (port `5178`) — Photo library backed by decentralized storage, with the album-tree root anchored on-chain via a smart contract.
-- **`explorer/`** (port `5179`) — Network-wide on-chain dashboard. Summary stats plus searchable lists of every provider, agreement, bucket, and open challenge. Read-only: never submits an extrinsic; a wallet is only used to highlight "mine".
+- **`explorer/`** (port `5179`) — Capacity Explorer, the network-wide on-chain view. Summary stats plus searchable lists of every provider, agreement, bucket, and open challenge. Read-only: never submits an extrinsic; a wallet is only used to highlight "mine".
 
 State management:
 - All apps use RxJS `BehaviorSubject` + `@react-rxjs/core` `bind()`. State files live in `src/state/*.state.ts`.
@@ -87,7 +87,7 @@ Examples in use across the UIs:
 - `provider-info`, `stat-card-{slug}`, `stat-value-{slug}`
 - `buckets-table`, `buckets-row-{id}`, `agreements-table`, `agreements-row-{id}`
 
-**explorer** (read-only network dashboard):
+**explorer** (Capacity Explorer, read-only network view):
 - `nav-{label}` (summary / providers / agreements / buckets / challenges)
 - `summary-stat-{providers|stake|data|agreements|buckets|challenges}`
 - `{area}-table`, `{area}-row-{id}`, `{area}-search` for each list page
