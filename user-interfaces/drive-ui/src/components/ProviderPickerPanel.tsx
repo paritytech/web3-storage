@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { RefreshCw, Server } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { AvailableProvider, MatchingProviders } from "@/lib/drive-client";
-import { formatBytes, truncateHash, formatTokens } from "@/lib/utils";
+import { formatBytes, formatUnits, truncateHash } from "@web3-storage/format";
 import { queryMatchingProviders } from "@/state/drive.state";
 interface ProviderPickerPanelProps {
   onSelect: (provider: AvailableProvider) => void;
@@ -177,7 +177,7 @@ export default function ProviderPickerPanel({
                       )}
                     </td>
                     <td className="px-3 py-2 text-xs">
-                      {formatTokens(p.pricePerByte)}
+                      {formatUnits(p.pricePerByte)}
                     </td>
                     <td className="px-3 py-2 text-xs">
                       {p.minDuration}–{p.maxDuration || "∞"}

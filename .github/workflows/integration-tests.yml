@@ -721,6 +721,11 @@ jobs:
           CI: "true"
         run: pnpm run test:e2e:provider
 
+      - name: explorer e2e
+        env:
+          CI: "true"
+        run: pnpm run test:e2e:explorer
+
       - name: Stop services
         if: always()
         run: |
@@ -738,6 +743,8 @@ jobs:
             user-interfaces/drive-ui/test-results
             user-interfaces/provider/playwright-report
             user-interfaces/provider/test-results
+            user-interfaces/explorer/playwright-report
+            user-interfaces/explorer/test-results
 
       - name: Upload chain + provider logs
         if: failure()

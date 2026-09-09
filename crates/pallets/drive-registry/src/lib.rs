@@ -102,11 +102,9 @@ pub mod pallet {
         type WeightInfo: WeightInfo;
     }
 
-    /// Balance type for this pallet (inherited from Currency)
-    pub type BalanceOf<T> =
-        <<T as pallet_storage_provider::Config>::Currency as frame_support::traits::Currency<
-            <T as frame_system::Config>::AccountId,
-        >>::Balance;
+    /// Balance type, taken from the storage provider pallet so the two cannot
+    /// drift apart.
+    pub type BalanceOf<T> = pallet_storage_provider::BalanceOf<T>;
 
     /// Maps bucket ID to drive ID (1-to-1 mapping)
     #[pallet::storage]

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Web3 Storage</title>
+  <title>Capacity</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -16,9 +16,23 @@
       justify-content: center;
     }
     .container { max-width: 800px; padding: 2rem; text-align: center; }
-    h1 { font-size: 2.5rem; font-weight: 700; margin-bottom: 0.5rem; }
+    h1 { font-size: 2.5rem; font-weight: 700; margin-bottom: 0.25rem; }
+    .prev-name { color: #666; font-size: 0.85rem; font-style: italic; margin-bottom: 0.75rem; }
     .subtitle { color: #888; font-size: 1.1rem; margin-bottom: 3rem; }
+    .section { margin-bottom: 2.5rem; }
+    .section:last-child { margin-bottom: 0; }
+    .section-title {
+      font-size: 0.95rem;
+      font-weight: 600;
+      color: #8a8aa0;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      text-align: left;
+      margin-bottom: 1rem;
+    }
     .cards { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1.5rem; }
+    /* Don't leave an odd trailing card orphaned in the left column. */
+    .cards > .card:last-child:nth-child(odd) { grid-column: 1 / -1; }
     .card {
       background: #1a1a2e;
       border: 1px solid #2a2a3e;
@@ -30,7 +44,7 @@
       cursor: pointer;
     }
     .card:hover { border-color: #7c3aed; transform: translateY(-2px); }
-    .card h2 { font-size: 1.25rem; margin-bottom: 0.5rem; }
+    .card h3 { font-size: 1.25rem; margin-bottom: 0.5rem; }
     .card p { color: #888; font-size: 0.9rem; line-height: 1.5; }
     .icon { font-size: 2rem; margin-bottom: 1rem; }
     .banner {
@@ -152,11 +166,12 @@
 </head>
 <body>
   <div class="container">
-    <h1>Web3 Storage</h1>
+    <h1>Capacity</h1>
+    <p class="prev-name" data-testid="landing-prev-name">previously known as Web3 Storage</p>
     <p class="subtitle">Decentralized storage with game-theoretic guarantees</p>
     <div class="banner">
       Successor to the <a href="https://paritytech.github.io/polkadot-bulletin-chain/">Polkadot Bulletin Chain</a> storage system.
-      Rather than heavy cryptographic proofs on every operation, Web3 Storage uses economic incentives:
+      Rather than heavy cryptographic proofs on every operation, Capacity uses economic incentives:
       providers lock stake proportional to their capacity and face slashing for data loss.
       The chain acts as a credible threat for accountability, not the hot path &mdash;
       normal reads and writes happen off-chain via HTTP and scale with provider capacity, not chain throughput.
@@ -203,34 +218,48 @@
       </dl>
       <div class="error" id="landing-picker-error" role="alert" hidden></div>
     </div>
-    <div class="cards">
-      <a href="./provider/" class="card" data-app="provider" data-testid="landing-card-provider">
-        <div class="icon">&#x1F5A5;</div>
-        <h2>Provider Dashboard</h2>
-        <p>Register as a storage provider, manage agreements, respond to challenges, and track earnings.</p>
-      </a>
-      <a href="./drive/" class="card" data-app="drive" data-testid="landing-card-drive">
-        <div class="icon">&#x1F4C1;</div>
-        <h2>Drive</h2>
-        <p>File manager interface. Create drives, browse directories, upload and download files.</p>
-      </a>
-      <a href="./s3/" class="card" data-app="s3" data-testid="landing-card-s3">
-        <div class="icon">&#x1FAA3;</div>
-        <h2>S3 Storage</h2>
-        <p>Amazon S3-compatible object storage on the decentralized web. Create buckets, manage objects, and browse prefixes.</p>
-      </a>
-      <a href="./photos/" class="card" data-app="photos" data-testid="landing-card-photos">
-        <div class="icon">&#x1F5BC;</div>
-        <h2>Photos</h2>
-        <p>A photo library backed by decentralized storage. Organize albums, upload and view photos, with the album-tree root anchored on-chain. Doubles as a reference example of integrating a dApp UI, a smart contract, and the storage layer.</p>
-      </a>
+    <div class="section" data-testid="landing-section-dashboards">
+      <h2 class="section-title">Dashboards</h2>
+      <div class="cards">
+        <a href="./explorer/" class="card" data-app="explorer" data-testid="landing-card-explorer">
+          <div class="icon">&#x1F50D;</div>
+          <h3>Capacity Explorer</h3>
+          <p>Network-wide view of the protocol. Summary stats plus every provider, agreement, bucket, and open challenge on chain. Read-only.</p>
+        </a>
+        <a href="./provider/" class="card" data-app="provider" data-testid="landing-card-provider">
+          <div class="icon">&#x1F5A5;</div>
+          <h3>Provider Dashboard</h3>
+          <p>Register as a storage provider, manage agreements, respond to challenges, and track earnings.</p>
+        </a>
+      </div>
+    </div>
+    <div class="section" data-testid="landing-section-examples">
+      <h2 class="section-title">Implementations &amp; Examples</h2>
+      <div class="cards">
+        <a href="./drive/" class="card" data-app="drive" data-testid="landing-card-drive">
+          <div class="icon">&#x1F4C1;</div>
+          <h3>Drive</h3>
+          <p>File manager interface. Create drives, browse directories, upload and download files.</p>
+        </a>
+        <a href="./s3/" class="card" data-app="s3" data-testid="landing-card-s3">
+          <div class="icon">&#x1FAA3;</div>
+          <h3>S3 Storage</h3>
+          <p>Amazon S3-compatible object storage on the decentralized web. Create buckets, manage objects, and browse prefixes.</p>
+        </a>
+        <a href="./photos/" class="card" data-app="photos" data-testid="landing-card-photos">
+          <div class="icon">&#x1F5BC;</div>
+          <h3>Photos</h3>
+          <p>A photo library backed by decentralized storage. Organize albums, upload and view photos, with the album-tree root anchored on-chain. Doubles as a reference example of integrating a dApp UI, a smart contract, and the storage layer.</p>
+        </a>
+      </div>
     </div>
   </div>
   <script>
-    // Card target URLs. Kept as relative paths so GH Pages serves all four apps
+    // Card target URLs. Kept as relative paths so GH Pages serves all apps
     // from the same origin (https://paritytech.github.io/web3-storage/<app>/).
     // The local dev landing copy rewrites these to absolute Vite dev-server URLs.
     var BASES = {
+      explorer: './explorer/',
       provider: './provider/',
       drive: './drive/',
       s3: './s3/',

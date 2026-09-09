@@ -19,7 +19,7 @@ import {
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { Spinner } from '@/components/ui/Spinner'
-import { formatBytes } from '@/utils/format'
+import { formatBytesBinary } from '@web3-storage/format'
 
 export function PhotoGrid() {
   const entries = useEntries()
@@ -210,7 +210,7 @@ function PhotoCell({ item }: { item: GridItem }) {
         ) : (
           <>
             <span className="truncate text-[11px] text-gray-200">{item.name}</span>
-            <span className="shrink-0 text-[10px] text-gray-400">{formatBytes(item.size)}</span>
+            <span className="shrink-0 text-[10px] text-gray-400">{formatBytesBinary(item.size)}</span>
           </>
         )}
       </div>
