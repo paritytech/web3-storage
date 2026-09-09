@@ -2,7 +2,7 @@
 
 ```
 docs/
-├── getting-started/   — quickstart + troubleshooting
+├── getting-started/   — quickstart
 ├── reference/         — derived / how-it-works docs (review-gated)
 ├── design/            — canonical system design (review-gated)
 ├── drafts/            — unratified / WIP notes (need triage)
@@ -17,7 +17,6 @@ docs/
 
 - **[Layer 1 Quick Start](./getting-started/LAYER1_QUICKSTART.md)** — three-terminal setup (chain → provider → demo) plus SDK examples for the file-system and S3 interfaces. The canonical entry point.
 - **[`FILE_SYSTEM_QUICKSTART.md`](./getting-started/FILE_SYSTEM_QUICKSTART.md)** — short version, file-system layer only.
-- **[Troubleshooting](./getting-started/TROUBLESHOOTING.md)** — common errors when running the local network and demos.
 - **[`CLAUDE.md`](../CLAUDE.md)** (repo root) — agent/contributor rules and the source-of-truth map.
 
 ## Reference

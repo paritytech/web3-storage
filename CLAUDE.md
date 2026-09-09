@@ -45,7 +45,6 @@ Link, don't copy.
 | Extrinsics API, execution flows, payment math | [`docs/reference/`](docs/reference/) |
 | Layer 1 file system (drives, manifests, commit strategies) | [`docs/filesystems/README.md`](docs/filesystems/README.md) |
 | WIP designs: marketplace/discovery, checkpoint protocol, smart contracts, encryption | [`docs/drafts/`](docs/drafts/) — **not authoritative** |
-| Troubleshooting common errors | [`docs/getting-started/TROUBLESHOOTING.md`](docs/getting-started/TROUBLESHOOTING.md) |
 | Review criteria (Parity Standards) | the `/review` skill — authoritative; not restated here |
 | TypeScript SDK layering, tx semantics, PAPI patterns | [`packages/sdk/README.md`](packages/sdk/README.md) |
 | Upstream FRAME / Cumulus / XCM | [Polkadot SDK docs](https://paritytech.github.io/polkadot-sdk/) |
