@@ -2,28 +2,29 @@
 
 ```
 docs/
-├── getting-started/   — quickstart
-├── reference/         — derived / how-it-works docs (accurate, not gated)
+├── getting-started/   — quickstart + troubleshooting
+├── reference/         — derived / how-it-works docs (review-gated)
 ├── design/            — canonical system design (review-gated)
 ├── drafts/            — unratified / WIP notes (need triage)
 └── filesystems/       — Layer 1 file system interface
 ```
 
 > - **`design/`** — the source of truth; changes require design-owner review (see [`.github/CODEOWNERS`](../.github/CODEOWNERS)).
-> - **`reference/`** — accurate but *derived* material (flow walkthroughs, API refs). Kept in sync with the design, but not itself design-of-record, so it is **not** review-gated.
+> - **`reference/`** — accurate but *derived* material (flow walkthroughs, API refs). Not itself design-of-record, but review-gated (see [`.github/CODEOWNERS`](../.github/CODEOWNERS)) and must stay true to the code.
 > - **`drafts/`** — unratified / WIP notes; treat as provisional. Each needs triage: promote to `design/` or `reference/`, fold into an existing doc, or drop.
 
 ## Getting started
 
 - **[Layer 1 Quick Start](./getting-started/LAYER1_QUICKSTART.md)** — three-terminal setup (chain → provider → demo) plus SDK examples for the file-system and S3 interfaces. The canonical entry point.
 - **[`FILE_SYSTEM_QUICKSTART.md`](./getting-started/FILE_SYSTEM_QUICKSTART.md)** — short version, file-system layer only.
-- **[`CLAUDE.md`](../CLAUDE.md)** (repo root) — build/test/run commands and contributor guidelines.
+- **[Troubleshooting](./getting-started/TROUBLESHOOTING.md)** — common errors when running the local network and demos.
+- **[`CLAUDE.md`](../CLAUDE.md)** (repo root) — agent/contributor rules and the source-of-truth map.
 
 ## Reference
 
 - **[Extrinsics Reference](./reference/EXTRINSICS_REFERENCE.md)** — every pallet extrinsic with parameters, errors, and example workflows.
 - **[Payment Calculator](./reference/PAYMENT_CALCULATOR.md)** — `payment = price_per_byte × max_bytes × duration`, with worked examples.
-- **[Execution Flows](./reference/EXECUTION_FLOWS.md)** — sequence-by-sequence walkthroughs of the main flows (derived from the design; no design-owner sign-off needed).
+- **[Execution Flows](./reference/EXECUTION_FLOWS.md)** — sequence-by-sequence walkthroughs of the main flows (derived from the design).
 
 ## Design
 
