@@ -11,8 +11,6 @@
 use crate::api::check_role;
 use crate::auth::RequiredRole;
 use crate::error::Error;
-use crate::fs_index::FsEntryMeta;
-use crate::storage::{build_padded_merkle_tree, hex_encode};
 use crate::ProviderState;
 use axum::{
     body::Bytes,
@@ -21,6 +19,7 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
+use provider_storage::{build_padded_merkle_tree, FsEntryMeta};
 use serde::{Deserialize, Serialize};
 use sp_core::H256;
 use std::sync::Arc;
@@ -46,6 +45,18 @@ fn default_root() -> String {
     "/".to_string()
 }
 
+/// Validate a user-supplied file-system path: absolute, non-empty, and free of
+/// `..` traversal segments.
+fn validate_fs_path(path: &str) -> Result<(), Error> {
+    if path.is_empty() || !path.starts_with('/') {
+        return Err(Error::InvalidPath("path must start with '/'".to_string()));
+    }
+    if path.split('/').any(|seg| seg == "..") {
+        return Err(Error::InvalidPath("path must not contain '..'".to_string()));
+    }
+    Ok(())
+}
+
 /// PUT /fs/:bucket_id/file?path=...
 ///
 /// Accepts raw bytes, chunks internally, builds Merkle tree, commits to MMR, updates FS index.
@@ -58,9 +69,7 @@ pub async fn fs_put_file(
 ) -> Result<Json<PutFileResponse>, Error> {
     check_role(&state, &headers, "PUT", bucket_id, RequiredRole::Writer).await?;
     let path = params.path;
-    if path.is_empty() || !path.starts_with('/') {
-        return Err(Error::InvalidPath("path must start with '/'".to_string()));
-    }
+    validate_fs_path(&path)?;
 
     let data = body.to_vec();
     let size = data.len() as u64;
@@ -120,7 +129,7 @@ pub async fn fs_put_file(
     state.fs_index.put_file(bucket_id, path, meta);
 
     Ok(Json(PutFileResponse {
-        data_root: format!("0x{}", hex_encode(data_root.as_bytes())),
+        data_root: format!("0x{}", hex::encode(data_root.as_bytes())),
         size,
         leaf_index,
     }))
@@ -137,6 +146,7 @@ pub async fn fs_get_file(
 ) -> Result<Response, Error> {
     check_role(&state, &headers, "GET", bucket_id, RequiredRole::Reader).await?;
     let path = params.path;
+    validate_fs_path(&path)?;
     let meta = state
         .fs_index
         .get_entry(bucket_id, &path)
@@ -187,6 +197,7 @@ pub async fn fs_delete_file(
 ) -> Result<Json<DeleteFileResponse>, Error> {
     check_role(&state, &headers, "DELETE", bucket_id, RequiredRole::Writer).await?;
     let path = params.path;
+    validate_fs_path(&path)?;
     let deleted = state.fs_index.delete_entry(bucket_id, &path).is_some();
 
     Ok(Json(DeleteFileResponse { deleted }))
@@ -203,9 +214,7 @@ pub async fn fs_mkdir(
 ) -> Result<Json<MkdirResponse>, Error> {
     check_role(&state, &headers, "POST", bucket_id, RequiredRole::Writer).await?;
     let path = params.path;
-    if path.is_empty() || !path.starts_with('/') {
-        return Err(Error::InvalidPath("path must start with '/'".to_string()));
-    }
+    validate_fs_path(&path)?;
 
     state.fs_index.mkdir(bucket_id, path.clone());
 
@@ -225,6 +234,7 @@ pub async fn fs_list_dir(
     headers: axum::http::HeaderMap,
 ) -> Result<Json<ListDirResponse>, Error> {
     check_role(&state, &headers, "GET", bucket_id, RequiredRole::Reader).await?;
+    validate_fs_path(&params.path)?;
     let entries = state
         .fs_index
         .list_dir(bucket_id, &params.path, params.recursive);
@@ -263,7 +273,7 @@ pub async fn fs_index_root(
 
     Ok(Json(FsIndexRootResponse {
         bucket_id,
-        metadata_merkle_root: format!("0x{}", hex_encode(root.as_bytes())),
+        metadata_merkle_root: format!("0x{}", hex::encode(root.as_bytes())),
         file_count,
         dir_count,
         total_size,

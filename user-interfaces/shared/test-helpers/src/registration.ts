@@ -23,7 +23,7 @@ function publicKeyHex(address: string): string {
  * Storage key for `pallet_storage_provider::Providers[address]`. Layout
  * is `twox128(pallet_name) ++ twox128(storage_name) ++
  * blake2_128_concat(scale(account))`, matching the FRAME `StorageMap`
- * with `Blake2_128Concat` hasher in `pallet/src/lib.rs`. AccountId32 is
+ * with `Blake2_128Concat` hasher in `crates/pallets/storage-provider/src/lib.rs`. AccountId32 is
  * 32 raw bytes, so the scale encoding of the key is just those bytes.
  */
 function providersStorageKey(address: string): Uint8Array {
@@ -202,7 +202,24 @@ export async function cleanProviderRegistry(
     if (keep.has(pk)) continue;
     const signer = knownDev[pk];
     if (!signer) continue;
-    if ((value as { committed_bytes: bigint }).committed_bytes !== 0n) continue;
+    const info = value as {
+      committed_bytes: bigint;
+      settings: { accepting_primary: boolean } & Record<string, unknown>;
+    };
+    if (info.committed_bytes !== 0n) {
+      // Can't wipe a provider with active agreements — but it can still be
+      // picked by auto-matching and stall every drive/bucket creation (its
+      // node isn't running). Silence it instead: flip accepting_primary off.
+      if (info.settings.accepting_primary) {
+        await submitExtrinsic(
+          api.tx.StorageProvider.update_provider_settings({
+            settings: { ...info.settings, accepting_primary: false } as never,
+          }),
+          signer.signer,
+        );
+      }
+      continue;
+    }
     await forceRemoveProvider(signer);
   }
 }

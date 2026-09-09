@@ -1,0 +1,20 @@
+[package]
+name = "provider-negotiation"
+version = "0.1.0"
+authors.workspace = true
+edition.workspace = true
+license = "Apache-2.0"
+repository.workspace = true
+description = "Off-chain negotiation wire protocol between storage clients and provider nodes"
+
+[dependencies]
+storage-primitives = { workspace = true, features = ["serde", "std"] }
+codec = { workspace = true, features = ["std"] }
+hex = { workspace = true, features = ["std"] }
+serde = { workspace = true, features = ["std"] }
+serde_with = { workspace = true }
+sp-core = { workspace = true, features = ["std"] }
+sp-runtime = { workspace = true, features = ["std"] }
+
+[dev-dependencies]
+serde_json = { workspace = true, features = ["std"] }

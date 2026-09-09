@@ -21,7 +21,7 @@ import {
   type CreationStatus,
 } from "@/state";
 import { type AvailableProvider } from "@/lib/drive-client";
-import { negotiateProviderTerms } from "@web3-storage/papi";
+import { negotiateProviderTerms } from "@web3-storage/sdk";
 import { formatBytes } from "@/lib/utils";
 import ProviderPickerPanel from "./ProviderPickerPanel";
 

@@ -23,7 +23,7 @@ import {
 import { type AvailableProvider } from "@/lib/s3-client";
 import { formatBytes } from "@/lib/utils";
 import ProviderPickerPanel from "./ProviderPickerPanel";
-import { negotiateProviderTerms } from "@web3-storage/papi";
+import { negotiateProviderTerms } from "@web3-storage/sdk";
 
 interface NewBucketDialogProps {
   open: boolean;

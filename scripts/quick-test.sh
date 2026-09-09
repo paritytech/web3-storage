@@ -40,7 +40,7 @@ if curl -s -H "Content-Type: application/json" \
     echo -e "${GREEN}✅ Chain is running${NC}"
 else
     echo -e "${RED}❌ Chain is not responding${NC}"
-    echo "Make sure zombienet is running: zombienet spawn zombienet.toml"
+    echo "Make sure zombienet is running: zombienet spawn zombienet/zombienet-parachain-local.toml"
     exit 1
 fi
 

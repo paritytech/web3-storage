@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 import { test, expect } from "../fixtures";
-import { expectBestBlockToAdvance } from "@web3-storage/test-helpers";
+import { expectBestBlockToAdvance } from "@web3-storage/test-helpers/playwright";
 
 test.describe.configure({ mode: "serial" });
 

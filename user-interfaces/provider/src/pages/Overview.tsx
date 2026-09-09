@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-only
+
 import { useEffect, useState, useCallback } from 'react'
 import { Server, HardDrive, FileText, Shield, Coins, AlertTriangle, Network } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/Card'
@@ -22,7 +23,7 @@ import {
 import type { TxStatus } from '@/state/provider.state'
 import { useSelectedAccount } from '@/state/wallet.state'
 import { useSelectedNetwork, useSelectedNetworkId } from '@/state/network.state'
-import { useChainInfo, useConnectionStatus, useBlockNumber } from '@/state/chain.state'
+import { useChainInfo, useConnectionStatus, useAnchorBlock } from '@/state/chain.state'
 import { RequireProvider } from '@/components/RequireProvider'
 import { formatBytes, formatTokens, formatDuration, formatHash } from '@/utils/format'
 
@@ -82,7 +83,8 @@ function DangerZone() {
   const providerInfo = useProviderInfo()
   const activeAgreements = useActiveAgreements()
   const selectedAccount = useSelectedAccount()
-  const currentBlock = useBlockNumber()
+  // deregister_at is on the pallet's anchor clock.
+  const anchorBlock = useAnchorBlock()
   const networkId = useSelectedNetworkId()
 
   const [confirming, setConfirming] = useState<'announce' | 'complete' | null>(null)
@@ -108,7 +110,7 @@ function DangerZone() {
   const hasAgreements = activeAgreements.length > 0
   const deregisterAt = providerInfo?.deregisterAt
   const isAnnounced = deregisterAt != null && deregisterAt > 0
-  const cooldownElapsed = isAnnounced && currentBlock >= deregisterAt
+  const cooldownElapsed = isAnnounced && anchorBlock >= deregisterAt
 
   const handleProgress = useCallback((status: TxStatus) => {
     setTxStatus(status)
@@ -245,7 +247,7 @@ function DangerZone() {
                 De-registration announced. Completion available after block #{deregisterAt}.
               </p>
               <p className="text-xs text-gray-500 mt-1">
-                Current block: #{currentBlock} — {deregisterAt - currentBlock} block{deregisterAt - currentBlock !== 1 ? 's' : ''} remaining
+                Anchor block: #{anchorBlock} — {deregisterAt - anchorBlock} block{deregisterAt - anchorBlock !== 1 ? 's' : ''} remaining
               </p>
             </div>
             <Button variant="destructive" disabled>

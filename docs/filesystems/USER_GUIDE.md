@@ -53,30 +53,25 @@ The system handles all of this automatically!
 ```bash
 # Add to your Cargo.toml
 [dependencies]
-file-system-client = { path = "path/to/storage-interfaces/file-system/client" }
-file-system-primitives = { path = "path/to/storage-interfaces/file-system/primitives" }
+file-system-client = { path = "path/to/clients/file-system" }
+file-system-primitives = { path = "path/to/crates/primitives/file-system" }
 ```
 
 ### Initialize Client
 
 ```rust
-use file_system_client::FileSystemClient;
+use file_system_client::{FileSystemClient, Signer};
 
 // Initialize client with blockchain connection
 let mut fs_client = FileSystemClient::new(
     "ws://127.0.0.1:2222",           // Parachain WebSocket endpoint
     "http://127.0.0.1:3333",         // Storage provider HTTP endpoint
+    Signer::from_seed("//Alice")?,           // Use Alice's dev account
 ).await?;
 
-// Set up signing (for testing with dev accounts)
-fs_client = fs_client
-    .with_dev_signer("alice")        // Use Alice's dev account
-    .await?;
-
-// Or use a real keypair for production:
-// use subxt_signer::sr25519::Keypair;
-// let keypair = Keypair::from_seed("your seed phrase")?;
-// fs_client = fs_client.with_signer(keypair).await?;
+// Or use a real key for production:
+// let signer = Signer::from_seed("your seed phrase")?;
+// or: Signer::from_keypair(keypair)
 ```
 
 **Blockchain Integration:**
@@ -548,7 +543,7 @@ let drive_id = fs_client.create_drive_with_providers(
 - Known reliable providers from past experience
 - Testing with specific provider configurations
 
-For more details, see [Storage Marketplace Design](../design/marketplace.md).
+For more details, see [Storage Marketplace Design](../drafts/marketplace.md).
 
 ---
 
@@ -625,7 +620,7 @@ If providers disagree on the data state, the system detects and handles it:
 // 4. Continues with majority consensus
 ```
 
-For more details, see [Checkpoint Protocol Design](../design/CHECKPOINT_PROTOCOL.md).
+For more details, see [Checkpoint Protocol Design](../drafts/CHECKPOINT_PROTOCOL.md).
 
 ---
 
@@ -884,7 +879,7 @@ See [Architecture Document](./ARCHITECTURE.md#content-addressing--cids) for deta
 
 - **[Admin Guide](./ADMIN_GUIDE.md)** - System administration
 - **[API Reference](./API_REFERENCE.md)** - Complete API documentation
-- **[Examples](../../storage-interfaces/file-system/examples/)** - Code examples
+- **[Examples](../../clients/file-system/examples/)** - Code examples
 
 ## Additional Resources
 

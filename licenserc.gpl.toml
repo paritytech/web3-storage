@@ -1,0 +1,27 @@
+# License header config for runtime/node crates: the parachain runtimes, the
+# off-chain provider node binary, and the reference UI apps. These are
+# deployable artifacts rather than reusable libraries, so they carry the
+# copyleft GPL-3.0-only license.
+inlineHeader = "SPDX-License-Identifier: GPL-3.0-only"
+keywords = ["SPDX-License-Identifier"]
+
+includes = [
+	"provider-node/**/*.rs",
+	"runtimes/**/*.rs",
+	"user-interfaces/drive-ui/**/*.ts",
+	"user-interfaces/drive-ui/**/*.tsx",
+	"user-interfaces/photos/scripts/**/*.ts",
+	"user-interfaces/provider/**/*.ts",
+	"user-interfaces/provider/**/*.tsx",
+	"user-interfaces/s3-ui/**/*.ts",
+	"user-interfaces/s3-ui/**/*.tsx",
+	"user-interfaces/shared/**/*.ts",
+	"user-interfaces/shared/**/*.tsx",
+]
+excludes = [
+	"**/*.bin.ts",
+	"runtimes/*/src/weights/**",
+]
+
+[mapping.DOUBLESLASH_STYLE]
+extensions = ["ts", "tsx"]

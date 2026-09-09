@@ -2,74 +2,29 @@
 
 //! Integration tests for auth-enabled HTTP endpoints.
 //!
-//! These tests spin up a real HTTP server with `auth_enabled = true` and a
-//! `MockResolver` that returns configurable roles for test accounts.  All
-//! assertions go through real HTTP requests — the auth middleware, signature
-//! verification, membership cache lookup, and role check are exercised as a
-//! single end-to-end path.
+//! These tests spin up a real HTTP server whose membership is a fixed member
+//! set with configurable roles per test account. All assertions go through
+//! real HTTP requests — the auth middleware, signature verification,
+//! membership cache lookup, and role check are exercised as a single
+//! end-to-end path.
+
+mod common;
 
 use axum::http::StatusCode;
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
+use common::{current_timestamp, make_auth_header};
+use provider_storage::{NullNonceStore, Storage};
 use reqwest::Client;
 use serde_json::Value;
 use sp_core::{sr25519, Pair};
 use std::sync::Arc;
 use std::time::Duration;
 use storage_primitives::Role;
-use storage_provider_node::auth::{MembershipCache, MembershipResolver};
-use storage_provider_node::{create_router, ProviderState, Storage};
+use storage_provider_node::auth::{MembershipCache, StaticMembershipResolver};
+use storage_provider_node::{create_router, ProviderDeps, ProviderState};
 use tokio::net::TcpListener;
 
 type AccountId32 = sp_core::crypto::AccountId32;
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Mock resolver (returns configurable roles, no chain needed)
-// ─────────────────────────────────────────────────────────────────────────────
-
-struct MockResolver {
-    members: std::sync::Mutex<Vec<(AccountId32, Role)>>,
-}
-
-impl MockResolver {
-    fn new(members: Vec<(AccountId32, Role)>) -> Self {
-        Self {
-            members: std::sync::Mutex::new(members),
-        }
-    }
-}
-
-#[async_trait::async_trait]
-impl MembershipResolver for MockResolver {
-    async fn fetch_members(&self, _bucket_id: u64) -> Result<Vec<(AccountId32, Role)>, String> {
-        Ok(self.members.lock().unwrap().clone())
-    }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Auth header helpers
-// ─────────────────────────────────────────────────────────────────────────────
-
-fn current_timestamp() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs()
-}
-
-fn make_auth_header(
-    keypair: &sr25519::Pair,
-    method: &str,
-    bucket_id: u64,
-    timestamp: u64,
-) -> String {
-    let message = format!("web3storage:{method}:{bucket_id}:{timestamp}");
-    let signature = keypair.sign(message.as_bytes());
-    format!(
-        "Web3Storage 0x{}:0x{}:{}",
-        hex_encode(&keypair.public().0),
-        hex_encode(&signature.0),
-        timestamp
-    )
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Test server
@@ -86,16 +41,17 @@ impl AuthTestServer {
         let alice_kp = sr25519::Pair::from_string("//Alice", None).unwrap();
         let alice_account = AccountId32::new(alice_kp.public().0);
 
-        let resolver = MockResolver::new(vec![(alice_account, alice_role)]);
-        let cache = Arc::new(MembershipCache::new(
-            Box::new(resolver),
-            Duration::from_secs(60),
-        ));
-
-        let mut state = ProviderState::with_seed(Arc::new(Storage::new()), "//Alice")
-            .expect("//Alice is valid");
-        state.auth_enabled = true;
-        state.membership_cache = Some(cache);
+        // The 300s skew keeps the default the `*_expired_timestamp` tests assume.
+        let deps = ProviderDeps {
+            storage: Arc::new(Storage::new()),
+            nonce_store: Arc::new(NullNonceStore),
+            membership: Arc::new(MembershipCache::new(
+                Box::new(StaticMembershipResolver(vec![(alice_account, alice_role)])),
+                Duration::from_secs(60),
+            )),
+            auth_max_skew: Duration::from_secs(300),
+        };
+        let state = ProviderState::with_seed(deps, "//Alice").expect("//Alice is valid");
 
         let app = create_router(Arc::new(state));
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -451,9 +407,222 @@ async fn s3_head_with_auth() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Helpers
+// Delete endpoint auth tests (admin-only)
 // ─────────────────────────────────────────────────────────────────────────────
 
-fn hex_encode(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
+#[tokio::test]
+async fn delete_admin_can_prune() {
+    let server = AuthTestServer::with_role(Role::Admin).await;
+    let alice = sr25519::Pair::from_string("//Alice", None).unwrap();
+
+    // Create bucket 1 by uploading a file (Admin satisfies the Writer requirement).
+    let ts = current_timestamp();
+    let header = make_auth_header(&alice, "PUT", 1, ts);
+    server
+        .client
+        .put(server.url("/fs/1/file?path=/data.txt"))
+        .header("Authorization", &header)
+        .body(b"prune me".to_vec())
+        .send()
+        .await
+        .unwrap();
+
+    // Admin-signed delete succeeds.
+    let ts = current_timestamp();
+    let header = make_auth_header(&alice, "POST", 1, ts);
+    let resp = server
+        .client
+        .post(server.url("/delete"))
+        .header("Authorization", &header)
+        .json(&serde_json::json!({ "bucket_id": 1, "new_start_seq": 0, "nonce": 0 }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value = resp.json().await.unwrap();
+    assert!(body["provider_signature"].is_string());
+}
+
+#[tokio::test]
+async fn delete_writer_blocked() {
+    let server = AuthTestServer::with_role(Role::Writer).await;
+    let alice = sr25519::Pair::from_string("//Alice", None).unwrap();
+    let ts = current_timestamp();
+    let header = make_auth_header(&alice, "POST", 1, ts);
+
+    let resp = server
+        .client
+        .post(server.url("/delete"))
+        .header("Authorization", &header)
+        .json(&serde_json::json!({ "bucket_id": 1, "new_start_seq": 0, "nonce": 0 }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn delete_missing_auth_returns_401() {
+    let server = AuthTestServer::with_role(Role::Admin).await;
+
+    let resp = server
+        .client
+        .post(server.url("/delete"))
+        .json(&serde_json::json!({ "bucket_id": 1, "new_start_seq": 0, "nonce": 0 }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// L0 node / commit endpoint auth tests
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Build an `UploadNodeRequest` body for `bucket_id` storing `data`.
+fn node_body(bucket_id: u64, data: &[u8]) -> Value {
+    let hash = storage_primitives::blake2_256(data);
+    serde_json::json!({
+        "bucket_id": bucket_id,
+        "hash": format!("0x{}", hex::encode(hash.as_bytes())),
+        "data": BASE64.encode(data),
+    })
+}
+
+#[tokio::test]
+async fn node_writer_can_upload() {
+    let server = AuthTestServer::with_role(Role::Writer).await;
+    let alice = sr25519::Pair::from_string("//Alice", None).unwrap();
+
+    let ts = current_timestamp();
+    let header = make_auth_header(&alice, "PUT", 1, ts);
+    let resp = server
+        .client
+        .put(server.url("/node"))
+        .header("Authorization", &header)
+        .json(&node_body(1, b"writer node payload"))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn node_reader_blocked() {
+    let server = AuthTestServer::with_role(Role::Reader).await;
+    let alice = sr25519::Pair::from_string("//Alice", None).unwrap();
+
+    let ts = current_timestamp();
+    let header = make_auth_header(&alice, "PUT", 1, ts);
+    let resp = server
+        .client
+        .put(server.url("/node"))
+        .header("Authorization", &header)
+        .json(&node_body(1, b"reader cannot write"))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn node_missing_auth_returns_401() {
+    let server = AuthTestServer::with_role(Role::Writer).await;
+
+    let resp = server
+        .client
+        .put(server.url("/node"))
+        .json(&node_body(1, b"no auth header"))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn commit_writer_can_commit() {
+    let server = AuthTestServer::with_role(Role::Writer).await;
+    let alice = sr25519::Pair::from_string("//Alice", None).unwrap();
+
+    // Upload a node first (Writer), then commit it.
+    let data = b"committed chunk";
+    let hash_hex = format!(
+        "0x{}",
+        hex::encode(storage_primitives::blake2_256(data).as_bytes())
+    );
+    let ts = current_timestamp();
+    let header = make_auth_header(&alice, "PUT", 1, ts);
+    server
+        .client
+        .put(server.url("/node"))
+        .header("Authorization", &header)
+        .json(&node_body(1, data))
+        .send()
+        .await
+        .unwrap();
+
+    let ts = current_timestamp();
+    let header = make_auth_header(&alice, "POST", 1, ts);
+    let resp = server
+        .client
+        .post(server.url("/commit"))
+        .header("Authorization", &header)
+        .json(&serde_json::json!({ "bucket_id": 1, "data_roots": [hash_hex], "nonce": 0 }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value = resp.json().await.unwrap();
+    assert!(body["provider_signature"].is_string());
+}
+
+#[tokio::test]
+async fn commit_reader_blocked() {
+    let server = AuthTestServer::with_role(Role::Reader).await;
+    let alice = sr25519::Pair::from_string("//Alice", None).unwrap();
+    let ts = current_timestamp();
+    let header = make_auth_header(&alice, "POST", 1, ts);
+
+    let resp = server
+        .client
+        .post(server.url("/commit"))
+        .header("Authorization", &header)
+        .json(&serde_json::json!({ "bucket_id": 1, "data_roots": [], "nonce": 0 }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+}
+
+/// A validly-signed request from an account that is not a member of the bucket
+/// must be rejected on the L0 write path — a correct signature only proves
+/// identity, not authorization. (The FS path has `fs_unknown_account_*`; this
+/// closes the same gap for `/node`.)
+#[tokio::test]
+async fn node_non_member_returns_forbidden() {
+    // Alice is the sole (Admin) member; Dave signs a genuine signature but is
+    // not in the member set.
+    let server = AuthTestServer::with_role(Role::Admin).await;
+    let dave = sr25519::Pair::from_string("//Dave", None).unwrap();
+
+    let ts = current_timestamp();
+    let header = make_auth_header(&dave, "PUT", 1, ts);
+    let resp = server
+        .client
+        .put(server.url("/node"))
+        .header("Authorization", &header)
+        .json(&node_body(1, b"non-member payload"))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 }

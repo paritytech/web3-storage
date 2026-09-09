@@ -1,25 +1,21 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 import { useEffect } from "react";
-import { Shield, RefreshCw, Loader2 } from "lucide-react";
+import { Shield, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
   useSelectedDrive,
   useCheckpointInfo,
-  useCheckpointDuty,
   useCheckpointLoading,
   refreshCheckpoint,
-  triggerCheckpoint,
   clearCheckpointState,
 } from "@/state";
 import { truncateHash } from "@/lib/utils";
-import { toast } from "@/components/ui/toaster";
 
 export default function CheckpointPanel() {
   const drive = useSelectedDrive();
   const info = useCheckpointInfo();
-  const duty = useCheckpointDuty();
   const loading = useCheckpointLoading();
 
   useEffect(() => {
@@ -34,19 +30,6 @@ export default function CheckpointPanel() {
 
   const handleRefresh = () => {
     refreshCheckpoint(drive.bucketId).catch(() => { /* swallow */ });
-  };
-
-  const handleTrigger = async () => {
-    try {
-      await triggerCheckpoint(drive.bucketId);
-      toast({ title: "Checkpoint triggered", description: "Provider is creating a checkpoint..." });
-    } catch (err) {
-      toast({
-        title: "Checkpoint failed",
-        description: err instanceof Error ? err.message : "Error",
-        variant: "destructive",
-      });
-    }
   };
 
   const hasCheckpoint = info && info.leafCount > 0n;
@@ -95,34 +78,6 @@ export default function CheckpointPanel() {
             <p className="text-muted-foreground">No checkpoint yet</p>
           )}
         </div>
-
-        {duty && (
-          <div className="flex items-center gap-2 text-xs">
-            <span
-              className={`h-2 w-2 rounded-full ${
-                duty.ready ? "bg-green-500" : "bg-amber-500"
-              }`}
-            />
-            <span data-testid="checkpoint-duty-status" className="text-muted-foreground">
-              Provider: {duty.leafCount} leaves, {duty.ready ? "ready" : "not ready"}
-            </span>
-          </div>
-        )}
-
-        <Button
-          data-testid="checkpoint-trigger"
-          size="sm"
-          className="w-full"
-          onClick={handleTrigger}
-          disabled={loading || (duty !== null && !duty.ready)}
-        >
-          {loading ? (
-            <Loader2 className="mr-2 h-3 w-3 animate-spin" />
-          ) : (
-            <Shield className="mr-2 h-3 w-3" />
-          )}
-          Checkpoint Now
-        </Button>
       </CardContent>
     </Card>
   );

@@ -31,10 +31,10 @@ pub struct Cli {
     pub key: KeyParams,
 
     #[clap(flatten)]
-    pub checkpoint: CheckpointParams,
+    pub replica_sync: ReplicaSyncParams,
 
     #[clap(flatten)]
-    pub replica_sync: ReplicaSyncParams,
+    pub challenge_responder: ChallengeResponderParams,
 
     #[clap(flatten)]
     pub auth: AuthParams,
@@ -73,18 +73,6 @@ pub struct RpcParams {
     )]
     pub chain_rpc: String,
 
-    /// How often (in seconds) to reconcile the node's view of its own on-chain
-    /// registration — provider settings and the nonce-counter replay window.
-    /// Lower values pick up (de)registration faster at the cost of more RPC
-    /// polling; mainly useful to shorten for tests.
-    #[arg(
-        long,
-        value_name = "SECS",
-        default_value_t = 30,
-        env = "RECONCILE_INTERVAL_SECS"
-    )]
-    pub reconcile_interval_secs: u64,
-
     /// Public multiaddr to advertise on chain instead of the bind-derived one.
     ///
     /// On hosted deployments the bind address (e.g. `0.0.0.0:3333`) is not
@@ -95,6 +83,17 @@ pub struct RpcParams {
     /// `/dns4/example.com/tcp/443/tls/http/http-path/web3-storage-provider`.
     #[arg(long, value_name = "MULTIADDR", env = "PUBLIC_MULTIADDR")]
     pub public_multiaddr: Option<String>,
+
+    /// Comma-separated list of browser origins allowed via CORS
+    /// (e.g. "https://app.example.com,http://localhost:5174").
+    /// When unset, all origins are allowed (permissive) — set this in production.
+    #[arg(
+        long,
+        value_name = "ORIGIN",
+        env = "CORS_ALLOWED_ORIGINS",
+        value_delimiter = ','
+    )]
+    pub cors_allowed_origins: Option<Vec<String>>,
 }
 
 /// Parameters for provider identity and signing keys.
@@ -168,22 +167,9 @@ fn read_secret_file(path: &std::path::Path) -> Result<String, String> {
     Ok(seed)
 }
 
-/// Parameters for the checkpoint coordinator.
-#[derive(Debug, clap::Args)]
-pub struct CheckpointParams {
-    /// Enable the background checkpoint coordinator.
-    #[arg(long, env = "ENABLE_CHECKPOINT_COORDINATOR")]
-    pub enable_checkpoint_coordinator: bool,
-}
-
 /// Parameters for authentication and authorization.
 #[derive(Debug, clap::Args)]
 pub struct AuthParams {
-    /// Enable authentication and role-based access control.
-    /// When disabled (default), all requests are allowed without auth headers.
-    #[arg(long, env = "ENABLE_AUTH")]
-    pub enable_auth: bool,
-
     /// Cache TTL in seconds for membership lookups from the chain.
     #[arg(
         long,
@@ -203,6 +189,28 @@ pub struct AuthParams {
     pub auth_max_skew: u64,
 }
 
+/// Parameters for the challenge responder background service.
+#[derive(Debug, clap::Args)]
+pub struct ChallengeResponderParams {
+    /// Enable the autonomous challenge responder. Without this flag, the
+    /// provider relies on an external orchestrator (e.g. the client SDK
+    /// driving challenges) to surface incoming challenges via HTTP proof
+    /// endpoints. With this flag, the provider polls chain state itself.
+    #[arg(long, env = "ENABLE_CHALLENGE_RESPONDER")]
+    pub enable_challenge_responder: bool,
+
+    /// Seconds between safety-net `Challenges` reconciliation scans.
+    /// Challenges are normally handled event-driven from the finalized-block
+    /// stream; this scan only catches events lost to edge cases. 0 disables it.
+    #[arg(
+        long,
+        value_name = "SECONDS",
+        default_value_t = 300,
+        env = "CHALLENGE_POLL_INTERVAL"
+    )]
+    pub challenge_poll_interval: u64,
+}
+
 /// Parameters for replica synchronization.
 #[derive(Debug, clap::Args)]
 pub struct ReplicaSyncParams {
@@ -210,11 +218,13 @@ pub struct ReplicaSyncParams {
     #[arg(long, env = "ENABLE_REPLICA_SYNC")]
     pub enable_replica_sync: bool,
 
-    /// Seconds between replica sync poll checks.
+    /// Seconds between safety-net replica duty reconciliation passes.
+    /// Duties are normally discovered event-driven from the finalized-block
+    /// stream; this pass only catches events lost to edge cases. 0 disables it.
     #[arg(
         long,
         value_name = "SECONDS",
-        default_value_t = 12,
+        default_value_t = 600,
         env = "REPLICA_POLL_INTERVAL"
     )]
     pub replica_poll_interval: u64,
@@ -250,11 +260,12 @@ mod tests {
         assert_eq!(cli.rpc.chain_rpc, "ws://127.0.0.1:2222");
         assert!(cli.key.keyfile.is_none());
         assert!(cli.key.provider_id.is_none());
-        assert!(!cli.checkpoint.enable_checkpoint_coordinator);
         assert!(!cli.replica_sync.enable_replica_sync);
-        assert_eq!(cli.replica_sync.replica_poll_interval, 12);
+        assert_eq!(cli.replica_sync.replica_poll_interval, 600);
         assert_eq!(cli.replica_sync.replica_sync_timeout, 300);
         assert_eq!(cli.replica_sync.replica_max_concurrent, 3);
+        assert!(!cli.challenge_responder.enable_challenge_responder);
+        assert_eq!(cli.challenge_responder.challenge_poll_interval, 300);
     }
 
     #[test]
@@ -271,7 +282,6 @@ mod tests {
             "ws://example.com:9944",
             "--keyfile",
             "/tmp/test-key",
-            "--enable-checkpoint-coordinator",
             "--enable-replica-sync",
             "--replica-poll-interval",
             "30",
@@ -290,7 +300,6 @@ mod tests {
             cli.key.keyfile.as_ref().unwrap().to_str().unwrap(),
             "/tmp/test-key"
         );
-        assert!(cli.checkpoint.enable_checkpoint_coordinator);
         assert!(cli.replica_sync.enable_replica_sync);
         assert_eq!(cli.replica_sync.replica_poll_interval, 30);
         assert_eq!(cli.replica_sync.replica_sync_timeout, 600);

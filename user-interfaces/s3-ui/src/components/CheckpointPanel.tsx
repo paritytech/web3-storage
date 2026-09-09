@@ -1,25 +1,21 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 import { useEffect, useState } from "react";
-import { Shield, RefreshCw, Loader2, CheckCircle2, Swords, History } from "lucide-react";
+import { Shield, RefreshCw, Loader2, Swords, History } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   useSelectedBucket,
   useCheckpointInfo,
-  useCheckpointDuty,
   useCheckpointLoading,
-  useCheckpointStatus,
   refreshCheckpoint,
-  triggerCheckpoint,
   useOpenChallenges,
   useOpenChallengesLoading,
   refreshOpenChallenges,
-  useBlockNumber,
+  useAnchorBlock,
 } from "@/state";
 import { useActiveChallenge, useChallengeStatus, useChallengeHistory } from "@/state/challenge.state";
 import { truncateHash } from "@/lib/utils";
-import { toast } from "@/components/ui/toaster";
 import { getS3Client } from "@/state";
 import ChallengeDialog from "./ChallengeDialog";
 import ChallengeOutcomeDialog from "./ChallengeOutcomeDialog";
@@ -31,14 +27,13 @@ interface CheckpointPanelProps {
 export default function CheckpointPanel({ onShowHistory }: CheckpointPanelProps) {
   const selectedBucket = useSelectedBucket();
   const info = useCheckpointInfo();
-  const duty = useCheckpointDuty();
   const loading = useCheckpointLoading();
-  const status = useCheckpointStatus();
   const challengeStatus = useChallengeStatus();
   const activeChallenge = useActiveChallenge();
   const openChallenges = useOpenChallenges();
   const challengesLoading = useOpenChallengesLoading();
-  const blockNumber = useBlockNumber();
+  // Challenge deadlines are on the pallet's anchor clock.
+  const anchorBlock = useAnchorBlock();
 
   const allHistory = useChallengeHistory();
 
@@ -46,7 +41,6 @@ export default function CheckpointPanel({ onShowHistory }: CheckpointPanelProps)
   const [providers, setProviders] = useState<string[]>([]);
 
   const bucketId = selectedBucket?.layer0BucketId ?? null;
-  const busy = status === "triggering" || status === "polling";
   const challengeBusy = challengeStatus !== "idle";
 
   const history = bucketId !== null
@@ -66,19 +60,6 @@ export default function CheckpointPanel({ onShowHistory }: CheckpointPanelProps)
     }
   }, [bucketId]);
 
-  const handleTrigger = async () => {
-    if (bucketId === null) return;
-    try {
-      await triggerCheckpoint(bucketId);
-    } catch (err) {
-      toast({
-        title: "Checkpoint failed",
-        description: err instanceof Error ? err.message : "Error",
-        variant: "destructive",
-      });
-    }
-  };
-
   return (
     <Card data-testid="checkpoint-panel">
       <CardHeader className="pb-3">
@@ -97,33 +78,13 @@ export default function CheckpointPanel({ onShowHistory }: CheckpointPanelProps)
                 refreshOpenChallenges(bucketId);
               }
             }}
-            disabled={loading || busy || bucketId === null}
+            disabled={loading || bucketId === null}
           >
             <RefreshCw className={`h-3.5 w-3.5 ${loading || challengesLoading ? "animate-spin" : ""}`} />
           </Button>
         </div>
       </CardHeader>
       <CardContent className="space-y-3">
-        {/* Checkpoint progress status */}
-        {status === "triggering" && (
-          <div className="flex items-center gap-2 rounded-md bg-blue-500/15 px-3 py-2 text-sm text-blue-600 dark:text-blue-400 font-medium">
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            Sending checkpoint trigger...
-          </div>
-        )}
-        {status === "polling" && (
-          <div className="flex items-center gap-2 rounded-md bg-orange-500/15 px-3 py-2 text-sm text-orange-600 dark:text-orange-400 font-medium">
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            Waiting for on-chain confirmation...
-          </div>
-        )}
-        {status === "confirmed" && (
-          <div className="flex items-center gap-2 rounded-md bg-emerald-500/15 px-3 py-2 text-sm text-emerald-600 dark:text-emerald-400 font-medium">
-            <CheckCircle2 className="h-3.5 w-3.5" />
-            Checkpoint confirmed on-chain
-          </div>
-        )}
-
         {/* Challenge submission status */}
         {challengeStatus === "submitting" && (
           <div className="flex items-center gap-2 rounded-md bg-blue-500/15 px-3 py-2 text-sm text-blue-600 dark:text-blue-400 font-medium">
@@ -161,17 +122,6 @@ export default function CheckpointPanel({ onShowHistory }: CheckpointPanelProps)
           <p className="text-sm text-muted-foreground">No checkpoint data yet.</p>
         )}
 
-        {duty && (
-          <div className="flex items-center gap-2 text-sm">
-            <span
-              className={`h-2 w-2 rounded-full ${duty.ready ? "bg-emerald-500" : "bg-amber-500"}`}
-            />
-            <span className="text-muted-foreground">
-              Provider duty: {duty.ready ? "Ready" : "Pending"}
-            </span>
-          </div>
-        )}
-
         {/* Open challenges list */}
         {openChallenges.length > 0 && (
           <div className="space-y-2">
@@ -180,7 +130,7 @@ export default function CheckpointPanel({ onShowHistory }: CheckpointPanelProps)
             </p>
             <div className="space-y-1.5">
               {openChallenges.map((c) => {
-                const blocksLeft = blockNumber ? c.deadline - blockNumber : null;
+                const blocksLeft = anchorBlock ? c.deadline - anchorBlock : null;
                 const isExpired = blocksLeft !== null && blocksLeft <= 0;
                 const isWatching =
                   activeChallenge?.status === "submitted" &&
@@ -230,21 +180,6 @@ export default function CheckpointPanel({ onShowHistory }: CheckpointPanelProps)
         )}
 
         <div className="flex gap-2">
-          <Button
-            data-testid="trigger-checkpoint"
-            variant="outline"
-            size="sm"
-            onClick={handleTrigger}
-            disabled={loading || busy || bucketId === null}
-          >
-            {busy ? (
-              <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <Shield className="mr-2 h-3.5 w-3.5" />
-            )}
-            {busy ? "Processing..." : "Trigger Checkpoint"}
-          </Button>
-
           <Button
             data-testid="challenge-provider"
             variant="outline"

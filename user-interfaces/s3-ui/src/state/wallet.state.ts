@@ -14,7 +14,7 @@ import { BehaviorSubject, combineLatest, map } from "rxjs";
 import { bind } from "@react-rxjs/core";
 import { getPolkadotSigner } from "polkadot-api/signer";
 import { getApi } from "@/state/chain.state";
-import { seedToKeypair, toSs58 } from "@/lib/crypto";
+import { seedToKeypair, toSs58, type Keypair } from "@web3-storage/sdk";
 
 export type Signer = ReturnType<typeof getPolkadotSigner>;
 
@@ -39,7 +39,7 @@ export interface AccountBalance {
 const STORAGE_KEY_ACCOUNT_NAME = "drive-ui-account-name";
 
 const signer$ = new BehaviorSubject<Signer | null>(null);
-const keypair$ = new BehaviorSubject<import("@/lib/crypto").Keypair | null>(null);
+const keypair$ = new BehaviorSubject<Keypair | null>(null);
 const signerAddress$ = new BehaviorSubject<string | null>(null);
 const signerName$ = new BehaviorSubject<string | null>(null);
 const balance$ = new BehaviorSubject<AccountBalance | null>(null);
@@ -131,7 +131,7 @@ export function getSigner(): Signer | null {
   return signer$.getValue();
 }
 
-export function getKeypair(): import("@/lib/crypto").Keypair | null {
+export function getKeypair(): Keypair | null {
   return keypair$.getValue();
 }
 

@@ -1,11 +1,24 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
-import { createClient, type PolkadotClient, type Transaction, type TxFinalizedPayload, type TypedApi } from "polkadot-api";
+/**
+ * Worker-scoped PAPI client singleton plus thin submit/wait wrappers over
+ * @web3-storage/sdk. The singleton is test-infra concern (one socket per
+ * Playwright worker, keyed by WS URL); everything chain-semantic — submission
+ * modes, dispatch-error handling, watch-based waits — lives in the sdk.
+ */
+
+import { createClient, type PolkadotClient } from "polkadot-api";
 import { getWsProvider } from "polkadot-api/ws";
 import { parachain } from "@polkadot-api/descriptors";
 import type { PolkadotSigner } from "polkadot-api/signer";
+import {
+  firstMatch,
+  submitTx,
+  type ParachainApi,
+  type SubmittableTx,
+} from "@web3-storage/sdk";
 
-export type ParachainApi = TypedApi<typeof parachain>;
+export type { ParachainApi };
 
 const DEFAULT_WS = process.env.CHAIN_WS ?? "ws://127.0.0.1:2222";
 
@@ -41,77 +54,35 @@ export function disconnect(): void {
 }
 
 /**
- * Sign + submit an extrinsic, wait for finalization, throw if it failed.
+ * Sign + submit an extrinsic, wait for FINALIZATION, throw on dispatch error.
+ * Test setup paths keep finalized semantics: globalSetup writes state that
+ * whole suites depend on, and a reorged-out registration would fail every
+ * downstream test with non-local errors.
  */
-export async function submitExtrinsic(
-  tx: Transaction,
-  signer: PolkadotSigner,
-): Promise<TxFinalizedPayload> {
-  const result = await tx.signAndSubmit(signer);
-  if (!result.ok) {
-    const err = JSON.stringify(result.dispatchError, (_, v) =>
-      typeof v === "bigint" ? v.toString() : v,
-    );
-    throw new Error(`Extrinsic failed: ${err}`);
-  }
-  return result;
+export async function submitExtrinsic(tx: SubmittableTx, signer: PolkadotSigner) {
+  return submitTx(tx, signer, { mode: "finalized", retryStale: 1, onStatus: null });
 }
 
 /**
- * Sign + submit an extrinsic, resolve as soon as it's included in a best
- * block (~6s) instead of finalized (~12-24s). Use for fire-and-forget
- * cleanup paths where the caller doesn't need finality guarantees and
+ * Sign + submit, resolve at best-block inclusion (~6s vs ~24s finalized).
+ * For cleanup paths where the caller doesn't need finality guarantees and
  * just wants the chain to acknowledge the tx.
  */
 export async function submitExtrinsicBestBlock(
-  tx: Transaction,
+  tx: SubmittableTx,
   signer: PolkadotSigner,
 ): Promise<void> {
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    const sub = tx.signSubmitAndWatch(signer).subscribe({
-      next: (ev: any) => {
-        if (ev.type === "txBestBlocksState" && ev.found && !settled) {
-          settled = true;
-          sub.unsubscribe();
-          if (ev.ok === false) {
-            const err = JSON.stringify(ev.dispatchError, (_, v) =>
-              typeof v === "bigint" ? v.toString() : v,
-            );
-            reject(new Error(`Extrinsic failed at best block: ${err}`));
-          } else {
-            resolve();
-          }
-        }
-      },
-      error: (err) => {
-        if (!settled) {
-          settled = true;
-          reject(err);
-        }
-      },
-    });
-  });
+  await submitTx(tx, signer, { mode: "best", retryStale: 1, onStatus: null });
 }
 
 /**
- * Wait until the chain has produced a block at or after `target`.
- * Useful when a test needs to wait for a checkpoint window etc.
+ * Wait until the chain has FINALIZED a block at or after `target`.
+ * Useful when a test needs to wait out a checkpoint window etc.
  */
 export async function waitForBlock(target: number, timeoutMs = 120_000): Promise<void> {
-  const client = getClient();
-  return new Promise((resolve, reject) => {
-    const t = setTimeout(() => {
-      sub.unsubscribe();
-      reject(new Error(`Timed out waiting for block ${target} after ${timeoutMs}ms`));
-    }, timeoutMs);
-    const sub = client.finalizedBlock$.subscribe((b) => {
-      if (b.number >= target) {
-        clearTimeout(t);
-        sub.unsubscribe();
-        resolve();
-      }
-    });
+  await firstMatch(getClient().finalizedBlock$, (b) => b.number >= target, {
+    timeoutMs,
+    description: `finalized block >= ${target}`,
   });
 }
 
@@ -122,32 +93,14 @@ export async function getBlockNumber(): Promise<number> {
 
 /**
  * Latest *best* block number (head of the best chain). Unlike the finalized
- * head, this advances as soon as a block is authored (~6s) and is immune to
+ * head, this advances as soon as a block is authored and is immune to
  * finality lag, so it's the right signal for "is the chain alive" liveness
  * checks that must not flake on a healthy-but-not-yet-finalizing chain.
  */
 export async function getBestBlockNumber(): Promise<number> {
-  const client = getClient();
-  return new Promise((resolve, reject) => {
-    // bestBlocks$ replays its latest value synchronously on subscribe, so this
-    // callback can run *during* the subscribe() call — before `sub` is bound.
-    // Track settledness and unsubscribe via the post-subscribe guard for that
-    // synchronous case; `sub` (a `let` initialised to null) avoids the TDZ.
-    let sub: { unsubscribe: () => void } | null = null;
-    let settled = false;
-    const done = (cb: () => void) => {
-      if (settled) return;
-      settled = true;
-      if (sub) sub.unsubscribe();
-      cb();
-    };
-    sub = client.bestBlocks$.subscribe({
-      next: (blocks) => {
-        const best = blocks[0];
-        if (best) done(() => resolve(best.number));
-      },
-      error: (err) => done(() => reject(err)),
-    });
-    if (settled) sub.unsubscribe();
+  const blocks = await firstMatch(getClient().bestBlocks$, (bs) => bs.length > 0, {
+    timeoutMs: 30_000,
+    description: "a best block",
   });
+  return blocks[0].number;
 }

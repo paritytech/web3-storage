@@ -373,7 +373,7 @@ let num_providers: u8 = if let Some(min) = min_providers {
 
 ```rust
 // Modify thresholds in pallet code:
-// storage-interfaces/file-system/pallet-registry/src/lib.rs
+// crates/pallets/drive-registry/src/lib.rs
 
 // Example: More aggressive replication
 if storage_period > 500 {

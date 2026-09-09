@@ -4,7 +4,9 @@
 // metadata at connection time via configureFromChain().
 let tokenDecimals = 12
 let tokenSymbol = 'UNIT'
-let blockTimeMs = 6000
+// Milliseconds per anchor block (the pallet clock all on-chain durations use),
+// not the parachain block time.
+let anchorBlockTimeMs = 6000
 let UNIT = 10n ** BigInt(tokenDecimals)
 
 /**
@@ -18,7 +20,7 @@ let UNIT = 10n ** BigInt(tokenDecimals)
 export async function configureFromChain(props: {
   tokenDecimals: number
   tokenSymbol: string
-  blockTimeMs: number
+  anchorBlockTimeMs: number
   ss58Prefix: number
   minProviderStake: bigint
   specName: string
@@ -27,7 +29,7 @@ export async function configureFromChain(props: {
 }): Promise<{ name: string; version: string; genesisHash: string }> {
   tokenDecimals = props.tokenDecimals
   tokenSymbol = props.tokenSymbol
-  blockTimeMs = props.blockTimeMs
+  anchorBlockTimeMs = props.anchorBlockTimeMs
   UNIT = 10n ** BigInt(tokenDecimals)
 
   // Dynamically import to avoid circular dependency (wallet → chain-client → chain)
@@ -125,11 +127,12 @@ export function formatBytes(bytes: number | bigint): string {
   return `${parseFloat((b / Math.pow(k, i)).toFixed(2))} ${sizes[i]}`
 }
 
+/** Humanize a duration given in anchor blocks (the pallet clock). */
 export function formatDuration(blocks: number): string {
   if (blocks === 0) return '0 blocks'
   if (blocks >= 4_000_000_000) return 'no limit'
 
-  const seconds = blocks * (blockTimeMs / 1000)
+  const seconds = blocks * (anchorBlockTimeMs / 1000)
   const minutes = Math.floor(seconds / 60)
   const hours = Math.floor(minutes / 60)
   const days = Math.floor(hours / 24)

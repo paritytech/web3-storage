@@ -10,7 +10,7 @@ import {
   useProviderInfo,
 } from '@/state/provider.state'
 import { RequireProvider } from '@/components/RequireProvider'
-import { useBlockNumber } from '@/state/chain.state'
+import { useAnchorBlock } from '@/state/chain.state'
 import { formatTokens, formatBytes, formatBlockNumber } from '@/utils/format'
 
 export function Earnings() {
@@ -25,12 +25,13 @@ function EarningsContent() {
   const earnings = useEarnings()
   const activeAgreements = useActiveAgreements()
   const providerInfo = useProviderInfo()
-  const currentBlock = useBlockNumber()
+  // Agreement start/end blocks are on the pallet's anchor clock.
+  const anchorBlock = useAnchorBlock()
 
   // Calculate agreement progress for each active agreement
   const agreementProgress = activeAgreements.map((agreement) => {
     const duration = agreement.endBlock - agreement.startBlock
-    const elapsed = Math.max(0, Math.min(currentBlock - agreement.startBlock, duration))
+    const elapsed = Math.max(0, Math.min(anchorBlock - agreement.startBlock, duration))
     const progress = (elapsed / duration) * 100
     const earnedSoFar =
       (agreement.pricePerByte * agreement.maxBytes * BigInt(elapsed)) / BigInt(duration)

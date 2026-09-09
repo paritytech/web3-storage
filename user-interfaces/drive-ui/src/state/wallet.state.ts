@@ -14,7 +14,7 @@ import { BehaviorSubject, combineLatest, map } from "rxjs";
 import { bind } from "@react-rxjs/core";
 import { getPolkadotSigner } from "polkadot-api/signer";
 import { getApi } from "@/state/chain.state";
-import { seedToKeypair, toSs58 } from "@/lib/crypto";
+import { seedToKeypair, toSs58, type Keypair } from "@/lib/crypto";
 
 export type Signer = ReturnType<typeof getPolkadotSigner>;
 
@@ -41,6 +41,7 @@ const STORAGE_KEY_ACCOUNT_NAME = "drive-ui-account-name";
 const signer$ = new BehaviorSubject<Signer | null>(null);
 const signerAddress$ = new BehaviorSubject<string | null>(null);
 const signerName$ = new BehaviorSubject<string | null>(null);
+const keypair$ = new BehaviorSubject<Keypair | null>(null);
 const balance$ = new BehaviorSubject<AccountBalance | null>(null);
 const settingSigner$ = new BehaviorSubject<boolean>(false);
 
@@ -64,6 +65,7 @@ export async function setSigner(seed: string, name?: string): Promise<string> {
       keypair.sign(input),
     );
 
+    keypair$.next(keypair);
     signer$.next(newSigner);
     signerAddress$.next(address);
     signerName$.next(name ?? null);
@@ -88,6 +90,7 @@ export async function selectDevAccount(name: string): Promise<void> {
 }
 
 export function clearSigner(): void {
+  keypair$.next(null);
   signer$.next(null);
   signerAddress$.next(null);
   signerName$.next(null);
@@ -133,6 +136,7 @@ export function getSignerAddress(): string | null {
 }
 
 export const signer$$ = signer$.asObservable();
+export const keypair$$ = keypair$.asObservable();
 export const signerAddress$$ = signerAddress$.asObservable();
 
 export const signerInfo$ = combineLatest([signerAddress$, signerName$]).pipe(

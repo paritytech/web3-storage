@@ -29,4 +29,8 @@ pub type Migrations = (
     // Drop the `payment` field from `DriveInfo` (#105). A real data transform,
     // so it stays a `VersionedMigration` gated on the pallet's storage version.
     pallet_drive_registry::migrations::v1::MigrateV0ToV1<Runtime>,
+    // Backfill the `commitment_nonce` field added to `BucketSnapshot` by the
+    // challenge flow overhaul (#125). A real data transform, so it stays a
+    // `VersionedMigration` gated on the pallet's storage version.
+    pallet_storage_provider::migrations::v1::MigrateV0ToV1<Runtime>,
 );

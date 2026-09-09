@@ -16,8 +16,8 @@
     "@web3-storage/network-config": "workspace:*"
   },
   "devDependencies": {
-    "react": "^19.2.7",
+    "react": "^19.2.8",
     "@types/react": "^19.2.17",
-    "typescript": "~6.0.3"
+    "typescript": "~7.0.2"
   }
 }

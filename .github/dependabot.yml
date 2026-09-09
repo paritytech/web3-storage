@@ -9,36 +9,23 @@ updates:
     ignore:
       - dependency-name: "*"
 
+  # Single pnpm workspace: one lockfile at the repo root covers every member
+  # (user-interfaces/*, packages/*, examples/papi). Dependabot must target the
+  # root `/` so it regenerates that one pnpm-lock.yaml in the same PR; pointing
+  # at subdirectories bumps their package.json but leaves the root lockfile
+  # stale, which breaks CI's `pnpm install --frozen-lockfile`.
   - package-ecosystem: "npm"
-    directories:
-      - "/user-interfaces"
-      - "/user-interfaces/**"
+    directory: "/"
     schedule:
       interval: "weekly"
     cooldown:
       default-days: 7
     groups:
-      user-interfaces-deps:
+      npm-deps:
         applies-to: version-updates
         patterns:
           - "*"
-      user-interfaces-security:
-        applies-to: security-updates
-        patterns:
-          - "*"
-
-  - package-ecosystem: "npm"
-    directory: "/examples/papi"
-    schedule:
-      interval: "weekly"
-    cooldown:
-      default-days: 7
-    groups:
-      examples-deps:
-        applies-to: version-updates
-        patterns:
-          - "*"
-      examples-security:
+      npm-security:
         applies-to: security-updates
         patterns:
           - "*"

@@ -1,0 +1,25 @@
+[package]
+name = "provider-storage"
+version = "0.1.0"
+authors.workspace = true
+edition.workspace = true
+license = "Apache-2.0"
+repository.workspace = true
+description = "Storage engine for provider nodes: backends, MMR commitments, and drive/S3 indexes"
+
+[dependencies]
+storage-primitives = { workspace = true, features = ["serde", "std"] }
+bincode = { workspace = true }
+codec = { workspace = true, features = ["std"] }
+dashmap = { workspace = true }
+hex = { workspace = true, features = ["std"] }
+parking_lot = { workspace = true }
+rocksdb = { workspace = true }
+serde = { workspace = true, features = ["std"] }
+serde_json = { workspace = true, features = ["std"] }
+sp-core = { workspace = true, features = ["std"] }
+thiserror = { workspace = true }
+tracing = { workspace = true, features = ["std"] }
+
+[dev-dependencies]
+tempfile = { workspace = true }

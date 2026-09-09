@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 import { describe, expect, it } from "vitest";
-import { parseMultiaddrToUrl } from "@web3-storage/papi";
+import { parseMultiaddrToUrl } from "@web3-storage/sdk";
 
 describe("parseMultiaddrToUrl", () => {
   it("parses /ip4/<host>/tcp/<port> as http", () => {
