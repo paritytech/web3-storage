@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Web3 Storage</title>
+  <title>Capacity</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -16,7 +16,8 @@
       justify-content: center;
     }
     .container { max-width: 800px; padding: 2rem; text-align: center; }
-    h1 { font-size: 2.5rem; font-weight: 700; margin-bottom: 0.5rem; }
+    h1 { font-size: 2.5rem; font-weight: 700; margin-bottom: 0.25rem; }
+    .prev-name { color: #666; font-size: 0.85rem; font-style: italic; margin-bottom: 0.75rem; }
     .subtitle { color: #888; font-size: 1.1rem; margin-bottom: 3rem; }
     .section { margin-bottom: 2.5rem; }
     .section:last-child { margin-bottom: 0; }
@@ -165,11 +166,12 @@
 </head>
 <body>
   <div class="container">
-    <h1>Web3 Storage</h1>
+    <h1>Capacity</h1>
+    <p class="prev-name" data-testid="landing-prev-name">previously known as Web3 Storage</p>
     <p class="subtitle">Decentralized storage with game-theoretic guarantees</p>
     <div class="banner">
       Successor to the <a href="https://paritytech.github.io/polkadot-bulletin-chain/">Polkadot Bulletin Chain</a> storage system.
-      Rather than heavy cryptographic proofs on every operation, Web3 Storage uses economic incentives:
+      Rather than heavy cryptographic proofs on every operation, Capacity uses economic incentives:
       providers lock stake proportional to their capacity and face slashing for data loss.
       The chain acts as a credible threat for accountability, not the hot path &mdash;
       normal reads and writes happen off-chain via HTTP and scale with provider capacity, not chain throughput.
@@ -221,7 +223,7 @@
       <div class="cards">
         <a href="./explorer/" class="card" data-app="explorer" data-testid="landing-card-explorer">
           <div class="icon">&#x1F50D;</div>
-          <h3>Web3 Storage Dashboard</h3>
+          <h3>Capacity Dashboard</h3>
           <p>Network-wide view of the protocol. Summary stats plus every provider, agreement, bucket, and open challenge on chain. Read-only.</p>
         </a>
         <a href="./provider/" class="card" data-app="provider" data-testid="landing-card-provider">
