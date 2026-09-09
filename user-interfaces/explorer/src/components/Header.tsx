@@ -85,7 +85,7 @@ export function Header() {
             <ArrowLeft className="h-4 w-4" />
           </a>
           <Link to="/" className="text-lg font-semibold text-gray-100">
-            Capacity Dashboard
+            Capacity Explorer
           </Link>
         </div>
 

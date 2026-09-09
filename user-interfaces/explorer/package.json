@@ -2,7 +2,7 @@
   "name": "@web3-storage/explorer",
   "version": "0.1.0",
   "license": "GPL-3.0-only",
-  "description": "Network-wide on-chain dashboard for Capacity (previously known as Web3 Storage)",
+  "description": "Capacity Explorer — network-wide read-only on-chain dashboard (Capacity was previously known as Web3 Storage)",
   "type": "module",
   "scripts": {
     "dev": "vite",
