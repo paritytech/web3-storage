@@ -76,7 +76,10 @@ design doc.
 - Stacked PRs only when the upper PR genuinely depends on the lower one, and
   each PR in the stack is still a single, self-contained, reviewable change.
   Do NOT stack unrelated work (a feature on a bug fix on a docs fix) just to
-  avoid waiting for a merge — that makes the stack unreviewable.
+  avoid waiting for a merge or to dodge conflicts in generated files
+  (bindings, metadata, weights) — that makes the stack unreviewable.
+- A stacked PR names its base PR and the intended merge order in the
+  description, and the description is kept current as the PR changes.
 
 **Code review rules:**
 - NEVER submit AI-generated review comments (PR reviews, inline comments, or
