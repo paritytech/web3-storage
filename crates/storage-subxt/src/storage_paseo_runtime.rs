@@ -3467,9 +3467,9 @@ pub mod api {
             .hash();
         runtime_metadata_hash
             == [
-                76u8, 127u8, 18u8, 106u8, 180u8, 222u8, 121u8, 186u8, 73u8, 223u8, 15u8, 5u8, 84u8,
-                131u8, 132u8, 254u8, 163u8, 233u8, 192u8, 184u8, 230u8, 16u8, 5u8, 81u8, 193u8,
-                203u8, 84u8, 55u8, 135u8, 97u8, 119u8, 254u8,
+                19u8, 211u8, 35u8, 35u8, 23u8, 56u8, 128u8, 208u8, 245u8, 93u8, 94u8, 154u8, 191u8,
+                234u8, 27u8, 198u8, 49u8, 34u8, 200u8, 217u8, 202u8, 215u8, 51u8, 249u8, 134u8,
+                168u8, 125u8, 56u8, 51u8, 214u8, 29u8, 36u8,
             ]
     }
     pub mod system {
@@ -18501,7 +18501,8 @@ pub mod api {
             #[doc = "Share a drive with another account by adding them as a member of"]
             #[doc = "the underlying Layer 0 bucket."]
             #[doc = ""]
-            #[doc = "The caller must be the drive owner or an Admin of the underlying bucket."]
+            #[doc = "The caller must be an admin of the underlying bucket; the drive owner"]
+            #[doc = "is one unless they stepped down. Layer 0 errors surface unchanged."]
             #[doc = ""]
             #[doc = "Parameters:"]
             #[doc = "- `drive_id`: The drive to share"]
@@ -18539,7 +18540,8 @@ pub mod api {
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
             #[doc = "Remove a member's access to a shared drive."]
             #[doc = ""]
-            #[doc = "The caller must be the drive owner or an Admin of the underlying bucket."]
+            #[doc = "The caller must be an admin of the underlying bucket. Layer 0 errors"]
+            #[doc = "surface unchanged."]
             #[doc = ""]
             #[doc = "Parameters:"]
             #[doc = "- `drive_id`: The drive to unshare"]
@@ -18635,7 +18637,8 @@ pub mod api {
                     #[doc = "Share a drive with another account by adding them as a member of"]
                     #[doc = "the underlying Layer 0 bucket."]
                     #[doc = ""]
-                    #[doc = "The caller must be the drive owner or an Admin of the underlying bucket."]
+                    #[doc = "The caller must be an admin of the underlying bucket; the drive owner"]
+                    #[doc = "is one unless they stepped down. Layer 0 errors surface unchanged."]
                     #[doc = ""]
                     #[doc = "Parameters:"]
                     #[doc = "- `drive_id`: The drive to share"]
@@ -18666,7 +18669,8 @@ pub mod api {
                     }
                     #[doc = "Remove a member's access to a shared drive."]
                     #[doc = ""]
-                    #[doc = "The caller must be the drive owner or an Admin of the underlying bucket."]
+                    #[doc = "The caller must be an admin of the underlying bucket. Layer 0 errors"]
+                    #[doc = "surface unchanged."]
                     #[doc = ""]
                     #[doc = "Parameters:"]
                     #[doc = "- `drive_id`: The drive to unshare"]
@@ -21067,9 +21071,9 @@ pub mod api {
                         "Revive",
                         "EthBlockBuilderIR",
                         [
-                            71u8, 238u8, 147u8, 189u8, 43u8, 68u8, 7u8, 59u8, 65u8, 129u8, 195u8,
-                            104u8, 36u8, 47u8, 160u8, 177u8, 141u8, 216u8, 47u8, 58u8, 4u8, 214u8,
-                            89u8, 77u8, 42u8, 174u8, 103u8, 255u8, 95u8, 196u8, 25u8, 232u8,
+                            191u8, 4u8, 102u8, 110u8, 200u8, 40u8, 49u8, 157u8, 116u8, 225u8, 59u8,
+                            64u8, 19u8, 106u8, 76u8, 129u8, 155u8, 76u8, 133u8, 26u8, 241u8, 3u8,
+                            116u8, 81u8, 152u8, 121u8, 215u8, 246u8, 170u8, 43u8, 165u8, 5u8,
                         ],
                     )
                 }
@@ -23621,7 +23625,8 @@ pub mod api {
                     #[doc = "Share a drive with another account by adding them as a member of"]
                     #[doc = "the underlying Layer 0 bucket."]
                     #[doc = ""]
-                    #[doc = "The caller must be the drive owner or an Admin of the underlying bucket."]
+                    #[doc = "The caller must be an admin of the underlying bucket; the drive owner"]
+                    #[doc = "is one unless they stepped down. Layer 0 errors surface unchanged."]
                     #[doc = ""]
                     #[doc = "Parameters:"]
                     #[doc = "- `drive_id`: The drive to share"]
@@ -23635,7 +23640,8 @@ pub mod api {
                     #[codec(index = 4)]
                     #[doc = "Remove a member's access to a shared drive."]
                     #[doc = ""]
-                    #[doc = "The caller must be the drive owner or an Admin of the underlying bucket."]
+                    #[doc = "The caller must be an admin of the underlying bucket. Layer 0 errors"]
+                    #[doc = "surface unchanged."]
                     #[doc = ""]
                     #[doc = "Parameters:"]
                     #[doc = "- `drive_id`: The drive to unshare"]
@@ -23672,12 +23678,6 @@ pub mod api {
                     #[codec(index = 4)]
                     #[doc = "Drive ID overflow"]
                     DriveIdOverflow,
-                    #[codec(index = 5)]
-                    #[doc = "Failed to cleanup bucket in Layer 0"]
-                    BucketCleanupFailed,
-                    #[codec(index = 6)]
-                    #[doc = "Failed to update bucket membership in Layer 0"]
-                    MembershipUpdateFailed,
                 }
                 #[derive(
                     :: subxt :: ext :: scale_decode :: DecodeAsType,
