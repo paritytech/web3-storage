@@ -35,6 +35,8 @@ primaries (replicas stay challengeable by anyone).
 
 **Redundancy**: A bucket can have storage agreements with multiple providers. The `min_providers` setting controls how many providers must acknowledge a state before it can be checkpointed. This ensures minimum redundancy for critical data.
 
+**Implementation status**: today every bucket has exactly one primary provider, fixed when `establish_storage_agreement` creates the bucket; no call adds another, so `min_providers` is always 1 and the late-signer path of `extend_checkpoint` is unreachable. Replicas are the redundancy mechanism in use. Multi-primary buckets remain the design target, and the `min_providers`, signature-bitfield and `extend_checkpoint` machinery below is written for them.
+
 **Append-only mode**: When `frozen_start_seq` is set, the bucket becomes append-only from that point. The start_seq can never decrease below the frozen value, preventing deletion of historical data. This is irreversible and requires the current snapshot to meet `min_providers` threshold.
 
 ### Storage Model
