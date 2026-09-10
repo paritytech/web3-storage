@@ -48,6 +48,7 @@ pub mod v1 {
         BalanceOf<T>,
     >;
 
+    /// v0 → v1: re-encodes every stored `DriveInfo` without its `payment` field.
     pub struct InnerMigrateV0ToV1<T>(core::marker::PhantomData<T>);
 
     impl<T: Config> UncheckedOnRuntimeUpgrade for InnerMigrateV0ToV1<T> {

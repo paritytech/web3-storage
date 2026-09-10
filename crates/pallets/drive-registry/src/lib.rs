@@ -26,10 +26,11 @@
 //! ### Queries
 //!
 //! - `Drives`: Maps DriveId → DriveInfo
-//! - `UserDrives`: Maps AccountId → Vec<DriveId>
+//! - `UserDrives`: Maps AccountId → `Vec<DriveId>`
 //! - `NextDriveId`: Auto-incrementing counter for drive IDs
 
 #![cfg_attr(not(feature = "std"), no_std)]
+#![warn(missing_docs)]
 
 extern crate alloc;
 
@@ -143,26 +144,38 @@ pub mod pallet {
     pub enum Event<T: Config> {
         /// A new drive was created
         DriveCreated {
+            /// The new drive.
             drive_id: DriveId,
+            /// Its owner.
             owner: T::AccountId,
+            /// Layer 0 bucket backing the drive.
             bucket_id: u64,
         },
         /// Drive was deleted
         DriveDeleted {
+            /// The removed drive.
             drive_id: DriveId,
+            /// Its owner.
             owner: T::AccountId,
+            /// Layer 0 bucket that backed it.
             bucket_id: u64,
+            /// Escrow returned to the owner from the ended agreements.
             refunded: BalanceOf<T>,
         },
         /// Drive was shared with a member
         DriveShared {
+            /// The drive.
             drive_id: DriveId,
+            /// Account granted access.
             member: T::AccountId,
+            /// Role granted on the underlying bucket.
             role: Role,
         },
         /// Member was removed from a shared drive
         DriveUnshared {
+            /// The drive.
             drive_id: DriveId,
+            /// Account whose access was removed.
             member: T::AccountId,
         },
     }
