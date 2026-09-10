@@ -1,13 +1,13 @@
 # Layer 1 — File System & S3 Interfaces (Design / Implementation)
 
 > **Draft — needs triage.** Extracted from the Layer 0 implementation design
-> doc. Promote into `design/`, fold into `docs/filesystems/`, or drop — pending
+> doc. Promote into `design/` or drop — pending
 > the layered-architecture decision in
 > [#51](https://github.com/paritytech/web3-storage/issues/51) (what belongs
 > on-chain vs. provider-only).
 
 The provider node also serves the Layer 1 interfaces described in
-`docs/filesystems/` and [`./marketplace.md`](./marketplace.md). These mount on
+the `file-system-client` and `s3-client` crates and [`./marketplace.md`](./marketplace.md). These mount on
 top of the Layer 0 blob primitives and require Writer/Admin authorization for
 mutating routes.
 
@@ -31,6 +31,5 @@ GET    /fs/:bucket_id/ls?path=/dir
 GET    /fs/:bucket_id/index_root                  # current drive root CID
 ```
 
-See [`docs/filesystems/API_REFERENCE.md`](../filesystems/API_REFERENCE.md) for
-the full Layer 1 contract (request/response shapes, error codes, manifest
-formats).
+The request/response shapes, error codes, and manifest formats are defined in
+the `file-system-primitives` crate and the provider node; see their rustdoc.

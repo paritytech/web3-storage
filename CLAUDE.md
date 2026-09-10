@@ -28,10 +28,13 @@ Link, don't copy.
   discuss** (open an issue and ping the design owner) — don't just fix it.
   Changes to the design itself go through a PR reviewed per
   `.github/CODEOWNERS`.
-- **`docs/reference/`** is *derived* documentation, but it is **review-gated**
-  (per `.github/CODEOWNERS`) and must stay true to the code. When you change
-  behavior, **update the relevant `reference/` doc in the same change** (run
-  `/reference-docs` to check).
+- **The rustdoc is the API reference.** There is no hand-written extrinsics or
+  API reference to keep in sync. Pallet `///` comments ship in the runtime
+  metadata and surface in PAPI descriptors, subxt bindings, and polkadot.js
+  Apps, so write them for the end user: what a call does and who may call it,
+  what an error means and how to get past it, what an event reports. Keep
+  each one short. The pallets set `#![warn(missing_docs)]` and clippy runs
+  with `-D warnings`, so an undocumented public item fails CI.
 - **`docs/drafts/`** is unratified / WIP — don't treat it as authoritative or
   reason from it as if it were the spec.
 
@@ -42,8 +45,9 @@ Link, don't copy.
 | What the system is, architecture, directory layout | root [`README.md`](README.md), [`docs/design/scalable-web3-storage.md`](docs/design/scalable-web3-storage.md) |
 | Mechanisms: agreements, checkpoints, challenges, slashing, MMR, anchor clock, replica sync | [`docs/design/scalable-web3-storage-implementation.md`](docs/design/scalable-web3-storage-implementation.md) |
 | Runtime parameter values (stakes, timeouts, decimals) | `runtimes/web3-storage-local/src/storage.rs` — the code is the value; the design doc has the rationale |
-| Extrinsics API, execution flows, payment math | [`docs/reference/`](docs/reference/) |
-| Layer 1 file system (drives, manifests, commit strategies) | [`docs/filesystems/README.md`](docs/filesystems/README.md) |
+| Extrinsics, errors, events, storage items (API reference) | rustdoc on `crates/pallets/*` (`cargo doc -p pallet-storage-provider --no-deps --open`); the same text is in the runtime metadata, so IDE hover on PAPI/subxt bindings and polkadot.js Apps show it |
+| Payment math | `Pallet::calculate_payment` in `crates/pallets/storage-provider/src/impls/agreements.rs` — the code is the formula |
+| Layer 1 file system (drives, manifests, commit strategies) | rustdoc on `crates/primitives/file-system` and `crates/pallets/drive-registry`; [`clients/file-system/README.md`](clients/file-system/README.md) |
 | WIP designs: marketplace/discovery, checkpoint protocol, smart contracts, encryption | [`docs/drafts/`](docs/drafts/) — **not authoritative** |
 | Review criteria (Parity Standards) | the `/review` skill — authoritative; not restated here |
 | TypeScript SDK layering, tx semantics, PAPI patterns | [`packages/sdk/README.md`](packages/sdk/README.md) |
