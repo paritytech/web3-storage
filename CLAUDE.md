@@ -69,23 +69,22 @@ design doc.
 - Public APIs need rustdoc.
 
 **Pull request rules:**
-- ALWAYS open pull requests against the repository's default branch (`dev`)
-- Single responsibility per PR; all CI checks must pass
+- ALWAYS open pull requests against the repository's default branch (`dev`).
+- Single responsibility per PR; all CI checks must pass.
 - Regenerated files (subxt/PAPI bindings, metadata, weights) go in their own
   commit so reviewers can skip them.
 - New or changed extrinsics are benchmarked before review: run `/cmd bench`
   on the PR. Never leave hand-written estimates in a runtime weight file.
-- PR description: short, plain, human-readable. One or two sentences on
-  what the PR does and why, then bulleted sections as needed: **Changes**,
-  **Cleanup**, **Follow-ups**, **Open questions**. Short bullets, skip
-  empty sections. No fluff, no restating the diff.
+- PR description: one or two sentences on what the PR does and why, then
+  bulleted sections as needed: **Changes**, **Cleanup**, **Follow-ups**,
+  **Open questions**. Skip empty sections.
 - Stacked PRs only when the upper PR genuinely depends on the lower one, and
   each PR in the stack is still a single, self-contained, reviewable change.
   Do NOT stack unrelated work (a feature on a bug fix on a docs fix) just to
   avoid waiting for a merge or to dodge conflicts in generated files
-  (bindings, metadata, weights) — that makes the stack unreviewable.
-- A stacked PR names its base PR and the intended merge order in the
-  description, and the description is kept current as the PR changes.
+  (bindings, metadata, weights) — that makes the stack unreviewable. The
+  description names the base PR and the intended merge order and is kept
+  current as the PR changes.
 
 **Code review rules:**
 - NEVER post review findings (PR reviews, inline or issue comments) to
