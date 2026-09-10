@@ -1311,6 +1311,13 @@ impl<T: Config> Pallet<T> {
     /// The new owner can top up quota and transfer ownership further.
     /// Useful for selling agreement slots or transferring to a DAO.
     /// 
+    /// The escrow moves with the owner: the locked payment and, for a replica,
+    /// the unspent sync balance are transferred on hold from the old owner to
+    /// the new one in the same call, so the hold and `StorageAgreement::owner`
+    /// never point at different accounts. Transferring to oneself is rejected
+    /// (`TransferToSelf`) so the event always marks a change of hands; any
+    /// other caller fails with `NotAgreementOwner`.
+    /// 
     /// Parameters:
     /// - `bucket_id`: The bucket containing the agreement
     /// - `provider`: The provider of the agreement to transfer
