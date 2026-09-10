@@ -614,8 +614,9 @@ pub mod pallet {
         /// and disjoint from the received counters.
         pub challenges_failed: u32,
         /// Total payment ever received by this provider for storage service:
-        /// agreement settlements, extension payments, and replica sync
-        /// payments. Monotonically increasing, never reset by a slash or
+        /// agreement settlements, extension payments, replica sync payments,
+        /// and challenger-cost reimbursement on successfully defended
+        /// challenges. Monotonically increasing, never reset by a slash or
         /// anything else. A historical record, not a live balance.
         pub lifetime_revenue: BalanceOf<T>,
     }
