@@ -73,13 +73,10 @@ design doc.
 - PR description: short, plain, human-readable. Say what the PR does and
   why, then list follow-ups and open questions (if any). No fluff, no
   restating the diff, no boilerplate sections.
-- Stacked PRs ([GitHub docs](https://docs.github.com/en/pull-requests/get-started/about-stacked-prs))
-  are allowed only when the upper PR genuinely depends on code in the lower
-  one, and every PR in the stack is still a single, self-contained,
-  reviewable change. Do NOT stack unrelated work (a feature on a bug fix on
-  a docs fix) just to avoid waiting for a merge — that makes the stack
-  unreviewable. State in the description which PR it is stacked on; merge
-  from the bottom up.
+- Stacked PRs only when the upper PR genuinely depends on the lower one, and
+  each PR in the stack is still a single, self-contained, reviewable change.
+  Do NOT stack unrelated work (a feature on a bug fix on a docs fix) just to
+  avoid waiting for a merge — that makes the stack unreviewable.
 
 **Code review rules:**
 - NEVER submit AI-generated review comments (PR reviews, inline comments, or
