@@ -91,7 +91,7 @@ Examples in use across the UIs:
 - `nav-{label}` (summary / providers / agreements / buckets / challenges)
 - `summary-stat-{providers|stake|data|agreements|buckets|challenges}`
 - `{area}-table`, `{area}-row-{id}`, `{area}-search` for each list page
-- `challenges-stat-{issued|upheld|dismissed}`, `{area}-unavailable` (degraded section)
+- `{area}-unavailable` (degraded section)
 - `highlight-mine-button`, `refresh-settings-button`, `connection-status`
 
 ### Running the feature-level e2e suite (PR 3)
