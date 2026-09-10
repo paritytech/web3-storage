@@ -7235,7 +7235,7 @@ dependencies = [
  "parking_lot",
  "provider-chain",
  "provider-storage",
- "serde",
+ "provider-types",
  "serde_json",
  "sp-crypto-hashing",
  "sp-runtime",
@@ -7278,6 +7278,19 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "tracing",
+]
+
+[[package]]
+name = "provider-types"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "parity-scale-codec",
+ "provider-negotiation",
+ "serde",
+ "sp-core",
+ "sp-crypto-hashing",
+ "sp-runtime",
 ]
 
 [[package]]
@@ -10118,6 +10131,7 @@ dependencies = [
  "provider-coordinator",
  "provider-negotiation",
  "provider-storage",
+ "provider-types",
  "reqwest",
  "serde",
  "serde_json",

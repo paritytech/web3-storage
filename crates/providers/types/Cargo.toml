@@ -1,0 +1,22 @@
+[package]
+name = "provider-types"
+version = "0.1.0"
+authors.workspace = true
+edition.workspace = true
+license = "Apache-2.0"
+repository.workspace = true
+description = "Shared provider identity and registration types"
+
+[dependencies]
+provider-negotiation = { workspace = true }
+serde = { workspace = true, features = ["std"] }
+sp-core = { workspace = true, features = ["std"] }
+sp-crypto-hashing = { workspace = true, features = ["std"] }
+sp-runtime = { workspace = true, features = ["std"] }
+clap = { workspace = true, optional = true, features = ["derive"] }
+
+[features]
+clap = ["dep:clap"]
+
+[dev-dependencies]
+codec = { workspace = true, features = ["std"] }

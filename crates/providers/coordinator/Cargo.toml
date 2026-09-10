@@ -13,7 +13,7 @@ codec = { workspace = true, features = ["std"] }
 parking_lot = { workspace = true }
 provider-chain = { workspace = true, features = ["connection", "decode"] }
 provider-storage = { workspace = true }
-serde = { workspace = true, features = ["std"] }
+provider-types = { workspace = true }
 sp-runtime = { workspace = true, features = ["std"] }
 subxt = { workspace = true }
 thiserror = { workspace = true }

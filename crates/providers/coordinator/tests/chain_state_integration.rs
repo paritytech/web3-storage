@@ -31,9 +31,10 @@ use provider_chain::chain_connection::{ChainHandle, ChainTransport};
 use provider_coordinator::{
     is_relevant_provider_event, refresh_if_relevant_event, refresh_provider_state, sync_constants,
     ChainState, ChainStateChainClient, ChainStateCoordinator, Error, NonceCounter, PalletConstants,
-    ProviderInfo, ProviderLifecycleEvent,
+    ProviderLifecycleEvent,
 };
 use provider_storage::{temp_rocksdb, NonceStore};
+use provider_types::ProviderInfo;
 use sp_runtime::AccountId32;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
