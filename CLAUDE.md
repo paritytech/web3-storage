@@ -200,3 +200,52 @@ strings) are documented in [`packages/sdk/README.md`](packages/sdk/README.md).
 Comment `/aireview` on a PR to get an advisory review from Vertex AI
 (`.github/workflows/vertex-ai-review.yml`). It is not a substitute for human
 review.
+
+## Rules and harness
+
+> [!NOTE]
+> **Credits:** the three subsections below are copied 1:1 from
+> [koute/CLANKER.md](https://github.com/koute/CLANKER.md/blob/master/CLANKER.md).
+
+### IMPORTANT: Minimize AI slop; use plain, simple language
+Do not use invented shorthands or heavy jargon. Say what something actually is.
+Never use metaphors or rhetorical flourishes. Never anthropomorphize.
+For example, a file does not "sit" in a directory; it "exists" there ("sit" implies it could also "stand"). A problem does not "bite"; it "occurs" (a problem has no mouth).
+No proverb symmetry ("teams change, topics stay"). No balanced contrast ("is a copy, not a rewrite"). No novelist's diction ("enters", "the latter case"). No wordplay.
+Be concrete. Do not use vague imperatives like "name them", "belongs elsewhere" or "that's all it takes".
+Never use fancy vocabulary. Use dry, technical, non-literary words. For example:
+  - do not say "carry"; say "continue"
+  - do not say "load-bearing"; say "critical"
+  - do not say "survives"; say "remains"
+  - do not say "asked"; say "requested"
+  - do not say "refuses"; say "rejects"
+  - do not say "holds"; say "contains"
+Use direct, dry, technical language. Avoid phrases and names that read as sentences or narrate. For example:
+  - do not say "asked to think"; say "thinking enabled"
+  - do not say "what was checked, not assumed"; say "what I checked"
+  - do not say "room to answer"; say "remaining capacity"
+  - do not say "where it stopped"; say "stopping point"
+  - do not say "for a reason worth writing down"; say "for an important reason"
+  - do not say "was never written down"; say "was never documented"
+Write like a software engineer with no literary skill.
+Never use abstract, soft phrasing that does not say what something is, or that only passively refers to something.
+Never use passive voice. Use active voice. For example, do not say "the last message wasn't written down"; say "the last message doesn't exist".
+Cut filler. Never editorialize. Use simple structure and simple vocabulary.
+This applies to everything you output: messages to the user, strings in code, method names, variable names, commit messages, and your own notes and status files.
+Do not match existing style when it disagrees with these guidelines.
+
+### IMPORTANT: Use dry, simple, concrete, technical language in code
+When writing code all of the "minimize AI slop" rules apply.
+Name things in the simplest, purely technical language.
+The following words are FORBIDDEN and should NEVER be used in code nor in any message in code: `ran`, `landed`, `land`, `given`, `give`, `settled`, `settle`, `held`, `holds`, `holding`, `says`, `names`, `named`, etc.
+Never use past participle in code.
+Always name things in *concrete* terms, for example:
+  - do not write "written_at"; write "write_timestamp"
+
+### IMPORTANT: Fix the root cause, not the symptom
+When fixing a bug, figure out what is its root cause, not just what directly caused it.
+Is the issue you're fixing a consequence of a particular architectural decision?
+Is there a more *fundamental* fix you could apply which not only fixes this issue, but also either fixes similar issues, or prevents the issue from reappearing in the future?
+Figure out *if* there is a fundamental root cause to what you're fixing, and what that root cause is.
+NEVER patch the symptoms when a root cause exists.
+When in doubt, ask the user to decide.
