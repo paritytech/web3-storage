@@ -151,16 +151,18 @@ pub mod pallet {
             /// Layer 0 bucket backing the drive.
             bucket_id: u64,
         },
-        /// Drive was deleted
+        /// Drive was deleted and its agreements settled.
         DriveDeleted {
             /// The removed drive.
             drive_id: DriveId,
-            /// Its owner.
+            /// The drive owner who deleted it.
             owner: T::AccountId,
             /// Layer 0 bucket that backed it.
             bucket_id: u64,
-            /// Escrow returned to the owner from the ended agreements.
-            refunded: BalanceOf<T>,
+            /// Unspent escrow released back to the agreements' owners. Each
+            /// agreement refunds its own owner, which after an ownership
+            /// transfer need not be `owner`.
+            escrow_released: BalanceOf<T>,
         },
         /// Drive was shared with a member
         DriveShared {
@@ -330,7 +332,7 @@ pub mod pallet {
                 drive_id,
                 owner: who,
                 bucket_id: drive.bucket_id,
-                refunded: total_refunded,
+                escrow_released: total_refunded,
             });
 
             Ok(())

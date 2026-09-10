@@ -343,7 +343,7 @@ fn delete_drive_works() {
                 drive_id: 0,
                 owner: alice,
                 bucket_id,
-                refunded: 0,
+                escrow_released: 0,
             }
             .into(),
         );
