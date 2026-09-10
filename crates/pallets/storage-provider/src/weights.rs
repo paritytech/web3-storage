@@ -71,6 +71,7 @@ pub trait WeightInfo {
 	fn establish_storage_agreement() -> Weight;
 	fn establish_replica_agreement() -> Weight;
 	fn top_up_agreement() -> Weight;
+	fn transfer_agreement_ownership() -> Weight;
 	fn extend_agreement() -> Weight;
 	fn end_agreement(a: u32, ) -> Weight;
 	fn claim_expired_agreement() -> Weight;
@@ -315,6 +316,15 @@ impl<T: frame_system::Config> WeightInfo for SubstrateWeight<T> {
 		Weight::from_parts(23_000_000, 3825)
 			.saturating_add(T::DbWeight::get().reads(3_u64))
 			.saturating_add(T::DbWeight::get().writes(3_u64))
+	}
+	/// Storage: `StorageProvider::StorageAgreements` (r:1 w:1)
+	/// Storage: `Balances::Holds` (r:2 w:2)
+	/// Storage: `System::Account` (r:2 w:2)
+	fn transfer_agreement_ownership() -> Weight {
+		// Hand-written estimate until `/cmd bench` regenerates this file.
+		Weight::from_parts(30_000_000, 6000)
+			.saturating_add(T::DbWeight::get().reads(5_u64))
+			.saturating_add(T::DbWeight::get().writes(5_u64))
 	}
 	/// Storage: `StorageProvider::Providers` (r:1 w:1)
 	/// Proof: `StorageProvider::Providers` (`max_values`: None, `max_size`: Some(360), added: 2835, mode: `MaxEncodedLen`)
@@ -774,6 +784,15 @@ impl WeightInfo for () {
 		Weight::from_parts(23_000_000, 3825)
 			.saturating_add(RocksDbWeight::get().reads(3_u64))
 			.saturating_add(RocksDbWeight::get().writes(3_u64))
+	}
+	/// Storage: `StorageProvider::StorageAgreements` (r:1 w:1)
+	/// Storage: `Balances::Holds` (r:2 w:2)
+	/// Storage: `System::Account` (r:2 w:2)
+	fn transfer_agreement_ownership() -> Weight {
+		// Hand-written estimate until `/cmd bench` regenerates this file.
+		Weight::from_parts(30_000_000, 6000)
+			.saturating_add(RocksDbWeight::get().reads(5_u64))
+			.saturating_add(RocksDbWeight::get().writes(5_u64))
 	}
 	/// Storage: `StorageProvider::Providers` (r:1 w:1)
 	/// Proof: `StorageProvider::Providers` (`max_values`: None, `max_size`: Some(360), added: 2835, mode: `MaxEncodedLen`)
