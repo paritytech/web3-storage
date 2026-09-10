@@ -87,6 +87,12 @@ design doc.
 - ALWAYS present review findings to the human reviewer for triage first, and
   only post the ones they explicitly approve, after they explicitly ask for
   them to be posted
+- When the PR under review is part of a stack, review the stack shape too:
+  diff each PR against its own base PR (not `dev`), check that every link
+  is a genuine dependency per the stacked-PR rule above, and flag stacking
+  that only avoids a merge wait or a generated-file conflict. Propose a
+  concrete restructure (which PRs rebase onto `dev`, merge order) rather
+  than just noting the problem.
 
 **Workspace crate rules:**
 - When adding, splitting out, or renaming a workspace member crate, ALWAYS
