@@ -96,6 +96,28 @@ impl<T: Config> Pallet<T> {
         .map(|_| ())
     }
 
+    /// Move an agreement's escrow to a new owner, keeping it on hold, so the
+    /// hold and `StorageAgreement::owner` never point at different accounts.
+    pub(crate) fn move_escrow(
+        from: &T::AccountId,
+        to: &T::AccountId,
+        amount: BalanceOf<T>,
+    ) -> DispatchResult {
+        if amount.is_zero() {
+            return Ok(());
+        }
+        T::Currency::transfer_on_hold(
+            &HoldReason::AgreementPayment.into(),
+            from,
+            to,
+            amount,
+            Precision::Exact,
+            Restriction::OnHold,
+            Fortitude::Polite,
+        )
+        .map(|_| ())
+    }
+
     /// Hold a challenger's anti-spam deposit.
     pub(crate) fn hold_challenge_deposit(
         who: &T::AccountId,
