@@ -70,6 +70,9 @@ design doc.
 - ALWAYS open pull requests against the repository's default branch (`dev`)
 - Single responsibility per PR; all CI checks must pass; public APIs need
   rustdoc
+- PR description: short, plain, human-readable. Say what the PR does and
+  why, then list follow-ups and open questions (if any). No fluff, no
+  restating the diff, no boilerplate sections.
 
 **Code review rules:**
 - NEVER submit AI-generated review comments (PR reviews, inline comments, or
