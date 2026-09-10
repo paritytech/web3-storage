@@ -6,8 +6,8 @@
 // working index.html (without the `__…__` placeholders that would otherwise
 // break the inline JS) and full-reload when the network-config TS sources
 // change. Also rewrites the card links to absolute Vite dev-server URLs so
-// the landing's "Provider / Drive / S3" cards open the locally-running
-// apps instead of falling through to the landing's own port.
+// the landing's app cards open the locally-running apps instead of falling
+// through to the landing's own port.
 
 import { readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
@@ -59,13 +59,17 @@ function readConfig() {
   return { defaultId, validIds, networks }
 }
 
-// The landing page's card links and BASES map are relative (`./console/`,
-// `./provider/`, `./drive/`) because in production all four are deployed under
-// the same origin. Locally each app is on its own Vite port, so we rewrite the
-// three known paths to absolute dev URLs — both the single-quoted BASES values
-// and the double-quoted `href` attributes (the click handler uses BASES, but
-// middle-click / "open in new tab" relies on the `href`).
+// The landing page's card links and BASES map are relative (`./explorer/`,
+// `./provider/`, `./drive/`, `./s3/`, `./photos/`) because in production all
+// apps are deployed under the same origin. Locally each app is on its own
+// Vite port, so we rewrite each path to an absolute dev URL — both the
+// single-quoted BASES values and the double-quoted `href` attributes (the
+// click handler uses BASES, but middle-click / "open in new tab" relies on
+// the `href`). This table must stay in lockstep with `BASES` in
+// user-interfaces/landing/index.html: a card missing here falls through to
+// the landing's own port in dev.
 const DEV_BASES = {
+  './explorer/': 'http://127.0.0.1:5179/',
   './provider/': 'http://127.0.0.1:5175/',
   './drive/': 'http://127.0.0.1:5174/',
   './s3/': 'http://127.0.0.1:5177/',
