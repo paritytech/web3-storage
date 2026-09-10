@@ -2085,9 +2085,9 @@ pub mod api {
                         "dry_run_call",
                         (origin, call, result_xcms_version),
                         [
-                            62u8, 15u8, 31u8, 44u8, 49u8, 53u8, 253u8, 241u8, 94u8, 57u8, 205u8,
-                            232u8, 255u8, 93u8, 7u8, 53u8, 118u8, 169u8, 78u8, 161u8, 34u8, 241u8,
-                            117u8, 177u8, 189u8, 235u8, 171u8, 65u8, 143u8, 79u8, 185u8, 128u8,
+                            64u8, 87u8, 160u8, 192u8, 180u8, 4u8, 208u8, 13u8, 94u8, 220u8, 131u8,
+                            209u8, 72u8, 101u8, 46u8, 109u8, 189u8, 117u8, 131u8, 248u8, 54u8,
+                            88u8, 31u8, 128u8, 169u8, 231u8, 2u8, 224u8, 228u8, 162u8, 93u8, 164u8,
                         ],
                     )
                 }
@@ -2105,9 +2105,10 @@ pub mod api {
                         "dry_run_xcm",
                         (origin_location, xcm),
                         [
-                            102u8, 218u8, 63u8, 54u8, 77u8, 39u8, 28u8, 255u8, 174u8, 10u8, 178u8,
-                            212u8, 8u8, 75u8, 190u8, 49u8, 40u8, 148u8, 169u8, 254u8, 198u8, 225u8,
-                            157u8, 90u8, 183u8, 231u8, 203u8, 141u8, 1u8, 194u8, 136u8, 175u8,
+                            123u8, 87u8, 60u8, 216u8, 92u8, 157u8, 133u8, 59u8, 247u8, 143u8,
+                            126u8, 76u8, 236u8, 209u8, 191u8, 118u8, 233u8, 178u8, 8u8, 153u8,
+                            89u8, 69u8, 155u8, 148u8, 168u8, 87u8, 248u8, 48u8, 133u8, 224u8,
+                            165u8, 64u8,
                         ],
                     )
                 }
@@ -3466,9 +3467,9 @@ pub mod api {
             .hash();
         runtime_metadata_hash
             == [
-                124u8, 146u8, 254u8, 130u8, 65u8, 192u8, 221u8, 235u8, 32u8, 81u8, 140u8, 144u8,
-                12u8, 65u8, 129u8, 112u8, 164u8, 247u8, 43u8, 150u8, 3u8, 122u8, 35u8, 249u8, 25u8,
-                2u8, 35u8, 147u8, 83u8, 250u8, 68u8, 177u8,
+                132u8, 219u8, 85u8, 225u8, 108u8, 247u8, 151u8, 141u8, 111u8, 118u8, 123u8, 214u8,
+                162u8, 73u8, 21u8, 163u8, 164u8, 195u8, 69u8, 242u8, 195u8, 8u8, 53u8, 24u8, 249u8,
+                148u8, 54u8, 228u8, 205u8, 61u8, 38u8, 138u8,
             ]
     }
     pub mod system {
@@ -4456,10 +4457,10 @@ pub mod api {
                         "System",
                         "Events",
                         [
-                            138u8, 223u8, 218u8, 227u8, 246u8, 22u8, 92u8, 121u8, 7u8, 207u8,
-                            215u8, 182u8, 208u8, 9u8, 214u8, 85u8, 196u8, 214u8, 22u8, 227u8, 2u8,
-                            212u8, 123u8, 140u8, 164u8, 102u8, 48u8, 15u8, 137u8, 199u8, 108u8,
-                            149u8,
+                            95u8, 150u8, 218u8, 91u8, 162u8, 191u8, 246u8, 222u8, 149u8, 139u8,
+                            233u8, 211u8, 116u8, 136u8, 34u8, 42u8, 234u8, 79u8, 172u8, 109u8,
+                            191u8, 110u8, 150u8, 59u8, 214u8, 66u8, 245u8, 7u8, 150u8, 205u8,
+                            223u8, 22u8,
                         ],
                     )
                 }
@@ -18834,19 +18835,19 @@ pub mod api {
             )]
             #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-            #[doc = "Drive was deleted"]
+            #[doc = "Drive was deleted and its agreements settled."]
             pub struct DriveDeleted {
                 pub drive_id: drive_deleted::DriveId,
                 pub owner: drive_deleted::Owner,
                 pub bucket_id: drive_deleted::BucketId,
-                pub refunded: drive_deleted::Refunded,
+                pub escrow_released: drive_deleted::EscrowReleased,
             }
             pub mod drive_deleted {
                 use super::runtime_types;
                 pub type DriveId = ::core::primitive::u64;
                 pub type Owner = ::subxt::utils::AccountId32;
                 pub type BucketId = ::core::primitive::u64;
-                pub type Refunded = ::core::primitive::u128;
+                pub type EscrowReleased = ::core::primitive::u128;
             }
             impl DriveDeleted {
                 const PALLET_NAME: &'static str = "DriveRegistry";
@@ -23792,12 +23793,12 @@ pub mod api {
                         bucket_id: ::core::primitive::u64,
                     },
                     #[codec(index = 1)]
-                    #[doc = "Drive was deleted"]
+                    #[doc = "Drive was deleted and its agreements settled."]
                     DriveDeleted {
                         drive_id: ::core::primitive::u64,
                         owner: ::subxt::utils::AccountId32,
                         bucket_id: ::core::primitive::u64,
-                        refunded: ::core::primitive::u128,
+                        escrow_released: ::core::primitive::u128,
                     },
                     #[codec(index = 2)]
                     #[doc = "Drive was shared with a member"]
