@@ -18,16 +18,11 @@ Link, don't copy.
   the relevant section of `docs/design/`** — don't rely on summaries of it
   found elsewhere. For non-trivial changes, run `/design-alignment` before
   committing.
-- **Validate code against the design.** On any divergence, **stop and
-  flag** — don't proceed on assumptions.
-- **Prefer flagging over quietly editing the design to match the code.** If
-  implementation and design disagree, treat it as a *finding*: open or
-  reference an issue and discuss before changing the spec, rather than
-  silently reconciling the gap.
-- If something in the design looks **wrong or vulnerable**, **flag and
-  discuss** (open an issue and ping the design owner) — don't just fix it.
-  Changes to the design itself go through a PR reviewed per
-  `.github/CODEOWNERS`.
+- **Validate code against the design. On any divergence, or anything in the
+  design that looks wrong or vulnerable, stop and flag**: open or reference
+  an issue and ping the design owner. Never quietly edit the design to match
+  the code or fix the code on assumptions. Design changes go through a PR
+  reviewed per `.github/CODEOWNERS`.
 - **`docs/reference/`** is *derived* documentation, but it is **review-gated**
   (per `.github/CODEOWNERS`) and must stay true to the code. When you change
   behavior, **update the relevant `reference/` doc in the same change** (run
@@ -71,11 +66,15 @@ design doc.
   PR and issue text) is simple and straight to the point. Say what the
   reader needs, once. No fluff, no restating the code or the diff, no
   boilerplate sections, no marketing tone.
+- Public APIs need rustdoc.
 
 **Pull request rules:**
 - ALWAYS open pull requests against the repository's default branch (`dev`)
-- Single responsibility per PR; all CI checks must pass; public APIs need
-  rustdoc
+- Single responsibility per PR; all CI checks must pass
+- Regenerated files (subxt/PAPI bindings, metadata, weights) go in their own
+  commit so reviewers can skip them.
+- New or changed extrinsics are benchmarked before review: run `/cmd bench`
+  on the PR. Never leave hand-written estimates in a runtime weight file.
 - PR description: short, plain, human-readable. Say what the PR does and
   why, then list follow-ups and open questions (if any). No fluff, no
   restating the diff, no boilerplate sections.
@@ -88,17 +87,16 @@ design doc.
   description, and the description is kept current as the PR changes.
 
 **Code review rules:**
-- NEVER submit AI-generated review comments (PR reviews, inline comments, or
-  issue comments) to GitHub automatically
-- ALWAYS present review findings to the human reviewer for triage first, and
-  only post the ones they explicitly approve, after they explicitly ask for
-  them to be posted
+- NEVER post review findings (PR reviews, inline or issue comments) to
+  GitHub on your own. Present them to the human reviewer for triage first
+  and post only the ones they approve, when they ask.
 - When the PR under review is part of a stack, review the stack shape too:
   diff each PR against its own base PR (not `dev`), check that every link
   is a genuine dependency per the stacked-PR rule above, and flag stacking
   that only avoids a merge wait or a generated-file conflict. Propose a
-  concrete restructure (which PRs rebase onto `dev`, merge order) rather
-  than just noting the problem.
+  concrete restructure (which PRs should be retargeted to `dev`, merge
+  order) rather than just noting the problem. The author does any history
+  rewrite; the git rules above still bind the agent.
 
 **Workspace crate rules:**
 - When adding, splitting out, or renaming a workspace member crate, ALWAYS
@@ -193,10 +191,8 @@ address-comparison gotcha (`ss58Address` defaults to prefix 42 while PAPI
 surfaces the runtime prefix — compare raw bytes via `ss58Decode`, never
 strings) are documented in [`packages/sdk/README.md`](packages/sdk/README.md).
 
-## Using the Claude review bot
+## AI review bot
 
-- **@claude** — mention in any comment to ask questions or request help
-- **Assign to claude[bot]** — assign an issue to have Claude analyze and
-  propose solutions
-- **Label with `claude`** — add the `claude` label to an issue for Claude to
-  investigate
+Comment `/aireview` on a PR to get an advisory review from Vertex AI
+(`.github/workflows/vertex-ai-review.yml`). It is not a substitute for human
+review.
