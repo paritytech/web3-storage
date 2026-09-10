@@ -195,8 +195,6 @@ pub mod pallet {
         DriveIdOverflow,
         /// Failed to cleanup bucket in Layer 0
         BucketCleanupFailed,
-        /// Not authorized to share this drive (must be owner or bucket admin)
-        NotAuthorizedToShare,
         /// Failed to update bucket membership in Layer 0
         MembershipUpdateFailed,
     }

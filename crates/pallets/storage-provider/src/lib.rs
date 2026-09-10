@@ -874,13 +874,6 @@ pub mod pallet {
             /// Providers whose signatures back it.
             providers: Vec<T::AccountId>,
         },
-        /// A primary provider joined the bucket's provider set.
-        ProviderAddedToBucket {
-            /// The bucket.
-            bucket_id: BucketId,
-            /// The provider.
-            provider: T::AccountId,
-        },
         /// A primary provider left the bucket's provider set.
         PrimaryProviderRemoved {
             /// The bucket.
@@ -889,17 +882,6 @@ pub mod pallet {
             provider: T::AccountId,
             /// Why it left.
             reason: RemovalReason,
-        },
-        /// A primary agreement was ended before its expiry.
-        PrimaryAgreementEndedEarly {
-            /// The bucket.
-            bucket_id: BucketId,
-            /// The provider.
-            provider: T::AccountId,
-            /// Paid to the provider for time served.
-            payment_to_provider: BalanceOf<T>,
-            /// Escrow burned rather than paid out.
-            burned: BalanceOf<T>,
         },
         /// A slashed provider was cleaned out of a bucket and the owner's
         /// escrow released.
@@ -941,15 +923,6 @@ pub mod pallet {
         },
 
         // Agreement events
-        /// An agreement became active.
-        AgreementAccepted {
-            /// The bucket.
-            bucket_id: BucketId,
-            /// The provider.
-            provider: T::AccountId,
-            /// Anchor block the agreement expires at.
-            expires_at: BlockNumberFor<T>,
-        },
         /// The owner bought more quota on an agreement.
         AgreementToppedUp {
             /// The bucket.
@@ -972,17 +945,6 @@ pub mod pallet {
             /// Escrowed for the extension.
             payment: BalanceOf<T>,
         },
-        /// The agreement's owner changed.
-        AgreementOwnershipTransferred {
-            /// The bucket.
-            bucket_id: BucketId,
-            /// The provider.
-            provider: T::AccountId,
-            /// Previous owner.
-            old_owner: T::AccountId,
-            /// New owner.
-            new_owner: T::AccountId,
-        },
         /// An agreement was settled and closed.
         AgreementEnded {
             /// The bucket.
@@ -993,16 +955,6 @@ pub mod pallet {
             payment_to_provider: BalanceOf<T>,
             /// Escrow burned because the owner chose `EndAction::Burn`.
             burned: BalanceOf<T>,
-        },
-        /// The provider collected payment for an expired agreement the owner
-        /// never settled.
-        AgreementExpiredClaimed {
-            /// The bucket.
-            bucket_id: BucketId,
-            /// The provider.
-            provider: T::AccountId,
-            /// Escrow released to the provider.
-            payment_to_provider: BalanceOf<T>,
         },
         /// Owner redeemed provider-signed terms; bucket created and agreement
         /// opened atomically.
@@ -1133,12 +1085,8 @@ pub mod pallet {
         BucketNotFound,
         /// The bucket is already frozen.
         BucketFrozen,
-        /// The bucket is not frozen.
-        BucketNotFrozen,
         /// The caller is not an admin of the bucket.
         NotBucketAdmin,
-        /// The caller is not a member of the bucket.
-        NotBucketMember,
         /// The caller is neither a writer nor an admin of the bucket.
         NotBucketWriter,
         /// The account is not a member of the bucket.
@@ -1211,10 +1159,6 @@ pub mod pallet {
         SelfChallenge,
         /// No challenge with this id.
         ChallengeNotFound,
-        /// A challenge with this id already exists.
-        ChallengeAlreadyExists,
-        /// The proof does not verify against the challenged commitment.
-        InvalidChallengeProof,
         /// The response deadline has passed.
         ChallengeExpired,
         /// Only the challenged provider may respond.
@@ -1223,11 +1167,6 @@ pub mod pallet {
         /// is no on-chain commitment to challenge; use `challenge_offchain`
         /// with a signed commitment instead.
         ProviderNotInSnapshot,
-        /// The challenged leaf lies beyond the canonical commitment.
-        LeafBeyondCanonical,
-        /// The deletion response does not prove the challenged data was
-        /// removed.
-        InvalidDeletionProof,
         /// A provider with unresolved challenges (`PendingChallenges > 0`)
         /// cannot complete deregistration — they are still slashable.
         ProviderHasPendingChallenges,
@@ -1254,8 +1193,6 @@ pub mod pallet {
         // General errors
         /// A balance or counter computation overflowed.
         ArithmeticOverflow,
-        /// The multiaddr is malformed.
-        InvalidMultiaddr,
         /// The public key is not 32 bytes (sr25519/ed25519) or 33 bytes
         /// (compressed ecdsa), or does not match the signature's scheme.
         InvalidPublicKey,
