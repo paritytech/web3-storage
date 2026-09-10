@@ -143,8 +143,14 @@ anchor.
 ```rust
 #[pallet::config]
 pub trait Config: frame_system::Config<RuntimeEvent: From<Event<Self>>> {
-    /// Currency type for payments and staking.
-    type Currency: ReservableCurrency<Self::AccountId>;
+    /// Currency for payments and staking. Funds are immobilised with
+    /// `fungible` holds (see "Funds on hold" below), never `reserve`.
+    type Currency: Mutate<Self::AccountId>
+        + MutateHold<Self::AccountId, Reason = Self::RuntimeHoldReason>
+        + BalancedHold<Self::AccountId>;
+
+    /// The runtime's overarching hold reason.
+    type RuntimeHoldReason: From<HoldReason>;
 
     /// Treasury account to receive burned payments.
     type Treasury: Get<Self::AccountId>;
@@ -242,6 +248,32 @@ parachain `HOURS`:
 | `MaxChallengesPerDeadline` | `1_000` |
 | `AnchorBlockTimeMillis` | `6_000` |
 | `Treasury` | derived from `PalletId(*b"py/trsry")` |
+
+### Funds on Hold
+
+Funds are immobilised with `fungible` **holds** under a tagged reason, so the
+claims stay separable on one account and `try_state` can check them against the
+pallet's bookkeeping:
+
+```rust
+#[pallet::composite_enum]
+pub enum HoldReason {
+    /// Provider collateral. The only hold that is ever slashed.
+    ProviderStake,
+    /// An agreement's prepaid fee, held on its owner (plus, for replicas,
+    /// the sync balance) until settlement.
+    AgreementPayment,
+    /// A challenger's anti-spam deposit, refunded on resolution minus the
+    /// provider's response-cost share.
+    ChallengeDeposit,
+}
+```
+
+An agreement's escrow always sits on its **owner** (permissionless top-ups move
+a third party's funds there first, since settlement pays out of the owner's
+hold), and — unlike `reserve` — a hold must leave the existential deposit
+spendable, so registering needs `stake + ED` of free balance and an account
+with a hold cannot be reaped.
 
 ### Storage Items
 
@@ -554,7 +586,7 @@ pub struct AgreementTerms<AccountId, Balance, BlockNumber> {
 
 /// Replica-specific parameters of a signed quote.
 pub struct ReplicaTerms<Balance, BlockNumber> {
-    /// Balance reserved by the owner to fund per-sync confirmations. The
+    /// Balance held on the owner to fund per-sync confirmations. The
     /// pallet draws down `sync_price` from this on each accepted sync.
     pub sync_balance: Balance,
     /// Minimum blocks between sync confirmations the provider commits to.
@@ -647,25 +679,6 @@ pub type PendingChallengesByBucket<T: Config> = StorageDoubleMap<
     ValueQuery,
 >;
 
-/// Per-challenger aggregates so the SDK doesn't have to scan historical
-/// events. Updated by `create_challenge`, the defended path of
-/// `respond_to_challenge`, and `slash_provider_for_failed_challenge`.
-#[pallet::storage]
-pub type ChallengerStats<T: Config> =
-    StorageMap<_, Blake2_128Concat, T::AccountId, ChallengerStatRecord, ValueQuery>;
-
-/// Defined in `storage_primitives`.
-pub struct ChallengerStatRecord {
-    /// Total challenges the challenger has ever opened.
-    pub total_challenges: u32,
-    /// Challenges where the provider was slashed (invalid response or
-    /// timeout). The challenger is only made whole (deposit refunded), no
-    /// reward — the slashed stake goes entirely to the Treasury.
-    pub successful_challenges: u32,
-    /// Challenges where the provider successfully defended.
-    pub failed_challenges: u32,
-}
-
 /// Reverse index: account → bucket IDs they are a member of.
 /// Bounded by `T::MaxBucketsPerMember` to keep iteration costs predictable.
 #[pallet::storage]
@@ -736,7 +749,7 @@ pub enum Event<T: Config> {
         stake_returned: BalanceOf<T>,
     },
     /// First step of the two-step exit — provider declared intent to leave.
-    /// Stake stays reserved and they remain slashable until `complete_after`.
+    /// Stake stays held and they remain slashable until `complete_after`.
     DeregisterAnnounced {
         provider: T::AccountId,
         complete_after: BlockNumberFor<T>,
@@ -1049,7 +1062,7 @@ impl<T: Config> Pallet<T> {
     ///
     /// Stamps `deregister_at = now + T::DeregisterAnnouncementPeriod`, freezes
     /// `accepting_primary` / `accepting_extensions` to `false`, and keeps the
-    /// stake reserved. The provider remains on-chain and fully slashable for
+    /// stake held. The provider remains on-chain and fully slashable for
     /// any challenge created up to the announcement block.
     ///
     /// Fails if `committed_bytes > 0`: providers must let active agreements
@@ -1062,11 +1075,11 @@ impl<T: Config> Pallet<T> {
     /// Finalise a previously-announced deregistration (step 2 of 2).
     ///
     /// Callable once `T::DeregisterAnnouncementPeriod` has elapsed since
-    /// `deregister_provider`. Unreserves the remaining stake and removes the
-    /// provider record. Still requires `committed_bytes == 0`, and also
+    /// `deregister_provider`. Releases the remaining stake hold and removes
+    /// the provider record. Still requires `committed_bytes == 0`, and also
     /// `PendingChallenges == 0` (`ProviderHasPendingChallenges`): the stake
     /// stays slashable until every open challenge matures, so a provider
-    /// cannot exit and unreserve while still slashable. The
+    /// cannot exit and release the hold while still slashable. The
     /// `DeregisterAnnouncementPeriod > ChallengeTimeout` invariant guarantees
     /// any challenge created up to the announcement block resolves before the
     /// wait window elapses, so this only blocks genuinely-live challenges.
@@ -1159,7 +1172,7 @@ impl<T: Config> Pallet<T> {
     ///    against on-chain provider settings.
     /// 2. Creates a bucket with `min_providers = 1` and the matched provider
     ///    pushed straight into `primary_providers` (no pending request flow).
-    /// 3. Reserves `provider.price_per_byte * max_bytes * duration` from the
+    /// 3. Holds `provider.price_per_byte * max_bytes * duration` from the
     ///    caller as locked payment.
     ///
     /// Providers who set `accepting_primary: true` have pre-consented to
@@ -1276,7 +1289,7 @@ impl<T: Config> Pallet<T> {
     //   (`InsufficientStakeForBytes`)
     //
     // Payment `terms.price_per_byte * terms.max_bytes * terms.duration` is
-    // reserved from the owner at the price the provider signed for — the
+    // held on the owner at the price the provider signed for — the
     // quote itself is the price protection; there is no `max_payment`
     // parameter.
 
@@ -1325,7 +1338,7 @@ impl<T: Config> Pallet<T> {
     /// - `terms.bucket_id` must be `Some(bucket_id)` — the quote is bound to
     ///   the targeted bucket (`TermsBucketMismatch`)
     /// - `terms.replica_params` must be `Some(_)` (`MissingReplicaTerms`):
-    ///   - `sync_balance`: Reserved from the owner on top of the storage
+    ///   - `sync_balance`: Held on the owner on top of the storage
     ///     payment to fund per-sync payments at the signed `sync_price`.
     ///     When exhausted, replica stops receiving sync payments but remains
     ///     bound until expiry. Can top up via `top_up_replica_sync_balance`.
@@ -1356,7 +1369,10 @@ impl<T: Config> Pallet<T> {
     ) -> DispatchResult;
 
     /// Extend agreement duration (immediate, no provider approval needed).
-    /// 1. Settles current period: releases payment to provider for elapsed time
+    /// Only while the agreement is live — an expired one settles via
+    /// `end_agreement` / `claim_expired_agreement`, never here.
+    /// 1. Settles current period: pays provider for elapsed time out of
+    ///    escrow, capped at the agreement's `payment_locked`
     /// 2. Calculates and locks new payment for extension at current provider prices
     /// 3. Updates end date to now + additional_duration
     /// 4. Updates agreement.price_per_byte (and sync_price for replicas) to current prices
@@ -1372,6 +1388,7 @@ impl<T: Config> Pallet<T> {
     /// Fails if calculated payment > max_payment.
     /// 
     /// Also fails if:
+    /// - The agreement has expired (`AgreementExpired`)
     /// - Duration below provider's min_duration or above max_duration
     /// - Provider has globally paused extensions (settings.accepting_extensions == false)
     /// - Provider has blocked extensions for this specific bucket (agreement.extensions_blocked == true)

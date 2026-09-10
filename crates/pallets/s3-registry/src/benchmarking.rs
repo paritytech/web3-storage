@@ -26,7 +26,7 @@ use super::*;
 use alloc::{vec, vec::Vec};
 use frame_benchmarking::v2::*;
 use frame_support::{
-    traits::{Currency, Get},
+    traits::{fungible::Mutate, Get},
     BoundedVec,
 };
 use frame_system::{pallet_prelude::BlockNumberFor, RawOrigin};
@@ -37,7 +37,7 @@ use s3_primitives::{
     S3BucketInfo,
 };
 use sp_core::H256;
-use sp_runtime::traits::{Bounded, SaturatedConversion, Saturating};
+use sp_runtime::traits::{SaturatedConversion, Saturating};
 use storage_primitives::AgreementTerms;
 
 const SEED: u32 = 0;
@@ -48,8 +48,8 @@ const KEY_TYPE: sp_core::crypto::KeyTypeId = sp_core::crypto::KeyTypeId(*b"s3bn"
 /// Account with effectively unbounded balance.
 fn funded_account<T: Config>(name: &'static str, index: u32) -> T::AccountId {
     let acc: T::AccountId = account(name, index, SEED);
-    let amount = BalanceOf::<T>::max_value() / 2u32.into();
-    let _ = <T as pallet_storage_provider::Config>::Currency::make_free_balance_be(&acc, amount);
+    let amount = pallet_storage_provider::benchmarking::funding::<T>();
+    let _ = <T as pallet_storage_provider::Config>::Currency::set_balance(&acc, amount);
     acc
 }
 
