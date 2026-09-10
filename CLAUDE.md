@@ -75,10 +75,10 @@ design doc.
   commit so reviewers can skip them.
 - New or changed extrinsics are benchmarked before review: run `/cmd bench`
   on the PR. Never leave hand-written estimates in a runtime weight file.
-- PR description: short, plain, human-readable. One-sentence intro on what
-  the PR does and why, then bulleted sections as needed: **Changes**,
-  **Cleanup**, **Follow-ups**, **Open questions**. One line per bullet,
-  skip empty sections. No fluff, no restating the diff.
+- PR description: short, plain, human-readable. One or two sentences on
+  what the PR does and why, then bulleted sections as needed: **Changes**,
+  **Cleanup**, **Follow-ups**, **Open questions**. Short bullets, skip
+  empty sections. No fluff, no restating the diff.
 - Stacked PRs only when the upper PR genuinely depends on the lower one, and
   each PR in the stack is still a single, self-contained, reviewable change.
   Do NOT stack unrelated work (a feature on a bug fix on a docs fix) just to
