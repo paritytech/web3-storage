@@ -180,11 +180,9 @@ async function main() {
         role: Enum("Writer"),
       });
       // DriveRegistry.share_drive delegates the admin check to
-      // set_member_internal (ensure_admin → NotBucketAdmin) and wraps any
-      // failure as the generic MembershipUpdateFailed (pallet-registry
-      // share_drive). So an unauthorized share surfaces as
-      // MembershipUpdateFailed.
-      await submitTxExpectFailure(tx, member.signer, "MembershipUpdateFailed", "9.6");
+      // set_member_internal (ensure_admin → NotBucketAdmin) and lets Layer 0's
+      // error surface unchanged.
+      await submitTxExpectFailure(tx, member.signer, "NotBucketAdmin", "9.6");
     },
   });
 
