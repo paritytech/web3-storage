@@ -93,3 +93,22 @@ test("settings update post-registration: pricePerByte round-trips", async ({
     { timeoutMs: 60_000, description: `Eve's price_per_byte to become ${newPrice}` },
   );
 });
+
+test("settings update post-registration: replica_sync_price round-trips", async ({
+  localPage,
+}) => {
+  await localPage.getByTestId("nav-registration").click();
+
+  await expect(localPage.getByTestId("settings-replicasyncprice-input")).toBeVisible({
+    timeout: 30_000,
+  });
+  const newPrice = "3";
+  await localPage.getByTestId("settings-replicasyncprice-input").fill(newPrice);
+  await localPage.getByTestId("settings-update").click();
+
+  await firstMatch(
+    getApi().query.StorageProvider.Providers.watchValue(Eve.address, READ_OPTS),
+    ({ value }) => value?.settings?.replica_sync_price?.toString() === newPrice,
+    { timeoutMs: 60_000, description: `Eve's replica_sync_price to become ${newPrice}` },
+  );
+});

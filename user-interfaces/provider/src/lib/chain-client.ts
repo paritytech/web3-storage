@@ -228,7 +228,7 @@ export interface OnChainProviderSettings {
   maxDuration: number
   pricePerByte: bigint
   acceptingPrimary: boolean
-  acceptingReplica: boolean
+  /** Price per successful sync confirmation; `null` mirrors the chain's `None` (not accepting replicas). */
   replicaSyncPrice: bigint | null
   acceptingExtensions: boolean
   maxCapacity: bigint
@@ -337,7 +337,6 @@ export async function getProviderData(
     maxDuration: s.max_duration,
     pricePerByte: s.price_per_byte,
     acceptingPrimary: s.accepting_primary,
-    acceptingReplica: s.replica_sync_price !== undefined,
     replicaSyncPrice: s.replica_sync_price ?? null,
     acceptingExtensions: s.accepting_extensions,
     maxCapacity: s.max_capacity,
@@ -548,8 +547,7 @@ export async function submitUpdateSettings(
       max_duration: settings.maxDuration,
       price_per_byte: settings.pricePerByte,
       accepting_primary: settings.acceptingPrimary,
-      replica_sync_price:
-        settings.acceptingReplica && settings.replicaSyncPrice ? settings.replicaSyncPrice : undefined,
+      replica_sync_price: settings.replicaSyncPrice ?? undefined,
       accepting_extensions: settings.acceptingExtensions,
       max_capacity: settings.maxCapacity,
     },
