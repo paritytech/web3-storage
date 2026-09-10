@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! Shared provider identity and registration types.
+//! Shared provider-related types.
 
 mod keys;
 mod registration;
