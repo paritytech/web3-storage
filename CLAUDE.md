@@ -66,6 +66,12 @@ design doc.
   commits on top; if history genuinely has to be rewritten, stop and ask the
   user instead of doing it.
 
+**Documentation rules:**
+- Every doc you add or edit (rustdoc, READMEs, design text, code comments,
+  PR and issue text) is simple and straight to the point. Say what the
+  reader needs, once. No fluff, no restating the code or the diff, no
+  boilerplate sections, no marketing tone.
+
 **Pull request rules:**
 - ALWAYS open pull requests against the repository's default branch (`dev`)
 - Single responsibility per PR; all CI checks must pass; public APIs need
