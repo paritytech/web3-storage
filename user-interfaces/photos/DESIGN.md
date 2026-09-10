@@ -256,7 +256,7 @@ patterns.
 
 | Concern | Choice |
 | --- | --- |
-| Dev port | **5178** (landing 5176, drive 5174, provider 5175, s3 5177) |
+| Dev port | **5178** (landing 5176, drive 5174, provider 5175, s3 5177, explorer 5179) |
 | Wallet | Dev accounts (zero-setup) **and** Polkadot extension, like the provider UI |
 | New dep | `viem` (ABI encode/decode only) |
 | Reads | `ReviveApi.call` dry-run + viem `decodeFunctionResult` (unsigned) |

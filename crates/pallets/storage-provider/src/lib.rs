@@ -48,7 +48,7 @@ pub mod pallet {
     use alloc::vec::Vec;
     use frame_support::{
         pallet_prelude::*,
-        traits::{BalanceStatus, Currency, ExistenceRequirement, ReservableCurrency},
+        traits::fungible::{BalancedHold, Inspect, Mutate, MutateHold},
         CloneNoBound, DebugNoBound, DefaultNoBound, EqNoBound, PartialEqNoBound,
     };
     /// The parachain block height. Re-exported so dependent pallets get the
@@ -66,7 +66,7 @@ pub mod pallet {
     };
 
     pub type BalanceOf<T> =
-        <<T as Config>::Currency as Currency<<T as frame_system::Config>::AccountId>>::Balance;
+        <<T as Config>::Currency as Inspect<<T as frame_system::Config>::AccountId>>::Balance;
 
     /// The anchor clock ([`Config::BlockNumberProvider`], relay chain in
     /// production) that every duration, deadline and expiry in this pallet is
@@ -90,6 +90,24 @@ pub mod pallet {
     #[pallet::pallet]
     #[pallet::storage_version(STORAGE_VERSION)]
     pub struct Pallet<T>(_);
+
+    /// Why this pallet is holding somebody's funds.
+    ///
+    /// Tagging each claim keeps them separable on one account: releasing or
+    /// slashing one can never reach another, and the bookkeeping in
+    /// [`Providers`] / [`StorageAgreements`] / [`Challenges`] stays checkable
+    /// against the balances pallet.
+    #[pallet::composite_enum]
+    pub enum HoldReason {
+        /// Provider collateral. The only hold that is ever slashed.
+        ProviderStake,
+        /// An agreement's prepaid fee, held on its owner (plus, for replicas,
+        /// the sync balance) until settlement.
+        AgreementPayment,
+        /// A challenger's anti-spam deposit, refunded on resolution minus the
+        /// provider's response-cost share.
+        ChallengeDeposit,
+    }
 
     /// Maximum deadline keys the slash sweep probes per block. Relay block
     /// numbers can jump by more than one per parachain block, so the sweep
@@ -175,8 +193,13 @@ pub mod pallet {
 
     #[pallet::config]
     pub trait Config: frame_system::Config<RuntimeEvent: From<Event<Self>>> {
-        /// Currency type for payments and staking.
-        type Currency: ReservableCurrency<Self::AccountId>;
+        /// Currency for payments and staking.
+        type Currency: Mutate<Self::AccountId>
+            + MutateHold<Self::AccountId, Reason = Self::RuntimeHoldReason>
+            + BalancedHold<Self::AccountId>;
+
+        /// The runtime's overarching hold reason.
+        type RuntimeHoldReason: From<HoldReason>;
 
         /// Treasury account to receive burned payments.
         type Treasury: Get<Self::AccountId>;
@@ -211,11 +234,11 @@ pub mod pallet {
         #[pallet::constant]
         type ChallengeTimeout: Get<BlockNumberFor<Self>>;
 
-        /// Deposit required to open a challenge. Reserved from the challenger
+        /// Deposit required to open a challenge. Held from the challenger
         /// on `challenge_*` and refunded (minus a response-time-proportional
-        /// cost share) when the provider successfully defends, or returned
-        /// in full alongside a 10% slash reward when the provider is
-        /// slashed. Sets the floor on challenge spam economics — too low
+        /// cost share paid to the provider) when the provider successfully
+        /// defends, or returned in full — with no reward — when the provider
+        /// is slashed. Sets the floor on challenge spam economics — too low
         /// and griefing is free; too high and legitimate challenges become
         /// unaffordable.
         // DRIFT-005: this config item is missing from the design doc's Config
@@ -411,8 +434,8 @@ pub mod pallet {
     )]
     #[serde(bound(serialize = "", deserialize = ""), rename_all = "camelCase")]
     pub struct GenesisProvider<T: Config> {
-        /// Provider account; must be endowed with at least `stake` by the
-        /// balances genesis.
+        /// Provider account; must be endowed with at least `stake` plus the
+        /// existential deposit by the balances genesis.
         pub account: T::AccountId,
         /// Multiaddr for connecting to this provider, hex-encoded in JSON
         /// ("0x..."); must fit `T::MaxMultiaddrLength`.
@@ -421,7 +444,7 @@ pub mod pallet {
         /// Raw public key bytes (32, 33 or 64), hex-encoded in JSON.
         #[serde(with = "sp_core::bytes")]
         pub public_key: Vec<u8>,
-        /// Stake to reserve; must be at least `T::MinProviderStake`.
+        /// Stake to hold; must be at least `T::MinProviderStake`.
         pub stake: BalanceOf<T>,
         /// Provider settings, validated like `update_provider_settings`.
         pub settings: ProviderSettings<T>,
@@ -433,8 +456,8 @@ pub mod pallet {
     pub struct GenesisConfig<T: Config> {
         /// Buckets to create at genesis: (admin_account, min_providers).
         pub buckets: Vec<(T::AccountId, u32)>,
-        /// Providers to register at genesis. Their stake is reserved from
-        /// the balances-genesis endowment.
+        /// Providers to register at genesis. Their stake is held from the
+        /// balances-genesis endowment.
         pub providers: Vec<GenesisProvider<T>>,
     }
 
@@ -639,6 +662,10 @@ pub mod pallet {
     #[scale_info(skip_type_params(T))]
     pub struct StorageAgreement<T: Config> {
         /// Who owns this agreement (can top up, transfer ownership).
+        ///
+        /// The whole escrow is held on *this* account, whoever paid it in, and
+        /// every settlement path draws on it — so reassigning `owner` must move
+        /// the hold too.
         pub owner: T::AccountId,
         /// Maximum bytes (quota).
         pub max_bytes: u64,
@@ -805,6 +832,7 @@ pub mod pallet {
         SlashedProviderRemoved {
             bucket_id: BucketId,
             provider: T::AccountId,
+            /// Locked payment plus, for a replica, the unspent sync balance.
             payment_returned_to_owner: BalanceOf<T>,
         },
 
@@ -889,11 +917,19 @@ pub mod pallet {
             challenger: T::AccountId,
             respond_by: BlockNumberFor<T>,
         },
+        /// The provider proved it holds the data. The two `*_cost` fields
+        /// say who pays which part of the response cost, not who receives
+        /// money — together they always sum to the deposit.
         ChallengeDefended {
             challenge_id: ChallengeId<BlockNumberFor<T>>,
             provider: T::AccountId,
             response_time_blocks: BlockNumberFor<T>,
+            /// Part paid by the challenger: moved from their deposit to the
+            /// provider to cover the cost of responding.
             challenger_cost: BalanceOf<T>,
+            /// Part paid by the provider itself: simply not refunded — no
+            /// funds move, and this amount of the deposit goes back to the
+            /// challenger.
             provider_cost: BalanceOf<T>,
         },
         ChallengeSlashed {
@@ -1094,7 +1130,7 @@ pub mod pallet {
                     .checked_add(&amount)
                     .ok_or(Error::<T>::ArithmeticOverflow)?;
 
-                T::Currency::reserve(&who, amount)?;
+                Self::hold_stake(&who, amount)?;
 
                 Self::deposit_event(Event::ProviderStakeAdded {
                     provider: who.clone(),
@@ -1199,7 +1235,7 @@ pub mod pallet {
                 Error::<T>::ProviderHasPendingChallenges
             );
 
-            T::Currency::unreserve(&who, provider.stake);
+            Self::release_stake(&who, provider.stake)?;
             Providers::<T>::remove(&who);
             ProviderReplayStates::<T>::remove(&who);
 
@@ -1597,8 +1633,14 @@ pub mod pallet {
             let agreement = StorageAgreements::<T>::take(bucket_id, &provider)
                 .ok_or(Error::<T>::AgreementNotFound)?;
 
-            // Return locked payment to owner (provider failed their duty)
-            T::Currency::unreserve(&agreement.owner, agreement.payment_locked);
+            // Return the locked payment to the owner (provider failed their
+            // duty), plus, for a replica, the unspent sync balance escrowed
+            // alongside it.
+            let mut returned = agreement.payment_locked;
+            if let ProviderRole::Replica { sync_balance, .. } = &agreement.role {
+                returned = returned.saturating_add(*sync_balance);
+            }
+            Self::release_payment(&agreement.owner, returned)?;
 
             // Update provider committed_bytes
             Providers::<T>::mutate(&provider, |maybe_provider| {
@@ -1632,7 +1674,7 @@ pub mod pallet {
             Self::deposit_event(Event::SlashedProviderRemoved {
                 bucket_id,
                 provider,
-                payment_returned_to_owner: agreement.payment_locked,
+                payment_returned_to_owner: returned,
             });
 
             Ok(())
@@ -1808,8 +1850,10 @@ pub mod pallet {
 
                     ensure!(payment <= max_payment, Error::<T>::PaymentExceedsMax);
 
-                    // Reserve payment
-                    T::Currency::reserve(&who, payment)?;
+                    // Owner-gated above, so `who == agreement.owner`; routed
+                    // through `escrow_from` anyway so every escrow in the
+                    // pallet lands on the owner by the same rule.
+                    Self::escrow_from(&who, &agreement.owner, payment)?;
 
                     // Update agreement
                     let new_max_bytes = agreement
@@ -1845,6 +1889,8 @@ pub mod pallet {
         }
 
         /// Extend agreement duration (immediate, no provider approval needed).
+        /// Only while the agreement is live — an expired one settles via
+        /// `end_agreement` / `claim_expired_agreement`.
         ///
         /// This:
         /// 1. Settles current period: releases payment to provider for elapsed time
@@ -1908,35 +1954,34 @@ pub mod pallet {
                     }
                     // If price same or decreased, anyone can extend (permissionless persistence)
 
-                    // Settle current period
-                    let elapsed = anchor_block.saturating_sub(agreement.started_at);
-                    let _remaining = if anchor_block < agreement.expires_at {
-                        agreement.expires_at.saturating_sub(anchor_block)
-                    } else {
-                        Zero::zero()
-                    };
+                    // An expired agreement settles via `end_agreement` /
+                    // `claim_expired_agreement`; extending it here would pay
+                    // the provider for time it was under no obligation.
+                    ensure!(
+                        anchor_block < agreement.expires_at,
+                        Error::<T>::AgreementExpired
+                    );
 
-                    // Calculate payment for elapsed time at old rate
+                    // Settle the elapsed period at the old rate, capped at
+                    // this agreement's escrow: a mid-flight top-up raises
+                    // `max_bytes` without back-paying elapsed time, and the
+                    // hold aggregates per owner, so an uncapped settle could
+                    // drain other agreements' escrow.
+                    let elapsed = anchor_block.saturating_sub(agreement.started_at);
                     let elapsed_payment = if !elapsed.is_zero() {
                         Self::calculate_payment(
                             agreement.price_per_byte,
                             agreement.max_bytes,
                             elapsed,
                         )?
+                        .min(agreement.payment_locked)
                     } else {
                         Zero::zero()
                     };
 
-                    // Release elapsed payment to provider
-                    if !elapsed_payment.is_zero() {
-                        T::Currency::unreserve(&agreement.owner, elapsed_payment);
-                        T::Currency::transfer(
-                            &agreement.owner,
-                            &provider,
-                            elapsed_payment,
-                            ExistenceRequirement::KeepAlive,
-                        )?;
-                    }
+                    // Pay the provider for the elapsed period straight out of
+                    // escrow — one atomic move, never briefly spendable.
+                    Self::settle_payment(&agreement.owner, &provider, elapsed_payment)?;
 
                     // Calculate new payment for extension at current rate
                     let extension_payment = Self::calculate_payment(
@@ -1950,8 +1995,9 @@ pub mod pallet {
                         Error::<T>::PaymentExceedsMax
                     );
 
-                    // Lock new payment from caller (not necessarily the owner)
-                    T::Currency::reserve(&who, extension_payment)?;
+                    // Lock new payment from the caller (not necessarily the
+                    // owner); it is escrowed on the owner regardless.
+                    Self::escrow_from(&who, &agreement.owner, extension_payment)?;
 
                     // Update agreement
                     agreement.expires_at = anchor_block.saturating_add(additional_duration);
@@ -2523,29 +2569,21 @@ pub mod pallet {
                 50u32
             };
 
-            let challenger_cost = challenge.deposit * challenger_percent.into() / 100u32.into();
-            // The provider's share is borne by simply not being reimbursed for
-            // it — no funds move from the provider, and its stake stays intact.
-            let provider_cost = challenge.deposit.saturating_sub(challenger_cost);
+            let challenger_share = challenge.deposit * challenger_percent.into() / 100u32.into();
 
-            // Challenger forfeits `challenger_cost` to the provider as
-            // compensation for the work of responding: move it from the
-            // challenger's reserved balance into the provider's free balance.
-            let not_moved = T::Currency::repatriate_reserved(
+            // Pay the challenger's share to the provider for the work of
+            // responding and give the rest of the deposit back to the
+            // challenger. The event reports what actually moved (mirrors
+            // `ChallengeSlashed`).
+            let challenger_cost = Self::settle_challenge_deposit(
                 &challenge.challenger,
                 &challenge.provider,
-                challenger_cost,
-                BalanceStatus::Free,
-            )
-            .unwrap_or(challenger_cost);
-            // Refund challenger the rest of their deposit. Anything that could
-            // not be moved (should not happen) is released back to them too, so
-            // no funds stay stuck in the challenger's reserved balance.
-            let refund = challenge
-                .deposit
-                .saturating_sub(challenger_cost)
-                .saturating_add(not_moved);
-            T::Currency::unreserve(&challenge.challenger, refund);
+                challenge.deposit,
+                challenger_share,
+            );
+            // The provider pays its share by simply not being refunded for it
+            // — no funds move from the provider, and its stake stays intact.
+            let provider_cost = challenge.deposit.saturating_sub(challenger_cost);
 
             // Count the responded-to challenge per tier (resolution-time
             // stats; creation leaves no trace).
@@ -2680,14 +2718,8 @@ pub mod pallet {
                         block: anchor_block,
                     });
 
-                    // Transfer sync payment to provider
-                    T::Currency::unreserve(&agreement.owner, *sync_price);
-                    T::Currency::transfer(
-                        &agreement.owner,
-                        &who,
-                        *sync_price,
-                        ExistenceRequirement::KeepAlive,
-                    )?;
+                    // Pay the sync fee straight out of escrow.
+                    Self::settle_payment(&agreement.owner, &who, *sync_price)?;
 
                     Self::deposit_event(Event::ReplicaSynced {
                         bucket_id,
@@ -2713,8 +2745,6 @@ pub mod pallet {
         ) -> DispatchResult {
             let who = ensure_signed(origin)?;
 
-            T::Currency::reserve(&who, amount)?;
-
             StorageAgreements::<T>::try_mutate(
                 bucket_id,
                 &provider,
@@ -2722,6 +2752,10 @@ pub mod pallet {
                     let agreement = maybe_agreement
                         .as_mut()
                         .ok_or(Error::<T>::AgreementNotFound)?;
+
+                    // Escrowed on the owner: `sync_balance` is settled from the
+                    // owner's hold, whoever paid to top it up.
+                    Self::escrow_from(&who, &agreement.owner, amount)?;
 
                     let sync_balance = match &mut agreement.role {
                         ProviderRole::Replica { sync_balance, .. } => sync_balance,

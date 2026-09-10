@@ -49,7 +49,7 @@ import {
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
 import { Spinner } from '@/components/ui/Spinner'
-import { formatAddress } from '@/utils/format'
+import { formatAddress } from '@web3-storage/format'
 
 const navItems = [
   { path: '/', label: 'Overview', icon: Server },
