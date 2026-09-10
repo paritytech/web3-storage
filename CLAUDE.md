@@ -59,7 +59,12 @@ design doc.
 **Git commit rules:**
 - NEVER add Co-Authored-By lines to commits
 - NEVER use git rebase
-- NEVER use git push --force or git push -f
+- NEVER force-push (`git push --force`, `-f`, or `--force-with-lease`). This
+  matters most once a PR is marked ready for review or has review activity:
+  rewriting its history destroys the reviewers' "changes since your last
+  review" view and detaches their inline comments. Address feedback with new
+  commits on top; if history genuinely has to be rewritten, stop and ask the
+  user instead of doing it.
 
 **Pull request rules:**
 - ALWAYS open pull requests against the repository's default branch (`dev`)
