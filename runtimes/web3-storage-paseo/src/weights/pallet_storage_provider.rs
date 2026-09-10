@@ -356,6 +356,16 @@ impl<T: frame_system::Config> pallet_storage_provider::WeightInfo for WeightInfo
 			.saturating_add(T::DbWeight::get().reads(6))
 			.saturating_add(T::DbWeight::get().writes(4))
 	}
+	/// Storage: `StorageProvider::StorageAgreements` (r:1 w:1)
+	/// Storage: `Balances::Holds` (r:2 w:2)
+	/// Storage: `System::Account` (r:2 w:2)
+	fn transfer_agreement_ownership() -> Weight {
+		// Hand-written estimate until `/cmd bench` regenerates this file.
+		Weight::from_parts(80_000_000, 0)
+			.saturating_add(Weight::from_parts(0, 6000))
+			.saturating_add(T::DbWeight::get().reads(5))
+			.saturating_add(T::DbWeight::get().writes(5))
+	}
 	/// Storage: `StorageProvider::Providers` (r:1 w:1)
 	/// Proof: `StorageProvider::Providers` (`max_values`: None, `max_size`: Some(364), added: 2839, mode: `MaxEncodedLen`)
 	/// Storage: `StorageProvider::StorageAgreements` (r:1 w:1)
