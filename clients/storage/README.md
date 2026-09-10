@@ -525,7 +525,7 @@ For most users, consider using the **Layer 1 File System Client** instead, which
 - You want to implement your own data structures on top of blob storage
 - You need direct access to buckets and agreements
 
-**Layer 1 Documentation:** See [File System Interface Docs](../../docs/filesystems/README.md)
+**Layer 1 Documentation:** See [File System Client](../file-system/README.md)
 
 **Layer 1 Client:** `clients/file-system/`
 
