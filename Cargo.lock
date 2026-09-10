@@ -9928,6 +9928,7 @@ dependencies = [
  "provider-auth",
  "provider-negotiation",
  "provider-storage",
+ "provider-types",
  "rand 0.8.8",
  "reqwest",
  "serde",

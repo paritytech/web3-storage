@@ -11,6 +11,7 @@
 use axum::http::StatusCode;
 use provider_auth::{Authenticator, StaticMembershipResolver};
 use provider_storage::{temp_rocksdb, NonceStore};
+use provider_types::ProviderInfo;
 use reqwest::Client;
 use serde_json::Value;
 use sp_core::{sr25519, Pair};
@@ -18,7 +19,6 @@ use sp_runtime::{AccountId32, MultiSignature};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use storage_primitives::ReplicaTerms;
-use storage_provider_node::ProviderInfo;
 use storage_provider_node::{
     create_router, NegotiateRequest, NonceCounter, PalletConstants, ProviderDeps, ProviderState,
     SignedTerms,

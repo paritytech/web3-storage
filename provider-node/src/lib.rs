@@ -50,7 +50,7 @@ pub use types::*;
 
 use codec::Encode;
 use provider_storage::{FsIndexManager, NonceStore, S3IndexManager, StorageBackend};
-pub use provider_types::{KeyScheme, ProviderKeypair};
+use provider_types::{KeyScheme, ProviderKeypair};
 use sp_core::crypto::Ss58Codec;
 use sp_core::{sr25519, Pair};
 use std::sync::Arc;
@@ -193,7 +193,7 @@ impl ProviderState {
     /// than one that may have been refreshed in between.
     pub fn ensure_signing_key_matches(
         &self,
-        info: &provider_coordinator::ProviderInfo,
+        info: &provider_types::ProviderInfo,
     ) -> Result<(), Error> {
         let Some(local) = self.signing_public_key.as_ref() else {
             return Ok(());
@@ -287,7 +287,7 @@ mod tests {
         let state = ProviderState::with_seed(deps, "//Alice").unwrap();
         let local_key = state.keypair.as_ref().unwrap().public_key_bytes();
 
-        let info = |public_key: Vec<u8>| provider_coordinator::ProviderInfo {
+        let info = |public_key: Vec<u8>| provider_types::ProviderInfo {
             multiaddr: "/ip4/1.2.3.4/tcp/3333".to_string(),
             public_key,
             stake: 1_000,
