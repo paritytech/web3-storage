@@ -823,24 +823,6 @@ pub enum Event<T: Config> {
     // Agreement events
     // ─────────────────────────────────────────────────────────────
     
-    AgreementRequested {
-        bucket_id: BucketId,
-        provider: T::AccountId,
-        requester: T::AccountId,
-        max_bytes: u64,
-        payment_locked: BalanceOf<T>,
-        duration: BlockNumberFor<T>,
-    },
-    AgreementRejected {
-        bucket_id: BucketId,
-        provider: T::AccountId,
-        payment_returned: BalanceOf<T>,
-    },
-    AgreementRequestWithdrawn {
-        bucket_id: BucketId,
-        provider: T::AccountId,
-        payment_returned: BalanceOf<T>,
-    },
     AgreementToppedUp {
         bucket_id: BucketId,
         provider: T::AccountId,
@@ -1107,45 +1089,6 @@ impl<T: Config> Pallet<T> {
     // ─────────────────────────────────────────────────────────────
     // Bucket management
     // ─────────────────────────────────────────────────────────────
-
-    /// Create a new bucket.
-    /// 
-    /// The caller becomes the bucket admin. The bucket starts empty with no
-    /// providers or data.
-    /// 
-    /// Parameters:
-    /// - `min_providers`: Minimum primary provider signatures required for checkpoints
-    /// - `visibility`: `Public` or `Private` (see `Visibility`). Wrappers that
-    ///   omit the choice must default to `Private` (fail-safe: an unset choice
-    ///   should protect data, not expose it).
-    #[pallet::weight(...)]
-    pub fn create_bucket(
-        origin: OriginFor<T>,
-        min_providers: u32,
-        visibility: Visibility,
-    ) -> DispatchResult;
-
-    /// Create a bucket and an agreement with an auto-selected provider in one call.
-    ///
-    /// Convenience extrinsic that:
-    /// 1. Runs `find_matching_provider(max_bytes, duration, max_price_per_byte)`
-    ///    against on-chain provider settings.
-    /// 2. Creates a bucket with `min_providers = 1` and the matched provider
-    ///    pushed straight into `primary_providers` (no pending request flow).
-    /// 3. Holds `provider.price_per_byte * max_bytes * duration` from the
-    ///    caller as locked payment.
-    ///
-    /// Providers who set `accepting_primary: true` have pre-consented to
-    /// agreements within their advertised parameters, so no acceptance step
-    /// is needed. Fails with `NoMatchingProvider` if nothing fits.
-    #[pallet::weight(...)]
-    pub fn create_bucket_with_storage(
-        origin: OriginFor<T>,
-        max_bytes: u64,
-        duration: BlockNumberFor<T>,
-        max_price_per_byte: BalanceOf<T>,
-        visibility: Visibility,
-    ) -> DispatchResult;
 
     /// Set minimum providers required for checkpoint (admin only).
     /// 
