@@ -785,20 +785,10 @@ pub enum Event<T: Config> {
         commitment: Commitment,
         providers: Vec<T::AccountId>,
     },
-    ProviderAddedToBucket {
-        bucket_id: BucketId,
-        provider: T::AccountId,
-    },
     PrimaryProviderRemoved {
         bucket_id: BucketId,
         provider: T::AccountId,
         reason: RemovalReason,
-    },
-    PrimaryAgreementEndedEarly {
-        bucket_id: BucketId,
-        provider: T::AccountId,
-        payment_to_provider: BalanceOf<T>,
-        burned: BalanceOf<T>,
     },
     SlashedProviderRemoved {
         bucket_id: BucketId,
@@ -841,11 +831,6 @@ pub enum Event<T: Config> {
         payment_locked: BalanceOf<T>,
         duration: BlockNumberFor<T>,
     },
-    AgreementAccepted {
-        bucket_id: BucketId,
-        provider: T::AccountId,
-        expires_at: BlockNumberFor<T>,
-    },
     AgreementRejected {
         bucket_id: BucketId,
         provider: T::AccountId,
@@ -879,11 +864,6 @@ pub enum Event<T: Config> {
         provider: T::AccountId,
         payment_to_provider: BalanceOf<T>,
         burned: BalanceOf<T>,
-    },
-    AgreementExpiredClaimed {
-        bucket_id: BucketId,
-        provider: T::AccountId,
-        payment_to_provider: BalanceOf<T>,
     },
 
     // ─────────────────────────────────────────────────────────────
