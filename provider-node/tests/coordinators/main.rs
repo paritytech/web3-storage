@@ -7,7 +7,6 @@
 mod challenge;
 mod event_fanout;
 mod membership;
-mod replica_sync;
 
 use provider_auth::{Authenticator, StaticMembershipResolver};
 use provider_storage::{build_padded_merkle_tree, temp_rocksdb, StorageBackend};

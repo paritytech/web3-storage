@@ -28,6 +28,7 @@ COV_PACKAGES=(
 	provider-coordinator
 	provider-negotiation
 	provider-auth
+	provider-replica
 	provider-storage
 	provider-challenge
 )
@@ -71,18 +72,18 @@ verify_classification() {
 
 # Exclusions: only code that structurally cannot execute in this run —
 # "untested but testable" code stays measured so the gate pushes for tests.
-# The coordinators (replica_sync_coordinator, and the challenge responder,
-# now the provider-challenge crate) are deliberately NOT here: they abstract
-# chain access behind traits and are covered by the mock-backed
-# tests/coordinators/ suite.
+# The coordinators (provider-replica's coordinator.rs, and the challenge
+# responder, now the provider-challenge crate) are deliberately NOT here: they
+# abstract chain access behind traits and are covered by mock-backed test
+# suites (crates/providers/replica/tests/, provider-node tests/coordinators/).
 # Groups: toolchain/vendored; generated code + test scaffolding; primitives
 # crates (linked in, own tests
 # not run here); chain-access layer (needs a live chain); client SDK crates
 # (in provider-node's dep graph until #277, never executed here);
-# replica_sync.rs (no chain-client trait of its own, exercised only
-# indirectly through replica_sync_coordinator — measure it once it is
-# directly testable); binary entry points.
-COV_IGNORE='(/\.cargo/|/rustc/|weights\.rs|runtime_api\.rs|mock\.rs|benchmarking\.rs|/primitives/|/storage-subxt/|subxt_client\.rs|_subxt\.rs|clients/[^/]+/src/|clients/[^/]+/tests/|src/replica_sync\.rs|src/main\.rs|src/cli\.rs|src/command\.rs)'
+# provider-replica's sync.rs (no chain-client trait of its own, exercised
+# only indirectly through the coordinator — measure it once it is directly
+# testable); binary entry points.
+COV_IGNORE='(/\.cargo/|/rustc/|weights\.rs|runtime_api\.rs|mock\.rs|benchmarking\.rs|/primitives/|/storage-subxt/|subxt_client\.rs|_subxt\.rs|clients/[^/]+/src/|clients/[^/]+/tests/|providers/replica/src/sync\.rs|src/main\.rs|src/cli\.rs|src/command\.rs)'
 
 REPO_ROOT="${GITHUB_WORKSPACE:-$(git rev-parse --show-toplevel)}"
 cd "$REPO_ROOT"

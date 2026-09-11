@@ -17,8 +17,6 @@ pub mod error;
 pub mod fs_api;
 pub mod membership;
 pub mod negotiate;
-pub mod replica_sync;
-pub mod replica_sync_coordinator;
 pub mod s3_api;
 pub(crate) mod subxt_client;
 pub mod types;
@@ -40,11 +38,10 @@ pub use provider_coordinator::{
     ChainState, ChainStateChainClient, ChainStateCoordinator, ChainStateCoordinatorHandle,
     NonceCounter, PalletConstants, ProviderLifecycleEvent,
 };
-pub use replica_sync::ReplicaSync;
-pub use replica_sync_coordinator::{
-    ReplicaSyncChainClient, ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig,
-    ReplicaSyncCoordinatorHandle, SignedSyncRoots, SyncCommand, SyncCoordinatorStatus, SyncDuty,
-    SyncResult,
+pub use provider_replica::{
+    ReplicaSync, ReplicaSyncChainClient, ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig,
+    ReplicaSyncCoordinatorHandle, RootSigner, SignedSyncRoots, SyncCommand, SyncCoordinatorStatus,
+    SyncDuty, SyncResult,
 };
 pub use types::*;
 
@@ -285,6 +282,24 @@ impl ProviderState {
     /// storage.
     pub fn challenge_proof_source(&self) -> Arc<dyn ChallengeProofSource> {
         Arc::new(StorageProofSource::new(self.storage.clone()))
+    }
+}
+
+/// Lets the replica sync coordinator attest its sync roots with the node's
+/// scheme-tagged key, under the same "must match the on-chain registration"
+/// guard every other signing path goes through.
+impl RootSigner for ProviderState {
+    fn sign_roots(&self, message: &[u8]) -> Result<MultiSignature, provider_replica::Error> {
+        let to_replica_err =
+            |e: Error| provider_replica::Error::Internal(format!("cannot sign sync roots: {e}"));
+        self.ensure_signing_key_registered()
+            .map_err(to_replica_err)?;
+        let keypair = self
+            .keypair
+            .as_ref()
+            .ok_or(Error::SigningUnavailable)
+            .map_err(to_replica_err)?;
+        Ok(keypair.sign(message))
     }
 }
 

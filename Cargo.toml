@@ -17,6 +17,7 @@ members = [
 	"crates/providers/challenge",
 	"crates/providers/coordinator",
 	"crates/providers/negotiation",
+	"crates/providers/replica",
 	"crates/providers/storage",
 
 	"crates/storage-subxt",
@@ -55,6 +56,7 @@ provider-chain = { path = "crates/providers/chain", default-features = false }
 provider-challenge = { path = "crates/providers/challenge" }
 provider-coordinator = { path = "crates/providers/coordinator" }
 provider-negotiation = { path = "crates/providers/negotiation" }
+provider-replica = { path = "crates/providers/replica" }
 provider-storage = { path = "crates/providers/storage" }
 storage-client = { path = "clients/storage" }
 storage-indexers = { path = "crates/utils/storage-indexers" }

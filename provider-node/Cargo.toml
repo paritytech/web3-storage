@@ -13,6 +13,7 @@ provider-chain = { workspace = true, features = ["all"] }
 provider-challenge = { workspace = true }
 provider-coordinator = { workspace = true }
 provider-negotiation = { workspace = true }
+provider-replica = { workspace = true }
 provider-storage = { workspace = true }
 storage-primitives = { workspace = true, features = ["serde", "std"] }
 storage-subxt = { workspace = true }

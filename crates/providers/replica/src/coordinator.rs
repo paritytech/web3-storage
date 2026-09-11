@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! Replica Sync Coordinator - Autonomous replica synchronization service.
 //!
@@ -11,9 +11,10 @@
 //! 4. Submits `confirm_replica_sync` transactions to receive payment
 //! 5. Handles historical roots matching for late syncs
 
-use crate::replica_sync::ReplicaSync;
-use crate::{Error, ProviderState};
+use crate::sync::ReplicaSync;
+use crate::Error;
 use provider_chain::{BlockEvent, BlockEventRx};
+use provider_storage::StorageBackend;
 use sp_core::H256;
 use sp_runtime::AccountId32;
 use std::collections::HashMap;
@@ -196,13 +197,26 @@ pub struct SignedSyncRoots {
 }
 
 impl SignedSyncRoots {
-    /// Attest the target root with the provider's signing keypair.
-    pub fn sign(keypair: &crate::ProviderKeypair, target_mmr_root: H256) -> Self {
+    /// Attest the target root with the provider's registered signing key.
+    pub fn sign(signer: &dyn RootSigner, target_mmr_root: H256) -> Result<Self, Error> {
         let mut roots = [None; 7];
         roots[0] = Some(target_mmr_root);
-        let signature = keypair.sign(&codec::Encode::encode(&roots));
-        Self { roots, signature }
+        let signature = signer.sign_roots(&codec::Encode::encode(&roots))?;
+        Ok(Self { roots, signature })
     }
+}
+
+/// Signs a replica's sync-roots attestation with the provider's registered
+/// key. The node owns the key material and the scheme it was registered
+/// under, so it supplies the implementation; this crate only needs the
+/// resulting scheme-tagged signature.
+///
+/// Implementations are expected to refuse when no key is configured, or when
+/// the local key no longer matches the on-chain registration - a signature the
+/// pallet cannot verify is worse than a skipped confirmation.
+pub trait RootSigner: Send + Sync {
+    /// Sign `message` (the SCALE-encoded roots array) or explain why not.
+    fn sign_roots(&self, message: &[u8]) -> Result<sp_runtime::MultiSignature, Error>;
 }
 
 #[async_trait::async_trait]
@@ -301,9 +315,13 @@ impl ReplicaSyncCoordinatorHandle {
 /// Replica sync coordinator service.
 pub struct ReplicaSyncCoordinator {
     config: ReplicaSyncCoordinatorConfig,
-    state: Arc<ProviderState>,
+    storage: Arc<dyn StorageBackend>,
+    provider_id: String,
     chain_client: Box<dyn ReplicaSyncChainClient>,
     replica_sync: ReplicaSync,
+    /// Signs sync-roots attestations. `None` in provider-id-only setups, where
+    /// the coordinator syncs data but cannot confirm on-chain.
+    signer: Option<Arc<dyn RootSigner>>,
     /// Track active sync operations by bucket.
     active_syncs: HashMap<BucketId, tokio::task::JoinHandle<SyncResult>>,
 }
@@ -312,18 +330,29 @@ impl ReplicaSyncCoordinator {
     /// Create a new replica sync coordinator.
     pub fn new(
         config: ReplicaSyncCoordinatorConfig,
-        state: Arc<ProviderState>,
+        storage: Arc<dyn StorageBackend>,
+        provider_id: String,
         chain_client: Box<dyn ReplicaSyncChainClient>,
     ) -> Self {
-        let replica_sync = ReplicaSync::new(state.storage.clone());
+        let replica_sync = ReplicaSync::new(storage.clone());
 
         Self {
             config,
-            state,
+            storage,
+            provider_id,
             chain_client,
             replica_sync,
+            signer: None,
             active_syncs: HashMap::new(),
         }
+    }
+
+    /// Attach the signer used to attest sync roots. Without one the
+    /// coordinator still syncs data but refuses to submit confirmations,
+    /// since the pallet verifies the attestation against the registered key.
+    pub fn with_signer(mut self, signer: Arc<dyn RootSigner>) -> Self {
+        self.signer = Some(signer);
+        self
     }
 
     /// Start the replica sync coordinator background service.
@@ -362,7 +391,7 @@ impl ReplicaSyncCoordinator {
                 our_account.as_ref().is_none_or(|me| me == provider)
             }
             BlockEvent::BucketCheckpointed { bucket_id } => {
-                self.state.storage.get_bucket(*bucket_id).is_some()
+                self.storage.get_bucket(*bucket_id).is_some()
             }
             _ => false,
         }
@@ -380,7 +409,7 @@ impl ReplicaSyncCoordinator {
         // A closed broadcast channel (follower gone) yields `Closed` on every
         // poll; disarm the events select arm then, or the loop busy-spins.
         let mut events_open = true;
-        let our_account = AccountId32::from_str(&self.state.provider_id).ok();
+        let our_account = AccountId32::from_str(&self.provider_id).ok();
         // The safety-net interval's first tick fires immediately, doubling as
         // the startup bootstrap pass (duties accrued while the node was
         // down). With the safety net disabled, the bootstrap pass comes from
@@ -522,8 +551,7 @@ impl ReplicaSyncCoordinator {
 
     /// Get list of bucket IDs we're tracking as replica.
     fn get_tracked_buckets(&self) -> Vec<BucketId> {
-        self.state
-            .storage
+        self.storage
             .list_buckets()
             .into_iter()
             .map(|b| b.bucket_id)
@@ -537,14 +565,13 @@ impl ReplicaSyncCoordinator {
         let anchor_block = self.chain_client.get_current_block().await?;
 
         let local_buckets: Vec<u64> = self
-            .state
             .storage
             .list_buckets()
             .into_iter()
             .map(|b| b.bucket_id)
             .collect();
 
-        let provider_account = self.state.provider_id.clone();
+        let provider_account = self.provider_id.clone();
 
         let agreements = self
             .chain_client
@@ -584,7 +611,7 @@ impl ReplicaSyncCoordinator {
                 continue;
             }
 
-            if let Some(bucket) = self.state.storage.get_bucket(agreement.bucket_id) {
+            if let Some(bucket) = self.storage.get_bucket(agreement.bucket_id) {
                 if bucket.mmr_root == snapshot.mmr_root {
                     continue;
                 }
@@ -631,7 +658,7 @@ impl ReplicaSyncCoordinator {
     /// Perform sync and submit confirmation.
     pub async fn sync_and_confirm(&self, duty: &SyncDuty) -> SyncResult {
         // Check if we already have this root
-        if let Some(bucket) = self.state.storage.get_bucket(duty.bucket_id) {
+        if let Some(bucket) = self.storage.get_bucket(duty.bucket_id) {
             if bucket.mmr_root == duty.target_mmr_root {
                 return SyncResult::AlreadySynced {
                     bucket_id: duty.bucket_id,
@@ -703,7 +730,7 @@ impl ReplicaSyncCoordinator {
         }
 
         // Verify final state
-        let local_bucket = match self.state.storage.get_bucket(duty.bucket_id) {
+        let local_bucket = match self.storage.get_bucket(duty.bucket_id) {
             Some(b) => b,
             None => {
                 return SyncResult::VerificationFailed {
@@ -742,18 +769,18 @@ impl ReplicaSyncCoordinator {
     /// our registered public key, so a node without a signing key must not
     /// submit at all.
     pub async fn confirm_on_chain(&self, duty: &SyncDuty) -> SyncResult {
-        if let Err(e) = self.state.ensure_signing_key_registered() {
+        let Some(signer) = self.signer.as_deref() else {
             return SyncResult::SubmissionFailed {
                 bucket_id: duty.bucket_id,
-                error: format!("signing key does not match on-chain registration: {e}"),
+                error: "no signing key configured; cannot attest sync roots".to_string(),
             };
-        }
-        let attestation = match self.state.keypair.as_ref() {
-            Some(pair) => SignedSyncRoots::sign(pair, duty.target_mmr_root),
-            None => {
+        };
+        let attestation = match SignedSyncRoots::sign(signer, duty.target_mmr_root) {
+            Ok(attestation) => attestation,
+            Err(e) => {
                 return SyncResult::SubmissionFailed {
                     bucket_id: duty.bucket_id,
-                    error: "no signing key configured; cannot attest sync roots".to_string(),
+                    error: format!("cannot attest sync roots: {e}"),
                 };
             }
         };
