@@ -9,7 +9,7 @@
 //!   bookkeeping says exactly what is held, so a shortfall is a broken
 //!   invariant, not something to silently under-pay.
 //! * Challenge money and slashes: [`Precision::BestEffort`], infallible.
-//!   [`Pallet::slash_provider_for_failed_challenge`] is shared with the
+//!   `slash_provider_for_failed_challenge` is shared with the
 //!   `on_initialize` sweep, which has no caller to return an error to.
 
 use crate::*;
