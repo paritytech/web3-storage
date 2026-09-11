@@ -7239,6 +7239,7 @@ dependencies = [
  "serde_json",
  "sp-crypto-hashing",
  "sp-runtime",
+ "storage-subxt",
  "subxt",
  "subxt-rpcs",
  "tempfile",
