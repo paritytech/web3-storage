@@ -241,6 +241,8 @@ pub mod pallet {
         /// is slashed. Sets the floor on challenge spam economics — too low
         /// and griefing is free; too high and legitimate challenges become
         /// unaffordable.
+        // DRIFT-005: this config item is missing from the design doc's Config
+        // sketch. Proposal: keep; add it to the design's sketch and values table.
         #[pallet::constant]
         type ChallengeDeposit: Get<BalanceOf<Self>>;
 
@@ -629,6 +631,10 @@ pub mod pallet {
     pub struct Bucket<T: Config> {
         /// Members who can interact with this bucket.
         pub members: BoundedVec<Member<T>, T::MaxMembers>,
+        /// Read visibility (see `Visibility`). On-chain, only challenge
+        /// creation reads it: `Private` restricts primary challenges to
+        /// members and primary-agreement owners.
+        pub visibility: Visibility,
         /// If Some, bucket is append-only from this start_seq.
         pub frozen_start_seq: Option<u64>,
         /// Minimum primary provider signatures required for checkpoint.
@@ -641,10 +647,6 @@ pub mod pallet {
         pub historical_roots: [(u32, H256); 6],
         /// Total snapshots created for this bucket.
         pub total_snapshots: u32,
-        /// Read visibility (see `Visibility`). On-chain, only challenge
-        /// creation reads it: `Private` restricts primary challenges to
-        /// members and primary-agreement owners.
-        pub visibility: Visibility,
     }
 
     /// Storage agreement between bucket and provider.
@@ -859,6 +861,10 @@ pub mod pallet {
             new_expires_at: BlockNumberFor<T>,
             payment: BalanceOf<T>,
         },
+        // DRIFT-015: declared but never emitted — the design's
+        // transfer_agreement_ownership extrinsic was never implemented.
+        // Proposal: implement the extrinsic (moving the owner-held escrow to
+        // the new owner with it) rather than dropping the event.
         AgreementOwnershipTransferred {
             bucket_id: BucketId,
             provider: T::AccountId,
@@ -1374,6 +1380,10 @@ pub mod pallet {
         // Bucket Management
         // ─────────────────────────────────────────────────────────────────────
 
+        // DRIFT-001 / DRIFT-002: this signed-terms flow supersedes the design
+        // docs' on-chain request/accept round-trip and standalone create_bucket
+        // (bucket creation is folded in here).
+        // Proposal: keep this flow; realign the design docs to it.
         /// Redeem provider-signed terms: create a bucket + primary agreement
         /// in a single call.
         ///
