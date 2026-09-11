@@ -164,14 +164,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("Challenge created: {:?}", challenge_id);
     }
 
-    // Aggregate challenge activity (challengers earn no reward — a slash goes
-    // entirely to the Treasury and the challenger is only refunded its deposit).
-    let stats = client.get_challenge_stats().await?;
-    println!(
-        "Challenges: total={} successful={} failed={}",
-        stats.total_challenges, stats.successful_challenges, stats.failed_challenges
-    );
-
     Ok(())
 }
 ```

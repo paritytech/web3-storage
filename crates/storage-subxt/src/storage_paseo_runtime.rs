@@ -2085,9 +2085,9 @@ pub mod api {
                         "dry_run_call",
                         (origin, call, result_xcms_version),
                         [
-                            76u8, 31u8, 20u8, 186u8, 140u8, 10u8, 2u8, 166u8, 7u8, 135u8, 223u8,
-                            11u8, 251u8, 254u8, 145u8, 94u8, 152u8, 155u8, 114u8, 181u8, 254u8,
-                            29u8, 109u8, 7u8, 97u8, 88u8, 208u8, 97u8, 47u8, 210u8, 28u8, 15u8,
+                            123u8, 218u8, 23u8, 205u8, 125u8, 254u8, 26u8, 29u8, 149u8, 208u8,
+                            150u8, 7u8, 80u8, 46u8, 38u8, 20u8, 178u8, 61u8, 75u8, 71u8, 41u8,
+                            200u8, 30u8, 105u8, 108u8, 250u8, 68u8, 31u8, 68u8, 237u8, 71u8, 109u8,
                         ],
                     )
                 }
@@ -2105,9 +2105,10 @@ pub mod api {
                         "dry_run_xcm",
                         (origin_location, xcm),
                         [
-                            202u8, 213u8, 226u8, 84u8, 83u8, 169u8, 69u8, 131u8, 195u8, 147u8,
-                            156u8, 158u8, 187u8, 23u8, 57u8, 14u8, 99u8, 207u8, 170u8, 65u8, 34u8,
-                            36u8, 206u8, 68u8, 158u8, 139u8, 104u8, 29u8, 75u8, 97u8, 195u8, 190u8,
+                            154u8, 227u8, 66u8, 99u8, 113u8, 248u8, 151u8, 225u8, 145u8, 78u8,
+                            139u8, 107u8, 116u8, 133u8, 123u8, 70u8, 14u8, 211u8, 88u8, 212u8,
+                            221u8, 85u8, 114u8, 142u8, 48u8, 254u8, 76u8, 19u8, 188u8, 213u8, 5u8,
+                            45u8,
                         ],
                     )
                 }
@@ -3466,9 +3467,9 @@ pub mod api {
             .hash();
         runtime_metadata_hash
             == [
-                6u8, 204u8, 190u8, 245u8, 201u8, 153u8, 144u8, 2u8, 230u8, 73u8, 185u8, 77u8, 60u8,
-                23u8, 88u8, 171u8, 124u8, 135u8, 235u8, 243u8, 164u8, 143u8, 42u8, 144u8, 11u8,
-                124u8, 230u8, 122u8, 74u8, 142u8, 178u8, 181u8,
+                48u8, 0u8, 193u8, 30u8, 220u8, 109u8, 120u8, 16u8, 5u8, 130u8, 30u8, 42u8, 82u8,
+                22u8, 83u8, 214u8, 182u8, 191u8, 223u8, 176u8, 131u8, 66u8, 132u8, 233u8, 135u8,
+                186u8, 163u8, 135u8, 171u8, 81u8, 212u8, 105u8,
             ]
     }
     pub mod system {
@@ -4456,10 +4457,10 @@ pub mod api {
                         "System",
                         "Events",
                         [
-                            130u8, 231u8, 119u8, 25u8, 25u8, 252u8, 131u8, 201u8, 110u8, 237u8,
-                            251u8, 122u8, 177u8, 164u8, 200u8, 154u8, 167u8, 79u8, 180u8, 64u8,
-                            6u8, 10u8, 225u8, 35u8, 213u8, 24u8, 56u8, 247u8, 77u8, 72u8, 221u8,
-                            116u8,
+                            43u8, 124u8, 208u8, 71u8, 102u8, 202u8, 82u8, 147u8, 15u8, 162u8,
+                            114u8, 13u8, 49u8, 238u8, 185u8, 190u8, 146u8, 110u8, 193u8, 27u8,
+                            54u8, 96u8, 212u8, 173u8, 23u8, 31u8, 87u8, 74u8, 156u8, 82u8, 138u8,
+                            104u8,
                         ],
                     )
                 }
@@ -7935,10 +7936,9 @@ pub mod api {
                         "Balances",
                         "Holds",
                         [
-                            193u8, 191u8, 89u8, 195u8, 49u8, 254u8, 227u8, 159u8, 141u8, 97u8,
-                            191u8, 51u8, 187u8, 141u8, 110u8, 245u8, 22u8, 114u8, 41u8, 207u8,
-                            193u8, 79u8, 235u8, 112u8, 63u8, 77u8, 72u8, 244u8, 118u8, 154u8,
-                            131u8, 214u8,
+                            232u8, 126u8, 57u8, 85u8, 2u8, 239u8, 78u8, 34u8, 186u8, 38u8, 131u8,
+                            96u8, 99u8, 241u8, 38u8, 215u8, 43u8, 189u8, 69u8, 25u8, 27u8, 38u8,
+                            205u8, 186u8, 233u8, 34u8, 200u8, 142u8, 20u8, 141u8, 241u8, 231u8,
                         ],
                     )
                 }
@@ -15813,6 +15813,8 @@ pub mod api {
             #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
             #[doc = "Extend agreement duration (immediate, no provider approval needed)."]
+            #[doc = "Only while the agreement is live — an expired one settles via"]
+            #[doc = "`end_agreement` / `claim_expired_agreement`."]
             #[doc = ""]
             #[doc = "This:"]
             #[doc = "1. Settles current period: releases payment to provider for elapsed time"]
@@ -16588,6 +16590,8 @@ pub mod api {
                         )
                     }
                     #[doc = "Extend agreement duration (immediate, no provider approval needed)."]
+                    #[doc = "Only while the agreement is live — an expired one settles via"]
+                    #[doc = "`end_agreement` / `claim_expired_agreement`."]
                     #[doc = ""]
                     #[doc = "This:"]
                     #[doc = "1. Settles current period: releases payment to provider for elapsed time"]
@@ -17772,6 +17776,9 @@ pub mod api {
             )]
             #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+            #[doc = "The provider proved it holds the data. The two `*_cost` fields"]
+            #[doc = "say who pays which part of the response cost, not who receives"]
+            #[doc = "money — together they always sum to the deposit."]
             pub struct ChallengeDefended {
                 pub challenge_id: challenge_defended::ChallengeId,
                 pub provider: challenge_defended::Provider,
@@ -18045,27 +18052,6 @@ pub mod api {
                         ],
                     )
                 }
-                #[doc = " Per-challenger aggregates so the SDK doesn't have to scan historical"]
-                #[doc = " events to answer `get_challenge_stats`. Updated by `create_challenge`,"]
-                #[doc = " the defended path of `respond_to_challenge`, and"]
-                #[doc = " `slash_provider_for_failed_challenge`."]
-                pub fn challenger_stats(
-                    &self,
-                ) -> ::subxt::storage::StaticAddress<
-                    (challenger_stats::input::Param0,),
-                    challenger_stats::Output,
-                    ::subxt::utils::Maybe,
-                > {
-                    ::subxt::storage::StaticAddress::new_static(
-                        "StorageProvider",
-                        "ChallengerStats",
-                        [
-                            8u8, 63u8, 212u8, 126u8, 176u8, 205u8, 53u8, 129u8, 86u8, 26u8, 143u8,
-                            107u8, 108u8, 16u8, 235u8, 67u8, 48u8, 72u8, 164u8, 169u8, 46u8, 252u8,
-                            234u8, 72u8, 201u8, 195u8, 223u8, 123u8, 178u8, 58u8, 116u8, 109u8,
-                        ],
-                    )
-                }
                 #[doc = " Reverse index: account → bucket IDs they are a member of."]
                 pub fn member_buckets(
                     &self,
@@ -18176,15 +18162,6 @@ pub mod api {
                     pub type Param1 = ::subxt::utils::AccountId32;
                 }
                 pub type Output = ::core::primitive::u32;
-            }
-            pub mod challenger_stats {
-                use super::root_mod;
-                use super::runtime_types;
-                pub mod input {
-                    use super::runtime_types;
-                    pub type Param0 = ::subxt::utils::AccountId32;
-                }
-                pub type Output = runtime_types::storage_primitives::ChallengerStatRecord;
             }
             pub mod member_buckets {
                 use super::root_mod;
@@ -18307,11 +18284,11 @@ pub mod api {
                         ],
                     )
                 }
-                #[doc = " Deposit required to open a challenge. Reserved from the challenger"]
+                #[doc = " Deposit required to open a challenge. Held from the challenger"]
                 #[doc = " on `challenge_*` and refunded (minus a response-time-proportional"]
-                #[doc = " cost share) when the provider successfully defends, or returned"]
-                #[doc = " in full alongside a 10% slash reward when the provider is"]
-                #[doc = " slashed. Sets the floor on challenge spam economics — too low"]
+                #[doc = " cost share paid to the provider) when the provider successfully"]
+                #[doc = " defends, or returned in full — with no reward — when the provider"]
+                #[doc = " is slashed. Sets the floor on challenge spam economics — too low"]
                 #[doc = " and griefing is free; too high and legitimate challenges become"]
                 #[doc = " unaffordable."]
                 pub fn challenge_deposit(
@@ -21115,9 +21092,10 @@ pub mod api {
                         "Revive",
                         "EthBlockBuilderIR",
                         [
-                            71u8, 238u8, 147u8, 189u8, 43u8, 68u8, 7u8, 59u8, 65u8, 129u8, 195u8,
-                            104u8, 36u8, 47u8, 160u8, 177u8, 141u8, 216u8, 47u8, 58u8, 4u8, 214u8,
-                            89u8, 77u8, 42u8, 174u8, 103u8, 255u8, 95u8, 196u8, 25u8, 232u8,
+                            116u8, 166u8, 102u8, 147u8, 101u8, 7u8, 206u8, 214u8, 182u8, 48u8,
+                            13u8, 231u8, 127u8, 31u8, 239u8, 190u8, 57u8, 113u8, 220u8, 48u8,
+                            235u8, 146u8, 231u8, 159u8, 0u8, 226u8, 33u8, 141u8, 210u8, 200u8,
+                            66u8, 23u8,
                         ],
                     )
                 }
@@ -26061,6 +26039,8 @@ pub mod api {
                     },
                     #[codec(index = 27)]
                     #[doc = "Extend agreement duration (immediate, no provider approval needed)."]
+                    #[doc = "Only while the agreement is live — an expired one settles via"]
+                    #[doc = "`end_agreement` / `claim_expired_agreement`."]
                     #[doc = ""]
                     #[doc = "This:"]
                     #[doc = "1. Settles current period: releases payment to provider for elapsed time"]
@@ -26618,6 +26598,9 @@ pub mod api {
                         respond_by: ::core::primitive::u32,
                     },
                     #[codec(index = 30)]
+                    #[doc = "The provider proved it holds the data. The two `*_cost` fields"]
+                    #[doc = "say who pays which part of the response cost, not who receives"]
+                    #[doc = "money — together they always sum to the deposit."]
                     ChallengeDefended {
                         challenge_id:
                             runtime_types::storage_primitives::ChallengeId<::core::primitive::u32>,
@@ -26635,6 +26618,24 @@ pub mod api {
                         challenger_reward: ::core::primitive::u128,
                         reason: runtime_types::storage_primitives::SlashReason,
                     },
+                }
+                #[derive(
+                    :: subxt :: ext :: scale_decode :: DecodeAsType,
+                    :: subxt :: ext :: scale_encode :: EncodeAsType,
+                    Clone,
+                    Debug,
+                    Eq,
+                    PartialEq,
+                )]
+                #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                pub enum HoldReason {
+                    #[codec(index = 0)]
+                    ProviderStake,
+                    #[codec(index = 1)]
+                    AgreementPayment,
+                    #[codec(index = 2)]
+                    ChallengeDeposit,
                 }
                 #[derive(
                     :: subxt :: ext :: scale_decode :: DecodeAsType,
@@ -31111,6 +31112,8 @@ pub mod api {
                 Session(runtime_types::pallet_session::pallet::HoldReason),
                 #[codec(index = 31)]
                 PolkadotXcm(runtime_types::pallet_xcm::pallet::HoldReason),
+                #[codec(index = 50)]
+                StorageProvider(runtime_types::pallet_storage_provider::pallet::HoldReason),
                 #[codec(index = 60)]
                 Revive(runtime_types::pallet_revive::pallet::HoldReason),
             }
@@ -31215,21 +31218,6 @@ pub mod api {
             pub struct ChallengeId<_0> {
                 pub deadline: _0,
                 pub index: ::core::primitive::u16,
-            }
-            #[derive(
-                :: subxt :: ext :: scale_decode :: DecodeAsType,
-                :: subxt :: ext :: scale_encode :: EncodeAsType,
-                Clone,
-                Debug,
-                Eq,
-                PartialEq,
-            )]
-            #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
-            #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-            pub struct ChallengerStatRecord {
-                pub total_challenges: ::core::primitive::u32,
-                pub successful_challenges: ::core::primitive::u32,
-                pub failed_challenges: ::core::primitive::u32,
             }
             #[derive(
                 :: subxt :: ext :: scale_decode :: DecodeAsType,
