@@ -8,6 +8,10 @@ This skill is the single source of truth for code review criteria in this reposi
 If no arguments are passed, review the local changes by looking at the diff between the base branch - `dev` by default - and the current branch.
 If arguments are passed, review pull request #$ARGUMENTS by fetching it and seeing its details with `gh pr view` and `gh pr diff`.
 
+If this session wrote the code under review, do not review it in place:
+delegate to the `reviewer` agent (`.claude/agents/reviewer.md`), which runs
+this skill from a clean context, and relay its findings.
+
 ## Procedure
 
 1. Read the PR title, description and linked issues first. Note the stated

@@ -66,12 +66,23 @@ design doc.
   commits on top; if history genuinely has to be rewritten, stop and ask the
   user instead of doing it.
 
+**Work flow rules:**
+- Work in small, single-purpose commits. Do not push, open PRs or issues,
+  or post comments unless the user asks for that action in the current
+  message.
+- Before reporting a change as done, run the `reviewer` agent on the local
+  diff, fix the blocking and should-fix findings, and repeat until it comes
+  back clean. Design deviations are flagged, not fixed (see above). Report
+  what the review found and what you changed.
+
 **Code review rules:**
 - NEVER post review findings (PR reviews, inline or issue comments) to
   GitHub on your own. Present them to the human reviewer for triage first
   and post only the ones they approve, when they ask.
 - Review criteria, the finding format and the stacked-PR checks live in the
-  `/review` skill. Use it for every review.
+  `/review` skill. Use it for every review. From a session that wrote the
+  code, delegate to the `reviewer` agent so the review starts from a clean
+  context.
 
 **Conventions (in `AGENTS.md`, imported above):**
 - Pull requests: base branch, single responsibility, regenerated files,
