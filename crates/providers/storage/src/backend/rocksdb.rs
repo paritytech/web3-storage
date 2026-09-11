@@ -804,6 +804,16 @@ mod tests {
             .unwrap();
     }
 
+    /// Remove a node's raw record entirely, standing in for the node
+    /// genuinely never having been written (or having been pruned) rather
+    /// than corrupted - `store_node`'s children-exist check would otherwise
+    /// make it impossible to reference a missing child through the public
+    /// API alone.
+    fn delete_node(storage: &DiskStorage, hash: H256) {
+        let cf = storage.db.cf_handle(CF_NODES).unwrap();
+        storage.db.delete_cf(&cf, hash.as_bytes()).unwrap();
+    }
+
     /// Overwrite a bucket's raw record with bytes that can't be decoded,
     /// same standing-in as [`corrupt_node`] but for `CF_BUCKETS`.
     fn corrupt_bucket(storage: &DiskStorage, bucket_id: BucketId) {
@@ -899,6 +909,41 @@ mod tests {
         assert!(
             matches!(err, Error::Serialization(_)),
             "expected Serialization, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn get_chunk_at_index_with_a_missing_node_mid_traversal_reports_node_not_found() {
+        // Stands for: a node the tree references was never written (or was
+        // pruned) rather than corrupted. Before this fix, traversal treated
+        // an absent node the same as an empty subtree and silently dropped
+        // it, shortening the chunk list instead of surfacing the gap.
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        storage.init_bucket(1, 1024 * 1024).unwrap();
+
+        let c0 = blake2_256(b"chunk-0");
+        let c1 = blake2_256(b"chunk-1");
+        storage
+            .store_node(1, c0, b"chunk-0".to_vec(), None)
+            .unwrap();
+        storage
+            .store_node(1, c1, b"chunk-1".to_vec(), None)
+            .unwrap();
+
+        let root_data = b"two-chunk-root-missing".to_vec();
+        let root = blake2_256(&root_data);
+        storage
+            .store_node(1, root, root_data, Some(vec![c0, c1]))
+            .unwrap();
+
+        // c0 is now gone, e.g. pruned, even though the root still references it.
+        delete_node(&storage, c0);
+
+        let err = storage.get_chunk_at_index(root, 1).unwrap_err();
+        assert!(
+            matches!(err, Error::NodeNotFound(_)),
+            "expected NodeNotFound, got {err:?}"
         );
     }
 }

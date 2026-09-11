@@ -179,14 +179,15 @@ pub trait StorageBackend: Send + Sync {
             if hash == H256::zero() {
                 continue;
             }
-            if let Some(node) = self.get_node(&hash)? {
-                if let Some(ref children) = node.children {
-                    for child in children.iter().rev() {
-                        stack.push(*child);
-                    }
-                } else {
-                    hashes.push(hash);
+            let node = self
+                .get_node(&hash)?
+                .ok_or_else(|| Error::NodeNotFound(hash.to_string()))?;
+            if let Some(ref children) = node.children {
+                for child in children.iter().rev() {
+                    stack.push(*child);
                 }
+            } else {
+                hashes.push(hash);
             }
         }
 
