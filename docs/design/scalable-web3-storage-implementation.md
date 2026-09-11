@@ -35,6 +35,8 @@ primaries (replicas stay challengeable by anyone).
 
 **Redundancy**: A bucket can have storage agreements with multiple providers. The `min_providers` setting controls how many providers must acknowledge a state before it can be checkpointed. This ensures minimum redundancy for critical data.
 
+**Implementation status**: today every bucket has exactly one primary provider, fixed when `establish_storage_agreement` creates the bucket; no call adds another, so `min_providers` is always 1 and the late-signer path of `extend_checkpoint` is unreachable. Replicas are the redundancy mechanism in use. Multi-primary buckets remain the design target, and the `min_providers`, signature-bitfield and `extend_checkpoint` machinery below is written for them.
+
 **Append-only mode**: When `frozen_start_seq` is set, the bucket becomes append-only from that point. The start_seq can never decrease below the frozen value, preventing deletion of historical data. This is irreversible and requires the current snapshot to meet `min_providers` threshold.
 
 ### Storage Model
@@ -785,20 +787,10 @@ pub enum Event<T: Config> {
         commitment: Commitment,
         providers: Vec<T::AccountId>,
     },
-    ProviderAddedToBucket {
-        bucket_id: BucketId,
-        provider: T::AccountId,
-    },
     PrimaryProviderRemoved {
         bucket_id: BucketId,
         provider: T::AccountId,
         reason: RemovalReason,
-    },
-    PrimaryAgreementEndedEarly {
-        bucket_id: BucketId,
-        provider: T::AccountId,
-        payment_to_provider: BalanceOf<T>,
-        burned: BalanceOf<T>,
     },
     SlashedProviderRemoved {
         bucket_id: BucketId,
@@ -833,29 +825,6 @@ pub enum Event<T: Config> {
     // Agreement events
     // ─────────────────────────────────────────────────────────────
     
-    AgreementRequested {
-        bucket_id: BucketId,
-        provider: T::AccountId,
-        requester: T::AccountId,
-        max_bytes: u64,
-        payment_locked: BalanceOf<T>,
-        duration: BlockNumberFor<T>,
-    },
-    AgreementAccepted {
-        bucket_id: BucketId,
-        provider: T::AccountId,
-        expires_at: BlockNumberFor<T>,
-    },
-    AgreementRejected {
-        bucket_id: BucketId,
-        provider: T::AccountId,
-        payment_returned: BalanceOf<T>,
-    },
-    AgreementRequestWithdrawn {
-        bucket_id: BucketId,
-        provider: T::AccountId,
-        payment_returned: BalanceOf<T>,
-    },
     AgreementToppedUp {
         bucket_id: BucketId,
         provider: T::AccountId,
@@ -879,11 +848,6 @@ pub enum Event<T: Config> {
         provider: T::AccountId,
         payment_to_provider: BalanceOf<T>,
         burned: BalanceOf<T>,
-    },
-    AgreementExpiredClaimed {
-        bucket_id: BucketId,
-        provider: T::AccountId,
-        payment_to_provider: BalanceOf<T>,
     },
 
     // ─────────────────────────────────────────────────────────────
@@ -1128,45 +1092,6 @@ impl<T: Config> Pallet<T> {
     // Bucket management
     // ─────────────────────────────────────────────────────────────
 
-    /// Create a new bucket.
-    /// 
-    /// The caller becomes the bucket admin. The bucket starts empty with no
-    /// providers or data.
-    /// 
-    /// Parameters:
-    /// - `min_providers`: Minimum primary provider signatures required for checkpoints
-    /// - `visibility`: `Public` or `Private` (see `Visibility`). Wrappers that
-    ///   omit the choice must default to `Private` (fail-safe: an unset choice
-    ///   should protect data, not expose it).
-    #[pallet::weight(...)]
-    pub fn create_bucket(
-        origin: OriginFor<T>,
-        min_providers: u32,
-        visibility: Visibility,
-    ) -> DispatchResult;
-
-    /// Create a bucket and an agreement with an auto-selected provider in one call.
-    ///
-    /// Convenience extrinsic that:
-    /// 1. Runs `find_matching_provider(max_bytes, duration, max_price_per_byte)`
-    ///    against on-chain provider settings.
-    /// 2. Creates a bucket with `min_providers = 1` and the matched provider
-    ///    pushed straight into `primary_providers` (no pending request flow).
-    /// 3. Holds `provider.price_per_byte * max_bytes * duration` from the
-    ///    caller as locked payment.
-    ///
-    /// Providers who set `accepting_primary: true` have pre-consented to
-    /// agreements within their advertised parameters, so no acceptance step
-    /// is needed. Fails with `NoMatchingProvider` if nothing fits.
-    #[pallet::weight(...)]
-    pub fn create_bucket_with_storage(
-        origin: OriginFor<T>,
-        max_bytes: u64,
-        duration: BlockNumberFor<T>,
-        max_price_per_byte: BalanceOf<T>,
-        visibility: Visibility,
-    ) -> DispatchResult;
-
     /// Set minimum providers required for checkpoint (admin only).
     /// 
     /// Controls redundancy: checkpoints require at least this many primary provider
@@ -1385,6 +1310,13 @@ impl<T: Config> Pallet<T> {
     /// 
     /// The new owner can top up quota and transfer ownership further.
     /// Useful for selling agreement slots or transferring to a DAO.
+    /// 
+    /// The escrow moves with the owner: the locked payment and, for a replica,
+    /// the unspent sync balance are transferred on hold from the old owner to
+    /// the new one in the same call, so the hold and `StorageAgreement::owner`
+    /// never point at different accounts. Transferring to oneself is rejected
+    /// (`TransferToSelf`) so the event always marks a change of hands; any
+    /// other caller fails with `NotAgreementOwner`.
     /// 
     /// Parameters:
     /// - `bucket_id`: The bucket containing the agreement
@@ -2359,77 +2291,82 @@ pub struct MmrProof {
 ### Verification
 
 ```rust
+/// Judged in one step. A valid response settles the deposit; an invalid
+/// one slashes the provider on the spot with the returned reason. Only a
+/// malformed submission — unknown challenge, wrong provider, past the
+/// deadline, or a `Deleted` claim naming a signer who is not a bucket
+/// admin — fails as a plain dispatch error the provider may correct and
+/// resend.
 fn verify_challenge_response(
     challenge: &Challenge,
     response: &ChallengeResponse,
     bucket: &Bucket,
-) -> Result<(), Error> {
+) -> Result<(), SlashReason> {
+    let challenged_seq = challenge.start_seq + challenge.leaf_index;
     match response {
         ChallengeResponse::Proof { chunk_data, mmr_proof, chunk_proof } => {
-            // 1. Verify chunk hash
+            // The chunk must sit in the leaf and the leaf in the committed MMR.
             let chunk_hash = blake2_256(chunk_data);
-            
-            // 2. Verify chunk is in data_root
-            verify_merkle_proof(chunk_hash, challenge.chunk_index, chunk_proof, &mmr_proof.leaf.data_root)?;
-            
-            // 3. Verify data_root is in MMR
-            verify_mmr_proof(&mmr_proof, challenge.leaf_index, &challenge.mmr_root)?;
-            
-            Ok(())
+            let chunk_ok = verify_merkle_proof(
+                chunk_hash, challenge.chunk_index, chunk_proof, &mmr_proof.leaf.data_root,
+            );
+            let mmr_ok = verify_mmr_proof(mmr_proof, &challenge.mmr_root);
+            if chunk_ok && mmr_ok { Ok(()) } else { Err(SlashReason::InvalidProof) }
         }
-        
-        ChallengeResponse::Deleted { new_start_seq, admin, admin_signature, .. } => {
+
+        ChallengeResponse::Deleted { new_mmr_root, new_start_seq, admin, admin_signature } => {
             // Note: We don't check frozen_start_seq here. Freeze protects canonical
             // checkpoints (enforced at checkpoint time), but off-chain deletions can
             // race with freeze. If admin signed a deletion, provider has valid defense
             // regardless of freeze state. Off-chain is "messy but functional."
-            
-            // Challenged seq must be before new start
-            let challenged_seq = challenge.start_seq + challenge.leaf_index;
-            ensure!(challenged_seq < *new_start_seq, Error::InvalidDeletionProof);
-            
-            // Verify admin signature on new commitment and that signer is bucket admin
-            // ...
-            
-            Ok(())
+            //
+            // `admin` must be a bucket admin (dispatch error otherwise, see above).
+
+            // The purge must actually cover the challenged leaf.
+            if challenged_seq >= *new_start_seq {
+                return Err(SlashReason::InvalidDeletionClaim);
+            }
+            // And the admin must have signed the newer commitment.
+            let payload = CommitmentPayload::new(
+                challenge.bucket_id,
+                Commitment { mmr_root: *new_mmr_root, start_seq: *new_start_seq, leaf_count: 0 },
+            );
+            if verify_signature(admin_signature, &payload.encode(), admin) {
+                Ok(())
+            } else {
+                Err(SlashReason::InvalidDeletionClaim)
+            }
         }
-        
+
         ChallengeResponse::Superseded => {
-            // Provider can defend if challenged state has been superseded by canonical.
-            //
-            // This defense covers three cases:
-            // 1. Same data: challenged leaf exists in canonical with same content
-            // 2. Forked data: challenged leaf was on a conflicting branch that lost
-            // 3. Deleted data: canonical has moved past via deletion (start_seq increased)
-            //
-            // In all cases, canonical has "moved past" the challenged state. The provider
-            // signed something that is no longer relevant - canonical supersedes it.
-            //
-            // Note: We don't require admin signature here (unlike Deleted defense).
-            // Superseded is for when canonical evolved independently - possibly by a
-            // different admin/provider. The provider shouldn't be slashed for state
-            // that was superseded by canonical they weren't involved in.
+            // Provider can defend if the challenged commitment was replaced by a
+            // newer canonical snapshot that still covers the challenged leaf:
+            // same data re-committed, or a forked branch that lost. No admin
+            // signature is needed — canonical may have evolved without this
+            // provider.
             //
             // Deleted vs Superseded:
-            // - Deleted: requires admin signature, works without canonical snapshot
-            // - Superseded: requires canonical snapshot, works without admin signature
-            // For challenged_seq < snapshot.start_seq, BOTH defenses are valid.
-            // Provider can use whichever they have evidence for.
+            // - Deleted: requires admin signature, works without canonical snapshot,
+            //   covers data purged from the front (challenged_seq < new_start_seq)
+            // - Superseded: requires canonical snapshot, works without admin signature,
+            //   covers data still inside the canonical range
+            // Data rolled off the front of canonical is NOT a Superseded defense;
+            // it must go through the admin-signed Deleted path.
             //
-            // Provider IS liable when challenged_seq >= canonical_end: they signed
-            // something that extends BEYOND canonical, so they must Proof it.
-            
-            let snapshot = bucket.snapshot.as_ref().ok_or(Error::NoSnapshot)?;
-            let challenged_seq = challenge.start_seq + challenge.leaf_index;
-            let canonical_end = snapshot.start_seq + snapshot.leaf_count;
-            
-            // Superseded is valid if canonical has moved past challenged state:
-            // - challenged_seq < snapshot.start_seq: canonical deleted past this
-            // - challenged_seq < canonical_end: within canonical range
-            // NOT valid if challenged_seq >= canonical_end: provider is liable
-            ensure!(challenged_seq < canonical_end, Error::LeafBeyondCanonical);
-            
-            Ok(())
+            // Provider IS liable when the challenged root is still canonical (the
+            // data is live, only a Proof defends it) or when challenged_seq lies
+            // beyond canonical_end (they signed something canonical never covered).
+            let Some(snapshot) = bucket.snapshot.as_ref() else {
+                // Nothing canonical to lean on: the claim is unsupported.
+                return Err(SlashReason::InvalidSupersededClaim);
+            };
+            if challenge.mmr_root != snapshot.commitment.mmr_root
+                && snapshot.contains_seq(challenged_seq)
+            {
+                Ok(())
+            } else {
+                Err(SlashReason::InvalidSupersededClaim)
+            }
         }
     }
 }
