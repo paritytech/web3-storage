@@ -91,8 +91,6 @@ just build
 
 ## Further reading
 
-- [User Guide](../filesystems/USER_GUIDE.md) — complete user workflows
-- [Architecture](../filesystems/ARCHITECTURE.md) — encoding, security, chain integration
-- [API Reference](../filesystems/API_REFERENCE.md) — complete API docs
 - [Client README](../../clients/file-system/README.md) — SDK docs
-- [Architecture](../filesystems/ARCHITECTURE.md) — encoding, security, chain integration
+- [Design](../design/scalable-web3-storage.md) — how the storage layer works and why
+- API reference — `cargo doc --workspace --no-deps --open`; the same text shows on IDE hover for the PAPI and subxt bindings

@@ -72,14 +72,13 @@ When reviewing, analyze for:
      must either conform to the design or update the design doc in the same PR with
      rationale
 
-10. **Reference Docs Consistency** — invoke the `reference-docs` skill and follow its
-    procedure in full; the points below are a summary, not a substitute
-    - `docs/reference/` is derived documentation, but it is review-gated and must
-      stay true to the code
-    - If a change alters a documented flow or makes any statement in `docs/reference/`
-      (`EXTRINSICS_REFERENCE.md`, `PAYMENT_CALCULATOR.md`, …) no longer true, the doc
-      must be updated in the same change
-    - A missing reference-doc update is a blocking finding, flagged as
-      `📄 REFERENCE DOC OUT OF DATE`
+10. **Rustdoc as API Reference** — the pallets' `///` comments are the API reference:
+    they ship in the runtime metadata and surface in PAPI descriptors, subxt bindings,
+    and polkadot.js Apps. `#![warn(missing_docs)]` plus clippy `-D warnings` fails CI on
+    a missing one, so review the text, not the presence
+    - A call doc says what it does, who may call it, and what state it leaves behind
+    - An error doc says what condition triggers it and how the caller gets past it
+    - An event doc says what happened and what the fields mean when not obvious
+    - Flag vague or stale text as `📄 RUSTDOC UNCLEAR`, citing the item
 
 Provide specific feedback with file paths and line numbers.
