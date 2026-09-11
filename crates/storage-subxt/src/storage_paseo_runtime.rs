@@ -3467,9 +3467,9 @@ pub mod api {
             .hash();
         runtime_metadata_hash
             == [
-                76u8, 127u8, 18u8, 106u8, 180u8, 222u8, 121u8, 186u8, 73u8, 223u8, 15u8, 5u8, 84u8,
-                131u8, 132u8, 254u8, 163u8, 233u8, 192u8, 184u8, 230u8, 16u8, 5u8, 81u8, 193u8,
-                203u8, 84u8, 55u8, 135u8, 97u8, 119u8, 254u8,
+                77u8, 183u8, 190u8, 133u8, 170u8, 247u8, 165u8, 41u8, 197u8, 109u8, 122u8, 73u8,
+                239u8, 195u8, 210u8, 49u8, 220u8, 247u8, 169u8, 60u8, 149u8, 185u8, 23u8, 45u8,
+                139u8, 134u8, 225u8, 135u8, 68u8, 16u8, 159u8, 222u8,
             ]
     }
     pub mod system {
@@ -17997,27 +17997,6 @@ pub mod api {
                         ],
                     )
                 }
-                #[doc = " Per-challenger aggregates so the SDK doesn't have to scan historical"]
-                #[doc = " events to answer `get_challenge_stats`. Updated by `create_challenge`,"]
-                #[doc = " the defended path of `respond_to_challenge`, and"]
-                #[doc = " `slash_provider_for_failed_challenge`."]
-                pub fn challenger_stats(
-                    &self,
-                ) -> ::subxt::storage::StaticAddress<
-                    (challenger_stats::input::Param0,),
-                    challenger_stats::Output,
-                    ::subxt::utils::Maybe,
-                > {
-                    ::subxt::storage::StaticAddress::new_static(
-                        "StorageProvider",
-                        "ChallengerStats",
-                        [
-                            8u8, 63u8, 212u8, 126u8, 176u8, 205u8, 53u8, 129u8, 86u8, 26u8, 143u8,
-                            107u8, 108u8, 16u8, 235u8, 67u8, 48u8, 72u8, 164u8, 169u8, 46u8, 252u8,
-                            234u8, 72u8, 201u8, 195u8, 223u8, 123u8, 178u8, 58u8, 116u8, 109u8,
-                        ],
-                    )
-                }
                 #[doc = " Reverse index: account → bucket IDs they are a member of."]
                 pub fn member_buckets(
                     &self,
@@ -18128,15 +18107,6 @@ pub mod api {
                     pub type Param1 = ::subxt::utils::AccountId32;
                 }
                 pub type Output = ::core::primitive::u32;
-            }
-            pub mod challenger_stats {
-                use super::root_mod;
-                use super::runtime_types;
-                pub mod input {
-                    use super::runtime_types;
-                    pub type Param0 = ::subxt::utils::AccountId32;
-                }
-                pub type Output = runtime_types::storage_primitives::ChallengerStatRecord;
             }
             pub mod member_buckets {
                 use super::root_mod;
@@ -21067,9 +21037,10 @@ pub mod api {
                         "Revive",
                         "EthBlockBuilderIR",
                         [
-                            71u8, 238u8, 147u8, 189u8, 43u8, 68u8, 7u8, 59u8, 65u8, 129u8, 195u8,
-                            104u8, 36u8, 47u8, 160u8, 177u8, 141u8, 216u8, 47u8, 58u8, 4u8, 214u8,
-                            89u8, 77u8, 42u8, 174u8, 103u8, 255u8, 95u8, 196u8, 25u8, 232u8,
+                            116u8, 166u8, 102u8, 147u8, 101u8, 7u8, 206u8, 214u8, 182u8, 48u8,
+                            13u8, 231u8, 127u8, 31u8, 239u8, 190u8, 57u8, 113u8, 220u8, 48u8,
+                            235u8, 146u8, 231u8, 159u8, 0u8, 226u8, 33u8, 141u8, 210u8, 200u8,
+                            66u8, 23u8,
                         ],
                     )
                 }
@@ -31272,21 +31243,6 @@ pub mod api {
             pub struct ChallengeId<_0> {
                 pub deadline: _0,
                 pub index: ::core::primitive::u16,
-            }
-            #[derive(
-                :: subxt :: ext :: scale_decode :: DecodeAsType,
-                :: subxt :: ext :: scale_encode :: EncodeAsType,
-                Clone,
-                Debug,
-                Eq,
-                PartialEq,
-            )]
-            #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
-            #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-            pub struct ChallengerStatRecord {
-                pub total_challenges: ::core::primitive::u32,
-                pub successful_challenges: ::core::primitive::u32,
-                pub failed_challenges: ::core::primitive::u32,
             }
             #[derive(
                 :: subxt :: ext :: scale_decode :: DecodeAsType,
