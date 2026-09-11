@@ -30,7 +30,7 @@ pub use negotiate::{AgreementTermsOf, NegotiateRequest, SignedTerms};
 pub use provider_challenge::{
     self as challenge_responder, ChallengeChainClient, ChallengeError, ChallengeProofSource,
     ChallengeResponder, ChallengeResponderConfig, ChallengeResponderHandle,
-    ChallengeResponseResult, DetectedChallenge, ResponderCommand,
+    ChallengeResponseResult, DetectedChallenge, ProofTarget, ResponderCommand,
 };
 /// The chain-state coordinator lives in the `provider-coordinator` crate; keep
 /// the old module path working for existing consumers.

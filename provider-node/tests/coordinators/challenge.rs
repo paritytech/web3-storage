@@ -9,8 +9,8 @@ use std::time::Duration;
 use storage_primitives::BucketId;
 use storage_provider_node::challenge_responder::ChallengeError;
 use storage_provider_node::{
-    ChallengeChainClient, ChallengeResponder, ChallengeResponderConfig, ChallengeResponseResult,
-    DetectedChallenge,
+    ChallengeChainClient, ChallengeProofSource, ChallengeResponder, ChallengeResponderConfig,
+    ChallengeResponseResult, DetectedChallenge, ProofTarget,
 };
 
 struct MockChallengeChainClient {
@@ -72,9 +72,41 @@ impl ChallengeChainClient for MockChallengeChainClient {
     ) -> Result<H256, ChallengeError> {
         self.submitted.lock().unwrap().push(challenge_id);
         if let Some(err) = self.submit_error.lock().unwrap().as_ref() {
-            return Err(ChallengeError::Internal(err.clone()));
+            return Err(ChallengeError::ChainUnavailable {
+                detail: err.clone(),
+            });
         }
         Ok(H256::zero())
+    }
+}
+
+/// A [`ChallengeProofSource`] that delegates `get_mmr_proof` to a real
+/// source but always fails `get_chunk_at_index` with a backend-unavailable
+/// error, simulating a storage outage that hits partway through gathering a
+/// response rather than the data being missing.
+struct StepTwoBackendFailure(Arc<dyn ChallengeProofSource>);
+
+impl ChallengeProofSource for StepTwoBackendFailure {
+    fn get_mmr_proof(
+        &self,
+        bucket_id: BucketId,
+        leaf_index: u64,
+    ) -> Result<storage_primitives::MmrProof, ChallengeError> {
+        self.0.get_mmr_proof(bucket_id, leaf_index)
+    }
+
+    fn get_chunk_at_index(
+        &self,
+        data_root: H256,
+        chunk_index: u64,
+    ) -> Result<(Vec<u8>, storage_primitives::MerkleProof), ChallengeError> {
+        Err(ChallengeError::StorageUnavailable {
+            target: ProofTarget::Chunk {
+                data_root,
+                chunk_index,
+            },
+            detail: "simulated RocksDB outage".to_string(),
+        })
     }
 }
 
@@ -219,7 +251,11 @@ async fn test_successful_challenge_response() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn test_proof_generation_failed_no_bucket() {
+async fn test_data_not_found_no_bucket() {
+    // A bucket that was never created is genuine absence - the proof data
+    // provably does not exist, so this reports DataNotFound (and risks the
+    // stake) rather than ProofGenerationFailed (which now means "retry -
+    // the backend, not the data, is the problem").
     let (state, _dir) = test_state();
     let challenge = DetectedChallenge {
         bucket_id: 999,
@@ -253,6 +289,57 @@ async fn test_proof_generation_failed_no_bucket() {
         state.challenge_proof_source(),
         Box::new(Arc::clone(&mock)),
     );
+    let handle = responder
+        .start(tokio::sync::broadcast::channel(16).1, Some(callback))
+        .await
+        .unwrap();
+
+    let result_ref = Arc::clone(&result);
+    assert!(
+        wait_for(5, 10, || {
+            let r = Arc::clone(&result_ref);
+            async move { r.lock().unwrap().is_some() }
+        })
+        .await,
+        "timed out waiting for callback"
+    );
+    handle.stop().await.unwrap();
+
+    let r = result.lock().unwrap();
+    assert!(
+        matches!(&*r, Some(ChallengeResponseResult::DataNotFound { .. })),
+        "expected DataNotFound, got {:?}",
+        r
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn test_proof_generation_failed_on_backend_outage_not_data_not_found() {
+    // The exact case this cycle exists for: a storage backend failure while
+    // gathering the chunk (not the data being missing) must be reported as
+    // a retryable proof-generation failure, not as data loss. Before the
+    // cause-based classification, any step-2 failure - missing or broken -
+    // was unconditionally DataNotFound, so this assertion fails against the
+    // pre-cycle code.
+    let (state, challenge, _dir) = test_state_with_data();
+    let mock = Arc::new(MockChallengeChainClient::new().with_challenges(vec![challenge]));
+
+    let result: Arc<Mutex<Option<ChallengeResponseResult>>> = Arc::new(Mutex::new(None));
+    let result_clone = Arc::clone(&result);
+    let callback: Arc<dyn Fn(ChallengeResponseResult) + Send + Sync> = Arc::new(move |r| {
+        let mut guard = result_clone.lock().unwrap();
+        if guard.is_none() {
+            *guard = Some(r);
+        }
+    });
+
+    let config = ChallengeResponderConfig {
+        poll_interval: Duration::from_millis(50),
+        auto_respond: true,
+        ..ChallengeResponderConfig::new(alice_account())
+    };
+    let proof_source = Arc::new(StepTwoBackendFailure(state.challenge_proof_source()));
+    let responder = ChallengeResponder::new(config, proof_source, Box::new(Arc::clone(&mock)));
     let handle = responder
         .start(tokio::sync::broadcast::channel(16).1, Some(callback))
         .await
