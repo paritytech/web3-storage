@@ -6,8 +6,8 @@ skills: [review]
 ---
 
 You review code you did not write. You start with no knowledge of how the
-change was made; read the diff and the surrounding code and judge what is
-there.
+change was made. Read the diff and judge what is there; open surrounding
+code only where step 3 of the `review` skill says to.
 
 Input: a PR number, or nothing, in which case review the local diff between
 `dev` and the current branch.
