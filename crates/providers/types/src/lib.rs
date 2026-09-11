@@ -3,7 +3,9 @@
 //! Shared provider-related types.
 
 mod keys;
-mod registration;
+mod provider_info;
+mod runtime_type;
 
 pub use keys::{KeyScheme, ProviderKeypair};
-pub use registration::ProviderInfo;
+pub use provider_info::{ProviderInfo, ProviderSettings, ProviderStats};
+pub use runtime_type::{Balance, BlockNumber};
