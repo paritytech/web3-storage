@@ -1,0 +1,50 @@
+name: Zizmor
+
+# Static analysis of the GitHub Actions workflows themselves. zizmor only parses
+# the workflow/action YAML — it never executes repo code — so it is safe to run
+# on fork PRs with a read-only token. Fails on any finding not explicitly
+# accepted in .github/zizmor.yml, keeping the CI hardening from regressing.
+on:
+  push:
+    branches: [main, dev]
+  # No base-branch filter: stacked PRs (base = another feature branch)
+  # must get the same CI as dev-targeted PRs.
+  pull_request:
+  merge_group:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  ZIZMOR_VERSION: 1.25.2
+
+jobs:
+  zizmor:
+    name: Audit workflows
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Cache the compiled binary so only the first run pays the build cost.
+      - name: Cache zizmor
+        id: cache-zizmor
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5
+        with:
+          path: ~/.cargo/bin/zizmor
+          key: zizmor-${{ env.ZIZMOR_VERSION }}-${{ runner.os }}
+
+      - name: Install zizmor
+        if: steps.cache-zizmor.outputs.cache-hit != 'true'
+        run: cargo install zizmor --version "$ZIZMOR_VERSION" --locked
+
+      - name: Audit .github/
+        run: zizmor --offline .github/

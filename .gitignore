@@ -1,7 +1,11 @@
 # Generated files
 /target/
 **/*.rs.bk
-Cargo.lock
+coverage
+provider-data
+
+# pnpm content-addressable store (package cache; reconstructible from lockfiles)
+.pnpm-store/
 
 # IDE
 .idea/
@@ -13,6 +17,7 @@ Cargo.lock
 # OS
 .DS_Store
 Thumbs.db
+desktop.ini
 
 # Test artifacts
 *.log
@@ -21,3 +26,56 @@ Thumbs.db
 # Local config
 .env
 .env.local
+
+# Downloaded binaries
+.bin/
+
+# Node.js
+node_modules/
+package-lock.json
+.papi/
+
+# Python
+__pycache__
+
+# Single source of truth lives in packages/papi/.papi/. Track its config +
+# metadata so CI can build without a running chain; descriptor dist/ is
+# regenerated, never tracked.
+!packages/papi/.papi/
+packages/papi/.papi/descriptors/dist/
+.vite/
+*.tsbuildinfo
+
+# Generated chain specs
+zombienet/storage-local-spec.json
+
+# Build output
+**/dist/
+
+# Playwright artefacts
+user-interfaces/**/playwright-report/
+user-interfaces/**/test-results/
+
+# Local Claude state (per-developer)
+.claude/scheduled_tasks.lock
+.claude/settings.local.json
+
+# The repo-root pnpm-lock.yaml is committed; npm lockfiles are not (no npm
+# islands — everything JS lives in the pnpm workspace).
+
+# Binary/generated docs
+*.docx
+
+# Screenshots
+Screenshot.png
+
+# c8 output from `just e2e`
+examples/papi/coverage/
+
+# llvm-cov
+coverage-integration.md
+coverage-modules.md
+coverage-summary.txt
+lcov-integration.info
+lcov.info
+patch-coverage.md

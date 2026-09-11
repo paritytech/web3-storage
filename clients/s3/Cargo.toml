@@ -1,0 +1,44 @@
+[package]
+name = "s3-client"
+version = "0.1.0"
+authors.workspace = true
+edition.workspace = true
+license = "Apache-2.0"
+repository.workspace = true
+description = "S3-compatible client SDK for web3-storage"
+
+[dependencies]
+# Internal
+s3-primitives = { workspace = true, features = ["std"] }
+storage-client = { workspace = true }
+storage-subxt = { workspace = true }
+
+# Substrate primitives
+sp-core = { workspace = true, features = ["std"] }
+sp-runtime = { workspace = true, features = ["std"] }
+
+# Async/HTTP
+futures = { workspace = true }
+reqwest = { workspace = true }
+tokio = { workspace = true }
+
+# Subxt for chain interaction
+subxt = { workspace = true }
+
+# Utilities
+hex = { workspace = true, features = ["std"] }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[dev-dependencies]
+subxt-signer = { workspace = true }
+tokio = { workspace = true }
+
+[[example]]
+name = "basic_usage"
+path = "examples/basic_usage.rs"
+
+[[example]]
+name = "ci_integration_test"
+path = "examples/ci_integration_test.rs"

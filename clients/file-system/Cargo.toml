@@ -1,0 +1,43 @@
+[package]
+name = "file-system-client"
+version = "0.1.0"
+authors.workspace = true
+edition.workspace = true
+license = "Apache-2.0"
+repository.workspace = true
+description = "Client SDK for Layer 1 file system built on Scalable Web3 Storage"
+
+[dependencies]
+# Internal dependencies
+file-system-primitives = { workspace = true, features = ["std"] }
+storage-client = { workspace = true }
+storage-primitives = { workspace = true, features = ["std"] }
+storage-subxt = { workspace = true }
+
+# Async runtime
+tokio = { workspace = true }
+reqwest = { workspace = true }
+
+# Substrate/Polkadot
+sp-core = { workspace = true, features = ["std"] }
+sp-crypto-hashing = { workspace = true, features = ["std"] }
+sp-runtime = { workspace = true, features = ["std"] }
+subxt = { workspace = true }
+
+# Utilities
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+thiserror = { workspace = true }
+hex = { workspace = true, features = ["std"] }
+
+[dev-dependencies]
+subxt-signer = { workspace = true }
+tokio-test = { workspace = true }
+
+[[example]]
+name = "basic_usage"
+path = "examples/basic_usage.rs"
+
+[[example]]
+name = "ci_integration_test"
+path = "examples/ci_integration_test.rs"

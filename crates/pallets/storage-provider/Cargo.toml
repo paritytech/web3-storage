@@ -1,0 +1,60 @@
+[package]
+name = "pallet-storage-provider"
+version = "0.1.0"
+authors.workspace = true
+edition.workspace = true
+license = "Apache-2.0"
+repository.workspace = true
+description = "Substrate pallet for scalable Web3 storage"
+
+[dependencies]
+storage-primitives = { workspace = true }
+codec = { workspace = true }
+scale-info = { workspace = true }
+frame-support = { workspace = true }
+frame-system = { workspace = true }
+frame-benchmarking = { workspace = true, optional = true }
+sp-api = { workspace = true }
+sp-core = { workspace = true, features = ["serde"] }
+sp-runtime = { workspace = true }
+sp-io = { workspace = true }
+serde = { workspace = true, features = ["alloc"] }
+
+[dev-dependencies]
+serde_json = { workspace = true, features = ["std"] }
+sp-keyring = { workspace = true, features = ["std"] }
+sp-keystore = { workspace = true, features = ["std"] }
+pallet-balances = { workspace = true, features = ["std"] }
+
+[features]
+default = ["std"]
+std = [
+	"codec/std",
+	"frame-benchmarking?/std",
+	"frame-support/std",
+	"frame-system/std",
+	"pallet-balances/std",
+	"scale-info/std",
+	"serde/std",
+	"serde_json/std",
+	"sp-api/std",
+	"sp-core/std",
+	"sp-io/std",
+	"sp-keyring/std",
+	"sp-keystore/std",
+	"sp-runtime/std",
+	"storage-primitives/std",
+]
+runtime-benchmarks = [
+	"frame-benchmarking/runtime-benchmarks",
+	"frame-support/runtime-benchmarks",
+	"frame-system/runtime-benchmarks",
+	"pallet-balances/runtime-benchmarks",
+	"sp-runtime/runtime-benchmarks",
+]
+try-runtime = [
+	"frame-support/try-runtime",
+	"frame-system/try-runtime",
+	"pallet-balances/try-runtime",
+	"sp-runtime/try-runtime",
+]

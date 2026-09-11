@@ -1,0 +1,53 @@
+# Configuration for cargo-deny (https://embarkstudios.github.io/cargo-deny/)
+#
+# Run: cargo deny check licenses
+
+[licenses]
+version = 2
+allow = [
+	"0BSD",
+	"Apache-2.0 WITH LLVM-exception",
+	"Apache-2.0",
+	"BSD-1-Clause",
+	"BSD-2-Clause",
+	"BSD-3-Clause",
+	"BSL-1.0",
+	"CC0-1.0",
+	"CDLA-Permissive-2.0",
+	"GPL-3.0",
+	"GPL-3.0-only",
+	"ISC",
+	"LGPL-2.1-or-later",
+	"MIT",
+	"MIT-0",
+	"MPL-2.0",
+	"Unicode-3.0",
+	"Unlicense",
+	"Zlib",
+]
+
+# Some older crates use non-SPDX license expressions (e.g. "MIT/Apache-2.0"
+# or "Apache-2.0/GPL-3.0"). cargo-deny emits parse warnings for these but
+# the underlying licenses are all in the allow list above.
+
+# r-efi (LGPL-2.1-or-later) is only compiled for UEFI targets, which are
+# outside our target set. It is allowed above for completeness.
+
+# smoldot (the embedded light client behind subxt's `light-client` feature)
+# is GPL-3.0-or-later with the Classpath exception. Compatible with this
+# repo's GPL-3.0-only provider node — the exception only grants additional
+# linking permissions — but scoped to these two crates rather than allowing
+# the expression workspace-wide.
+[[licenses.exceptions]]
+allow = ["GPL-3.0-or-later WITH Classpath-exception-2.0"]
+crate = "smoldot"
+
+[[licenses.exceptions]]
+allow = ["GPL-3.0-or-later WITH Classpath-exception-2.0"]
+crate = "smoldot-light"
+
+[licenses.private]
+ignore = true
+
+[advisories]
+unmaintained = "workspace"

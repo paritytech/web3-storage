@@ -1,0 +1,491 @@
+// SPDX-License-Identifier: Apache-2.0
+
+//! Challenge Responder - Automated response to on-chain challenges.
+//!
+//! This crate provides a background service that reacts to
+//! `ChallengeCreated` events (fanned out by the chain-state coordinator)
+//! against this provider and automatically responds with the required proof
+//! data. A full `Challenges` scan runs at startup and on every stream
+//! (re)subscription to catch challenges raised while the node was down, plus
+//! on a slow safety-net interval — a missed challenge means getting slashed,
+//! so the event path is backstopped rather than trusted blindly.
+
+use provider_chain::{BlockEvent, BlockEventRx};
+use sp_core::H256;
+use sp_runtime::AccountId32;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::time::Duration;
+use storage_primitives::{BucketId, MerkleProof, MmrProof};
+use tokio::sync::{broadcast, mpsc};
+
+/// Errors surfaced by the challenge responder.
+#[derive(Debug, thiserror::Error)]
+pub enum ChallengeError {
+    /// Chain interaction failed (polling or submitting).
+    #[error("chain error: {0}")]
+    Chain(String),
+    /// Local storage could not produce the requested proof data.
+    #[error("storage error: {0}")]
+    Storage(String),
+    /// Internal service error (e.g. control channel closed).
+    #[error("internal error: {0}")]
+    Internal(String),
+}
+
+/// Local proof data the responder needs to answer a challenge.
+///
+/// Backed by the provider node's storage backend; kept narrow so this crate
+/// stays decoupled from the full storage engine.
+pub trait ChallengeProofSource: Send + Sync {
+    /// Generate an MMR proof for the given leaf of a bucket's commitment.
+    fn get_mmr_proof(
+        &self,
+        bucket_id: BucketId,
+        leaf_index: u64,
+    ) -> Result<MmrProof, ChallengeError>;
+
+    /// Fetch a chunk and its Merkle proof under the given data root.
+    fn get_chunk_at_index(
+        &self,
+        data_root: H256,
+        chunk_index: u64,
+    ) -> Result<(Vec<u8>, MerkleProof), ChallengeError>;
+}
+
+/// Configuration for the challenge responder.
+#[derive(Clone, Debug)]
+pub struct ChallengeResponderConfig {
+    /// Account this responder acts for; used to filter `ChallengeCreated`
+    /// events down to our own challenges. Validated by the caller before the
+    /// responder starts.
+    pub provider_account: AccountId32,
+    /// Safety-net interval between full `Challenges` reconciliation scans.
+    /// Challenges are normally handled event-driven; zero disables the scan.
+    pub poll_interval: Duration,
+    /// Maximum time to spend gathering proof data.
+    pub proof_timeout: Duration,
+    /// Whether to automatically respond to challenges.
+    pub auto_respond: bool,
+}
+
+impl ChallengeResponderConfig {
+    /// Config for `provider_account` with the default poll interval, proof
+    /// timeout and auto-respond setting.
+    pub fn new(provider_account: AccountId32) -> Self {
+        Self {
+            provider_account,
+            poll_interval: Duration::from_secs(300),
+            proof_timeout: Duration::from_secs(30),
+            auto_respond: true,
+        }
+    }
+}
+
+/// Information about a detected challenge.
+#[derive(Clone, Debug)]
+pub struct DetectedChallenge {
+    /// Bucket being challenged.
+    pub bucket_id: BucketId,
+    /// Challenge deadline (block number).
+    pub deadline: u32,
+    /// Challenge index within the deadline.
+    pub index: u16,
+    /// MMR root being challenged.
+    pub mmr_root: H256,
+    /// Start sequence of the commitment.
+    pub start_seq: u64,
+    /// Leaf index in the MMR to prove.
+    pub leaf_index: u64,
+    /// Chunk index within the leaf to prove.
+    pub chunk_index: u64,
+    /// Challenger's account.
+    pub challenger: String,
+}
+
+/// Result of responding to a challenge.
+#[derive(Clone, Debug)]
+pub enum ChallengeResponseResult {
+    /// Successfully submitted response.
+    Success {
+        challenge_id: (u32, u16),
+        block_hash: H256,
+    },
+    /// Failed to gather proof data.
+    ProofGenerationFailed {
+        challenge_id: (u32, u16),
+        error: String,
+    },
+    /// Failed to submit response transaction.
+    SubmissionFailed {
+        challenge_id: (u32, u16),
+        error: String,
+    },
+    /// Challenge data not found locally.
+    DataNotFound {
+        challenge_id: (u32, u16),
+        bucket_id: BucketId,
+        leaf_index: u64,
+    },
+}
+
+/// Trait abstracting chain interactions for the challenge responder.
+#[async_trait::async_trait]
+pub trait ChallengeChainClient: Send + Sync {
+    /// Poll the chain for active challenges targeting this provider.
+    async fn poll_challenges(&self) -> Result<Vec<DetectedChallenge>, ChallengeError>;
+
+    /// Point-read a single challenge by id, `None` if it is gone (already
+    /// responded / reaped) or targets another provider. Backs the
+    /// event-driven path, where `ChallengeCreated` carries the id but not
+    /// the proof parameters.
+    async fn fetch_challenge(
+        &self,
+        deadline: u32,
+        index: u16,
+    ) -> Result<Option<DetectedChallenge>, ChallengeError>;
+
+    /// Submit a challenge response transaction.
+    async fn submit_response(
+        &self,
+        challenge_id: (u32, u16),
+        chunk_data: Vec<u8>,
+        mmr_proof: MmrProof,
+        chunk_proof: MerkleProof,
+    ) -> Result<H256, ChallengeError>;
+}
+
+#[async_trait::async_trait]
+impl<T: ChallengeChainClient> ChallengeChainClient for Arc<T> {
+    async fn poll_challenges(&self) -> Result<Vec<DetectedChallenge>, ChallengeError> {
+        self.as_ref().poll_challenges().await
+    }
+
+    async fn fetch_challenge(
+        &self,
+        deadline: u32,
+        index: u16,
+    ) -> Result<Option<DetectedChallenge>, ChallengeError> {
+        self.as_ref().fetch_challenge(deadline, index).await
+    }
+
+    async fn submit_response(
+        &self,
+        challenge_id: (u32, u16),
+        chunk_data: Vec<u8>,
+        mmr_proof: MmrProof,
+        chunk_proof: MerkleProof,
+    ) -> Result<H256, ChallengeError> {
+        self.as_ref()
+            .submit_response(challenge_id, chunk_data, mmr_proof, chunk_proof)
+            .await
+    }
+}
+
+/// Commands for controlling the responder.
+#[derive(Debug)]
+pub enum ResponderCommand {
+    /// Stop the responder.
+    Stop,
+    /// Pause automatic responses.
+    Pause,
+    /// Resume automatic responses.
+    Resume,
+    /// Manually respond to a specific challenge.
+    RespondTo(DetectedChallenge),
+}
+
+/// Handle for controlling the challenge responder.
+pub struct ChallengeResponderHandle {
+    command_tx: mpsc::Sender<ResponderCommand>,
+    running: Arc<AtomicBool>,
+}
+
+impl ChallengeResponderHandle {
+    /// Check if the responder is running.
+    pub fn is_running(&self) -> bool {
+        self.running.load(Ordering::SeqCst)
+    }
+
+    /// Stop the responder.
+    pub async fn stop(&self) -> Result<(), ChallengeError> {
+        self.command_tx
+            .send(ResponderCommand::Stop)
+            .await
+            .map_err(|_| ChallengeError::Internal("Responder channel closed".to_string()))
+    }
+
+    /// Pause automatic responses.
+    pub async fn pause(&self) -> Result<(), ChallengeError> {
+        self.command_tx
+            .send(ResponderCommand::Pause)
+            .await
+            .map_err(|_| ChallengeError::Internal("Responder channel closed".to_string()))
+    }
+
+    /// Resume automatic responses.
+    pub async fn resume(&self) -> Result<(), ChallengeError> {
+        self.command_tx
+            .send(ResponderCommand::Resume)
+            .await
+            .map_err(|_| ChallengeError::Internal("Responder channel closed".to_string()))
+    }
+}
+
+/// Challenge responder service.
+pub struct ChallengeResponder {
+    config: ChallengeResponderConfig,
+    proof_source: Arc<dyn ChallengeProofSource>,
+    chain_client: Box<dyn ChallengeChainClient>,
+}
+
+impl ChallengeResponder {
+    /// Create a new challenge responder.
+    pub fn new(
+        config: ChallengeResponderConfig,
+        proof_source: Arc<dyn ChallengeProofSource>,
+        chain_client: Box<dyn ChallengeChainClient>,
+    ) -> Self {
+        Self {
+            config,
+            proof_source,
+            chain_client,
+        }
+    }
+
+    /// Start the challenge responder background service.
+    ///
+    /// `events_rx` is a subscription to the chain-state coordinator's block
+    /// event fan-out; the responder reacts to `ChallengeCreated` events and
+    /// reconciles with a full scan on `Resubscribed` / lag / the safety-net
+    /// interval.
+    pub async fn start(
+        self,
+        events_rx: BlockEventRx,
+        callback: Option<Arc<dyn Fn(ChallengeResponseResult) + Send + Sync>>,
+    ) -> Result<ChallengeResponderHandle, ChallengeError> {
+        let (command_tx, command_rx) = mpsc::channel::<ResponderCommand>(32);
+        let running = Arc::new(AtomicBool::new(true));
+        let running_clone = running.clone();
+
+        tokio::spawn(async move {
+            self.run_loop(command_rx, events_rx, running_clone, callback)
+                .await;
+        });
+
+        Ok(ChallengeResponderHandle {
+            command_tx,
+            running,
+        })
+    }
+
+    /// Main responder loop.
+    async fn run_loop(
+        self,
+        mut command_rx: mpsc::Receiver<ResponderCommand>,
+        mut events_rx: BlockEventRx,
+        running: Arc<AtomicBool>,
+        callback: Option<Arc<dyn Fn(ChallengeResponseResult) + Send + Sync>>,
+    ) {
+        let mut paused = false;
+        // A closed broadcast channel (follower gone) yields `Closed` on every
+        // poll; disarm the events select arm then, or the loop busy-spins.
+        let mut events_open = true;
+        // The safety-net interval's first tick fires immediately, doubling as
+        // the startup bootstrap scan (challenges raised while the node was
+        // down). With the safety net disabled, the bootstrap scan comes from
+        // the follower's `Resubscribed` event on its first connect instead.
+        let safety_net = !self.config.poll_interval.is_zero();
+        let mut interval = tokio::time::interval(if safety_net {
+            self.config.poll_interval
+        } else {
+            Duration::from_secs(3600)
+        });
+
+        tracing::info!("Challenge responder started");
+
+        loop {
+            tokio::select! {
+                // Prefer control commands over event/scan work, so a
+                // Pause/Stop queued right after start() is honored first.
+                biased;
+
+                cmd = command_rx.recv() => {
+                    match cmd {
+                        Some(ResponderCommand::Stop) | None => {
+                            tracing::info!("Challenge responder stopping");
+                            running.store(false, Ordering::SeqCst);
+                            break;
+                        }
+                        Some(ResponderCommand::Pause) => {
+                            tracing::info!("Challenge responder paused");
+                            paused = true;
+                        }
+                        Some(ResponderCommand::Resume) => {
+                            tracing::info!("Challenge responder resumed");
+                            paused = false;
+                        }
+                        Some(ResponderCommand::RespondTo(challenge)) => {
+                            let result = self.respond_to_challenge(&challenge).await;
+                            if let Some(ref cb) = callback {
+                                cb(result);
+                            }
+                        }
+                    }
+                }
+                // While paused, stop consuming so events stay queued instead of
+                // being dropped. Replaying them on resume is safe: each one is
+                // point-read against live chain state, so anything already
+                // resolved is a no-op. A pause longer than the channel's
+                // capacity surfaces as `Lagged` below, which reconciles with a
+                // full scan.
+                event = events_rx.recv(), if events_open && !paused => {
+                    if matches!(event, Err(broadcast::error::RecvError::Closed)) {
+                        events_open = false;
+                        continue;
+                    }
+                    // Unlike `paused`, this is permanent config: drain and drop,
+                    // since no later state change makes these actionable.
+                    if !self.config.auto_respond {
+                        continue;
+                    }
+                    match event {
+                        Ok(BlockEvent::ChallengeCreated { deadline, index, provider, .. }) => {
+                            // Only challenges against our own account are actionable.
+                            if self.config.provider_account != provider {
+                                continue;
+                            }
+                            match self.chain_client.fetch_challenge(deadline, index).await {
+                                Ok(Some(challenge)) => {
+                                    tracing::info!(
+                                        "Challenge event for bucket {} (deadline: {}, index: {})",
+                                        challenge.bucket_id,
+                                        deadline,
+                                        index
+                                    );
+                                    let result = self.respond_to_challenge(&challenge).await;
+                                    if let Some(ref cb) = callback {
+                                        cb(result);
+                                    }
+                                }
+                                Ok(None) => {}
+                                Err(e) => {
+                                    tracing::warn!(
+                                        "Failed to fetch challenge {deadline}/{index} after event: {e}"
+                                    );
+                                }
+                            }
+                        }
+                        Ok(BlockEvent::Resubscribed { .. }) | Err(broadcast::error::RecvError::Lagged(_)) => {
+                            // Events may have been missed: reconcile with a scan.
+                            self.scan_and_respond(&callback).await;
+                        }
+                        Ok(_) | Err(broadcast::error::RecvError::Closed) => {}
+                    }
+                }
+                _ = interval.tick() => {
+                    if paused || !self.config.auto_respond || !safety_net {
+                        continue;
+                    }
+                    self.scan_and_respond(&callback).await;
+                }
+            }
+        }
+    }
+
+    /// Full `Challenges` scan; respond to everything targeting this provider.
+    async fn scan_and_respond(
+        &self,
+        callback: &Option<Arc<dyn Fn(ChallengeResponseResult) + Send + Sync>>,
+    ) {
+        match self.chain_client.poll_challenges().await {
+            Ok(challenges) => {
+                for challenge in challenges {
+                    tracing::info!(
+                        "Detected challenge for bucket {} (deadline: {}, index: {})",
+                        challenge.bucket_id,
+                        challenge.deadline,
+                        challenge.index
+                    );
+
+                    let result = self.respond_to_challenge(&challenge).await;
+                    if let Some(ref cb) = callback {
+                        cb(result);
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!("Failed to poll for challenges: {}", e);
+            }
+        }
+    }
+
+    /// Respond to a specific challenge.
+    async fn respond_to_challenge(&self, challenge: &DetectedChallenge) -> ChallengeResponseResult {
+        let challenge_id = (challenge.deadline, challenge.index);
+
+        tracing::info!(
+            "Responding to challenge {:?} for bucket {}",
+            challenge_id,
+            challenge.bucket_id
+        );
+
+        // Step 1: Generate MMR proof (includes the leaf with data_root)
+        let mmr_proof = match self
+            .proof_source
+            .get_mmr_proof(challenge.bucket_id, challenge.leaf_index)
+        {
+            Ok(proof) => proof,
+            Err(e) => {
+                tracing::error!("Failed to generate MMR proof: {}", e);
+                return ChallengeResponseResult::ProofGenerationFailed {
+                    challenge_id,
+                    error: e.to_string(),
+                };
+            }
+        };
+
+        // Step 2: Get chunk data and Merkle proof using data_root from MMR leaf
+        let data_root = mmr_proof.leaf.data_root;
+        let (chunk_data, chunk_proof) = match self
+            .proof_source
+            .get_chunk_at_index(data_root, challenge.chunk_index)
+        {
+            Ok(data) => data,
+            Err(e) => {
+                tracing::error!("Failed to get chunk data: {}", e);
+                return ChallengeResponseResult::DataNotFound {
+                    challenge_id,
+                    bucket_id: challenge.bucket_id,
+                    leaf_index: challenge.leaf_index,
+                };
+            }
+        };
+
+        // Step 3: Submit response transaction
+        match self
+            .chain_client
+            .submit_response(challenge_id, chunk_data, mmr_proof, chunk_proof)
+            .await
+        {
+            Ok(block_hash) => {
+                tracing::info!(
+                    "Successfully responded to challenge {:?} in block {:?}",
+                    challenge_id,
+                    block_hash
+                );
+                ChallengeResponseResult::Success {
+                    challenge_id,
+                    block_hash,
+                }
+            }
+            Err(e) => {
+                tracing::error!("Failed to submit response: {}", e);
+                ChallengeResponseResult::SubmissionFailed {
+                    challenge_id,
+                    error: e.to_string(),
+                }
+            }
+        }
+    }
+}
