@@ -986,6 +986,8 @@ pub mod pallet {
         AgreementNotExpired,
         AgreementExtensionsBlocked,
         NotAgreementOwner,
+        /// The new owner is the current owner.
+        TransferToSelf,
         DurationTooShort,
         DurationTooLong,
         PaymentExceedsMax,
@@ -1868,6 +1870,50 @@ pub mod pallet {
                     Ok(())
                 },
             )
+        }
+
+        /// Owner only. Hand the agreement to `new_owner`, who can then top up,
+        /// extend, settle, or transfer it again. The escrow moves with it and
+        /// stays on hold.
+        #[pallet::call_index(52)]
+        #[pallet::weight(T::WeightInfo::transfer_agreement_ownership())]
+        pub fn transfer_agreement_ownership(
+            origin: OriginFor<T>,
+            bucket_id: BucketId,
+            provider: T::AccountId,
+            new_owner: T::AccountId,
+        ) -> DispatchResult {
+            let who = ensure_signed(origin)?;
+            ensure!(new_owner != who, Error::<T>::TransferToSelf);
+
+            StorageAgreements::<T>::try_mutate(
+                bucket_id,
+                &provider,
+                |maybe_agreement| -> DispatchResult {
+                    let agreement = maybe_agreement
+                        .as_mut()
+                        .ok_or(Error::<T>::AgreementNotFound)?;
+                    ensure!(agreement.owner == who, Error::<T>::NotAgreementOwner);
+
+                    // The whole escrow sits on the owner: the prepaid fee plus,
+                    // for a replica, the unspent sync balance.
+                    let mut escrow = agreement.payment_locked;
+                    if let ProviderRole::Replica { sync_balance, .. } = &agreement.role {
+                        escrow = escrow.saturating_add(*sync_balance);
+                    }
+                    Self::move_escrow(&who, &new_owner, escrow)?;
+                    agreement.owner = new_owner.clone();
+                    Ok(())
+                },
+            )?;
+
+            Self::deposit_event(Event::AgreementOwnershipTransferred {
+                bucket_id,
+                provider,
+                old_owner: who,
+                new_owner,
+            });
+            Ok(())
         }
 
         /// Extend agreement duration (immediate, no provider approval needed).
