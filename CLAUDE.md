@@ -80,6 +80,13 @@ design doc.
   code, delegate to the `reviewer` agent so the review starts from a clean
   context.
 
+**Conventions**
+
+- Pull requests: base branch, single responsibility, regenerated files, benchmarks, description structure, stacking. More detail in [Pull Request](#pull-requests) section.
+- Issues: one problem per issue, description structure, the agent drafts and the user files. More detail in [Issues](#issues) section.
+- Writing: documentation rules, plain language, root-cause fixes.
+- Code: Rust workspace and Cargo dependency rules, JS/TS via `polkadot-api`.
+
 **Automatic formatting:**
 - ALWAYS run `/format` after generating or modifying Rust code, and before
   creating any git commit (Rust + TOML formatting, feature-propagation lint,
