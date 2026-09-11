@@ -9,6 +9,11 @@ file is loaded into every session but is not CODEOWNERS-gated, so any copy of
 a design fact placed here becomes an unreviewed, drift-prone shadow spec.
 Link, don't copy.
 
+Conventions for agent-written text, PRs and issues are in `AGENTS.md`, imported here
+so every tool reads the same text:
+
+@AGENTS.md
+
 ## Design & spec discipline (read this first)
 
 - `docs/design/` is the **canonical, review-gated source of truth** (enforced
@@ -18,15 +23,11 @@ Link, don't copy.
   the relevant section of `docs/design/`** — don't rely on summaries of it
   found elsewhere. For non-trivial changes, run `/design-alignment` before
   committing.
-- **Validate code against the design.** On any divergence, **stop and
-  flag** — don't proceed on assumptions.
-- **Prefer flagging over quietly editing the design to match the code.** If
-  implementation and design disagree, treat it as a *finding*: open or
-  reference an issue and discuss before changing the spec, rather than
-  silently reconciling the gap.
-- If something in the design looks **wrong or vulnerable**, **flag and
-  discuss** (open an issue and ping the design owner) — don't just fix it.
-  Changes to the design itself go through a PR reviewed per
+- **Validate code against the design. On any divergence, or anything in the
+  design that looks wrong or vulnerable, stop and flag**: reference the
+  existing issue, or draft one for the user to file, and name the design
+  owner. Never quietly edit the design to match the code or fix the code on
+  assumptions. Design changes go through a PR reviewed per
   `.github/CODEOWNERS`.
 - **`docs/reference/`** is *derived* documentation, but it is **review-gated**
   (per `.github/CODEOWNERS`) and must stay true to the code. When you change
@@ -66,36 +67,31 @@ design doc.
   commits on top; if history genuinely has to be rewritten, stop and ask the
   user instead of doing it.
 
-**Pull request rules:**
-- ALWAYS open pull requests against the repository's default branch (`dev`)
-- Single responsibility per PR; all CI checks must pass; public APIs need
-  rustdoc
+**Work flow rules:**
+- Work in small, single-purpose commits. Do not push, open PRs or issues,
+  or post comments unless the user asks for that action in the current
+  message.
+- Before reporting a change as done, run the `reviewer` agent on the local
+  diff, fix the blocking and should-fix findings, and repeat until it comes
+  back clean. Design deviations are flagged, not fixed (see above). Report
+  what the review found and what you changed.
 
 **Code review rules:**
-- NEVER submit AI-generated review comments (PR reviews, inline comments, or
-  issue comments) to GitHub automatically
-- ALWAYS present review findings to the human reviewer for triage first, and
-  only post the ones they explicitly approve, after they explicitly ask for
-  them to be posted
+- NEVER post review findings (PR reviews, inline or issue comments) to
+  GitHub on your own. Present them to the human reviewer for triage first
+  and post only the ones they approve, when they ask.
+- Review criteria, the finding format and the stacked-PR checks live in the
+  `/review` skill. Use it for every review. From a session that wrote the
+  code, delegate to the `reviewer` agent so the review starts from a clean
+  context.
 
-**Workspace crate rules:**
-- When adding, splitting out, or renaming a workspace member crate, ALWAYS
-  classify it in `scripts/coverage.sh`: add it to `COV_PACKAGES` (measured)
-  or `COV_SKIP_PACKAGES` (skipped, with a reason comment). CI's coverage job
-  fails on any unclassified member.
-- Prefer keeping `crates/providers/*` free of `subxt`: express what the crate
-  needs as a trait and let `provider-node` supply the subxt-backed
-  implementation, so swapping the chain client stays a provider-node change.
-
-**Cargo dependency rules:**
-- ALWAYS declare external dependencies in the root `[workspace.dependencies]`
-  and inherit them in crates via `{ workspace = true }`. Never add
-  inline-versioned dependencies (e.g. `foo = "1.2"`) to a crate's
-  `Cargo.toml`.
-- On the inheriting line you may only add `features` (additive) and
-  `optional`; per Cargo, `version` and `default-features` cannot appear
-  there, so set `default-features` in the workspace declaration (e.g.
-  `hex = { version = "0.4", default-features = false }`).
+**Conventions (in `AGENTS.md`, imported above):**
+- Pull requests: base branch, single responsibility, regenerated files,
+  benchmarks, description structure, stacking.
+- Issues: one problem per issue, description structure, the agent drafts and
+  the user files.
+- Writing: documentation rules, plain language, root-cause fixes.
+- Code: Rust workspace and Cargo dependency rules, JS/TS via `polkadot-api`.
 
 **Automatic formatting:**
 - ALWAYS run `/format` after generating or modifying Rust code, and before
@@ -143,38 +139,8 @@ When the user says **"run locally"** (or "run the UIs", "start the UIs",
 six `user-interfaces/` apps on their canonical ports with Vite HMR (landing
 5176, drive-ui 5174, provider 5175, s3-ui 5177, photos 5178, explorer 5179).
 
-## JS/TS: use `polkadot-api`, never `@polkadot/*`
+## AI review bot
 
-For any JavaScript or TypeScript code in this repo (demos, scripts, tooling,
-SDKs), talk to the chain through `polkadot-api` (PAPI). Do NOT introduce
-`@polkadot/keyring`, `@polkadot/util-crypto`, `@polkadot/util`,
-`@polkadot/api`, or any other `@polkadot/*` package — they duplicate
-functionality PAPI already provides, drag in 20+ transitive deps, and force
-`cryptoWaitReady()` awaits everywhere.
-
-| Need | Use |
-| --- | --- |
-| Chain client + typed API | `polkadot-api` (`createClient`; `getWsProvider` from `polkadot-api/ws`) |
-| Signer wrapper | `getPolkadotSigner` from `polkadot-api/signer` |
-| SCALE / `Binary` / `Enum` | `import { Binary, Enum } from "polkadot-api"` — NOT `@polkadot-api/substrate-bindings` (its 0.20+ `Binary` is a codec helper without `fromBytes`/`asBytes`) |
-| Sr25519 key derivation (`//Alice`) | `sr25519CreateDerive` from `@polkadot-labs/hdkd` + `DEV_PHRASE` + `entropyToMiniSecret` + `mnemonicToEntropy` from `@polkadot-labs/hdkd-helpers` |
-| SS58 encode / decode | `ss58Address` / `ss58Decode` from `@polkadot-labs/hdkd-helpers` |
-| blake2-256 hashing | `blake2b256` from `@polkadot-labs/hdkd-helpers` |
-| `cryptoWaitReady()` | Not needed — hdkd is synchronous; delete the import and the await |
-
-In-repo code should not hand-roll these patterns: the workspace package
-`@web3-storage/sdk` (`packages/sdk`) already provides `connect`,
-`makeSigner`, the `Alice..Ferdie` dev signers, `submitTx`,
-`watchValue`-based waits, and typed wrappers for every pallet extrinsic.
-Import from it instead. The canonical signer/derive pattern and the SS58
-address-comparison gotcha (`ss58Address` defaults to prefix 42 while PAPI
-surfaces the runtime prefix — compare raw bytes via `ss58Decode`, never
-strings) are documented in [`packages/sdk/README.md`](packages/sdk/README.md).
-
-## Using the Claude review bot
-
-- **@claude** — mention in any comment to ask questions or request help
-- **Assign to claude[bot]** — assign an issue to have Claude analyze and
-  propose solutions
-- **Label with `claude`** — add the `claude` label to an issue for Claude to
-  investigate
+Comment `/aireview` on a PR to get an advisory review from Vertex AI
+(`.github/workflows/vertex-ai-review.yml`). It is not a substitute for human
+review.
