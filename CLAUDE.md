@@ -9,7 +9,7 @@ file is loaded into every session but is not CODEOWNERS-gated, so any copy of
 a design fact placed here becomes an unreviewed, drift-prone shadow spec.
 Link, don't copy.
 
-Conventions for agent-written text and PRs are in `AGENTS.md`, imported here
+Conventions for agent-written text, PRs and issues are in `AGENTS.md`, imported here
 so every tool reads the same text:
 
 @AGENTS.md

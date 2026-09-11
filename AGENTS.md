@@ -1,4 +1,4 @@
-# AGENTS.md - Conventions for agent-written text, PRs and code
+# AGENTS.md - Conventions for agent-written text, PRs, issues and code
 
 Conventions for anything an agent writes in this repo: docs, PR and issue
 text, commit messages, review findings, Rust and JS/TS code. Behavioural
@@ -76,7 +76,15 @@ When in doubt, ask the user to decide.
   description names the base PR and the intended merge order and is kept
   current as the PR changes.
 
-## Rust workspace
+## Issues
+
+- One problem per issue. The title names the problem, not the fix.
+- Issue description: one or two sentences on the problem and why it matters,
+  then sections as needed: **Motivation**, **Current state** (evidence: file
+  paths, design doc sections, observed behaviour), **Proposed solutions**,
+  **TODO** (checkboxes), **Related** (issues, PRs, design sections). Skip
+  empty sections.
+- Never open an issue on your own; draft it and let the user file it.
 
 - When adding, splitting out, or renaming a workspace member crate, ALWAYS
   classify it in `scripts/coverage.sh`: add it to `COV_PACKAGES` (measured)
