@@ -137,6 +137,13 @@ impl IntoResponse for Error {
                         details: Some(serde_json::json!({ "missing": children })),
                     },
                 ),
+                StorageError::InvalidChildCount(count) => (
+                    StatusCode::BAD_REQUEST,
+                    ErrorResponse {
+                        error: "invalid_child_count".to_string(),
+                        details: Some(serde_json::json!({ "expected": 2, "actual": count })),
+                    },
+                ),
                 StorageError::QuotaExceeded { used, max } => (
                     StatusCode::INSUFFICIENT_STORAGE,
                     ErrorResponse {

@@ -9,6 +9,7 @@
 mod common;
 
 use common::{make_client, start_test_provider};
+use provider_storage::{build_padded_merkle_tree, temp_rocksdb};
 use sp_core::H256;
 use storage_client::{ChunkingStrategy, EncryptionKey, ENCRYPTION_OVERHEAD};
 
@@ -596,4 +597,125 @@ async fn test_different_buckets_are_independent() {
     assert_eq!(c1.bucket_id, 1);
     assert_eq!(c2.bucket_id, 2);
     assert_ne!(c1.mmr_root, c2.mmr_root);
+}
+
+// ============================================================================
+// Non-power-of-two Merkle tree (zero-padding)
+// ============================================================================
+
+#[tokio::test]
+async fn test_non_power_of_two_upload_matches_padded_root_and_verifies() {
+    let url = start_test_provider().await;
+    let client = make_client(url.clone());
+
+    // Three chunks: previously failed with InvalidHash, since the client
+    // promoted the trailing lone node instead of zero-padding it.
+    let chunk_size = 1024usize;
+    let data: Vec<u8> = (0..chunk_size * 3).map(|i| (i % 256) as u8).collect();
+
+    let data_root = client
+        .upload(1, &data, ChunkingStrategy::Fixed(chunk_size))
+        .await
+        .unwrap();
+    assert_ne!(data_root, H256::zero());
+
+    // The root must match the provider's own (zero-padded) tree builder for
+    // the same leaves.
+    let leaf_hashes: Vec<H256> = data
+        .chunks(chunk_size)
+        .map(storage_primitives::blake2_256)
+        .collect();
+    assert_eq!(
+        leaf_hashes.len(),
+        3,
+        "test data must produce a non-power-of-two chunk count"
+    );
+
+    let (scratch_storage, _nonce_store, _dir) = temp_rocksdb();
+    scratch_storage.init_bucket(1, u64::MAX).unwrap();
+    let expected_root = build_padded_merkle_tree(&*scratch_storage, 1, &leaf_hashes);
+    assert_eq!(data_root, expected_root);
+
+    // Every internal node the client uploaded has exactly two children.
+    let http = reqwest::Client::new();
+    let mut stack = vec![data_root];
+    let mut internal_count = 0;
+    while let Some(hash) = stack.pop() {
+        let node: serde_json::Value = http
+            .get(format!("{url}/node"))
+            .query(&[("hash", format!("0x{}", hex::encode(hash.as_bytes())))])
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+
+        if let Some(children) = node["children"].as_array() {
+            internal_count += 1;
+            assert_eq!(
+                children.len(),
+                2,
+                "internal node must have exactly two children"
+            );
+            for child in children {
+                let bytes = hex::decode(child.as_str().unwrap().trim_start_matches("0x")).unwrap();
+                let child_hash = H256::from_slice(&bytes);
+                if child_hash != H256::zero() {
+                    stack.push(child_hash);
+                }
+            }
+        }
+    }
+    assert!(internal_count > 0, "a 3-leaf tree must have internal nodes");
+
+    // A proof for each real leaf verifies against the client's root.
+    for chunk_index in 0..leaf_hashes.len() as u64 {
+        let proof_response: serde_json::Value = http
+            .get(format!("{url}/chunk_proof"))
+            .query(&[
+                (
+                    "data_root",
+                    format!("0x{}", hex::encode(data_root.as_bytes())),
+                ),
+                ("chunk_index", chunk_index.to_string()),
+            ])
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+
+        let chunk_hash_bytes = hex::decode(
+            proof_response["chunk_hash"]
+                .as_str()
+                .unwrap()
+                .trim_start_matches("0x"),
+        )
+        .unwrap();
+        let chunk_hash = H256::from_slice(&chunk_hash_bytes);
+
+        let siblings: Vec<H256> = proof_response["proof"]["siblings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| {
+                let bytes = hex::decode(s.as_str().unwrap().trim_start_matches("0x")).unwrap();
+                H256::from_slice(&bytes)
+            })
+            .collect();
+        let path: Vec<bool> = proof_response["proof"]["path"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|p| p.as_bool().unwrap())
+            .collect();
+
+        let proof = storage_primitives::MerkleProof { siblings, path };
+        assert!(
+            storage_primitives::verify_merkle_proof(chunk_hash, chunk_index, &proof, &data_root),
+            "chunk {chunk_index} proof must verify against the client's root"
+        );
+    }
 }

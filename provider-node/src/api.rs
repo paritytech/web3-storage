@@ -18,6 +18,7 @@ use axum::{
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use codec::Encode;
 use provider_auth::RequiredRole;
+use provider_storage::ChunkTreeNode;
 use sp_core::H256;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -225,6 +226,26 @@ struct GetNodeQuery {
     hash: String,
 }
 
+/// A stored node in its wire form: base64 of the bytes that hash to the node's
+/// identity, plus the child hashes if it is an internal node.
+///
+/// An internal node's bytes are derived from its children rather than kept on
+/// disk, so they are rebuilt here - replica peers and verifying clients rehash
+/// `data` and compare it against the hash they asked for.
+fn node_to_wire(node: &ChunkTreeNode) -> (String, Option<Vec<String>>) {
+    let children = match node {
+        ChunkTreeNode::Chunk(_) => None,
+        ChunkTreeNode::Internal(children) => Some(
+            children
+                .iter()
+                .map(|h| format!("0x{}", hex::encode(h.as_bytes())))
+                .collect(),
+        ),
+    };
+
+    (BASE64.encode(node.preimage()), children)
+}
+
 async fn get_node(
     State(state): State<Arc<ProviderState>>,
     Query(query): Query<GetNodeQuery>,
@@ -243,14 +264,12 @@ async fn get_node(
         .get_node(&hash)
         .ok_or_else(|| provider_storage::Error::NodeNotFound(query.hash.clone()))?;
 
+    let (data, children) = node_to_wire(&node);
+
     Ok(Json(DownloadNodeResponse {
         hash: query.hash,
-        data: BASE64.encode(&node.data),
-        children: node.children.map(|c| {
-            c.iter()
-                .map(|h| format!("0x{}", hex::encode(h.as_bytes())))
-                .collect()
-        }),
+        data,
+        children,
     }))
 }
 
@@ -299,13 +318,18 @@ async fn upload_node(
         })
         .transpose()?;
 
+    // A node that declares children is an internal node, and must declare
+    // exactly two of them.
+    let node = match children {
+        Some(children) => ChunkTreeNode::internal(children)?,
+        None => ChunkTreeNode::Chunk(data),
+    };
+
     // Initialize bucket if needed
     state.storage.init_bucket(request.bucket_id, u64::MAX)?;
 
     // Store node
-    state
-        .storage
-        .store_node(request.bucket_id, hash, data, children)?;
+    state.storage.store_node(request.bucket_id, hash, node)?;
 
     Ok(Json(UploadNodeResponse { stored: true }))
 }
@@ -693,14 +717,11 @@ async fn fetch_nodes(
         let hash = H256::from_slice(&hash_bytes);
 
         if let Some(node) = state.storage.get_node(&hash) {
+            let (data, children) = node_to_wire(&node);
             nodes.push(FetchedNode {
                 hash: hash_str.clone(),
-                data: BASE64.encode(&node.data),
-                children: node.children.map(|c| {
-                    c.iter()
-                        .map(|h| format!("0x{}", hex::encode(h.as_bytes())))
-                        .collect()
-                }),
+                data,
+                children,
             });
         }
     }

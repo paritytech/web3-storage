@@ -546,29 +546,28 @@ impl StorageUserClient {
                 "Cannot build Merkle tree with no leaves".to_string(),
             ));
         }
+        if leaf_hashes.len() == 1 {
+            return Ok(leaf_hashes[0]);
+        }
 
+        let padded_len = leaf_hashes.len().next_power_of_two();
         let mut current_level = leaf_hashes.to_vec();
+        current_level.resize(padded_len, H256::zero());
 
         while current_level.len() > 1 {
             let mut next_level = Vec::new();
 
             for pair in current_level.chunks(2) {
-                let parent_hash = if pair.len() == 2 {
-                    storage_primitives::hash_children(pair[0], pair[1])
-                } else {
-                    pair[0]
-                };
+                let parent_hash = storage_primitives::hash_children(pair[0], pair[1]);
 
-                // Upload internal node
-                let children = pair.to_vec();
-                let parent_data = self.encode_internal_node(&children);
-
+                // The provider derives an internal node's data from its
+                // children, so nothing meaningful is uploaded here.
                 self.upload_node(
                     provider_url,
                     bucket_id,
                     parent_hash,
-                    parent_data,
-                    Some(children),
+                    Vec::new(),
+                    Some(vec![pair[0], pair[1]]),
                 )
                 .await?;
 
@@ -579,14 +578,6 @@ impl StorageUserClient {
         }
 
         Ok(current_level[0])
-    }
-
-    fn encode_internal_node(&self, children: &[H256]) -> Vec<u8> {
-        // Simple encoding: concatenate child hashes
-        children
-            .iter()
-            .flat_map(|h| h.as_bytes().to_vec())
-            .collect()
     }
 
     // ═════════════════════════════════════════════════════════════════════════

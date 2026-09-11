@@ -10,7 +10,7 @@ mod membership;
 mod replica_sync;
 
 use provider_auth::{Authenticator, StaticMembershipResolver};
-use provider_storage::{build_padded_merkle_tree, temp_rocksdb, StorageBackend};
+use provider_storage::{build_padded_merkle_tree, temp_rocksdb, ChunkTreeNode, StorageBackend};
 use sp_runtime::AccountId32;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -87,7 +87,7 @@ pub fn test_state_with_data() -> (Arc<ProviderState>, DetectedChallenge, TempDir
     let chunk_data = b"test-chunk-data-for-challenge";
     let chunk_hash = blake2_256(chunk_data);
     storage
-        .store_node(1, chunk_hash, chunk_data.to_vec(), None)
+        .store_node(1, chunk_hash, ChunkTreeNode::Chunk(chunk_data.to_vec()))
         .unwrap();
 
     let data_root = build_padded_merkle_tree(storage.as_ref(), 1, &[chunk_hash]);

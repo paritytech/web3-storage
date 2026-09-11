@@ -4,6 +4,7 @@
 
 use super::{test_state, test_state_with_seed, ALICE_SS58};
 use provider_auth::{Authenticator, StaticMembershipResolver};
+use provider_storage::ChunkTreeNode;
 use sp_core::H256;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -268,7 +269,7 @@ async fn test_already_synced() {
     let data = b"test data".to_vec();
     let hash = sp_crypto_hashing::blake2_256(&data);
     let data_root = H256::from(hash);
-    let _ = storage.store_node(1, data_root, data, None);
+    let _ = storage.store_node(1, data_root, ChunkTreeNode::Chunk(data));
     let (mmr_root, _, _) = storage.commit(1, vec![data_root]).unwrap();
 
     let deps = ProviderDeps {
@@ -489,7 +490,9 @@ async fn test_duties_filter_already_synced() {
     let data = b"synced data".to_vec();
     let hash = sp_crypto_hashing::blake2_256(&data);
     let data_root = H256::from(hash);
-    storage.store_node(1, data_root, data, None).unwrap();
+    storage
+        .store_node(1, data_root, ChunkTreeNode::Chunk(data))
+        .unwrap();
     let (mmr_root, _, _) = storage.commit(1, vec![data_root]).unwrap();
 
     let deps = ProviderDeps {
