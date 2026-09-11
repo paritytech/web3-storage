@@ -31,9 +31,10 @@ use provider_chain::chain_connection::{ChainHandle, ChainTransport};
 use provider_coordinator::{
     is_relevant_provider_event, refresh_if_relevant_event, refresh_provider_state, sync_constants,
     ChainState, ChainStateChainClient, ChainStateCoordinator, Error, NonceCounter, PalletConstants,
-    ProviderInfo, ProviderLifecycleEvent,
+    ProviderLifecycleEvent,
 };
 use provider_storage::{temp_rocksdb, NonceStore};
+use provider_types::{ProviderInfo, ProviderSettings, ProviderStats};
 use sp_runtime::AccountId32;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -81,15 +82,20 @@ fn sample_provider_info() -> ProviderInfo {
         public_key: vec![1u8; 32],
         stake: 1_000,
         committed_bytes: 500,
-        max_capacity: 10_000,
-        min_duration: 10,
-        max_duration: 100,
-        price_per_byte: 5,
-        accepting_primary: true,
-        replica_sync_price: None,
-        accepting_extensions: true,
-        agreements_total: 3,
-        challenges_failed: 1,
+        settings: ProviderSettings {
+            min_duration: 10,
+            max_duration: 100,
+            price_per_byte: 5,
+            accepting_primary: true,
+            replica_sync_price: None,
+            accepting_extensions: true,
+            max_capacity: 10_000,
+        },
+        stats: ProviderStats {
+            agreements_total: 3,
+            challenges_failed: 1,
+            ..Default::default()
+        },
         deregister_at: None,
     }
 }
