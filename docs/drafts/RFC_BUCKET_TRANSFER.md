@@ -26,6 +26,57 @@ upload it again.
 Same story, other triggers: `P1` winds down (#281), blocks extensions, raises
 prices, or is slashed.
 
+### Sub-questions
+
+The story has two buckets in practice: the SPA itself and the data the SPA
+produces for its users. The design does not say how they relate.
+
+**Q1. Who owns the user data, and who pays for it?** The operator has an
+agreement with `P1` for the SPA. The SPA then produces data for and by each
+user. Options, none of them specified:
+
+- One operator bucket, users as `Writer` members. Bounded by `MaxMembers`
+  (100). Operator pays and controls. Users' data lives under the operator's
+  admin key and dies with the operator's agreement.
+- One operator bucket, shared writer key or a `pallet_revive` contract as the
+  writer (`docs/drafts/smart-contracts.md`, `StorageMarketplace.sol`
+  `buyStorage`). No member bound. Same ownership shape as above.
+- One bucket per user, user-owned agreement. Follows the Web3 principle that
+  the user pays for and controls their own data. `MaxBucketsPerMember` is
+  1000. Requires every user to hold funds and sign extrinsics, and the SPA
+  to discover each user's bucket and provider from chain.
+- Contract-owned per-user buckets (the token-gated drive pattern in the
+  smart-contracts draft): the dApp funds, a token proves the user's rights.
+
+Does every user need their own agreement? Which of these is the intended
+shape for a dApp, and does the design want to say so? This RFC treats the
+operator-owned shared bucket as the given, because it is the one that
+produces data the operator cannot re-upload. The per-user shape moves the
+same continuity problem to every user.
+
+**Q2. Keeping the SPA live past `expires_at`.** The SPA bucket is static and
+public. Two cases:
+
+- Read-only continuation: replicas are enough. Anyone can fund a replica of a
+  frozen public bucket and extend it (design doc, "permissionless
+  persistence"). Visitors read from replicas. No primary is needed until the
+  operator wants to ship a new SPA version.
+- Writable continuation: the operator wants to keep deploying. It can sign a
+  new agreement, but today only as a new bucket (G1), and the data reaches
+  the new provider only if the client downloads it from `P1` and uploads it
+  again (G2). For an SPA the operator has the build locally, so re-upload is
+  possible but is the wrong mechanism: it moves every byte through the client
+  and changes the bucket id that DNS and users point at.
+
+**Q3. Can the transfer happen provider-to-provider instead of through the
+client?** Yes, and the pieces exist. Replica sync already moves a whole
+bucket between two providers with every node verified against the chain
+root. What is missing is the trigger for the primary role and the on-chain
+attestation for it, which is the direction below. #65 asks the same question
+from the provider side (§1 primary-to-primary, §2 primary-to-replica, §4
+provider migration) and has no protocol yet; this RFC is the concrete
+proposal for §1 and §4.
+
 ## Designed vs. implemented
 
 | Topic | Design | Code |
@@ -204,6 +255,9 @@ Economics (inherent, document only):
 6. Layer 1: derive mirrored fields from Layer 0, or add update paths?
 7. After #414, a drive owner and its agreement owner can diverge. Does
    Layer 1 need a matching drive transfer? (Open question in #414.)
+8. Which ownership shape does the design intend for dApp user data:
+   operator-owned shared bucket, per-user buckets, or contract-owned buckets
+   (Q1)? Should the design doc add a "dApp with user data" use case?
 
 ## Related
 
