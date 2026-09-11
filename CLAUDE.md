@@ -73,8 +73,9 @@ design doc.
 - Single responsibility per PR; all CI checks must pass.
 - Regenerated files (subxt/PAPI bindings, metadata, weights) go in their own
   commit so reviewers can skip them.
-- New or changed extrinsics are benchmarked before review: run `/cmd bench`
-  on the PR. Never leave hand-written estimates in a runtime weight file.
+- New or changed extrinsics need fresh benchmarks. Do not run `/cmd bench`
+  yourself; tell the user the PR needs re-benching and let them trigger it.
+  Never leave hand-written estimates in a runtime weight file.
 - PR description: one or two sentences on what the PR does and why, then
   bulleted sections as needed: **Changes**, **Cleanup**, **Follow-ups**,
   **Open questions**. Skip empty sections.
@@ -202,10 +203,6 @@ Comment `/aireview` on a PR to get an advisory review from Vertex AI
 review.
 
 ## Rules and harness
-
-> [!NOTE]
-> **Credits:** the three subsections below are copied 1:1 from
-> [koute/CLANKER.md](https://github.com/koute/CLANKER.md/blob/master/CLANKER.md).
 
 ### IMPORTANT: Minimize AI slop; use plain, simple language
 Do not use invented shorthands or heavy jargon. Say what something actually is.
