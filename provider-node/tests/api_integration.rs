@@ -9,12 +9,13 @@ mod common;
 use axum::http::StatusCode;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use codec::Encode;
+use provider_types::KeyScheme;
 use reqwest::Method;
 use serde_json::{json, Value};
 use sp_core::crypto::Ss58Codec;
 use sp_core::{sr25519, Pair, H256};
 use storage_primitives::{Commitment, CommitmentPayload};
-use storage_provider_node::{KeyScheme, ProviderState};
+use storage_provider_node::ProviderState;
 
 use common::{StorageBackendKind, TestServer};
 

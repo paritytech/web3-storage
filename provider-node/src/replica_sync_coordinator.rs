@@ -197,7 +197,7 @@ pub struct SignedSyncRoots {
 
 impl SignedSyncRoots {
     /// Attest the target root with the provider's signing keypair.
-    pub fn sign(keypair: &crate::ProviderKeypair, target_mmr_root: H256) -> Self {
+    pub fn sign(keypair: &provider_types::ProviderKeypair, target_mmr_root: H256) -> Self {
         let mut roots = [None; 7];
         roots[0] = Some(target_mmr_root);
         let signature = keypair.sign(&codec::Encode::encode(&roots));

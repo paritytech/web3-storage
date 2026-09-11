@@ -11,6 +11,7 @@
 use axum::http::StatusCode;
 use provider_auth::{Authenticator, StaticMembershipResolver};
 use provider_storage::{temp_rocksdb, NonceStore};
+use provider_types::{ProviderInfo, ProviderSettings, ProviderStats};
 use reqwest::Client;
 use serde_json::Value;
 use sp_core::{sr25519, Pair};
@@ -18,7 +19,6 @@ use sp_runtime::{AccountId32, MultiSignature};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use storage_primitives::ReplicaTerms;
-use storage_provider_node::ProviderInfo;
 use storage_provider_node::{
     create_router, NegotiateRequest, NonceCounter, PalletConstants, ProviderDeps, ProviderState,
     SignedTerms,
@@ -134,15 +134,16 @@ fn provider_info() -> ProviderInfo {
         public_key: alice_public().0.to_vec(),
         stake: 1_000_000_000_000,
         committed_bytes: 0,
-        max_capacity: 0,
-        min_duration: 10,
-        max_duration: 100_000,
-        price_per_byte: 5,
-        accepting_primary: true,
-        replica_sync_price: None,
-        accepting_extensions: true,
-        agreements_total: 0,
-        challenges_failed: 0,
+        settings: ProviderSettings {
+            min_duration: 10,
+            max_duration: 100_000,
+            price_per_byte: 5,
+            accepting_primary: true,
+            replica_sync_price: None,
+            accepting_extensions: true,
+            max_capacity: 0,
+        },
+        stats: ProviderStats::default(),
         deregister_at: None,
     }
 }
@@ -301,8 +302,8 @@ async fn negotiate_allocates_distinct_monotonic_nonces() {
 #[tokio::test]
 async fn negotiate_accepts_replica_when_sync_price_configured() {
     let mut info = provider_info();
-    info.accepting_primary = false; // closed for primary…
-    info.replica_sync_price = Some(7); // …but open for replicas.
+    info.settings.accepting_primary = false; // closed for primary…
+    info.settings.replica_sync_price = Some(7); // …but open for replicas.
     let server = TestServer::ready(info).await;
 
     let mut req = primary_request();
@@ -618,7 +619,7 @@ async fn negotiate_422_duration_out_of_bounds() {
 #[tokio::test]
 async fn negotiate_422_capacity_exceeded() {
     let mut info = provider_info();
-    info.max_capacity = 2048;
+    info.settings.max_capacity = 2048;
     info.committed_bytes = 1536; // only 512 bytes free
     let server = TestServer::ready(info).await;
 
@@ -645,7 +646,7 @@ async fn negotiate_422_zero_bytes() {
 #[tokio::test]
 async fn negotiate_422_not_accepting_primary() {
     let mut info = provider_info();
-    info.accepting_primary = false;
+    info.settings.accepting_primary = false;
     let server = TestServer::ready(info).await;
 
     let resp = server.negotiate(&primary_request()).await;

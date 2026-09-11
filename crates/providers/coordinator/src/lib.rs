@@ -27,7 +27,7 @@ use parking_lot::RwLock;
 use provider_chain::chain_connection::{self, ChainHandle, ChainTransport};
 use provider_chain::{decode_block_events, BlockEvent, BlockEventTx};
 use provider_storage::NonceStore;
-use serde::{Deserialize, Serialize};
+use provider_types::{ProviderInfo, ProviderSettings, ProviderStats};
 use sp_runtime::AccountId32;
 use std::future::Future;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
@@ -73,72 +73,43 @@ async fn with_timeout<T>(
     }
 }
 
-// ── On-chain Provider Info ────────────────────────────────────────────────────
-
-/// The node's view of its on-chain provider registration.
+/// Convert the runtime's `ProviderInfo` into the node's view of it.
 ///
-/// Decoded from the `StorageProvider::Providers` storage entry by the
-/// chain-state coordinator; consumed by `/negotiate` validation and `/info`.
+/// Mirrors the runtime struct field for field (see
+/// [`provider_types::ProviderInfo`]), resolving the runtime's bounded byte
+/// vectors into the node's `String`/`Vec<u8>`.
 ///
-/// All durations and block numbers on this struct are counted in anchor
-/// (relay-chain) blocks, 6s each - the same clock the pallet reads via its
-/// `BlockNumberProvider` - not parachain blocks.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProviderInfo {
-    /// Network address for connecting.
-    pub multiaddr: String,
-    /// Raw registered public key bytes. `/negotiate` refuses to sign while
-    /// this doesn't match the local signing key.
-    pub public_key: Vec<u8>,
-    /// Total stake locked.
-    pub stake: u128,
-    /// Currently committed bytes.
-    pub committed_bytes: u64,
-    /// Maximum capacity (0 = unlimited).
-    pub max_capacity: u64,
-    /// Minimum agreement duration, in anchor (relay-chain) blocks.
-    pub min_duration: u32,
-    /// Maximum agreement duration, in anchor (relay-chain) blocks.
-    pub max_duration: u32,
-    /// Price per byte per anchor (relay-chain) block.
-    pub price_per_byte: u128,
-    /// Whether accepting primary agreements.
-    pub accepting_primary: bool,
-    /// Replica sync price (None if not accepting replicas).
-    pub replica_sync_price: Option<u128>,
-    /// Whether accepting extensions.
-    pub accepting_extensions: bool,
-    /// Total agreements ever.
-    pub agreements_total: u32,
-    /// Failed challenges count.
-    pub challenges_failed: u32,
-    /// Anchor (relay-chain) block at which deregistration becomes finalisable
-    /// (`None` = not deregistering).
-    pub deregister_at: Option<u32>,
-}
-
-impl From<RuntimeProviderInfo> for ProviderInfo {
-    /// Flatten the runtime's nested `ProviderInfo` into the node's view.
-    ///
-    /// The six unused `stats` counters are deliberately dropped — they are not
-    /// part of what `/negotiate` or `/info` expose.
-    fn from(info: RuntimeProviderInfo) -> Self {
-        Self {
-            multiaddr: String::from_utf8_lossy(&info.multiaddr.0).into_owned(),
-            public_key: info.public_key.0,
-            stake: info.stake,
-            committed_bytes: info.committed_bytes,
-            max_capacity: info.settings.max_capacity,
+/// A free function rather than a `From` impl: both types are foreign to this
+/// crate (`RuntimeProviderInfo` comes from `storage-subxt`'s generated
+/// bindings, `ProviderInfo` from `provider-types`), so the orphan rule rules
+/// out the trait impl here.
+fn provider_info_from_runtime(info: RuntimeProviderInfo) -> ProviderInfo {
+    ProviderInfo {
+        multiaddr: String::from_utf8_lossy(&info.multiaddr.0).into_owned(),
+        public_key: info.public_key.0,
+        stake: info.stake,
+        committed_bytes: info.committed_bytes,
+        settings: ProviderSettings {
             min_duration: info.settings.min_duration,
             max_duration: info.settings.max_duration,
             price_per_byte: info.settings.price_per_byte,
             accepting_primary: info.settings.accepting_primary,
             replica_sync_price: info.settings.replica_sync_price,
             accepting_extensions: info.settings.accepting_extensions,
+            max_capacity: info.settings.max_capacity,
+        },
+        stats: ProviderStats {
+            registered_at: info.stats.registered_at,
             agreements_total: info.stats.agreements_total,
+            agreements_extended: info.stats.agreements_extended,
+            agreements_not_extended: info.stats.agreements_not_extended,
+            agreements_burned: info.stats.agreements_burned,
+            total_bytes_committed: info.stats.total_bytes_committed,
+            challenges_received_authorized: info.stats.challenges_received_authorized,
+            challenges_received_public: info.stats.challenges_received_public,
             challenges_failed: info.stats.challenges_failed,
-            deregister_at: info.deregister_at,
-        }
+        },
+        deregister_at: info.deregister_at,
     }
 }
 
@@ -379,7 +350,7 @@ impl ChainStateChainClient for RealChainStateClient {
         let info = value
             .decode()
             .map_err(|e| Error::Internal(format!("Failed to decode Providers: {e}")))?;
-        Ok(Some(ProviderInfo::from(info)))
+        Ok(Some(provider_info_from_runtime(info)))
     }
 
     async fn fetch_replay_hsn(&self, who: &AccountId32) -> Result<Option<u64>, Error> {
@@ -978,15 +949,20 @@ mod tests {
             public_key: vec![1u8; 32],
             stake: 1_000,
             committed_bytes: 500,
-            max_capacity: 10_000,
-            min_duration: 10,
-            max_duration: 100,
-            price_per_byte: 5,
-            accepting_primary: true,
-            replica_sync_price: None,
-            accepting_extensions: true,
-            agreements_total: 3,
-            challenges_failed: 1,
+            settings: ProviderSettings {
+                min_duration: 10,
+                max_duration: 100,
+                price_per_byte: 5,
+                accepting_primary: true,
+                replica_sync_price: None,
+                accepting_extensions: true,
+                max_capacity: 10_000,
+            },
+            stats: ProviderStats {
+                agreements_total: 3,
+                challenges_failed: 1,
+                ..Default::default()
+            },
             deregister_at: None,
         }
     }
@@ -1013,7 +989,7 @@ mod tests {
         *cs.provider_info.write() = Some(sample_provider_info());
         let guard = cs.provider_info.read();
         let info = guard.as_ref().unwrap();
-        assert_eq!(info.price_per_byte, 5);
+        assert_eq!(info.settings.price_per_byte, 5);
         assert_eq!(info.committed_bytes, 500);
         assert_eq!(info.multiaddr, "/ip4/1.2.3.4/tcp/3333");
     }
@@ -1528,8 +1504,15 @@ mod tests {
                 .expect("provider info decodes");
             assert_eq!(info.multiaddr, "/ip4/1.2.3.4/tcp/3333");
             assert_eq!(info.stake, 1_000);
-            assert_eq!(info.max_capacity, 10_000);
-            assert_eq!(info.replica_sync_price, Some(7));
+            assert_eq!(info.settings.max_capacity, 10_000);
+            assert_eq!(info.settings.replica_sync_price, Some(7));
+            // Every `stats` counter is carried across, not just the two the
+            // node reads today - a dropped field here is a silent zero.
+            assert_eq!(info.stats.registered_at, 1);
+            assert_eq!(info.stats.agreements_total, 3);
+            assert_eq!(info.stats.total_bytes_committed, 500);
+            assert_eq!(info.stats.challenges_received_authorized, 2);
+            assert_eq!(info.stats.challenges_failed, 1);
             assert_eq!(info.deregister_at, Some(42));
         }
 

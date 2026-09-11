@@ -12,7 +12,7 @@ async-trait = { workspace = true }
 parking_lot = { workspace = true }
 provider-chain = { workspace = true, features = ["all"] }
 provider-storage = { workspace = true }
-serde = { workspace = true, features = ["std"] }
+provider-types = { workspace = true }
 sp-runtime = { workspace = true, features = ["std"] }
 storage-subxt = { workspace = true }
 subxt = { workspace = true }
