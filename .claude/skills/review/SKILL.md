@@ -82,4 +82,23 @@ When reviewing, analyze for:
     - A missing reference-doc update is a blocking finding, flagged as
       `📄 REFERENCE DOC OUT OF DATE`
 
-Provide specific feedback with file paths and line numbers.
+11. **Stack Shape** — when the PR is part of a stack (its base is not `dev`)
+    - Diff each PR against its own base PR, not `dev`
+    - Check that every link in the stack is a genuine dependency: the upper PR
+      must not compile or make sense without the lower one. Stacking unrelated
+      work to avoid a merge wait or a generated-file conflict (bindings,
+      metadata, weights) makes the stack unreviewable; flag it
+    - Check that the description names the base PR and the intended merge order
+    - Propose a concrete restructure (which PRs to retarget to `dev`, merge
+      order) rather than just noting the problem. The author does any history
+      rewrite
+
+## Writing the findings
+
+Each finding is simple, exact and straight to the point: the problem, where it
+is (`file:line`), and the fix or the question. When unsure, say what the
+reviewer should check instead of guessing. No fluff, no boilerplate, no praise,
+no restating the code.
+
+Present the findings to the user for triage. Never post them to GitHub on your
+own (see the code review rules in `CLAUDE.md`).

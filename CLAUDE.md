@@ -92,17 +92,8 @@ design doc.
 - NEVER post review findings (PR reviews, inline or issue comments) to
   GitHub on your own. Present them to the human reviewer for triage first
   and post only the ones they approve, when they ask.
-- Review comments are simple, exact and straight to the point: the problem,
-  where it is (`file:line`), and the fix or the question. When unsure, say
-  what the reviewer should check instead of guessing. No fluff, no
-  boilerplate, no praise, no restating the code.
-- When the PR under review is part of a stack, review the stack shape too:
-  diff each PR against its own base PR (not `dev`), check that every link
-  is a genuine dependency per the stacked-PR rule above, and flag stacking
-  that only avoids a merge wait or a generated-file conflict. Propose a
-  concrete restructure (which PRs should be retargeted to `dev`, merge
-  order) rather than just noting the problem. The author does any history
-  rewrite; the git rules above still bind the agent.
+- Review criteria, the finding format and the stacked-PR checks live in the
+  `/review` skill. Use it for every review.
 
 **Workspace crate rules:**
 - When adding, splitting out, or renaming a workspace member crate, ALWAYS
