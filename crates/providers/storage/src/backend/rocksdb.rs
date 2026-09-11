@@ -7,7 +7,7 @@
 //!
 //! [`types`]: super::types
 
-use super::{BucketInfo, BucketState, BucketStats, BucketSummary, StorageBackend, StoredNode};
+use super::{BucketInfo, BucketState, StorageBackend, StoredNode};
 use crate::error::Error;
 use crate::nonce::NonceStore;
 use codec::{DecodeAll, Encode};
@@ -133,24 +133,9 @@ impl DiskStorage {
             .collect()
     }
 
-    /// List all buckets.
-    pub fn list_buckets(&self) -> Vec<BucketSummary> {
-        self.iter_buckets(|bucket_id, state| BucketSummary {
-            bucket_id,
-            mmr_root: format!("0x{}", hex::encode(state.mmr_root.as_bytes())),
-            start_seq: state.start_seq,
-            leaf_count: state.leaf_count(),
-        })
-    }
-
-    /// Get storage statistics per bucket.
-    pub fn get_bucket_stats(&self) -> Vec<BucketStats> {
-        self.iter_buckets(|bucket_id, state| BucketStats {
-            bucket_id,
-            leaf_count: state.leaf_count(),
-            node_count: 0, // Would need per-bucket tracking
-            bytes_stored: state.used_bytes,
-        })
+    /// Ids of every locally-held bucket.
+    pub fn bucket_ids(&self) -> Vec<BucketId> {
+        self.iter_buckets(|bucket_id, _| bucket_id)
     }
 
     /// Get total node count.
@@ -469,12 +454,8 @@ impl StorageBackend for DiskStorage {
         })
     }
 
-    fn list_buckets(&self) -> Vec<BucketSummary> {
-        self.list_buckets()
-    }
-
-    fn get_bucket_stats(&self) -> Vec<BucketStats> {
-        self.get_bucket_stats()
+    fn bucket_ids(&self) -> Vec<BucketId> {
+        self.bucket_ids()
     }
 
     fn total_nodes(&self) -> u64 {

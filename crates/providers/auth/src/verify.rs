@@ -130,6 +130,8 @@ fn verify_signature(
 pub struct Authenticator {
     membership: MembershipCache,
     max_skew: Duration,
+    /// The node's own provider account — see [`Self::with_self_account`].
+    self_account: Option<AccountId32>,
 }
 
 /// Default clock-skew tolerance. Matches `--auth-max-skew`'s default.
@@ -143,7 +145,18 @@ impl Authenticator {
         Self {
             membership: MembershipCache::new(resolver),
             max_skew: DEFAULT_MAX_SKEW,
+            self_account: None,
         }
+    }
+
+    /// The node's own provider account. A request signed by it passes every
+    /// Reader check: the operator can read the node's disk anyway, and
+    /// provider accounts are never bucket members, so the provider's own
+    /// tooling (e.g. the dashboard fetching challenge proofs) has no other
+    /// identity to authenticate with. Writer/Admin checks are unaffected.
+    pub fn with_self_account(mut self, account: AccountId32) -> Self {
+        self.self_account = Some(account);
+        self
     }
 
     /// Feed membership invalidations into the cache, so a change takes effect
@@ -181,12 +194,16 @@ impl Authenticator {
         self
     }
 
-    /// Reader-level requests on a `Public` bucket are served without
-    /// authentication — an honest primary serves public-bucket reads to
-    /// anyone. Everything else (any request on a `Private` bucket, and every
+    /// Reader-level requests are served without authentication on a `Public`
+    /// bucket (an honest primary serves public-bucket reads to anyone) and on
+    /// a bucket this node holds as a **replica** (replicas serve everyone —
+    /// visibility gates primaries only; this is the design's anti-censorship
+    /// rule). Everything else (any request on a `Private` bucket, and every
     /// Writer/Admin request) needs a valid signed `Authorization` header whose
-    /// account holds `required` for the bucket. A bucket whose visibility
-    /// cannot be established gates like `Private`.
+    /// account holds `required` for the bucket — or is the node's own provider
+    /// account, which passes any Reader check (see
+    /// [`Self::with_self_account`]). A bucket whose visibility cannot be
+    /// established gates like `Private`.
     pub async fn require_role(
         &self,
         auth_header: Option<&str>,
@@ -198,15 +215,21 @@ impl Authenticator {
         // request has proven it needs a role.
         let access = self.membership.lookup(bucket_id).await;
         if required == RequiredRole::Reader
-            && access
-                .as_ref()
-                .is_ok_and(|entry| entry.access.visibility == Visibility::Public)
+            && access.as_ref().is_ok_and(|entry| {
+                entry.access.visibility == Visibility::Public || entry.replica_here
+            })
         {
             return Ok(());
         }
 
         let header = auth_header.ok_or(AuthError::AuthRequired)?;
         let account = verify_signature(header, method, bucket_id, self.max_skew)?;
+
+        // Checked before the membership lookup result is consulted, so
+        // operator reads keep working through a chain outage.
+        if required == RequiredRole::Reader && self.self_account.as_ref() == Some(&account) {
+            return Ok(());
+        }
 
         let role = access?
             .role_of(&account)
@@ -327,33 +350,16 @@ mod tests {
     /// Run `require_role` against a bucket whose only member is `//Alice`
     /// holding `granted`, with a valid signed header from that same account.
     fn authenticator(members: Vec<Member>) -> Authenticator {
-        Authenticator::new(StaticMembershipResolver(members))
-    }
-
-    /// Fixed member set on buckets that resolve as `Public`.
-    struct PublicResolver(Vec<Member>);
-
-    #[async_trait::async_trait]
-    impl MembershipResolver for PublicResolver {
-        async fn fetch_access(
-            &self,
-            _bucket_id: BucketId,
-        ) -> Result<BucketAccess, MembershipError> {
-            Ok(BucketAccess {
-                members: self.0.clone(),
-                visibility: Visibility::Public,
-            })
-        }
+        Authenticator::new(StaticMembershipResolver::private(members))
     }
 
     #[tokio::test]
     async fn public_bucket_serves_reads_without_auth_but_still_gates_writes() {
         let alice = sr25519::Pair::from_string("//Alice", None).unwrap();
-        let auth = Authenticator::new(PublicResolver(vec![(
-            AccountId32::new(alice.public().0),
-            Role::Reader,
-        )
-            .into()]));
+        let auth = Authenticator::new(StaticMembershipResolver::new(BucketAccess {
+            members: vec![(AccountId32::new(alice.public().0), Role::Reader).into()],
+            visibility: Visibility::Public,
+        }));
 
         let anonymous_read = auth
             .require_role(None, "GET", 1, RequiredRole::Reader)
@@ -370,6 +376,72 @@ mod tests {
             .require_role(Some(&header), "PUT", 1, RequiredRole::Writer)
             .await;
         assert!(matches!(reader_write, Err(AuthError::InsufficientRole)));
+    }
+
+    #[tokio::test]
+    async fn replica_served_bucket_reads_anonymously_but_writes_stay_gated() {
+        // Design rule: replicas serve everyone — visibility gates primaries
+        // only. A private bucket this node replicates must answer anonymous
+        // reads, while writes keep demanding a role (which nobody holds here).
+        let auth =
+            Authenticator::new(StaticMembershipResolver::private(vec![]).with_replica_here());
+
+        let anonymous_read = auth
+            .require_role(None, "GET", 1, RequiredRole::Reader)
+            .await;
+        assert!(anonymous_read.is_ok(), "got {anonymous_read:?}");
+
+        let anonymous_write = auth
+            .require_role(None, "PUT", 1, RequiredRole::Writer)
+            .await;
+        assert!(matches!(anonymous_write, Err(AuthError::AuthRequired)));
+    }
+
+    #[tokio::test]
+    async fn self_account_reads_any_bucket_but_cannot_write() {
+        // The node's own provider account is never a bucket member, yet its
+        // tooling must fetch challenge proofs — Reader passes, Writer doesn't.
+        let provider = sr25519::Pair::from_string("//Provider", None).unwrap();
+        let provider_account = AccountId32::new(provider.public().0);
+        let auth = Authenticator::new(StaticMembershipResolver::private(vec![]))
+            .with_self_account(provider_account);
+
+        let header = make_auth_header(&provider, "GET", 1, current_timestamp());
+        let read = auth
+            .require_role(Some(&header), "GET", 1, RequiredRole::Reader)
+            .await;
+        assert!(read.is_ok(), "got {read:?}");
+
+        let header = make_auth_header(&provider, "PUT", 1, current_timestamp());
+        let write = auth
+            .require_role(Some(&header), "PUT", 1, RequiredRole::Writer)
+            .await;
+        assert!(matches!(write, Err(AuthError::InsufficientRole)));
+    }
+
+    #[tokio::test]
+    async fn self_account_reads_survive_a_chain_outage() {
+        // FlakyResolver fails from the second lookup on; with zero ttl and
+        // max_stale the membership entry is unusable — the operator's own
+        // reads must still pass, since they never consult membership.
+        let provider = sr25519::Pair::from_string("//Provider", None).unwrap();
+        let provider_account = AccountId32::new(provider.public().0);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let auth = Authenticator::new(FlakyResolver {
+            account: provider_account.clone(),
+            calls,
+        })
+        .with_ttl(Duration::ZERO)
+        .with_max_stale(Duration::ZERO)
+        .with_self_account(provider_account);
+
+        for _ in 0..2 {
+            let header = make_auth_header(&provider, "GET", 1, current_timestamp());
+            let read = auth
+                .require_role(Some(&header), "GET", 1, RequiredRole::Reader)
+                .await;
+            assert!(read.is_ok(), "got {read:?}");
+        }
     }
 
     #[tokio::test]
@@ -428,9 +500,9 @@ mod tests {
         // `impl MembershipResolver` bound must still accept that.
         fn pick(mock: bool, member: Member) -> Box<dyn MembershipResolver> {
             if mock {
-                Box::new(StaticMembershipResolver(vec![member]))
+                Box::new(StaticMembershipResolver::private(vec![member]))
             } else {
-                Box::new(StaticMembershipResolver(vec![]))
+                Box::new(StaticMembershipResolver::private(vec![]))
             }
         }
 

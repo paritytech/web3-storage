@@ -23,6 +23,7 @@ import {
   parseMultiaddrToUrl,
   removeMember as removeMemberTx,
   requireOneEvent,
+  signProviderRequest,
   getBucketVisibility as getBucketVisibilityQuery,
   setBucketVisibility as setBucketVisibilityTx,
   setMember as setMemberTx,
@@ -530,7 +531,9 @@ export class S3Client {
       bucket_id: Number(bucketId).toString(),
       leaf_index: leafIndex.toString(),
     });
-    const response = await httpFetch(`${providerUrl}/mmr_proof?${params.toString()}`);
+    // Reader-gated on private buckets — sign as the connected owner.
+    const headers = await signProviderRequest(this.requireOwner().signer, "GET", bucketId);
+    const response = await httpFetch(`${providerUrl}/mmr_proof?${params.toString()}`, { headers });
     if (!response.ok) {
       throw new Error(`MMR proof request failed: ${response.status}`);
     }

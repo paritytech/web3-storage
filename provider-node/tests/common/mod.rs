@@ -50,11 +50,9 @@ impl TestServer {
         let deps = ProviderDeps {
             storage,
             nonce_store,
-            auth: Arc::new(Authenticator::new(StaticMembershipResolver(vec![(
-                test_member_account(),
-                Role::Admin,
-            )
-                .into()]))),
+            auth: Arc::new(Authenticator::new(StaticMembershipResolver::private(vec![
+                (test_member_account(), Role::Admin).into(),
+            ]))),
         };
         let (addr, client) = serve(state(deps)).await;
         Self {

@@ -301,9 +301,9 @@ mod tests {
         let deps = ProviderDeps {
             storage,
             nonce_store,
-            auth: Arc::new(Authenticator::new(provider_auth::StaticMembershipResolver(
-                vec![],
-            ))),
+            auth: Arc::new(Authenticator::new(
+                provider_auth::StaticMembershipResolver::private(vec![]),
+            )),
         };
         (deps, dir)
     }

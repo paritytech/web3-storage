@@ -500,6 +500,46 @@ impl SubxtChainClient {
         }
     }
 
+    /// Resolve each provider account (raw 32-byte keys) to its HTTP endpoint
+    /// via the on-chain `Providers` multiaddr. Accounts without a resolvable
+    /// registration are skipped.
+    async fn endpoints_for_accounts(
+        &self,
+        provider_bytes_list: Vec<Vec<u8>>,
+    ) -> Result<Vec<String>, Error> {
+        use subxt::ext::scale_value::At;
+
+        let mut endpoints = Vec::new();
+        for provider_bytes in provider_bytes_list {
+            let provider_addr =
+                subxt::dynamic::storage::<(Value,), Value>("StorageProvider", "Providers");
+
+            let at = self
+                .api()?
+                .at_current_block()
+                .await
+                .map_err(|e| Error::Internal(format!("Failed to get storage: {e}")))?;
+
+            if let Ok(Some(value)) = at
+                .storage()
+                .try_fetch(provider_addr, (Value::from_bytes(&provider_bytes),))
+                .await
+            {
+                if let Ok(decoded) = value.decode() {
+                    if let Some(field0) = decoded.at(0) {
+                        let bytes = Self::extract_byte_vec(field0);
+                        if !bytes.is_empty() {
+                            let multiaddr_str = String::from_utf8_lossy(&bytes);
+                            endpoints.push(Self::multiaddr_to_http_endpoint(&multiaddr_str));
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(endpoints)
+    }
+
     /// Decode a storage agreement from raw SCALE-encoded bytes.
     fn decode_storage_agreement_bytes(
         bucket_id: BucketId,
@@ -825,36 +865,60 @@ impl ReplicaSyncChainClient for SubxtChainClient {
             }
         }
 
-        // Look up each provider's multiaddr
-        let mut endpoints = Vec::new();
-        for provider_bytes in provider_bytes_list {
-            let provider_addr =
-                subxt::dynamic::storage::<(Value,), Value>("StorageProvider", "Providers");
+        self.endpoints_for_accounts(provider_bytes_list).await
+    }
 
-            let at = self
-                .api()?
-                .at_current_block()
-                .await
-                .map_err(|e| Error::Internal(format!("Failed to get storage: {e}")))?;
+    async fn fetch_replica_endpoints(&self, bucket_id: BucketId) -> Result<Vec<String>, Error> {
+        let own_account = self.signer.public_key().0.to_vec();
 
-            if let Ok(Some(value)) = at
-                .storage()
-                .try_fetch(provider_addr, (Value::from_bytes(&provider_bytes),))
-                .await
-            {
-                if let Ok(decoded) = value.decode() {
-                    if let Some(field0) = decoded.at(0) {
-                        let bytes = Self::extract_byte_vec(field0);
-                        if !bytes.is_empty() {
-                            let multiaddr_str = String::from_utf8_lossy(&bytes);
-                            endpoints.push(Self::multiaddr_to_http_endpoint(&multiaddr_str));
-                        }
-                    }
+        // Iterate the bucket's agreements (StorageAgreements is keyed
+        // (bucket_id, account); one key fixes the prefix) and keep the
+        // replica-role holders, minus this node itself.
+        let storage_address = subxt::dynamic::storage::<(Value, Value), Value>(
+            "StorageProvider",
+            "StorageAgreements",
+        );
+
+        let at = self
+            .api()?
+            .at_current_block()
+            .await
+            .map_err(|e| Error::Internal(format!("Failed to get storage: {e}")))?;
+
+        let mut iter = at
+            .storage()
+            .iter(storage_address, (Value::u128(bucket_id as u128),))
+            .await
+            .map_err(|e| Error::Internal(format!("Failed to iterate agreements: {e}")))?;
+
+        let mut accounts = Vec::new();
+        while let Some(result) = iter.next().await {
+            let kv = match result {
+                Ok(kv) => kv,
+                Err(e) => {
+                    tracing::debug!("Error iterating agreements for bucket {bucket_id}: {e}");
+                    continue;
                 }
+            };
+
+            // Key layout: 32-byte prefix + 16+8 (hashed+raw bucket id)
+            // + 16+32 (hashed+raw account) — the account is the last 32 bytes.
+            let key_bytes = kv.key_bytes();
+            if key_bytes.len() < 32 {
+                continue;
+            }
+            let account = key_bytes[key_bytes.len() - 32..].to_vec();
+            if account == own_account {
+                continue;
+            }
+
+            // `decode_storage_agreement_bytes` rejects non-replica roles.
+            if Self::decode_storage_agreement_bytes(bucket_id, kv.value().bytes()).is_ok() {
+                accounts.push(account);
             }
         }
 
-        Ok(endpoints)
+        self.endpoints_for_accounts(accounts).await
     }
 
     async fn submit_sync_confirmation(

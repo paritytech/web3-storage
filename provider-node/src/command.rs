@@ -18,6 +18,7 @@ use provider_chain::{
     chain_connection::{self, ChainHandle, ChainTransport},
     BlockEvent, BlockEventRx, BlockEventTx, EVENT_CHANNEL_CAPACITY,
 };
+use sp_core::{crypto::Ss58Codec, Pair};
 use std::net::SocketAddr;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -61,11 +62,30 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!("Storage backend: {backend}");
     let (storage, nonce_store) = backend.build()?;
 
+    // The node's own provider account: the sr25519 submission account when a
+    // seed is configured, else whatever --provider-id parses to. Feeds the
+    // membership resolver (is this node a replica for the bucket?) and the
+    // authenticator's operator self-auth; both degrade gracefully to None.
+    let seed = cli.key.load_seed()?;
+    let own_account = match &seed {
+        Some(seed) => Some(sp_core::crypto::AccountId32::new(
+            sp_core::sr25519::Pair::from_string(seed, None)
+                .map_err(|e| format!("Failed to create keypair: {e:?}"))?
+                .public()
+                .0,
+        )),
+        None => cli
+            .key
+            .provider_id
+            .as_deref()
+            .and_then(|id| sp_core::crypto::AccountId32::from_ss58check(id).ok()),
+    };
+
     // Membership-based auth over the chain's bucket member sets, resolved
     // through the shared watch connection. Subscribed here rather than after
     // the chain-state coordinator starts, so the cache cannot miss the
     // bootstrap `Resubscribed` the coordinator broadcasts on first connect.
-    let resolver = ChainMembershipResolver::new(chain_rx.clone());
+    let resolver = ChainMembershipResolver::new(chain_rx.clone(), own_account.clone());
     // Incoherent, not unsafe - warn rather than clamp an explicit choice.
     if cli.auth.auth_max_stale <= cli.auth.auth_cache_ttl {
         tracing::warn!(
@@ -75,14 +95,16 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
             cli.auth.auth_cache_ttl
         );
     }
-    let auth = Arc::new(
-        Authenticator::new(resolver)
-            .with_ttl(Duration::from_secs(cli.auth.auth_cache_ttl))
-            .with_max_skew(Duration::from_secs(cli.auth.auth_max_skew))
-            .with_max_stale(Duration::from_secs(cli.auth.auth_max_stale))
-            .with_max_entries(cli.auth.auth_cache_max_entries)
-            .with_invalidations(BlockEventInvalidations::new(events_tx.subscribe())),
-    );
+    let mut authenticator = Authenticator::new(resolver)
+        .with_ttl(Duration::from_secs(cli.auth.auth_cache_ttl))
+        .with_max_skew(Duration::from_secs(cli.auth.auth_max_skew))
+        .with_max_stale(Duration::from_secs(cli.auth.auth_max_stale))
+        .with_max_entries(cli.auth.auth_cache_max_entries)
+        .with_invalidations(BlockEventInvalidations::new(events_tx.subscribe()));
+    if let Some(account) = own_account.clone() {
+        authenticator = authenticator.with_self_account(account);
+    }
+    let auth = Arc::new(authenticator);
     tracing::info!(
         "Auth: membership cache_ttl={}s, max_stale={}s, max_skew={}s, max_entries={}",
         cli.auth.auth_cache_ttl,
@@ -98,7 +120,6 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // Resolve provider identity
-    let seed = cli.key.load_seed()?;
     let state = match &seed {
         Some(seed) => {
             let state = ProviderState::with_seed_scheme(deps, seed, cli.key.key_scheme)?;

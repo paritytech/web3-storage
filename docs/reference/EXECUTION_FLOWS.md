@@ -287,7 +287,7 @@ sequenceDiagram
     Note over U,C: Step 1: Collect signatures from providers
 
     loop For each primary provider
-        SC->>PN: GET /commitment?bucket_id=X
+        SC->>PN: GET /commitment?bucket_id=X (signed — Reader-gated on private buckets)
         PN->>PN: Sign CommitmentPayload
         PN-->>SC: { mmr_root, start_seq, provider_signature }
     end

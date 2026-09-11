@@ -36,7 +36,9 @@ pub fn test_deps(
     ProviderDeps {
         storage,
         nonce_store,
-        auth: Arc::new(Authenticator::new(StaticMembershipResolver(vec![]))),
+        auth: Arc::new(Authenticator::new(StaticMembershipResolver::private(
+            vec![],
+        ))),
     }
 }
 

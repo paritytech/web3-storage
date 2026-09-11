@@ -201,7 +201,7 @@ async function main() {
     );
 
     console.log("\n=== Step 4: Respond to off-chain challenge ===");
-    const offchainProof = await fetchChallengeProof(api, PROVIDER_URL, offchainId);
+    const offchainProof = await fetchChallengeProof(api, PROVIDER_URL, offchainId, provider);
     const offchainResp = await respondToChallenge(
       api,
       provider,
@@ -214,7 +214,7 @@ async function main() {
     console.log("  Challenge defended");
 
     console.log("\n=== Step 5: Submit checkpoint ===");
-    const ck = await fetchCheckpointSignature(PROVIDER_URL, bucketId);
+    const ck = await fetchCheckpointSignature(PROVIDER_URL, bucketId, client);
     console.log("  Checkpoint mmr_root:", ck.mmr_root);
     console.log("  Checkpoint leaf_count:", ck.leaf_count);
     await submitClientCheckpoint(api, client, provider, bucketId, ck);
@@ -238,7 +238,8 @@ async function main() {
     const checkpointProof = await fetchChallengeProof(
       api,
       PROVIDER_URL,
-      checkpointId
+      checkpointId,
+      provider
     );
     const checkpointResp = await respondToChallenge(
       api,

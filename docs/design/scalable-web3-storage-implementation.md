@@ -1767,9 +1767,37 @@ The provider node exposes a JSON-over-HTTP API (axum) on, by default,
 ### Authentication & RBAC
 
 Mutating Layer-0 endpoints (`PUT /node`, `POST /commit`, `POST /delete`) and
-authenticated read endpoints require an `Authorization` header. The provider node verifies an sr25519 signature
-locally and resolves the caller's role via a TTL-cached query against the
-chain's `Buckets` storage (`bucket.members`).
+every **bucket-bound read** — Layer-1 (`/fs/*`, `/s3/*`) and Layer-0
+(`GET /commitment`, `GET /checkpoint-signature`, `GET /mmr_proof`,
+`GET /mmr_peaks`, `POST /exists`, `GET /replica/historical_roots`,
+`GET /replica/sync_status`) — require an `Authorization` header at Reader
+level. The provider node verifies an sr25519 signature locally and resolves
+the caller's role via a TTL-cached query against the chain's `Buckets`
+storage (`bucket.members`).
+
+Three Reader-level exemptions, all resolved from the same cached lookup:
+
+- **Public buckets** serve every bucket-bound read anonymously.
+- **Replica-held buckets**: when this node holds the bucket under a replica
+  agreement, reads are served to anyone regardless of visibility — replicas
+  serve everyone; visibility gates primaries only (design doc, "Bucket
+  Visibility & Access"). Resolved from the node's own `StorageAgreements`
+  entry, cached and invalidated alongside the member set.
+- **Operator self-auth**: a request signed by the node's *own* provider
+  account passes any Reader check. Provider accounts are never bucket
+  members, and the operator can read the node's disk anyway; this is what
+  lets the provider's own tooling (e.g. the dashboard building a challenge
+  response) fetch `/mmr_proof` on a private bucket. It never grants Writer
+  or Admin.
+
+**Hash-keyed reads are capability reads.** `GET /node`, `GET /read`,
+`GET /chunk_proof` and `POST /fetch_nodes` are keyed by a blake2-256 hash or
+data root and carry no bucket binding (the node store is a single
+content-addressed namespace with cross-bucket dedup), so they are served
+without authentication: possession of the hash is the capability. Hashes of
+private data are unguessable and every enumeration surface that would reveal
+them (the MMR shape via `/mmr_peaks`, per-bucket listings) is gated; see the
+design doc's "Bucket Visibility & Access" for the rule and its limits.
 
 > **⚠️ Under-specified — [#304](https://github.com/paritytech/web3-storage/issues/304).**
 > This scheme grew organically across several crates and needs one source of
@@ -1840,6 +1868,7 @@ Client discovers which nodes are missing before uploading.
 Check Existence (batched)
 ─────────────────────────
 POST /exists
+Authorization: Web3Storage <...>       # Reader (anonymous on public buckets)
 
 Request:
 {
@@ -1892,6 +1921,9 @@ Read Chunks
 ───────────
 GET /read?data_root=0x...&offset=0&length=2097152
 
+Capability read: keyed by data root, no bucket binding, unauthenticated
+(see Authentication & RBAC).
+
 Response:
 {
   "chunks": [
@@ -1922,6 +1954,9 @@ Download Node
 ─────────────
 GET /node?hash=0x...
 
+Capability read: keyed by hash, no bucket binding, unauthenticated
+(see Authentication & RBAC).
+
 Response (200 OK):
 {
   "hash": "0xabc...",
@@ -1935,6 +1970,7 @@ Response (404 Not Found):
 Get Commitment (for challenge_offchain)
 ───────────────────────────────────────
 GET /commitment?bucket_id=1234
+Authorization: Web3Storage <...>       # Reader (anonymous on public buckets)
 
 Response:
 {
@@ -1953,6 +1989,7 @@ passed on-chain unchanged.
 Get Checkpoint Signature (for checkpoint extrinsic)
 ───────────────────────────────────────────────────
 GET /checkpoint-signature?bucket_id=1234
+Authorization: Web3Storage <...>       # Reader (anonymous on public buckets)
 
 Response:
 {
@@ -1970,6 +2007,8 @@ for the checkpoint workflow, where the signature goes into the
 Get MMR Proof
 ─────────────
 GET /mmr_proof?bucket_id=0x...&leaf_index=5
+Authorization: Web3Storage <...>       # Reader; the provider's own account
+                                       # also passes (operator self-auth)
 
 Response:
 {
@@ -1980,6 +2019,8 @@ Response:
 Get Chunk Proof
 ───────────────
 GET /chunk_proof?data_root=0x...&chunk_index=3
+
+Capability read: keyed by data root, no bucket binding, unauthenticated.
 
 Response:
 {
@@ -2021,18 +2062,6 @@ Note: Only bucket admins can delete data. This triggers deletion of data before
 new_start_seq. Provider returns new commitment covering remaining data. Admin
 signature authorizes the deletion and serves as proof if challenged later.
 
-List Buckets
-────────────
-GET /buckets
-
-Response:
-{
-  "buckets": [
-    { "bucket_id": "0x1234...", "mmr_root": "0x...", "start_seq": 0, "leaf_count": 42 },
-    { "bucket_id": "0x5678...", "mmr_root": "0x...", "start_seq": 5, "leaf_count": 10 }
-  ]
-}
-
 Health Check
 ────────────
 GET /health
@@ -2049,15 +2078,12 @@ Response:
   "provider_id": "5G...",            // SS58 address
   "total_buckets": 3,
   "total_nodes": 1234,
-  "total_bytes": 42949672960,
-  "buckets": [
-    { "bucket_id": 1234, "nodes": 500, "bytes": 21474836480, ... },
-    ...
-  ]
+  "total_bytes": 42949672960
 }
 
-Note: Public observability endpoint. Useful for operators and the
-Prometheus/Grafana setup in `docs/`.
+Note: Public observability endpoint (operators, the Prometheus/Grafana setup
+in `docs/`). Aggregate totals only — a per-bucket breakdown would let anyone
+enumerate the node's buckets, sidestepping the per-bucket read gates.
 ```
 
 ### Replica Sync Status
@@ -2066,6 +2092,7 @@ Prometheus/Grafana setup in `docs/`.
 Get Historical Roots (informational)
 ────────────────────────────────────
 GET /replica/historical_roots?bucket_id=1234
+Authorization: Web3Storage <...>       # Reader (anonymous on public buckets)
 
 Response:
 {
@@ -2083,6 +2110,7 @@ and placeholder entries for the historical positions; clients building
 Get Replica Sync Status
 ───────────────────────
 GET /replica/sync_status?bucket_id=1234
+Authorization: Web3Storage <...>       # Reader (anonymous on public buckets)
 
 Response:
 {
@@ -2107,6 +2135,13 @@ top-down Merkle traversal. This section describes the sync protocol.
 4. Replica fetches missing nodes from providers, verifying hashes along the way
 5. Once fully synced, replica confirms on-chain to receive per-sync payment
 
+On a **private** bucket the primaries refuse step 2 (`/mmr_peaks` is
+Reader-gated and a replica is not a member — the design's primary gate), so
+the sync coordinator tries the bucket's *other replicas* after the primaries:
+replicas serve everyone, which is what lets a public→private bucket keep
+seeding new replicas. A born-private bucket has no honest source at all —
+by design.
+
 **Why chain-first?**
 
 The chain checkpoint is the source of truth. Fetching the root from a provider
@@ -2117,6 +2152,9 @@ the replica can verify all fetched data against a trusted commitment.
 Get MMR Peaks (given trusted root from chain)
 ─────────────────────────────────────────────
 GET /mmr_peaks?bucket_id=0x...
+Authorization: Web3Storage <...>       # Reader (anonymous on public buckets
+                                       # and on buckets the serving node
+                                       # holds as a replica)
 
 Response:
 {
@@ -2129,37 +2167,19 @@ Note: Replica already knows the trusted mmr_root from the chain. It fetches
 peaks from a provider and verifies: hash(peaks) == trusted_root. If verification
 fails, try another provider. Once verified, use peaks to start top-down traversal.
 
-Get MMR Subtree
-───────────────
-GET /mmr_subtree?bucket_id=0x...&peak_index=0&depth=2
-
-Request: Fetch nodes in an MMR subtree starting from a peak.
-- peak_index: which peak to start from (0 = leftmost)
-- depth: how many levels to fetch (0 = just the peak, 1 = peak + children, etc.)
-
-Response:
-{
-  "nodes": [
-    { "position": 0, "hash": "0xabc...", "children": [1, 2] },
-    { "position": 1, "hash": "0xdef...", "children": [3, 4] },
-    { "position": 2, "hash": "0x123...", "children": [5, 6] },
-    ...
-  ]
-}
-
-Note: Replica can batch requests by depth level. Check which hashes match
-locally stored nodes, then fetch children of missing nodes.
-
 Note: To check which nodes exist on a provider, use the existing POST /exists
-endpoint from the Sync Protocol section above.
+endpoint from the Sync Protocol section above. The traversal walks `GET /node`
+children links.
 
 Fetch Nodes (batched, for sync)
 ───────────────────────────────
 POST /fetch_nodes
 
+Capability read: keyed by hash, no bucket binding, unauthenticated
+(see Authentication & RBAC).
+
 Request:
 {
-  "bucket_id": "0x1234...",
   "hashes": ["0xdef...", "0x456...", ...]
 }
 
