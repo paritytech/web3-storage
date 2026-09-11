@@ -44,6 +44,76 @@ change: move the bucket to another provider under a new agreement, or at
 least add a primary provider to an existing bucket. The design specifies
 neither.
 
+## Questions and open points
+
+Each question points at the gap (G), continuity (C), retention (R),
+economics (E) or drift (D) item it comes from, listed in the sections below.
+
+Ownership and shape:
+
+1. Is a bucket-level provider change intended: move the bucket to a new
+   provider under a new agreement, add a primary to an existing bucket, or
+   both? The design promises a stable `bucket_id` across providers and has no
+   path to keep it. (G1, D1)
+2. Who owns and pays for dApp user data? Options, none specified: one
+   operator bucket with users as `Writer` members (bounded by `MaxMembers`);
+   one operator bucket with a shared writer key or a contract as writer;
+   one bucket per user with a user-owned agreement (Web3 principle: the user
+   pays and controls, but every user needs funds and signatures, and the
+   continuity problem moves to every user); contract-owned per-user buckets.
+   Does every user need an agreement? Should the design add a "dApp with user
+   data" use case? (Story)
+3. How does a static SPA bucket continue past `expires_at`? Read-only
+   continuation works today through replicas of a frozen public bucket.
+   Writable continuation (new SPA version) needs a primary and hits G1 and
+   G2; the operator has the build locally, but re-upload changes the
+   `bucket_id` that DNS points at. (G1, G2)
+4. After #414 a drive owner and its agreement owner can diverge. Does Layer 1
+   need a matching drive transfer? (D7)
+
+Data movement and liability:
+
+5. Can the transfer run provider-to-provider instead of through the client?
+   Should "Primary providers don't sync with each other" be amended so a
+   primary may catch up from any provider with a live agreement on the
+   bucket, with clients still delivering new writes to every primary? (G2,
+   E2)
+6. Should a primary be able to attest the current snapshot itself, so its
+   liability does not depend on a client relaying its signature? (G3, C1,
+   D2)
+7. Should a provider be able to be replica and primary of one bucket at once,
+   or be promoted from replica to primary in place? (G5)
+8. Is there a setting between "one signature is enough" and "all primaries
+   must sign" that keeps a second primary liable without blocking
+   checkpoints when one is dead? (C1)
+9. On a private bucket, what is the intended data source for a joining
+   provider: admin adds its account as `Reader`, a replica, or a rule that
+   providers under agreement may read? (G4, D6)
+10. Should the replica confirmation window (six historical roots, oldest
+    ~113 anchor blocks) be widened or replaced so a replica of a large, busy
+    bucket can attest at all? (C6)
+11. Who challenges? The design assumes client software spot-checks in the
+    background; nothing does. Is that a client requirement, a provider-node
+    duty, or a protocol role? (C7)
+
+Lifecycle:
+
+12. Should a `RetentionPeriod` after `expires_at` exist, during which the
+    provider stays challengeable and the agreement cannot be settled? (R1,
+    D3)
+13. Should a provider be required to announce a refused extension a minimum
+    number of blocks before expiry? (C3)
+14. Is a pro-rated early exit ever acceptable (for example once a replacement
+    provider has attested), or does the binding-commitment rule stay
+    absolute? `delete_drive` already does this today. (C5, D4, E1)
+15. Should renewal be possible without a live owner at the expiry block:
+    prepaid pool, auto-extend from escrow, or permissionless extension only?
+    (C2)
+16. Layer 1: derive mirrored agreement fields from Layer 0, or add update
+    paths? (G6)
+17. Should the provider node reject uploads and commits for buckets where it
+    has no agreement in the matching role? (D5)
+
 ## Gaps
 
 Transfer:
@@ -94,73 +164,23 @@ Retention and economics:
 - **E2** Serving the bulk fetch is unpaid; the operator's authorized-tier
   challenge against `P1` is the only lever.
 
-## Drifts (design vs. code)
+## Drifts (design vs. code, D)
 
-1. The design's use cases assume a join path ("Add 2-3 diverse providers")
+- **D1** The design's use cases assume a join path ("Add 2-3 diverse providers")
    that the implementation doc never specifies and the pallet does not have.
-2. `extend_checkpoint` drops a signer bit beyond the stored bitfield and still
+- **D2** `extend_checkpoint` drops a signer bit beyond the stored bitfield and still
    emits `BucketCheckpointed` for that provider (`lib.rs:2180-2182`).
-3. "Snapshot liability remains until superseded" does not apply after expiry
+- **D3** "Snapshot liability remains until superseded" does not apply after expiry
    in code.
-4. `delete_drive` early-terminates replica agreements with refunds (C5).
-5. The provider node accepts `PUT /node` and `POST /commit` for any bucket a
+- **D4** `delete_drive` early-terminates replica agreements with refunds (C5).
+- **D5** The provider node accepts `PUT /node` and `POST /commit` for any bucket a
    writer authenticates for, without checking its own agreement or role
    (`provider-node/src/api.rs:262-303`). Quota part is #382; the role check
    is unfiled.
-6. Read and sync endpoints are unauthenticated while the design gates private
+- **D6** Read and sync endpoints are unauthenticated while the design gates private
    bucket reads to members (#383).
-7. `transfer_agreement_ownership` was specified and unimplemented
+- **D7** `transfer_agreement_ownership` was specified and unimplemented
    (DRIFT-015 in #376); PR #414 closes it.
-
-## Questions
-
-Ownership and shape:
-
-1. Is a bucket-level provider change intended: move the bucket to a new
-   provider under a new agreement, add a primary to an existing bucket, or
-   both? The design promises a stable `bucket_id` across providers and has no
-   path to keep it.
-2. Who owns and pays for dApp user data? Options, none specified: one
-   operator bucket with users as `Writer` members (bounded by `MaxMembers`);
-   one operator bucket with a shared writer key or a contract as writer;
-   one bucket per user with a user-owned agreement (Web3 principle: the user
-   pays and controls, but every user needs funds and signatures, and the
-   continuity problem moves to every user); contract-owned per-user buckets.
-   Does every user need an agreement? Should the design add a "dApp with user
-   data" use case?
-3. How does a static SPA bucket continue past `expires_at`? Read-only
-   continuation works today through replicas of a frozen public bucket.
-   Writable continuation (new SPA version) needs a primary and hits G1 and
-   G2; the operator has the build locally, but re-upload changes the
-   `bucket_id` that DNS points at.
-4. After #414 a drive owner and its agreement owner can diverge. Does Layer 1
-   need a matching drive transfer?
-
-Data movement and liability:
-
-5. Can the transfer run provider-to-provider instead of through the client?
-   Should "Primary providers don't sync with each other" be amended so a
-   primary may catch up from any provider with a live agreement on the
-   bucket, with clients still delivering new writes to every primary?
-6. Should a primary be able to attest the current snapshot itself, so its
-   liability does not depend on a client relaying its signature?
-7. Should a provider be able to be replica and primary of one bucket at once,
-   or be promoted from replica to primary in place?
-8. Is there a setting between "one signature is enough" and "all primaries
-   must sign" that keeps a second primary liable without blocking
-   checkpoints when one is dead?
-
-Lifecycle:
-
-9. Should a `RetentionPeriod` after `expires_at` exist, during which the
-   provider stays challengeable and the agreement cannot be settled?
-10. Should a provider be required to announce a refused extension a minimum
-    number of blocks before expiry?
-11. Is a pro-rated early exit ever acceptable (for example once a replacement
-    provider has attested), or does the binding-commitment rule stay
-    absolute? `delete_drive` already does this today (C5).
-12. Layer 1: derive mirrored agreement fields from Layer 0, or add update
-    paths?
 
 ## Designed vs. implemented
 
