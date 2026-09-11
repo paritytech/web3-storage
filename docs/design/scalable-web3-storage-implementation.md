@@ -533,6 +533,26 @@ pub enum ProviderRole<T: Config> {
     },
 }
 
+/// Per-provider sliding replay window over signed agreement-term nonces.
+/// Advanced by `establish_storage_agreement` / `establish_replica_agreement`,
+/// reset at registration, removed at `complete_deregister`.
+#[pallet::storage]
+pub type ProviderReplayStates<T: Config> =
+    StorageMap<_, Blake2_128Concat, T::AccountId, ReplayWindow, ValueQuery>;
+
+/// Defined in `storage_primitives`. Sliding window over the most recent
+/// `REPLAY_WINDOW_BITS` (1024) nonces accepted from a provider: nonces more
+/// than 1024 slots behind the highest accepted nonce are rejected outright
+/// (`NonceTooOld`); nonces inside the window are accepted at most once
+/// (`NonceAlreadyUsed`).
+pub struct ReplayWindow {
+    /// Highest sequence nonce ever accepted for this provider (window anchor).
+    pub hsn: u64,
+    /// 1024-bit acceptance bitmap; bit `i` is set iff nonce `hsn - i`
+    /// has been accepted.
+    pub bitmap: [u8; 128],
+}
+
 /// Defined in `storage_primitives`: the off-chain quote a provider signs and
 /// the owner redeems on-chain (see `establish_storage_agreement` /
 /// `establish_replica_agreement`). The provider signs
@@ -551,8 +571,8 @@ pub struct AgreementTerms<AccountId, Balance, BlockNumber> {
     pub price_per_byte: Balance,
     /// Block number after which the quote is no longer redeemable.
     pub valid_until: BlockNumber,
-    /// Provider-chosen replay-protection nonce: a signed quote is redeemable
-    /// at most once.
+    /// Provider-chosen replay-protection nonce; uniqueness is enforced
+    /// through the provider's sliding replay window.
     pub nonce: u64,
     /// Bucket the quote is bound to:
     /// - `None` for primary terms (the bucket is created at redemption)
@@ -1261,8 +1281,8 @@ impl<T: Config> Pallet<T> {
     //   (`TermsExpired` / `TermsValidityTooLong`)
     // - the signature must verify against the provider's registered key over
     //   `blake2_256(context | SCALE(terms))` with the flavour's context
-    // - `terms.nonce` must not replay an already-redeemed quote
-    //   (`NonceAlreadyUsed` / `NonceTooOld`)
+    // - `terms.nonce` must pass the provider's sliding replay window
+    //   (`NonceAlreadyUsed` / `NonceTooOld`), which is advanced on success
     // - the provider must be active (registered, not deregistering), within
     //   its duration bounds, and the added `terms.max_bytes` must fit its
     //   declared capacity (`CapacityExceeded`) and stake
