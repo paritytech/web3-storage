@@ -24,10 +24,11 @@ so every tool reads the same text:
   found elsewhere. For non-trivial changes, run `/design-alignment` before
   committing.
 - **Validate code against the design. On any divergence, or anything in the
-  design that looks wrong or vulnerable, stop and flag**: open or reference
-  an issue and ping the design owner. Never quietly edit the design to match
-  the code or fix the code on assumptions. Design changes go through a PR
-  reviewed per `.github/CODEOWNERS`.
+  design that looks wrong or vulnerable, stop and flag**: reference the
+  existing issue, or draft one for the user to file, and name the design
+  owner. Never quietly edit the design to match the code or fix the code on
+  assumptions. Design changes go through a PR reviewed per
+  `.github/CODEOWNERS`.
 - **`docs/reference/`** is *derived* documentation, but it is **review-gated**
   (per `.github/CODEOWNERS`) and must stay true to the code. When you change
   behavior, **update the relevant `reference/` doc in the same change** (run
@@ -87,6 +88,8 @@ design doc.
 **Conventions (in `AGENTS.md`, imported above):**
 - Pull requests: base branch, single responsibility, regenerated files,
   benchmarks, description structure, stacking.
+- Issues: one problem per issue, description structure, the agent drafts and
+  the user files.
 - Writing: documentation rules, plain language, root-cause fixes.
 - Code: Rust workspace and Cargo dependency rules, JS/TS via `polkadot-api`.
 
