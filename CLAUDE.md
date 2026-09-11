@@ -75,7 +75,8 @@ design doc.
   commit so reviewers can skip them.
 - New or changed extrinsics need fresh benchmarks. Do not run `/cmd bench`
   yourself; tell the user the PR needs re-benching and let them trigger it.
-  Never leave hand-written estimates in a runtime weight file.
+  A placeholder weight is fine in the meantime if it is marked
+  `// TODO: needs re-benchmarking`.
 - PR description: one or two sentences on what the PR does and why, then
   bulleted sections as needed: **Changes**, **Cleanup**, **Follow-ups**,
   **Open questions**. Skip empty sections.
