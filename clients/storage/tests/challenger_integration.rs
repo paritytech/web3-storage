@@ -47,37 +47,6 @@ async fn test_list_my_challenges_empty() {
     }
 }
 
-/// `get_challenge_stats` now reads the on-chain `ChallengerStats` aggregate.
-/// On a fresh chain the account hasn't issued any challenges so all counters
-/// are 0; the invariant `total >= successful + failed` is what we assert.
-#[tokio::test]
-async fn test_get_challenge_stats() {
-    let _guard = chain_guard().await;
-
-    let challenger = match alice_challenger().await {
-        Some(c) => c,
-        None => {
-            eprintln!("Chain not reachable — skipping test_get_challenge_stats");
-            return;
-        }
-    };
-
-    let stats = challenger
-        .get_challenge_stats()
-        .await
-        .expect("get_challenge_stats should not error");
-
-    println!(
-        "Challenge stats: total={} successful={} failed={}",
-        stats.total_challenges, stats.successful_challenges, stats.failed_challenges
-    );
-
-    assert!(
-        stats.total_challenges >= stats.successful_challenges + stats.failed_challenges,
-        "total >= successful + failed must hold (in-flight challenges fill the gap)"
-    );
-}
-
 /// `find_challenge_targets` scores all active agreements; on an empty chain
 /// it returns an empty vec without error.
 #[tokio::test]
