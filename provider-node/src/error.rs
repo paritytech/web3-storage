@@ -195,11 +195,11 @@ impl IntoResponse for Error {
                         })),
                     },
                 ),
-                StorageError::Storage(msg) => (
+                e @ (StorageError::RocksDb(_) | StorageError::ColumnFamilyMissing(_)) => (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     ErrorResponse {
                         error: "internal_error".to_string(),
-                        details: Some(serde_json::json!({ "message": msg })),
+                        details: Some(serde_json::json!({ "message": e.to_string() })),
                     },
                 ),
                 StorageError::Serialization(msg) => (
@@ -524,6 +524,12 @@ mod tests {
                 "x".into()
             ))),
             StatusCode::NOT_FOUND
+        );
+        assert_eq!(
+            status_of(Error::from(provider_storage::Error::ColumnFamilyMissing(
+                "nodes"
+            ))),
+            StatusCode::INTERNAL_SERVER_ERROR
         );
         assert_eq!(
             status_of(Error::InvalidHash {
