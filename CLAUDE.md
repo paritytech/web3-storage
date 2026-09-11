@@ -9,6 +9,11 @@ file is loaded into every session but is not CODEOWNERS-gated, so any copy of
 a design fact placed here becomes an unreviewed, drift-prone shadow spec.
 Link, don't copy.
 
+Conventions for agent-written text and PRs are in `AGENTS.md`, imported here
+so every tool reads the same text:
+
+@AGENTS.md
+
 ## Design & spec discipline (read this first)
 
 - `docs/design/` is the **canonical, review-gated source of truth** (enforced
@@ -61,13 +66,6 @@ design doc.
   commits on top; if history genuinely has to be rewritten, stop and ask the
   user instead of doing it.
 
-**Documentation rules:**
-- Every doc you add or edit (rustdoc, READMEs, design text, code comments,
-  PR and issue text) is simple and straight to the point. Say what the
-  reader needs, once. No fluff, no restating the code or the diff, no
-  boilerplate sections, no marketing tone.
-- Public APIs need rustdoc.
-
 **Pull request rules:**
 - ALWAYS open pull requests against the repository's default branch (`dev`).
 - Single responsibility per PR; all CI checks must pass.
@@ -77,16 +75,7 @@ design doc.
   yourself; tell the user the PR needs re-benching and let them trigger it.
   A placeholder weight is fine in the meantime if it is marked
   `// TODO: needs re-benchmarking`.
-- PR description: one or two sentences on what the PR does and why, then
-  bulleted sections as needed: **Changes**, **Cleanup**, **Follow-ups**,
-  **Open questions**. Skip empty sections.
-- Stacked PRs only when the upper PR genuinely depends on the lower one, and
-  each PR in the stack is still a single, self-contained, reviewable change.
-  Do NOT stack unrelated work (a feature on a bug fix on a docs fix) just to
-  avoid waiting for a merge or to dodge conflicts in generated files
-  (bindings, metadata, weights) — that makes the stack unreviewable. The
-  description names the base PR and the intended merge order and is kept
-  current as the PR changes.
+- PR description structure and the stacked-PR rule are in `AGENTS.md`.
 
 **Code review rules:**
 - NEVER post review findings (PR reviews, inline or issue comments) to
@@ -193,48 +182,3 @@ strings) are documented in [`packages/sdk/README.md`](packages/sdk/README.md).
 Comment `/aireview` on a PR to get an advisory review from Vertex AI
 (`.github/workflows/vertex-ai-review.yml`). It is not a substitute for human
 review.
-
-## Rules and harness
-
-### IMPORTANT: Minimize AI slop; use plain, simple language
-Do not use invented shorthands or heavy jargon. Say what something actually is.
-Never use metaphors or rhetorical flourishes. Never anthropomorphize.
-For example, a file does not "sit" in a directory; it "exists" there ("sit" implies it could also "stand"). A problem does not "bite"; it "occurs" (a problem has no mouth).
-No proverb symmetry ("teams change, topics stay"). No balanced contrast ("is a copy, not a rewrite"). No novelist's diction ("enters", "the latter case"). No wordplay.
-Be concrete. Do not use vague imperatives like "name them", "belongs elsewhere" or "that's all it takes".
-Never use fancy vocabulary. Use dry, technical, non-literary words. For example:
-  - do not say "carry"; say "continue"
-  - do not say "load-bearing"; say "critical"
-  - do not say "survives"; say "remains"
-  - do not say "asked"; say "requested"
-  - do not say "refuses"; say "rejects"
-  - do not say "holds"; say "contains"
-Use direct, dry, technical language. Avoid phrases and names that read as sentences or narrate. For example:
-  - do not say "asked to think"; say "thinking enabled"
-  - do not say "what was checked, not assumed"; say "what I checked"
-  - do not say "room to answer"; say "remaining capacity"
-  - do not say "where it stopped"; say "stopping point"
-  - do not say "for a reason worth writing down"; say "for an important reason"
-  - do not say "was never written down"; say "was never documented"
-Write like a software engineer with no literary skill.
-Never use abstract, soft phrasing that does not say what something is, or that only passively refers to something.
-Never use passive voice. Use active voice. For example, do not say "the last message wasn't written down"; say "the last message doesn't exist".
-Cut filler. Never editorialize. Use simple structure and simple vocabulary.
-This applies to everything you output: messages to the user, strings in code, method names, variable names, commit messages, and your own notes and status files.
-Do not match existing style when it disagrees with these guidelines.
-
-### IMPORTANT: Use dry, simple, concrete, technical language in code
-When writing code all of the "minimize AI slop" rules apply.
-Name things in the simplest, purely technical language.
-The following words are FORBIDDEN and should NEVER be used in code nor in any message in code: `ran`, `landed`, `land`, `given`, `give`, `settled`, `settle`, `held`, `holds`, `holding`, `says`, `names`, `named`, etc.
-Never use past participle in code.
-Always name things in *concrete* terms, for example:
-  - do not write "written_at"; write "write_timestamp"
-
-### IMPORTANT: Fix the root cause, not the symptom
-When fixing a bug, figure out what is its root cause, not just what directly caused it.
-Is the issue you're fixing a consequence of a particular architectural decision?
-Is there a more *fundamental* fix you could apply which not only fixes this issue, but also either fixes similar issues, or prevents the issue from reappearing in the future?
-Figure out *if* there is a fundamental root cause to what you're fixing, and what that root cause is.
-NEVER patch the symptoms when a root cause exists.
-When in doubt, ask the user to decide.
