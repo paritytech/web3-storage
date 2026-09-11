@@ -489,7 +489,7 @@ sequenceDiagram
         C->>C: Refund challenger deposit (no reward)
         C->>B: release(HoldReason::ChallengeDeposit, challenger, deposit)
 
-        C->>C: Update provider + challenger stats
+        C->>C: Update provider stats
 
         C-->>C: Event::ChallengeSlashed { challenge_id, provider,<br/>slashed_amount, challenger_reward: 0, reason: Timeout }
     end

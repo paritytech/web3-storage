@@ -185,8 +185,9 @@ pub const VERSION: RuntimeVersion = RuntimeVersion {
     // * 4_005 for 2 s blocks / 3 cores: slot-based authoring, `RelayParentOffset = 1` (#131);
     // * 4_006 for the challenger tier and bucket visibility: split `ProviderStats` counters,
     //   `Bucket.visibility`, `Challenge.authorized`, `set_bucket_visibility`, and
-    //   `StorageProviderApi` v3 with the split counters in its responses (#330).
-    spec_version: 4_006,
+    //   `StorageProviderApi` v3 with the split counters in its responses (#330);
+    // * 4_007 for dropping the `ChallengerStats` map and its `ChallengerStatRecord` (#400).
+    spec_version: 4_007,
     impl_version: 0,
     apis: RUNTIME_API_VERSIONS,
     // Bumped whenever call encoding changes, so offline signers and stale-metadata

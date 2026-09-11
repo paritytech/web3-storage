@@ -110,25 +110,11 @@ export interface ChallengeRow {
   authorized: boolean
 }
 
-/**
- * Network-wide outcome counters summed over `ChallengerStats`. Resolved
- * challenges are deleted from storage, so these aggregates (plus events) are
- * the only durable outcome record — per-challenge history is issue #238.
- */
-export interface ChallengeAggregates {
-  totalIssued: number
-  /** Provider slashed. */
-  upheld: number
-  /** Provider defended. */
-  dismissed: number
-}
-
 export interface NetworkSnapshot {
   providers: ProviderRow[]
   agreements: AgreementRow[]
   buckets: BucketRow[]
   openChallenges: ChallengeRow[]
-  challengeAggregates: ChallengeAggregates
   /** NextBucketId — buckets ever created (deleted ones included). */
   bucketsEverCreated: number
   /** Sections whose query failed (e.g. storage item missing on an older runtime). */
@@ -156,8 +142,7 @@ export async function loadNetworkSnapshot(): Promise<NetworkSnapshot> {
     }
   }
 
-  const [providers, agreements, buckets, openChallenges, challengeAggregates, bucketsEverCreated] =
-    await Promise.all([
+  const [providers, agreements, buckets, openChallenges, bucketsEverCreated] = await Promise.all([
       safe('providers', [] as ProviderRow[], async () => {
         const entries = await api.query.StorageProvider.Providers.getEntries()
         return entries.map(({ keyArgs, value }) => ({
@@ -241,17 +226,6 @@ export async function loadNetworkSnapshot(): Promise<NetworkSnapshot> {
           .sort((a, b) => a.deadline - b.deadline)
       }),
 
-      safe('challenge stats', { totalIssued: 0, upheld: 0, dismissed: 0 } as ChallengeAggregates, async () => {
-        const entries = await api.query.StorageProvider.ChallengerStats.getEntries()
-        const agg: ChallengeAggregates = { totalIssued: 0, upheld: 0, dismissed: 0 }
-        for (const { value } of entries) {
-          agg.totalIssued += value.total_challenges
-          agg.upheld += value.successful_challenges
-          agg.dismissed += value.failed_challenges
-        }
-        return agg
-      }),
-
       safe('bucket counter', 0, async () =>
         Number(await api.query.StorageProvider.NextBucketId.getValue())
       ),
@@ -262,7 +236,6 @@ export async function loadNetworkSnapshot(): Promise<NetworkSnapshot> {
     agreements,
     buckets,
     openChallenges,
-    challengeAggregates,
     bucketsEverCreated,
     failedSections,
     fetchedAt: Date.now(),
