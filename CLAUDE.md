@@ -66,17 +66,6 @@ design doc.
   commits on top; if history genuinely has to be rewritten, stop and ask the
   user instead of doing it.
 
-**Pull request rules:**
-- ALWAYS open pull requests against the repository's default branch (`dev`).
-- Single responsibility per PR; all CI checks must pass.
-- Regenerated files (subxt/PAPI bindings, metadata, weights) go in their own
-  commit so reviewers can skip them.
-- New or changed extrinsics need fresh benchmarks. Do not run `/cmd bench`
-  yourself; tell the user the PR needs re-benching and let them trigger it.
-  A placeholder weight is fine in the meantime if it is marked
-  `// TODO: needs re-benchmarking`.
-- PR description structure and the stacked-PR rule are in `AGENTS.md`.
-
 **Code review rules:**
 - NEVER post review findings (PR reviews, inline or issue comments) to
   GitHub on your own. Present them to the human reviewer for triage first
@@ -84,24 +73,11 @@ design doc.
 - Review criteria, the finding format and the stacked-PR checks live in the
   `/review` skill. Use it for every review.
 
-**Workspace crate rules:**
-- When adding, splitting out, or renaming a workspace member crate, ALWAYS
-  classify it in `scripts/coverage.sh`: add it to `COV_PACKAGES` (measured)
-  or `COV_SKIP_PACKAGES` (skipped, with a reason comment). CI's coverage job
-  fails on any unclassified member.
-- Prefer keeping `crates/providers/*` free of `subxt`: express what the crate
-  needs as a trait and let `provider-node` supply the subxt-backed
-  implementation, so swapping the chain client stays a provider-node change.
-
-**Cargo dependency rules:**
-- ALWAYS declare external dependencies in the root `[workspace.dependencies]`
-  and inherit them in crates via `{ workspace = true }`. Never add
-  inline-versioned dependencies (e.g. `foo = "1.2"`) to a crate's
-  `Cargo.toml`.
-- On the inheriting line you may only add `features` (additive) and
-  `optional`; per Cargo, `version` and `default-features` cannot appear
-  there, so set `default-features` in the workspace declaration (e.g.
-  `hex = { version = "0.4", default-features = false }`).
+**Conventions (in `AGENTS.md`, imported above):**
+- Pull requests: base branch, single responsibility, regenerated files,
+  benchmarks, description structure, stacking.
+- Writing: documentation rules, plain language, root-cause fixes.
+- Code: Rust workspace and Cargo dependency rules, JS/TS via `polkadot-api`.
 
 **Automatic formatting:**
 - ALWAYS run `/format` after generating or modifying Rust code, and before
@@ -148,34 +124,6 @@ When the user says **"run locally"** (or "run the UIs", "start the UIs",
 "spin up the UIs"), invoke the `run-local-uis` project skill — it starts all
 six `user-interfaces/` apps on their canonical ports with Vite HMR (landing
 5176, drive-ui 5174, provider 5175, s3-ui 5177, photos 5178, explorer 5179).
-
-## JS/TS: use `polkadot-api`, never `@polkadot/*`
-
-For any JavaScript or TypeScript code in this repo (demos, scripts, tooling,
-SDKs), talk to the chain through `polkadot-api` (PAPI). Do NOT introduce
-`@polkadot/keyring`, `@polkadot/util-crypto`, `@polkadot/util`,
-`@polkadot/api`, or any other `@polkadot/*` package — they duplicate
-functionality PAPI already provides, drag in 20+ transitive deps, and force
-`cryptoWaitReady()` awaits everywhere.
-
-| Need | Use |
-| --- | --- |
-| Chain client + typed API | `polkadot-api` (`createClient`; `getWsProvider` from `polkadot-api/ws`) |
-| Signer wrapper | `getPolkadotSigner` from `polkadot-api/signer` |
-| SCALE / `Binary` / `Enum` | `import { Binary, Enum } from "polkadot-api"` — NOT `@polkadot-api/substrate-bindings` (its 0.20+ `Binary` is a codec helper without `fromBytes`/`asBytes`) |
-| Sr25519 key derivation (`//Alice`) | `sr25519CreateDerive` from `@polkadot-labs/hdkd` + `DEV_PHRASE` + `entropyToMiniSecret` + `mnemonicToEntropy` from `@polkadot-labs/hdkd-helpers` |
-| SS58 encode / decode | `ss58Address` / `ss58Decode` from `@polkadot-labs/hdkd-helpers` |
-| blake2-256 hashing | `blake2b256` from `@polkadot-labs/hdkd-helpers` |
-| `cryptoWaitReady()` | Not needed — hdkd is synchronous; delete the import and the await |
-
-In-repo code should not hand-roll these patterns: the workspace package
-`@web3-storage/sdk` (`packages/sdk`) already provides `connect`,
-`makeSigner`, the `Alice..Ferdie` dev signers, `submitTx`,
-`watchValue`-based waits, and typed wrappers for every pallet extrinsic.
-Import from it instead. The canonical signer/derive pattern and the SS58
-address-comparison gotcha (`ss58Address` defaults to prefix 42 while PAPI
-surfaces the runtime prefix — compare raw bytes via `ss58Decode`, never
-strings) are documented in [`packages/sdk/README.md`](packages/sdk/README.md).
 
 ## AI review bot
 

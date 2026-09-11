@@ -1,8 +1,9 @@
-# AGENTS.md - Conventions for agent-written text and PRs
+# AGENTS.md - Conventions for agent-written text, PRs and code
 
 Conventions for anything an agent writes in this repo: docs, PR and issue
-text, commit messages, review findings. Behavioural rules (design discipline,
-git, review) are in `CLAUDE.md`, which imports this file.
+text, commit messages, review findings, Rust and JS/TS code. Behavioural
+rules (design discipline, git, review) are in `CLAUDE.md`, which imports this
+file.
 
 ## Documentation
 
@@ -56,6 +57,14 @@ When in doubt, ask the user to decide.
 
 ## Pull requests
 
+- ALWAYS open pull requests against the repository's default branch (`dev`).
+- Single responsibility per PR; all CI checks must pass.
+- Regenerated files (subxt/PAPI bindings, metadata, weights) go in their own
+  commit so reviewers can skip them.
+- New or changed extrinsics need fresh benchmarks. Do not run `/cmd bench`
+  yourself; tell the user the PR needs re-benching and let them trigger it.
+  A placeholder weight is fine in the meantime if it is marked
+  `// TODO: needs re-benchmarking`.
 - PR description: one or two sentences on what the PR does and why, then
   bulleted sections as needed: **Changes**, **Cleanup**, **Follow-ups**,
   **Open questions**. Skip empty sections.
@@ -66,3 +75,49 @@ When in doubt, ask the user to decide.
   (bindings, metadata, weights) — that makes the stack unreviewable. The
   description names the base PR and the intended merge order and is kept
   current as the PR changes.
+
+## Rust workspace
+
+- When adding, splitting out, or renaming a workspace member crate, ALWAYS
+  classify it in `scripts/coverage.sh`: add it to `COV_PACKAGES` (measured)
+  or `COV_SKIP_PACKAGES` (skipped, with a reason comment). CI's coverage job
+  fails on any unclassified member.
+- Prefer keeping `crates/providers/*` free of `subxt`: express what the crate
+  needs as a trait and let `provider-node` supply the subxt-backed
+  implementation, so swapping the chain client stays a provider-node change.
+- ALWAYS declare external dependencies in the root `[workspace.dependencies]`
+  and inherit them in crates via `{ workspace = true }`. Never add
+  inline-versioned dependencies (e.g. `foo = "1.2"`) to a crate's
+  `Cargo.toml`.
+- On the inheriting line you may only add `features` (additive) and
+  `optional`; per Cargo, `version` and `default-features` cannot appear
+  there, so set `default-features` in the workspace declaration (e.g.
+  `hex = { version = "0.4", default-features = false }`).
+
+## JS/TS: use `polkadot-api`, never `@polkadot/*`
+
+For any JavaScript or TypeScript code in this repo (demos, scripts, tooling,
+SDKs), talk to the chain through `polkadot-api` (PAPI). Do NOT introduce
+`@polkadot/keyring`, `@polkadot/util-crypto`, `@polkadot/util`,
+`@polkadot/api`, or any other `@polkadot/*` package — they duplicate
+functionality PAPI already provides, drag in 20+ transitive deps, and force
+`cryptoWaitReady()` awaits everywhere.
+
+| Need | Use |
+| --- | --- |
+| Chain client + typed API | `polkadot-api` (`createClient`; `getWsProvider` from `polkadot-api/ws`) |
+| Signer wrapper | `getPolkadotSigner` from `polkadot-api/signer` |
+| SCALE / `Binary` / `Enum` | `import { Binary, Enum } from "polkadot-api"` — NOT `@polkadot-api/substrate-bindings` (its 0.20+ `Binary` is a codec helper without `fromBytes`/`asBytes`) |
+| Sr25519 key derivation (`//Alice`) | `sr25519CreateDerive` from `@polkadot-labs/hdkd` + `DEV_PHRASE` + `entropyToMiniSecret` + `mnemonicToEntropy` from `@polkadot-labs/hdkd-helpers` |
+| SS58 encode / decode | `ss58Address` / `ss58Decode` from `@polkadot-labs/hdkd-helpers` |
+| blake2-256 hashing | `blake2b256` from `@polkadot-labs/hdkd-helpers` |
+| `cryptoWaitReady()` | Not needed — hdkd is synchronous; delete the import and the await |
+
+In-repo code should not hand-roll these patterns: the workspace package
+`@web3-storage/sdk` (`packages/sdk`) already provides `connect`,
+`makeSigner`, the `Alice..Ferdie` dev signers, `submitTx`,
+`watchValue`-based waits, and typed wrappers for every pallet extrinsic.
+Import from it instead. The canonical signer/derive pattern and the SS58
+address-comparison gotcha (`ss58Address` defaults to prefix 42 while PAPI
+surfaces the runtime prefix — compare raw bytes via `ss58Decode`, never
+strings) are documented in [`packages/sdk/README.md`](packages/sdk/README.md).
