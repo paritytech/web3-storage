@@ -90,6 +90,10 @@ impl<T: Config> Pallet<T> {
                     provider_info.committed_bytes = provider_info
                         .committed_bytes
                         .saturating_sub(agreement.max_bytes);
+                    provider_info.stats.lifetime_revenue = provider_info
+                        .stats
+                        .lifetime_revenue
+                        .saturating_add(payment_to_provider);
                     provider_info.stats.agreements_not_extended = provider_info
                         .stats
                         .agreements_not_extended

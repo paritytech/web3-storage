@@ -46,6 +46,8 @@ fn end_agreement_pay_after_expiry() {
         // Provider committed_bytes decreased
         let provider = Providers::<Test>::get(2).unwrap();
         assert_eq!(provider.committed_bytes, 0);
+        // Full payment counted as lifetime revenue
+        assert_eq!(provider.stats.lifetime_revenue, payment);
     });
 }
 
@@ -87,6 +89,12 @@ fn end_agreement_burn_after_expiry() {
         assert_eq!(
             Balances::free_balance(999),
             treasury_balance_before + burned
+        );
+        // Only the unburned portion counts as lifetime revenue, not the
+        // full locked payment.
+        assert_eq!(
+            Providers::<Test>::get(2).unwrap().stats.lifetime_revenue,
+            to_provider
         );
     });
 }

@@ -335,9 +335,10 @@ impl ChallengerClient {
         let (challenges_defended, challenges_failed, reputation) = if let Some(info) = provider_info
         {
             (
-                info.challenges_received_authorized
-                    .saturating_add(info.challenges_received_public),
-                info.challenges_failed,
+                info.stats
+                    .challenges_received_authorized
+                    .saturating_add(info.stats.challenges_received_public),
+                info.stats.challenges_failed,
                 info.reputation,
             )
         } else {

@@ -1302,9 +1302,10 @@ pub mod api {
                         "provider_info",
                         (provider,),
                         [
-                            5u8, 59u8, 71u8, 84u8, 51u8, 150u8, 226u8, 235u8, 223u8, 79u8, 114u8,
-                            81u8, 165u8, 111u8, 128u8, 147u8, 87u8, 69u8, 160u8, 231u8, 59u8, 11u8,
-                            204u8, 125u8, 91u8, 155u8, 26u8, 200u8, 200u8, 172u8, 170u8, 230u8,
+                            128u8, 250u8, 14u8, 219u8, 94u8, 177u8, 239u8, 246u8, 250u8, 160u8,
+                            176u8, 65u8, 123u8, 118u8, 11u8, 6u8, 103u8, 125u8, 106u8, 82u8, 154u8,
+                            23u8, 131u8, 14u8, 242u8, 118u8, 195u8, 135u8, 206u8, 213u8, 37u8,
+                            173u8,
                         ],
                     )
                 }
@@ -1322,9 +1323,10 @@ pub mod api {
                         "providers",
                         (offset, limit),
                         [
-                            132u8, 13u8, 201u8, 138u8, 219u8, 152u8, 81u8, 20u8, 227u8, 254u8,
-                            244u8, 12u8, 254u8, 119u8, 182u8, 228u8, 84u8, 187u8, 34u8, 223u8, 6u8,
-                            141u8, 82u8, 64u8, 95u8, 145u8, 6u8, 36u8, 41u8, 176u8, 152u8, 113u8,
+                            55u8, 28u8, 185u8, 98u8, 143u8, 141u8, 91u8, 242u8, 198u8, 160u8,
+                            198u8, 244u8, 52u8, 91u8, 189u8, 255u8, 255u8, 75u8, 104u8, 25u8,
+                            122u8, 246u8, 114u8, 213u8, 154u8, 114u8, 176u8, 69u8, 64u8, 15u8,
+                            71u8, 185u8,
                         ],
                     )
                 }
@@ -1567,9 +1569,9 @@ pub mod api {
                         "find_matching_providers",
                         (requirements, limit),
                         [
-                            173u8, 197u8, 19u8, 135u8, 197u8, 123u8, 185u8, 45u8, 214u8, 147u8,
-                            102u8, 208u8, 192u8, 178u8, 205u8, 212u8, 9u8, 38u8, 65u8, 8u8, 245u8,
-                            144u8, 8u8, 248u8, 97u8, 167u8, 148u8, 9u8, 236u8, 183u8, 110u8, 97u8,
+                            255u8, 154u8, 107u8, 47u8, 62u8, 41u8, 126u8, 166u8, 20u8, 142u8,
+                            117u8, 111u8, 72u8, 86u8, 2u8, 120u8, 168u8, 169u8, 226u8, 151u8, 14u8,
+                            52u8, 48u8, 12u8, 196u8, 75u8, 152u8, 115u8, 176u8, 249u8, 218u8, 90u8,
                         ],
                     )
                 }
@@ -1592,10 +1594,10 @@ pub mod api {
                         "providers_with_capacity",
                         (bytes_needed, offset, limit),
                         [
-                            45u8, 27u8, 86u8, 215u8, 144u8, 227u8, 109u8, 217u8, 179u8, 191u8,
-                            54u8, 101u8, 182u8, 79u8, 219u8, 100u8, 205u8, 86u8, 144u8, 115u8,
-                            34u8, 230u8, 255u8, 50u8, 243u8, 126u8, 24u8, 224u8, 23u8, 209u8,
-                            106u8, 112u8,
+                            142u8, 92u8, 119u8, 111u8, 87u8, 255u8, 60u8, 255u8, 145u8, 177u8,
+                            238u8, 189u8, 103u8, 43u8, 14u8, 237u8, 196u8, 215u8, 196u8, 80u8,
+                            225u8, 38u8, 166u8, 43u8, 108u8, 175u8, 205u8, 233u8, 145u8, 142u8,
+                            115u8, 118u8,
                         ],
                     )
                 }
@@ -3467,9 +3469,9 @@ pub mod api {
             .hash();
         runtime_metadata_hash
             == [
-                48u8, 0u8, 193u8, 30u8, 220u8, 109u8, 120u8, 16u8, 5u8, 130u8, 30u8, 42u8, 82u8,
-                22u8, 83u8, 214u8, 182u8, 191u8, 223u8, 176u8, 131u8, 66u8, 132u8, 233u8, 135u8,
-                186u8, 163u8, 135u8, 171u8, 81u8, 212u8, 105u8,
+                108u8, 59u8, 172u8, 187u8, 233u8, 189u8, 156u8, 104u8, 171u8, 14u8, 86u8, 55u8,
+                99u8, 168u8, 42u8, 70u8, 240u8, 241u8, 127u8, 129u8, 120u8, 146u8, 61u8, 95u8,
+                202u8, 255u8, 205u8, 18u8, 6u8, 101u8, 112u8, 153u8,
             ]
     }
     pub mod system {
@@ -17857,9 +17859,10 @@ pub mod api {
                         "StorageProvider",
                         "Providers",
                         [
-                            195u8, 215u8, 197u8, 19u8, 154u8, 128u8, 9u8, 216u8, 68u8, 204u8,
-                            127u8, 13u8, 120u8, 228u8, 24u8, 235u8, 56u8, 60u8, 13u8, 224u8, 56u8,
-                            211u8, 176u8, 4u8, 71u8, 41u8, 44u8, 77u8, 39u8, 51u8, 26u8, 196u8,
+                            139u8, 130u8, 107u8, 93u8, 239u8, 166u8, 60u8, 57u8, 144u8, 108u8,
+                            249u8, 78u8, 45u8, 82u8, 97u8, 238u8, 185u8, 108u8, 127u8, 63u8, 162u8,
+                            166u8, 161u8, 27u8, 54u8, 228u8, 48u8, 149u8, 224u8, 141u8, 200u8,
+                            223u8,
                         ],
                     )
                 }
@@ -21092,10 +21095,9 @@ pub mod api {
                         "Revive",
                         "EthBlockBuilderIR",
                         [
-                            116u8, 166u8, 102u8, 147u8, 101u8, 7u8, 206u8, 214u8, 182u8, 48u8,
-                            13u8, 231u8, 127u8, 31u8, 239u8, 190u8, 57u8, 113u8, 220u8, 48u8,
-                            235u8, 146u8, 231u8, 159u8, 0u8, 226u8, 33u8, 141u8, 210u8, 200u8,
-                            66u8, 23u8,
+                            62u8, 22u8, 204u8, 180u8, 89u8, 208u8, 118u8, 104u8, 70u8, 79u8, 254u8,
+                            35u8, 81u8, 30u8, 181u8, 91u8, 139u8, 0u8, 140u8, 81u8, 45u8, 123u8,
+                            181u8, 158u8, 118u8, 82u8, 95u8, 24u8, 133u8, 117u8, 33u8, 133u8,
                         ],
                     )
                 }
@@ -26719,6 +26721,7 @@ pub mod api {
                     pub challenges_received_authorized: ::core::primitive::u32,
                     pub challenges_received_public: ::core::primitive::u32,
                     pub challenges_failed: ::core::primitive::u32,
+                    pub lifetime_revenue: ::core::primitive::u128,
                 }
                 #[derive(
                     :: subxt :: ext :: scale_decode :: DecodeAsType,
@@ -26913,6 +26916,24 @@ pub mod api {
                     pub accepting_primary: ::core::primitive::bool,
                     pub replica_sync_price: ::core::option::Option<::core::primitive::u128>,
                     pub accepting_extensions: ::core::primitive::bool,
+                    pub stats:
+                        runtime_types::pallet_storage_provider::runtime_api::ProviderStatsInfo,
+                    pub max_capacity: ::core::primitive::u64,
+                    pub available_capacity: ::core::option::Option<::core::primitive::u64>,
+                    pub deregister_at: ::core::option::Option<::core::primitive::u32>,
+                    pub reputation: ::core::primitive::u8,
+                }
+                #[derive(
+                    :: subxt :: ext :: scale_decode :: DecodeAsType,
+                    :: subxt :: ext :: scale_encode :: EncodeAsType,
+                    Clone,
+                    Debug,
+                    Eq,
+                    PartialEq,
+                )]
+                #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                pub struct ProviderStatsInfo {
                     pub registered_at: ::core::primitive::u32,
                     pub agreements_total: ::core::primitive::u32,
                     pub agreements_extended: ::core::primitive::u32,
@@ -26921,10 +26942,7 @@ pub mod api {
                     pub challenges_received_authorized: ::core::primitive::u32,
                     pub challenges_received_public: ::core::primitive::u32,
                     pub challenges_failed: ::core::primitive::u32,
-                    pub max_capacity: ::core::primitive::u64,
-                    pub available_capacity: ::core::option::Option<::core::primitive::u64>,
-                    pub deregister_at: ::core::option::Option<::core::primitive::u32>,
-                    pub reputation: ::core::primitive::u8,
+                    pub lifetime_revenue: ::core::primitive::u128,
                 }
                 #[derive(
                     :: subxt :: ext :: scale_decode :: DecodeAsType,

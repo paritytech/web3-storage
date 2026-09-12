@@ -96,6 +96,9 @@ pub struct ProviderInfo {
     pub agreements_total: u32,
     /// Failed challenges count.
     pub challenges_failed: u32,
+    /// Total payment ever received for storage service. Never resets, not
+    /// even on a slash.
+    pub lifetime_revenue: u128,
     /// Block at which deregistration becomes finalisable (`None` = not deregistering).
     pub deregister_at: Option<u32>,
     /// Reputation 0-100, computed on-chain by `runtime_api::reputation_score`.
@@ -116,8 +119,9 @@ impl From<rt_api::ProviderInfoResponse> for ProviderInfo {
             accepting_primary: p.accepting_primary,
             replica_sync_price: p.replica_sync_price,
             accepting_extensions: p.accepting_extensions,
-            agreements_total: p.agreements_total,
-            challenges_failed: p.challenges_failed,
+            agreements_total: p.stats.agreements_total,
+            challenges_failed: p.stats.challenges_failed,
+            lifetime_revenue: p.stats.lifetime_revenue,
             deregister_at: p.deregister_at,
             reputation: p.reputation,
         }

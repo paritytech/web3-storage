@@ -337,6 +337,12 @@ pub struct ProviderStats<T: Config> {
     /// resolves into exactly one of received_authorized / received_public
     /// (successfully defended), failed (slashed), or nothing (cancelled).
     pub challenges_failed: u32,
+    /// Total payment ever received by this provider for storage service:
+    /// agreement settlements, extension payments, replica sync payments,
+    /// and challenger-cost reimbursement on successfully defended
+    /// challenges. Monotonically increasing, never reset by a slash or
+    /// anything else. A historical record, not a live balance.
+    pub lifetime_revenue: BalanceOf<T>,
 }
 
 pub struct ProviderSettings<T: Config> {
@@ -979,7 +985,7 @@ sp_api::decl_runtime_apis! {
 
 Response types live in `crates/pallets/storage-provider/src/runtime_api.rs` (`ProviderInfoResponse`,
 `StorageRequirements`, `MatchedProvider`, `BucketResponse`,
-`AgreementResponse`, `ChallengeResponse`, `ChallengeCandidate`, etc.). They flatten the on-chain
+`AgreementResponse`, `ChallengeResponse`, `ChallengeCandidate`, etc.). Most flatten the on-chain
 structs into encode/decode-friendly shapes (e.g. `AccountId` as `Vec<u8>`,
 `Balance` as `u128`) so client-side SDKs don't need to depend on the runtime's
 generics. `MatchedProvider` also carries a `match_score` (0–100) and an
@@ -987,6 +993,9 @@ optional `PartialMatchReason` (price, capacity, duration, not-accepting) for
 the marketplace UI to surface why a provider didn't qualify.
 `ProviderInfoResponse` carries `deregister_at` so clients can tell a
 winding-down provider from an active one without a second storage read.
+Its historical counters are grouped separately, under a nested
+`stats: ProviderStatsInfo` — track record kept apart from settings and
+connection info, the one place this response doesn't fully flatten.
 
 `challenge_candidates` is the challenger-side counterpart of
 `find_matching_providers`: both fold a whole-map scan plus a scoring pass into

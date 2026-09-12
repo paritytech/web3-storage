@@ -26,6 +26,41 @@ fn extend_agreement_works() {
 }
 
 #[test]
+fn extend_agreement_counts_elapsed_payment_as_lifetime_revenue() {
+    new_test_ext().execute_with(|| {
+        register_provider_with_settings(
+            2,
+            200,
+            ProviderSettings {
+                price_per_byte: 1,
+                accepting_primary: true,
+                accepting_extensions: true,
+                ..Default::default()
+            },
+        );
+        let bucket_id = setup_agreement(2, 1, 10, 100); // payment = 1 * 10 * 100 = 1000
+
+        // Advance partway through the term so `elapsed_payment` is non-zero;
+        // extending immediately at creation would settle nothing.
+        run_to_block(40);
+
+        assert_ok!(StorageProvider::extend_agreement(
+            RuntimeOrigin::signed(1),
+            bucket_id,
+            2,
+            50,
+            10_000
+        ));
+
+        let elapsed_payment = 10 * 40; // price(1) * max_bytes * elapsed
+        assert_eq!(
+            Providers::<Test>::get(2).unwrap().stats.lifetime_revenue,
+            elapsed_payment
+        );
+    });
+}
+
+#[test]
 fn extend_agreement_fails_extensions_blocked() {
     new_test_ext().execute_with(|| {
         register_provider(2, 200);

@@ -335,14 +335,15 @@ export class DriveClient {
           replicaSyncPrice:
             info.replica_sync_price != null ? BigInt(info.replica_sync_price) : undefined,
           acceptingExtensions: info.accepting_extensions ?? false,
-          registeredAt: Number(info.registered_at ?? 0),
-          agreementsTotal: info.agreements_total ?? 0,
-          agreementsExtended: info.agreements_extended ?? 0,
-          agreementsNotExtended: info.agreements_not_extended ?? 0,
-          agreementsBurned: info.agreements_burned ?? 0,
+          registeredAt: Number(info.stats.registered_at ?? 0),
+          agreementsTotal: info.stats.agreements_total ?? 0,
+          agreementsExtended: info.stats.agreements_extended ?? 0,
+          agreementsNotExtended: info.stats.agreements_not_extended ?? 0,
+          agreementsBurned: info.stats.agreements_burned ?? 0,
           challengesDefended:
-            (info.challenges_received_authorized ?? 0) + (info.challenges_received_public ?? 0),
-          challengesFailed: info.challenges_failed ?? 0,
+            (info.stats.challenges_received_authorized ?? 0) +
+            (info.stats.challenges_received_public ?? 0),
+          challengesFailed: info.stats.challenges_failed ?? 0,
           matchScore: match.match_score,
           partialReason: match.partial_reason?.type ?? "",
         };

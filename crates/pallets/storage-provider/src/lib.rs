@@ -605,6 +605,12 @@ pub mod pallet {
         /// Number of challenges where provider was slashed. Tier-independent
         /// and disjoint from the received counters.
         pub challenges_failed: u32,
+        /// Total payment ever received by this provider for storage service:
+        /// agreement settlements, extension payments, replica sync payments,
+        /// and challenger-cost reimbursement on successfully defended
+        /// challenges. Monotonically increasing, never reset by a slash or
+        /// anything else. A historical record, not a live balance.
+        pub lifetime_revenue: BalanceOf<T>,
     }
 
     impl<T: Config> ProviderStats<T> {
@@ -2010,6 +2016,10 @@ pub mod pallet {
                         if let Some(provider_info) = maybe_provider {
                             provider_info.stats.agreements_extended =
                                 provider_info.stats.agreements_extended.saturating_add(1);
+                            provider_info.stats.lifetime_revenue = provider_info
+                                .stats
+                                .lifetime_revenue
+                                .saturating_add(elapsed_payment);
                         }
                     });
 
@@ -2580,6 +2590,10 @@ pub mod pallet {
                         provider.stats.challenges_received_public =
                             provider.stats.challenges_received_public.saturating_add(1);
                     }
+                    provider.stats.lifetime_revenue = provider
+                        .stats
+                        .lifetime_revenue
+                        .saturating_add(challenger_cost);
                 }
             });
 
@@ -2694,7 +2708,17 @@ pub mod pallet {
                     });
 
                     // Pay the sync fee straight out of escrow.
-                    Self::settle_payment(&agreement.owner, &who, *sync_price)?;
+                    let sync_payment = *sync_price;
+                    Self::settle_payment(&agreement.owner, &who, sync_payment)?;
+
+                    Providers::<T>::mutate(&who, |maybe_provider| {
+                        if let Some(provider_info) = maybe_provider {
+                            provider_info.stats.lifetime_revenue = provider_info
+                                .stats
+                                .lifetime_revenue
+                                .saturating_add(sync_payment);
+                        }
+                    });
 
                     Self::deposit_event(Event::ReplicaSynced {
                         bucket_id,

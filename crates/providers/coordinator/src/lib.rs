@@ -1145,6 +1145,7 @@ mod tests {
                         ("challenges_received_authorized", Value::u128(2)),
                         ("challenges_received_public", Value::u128(0)),
                         ("challenges_failed", Value::u128(1)),
+                        ("lifetime_revenue", Value::u128(0)),
                     ]),
                 ),
                 ("deregister_at", opt(deregister_at.map(u128::from))),
