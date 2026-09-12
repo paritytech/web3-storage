@@ -52,7 +52,7 @@ import {
   deleteEntry,
   createFolder,
 } from "@/state";
-import { formatBytes, formatTimestamp } from "@/lib/utils";
+import { formatBytes, formatTimestamp } from "@web3-storage/format";
 import { toast } from "@/components/ui/toaster";
 import type { FsEntry } from "@/lib/drive-client";
 import UploadZone from "./UploadZone";

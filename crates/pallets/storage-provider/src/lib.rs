@@ -60,9 +60,9 @@ pub mod pallet {
     #[cfg(feature = "try-runtime")]
     use sp_runtime::TryRuntimeError;
     use storage_primitives::{
-        BucketId, BucketSnapshot, ChallengeId, ChallengerStatRecord, ChunkLocation, Commitment,
-        CommitmentPayload, EndAction, MerkleProof, MmrProof, ProviderRole, RemovalReason,
-        ReplayWindow, ReplicaSyncRecord, Role, SlashReason, Visibility,
+        BucketId, BucketSnapshot, ChallengeId, ChunkLocation, Commitment, CommitmentPayload,
+        EndAction, MerkleProof, MmrProof, ProviderRole, RemovalReason, ReplayWindow,
+        ReplicaSyncRecord, Role, SlashReason, Visibility,
     };
 
     pub type BalanceOf<T> =
@@ -398,14 +398,6 @@ pub mod pallet {
         u32,
         ValueQuery,
     >;
-
-    /// Per-challenger aggregates so the SDK doesn't have to scan historical
-    /// events to answer `get_challenge_stats`. Updated by `create_challenge`,
-    /// the defended path of `respond_to_challenge`, and
-    /// `slash_provider_for_failed_challenge`.
-    #[pallet::storage]
-    pub type ChallengerStats<T: Config> =
-        StorageMap<_, Blake2_128Concat, T::AccountId, ChallengerStatRecord, ValueQuery>;
 
     /// Reverse index: account → bucket IDs they are a member of.
     #[pallet::storage]
@@ -2603,13 +2595,6 @@ pub mod pallet {
                         .lifetime_revenue
                         .saturating_add(challenger_cost);
                 }
-            });
-
-            // Challenger lost — they pay `challenger_cost` from their deposit
-            // and the provider keeps their stake. Bump the failed counter so
-            // the SDK can report a realistic success rate.
-            ChallengerStats::<T>::mutate(&challenge.challenger, |stats| {
-                stats.failed_challenges = stats.failed_challenges.saturating_add(1);
             });
 
             Self::deposit_event(Event::ChallengeDefended {

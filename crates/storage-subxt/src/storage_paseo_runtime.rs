@@ -3469,9 +3469,9 @@ pub mod api {
             .hash();
         runtime_metadata_hash
             == [
-                163u8, 233u8, 65u8, 139u8, 198u8, 253u8, 206u8, 177u8, 84u8, 233u8, 229u8, 8u8,
-                230u8, 127u8, 14u8, 68u8, 85u8, 48u8, 112u8, 64u8, 111u8, 197u8, 53u8, 9u8, 225u8,
-                18u8, 135u8, 197u8, 9u8, 206u8, 46u8, 96u8,
+                108u8, 59u8, 172u8, 187u8, 233u8, 189u8, 156u8, 104u8, 171u8, 14u8, 86u8, 55u8,
+                99u8, 168u8, 42u8, 70u8, 240u8, 241u8, 127u8, 129u8, 120u8, 146u8, 61u8, 95u8,
+                202u8, 255u8, 205u8, 18u8, 6u8, 101u8, 112u8, 153u8,
             ]
     }
     pub mod system {
@@ -18055,27 +18055,6 @@ pub mod api {
                         ],
                     )
                 }
-                #[doc = " Per-challenger aggregates so the SDK doesn't have to scan historical"]
-                #[doc = " events to answer `get_challenge_stats`. Updated by `create_challenge`,"]
-                #[doc = " the defended path of `respond_to_challenge`, and"]
-                #[doc = " `slash_provider_for_failed_challenge`."]
-                pub fn challenger_stats(
-                    &self,
-                ) -> ::subxt::storage::StaticAddress<
-                    (challenger_stats::input::Param0,),
-                    challenger_stats::Output,
-                    ::subxt::utils::Maybe,
-                > {
-                    ::subxt::storage::StaticAddress::new_static(
-                        "StorageProvider",
-                        "ChallengerStats",
-                        [
-                            8u8, 63u8, 212u8, 126u8, 176u8, 205u8, 53u8, 129u8, 86u8, 26u8, 143u8,
-                            107u8, 108u8, 16u8, 235u8, 67u8, 48u8, 72u8, 164u8, 169u8, 46u8, 252u8,
-                            234u8, 72u8, 201u8, 195u8, 223u8, 123u8, 178u8, 58u8, 116u8, 109u8,
-                        ],
-                    )
-                }
                 #[doc = " Reverse index: account → bucket IDs they are a member of."]
                 pub fn member_buckets(
                     &self,
@@ -18186,15 +18165,6 @@ pub mod api {
                     pub type Param1 = ::subxt::utils::AccountId32;
                 }
                 pub type Output = ::core::primitive::u32;
-            }
-            pub mod challenger_stats {
-                use super::root_mod;
-                use super::runtime_types;
-                pub mod input {
-                    use super::runtime_types;
-                    pub type Param0 = ::subxt::utils::AccountId32;
-                }
-                pub type Output = runtime_types::storage_primitives::ChallengerStatRecord;
             }
             pub mod member_buckets {
                 use super::root_mod;
@@ -31266,21 +31236,6 @@ pub mod api {
             pub struct ChallengeId<_0> {
                 pub deadline: _0,
                 pub index: ::core::primitive::u16,
-            }
-            #[derive(
-                :: subxt :: ext :: scale_decode :: DecodeAsType,
-                :: subxt :: ext :: scale_encode :: EncodeAsType,
-                Clone,
-                Debug,
-                Eq,
-                PartialEq,
-            )]
-            #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
-            #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-            pub struct ChallengerStatRecord {
-                pub total_challenges: ::core::primitive::u32,
-                pub successful_challenges: ::core::primitive::u32,
-                pub failed_challenges: ::core::primitive::u32,
             }
             #[derive(
                 :: subxt :: ext :: scale_decode :: DecodeAsType,

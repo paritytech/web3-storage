@@ -51,7 +51,7 @@ import {
   type ProviderSettings,
   type TxStatus,
 } from '@/state/provider.state'
-import { formatTokens, parseTokens, formatBytes } from '@/utils/format'
+import { formatTokens, parseTokens, formatBytes } from '@web3-storage/format'
 
 // Min stake is fetched from chain constants at connection time.
 // Falls back to 1000 tokens if not yet loaded.
@@ -98,7 +98,6 @@ export function Registration() {
     maxDuration: 100_000,
     pricePerByte: 1_000_000n,
     acceptingPrimary: true,
-    acceptingReplica: false,
     replicaSyncPrice: null,
     acceptingExtensions: true,
     maxCapacity: 1_099_511_627_776n, // 1 TB (2^40 bytes)
@@ -443,6 +442,27 @@ export function Registration() {
                   {formatBytes(Number(settings.maxCapacity))}
                 </p>
               </div>
+              <div className="space-y-2">
+                <Label htmlFor="replicaSyncPrice">Replica Sync Price (per sync confirmation)</Label>
+                <Input
+                  id="replicaSyncPrice"
+                  data-testid="registration-replicasyncprice-input"
+                  type="number"
+                  placeholder="Empty = not accepting replicas"
+                  value={settings.replicaSyncPrice === null ? '' : settings.replicaSyncPrice.toString()}
+                  onChange={(e) =>
+                    setSettings({
+                      ...settings,
+                      replicaSyncPrice: e.target.value === '' ? null : BigInt(e.target.value),
+                    })
+                  }
+                />
+                <p className="text-xs text-gray-500">
+                  {settings.replicaSyncPrice === null
+                    ? 'Not accepting replica agreements'
+                    : formatTokens(settings.replicaSyncPrice)}
+                </p>
+              </div>
             </div>
 
             {/* Duration */}
@@ -486,18 +506,6 @@ export function Registration() {
                   checked={settings.acceptingPrimary}
                   onCheckedChange={(checked) =>
                     setSettings({ ...settings, acceptingPrimary: checked })
-                  }
-                />
-              </div>
-              <div className="flex items-center justify-between">
-                <div>
-                  <Label>Accept Replica Agreements</Label>
-                  <p className="text-sm text-gray-500">Store backup copies</p>
-                </div>
-                <Switch
-                  checked={settings.acceptingReplica}
-                  onCheckedChange={(checked) =>
-                    setSettings({ ...settings, acceptingReplica: checked })
                   }
                 />
               </div>
@@ -566,10 +574,17 @@ export function Registration() {
                 </span>
               </div>
               <div className="flex justify-between">
+                <span className="text-gray-400">Replica Sync Price</span>
+                <span>
+                  {settings.replicaSyncPrice === null
+                    ? 'Not accepting replicas'
+                    : formatTokens(settings.replicaSyncPrice)}
+                </span>
+              </div>
+              <div className="flex justify-between">
                 <span className="text-gray-400">Accepting</span>
                 <div className="flex gap-2">
                   {settings.acceptingPrimary && <Badge>Primary</Badge>}
-                  {settings.acceptingReplica && <Badge>Replica</Badge>}
                   {settings.acceptingExtensions && <Badge variant="secondary">Extensions</Badge>}
                 </div>
               </div>
@@ -909,6 +924,27 @@ function SettingsManager() {
               />
               <p className="text-xs text-gray-500">{settings.maxCapacity === 0n ? '0 = unlimited' : formatBytes(Number(settings.maxCapacity))}</p>
             </div>
+            <div className="space-y-2">
+              <Label htmlFor="replicaSyncPrice">Replica Sync Price (per sync confirmation)</Label>
+              <Input
+                id="replicaSyncPrice"
+                data-testid="settings-replicasyncprice-input"
+                type="number"
+                placeholder="Empty = not accepting replicas"
+                value={settings.replicaSyncPrice === null ? '' : settings.replicaSyncPrice.toString()}
+                onChange={(e) =>
+                  setSettings({
+                    ...settings,
+                    replicaSyncPrice: e.target.value === '' ? null : BigInt(e.target.value),
+                  })
+                }
+              />
+              <p className="text-xs text-gray-500">
+                {settings.replicaSyncPrice === null
+                  ? 'Not accepting replica agreements'
+                  : formatTokens(settings.replicaSyncPrice)}
+              </p>
+            </div>
           </div>
 
           <div className="grid gap-4 md:grid-cols-2">
@@ -954,18 +990,6 @@ function SettingsManager() {
               checked={settings.acceptingPrimary}
               onCheckedChange={(checked) =>
                 setSettings({ ...settings, acceptingPrimary: checked })
-              }
-            />
-          </div>
-          <div className="flex items-center justify-between">
-            <div>
-              <Label>Accept Replica Agreements</Label>
-              <p className="text-sm text-gray-500">Store backup copies</p>
-            </div>
-            <Switch
-              checked={settings.acceptingReplica}
-              onCheckedChange={(checked) =>
-                setSettings({ ...settings, acceptingReplica: checked })
               }
             />
           </div>
