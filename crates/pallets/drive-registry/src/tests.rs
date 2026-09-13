@@ -207,7 +207,7 @@ fn unshare_drive_fails_when_drive_not_found() {
 }
 
 #[test]
-fn share_and_unshare_fail_when_caller_is_not_bucket_admin() {
+fn share_unshare_and_delete_fail_when_caller_is_not_bucket_admin() {
     new_test_ext().execute_with(|| {
         advance_to_block_1();
 
@@ -234,6 +234,27 @@ fn share_and_unshare_fail_when_caller_is_not_bucket_admin() {
             DriveRegistry::unshare_drive(RuntimeOrigin::signed(5), 0, 1),
             pallet_storage_provider::Error::<Test>::NotBucketAdmin
         );
+
+        // The drive owner is not exempt: once account 1 hands admin to 2 and
+        // steps down to Writer, deleting the drive it still owns fails the
+        // same way, and nothing is torn down.
+        assert_ok!(DriveRegistry::share_drive(
+            RuntimeOrigin::signed(1),
+            0,
+            2,
+            Role::Admin
+        ));
+        assert_ok!(DriveRegistry::share_drive(
+            RuntimeOrigin::signed(1),
+            0,
+            1,
+            Role::Writer
+        ));
+        assert_noop!(
+            DriveRegistry::delete_drive(RuntimeOrigin::signed(1), 0),
+            pallet_storage_provider::Error::<Test>::NotBucketAdmin
+        );
+        assert!(DriveRegistry::get_drive(0).is_some());
     });
 }
 
