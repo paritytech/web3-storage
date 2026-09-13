@@ -18,7 +18,7 @@ There is no hand-written API reference. The rustdoc on the pallets is the refere
 - **TypeScript** — hover over the PAPI descriptors generated from `packages/papi`; the JSDoc is the pallet rustdoc.
 - **Browser** — [polkadot.js Apps](https://polkadot.js.org/apps/?rpc=ws://127.0.0.1:2222) → Developer → Extrinsics shows the doc for each call, error, and event.
 
-A pallet item without a doc comment fails CI: the pallets set `#![warn(missing_docs)]` and clippy runs with `-D warnings`.
+Every public pallet item must carry a doc comment; the `missing_docs` CI gate that enforces this lands with #403.
 
 ## Getting started
 

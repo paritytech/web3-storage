@@ -29,8 +29,8 @@ Link, don't copy.
   metadata and surface in PAPI descriptors, subxt bindings, and polkadot.js
   Apps, so write them for the end user: what a call does and who may call it,
   what an error means and how to get past it, what an event reports. Keep
-  each one short. The pallets set `#![warn(missing_docs)]` and clippy runs
-  with `-D warnings`, so an undocumented public item fails CI.
+  each one short. Every public pallet item must carry one; the `missing_docs`
+  CI gate that enforces this lands with #403.
 - **`docs/drafts/`** is unratified / WIP — don't treat it as authoritative or
   reason from it as if it were the spec.
 

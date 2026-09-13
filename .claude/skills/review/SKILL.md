@@ -106,8 +106,8 @@ this skill from a clean context, and relay its findings.
 
 10. **Rustdoc as API Reference** — the pallets' `///` comments are the API reference:
     they ship in the runtime metadata and surface in PAPI descriptors, subxt bindings,
-    and polkadot.js Apps. `#![warn(missing_docs)]` plus clippy `-D warnings` fails CI on
-    a missing one, so review the text, not the presence
+    and polkadot.js Apps. Every public item must carry one (the `missing_docs` CI gate
+    lands with #403), so review the presence as well as the text
     - A call doc says what it does, who may call it, and what state it leaves behind
     - An error doc says what condition triggers it and how the caller gets past it
     - An event doc says what happened and what the fields mean when not obvious
