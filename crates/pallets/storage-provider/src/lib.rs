@@ -2616,9 +2616,10 @@ pub mod pallet {
             //                    provider immediately (do NOT let them stall
             //                    until the deadline timeout)
             //
-            // Parameter-shape errors (stale nonce, non-admin signer, missing
-            // bucket snapshot for `Deleted`) still bubble up as `DispatchError`
-            // — they represent caller mistakes, not adversarial responses.
+            // Parameter-shape errors (unknown challenge, wrong provider, past
+            // the deadline, non-admin signer on `Deleted`) still bubble up as
+            // `DispatchError` — they represent caller mistakes, not adversarial
+            // responses.
             let response_outcome: Result<(), SlashReason> = match &response {
                 ChallengeResponse::Proof {
                     chunk_data,
