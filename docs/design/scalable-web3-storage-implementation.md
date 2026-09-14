@@ -827,24 +827,6 @@ pub enum Event<T: Config> {
     // Agreement events
     // ─────────────────────────────────────────────────────────────
     
-    AgreementRequested {
-        bucket_id: BucketId,
-        provider: T::AccountId,
-        requester: T::AccountId,
-        max_bytes: u64,
-        payment_locked: BalanceOf<T>,
-        duration: BlockNumberFor<T>,
-    },
-    AgreementRejected {
-        bucket_id: BucketId,
-        provider: T::AccountId,
-        payment_returned: BalanceOf<T>,
-    },
-    AgreementRequestWithdrawn {
-        bucket_id: BucketId,
-        provider: T::AccountId,
-        payment_returned: BalanceOf<T>,
-    },
     AgreementToppedUp {
         bucket_id: BucketId,
         provider: T::AccountId,
