@@ -97,8 +97,10 @@ flowchart LR
   cannot be promoted.
 - **Owner change.** `transfer_agreement_ownership` is in the design only.
   Open PR #414 implements it; it moves the payer, not the data.
-- **Create without a provider.** The design has `create_bucket`; the code has
-  none (#376 DRIFT-002).
+- **Create without a provider.** The design has `create_bucket`; #97 scoped
+  its removal and PR #105 removed it together with the request/accept flow
+  (#376 DRIFT-002). See *2. Multi-provider* for how that also removed the
+  path to add a primary to an existing bucket.
 - **Delete at Layer 0.** No extrinsic. A bucket not backed by a drive cannot be
   deleted.
 - **Retention after expiry.** Challenges stop at the expiry block; there is no
@@ -128,6 +130,36 @@ implemented*). If yes, the join path is the missing piece and the rest
 follows. If no, the design should say single primary plus replicas, and
 transfer reduces to replacing the one primary.
 
+- **`add_primary_provider`: how the join path went missing.** The design is
+  bucket-first: the bucket is created once, then providers are attached one
+  agreement at a time. The implementation doc still lists that shape:
+  `create_bucket(min_providers, visibility)` makes an empty bucket with the
+  caller as admin, `request_primary_agreement` + `accept_agreement` attach a
+  primary to it, and `create_bucket_with_storage` was a one-call shortcut with
+  on-chain provider matching. #97 moved the negotiation off-chain: the matching
+  was O(n) over all providers, the pending `AgreementRequests` map only bridged
+  two extrinsics, and the shortcut bound a provider without its consent. Its
+  ideal flow was `establish_agreement(bucket_id, provider, terms, sig)` on an
+  existing bucket, while its scope list also removed `create_bucket`. PR #105
+  (merged 2026-06-12) resolved that tension by folding bucket creation into
+  the agreement: `establish_storage_agreement` requires `terms.bucket_id ==
+  None`, creates the bucket with `min_providers = 1` and the signing provider
+  as its only primary, and no primary-role call accepts a `bucket_id`. Only
+  `establish_replica_agreement` attaches a provider to an existing bucket, as
+  a replica. Layer 1 (`create_drive`, `create_s3_bucket`) goes through the
+  same internal, so every user bucket is born with exactly one primary; the
+  pallet tests build multi-primary buckets by writing storage directly. The
+  join path was therefore never rejected, it fell out of #105 as a side
+  effect.
+- **Shape of the missing call.** It mirrors the replica call:
+  `add_primary_provider(bucket_id, provider, terms, sig)` with
+  `terms.bucket_id == Some(id)` signed under `PRIMARY_TERM_CONTEXT`, the same
+  provider/capacity/stake checks, and the provider pushed onto
+  `primary_providers`. Open: who redeems it (an admin, or anyone the provider
+  quoted for, with admin consent), and whether the redeemer or the admin owns
+  the agreement. Everything else in this topic follows from it: where the
+  joining primary gets the data, what it is liable for, and whether a replica
+  can be promoted in place.
 - **Provider-to-provider transfer.** Should a joining primary obtain the
   data from any provider under agreement on the bucket, the way replicas do,
   instead of the client re-uploading? (#65 §1, §4)
@@ -235,7 +267,12 @@ models are on the tracker:
 ## Drifts (design vs. code)
 
 - Use cases assume adding providers to a bucket; nothing specifies or
-  implements it.
+  implements it. The implementation doc still documents `create_bucket`,
+  `create_bucket_with_storage` and the `AgreementRequested` / `Accepted` /
+  `Rejected` / `RequestWithdrawn` events that PR #105 removed, next to the
+  `establish_*` section that replaced them; `docs/drafts/marketplace.md` and
+  `docs/drafts/smart-contracts.md` still show `request_agreement()` and
+  `createBucket`.
 - `extend_checkpoint` silently drops a signer bit beyond the stored bitfield.
 - `set_min_providers` has no lower bound (`InvalidMinProviders` only guards
   the upper one) and `checkpoint` only checks `signing_count >=
@@ -255,7 +292,8 @@ models are on the tracker:
 
 ## Related
 
-#65, #281, #107 (migration, wind-down) · #332, #388, #302 (multi-provider
+#65, #281, #107 (migration, wind-down) · #97, #105 (off-chain negotiation,
+bucket creation folded into the agreement) · #332, #388, #302 (multi-provider
 checkpoints) · #134, #133 (dApps) · #414, #376 (ownership transfer) · #382,
 #383, #310 (provider node) · #132, #391, #390, #43 (Bulletin) ·
 `docs/drafts/CHECKPOINT_PROTOCOL.md`,
