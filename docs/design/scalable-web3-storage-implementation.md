@@ -799,7 +799,7 @@ pub enum Event<T: Config> {
     BucketDeleted {
         bucket_id: BucketId,
     },
-    /// Admin flipped the bucket's read visibility.
+    /// An admin changed who may read the bucket.
     BucketVisibilityChanged {
         bucket_id: BucketId,
         visibility: Visibility,
