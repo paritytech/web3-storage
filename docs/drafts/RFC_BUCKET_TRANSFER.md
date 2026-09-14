@@ -1,7 +1,7 @@
 # Potential RFC: Bucket lifecycle and transfer between providers (Draft)
 
 > **Draft — needs triage.** Gap summary for discussion with the design owner.
-> No proposal. Written against `dev` at 4a80b3fe (2026-09-14).
+> No proposal. Written against `dev` at 7a9673c0 (2026-09-14).
 
 ## Story
 
@@ -35,18 +35,18 @@ A Layer 0 bucket has four states. Only the transitions listed exist.
 |---|---|
 | **Active** | One primary under agreement. Writes, checkpoints and challenges work. Replicas optional. |
 | **Frozen** | Active, but append-only from the frozen snapshot. Irreversible. |
-| **No primary** | The primary agreement ended. Bucket, members, snapshot and replica agreements remain. No checkpoint is possible, so no new data is ever committed. Only replicas still under agreement are challengeable. |
+| **No primary** | The primary agreement ended. Bucket, members, snapshot and replica agreements remain. No provider can sign a checkpoint, so no new data is committed with anyone liable for it. Only replicas still under agreement are challengeable. (`set_min_providers(0)` is accepted in this state and lets `checkpoint` pass with no signatures at all, see *Drifts*.) |
 | **Deleted** | Bucket and all agreements removed. |
 
 | From | To | Call | Caller |
 |---|---|---|---|
 | — | Active | `establish_storage_agreement` | owner, redeeming provider-signed terms. Creates the bucket and its only primary in one step. |
-| Active | Active | `establish_replica_agreement`, `extend_agreement`, `top_up_agreement`, `set_member`, `remove_member`, `set_bucket_visibility`, `checkpoint` | owner / admin / writers |
+| Active | Active | `establish_replica_agreement`, `extend_agreement`, `top_up_agreement`, `top_up_replica_sync_balance`, `set_member`, `remove_member`, `set_bucket_visibility`, `set_min_providers`, `checkpoint`, `extend_checkpoint` | owner / admin / writers |
 | Active | Frozen | `freeze_bucket` | admin |
 | Active, Frozen | No primary | `end_agreement` (early or after expiry) | owner, also admin if early |
 | Active, Frozen | No primary | `claim_expired_agreement` (after `SettlementTimeout`) | provider |
 | Active, Frozen | No primary | `remove_slashed` (provider stake is zero) | anyone |
-| any | Deleted | `delete_drive` → `cleanup_bucket_internal`. Ends every agreement, replicas included, with prorated refunds. | drive owner who is bucket admin |
+| any | Deleted | `delete_drive` → `cleanup_bucket_internal`. Ends every agreement, replicas included, with prorated refunds. Refused while any agreement has a pending challenge. | drive owner who is bucket admin |
 
 `deregister_provider` is rejected while the provider has active agreements, so
 it is not a bucket transition. `delete_s3_bucket` removes the S3 registry
@@ -61,7 +61,7 @@ flowchart LR
     none(("no bucket"))
     Active["Active<br/>one primary under agreement"]
     Frozen["Frozen<br/>append-only, irreversible"]
-    NoPrimary["No primary<br/>read-only forever"]
+    NoPrimary["No primary<br/>nobody liable for new data"]
     Deleted["Deleted"]
     Multi["Active, 2+ primaries<br/>design only"]
 
@@ -85,8 +85,9 @@ flowchart LR
 
 - **Active with two or more primaries. Is this still the target?** The design
   describes multi-primary buckets, `min_providers`, the signature bitfield and
-  `extend_checkpoint` for them. No call adds a second primary, so
-  `min_providers` is always 1 and that machinery is unreachable. If yes, the
+  `extend_checkpoint` for them. No call adds a second primary.
+  `set_min_providers` exists but is capped by the primary count, so it can
+  only hold 0 or 1 and that machinery is unreachable. If yes, the
   join path below is the missing piece and every item after it follows from
   it. If no, the design must say single primary plus replicas, and the
   transfer story reduces to replacing the one primary.
@@ -96,7 +97,7 @@ flowchart LR
 - **Replica → Primary.** A provider cannot hold both roles on one bucket and
   cannot be promoted.
 - **Owner change.** `transfer_agreement_ownership` is in the design only.
-  #414 implements it; it moves the payer, not the data.
+  Open PR #414 implements it; it moves the payer, not the data.
 - **Create without a provider.** The design has `create_bucket`; the code has
   none (#376 DRIFT-002).
 - **Delete at Layer 0.** No extrinsic. A bucket not backed by a drive cannot be
@@ -224,8 +225,10 @@ models are on the tracker:
 - On a private bucket a joining provider has no honest data source unless
   the admin adds it as a member or a replica exists.
 - No retention window after expiry. No auto-renew. No notice obligation.
-- Replica confirmation must match one of the last ~113 anchor blocks' roots;
-  a large busy bucket may never let a replica confirm.
+- Replica confirmation must match the current snapshot root or one of six
+  historical roots refreshed on windows of 3, 7, 11, 23, 47 and 113 anchor
+  blocks (about 11 minutes at the longest); a large busy bucket may never let
+  a replica confirm.
 - Nobody challenges automatically.
 - Overlap payment and unpaid bulk fetch are inherent to the current
   economics.
@@ -235,6 +238,13 @@ models are on the tracker:
 - Use cases assume adding providers to a bucket; nothing specifies or
   implements it.
 - `extend_checkpoint` silently drops a signer bit beyond the stored bitfield.
+- `set_min_providers` has no lower bound (`InvalidMinProviders` only guards
+  the upper one) and `checkpoint` only checks `signing_count >=
+  min_providers`. An admin can set 0 and commit a snapshot with an empty
+  signature list, so a bucket, including one in *No primary*, can carry a
+  snapshot no provider is liable for. Bucket creation seeds `min_providers =
+  1`; nothing lowers it when the primary leaves, so the exposure needs an
+  explicit admin call. Likely a code bug; adjacent to #388, no issue yet.
 - "Liable for signed snapshots until superseded" ends at expiry in code.
 - `delete_drive` early-terminates replicas with refunds; the design forbids
   both.
