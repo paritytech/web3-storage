@@ -5,8 +5,8 @@
 use serde::{Deserialize, Serialize};
 use storage_primitives::BucketId;
 
-pub use provider_coordinator::ProviderInfo;
 pub use provider_storage::{BucketStats, BucketSummary};
+pub use provider_types::ProviderInfo;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Node Upload/Download Types

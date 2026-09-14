@@ -148,11 +148,8 @@ just s3-test-all             # S3 layer only
 
 | Document | Description |
 |----------|-------------|
-| **[Layer 1 Quick Start](./docs/getting-started/LAYER1_QUICKSTART.md)** | **Three-terminal setup + SDK examples (recommended)** |
-| [File System Quick Start](./docs/getting-started/FILE_SYSTEM_QUICKSTART.md) | File-system-only quickstart |
-| [File System Docs](./docs/filesystems/README.md) | Complete Layer 1 documentation |
-| [Extrinsics Reference](./docs/reference/EXTRINSICS_REFERENCE.md) | Complete blockchain API |
-| [Payment Calculator](./docs/reference/PAYMENT_CALCULATOR.md) | Calculate agreement costs |
+| **[Quick Start](./docs/getting-started/FILE_SYSTEM_QUICKSTART.md)** | **Three-terminal setup: chain, provider, demo (recommended)** |
+| API reference | Pallet rustdoc: `cargo doc --workspace --no-deps --open`. The same text ships in the runtime metadata, so PAPI/subxt IDE hover and polkadot.js Apps show it too |
 | [Architecture Design](./docs/design/scalable-web3-storage.md) | System design, economics, common concerns |
 | [Implementation Details](./docs/design/scalable-web3-storage-implementation.md) | Technical specs |
 | [Photos dApp](./user-interfaces/photos/README.md) | Example photo-storage dApp — Layer 1 + a custom contract ([design](./user-interfaces/photos/DESIGN.md)) |
@@ -202,7 +199,7 @@ web3-storage/
 ├── provider-node/          # Off-chain HTTP storage server
 ├── clients/                # Rust client SDKs: storage (Layer 0), file-system, s3 (Layer 1)
 ├── packages/               # JS/TS workspace: @web3-storage/{core,layer0,layer1,papi,sdk}
-├── user-interfaces/        # Web apps: landing, drive-ui, provider, s3-ui, photos, shared
+├── user-interfaces/        # Web apps: landing, explorer, drive-ui, provider, s3-ui, photos, shared
 ├── examples/               # contracts/ (Solidity dApps), papi/ (end-to-end PAPI demos)
 ├── scripts/                # Helper scripts (chain spec, health checks, smoke test)
 ├── chain-specs/            # Chain specification files
@@ -316,7 +313,7 @@ See [Client README](./clients/storage/README.md) for complete examples.
 
 ## Deployment
 
-For local dev, follow [Layer 1 Quick Start](./docs/getting-started/LAYER1_QUICKSTART.md). For testnet/production, no canonical guide exists yet — see `chain-specs/` and `zombienet/zombienet-parachain-local.toml` for current local network shape.
+For local dev, follow the [Quick Start](./docs/getting-started/FILE_SYSTEM_QUICKSTART.md). For testnet/production, no canonical guide exists yet — see `chain-specs/` and `zombienet/zombienet-parachain-local.toml` for current local network shape.
 
 ## Contributing
 

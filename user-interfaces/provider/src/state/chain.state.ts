@@ -18,8 +18,9 @@ import {
   subscribeToBlocks,
   getChainProperties,
 } from '@/lib/chain-client'
-import { configureFromChain } from '@/utils/format'
+import { configureFormat } from '@web3-storage/format'
 import { loadSelectedNetwork } from '@web3-storage/network-config'
+import { updateSs58Prefix } from '@/state/wallet.state'
 
 // Types
 export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'error'
@@ -85,12 +86,20 @@ export async function connect(wsEndpoint?: string): Promise<void> {
   try {
     await connectToChain(ep)
 
-    // Fetch chain properties and apply all chain-derived config: formatting,
-    // SS58 prefix, and minProviderStake. Returns the chain identity to publish.
+    // Fetch chain properties and apply all chain-derived config: number
+    // formatting, the SS58 prefix, minProviderStake, and the chain identity.
     const chainProps = await getChainProperties()
-    const info = await configureFromChain(chainProps)
+    configureFormat(chainProps)
+    await updateSs58Prefix(chainProps.ss58Prefix)
 
-    chainInfo$.next(info)
+    // Store minProviderStake for the Registration page
+    ;(globalThis as any).__minProviderStake = chainProps.minProviderStake
+
+    chainInfo$.next({
+      name: chainProps.specName,
+      version: String(chainProps.specVersion),
+      genesisHash: chainProps.genesisHash,
+    })
 
     connectionStatus$.next('connected')
 

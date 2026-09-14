@@ -17,7 +17,7 @@ import {
   ContextMenuSeparator,
 } from "@/components/ui/context-menu";
 import { useBuckets, useBucketUsage, useSelectedBucket, selectBucket, deleteBucket } from "@/state";
-import { formatBytes, formatTokens } from "@/lib/utils";
+import { formatBytes, formatTokens } from "@web3-storage/format";
 import type { BucketInfo } from "@/lib/s3-client";
 import { toast } from "@/components/ui/toaster";
 import ConfirmDialog from "./ConfirmDialog";
