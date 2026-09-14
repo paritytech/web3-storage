@@ -13,7 +13,7 @@ import {
 } from '@/components/ui/Table'
 import { useAgreements, useAgreementRequests } from '@/state/provider.state'
 import { RequireProvider } from '@/components/RequireProvider'
-import { formatAddress, formatBytes, formatTokens, formatBlockNumber, formatDuration } from '@/utils/format'
+import { formatAddress, formatBytes, formatTokens, formatBlockNumber, formatDuration } from '@web3-storage/format'
 
 export function Agreements() {
   return (

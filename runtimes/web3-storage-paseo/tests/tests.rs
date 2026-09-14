@@ -860,6 +860,7 @@ fn drive_lifecycle_e2e() {
                 provider: provider.to_account_id(),
                 terms,
                 sig,
+                visibility: storage_primitives::Visibility::Private,
             }),
         ));
 
@@ -953,6 +954,7 @@ fn drive_lifecycle_via_xcm_e2e() {
                 provider: provider.to_account_id(),
                 terms,
                 sig,
+                visibility: storage_primitives::Visibility::Private,
             });
 
         assert_ok!(
@@ -1039,6 +1041,7 @@ fn s3_bucket_lifecycle_e2e() {
                 provider: provider.to_account_id(),
                 terms,
                 sig,
+                visibility: storage_primitives::Visibility::Private,
             }),
         ));
 
@@ -1138,6 +1141,7 @@ fn s3_bucket_lifecycle_via_xcm_e2e() {
             provider: provider.to_account_id(),
             terms,
             sig,
+            visibility: storage_primitives::Visibility::Private,
         });
         assert_ok!(
             RuntimeHelper::<Runtime, AllPalletsWithoutSystem>::execute_as_origin(

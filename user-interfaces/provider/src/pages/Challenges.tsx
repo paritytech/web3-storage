@@ -22,7 +22,7 @@ import {
 import { challengeKey } from '@/state/challengeKey'
 import { useSelectedAccount } from '@/state/wallet.state'
 import { RequireProvider } from '@/components/RequireProvider'
-import { formatAddress, formatBlockNumber } from '@/utils/format'
+import { formatAddress, formatBlockNumber } from '@web3-storage/format'
 
 export function Challenges() {
   return (
@@ -229,7 +229,18 @@ function ChallengesContent() {
                       </TableCell>
                       <TableCell className="font-mono">#{challenge.bucketId}</TableCell>
                       <TableCell>
-                        <span className="font-mono">{formatAddress(challenge.challenger)}</span>
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono">{formatAddress(challenge.challenger)}</span>
+                          {challenge.authorized !== undefined && (
+                            <span className={`text-xs px-2 py-0.5 rounded ${
+                              challenge.authorized
+                                ? 'bg-emerald-500/20 text-emerald-400'
+                                : 'bg-gray-500/20 text-gray-400'
+                            }`}>
+                              {challenge.authorized ? 'authorized' : 'public'}
+                            </span>
+                          )}
+                        </div>
                       </TableCell>
                       <TableCell>{challenge.leafIndex.toLocaleString()}</TableCell>
                       <TableCell>{challenge.chunkIndex.toLocaleString()}</TableCell>

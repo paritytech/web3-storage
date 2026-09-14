@@ -133,6 +133,7 @@ impl SubstrateClient {
         provider: AccountId32,
         terms: &storage_client::AgreementTermsOf,
         sig: &sp_runtime::MultiSignature,
+        visibility: storage_client::Visibility,
     ) -> Result<S3BucketId> {
         debug!("Creating S3 bucket: {}", name);
 
@@ -141,6 +142,7 @@ impl SubstrateClient {
             convert::to_subxt_account(&provider),
             convert::agreement_terms(terms),
             convert::multisig(sig),
+            convert::visibility(visibility),
         );
 
         let events = self.submit_and_finalize(tx).await?;

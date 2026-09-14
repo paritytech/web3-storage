@@ -80,7 +80,10 @@ only the final one.
 Provider requests are signed (`Web3Storage <pubkey>:<sig>:<timestamp>` per
 the `crates/providers/auth` crate) whenever the signer carries a raw keypair
 (`makeSigner` populates it). Wallet-extension signers can't produce the raw
-sr25519 signature — unauthenticated providers still work.
+sr25519 signature — unauthenticated providers still work. Client auth is
+sr25519-only ([#304](https://github.com/paritytech/web3-storage/issues/304)
+tracks extending it); *provider* signatures are multi-scheme and arrive as
+SCALE-encoded `MultiSignature` hex, decoded by `decodeMultiSignature`.
 
 ## Deliberately NOT in this package
 
@@ -95,6 +98,67 @@ sr25519 signature — unauthenticated providers still work.
 - **Pre-subscription warmup guards** (`waitForChainReady`,
   `waitForBlockProduction`) stay polling-based on purpose: during zombienet
   warmup there are no blocks/metadata yet, so a subscription would hang.
+
+## Canonical PAPI patterns (no `@polkadot/*`)
+
+Repo rule (see the root `CLAUDE.md`): all JS/TS talks to the chain through
+`polkadot-api` — never `@polkadot/keyring`, `@polkadot/util-crypto`,
+`@polkadot/util`, `@polkadot/api`, or any other `@polkadot/*` package.
+Consumers should import the helpers below from this SDK rather than
+re-deriving them; the snippets document what the SDK does under the hood.
+
+The signer/derive pattern behind `makeSigner` — set up the derive function
+once at module load, then call `makeSigner("//Alice")` etc.:
+
+```js
+import { getPolkadotSigner } from "polkadot-api/signer";
+import { sr25519CreateDerive } from "@polkadot-labs/hdkd";
+import {
+  DEV_PHRASE,
+  entropyToMiniSecret,
+  mnemonicToEntropy,
+  ss58Address,
+} from "@polkadot-labs/hdkd-helpers";
+
+const devMiniSecret = entropyToMiniSecret(mnemonicToEntropy(DEV_PHRASE));
+const deriveSr25519 = sr25519CreateDerive(devMiniSecret);
+
+export function makeSigner(seed) {
+  const keyPair = deriveSr25519(seed); // seed is a SURI path like "//Alice"
+  return {
+    signer: getPolkadotSigner(keyPair.publicKey, "Sr25519", keyPair.sign),
+    address: ss58Address(keyPair.publicKey), // prefix 42 (`5…`), same as @polkadot/keyring default
+    publicKey: keyPair.publicKey,
+    seed,
+  };
+}
+```
+
+No `cryptoWaitReady()` — hdkd is synchronous.
+
+**SS58 gotcha**: `ss58Address` defaults to substrate prefix 42 (`5…`) while
+PAPI surfaces accounts with the runtime SS58 prefix (Polkadot-style `1…` on
+this parachain) — same key, different string, so string equality fails.
+Compare raw bytes via `ss58Decode`:
+
+```js
+import { ss58Decode } from "@polkadot-labs/hdkd-helpers";
+
+// ss58Decode(addr) → [bytes, prefix]
+export function sameAddress(a, b) {
+  try {
+    const [aBytes] = ss58Decode(a);
+    const [bBytes] = ss58Decode(b);
+    if (aBytes.length !== bBytes.length) return false;
+    for (let i = 0; i < aBytes.length; i++) {
+      if (aBytes[i] !== bBytes[i]) return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+```
 
 ## Descriptors
 

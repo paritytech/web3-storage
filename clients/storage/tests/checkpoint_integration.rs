@@ -50,8 +50,12 @@ async fn test_checkpoint_signature_available_after_commit() {
 
     assert_eq!(sig.bucket_id, bucket_id);
     assert_eq!(sig.leaf_count, 1);
-    assert!(!sig.mmr_root.is_empty());
-    assert!(!sig.provider_signature.is_empty());
+    assert_ne!(sig.mmr_root, sp_core::H256::zero());
+    // Deserialization already proves the signature decodes; pin the scheme.
+    assert!(matches!(
+        sig.provider_signature,
+        sp_runtime::MultiSignature::Sr25519(_)
+    ));
 }
 
 // ============================================================================

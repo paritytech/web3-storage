@@ -11,7 +11,7 @@ use sp_core::crypto::AccountId32;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use storage_primitives::{BucketId, Role};
+use storage_primitives::{BucketId, Role, Visibility};
 
 /// A bucket member and the role they hold.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -25,6 +25,25 @@ pub struct Member {
 impl From<(AccountId32, Role)> for Member {
     fn from((account, role): (AccountId32, Role)) -> Self {
         Self { account, role }
+    }
+}
+
+/// The slice of on-chain bucket state that access control needs: who the
+/// members are, and whether reads are member-only.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BucketAccess {
+    pub members: Vec<Member>,
+    pub visibility: Visibility,
+}
+
+impl BucketAccess {
+    /// A member-only bucket: the fail-safe shape for a bucket whose visibility
+    /// is not known (missing on chain, or a fixed test member set).
+    pub fn private(members: Vec<Member>) -> Self {
+        Self {
+            members,
+            visibility: Visibility::Private,
+        }
     }
 }
 
@@ -54,17 +73,17 @@ impl RequiredRole {
     }
 }
 
-/// Cached membership entry for a bucket.
+/// Cached access entry for a bucket.
 #[derive(Debug, Clone)]
-struct CachedMembership {
-    members: Vec<Member>,
+pub(crate) struct CachedMembership {
+    pub(crate) access: BucketAccess,
     fetched_at: Instant,
 }
 
 impl CachedMembership {
-    fn new(members: Vec<Member>) -> Self {
+    fn new(access: BucketAccess) -> Self {
         Self {
-            members,
+            access,
             fetched_at: Instant::now(),
         }
     }
@@ -78,38 +97,42 @@ impl CachedMembership {
         self.age() < ttl
     }
 
-    fn role_of(&self, account: &AccountId32) -> Option<Role> {
-        self.members
+    pub(crate) fn role_of(&self, account: &AccountId32) -> Option<Role> {
+        self.access
+            .members
             .iter()
             .find(|m| &m.account == account)
             .map(|m| m.role)
     }
 }
 
-/// Trait for resolving bucket membership (enables mocking in tests).
+/// Trait for resolving bucket membership and visibility (enables mocking in
+/// tests).
 #[async_trait::async_trait]
 pub trait MembershipResolver: Send + Sync {
-    /// Every member of `bucket_id`. An empty set means nobody is a member —
-    /// either the bucket does not exist, or it holds no members.
-    async fn fetch_members(&self, bucket_id: BucketId) -> Result<Vec<Member>, MembershipError>;
+    /// The members of `bucket_id` and whether its reads are member-only. An
+    /// empty member set means nobody is a member — either the bucket does not
+    /// exist, or it holds no members.
+    async fn fetch_access(&self, bucket_id: BucketId) -> Result<BucketAccess, MembershipError>;
 }
 
 /// So a boxed resolver still satisfies the `impl MembershipResolver` bound.
 #[async_trait::async_trait]
 impl<T: MembershipResolver + ?Sized> MembershipResolver for Box<T> {
-    async fn fetch_members(&self, bucket_id: BucketId) -> Result<Vec<Member>, MembershipError> {
-        (**self).fetch_members(bucket_id).await
+    async fn fetch_access(&self, bucket_id: BucketId) -> Result<BucketAccess, MembershipError> {
+        (**self).fetch_access(bucket_id).await
     }
 }
 
 /// A [`MembershipResolver`] that returns a fixed member set for every bucket.
-/// Used by integration tests across crates.
+/// Used by integration tests across crates. Buckets resolve as `Private`
+/// (auth always required), matching the fail-safe default.
 pub struct StaticMembershipResolver(pub Vec<Member>);
 
 #[async_trait::async_trait]
 impl MembershipResolver for StaticMembershipResolver {
-    async fn fetch_members(&self, _bucket_id: BucketId) -> Result<Vec<Member>, MembershipError> {
-        Ok(self.0.clone())
+    async fn fetch_access(&self, _bucket_id: BucketId) -> Result<BucketAccess, MembershipError> {
+        Ok(BucketAccess::private(self.0.clone()))
     }
 }
 
@@ -163,7 +186,7 @@ struct MembershipExpiry {
 
 impl MembershipExpiry {
     fn residency(&self, value: &Arc<CachedMembership>) -> Duration {
-        if value.members.is_empty() {
+        if value.access.members.is_empty() {
             self.ttl
         } else {
             self.max_stale
@@ -312,16 +335,25 @@ impl MembershipCache {
 
     /// Look up a caller's role in a bucket.
     /// Returns None if the caller is not a member.
+    #[cfg(test)]
     pub(crate) async fn get_role(
         &self,
         bucket_id: BucketId,
         account: &AccountId32,
     ) -> Result<Option<Role>, MembershipError> {
+        Ok(self.lookup(bucket_id).await?.role_of(account))
+    }
+
+    /// The bucket's cached access entry, resolved on a miss or once stale.
+    pub(crate) async fn lookup(
+        &self,
+        bucket_id: BucketId,
+    ) -> Result<Arc<CachedMembership>, MembershipError> {
         self.drain_invalidations().await;
 
         if let Some(entry) = self.cache.get(&bucket_id).await {
             if entry.is_fresh(self.ttl) {
-                return Ok(entry.role_of(account));
+                return Ok(entry);
             }
         }
 
@@ -330,10 +362,9 @@ impl MembershipCache {
         let epoch_before = self.epoch.load(Ordering::SeqCst);
 
         // Cache miss or stale — fetch from chain
-        match self.resolver.fetch_members(bucket_id).await {
-            Ok(members) => {
-                let entry = Arc::new(CachedMembership::new(members));
-                let role = entry.role_of(account);
+        match self.resolver.fetch_access(bucket_id).await {
+            Ok(access) => {
+                let entry = Arc::new(CachedMembership::new(access));
                 // Cache it only if no invalidation landed during the fetch,
                 // then check again: no lock spans the insert, so a bump can
                 // still slip between the two lines. `invalidate` bumps
@@ -344,12 +375,12 @@ impl MembershipCache {
                 // free to resurrect the revoked member set for a full
                 // `max_stale`.
                 if self.epoch.load(Ordering::SeqCst) == epoch_before {
-                    self.cache.insert(bucket_id, entry).await;
+                    self.cache.insert(bucket_id, entry.clone()).await;
                     if self.epoch.load(Ordering::SeqCst) != epoch_before {
                         self.cache.invalidate(&bucket_id).await;
                     }
                 }
-                Ok(role)
+                Ok(entry)
             }
             Err(e) => {
                 // Drain again: a change for this bucket may have arrived during
@@ -374,7 +405,7 @@ impl MembershipCache {
                         entry.age(),
                         e
                     );
-                    return Ok(entry.role_of(account));
+                    return Ok(entry);
                 }
                 Err(e)
             }
@@ -441,11 +472,11 @@ mod tests {
         let bob = AccountId32::new([2u8; 32]);
         let charlie = AccountId32::new([3u8; 32]);
 
-        let entry = CachedMembership::new(vec![
+        let entry = CachedMembership::new(BucketAccess::private(vec![
             (alice.clone(), Role::Admin).into(),
             (bob.clone(), Role::Writer).into(),
             (charlie.clone(), Role::Reader).into(),
-        ]);
+        ]));
 
         assert_eq!(entry.role_of(&alice), Some(Role::Admin));
         assert_eq!(entry.role_of(&bob), Some(Role::Writer));
@@ -457,7 +488,7 @@ mod tests {
 
     #[test]
     fn entries_go_stale_once_the_ttl_elapses() {
-        let entry = CachedMembership::new(vec![]);
+        let entry = CachedMembership::new(BucketAccess::private(vec![]));
         assert!(entry.is_fresh(Duration::from_secs(60)));
         assert!(!entry.is_fresh(Duration::ZERO));
     }
@@ -551,7 +582,7 @@ mod tests {
         assert_eq!(calls.load(Ordering::SeqCst), 1);
 
         // The next lookup must refetch (TTL is zero) and this time blocks
-        // inside `fetch_members` until `proceed` flips.
+        // inside `fetch_access` until `proceed` flips.
         proceed.store(false, Ordering::SeqCst);
         let in_flight = {
             let cache = cache.clone();
@@ -998,15 +1029,15 @@ mod tests {
 
         #[async_trait::async_trait]
         impl MembershipResolver for MixedResolver {
-            async fn fetch_members(
+            async fn fetch_access(
                 &self,
                 bucket_id: BucketId,
-            ) -> Result<Vec<Member>, MembershipError> {
-                Ok(if bucket_id == 1 {
+            ) -> Result<BucketAccess, MembershipError> {
+                Ok(BucketAccess::private(if bucket_id == 1 {
                     vec![] // "nonexistent" bucket
                 } else {
                     vec![(self.account.clone(), Role::Reader).into()]
-                })
+                }))
             }
         }
 

@@ -20,7 +20,8 @@ fn try_state_holds_and_detects_corruption() {
             None,
             provider,
             terms,
-            sig
+            sig,
+            storage_primitives::Visibility::Public
         ));
 
         // Index invariants hold on real state.

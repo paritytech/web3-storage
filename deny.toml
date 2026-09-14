@@ -48,3 +48,6 @@ crate = "smoldot-light"
 
 [licenses.private]
 ignore = true
+
+[advisories]
+unmaintained = "workspace"

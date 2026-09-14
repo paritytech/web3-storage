@@ -12,6 +12,23 @@ just start-provider   # requires a running chain (just start-chain)
 just health           # check provider is up
 ```
 
+## Signing key
+
+The keypair derived from `--keyfile` signs commitments, checkpoint
+co-signatures, negotiated terms, and replica sync attestations.
+`--key-scheme` picks its scheme (`sr25519` default, `ed25519`, `ecdsa`,
+`eth`), which must match the `public_key` registered on-chain — while they
+differ, every signing endpoint returns `503 provider_key_mismatch`. The
+registered key cannot be changed, so fix a mismatch by pointing the node at
+the original key.
+
+Extrinsics are always submitted from the sr25519 account derived from the
+same seed: the provider's on-chain identity, independent of `--key-scheme`.
+
+Signatures leave the node as SCALE-encoded `MultiSignature` in `0x` hex, so
+the scheme tag travels with them (`0x01<64-byte sr25519>`,
+`0x02<65-byte ecdsa>`).
+
 ## Storage backend
 
 `--storage-backend` picks the storage engine (default `rocksdb`). Chunks, MMR
@@ -34,7 +51,9 @@ whether they should require the `Reader` role is tracked in
 [#228](https://github.com/paritytech/web3-storage/issues/228).
 
 The client signs an sr25519 message binding the request to a bucket and a
-timestamp:
+timestamp. Unlike provider signatures, client auth is sr25519-only;
+[#304](https://github.com/paritytech/web3-storage/issues/304) tracks
+extending it:
 
 ```text
 signed message:  web3storage:<METHOD>:<bucket_id>:<timestamp>

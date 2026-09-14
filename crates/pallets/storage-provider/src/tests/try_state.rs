@@ -90,6 +90,7 @@ fn try_state_detects_challenge_below_sweep_cursor() {
                     chunk_index: 0,
                 },
                 deposit: 0,
+                authorized: false,
             },
         );
         // Cursor claims everything up to `deadline` is swept, yet a challenge is

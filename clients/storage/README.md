@@ -164,14 +164,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("Challenge created: {:?}", challenge_id);
     }
 
-    // Aggregate challenge activity (challengers earn no reward — a slash goes
-    // entirely to the Treasury and the challenger is only refunded its deposit).
-    let stats = client.get_challenge_stats().await?;
-    println!(
-        "Challenges: total={} successful={} failed={}",
-        stats.total_challenges, stats.successful_challenges, stats.failed_challenges
-    );
-
     Ok(())
 }
 ```
@@ -533,7 +525,7 @@ For most users, consider using the **Layer 1 File System Client** instead, which
 - You want to implement your own data structures on top of blob storage
 - You need direct access to buckets and agreements
 
-**Layer 1 Documentation:** See [File System Interface Docs](../../docs/filesystems/README.md)
+**Layer 1 Documentation:** See [File System Client](../file-system/README.md)
 
 **Layer 1 Client:** `clients/file-system/`
 

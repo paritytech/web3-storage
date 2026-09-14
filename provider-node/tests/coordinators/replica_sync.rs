@@ -2,7 +2,7 @@
 
 //! Integration tests for the replica sync coordinator.
 
-use super::{test_state, ALICE_SS58};
+use super::{test_state, test_state_with_seed, ALICE_SS58};
 use provider_auth::{Authenticator, StaticMembershipResolver};
 use sp_core::H256;
 use std::collections::HashMap;
@@ -12,7 +12,7 @@ use storage_primitives::BucketId;
 use storage_provider_node::replica_sync_coordinator::{BucketSnapshot, ReplicaAgreementInfo};
 use storage_provider_node::{
     Error, ProviderDeps, ProviderState, ReplicaSyncChainClient, ReplicaSyncCoordinator,
-    ReplicaSyncCoordinatorConfig, SyncDuty, SyncResult,
+    ReplicaSyncCoordinatorConfig, SignedSyncRoots, SyncDuty, SyncResult,
 };
 
 struct MockReplicaSyncChainClient {
@@ -21,6 +21,7 @@ struct MockReplicaSyncChainClient {
     snapshots: Mutex<HashMap<BucketId, BucketSnapshot>>,
     endpoints: Mutex<HashMap<BucketId, Vec<String>>>,
     confirmations: Mutex<Vec<BucketId>>,
+    attestations: Mutex<Vec<SignedSyncRoots>>,
     confirm_result: Mutex<Result<(u8, u128), Error>>,
 }
 
@@ -32,6 +33,7 @@ impl MockReplicaSyncChainClient {
             snapshots: Mutex::new(HashMap::new()),
             endpoints: Mutex::new(HashMap::new()),
             confirmations: Mutex::new(Vec::new()),
+            attestations: Mutex::new(Vec::new()),
             confirm_result: Mutex::new(Ok((0, 1000))),
         }
     }
@@ -95,9 +97,10 @@ impl ReplicaSyncChainClient for MockReplicaSyncChainClient {
     async fn submit_sync_confirmation(
         &self,
         bucket_id: BucketId,
-        _target_mmr_root: H256,
+        attestation: SignedSyncRoots,
     ) -> Result<(u8, u128), Error> {
         self.confirmations.lock().unwrap().push(bucket_id);
+        self.attestations.lock().unwrap().push(attestation);
         let result = &*self.confirm_result.lock().unwrap();
         match result {
             Ok(v) => Ok(*v),
@@ -123,6 +126,115 @@ async fn test_no_agreements() {
 
     let duties = coordinator.get_active_replica_duties().await.unwrap();
     assert!(duties.is_empty());
+}
+
+#[tokio::test]
+async fn confirm_on_chain_attests_roots_with_signing_key() {
+    use codec::Encode;
+    use sp_core::Pair as _;
+    use sp_runtime::traits::Verify;
+
+    let target = H256::repeat_byte(0xAB);
+    let duty = SyncDuty {
+        bucket_id: 42,
+        target_mmr_root: target,
+        target_leaf_count: 10,
+        primary_endpoints: vec![],
+        sync_balance: 1_000,
+        sync_price: 100,
+        min_sync_interval: 0,
+        last_sync: None,
+    };
+
+    let mock = Arc::new(MockReplicaSyncChainClient::new());
+    let (state, _dir) = test_state_with_seed("//Alice");
+    let config = ReplicaSyncCoordinatorConfig::default();
+    let coordinator = ReplicaSyncCoordinator::new(config, state, Box::new(mock.clone()));
+
+    let result = coordinator.confirm_on_chain(&duty).await;
+    assert!(matches!(result, SyncResult::Success { bucket_id: 42, .. }));
+
+    // The submitted roots have the target at position 0 (rest empty) and
+    // the signature verifies over their SCALE encoding under //Alice —
+    // exactly what the pallet checks against the registered public_key.
+    let attestation = mock.attestations.lock().unwrap()[0].clone();
+    let mut expected_roots = [None; 7];
+    expected_roots[0] = Some(target);
+    assert_eq!(attestation.roots, expected_roots);
+    let alice = sp_core::sr25519::Pair::from_string("//Alice", None).unwrap();
+    let expected_signer = sp_runtime::AccountId32::new(sp_core::Pair::public(&alice).0);
+    assert!(
+        attestation
+            .signature
+            .verify(&attestation.roots.encode()[..], &expected_signer),
+        "attestation must verify under //Alice's key"
+    );
+    assert_eq!(mock.confirmations.lock().unwrap().as_slice(), &[42]);
+}
+
+#[tokio::test]
+async fn confirm_on_chain_surfaces_submission_errors() {
+    let duty = SyncDuty {
+        bucket_id: 9,
+        target_mmr_root: H256::repeat_byte(0xEF),
+        target_leaf_count: 1,
+        primary_endpoints: vec![],
+        sync_balance: 1_000,
+        sync_price: 100,
+        min_sync_interval: 0,
+        last_sync: None,
+    };
+
+    let mock = Arc::new(MockReplicaSyncChainClient::new());
+    *mock.confirm_result.lock().unwrap() = Err(Error::Internal("chain rejected".to_string()));
+    let (state, _dir) = test_state_with_seed("//Alice");
+    let config = ReplicaSyncCoordinatorConfig::default();
+    let coordinator = ReplicaSyncCoordinator::new(config, state, Box::new(mock.clone()));
+
+    let result = coordinator.confirm_on_chain(&duty).await;
+    match result {
+        SyncResult::SubmissionFailed { bucket_id, error } => {
+            assert_eq!(bucket_id, 9);
+            assert!(
+                error.contains("chain rejected"),
+                "unexpected error: {error}"
+            );
+        }
+        other => panic!("expected SubmissionFailed, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn confirm_on_chain_refuses_without_signing_key() {
+    let duty = SyncDuty {
+        bucket_id: 7,
+        target_mmr_root: H256::repeat_byte(0xCD),
+        target_leaf_count: 1,
+        primary_endpoints: vec![],
+        sync_balance: 1_000,
+        sync_price: 100,
+        min_sync_interval: 0,
+        last_sync: None,
+    };
+
+    let mock = Arc::new(MockReplicaSyncChainClient::new());
+    let (state, _dir) = test_state(); // provider-id mode: no keypair
+    let config = ReplicaSyncCoordinatorConfig::default();
+    let coordinator = ReplicaSyncCoordinator::new(config, state, Box::new(mock.clone()));
+
+    let result = coordinator.confirm_on_chain(&duty).await;
+    match result {
+        SyncResult::SubmissionFailed { bucket_id, error } => {
+            assert_eq!(bucket_id, 7);
+            assert!(
+                error.contains("no signing key"),
+                "unexpected error: {error}"
+            );
+        }
+        other => panic!("expected SubmissionFailed, got {other:?}"),
+    }
+    // Nothing must reach the chain without an attestation.
+    assert!(mock.confirmations.lock().unwrap().is_empty());
 }
 
 #[tokio::test]

@@ -75,6 +75,7 @@
 //! let bucket_id = client.establish_storage_agreement(
 //!     "5FHneW46...".to_string(), // provider account
 //!     signed,
+//!     storage_primitives::Visibility::Private,
 //! ).await?;
 //! # Ok(())
 //! # }
@@ -159,7 +160,7 @@ pub use verification::ClientVerifier;
 // Commitment / ChunkLocation appear in the public challenge & checkpoint method
 // signatures, so re-export them rather than make callers depend on
 // storage_primitives directly.
-pub use storage_primitives::{ChunkLocation, Commitment};
+pub use storage_primitives::{ChunkLocation, Commitment, Visibility};
 
 // Encryption re-exports
 pub use encryption::{Cipher, EncryptionKey, XChaCha20Poly1305Cipher, ENCRYPTION_OVERHEAD};

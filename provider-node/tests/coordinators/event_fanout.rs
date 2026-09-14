@@ -310,7 +310,7 @@ impl ReplicaSyncChainClient for MockReplicaClient {
     async fn submit_sync_confirmation(
         &self,
         _bucket_id: BucketId,
-        _target_mmr_root: H256,
+        _attestation: storage_provider_node::SignedSyncRoots,
     ) -> Result<(u8, u128), Error> {
         Ok((0, 0))
     }

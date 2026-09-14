@@ -16,11 +16,14 @@ import {
   createDrive as createDriveTx,
   negotiateTerms,
   parseMultiaddrToUrl,
+  getBucketVisibility as getBucketVisibilityQuery,
+  setBucketVisibility as setBucketVisibilityTx,
   toSs58,
   type ChainSigner,
   type Keypair,
   type NegotiateRequest,
   type SignedTerms,
+  type Visibility,
 } from "@web3-storage/sdk";
 import { FileSystemClient } from "@web3-storage/sdk/fs";
 import type { ParachainApi } from "@/state/chain.state";
@@ -30,7 +33,7 @@ export type Signer = PolkadotSigner;
 // Re-export the SDK negotiate primitives + types the create-drive components
 // (NewDriveDialog, ProviderPickerPanel) and the state layer import from here.
 export { buildSignedTermsArgs, negotiateTerms };
-export type { NegotiateRequest, SignedTerms };
+export type { NegotiateRequest, SignedTerms, Visibility };
 
 /** `parseMultiaddrToHttp` is the SDK's `parseMultiaddrToUrl` under the old name. */
 export const parseMultiaddrToHttp = parseMultiaddrToUrl;
@@ -91,7 +94,8 @@ export interface MatchingProviders extends AvailableProvider {
   agreementsExtended: number;
   agreementsNotExtended: number;
   agreementsBurned: number;
-  challengesReceived: number;
+  /** Challenges resolved in the provider's favor (authorized + public tiers). */
+  challengesDefended: number;
   challengesFailed: number;
 }
 
@@ -167,6 +171,16 @@ export class DriveClient {
   private requireFs(): FileSystemClient {
     if (!this.fsc) throw new Error("Not connected to chain");
     return this.fsc;
+  }
+
+  private requireOwner(): ChainSigner {
+    if (!this.signer || !this.signerAddress) throw new Error("Signer not set");
+    return {
+      signer: this.signer,
+      address: this.signerAddress,
+      publicKey: this.signer.publicKey,
+      keypair: this.keypair ?? undefined,
+    };
   }
 
   // ── Provider resolution ───────────────────────────────────────────────────
@@ -326,7 +340,8 @@ export class DriveClient {
           agreementsExtended: info.agreements_extended ?? 0,
           agreementsNotExtended: info.agreements_not_extended ?? 0,
           agreementsBurned: info.agreements_burned ?? 0,
-          challengesReceived: info.challenges_received ?? 0,
+          challengesDefended:
+            (info.challenges_received_authorized ?? 0) + (info.challenges_received_public ?? 0),
           challengesFailed: info.challenges_failed ?? 0,
           matchScore: match.match_score,
           partialReason: match.partial_reason?.type ?? "",
@@ -351,17 +366,10 @@ export class DriveClient {
     providerAccount: string,
     providerUrl: string,
     signed: SignedTerms,
+    visibility?: Visibility,
   ): Promise<DriveInfo> {
     const api = this.requireApi();
-    if (!this.signer || !this.signerAddress) {
-      throw new Error("Signer not set");
-    }
-    const owner: ChainSigner = {
-      signer: this.signer,
-      address: this.signerAddress,
-      publicKey: this.signer.publicKey,
-      keypair: this.keypair ?? undefined,
-    };
+    const owner = this.requireOwner();
 
     // Finalize: the state layer reads the drive list back at the finalized
     // head right after this resolves, so an in-block ("best") submit would
@@ -373,13 +381,13 @@ export class DriveClient {
       name ?? "",
       { address: providerAccount },
       signed,
-      { mode: "finalized", retryStale: 0 },
+      { mode: "finalized", retryStale: 0, visibility },
     );
 
     return {
       driveId,
       bucketId,
-      owner: this.signerAddress,
+      owner: owner.address,
       name: name ?? null,
       maxCapacity: BigInt(signed.terms.max_bytes),
       createdAt: 0,
@@ -441,6 +449,14 @@ export class DriveClient {
 
   removeMember(bucketId: bigint, account: string): Promise<void> {
     return this.requireFs().removeMember(bucketId, account);
+  }
+
+  async getBucketVisibility(bucketId: bigint): Promise<Visibility> {
+    return getBucketVisibilityQuery(this.requireApi(), bucketId);
+  }
+
+  async setBucketVisibility(bucketId: bigint, visibility: Visibility): Promise<void> {
+    await setBucketVisibilityTx(this.requireApi(), this.requireOwner(), bucketId, visibility);
   }
 
   // ── Checkpoint ────────────────────────────────────────────────────────────

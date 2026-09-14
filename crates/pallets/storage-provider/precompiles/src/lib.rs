@@ -26,7 +26,7 @@ use pallet_revive::{
     ExecOrigin as Origin,
 };
 use pallet_storage_provider::{BalanceOf, WeightInfo};
-use storage_primitives::{BucketId, EndAction, Role};
+use storage_primitives::{BucketId, EndAction, Role, Visibility};
 use tracing::error;
 
 alloy::sol!("src/interface/IWeb3Storage.sol");
@@ -82,16 +82,24 @@ where
     })
 }
 
-/// Decode a Solidity `uint8` as a `Role` enum (0 = Admin, 1 = Writer, 2 = Reader).
-fn decode_role(tag: u8) -> Result<Role, Error> {
-    match tag {
-        0 => Ok(Role::Admin),
-        1 => Ok(Role::Writer),
-        2 => Ok(Role::Reader),
-        other => Err(revert(
-            &other,
-            "Invalid role tag (expected 0=Admin, 1=Writer, 2=Reader)",
-        )),
+/// The Solidity-side enums decode fallibly in `alloy`, so out-of-range
+/// bytes revert before dispatch; the `__Invalid` arm is defensive only.
+fn to_role(role: IWeb3Storage::Role) -> Result<Role, Error> {
+    match role {
+        IWeb3Storage::Role::Admin => Ok(Role::Admin),
+        IWeb3Storage::Role::Writer => Ok(Role::Writer),
+        IWeb3Storage::Role::Reader => Ok(Role::Reader),
+        // Rejected by ABI decoding already; kept total to stay panic-free.
+        IWeb3Storage::Role::__Invalid => Err(revert(&"__Invalid", "Invalid role")),
+    }
+}
+
+fn to_visibility(visibility: IWeb3Storage::Visibility) -> Result<Visibility, Error> {
+    match visibility {
+        IWeb3Storage::Visibility::Public => Ok(Visibility::Public),
+        IWeb3Storage::Visibility::Private => Ok(Visibility::Private),
+        // Rejected by ABI decoding already; kept total to stay panic-free.
+        IWeb3Storage::Visibility::__Invalid => Err(revert(&"__Invalid", "Invalid visibility")),
     }
 }
 
@@ -136,6 +144,7 @@ where
                     provider,
                     terms,
                     signature,
+                    visibility,
                 },
             ) => {
                 env.charge(<Runtime as pallet_storage_provider::Config>::WeightInfo::establish_storage_agreement())?;
@@ -157,6 +166,7 @@ where
                     provider,
                     terms,
                     sig,
+                    to_visibility(*visibility)?,
                 )
                 .map_err(|e| revert(&e, "establishStorageAgreement failed"))?;
                 Ok(bucket_id.abi_encode())
@@ -171,6 +181,23 @@ where
                 Ok(Vec::new())
             }
 
+            IWeb3StorageCalls::setBucketVisibility(IWeb3Storage::setBucketVisibilityCall {
+                bucketId,
+                visibility,
+            }) => {
+                env.charge(
+                    <Runtime as pallet_storage_provider::Config>::WeightInfo::set_bucket_visibility(
+                    ),
+                )?;
+                pallet_storage_provider::Pallet::<Runtime>::set_bucket_visibility(
+                    frame_origin,
+                    *bucketId,
+                    to_visibility(*visibility)?,
+                )
+                .map_err(|e| revert(&e, "setBucketVisibility failed"))?;
+                Ok(Vec::new())
+            }
+
             IWeb3StorageCalls::setMember(IWeb3Storage::setMemberCall {
                 bucketId,
                 member,
@@ -180,7 +207,7 @@ where
                     <Runtime as pallet_storage_provider::Config>::WeightInfo::set_bucket_member(),
                 )?;
                 let member = decode_account::<Runtime>(&member.0)?;
-                let role = decode_role(*role)?;
+                let role = to_role(*role)?;
                 pallet_storage_provider::Pallet::<Runtime>::set_member(
                     frame_origin,
                     *bucketId,

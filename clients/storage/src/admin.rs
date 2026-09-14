@@ -84,6 +84,7 @@ impl AdminClient {
     /// let bucket_id = client.establish_storage_agreement(
     ///     "5FHneW46...".to_string(),
     ///     signed,
+    ///     storage_primitives::Visibility::Private,
     /// ).await?;
     /// # Ok(())
     /// # }
@@ -92,6 +93,7 @@ impl AdminClient {
         &self,
         provider: String,
         signed_terms: SignedTerms,
+        visibility: storage_primitives::Visibility,
     ) -> ClientResult<BucketId> {
         let SignedTerms { terms, signature } = signed_terms;
         let chain = self.base.chain()?;
@@ -107,7 +109,12 @@ impl AdminClient {
             terms.nonce,
         );
 
-        let tx = extrinsics::establish_storage_agreement(provider_account, &terms, &signature);
+        let tx = extrinsics::establish_storage_agreement(
+            provider_account,
+            &terms,
+            &signature,
+            visibility,
+        );
 
         let tx_progress = chain
             .api()
@@ -262,6 +269,34 @@ impl AdminClient {
             .map_err(|e| ClientError::Chain(format!("Transaction failed: {e}")))?;
 
         tracing::info!("Froze bucket {}", bucket_id);
+        Ok(())
+    }
+
+    /// Set bucket read visibility (admin only). Flips `Public` ⇄ `Private`
+    /// unconditionally in both directions.
+    pub async fn set_bucket_visibility(
+        &self,
+        bucket_id: BucketId,
+        visibility: storage_primitives::Visibility,
+    ) -> ClientResult<()> {
+        let chain = self.base.chain()?;
+        let signer = chain.signer()?;
+
+        let tx = extrinsics::set_bucket_visibility(bucket_id, visibility);
+        chain
+            .api()
+            .at_current_block()
+            .await
+            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
+            .transactions()
+            .sign_and_submit_then_watch_default(&tx, signer)
+            .await
+            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
+            .wait_for_finalized_success()
+            .await
+            .map_err(|e| ClientError::Chain(format!("Transaction failed: {e}")))?;
+
+        tracing::info!("Set bucket {} visibility to {:?}", bucket_id, visibility);
         Ok(())
     }
 
@@ -452,18 +487,19 @@ impl AdminClient {
     /// Submit a checkpoint with provider signatures.
     ///
     /// This creates a canonical on-chain snapshot of the bucket state,
-    /// enabling `challenge_checkpoint` to work against it.
+    /// enabling `challenge_checkpoint` to work against it. Signatures arrive
+    /// already typed (the SDK's provider responses deserialize them), so the
+    /// only thing left to parse here is the SS58 account strings.
     pub async fn submit_checkpoint(
         &self,
         bucket_id: BucketId,
         commitment: Commitment,
-        signatures: Vec<(String, Vec<u8>)>, // (provider SS58, signature bytes)
+        signatures: Vec<(String, sp_runtime::MultiSignature)>, // (provider SS58, signature)
     ) -> ClientResult<()> {
         let chain = self.base.chain()?;
         let signer = chain.signer()?;
 
-        // Parse provider accounts
-        let parsed_sigs: Vec<(sp_runtime::AccountId32, Vec<u8>)> = signatures
+        let parsed_sigs: Vec<(sp_runtime::AccountId32, sp_runtime::MultiSignature)> = signatures
             .into_iter()
             .map(|(account_str, sig)| {
                 let account = SubstrateClient::parse_account(&account_str)?;
@@ -471,7 +507,7 @@ impl AdminClient {
             })
             .collect::<ClientResult<Vec<_>>>()?;
 
-        let tx = extrinsics::checkpoint(bucket_id, commitment, parsed_sigs)?;
+        let tx = extrinsics::checkpoint(bucket_id, commitment, &parsed_sigs);
 
         let tx_progress = chain
             .api()
@@ -539,6 +575,7 @@ impl AdminClient {
             frozen_start_seq: bucket.frozen_start_seq,
             min_providers: bucket.min_providers,
             snapshot,
+            visibility: bucket.visibility.into(),
         })
     }
 
@@ -613,6 +650,7 @@ pub struct BucketInfo {
     pub frozen_start_seq: Option<u64>,
     pub min_providers: u32,
     pub snapshot: Option<SnapshotInfo>,
+    pub visibility: storage_primitives::Visibility,
 }
 
 #[derive(Debug, Clone)]

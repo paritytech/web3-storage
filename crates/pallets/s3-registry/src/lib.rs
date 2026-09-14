@@ -5,6 +5,7 @@
 //! This pallet provides on-chain storage for S3-compatible bucket and object metadata.
 
 #![cfg_attr(not(feature = "std"), no_std)]
+#![warn(missing_docs)]
 
 extern crate alloc;
 
@@ -46,11 +47,9 @@ pub mod pallet {
     pub type S3BucketInfoOf<T> =
         S3BucketInfo<<T as frame_system::Config>::AccountId, BlockNumberFor<T>>;
 
-    /// Balance type (inherited from the storage provider pallet's Currency).
-    pub type BalanceOf<T> =
-        <<T as pallet_storage_provider::Config>::Currency as frame_support::traits::Currency<
-            <T as frame_system::Config>::AccountId,
-        >>::Balance;
+    /// Balance type, taken from the storage provider pallet so the two cannot
+    /// drift apart.
+    pub type BalanceOf<T> = pallet_storage_provider::BalanceOf<T>;
 
     #[pallet::pallet]
     pub struct Pallet<T>(_);
@@ -125,30 +124,47 @@ pub mod pallet {
     pub enum Event<T: Config> {
         /// S3 bucket created.
         S3BucketCreated {
+            /// The new S3 bucket.
             s3_bucket_id: S3BucketId,
+            /// Its name.
             name: Vec<u8>,
+            /// Layer 0 bucket backing it.
             layer0_bucket_id: u64,
+            /// Its owner.
             owner: T::AccountId,
         },
         /// S3 bucket deleted.
-        S3BucketDeleted { s3_bucket_id: S3BucketId },
+        S3BucketDeleted {
+            /// The removed S3 bucket.
+            s3_bucket_id: S3BucketId,
+        },
         /// Object metadata stored.
         ObjectPut {
+            /// The S3 bucket.
             s3_bucket_id: S3BucketId,
+            /// Object key.
             key: Vec<u8>,
+            /// Content id of the object data.
             cid: H256,
+            /// Object size in bytes.
             size: u64,
         },
         /// Object deleted.
         ObjectDeleted {
+            /// The S3 bucket.
             s3_bucket_id: S3BucketId,
+            /// Key of the removed object.
             key: Vec<u8>,
         },
         /// Object copied.
         ObjectCopied {
+            /// Bucket copied from.
             src_bucket_id: S3BucketId,
+            /// Key copied from.
             src_key: Vec<u8>,
+            /// Bucket copied to.
             dst_bucket_id: S3BucketId,
+            /// Key copied to.
             dst_key: Vec<u8>,
         },
     }
@@ -193,6 +209,7 @@ pub mod pallet {
         /// - `provider`: Explicit provider account that signed the terms.
         /// - `terms`: Provider-signed agreement terms.
         /// - `sig`: Provider signature over the SCALE-encoded terms.
+        /// - `visibility`: Read visibility of the underlying Layer 0 bucket.
         #[pallet::call_index(0)]
         #[pallet::weight(<T as Config>::WeightInfo::create_s3_bucket())]
         pub fn create_s3_bucket(
@@ -201,6 +218,7 @@ pub mod pallet {
             provider: T::AccountId,
             terms: pallet_storage_provider::AgreementTermsOf<T>,
             sig: sp_runtime::MultiSignature,
+            visibility: storage_primitives::Visibility,
         ) -> DispatchResult {
             let who = ensure_signed(origin)?;
 
@@ -231,7 +249,7 @@ pub mod pallet {
             // directly so callers can act on them.
             let layer0_bucket_id =
                 pallet_storage_provider::Pallet::<T>::establish_storage_agreement_internal(
-                    &who, &provider, terms, &sig,
+                    &who, &provider, terms, &sig, visibility,
                 )?;
 
             // Generate new S3 bucket ID

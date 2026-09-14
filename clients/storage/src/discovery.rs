@@ -71,6 +71,9 @@ pub struct MatchedProvider {
 pub struct ProviderInfo {
     /// Network address for connecting.
     pub multiaddr: String,
+    /// Raw registered public key bytes; the scheme of the provider's
+    /// signatures is whatever this key belongs to.
+    pub public_key: Vec<u8>,
     /// Total stake locked.
     pub stake: u128,
     /// Currently committed bytes.
@@ -103,6 +106,7 @@ impl From<rt_api::ProviderInfoResponse> for ProviderInfo {
     fn from(p: rt_api::ProviderInfoResponse) -> Self {
         Self {
             multiaddr: String::from_utf8_lossy(&p.multiaddr).into_owned(),
+            public_key: p.public_key,
             stake: p.stake,
             committed_bytes: p.committed_bytes,
             max_capacity: p.max_capacity,

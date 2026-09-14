@@ -189,7 +189,8 @@ start-e2e-chain RUNTIME="web3-storage-paseo": check
 #   just start-provider BACKEND=rocksdb STORAGE_PATH=/tmp/rocks    # pick the engine and where it stores
 #   just start-provider PORT=3334 STORAGE_PATH=/tmp/p2             # second provider, separate data dir
 #   just start-provider KEYFILE=/path/to/seed                      # custom key from file
-start-provider BACKEND="rocksdb" PORT=PROVIDER_PORT STORAGE_PATH="./provider-data" KEYFILE="": build-provider
+#   just start-provider KEY_SCHEME=ed25519                         # non-sr25519 signing key
+start-provider BACKEND="rocksdb" PORT=PROVIDER_PORT STORAGE_PATH="./provider-data" KEYFILE="" KEY_SCHEME="": build-provider
     #!/usr/bin/env bash
     set -euo pipefail
     echo ""
@@ -197,6 +198,10 @@ start-provider BACKEND="rocksdb" PORT=PROVIDER_PORT STORAGE_PATH="./provider-dat
     echo ""
     echo "Provider health: http://127.0.0.1:{{PORT}}/health"
     echo ""
+    EXTRA_ARGS=""
+    if [ -n "{{KEY_SCHEME}}" ]; then
+        EXTRA_ARGS="--key-scheme {{KEY_SCHEME}}"
+    fi
     if [ -n "{{KEYFILE}}" ]; then
         KEY_ARGS="--keyfile {{KEYFILE}}"
     else
@@ -208,6 +213,7 @@ start-provider BACKEND="rocksdb" PORT=PROVIDER_PORT STORAGE_PATH="./provider-dat
 
     ./target/release/storage-provider-node \
         $KEY_ARGS \
+        $EXTRA_ARGS \
         --storage-backend "{{BACKEND}}" \
         --storage-path "{{STORAGE_PATH}}" \
         --bind-addr "0.0.0.0:{{PORT}}" \
@@ -216,17 +222,27 @@ start-provider BACKEND="rocksdb" PORT=PROVIDER_PORT STORAGE_PATH="./provider-dat
 # Register on-chain then start the provider node (original behavior)
 # Registration is a chain-only extrinsic, so it must run first: start-provider
 # runs in the foreground and never returns.
-register-then-start-provider BACKEND="rocksdb" PORT=PROVIDER_PORT STORAGE_PATH="./provider-data" KEYFILE="":
-    just register-provider "{{KEYFILE}}"
-    just start-provider BACKEND="{{BACKEND}}" PORT="{{PORT}}" STORAGE_PATH="{{STORAGE_PATH}}" KEYFILE="{{KEYFILE}}"
+register-then-start-provider BACKEND="rocksdb" PORT=PROVIDER_PORT STORAGE_PATH="./provider-data" KEYFILE="" KEY_SCHEME="":
+    just register-provider "{{KEYFILE}}" "{{KEY_SCHEME}}"
+    just start-provider BACKEND="{{BACKEND}}" PORT="{{PORT}}" STORAGE_PATH="{{STORAGE_PATH}}" KEYFILE="{{KEYFILE}}" KEY_SCHEME="{{KEY_SCHEME}}"
 
 # Register provider on-chain (idempotent). Requires a running chain.
 # Called automatically by register-then-start-provider, or run standalone.
-register-provider KEYFILE="":
+# KEY_SCHEME registers a non-sr25519 signing key (the node's --key-scheme
+# must match); extrinsics are still submitted from the sr25519 account.
+register-provider KEYFILE="" KEY_SCHEME="":
     #!/usr/bin/env bash
     set -euo pipefail
     ARGS=("{{ CHAIN_WS }}" "{{ PROVIDER_URL }}" "{{ PROVIDER_MULTI_ADDR }}")
-    if [ -n "{{KEYFILE}}" ]; then
+    if [ -n "{{KEY_SCHEME}}" ]; then
+        KEYFILE_ARG="{{KEYFILE}}"
+        if [ -z "$KEYFILE_ARG" ]; then
+            KEYFILE_ARG=$(mktemp)
+            echo "//Alice" > "$KEYFILE_ARG" && chmod 600 "$KEYFILE_ARG"
+            trap "rm -f $KEYFILE_ARG" EXIT
+        fi
+        ARGS+=("$KEYFILE_ARG" "{{KEY_SCHEME}}")
+    elif [ -n "{{KEYFILE}}" ]; then
         ARGS+=("{{KEYFILE}}")
     fi
     cargo run -p storage-client --example register_provider -- "${ARGS[@]}"
@@ -426,7 +442,7 @@ s3-demo-ci:
     cargo run --release -p s3-client --example ci_integration_test -- "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}"
 # ─── UI Tests ─────────────────────────────────────────────────────────────────
 #
-# Unit tests + Playwright e2e for drive-ui and provider.
+# Unit tests + Playwright e2e for drive-ui, provider, and explorer.
 # Requires a running local chain + provider node.
 
 # Run all UI unit tests (Vitest)
@@ -440,6 +456,10 @@ test-ui-drive:
 # Run provider Playwright e2e (requires chain running)
 test-ui-provider:
     pnpm run test:e2e:provider
+
+# Run explorer Playwright e2e (requires chain running)
+test-ui-explorer:
+    pnpm run test:e2e:explorer
 
 # Run ALL UI tests: unit + e2e for every UI. Assumes chain + provider already
 # started (via `just start-chain` and `just start-provider` in separate
@@ -471,5 +491,8 @@ test-ui:
 
     echo "=== provider e2e ==="
     just test-ui-provider
+
+    echo "=== explorer e2e ==="
+    just test-ui-explorer
 
     echo "✅ All UI tests passed"

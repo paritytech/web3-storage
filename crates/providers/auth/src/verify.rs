@@ -9,7 +9,7 @@ use crate::membership::{
 };
 use sp_core::{crypto::AccountId32, sr25519, Pair};
 use std::time::Duration;
-use storage_primitives::BucketId;
+use storage_primitives::{BucketId, Visibility};
 
 /// Wrap a payload the way Polkadot message-signing surfaces do before signing:
 /// `<Bytes>` ++ payload ++ `</Bytes>`. Browser extensions (`signRaw`) and PAPI's
@@ -181,8 +181,12 @@ impl Authenticator {
         self
     }
 
-    /// Auth is always enforced: the caller must present a valid signed
-    /// `Authorization` header whose account holds `required` for the bucket.
+    /// Reader-level requests on a `Public` bucket are served without
+    /// authentication — an honest primary serves public-bucket reads to
+    /// anyone. Everything else (any request on a `Private` bucket, and every
+    /// Writer/Admin request) needs a valid signed `Authorization` header whose
+    /// account holds `required` for the bucket. A bucket whose visibility
+    /// cannot be established gates like `Private`.
     pub async fn require_role(
         &self,
         auth_header: Option<&str>,
@@ -190,13 +194,22 @@ impl Authenticator {
         bucket_id: BucketId,
         required: RequiredRole,
     ) -> Result<(), AuthError> {
+        // One lookup serves both gates; its failure only matters once the
+        // request has proven it needs a role.
+        let access = self.membership.lookup(bucket_id).await;
+        if required == RequiredRole::Reader
+            && access
+                .as_ref()
+                .is_ok_and(|entry| entry.access.visibility == Visibility::Public)
+        {
+            return Ok(());
+        }
+
         let header = auth_header.ok_or(AuthError::AuthRequired)?;
         let account = verify_signature(header, method, bucket_id, self.max_skew)?;
 
-        let role = self
-            .membership
-            .get_role(bucket_id, &account)
-            .await?
+        let role = access?
+            .role_of(&account)
             .ok_or(AuthError::InsufficientRole)?;
 
         if !required.is_satisfied_by(role) {
@@ -212,7 +225,7 @@ mod tests {
     use super::*;
     use crate::error::MembershipError;
     use crate::http_auth::build_auth_header;
-    use crate::membership::{Member, StaticMembershipResolver};
+    use crate::membership::{BucketAccess, Member, MembershipResolver, StaticMembershipResolver};
     use crate::test_support::FlakyResolver;
     use sp_core::Pair;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -315,6 +328,60 @@ mod tests {
     /// holding `granted`, with a valid signed header from that same account.
     fn authenticator(members: Vec<Member>) -> Authenticator {
         Authenticator::new(StaticMembershipResolver(members))
+    }
+
+    /// Fixed member set on buckets that resolve as `Public`.
+    struct PublicResolver(Vec<Member>);
+
+    #[async_trait::async_trait]
+    impl MembershipResolver for PublicResolver {
+        async fn fetch_access(
+            &self,
+            _bucket_id: BucketId,
+        ) -> Result<BucketAccess, MembershipError> {
+            Ok(BucketAccess {
+                members: self.0.clone(),
+                visibility: Visibility::Public,
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn public_bucket_serves_reads_without_auth_but_still_gates_writes() {
+        let alice = sr25519::Pair::from_string("//Alice", None).unwrap();
+        let auth = Authenticator::new(PublicResolver(vec![(
+            AccountId32::new(alice.public().0),
+            Role::Reader,
+        )
+            .into()]));
+
+        let anonymous_read = auth
+            .require_role(None, "GET", 1, RequiredRole::Reader)
+            .await;
+        assert!(anonymous_read.is_ok(), "got {anonymous_read:?}");
+
+        let anonymous_write = auth
+            .require_role(None, "PUT", 1, RequiredRole::Writer)
+            .await;
+        assert!(matches!(anonymous_write, Err(AuthError::AuthRequired)));
+
+        let header = make_auth_header(&alice, "PUT", 1, current_timestamp());
+        let reader_write = auth
+            .require_role(Some(&header), "PUT", 1, RequiredRole::Writer)
+            .await;
+        assert!(matches!(reader_write, Err(AuthError::InsufficientRole)));
+    }
+
+    #[tokio::test]
+    async fn private_bucket_read_requires_auth() {
+        let alice = sr25519::Pair::from_string("//Alice", None).unwrap();
+        let auth = authenticator(vec![
+            (AccountId32::new(alice.public().0), Role::Reader).into()
+        ]);
+        let anonymous_read = auth
+            .require_role(None, "GET", 1, RequiredRole::Reader)
+            .await;
+        assert!(matches!(anonymous_read, Err(AuthError::AuthRequired)));
     }
 
     async fn require_role_for(granted: Role, required: RequiredRole) -> Result<(), AuthError> {

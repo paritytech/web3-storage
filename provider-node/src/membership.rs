@@ -3,7 +3,8 @@
 //! Chain-backed [`MembershipResolver`] and [`MembershipInvalidations`].
 
 use provider_auth::{
-    Invalidation, Member, MembershipError, MembershipInvalidations, MembershipResolver,
+    BucketAccess, Invalidation, Member, MembershipError, MembershipInvalidations,
+    MembershipResolver,
 };
 use provider_chain::chain_connection::{self, ChainWatch};
 use provider_chain::{BlockEvent, BlockEventRx};
@@ -34,7 +35,7 @@ impl ChainMembershipResolver {
 
 #[async_trait::async_trait]
 impl MembershipResolver for ChainMembershipResolver {
-    async fn fetch_members(&self, bucket_id: BucketId) -> Result<Vec<Member>, MembershipError> {
+    async fn fetch_access(&self, bucket_id: BucketId) -> Result<BucketAccess, MembershipError> {
         let api = self.api()?;
 
         // `unvalidated`: see the `storage-subxt` crate docs.
@@ -53,11 +54,10 @@ impl MembershipResolver for ChainMembershipResolver {
             .await
             .map_err(|e| MembershipError::Unavailable(e.to_string()))?;
 
-        // No such bucket: an empty member set, which the caller reads as "not a
-        // member". Distinct from a bucket we cannot decode, below.
-        let bucket_value = match result {
-            Some(v) => v,
-            None => return Ok(vec![]),
+        // No such bucket: memberless and member-only, so nobody gets in.
+        // Distinct from a bucket we cannot decode, below.
+        let Some(bucket_value) = result else {
+            return Ok(BucketAccess::private(Vec::new()));
         };
 
         let bucket = bucket_value.decode().map_err(|e| MembershipError::Decode {
@@ -76,7 +76,10 @@ impl MembershipResolver for ChainMembershipResolver {
             tracing::debug!(bucket_id, count = members.len(), "auth: resolved members");
         }
 
-        Ok(members)
+        Ok(BucketAccess {
+            members,
+            visibility: bucket.visibility.into(),
+        })
     }
 }
 
@@ -168,7 +171,7 @@ mod tests {
         let (_tx, rx) = tokio::sync::watch::channel(None);
         let resolver = ChainMembershipResolver::new(rx);
         let err = resolver
-            .fetch_members(1)
+            .fetch_access(1)
             .await
             .expect_err("no connection published yet");
         // Retryable, not a decode bug — the node maps this onto a 503.

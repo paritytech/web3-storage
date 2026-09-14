@@ -9,7 +9,6 @@ description = "Storage engine for provider nodes: backends, MMR commitments, and
 
 [dependencies]
 storage-primitives = { workspace = true, features = ["serde", "std"] }
-bincode = { workspace = true }
 codec = { workspace = true, features = ["std"] }
 dashmap = { workspace = true }
 hex = { workspace = true, features = ["std"] }

@@ -153,9 +153,10 @@ async function main() {
         maxBytes,
         duration,
       });
-      const tx = api.tx.StorageProvider.establish_storage_agreement(
-        buildSignedTermsArgs(provider, signed)
-      );
+      const tx = api.tx.StorageProvider.establish_storage_agreement({
+        ...buildSignedTermsArgs(provider, signed),
+        visibility: Enum("Private"),
+      });
       await submitTxExpectFailure(tx, charlie.signer, "TermsOwnerMismatch", "2.5");
     },
   });
@@ -168,7 +169,10 @@ async function main() {
         maxBytes,
         duration,
       });
-      const args = buildSignedTermsArgs(provider, signed);
+      const args = {
+        ...buildSignedTermsArgs(provider, signed),
+        visibility: Enum("Private"),
+      };
       await api.tx.StorageProvider.establish_storage_agreement(args).signAndSubmit(client.signer);
       const replay = api.tx.StorageProvider.establish_storage_agreement(args);
       await submitTxExpectFailure(replay, client.signer, "NonceAlreadyUsed", "2.6");

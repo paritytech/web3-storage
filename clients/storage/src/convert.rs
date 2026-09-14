@@ -10,7 +10,6 @@
 use storage_subxt::api::runtime_types;
 
 use crate::agreement::AgreementTermsOf;
-use crate::base::ClientError;
 use runtime_types::bounded_collections::bounded_vec::BoundedVec;
 use runtime_types::storage_primitives as rt;
 
@@ -75,20 +74,6 @@ pub fn multisig(sig: &sp_runtime::MultiSignature) -> runtime_types::sp_runtime::
     }
 }
 
-/// Raw sr25519 signature bytes (as served by provider HTTP endpoints) →
-/// generated `MultiSignature::Sr25519`.
-pub fn sr25519_signature(
-    sig: Vec<u8>,
-) -> Result<runtime_types::sp_runtime::MultiSignature, ClientError> {
-    let bytes: [u8; 64] = sig.try_into().map_err(|v: Vec<u8>| {
-        ClientError::Serialization(format!(
-            "sr25519 signature must be 64 bytes, got {}",
-            v.len()
-        ))
-    })?;
-    Ok(runtime_types::sp_runtime::MultiSignature::Sr25519(bytes))
-}
-
 /// [`storage_primitives::Commitment`] → generated twin.
 pub fn commitment(c: &storage_primitives::Commitment) -> rt::Commitment {
     rt::Commitment {
@@ -125,6 +110,13 @@ pub fn to_sp_role(r: &rt::Role) -> storage_primitives::Role {
 }
 
 /// [`storage_primitives::EndAction`] → generated twin.
+pub fn visibility(v: storage_primitives::Visibility) -> rt::Visibility {
+    match v {
+        storage_primitives::Visibility::Public => rt::Visibility::Public,
+        storage_primitives::Visibility::Private => rt::Visibility::Private,
+    }
+}
+
 pub fn end_action(a: storage_primitives::EndAction) -> rt::EndAction {
     match a {
         storage_primitives::EndAction::Pay => rt::EndAction::Pay,
@@ -212,16 +204,6 @@ mod tests {
         assert_eq!(
             multisig(&sp_runtime::MultiSignature::Eth(eth.into())),
             RtSig::Eth(eth)
-        );
-    }
-
-    #[test]
-    fn sr25519_signature_rejects_wrong_length() {
-        assert!(sr25519_signature(vec![0u8; 63]).is_err());
-        assert!(sr25519_signature(vec![0u8; 65]).is_err());
-        assert_eq!(
-            sr25519_signature(vec![7u8; 64]).unwrap(),
-            runtime_types::sp_runtime::MultiSignature::Sr25519([7u8; 64])
         );
     }
 

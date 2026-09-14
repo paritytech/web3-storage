@@ -287,7 +287,13 @@ fn agreement_entry_points_reject_deregistering_provider() {
         // advances, so assert the error only.
         let (terms, sig) = signed_primary_terms(2, 1, 50, 100);
         assert_err!(
-            StorageProvider::establish_storage_agreement(RuntimeOrigin::signed(1), 2, terms, sig),
+            StorageProvider::establish_storage_agreement(
+                RuntimeOrigin::signed(1),
+                2,
+                terms,
+                sig,
+                storage_primitives::Visibility::Public
+            ),
             Error::<Test>::DeregisterAnnounced
         );
 
@@ -622,7 +628,13 @@ fn establish_agreement_fails_when_capacity_exceeded() {
         // error only.
         let (terms, sig) = signed_primary_terms(2, 1, 60, 10);
         assert_err!(
-            StorageProvider::establish_storage_agreement(RuntimeOrigin::signed(1), 2, terms, sig),
+            StorageProvider::establish_storage_agreement(
+                RuntimeOrigin::signed(1),
+                2,
+                terms,
+                sig,
+                storage_primitives::Visibility::Public
+            ),
             Error::<Test>::CapacityExceeded
         );
     });

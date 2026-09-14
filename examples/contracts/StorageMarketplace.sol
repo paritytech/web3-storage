@@ -54,10 +54,13 @@ contract StorageMarketplace {
     ) external payable returns (uint64 bucketId) {
         require(msg.value > 0, "msg.value must cover the agreement payment");
         require(!terms.hasBucketId, "primary terms must not be bucket-bound");
+        // Private: the fail-safe default for wrappers that do not surface
+        // the choice to their own callers.
         bucketId = WEB3_STORAGE.establishStorageAgreement(
             provider,
             terms,
-            signature
+            signature,
+            IWeb3Storage.Visibility.Private
         );
         bucketOwner[bucketId] = msg.sender;
         emit BucketBoughtFor(msg.sender, bucketId);
@@ -68,7 +71,7 @@ contract StorageMarketplace {
     /// is the bucket admin; only the original buyer may grant.
     function grantWriter(uint64 bucketId, bytes32 member) external {
         require(bucketOwner[bucketId] == msg.sender, "Not your bucket");
-        WEB3_STORAGE.setMember(bucketId, member, 1); // role 1 = Writer
+        WEB3_STORAGE.setMember(bucketId, member, IWeb3Storage.Role.Writer);
         emit WriterGranted(msg.sender, bucketId, member);
     }
 

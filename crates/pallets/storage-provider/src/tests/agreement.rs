@@ -13,7 +13,8 @@ fn establish_storage_agreement_works() {
             RuntimeOrigin::signed(1),
             2,
             terms,
-            sig
+            sig,
+            storage_primitives::Visibility::Public
         ));
 
         // Bucket created with owner as sole admin and provider as the
@@ -58,7 +59,8 @@ fn establish_storage_agreement_reserves_payment() {
             RuntimeOrigin::signed(1),
             2,
             terms,
-            sig
+            sig,
+            storage_primitives::Visibility::Public
         ));
 
         assert_eq!(Balances::free_balance(1), balance_before - 1000);
@@ -75,7 +77,13 @@ fn establish_storage_agreement_fails_for_wrong_owner() {
         // Terms signed for owner 1, redeemed by account 3.
         let (terms, sig) = signed_primary_terms(2, 1, 100, 100);
         assert_noop!(
-            StorageProvider::establish_storage_agreement(RuntimeOrigin::signed(3), 2, terms, sig),
+            StorageProvider::establish_storage_agreement(
+                RuntimeOrigin::signed(3),
+                2,
+                terms,
+                sig,
+                storage_primitives::Visibility::Public
+            ),
             Error::<Test>::TermsOwnerMismatch
         );
     });
@@ -93,7 +101,13 @@ fn establish_storage_agreement_fails_with_bucket_bound_terms() {
         let sig = sign_terms(&pair, &terms);
 
         assert_noop!(
-            StorageProvider::establish_storage_agreement(RuntimeOrigin::signed(1), 2, terms, sig),
+            StorageProvider::establish_storage_agreement(
+                RuntimeOrigin::signed(1),
+                2,
+                terms,
+                sig,
+                storage_primitives::Visibility::Public
+            ),
             Error::<Test>::TermsBucketMismatch
         );
     });
@@ -111,7 +125,13 @@ fn establish_storage_agreement_fails_when_terms_expired() {
         let sig = sign_terms(&pair, &terms);
 
         assert_noop!(
-            StorageProvider::establish_storage_agreement(RuntimeOrigin::signed(1), 2, terms, sig),
+            StorageProvider::establish_storage_agreement(
+                RuntimeOrigin::signed(1),
+                2,
+                terms,
+                sig,
+                storage_primitives::Visibility::Public
+            ),
             Error::<Test>::TermsExpired
         );
     });
@@ -129,7 +149,13 @@ fn establish_storage_agreement_fails_with_invalid_signature() {
         let sig = sign_terms(&wrong_pair, &terms);
 
         assert_noop!(
-            StorageProvider::establish_storage_agreement(RuntimeOrigin::signed(1), 2, terms, sig),
+            StorageProvider::establish_storage_agreement(
+                RuntimeOrigin::signed(1),
+                2,
+                terms,
+                sig,
+                storage_primitives::Visibility::Public
+            ),
             Error::<Test>::InvalidProviderSignature
         );
     });
@@ -145,12 +171,19 @@ fn establish_storage_agreement_fails_on_nonce_replay() {
             RuntimeOrigin::signed(1),
             2,
             terms.clone(),
-            sig.clone()
+            sig.clone(),
+            storage_primitives::Visibility::Public
         ));
 
         // Redeeming the exact same quote again is a replay.
         assert_noop!(
-            StorageProvider::establish_storage_agreement(RuntimeOrigin::signed(1), 2, terms, sig),
+            StorageProvider::establish_storage_agreement(
+                RuntimeOrigin::signed(1),
+                2,
+                terms,
+                sig,
+                storage_primitives::Visibility::Public
+            ),
             Error::<Test>::NonceAlreadyUsed
         );
     });
@@ -166,6 +199,7 @@ fn establish_storage_agreement_fails_provider_not_found() {
                 99, // not registered
                 terms,
                 sp_runtime::MultiSignature::Sr25519([0u8; 64].into()),
+                storage_primitives::Visibility::Public,
             ),
             Error::<Test>::ProviderNotFound
         );
@@ -188,7 +222,13 @@ fn establish_storage_agreement_fails_not_accepting_primary() {
         // storage is mutated even on failure — assert the error only.
         let (terms, sig) = signed_primary_terms(2, 1, 50, 100);
         assert_err!(
-            StorageProvider::establish_storage_agreement(RuntimeOrigin::signed(1), 2, terms, sig),
+            StorageProvider::establish_storage_agreement(
+                RuntimeOrigin::signed(1),
+                2,
+                terms,
+                sig,
+                storage_primitives::Visibility::Public
+            ),
             Error::<Test>::ProviderNotAcceptingPrimary
         );
     });
@@ -209,7 +249,13 @@ fn establish_storage_agreement_fails_duration_too_long() {
 
         let (terms, sig) = signed_primary_terms(2, 1, 50, 100); // exceeds max_duration
         assert_err!(
-            StorageProvider::establish_storage_agreement(RuntimeOrigin::signed(1), 2, terms, sig),
+            StorageProvider::establish_storage_agreement(
+                RuntimeOrigin::signed(1),
+                2,
+                terms,
+                sig,
+                storage_primitives::Visibility::Public
+            ),
             Error::<Test>::DurationTooLong
         );
     });
@@ -223,7 +269,13 @@ fn establish_storage_agreement_fails_insufficient_stake() {
 
         let (terms, sig) = signed_primary_terms(2, 1, 300, 100);
         assert_err!(
-            StorageProvider::establish_storage_agreement(RuntimeOrigin::signed(1), 2, terms, sig),
+            StorageProvider::establish_storage_agreement(
+                RuntimeOrigin::signed(1),
+                2,
+                terms,
+                sig,
+                storage_primitives::Visibility::Public
+            ),
             Error::<Test>::InsufficientStakeForBytes
         );
     });
@@ -241,7 +293,13 @@ fn establish_storage_agreement_fails_when_terms_validity_too_long() {
         let sig = sign_terms(&pair, &terms);
 
         assert_noop!(
-            StorageProvider::establish_storage_agreement(RuntimeOrigin::signed(1), 2, terms, sig),
+            StorageProvider::establish_storage_agreement(
+                RuntimeOrigin::signed(1),
+                2,
+                terms,
+                sig,
+                storage_primitives::Visibility::Public
+            ),
             Error::<Test>::TermsValidityTooLong
         );
     });
@@ -279,7 +337,13 @@ fn re_register_replay_blocked_by_expiry() {
         // At block 150 the old quote is expired (valid_until=50 < 150): TermsExpired
         // fires before the signature check so key mismatch is irrelevant.
         assert_noop!(
-            StorageProvider::establish_storage_agreement(RuntimeOrigin::signed(1), 2, terms, sig),
+            StorageProvider::establish_storage_agreement(
+                RuntimeOrigin::signed(1),
+                2,
+                terms,
+                sig,
+                storage_primitives::Visibility::Public
+            ),
             Error::<Test>::TermsExpired
         );
     });
@@ -299,7 +363,8 @@ fn early_terminated_agreement_nonce_not_reusable() {
             RuntimeOrigin::signed(1),
             2,
             terms.clone(),
-            sig.clone()
+            sig.clone(),
+            storage_primitives::Visibility::Public
         ));
 
         // Admin (owner = 1) early-terminates before the agreement expires.
@@ -312,7 +377,13 @@ fn early_terminated_agreement_nonce_not_reusable() {
 
         // Replay window is intact; the same quote cannot be redeemed again.
         assert_noop!(
-            StorageProvider::establish_storage_agreement(RuntimeOrigin::signed(1), 2, terms, sig),
+            StorageProvider::establish_storage_agreement(
+                RuntimeOrigin::signed(1),
+                2,
+                terms,
+                sig,
+                storage_primitives::Visibility::Public
+            ),
             Error::<Test>::NonceAlreadyUsed
         );
     });
