@@ -52,9 +52,10 @@ A Layer 0 bucket has four states. Only the transitions listed exist.
 it is not a bucket transition. `delete_s3_bucket` removes the S3 registry
 entry only; the Layer 0 bucket and its agreements remain.
 
-Solid arrows are implemented on `dev`. Dashed arrows and the dashed state are
-described in the design and have no extrinsic. In-state calls from the table
-are left off to keep the drawing readable.
+Layer 0 only. Solid arrows are implemented on `dev`. Dashed arrows and dashed
+states are described in the design and have no Layer 0 extrinsic. In-state
+calls from the table and the Layer 1 `delete_drive` teardown are left off to
+keep the drawing readable.
 
 ```mermaid
 flowchart LR
@@ -62,23 +63,21 @@ flowchart LR
     Active["Active<br/>one primary under agreement"]
     Frozen["Frozen<br/>append-only, irreversible"]
     NoPrimary["No primary<br/>nobody liable for new data"]
-    Deleted["Deleted"]
+    Deleted["Deleted<br/>design only"]
     Multi["Active, 2+ primaries<br/>design only"]
 
     none -- "establish_storage_agreement<br/>owner · creates bucket + sole primary" --> Active
     Active -- "freeze_bucket<br/>admin" --> Frozen
     Active -- "end_agreement · claim_expired_agreement · remove_slashed" --> NoPrimary
     Frozen -- "end_agreement · claim_expired_agreement · remove_slashed" --> NoPrimary
-    Active -- "delete_drive" --> Deleted
-    Frozen -- "delete_drive" --> Deleted
-    NoPrimary -- "delete_drive" --> Deleted
 
     NoPrimary -. "no call: add or replace primary" .-> Active
+    NoPrimary -. "no Layer 0 call: delete bucket" .-> Deleted
     Active -. "no call: add a primary" .-> Multi
     Multi -. "min_providers, signature bitfield,<br/>extend_checkpoint unreachable" .-> Multi
 
     classDef missing stroke-dasharray: 6 4;
-    class Multi missing;
+    class Multi,Deleted missing;
 ```
 
 ### Not implemented
