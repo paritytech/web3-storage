@@ -1,7 +1,7 @@
 # Potential RFC: Bucket transfer between providers (Draft)
 
 > **Draft — needs triage.** Gap summary for discussion with the design owner.
-> No proposal. Written against `dev` at 67ce0738 (2026-09-11).
+> No proposal. Written against `dev` at 4a80b3fe (2026-09-14).
 
 ## Story
 
@@ -26,6 +26,54 @@ design describes multi-primary buckets ("Add 2-3 diverse providers") but
 specifies no way to add a primary to an existing bucket, and the pallet has
 none. Data movement between primaries is assigned to the client ("client
 re-uploads"). Replicas sync automatically but cannot take writes.
+
+## Bucket lifecycle (code on `dev`)
+
+A Layer 0 bucket has four states. Only the transitions listed exist.
+
+| State | Meaning |
+|---|---|
+| **Active** | One primary under agreement. Writes, checkpoints and challenges work. Replicas optional. |
+| **Frozen** | Active, but append-only from the frozen snapshot. Irreversible. |
+| **No primary** | The primary agreement ended. Bucket, members, snapshot and replica agreements remain. No checkpoint is possible, so no new data is ever committed. Only replicas still under agreement are challengeable. |
+| **Deleted** | Bucket and all agreements removed. |
+
+| From | To | Call | Caller |
+|---|---|---|---|
+| — | Active | `establish_storage_agreement` | owner, redeeming provider-signed terms. Creates the bucket and its only primary in one step. |
+| Active | Active | `establish_replica_agreement`, `extend_agreement`, `top_up_agreement`, `set_member`, `remove_member`, `set_bucket_visibility`, `checkpoint` | owner / admin / writers |
+| Active | Frozen | `freeze_bucket` | admin |
+| Active, Frozen | No primary | `end_agreement` (early or after expiry) | owner, also admin if early |
+| Active, Frozen | No primary | `claim_expired_agreement` (after `SettlementTimeout`) | provider |
+| Active, Frozen | No primary | `remove_slashed` (provider stake is zero) | anyone |
+| any | Deleted | `delete_drive` → `cleanup_bucket_internal`. Ends every agreement, replicas included, with prorated refunds. | drive owner who is bucket admin |
+
+`deregister_provider` is rejected while the provider has active agreements, so
+it is not a bucket transition. `delete_s3_bucket` removes the S3 registry
+entry only; the Layer 0 bucket and its agreements remain.
+
+### Not implemented
+
+- **Active with two or more primaries. Is this still the target?** The design
+  describes multi-primary buckets, `min_providers`, the signature bitfield and
+  `extend_checkpoint` for them. No call adds a second primary, so
+  `min_providers` is always 1 and that machinery is unreachable. If yes, the
+  join path below is the missing piece and every item after it follows from
+  it. If no, the design must say single primary plus replicas, and the
+  transfer story reduces to replacing the one primary.
+- **No primary → Active.** Nothing adds or replaces a primary. A bucket whose
+  primary expired, ended or was slashed stays read-only forever under the same
+  `bucket_id`. #403 removed the `ProviderAddedToBucket` event as dead code.
+- **Replica → Primary.** A provider cannot hold both roles on one bucket and
+  cannot be promoted.
+- **Owner change.** `transfer_agreement_ownership` is in the design only.
+  #414 implements it; it moves the payer, not the data.
+- **Create without a provider.** The design has `create_bucket`; the code has
+  none (#376 DRIFT-002).
+- **Delete at Layer 0.** No extrinsic. A bucket not backed by a drive cannot be
+  deleted.
+- **Retention after expiry.** Challenges stop at the expiry block; there is no
+  window in which a successor can fetch the data from a still-liable provider.
 
 ## Main questions
 
