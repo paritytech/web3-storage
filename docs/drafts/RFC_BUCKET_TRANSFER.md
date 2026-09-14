@@ -1,4 +1,4 @@
-# Potential RFC: Bucket transfer between providers (Draft)
+# Potential RFC: Bucket lifecycle and transfer between providers (Draft)
 
 > **Draft — needs triage.** Gap summary for discussion with the design owner.
 > No proposal. Written against `dev` at 4a80b3fe (2026-09-14).
