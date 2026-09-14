@@ -813,8 +813,8 @@ pub enum Event<T: Config> {
         providers: Vec<T::AccountId>,
     },
     // DRIFT-016: never emitted — no call adds a primary to an existing bucket
-    // (buckets are single-primary since #105). #403 removes the variant from
-    // the pallet; #408 removes it from this listing.
+    // (buckets are single-primary since #105). #408 removes the variant from
+    // the pallet and from this listing.
     // Proposal: decide in #417 whether multi-primary is still the target.
     // Keep it here while it is; the join path that emits it returns with it.
     ProviderAddedToBucket {
@@ -828,7 +828,7 @@ pub enum Event<T: Config> {
     },
     // DRIFT-017: never emitted — `dev` reports an early end as AgreementEnded
     // plus PrimaryProviderRemoved { reason: AdminTerminated }. #403 removes
-    // the variant from the pallet; #408 removes it from this listing.
+    // the variant from the pallet and from this listing.
     // Proposal: remove from design.
     PrimaryAgreementEndedEarly {
         bucket_id: BucketId,
@@ -872,7 +872,7 @@ pub enum Event<T: Config> {
     // DRIFT-018: leftover of the request/accept flow (DRIFT-001) — `dev`
     // reports agreement creation as StorageAgreementEstablished /
     // ReplicaAgreementEstablished below. #403 removes the variant from the
-    // pallet; #408 removes it from this listing.
+    // pallet and from this listing.
     // Proposal: remove from design.
     AgreementAccepted {
         bucket_id: BucketId,
@@ -891,7 +891,7 @@ pub enum Event<T: Config> {
         new_expires_at: BlockNumberFor<T>,
         payment: BalanceOf<T>,
     },
-    // DRIFT-015: never emitted; #403 removes the variant from the pallet.
+    // DRIFT-015: never emitted; the variant stays in the pallet pending #414.
     // See the marker on transfer_agreement_ownership below and #417.
     AgreementOwnershipTransferred {
         bucket_id: BucketId,
@@ -907,7 +907,7 @@ pub enum Event<T: Config> {
     },
     // DRIFT-019: never emitted — claim_expired_agreement settles through the
     // same path as end_agreement and reports AgreementEnded. #403 removes the
-    // variant from the pallet; #408 removes it from this listing.
+    // variant from the pallet and from this listing.
     // Proposal: remove from design.
     AgreementExpiredClaimed {
         bucket_id: BucketId,
@@ -1190,7 +1190,7 @@ impl<T: Config> Pallet<T> {
     // primary terms (#105). Proposal: remove from design (bucket creation is
     // atomic inside establish_storage_agreement; a standalone call has no
     // consumer).
-    // #408 (commit 286d3510) removes both sketches. The design owner
+    // #408 (commit 2400b2b7) removes both sketches. The design owner
     // questioned on #376 whether creation and provider assignment should stay
     // separate steps; decision tracked in #417 (bucket lifecycle).
     /// Create a new bucket.
@@ -1463,9 +1463,9 @@ impl<T: Config> Pallet<T> {
     /// - `provider`: The provider of the agreement to transfer
     /// - `new_owner`: Account that will become the new agreement owner
     // DRIFT-015: not on `dev` — remove from impl doc or implement?
-    // #403 removes the never-emitted AgreementOwnershipTransferred event from
-    // the pallet. #414 implements this call and brings the event back with an
-    // emitter; the escrow is held on the owner's account, so #414 moves it to
+    // The never-emitted AgreementOwnershipTransferred event stays in the
+    // pallet (#403 keeps it). #414 implements this call and emits the
+    // event; the escrow is held on the owner's account, so #414 moves it to
     // `new_owner` in the same call (see PR #372 review discussion). Whether
     // the transfer belongs to the bucket lifecycle at all is open in #417.
     // Proposal: decide in #417 before #414 merges.
