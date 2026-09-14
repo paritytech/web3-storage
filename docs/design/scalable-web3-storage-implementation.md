@@ -818,11 +818,12 @@ pub enum Event<T: Config> {
         commitment: Commitment,
         providers: Vec<T::AccountId>,
     },
-    // DRIFT-016: never emitted — no call adds a primary to an existing bucket
-    // (buckets are single-primary since #105). #408 removes the variant from
-    // the pallet and from this listing.
-    // Proposal: decide in #417 whether multi-primary is still the target.
-    // Keep it here while it is; the join path that emits it returns with it.
+    // DRIFT-016: never emitted; no call adds a primary to an existing bucket
+    // (buckets are single-primary since #105). The dead-variant CI gate from
+    // #408 fails on it until this is decided.
+    // Proposal: implement the join path that emits it, or remove the variant
+    // from the pallet and from this listing. Decide with #417 (whether
+    // multi-primary is still the target).
     ProviderAddedToBucket {
         bucket_id: BucketId,
         provider: T::AccountId,
@@ -1194,13 +1195,12 @@ impl<T: Config> Pallet<T> {
     // ─────────────────────────────────────────────────────────────
 
     // DRIFT-002: no standalone create_bucket / create_bucket_with_storage on
-    // `dev` — a bucket is created by establish_storage_agreement redeeming
-    // primary terms (#105). Proposal: remove from design (bucket creation is
-    // atomic inside establish_storage_agreement; a standalone call has no
-    // consumer).
-    // #408 (commit 2400b2b7) removes both sketches. The design owner
-    // questioned on #376 whether creation and provider assignment should stay
-    // separate steps; decision tracked in #417 (bucket lifecycle).
+    // `dev`; a bucket is created by establish_storage_agreement redeeming
+    // primary terms (#105).
+    // Proposal: implement both calls, or remove the two sketches below. The
+    // design owner questioned on #376 whether creation and provider
+    // assignment should stay separate steps; decision tracked in #417 (bucket
+    // lifecycle).
     /// Create a new bucket.
     /// 
     /// The caller becomes the bucket admin. The bucket starts empty with no
