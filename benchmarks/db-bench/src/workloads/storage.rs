@@ -1,11 +1,12 @@
-//! Storage Provider workloads — model the two per-bucket stores of
-//! `05-per-bucket-store-design.md`:
+//! Storage Provider workloads — model the two table groups that share each
+//! per-bucket file in `05-per-bucket-store-design.md`:
 //!
 //! - **Commitment store** — 48-byte `MmrLeaf` values under dense position keys,
 //!   fully durable per transaction. Modelled by `mmr_append_small`, `proof_read`,
 //!   `disk_small`, and the reopen/instance-scaling scenarios.
 //! - **Content store** — 256 KiB chunks under random content-hash keys, ingested
-//!   in unsynced batches behind a single flush barrier. Modelled by
+//!   in unsynced batches behind a single flush barrier (in the single-file
+//!   layout that fsync is the one the commitment commit pays). Modelled by
 //!   `content_store`.
 //!
 //! Earlier passes also ran `node_append_large` and `disk_large`: 256 KiB values
@@ -432,7 +433,7 @@ fn content_store(engine: Engine, context: &Context) -> Record {
     }
     let ingest_elapsed = ingest_started.elapsed().saturating_sub(miss_total);
 
-    // The barrier: one durable flush before the commitment store would commit.
+    // The barrier: one durable flush standing in for the commitment commit's fsync.
     let barrier_started = Instant::now();
     store.flush();
     let barrier = barrier_started.elapsed();

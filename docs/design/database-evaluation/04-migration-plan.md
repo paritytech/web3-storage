@@ -1,8 +1,8 @@
 # Migration Plan
 
 From today's **single shared RocksDB** to the recommended architecture:
-**two SQLite stores per bucket** in the Storage Provider — a content store and a
-commitment store, per
+**one SQLite file per bucket** in the Storage Provider, holding a content store
+and a commitment store as two table groups, per
 [05-per-bucket-store-design.md](05-per-bucket-store-design.md).
 Sequenced to interleave with [Issue #100](https://github.com/paritytech/web3-storage/issues/100)
 (per-bucket isolation), which this evaluation directly informs.
@@ -14,8 +14,8 @@ Sequenced to interleave with [Issue #100](https://github.com/paritytech/web3-sto
 
   | CF | Holds | Destination |
   |----|-------|-------------|
-  | `CF_NODES` | chunks + chunk-tree nodes, keyed by content hash, **global across buckets** | per-bucket content store |
-  | `CF_BUCKETS` | `BucketState` — `mmr_root`, `start_seq`, `used_bytes`, `max_bytes`, and **all MMR leaves in one bincode value** | per-bucket commitment store |
+  | `CF_NODES` | chunks + chunk-tree nodes, keyed by content hash, **global across buckets** | per-bucket file, content tables |
+  | `CF_BUCKETS` | `BucketState` — `mmr_root`, `start_seq`, `used_bytes`, `max_bytes`, and **all MMR leaves in one bincode value** | per-bucket file, commitment tables |
   | `CF_METADATA` | the negotiation nonce high-water mark (`KEY_NONCE`, via `DiskNonceStore`) — **provider-global, not per-bucket** | provider-level store (below) |
   | `CF_ROOT_TO_BUCKET` | nothing — created at `disk.rs:68`, never read or written | **already dead**; drop it |
 
@@ -52,61 +52,63 @@ sharded-vs-shared matrix in [report 01](01-storage-provider-benchmark.md).
 
 - Add a new `StorageBackend` implementation (e.g.
   `provider-node/src/storage/sqlite_bucket.rs`) that owns an **LRU pool of
-  per-bucket SQLite connections** instead of one shared DB. **Two files per
-  bucket**, because the two stores have opposite workloads and opposite
-  durability needs:
+  per-bucket SQLite connections** instead of one shared DB. **One file per
+  bucket**, `{storage_path}/buckets/{bucket_id}.sqlite`, with two table groups
+  whose transactions run at different durability on the same connection:
 
-  | File | Holds | Durability |
-  |------|-------|-----------|
-  | `{storage_path}/buckets/{bucket_id}.commitment.sqlite` | MMR leaves, MMR interior nodes, bucket state | `synchronous = FULL` — this is the slashable state |
-  | `{storage_path}/buckets/{bucket_id}.content.sqlite` | chunks + chunk-tree interior nodes | `synchronous = NORMAL` + one flush barrier per commitment |
+  | Table group | Holds | Durability |
+  |-------------|-------|-----------|
+  | commitment (`leaves`, `mmr_nodes`, `meta`) | MMR leaves, MMR interior nodes, bucket state | transactions at `synchronous = FULL` — this is the slashable state |
+  | content (`chunks` + `chunks_hash`) | chunks + chunk-tree interior nodes | transactions at `synchronous = NORMAL`; pinned by the next commitment commit's fsync |
 
 - **Commitment-store schema** (resolves the O(n) blob): store MMR leaves **per
   position**, not as one serialized vector, and persist the interior nodes that
   are today rebuilt on every operation —
 
   ```sql
-  CREATE TABLE leaves (pos INTEGER PRIMARY KEY, leaf BLOB NOT NULL) WITHOUT ROWID;
-  CREATE TABLE nodes  (pos INTEGER PRIMARY KEY, hash BLOB NOT NULL) WITHOUT ROWID;
-  CREATE TABLE meta   (k TEXT PRIMARY KEY, v BLOB NOT NULL);  -- mmr_root, start_seq, used/max bytes
+  CREATE TABLE leaves    (pos INTEGER PRIMARY KEY, leaf BLOB NOT NULL) WITHOUT ROWID;
+  CREATE TABLE mmr_nodes (pos INTEGER PRIMARY KEY, hash BLOB NOT NULL) WITHOUT ROWID;
+  CREATE TABLE meta      (k TEXT PRIMARY KEY, v BLOB NOT NULL);  -- mmr_root, start_seq, used/max bytes
   ```
 
   `commit`, `delete_before`, and proof reads become **bounded range operations**
   keyed by position, instead of deserialize-mutate-reserialize of the whole set
-  plus a full MMR rebuild. Leaves, interior nodes and `meta` live in one file
-  precisely so a commit updates all three in **one transaction** — `mmr_root` is
-  derived from the other two and must never disagree with them.
+  plus a full MMR rebuild. A commit updates leaves, interior nodes and `meta` in
+  **one transaction** — `mmr_root` is derived from the other two and must never
+  disagree with them.
 
 - **Content-store schema** — content-addressed, write-once. The hash index must
   be a **separate B-tree** from the payload, and `mmap_size` must be enabled:
 
   ```sql
-  CREATE TABLE nodes (
+  CREATE TABLE chunks (
     id       INTEGER PRIMARY KEY,
     hash     BLOB NOT NULL,
     data     BLOB NOT NULL,
     children BLOB
   );
-  CREATE UNIQUE INDEX nodes_hash ON nodes (hash);
+  CREATE UNIQUE INDEX chunks_hash ON chunks (hash);
   ```
 
   Not a style preference: `hash BLOB PRIMARY KEY … WITHOUT ROWID` puts 256 KiB
   payloads inside the index that every dedup check descends, which measures **50×
   slower on the dedup lookup and 4.8× slower on chunk reads** — see the
   [dedup experiment](01-storage-provider-benchmark.md#the-dedup-experiment-three-hypotheses-one-cause-one-fix).
-  The commitment store keeps `WITHOUT ROWID`, where 48-byte payloads make
+  The commitment tables keep `WITHOUT ROWID`, where 48-byte payloads make
   payload-in-index the right choice.
 
-- **The write sequence is a choke point, not a convention.** Per
-  [05](05-per-bucket-store-design.md#the-crash-consistency-invariant-the-one-cost-of-two-databases),
-  two databases are two WALs with no ordering relationship, so one function must
-  own: ingest chunks unsynced → `content.flush()` barrier → durable commitment
-  transaction → sign → persist the Layer-1 index. The three existing upload paths
-  (`api.rs`, `fs_api.rs`, `s3_api.rs`) must share it, and a crash-injection test
-  must assert no committed leaf ever references a missing chunk.
-- **The Layer-1 index is a third store with no ordering guarantee.**
+- **One write sequence, ordered by the engine.** Per
+  [05](05-per-bucket-store-design.md#crash-consistency-what-one-wal-gives-for-free),
+  one file is one WAL, so the sequence is: content transactions at `NORMAL` →
+  commitment transaction at `FULL` (its fsync pins the content writes) → sign →
+  persist the Layer-1 index. Put it in one function shared by the three upload
+  paths (`api.rs`, `fs_api.rs`, `s3_api.rs`) — hygiene, since the engine enforces
+  the ordering regardless — and keep a startup scrub that verifies every
+  committed leaf's chunks are present, as defence-in-depth against bugs rather
+  than crashes.
+- **The Layer-1 index is a second store with no ordering guarantee.**
   `fs_indices/<bucket>.json` and `s3_indices/<bucket>.json` are written by atomic
-  rename, entirely outside both databases. Today's upload paths already save the
+  rename, entirely outside the database. Today's upload paths already save the
   index *after* `commit` (`fs_api.rs:105` then `:129`; `s3_api.rs:82` likewise) —
   keep that order, because the two failure modes are not symmetric: a crash
   between commit and index save leaves a committed leaf nothing references (an
@@ -116,14 +118,14 @@ sharded-vs-shared matrix in [report 01](01-storage-provider-benchmark.md).
   entries.
 - **Add a provider-level store for what is not per-bucket.** `CF_METADATA`'s
   nonce high-water mark belongs to the provider, not to any bucket, and the
-  two-stores-per-bucket layout has nowhere to put it. Create
+  one-file-per-bucket layout has nowhere to put it. Create
   `{storage_path}/provider.sqlite` (`meta(k TEXT PRIMARY KEY, v BLOB)`,
   `synchronous = FULL`) as the `NonceStore` backing and the home for future
   provider-global state. Without it the counter is silently dropped and
   re-seeds from `chain_hsn + 1` on the next registration (see the `NonceStore`
   docs in `storage/mod.rs`) — survivable, but a behavioural change that should
   be deliberate rather than accidental.
-- Apply the [per-store PRAGMAs and pool config](03-configuration-guide.md#storage-provider--sqlite-wal-per-bucket).
+- Apply the [PRAGMAs and pool config](03-configuration-guide.md#storage-provider--sqlite-wal-per-bucket).
 - Add `--storage-mode sqlite` alongside the existing `inmemory` / `disk` modes in
   `provider-node/src/cli.rs` + `command.rs`. The old RocksDB `disk` mode stays
   available throughout.
@@ -131,15 +133,16 @@ sharded-vs-shared matrix in [report 01](01-storage-provider-benchmark.md).
 ### Phase 2 — data migration
 
 - One-shot migrator: open the legacy RocksDB, iterate `CF_BUCKETS`; for each
-  bucket create its two files, inserting leaves **by position** into the
-  commitment store and nodes **by hash** into the content store; write `meta`. Idempotent and resumable (skip buckets whose file already
-  exists and matches `leaf_count`).
+  bucket create its file, inserting leaves **by position** into the commitment
+  tables and nodes **by hash** into the content table; write `meta`. Idempotent
+  and resumable (skip buckets whose file already exists and matches
+  `leaf_count`).
 - **Recompute `used_bytes`; do not copy it.** The legacy value is undercharged:
   `store_node` increments it only when the hash is absent from the *global*
   pool, so a bucket was never charged for content another bucket had already
   stored. Per-bucket stores change the semantics to "bytes this bucket holds",
   which is what quotas are supposed to enforce — so derive it from the nodes
-  actually inserted into each bucket's content store. Copying the legacy number
+  actually inserted into each bucket's content table. Copying the legacy number
   perpetuates the under-charge into the new layout. Note the asymmetry:
   `MmrLeaf.total_size` lives inside **signed** leaves and is immutable, so a
   bucket whose recomputed `used_bytes` disagrees with its leaves' `total_size`
@@ -166,7 +169,7 @@ sharded-vs-shared matrix in [report 01](01-storage-provider-benchmark.md).
 
 ```
 ┌─ Storage (with Issue #100) ──────────────────────────────────────┐
-│ Phase 1: SqliteBucketStore, two stores/bucket, LRU pool, barrier │
+│ Phase 1: SqliteBucketStore, one file/bucket, LRU pool, ordering  │
 │ Phase 2: migrate / drain-and-refill, verify MMR roots            │
 │ Phase 3: cutover, keep RocksDB as rollback, then deprecate       │
 └──────────────────────────────────────────────────────────────────┘
@@ -178,14 +181,14 @@ sharded-vs-shared matrix in [report 01](01-storage-provider-benchmark.md).
 |------|-----------|
 | New SQLite backend has a correctness bug | Trait-isolated; `--storage-mode disk` (RocksDB) stays selectable for instant rollback |
 | Migration corrupts/loses data | Per-bucket MMR-root verification against on-chain checkpoint before retiring source; idempotent migrator |
-| Too many open buckets exhaust FDs/RAM | LRU pool cap sized from the [config guide](03-configuration-guide.md). Budget **~6 FDs per hot bucket** — two stores × 3 FDs (main + `-wal` + `-shm`) — and ~144 KiB RSS at pass-4 disk figures |
+| Too many open buckets exhaust FDs/RAM | LRU pool cap sized from the [config guide](03-configuration-guide.md). Budget **~3 FDs per hot bucket** (main + `-wal` + `-shm`) and ~72 KiB RSS plus `cache_size` at pass-4 disk figures |
 | Absolute perf differs from tmpfs benchmark | Re-run `just db-bench` on target SSD hardware before final sign-off |
 
 ## Definition of done
 
-- [ ] `SqliteBucketStore` implements `StorageBackend` with the two-store layout and per-position MMR storage; `--storage-mode sqlite` available.
-- [ ] The ingest → barrier → commit → sign sequence lives in one function, shared by all three upload paths, with a crash-injection test.
-- [ ] Content store uses the split hash index and `mmap_size`; a regression test asserts a dedup miss stays in single-digit µs on a populated bucket.
+- [ ] `SqliteBucketStore` implements `StorageBackend` with one file per bucket, the two table groups, and per-position MMR storage; `--storage-mode sqlite` available.
+- [ ] The content → commitment (`FULL`) → sign sequence lives in one function shared by all three upload paths; a startup scrub verifies committed leaves reference present chunks.
+- [ ] Content table uses the split hash index and `mmap_size`; a regression test asserts a dedup miss stays in single-digit µs on a populated bucket.
 - [ ] All existing provider-node + client tests pass against the SQLite backend.
 - [ ] Migration verified by MMR-root equality per bucket; `used_bytes` recomputed rather than copied, and `KEY_NONCE` landed in `provider.sqlite`.
 - [ ] Layer-1 index persisted after the commitment commit inside the shared sequence, with startup reconciliation for dangling entries.

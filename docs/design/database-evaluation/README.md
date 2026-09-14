@@ -23,7 +23,7 @@ over.
 | 2 | [02-recommendations.md](02-recommendations.md) | Recommendation + justification |
 | 3 | [03-configuration-guide.md](03-configuration-guide.md) | SQLite/LRU-pool config, memory budget, bucket deletion |
 | 4 | [04-migration-plan.md](04-migration-plan.md) | Single-RocksDB → chosen per-bucket architecture |
-| 5 | [05-per-bucket-store-design.md](05-per-bucket-store-design.md) | Two stores per bucket (content + commitment): layout, durability barrier, crash-consistency invariant |
+| 5 | [05-per-bucket-store-design.md](05-per-bucket-store-design.md) | One file per bucket, two table groups (content + commitment): layout, per-transaction durability, crash consistency |
 
 ## The harness
 
@@ -88,7 +88,7 @@ cargo +nightly fmt --manifest-path benchmarks/db-bench/Cargo.toml --all
 
 ## Methodology
 
-- **Workloads model the two real stores**, as specified in
+- **Workloads model the two table groups of the per-bucket file**, as specified in
   [05-per-bucket-store-design.md](05-per-bucket-store-design.md):
   - *Commitment store* — 48-byte `MmrLeaf` values under dense position keys,
     durable per transaction: `mmr_append_small`, `proof_read`, `disk_small`,
@@ -138,8 +138,8 @@ cargo +nightly fmt --manifest-path benchmarks/db-bench/Cargo.toml --all
   Passes 1–4 mapped a SQLite `sync` batch to a full `wal_checkpoint(TRUNCATE)` —
   strictly more work than production does, since it fsyncs *and* folds the WAL
   back into the main file on every batch. Pass 5 corrected it to
-  `synchronous = FULL`, which is what the commitment store actually runs; SQLite's
-  durable-append figures rise ~17× as a result.
+  `synchronous = FULL`, which is what commitment transactions actually run;
+  SQLite's durable-append figures rise ~17× as a result.
 
 ## Fairness and validity caveats (read before trusting absolute numbers)
 

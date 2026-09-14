@@ -2,10 +2,10 @@
 //! `kv(k BLOB PRIMARY KEY, v BLOB)` models the keyspace.
 //!
 //! **Durability mapping.** `synchronous = NORMAL` in WAL mode is the relaxed
-//! setting the content store runs at: commits do not fsync, and durability
-//! arrives at the next checkpoint. A `sync` batch instead commits at
-//! `synchronous = FULL`, which fsyncs the WAL — exactly what the commitment
-//! store does in production per `05-per-bucket-store-design.md`. `flush()`
+//! setting content transactions run at: commits do not fsync, and durability
+//! arrives with the next fsync of the shared WAL. A `sync` batch instead commits
+//! at `synchronous = FULL`, which fsyncs the WAL — exactly what commitment
+//! transactions do in production per `05-per-bucket-store-design.md`. `flush()`
 //! remains a `wal_checkpoint(TRUNCATE)`, i.e. the flush barrier.
 //!
 //! Earlier passes mapped a `sync` batch to a *checkpoint* rather than an fsync.

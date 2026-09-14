@@ -24,26 +24,27 @@ in [01](01-storage-provider-benchmark.md).
 
 1. **Architecture: sharded** — per-bucket database files, behind an LRU
    connection pool.
-2. **Layout: two stores per bucket** — a *content store* (chunks + chunk-tree
-   nodes, hash-keyed) and a *commitment store* (MMR leaves + interior nodes +
-   bucket state, position-keyed), per
+2. **Layout: one file per bucket, two table groups** — a *content store*
+   (chunks + chunk-tree nodes, hash-keyed) and a *commitment store* (MMR leaves +
+   interior nodes + bucket state, position-keyed) in the same database, per
    [05-per-bucket-store-design.md](05-per-bucket-store-design.md). The global
    node pool is dropped (client-side encryption forecloses cross-bucket dedup).
-3. **Engine: SQLite (WAL mode) for both stores**, with different durability
-   settings: the commitment store runs fully synchronous (it holds the
-   slashable state); the content store runs relaxed with one flush barrier
-   before each commitment (its writes are idempotent and hash-verified).
+3. **Engine: SQLite (WAL mode)**, with durability chosen per transaction:
+   commitment transactions commit at `synchronous = FULL` (they hold the
+   slashable state); content transactions commit at `NORMAL` (their writes are
+   idempotent and hash-verified). Because both share one WAL, the commitment
+   commit's fsync durably pins every content write before it — the
+   content-before-commitment ordering is an engine guarantee, not a convention.
 4. **The content store keeps its hash index in a separate B-tree** from the chunk
    payloads, and enables `mmap_size`. This is not a micro-optimisation: measured,
    it is worth **50× on the dedup lookup and 4.8× on chunk reads**, and it is what
    makes SQLite competitive with LMDB on the content store at all. See the
    [dedup experiment](01-storage-provider-benchmark.md#the-dedup-experiment-three-hypotheses-one-cause-one-fix).
 
-Note the pool arithmetic: two stores per bucket doubles per-bucket FDs and
-instances, so [report 01](01-storage-provider-benchmark.md)'s `multi_instance`
-figures apply ×2 at a given pool size — SQLite's 6 FDs and ~60–140 MiB per
-1000 *hot* buckets remains comfortably the smallest footprint of any viable
-pair.
+The pool arithmetic is [report 01](01-storage-provider-benchmark.md)'s
+`multi_instance` figures as measured — one instance per bucket: SQLite's 3 FDs
+and ~30–70 MiB per 1000 *hot* buckets is comfortably the smallest footprint of
+any viable candidate.
 
 ### Why sharded over shared
 
@@ -74,12 +75,11 @@ rediscover:
 
 - **A shared database gives the crash-ordering guarantee for free.** One database
   is one WAL, and WAL recovery is prefix-consistent, so a recovered commitment
-  necessarily implies the content writes that preceded it survived. The
-  content-before-commitment barrier that
-  [05](05-per-bucket-store-design.md#the-crash-consistency-invariant-the-one-cost-of-two-databases)
-  makes an application obligation — one choke-point function, a crash-injection
-  test — exists *only because* we split into separate files. This is the same
-  mechanism as 05's single-file fallback, one level up.
+  necessarily implies the content writes that preceded it survived. This was a
+  genuine point for shared while the sharded design was two files per bucket;
+  with [one file per bucket](05-per-bucket-store-design.md#crash-consistency-what-one-wal-gives-for-free)
+  the sharded model has the same guarantee, bucket-locally, so it no longer
+  discriminates.
 - **Shared deletion is less bad than the per-key numbers suggest.** With keys
   laid out `bucket_id || …` a bucket is a contiguous key range, and RocksDB's
   `DeleteRange` / `DeleteFilesInRange` drop whole SST files for interior ranges
@@ -135,28 +135,32 @@ per bucket, ubiquitous tooling, and a battle-tested engine.
 
 ### Per-store engine choice
 
-The two stores have opposite workloads, so the choice was re-examined per
-store against passes 2–5
+The two table groups have opposite workloads, so the choice was re-examined per
+store against passes 2–5 — both to confirm one engine suits both and because a
+different engine for either group would force the two-file layout
 ([redb section](01-storage-provider-benchmark.md#redb--a-fifth-candidate-second-measurement-pass),
 [content-store section](01-storage-provider-benchmark.md#the-content-store-measured-third-pass),
 [per-instance and LMDB](01-storage-provider-benchmark.md#reading-the-fourth-pass),
 [dedup experiment](01-storage-provider-benchmark.md#the-dedup-experiment-three-hypotheses-one-cause-one-fix)):
 
-| | Commitment store (48 B, position keys, fully durable) | Content store (256 KiB, hash keys, barrier durability) |
+| | Commitment store (48 B, position keys, `synchronous = FULL`) | Content store (256 KiB, hash keys, `synchronous = NORMAL`) |
 |---|---|---|
 | **SQLite** | **best space** (1.29×→1.13× compacted), sequential-insert packing, zero threads, 8 KiB floor, multi-table transactions for leaf+node+state atomicity | 1.00× space; **34.6 µs reads and 3.9 µs dedup with a split index + mmap** (711 µs / 746 µs at the harness defaults) |
 | **LMDB** | best on nearly every driver: 45 µs reopen, 0.46/0.71 µs proof reads, 1.23× space, zero threads | **fastest reads by far (19 µs)** at 1.02× space and 536 MiB/s ingest |
 | redb | best per-instance profile, but 3.01× space that *compaction worsens* to 4.65× | fast reads (26 µs), but **2.00× space** — doubles the capacity bill; 1.7 s flush barrier |
-| RocksDB | 1.10× space, but ~1.1 ms (p1) to ~5.0 ms (p4) reopens and 7 FDs/instance ruin the LRU pool | 1.00× space, good reads (159 µs); same reopen/FD/compaction liabilities, now ×2 per bucket |
+| RocksDB | 1.10× space, but ~1.1 ms (p1) to ~5.0 ms (p4) reopens and 7 FDs/instance ruin the LRU pool | 1.00× space, good reads (159 µs); same reopen/FD/compaction liabilities |
 | jammdb / libmdbx | disqualified: 4.52× space; 1 thread per instance and 1.2 GiB unreclaimed after deleting every key | — |
 
 **SQLite for both.** For the commitment store it wins or ties every driver that
 matters. For the content store it ties the best space figure — the cost a
 capacity-priced provider actually pays — and its one measured weakness,
 chunk-read latency, is sub-millisecond and partly tuned away: `page_size = 32768`
-buys a measured **1.58×** (452 → 286 µs warm p50, seven runs, disjoint ranges).
-Running one engine everywhere also keeps the operational surface — WAL discipline,
-backup, `integrity_check`, tooling — singular.
+buys a measured **1.58×** (452 → 286 µs warm p50, seven runs, disjoint ranges),
+and the same sweep shows the 48-byte commitment rows paying only a few percent on
+durable appends for it, so one page size serves the whole file. Running one
+engine for both groups is also what makes one *file* possible — two engines
+would force the two-file split — and keeps the operational surface (WAL
+discipline, backup, `integrity_check`, tooling) singular.
 
 The honest caveat is that **LMDB is faster on the content store than tuning gets
 SQLite**, by roughly 15× on chunk reads even after the page-size fix. The next
@@ -287,26 +291,31 @@ transaction lifetime.
   function of the LRU pool cap, not total buckets.
 - A single bucket becoming write-hot at sustained millions of ops/s, or needing
   multi-writer concurrency within one bucket: revisit RocksDB for that tier.
-- **The content-before-commitment barrier proving unenforceable** across the three
-  upload paths: fall back to [one file with two tables per bucket](05-per-bucket-store-design.md#the-single-file-fallback),
-  which restores the ordering guarantee at the engine level. That is a
-  bucket-local, reversible change — unlike moving to a shared database, which
-  also restores it but forfeits fault isolation.
+- **A measured conflict between the two table groups sharing one file** — e.g.
+  commitment-side latency or checkpoint cost regressing under chunk traffic on
+  target hardware, which no current scenario measures: split into
+  [two files per bucket](05-per-bucket-store-design.md#the-two-file-split-fallback),
+  which is bucket-local and reversible, at the price of making the
+  content-before-commitment ordering application code again.
 - **Chunk-serving latency becoming the binding constraint** (large files,
   latency-sensitive reads): move the *content store only* to **LMDB** (19 µs warm
   reads, 1.02× space) or **RocksDB** (159 µs, 1.00× space), keeping SQLite for the
-  commitment store. Try `page_size = 32768` (1.58×), parallel reassembly, and the
-  O(log n) descent fix first — all three are cheaper than an engine change — and
-  validate on SSD, since read rankings are the least medium-robust numbers here.
+  commitment store — which requires the two-file split above, since two engines
+  cannot share a file. Try `page_size = 32768` (1.58×), parallel reassembly, and
+  the O(log n) descent fix first — all three are cheaper than an engine change —
+  and validate on SSD, since read rankings are the least medium-robust numbers
+  here.
 
 ---
 
 ## Summary
 
-**Sharded, two SQLite stores per bucket, WAL mode.** Sharding wins the operations
+**Sharded, one SQLite file per bucket, WAL mode.** Sharding wins the operations
 tied to the bucket lifecycle — deletion, concurrent writes (1.60×, pass 5), fault
 isolation — and the LRU pool bounds the memory that the shared model would
-otherwise win on. Within the sharded model SQLite is among the cheapest engines to
+otherwise win on. Content and commitment tables share the file, so the
+commitment commit's fsync orders them for free; they differ in durability per
+transaction, not per file. Within the sharded model SQLite is among the cheapest engines to
 open, spawns no threads, has the smallest empty-bucket floor, and ties the best
 disk amplification. **LMDB is faster on every read path**; SQLite is kept for
 testing rigour and operational safety — see [Why not LMDB (yet)](#why-not-lmdb-yet).

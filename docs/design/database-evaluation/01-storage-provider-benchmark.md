@@ -236,12 +236,13 @@ compaction) remain exceptions that cannot be scheduled this way.
 
 ## The content store, measured (third pass)
 
-The two-database-per-bucket design in
+The per-bucket design in
 [05-per-bucket-store-design.md](05-per-bucket-store-design.md) splits each
-bucket into a *commitment store* (48 B MMR entries, position keys, fully
-durable — modelled by `mmr_append_small` and `proof_read` above) and a
-*content store* (256 KiB chunks, **content-hash keys, so random insertion
-order**, unsynced ingest + one flush barrier). No earlier scenario modelled the
+bucket's data into two table groups: a *commitment store* (48 B MMR entries,
+position keys, fully durable — modelled by `mmr_append_small` and `proof_read`
+above) and a *content store* (256 KiB chunks, **content-hash keys, so random
+insertion order**, unsynced ingest + one flush barrier — the fsync the
+commitment commit pays in the single-file layout). No earlier scenario modelled the
 content store: every prior scenario uses sequential keys, and
 `node_append_large` fsyncs every batch, which the barrier design deliberately
 avoids. The `content_store` scenario closes that gap; results from
@@ -485,6 +486,16 @@ penalty but does not close it:
 So LMDB's read advantage **survives tuning**, narrowing from ~24× to ~15×. The
 honest conclusion is that `page_size` is worth setting on its own merits — a free
 1.58× on the serving path — and that it does not dissolve the case for LMDB.
+
+The sweep is also the measurement of the **single-file compromise**: every
+scenario ran in one file at each page size, so the 48-byte commitment rows paid
+the content store's 32 KiB pages. Their cost was small — durable appends 6,450 vs
+6,956 op/s (medians of three replicates at 32 KiB vs 4 KiB, inside the 4 KiB
+replicates' own 5,988–8,222 spread), proof read p50 4.9 vs 3.9 µs, reopen
+unchanged — which is why [05](05-per-bucket-store-design.md#the-two-file-split-fallback)
+keeps both table groups in one file rather than splitting to give each its own
+page size. (These append figures predate the pass-5 durability fix, so they are
+relative, not absolute.)
 Whether the remaining gap justifies an engine change is a reliability question,
 not a performance one, and two cheaper mitigations come first: chunk reassembly
 is parallelisable across WAL readers (the figures above are single-threaded), and
@@ -601,8 +612,8 @@ is settled where passes 1–3 left it, the pass-4 inversion having been
 ## Harness v2 and the dedup lookup (fifth pass)
 
 Pass 5 re-ran the full matrix after three changes that make the harness model the
-[two-store design](05-per-bucket-store-design.md) rather than an approximation of
-it. Source: [`results/final-run.json`](results/final-run.json), all eight engines,
+[two table groups of the per-bucket design](05-per-bucket-store-design.md) rather
+than an approximation of them. Source: [`results/final-run.json`](results/final-run.json), all eight engines,
 disk-backed scratch, one process per engine.
 
 1. **Retired `node_append_large` and `disk_large`** — 256 KiB values under
