@@ -583,7 +583,7 @@ pub struct ReplicaTerms<Balance, BlockNumber> {
 pub type Challenges<T: Config> = StorageDoubleMap<
     _,
     Blake2_128Concat, BlockNumberFor<T>, // deadline (anchor block)
-    Blake2_128Concat, u16,               // index within the deadline
+    Twox64Concat, u16,                   // index within the deadline
     Challenge<T>,
 >;
 
@@ -749,6 +749,7 @@ pub enum Event<T: Config> {
     },
     ProviderMultiaddrUpdated {
         provider: T::AccountId,
+        multiaddr: BoundedVec<u8, T::MaxMultiaddrLength>,
     },
     ExtensionsBlocked {
         bucket_id: BucketId,
@@ -770,6 +771,11 @@ pub enum Event<T: Config> {
     },
     BucketDeleted {
         bucket_id: BucketId,
+    },
+    /// An admin changed who may read the bucket.
+    BucketVisibilityChanged {
+        bucket_id: BucketId,
+        visibility: Visibility,
     },
     MemberSet {
         bucket_id: BucketId,
