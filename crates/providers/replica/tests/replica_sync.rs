@@ -472,6 +472,31 @@ async fn test_stop_command() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn test_command_after_stop_yields_channel_closed() {
+    let mock = MockReplicaSyncChainClient::new();
+    let config = ReplicaSyncCoordinatorConfig {
+        poll_interval: Duration::from_secs(60),
+        ..Default::default()
+    };
+    let (storage, _dir) = test_storage();
+    let coordinator =
+        ReplicaSyncCoordinator::new(config, storage, ALICE_SS58.to_string(), Box::new(mock));
+
+    let handle = coordinator
+        .start(tokio::sync::broadcast::channel(16).1, None)
+        .await
+        .unwrap();
+
+    // Stopping ends the coordinator's background task, which drops its
+    // command channel receiver. Any command sent afterward can no longer be
+    // delivered.
+    handle.stop().await.unwrap();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    assert!(matches!(handle.pause().await, Err(Error::ChannelClosed)));
+}
+
+#[tokio::test(start_paused = true)]
 async fn test_pause_resume() {
     let mock = MockReplicaSyncChainClient::new();
     let config = ReplicaSyncCoordinatorConfig {

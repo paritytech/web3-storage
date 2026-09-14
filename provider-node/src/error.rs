@@ -312,12 +312,21 @@ impl IntoResponse for Error {
             e @ (Error::ChainQuery { .. }
             | Error::TxSubmit { .. }
             | Error::TxRejected { .. }
-            | Error::Signer { .. }
-            | Error::RateLimiterFailed(_)) => (
+            | Error::Signer { .. }) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 ErrorResponse {
                     error: "internal_error".to_string(),
                     details: Some(serde_json::json!({ "message": e.to_string() })),
+                },
+            ),
+            // The reason is logged (see the rate-limit middleware) but kept out
+            // of the response: it comes from the limiter's own backend and may
+            // say more than an unauthenticated caller should learn.
+            Error::RateLimiterFailed(_) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                ErrorResponse {
+                    error: "internal_error".to_string(),
+                    details: None,
                 },
             ),
             e @ Error::Decode { .. } => (
@@ -750,6 +759,23 @@ mod tests {
         assert_eq!(json["error"], "not_found");
         assert!(json.get("details").is_some());
         assert_eq!(json["details"]["hash"], "0xabc");
+    }
+
+    #[test]
+    fn test_rate_limiter_failed_hides_detail_from_response() {
+        let resp =
+            Error::RateLimiterFailed("backend store unreachable".to_string()).into_response();
+        let (parts, body) = resp.into_parts();
+        assert_eq!(parts.status, StatusCode::INTERNAL_SERVER_ERROR);
+
+        let body_bytes = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(async { axum::body::to_bytes(body, usize::MAX).await.unwrap() });
+        let json: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        assert_eq!(json["error"], "internal_error");
+        // The limiter's own failure reason must never reach the client - only
+        // the tracing log (see the rate-limit middleware) carries it.
+        assert!(json.get("details").is_none());
     }
 
     #[test]
