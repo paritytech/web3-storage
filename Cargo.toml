@@ -19,6 +19,7 @@ members = [
 	"crates/providers/negotiation",
 	"crates/providers/replica",
 	"crates/providers/storage",
+	"crates/providers/types",
 
 	"crates/storage-subxt",
 	"crates/utils/storage-indexers",
@@ -58,6 +59,7 @@ provider-coordinator = { path = "crates/providers/coordinator" }
 provider-negotiation = { path = "crates/providers/negotiation" }
 provider-replica = { path = "crates/providers/replica" }
 provider-storage = { path = "crates/providers/storage" }
+provider-types = { path = "crates/providers/types" }
 storage-client = { path = "clients/storage" }
 storage-indexers = { path = "crates/utils/storage-indexers" }
 storage-parachain-runtime = { path = "runtimes/web3-storage-local" }

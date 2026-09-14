@@ -15,6 +15,7 @@ provider-coordinator = { workspace = true }
 provider-negotiation = { workspace = true }
 provider-replica = { workspace = true }
 provider-storage = { workspace = true }
+provider-types = { workspace = true, features = ["clap"] }
 storage-primitives = { workspace = true, features = ["serde", "std"] }
 storage-subxt = { workspace = true }
 tokio = { workspace = true }
