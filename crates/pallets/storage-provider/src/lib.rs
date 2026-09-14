@@ -945,6 +945,18 @@ pub mod pallet {
             /// Escrowed for the extension.
             payment: BalanceOf<T>,
         },
+        /// The agreement's owner changed. Not emitted yet:
+        /// `transfer_agreement_ownership` lands with #414.
+        AgreementOwnershipTransferred {
+            /// The bucket.
+            bucket_id: BucketId,
+            /// The provider.
+            provider: T::AccountId,
+            /// Previous owner.
+            old_owner: T::AccountId,
+            /// New owner.
+            new_owner: T::AccountId,
+        },
         /// An agreement was settled and closed.
         AgreementEnded {
             /// The bucket.
