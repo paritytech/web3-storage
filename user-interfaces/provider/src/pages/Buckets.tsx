@@ -14,7 +14,7 @@ import {
 } from '@/components/ui/Table'
 import { RequireProvider } from '@/components/RequireProvider'
 import { useBucketDetails, type BucketDetail } from '@/state/provider.state'
-import { formatAddress, formatBytes, formatTokens, formatBlockNumber, formatHash } from '@/utils/format'
+import { formatAddress, formatBytes, formatTokens, formatBlockNumber, formatHash } from '@web3-storage/format'
 
 export function Buckets() {
   return (

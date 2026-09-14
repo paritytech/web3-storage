@@ -14,7 +14,7 @@ use crate::{
     paseo_constants::{
         consensus::RELAY_CHAIN_SLOT_DURATION_MILLIS, currency::UNIT, relay_time::RC_HOURS,
     },
-    AccountId, Balance, Balances, BlockNumber, Runtime, RuntimeEvent,
+    AccountId, Balance, Balances, BlockNumber, Runtime, RuntimeEvent, RuntimeHoldReason,
 };
 
 // Storage-backed parameters: each value below is the default, but can be
@@ -94,6 +94,7 @@ impl pallet_s3_registry::Config for Runtime {
 
 impl pallet_storage_provider::Config for Runtime {
     type Currency = Balances;
+    type RuntimeHoldReason = RuntimeHoldReason;
     type Treasury = TreasuryAccount;
     type MinStakePerByte = MinStakePerByte;
     type MaxMultiaddrLength = ConstU32<128>;

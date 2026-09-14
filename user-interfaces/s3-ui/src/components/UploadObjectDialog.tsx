@@ -12,7 +12,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useCurrentPrefix, useEncryptionKey, uploadObject } from "@/state";
-import { formatBytes } from "@/lib/utils";
+import { formatBytes } from "@web3-storage/format";
 import { toast } from "@/components/ui/toaster";
 
 interface UploadObjectDialogProps {

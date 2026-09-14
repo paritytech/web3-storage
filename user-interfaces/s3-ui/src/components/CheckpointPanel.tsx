@@ -15,7 +15,7 @@ import {
   useAnchorBlock,
 } from "@/state";
 import { useActiveChallenge, useChallengeStatus, useChallengeHistory } from "@/state/challenge.state";
-import { truncateHash } from "@/lib/utils";
+import { truncateHash } from "@web3-storage/format";
 import { getS3Client } from "@/state";
 import ChallengeDialog from "./ChallengeDialog";
 import ChallengeOutcomeDialog from "./ChallengeOutcomeDialog";

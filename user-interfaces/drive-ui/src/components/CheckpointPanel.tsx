@@ -11,7 +11,7 @@ import {
   refreshCheckpoint,
   clearCheckpointState,
 } from "@/state";
-import { truncateHash } from "@/lib/utils";
+import { truncateHash } from "@web3-storage/format";
 
 export default function CheckpointPanel() {
   const drive = useSelectedDrive();

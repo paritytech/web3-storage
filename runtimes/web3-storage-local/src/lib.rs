@@ -174,16 +174,7 @@ pub const VERSION: RuntimeVersion = RuntimeVersion {
     spec_name: Cow::Borrowed("web3-storage-parachain"),
     impl_name: Cow::Borrowed("web3-storage-parachain"),
     authoring_version: 1,
-    // Encodes the runtime semver: major * 1_000_000 + minor * 1_000 + patch.
-    // * 0.4.1 -> 4_001 on dev (#212), released as v0.4.1-paseo and still the deployed value;
-    // * 4_002 for the breaking Challenges storage reshape (Vec -> StorageDoubleMap) (#125);
-    // * 4_003 for dropping the vestigial `ChallengerStatRecord::total_earnings` field (#125);
-    // * 4_004 for `StorageProviderApi` v2: `challenge_candidates`, `deregister_at`, `reputation` (#318);
-    // * 4_005 for 2 s blocks / 3 cores: slot-based authoring, `RelayParentOffset = 1` (#131);
-    // * 4_006 for the challenger tier and bucket visibility: split `ProviderStats` counters,
-    //   `Bucket.visibility`, `Challenge.authorized`, `set_bucket_visibility`, and
-    //   `StorageProviderApi` v3 with the split counters in its responses (#330);
-    spec_version: 4_006,
+    spec_version: 4_008,
     impl_version: 0,
     apis: RUNTIME_API_VERSIONS,
     // Bumped whenever call encoding changes, so offline signers and stale-metadata
