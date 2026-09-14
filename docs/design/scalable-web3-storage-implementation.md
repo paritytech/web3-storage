@@ -2456,6 +2456,15 @@ pub struct MmrProof {
     └─ Challenger made whole from the slash: deposit refunded, tx fees
        reimbursed—but no reward beyond actual costs (no profit motive
        for forcing slashes), regardless of tier
+       DRIFT-021: `dev` releases the challenger's deposit hold and moves the
+       whole slash to the Treasury (slash_provider_for_failed_challenge). No
+       tx fee is reimbursed, and nothing is paid "from the slash". The
+       Challenge struct comment above and the ChallengeSlashed event
+       (challenger_reward always 0) already describe the `dev` behaviour.
+       Same claim in scalable-web3-storage.md, Resolution list and the
+       paragraph after the cost-split table.
+       Proposal: keep code; reword to "deposit refunded in full, slash goes
+       to the Treasury, no reward".
     └─ Clear on-chain evidence of provider fault
 ```
 

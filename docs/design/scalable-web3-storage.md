@@ -618,6 +618,9 @@ below):
    - Cancelled by challenger: Deposit returned (challenger paid only tx fees)
    - Invalid/no proof: Provider's full stake slashed; challenger made whole
      from the slash (deposit and tx fees refunded—no reward beyond costs)
+     DRIFT-021: on `dev` the deposit hold is released and the whole slash
+     goes to the Treasury; no tx fee is refunded. Details at Timeline 3c in
+     scalable-web3-storage-implementation.md.
 ```
 
 **Stake is never touched on a valid response.** The only thing in play is who
@@ -676,6 +679,8 @@ would make griefing cheap). Faster responses cost the provider less:
 The general public is not on this table: the challenger always pays 100%. (The
 failure case—no or invalid response—is separate: the provider's full stake is
 slashed and the challenger is made whole from it, per Resolution above.)
+<!-- DRIFT-021: see the marker in the Resolution list above. -->
+
 
 The net effect: a provider's *monetary* challenge exposure is bounded to the
 counterparties it chose to accept—strangers can be a nuisance but can't drain
