@@ -610,14 +610,29 @@ below):
      from its stake (normal tx fee mechanism)
    - Challenger can cancel anytime before the response (deposit returned, pays
      only the cancel tx fee)
+     DRIFT-022: no cancel_challenge call exists on `dev`. Once created, a
+     challenge resolves only by respond_to_challenge or by the deadline sweep
+     slashing the provider; the challenger cannot withdraw it and the deposit
+     stays held until then. Also referenced in the Resolution list below, in
+     point 3 of the cost-model rationale, and in the ProviderStats sketch in
+     scalable-web3-storage-implementation.md ("cancelled challenges are not
+     counted").
+     Proposal: implement cancel_challenge (challenger only, before a response:
+     remove the challenge, release the deposit, decrement the pending
+     counters, no stats change). The off-chain-resolution argument in point 3
+     depends on it.
 
 3. Resolution
    - Valid proof: Challenge rejected. The provider's response fee is reimbursed
      from the challenger's deposit (in full, or only a fraction—see below).
      Any excess deposit is returned to the challenger.
    - Cancelled by challenger: Deposit returned (challenger paid only tx fees)
+     DRIFT-022: not on `dev`, see the marker in step 2.
    - Invalid/no proof: Provider's full stake slashed; challenger made whole
      from the slash (deposit and tx fees refunded—no reward beyond costs)
+     DRIFT-021: on `dev` the deposit hold is released and the whole slash
+     goes to the Treasury; no tx fee is refunded. Details at Timeline 3c in
+     scalable-web3-storage-implementation.md.
 ```
 
 **Stake is never touched on a valid response.** The only thing in play is who
@@ -676,6 +691,8 @@ would make griefing cheap). Faster responses cost the provider less:
 The general public is not on this table: the challenger always pays 100%. (The
 failure case—no or invalid response—is separate: the provider's full stake is
 slashed and the challenger is made whole from it, per Resolution above.)
+<!-- DRIFT-021: see the marker in the Resolution list above. -->
+
 
 The net effect: a provider's *monetary* challenge exposure is bounded to the
 counterparties it chose to accept—strangers can be a nuisance but can't drain
@@ -1224,6 +1241,7 @@ This is exactly why the general public gets no cost split—it closes the floodi
 2. **Only counterparties get the split**: A provider is made to bear a fraction of the cost only for its own members or agreement owners—accounts it *chose* to deal with (it accepted their agreement) or that the admin added.
 
 3. **Challenge cancellation**: Any challenger can cancel before the response, paying only the tx fee. If the provider serves off-chain after a challenge is initiated, the challenger cancels and the provider never even responds on-chain. Cancelled challenges leave no trace in the provider's stats (see next point).
+<!-- DRIFT-022: no cancel_challenge call exists on `dev`; see the marker in the challenge Timeline above. -->
 
 4. **Reputation**: Challenge stats count only *responded-to* challenges (at resolution, never creation) and are split by tier—`challenges_received_authorized` vs `challenges_received_public`—so clients can weigh the two as they see fit. The challenges-*failed* count (the one that actually signals data loss) is unaffected, since the provider defends every one.
 
