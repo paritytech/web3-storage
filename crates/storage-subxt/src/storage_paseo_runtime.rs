@@ -2085,10 +2085,10 @@ pub mod api {
                         "dry_run_call",
                         (origin, call, result_xcms_version),
                         [
-                            23u8, 136u8, 83u8, 42u8, 10u8, 226u8, 206u8, 143u8, 190u8, 67u8, 136u8,
-                            97u8, 166u8, 116u8, 195u8, 143u8, 211u8, 67u8, 86u8, 147u8, 138u8,
-                            104u8, 100u8, 97u8, 119u8, 16u8, 223u8, 250u8, 168u8, 156u8, 15u8,
-                            133u8,
+                            159u8, 76u8, 110u8, 60u8, 193u8, 54u8, 235u8, 254u8, 85u8, 60u8, 88u8,
+                            67u8, 19u8, 222u8, 174u8, 159u8, 39u8, 167u8, 160u8, 182u8, 178u8,
+                            56u8, 101u8, 139u8, 12u8, 192u8, 100u8, 219u8, 225u8, 88u8, 226u8,
+                            82u8,
                         ],
                     )
                 }
@@ -2106,10 +2106,9 @@ pub mod api {
                         "dry_run_xcm",
                         (origin_location, xcm),
                         [
-                            118u8, 19u8, 59u8, 205u8, 190u8, 79u8, 38u8, 185u8, 101u8, 118u8,
-                            139u8, 183u8, 109u8, 106u8, 173u8, 11u8, 149u8, 83u8, 44u8, 150u8,
-                            231u8, 22u8, 162u8, 106u8, 10u8, 96u8, 36u8, 162u8, 111u8, 183u8,
-                            248u8, 207u8,
+                            102u8, 81u8, 32u8, 34u8, 37u8, 130u8, 110u8, 221u8, 184u8, 165u8, 19u8,
+                            50u8, 5u8, 101u8, 161u8, 110u8, 200u8, 173u8, 227u8, 105u8, 204u8,
+                            248u8, 164u8, 31u8, 146u8, 165u8, 221u8, 4u8, 89u8, 42u8, 186u8, 50u8,
                         ],
                     )
                 }
@@ -3468,9 +3467,9 @@ pub mod api {
             .hash();
         runtime_metadata_hash
             == [
-                158u8, 244u8, 192u8, 55u8, 222u8, 160u8, 219u8, 34u8, 37u8, 254u8, 70u8, 145u8,
-                247u8, 85u8, 41u8, 7u8, 102u8, 30u8, 175u8, 232u8, 123u8, 83u8, 68u8, 16u8, 8u8,
-                221u8, 79u8, 242u8, 163u8, 3u8, 35u8, 132u8,
+                6u8, 163u8, 50u8, 186u8, 27u8, 21u8, 48u8, 143u8, 78u8, 215u8, 89u8, 250u8, 223u8,
+                29u8, 149u8, 50u8, 108u8, 54u8, 155u8, 42u8, 89u8, 126u8, 145u8, 212u8, 254u8,
+                234u8, 148u8, 153u8, 158u8, 109u8, 88u8, 83u8,
             ]
     }
     pub mod system {
@@ -4458,10 +4457,9 @@ pub mod api {
                         "System",
                         "Events",
                         [
-                            1u8, 32u8, 94u8, 89u8, 28u8, 105u8, 234u8, 229u8, 90u8, 29u8, 45u8,
-                            94u8, 158u8, 178u8, 232u8, 238u8, 166u8, 255u8, 251u8, 239u8, 157u8,
-                            186u8, 90u8, 183u8, 29u8, 206u8, 196u8, 198u8, 135u8, 61u8, 161u8,
-                            236u8,
+                            192u8, 124u8, 66u8, 102u8, 176u8, 173u8, 147u8, 79u8, 215u8, 167u8,
+                            15u8, 216u8, 26u8, 151u8, 21u8, 32u8, 25u8, 48u8, 220u8, 91u8, 231u8,
+                            177u8, 195u8, 90u8, 79u8, 249u8, 99u8, 83u8, 146u8, 192u8, 133u8, 3u8,
                         ],
                     )
                 }
@@ -17603,6 +17601,40 @@ pub mod api {
             )]
             #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+            #[doc = "The agreement's owner changed. Not emitted yet:"]
+            #[doc = "`transfer_agreement_ownership` lands with #414."]
+            pub struct AgreementOwnershipTransferred {
+                pub bucket_id: agreement_ownership_transferred::BucketId,
+                pub provider: agreement_ownership_transferred::Provider,
+                pub old_owner: agreement_ownership_transferred::OldOwner,
+                pub new_owner: agreement_ownership_transferred::NewOwner,
+            }
+            pub mod agreement_ownership_transferred {
+                use super::runtime_types;
+                pub type BucketId = ::core::primitive::u64;
+                pub type Provider = ::subxt::utils::AccountId32;
+                pub type OldOwner = ::subxt::utils::AccountId32;
+                pub type NewOwner = ::subxt::utils::AccountId32;
+            }
+            impl AgreementOwnershipTransferred {
+                const PALLET_NAME: &'static str = "StorageProvider";
+                const EVENT_NAME: &'static str = "AgreementOwnershipTransferred";
+            }
+            impl ::subxt::events::DecodeAsEvent for AgreementOwnershipTransferred {
+                fn is_event(pallet_name: &str, event_name: &str) -> bool {
+                    pallet_name == Self::PALLET_NAME && event_name == Self::EVENT_NAME
+                }
+            }
+            #[derive(
+                :: subxt :: ext :: scale_decode :: DecodeAsType,
+                :: subxt :: ext :: scale_encode :: EncodeAsType,
+                Clone,
+                Debug,
+                Eq,
+                PartialEq,
+            )]
+            #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+            #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
             #[doc = "An agreement was settled and closed."]
             pub struct AgreementEnded {
                 pub bucket_id: agreement_ended::BucketId,
@@ -21073,9 +21105,10 @@ pub mod api {
                         "Revive",
                         "EthBlockBuilderIR",
                         [
-                            191u8, 4u8, 102u8, 110u8, 200u8, 40u8, 49u8, 157u8, 116u8, 225u8, 59u8,
-                            64u8, 19u8, 106u8, 76u8, 129u8, 155u8, 76u8, 133u8, 26u8, 241u8, 3u8,
-                            116u8, 81u8, 152u8, 121u8, 215u8, 246u8, 170u8, 43u8, 165u8, 5u8,
+                            116u8, 166u8, 102u8, 147u8, 101u8, 7u8, 206u8, 214u8, 182u8, 48u8,
+                            13u8, 231u8, 127u8, 31u8, 239u8, 190u8, 57u8, 113u8, 220u8, 48u8,
+                            235u8, 146u8, 231u8, 159u8, 0u8, 226u8, 33u8, 141u8, 210u8, 200u8,
+                            66u8, 23u8,
                         ],
                     )
                 }
@@ -26614,6 +26647,15 @@ pub mod api {
                         payment: ::core::primitive::u128,
                     },
                     #[codec(index = 22)]
+                    #[doc = "The agreement's owner changed. Not emitted yet:"]
+                    #[doc = "`transfer_agreement_ownership` lands with #414."]
+                    AgreementOwnershipTransferred {
+                        bucket_id: ::core::primitive::u64,
+                        provider: ::subxt::utils::AccountId32,
+                        old_owner: ::subxt::utils::AccountId32,
+                        new_owner: ::subxt::utils::AccountId32,
+                    },
+                    #[codec(index = 23)]
                     #[doc = "An agreement was settled and closed."]
                     AgreementEnded {
                         bucket_id: ::core::primitive::u64,
@@ -26621,7 +26663,7 @@ pub mod api {
                         payment_to_provider: ::core::primitive::u128,
                         burned: ::core::primitive::u128,
                     },
-                    #[codec(index = 23)]
+                    #[codec(index = 24)]
                     #[doc = "Owner redeemed provider-signed terms; bucket created and agreement"]
                     #[doc = "opened atomically."]
                     StorageAgreementEstablished {
@@ -26635,7 +26677,7 @@ pub mod api {
                         >,
                         expires_at: ::core::primitive::u32,
                     },
-                    #[codec(index = 24)]
+                    #[codec(index = 25)]
                     #[doc = "Owner redeemed provider-signed replica terms; replica agreement"]
                     #[doc = "opened against an existing bucket."]
                     ReplicaAgreementEstablished {
@@ -26649,7 +26691,7 @@ pub mod api {
                         >,
                         expires_at: ::core::primitive::u32,
                     },
-                    #[codec(index = 25)]
+                    #[codec(index = 26)]
                     #[doc = "Someone challenged a provider to prove it still holds a chunk."]
                     ChallengeCreated {
                         challenge_id:
@@ -26659,7 +26701,7 @@ pub mod api {
                         challenger: ::subxt::utils::AccountId32,
                         respond_by: ::core::primitive::u32,
                     },
-                    #[codec(index = 26)]
+                    #[codec(index = 27)]
                     #[doc = "The provider proved it holds the data. The two `*_cost` fields"]
                     #[doc = "say who pays which part of the response cost, not who receives"]
                     #[doc = "money — together they always sum to the deposit."]
@@ -26671,7 +26713,7 @@ pub mod api {
                         challenger_cost: ::core::primitive::u128,
                         provider_cost: ::core::primitive::u128,
                     },
-                    #[codec(index = 27)]
+                    #[codec(index = 28)]
                     #[doc = "A provider failed a challenge and lost stake."]
                     ChallengeSlashed {
                         challenge_id:
