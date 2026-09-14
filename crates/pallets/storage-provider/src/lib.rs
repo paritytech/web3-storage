@@ -866,14 +866,6 @@ pub mod pallet {
             /// Providers whose signatures back it.
             providers: Vec<T::AccountId>,
         },
-        /// A primary provider joined the bucket's provider set. Not emitted
-        /// yet: no call adds a primary to an existing bucket (#417).
-        ProviderAddedToBucket {
-            /// The bucket.
-            bucket_id: BucketId,
-            /// The provider.
-            provider: T::AccountId,
-        },
         /// A primary provider left the bucket's provider set.
         PrimaryProviderRemoved {
             /// The bucket.
