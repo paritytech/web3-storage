@@ -98,11 +98,10 @@ macro_rules! agreement_changed_from {
 }
 
 agreement_changed_from!(
-    AgreementAccepted,
     StorageAgreementEstablished,
     AgreementToppedUp,
+    AgreementExtended,
     AgreementEnded,
-    AgreementExpiredClaimed,
 );
 
 /// Decode one block's events into the coordinator-relevant [`BlockEvent`]s.
@@ -149,19 +148,16 @@ pub fn decode_block_events(
                     )
                 })
                 .or_else(|| {
-                    decode::<provider_events::AgreementAccepted>(&event).map(BlockEvent::from)
-                })
-                .or_else(|| {
                     decode::<provider_events::StorageAgreementEstablished>(&event)
                         .map(BlockEvent::from)
                 })
                 .or_else(|| {
                     decode::<provider_events::AgreementToppedUp>(&event).map(BlockEvent::from)
                 })
-                .or_else(|| decode::<provider_events::AgreementEnded>(&event).map(BlockEvent::from))
                 .or_else(|| {
-                    decode::<provider_events::AgreementExpiredClaimed>(&event).map(BlockEvent::from)
+                    decode::<provider_events::AgreementExtended>(&event).map(BlockEvent::from)
                 })
+                .or_else(|| decode::<provider_events::AgreementEnded>(&event).map(BlockEvent::from))
         })
         .collect()
 }
@@ -319,10 +315,11 @@ mod tests {
             44,
         );
         expect_changed(
-            BlockEvent::from(provider_events::AgreementAccepted {
+            BlockEvent::from(provider_events::AgreementExtended {
                 bucket_id: 45,
                 provider: subxt::utils::AccountId32([6u8; 32]),
-                expires_at: 100,
+                new_expires_at: 100,
+                payment: 0,
             }),
             45,
         );
@@ -334,14 +331,6 @@ mod tests {
                 new_max_bytes: 2048,
             }),
             46,
-        );
-        expect_changed(
-            BlockEvent::from(provider_events::AgreementExpiredClaimed {
-                bucket_id: 47,
-                provider: subxt::utils::AccountId32([6u8; 32]),
-                payment_to_provider: 0,
-            }),
-            47,
         );
         expect_changed(
             BlockEvent::from(provider_events::StorageAgreementEstablished {
