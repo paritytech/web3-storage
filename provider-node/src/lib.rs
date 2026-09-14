@@ -166,22 +166,27 @@ impl ProviderState {
     /// silently emitting a zeroed placeholder signature, which would be a
     /// cryptographically invalid commitment masquerading as a real one.
     pub fn sign(&self, message: &[u8]) -> Result<String, Error> {
-        self.ensure_signing_key_registered()?;
-        let keypair = self.keypair.as_ref().ok_or(Error::SigningUnavailable)?;
+        let keypair = self.signing_keypair()?;
         Ok(format!("0x{}", hex::encode(keypair.sign(message).encode())))
     }
 
-    /// Best-effort guard for every signing path: once the coordinator has
-    /// loaded our on-chain registration, refuse to sign with a key the chain
-    /// doesn't know — such signatures can never verify, so failing here beats
-    /// handing out dead ones. While no registration is loaded (chainless dev
-    /// mode, or before the first refresh) signing proceeds; a re-registration
-    /// heals a mismatch on the coordinator's next refresh without a restart.
+    /// Checks `keypair` before the guard: a node with no signing key at all
+    /// must report [`Error::SigningUnavailable`] (the actionable fix -
+    /// configure `--keyfile`) rather than [`Error::ProviderInfoUnavailable`].
+    fn signing_keypair(&self) -> Result<&ProviderKeypair, Error> {
+        let keypair = self.keypair.as_ref().ok_or(Error::SigningUnavailable)?;
+        self.ensure_signing_key_registered()?;
+        Ok(keypair)
+    }
+
+    /// Guard for every signing path: signing requires a published on-chain
+    /// registration whose key matches ours, because the pallet rejects any
+    /// other signature. Clears on the coordinator's next refresh, no restart.
     pub fn ensure_signing_key_registered(&self) -> Result<(), Error> {
         let info = self.chain_state.provider_info.read();
         match info.as_ref() {
             Some(info) => self.ensure_signing_key_matches(info),
-            None => Ok(()),
+            None => Err(Error::ProviderInfoUnavailable),
         }
     }
 
@@ -222,16 +227,7 @@ impl SyncRootsSigner for ProviderState {
         &self,
         roots: &SyncRoots,
     ) -> Result<MultiSignature, provider_replica::Error> {
-        let to_replica_err =
-            |e: Error| provider_replica::Error::Node(format!("cannot sign sync roots: {e}"));
-        self.ensure_signing_key_registered()
-            .map_err(to_replica_err)?;
-        let keypair = self
-            .keypair
-            .as_ref()
-            .ok_or(Error::SigningUnavailable)
-            .map_err(to_replica_err)?;
-        Ok(keypair.sign(&roots.encode()))
+        Ok(self.signing_keypair()?.sign(&roots.encode()))
     }
 }
 
@@ -253,6 +249,34 @@ mod tests {
             ))),
         };
         (deps, dir)
+    }
+
+    /// Publish a registration snapshot whose `public_key` matches this
+    /// state's own signing key, as the chain-state coordinator would once
+    /// the provider is registered on chain.
+    fn publish_matching_registration(state: &ProviderState) {
+        let public_key = state.keypair.as_ref().unwrap().public_key_bytes();
+        state
+            .chain_state
+            .provider_info
+            .write()
+            .replace(provider_types::ProviderInfo {
+                multiaddr: "/ip4/1.2.3.4/tcp/3333".to_string(),
+                public_key,
+                stake: 1_000,
+                committed_bytes: 0,
+                settings: provider_types::ProviderSettings {
+                    min_duration: 10,
+                    max_duration: 100,
+                    price_per_byte: 1,
+                    accepting_primary: true,
+                    replica_sync_price: None,
+                    accepting_extensions: true,
+                    max_capacity: 0,
+                },
+                stats: Default::default(),
+                deregister_at: None,
+            });
     }
 
     #[test]
@@ -278,6 +302,7 @@ mod tests {
         // aren't valid sr25519.
         let (deps, _dir) = test_deps();
         let state = ProviderState::with_seed(deps, "//Alice").unwrap();
+        publish_matching_registration(&state);
         let message = b"commitment-payload-bytes";
 
         let sig_hex = state.sign(message).expect("signing succeeds with keypair");
@@ -334,9 +359,15 @@ mod tests {
             Err(Error::ProviderKeyMismatch)
         ));
 
-        // No snapshot (chainless mode) and a matching snapshot both sign.
+        // No snapshot at all must also refuse: an unpublished registration
+        // means the pallet has no key to verify against.
         state.chain_state.provider_info.write().take();
-        assert!(state.sign(b"msg").is_ok());
+        assert!(matches!(
+            state.sign(b"msg"),
+            Err(Error::ProviderInfoUnavailable)
+        ));
+
+        // A matching snapshot signs.
         state
             .chain_state
             .provider_info
@@ -369,6 +400,7 @@ mod tests {
         // returns a constant value (e.g. zero bytes).
         let (deps, _dir) = test_deps();
         let state = ProviderState::with_seed(deps, "//Alice").unwrap();
+        publish_matching_registration(&state);
         let alice_pub = keypair_for("//Alice").public();
         let msg = b"commitment-payload";
 
@@ -392,6 +424,8 @@ mod tests {
         let (bob_deps, _bob_dir) = test_deps();
         let alice = ProviderState::with_seed(alice_deps, "//Alice").unwrap();
         let bob = ProviderState::with_seed(bob_deps, "//Bob").unwrap();
+        publish_matching_registration(&alice);
+        publish_matching_registration(&bob);
         let alice_pub = keypair_for("//Alice").public();
         let msg = b"checkpoint payload";
 
