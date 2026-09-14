@@ -2085,9 +2085,10 @@ pub mod api {
                         "dry_run_call",
                         (origin, call, result_xcms_version),
                         [
-                            0u8, 24u8, 76u8, 119u8, 129u8, 16u8, 124u8, 223u8, 252u8, 30u8, 56u8,
-                            152u8, 118u8, 251u8, 28u8, 127u8, 100u8, 175u8, 66u8, 181u8, 187u8,
-                            238u8, 14u8, 153u8, 32u8, 100u8, 96u8, 80u8, 218u8, 232u8, 4u8, 250u8,
+                            23u8, 136u8, 83u8, 42u8, 10u8, 226u8, 206u8, 143u8, 190u8, 67u8, 136u8,
+                            97u8, 166u8, 116u8, 195u8, 143u8, 211u8, 67u8, 86u8, 147u8, 138u8,
+                            104u8, 100u8, 97u8, 119u8, 16u8, 223u8, 250u8, 168u8, 156u8, 15u8,
+                            133u8,
                         ],
                     )
                 }
@@ -2105,10 +2106,10 @@ pub mod api {
                         "dry_run_xcm",
                         (origin_location, xcm),
                         [
-                            199u8, 226u8, 245u8, 47u8, 91u8, 102u8, 215u8, 52u8, 106u8, 165u8,
-                            149u8, 19u8, 147u8, 206u8, 206u8, 94u8, 4u8, 49u8, 104u8, 40u8, 179u8,
-                            227u8, 167u8, 34u8, 199u8, 112u8, 99u8, 180u8, 115u8, 241u8, 17u8,
-                            122u8,
+                            118u8, 19u8, 59u8, 205u8, 190u8, 79u8, 38u8, 185u8, 101u8, 118u8,
+                            139u8, 183u8, 109u8, 106u8, 173u8, 11u8, 149u8, 83u8, 44u8, 150u8,
+                            231u8, 22u8, 162u8, 106u8, 10u8, 96u8, 36u8, 162u8, 111u8, 183u8,
+                            248u8, 207u8,
                         ],
                     )
                 }
@@ -3467,9 +3468,9 @@ pub mod api {
             .hash();
         runtime_metadata_hash
             == [
-                145u8, 159u8, 62u8, 102u8, 89u8, 200u8, 195u8, 59u8, 71u8, 88u8, 150u8, 20u8, 91u8,
-                53u8, 136u8, 193u8, 100u8, 41u8, 247u8, 190u8, 79u8, 123u8, 222u8, 1u8, 159u8,
-                13u8, 161u8, 244u8, 127u8, 149u8, 66u8, 231u8,
+                158u8, 244u8, 192u8, 55u8, 222u8, 160u8, 219u8, 34u8, 37u8, 254u8, 70u8, 145u8,
+                247u8, 85u8, 41u8, 7u8, 102u8, 30u8, 175u8, 232u8, 123u8, 83u8, 68u8, 16u8, 8u8,
+                221u8, 79u8, 242u8, 163u8, 3u8, 35u8, 132u8,
             ]
     }
     pub mod system {
@@ -4457,9 +4458,10 @@ pub mod api {
                         "System",
                         "Events",
                         [
-                            138u8, 175u8, 29u8, 34u8, 92u8, 123u8, 140u8, 71u8, 51u8, 170u8, 206u8,
-                            152u8, 162u8, 28u8, 107u8, 74u8, 235u8, 37u8, 138u8, 48u8, 90u8, 207u8,
-                            134u8, 240u8, 227u8, 22u8, 71u8, 143u8, 93u8, 76u8, 89u8, 21u8,
+                            1u8, 32u8, 94u8, 89u8, 28u8, 105u8, 234u8, 229u8, 90u8, 29u8, 45u8,
+                            94u8, 158u8, 178u8, 232u8, 238u8, 166u8, 255u8, 251u8, 239u8, 157u8,
+                            186u8, 90u8, 183u8, 29u8, 206u8, 196u8, 198u8, 135u8, 61u8, 161u8,
+                            236u8,
                         ],
                     )
                 }
@@ -17373,6 +17375,36 @@ pub mod api {
             )]
             #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+            #[doc = "A primary provider joined the bucket's provider set. Not emitted"]
+            #[doc = "yet: no call adds a primary to an existing bucket (#417)."]
+            pub struct ProviderAddedToBucket {
+                pub bucket_id: provider_added_to_bucket::BucketId,
+                pub provider: provider_added_to_bucket::Provider,
+            }
+            pub mod provider_added_to_bucket {
+                use super::runtime_types;
+                pub type BucketId = ::core::primitive::u64;
+                pub type Provider = ::subxt::utils::AccountId32;
+            }
+            impl ProviderAddedToBucket {
+                const PALLET_NAME: &'static str = "StorageProvider";
+                const EVENT_NAME: &'static str = "ProviderAddedToBucket";
+            }
+            impl ::subxt::events::DecodeAsEvent for ProviderAddedToBucket {
+                fn is_event(pallet_name: &str, event_name: &str) -> bool {
+                    pallet_name == Self::PALLET_NAME && event_name == Self::EVENT_NAME
+                }
+            }
+            #[derive(
+                :: subxt :: ext :: scale_decode :: DecodeAsType,
+                :: subxt :: ext :: scale_encode :: EncodeAsType,
+                Clone,
+                Debug,
+                Eq,
+                PartialEq,
+            )]
+            #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+            #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
             #[doc = "A primary provider left the bucket's provider set."]
             pub struct PrimaryProviderRemoved {
                 pub bucket_id: primary_provider_removed::BucketId,
@@ -26526,13 +26558,20 @@ pub mod api {
                         providers: ::subxt::alloc::vec::Vec<::subxt::utils::AccountId32>,
                     },
                     #[codec(index = 15)]
+                    #[doc = "A primary provider joined the bucket's provider set. Not emitted"]
+                    #[doc = "yet: no call adds a primary to an existing bucket (#417)."]
+                    ProviderAddedToBucket {
+                        bucket_id: ::core::primitive::u64,
+                        provider: ::subxt::utils::AccountId32,
+                    },
+                    #[codec(index = 16)]
                     #[doc = "A primary provider left the bucket's provider set."]
                     PrimaryProviderRemoved {
                         bucket_id: ::core::primitive::u64,
                         provider: ::subxt::utils::AccountId32,
                         reason: runtime_types::storage_primitives::RemovalReason,
                     },
-                    #[codec(index = 16)]
+                    #[codec(index = 17)]
                     #[doc = "A slashed provider was cleaned out of a bucket and the owner's"]
                     #[doc = "escrow released."]
                     SlashedProviderRemoved {
@@ -26540,7 +26579,7 @@ pub mod api {
                         provider: ::subxt::utils::AccountId32,
                         payment_returned_to_owner: ::core::primitive::u128,
                     },
-                    #[codec(index = 17)]
+                    #[codec(index = 18)]
                     #[doc = "A replica confirmed it holds the bucket's data at `mmr_root` and"]
                     #[doc = "was paid for the sync."]
                     ReplicaSynced {
@@ -26550,7 +26589,7 @@ pub mod api {
                         position_matched: ::core::primitive::u8,
                         sync_payment: ::core::primitive::u128,
                     },
-                    #[codec(index = 18)]
+                    #[codec(index = 19)]
                     #[doc = "Funds were added to the balance that pays a replica per sync."]
                     ReplicaSyncBalanceToppedUp {
                         bucket_id: ::core::primitive::u64,
@@ -26558,7 +26597,7 @@ pub mod api {
                         amount: ::core::primitive::u128,
                         new_total: ::core::primitive::u128,
                     },
-                    #[codec(index = 19)]
+                    #[codec(index = 20)]
                     #[doc = "The owner bought more quota on an agreement."]
                     AgreementToppedUp {
                         bucket_id: ::core::primitive::u64,
@@ -26566,7 +26605,7 @@ pub mod api {
                         amount: ::core::primitive::u128,
                         new_max_bytes: ::core::primitive::u64,
                     },
-                    #[codec(index = 20)]
+                    #[codec(index = 21)]
                     #[doc = "An agreement's expiry was pushed out and the extension paid for."]
                     AgreementExtended {
                         bucket_id: ::core::primitive::u64,
@@ -26574,7 +26613,7 @@ pub mod api {
                         new_expires_at: ::core::primitive::u32,
                         payment: ::core::primitive::u128,
                     },
-                    #[codec(index = 21)]
+                    #[codec(index = 22)]
                     #[doc = "An agreement was settled and closed."]
                     AgreementEnded {
                         bucket_id: ::core::primitive::u64,
@@ -26582,7 +26621,7 @@ pub mod api {
                         payment_to_provider: ::core::primitive::u128,
                         burned: ::core::primitive::u128,
                     },
-                    #[codec(index = 22)]
+                    #[codec(index = 23)]
                     #[doc = "Owner redeemed provider-signed terms; bucket created and agreement"]
                     #[doc = "opened atomically."]
                     StorageAgreementEstablished {
@@ -26596,7 +26635,7 @@ pub mod api {
                         >,
                         expires_at: ::core::primitive::u32,
                     },
-                    #[codec(index = 23)]
+                    #[codec(index = 24)]
                     #[doc = "Owner redeemed provider-signed replica terms; replica agreement"]
                     #[doc = "opened against an existing bucket."]
                     ReplicaAgreementEstablished {
@@ -26610,7 +26649,7 @@ pub mod api {
                         >,
                         expires_at: ::core::primitive::u32,
                     },
-                    #[codec(index = 24)]
+                    #[codec(index = 25)]
                     #[doc = "Someone challenged a provider to prove it still holds a chunk."]
                     ChallengeCreated {
                         challenge_id:
@@ -26620,7 +26659,7 @@ pub mod api {
                         challenger: ::subxt::utils::AccountId32,
                         respond_by: ::core::primitive::u32,
                     },
-                    #[codec(index = 25)]
+                    #[codec(index = 26)]
                     #[doc = "The provider proved it holds the data. The two `*_cost` fields"]
                     #[doc = "say who pays which part of the response cost, not who receives"]
                     #[doc = "money — together they always sum to the deposit."]
@@ -26632,7 +26671,7 @@ pub mod api {
                         challenger_cost: ::core::primitive::u128,
                         provider_cost: ::core::primitive::u128,
                     },
-                    #[codec(index = 26)]
+                    #[codec(index = 27)]
                     #[doc = "A provider failed a challenge and lost stake."]
                     ChallengeSlashed {
                         challenge_id:
