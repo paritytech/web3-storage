@@ -29,4 +29,18 @@ pub enum Error {
 
     #[error("Serialization error: {0}")]
     Serialization(String),
+
+    #[error(
+        "Incompatible on-disk storage format at {path}: database is {found}, this build reads \
+         and writes version {expected}. Migrate the database, or move it aside and re-sync this \
+         provider's buckets from the client or a replica"
+    )]
+    IncompatibleFormat {
+        /// Directory the database was opened from.
+        path: String,
+        /// What the database is marked with, in words.
+        found: String,
+        /// Version this build reads and writes.
+        expected: u32,
+    },
 }

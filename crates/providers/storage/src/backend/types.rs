@@ -13,8 +13,8 @@
 //! [`MmrLeaf`] - changes that format, and a provider restarted on data written
 //! by the previous build will fail to decode it. The golden-vector tests in
 //! [`tests::compatibility_tests`] pin the encoding byte-for-byte so such a change breaks the build
-//! instead of a live provider; when one is intended, it needs a versioning and
-//! migration story (see issue #375) alongside the new vectors.
+//! instead of a live provider. An intended change also bumps
+//! `rocksdb::FORMAT_VERSION`, which documents what else a bump needs.
 //!
 //! [`StorageBackend`]: super::StorageBackend
 

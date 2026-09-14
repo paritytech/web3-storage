@@ -182,6 +182,19 @@ impl IntoResponse for Error {
                         details: Some(serde_json::json!({ "message": msg })),
                     },
                 ),
+                // Raised when the backend opens the database, so the node
+                // exits before serving. `path` stays out of the response.
+                StorageError::IncompatibleFormat {
+                    path: _,
+                    found,
+                    expected,
+                } => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    ErrorResponse {
+                        error: "incompatible_storage_format".to_string(),
+                        details: Some(serde_json::json!({ "found": found, "expected": expected })),
+                    },
+                ),
             },
             Error::InvalidHash { expected, actual } => (
                 StatusCode::BAD_REQUEST,
@@ -487,6 +500,14 @@ mod tests {
                 "x".into()
             ))),
             StatusCode::NOT_FOUND
+        );
+        assert_eq!(
+            status_of(Error::from(provider_storage::Error::IncompatibleFormat {
+                path: "/data".into(),
+                found: "version 2".into(),
+                expected: 1
+            })),
+            StatusCode::INTERNAL_SERVER_ERROR
         );
         assert_eq!(
             status_of(Error::InvalidHash {
