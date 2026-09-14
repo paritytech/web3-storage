@@ -829,9 +829,10 @@ pub enum Event<T: Config> {
         provider: T::AccountId,
         reason: RemovalReason,
     },
-    // DRIFT-017: never emitted — `dev` reports an early end as AgreementEnded
-    // plus PrimaryProviderRemoved { reason: AdminTerminated }. #403 removes
-    // the variant from the pallet and from this listing.
+    // DRIFT-017: removed from the pallet in #403 because nothing emits it —
+    // `dev` reports an early end as AgreementEnded plus
+    // PrimaryProviderRemoved { reason: AdminTerminated }. Keep here and
+    // implement, or remove from design?
     // Proposal: remove from design.
     PrimaryAgreementEndedEarly {
         bucket_id: BucketId,
@@ -872,10 +873,10 @@ pub enum Event<T: Config> {
     // Agreement events
     // ─────────────────────────────────────────────────────────────
     
-    // DRIFT-018: leftover of the request/accept flow (DRIFT-001) — `dev`
-    // reports agreement creation as StorageAgreementEstablished /
-    // ReplicaAgreementEstablished below. #403 removes the variant from the
-    // pallet and from this listing.
+    // DRIFT-018: removed from the pallet in #403 because nothing emits it —
+    // leftover of the request/accept flow (DRIFT-001); `dev` reports agreement
+    // creation as StorageAgreementEstablished / ReplicaAgreementEstablished
+    // below. Keep here and implement, or remove from design?
     // Proposal: remove from design.
     AgreementAccepted {
         bucket_id: BucketId,
@@ -908,9 +909,10 @@ pub enum Event<T: Config> {
         payment_to_provider: BalanceOf<T>,
         burned: BalanceOf<T>,
     },
-    // DRIFT-019: never emitted — claim_expired_agreement settles through the
-    // same path as end_agreement and reports AgreementEnded. #403 removes the
-    // variant from the pallet and from this listing.
+    // DRIFT-019: removed from the pallet in #403 because nothing emits it —
+    // claim_expired_agreement settles through the same path as end_agreement
+    // and reports AgreementEnded. Keep here and implement, or remove from
+    // design?
     // Proposal: remove from design.
     AgreementExpiredClaimed {
         bucket_id: BucketId,
