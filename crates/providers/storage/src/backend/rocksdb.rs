@@ -276,8 +276,7 @@ impl DiskStorage {
                 .db
                 .cf_handle(CF_BUCKETS)
                 .ok_or_else(|| Error::Storage("Buckets CF not found".to_string()))?;
-            let bucket_value =
-                bincode::serialize(&bucket).map_err(|e| Error::Serialization(e.to_string()))?;
+            let bucket_value = bucket.encode();
 
             let mut batch = rocksdb::WriteBatch::default();
             batch.put_cf(&cf_nodes, key, &value);
