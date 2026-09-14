@@ -180,12 +180,6 @@ pub mod pallet {
         DriveNameTooLong,
         /// Drive ID overflow
         DriveIdOverflow,
-        /// Failed to cleanup bucket in Layer 0
-        BucketCleanupFailed,
-        /// Not authorized to share this drive (must be owner or bucket admin)
-        NotAuthorizedToShare,
-        /// Failed to update bucket membership in Layer 0
-        MembershipUpdateFailed,
     }
 
     #[pallet::call]
@@ -305,8 +299,7 @@ pub mod pallet {
             let total_refunded = pallet_storage_provider::Pallet::<T>::cleanup_bucket_internal(
                 drive.bucket_id,
                 &who,
-            )
-            .map_err(|_| Error::<T>::BucketCleanupFailed)?;
+            )?;
 
             // Remove bucket-to-drive mapping
             BucketToDrive::<T>::remove(drive.bucket_id);
@@ -333,7 +326,8 @@ pub mod pallet {
         /// Share a drive with another account by adding them as a member of
         /// the underlying Layer 0 bucket.
         ///
-        /// The caller must be the drive owner or an Admin of the underlying bucket.
+        /// The caller must be an admin of the underlying bucket; the drive owner
+        /// is one unless they stepped down. Layer 0 errors surface unchanged.
         ///
         /// Parameters:
         /// - `drive_id`: The drive to share
@@ -351,19 +345,12 @@ pub mod pallet {
 
             let drive = Drives::<T>::get(drive_id).ok_or(Error::<T>::DriveNotFound)?;
 
-            // Drive owner always has permission; non-owners must be bucket Admin
-            if drive.owner != who {
-                // Delegate the admin check to set_member_internal which calls ensure_admin
-                // If the caller isn't an admin, set_member_internal will return NotBucketAdmin
-            }
-
             pallet_storage_provider::Pallet::<T>::set_member_internal(
                 &who,
                 drive.bucket_id,
                 member.clone(),
                 role,
-            )
-            .map_err(|_| Error::<T>::MembershipUpdateFailed)?;
+            )?;
 
             Self::deposit_event(Event::DriveShared {
                 drive_id,
@@ -376,7 +363,8 @@ pub mod pallet {
 
         /// Remove a member's access to a shared drive.
         ///
-        /// The caller must be the drive owner or an Admin of the underlying bucket.
+        /// The caller must be an admin of the underlying bucket. Layer 0 errors
+        /// surface unchanged.
         ///
         /// Parameters:
         /// - `drive_id`: The drive to unshare
@@ -396,8 +384,7 @@ pub mod pallet {
                 &who,
                 drive.bucket_id,
                 member.clone(),
-            )
-            .map_err(|_| Error::<T>::MembershipUpdateFailed)?;
+            )?;
 
             Self::deposit_event(Event::DriveUnshared { drive_id, member });
 

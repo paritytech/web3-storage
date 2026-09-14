@@ -17,7 +17,7 @@ import {
   ContextMenuSeparator,
 } from "@/components/ui/context-menu";
 import { useDrives, useSelectedDrive, selectDrive, deleteDrive } from "@/state";
-import { formatBytes } from "@/lib/utils";
+import { formatBytes } from "@web3-storage/format";
 import type { DriveInfo } from "@/lib/drive-client";
 import { toast } from "@/components/ui/toaster";
 import ConfirmDialog from "./ConfirmDialog";

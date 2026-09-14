@@ -21,7 +21,7 @@ import {
   type CreationStatus,
 } from "@/state";
 import { type AvailableProvider, type Visibility } from "@/lib/s3-client";
-import { formatBytes } from "@/lib/utils";
+import { formatBytes } from "@web3-storage/format";
 import ProviderPickerPanel from "./ProviderPickerPanel";
 import { negotiateProviderTerms } from "@web3-storage/sdk";
 

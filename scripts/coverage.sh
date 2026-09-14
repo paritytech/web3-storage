@@ -31,6 +31,7 @@ COV_PACKAGES=(
 	provider-replica
 	provider-storage
 	provider-challenge
+	provider-types
 )
 
 # Not measured, with the reason per crate.

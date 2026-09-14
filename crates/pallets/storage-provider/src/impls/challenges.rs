@@ -200,12 +200,6 @@ impl<T: Config> Pallet<T> {
         PendingChallenges::<T>::mutate(&provider, |n| *n = n.saturating_add(1));
         PendingChallengesByBucket::<T>::mutate(bucket_id, &provider, |n| *n = n.saturating_add(1));
 
-        // Bump challenger's total_challenges aggregate so the SDK's
-        // `get_challenge_stats` doesn't have to scan event history.
-        ChallengerStats::<T>::mutate(&challenger, |stats| {
-            stats.total_challenges = stats.total_challenges.saturating_add(1);
-        });
-
         let challenge_id = ChallengeId { deadline, index };
 
         Self::deposit_event(Event::ChallengeCreated {
@@ -259,13 +253,6 @@ impl<T: Config> Pallet<T> {
             // `try_state`) would keep `remove_slashed` gated on purpose —
             // bookkeeping honesty over guaranteed cleanup.
             provider_info.stake = provider_info.stake.saturating_sub(actually_slashed);
-
-            // Bump the challenger's successful-challenge count. Challengers
-            // earn no reward (the slashed stake goes entirely to the
-            // Treasury), so only the counter moves here.
-            ChallengerStats::<T>::mutate(&challenge.challenger, |stats| {
-                stats.successful_challenges = stats.successful_challenges.saturating_add(1);
-            });
 
             Self::deposit_event(Event::ChallengeSlashed {
                 challenge_id,
