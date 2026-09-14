@@ -790,6 +790,12 @@ pub enum Event<T: Config> {
         provider: T::AccountId,
         reason: RemovalReason,
     },
+    PrimaryAgreementEndedEarly {
+        bucket_id: BucketId,
+        provider: T::AccountId,
+        payment_to_provider: BalanceOf<T>,
+        burned: BalanceOf<T>,
+    },
     SlashedProviderRemoved {
         bucket_id: BucketId,
         provider: T::AccountId,
@@ -823,6 +829,29 @@ pub enum Event<T: Config> {
     // Agreement events
     // ─────────────────────────────────────────────────────────────
     
+    AgreementRequested {
+        bucket_id: BucketId,
+        provider: T::AccountId,
+        requester: T::AccountId,
+        max_bytes: u64,
+        payment_locked: BalanceOf<T>,
+        duration: BlockNumberFor<T>,
+    },
+    AgreementAccepted {
+        bucket_id: BucketId,
+        provider: T::AccountId,
+        expires_at: BlockNumberFor<T>,
+    },
+    AgreementRejected {
+        bucket_id: BucketId,
+        provider: T::AccountId,
+        payment_returned: BalanceOf<T>,
+    },
+    AgreementRequestWithdrawn {
+        bucket_id: BucketId,
+        provider: T::AccountId,
+        payment_returned: BalanceOf<T>,
+    },
     AgreementToppedUp {
         bucket_id: BucketId,
         provider: T::AccountId,
@@ -846,6 +875,11 @@ pub enum Event<T: Config> {
         provider: T::AccountId,
         payment_to_provider: BalanceOf<T>,
         burned: BalanceOf<T>,
+    },
+    AgreementExpiredClaimed {
+        bucket_id: BucketId,
+        provider: T::AccountId,
+        payment_to_provider: BalanceOf<T>,
     },
 
     // ─────────────────────────────────────────────────────────────
