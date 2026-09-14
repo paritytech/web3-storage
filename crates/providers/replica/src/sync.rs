@@ -43,6 +43,8 @@ impl ReplicaSync {
         bucket_id: BucketId,
         primary_url: &str,
     ) -> Result<H256, Error> {
+        // TODO: (we need to put node's RPC to separate crate,
+        //               something like provider's versioned protocol)
         // Get primary's current MMR state
         let response = self
             .http
