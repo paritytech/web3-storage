@@ -52,6 +52,35 @@ A Layer 0 bucket has four states. Only the transitions listed exist.
 it is not a bucket transition. `delete_s3_bucket` removes the S3 registry
 entry only; the Layer 0 bucket and its agreements remain.
 
+Solid arrows are implemented on `dev`. Dashed arrows and the dashed state are
+described in the design and have no extrinsic. In-state calls from the table
+are left off to keep the drawing readable.
+
+```mermaid
+flowchart LR
+    none(("no bucket"))
+    Active["Active<br/>one primary under agreement"]
+    Frozen["Frozen<br/>append-only, irreversible"]
+    NoPrimary["No primary<br/>read-only forever"]
+    Deleted["Deleted"]
+    Multi["Active, 2+ primaries<br/>design only"]
+
+    none -- "establish_storage_agreement<br/>owner · creates bucket + sole primary" --> Active
+    Active -- "freeze_bucket<br/>admin" --> Frozen
+    Active -- "end_agreement · claim_expired_agreement · remove_slashed" --> NoPrimary
+    Frozen -- "end_agreement · claim_expired_agreement · remove_slashed" --> NoPrimary
+    Active -- "delete_drive" --> Deleted
+    Frozen -- "delete_drive" --> Deleted
+    NoPrimary -- "delete_drive" --> Deleted
+
+    NoPrimary -. "no call: add or replace primary" .-> Active
+    Active -. "no call: add a primary" .-> Multi
+    Multi -. "min_providers, signature bitfield,<br/>extend_checkpoint unreachable" .-> Multi
+
+    classDef missing stroke-dasharray: 6 4;
+    class Multi missing;
+```
+
 ### Not implemented
 
 - **Active with two or more primaries. Is this still the target?** The design
@@ -77,34 +106,110 @@ entry only; the Layer 0 bucket and its agreements remain.
 
 ## Main questions
 
-1. **Bucket-level provider change.** Is it intended that a bucket moves to a
-   new provider, or that a primary is added to an existing bucket? The
-   design promises a stable `bucket_id` across providers and has no path to
-   keep it.
-2. **Provider-to-provider transfer.** Should a joining primary obtain the
-   data from any provider under agreement on the bucket, the way replicas do,
-   instead of the client re-uploading? (#65 §1, §4)
-3. **Liability of a joining primary.** A primary is slashable only for
-   snapshots it signed, and only a writer/admin can add its signature. Should
-   a primary attest possession itself? Is there a middle ground between
-   "one signature is enough" and "all primaries must sign"?
-4. **Replica to primary.** Should a provider be replica and primary of one
-   bucket at once, or be promoted in place, so a replica can serve as warm
-   standby?
-5. **Retention after expiry.** The provider may delete data at the expiry
-   block; all challenges stop there. Should a retention period exist during
-   which the provider stays challengeable, so a transfer has a window?
-6. **Renewal and notice.** Renewal needs a live, funded owner before the
-   expiry block, and a provider can block extensions one block before it.
-   Should there be auto-renew from escrow and a minimum notice period?
-7. **dApp user data ownership.** One operator bucket (users as writers, a
-   shared key, or a contract), one bucket per user, or contract-owned
-   buckets? Does every user need an agreement? The design has no dApp use
-   case.
-8. **Layer 1.** `delete_drive` ends every agreement on the bucket early with
-   refunds, including third-party replicas. Drive fields mirror the first
-   agreement and never update. After #414 a drive owner and its agreement
-   owner can diverge. What does Layer 1 want here?
+Grouped into six topics, in meeting order.
+
+### 1. Bucket lifecycle
+
+- **Bucket-level provider change.** Is it intended that a bucket moves to a
+  new provider, or that a primary is added to an existing bucket? The
+  design promises a stable `bucket_id` across providers and has no path to
+  keep it.
+- **Retention after expiry.** The provider may delete data at the expiry
+  block; all challenges stop there. Should a retention period exist during
+  which the provider stays challengeable, so a transfer has a window?
+- **Renewal and notice.** Renewal needs a live, funded owner before the
+  expiry block, and a provider can block extensions one block before it.
+  Should there be auto-renew from escrow and a minimum notice period?
+
+### 2. Multi-provider
+
+Decide first whether multi-primary is still the target (see *Not
+implemented*). If yes, the join path is the missing piece and the rest
+follows. If no, the design should say single primary plus replicas, and
+transfer reduces to replacing the one primary.
+
+- **Provider-to-provider transfer.** Should a joining primary obtain the
+  data from any provider under agreement on the bucket, the way replicas do,
+  instead of the client re-uploading? (#65 §1, §4)
+- **Liability of a joining primary.** A primary is slashable only for
+  snapshots it signed, and only a writer/admin can add its signature. Should
+  a primary attest possession itself? Is there a middle ground between
+  "one signature is enough" and "all primaries must sign"?
+- **Replica to primary.** Should a provider be replica and primary of one
+  bucket at once, or be promoted in place, so a replica can serve as warm
+  standby?
+
+### 3. Incentives
+
+The stake is a hold on the provider's balance and earns nothing while held,
+so it forgoes relay staking yield for the life of the longest agreement. The
+fee sits in the owner's escrow and is paid to the provider only at
+settlement.
+
+- **Capital cost of a 1-year primary.** Stake locked for a year with no
+  yield, fee received at month 12. Acceptable, or should the fee stream or
+  vest per checkpoint?
+- **Nobody challenges.** A successful challenger gets a refund and no reward
+  (design v2.1), and the provider node does not challenge. Who verifies a
+  departing or joining primary?
+- **Slash granularity.** One failed challenge slashes the entire global
+  stake across all agreements, including while a provider winds down one
+  bucket and serves others.
+- **Overlap payment.** During a transfer both providers are paid for the
+  same bytes and the bulk fetch is unpaid.
+
+### 4. 1-year contract numbers
+
+Fee = `price_per_byte × max_bytes × duration`, in integer plancks per byte
+per anchor block. One year is 5,256,000 relay blocks. The whole fee is
+escrowed upfront as a hold on the owner and paid out at settlement; early
+end refunds `fee × remaining / total`. Paseo constants on `dev`:
+`MinProviderStake` 1,000 UNIT, `MinStakePerByte` 1,000 plancks (1 UNIT per
+GB), `SettlementTimeout` 24 relay hours, `ChallengeDeposit` 1 UNIT,
+`max_duration` provider-set and unbounded by default.
+
+- **Price granularity.** The smallest non-zero price is 1 planck per byte
+  per block, so 1 GB for a year costs at least 5,256 UNIT while the stake
+  backing that GB is 1 UNIT. A 100 GB bucket for a year escrows 525,600 UNIT
+  on day one. Is zero pricing the intended default, or does the unit need to
+  change (per GB-block, per byte-day, fixed-point price)?
+
+### 5. dApp integration
+
+- **dApp user data ownership.** One operator bucket (users as writers, a
+  shared key, or a contract), one bucket per user, or contract-owned
+  buckets? Does every user need an agreement? The design has no dApp use
+  case.
+- **Layer 1.** `delete_drive` ends every agreement on the bucket early with
+  refunds, including third-party replicas. Drive fields mirror the first
+  agreement and never update. After #414 a drive owner and its agreement
+  owner can diverge. What does Layer 1 want here?
+
+### 6. Bulletin vs Web3 Storage coexistence
+
+Bulletin is fee-less, authorization-gated, ~14-day renewable TTL, real IPFS
+CIDs over Bitswap, and officially interim until the JAM data lake. Web3
+Storage is paid, staked, long-term, with no CIDs and no Bitswap. Three
+models are on the tracker:
+
+| Model | Shape | Issue | w3s must add |
+|---|---|---|---|
+| Replace | DotNS, dotli, bulletin-deploy move to w3s buckets | #132 | website/SPA serving, gateway, naming |
+| Durability tier | Bulletin publishes, a w3s replica keeps the bytes past the TTL | #391 | a replica that syncs from Bulletin; today replicas sync only from w3s primaries |
+| Shared retrieval plane | both serve the same content addresses | #390 | real CIDs or a CID↔`data_root` map, chunking parity, Bitswap in the provider |
+
+- **Which model first.** Replace follows the official direction; durability
+  tier is the smallest change; shared retrieval touches the data model.
+- **Replica from a foreign source.** The replica role is read-only, syncs
+  only from w3s primaries, and must confirm against one of the last ~113
+  anchor roots. Bulletin content has no such root. Own role, or a relaxed
+  confirmation rule?
+- **Who pays and who is liable.** Bulletin is fee-less and unstaked; a w3s
+  replica is paid and slashable. Who owns the mirror agreement, and does the
+  transfer path from topic 2 apply once the mirror is the only copy after
+  the TTL?
+- **Positioning.** w3s is the durable storage market, not a data
+  availability service (#43).
 
 ## Gaps
 
@@ -143,5 +248,6 @@ entry only; the Layer 0 bucket and its agreements remain.
 
 #65, #281, #107 (migration, wind-down) · #332, #388, #302 (multi-provider
 checkpoints) · #134, #133 (dApps) · #414, #376 (ownership transfer) · #382,
-#383, #310 (provider node) · `docs/drafts/CHECKPOINT_PROTOCOL.md`,
+#383, #310 (provider node) · #132, #391, #390, #43 (Bulletin) ·
+`docs/drafts/CHECKPOINT_PROTOCOL.md`,
 `docs/drafts/smart-contracts.md`, `docs/drafts/marketplace.md`.
