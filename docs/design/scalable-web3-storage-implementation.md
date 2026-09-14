@@ -917,6 +917,8 @@ pub enum Event<T: Config> {
         challenge_id: ChallengeId<BlockNumberFor<T>>,
         provider: T::AccountId,
         slashed_amount: BalanceOf<T>,
+        /// Timeout, or which response type failed verification (see `SlashReason`)
+        reason: SlashReason,
     },
 
 }
@@ -1725,6 +1727,21 @@ pub enum RemovalReason {
     Expired,
 }
 
+/// Why a provider was slashed; reported in `ChallengeSlashed` and returned by
+/// `verify_challenge_response` (see "Verification").
+pub enum SlashReason {
+    /// No response before the challenge deadline
+    Timeout,
+    /// `Proof` response whose chunk or MMR proof did not verify
+    InvalidProof,
+    /// `Deleted` response whose `new_start_seq` does not cover the challenged
+    /// leaf or whose admin signature does not verify
+    InvalidDeletionClaim,
+    /// `Superseded` response without a canonical snapshot that replaces the
+    /// challenged root and covers the challenged leaf
+    InvalidSupersededClaim,
+}
+
 pub enum ChallengeResponse<T: Config> {
     /// Provide the chunk with proofs
     Proof {
@@ -1743,8 +1760,10 @@ pub enum ChallengeResponse<T: Config> {
         admin_signature: Signature,
     },
     /// Challenged state has been superseded by a larger canonical checkpoint.
-    /// Valid when: canonical.start_seq <= challenged_seq < canonical.start_seq + canonical.leaf_count
+    /// Valid when: canonical.mmr_root != challenged mmr_root AND
+    /// canonical.start_seq <= challenged_seq < canonical.start_seq + canonical.leaf_count
     /// (The leaf exists in canonical - challenger should challenge the snapshot instead)
+    /// (If the challenged root IS the canonical root, the data is live - must use Proof)
     /// (For challenged_seq < canonical.start_seq, use Deleted response instead)
     /// (For challenged_seq >= canonical_end, provider is liable - must use Proof)
     Superseded,
@@ -2370,13 +2389,13 @@ fn verify_challenge_response(
     response: &ChallengeResponse,
     bucket: &Bucket,
 ) -> Result<(), SlashReason> {
-    let challenged_seq = challenge.start_seq + challenge.leaf_index;
+    let challenged_seq = challenge.start_seq + challenge.target.leaf_index;
     match response {
         ChallengeResponse::Proof { chunk_data, mmr_proof, chunk_proof } => {
             // The chunk must sit in the leaf and the leaf in the committed MMR.
             let chunk_hash = blake2_256(chunk_data);
             let chunk_ok = verify_merkle_proof(
-                chunk_hash, challenge.chunk_index, chunk_proof, &mmr_proof.leaf.data_root,
+                chunk_hash, challenge.target.chunk_index, chunk_proof, &mmr_proof.leaf.data_root,
             );
             let mmr_ok = verify_mmr_proof(mmr_proof, &challenge.mmr_root);
             if chunk_ok && mmr_ok { Ok(()) } else { Err(SlashReason::InvalidProof) }
