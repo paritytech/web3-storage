@@ -1,10 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::*;
-use frame_support::{
-    pallet_prelude::*,
-    traits::{Currency, ExistenceRequirement, ReservableCurrency},
-};
+use frame_support::pallet_prelude::*;
 use sp_runtime::traits::{CheckedAdd, CheckedMul, SaturatedConversion, Saturating, Zero};
 use storage_primitives::{
     BucketId, EndAction, ProviderRole, RemovalReason, ReplayError, Visibility,
@@ -60,27 +57,16 @@ impl<T: Config> Pallet<T> {
             }
         };
 
-        // Unreserve from owner
-        T::Currency::unreserve(&agreement.owner, agreement.payment_locked);
+        // Both arms above split `payment_locked` exactly, so these two drain
+        // the storage-fee part of the hold.
+        Self::settle_payment(&agreement.owner, provider, to_provider)?;
+        Self::settle_payment(&agreement.owner, &T::Treasury::get(), to_burn)?;
 
-        // Pay provider
-        if !to_provider.is_zero() {
-            T::Currency::transfer(
-                &agreement.owner,
-                provider,
-                to_provider,
-                ExistenceRequirement::KeepAlive,
-            )?;
-        }
-
-        // Send burned amount to treasury
-        if !to_burn.is_zero() {
-            T::Currency::transfer(
-                &agreement.owner,
-                &T::Treasury::get(),
-                to_burn,
-                ExistenceRequirement::KeepAlive,
-            )?;
+        // A replica's unspent sync balance is escrowed alongside the fee; the
+        // agreement record is about to go, so return it to the owner rather
+        // than stranding it on hold.
+        if let ProviderRole::Replica { sync_balance, .. } = &agreement.role {
+            Self::release_payment(&agreement.owner, *sync_balance)?;
         }
 
         // Update provider stats
@@ -228,7 +214,7 @@ impl<T: Config> Pallet<T> {
         // Pay at the price the provider signed for.
         let payment =
             Self::calculate_payment(terms.price_per_byte, terms.max_bytes, terms.duration)?;
-        T::Currency::reserve(owner, payment)?;
+        Self::hold_payment(owner, payment)?;
 
         // Bucket creation folded in: owner is sole admin, provider is the
         // bucket's single primary. `create_bucket_internal` emits
@@ -381,7 +367,7 @@ impl<T: Config> Pallet<T> {
         let total_lock = payment
             .checked_add(&replica_terms.sync_balance)
             .ok_or(Error::<T>::ArithmeticOverflow)?;
-        T::Currency::reserve(owner, total_lock)?;
+        Self::hold_payment(owner, total_lock)?;
 
         let expires_at = anchor_block.saturating_add(terms.duration);
         let agreement = StorageAgreement {

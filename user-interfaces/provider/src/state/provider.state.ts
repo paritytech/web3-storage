@@ -45,7 +45,7 @@ export interface ProviderSettings {
   maxDuration: number
   pricePerByte: bigint
   acceptingPrimary: boolean
-  acceptingReplica: boolean
+  /** Price per successful sync confirmation; `null` means not accepting replicas. */
   replicaSyncPrice: bigint | null
   acceptingExtensions: boolean
   maxCapacity: bigint
@@ -614,7 +614,6 @@ function convertProviderSettings(chain: OnChainProviderSettings): ProviderSettin
     maxDuration: chain.maxDuration,
     pricePerByte: chain.pricePerByte,
     acceptingPrimary: chain.acceptingPrimary,
-    acceptingReplica: chain.acceptingReplica,
     replicaSyncPrice: chain.replicaSyncPrice,
     acceptingExtensions: chain.acceptingExtensions,
     maxCapacity: chain.maxCapacity,
