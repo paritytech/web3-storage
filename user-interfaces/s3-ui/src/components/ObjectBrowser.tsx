@@ -47,7 +47,7 @@ import {
   downloadObject,
   deleteObject,
 } from "@/state";
-import { formatBytes, formatTimestamp } from "@/lib/utils";
+import { formatBytes, formatTimestamp } from "@web3-storage/format";
 import { toast } from "@/components/ui/toaster";
 import type { S3ObjectInfo } from "@/lib/s3-client";
 import UploadZone from "./UploadZone";

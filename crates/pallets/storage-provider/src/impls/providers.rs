@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::*;
-use frame_support::{pallet_prelude::*, traits::ReservableCurrency};
+use frame_support::pallet_prelude::*;
 use sp_runtime::traits::CheckedMul;
 use storage_primitives::ReplayWindow;
 
@@ -84,8 +84,8 @@ impl<T: Config> Pallet<T> {
 
         Self::validate_settings(&settings, 0, stake)?;
 
-        // Reserve stake
-        T::Currency::reserve(who, stake)?;
+        // Hold stake as collateral
+        Self::hold_stake(who, stake)?;
 
         let anchor_block = Self::current_anchor_block();
 

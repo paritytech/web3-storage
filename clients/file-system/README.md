@@ -372,10 +372,8 @@ cargo test -p file-system-client test_create_directory
 
 For more details, see:
 
-- **[User Guide](../../docs/filesystems/USER_GUIDE.md)** - Complete user workflows
-- **[Admin Guide](../../docs/filesystems/ADMIN_GUIDE.md)** - System administration
-- **[API Reference](../../docs/filesystems/API_REFERENCE.md)** - Complete API docs
-- **[Architecture](../../docs/filesystems/ARCHITECTURE.md)** - Encoding, security, chain integration
+- **API reference** - `cargo doc -p file-system-client -p file-system-primitives -p pallet-drive-registry --no-deps --open`
+- **[Layer 0 design](../../docs/design/scalable-web3-storage.md)** - the storage layer underneath
 
 ## License
 

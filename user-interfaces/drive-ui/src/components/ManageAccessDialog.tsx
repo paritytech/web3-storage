@@ -22,7 +22,7 @@ import {
   setBucketVisibility,
 } from "@/state";
 import { toast } from "@/components/ui/toaster";
-import { truncateHash } from "@/lib/utils";
+import { truncateHash } from "@web3-storage/format";
 import type { BucketMember, MemberRole, Visibility } from "@/lib/drive-client";
 
 interface ManageAccessDialogProps {
