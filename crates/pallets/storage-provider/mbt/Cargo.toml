@@ -1,0 +1,39 @@
+[package]
+name = "pallet-storage-provider-mbt"
+version = "0.1.0"
+authors.workspace = true
+edition.workspace = true
+license = "Apache-2.0"
+repository.workspace = true
+description = "Model-based tests replaying the Quint challenge-protocol spec (specs/quint/challenges.qnt) against the storage-provider pallet"
+publish = false
+
+[dependencies]
+anyhow = { workspace = true }
+codec = { workspace = true, features = ["std"] }
+frame-support = { workspace = true, features = ["std"] }
+frame-system = { workspace = true, features = ["std"] }
+itf = { workspace = true }
+pallet-balances = { workspace = true, features = ["std"] }
+pallet-storage-provider = { workspace = true, features = ["std"] }
+quint-connect = { workspace = true }
+scale-info = { workspace = true, features = ["std"] }
+serde = { workspace = true, features = ["std"] }
+sp-core = { workspace = true, features = ["std"] }
+sp-io = { workspace = true, features = ["std"] }
+sp-runtime = { workspace = true, features = ["std"] }
+storage-primitives = { workspace = true, features = ["std"] }
+
+[features]
+# The `mbt` test target shells out to the `quint` CLI; gate it so plain
+# `cargo test --workspace` (CI without Node/quint) skips it.
+mbt = []
+
+[lints.rust]
+# This crate is std-only and has no `std` feature, but `construct_runtime!`
+# expands `#[cfg(feature = "std")]` internally.
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("std"))'] }
+
+[[test]]
+name = "mbt"
+required-features = ["mbt"]
