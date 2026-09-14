@@ -15,7 +15,6 @@ import {
 } from '@/components/ui'
 import { SearchInput } from '@/components/SearchInput'
 import { SectionUnavailable } from '@/components/SectionUnavailable'
-import { StatTile } from '@/components/StatTile'
 import { AddressCell } from '@/pages/Agreements'
 import { useAnchorBlock } from '@/state/chain.state'
 import { useSnapshot } from '@/state/explorer.state'
@@ -42,39 +41,14 @@ export function Challenges() {
     )
   }, [snapshot, query])
 
-  // A failed aggregates query must not render as a confident "0 challenges".
-  const agg =
-    snapshot && !snapshot.failedSections.includes('challenge stats')
-      ? snapshot.challengeAggregates
-      : null
-  const aggFailed = snapshot?.failedSections.includes('challenge stats') ?? false
-
   return (
     <div className="space-y-4">
       <div>
         <h1 className="text-2xl font-semibold text-gray-100">Challenges</h1>
         <p className="mt-1 text-sm text-gray-400">
           Open challenges awaiting a response. Resolved challenges are removed from chain
-          storage — only the outcome totals below remain.
+          storage, so outcomes are only recoverable from events.
         </p>
-      </div>
-
-      <div className="grid gap-4 md:grid-cols-3">
-        <StatTile
-          label="Challenges ever raised"
-          value={aggFailed ? '—' : agg ? agg.totalIssued.toLocaleString() : null}
-          testId="challenges-stat-issued"
-        />
-        <StatTile
-          label="Upheld (provider slashed)"
-          value={aggFailed ? '—' : agg ? agg.upheld.toLocaleString() : null}
-          testId="challenges-stat-upheld"
-        />
-        <StatTile
-          label="Dismissed (provider defended)"
-          value={aggFailed ? '—' : agg ? agg.dismissed.toLocaleString() : null}
-          testId="challenges-stat-dismissed"
-        />
       </div>
 
       <SearchInput

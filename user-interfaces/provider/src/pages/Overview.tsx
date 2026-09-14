@@ -502,10 +502,12 @@ function OverviewContent() {
                 </Badge>
               </div>
               <div>
-                <p className="text-sm text-gray-400">Accepting Replica</p>
-                <Badge variant={settings.acceptingReplica ? 'success' : 'secondary'}>
-                  {settings.acceptingReplica ? 'Yes' : 'No'}
-                </Badge>
+                <p className="text-sm text-gray-400">Replica Sync Price</p>
+                {settings.replicaSyncPrice !== null ? (
+                  <p className="font-medium">{formatTokens(settings.replicaSyncPrice)}</p>
+                ) : (
+                  <Badge variant="secondary">Not accepting replicas</Badge>
+                )}
               </div>
               <div>
                 <p className="text-sm text-gray-400">Accepting Extensions</p>
