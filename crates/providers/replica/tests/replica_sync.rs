@@ -6,7 +6,7 @@ use axum::{routing::get, Json, Router};
 use provider_replica::coordinator::{BucketSnapshot, ReplicaAgreementInfo};
 use provider_replica::{
     Error, ReplicaSyncChainClient, ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig,
-    RootSigner, SignedSyncRoots, SyncDuty, SyncResult,
+    SignedSyncRoots, SyncDuty, SyncResult, SyncRoots, SyncRootsSigner,
 };
 use provider_storage::{temp_rocksdb, StorageBackend};
 use sp_core::H256;
@@ -39,10 +39,13 @@ impl AliceSigner {
     }
 }
 
-impl RootSigner for AliceSigner {
-    fn sign_roots(&self, message: &[u8]) -> Result<sp_runtime::MultiSignature, Error> {
+impl SyncRootsSigner for AliceSigner {
+    fn sign_sync_roots(&self, roots: &SyncRoots) -> Result<sp_runtime::MultiSignature, Error> {
+        use codec::Encode;
         use sp_core::Pair as _;
-        Ok(sp_runtime::MultiSignature::Sr25519(self.0.sign(message)))
+        Ok(sp_runtime::MultiSignature::Sr25519(
+            self.0.sign(&roots.encode()),
+        ))
     }
 }
 

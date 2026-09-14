@@ -12,6 +12,7 @@
 //! 5. Handles historical roots matching for late syncs
 
 use crate::sync::ReplicaSync;
+use crate::sync_roots::{SignedSyncRoots, SyncRootsSigner};
 use crate::Error;
 use provider_chain::{BlockEvent, BlockEventRx};
 use provider_storage::StorageBackend;
@@ -183,42 +184,6 @@ pub trait ReplicaSyncChainClient: Send + Sync {
     ) -> Result<(u8, u128), Error>;
 }
 
-/// A replica's signed attestation of the sync roots it claims. Bundling the
-/// array with the signature over its SCALE encoding keeps the signed and the
-/// submitted payload one value — they cannot drift apart.
-#[derive(Clone, Debug)]
-pub struct SignedSyncRoots {
-    /// The roots shape `confirm_replica_sync` expects: target root in
-    /// position 0, positions 1–6 map to the bucket's prime-bucketed
-    /// historical slots (unused by the node today).
-    pub roots: [Option<H256>; 7],
-    /// Scheme-tagged signature over `SCALE(roots)` by the registered key.
-    pub signature: sp_runtime::MultiSignature,
-}
-
-impl SignedSyncRoots {
-    /// Attest the target root with the provider's registered signing key.
-    pub fn sign(signer: &dyn RootSigner, target_mmr_root: H256) -> Result<Self, Error> {
-        let mut roots = [None; 7];
-        roots[0] = Some(target_mmr_root);
-        let signature = signer.sign_roots(&codec::Encode::encode(&roots))?;
-        Ok(Self { roots, signature })
-    }
-}
-
-/// Signs a replica's sync-roots attestation with the provider's registered
-/// key. The node owns the key material and the scheme it was registered
-/// under, so it supplies the implementation; this crate only needs the
-/// resulting scheme-tagged signature.
-///
-/// Implementations are expected to refuse when no key is configured, or when
-/// the local key no longer matches the on-chain registration - a signature the
-/// pallet cannot verify is worse than a skipped confirmation.
-pub trait RootSigner: Send + Sync {
-    /// Sign `message` (the SCALE-encoded roots array) or explain why not.
-    fn sign_roots(&self, message: &[u8]) -> Result<sp_runtime::MultiSignature, Error>;
-}
-
 #[async_trait::async_trait]
 impl<T: ReplicaSyncChainClient> ReplicaSyncChainClient for Arc<T> {
     async fn get_current_block(&self) -> Result<u64, Error> {
@@ -319,7 +284,7 @@ pub struct ReplicaSyncCoordinator {
     replica_sync: ReplicaSync,
     /// Signs sync-roots attestations. `None` in provider-id-only setups, where
     /// the coordinator syncs data but cannot confirm on-chain.
-    signer: Option<Arc<dyn RootSigner>>,
+    signer: Option<Arc<dyn SyncRootsSigner>>,
     /// Track active sync operations by bucket.
     active_syncs: HashMap<BucketId, tokio::task::JoinHandle<SyncResult>>,
 }
@@ -348,7 +313,7 @@ impl ReplicaSyncCoordinator {
     /// Attach the signer used to attest sync roots. Without one the
     /// coordinator still syncs data but refuses to submit confirmations,
     /// since the pallet verifies the attestation against the registered key.
-    pub fn with_signer(mut self, signer: Arc<dyn RootSigner>) -> Self {
+    pub fn with_signer(mut self, signer: Arc<dyn SyncRootsSigner>) -> Self {
         self.signer = Some(signer);
         self
     }

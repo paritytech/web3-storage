@@ -40,8 +40,8 @@ pub use provider_coordinator::{
 };
 pub use provider_replica::{
     ReplicaSync, ReplicaSyncChainClient, ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig,
-    ReplicaSyncCoordinatorHandle, RootSigner, SignedSyncRoots, SyncCommand, SyncCoordinatorStatus,
-    SyncDuty, SyncResult,
+    ReplicaSyncCoordinatorHandle, SignedSyncRoots, SyncCommand, SyncCoordinatorStatus, SyncDuty,
+    SyncResult, SyncRoots, SyncRootsSigner,
 };
 pub use types::*;
 
@@ -217,8 +217,11 @@ impl ProviderState {
 /// Lets the replica sync coordinator attest its sync roots with the node's
 /// scheme-tagged key, under the same "must match the on-chain registration"
 /// guard every other signing path goes through.
-impl RootSigner for ProviderState {
-    fn sign_roots(&self, message: &[u8]) -> Result<MultiSignature, provider_replica::Error> {
+impl SyncRootsSigner for ProviderState {
+    fn sign_sync_roots(
+        &self,
+        roots: &SyncRoots,
+    ) -> Result<MultiSignature, provider_replica::Error> {
         let to_replica_err =
             |e: Error| provider_replica::Error::Node(format!("cannot sign sync roots: {e}"));
         self.ensure_signing_key_registered()
@@ -228,7 +231,7 @@ impl RootSigner for ProviderState {
             .as_ref()
             .ok_or(Error::SigningUnavailable)
             .map_err(to_replica_err)?;
-        Ok(keypair.sign(message))
+        Ok(keypair.sign(&roots.encode()))
     }
 }
 

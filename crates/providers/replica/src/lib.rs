@@ -5,13 +5,14 @@
 
 pub mod coordinator;
 pub mod sync;
+pub mod sync_roots;
 
 pub use coordinator::{
     ReplicaSyncChainClient, ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig,
-    ReplicaSyncCoordinatorHandle, RootSigner, SignedSyncRoots, SyncCommand, SyncCoordinatorStatus,
-    SyncDuty, SyncResult,
+    ReplicaSyncCoordinatorHandle, SyncCommand, SyncCoordinatorStatus, SyncDuty, SyncResult,
 };
 pub use sync::ReplicaSync;
+pub use sync_roots::{SignedSyncRoots, SyncRoots, SyncRootsSigner};
 
 use std::fmt;
 use storage_primitives::BucketId;
