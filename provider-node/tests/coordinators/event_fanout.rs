@@ -340,6 +340,7 @@ async fn replica_agreement_event_triggers_duty_pass() {
         state.0.storage.clone(),
         state.0.provider_id.clone(),
         Box::new(Arc::clone(&mock)),
+        None,
     );
 
     let (events_tx, events_rx) = tokio::sync::broadcast::channel(16);
@@ -406,6 +407,7 @@ async fn bucket_checkpointed_event_drives_duty_through_sync_attempt() {
         state.storage.clone(),
         state.provider_id.clone(),
         Box::new(Arc::clone(&mock)),
+        None,
     );
 
     let results: Arc<Mutex<Vec<storage_provider_node::SyncResult>>> =

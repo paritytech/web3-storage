@@ -291,11 +291,16 @@ pub struct ReplicaSyncCoordinator {
 
 impl ReplicaSyncCoordinator {
     /// Create a new replica sync coordinator.
+    ///
+    /// `signer` attests sync roots. Without one the coordinator still syncs
+    /// data but refuses to submit confirmations, since the pallet verifies
+    /// the attestation against the registered key.
     pub fn new(
         config: ReplicaSyncCoordinatorConfig,
         storage: Arc<dyn StorageBackend>,
         provider_id: String,
         chain_client: Box<dyn ReplicaSyncChainClient>,
+        signer: Option<Arc<dyn SyncRootsSigner>>,
     ) -> Self {
         let replica_sync = ReplicaSync::new(storage.clone());
 
@@ -305,17 +310,9 @@ impl ReplicaSyncCoordinator {
             provider_id,
             chain_client,
             replica_sync,
-            signer: None,
+            signer,
             active_syncs: HashMap::new(),
         }
-    }
-
-    /// Attach the signer used to attest sync roots. Without one the
-    /// coordinator still syncs data but refuses to submit confirmations,
-    /// since the pallet verifies the attestation against the registered key.
-    pub fn with_signer(mut self, signer: Arc<dyn SyncRootsSigner>) -> Self {
-        self.signer = Some(signer);
-        self
     }
 
     /// Start the replica sync coordinator background service.
