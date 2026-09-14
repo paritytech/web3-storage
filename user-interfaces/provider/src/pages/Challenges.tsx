@@ -22,7 +22,7 @@ import {
 import { challengeKey } from '@/state/challengeKey'
 import { useSelectedAccount } from '@/state/wallet.state'
 import { RequireProvider } from '@/components/RequireProvider'
-import { formatAddress, formatBlockNumber } from '@/utils/format'
+import { formatAddress, formatBlockNumber } from '@web3-storage/format'
 
 export function Challenges() {
   return (

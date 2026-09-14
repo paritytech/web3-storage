@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { useChallengeHistory, useChallengeHistoryLoading, refreshChallengeHistory } from "@/state/challenge.state";
 import type { ChallengeHistoryEntry } from "@/state/challenge.state";
 import { useEndpoint } from "@/state";
-import { truncateHash, formatTokens } from "@/lib/utils";
+import { formatUnits, truncateHash } from "@web3-storage/format";
 
 interface ChallengeHistoryPanelProps {
   bucketId: bigint | null;
@@ -60,7 +60,7 @@ function HistoryEntry({ entry, explorerUrl }: { entry: ChallengeHistoryEntry; ex
             Response: <span className="text-foreground">{entry.defenseDetails.responseTimeBlocks} blocks</span>
           </span>
           <span className="text-muted-foreground">
-            Your cost: <span className="text-foreground">{formatTokens(entry.defenseDetails.challengerCost)} tokens</span>
+            Your cost: <span className="text-foreground">{formatUnits(entry.defenseDetails.challengerCost)} tokens</span>
           </span>
         </div>
       )}
@@ -68,10 +68,10 @@ function HistoryEntry({ entry, explorerUrl }: { entry: ChallengeHistoryEntry; ex
       {!isDefended && entry.slashDetails && (
         <div className="grid grid-cols-2 gap-x-6 text-xs">
           <span className="text-muted-foreground">
-            Slashed: <span className="text-foreground">{formatTokens(entry.slashDetails.slashedAmount)} tokens</span>
+            Slashed: <span className="text-foreground">{formatUnits(entry.slashDetails.slashedAmount)} tokens</span>
           </span>
           <span className="text-muted-foreground">
-            Your reward: <span className="text-foreground">{formatTokens(entry.slashDetails.challengerReward)} tokens</span>
+            Your reward: <span className="text-foreground">{formatUnits(entry.slashDetails.challengerReward)} tokens</span>
           </span>
         </div>
       )}

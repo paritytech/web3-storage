@@ -48,8 +48,8 @@ pub enum BlockEvent {
     /// only recoverable via the GC's "local bucket with no chain row" rescan.
     /// Also invalidates cached membership for the bucket.
     BucketDeleted { bucket_id: BucketId },
-    /// Any agreement lifecycle change on a bucket (established, accepted,
-    /// topped up, ended, expired-claimed). The GC treats all of them as
+    /// Any agreement lifecycle change on a bucket (established, topped up,
+    /// extended, ended). The GC treats all of them as
     /// "reconcile this bucket": re-read quota, detect lost agreements.
     AgreementChanged {
         bucket_id: BucketId,

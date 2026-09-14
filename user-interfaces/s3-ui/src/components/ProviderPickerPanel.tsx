@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { queryMatchingProviders } from "@/state";
 import type { MatchingProviders, AvailableProvider } from "@/lib/s3-client";
-import { formatBytes, truncateHash } from "@/lib/utils";
+import { formatBytes, truncateHash } from "@web3-storage/format";
 
 interface ProviderPickerPanelProps {
   onSelect: (provider: AvailableProvider) => void;

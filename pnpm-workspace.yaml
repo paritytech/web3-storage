@@ -9,6 +9,7 @@ packages:
   - "user-interfaces/drive-ui"
   - "user-interfaces/s3-ui"
   - "user-interfaces/photos"
+  - "user-interfaces/explorer"
   - "packages/*"
   - "examples/papi"
 

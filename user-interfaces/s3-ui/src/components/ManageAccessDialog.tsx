@@ -20,7 +20,7 @@ import {
   useSignerAddress,
 } from "@/state";
 import type { BucketMember, MemberRole, Visibility } from "@/lib/s3-client";
-import { truncateHash } from "@/lib/utils";
+import { truncateHash } from "@web3-storage/format";
 import { toast } from "@/components/ui/toaster";
 import { isValidSs58 } from "@/lib/s3-client";
 
