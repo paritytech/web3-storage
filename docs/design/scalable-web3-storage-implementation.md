@@ -787,10 +787,6 @@ pub enum Event<T: Config> {
         commitment: Commitment,
         providers: Vec<T::AccountId>,
     },
-    ProviderAddedToBucket {
-        bucket_id: BucketId,
-        provider: T::AccountId,
-    },
     PrimaryProviderRemoved {
         bucket_id: BucketId,
         provider: T::AccountId,
