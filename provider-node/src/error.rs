@@ -9,6 +9,7 @@ use axum::{
 };
 use provider_auth::{AuthError, MembershipError};
 use serde::Serialize;
+use std::fmt;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -25,14 +26,37 @@ pub enum Error {
     #[error("Not authorized: {0}")]
     NotAuthorized(String),
 
-    #[error("Storage error: {0}")]
-    Storage(String),
+    /// A read against chain state (RPC call, storage fetch/iter, runtime API
+    /// call) failed.
+    #[error("Chain query failed ({what}): {reason}")]
+    ChainQuery { what: &'static str, reason: String },
 
-    #[error("Serialization error: {0}")]
-    Serialization(String),
+    /// An extrinsic could not be submitted or its watch died before a
+    /// verdict was seen; the transaction may or may not have landed, so this
+    /// is safe to retry.
+    #[error("Failed to submit {what}: {reason}")]
+    TxSubmit { what: &'static str, reason: String },
 
-    #[error("Internal error: {0}")]
-    Internal(String),
+    /// The chain rejected the extrinsic itself; resubmitting would fail
+    /// identically.
+    #[error("{what} rejected: {reason}")]
+    TxRejected { what: &'static str, reason: String },
+
+    /// A value read from the chain or from a request body did not have the
+    /// expected shape.
+    #[error("Failed to decode {what}: {reason}")]
+    Decode { what: &'static str, reason: String },
+
+    /// The provider's signing key could not be parsed or constructed.
+    #[error("Signing key error ({what}): {reason}")]
+    Signer { what: &'static str, reason: String },
+
+    /// The rate limiter itself failed (e.g. its backing store is
+    /// unreachable). The request is rejected fail-closed rather than let
+    /// through, but this is a distinct condition from [`Error::RateLimited`],
+    /// which means the limiter ran and denied the request.
+    #[error("Rate limiter failed: {0}")]
+    RateLimiterFailed(String),
 
     #[error("Object not found: bucket {bucket_id}, key {key}")]
     ObjectNotFound { bucket_id: u64, key: String },
@@ -110,6 +134,52 @@ pub enum Error {
     RateLimited,
 }
 
+impl Error {
+    /// A chain-state read failed. `what` names the read (e.g. `"current
+    /// block"`); `e` is the underlying transport/RPC error, captured via its
+    /// `Display` so callers never need to name the chain client's own error
+    /// type.
+    pub fn chain_query(what: &'static str, e: impl fmt::Display) -> Self {
+        Error::ChainQuery {
+            what,
+            reason: e.to_string(),
+        }
+    }
+
+    /// A value read from the chain or from a request body did not decode
+    /// into the expected shape.
+    pub fn decode(what: &'static str, e: impl fmt::Display) -> Self {
+        Error::Decode {
+            what,
+            reason: e.to_string(),
+        }
+    }
+
+    /// An extrinsic submission failed in a way that may be safe to retry.
+    pub fn tx_submit(what: &'static str, e: impl fmt::Display) -> Self {
+        Error::TxSubmit {
+            what,
+            reason: e.to_string(),
+        }
+    }
+
+    /// The chain rejected an extrinsic outright.
+    pub fn tx_rejected(what: &'static str, e: impl fmt::Display) -> Self {
+        Error::TxRejected {
+            what,
+            reason: e.to_string(),
+        }
+    }
+
+    /// The provider's signing key could not be parsed or constructed.
+    pub fn signer(what: &'static str, e: impl fmt::Display) -> Self {
+        Error::Signer {
+            what,
+            reason: e.to_string(),
+        }
+    }
+}
+
 /// Reverse of [`Error::Replica`]: `SubxtChainClient`'s `ReplicaSyncChainClient`
 /// impl (in `subxt_client.rs`) shares chain-connection and submission helpers
 /// with `ChallengeChainClient`, which return this node's `Error`, but the
@@ -126,10 +196,15 @@ impl From<Error> for provider_replica::Error {
             Error::InvalidHash { expected, actual } => {
                 provider_replica::Error::InvalidHash { expected, actual }
             }
-            Error::Storage(msg) => provider_replica::Error::Storage(msg),
-            Error::Serialization(msg) => provider_replica::Error::Serialization(msg),
-            Error::Internal(msg) => provider_replica::Error::Internal(msg),
-            other => provider_replica::Error::Internal(other.to_string()),
+            Error::ChainQuery { what, reason } => {
+                provider_replica::Error::ChainQuery { what, reason }
+            }
+            Error::TxSubmit { what, reason } => provider_replica::Error::TxSubmit { what, reason },
+            Error::TxRejected { what, reason } => {
+                provider_replica::Error::TxRejected { what, reason }
+            }
+            Error::Decode { what, reason } => provider_replica::Error::Decode { what, reason },
+            other => provider_replica::Error::Node(other.to_string()),
         }
     }
 }
@@ -234,18 +309,22 @@ impl IntoResponse for Error {
                     details: Some(serde_json::json!({ "reason": reason })),
                 },
             ),
-            Error::Storage(msg) | Error::Internal(msg) => (
+            e @ (Error::ChainQuery { .. }
+            | Error::TxSubmit { .. }
+            | Error::TxRejected { .. }
+            | Error::Signer { .. }
+            | Error::RateLimiterFailed(_)) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 ErrorResponse {
                     error: "internal_error".to_string(),
-                    details: Some(serde_json::json!({ "message": msg })),
+                    details: Some(serde_json::json!({ "message": e.to_string() })),
                 },
             ),
-            Error::Serialization(msg) => (
+            e @ Error::Decode { .. } => (
                 StatusCode::BAD_REQUEST,
                 ErrorResponse {
                     error: "serialization_error".to_string(),
-                    details: Some(serde_json::json!({ "message": msg })),
+                    details: Some(serde_json::json!({ "message": e.to_string() })),
                 },
             ),
             Error::ObjectNotFound { bucket_id, key } => (
@@ -544,15 +623,30 @@ mod tests {
             StatusCode::FORBIDDEN
         );
         assert_eq!(
-            status_of(Error::Storage("x".into())),
+            status_of(Error::chain_query("current block", "timed out")),
             StatusCode::INTERNAL_SERVER_ERROR
         );
         assert_eq!(
-            status_of(Error::Internal("x".into())),
+            status_of(Error::tx_submit("confirm_replica_sync", "watch dropped")),
             StatusCode::INTERNAL_SERVER_ERROR
         );
         assert_eq!(
-            status_of(Error::Serialization("x".into())),
+            status_of(Error::tx_rejected(
+                "confirm_replica_sync",
+                "SyncTooFrequent"
+            )),
+            StatusCode::INTERNAL_SERVER_ERROR
+        );
+        assert_eq!(
+            status_of(Error::signer("keypair", "bad seed")),
+            StatusCode::INTERNAL_SERVER_ERROR
+        );
+        assert_eq!(
+            status_of(Error::RateLimiterFailed("backend unreachable".into())),
+            StatusCode::INTERNAL_SERVER_ERROR
+        );
+        assert_eq!(
+            status_of(Error::decode("node data", "invalid base64")),
             StatusCode::BAD_REQUEST
         );
         assert_eq!(
@@ -723,9 +817,22 @@ mod tests {
                 },
                 "Invalid hash: expected e, got a",
             ),
-            (Error::Storage("s".into()), "Storage error: s"),
-            (Error::Serialization("z".into()), "Serialization error: z"),
-            (Error::Internal("i".into()), "Internal error: i"),
+            (
+                Error::chain_query("current block", "timed out"),
+                "Chain query failed (current block): timed out",
+            ),
+            (
+                Error::tx_submit("confirm_replica_sync", "watch dropped"),
+                "Failed to submit confirm_replica_sync: watch dropped",
+            ),
+            (
+                Error::tx_rejected("confirm_replica_sync", "SyncTooFrequent"),
+                "confirm_replica_sync rejected: SyncTooFrequent",
+            ),
+            (
+                Error::decode("node data", "invalid base64"),
+                "Failed to decode node data: invalid base64",
+            ),
         ];
 
         for (node_err, expected_message) in cases {
@@ -736,7 +843,7 @@ mod tests {
         // Every other node `Error` variant is unreachable from the replica
         // trait's methods but still mapped defensively via `Display`.
         let mapped: ReplicaError = Error::InvalidSignature.into();
-        assert!(matches!(mapped, ReplicaError::Internal(msg) if msg == "Invalid signature"));
+        assert!(matches!(mapped, ReplicaError::Node(msg) if msg == "Invalid signature"));
     }
 
     #[test]

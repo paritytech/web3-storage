@@ -271,7 +271,7 @@ impl ReplicaSyncCoordinatorHandle {
         self.command_tx
             .send(SyncCommand::Stop)
             .await
-            .map_err(|_| Error::Internal("Coordinator channel closed".to_string()))
+            .map_err(|_| Error::ChannelClosed)
     }
 
     /// Pause automatic syncs.
@@ -279,7 +279,7 @@ impl ReplicaSyncCoordinatorHandle {
         self.command_tx
             .send(SyncCommand::Pause)
             .await
-            .map_err(|_| Error::Internal("Coordinator channel closed".to_string()))
+            .map_err(|_| Error::ChannelClosed)
     }
 
     /// Resume automatic syncs.
@@ -287,7 +287,7 @@ impl ReplicaSyncCoordinatorHandle {
         self.command_tx
             .send(SyncCommand::Resume)
             .await
-            .map_err(|_| Error::Internal("Coordinator channel closed".to_string()))
+            .map_err(|_| Error::ChannelClosed)
     }
 
     /// Force a sync for a specific bucket.
@@ -295,7 +295,7 @@ impl ReplicaSyncCoordinatorHandle {
         self.command_tx
             .send(SyncCommand::ForceSync { bucket_id })
             .await
-            .map_err(|_| Error::Internal("Coordinator channel closed".to_string()))
+            .map_err(|_| Error::ChannelClosed)
     }
 
     /// Get current coordinator status.
@@ -304,11 +304,9 @@ impl ReplicaSyncCoordinatorHandle {
         self.command_tx
             .send(SyncCommand::Status { response_tx })
             .await
-            .map_err(|_| Error::Internal("Coordinator channel closed".to_string()))?;
+            .map_err(|_| Error::ChannelClosed)?;
 
-        response_rx
-            .await
-            .map_err(|_| Error::Internal("Status response channel closed".to_string()))
+        response_rx.await.map_err(|_| Error::ChannelClosed)
     }
 }
 

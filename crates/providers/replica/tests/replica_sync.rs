@@ -135,7 +135,7 @@ impl ReplicaSyncChainClient for MockReplicaSyncChainClient {
         let result = &*self.confirm_result.lock().unwrap();
         match result {
             Ok(v) => Ok(*v),
-            Err(e) => Err(Error::Internal(e.to_string())),
+            Err(e) => Err(Error::tx_rejected("confirm_replica_sync", e)),
         }
     }
 }
@@ -224,7 +224,8 @@ async fn confirm_on_chain_surfaces_submission_errors() {
     };
 
     let mock = Arc::new(MockReplicaSyncChainClient::new());
-    *mock.confirm_result.lock().unwrap() = Err(Error::Internal("chain rejected".to_string()));
+    *mock.confirm_result.lock().unwrap() =
+        Err(Error::tx_rejected("confirm_replica_sync", "chain rejected"));
     let (storage, _dir) = test_storage();
     let config = ReplicaSyncCoordinatorConfig::default();
     let coordinator = ReplicaSyncCoordinator::new(

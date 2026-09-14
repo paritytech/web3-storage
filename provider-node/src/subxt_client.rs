@@ -101,11 +101,10 @@ impl SubxtChainClient {
     /// reproduces the provider's registered account — the identity every
     /// on-chain action must be signed by.
     pub fn new(chain_rx: ChainWatch, seed: &str) -> Result<Self, Error> {
-        let uri: subxt_signer::SecretUri = seed
-            .parse()
-            .map_err(|e| Error::Internal(format!("Invalid seed URI: {e}")))?;
+        let uri: subxt_signer::SecretUri =
+            seed.parse().map_err(|e| Error::signer("seed URI", e))?;
         let signer = subxt_signer::sr25519::Keypair::from_uri(&uri)
-            .map_err(|e| Error::Internal(format!("Failed to create signer: {e}")))?;
+            .map_err(|e| Error::signer("keypair", e))?;
 
         tracing::info!(
             "Chain client signing as {}",
@@ -135,7 +134,7 @@ impl SubxtChainClient {
             .api()?
             .at_current_block()
             .await
-            .map_err(|e| Error::Internal(format!("Failed to get current block: {e}")))?;
+            .map_err(|e| Error::chain_query("current block", e))?;
         Ok(u64::from(
             provider_coordinator::fetch_current_anchor_block(&at).await?,
         ))
@@ -183,7 +182,7 @@ impl SubxtChainClient {
     async fn submit_and_finalize<C: subxt::tx::Payload>(
         &self,
         tx: &C,
-        what: &str,
+        what: &'static str,
     ) -> Result<Option<H256>, Error> {
         const RETRY_DELAY: Duration = Duration::from_secs(6);
 
@@ -216,15 +215,15 @@ impl SubxtChainClient {
     async fn try_submit<C: subxt::tx::Payload>(
         &self,
         tx: &C,
-        what: &str,
+        what: &'static str,
         retrying: bool,
     ) -> Attempt {
         match tokio::time::timeout(SUBMIT_TIMEOUT, self.submit_once(tx, what, retrying)).await {
             Ok(attempt) => attempt,
-            Err(_) => Attempt::Retryable(Error::Internal(format!(
-                "not finalized within {}s",
-                SUBMIT_TIMEOUT.as_secs()
-            ))),
+            Err(_) => Attempt::Retryable(Error::tx_submit(
+                what,
+                format!("not finalized within {}s", SUBMIT_TIMEOUT.as_secs()),
+            )),
         }
     }
 
@@ -233,18 +232,18 @@ impl SubxtChainClient {
     async fn submit_once<C: subxt::tx::Payload>(
         &self,
         tx: &C,
-        what: &str,
+        what: &'static str,
         retrying: bool,
     ) -> Attempt {
         let submitted = async {
             self.api()?
                 .at_current_block()
                 .await
-                .map_err(|e| Error::Internal(format!("Failed to get current block: {e}")))?
+                .map_err(|e| Error::chain_query("current block", e))?
                 .transactions()
                 .sign_and_submit_then_watch_default(tx, &self.signer)
                 .await
-                .map_err(|e| Error::Internal(format!("Failed to submit tx: {e}")))
+                .map_err(|e| Error::tx_submit(what, e))
         }
         .await;
 
@@ -274,9 +273,9 @@ impl SubxtChainClient {
             // may or may not have landed, so resubmit and let the duplicate
             // classification above decide.
             Err(e) if !Self::is_dispatch_failure(&e) => {
-                Attempt::Retryable(Error::Internal(format!("tx watch failed: {e}")))
+                Attempt::Retryable(Error::tx_submit(what, format!("tx watch failed: {e}")))
             }
-            Err(e) => Attempt::Rejected(Error::Internal(format!("Transaction failed: {e}"))),
+            Err(e) => Attempt::Rejected(Error::tx_rejected(what, e)),
         }
     }
 

@@ -220,7 +220,7 @@ impl ProviderState {
 impl RootSigner for ProviderState {
     fn sign_roots(&self, message: &[u8]) -> Result<MultiSignature, provider_replica::Error> {
         let to_replica_err =
-            |e: Error| provider_replica::Error::Internal(format!("cannot sign sync roots: {e}"));
+            |e: Error| provider_replica::Error::Node(format!("cannot sign sync roots: {e}"));
         self.ensure_signing_key_registered()
             .map_err(to_replica_err)?;
         let keypair = self

@@ -27,14 +27,12 @@ pub enum Error {
     #[error("Invalid hash: expected {expected}, got {actual}")]
     InvalidHash { expected: String, actual: String },
 
-    #[error("Storage error: {0}")]
-    Storage(String),
-
-    #[error("Serialization error: {0}")]
-    Serialization(String),
-
-    #[error("Internal error: {0}")]
-    Internal(String),
+    /// This variant exists only for `provider-node`'s `From<Error> for
+    /// Error` catch-all, which maps every node error it has no dedicated
+    /// arm for onto this one via `Display`. Nothing in this crate should
+    /// construct it directly.
+    #[error("Node error: {0}")]
+    Node(String),
 
     /// The chain connection itself is unavailable or failed to build.
     #[error(transparent)]
@@ -45,9 +43,19 @@ pub enum Error {
     #[error("Chain query failed ({what}): {reason}")]
     ChainQuery { what: &'static str, reason: String },
 
-    /// A value came back from the chain but did not have the expected shape.
+    /// A value read from the chain or from a primary provider did not have
+    /// the expected shape.
     #[error("Failed to decode {what}: {reason}")]
     Decode { what: &'static str, reason: String },
+
+    /// An HTTP request to a primary provider failed at the transport level
+    /// (connection refused, timed out, DNS failure).
+    #[error("Request to primary failed ({what}): {reason}")]
+    PrimaryRequest { what: &'static str, reason: String },
+
+    /// A primary provider answered but with a non-success HTTP status.
+    #[error("Primary returned error for {what}: status {status}")]
+    PrimaryUnavailable { what: &'static str, status: u16 },
 
     /// An extrinsic could not be submitted or its watch died before a
     /// verdict was seen; the transaction may or may not have landed, so this
@@ -87,9 +95,18 @@ impl Error {
         }
     }
 
-    /// A value read from the chain did not decode into the expected shape.
+    /// A value read from the chain or from a primary provider did not
+    /// decode into the expected shape.
     pub fn decode(what: &'static str, e: impl fmt::Display) -> Self {
         Error::Decode {
+            what,
+            reason: e.to_string(),
+        }
+    }
+
+    /// A request to a primary provider failed at the transport level.
+    pub fn primary_request(what: &'static str, e: impl fmt::Display) -> Self {
+        Error::PrimaryRequest {
             what,
             reason: e.to_string(),
         }
@@ -147,6 +164,10 @@ mod tests {
             Error::tx_rejected("confirm_replica_sync", "SyncTooFrequent").to_string(),
             "confirm_replica_sync rejected: SyncTooFrequent"
         );
+        assert_eq!(
+            Error::primary_request("mmr peaks", "connection refused").to_string(),
+            "Request to primary failed (mmr peaks): connection refused"
+        );
     }
 
     #[test]
@@ -166,6 +187,18 @@ mod tests {
         assert_eq!(
             Error::ChannelClosed.to_string(),
             "Coordinator channel closed"
+        );
+        assert_eq!(
+            Error::PrimaryUnavailable {
+                what: "mmr peaks",
+                status: 404,
+            }
+            .to_string(),
+            "Primary returned error for mmr peaks: status 404"
+        );
+        assert_eq!(
+            Error::Node("cannot sign sync roots: bad key".to_string()).to_string(),
+            "Node error: cannot sign sync roots: bad key"
         );
     }
 }
