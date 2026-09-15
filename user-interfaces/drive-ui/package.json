@@ -14,7 +14,7 @@
   },
   "dependencies": {
     "@polkadot-api/descriptors": "workspace:*",
-    "@polkadot-api/substrate-bindings": "^0.20.3",
+    "@polkadot-api/substrate-bindings": "^0.21.1",
     "@polkadot-labs/hdkd": "^0.0.29",
     "@polkadot-labs/hdkd-helpers": "^0.0.31",
     "@radix-ui/react-context-menu": "^2.3.5",
@@ -33,7 +33,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "lucide-react": "^1.26.0",
-    "polkadot-api": "^2.2.1",
+    "polkadot-api": "^3.1.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "react-router-dom": "^7.18.1",
