@@ -3,19 +3,20 @@
 //! Node startup and runtime orchestration.
 
 use crate::{
+    chain_follower::SubxtChainFollower,
     chain_state_coordinator::ChainStateCoordinator,
     cli::{Cli, DEFAULT_PROVIDER_ID},
     create_router,
     membership::{BlockEventInvalidations, ChainMembershipResolver},
     subxt_client::SubxtChainClient,
-    ChainStateCoordinatorHandle, ChallengeResponder, ChallengeResponderConfig,
+    ChainFollower, ChainStateCoordinatorHandle, ChallengeResponder, ChallengeResponderConfig,
     ChallengeResponderHandle, ProviderDeps, ProviderState, ReplicaSyncCoordinator,
     ReplicaSyncCoordinatorConfig, ReplicaSyncCoordinatorHandle,
 };
 use clap::Parser;
 use provider_auth::Authenticator;
 use provider_chain::{
-    chain_connection::{self, ChainHandle, ChainTransport},
+    chain_connection::{self, ChainHandle},
     BlockEvent, BlockEventRx, BlockEventTx, EVENT_CHANNEL_CAPACITY,
 };
 use std::net::SocketAddr;
@@ -148,8 +149,8 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let challenge_events = events_tx.subscribe();
 
     // Start optional background services (failures are non-fatal)
-    let _chain_state_handle =
-        start_chain_state_coordinator(transport, chain_tx, events_tx, state.clone());
+    let follower = Arc::new(SubxtChainFollower::new(transport, chain_tx));
+    let _chain_state_handle = start_chain_state_coordinator(follower, events_tx, state.clone());
     let _replica_sync_handle =
         start_replica_sync_coordinator(&cli, chain_client.as_ref(), replica_events, state.clone())
             .await;
@@ -194,8 +195,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
 /// retries with a backoff if the chain is unreachable, so `current_anchor_block`
 /// is populated as soon as the chain comes up.
 fn start_chain_state_coordinator(
-    transport: ChainTransport,
-    chain_tx: watch::Sender<Option<ChainHandle>>,
+    follower: Arc<dyn ChainFollower>,
     events_tx: BlockEventTx,
     state: Arc<ProviderState>,
 ) -> Option<ChainStateCoordinatorHandle> {
@@ -211,10 +211,9 @@ fn start_chain_state_coordinator(
     };
 
     let coordinator = ChainStateCoordinator::new(
-        transport,
+        follower,
         provider_account,
         state.chain_state.clone(),
-        chain_tx,
         events_tx,
     );
 

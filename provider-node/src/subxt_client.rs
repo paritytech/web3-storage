@@ -136,7 +136,7 @@ impl SubxtChainClient {
             .await
             .map_err(|e| Error::Internal(format!("Failed to get current block: {e}")))?;
         Ok(u64::from(
-            provider_coordinator::fetch_current_anchor_block(&at).await?,
+            crate::chain_follower::fetch_current_anchor_block(&at).await?,
         ))
     }
 

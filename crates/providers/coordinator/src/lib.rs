@@ -13,7 +13,7 @@
 //!   chain's replay window. `None` until the provider is registered.
 //!
 //! [`ChainStateCoordinator`] is the **only writer** for all four fields.  It
-//! drives a finalized-block subscription on its own subxt connection in a
+//! drives a finalized-block subscription on its own chain connection in a
 //! reconnect loop; on every relevant provider event it re-fetches the full
 //! `ProviderInfo` so `committed_bytes`, `stake`, and all settings stay
 //! current — no field-patching, no partial updates, no second writer.
@@ -22,24 +22,22 @@
 //! [`BlockEvent::BucketMembershipChanged`], so the membership cache can drop
 //! stale authorization on its own rather than being told to.
 
-use async_trait::async_trait;
+pub mod chain_client;
+pub mod follower;
+
+pub use chain_client::ChainStateChainClient;
+pub use follower::{BlockUpdate, ChainFollower, ChainSession, FinalizedBlock, FinalizedBlocks};
+
 use parking_lot::RwLock;
-use provider_chain::chain_connection::{self, ChainHandle, ChainTransport};
-use provider_chain::{decode_block_events, BlockEvent, BlockEventTx};
+use provider_chain::{BlockEvent, BlockEventTx};
 use provider_storage::NonceStore;
-use provider_types::{ProviderInfo, ProviderSettings, ProviderStats};
+use provider_types::ProviderInfo;
 use sp_runtime::AccountId32;
 use std::future::Future;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use storage_subxt::api::runtime_types::pallet_storage_provider::pallet::ProviderInfo as RuntimeProviderInfo;
-use subxt::{OnlineClient, PolkadotConfig};
-use tokio::sync::watch;
 use tokio::task::JoinHandle;
-
-/// Pallet whose storage, constants, and events the coordinator follows.
-const PALLET_NAME: &str = "StorageProvider";
 
 // ── Error ─────────────────────────────────────────────────────────────────────
 
@@ -70,46 +68,6 @@ async fn with_timeout<T>(
             "{what} timed out after {}s",
             budget.as_secs()
         ))),
-    }
-}
-
-/// Convert the runtime's `ProviderInfo` into the node's view of it.
-///
-/// Mirrors the runtime struct field for field (see
-/// [`provider_types::ProviderInfo`]), resolving the runtime's bounded byte
-/// vectors into the node's `String`/`Vec<u8>`.
-///
-/// A free function rather than a `From` impl: both types are foreign to this
-/// crate (`RuntimeProviderInfo` comes from `storage-subxt`'s generated
-/// bindings, `ProviderInfo` from `provider-types`), so the orphan rule rules
-/// out the trait impl here.
-fn provider_info_from_runtime(info: RuntimeProviderInfo) -> ProviderInfo {
-    ProviderInfo {
-        multiaddr: String::from_utf8_lossy(&info.multiaddr.0).into_owned(),
-        public_key: info.public_key.0,
-        stake: info.stake,
-        committed_bytes: info.committed_bytes,
-        settings: ProviderSettings {
-            min_duration: info.settings.min_duration,
-            max_duration: info.settings.max_duration,
-            price_per_byte: info.settings.price_per_byte,
-            accepting_primary: info.settings.accepting_primary,
-            replica_sync_price: info.settings.replica_sync_price,
-            accepting_extensions: info.settings.accepting_extensions,
-            max_capacity: info.settings.max_capacity,
-        },
-        stats: ProviderStats {
-            registered_at: info.stats.registered_at,
-            agreements_total: info.stats.agreements_total,
-            agreements_extended: info.stats.agreements_extended,
-            agreements_not_extended: info.stats.agreements_not_extended,
-            agreements_burned: info.stats.agreements_burned,
-            total_bytes_committed: info.stats.total_bytes_committed,
-            challenges_received_authorized: info.stats.challenges_received_authorized,
-            challenges_received_public: info.stats.challenges_received_public,
-            challenges_failed: info.stats.challenges_failed,
-        },
-        deregister_at: info.deregister_at,
     }
 }
 
@@ -263,150 +221,6 @@ impl NonceCounter {
     }
 }
 
-// ── anchor block ──────────────────────────────────────────────────────────────
-
-/// Query the pallet's `StorageProviderApi::current_anchor_block` runtime API —
-/// the block every on-chain duration (timeouts, expiries, `valid_until`, nonce
-/// age) is measured against. Reading it through the runtime API keeps the
-/// provider agnostic to whether the anchor is a relay, parachain, or other
-/// block number: the pallet decides via its `BlockNumberProvider`, and the
-/// provider no longer reaches into a specific storage item.
-///
-/// Kept here (rather than in `storage-client`) so the provider node stays
-/// dependency-light (see #275).
-pub async fn fetch_current_anchor_block<C>(
-    at: &subxt::client::ClientAtBlock<subxt::PolkadotConfig, C>,
-) -> Result<u32, Error>
-where
-    C: subxt::client::OnlineClientAtBlockT<subxt::PolkadotConfig>,
-{
-    // `unvalidated`: see the `storage-subxt` crate docs.
-    at.runtime_apis()
-        .call(
-            storage_subxt::api::runtime_apis()
-                .storage_provider_api()
-                .current_anchor_block()
-                .unvalidated(),
-        )
-        .await
-        .map_err(|e| Error::Internal(format!("current_anchor_block runtime API call failed: {e}")))
-}
-
-// ── chain reads ───────────────────────────────────────────────────────────────
-
-/// The chain reads the coordinator needs to keep [`ChainState`] in sync.
-///
-/// Abstracted behind a trait — exactly like the other coordinators'
-/// `*ChainClient` traits — so the [`sync_constants`] / [`refresh_provider_state`]
-/// logic can be driven by a mock in tests without a live chain.
-#[async_trait]
-pub trait ChainStateChainClient: Send + Sync {
-    /// Full on-chain `ProviderInfo`, or `None` if the provider is not registered.
-    async fn get_provider_info(&self, who: &AccountId32) -> Result<Option<ProviderInfo>, Error>;
-
-    /// Provider's replay-window head sequence (`hsn`), or `None` if no replay
-    /// state exists yet (the provider has never signed any terms).
-    async fn fetch_replay_hsn(&self, who: &AccountId32) -> Result<Option<u64>, Error>;
-
-    /// `StorageProvider::RequestTimeout` runtime constant, or `None` if absent
-    /// from the node's metadata.
-    async fn fetch_request_timeout(&self) -> Result<Option<u32>, Error>;
-}
-
-/// Production [`ChainStateChainClient`] running typed storage queries — through
-/// the generated `storage-subxt` bindings — on the coordinator's own subxt
-/// connection (shared with the block subscription).
-struct RealChainStateClient {
-    api: OnlineClient<PolkadotConfig>,
-}
-
-/// Convert an account from the `sp_runtime` representation the node uses into
-/// the `subxt` one the generated bindings expect. Same 32 bytes either way.
-fn subxt_account(who: &AccountId32) -> subxt::utils::AccountId32 {
-    subxt::utils::AccountId32(*<AccountId32 as AsRef<[u8; 32]>>::as_ref(who))
-}
-
-#[async_trait]
-impl ChainStateChainClient for RealChainStateClient {
-    async fn get_provider_info(&self, who: &AccountId32) -> Result<Option<ProviderInfo>, Error> {
-        // `unvalidated`: see the `storage-subxt` crate docs.
-        let addr = storage_subxt::api::storage()
-            .storage_provider()
-            .providers()
-            .unvalidated();
-        let at = self
-            .api
-            .at_current_block()
-            .await
-            .map_err(|e| Error::Internal(format!("Failed to get storage: {e}")))?;
-        let Some(value) = at
-            .storage()
-            .try_fetch(addr, (subxt_account(who),))
-            .await
-            .map_err(|e| Error::Internal(format!("Failed to fetch Providers: {e}")))?
-        else {
-            return Ok(None);
-        };
-        let info = value
-            .decode()
-            .map_err(|e| Error::Internal(format!("Failed to decode Providers: {e}")))?;
-        Ok(Some(provider_info_from_runtime(info)))
-    }
-
-    async fn fetch_replay_hsn(&self, who: &AccountId32) -> Result<Option<u64>, Error> {
-        // `unvalidated`: see the `storage-subxt` crate docs.
-        let addr = storage_subxt::api::storage()
-            .storage_provider()
-            .provider_replay_states()
-            .unvalidated();
-        let at = self
-            .api
-            .at_current_block()
-            .await
-            .map_err(|e| Error::Internal(format!("Failed to get storage: {e}")))?;
-        let Some(value) = at
-            .storage()
-            .try_fetch(addr, (subxt_account(who),))
-            .await
-            .map_err(|e| Error::Internal(format!("Failed to fetch ProviderReplayStates: {e}")))?
-        else {
-            return Ok(None);
-        };
-        let window = value
-            .decode()
-            .map_err(|e| Error::Internal(format!("Failed to decode ProviderReplayStates: {e}")))?;
-        Ok(Some(window.hsn))
-    }
-
-    async fn fetch_request_timeout(&self) -> Result<Option<u32>, Error> {
-        let at = self
-            .api
-            .at_current_block()
-            .await
-            .map_err(|e| Error::Internal(format!("Failed to get current block: {e}")))?;
-
-        // `unvalidated`: see the `storage-subxt` crate docs.
-        match at.constants().entry(
-            storage_subxt::api::constants()
-                .storage_provider()
-                .request_timeout()
-                .unvalidated(),
-        ) {
-            Ok(timeout) => Ok(Some(timeout)),
-            // A runtime without the constant is a different thing from a failed
-            // read: the caller logs it as a metadata gap and leaves the pallet
-            // constants unset, rather than treating it as a chain error.
-            Err(
-                subxt::error::ConstantError::PalletNameNotFound(_)
-                | subxt::error::ConstantError::ConstantNameNotFound { .. },
-            ) => Ok(None),
-            Err(e) => Err(Error::Internal(format!(
-                "Failed to read RequestTimeout: {e}"
-            ))),
-        }
-    }
-}
-
 // ── provider lifecycle events ─────────────────────────────────────────────────
 
 /// Minimal decoded view of a `StorageProvider` provider-lifecycle event.
@@ -433,78 +247,6 @@ impl ProviderLifecycleEvent {
     }
 }
 
-/// Names of the `StorageProvider` events that affect [`ProviderLifecycleEvent`],
-/// paired with whether the event confirms a deregistration. Every one of these
-/// carries a named `provider` field decodable as [`LifecycleProvider`].
-const LIFECYCLE_EVENT_NAMES: &[(&str, bool)] = &[
-    ("ProviderDeregistered", true),
-    ("ProviderRegistered", false),
-    ("ProviderSettingsUpdated", false),
-    ("ProviderMultiaddrUpdated", false),
-    ("DeregisterAnnounced", false),
-    ("DeregisterCancelled", false),
-];
-
-/// The only field the coordinator reads out of a provider-lifecycle event.
-///
-/// Decoding just this field, rather than the whole generated event struct,
-/// keeps the coordinator working across runtime changes that reshape fields it
-/// never reads. `ProviderSettingsUpdated` in particular carries the full
-/// `ProviderSettings`, so decoding it whole would break on any change to that
-/// struct.
-#[derive(subxt::ext::scale_decode::DecodeAsType)]
-#[decode_as_type(crate_path = "::subxt::ext::scale_decode")]
-struct LifecycleProvider {
-    provider: subxt::utils::AccountId32,
-}
-
-/// Decode a finalized block's events down to the provider-lifecycle events.
-fn parse_provider_lifecycle_events(
-    events: &subxt::events::Events<PolkadotConfig>,
-) -> Vec<ProviderLifecycleEvent> {
-    events
-        .iter()
-        .filter_map(|event| event.ok())
-        .filter(|event| event.pallet_name() == PALLET_NAME)
-        .filter_map(|event| {
-            let deregistered = LIFECYCLE_EVENT_NAMES
-                .iter()
-                .find(|(name, _)| *name == event.event_name())
-                .map(|(_, deregistered)| *deregistered)?;
-            let provider = decode_provider(&event)?;
-            Some(if deregistered {
-                ProviderLifecycleEvent::Deregistered { provider }
-            } else {
-                ProviderLifecycleEvent::Updated { provider }
-            })
-        })
-        .collect()
-}
-
-/// Decode the `provider` field out of a `StorageProvider` lifecycle event.
-///
-/// A shape mismatch (a runtime whose event fields drifted from the bindings)
-/// is logged and skipped. For most of these events that is recoverable: the
-/// next relevant event still triggers a fresh `refresh_provider_state`. A
-/// missed `ProviderDeregistered` is the exception - a deregistered provider
-/// emits nothing further, so only the next reconnect's bootstrap refresh
-/// corrects it. The persisted nonce watermark is unaffected either way: its
-/// reset is gated on a successfully decoded `Deregistered` in
-/// [`refresh_if_relevant_event`], so a missed decode simply leaves it as-is.
-fn decode_provider(event: &subxt::events::Event<'_, PolkadotConfig>) -> Option<AccountId32> {
-    match event.decode_fields_unchecked_as::<LifecycleProvider>() {
-        Ok(LifecycleProvider { provider }) => Some(AccountId32::new(provider.0)),
-        Err(e) => {
-            tracing::warn!(
-                "chain-state coordinator: failed to decode {}::{} against the static bindings: {e}",
-                event.pallet_name(),
-                event.event_name(),
-            );
-            None
-        }
-    }
-}
-
 // ── ChainStateCoordinator ─────────────────────────────────────────────────────
 
 /// Builds and starts the live chain-state synchronisation for a single provider.
@@ -512,30 +254,27 @@ fn decode_provider(event: &subxt::events::Event<'_, PolkadotConfig>) -> Option<A
 /// Start with [`ChainStateCoordinator::start`]; keep the returned
 /// [`ChainStateCoordinatorHandle`] alive for the duration of the server.
 pub struct ChainStateCoordinator {
-    transport: ChainTransport,
+    /// Builds and (re)connects the underlying chain connection. Also
+    /// responsible for publishing each new connection to the node's other
+    /// chain consumers, once its block stream is confirmed up.
+    follower: Arc<dyn ChainFollower>,
     provider_account: AccountId32,
     chain_state: Arc<ChainState>,
-    /// Publishes the live connection to every chain consumer. This coordinator
-    /// is the only writer: it rebuilds the connection on stream loss or stall
-    /// and everyone else picks up the new handle from the watch channel.
-    chain_tx: watch::Sender<Option<ChainHandle>>,
     /// Fan-out of decoded per-block events to the background coordinators.
     events_tx: BlockEventTx,
 }
 
 impl ChainStateCoordinator {
     pub fn new(
-        transport: ChainTransport,
+        follower: Arc<dyn ChainFollower>,
         provider_account: AccountId32,
         chain_state: Arc<ChainState>,
-        chain_tx: watch::Sender<Option<ChainHandle>>,
         events_tx: BlockEventTx,
     ) -> Self {
         Self {
-            transport,
+            follower,
             provider_account,
             chain_state,
-            chain_tx,
             events_tx,
         }
     }
@@ -584,20 +323,18 @@ impl ChainStateCoordinator {
         /// because killing a slow warp sync throws its progress away.
         const CONNECT_TIMEOUT: Duration = Duration::from_secs(300);
 
-        let handle = with_timeout("Connecting to the chain", CONNECT_TIMEOUT, async {
-            chain_connection::connect(&self.transport)
-                .await
-                .map_err(Error::from)
+        let session = with_timeout("Connecting to the chain", CONNECT_TIMEOUT, async {
+            self.follower.connect().await
         })
         .await?;
-        self.follow(handle).await
+        self.follow(session).await
     }
 
     /// Bootstrap state from the connection and follow its finalized blocks
     /// until the stream ends or stalls. Split from
     /// [`Self::connect_and_follow`] so tests can drive the full pipeline over
-    /// a mock RPC connection.
-    async fn follow(&self, handle: ChainHandle) -> Result<(), Error> {
+    /// a mock connection.
+    async fn follow(&self, session: Box<dyn ChainSession>) -> Result<(), Error> {
         /// How long without a finalized block before the connection is treated
         /// as dead and rebuilt. Finality can pause briefly (session boundaries,
         /// backend resubscriptions), so this is several times the block time;
@@ -612,26 +349,17 @@ impl ChainStateCoordinator {
         const BOOTSTRAP_TIMEOUT: Duration = Duration::from_secs(60);
 
         let (mut blocks, chain) = with_timeout("Chain bootstrap", BOOTSTRAP_TIMEOUT, async {
-            let api = handle.api.clone();
-            let blocks = api
-                .stream_blocks()
-                .await
-                .map_err(|e| Error::Internal(format!("Failed to subscribe to blocks: {e}")))?;
-
-            // Publish the new connection only after the block stream is up, so
-            // consumers never observe a handle whose backend failed immediately.
-            self.chain_tx.send_replace(Some(handle));
-            let chain = RealChainStateClient { api };
+            let (blocks, chain) = session.subscribe().await?;
 
             tracing::info!("chain-state coordinator: connected; following finalized blocks");
 
             // Fetch pallet constants once per connection (they only change on runtime upgrade).
-            sync_constants(&chain, &self.chain_state).await;
+            sync_constants(chain.as_ref(), &self.chain_state).await;
 
             // Bootstrap from any existing on-chain state so a restarted node that was
             // already registered picks up its provider_info and nonce counter immediately
             // rather than waiting for the next relevant event.
-            refresh_provider_state(&chain, &self.chain_state, &self.provider_account).await;
+            refresh_provider_state(chain.as_ref(), &self.chain_state, &self.provider_account).await;
 
             Ok::<_, Error>((blocks, chain))
         })
@@ -647,8 +375,8 @@ impl ChainStateCoordinator {
         });
 
         loop {
-            let next = match tokio::time::timeout(STALL_TIMEOUT, blocks.next()).await {
-                Ok(Some(next)) => next,
+            let update = match tokio::time::timeout(STALL_TIMEOUT, blocks.next()).await {
+                Ok(Some(update)) => update,
                 Ok(None) => break,
                 Err(_) => {
                     tracing::warn!(
@@ -658,64 +386,29 @@ impl ChainStateCoordinator {
                     break;
                 }
             };
-            let block = match next {
-                Ok(block) => block,
-                Err(e) => {
-                    tracing::warn!("chain-state coordinator: block subscription error: {e}");
-                    break;
-                }
-            };
-            let block_number = block.number() as u32;
-
-            tracing::debug!("Finalized block: {}", block_number);
-
-            // One block-scoped handle drives both reads below.
-            let at = match block.at().await {
-                Ok(at) => at,
-                Err(e) => {
-                    tracing::warn!(
-                        "chain-state coordinator: failed to get block handle for {block_number}: {e}"
-                    );
-                    escalate_block_read_failure(&self.events_tx, block_number);
+            let block = match update {
+                BlockUpdate::Block(block) => block,
+                BlockUpdate::Unreadable { number } => {
+                    escalate_block_read_failure(&self.events_tx, number);
                     continue;
                 }
             };
 
-            // Track the pallet's anchor block (the clock all on-chain durations
-            // are measured against) at this finalized block, via its runtime
-            // API — so the provider never needs to know which block notion the
-            // pallet uses.
-            match fetch_current_anchor_block(&at).await {
-                Ok(anchor_block) => {
-                    self.chain_state
-                        .current_anchor_block
-                        .store(anchor_block, std::sync::atomic::Ordering::Relaxed);
-                }
-                Err(e) => tracing::warn!(
-                    "chain-state coordinator: failed to fetch anchor block for block \
-                     {block_number}: {e}; keeping previous value"
-                ),
+            // A failed anchor read keeps the previous value rather than
+            // resetting it - see `FinalizedBlock::anchor_block`.
+            if let Some(anchor_block) = block.anchor_block {
+                self.chain_state
+                    .current_anchor_block
+                    .store(anchor_block, std::sync::atomic::Ordering::Relaxed);
             }
-
-            let events = match at.events().fetch().await {
-                Ok(events) => events,
-                Err(e) => {
-                    tracing::warn!(
-                        "chain-state coordinator: failed to fetch events for block {block_number}: {e}"
-                    );
-                    escalate_block_read_failure(&self.events_tx, block_number);
-                    continue;
-                }
-            };
 
             // Fan out the coordinator-relevant events. Send failures just mean
             // no coordinator is subscribed.
-            for event in decode_block_events(&events, block_number) {
+            for event in block.events {
                 let _ = self.events_tx.send(event);
             }
 
-            let parsed = parse_provider_lifecycle_events(&events);
-            self.process_provider_events(&chain, &parsed, block_number)
+            self.process_provider_events(chain.as_ref(), &block.lifecycle, block.number)
                 .await;
         }
 
@@ -924,8 +617,12 @@ fn escalate_block_read_failure(events_tx: &BlockEventTx, block_number: u32) {
 mod tests {
     use super::*;
     use provider_storage::temp_rocksdb;
+    use provider_types::{ProviderSettings, ProviderStats};
     use std::sync::atomic::Ordering;
     use subxt::ext::scale_value::Value;
+
+    /// Pallet whose storage, constants, and events the coordinator follows.
+    const PALLET_NAME: &str = "StorageProvider";
 
     /// Chain state over a throwaway backend's nonce store.
     fn test_chain_state() -> (ChainState, tempfile::TempDir) {
