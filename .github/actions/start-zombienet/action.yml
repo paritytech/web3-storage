@@ -1,0 +1,39 @@
+name: Start zombienet
+description: >-
+  Spawn a zombienet network in the background and verify the process stays
+  alive after initial setup. Does NOT wait for block production — use the
+  wait-for-parachain action for that.
+
+inputs:
+  config:
+    description: Path to the zombienet TOML config file.
+    required: true
+  log-file:
+    description: Where to redirect zombienet stdout/stderr.
+    required: false
+    default: /tmp/zombienet.log
+  startup-delay:
+    description: Seconds to wait before checking the process is alive.
+    required: false
+    default: "15"
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        CONFIG: ${{ inputs.config }}
+        LOG_FILE: ${{ inputs.log-file }}
+        STARTUP_DELAY: ${{ inputs.startup-delay }}
+      run: |
+        nohup env PROJECT_ROOT=$(pwd) .bin/zombienet spawn -p native "$CONFIG" \
+          > "$LOG_FILE" 2>&1 &
+        ZOMBIE_PID=$!
+        echo "Waiting ${STARTUP_DELAY}s for zombienet to set up nodes..."
+        sleep "$STARTUP_DELAY"
+        if ! kill -0 $ZOMBIE_PID 2>/dev/null; then
+          echo "ERROR: zombienet exited early"
+          cat "$LOG_FILE" || true
+          exit 1
+        fi
+        echo "Zombienet is running (PID $ZOMBIE_PID)"

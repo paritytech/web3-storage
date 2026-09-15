@@ -1,0 +1,248 @@
+// SPDX-License-Identifier: Apache-2.0
+
+//! Per-provider replay protection for signed agreement terms.
+//!
+//! Each provider maintains a sliding window over the most recent
+//! [`REPLAY_WINDOW_BITS`] nonces it has issued. The window is anchored at the
+//! highest sequence nonce ever accepted (`hsn`) and tracks the inclusive range
+//! `hsn - (REPLAY_WINDOW_BITS - 1) ..= hsn`. Nonces older than the window
+//! are rejected outright; nonces inside the window are accepted at most
+//! once.
+//!
+//! # Bit layout
+//!
+//! The LSB of `bitmap[0]` represents `hsn`, the next bit represents
+//! `hsn - 1`, and so on. Advancing the window by `d` slots shifts the
+//! bitmap left by `d` bits, dropping the oldest entries.
+
+use codec::{Decode, DecodeWithMemTracking, Encode, MaxEncodedLen};
+use core::fmt::Debug;
+use scale_info::TypeInfo;
+
+/// Width of the sliding replay window, in bits / nonce slots.
+pub const REPLAY_WINDOW_BITS: u32 = 1024;
+
+/// Size of the acceptance bitmap in bytes.
+const BIT_MAP_WINDOW_SIZE: usize = (REPLAY_WINDOW_BITS / 8) as usize;
+
+/// Sliding replay window over the most recent [`REPLAY_WINDOW_BITS`] nonces
+/// accepted from a provider.
+#[derive(
+    Clone, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo, MaxEncodedLen, Debug,
+)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct ReplayWindow {
+    /// Highest sequence nonce ever accepted for this provider (window anchor).
+    pub hsn: u64,
+    /// [`REPLAY_WINDOW_BITS`]-bit acceptance bitmap; bit `i` (counting from the LSB of
+    /// `bitmap[0]`) is set iff nonce `hsn - i` has been accepted.
+    #[cfg_attr(feature = "serde", serde(with = "bitmap_serde"))]
+    pub bitmap: [u8; BIT_MAP_WINDOW_SIZE],
+}
+
+// `Default`, `Serialize` and `Deserialize` are only derivable for arrays of up
+// to 32 elements, so the bitmap needs manual impls.
+impl Default for ReplayWindow {
+    fn default() -> Self {
+        Self {
+            hsn: 0,
+            bitmap: [0u8; BIT_MAP_WINDOW_SIZE],
+        }
+    }
+}
+
+#[cfg(feature = "serde")]
+mod bitmap_serde {
+    use super::BIT_MAP_WINDOW_SIZE;
+    use alloc::vec::Vec;
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(
+        bitmap: &[u8; BIT_MAP_WINDOW_SIZE],
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        serializer.serialize_bytes(bitmap)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<[u8; BIT_MAP_WINDOW_SIZE], D::Error> {
+        let bytes = Vec::<u8>::deserialize(deserializer)?;
+        bytes
+            .as_slice()
+            .try_into()
+            .map_err(|_| serde::de::Error::custom("replay window bitmap has wrong length"))
+    }
+}
+
+/// Reasons [`ReplayWindow::try_accept`] can reject a nonce.
+#[derive(Debug, PartialEq, Eq)]
+pub enum ReplayError {
+    /// The nonce is inside the window and has already been marked as seen.
+    AlreadyUsed,
+    /// The nonce is more than [`REPLAY_WINDOW_BITS`] slots behind `hsn`.
+    TooOld,
+}
+
+impl ReplayWindow {
+    /// Records `nonce` as seen, advancing the window if necessary.
+    ///
+    /// When `nonce > hsn`, the bitmap is shifted left by `nonce - hsn` and
+    /// `hsn` is updated; the new high sequence nonce is then marked at bit 0.
+    /// When `nonce <= hsn`, the bit at distance `hsn - nonce` is set.
+    ///
+    /// # Errors
+    ///
+    /// * [`ReplayError::AlreadyUsed`] if the nonce is inside the window
+    ///   and its bit is already set.
+    /// * [`ReplayError::TooOld`] if the nonce is more than
+    ///   [`REPLAY_WINDOW_BITS`] slots behind `hsn`.
+    pub fn try_accept(&mut self, nonce: u64) -> Result<(), ReplayError> {
+        if nonce > self.hsn {
+            let shift = nonce - self.hsn;
+            shift_left_le(&mut self.bitmap, shift);
+            self.hsn = nonce;
+            self.bitmap[0] |= 1;
+            return Ok(());
+        }
+
+        let distance = self.hsn - nonce;
+        if distance >= REPLAY_WINDOW_BITS as u64 {
+            return Err(ReplayError::TooOld);
+        }
+        let byte = (distance / 8) as usize;
+        let mask = 1u8 << (distance % 8);
+        if self.bitmap[byte] & mask != 0 {
+            return Err(ReplayError::AlreadyUsed);
+        }
+        self.bitmap[byte] |= mask;
+        Ok(())
+    }
+}
+
+/// Shifts a `REPLAY_WINDOW_BITS`-bit little-endian bitmap left by `shift` bits.
+///
+/// Bit `i` (counting from the LSB of `bytes[0]`) moves to position
+/// `i + shift`; positions `< shift` are cleared. Shifts of
+/// [`REPLAY_WINDOW_BITS`] or more clear the entire bitmap.
+fn shift_left_le(bytes: &mut [u8; BIT_MAP_WINDOW_SIZE], shift: u64) {
+    if shift == 0 {
+        return;
+    }
+    if shift >= REPLAY_WINDOW_BITS as u64 {
+        *bytes = [0u8; BIT_MAP_WINDOW_SIZE];
+        return;
+    }
+    let byte_shift = (shift / 8) as usize;
+    let bit_shift = (shift % 8) as u32;
+
+    let mut out = [0u8; BIT_MAP_WINDOW_SIZE];
+    if bit_shift == 0 {
+        out[byte_shift..].copy_from_slice(&bytes[..(BIT_MAP_WINDOW_SIZE - byte_shift)]);
+    } else {
+        for (i, slot) in out.iter_mut().enumerate().skip(byte_shift) {
+            let src = i - byte_shift;
+            let lo = bytes[src] << bit_shift;
+            let hi = if src > 0 {
+                bytes[src - 1] >> (8 - bit_shift)
+            } else {
+                0
+            };
+            *slot = lo | hi;
+        }
+    }
+    *bytes = out;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn first_nonce_sets_hsn() {
+        let mut w = ReplayWindow::default();
+        assert!(w.try_accept(5).is_ok());
+        assert_eq!(w.hsn, 5);
+        assert_eq!(w.bitmap[0] & 1, 1);
+    }
+
+    #[test]
+    fn duplicate_nonce_rejected() {
+        let mut w = ReplayWindow::default();
+        w.try_accept(10).unwrap();
+        assert_eq!(w.try_accept(10), Err(ReplayError::AlreadyUsed));
+    }
+
+    #[test]
+    fn out_of_order_nonces_accepted() {
+        let mut w = ReplayWindow::default();
+        for n in [3u64, 7, 1, 10, 2] {
+            assert!(w.try_accept(n).is_ok(), "nonce {n} should be accepted");
+        }
+        assert_eq!(w.hsn, 10);
+        for n in [3u64, 7, 1, 10, 2] {
+            assert_eq!(w.try_accept(n), Err(ReplayError::AlreadyUsed));
+        }
+    }
+
+    #[test]
+    fn nonce_at_window_edge_accepted() {
+        let mut w = ReplayWindow::default();
+        w.try_accept(3000).unwrap();
+        // Distance REPLAY_WINDOW_BITS - 1 is the oldest slot still inside the window.
+        assert!(w
+            .try_accept(3000 - u64::from(REPLAY_WINDOW_BITS) + 1)
+            .is_ok());
+    }
+
+    #[test]
+    fn nonce_past_window_edge_rejected() {
+        let mut w = ReplayWindow::default();
+        w.try_accept(3000).unwrap();
+        // Distance REPLAY_WINDOW_BITS is the first slot outside the window.
+        assert_eq!(
+            w.try_accept(3000 - u64::from(REPLAY_WINDOW_BITS)),
+            Err(ReplayError::TooOld)
+        );
+        // Distance much greater than window size.
+        assert_eq!(w.try_accept(1), Err(ReplayError::TooOld));
+    }
+
+    #[test]
+    fn forward_jump_beyond_window_clears_bitmap() {
+        let mut w = ReplayWindow::default();
+        w.try_accept(5).unwrap();
+        w.try_accept(7).unwrap();
+        w.try_accept(3000).unwrap();
+        assert_eq!(w.hsn, 3000);
+        assert_eq!(w.bitmap[0], 1);
+        for b in &w.bitmap[1..] {
+            assert_eq!(*b, 0);
+        }
+    }
+
+    #[test]
+    fn duplicate_detected_across_large_shift() {
+        let mut w = ReplayWindow::default();
+        w.try_accept(100).unwrap();
+        // Advance most of the window in one jump; nonce 100 lands deep in the bitmap.
+        w.try_accept(1100).unwrap();
+        assert_eq!(w.try_accept(100), Err(ReplayError::AlreadyUsed));
+        // Distance 1001 is still inside the window and unseen.
+        assert!(w.try_accept(99).is_ok());
+    }
+
+    #[test]
+    fn bitmap_shifts_track_distances() {
+        let mut w = ReplayWindow::default();
+        w.try_accept(100).unwrap();
+        w.try_accept(101).unwrap();
+        // 101 is hsn; 100 sits at distance 1, so bits 0 and 1 of byte 0 are set.
+        assert_eq!(w.bitmap[0] & 0b11, 0b11);
+        w.try_accept(109).unwrap();
+        // After shifting left by 8, the bits previously at positions 0 and 1
+        // land in byte 1 at positions 0 and 1; bit 0 of byte 0 marks the new hsn.
+        assert_eq!(w.bitmap[0] & 1, 1);
+        assert_eq!(w.bitmap[1] & 0b11, 0b11);
+    }
+}
