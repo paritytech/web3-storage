@@ -142,7 +142,7 @@ async fn rate_limit_by_ip_middleware(
         // hide detail error from client.
         Err(err) => {
             tracing::warn!("rate limiter error for {ip}: {err}; rejecting request");
-            Err(Error::Internal("RateLimited".to_string()))
+            Err(Error::RateLimiterFailed(err.to_string()))
         }
     }
 }
@@ -279,7 +279,7 @@ async fn upload_node(
     // Decode data
     let data = BASE64
         .decode(&request.data)
-        .map_err(|e| Error::Serialization(e.to_string()))?;
+        .map_err(|e| Error::decode("node data", e))?;
 
     // Decode children
     let children = request

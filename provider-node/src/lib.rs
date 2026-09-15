@@ -17,8 +17,6 @@ pub mod error;
 pub mod fs_api;
 pub mod membership;
 pub mod negotiate;
-pub mod replica_sync;
-pub mod replica_sync_coordinator;
 pub mod s3_api;
 pub(crate) mod subxt_client;
 pub mod types;
@@ -40,11 +38,10 @@ pub use provider_coordinator::{
     ChainState, ChainStateChainClient, ChainStateCoordinator, ChainStateCoordinatorHandle,
     NonceCounter, PalletConstants, ProviderLifecycleEvent,
 };
-pub use replica_sync::ReplicaSync;
-pub use replica_sync_coordinator::{
-    ReplicaSyncChainClient, ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig,
+pub use provider_replica::{
+    ReplicaSync, ReplicaSyncChainClient, ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig,
     ReplicaSyncCoordinatorHandle, SignedSyncRoots, SyncCommand, SyncCoordinatorStatus, SyncDuty,
-    SyncResult,
+    SyncResult, SyncRoots, SyncRootsSigner,
 };
 pub use types::*;
 
@@ -53,6 +50,7 @@ use provider_storage::{FsIndexManager, NonceStore, S3IndexManager, StorageBacken
 use provider_types::{KeyScheme, ProviderKeypair};
 use sp_core::crypto::Ss58Codec;
 use sp_core::{sr25519, Pair};
+use sp_runtime::MultiSignature;
 use std::sync::Arc;
 
 /// Everything a servable [`ProviderState`] requires.
@@ -168,22 +166,27 @@ impl ProviderState {
     /// silently emitting a zeroed placeholder signature, which would be a
     /// cryptographically invalid commitment masquerading as a real one.
     pub fn sign(&self, message: &[u8]) -> Result<String, Error> {
-        self.ensure_signing_key_registered()?;
-        let keypair = self.keypair.as_ref().ok_or(Error::SigningUnavailable)?;
+        let keypair = self.signing_keypair()?;
         Ok(format!("0x{}", hex::encode(keypair.sign(message).encode())))
     }
 
-    /// Best-effort guard for every signing path: once the coordinator has
-    /// loaded our on-chain registration, refuse to sign with a key the chain
-    /// doesn't know — such signatures can never verify, so failing here beats
-    /// handing out dead ones. While no registration is loaded (chainless dev
-    /// mode, or before the first refresh) signing proceeds; a re-registration
-    /// heals a mismatch on the coordinator's next refresh without a restart.
+    /// Checks `keypair` before the guard: a node with no signing key at all
+    /// must report [`Error::SigningUnavailable`] (the actionable fix -
+    /// configure `--keyfile`) rather than [`Error::ProviderInfoUnavailable`].
+    fn signing_keypair(&self) -> Result<&ProviderKeypair, Error> {
+        let keypair = self.keypair.as_ref().ok_or(Error::SigningUnavailable)?;
+        self.ensure_signing_key_registered()?;
+        Ok(keypair)
+    }
+
+    /// Guard for every signing path: signing requires a published on-chain
+    /// registration whose key matches ours, because the pallet rejects any
+    /// other signature. Clears on the coordinator's next refresh, no restart.
     pub fn ensure_signing_key_registered(&self) -> Result<(), Error> {
         let info = self.chain_state.provider_info.read();
         match info.as_ref() {
             Some(info) => self.ensure_signing_key_matches(info),
-            None => Ok(()),
+            None => Err(Error::ProviderInfoUnavailable),
         }
     }
 
@@ -216,6 +219,18 @@ impl ProviderState {
     }
 }
 
+/// Lets the replica sync coordinator attest its sync roots with the node's
+/// scheme-tagged key, under the same "must match the on-chain registration"
+/// guard every other signing path goes through.
+impl SyncRootsSigner for ProviderState {
+    fn sign_sync_roots(
+        &self,
+        roots: &SyncRoots,
+    ) -> Result<MultiSignature, provider_replica::Error> {
+        Ok(self.signing_keypair()?.sign(&roots.encode()))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -234,6 +249,34 @@ mod tests {
             ))),
         };
         (deps, dir)
+    }
+
+    /// Publish a registration snapshot whose `public_key` matches this
+    /// state's own signing key, as the chain-state coordinator would once
+    /// the provider is registered on chain.
+    fn publish_matching_registration(state: &ProviderState) {
+        let public_key = state.keypair.as_ref().unwrap().public_key_bytes();
+        state
+            .chain_state
+            .provider_info
+            .write()
+            .replace(provider_types::ProviderInfo {
+                multiaddr: "/ip4/1.2.3.4/tcp/3333".to_string(),
+                public_key,
+                stake: 1_000,
+                committed_bytes: 0,
+                settings: provider_types::ProviderSettings {
+                    min_duration: 10,
+                    max_duration: 100,
+                    price_per_byte: 1,
+                    accepting_primary: true,
+                    replica_sync_price: None,
+                    accepting_extensions: true,
+                    max_capacity: 0,
+                },
+                stats: Default::default(),
+                deregister_at: None,
+            });
     }
 
     #[test]
@@ -259,6 +302,7 @@ mod tests {
         // aren't valid sr25519.
         let (deps, _dir) = test_deps();
         let state = ProviderState::with_seed(deps, "//Alice").unwrap();
+        publish_matching_registration(&state);
         let message = b"commitment-payload-bytes";
 
         let sig_hex = state.sign(message).expect("signing succeeds with keypair");
@@ -315,9 +359,15 @@ mod tests {
             Err(Error::ProviderKeyMismatch)
         ));
 
-        // No snapshot (chainless mode) and a matching snapshot both sign.
+        // No snapshot at all must also refuse: an unpublished registration
+        // means the pallet has no key to verify against.
         state.chain_state.provider_info.write().take();
-        assert!(state.sign(b"msg").is_ok());
+        assert!(matches!(
+            state.sign(b"msg"),
+            Err(Error::ProviderInfoUnavailable)
+        ));
+
+        // A matching snapshot signs.
         state
             .chain_state
             .provider_info
@@ -330,7 +380,6 @@ mod tests {
     /// `sr25519::Signature`, asserting the variant tag.
     fn sig_from_hex(sig_hex: &str) -> sr25519::Signature {
         use codec::Decode;
-        use sp_runtime::MultiSignature;
         let bytes = hex::decode(sig_hex.strip_prefix("0x").unwrap()).unwrap();
         match MultiSignature::decode(&mut &bytes[..]).expect("valid SCALE MultiSignature") {
             MultiSignature::Sr25519(sig) => sig,
@@ -351,6 +400,7 @@ mod tests {
         // returns a constant value (e.g. zero bytes).
         let (deps, _dir) = test_deps();
         let state = ProviderState::with_seed(deps, "//Alice").unwrap();
+        publish_matching_registration(&state);
         let alice_pub = keypair_for("//Alice").public();
         let msg = b"commitment-payload";
 
@@ -374,6 +424,8 @@ mod tests {
         let (bob_deps, _bob_dir) = test_deps();
         let alice = ProviderState::with_seed(alice_deps, "//Alice").unwrap();
         let bob = ProviderState::with_seed(bob_deps, "//Bob").unwrap();
+        publish_matching_registration(&alice);
+        publish_matching_registration(&bob);
         let alice_pub = keypair_for("//Alice").public();
         let msg = b"checkpoint payload";
 
