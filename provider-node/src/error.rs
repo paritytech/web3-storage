@@ -193,9 +193,13 @@ impl From<Error> for provider_replica::Error {
             // `provider_replica` maps the storage error space one-to-one.
             Error::Backend(err) => err.into(),
             Error::Chain(err) => provider_replica::Error::Chain(err),
-            Error::InvalidHash { expected, actual } => {
-                provider_replica::Error::InvalidHash { expected, actual }
-            }
+            // The node's own `InvalidHash` reports text that failed to parse as
+            // a hash, so it cannot feed the replica variant, which holds two
+            // real `H256`s.
+            Error::InvalidHash { expected, actual } => provider_replica::Error::Decode {
+                what: "hash",
+                reason: format!("expected {expected}, got {actual}"),
+            },
             Error::ChainQuery { what, reason } => {
                 provider_replica::Error::ChainQuery { what, reason }
             }
@@ -230,6 +234,13 @@ impl IntoResponse for Error {
                     ErrorResponse {
                         error: "not_found".to_string(),
                         details: Some(serde_json::json!({ "hash": hash })),
+                    },
+                ),
+                StorageError::ResourceNotFound(resource) => (
+                    StatusCode::NOT_FOUND,
+                    ErrorResponse {
+                        error: "not_found".to_string(),
+                        details: Some(serde_json::json!({ "resource": resource })),
                     },
                 ),
                 StorageError::ChildrenMissing(children) => (
@@ -576,6 +587,7 @@ mod tests {
     use super::*;
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
+    use sp_core::H256;
 
     fn status_of(err: Error) -> StatusCode {
         err.into_response().status()
@@ -585,7 +597,7 @@ mod tests {
     fn test_all_error_variants_status_codes() {
         assert_eq!(
             status_of(Error::from(provider_storage::Error::NodeNotFound(
-                "x".into()
+                H256::zero()
             ))),
             StatusCode::NOT_FOUND
         );
@@ -609,7 +621,7 @@ mod tests {
         );
         assert_eq!(
             status_of(Error::from(provider_storage::Error::RootNotFound(
-                "x".into()
+                H256::zero()
             ))),
             StatusCode::NOT_FOUND
         );
@@ -747,8 +759,8 @@ mod tests {
 
     #[test]
     fn test_error_response_json_structure() {
-        let resp =
-            Error::from(provider_storage::Error::NodeNotFound("0xabc".into())).into_response();
+        let hash = H256::repeat_byte(0xab);
+        let resp = Error::from(provider_storage::Error::NodeNotFound(hash)).into_response();
         let (parts, body) = resp.into_parts();
         assert_eq!(parts.status, StatusCode::NOT_FOUND);
 
@@ -758,7 +770,11 @@ mod tests {
         let json: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
         assert_eq!(json["error"], "not_found");
         assert!(json.get("details").is_some());
-        assert_eq!(json["details"]["hash"], "0xabc");
+        // The storage engine holds an H256; the response renders it as hex.
+        assert_eq!(
+            json["details"]["hash"],
+            "0xabababababababababababababababababababababababababababababababab"
+        );
     }
 
     #[test]
@@ -817,12 +833,12 @@ mod tests {
 
         let cases: Vec<(Error, &str)> = vec![
             (
-                Error::Backend(StorageError::NodeNotFound("h".into())),
-                "Node not found: h",
+                Error::Backend(StorageError::NodeNotFound(H256::zero())),
+                "Node not found: 0x0000000000000000000000000000000000000000000000000000000000000000",
             ),
             (
-                Error::Backend(StorageError::ChildrenMissing(vec!["a".into()])),
-                "Children missing: [\"a\"]",
+                Error::Backend(StorageError::ChildrenMissing(vec![H256::zero()])),
+                "Children missing: [0x0000000000000000000000000000000000000000000000000000000000000000]",
             ),
             (
                 Error::Backend(StorageError::QuotaExceeded { used: 1, max: 2 }),
@@ -833,15 +849,15 @@ mod tests {
                 "Bucket not found: 7",
             ),
             (
-                Error::Backend(StorageError::RootNotFound("r".into())),
-                "Root not found: r",
+                Error::Backend(StorageError::RootNotFound(H256::zero())),
+                "Root not found: 0x0000000000000000000000000000000000000000000000000000000000000000",
             ),
             (
                 Error::InvalidHash {
                     expected: "e".into(),
                     actual: "a".into(),
                 },
-                "Invalid hash: expected e, got a",
+                "Failed to decode hash: expected e, got a",
             ),
             (
                 Error::chain_query("current block", "timed out"),

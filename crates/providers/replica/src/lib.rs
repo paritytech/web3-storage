@@ -14,6 +14,7 @@ pub use coordinator::{
 pub use sync::ReplicaSync;
 pub use sync_roots::{SignedSyncRoots, SyncRoots, SyncRootsSigner};
 
+use sp_core::H256;
 use std::fmt;
 use storage_primitives::BucketId;
 use thiserror::Error;
@@ -25,8 +26,8 @@ pub enum Error {
     #[error(transparent)]
     Backend(#[from] provider_storage::Error),
 
-    #[error("Invalid hash: expected {expected}, got {actual}")]
-    InvalidHash { expected: String, actual: String },
+    #[error("Invalid hash: expected {expected:?}, got {actual:?}")]
+    InvalidHash { expected: H256, actual: H256 },
 
     /// This variant exists only for `provider-node`'s `From<Error> for
     /// Error` catch-all, which maps every node error it has no dedicated

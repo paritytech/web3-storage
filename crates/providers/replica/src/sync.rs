@@ -73,8 +73,7 @@ impl ReplicaSync {
         let local_bucket = self.storage.get_bucket(bucket_id);
 
         // Determine what we need to fetch
-        let target_root = hex_decode("mmr_root", &peaks_response.mmr_root)?;
-        let target_root = H256::from_slice(&target_root);
+        let target_root = peaks_response.mmr_root;
 
         // If we already have this root, we're done
         if let Some(bucket) = local_bucket {
@@ -92,18 +91,8 @@ impl ReplicaSync {
         //
         // For now, we'll fetch all hashes from the primary
 
-        // Get list of all hashes from primary
-        let peaks: Vec<H256> = peaks_response
-            .peaks
-            .iter()
-            .map(|h| {
-                let bytes = hex_decode("peak hash", h)?;
-                Ok(H256::from_slice(&bytes))
-            })
-            .collect::<Result<Vec<_>, Error>>()?;
-
         // Fetch nodes for each peak
-        for peak in peaks {
+        for peak in peaks_response.peaks {
             self.fetch_subtree(bucket_id, peak, primary_url).await?;
         }
 
@@ -149,18 +138,7 @@ impl ReplicaSync {
                 .decode(&node_response.data)
                 .map_err(|e| Error::decode("node data", e))?;
 
-            // Decode children if present
-            let children = node_response
-                .children
-                .map(|c| {
-                    c.iter()
-                        .map(|h| {
-                            let bytes = hex_decode("child hash", h)?;
-                            Ok(H256::from_slice(&bytes))
-                        })
-                        .collect::<Result<Vec<_>, Error>>()
-                })
-                .transpose()?;
+            let children = node_response.children;
 
             // Store locally
             self.storage
@@ -232,21 +210,14 @@ impl ReplicaSync {
 #[allow(dead_code)]
 struct MmrPeaksResponse {
     bucket_id: u64,
-    mmr_root: String,
-    peaks: Vec<String>,
+    mmr_root: H256,
+    peaks: Vec<H256>,
 }
 
 #[derive(serde::Deserialize)]
 #[allow(dead_code)]
 struct DownloadNodeResponse {
-    hash: String,
+    hash: H256,
     data: String,
-    children: Option<Vec<String>>,
-}
-
-/// Decode hex string (with or without 0x prefix). `what` names the value
-/// being decoded, for the error message.
-fn hex_decode(what: &'static str, s: &str) -> Result<Vec<u8>, Error> {
-    let s = s.strip_prefix("0x").unwrap_or(s);
-    hex::decode(s).map_err(|e| Error::decode(what, e))
+    children: Option<Vec<H256>>,
 }
