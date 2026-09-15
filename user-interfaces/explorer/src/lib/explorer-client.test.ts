@@ -130,7 +130,6 @@ describe('summarize', () => {
       ],
       buckets: [],
       openChallenges: [],
-      challengeAggregates: { totalIssued: 0, upheld: 0, dismissed: 0 },
       bucketsEverCreated: 3,
       failedSections: [],
       fetchedAt: 0,
