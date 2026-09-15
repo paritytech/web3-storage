@@ -478,6 +478,42 @@ async fn test_sync_from_primary_succeeds_but_final_verification_fails() {
     );
 }
 
+#[tokio::test]
+async fn test_sync_from_primary_rejects_wrong_length_root_instead_of_panicking() {
+    let bucket_id = 1;
+    let target_root = H256::repeat_byte(0xDD);
+    // Well-formed hex, but not 32 bytes.
+    let primary_url = spawn_mock_primary(bucket_id, "0xab".to_string()).await;
+
+    let duty = SyncDuty {
+        bucket_id,
+        target_mmr_root: target_root,
+        target_leaf_count: 0,
+        primary_endpoints: vec![primary_url],
+        sync_balance: 1000,
+        sync_price: 100,
+        min_sync_interval: 0,
+        last_sync: None,
+    };
+
+    let mock = MockReplicaSyncChainClient::new();
+    let config = ReplicaSyncCoordinatorConfig::default();
+    let (storage, _dir) = test_storage();
+    let coordinator = ReplicaSyncCoordinator::new(
+        config,
+        storage,
+        ALICE_SS58.to_string(),
+        Box::new(mock),
+        None,
+    );
+
+    let result = coordinator.sync_and_confirm(&duty).await;
+    assert!(
+        matches!(result, SyncResult::PrimaryUnavailable { .. }),
+        "expected PrimaryUnavailable, got {result:?}"
+    );
+}
+
 #[tokio::test(start_paused = true)]
 async fn test_stop_command() {
     let mock = MockReplicaSyncChainClient::new();
