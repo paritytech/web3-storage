@@ -4,7 +4,7 @@
 // and walks a fresh account A→B: map the account, negotiate signed terms with
 // the chosen provider (owner = the contract's mapped account), then call
 // `createLibrary{value}` on the Photos contract. Mirrors the headless sequence
-// in `scripts/photos-flow.ts`, submitting via PAPI `signAndSubmit`.
+// in `scripts/photos-flow.ts`, submitting via PAPI `createAndSubmit`.
 
 import { BehaviorSubject } from 'rxjs'
 import { bind } from '@react-rxjs/core'
@@ -103,7 +103,7 @@ export async function createLibrary(input: CreateLibraryInput): Promise<void> {
   lastInput = input
   const { account, contract, provider, sizeBytes, durationBlocks, name } = input
   const api = requireApi()
-  const signer = account.polkadotSigner
+  const signer = account.txCreator
 
   try {
     // Idempotent: a fresh account must be mapped before any contract write.

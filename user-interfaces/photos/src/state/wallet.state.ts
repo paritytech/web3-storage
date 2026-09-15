@@ -22,7 +22,7 @@ import {
   entropyToMiniSecret,
   mnemonicToEntropy,
 } from '@polkadot-labs/hdkd-helpers'
-import { getPolkadotSigner } from 'polkadot-api/signer'
+import { getTxCreator } from 'polkadot-api/tx-creator'
 import { getSs58Prefix, isSameAddress, setSs58Prefix, toSs58 } from '@web3-storage/papi'
 
 export type WalletMode = 'dev' | 'extension'
@@ -80,7 +80,7 @@ export function updateSs58Prefix(prefix: number): void {
   const accounts = accountsSubject.getValue()
   if (modeSubject.getValue() !== 'dev' || accounts.length === 0) return
 
-  const reencoded = accounts.map((a) => ({ ...a, address: toSs58(a.polkadotSigner.publicKey) }))
+  const reencoded = accounts.map((a) => ({ ...a, address: toSs58(a.txCreator.publicKey) }))
   accountsSubject.next(reencoded)
 
   const selected = selectedAccountSubject.getValue()
@@ -103,11 +103,11 @@ function createDevAccountsWithKnownAddresses(): InjectedPolkadotAccount[] {
     return DEV_ACCOUNT_SEEDS.map(({ name, path }) => {
       const keypair = derive(path)
       const publicKey = keypair.publicKey
-      const polkadotSigner = getPolkadotSigner(publicKey, 'Sr25519', (input) => keypair.sign(input))
+      const txCreator = getTxCreator(publicKey, 'Sr25519', (input) => keypair.sign(input))
       return {
         address: toSs58(publicKey),
         name: `${name} (Dev)`,
-        polkadotSigner,
+        txCreator,
       }
     })
   } catch (error) {
