@@ -71,7 +71,7 @@ pub struct BucketInfo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BucketSummary {
     pub bucket_id: BucketId,
-    pub mmr_root: H256,
+    pub mmr_root: String,
     pub start_seq: u64,
     pub leaf_count: u64,
 }

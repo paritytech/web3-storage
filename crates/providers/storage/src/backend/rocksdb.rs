@@ -137,7 +137,7 @@ impl DiskStorage {
     pub fn list_buckets(&self) -> Vec<BucketSummary> {
         self.iter_buckets(|bucket_id, state| BucketSummary {
             bucket_id,
-            mmr_root: state.mmr_root,
+            mmr_root: format!("0x{}", hex::encode(state.mmr_root.as_bytes())),
             start_seq: state.start_seq,
             leaf_count: state.leaf_count(),
         })
