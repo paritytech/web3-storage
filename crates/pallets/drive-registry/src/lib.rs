@@ -26,10 +26,11 @@
 //! ### Queries
 //!
 //! - `Drives`: Maps DriveId → DriveInfo
-//! - `UserDrives`: Maps AccountId → Vec<DriveId>
+//! - `UserDrives`: Maps AccountId → `Vec<DriveId>`
 //! - `NextDriveId`: Auto-incrementing counter for drive IDs
 
 #![cfg_attr(not(feature = "std"), no_std)]
+#![warn(missing_docs)]
 
 extern crate alloc;
 
@@ -37,7 +38,6 @@ pub use pallet::*;
 
 #[cfg(feature = "runtime-benchmarks")]
 pub mod benchmarking;
-pub mod migrations;
 pub mod weights;
 pub use weights::WeightInfo;
 
@@ -66,9 +66,7 @@ pub mod pallet {
     use sp_runtime::{traits::Saturating, BoundedVec};
     use storage_primitives::Role;
 
-    /// In-code storage version. v1 drops the `payment` field from
-    /// [`DriveInfo`]; see [`crate::migrations::v1`].
-    const STORAGE_VERSION: StorageVersion = StorageVersion::new(1);
+    const STORAGE_VERSION: StorageVersion = StorageVersion::new(0);
 
     #[pallet::pallet]
     #[pallet::storage_version(STORAGE_VERSION)]
@@ -143,26 +141,38 @@ pub mod pallet {
     pub enum Event<T: Config> {
         /// A new drive was created
         DriveCreated {
+            /// The new drive.
             drive_id: DriveId,
+            /// Its owner.
             owner: T::AccountId,
+            /// Layer 0 bucket backing the drive.
             bucket_id: u64,
         },
         /// Drive was deleted
         DriveDeleted {
+            /// The removed drive.
             drive_id: DriveId,
+            /// Its owner.
             owner: T::AccountId,
+            /// Layer 0 bucket that backed it.
             bucket_id: u64,
+            /// Escrow returned to the owner from the ended agreements.
             refunded: BalanceOf<T>,
         },
         /// Drive was shared with a member
         DriveShared {
+            /// The drive.
             drive_id: DriveId,
+            /// Account granted access.
             member: T::AccountId,
+            /// Role granted on the underlying bucket.
             role: Role,
         },
         /// Member was removed from a shared drive
         DriveUnshared {
+            /// The drive.
             drive_id: DriveId,
+            /// Account whose access was removed.
             member: T::AccountId,
         },
     }
