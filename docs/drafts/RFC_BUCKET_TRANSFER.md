@@ -225,6 +225,113 @@ and provider-node work, not Layer 0:
   owns the mirror agreement, and does the transfer path from topic 2 apply
   once the mirror is the only copy after the TTL?
 
+## Hosting use cases: single SPA and multi-file site
+
+Two cases from #132, mapped onto the code on `dev`. High level only. Every
+row marked **missing** has no code and no design text; nothing here proposes
+how to fill it.
+
+- **Case A**: one single-page application delivered as one archive file, for
+  example a CAR archive for Polkadot Products.
+- **Case B**: one site made of many files, reached through a `.dot` name.
+
+### Common to both cases
+
+**Buckets and payment.** One bucket per site. A bucket is a log of data
+roots; a new deploy is a new commit under the same `bucket_id`. The site
+operator creates the bucket with `establish_storage_agreement`, which creates
+the bucket and the primary agreement in one call and holds the whole fee
+upfront. The operator is the bucket admin. Public sites need
+`Visibility::Public`, set at creation or later by the admin with
+`set_bucket_visibility`. Old deploys stay stored and count against the
+quota. The only pruning is `/delete` (admin only): it drops a prefix of the
+MMR leaves from the commitment, not a single file or version, and the node
+bytes and the quota usage remain.
+
+**Upload.** Layer 0: the client chunks each file, uploads chunks and internal
+nodes bottom-up with `PUT /node`, then `POST /commit` with the data roots.
+Needs the Writer role. The provider returns a signed commitment.
+
+**Commit vs. checkpoint.** After the commit the provider stores and serves
+the data and has signed for it, but nothing is on chain. The checkpoint puts
+the commitment on chain and makes the provider challengeable and slashable
+for it. Only a bucket writer or admin can call `checkpoint`; the provider
+cannot. The caller pays the transaction fee, so the operator checkpoints
+after each deploy and pays for it. Reads do not need a checkpoint.
+
+**Reference.** The stable identifier is the `bucket_id`. A client resolves
+`bucket_id` → primary providers → provider URL through the chain
+(`bucket_providers` runtime API). Content is then addressed as
+`bucket_id + data_root` (immutable) or as a mutable "current" reference.
+The design writes these as `bucket://42/<data_root>`,
+`bucket://42/fs/<path>` and `bucket://42/latest/leaf/<n>`; no resolver for
+this scheme exists. What "current" means is not defined in code. The
+candidates are the last MMR leaf, a manifest leaf by client convention, the
+Layer 1 path index, or the `pallet_s3_registry` object map; none is
+specified for this use.
+
+**Read.** Layer 0: `GET /read?data_root=…` returns base64 in JSON,
+unauthenticated, byte ranges only through `offset`/`length` query parameters
+(no HTTP `Range` header), and no client-side verification against the data
+root. Layer 1: `GET /fs/:bucket_id/file?path=…` returns the bytes
+with the stored Content-Type; anonymous reads are allowed when the bucket is
+Public. Neither endpoint is usable by a browser as a site origin.
+
+### Case A: single SPA as one archive
+
+| Step | Today | Missing |
+|---|---|---|
+| Upload | one file → one data root → one commit → one MMR leaf | CAR handling: the archive is opaque bytes at Layer 0; nothing reads or unpacks CAR |
+| Reference | `bucket_id + data_root`; every deploy produces a new `data_root` | a name record with only `bucket_id` needs a "current" rule; a record with `bucket_id + data_root` must be rewritten per deploy |
+| Read | `GET /read` for the whole archive | a gateway that unpacks the archive and serves `index.html` and assets |
+
+### Case B: multi-file site under a `.dot` name
+
+Two upload paths exist:
+
+- **Layer 0, one data root per file.** One `POST /commit` may carry all
+  data roots, so one deploy is one commit and one leaf per file. Which leaf
+  is which path is the client's convention (design: "Client-Controlled
+  Layout"); no code.
+- **Layer 1 file system.** `PUT /fs/:bucket_id/file?path=…`. The provider
+  chunks, commits and keeps a path → data root index. The index is
+  provider-local, in memory, and its root is never committed or checkpointed
+  (#261, #290).
+
+| Step | Today | Missing |
+|---|---|---|
+| Upload | Layer 1 `PUT /fs/…` per file, or Layer 0 with a client-side manifest | a committed, verifiable directory manifest |
+| Reference | `bucket_id + path` (design `bucket://42/fs/…`) | path resolution outside the one provider that holds the index |
+| Read | `GET /fs/:bucket_id/file?path=…` with Content-Type | gateway: hostname → `bucket_id`, path routing, `index.html` default, SPA fallback |
+
+### Prerequisites
+
+| | Operator (user) | Provider |
+|---|---|---|
+| On chain | account with funds for the escrowed fee and the checkpoint transactions; bucket via `establish_storage_agreement`; Writer or Admin role | registered, staked, with free capacity; signs the terms |
+| Off chain | a client that chunks, uploads bottom-up and commits (Layer 0) or a Layer 1 client; a checkpoint step after each deploy | provider node reachable at its on-chain multiaddr |
+| For the site to load in a browser | **missing**: a gateway and a name → bucket mapping | **missing**: nothing to run today; whether the gateway is a provider role, a separate service or a client library is open |
+
+### Open gaps
+
+- **Gateway.** No HTTP gateway exists. Browsers cannot load a site from the
+  provider endpoints.
+- **DotNS.** No integration in this repo. The record format is undefined:
+  `bucket_id` only, `bucket_id + data_root`, or `bucket_id + path`. What
+  DotNS resolves to today is outside this repo and was not checked.
+- **"Current version".** Not defined in code; candidates listed under
+  *Reference* above.
+- **CAR.** No support. Whether the archive is stored as one blob or unpacked
+  into files is undecided.
+- **Path index.** Layer 1 index is not committed, not verifiable, and stored by
+  one provider only (#261, #290).
+- **Download verification.** Clients do not check downloaded bytes against
+  the data root (Rust client `spot_check` discards the result; TypeScript
+  Layer 0 has no verification).
+- **Per-file pruning.** Updating one file in Case B appends; the old version
+  cannot be removed alone.
+- **Serving incentive.** Possession is challengeable; serving is not (#216).
+
 ## Drifts (docs vs. code)
 
 Untracked, likely code bugs:
