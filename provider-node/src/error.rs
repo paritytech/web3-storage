@@ -383,9 +383,7 @@ impl IntoResponse for Error {
                     })),
                 },
             ),
-            // A chain error reaching us through the coordinator is the same
-            // failure as a direct one, so both map to the same status.
-            Error::Chain(err) | Error::Coordinator(CoordinatorError::Chain(err)) => match err {
+            Error::Chain(err) => match err {
                 ChainError::NotConnected => (
                     StatusCode::SERVICE_UNAVAILABLE,
                     ErrorResponse {
