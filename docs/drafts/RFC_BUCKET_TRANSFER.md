@@ -1,7 +1,9 @@
-# Potential RFC: Bucket lifecycle and transfer between providers (Draft)
+# RFC draft: Bucket lifecycle and transfer between providers
 
-> **Draft — needs triage.** Gap summary for discussion with the design owner.
-> No proposal. Written against `dev` at 7a9673c0 (2026-09-14).
+> Gap summary for the design owner, no proposal. Written against `dev` at
+> 7a9673c0 (2026-09-14). "The design" is
+> `docs/design/scalable-web3-storage.md`; "the implementation doc" is
+> `docs/design/scalable-web3-storage-implementation.md`.
 
 ## Story
 
@@ -35,27 +37,23 @@ A Layer 0 bucket has four states. Only the transitions listed exist.
 |---|---|
 | **Active** | One primary under agreement. Writes, checkpoints and challenges work. Replicas optional. |
 | **Frozen** | Active, but append-only from the frozen snapshot. Irreversible. |
-| **No primary** | The primary agreement ended. Bucket, members, snapshot and replica agreements remain. No provider can sign a checkpoint, so no new data is committed with anyone liable for it. Only replicas still under agreement are challengeable. (`set_min_providers(0)` is accepted in this state and lets `checkpoint` pass with no signatures at all, see *Drifts*.) |
-| **Deleted** | Bucket and all agreements removed. |
+| **No primary** | The primary agreement ended. Bucket, members, snapshot and replica agreements remain. No provider can sign a checkpoint, so no new data is committed with anyone liable for it. Only replicas still under agreement are challengeable. (`set_min_providers(0)` exposure: see *Drifts*.) |
+| **Deleted** | Bucket and all agreements removed. No Layer 0 call; reachable only through Layer 1. |
 
 | From | To | Call | Caller |
 |---|---|---|---|
-| — | Active | `establish_storage_agreement` | owner, redeeming provider-signed terms. Creates the bucket and its only primary in one step. |
+| — | Active | `establish_storage_agreement` (creates the bucket and its only primary) | owner, redeeming provider-signed terms |
 | Active | Active | `establish_replica_agreement`, `extend_agreement`, `top_up_agreement`, `top_up_replica_sync_balance`, `set_member`, `remove_member`, `set_bucket_visibility`, `set_min_providers`, `checkpoint`, `extend_checkpoint` | owner / admin / writers |
 | Active | Frozen | `freeze_bucket` | admin |
-| Active, Frozen | No primary | `end_agreement` (early or after expiry) | owner, also admin if early |
-| Active, Frozen | No primary | `claim_expired_agreement` (after `SettlementTimeout`) | provider |
-| Active, Frozen | No primary | `remove_slashed` (provider stake is zero) | anyone |
-| any | Deleted | `delete_drive` → `cleanup_bucket_internal`. Ends every agreement, replicas included, with prorated refunds. Refused while any agreement has a pending challenge. | drive owner who is bucket admin |
+| Active, Frozen | No primary | `end_agreement` (early or after expiry) · `claim_expired_agreement` (after `SettlementTimeout`) · `remove_slashed` (provider stake is zero) | owner, also admin if early · provider · anyone |
+| any | Deleted | Layer 1 `delete_drive` → `cleanup_bucket_internal`; refused while any agreement has a pending challenge | drive owner who is bucket admin |
 
-`deregister_provider` is rejected while the provider has active agreements, so
-it is not a bucket transition. `delete_s3_bucket` removes the S3 registry
-entry only; the Layer 0 bucket and its agreements remain.
+`deregister_provider` is rejected while the provider has active agreements.
+`delete_s3_bucket` removes the S3 registry entry only; the Layer 0 bucket and
+its agreements remain.
 
-Layer 0 only. Solid arrows are implemented on `dev`. Dashed arrows and dashed
-states are described in the design and have no Layer 0 extrinsic. In-state
-calls from the table and the Layer 1 `delete_drive` teardown are left off to
-keep the drawing readable.
+Solid arrows exist on `dev`. Dashed arrows and states have no Layer 0 call.
+In-state calls omitted.
 
 ```mermaid
 flowchart LR
@@ -63,7 +61,7 @@ flowchart LR
     Active["Active<br/>one primary under agreement"]
     Frozen["Frozen<br/>append-only, irreversible"]
     NoPrimary["No primary<br/>nobody liable for new data"]
-    Deleted["Deleted<br/>design only"]
+    Deleted["Deleted<br/>Layer 1 only"]
     Multi["Active, 2+ primaries<br/>design only"]
 
     none -- "establish_storage_agreement<br/>owner · creates bucket + sole primary" --> Active
@@ -71,10 +69,9 @@ flowchart LR
     Active -- "end_agreement · claim_expired_agreement · remove_slashed" --> NoPrimary
     Frozen -- "end_agreement · claim_expired_agreement · remove_slashed" --> NoPrimary
 
-    NoPrimary -. "no call: add or replace primary" .-> Active
-    NoPrimary -. "no Layer 0 call: delete bucket" .-> Deleted
-    Active -. "no call: add a primary" .-> Multi
-    Multi -. "min_providers, signature bitfield,<br/>extend_checkpoint unreachable" .-> Multi
+    NoPrimary -. "no primary-role call takes a bucket_id" .-> Active
+    Active -. "no primary-role call takes a bucket_id" .-> Multi
+    NoPrimary -. "no Layer 0 call" .-> Deleted
 
     classDef missing stroke-dasharray: 6 4;
     class Multi,Deleted missing;
@@ -82,46 +79,42 @@ flowchart LR
 
 ### Not implemented
 
-- **Active with two or more primaries. Is this still the target?** The design
-  describes multi-primary buckets, `min_providers`, the signature bitfield and
-  `extend_checkpoint` for them. No call adds a second primary.
-  `set_min_providers` exists but is capped by the primary count, so it can
-  only hold 0 or 1 and that machinery is unreachable. If yes, the
-  join path below is the missing piece and every item after it follows from
-  it. If no, the design must say single primary plus replicas, and the
-  transfer story reduces to replacing the one primary.
-- **No primary → Active.** Nothing adds or replaces a primary. A bucket whose
-  primary expired, ended or was slashed stays read-only forever under the same
-  `bucket_id`. #403 removed the `ProviderAddedToBucket` event as dead code.
-- **Replica → Primary.** A provider cannot hold both roles on one bucket and
-  cannot be promoted.
+- **A primary can only be attached at bucket creation.**
+  `establish_storage_agreement` is the sole primary-role entry and requires
+  `terms.bucket_id == None`; only the replica call accepts an existing bucket.
+  Consequences: (a) no second primary, so `min_providers`, the signature
+  bitfield and `extend_checkpoint` are unreachable outside tests
+  (`set_min_providers` is capped by the primary count and can only hold 0 or
+  1); (b) *No primary* is terminal: a bucket whose primary expired, ended or
+  was slashed stays read-only forever under the same `bucket_id` (PR #403
+  removed the `ProviderAddedToBucket` event as dead code); (c) a replica
+  cannot be promoted, and a provider cannot hold both roles on one bucket;
+  (d) the path existed as `create_bucket` + request/accept and was removed by
+  #97 / PR #105 (PR #376 DRIFT-002), see *2. Multi-provider*.
 - **Owner change.** `transfer_agreement_ownership` is in the design only.
   Open PR #414 implements it; it moves the payer, not the data.
-- **Create without a provider.** The design has `create_bucket`; #97 scoped
-  its removal and PR #105 removed it together with the request/accept flow
-  (#376 DRIFT-002). See *2. Multi-provider* for how that also removed the
-  path to add a primary to an existing bucket.
+- **Agreement end is a single block edge.** Liability, challengeability,
+  payment and the data obligation all end at the expiry block. There is no
+  retention window in which a successor can fetch from a still-liable
+  provider; renewal needs a live, funded owner before the edge, and the
+  provider can block extensions one block before it.
 - **Delete at Layer 0.** No extrinsic. A bucket not backed by a drive cannot be
   deleted.
-- **Retention after expiry.** Challenges stop at the expiry block; there is no
-  window in which a successor can fetch the data from a still-liable provider.
 
 ## Main questions
 
-Grouped into six topics, in meeting order.
+Six topics, in meeting order.
 
 ### 1. Bucket lifecycle
 
-- **Bucket-level provider change.** Is it intended that a bucket moves to a
-  new provider, or that a primary is added to an existing bucket? The
-  design promises a stable `bucket_id` across providers and has no path to
-  keep it.
-- **Retention after expiry.** The provider may delete data at the expiry
-  block; all challenges stop there. Should a retention period exist during
-  which the provider stays challengeable, so a transfer has a window?
-- **Renewal and notice.** Renewal needs a live, funded owner before the
-  expiry block, and a provider can block extensions one block before it.
-  Should there be auto-renew from escrow and a minimum notice period?
+- **Stable `bucket_id` across providers.** The design promises it and has no
+  path to keep it. Whether the path is "add a primary, then end the old one"
+  or "replace the primary" follows from topic 2.
+- **Agreement end as a phase.** Should the end be a phase, notice → expiry →
+  retention, rather than one block: a minimum notice period, auto-renew from
+  escrow, and a retention period during which the provider stays
+  challengeable so a transfer has a window? Who may extend the edge: owner,
+  escrow, provider?
 
 ### 2. Multi-provider
 
@@ -130,57 +123,46 @@ implemented*). If yes, the join path is the missing piece and the rest
 follows. If no, the design should say single primary plus replicas, and
 transfer reduces to replacing the one primary.
 
-- **`add_primary_provider`: how the join path went missing.** The design is
-  bucket-first: the bucket is created once, then providers are attached one
-  agreement at a time. The implementation doc still lists that shape:
-  `create_bucket(min_providers, visibility)` makes an empty bucket with the
-  caller as admin, `request_primary_agreement` + `accept_agreement` attach a
-  primary to it, and `create_bucket_with_storage` was a one-call shortcut with
-  on-chain provider matching. #97 moved the negotiation off-chain: the matching
-  was O(n) over all providers, the pending `AgreementRequests` map only bridged
-  two extrinsics, and the shortcut bound a provider without its consent. Its
-  ideal flow was `establish_agreement(bucket_id, provider, terms, sig)` on an
-  existing bucket, while its scope list also removed `create_bucket`. PR #105
-  (merged 2026-06-12) resolved that tension by folding bucket creation into
-  the agreement: `establish_storage_agreement` requires `terms.bucket_id ==
-  None`, creates the bucket with `min_providers = 1` and the signing provider
-  as its only primary, and no primary-role call accepts a `bucket_id`. Only
-  `establish_replica_agreement` attaches a provider to an existing bucket, as
-  a replica. Layer 1 (`create_drive`, `create_s3_bucket`) goes through the
-  same internal, so every user bucket is born with exactly one primary; the
-  pallet tests build multi-primary buckets by writing storage directly. The
-  join path was therefore never rejected, it fell out of #105 as a side
-  effect.
-- **Shape of the missing call.** It mirrors the replica call:
-  `add_primary_provider(bucket_id, provider, terms, sig)` with
-  `terms.bucket_id == Some(id)` signed under `PRIMARY_TERM_CONTEXT`, the same
-  provider/capacity/stake checks, and the provider pushed onto
-  `primary_providers`. Open: who redeems it (an admin, or anyone the provider
-  quoted for, with admin consent), and whether the redeemer or the admin owns
-  the agreement. Everything else in this topic follows from it: where the
-  joining primary gets the data, what it is liable for, and whether a replica
-  can be promoted in place.
+- **How the join path went missing.** It was never rejected; it fell out of
+  PR #105 as a side effect. The design is bucket-first: create the bucket,
+  then attach providers one agreement at a time (`create_bucket`, then
+  `request_primary_agreement` + `accept_agreement`; `create_bucket_with_storage`
+  as a one-call shortcut with on-chain matching). #97 moved negotiation
+  off-chain because the on-chain matching was O(n) over all providers, the
+  pending `AgreementRequests` map only bridged two extrinsics, and the shortcut
+  bound a provider without its consent. Its ideal flow was
+  `establish_agreement(bucket_id, provider, terms, sig)` on an existing bucket,
+  while its scope list also removed `create_bucket`. PR #105 (merged
+  2026-06-12) resolved that tension by folding bucket creation into the
+  agreement: `terms.bucket_id` must be `None`, the bucket is created with
+  `min_providers = 1` and the signer as its only primary, and Layer 1
+  (`create_drive`, `create_s3_bucket`) goes through the same internal.
+- **Where the join path fits.** Two shapes: (a) generalise
+  `establish_storage_agreement` so `terms.bucket_id == Some(id)` attaches a
+  primary to an existing bucket, the #97 shape, which also covers promoting a
+  replica; (b) a separate `add_primary_provider(bucket_id, provider, terms,
+  sig)` mirroring the replica call. Open in both: who redeems it (an admin,
+  or anyone the provider quoted for, with admin consent) and who owns the
+  agreement.
 - **Provider-to-provider transfer.** Should a joining primary obtain the
   data from any provider under agreement on the bucket, the way replicas do,
-  instead of the client re-uploading? (#65 §1, §4)
+  instead of the client re-uploading? (#65 §1, §4) On a private bucket the
+  joiner has no honest data source unless the admin adds it as a member or a
+  replica exists.
 - **Liability of a joining primary.** A primary is slashable only for
   snapshots it signed, and only a writer/admin can add its signature. Should
   a primary attest possession itself? Is there a middle ground between
   "one signature is enough" and "all primaries must sign"?
-- **Replica to primary.** Should a provider be replica and primary of one
-  bucket at once, or be promoted in place, so a replica can serve as warm
-  standby?
+- **Replica as warm standby.** Is a replica meant to be the succession
+  candidate? If so, promote it in place, or let one provider be replica and
+  primary of one bucket at once?
 
 ### 3. Incentives
 
-The stake is a hold on the provider's balance and earns nothing while held,
-so it forgoes relay staking yield for the life of the longest agreement. The
-fee sits in the owner's escrow and is paid to the provider only at
-settlement.
-
-- **Capital cost of a 1-year primary.** Stake locked for a year with no
-  yield, fee received at month 12. Acceptable, or should the fee stream or
-  vest per checkpoint?
+- **Capital cost of a 1-year primary.** The stake is a hold that earns
+  nothing, so it forgoes relay staking yield for the life of the longest
+  agreement, and the fee arrives at settlement (topic 4). Acceptable, or
+  should the fee stream or vest per checkpoint?
 - **Nobody challenges.** A successful challenger gets a refund and no reward
   (design v2.1), and the provider node does not challenge. Who verifies a
   departing or joining primary?
@@ -193,18 +175,17 @@ settlement.
 ### 4. 1-year contract numbers
 
 Fee = `price_per_byte × max_bytes × duration`, in integer plancks per byte
-per anchor block. One year is 5,256,000 relay blocks. The whole fee is
-escrowed upfront as a hold on the owner and paid out at settlement; early
-end refunds `fee × remaining / total`. Paseo constants on `dev`:
-`MinProviderStake` 1,000 UNIT, `MinStakePerByte` 1,000 plancks (1 UNIT per
-GB), `SettlementTimeout` 24 relay hours, `ChallengeDeposit` 1 UNIT,
-`max_duration` provider-set and unbounded by default.
+per anchor block; one year is 5,256,000 anchor blocks. The whole fee is
+escrowed upfront as a hold on the owner and paid out at settlement; early end
+refunds `fee × remaining / total`. `MinStakePerByte` on Paseo `dev` is 1,000
+plancks, 1 UNIT per GB; other constants are in the implementation doc's
+reference values.
 
 - **Price granularity.** The smallest non-zero price is 1 planck per byte
-  per block, so 1 GB for a year costs at least 5,256 UNIT while the stake
-  backing that GB is 1 UNIT. A 100 GB bucket for a year escrows 525,600 UNIT
-  on day one. Is zero pricing the intended default, or does the unit need to
-  change (per GB-block, per byte-day, fixed-point price)?
+  per block, so 1 GB for a year costs at least 5,256 UNIT against 1 UNIT of
+  stake backing the same bytes, a 5,256× ratio; a 100 GB bucket escrows
+  525,600 UNIT on day one. Is zero pricing the intended default, or does the
+  unit need to change (per GB-block, per byte-day, fixed-point price)?
 
 ### 5. dApp integration
 
@@ -212,17 +193,20 @@ GB), `SettlementTimeout` 24 relay hours, `ChallengeDeposit` 1 UNIT,
   shared key, or a contract), one bucket per user, or contract-owned
   buckets? Does every user need an agreement? The design has no dApp use
   case.
-- **Layer 1.** `delete_drive` ends every agreement on the bucket early with
-  refunds, including third-party replicas. Drive fields mirror the first
-  agreement and never update. After #414 a drive owner and its agreement
-  owner can diverge. What does Layer 1 want here?
+- **Layer 1 (outside Layer 0 scope, listed for the meeting).** `delete_drive`
+  ends every agreement on the bucket early, third-party replicas included
+  (see *Drifts*). Drive fields mirror the first agreement and never update.
+  After PR #414 a drive owner and its agreement owner can diverge. What does
+  Layer 1 want here?
 
 ### 6. Bulletin vs Web3 Storage coexistence
 
-Bulletin is fee-less, authorization-gated, ~14-day renewable TTL, real IPFS
-CIDs over Bitswap, and officially interim until the JAM data lake. Web3
-Storage is paid, staked, long-term, with no CIDs and no Bitswap. Three
-models are on the tracker:
+Bulletin is fee-less, unstaked, authorization-gated, ~14-day renewable TTL,
+real IPFS CIDs over Bitswap, and officially interim until the JAM data lake.
+Web3 Storage (w3s) is paid, staked, long-term, with no CIDs and no Bitswap;
+it is the durable storage market, not a data availability service (#43).
+Three models are on the tracker; the "must add" column is mostly retrieval
+and provider-node work, not Layer 0:
 
 | Model | Shape | Issue | w3s must add |
 |---|---|---|---|
@@ -232,69 +216,49 @@ models are on the tracker:
 
 - **Which model first.** Replace follows the official direction; durability
   tier is the smallest change; shared retrieval touches the data model.
-- **Replica from a foreign source.** The replica role is read-only, syncs
-  only from w3s primaries, and must confirm against one of the last ~113
-  anchor roots. Bulletin content has no such root. Own role, or a relaxed
-  confirmation rule?
-- **Who pays and who is liable.** Bulletin is fee-less and unstaked; a w3s
-  replica is paid and slashable. Who owns the mirror agreement, and does the
-  transfer path from topic 2 apply once the mirror is the only copy after
-  the TTL?
-- **Positioning.** w3s is the durable storage market, not a data
-  availability service (#43).
+- **Replica from a foreign source.** The replica role is read-only and must
+  confirm against the current snapshot root or one of six historical roots
+  refreshed on windows of 3 to 113 anchor blocks (about 11 minutes at the
+  widest), which a large busy bucket can outrun. Bulletin content has no such
+  root. Own role, or a relaxed confirmation rule?
+- **Who pays and who is liable.** A w3s replica is paid and slashable. Who
+  owns the mirror agreement, and does the transfer path from topic 2 apply
+  once the mirror is the only copy after the TTL?
 
-## Gaps
+## Drifts (docs vs. code)
 
-- No extrinsic adds a primary to an existing bucket or moves a bucket. A
-  bucket whose sole primary expired or was slashed can never be written
-  again.
-- No primary-to-primary data movement. Replica sync has the mechanism; it
-  runs only for the replica role and fetches only from primaries.
-- A primary cannot attest possession on its own. A second primary that
-  never signs is paid and never slashable.
-- A provider cannot be replica and primary of one bucket at once.
-- On a private bucket a joining provider has no honest data source unless
-  the admin adds it as a member or a replica exists.
-- No retention window after expiry. No auto-renew. No notice obligation.
-- Replica confirmation must match the current snapshot root or one of six
-  historical roots refreshed on windows of 3, 7, 11, 23, 47 and 113 anchor
-  blocks (about 11 minutes at the longest); a large busy bucket may never let
-  a replica confirm.
-- Nobody challenges automatically.
-- Overlap payment and unpaid bulk fetch are inherent to the current
-  economics.
+Untracked, likely code bugs:
 
-## Drifts (design vs. code)
-
-- Use cases assume adding providers to a bucket; nothing specifies or
-  implements it. The implementation doc still documents `create_bucket`,
-  `create_bucket_with_storage` and the `AgreementRequested` / `Accepted` /
-  `Rejected` / `RequestWithdrawn` events that PR #105 removed, next to the
-  `establish_*` section that replaced them; `docs/drafts/marketplace.md` and
-  `docs/drafts/smart-contracts.md` still show `request_agreement()` and
-  `createBucket`.
-- `extend_checkpoint` silently drops a signer bit beyond the stored bitfield.
 - `set_min_providers` has no lower bound (`InvalidMinProviders` only guards
   the upper one) and `checkpoint` only checks `signing_count >=
   min_providers`. An admin can set 0 and commit a snapshot with an empty
   signature list, so a bucket, including one in *No primary*, can carry a
   snapshot no provider is liable for. Bucket creation seeds `min_providers =
   1`; nothing lowers it when the primary leaves, so the exposure needs an
-  explicit admin call. Likely a code bug; adjacent to #388, no issue yet.
-- "Liable for signed snapshots until superseded" ends at expiry in code.
+  explicit admin call. Adjacent to #388, no issue yet. Under a single-primary
+  answer to topic 2 the call is dead code and can go.
+- `extend_checkpoint` silently drops a signer bit beyond the stored bitfield.
+  Multi-primary machinery; disposition follows topic 2.
 - `delete_drive` early-terminates replicas with refunds; the design forbids
   both.
-- The provider node accepts uploads and commits for buckets where it has no
-  agreement or the wrong role (#382 covers quota).
-- Read and sync endpoints are unauthenticated (#383).
-- `transfer_agreement_ownership` was specified and missing; PR #414 adds it.
-  It moves the payer, not the data.
+
+Design text vs. code:
+
+- "Liable for signed snapshots until superseded" ends at expiry in code
+  (topic 1).
+- Stale pre-#105 API: the implementation doc still documents `create_bucket`,
+  `create_bucket_with_storage` and the `AgreementRequested` / `Accepted` /
+  `Rejected` / `RequestWithdrawn` events next to the `establish_*` section
+  that replaced them; `docs/drafts/marketplace.md` and
+  `docs/drafts/smart-contracts.md` still show `request_agreement()` and
+  `createBucket`.
+
+Already tracked: the provider node accepts uploads and commits for buckets
+where it has no agreement or the wrong role (#382 covers quota); read and
+sync endpoints are unauthenticated (#383).
 
 ## Related
 
-#65, #281, #107 (migration, wind-down) · #97, #105 (off-chain negotiation,
-bucket creation folded into the agreement) · #332, #388, #302 (multi-provider
-checkpoints) · #134, #133 (dApps) · #414, #376 (ownership transfer) · #382,
-#383, #310 (provider node) · #132, #391, #390, #43 (Bulletin) ·
-`docs/drafts/CHECKPOINT_PROTOCOL.md`,
-`docs/drafts/smart-contracts.md`, `docs/drafts/marketplace.md`.
+Not cited above: #281, #107 (migration, wind-down) · #332, #302
+(multi-provider checkpoints) · #134, #133 (dApps) · #310 (provider node) ·
+`docs/drafts/CHECKPOINT_PROTOCOL.md`.
