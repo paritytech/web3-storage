@@ -193,9 +193,13 @@ impl From<Error> for provider_replica::Error {
             // `provider_replica` maps the storage error space one-to-one.
             Error::Backend(err) => err.into(),
             Error::Chain(err) => provider_replica::Error::Chain(err),
-            Error::InvalidHash { expected, actual } => {
-                provider_replica::Error::InvalidHash { expected, actual }
-            }
+            // The node's own `InvalidHash` reports text that failed to parse as
+            // a hash, so it cannot feed the replica variant, which holds two
+            // real `H256`s.
+            Error::InvalidHash { expected, actual } => provider_replica::Error::Decode {
+                what: "hash",
+                reason: format!("expected {expected}, got {actual}"),
+            },
             Error::ChainQuery { what, reason } => {
                 provider_replica::Error::ChainQuery { what, reason }
             }
@@ -853,7 +857,7 @@ mod tests {
                     expected: "e".into(),
                     actual: "a".into(),
                 },
-                "Invalid hash: expected e, got a",
+                "Failed to decode hash: expected e, got a",
             ),
             (
                 Error::chain_query("current block", "timed out"),
