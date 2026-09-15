@@ -270,12 +270,59 @@ candidates are the last MMR leaf, a manifest leaf by client convention, the
 Layer 1 path index, or the `pallet_s3_registry` object map; none is
 specified for this use.
 
-**Read.** Layer 0: `GET /read?data_root=…` returns base64 in JSON,
-unauthenticated, byte ranges only through `offset`/`length` query parameters
-(no HTTP `Range` header), and no client-side verification against the data
-root. Layer 1: `GET /fs/:bucket_id/file?path=…` returns the bytes
-with the stored Content-Type; anonymous reads are allowed when the bucket is
-Public. Neither endpoint is usable by a browser as a site origin.
+**Read.** The Layer 0 route is below. Layer 1 (`GET
+/fs/:bucket_id/file?path=…`, `GET /s3/:bucket_id/object?key=…`) is the
+path- or key-addressed read and is out of scope here. Neither endpoint is usable by a browser as a site origin.
+
+### Read route (Layer 0)
+
+How a dApp gets from a name to the latest bytes, and at which step it
+uses the commit or the checkpoint. All provider endpoints below are unauthenticated
+(#383).
+
+1. **Name → `bucket_id`.** Missing (DotNS record format undefined).
+2. **`bucket_id` → provider address.** Chain: `Buckets[bucket_id]` gives
+   `primary_providers`, `visibility` and `snapshot`; `Providers[account]`
+   gives the multiaddr. Runtime API `bucket_providers(bucket_id)`.
+3. **Find the latest leaf.** Two sources, see the table.
+4. **Leaf → `data_root`.** `GET /mmr_proof?bucket_id=…&leaf_index=…` returns
+   the leaf (`data_root`, `data_size`, `total_size`) and an MMR proof.
+   `leaf_index` is relative to `start_seq`; the latest leaf is
+   `leaf_count - 1`. The client checks the proof against the `mmr_root`
+   from step 3 with `verify_mmr_proof`.
+5. **`data_root` → bytes.** `GET /read?data_root=…&offset=…&length=…`
+   returns base64 chunks in JSON, each with its Merkle siblings to
+   `data_root`; byte ranges only through the query parameters, no HTTP
+   `Range` header. The client can check every chunk with
+   `verify_merkle_proof` (it supplies the chunk index from `offset`); no
+   client in the repo does so today.
+
+| Source of "latest" in step 3 | Where | What it proves | Lag |
+|---|---|---|---|
+| Commit | `GET /commitment?bucket_id=…` on the provider: `mmr_root`, `start_seq`, `leaf_count`, provider signature | the provider signed for this state; nothing is on chain, nobody is challengeable for it | none: visible right after `POST /commit` |
+| Checkpoint | `Buckets[bucket_id].snapshot.commitment` on chain: same triplet plus `checkpoint_block` and the signer bitfield | the provider is challengeable and slashable for every leaf below `leaf_count` | until the operator calls `checkpoint` and pays the fee |
+
+Both sources give a `(mmr_root, start_seq, leaf_count)` triplet and the
+same steps 4 and 5 follow. Only the checkpoint source gives a
+chain-backed answer; the commit source depends on the provider's signature
+and on the operator checkpointing it later.
+
+Limitations, verified in code:
+
+- **Proof against the on-chain root.** `/mmr_proof` takes only
+  `leaf_index` and proves against the provider's current MMR. After a
+  writer commits past the checkpoint, the returned peaks no longer match
+  `snapshot.commitment.mmr_root`, so a client cannot verify a checkpointed
+  leaf against the chain root until the next checkpoint. The pallet keeps
+  `historical_roots` for replica sync reports only; no client-facing
+  equivalent exists.
+- **No "latest" helper.** No SDK function performs steps 2 to 5. The
+  TypeScript Layer 0 package has `downloadChunk` for a known `data_root`
+  only.
+- **`leaf_count` differs per primary.** If a bucket ever has more than one
+  primary (topic 2), each primary keeps its own log and step 3 from the
+  commit source can return a different `leaf_count` per provider; only the
+  checkpoint source is a single answer.
 
 ### Case A: single SPA as one archive
 
@@ -283,7 +330,7 @@ Public. Neither endpoint is usable by a browser as a site origin.
 |---|---|---|
 | Upload | one file → one data root → one commit → one MMR leaf | CAR handling: the archive is opaque bytes at Layer 0; nothing reads or unpacks CAR |
 | Reference | `bucket_id + data_root`; every deploy produces a new `data_root` | a name record with only `bucket_id` needs a "current" rule; a record with `bucket_id + data_root` must be rewritten per deploy |
-| Read | `GET /read` for the whole archive | a gateway that unpacks the archive and serves `index.html` and assets |
+| Read | the Layer 0 route above, one `data_root` for the whole archive | a gateway that unpacks the archive and serves `index.html` and assets |
 
 ### Case B: multi-file site under a `.dot` name
 
