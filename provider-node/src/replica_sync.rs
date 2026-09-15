@@ -70,7 +70,7 @@ impl ReplicaSync {
             .map_err(|e| Error::Storage(format!("Failed to init bucket: {e}")))?;
 
         // Get local state
-        let local_bucket = self.storage.get_bucket(bucket_id);
+        let local_bucket = self.storage.get_bucket(bucket_id).ok().flatten();
 
         // Determine what we need to fetch
         let target_root = hex_decode(&peaks_response.mmr_root)
@@ -121,7 +121,7 @@ impl ReplicaSync {
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), Error>> + Send + 'a>> {
         Box::pin(async move {
             // Check if we already have this node
-            if self.storage.get_node(&root_hash).is_some() {
+            if matches!(self.storage.get_node(&root_hash), Ok(Some(_))) {
                 return Ok(());
             }
 
