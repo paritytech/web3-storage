@@ -379,6 +379,36 @@ Two upload paths exist:
   cannot be removed alone.
 - **Serving incentive.** Possession is challengeable; serving is not (#216).
 
+### Open questions (hosting)
+
+- **Bucket expiry.** Agreement end is a single block edge (see *Bucket
+  lifecycle*). After it the provider keeps the data, is not paid until
+  settlement, and cannot be challenged for it, while the DotNS record still
+  points at the data. Who watches the expiry, and what does the reader see
+  between expiry and renewal?
+- **Transition to another provider.** A site whose agreement ends before
+  the site does needs the transfer from the *Story*: same `bucket_id`, new primary, no
+  re-upload. With one blob per deploy the data is small, so is a
+  re-upload by the publisher acceptable for sites, or does the record need
+  the generic path from topic 2?
+- **One site per bucket: does it scale?** Every site is one bucket, one
+  agreement, one on-chain snapshot, and one `checkpoint` call per deploy. A
+  publisher with many sites has many agreements with the same provider,
+  bounded by `MaxBucketsPerMember` (1000 in the local runtime). On the
+  provider, one RocksDB contains all buckets, one record per bucket, and every
+  commit rewrites that record with the full leaf vector and rebuilds the
+  MMR from it. Is a bucket per site the intended granularity, or one
+  bucket per publisher with sites as leaves and a manifest? The second
+  option needs the "current version" rule and per-leaf pruning that
+  Layer 0 does not have.
+- **Free-tier sites.** The personhood free tier design
+  ([technical-design PR 6](https://github.com/paritytech/technical-design/pull/6))
+  funds one bucket per Product per person through 14-day vouchers, paid by a
+  treasury fund per byte per anchor block. With the smallest non-zero
+  `price_per_byte`, one GB for one 14-day window (201,600 anchor blocks)
+  costs about 201.6 UNIT (granularity argument in topic 4). What quota per
+  person is affordable at that price?
+
 ## Drifts (docs vs. code)
 
 Untracked, likely code bugs:
