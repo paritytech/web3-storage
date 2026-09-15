@@ -4,13 +4,14 @@
 | --- | --- |
 | **Authors** | eskimor |
 | **Status** | Draft |
-| **Version** | 2.3 |
+| **Version** | 2.4 |
 | **Related** | [Implementation Details](./scalable-web3-storage-implementation.md), [Proof-of-DOT Infrastructure Strategy](https://docs.google.com/document/d/1fNv75FCEBFkFoG__s_Xu10UZd0QsGIE9AKnrouzz-U8/) |
 
 ## Version History
 
 | Version | Changes |
 |---------|---------|
+| 2.4 | Bucket creation and provider assignment are separate on-chain operations: `create_bucket`, `create_bucket_with_primary`, `add_primary_provider`, `add_replica_provider`. Provider-signed quotes name the bucket they are for. A bucket remains after its last agreement ends and can get new providers later; the client moves the data when a provider is added. **Read**: "Buckets: Stable Identity in a Fluid Provider Market"; "Two Classes of Providers"; "Provider Lifecycle in Bucket" in [Implementation Details](./scalable-web3-storage-implementation.md) for the four calls. |
 | 2.3 | Private buckets clarified (visibility flag, Reader role, primary challenges gated to members + primary-agreement owners, tier-split challenge stats). **Read**: new "Bucket Visibility & Access" section; "The Challenge Game". |
 | 2.2 | Challenge cost model reworked and clarified: a valid response never touches the provider's stake. The challenger's deposit covers the on-chain response cost; authorized challengers (bucket members + agreement owners) get a split where the provider bears a fraction (challenger's share floored at 50%, as leverage—not cheap recovery), while the general public pays in full (anti-DoS, since a provider can't serve everyone equally). Stake is slashed only on a missing/invalid response. |
 | 2.1 | Clarification on rewards for the challenger: There should be none, just refund. Plus some corrections with regards to PDP and Filecoin. |
@@ -364,7 +365,8 @@ Bucket (on-chain, stable identifier)
 A content hash names data but doesn't guarantee anyone stores it. A bucket makes availability explicit and controllable:
 
 - **Stable identity**: The bucket_id never changes, even as providers come and go. Applications reference buckets, not
-  providers. Switch providers without breaking links.
+  providers. Switch providers without breaking links. Providers join a bucket one agreement each, at creation or
+  later, and a bucket whose agreements have all ended remains on-chain; the admin can add a new provider later.
 
 - **Explicit availability**: On-chain state shows exactly which providers have agreements. No guessing, no DHT lookups,
   no hoping.
@@ -381,13 +383,13 @@ A content hash names data but doesn't guarantee anyone stores it. A bucket makes
 Providers fall into two categories with different trust models:
 
 **Primary Providers** (admin-controlled):
-- Added only by bucket admin
+- Added only by bucket admin, by redeeming a provider-signed quote (`create_bucket_with_primary`, `add_primary_provider`)
 - Receive writes directly from clients
 - Count toward `min_providers` for checkpoints
 - Limited to ~5 per bucket (prevents bloat)
 
 **Replica Providers** (permissionless):
-- Added by anyone (you, a third party, a charity)
+- Added by anyone (you, a third party, a charity) by redeeming a provider-signed quote (`add_replica_provider`)
 - Sync data autonomously from primaries or other replicas
 - Paid per successful sync confirmation
 - Unlimited count
@@ -1198,6 +1200,21 @@ For use cases requiring stronger guarantees than game-theoretic verification—p
 replicas (which lack natural client verification) and fire-and-forget archival—optional
 periodic proofs similar to Filecoin's PDP could be added as a premium feature. This can
 be layered on later without changing the core protocol.
+
+### Provider-to-Provider Fetch
+
+A primary joining a bucket that already has data gets that data from the client,
+which downloads it from a provider that has it and uploads it again. An optional
+provider API could let the new primary pull the data directly, the way a replica
+syncs today. The transfer needs no trust: chunks and internal nodes are
+content-addressed, so the receiver verifies everything against the data root it
+already knows from the chain.
+
+Open points: whether serving such a fetch is voluntary or part of the agreement,
+who pays the serving provider for the egress, and whether a provider that is
+about to exit can be made to serve at all. Nothing in the core protocol depends
+on it — the client path always works — so it can be added once the cost of the
+download-and-upload round trip is measured on real bucket sizes.
 
 ### Isolation Mode
 
