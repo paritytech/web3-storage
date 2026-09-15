@@ -12,7 +12,6 @@
   "dependencies": {
     "@polkadot-api/descriptors": "workspace:*",
     "@polkadot-api/substrate-bindings": "^0.21.1",
-    "@polkadot-labs/hdkd-helpers": "^0.0.31",
     "@radix-ui/react-context-menu": "^2.3.5",
     "@radix-ui/react-dialog": "^1.1.21",
     "@radix-ui/react-dropdown-menu": "^2.1.22",

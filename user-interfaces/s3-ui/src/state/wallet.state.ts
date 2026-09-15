@@ -12,11 +12,10 @@
 
 import { BehaviorSubject, combineLatest, map } from "rxjs";
 import { bind } from "@react-rxjs/core";
-import { getTxCreator } from "polkadot-api/tx-creator";
 import { getApi } from "@/state/chain.state";
-import { seedToKeypair, toSs58, type Keypair } from "@web3-storage/sdk";
+import { makeSigner, type ChainSigner, type Keypair } from "@web3-storage/sdk";
 
-export type Signer = ReturnType<typeof getTxCreator>;
+export type Signer = ChainSigner["signer"];
 
 export interface DevAccount {
   name: string;
@@ -58,15 +57,10 @@ export const [useHasSigner] = bind(
 export async function setSigner(seed: string, name?: string): Promise<string> {
   settingSigner$.next(true);
   try {
-    const keypair = seedToKeypair(seed);
-    const address = toSs58(keypair.publicKey);
+    const { signer, address, keypair } = makeSigner(seed);
 
-    const newSigner = getTxCreator(keypair.publicKey, "Sr25519", (input) =>
-      keypair.sign(input),
-    );
-
-    signer$.next(newSigner);
-    keypair$.next(keypair);
+    signer$.next(signer);
+    keypair$.next(keypair ?? null);
     signerAddress$.next(address);
     signerName$.next(name ?? null);
 
@@ -129,10 +123,6 @@ export async function restoreSigner(): Promise<void> {
 
 export function getSigner(): Signer | null {
   return signer$.getValue();
-}
-
-export function getKeypair(): Keypair | null {
-  return keypair$.getValue();
 }
 
 export function getSignerAddress(): string | null {

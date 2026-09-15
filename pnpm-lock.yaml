@@ -188,12 +188,6 @@ importers:
       '@polkadot-api/substrate-bindings':
         specifier: ^0.21.1
         version: 0.21.1
-      '@polkadot-labs/hdkd':
-        specifier: ^0.0.29
-        version: 0.0.29
-      '@polkadot-labs/hdkd-helpers':
-        specifier: ^0.0.31
-        version: 0.0.31
       '@radix-ui/react-context-menu':
         specifier: ^2.3.5
         version: 2.3.5(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
@@ -379,9 +373,6 @@ importers:
       '@polkadot-api/descriptors':
         specifier: workspace:*
         version: link:../../packages/papi/.papi/descriptors
-      '@polkadot-labs/hdkd':
-        specifier: ^0.0.29
-        version: 0.0.29
       '@polkadot-labs/hdkd-helpers':
         specifier: ^0.0.31
         version: 0.0.31
@@ -624,9 +615,6 @@ importers:
       '@polkadot-api/substrate-bindings':
         specifier: ^0.21.1
         version: 0.21.1
-      '@polkadot-labs/hdkd-helpers':
-        specifier: ^0.0.31
-        version: 0.0.31
       '@radix-ui/react-context-menu':
         specifier: ^2.3.5
         version: 2.3.5(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)

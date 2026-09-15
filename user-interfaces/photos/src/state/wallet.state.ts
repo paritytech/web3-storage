@@ -16,13 +16,7 @@ import {
   InjectedExtension,
   InjectedPolkadotAccount,
 } from 'polkadot-api/pjs-signer'
-import { sr25519CreateDerive } from '@polkadot-labs/hdkd'
-import {
-  DEV_PHRASE,
-  entropyToMiniSecret,
-  mnemonicToEntropy,
-} from '@polkadot-labs/hdkd-helpers'
-import { getTxCreator } from 'polkadot-api/tx-creator'
+import { makeSigner } from '@web3-storage/sdk'
 import { getSs58Prefix, isSameAddress, setSs58Prefix, toSs58 } from '@web3-storage/papi'
 
 export type WalletMode = 'dev' | 'extension'
@@ -96,19 +90,9 @@ export function updateSs58Prefix(prefix: number): void {
 
 function createDevAccountsWithKnownAddresses(): InjectedPolkadotAccount[] {
   try {
-    const entropy = mnemonicToEntropy(DEV_PHRASE)
-    const miniSecret = entropyToMiniSecret(entropy)
-    const derive = sr25519CreateDerive(miniSecret)
-
     return DEV_ACCOUNT_SEEDS.map(({ name, path }) => {
-      const keypair = derive(path)
-      const publicKey = keypair.publicKey
-      const txCreator = getTxCreator(publicKey, 'Sr25519', (input) => keypair.sign(input))
-      return {
-        address: toSs58(publicKey),
-        name: `${name} (Dev)`,
-        txCreator,
-      }
+      const { signer, address } = makeSigner(path)
+      return { address, name: `${name} (Dev)`, txCreator: signer }
     })
   } catch (error) {
     console.error('Failed to create dev accounts:', error)
