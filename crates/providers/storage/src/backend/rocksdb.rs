@@ -137,7 +137,7 @@ impl DiskStorage {
     pub fn list_buckets(&self) -> Vec<BucketSummary> {
         self.iter_buckets(|bucket_id, state| BucketSummary {
             bucket_id,
-            mmr_root: format!("0x{}", hex::encode(state.mmr_root.as_bytes())),
+            mmr_root: state.mmr_root,
             start_seq: state.start_seq,
             leaf_count: state.leaf_count(),
         })
@@ -187,8 +187,8 @@ impl DiskStorage {
         let actual_hash = blake2_256(&data);
         if actual_hash != expected_hash {
             return Err(Error::InvalidHash {
-                expected: format!("0x{}", hex::encode(expected_hash.as_bytes())),
-                actual: format!("0x{}", hex::encode(actual_hash.as_bytes())),
+                expected: expected_hash,
+                actual: actual_hash,
             });
         }
 
@@ -199,7 +199,7 @@ impl DiskStorage {
                 .cf_handle(CF_NODES)
                 .ok_or_else(|| Error::Storage("Nodes CF not found".to_string()))?;
 
-            let missing: Vec<String> = child_hashes
+            let missing: Vec<H256> = child_hashes
                 .iter()
                 .filter(|h| {
                     **h != H256::zero()
@@ -210,7 +210,7 @@ impl DiskStorage {
                             .flatten()
                             .is_none()
                 })
-                .map(|h| format!("0x{}", hex::encode(h.as_bytes())))
+                .copied()
                 .collect();
 
             if !missing.is_empty() {
@@ -316,10 +316,7 @@ impl DiskStorage {
                 .map_err(|e| Error::Storage(e.to_string()))?
                 .is_none()
             {
-                return Err(Error::RootNotFound(format!(
-                    "0x{}",
-                    hex::encode(root.as_bytes())
-                )));
+                return Err(Error::RootNotFound(*root));
             }
         }
 
@@ -411,7 +408,7 @@ impl DiskStorage {
         let leaf = bucket
             .leaves
             .get(leaf_index as usize)
-            .ok_or(Error::NodeNotFound(format!("leaf_{leaf_index}")))?
+            .ok_or(Error::ResourceNotFound(format!("leaf_{leaf_index}")))?
             .clone();
 
         // Build MMR and generate proof
@@ -422,7 +419,7 @@ impl DiskStorage {
 
         let (siblings, path, peaks) = mmr
             .proof_with_path(leaf_index)
-            .ok_or(Error::NodeNotFound(format!("mmr_proof_{leaf_index}")))?;
+            .ok_or(Error::ResourceNotFound(format!("mmr_proof_{leaf_index}")))?;
 
         Ok(storage_primitives::MmrProof {
             peaks,

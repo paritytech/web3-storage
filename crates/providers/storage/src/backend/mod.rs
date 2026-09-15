@@ -71,7 +71,7 @@ pub struct BucketInfo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BucketSummary {
     pub bucket_id: BucketId,
-    pub mmr_root: String,
+    pub mmr_root: H256,
     pub start_seq: u64,
     pub leaf_count: u64,
 }
@@ -186,13 +186,13 @@ pub trait StorageBackend: Send + Sync {
         let chunk_hashes = self.collect_chunk_hashes(data_root);
 
         if chunk_index as usize >= chunk_hashes.len() {
-            return Err(Error::NodeNotFound(format!("chunk_{chunk_index}")));
+            return Err(Error::ResourceNotFound(format!("chunk_{chunk_index}")));
         }
 
         let chunk_hash = chunk_hashes[chunk_index as usize];
         let chunk_data = self
             .get_node(&chunk_hash)
-            .ok_or_else(|| Error::NodeNotFound(format!("chunk_data_{chunk_index}")))?
+            .ok_or(Error::NodeNotFound(chunk_hash))?
             .data;
 
         let proof = build_merkle_proof(&chunk_hashes, chunk_index as usize);
