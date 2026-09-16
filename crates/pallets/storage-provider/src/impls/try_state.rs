@@ -16,6 +16,7 @@ use sp_runtime::{traits::Saturating, TryRuntimeError};
 use storage_primitives::{BucketId, ProviderRole};
 
 impl<T: Config> Pallet<T> {
+    /// Checks the pallet's storage invariants; run by `try-runtime`.
     pub fn do_try_state() -> Result<(), TryRuntimeError> {
         Self::check_timing_config()?;
         Self::check_committed_bytes()?;

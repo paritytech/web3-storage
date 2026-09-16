@@ -54,7 +54,11 @@ impl ChallengeProofSource for StorageProofSource {
 /// nothing there - genuine absence, once the reads underneath stopped
 /// collapsing a backend failure into the same signal (see `StorageBackend`).
 /// Everything else means the lookup didn't complete cleanly, so the data's
-/// actual presence is unknown. That includes variants that structurally
+/// actual presence is unknown. `RocksDb`, `ColumnFamilyMissing` and
+/// `Serialization` are the ones a read path really produces: the engine
+/// failed, the database layout is wrong, or a record decoded to garbage -
+/// in none of those did storage get to look and find nothing. It also
+/// includes variants that structurally
 /// cannot come back from either read path (`ChildrenMissing`, `QuotaExceeded`
 /// and `InvalidHash` are write-side only; `RootNotFound` is produced solely
 /// by `commit`, confirmed by grepping the backend for its only call site) -
@@ -248,9 +252,7 @@ mod tests {
             _: storage_primitives::BucketId,
             _: u64,
         ) -> Result<storage_primitives::MmrProof, provider_storage::Error> {
-            Err(provider_storage::Error::Storage(
-                "simulated RocksDB failure".to_string(),
-            ))
+            Err(provider_storage::Error::ColumnFamilyMissing("nodes"))
         }
         fn get_chunk_at_index(
             &self,
@@ -286,10 +288,7 @@ mod tests {
                         leaf_index: 0,
                     }
                 );
-                assert_eq!(
-                    detail,
-                    "Storage error: simulated RocksDB failure".to_string()
-                );
+                assert_eq!(detail, "Column family not found: nodes".to_string());
             }
             other => panic!("expected StorageUnavailable, got {other:?}"),
         }

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! Replica Sync Coordinator - Autonomous replica synchronization service.
 //!
@@ -11,9 +11,12 @@
 //! 4. Submits `confirm_replica_sync` transactions to receive payment
 //! 5. Handles historical roots matching for late syncs
 
-use crate::replica_sync::ReplicaSync;
-use crate::{Error, ProviderState};
+use crate::sync::ReplicaSync;
+use crate::sync_roots::{SignedSyncRoots, SyncRootsSigner};
+use crate::Error;
 use provider_chain::{BlockEvent, BlockEventRx};
+use provider_storage::StorageBackend;
+use provider_types::ChainClientError;
 use sp_core::H256;
 use sp_runtime::AccountId32;
 use std::collections::HashMap;
@@ -157,20 +160,26 @@ pub struct BucketSnapshot {
 #[async_trait::async_trait]
 pub trait ReplicaSyncChainClient: Send + Sync {
     /// Get the current block number.
-    async fn get_current_block(&self) -> Result<u64, Error>;
+    async fn get_current_block(&self) -> Result<u64, ChainClientError>;
 
     /// Fetch replica agreements for this provider.
     async fn fetch_replica_agreements(
         &self,
         provider_account: &str,
         local_buckets: Vec<BucketId>,
-    ) -> Result<Vec<ReplicaAgreementInfo>, Error>;
+    ) -> Result<Vec<ReplicaAgreementInfo>, ChainClientError>;
 
     /// Fetch the bucket snapshot (latest checkpoint state) from chain.
-    async fn fetch_bucket_snapshot(&self, bucket_id: BucketId) -> Result<BucketSnapshot, Error>;
+    async fn fetch_bucket_snapshot(
+        &self,
+        bucket_id: BucketId,
+    ) -> Result<BucketSnapshot, ChainClientError>;
 
     /// Fetch primary provider HTTP endpoints for a bucket.
-    async fn fetch_primary_endpoints(&self, bucket_id: BucketId) -> Result<Vec<String>, Error>;
+    async fn fetch_primary_endpoints(
+        &self,
+        bucket_id: BucketId,
+    ) -> Result<Vec<String>, ChainClientError>;
 
     /// Submit a confirm_replica_sync extrinsic carrying the replica's
     /// signed roots attestation — the pallet verifies it against the
@@ -179,35 +188,12 @@ pub trait ReplicaSyncChainClient: Send + Sync {
         &self,
         bucket_id: BucketId,
         attestation: SignedSyncRoots,
-    ) -> Result<(u8, u128), Error>;
-}
-
-/// A replica's signed attestation of the sync roots it claims. Bundling the
-/// array with the signature over its SCALE encoding keeps the signed and the
-/// submitted payload one value — they cannot drift apart.
-#[derive(Clone, Debug)]
-pub struct SignedSyncRoots {
-    /// The roots shape `confirm_replica_sync` expects: target root in
-    /// position 0, positions 1–6 map to the bucket's prime-bucketed
-    /// historical slots (unused by the node today).
-    pub roots: [Option<H256>; 7],
-    /// Scheme-tagged signature over `SCALE(roots)` by the registered key.
-    pub signature: sp_runtime::MultiSignature,
-}
-
-impl SignedSyncRoots {
-    /// Attest the target root with the provider's signing keypair.
-    pub fn sign(keypair: &provider_types::ProviderKeypair, target_mmr_root: H256) -> Self {
-        let mut roots = [None; 7];
-        roots[0] = Some(target_mmr_root);
-        let signature = keypair.sign(&codec::Encode::encode(&roots));
-        Self { roots, signature }
-    }
+    ) -> Result<(u8, u128), ChainClientError>;
 }
 
 #[async_trait::async_trait]
 impl<T: ReplicaSyncChainClient> ReplicaSyncChainClient for Arc<T> {
-    async fn get_current_block(&self) -> Result<u64, Error> {
+    async fn get_current_block(&self) -> Result<u64, ChainClientError> {
         self.as_ref().get_current_block().await
     }
 
@@ -215,17 +201,23 @@ impl<T: ReplicaSyncChainClient> ReplicaSyncChainClient for Arc<T> {
         &self,
         provider_account: &str,
         local_buckets: Vec<BucketId>,
-    ) -> Result<Vec<ReplicaAgreementInfo>, Error> {
+    ) -> Result<Vec<ReplicaAgreementInfo>, ChainClientError> {
         self.as_ref()
             .fetch_replica_agreements(provider_account, local_buckets)
             .await
     }
 
-    async fn fetch_bucket_snapshot(&self, bucket_id: BucketId) -> Result<BucketSnapshot, Error> {
+    async fn fetch_bucket_snapshot(
+        &self,
+        bucket_id: BucketId,
+    ) -> Result<BucketSnapshot, ChainClientError> {
         self.as_ref().fetch_bucket_snapshot(bucket_id).await
     }
 
-    async fn fetch_primary_endpoints(&self, bucket_id: BucketId) -> Result<Vec<String>, Error> {
+    async fn fetch_primary_endpoints(
+        &self,
+        bucket_id: BucketId,
+    ) -> Result<Vec<String>, ChainClientError> {
         self.as_ref().fetch_primary_endpoints(bucket_id).await
     }
 
@@ -233,7 +225,7 @@ impl<T: ReplicaSyncChainClient> ReplicaSyncChainClient for Arc<T> {
         &self,
         bucket_id: BucketId,
         attestation: SignedSyncRoots,
-    ) -> Result<(u8, u128), Error> {
+    ) -> Result<(u8, u128), ChainClientError> {
         self.as_ref()
             .submit_sync_confirmation(bucket_id, attestation)
             .await
@@ -257,7 +249,7 @@ impl ReplicaSyncCoordinatorHandle {
         self.command_tx
             .send(SyncCommand::Stop)
             .await
-            .map_err(|_| Error::Internal("Coordinator channel closed".to_string()))
+            .map_err(|_| Error::ChannelClosed)
     }
 
     /// Pause automatic syncs.
@@ -265,7 +257,7 @@ impl ReplicaSyncCoordinatorHandle {
         self.command_tx
             .send(SyncCommand::Pause)
             .await
-            .map_err(|_| Error::Internal("Coordinator channel closed".to_string()))
+            .map_err(|_| Error::ChannelClosed)
     }
 
     /// Resume automatic syncs.
@@ -273,7 +265,7 @@ impl ReplicaSyncCoordinatorHandle {
         self.command_tx
             .send(SyncCommand::Resume)
             .await
-            .map_err(|_| Error::Internal("Coordinator channel closed".to_string()))
+            .map_err(|_| Error::ChannelClosed)
     }
 
     /// Force a sync for a specific bucket.
@@ -281,7 +273,7 @@ impl ReplicaSyncCoordinatorHandle {
         self.command_tx
             .send(SyncCommand::ForceSync { bucket_id })
             .await
-            .map_err(|_| Error::Internal("Coordinator channel closed".to_string()))
+            .map_err(|_| Error::ChannelClosed)
     }
 
     /// Get current coordinator status.
@@ -290,38 +282,48 @@ impl ReplicaSyncCoordinatorHandle {
         self.command_tx
             .send(SyncCommand::Status { response_tx })
             .await
-            .map_err(|_| Error::Internal("Coordinator channel closed".to_string()))?;
+            .map_err(|_| Error::ChannelClosed)?;
 
-        response_rx
-            .await
-            .map_err(|_| Error::Internal("Status response channel closed".to_string()))
+        response_rx.await.map_err(|_| Error::ChannelClosed)
     }
 }
 
 /// Replica sync coordinator service.
 pub struct ReplicaSyncCoordinator {
     config: ReplicaSyncCoordinatorConfig,
-    state: Arc<ProviderState>,
+    storage: Arc<dyn StorageBackend>,
+    provider_id: String,
     chain_client: Box<dyn ReplicaSyncChainClient>,
     replica_sync: ReplicaSync,
+    /// Signs sync-roots attestations. `None` in provider-id-only setups, where
+    /// the coordinator syncs data but cannot confirm on-chain.
+    signer: Option<Arc<dyn SyncRootsSigner>>,
     /// Track active sync operations by bucket.
     active_syncs: HashMap<BucketId, tokio::task::JoinHandle<SyncResult>>,
 }
 
 impl ReplicaSyncCoordinator {
     /// Create a new replica sync coordinator.
+    ///
+    /// `signer` attests sync roots. Without one the coordinator still syncs
+    /// data but refuses to submit confirmations, since the pallet verifies
+    /// the attestation against the registered key.
     pub fn new(
         config: ReplicaSyncCoordinatorConfig,
-        state: Arc<ProviderState>,
+        storage: Arc<dyn StorageBackend>,
+        provider_id: String,
         chain_client: Box<dyn ReplicaSyncChainClient>,
+        signer: Option<Arc<dyn SyncRootsSigner>>,
     ) -> Self {
-        let replica_sync = ReplicaSync::new(state.storage.clone());
+        let replica_sync = ReplicaSync::new(storage.clone());
 
         Self {
             config,
-            state,
+            storage,
+            provider_id,
             chain_client,
             replica_sync,
+            signer,
             active_syncs: HashMap::new(),
         }
     }
@@ -361,13 +363,9 @@ impl ReplicaSyncCoordinator {
             BlockEvent::ReplicaAgreementEstablished { provider, .. } => {
                 our_account.as_ref().is_none_or(|me| me == provider)
             }
-            BlockEvent::BucketCheckpointed { bucket_id } => self
-                .state
-                .storage
-                .get_bucket(*bucket_id)
-                .ok()
-                .flatten()
-                .is_some(),
+            BlockEvent::BucketCheckpointed { bucket_id } => {
+                self.storage.get_bucket(*bucket_id).ok().flatten().is_some()
+            }
             _ => false,
         }
     }
@@ -384,7 +382,7 @@ impl ReplicaSyncCoordinator {
         // A closed broadcast channel (follower gone) yields `Closed` on every
         // poll; disarm the events select arm then, or the loop busy-spins.
         let mut events_open = true;
-        let our_account = AccountId32::from_str(&self.state.provider_id).ok();
+        let our_account = AccountId32::from_str(&self.provider_id).ok();
         // The safety-net interval's first tick fires immediately, doubling as
         // the startup bootstrap pass (duties accrued while the node was
         // down). With the safety net disabled, the bootstrap pass comes from
@@ -526,8 +524,7 @@ impl ReplicaSyncCoordinator {
 
     /// Get list of bucket IDs we're tracking as replica.
     fn get_tracked_buckets(&self) -> Vec<BucketId> {
-        self.state
-            .storage
+        self.storage
             .list_buckets()
             .into_iter()
             .map(|b| b.bucket_id)
@@ -541,18 +538,15 @@ impl ReplicaSyncCoordinator {
         let anchor_block = self.chain_client.get_current_block().await?;
 
         let local_buckets: Vec<u64> = self
-            .state
             .storage
             .list_buckets()
             .into_iter()
             .map(|b| b.bucket_id)
             .collect();
 
-        let provider_account = self.state.provider_id.clone();
-
         let agreements = self
             .chain_client
-            .fetch_replica_agreements(&provider_account, local_buckets)
+            .fetch_replica_agreements(&self.provider_id, local_buckets)
             .await?;
 
         for agreement in agreements {
@@ -588,13 +582,7 @@ impl ReplicaSyncCoordinator {
                 continue;
             }
 
-            if let Some(bucket) = self
-                .state
-                .storage
-                .get_bucket(agreement.bucket_id)
-                .ok()
-                .flatten()
-            {
+            if let Some(bucket) = self.storage.get_bucket(agreement.bucket_id).ok().flatten() {
                 if bucket.mmr_root == snapshot.mmr_root {
                     continue;
                 }
@@ -641,7 +629,7 @@ impl ReplicaSyncCoordinator {
     /// Perform sync and submit confirmation.
     pub async fn sync_and_confirm(&self, duty: &SyncDuty) -> SyncResult {
         // Check if we already have this root
-        if let Some(bucket) = self.state.storage.get_bucket(duty.bucket_id).ok().flatten() {
+        if let Some(bucket) = self.storage.get_bucket(duty.bucket_id).ok().flatten() {
             if bucket.mmr_root == duty.target_mmr_root {
                 return SyncResult::AlreadySynced {
                     bucket_id: duty.bucket_id,
@@ -713,7 +701,7 @@ impl ReplicaSyncCoordinator {
         }
 
         // Verify final state
-        let local_bucket = match self.state.storage.get_bucket(duty.bucket_id).ok().flatten() {
+        let local_bucket = match self.storage.get_bucket(duty.bucket_id).ok().flatten() {
             Some(b) => b,
             None => {
                 return SyncResult::VerificationFailed {
@@ -752,18 +740,18 @@ impl ReplicaSyncCoordinator {
     /// our registered public key, so a node without a signing key must not
     /// submit at all.
     pub async fn confirm_on_chain(&self, duty: &SyncDuty) -> SyncResult {
-        if let Err(e) = self.state.ensure_signing_key_registered() {
+        let Some(signer) = self.signer.as_deref() else {
             return SyncResult::SubmissionFailed {
                 bucket_id: duty.bucket_id,
-                error: format!("signing key does not match on-chain registration: {e}"),
+                error: "no signing key configured; cannot attest sync roots".to_string(),
             };
-        }
-        let attestation = match self.state.keypair.as_ref() {
-            Some(pair) => SignedSyncRoots::sign(pair, duty.target_mmr_root),
-            None => {
+        };
+        let attestation = match SignedSyncRoots::sign(signer, duty.target_mmr_root) {
+            Ok(attestation) => attestation,
+            Err(e) => {
                 return SyncResult::SubmissionFailed {
                     bucket_id: duty.bucket_id,
-                    error: "no signing key configured; cannot attest sync roots".to_string(),
+                    error: format!("cannot attest sync roots: {e}"),
                 };
             }
         };
