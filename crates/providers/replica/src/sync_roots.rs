@@ -34,24 +34,6 @@ impl SignedSyncRoots {
     }
 }
 
-/// Why a [`SyncRootsSigner`] refused to attest. The pallet verifies the
-/// signature against the provider's registered key, so in each case the
-/// attestation could not have verified.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
-pub enum SigningRefused {
-    /// No signing key is configured. Set `--keyfile`.
-    #[error("no signing key configured")]
-    NoKey,
-    /// No registration is published on chain yet, so the pallet has no key
-    /// to verify against. Clears once the registration lands.
-    #[error("provider registration not published")]
-    Unregistered,
-    /// The local key differs from the registered one. Re-register, or point
-    /// the node at the key it registered with.
-    #[error("local key does not match the on-chain registration")]
-    KeyMismatch,
-}
-
 /// Signs a replica's sync-roots attestation with the provider's registered
 /// key. The node owns the key material and the scheme it was registered
 /// under, so it supplies the implementation; this crate only needs the

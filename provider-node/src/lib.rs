@@ -40,14 +40,14 @@ pub use provider_coordinator::{
 };
 pub use provider_replica::{
     ReplicaSync, ReplicaSyncChainClient, ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig,
-    ReplicaSyncCoordinatorHandle, SignedSyncRoots, SigningRefused, SyncCommand,
-    SyncCoordinatorStatus, SyncDuty, SyncResult, SyncRoots, SyncRootsSigner,
+    ReplicaSyncCoordinatorHandle, SignedSyncRoots, SyncCommand, SyncCoordinatorStatus, SyncDuty,
+    SyncResult, SyncRoots, SyncRootsSigner,
 };
 pub use types::*;
 
 use codec::Encode;
 use provider_storage::{FsIndexManager, NonceStore, S3IndexManager, StorageBackend};
-use provider_types::{KeyScheme, ProviderKeypair};
+use provider_types::{KeyScheme, ProviderKeypair, SigningRefused};
 use sp_core::crypto::Ss58Codec;
 use sp_core::{sr25519, Pair};
 use sp_runtime::MultiSignature;
@@ -161,7 +161,7 @@ impl ProviderState {
     /// `0x`-prefixed hex — the same wire format `/negotiate` uses, so the
     /// scheme tag travels with every signature.
     ///
-    /// Returns `Err(Error::SigningUnavailable)` if no keypair is configured.
+    /// Returns [`SigningRefused::NoKey`] if no keypair is configured.
     /// Callers must propagate this so the HTTP layer returns 503 rather than
     /// silently emitting a zeroed placeholder signature, which would be a
     /// cryptographically invalid commitment masquerading as a real one.
@@ -171,10 +171,10 @@ impl ProviderState {
     }
 
     /// Checks `keypair` before the guard: a node with no signing key at all
-    /// must report [`Error::SigningUnavailable`] (the actionable fix -
-    /// configure `--keyfile`) rather than [`Error::ProviderInfoUnavailable`].
+    /// must report [`SigningRefused::NoKey`] (the actionable fix - configure
+    /// `--keyfile`) rather than [`SigningRefused::Unregistered`].
     fn signing_keypair(&self) -> Result<&ProviderKeypair, Error> {
-        let keypair = self.keypair.as_ref().ok_or(Error::SigningUnavailable)?;
+        let keypair = self.keypair.as_ref().ok_or(SigningRefused::NoKey)?;
         self.ensure_signing_key_registered()?;
         Ok(keypair)
     }
@@ -303,7 +303,7 @@ mod tests {
         let err = state
             .sign(b"any message")
             .expect_err("must refuse to sign without a keypair");
-        assert!(matches!(err, Error::SigningUnavailable));
+        assert!(matches!(err, Error::Signing(SigningRefused::NoKey)));
     }
 
     #[test]
@@ -369,7 +369,7 @@ mod tests {
             .replace(info(vec![9u8; 32]));
         assert!(matches!(
             state.sign(b"msg"),
-            Err(Error::ProviderKeyMismatch)
+            Err(Error::Signing(SigningRefused::KeyMismatch))
         ));
 
         // No snapshot at all must also refuse: an unpublished registration
@@ -377,7 +377,7 @@ mod tests {
         state.chain_state.provider_info.write().take();
         assert!(matches!(
             state.sign(b"msg"),
-            Err(Error::ProviderInfoUnavailable)
+            Err(Error::Signing(SigningRefused::Unregistered))
         ));
 
         // A matching snapshot signs.

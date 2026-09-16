@@ -8,6 +8,7 @@ use axum::{
     Json,
 };
 use provider_auth::{AuthError, MembershipError};
+use provider_types::SigningRefused;
 use serde::Serialize;
 use std::fmt;
 use thiserror::Error;
@@ -76,9 +77,6 @@ pub enum Error {
     #[error(transparent)]
     Auth(#[from] AuthError),
 
-    #[error("Signing unavailable: provider has no keypair configured")]
-    SigningUnavailable,
-
     #[error("Nonce counter unavailable; provider has not bootstrapped replay state")]
     NonceCounterUnavailable,
 
@@ -104,14 +102,8 @@ pub enum Error {
         max_capacity: u64,
     },
 
-    #[error("Provider on-chain info unavailable; cannot validate terms")]
-    ProviderInfoUnavailable,
-
     #[error("Provider is deregistering; not accepting new agreements")]
     ProviderDeregistering,
-
-    #[error("Local signing key does not match the registered on-chain public_key")]
-    ProviderKeyMismatch,
 
     #[error(
         "Chain state not ready: current_anchor_block and request_timeout must both be non-zero"
@@ -126,6 +118,11 @@ pub enum Error {
 
     #[error(transparent)]
     Replica(#[from] provider_replica::Error),
+
+    /// The node cannot sign with its registered key. Each reason keeps the
+    /// response code it had when these were three separate variants.
+    #[error(transparent)]
+    Signing(#[from] provider_types::SigningRefused),
 
     #[error("Storage agreement requested 0 byte")]
     InvalidMaxBytesRequest,
@@ -176,20 +173,6 @@ impl Error {
         Error::Signer {
             what,
             reason: e.to_string(),
-        }
-    }
-}
-
-/// Each refusal has a long-standing variant here, so the HTTP layer keeps
-/// answering exactly as it did before the replica signer needed its own
-/// vocabulary.
-impl From<provider_replica::SigningRefused> for Error {
-    fn from(e: provider_replica::SigningRefused) -> Self {
-        use provider_replica::SigningRefused;
-        match e {
-            SigningRefused::NoKey => Error::SigningUnavailable,
-            SigningRefused::Unregistered => Error::ProviderInfoUnavailable,
-            SigningRefused::KeyMismatch => Error::ProviderKeyMismatch,
         }
     }
 }
@@ -385,13 +368,33 @@ impl IntoResponse for Error {
                     details: Some(serde_json::json!({ "message": err.to_string() })),
                 },
             ),
-            Error::SigningUnavailable => (
+            // One variant, but each reason keeps the code and message it had
+            // when these were three: a client tells "configure a key" from
+            // "wait for the registration" by the `error` field.
+            Error::Signing(refusal) => (
                 StatusCode::SERVICE_UNAVAILABLE,
-                ErrorResponse {
-                    error: "signing_unavailable".to_string(),
-                    details: Some(serde_json::json!({
-                        "message": "provider node signer is not available."
-                    })),
+                match refusal {
+                    SigningRefused::NoKey => ErrorResponse {
+                        error: "signing_unavailable".to_string(),
+                        details: Some(serde_json::json!({
+                            "message": "provider node signer is not available."
+                        })),
+                    },
+                    SigningRefused::Unregistered => ErrorResponse {
+                        error: "provider_info_unavailable".to_string(),
+                        details: Some(serde_json::json!({
+                            "message": "provider's on-chain registration info is not loaded; \
+                                        cannot validate agreement terms"
+                        })),
+                    },
+                    SigningRefused::KeyMismatch => ErrorResponse {
+                        error: "provider_key_mismatch".to_string(),
+                        details: Some(serde_json::json!({
+                            "message": "the node's signing key does not match the public_key \
+                                        registered on-chain; signatures would never verify — \
+                                        check --keyfile / --key-scheme against the registration"
+                        })),
+                    },
                 },
             ),
             Error::NonceCounterUnavailable => (
@@ -463,16 +466,6 @@ impl IntoResponse for Error {
                     details: None,
                 },
             ),
-            Error::ProviderInfoUnavailable => (
-                StatusCode::SERVICE_UNAVAILABLE,
-                ErrorResponse {
-                    error: "provider_info_unavailable".to_string(),
-                    details: Some(serde_json::json!({
-                        "message": "provider's on-chain registration info is not loaded; \
-                                    cannot validate agreement terms"
-                    })),
-                },
-            ),
             Error::ChainStateNotReady => (
                 StatusCode::SERVICE_UNAVAILABLE,
                 ErrorResponse {
@@ -529,17 +522,6 @@ impl IntoResponse for Error {
                     details: Some(serde_json::json!({
                         "message": "provider has announced deregistration and is no \
                                     longer accepting new storage agreements"
-                    })),
-                },
-            ),
-            Error::ProviderKeyMismatch => (
-                StatusCode::SERVICE_UNAVAILABLE,
-                ErrorResponse {
-                    error: "provider_key_mismatch".to_string(),
-                    details: Some(serde_json::json!({
-                        "message": "the node's signing key does not match the public_key \
-                                    registered on-chain; signatures would never verify — \
-                                    check --keyfile / --key-scheme against the registration"
                     })),
                 },
             ),
@@ -703,7 +685,7 @@ mod tests {
             StatusCode::INTERNAL_SERVER_ERROR
         );
         assert_eq!(
-            status_of(Error::SigningUnavailable),
+            status_of(SigningRefused::NoKey.into()),
             StatusCode::SERVICE_UNAVAILABLE
         );
         assert_eq!(
@@ -765,7 +747,7 @@ mod tests {
 
     #[test]
     fn test_signing_unavailable_503() {
-        let resp = Error::SigningUnavailable.into_response();
+        let resp = Error::from(SigningRefused::NoKey).into_response();
         let (parts, body) = resp.into_parts();
         assert_eq!(parts.status, StatusCode::SERVICE_UNAVAILABLE);
 
@@ -782,8 +764,6 @@ mod tests {
 
     #[test]
     fn signing_refusals_keep_the_statuses_they_had() {
-        use provider_replica::SigningRefused;
-
         assert_eq!(
             status_of(SigningRefused::NoKey.into()),
             StatusCode::SERVICE_UNAVAILABLE

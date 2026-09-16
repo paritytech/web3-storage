@@ -12,7 +12,7 @@ pub use coordinator::{
     ReplicaSyncCoordinatorHandle, SyncCommand, SyncCoordinatorStatus, SyncDuty, SyncResult,
 };
 pub use sync::ReplicaSync;
-pub use sync_roots::{SignedSyncRoots, SigningRefused, SyncRoots, SyncRootsSigner};
+pub use sync_roots::{SignedSyncRoots, SyncRoots, SyncRootsSigner};
 
 use std::fmt;
 use storage_primitives::BucketId;
@@ -67,7 +67,7 @@ pub enum Error {
 
     /// The signer refused to attest the roots.
     #[error("Cannot sign sync roots: {0}")]
-    Signing(#[from] SigningRefused),
+    Signing(#[from] provider_types::SigningRefused),
 
     /// A coordinator control or status channel was dropped.
     #[error("Coordinator channel closed")]

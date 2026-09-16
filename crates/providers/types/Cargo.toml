@@ -13,6 +13,7 @@ serde = { workspace = true, features = ["std"] }
 sp-core = { workspace = true, features = ["std"] }
 sp-crypto-hashing = { workspace = true, features = ["std"] }
 sp-runtime = { workspace = true, features = ["std"] }
+thiserror = { workspace = true }
 clap = { workspace = true, optional = true, features = ["derive"] }
 
 [features]
