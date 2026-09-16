@@ -1,20 +1,21 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! The error the provider chain-client traits report, shared so that a chain
+//! The error a provider chain-client trait reports, shared so that a chain
 //! failure keeps one shape across the provider crates and the node.
 
 use std::fmt;
 
 /// Why a call against the chain failed.
 ///
-/// The error type of the provider chain-client traits and of the node's own
-/// chain calls, so a failure keeps the same shape whether it crosses a
+/// The error type of `ReplicaSyncChainClient` and of the node's own chain
+/// calls, so a failure keeps the same shape whether it crosses a
 /// provider-crate trait or stays inside the node. Implementations map their
 /// transport errors into these variants; naming no transport type keeps this
 /// usable from crates that do not compile subxt.
 ///
-/// The challenge-response path is the remaining exception: it still reports
-/// its own stringly `ChallengeError::Chain`.
+/// Two chain-client traits do not use it yet and still report their own
+/// stringly errors: `ChallengeChainClient` reports `ChallengeError::Chain`,
+/// and `ChainStateChainClient` reports `provider_coordinator::Error::Internal`.
 #[derive(Debug, thiserror::Error)]
 pub enum ChainClientError {
     /// A read against chain state (RPC call, storage fetch/iter, runtime API
