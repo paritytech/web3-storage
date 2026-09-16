@@ -234,10 +234,7 @@ impl ProviderState {
 /// scheme-tagged key, under the same "must match the on-chain registration"
 /// guard every other signing path goes through.
 impl SyncRootsSigner for ProviderState {
-    fn sign_sync_roots(
-        &self,
-        roots: &SyncRoots,
-    ) -> Result<MultiSignature, provider_replica::Error> {
+    fn sign_sync_roots(&self, roots: &SyncRoots) -> Result<MultiSignature, SigningRefused> {
         let keypair = self.keypair.as_ref().ok_or(SigningRefused::NoKey)?;
         self.check_signing_key()?;
         Ok(keypair.sign(&roots.encode()))

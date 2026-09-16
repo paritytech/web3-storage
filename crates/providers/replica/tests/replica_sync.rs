@@ -7,8 +7,9 @@ mod common;
 use common::{hex_hash, peaks_body, spawn_primary, test_storage};
 use provider_replica::coordinator::{BucketSnapshot, ReplicaAgreementInfo};
 use provider_replica::{
-    Error, ReplicaSyncChainClient, ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig,
-    SignedSyncRoots, SyncDuty, SyncResult, SyncRoots, SyncRootsSigner,
+    ChainClientError, Error, ReplicaSyncChainClient, ReplicaSyncCoordinator,
+    ReplicaSyncCoordinatorConfig, SignedSyncRoots, SyncDuty, SyncResult, SyncRoots,
+    SyncRootsSigner,
 };
 use provider_storage::temp_rocksdb;
 use sp_core::H256;
@@ -34,7 +35,10 @@ impl AliceSigner {
 }
 
 impl SyncRootsSigner for AliceSigner {
-    fn sign_sync_roots(&self, roots: &SyncRoots) -> Result<sp_runtime::MultiSignature, Error> {
+    fn sign_sync_roots(
+        &self,
+        roots: &SyncRoots,
+    ) -> Result<sp_runtime::MultiSignature, provider_types::SigningRefused> {
         use codec::Encode;
         use sp_core::Pair as _;
         Ok(sp_runtime::MultiSignature::Sr25519(
@@ -50,7 +54,7 @@ struct MockReplicaSyncChainClient {
     endpoints: Mutex<HashMap<BucketId, Vec<String>>>,
     confirmations: Mutex<Vec<BucketId>>,
     attestations: Mutex<Vec<SignedSyncRoots>>,
-    confirm_result: Mutex<Result<(u8, u128), Error>>,
+    confirm_result: Mutex<Result<(u8, u128), ChainClientError>>,
 }
 
 impl MockReplicaSyncChainClient {
@@ -94,7 +98,7 @@ impl MockReplicaSyncChainClient {
 
 #[async_trait::async_trait]
 impl ReplicaSyncChainClient for MockReplicaSyncChainClient {
-    async fn get_current_block(&self) -> Result<u64, Error> {
+    async fn get_current_block(&self) -> Result<u64, ChainClientError> {
         Ok(*self.block.lock().unwrap())
     }
 
@@ -102,11 +106,14 @@ impl ReplicaSyncChainClient for MockReplicaSyncChainClient {
         &self,
         _provider_account: &str,
         _local_buckets: Vec<BucketId>,
-    ) -> Result<Vec<ReplicaAgreementInfo>, Error> {
+    ) -> Result<Vec<ReplicaAgreementInfo>, ChainClientError> {
         Ok(self.agreements.lock().unwrap().clone())
     }
 
-    async fn fetch_bucket_snapshot(&self, bucket_id: BucketId) -> Result<BucketSnapshot, Error> {
+    async fn fetch_bucket_snapshot(
+        &self,
+        bucket_id: BucketId,
+    ) -> Result<BucketSnapshot, ChainClientError> {
         let snapshots = self.snapshots.lock().unwrap();
         Ok(snapshots
             .get(&bucket_id)
@@ -117,7 +124,10 @@ impl ReplicaSyncChainClient for MockReplicaSyncChainClient {
             }))
     }
 
-    async fn fetch_primary_endpoints(&self, bucket_id: BucketId) -> Result<Vec<String>, Error> {
+    async fn fetch_primary_endpoints(
+        &self,
+        bucket_id: BucketId,
+    ) -> Result<Vec<String>, ChainClientError> {
         let endpoints = self.endpoints.lock().unwrap();
         Ok(endpoints.get(&bucket_id).cloned().unwrap_or_default())
     }
@@ -126,13 +136,13 @@ impl ReplicaSyncChainClient for MockReplicaSyncChainClient {
         &self,
         bucket_id: BucketId,
         attestation: SignedSyncRoots,
-    ) -> Result<(u8, u128), Error> {
+    ) -> Result<(u8, u128), ChainClientError> {
         self.confirmations.lock().unwrap().push(bucket_id);
         self.attestations.lock().unwrap().push(attestation);
         let result = &*self.confirm_result.lock().unwrap();
         match result {
             Ok(v) => Ok(*v),
-            Err(e) => Err(Error::tx_rejected("confirm_replica_sync", e)),
+            Err(e) => Err(ChainClientError::tx_rejected("confirm_replica_sync", e)),
         }
     }
 }
@@ -226,8 +236,10 @@ async fn confirm_on_chain_surfaces_submission_errors() {
     };
 
     let mock = Arc::new(MockReplicaSyncChainClient::new());
-    *mock.confirm_result.lock().unwrap() =
-        Err(Error::tx_rejected("confirm_replica_sync", "chain rejected"));
+    *mock.confirm_result.lock().unwrap() = Err(ChainClientError::tx_rejected(
+        "confirm_replica_sync",
+        "chain rejected",
+    ));
     let (storage, _dir) = test_storage();
     let config = ReplicaSyncCoordinatorConfig::default();
     let coordinator = ReplicaSyncCoordinator::new(
