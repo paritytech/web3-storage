@@ -968,6 +968,12 @@ MmrLeaf
 **Delete**: Increase start_seq (old leaves no longer in range)
 **Freeze**: Lock start_seq—bucket becomes append-only forever
 
+**Physical erasure & quota reclaim**: Deleting shrinks the provider's *liability*; the bytes are erased later, once liability has provably passed. The provider keeps pruned leaves in a retention stash — still able to prove any commitment covering them — until the canonical checkpoint has passed the pruned range (the pruning rule), the admin's signed deletion authorization is held as a durable *deletion receipt* (so a `challenge_offchain` citing an older commitment covering the range is answered with the `Deleted` defense instead of the erased bytes), and no challenge is pending. The receipt outlives the erasure: it is the permanent evidence. Erasure is reference-counted: content-addressed chunks may serve many leaves and, deduplicated, many buckets, so a node dies only with its last committed reference. A bucket's `used_bytes` — the quota consumed against the agreement's paid `max_bytes` — decreases exactly when bytes leave the disk: deletion reclaims paid *capacity* once those conditions pass, never money (payments are fixed by `max_bytes`; prorated refunds exist only in whole-bucket teardown).
+
+**Bucket teardown**: Deleting a drive or S3 bucket on-chain settles every agreement with a prorated refund and emits `BucketDeleted`; the provider condemns its local copy and erases it through the same delayed-erasure lifecycle. A frozen bucket cannot be torn down — "Frozen = deletions impossible" includes the biggest deletion of all.
+
+**Scope**: Layer 1 per-file deletes only remove index entries; space is reclaimed at Layer 0 granularity — a prefix prune or the whole bucket. Replicas mirror the canonical state, so a checkpointed prune propagates to them under the same conditions, but their agreements can never be terminated early (anti-censorship), and a frozen bucket accepts no prune at all.
+
 ### Client-Controlled Layout
 
 The protocol provides what is essentially a disk: content-addressed chunks of fixed size. Clients control layout completely.
