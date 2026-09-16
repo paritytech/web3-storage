@@ -564,9 +564,7 @@ impl SubxtChainClient {
 #[async_trait::async_trait]
 impl ReplicaSyncChainClient for SubxtChainClient {
     async fn get_current_block(&self) -> Result<u64, ChainClientError> {
-        self.current_anchor_block()
-            .await
-            .map_err(|e| ChainClientError::query("current block", e))
+        self.current_anchor_block().await
     }
 
     /// This provider's replica agreements for the buckets it stores locally.

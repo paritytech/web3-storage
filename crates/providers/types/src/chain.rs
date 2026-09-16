@@ -1,17 +1,20 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! The error every chain call reports, shared by the provider crates and
-//! the node.
+//! The error the provider chain-client traits report, shared so that a chain
+//! failure keeps one shape across the provider crates and the node.
 
 use std::fmt;
 
 /// Why a call against the chain failed.
 ///
-/// This is the error type of `provider_replica::ReplicaSyncChainClient`
-/// and of `provider-node`'s own subxt calls, so a chain failure keeps the
-/// same shape whether it crosses a provider-crate trait or stays inside
-/// the node. Naming no transport type keeps it usable from crates that do
-/// not compile subxt.
+/// The error type of the provider chain-client traits and of the node's own
+/// chain calls, so a failure keeps the same shape whether it crosses a
+/// provider-crate trait or stays inside the node. Implementations map their
+/// transport errors into these variants; naming no transport type keeps this
+/// usable from crates that do not compile subxt.
+///
+/// The challenge-response path is the remaining exception: it still reports
+/// its own stringly `ChallengeError::Chain`.
 #[derive(Debug, thiserror::Error)]
 pub enum ChainClientError {
     /// A read against chain state (RPC call, storage fetch/iter, runtime API
@@ -80,5 +83,34 @@ impl ChainClientError {
             what,
             reason: e.to_string(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn constructors_produce_expected_messages() {
+        assert_eq!(
+            ChainClientError::query("current block", "timed out").to_string(),
+            "Chain query failed (current block): timed out"
+        );
+        assert_eq!(
+            ChainClientError::decode("bucket", "unexpected shape").to_string(),
+            "Failed to decode chain state (bucket): unexpected shape"
+        );
+        assert_eq!(
+            ChainClientError::invalid_account("0xzz", "odd length hex string").to_string(),
+            "Invalid account 0xzz: odd length hex string"
+        );
+        assert_eq!(
+            ChainClientError::tx_submit("confirm_replica_sync", "watch dropped").to_string(),
+            "Failed to submit confirm_replica_sync: watch dropped"
+        );
+        assert_eq!(
+            ChainClientError::tx_rejected("confirm_replica_sync", "SyncTooFrequent").to_string(),
+            "confirm_replica_sync rejected: SyncTooFrequent"
+        );
     }
 }

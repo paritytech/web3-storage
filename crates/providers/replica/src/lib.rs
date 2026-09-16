@@ -38,8 +38,9 @@ pub enum Error {
     #[error("Primary returned error for {what}: status {status}")]
     PrimaryUnavailable { what: &'static str, status: u16 },
 
-    /// A call through [`ReplicaSyncChainClient`] failed. Its variants are
-    /// defined with that trait; this crate only reports them.
+    /// A call through [`ReplicaSyncChainClient`] failed. [`ChainClientError`]
+    /// is declared in `provider-types` and shared with the node; this crate
+    /// only reports it.
     #[error(transparent)]
     ChainClient(#[from] ChainClientError),
 
@@ -85,32 +86,6 @@ mod tests {
         assert_eq!(
             err.to_string(),
             "Chain query failed (current block): timed out"
-        );
-    }
-
-    /// Every [`ChainClientError`] constructor, including the two whose only
-    /// production callers live in `provider-node`'s subxt client.
-    #[test]
-    fn chain_client_constructors_produce_expected_messages() {
-        assert_eq!(
-            ChainClientError::query("current block", "timed out").to_string(),
-            "Chain query failed (current block): timed out"
-        );
-        assert_eq!(
-            ChainClientError::decode("bucket", "unexpected shape").to_string(),
-            "Failed to decode chain state (bucket): unexpected shape"
-        );
-        assert_eq!(
-            ChainClientError::invalid_account("0xzz", "odd length hex string").to_string(),
-            "Invalid account 0xzz: odd length hex string"
-        );
-        assert_eq!(
-            ChainClientError::tx_submit("confirm_replica_sync", "watch dropped").to_string(),
-            "Failed to submit confirm_replica_sync: watch dropped"
-        );
-        assert_eq!(
-            ChainClientError::tx_rejected("confirm_replica_sync", "SyncTooFrequent").to_string(),
-            "confirm_replica_sync rejected: SyncTooFrequent"
         );
     }
 
