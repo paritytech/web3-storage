@@ -16,7 +16,7 @@ use axum::{
     Json, Router,
 };
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
-use codec::Encode;
+use codec::{Decode, Encode};
 use provider_auth::RequiredRole;
 use sp_core::H256;
 use std::net::SocketAddr;
@@ -86,6 +86,7 @@ pub fn create_router(state: Arc<ProviderState>) -> Router {
         // Bucket operations
         .route("/buckets", get(list_buckets))
         .route("/delete", post(delete_data))
+        .route("/delete/confirm", post(confirm_deletion))
         // Replica sync
         .route("/mmr_peaks", get(get_mmr_peaks))
         .route("/mmr_subtree", get(get_mmr_subtree))
@@ -614,6 +615,23 @@ async fn delete_data(
     )
     .await?;
 
+    // Frozen buckets are append-only by design: deletion is refused outright.
+    // If chain truth cannot be read, the prune is rejected as retryable (503)
+    // rather than allowed through on a stale answer. Nodes running without a
+    // chain connection (no signing key configured — local dev and tests) skip
+    // the check: buckets can only be frozen on-chain.
+    if let Some(gc_chain) = &state.gc_chain {
+        let chain = gc_chain
+            .fetch_canonical_bucket(request.bucket_id)
+            .await
+            .map_err(|e| Error::ChainStateUnavailable(e.to_string()))?;
+        if chain.frozen_start_seq.is_some() {
+            return Err(Error::BucketFrozen {
+                bucket_id: request.bucket_id,
+            });
+        }
+    }
+
     let (mmr_root, start_seq, leaf_count) = state
         .storage
         .delete_before(request.bucket_id, request.new_start_seq)?;
@@ -635,6 +653,82 @@ async fn delete_data(
         leaf_count,
         provider_signature: signature,
     }))
+}
+
+/// POST /delete/confirm — store the admin's signed deletion authorization.
+///
+/// Deletion is two requests because the admin signs the *post-prune*
+/// commitment, and only the provider can compute it (buckets are
+/// multi-writer; clients do not hold the full MMR): `/delete` computes and
+/// returns the commitment, the admin signs it, this endpoint stores the
+/// signature.
+///
+/// The admin signs `CommitmentPayload(bucket_id, Commitment { mmr_root,
+/// start_seq: new_start_seq, leaf_count: 0 })` — the exact payload the
+/// pallet's `Deleted` challenge defense verifies. Holding this receipt is
+/// what allows the GC to physically erase the pruned range: any later
+/// `challenge_offchain` citing an old commitment over the erased leaves is
+/// answered with the receipt instead of the bytes.
+async fn confirm_deletion(
+    State(state): State<Arc<ProviderState>>,
+    headers: axum::http::HeaderMap,
+    Json(request): Json<DeleteConfirmRequest>,
+) -> Result<Json<DeleteConfirmResponse>, Error> {
+    check_role(
+        &state,
+        &headers,
+        "POST",
+        request.bucket_id,
+        RequiredRole::Admin,
+    )
+    .await?;
+
+    // Parse, don't validate: malformed input is the caller's fault (400),
+    // and the receipt is stored fully typed — an undecodable signature is
+    // rejected here, where the admin can retry, not at defense time.
+    let root_bytes = hex::decode(
+        request
+            .mmr_root
+            .strip_prefix("0x")
+            .unwrap_or(&request.mmr_root),
+    )
+    .ok()
+    .filter(|b| b.len() == 32)
+    .ok_or_else(|| Error::InvalidHash {
+        expected: "32-byte hex mmr_root".to_string(),
+        actual: request.mmr_root.clone(),
+    })?;
+    let mmr_root = H256::from_slice(&root_bytes);
+    let admin_bytes: [u8; 32] =
+        hex::decode(request.admin.strip_prefix("0x").unwrap_or(&request.admin))
+            .ok()
+            .and_then(|b| b.try_into().ok())
+            .ok_or_else(|| Error::InvalidHash {
+                expected: "32-byte hex admin key".to_string(),
+                actual: request.admin.clone(),
+            })?;
+    let admin = sp_core::crypto::AccountId32::new(admin_bytes);
+    let signature = hex::decode(
+        request
+            .signature
+            .strip_prefix("0x")
+            .unwrap_or(&request.signature),
+    )
+    .ok()
+    .and_then(|b| sp_runtime::MultiSignature::decode(&mut b.as_slice()).ok())
+    .ok_or(Error::InvalidSignature)?;
+
+    state.storage.attach_deletion_receipt(
+        request.bucket_id,
+        provider_storage::DeletionReceipt {
+            mmr_root,
+            new_start_seq: request.new_start_seq,
+            admin,
+            signature,
+        },
+    )?;
+
+    Ok(Json(DeleteConfirmResponse { stored: true }))
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

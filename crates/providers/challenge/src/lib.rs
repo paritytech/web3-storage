@@ -37,6 +37,22 @@ pub enum ChallengeError {
 ///
 /// Backed by the provider node's storage backend; kept narrow so this crate
 /// stays decoupled from the full storage engine.
+/// An admin-signed deletion authorization covering erased leaves: the
+/// evidence for the on-chain `Deleted` challenge defense. Mirrors the
+/// storage engine's receipt so this crate stays decoupled from it; the
+/// provider node maps between the two.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DeletionReceipt {
+    /// The post-prune MMR root the admin signed.
+    pub mmr_root: H256,
+    /// The start_seq the deletion advanced the bucket to.
+    pub new_start_seq: u64,
+    /// The admin account that signed the deletion authorization.
+    pub admin: AccountId32,
+    /// The admin's signature over the deletion `CommitmentPayload`.
+    pub signature: sp_runtime::MultiSignature,
+}
+
 pub trait ChallengeProofSource: Send + Sync {
     /// Generate an MMR proof for `leaf_index` of the exact commitment
     /// state identified by `(mmr_root, start_seq)` — the cited root may
@@ -56,6 +72,11 @@ pub trait ChallengeProofSource: Send + Sync {
         data_root: H256,
         chunk_index: u64,
     ) -> Result<(Vec<u8>, MerkleProof), ChallengeError>;
+
+    /// The stored deletion receipt covering `seq` (smallest `new_start_seq`
+    /// strictly greater than it), if the leaf was deleted with the admin's
+    /// authorization.
+    fn deletion_receipt_covering(&self, bucket_id: BucketId, seq: u64) -> Option<DeletionReceipt>;
 }
 
 /// Configuration for the challenge responder.
@@ -158,6 +179,15 @@ pub trait ChallengeChainClient: Send + Sync {
         mmr_proof: MmrProof,
         chunk_proof: MerkleProof,
     ) -> Result<H256, ChallengeError>;
+
+    /// Submit a `Deleted` challenge response: the admin-signed deletion
+    /// authorization defending a challenge on leaves that were pruned and
+    /// physically erased.
+    async fn submit_deleted_response(
+        &self,
+        challenge_id: (u32, u16),
+        receipt: &DeletionReceipt,
+    ) -> Result<H256, ChallengeError>;
 }
 
 #[async_trait::async_trait]
@@ -183,6 +213,16 @@ impl<T: ChallengeChainClient> ChallengeChainClient for Arc<T> {
     ) -> Result<H256, ChallengeError> {
         self.as_ref()
             .submit_response(challenge_id, chunk_data, mmr_proof, chunk_proof)
+            .await
+    }
+
+    async fn submit_deleted_response(
+        &self,
+        challenge_id: (u32, u16),
+        receipt: &DeletionReceipt,
+    ) -> Result<H256, ChallengeError> {
+        self.as_ref()
+            .submit_deleted_response(challenge_id, receipt)
             .await
     }
 }
@@ -447,6 +487,35 @@ impl ChallengeResponder {
         ) {
             Ok(proof) => proof,
             Err(e) => {
+                // The cited leaves may be pruned and already physically
+                // erased. If the admin's deletion authorization covers the
+                // challenged leaf, that receipt IS the defense.
+                let challenged_seq = challenge.start_seq.saturating_add(challenge.leaf_index);
+                if let Some(receipt) = self
+                    .proof_source
+                    .deletion_receipt_covering(challenge.bucket_id, challenged_seq)
+                {
+                    tracing::info!(
+                        "Defending challenge {:?} with the admin's deletion receipt \
+                         (new_start_seq {})",
+                        challenge_id,
+                        receipt.new_start_seq
+                    );
+                    return match self
+                        .chain_client
+                        .submit_deleted_response(challenge_id, &receipt)
+                        .await
+                    {
+                        Ok(block_hash) => ChallengeResponseResult::Success {
+                            challenge_id,
+                            block_hash,
+                        },
+                        Err(e) => ChallengeResponseResult::SubmissionFailed {
+                            challenge_id,
+                            error: e.to_string(),
+                        },
+                    };
+                }
                 tracing::error!("Failed to generate MMR proof: {}", e);
                 return ChallengeResponseResult::ProofGenerationFailed {
                     challenge_id,
