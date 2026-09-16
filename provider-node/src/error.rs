@@ -103,9 +103,6 @@ pub enum Error {
     #[error(transparent)]
     Coordinator(#[from] provider_coordinator::Error),
 
-    #[error(transparent)]
-    Replica(#[from] provider_replica::Error),
-
     /// The node cannot sign with its registered key. Each reason keeps the
     /// response code it had when these were three separate variants.
     #[error(transparent)]
@@ -454,16 +451,6 @@ impl IntoResponse for Error {
                     details: Some(serde_json::json!({ "message": msg })),
                 },
             ),
-            // Replica sync runs on the background chain-client path, never
-            // behind a request, so this is a catch-all for a case no handler
-            // reaches rather than a considered per-variant status.
-            Error::Replica(err) => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                ErrorResponse {
-                    error: "internal_error".to_string(),
-                    details: Some(serde_json::json!({ "message": err.to_string() })),
-                },
-            ),
             Error::ProviderDeregistering => (
                 StatusCode::SERVICE_UNAVAILABLE,
                 ErrorResponse {
@@ -648,10 +635,6 @@ mod tests {
         );
         assert_eq!(
             status_of(provider_coordinator::Error::Internal("boom".into()).into()),
-            StatusCode::INTERNAL_SERVER_ERROR
-        );
-        assert_eq!(
-            status_of(provider_replica::Error::ChannelClosed.into()),
             StatusCode::INTERNAL_SERVER_ERROR
         );
     }
