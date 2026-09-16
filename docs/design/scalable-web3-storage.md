@@ -1204,8 +1204,9 @@ be layered on later without changing the core protocol.
 ### Provider-to-Provider Fetch
 
 A primary joining a bucket that already has data gets that data from the client,
-which downloads it from a provider that has it and uploads it again. An optional
-provider API could let the new primary pull the data directly, the way a replica
+which uploads it to the new primary and may first download it from a provider
+that has it (a client that still keeps a local copy only uploads). A provider
+API could let the new primary fetch the data directly instead, the way a replica
 syncs today. The transfer needs no trust: chunks and internal nodes are
 content-addressed, so the receiver verifies everything against the data root it
 already knows from the chain.
