@@ -12,6 +12,9 @@ pub enum Error {
     #[error("Children missing: {0:?}")]
     ChildrenMissing(Vec<String>),
 
+    #[error("Invalid child count: expected 2, got {0}")]
+    InvalidChildCount(usize),
+
     #[error("Quota exceeded: used {used}, max {max}")]
     QuotaExceeded { used: u64, max: u64 },
 

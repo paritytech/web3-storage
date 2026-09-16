@@ -19,7 +19,7 @@ use axum::{
     Json,
 };
 use provider_auth::RequiredRole;
-use provider_storage::{build_padded_merkle_tree, ListResult, ObjectMeta};
+use provider_storage::{build_padded_merkle_tree, ChunkTreeNode, ListResult, ObjectMeta};
 use serde::{Deserialize, Serialize};
 use sp_core::H256;
 use std::sync::Arc;
@@ -69,7 +69,7 @@ pub async fn s3_put_object(
             let hash = blake2_256(chunk);
             state
                 .storage
-                .store_node(bucket_id, hash, chunk.to_vec(), None)?;
+                .store_node(bucket_id, hash, ChunkTreeNode::Chunk(chunk.to_vec()))?;
             Ok(hash)
         })
         .collect::<Result<Vec<_>, Error>>()?;
