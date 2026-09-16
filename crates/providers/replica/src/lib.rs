@@ -35,10 +35,6 @@ pub enum Error {
     #[error("Node error: {0}")]
     Node(String),
 
-    /// The chain connection itself is unavailable or failed to build.
-    #[error(transparent)]
-    Chain(#[from] provider_chain::Error),
-
     /// A read against chain state (RPC call, storage fetch/iter, runtime API
     /// call) failed.
     #[error("Chain query failed ({what}): {reason}")]
@@ -139,12 +135,6 @@ mod tests {
         let err: Error = provider_storage::Error::BucketNotFound(7).into();
         assert!(matches!(err, Error::Backend(_)));
         assert_eq!(err.to_string(), "Bucket not found: 7");
-    }
-
-    #[test]
-    fn chain_variant_wraps_provider_chain_error_transparently() {
-        let err: Error = provider_chain::Error::NotConnected.into();
-        assert_eq!(err.to_string(), "Chain connection not established yet");
     }
 
     #[test]

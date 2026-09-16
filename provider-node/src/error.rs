@@ -192,7 +192,8 @@ impl From<Error> for provider_replica::Error {
             Error::Replica(err) => err,
             // `provider_replica` maps the storage error space one-to-one.
             Error::Backend(err) => err.into(),
-            Error::Chain(err) => provider_replica::Error::Chain(err),
+            // `provider_replica` has no connection-error variant.
+            Error::Chain(err) => provider_replica::Error::chain_query("chain connection", err),
             Error::InvalidHash { expected, actual } => {
                 provider_replica::Error::InvalidHash { expected, actual }
             }
@@ -858,6 +859,10 @@ mod tests {
             (
                 Error::decode("node data", "invalid base64"),
                 "Failed to decode node data: invalid base64",
+            ),
+            (
+                Error::Chain(provider_chain::Error::NotConnected),
+                "Chain query failed (chain connection): Chain connection not established yet",
             ),
         ];
 
