@@ -171,9 +171,9 @@ See "Provider-to-Provider Fetch" in the design doc's Future Directions.
 
 **Reads**: the chain records what each provider acknowledged, which is what a
 reader can act on. A primary that signed the current snapshot acknowledged
-storing the data up to the snapshot's range end; a replica's last confirmed
-sync names the root it synced to. Neither record covers data appended since
-the last checkpoint, so a reader queries providers in turn until one serves it.
+storing the range that snapshot covers; a replica's last confirmed sync names
+the root it synced to. Neither record covers data appended since the last
+checkpoint, so a reader queries providers in turn until one serves it.
 
 **Replica providers** sync autonomously from primaries or other replicas. They confirm sync on-chain and are liable for the roots they've confirmed.
 
