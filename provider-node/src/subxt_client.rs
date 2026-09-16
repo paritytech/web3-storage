@@ -95,16 +95,28 @@ pub struct SubxtChainClient {
     submit_lock: Arc<tokio::sync::Mutex<()>>,
 }
 
+/// Turning the configured seed into a keypair is all [`SubxtChainClient::new`]
+/// can fail at, and it happens once at startup: `command.rs` logs it and runs
+/// without a chain client. It never reaches a request, so it is deliberately
+/// not one of the HTTP [`Error`] variants.
+#[derive(Debug, thiserror::Error)]
+pub enum SignerSetupError {
+    /// The `--keyfile` contents are not a valid seed URI.
+    #[error("invalid seed URI: {0}")]
+    SecretUri(#[from] subxt_signer::SecretUriError),
+    /// The seed parsed but no sr25519 keypair could be derived from it.
+    #[error("cannot build keypair from seed: {0}")]
+    Keypair(#[from] subxt_signer::sr25519::Error),
+}
+
 impl SubxtChainClient {
     /// Create the signing chain client from the connection watch channel and
     /// the provider's seed URI (e.g. `//Alice` or a mnemonic), which
     /// reproduces the provider's registered account — the identity every
     /// on-chain action must be signed by.
-    pub fn new(chain_rx: ChainWatch, seed: &str) -> Result<Self, Error> {
-        let uri: subxt_signer::SecretUri =
-            seed.parse().map_err(|e| Error::signer("seed URI", e))?;
-        let signer = subxt_signer::sr25519::Keypair::from_uri(&uri)
-            .map_err(|e| Error::signer("keypair", e))?;
+    pub fn new(chain_rx: ChainWatch, seed: &str) -> Result<Self, SignerSetupError> {
+        let uri: subxt_signer::SecretUri = seed.parse()?;
+        let signer = subxt_signer::sr25519::Keypair::from_uri(&uri)?;
 
         tracing::info!(
             "Chain client signing as {}",

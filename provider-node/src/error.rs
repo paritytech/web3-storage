@@ -48,10 +48,6 @@ pub enum Error {
     #[error("Failed to decode {what}: {reason}")]
     Decode { what: &'static str, reason: String },
 
-    /// The provider's signing key could not be parsed or constructed.
-    #[error("Signing key error ({what}): {reason}")]
-    Signer { what: &'static str, reason: String },
-
     /// The rate limiter itself failed (e.g. its backing store is
     /// unreachable). The request is rejected fail-closed rather than let
     /// through, but this is a distinct condition from [`Error::RateLimited`],
@@ -167,14 +163,6 @@ impl Error {
             reason: e.to_string(),
         }
     }
-
-    /// The provider's signing key could not be parsed or constructed.
-    pub fn signer(what: &'static str, e: impl fmt::Display) -> Self {
-        Error::Signer {
-            what,
-            reason: e.to_string(),
-        }
-    }
 }
 
 #[derive(Serialize)]
@@ -277,10 +265,7 @@ impl IntoResponse for Error {
                     details: Some(serde_json::json!({ "reason": reason })),
                 },
             ),
-            e @ (Error::ChainQuery { .. }
-            | Error::TxSubmit { .. }
-            | Error::TxRejected { .. }
-            | Error::Signer { .. }) => (
+            e @ (Error::ChainQuery { .. } | Error::TxSubmit { .. } | Error::TxRejected { .. }) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 ErrorResponse {
                     error: "internal_error".to_string(),
@@ -611,10 +596,6 @@ mod tests {
                 "confirm_replica_sync",
                 "SyncTooFrequent"
             )),
-            StatusCode::INTERNAL_SERVER_ERROR
-        );
-        assert_eq!(
-            status_of(Error::signer("keypair", "bad seed")),
             StatusCode::INTERNAL_SERVER_ERROR
         );
         assert_eq!(
