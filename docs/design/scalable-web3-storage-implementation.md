@@ -156,15 +156,16 @@ Primary providers don't sync with each other. Clients are responsible for upload
 4. Primaries not in the snapshot should sync (client re-uploads)
 5. After checkpoint, providers can prune non-canonical roots
 
-**The client moves the data, not the chain and not the providers**: a primary
-added to a bucket that already has data receives that data from the client.
-The client downloads the committed data from a provider that has it, uploads
-it to the new primary, and includes the new primary's signature in the next
-checkpoint. A client that no longer keeps a local copy therefore pays for a
-full download and a full upload to change provider.
+**The client moves the data**: a primary added to a bucket that already has
+data receives that data from the client, not from the chain and not from the
+other providers. The client uploads the data to the new primary and includes
+the new primary's signature in the next checkpoint. It first downloads the data
+from a provider that has it, unless it still keeps a local copy; changing
+provider then costs a full download and a full upload.
 
-An optional provider-to-provider fetch could remove that round trip; see
-"Provider-to-Provider Fetch" in the design doc's Future Directions.
+A provider-to-provider fetch could remove that download, but it does not
+replace the client path: only the client sees which provider failed a transfer.
+See "Provider-to-Provider Fetch" in the design doc's Future Directions.
 
 **Liability**: A provider is only liable for MMR states they acknowledged (signed). Challenges against the canonical checkpoint only work for providers listed in the snapshot's provider bitfield.
 
