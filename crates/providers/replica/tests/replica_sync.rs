@@ -2,29 +2,23 @@
 
 //! Integration tests for the replica sync coordinator.
 
-use axum::{routing::get, Json, Router};
+mod common;
+
+use common::{hex_hash, peaks_body, spawn_primary, test_storage};
 use provider_replica::coordinator::{BucketSnapshot, ReplicaAgreementInfo};
 use provider_replica::{
     Error, ReplicaSyncChainClient, ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig,
     SignedSyncRoots, SyncDuty, SyncResult, SyncRoots, SyncRootsSigner,
 };
-use provider_storage::{temp_rocksdb, StorageBackend};
+use provider_storage::temp_rocksdb;
 use sp_core::H256;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use storage_primitives::{blake2_256, BucketId};
-use tempfile::TempDir;
 
 /// Full Alice SS58 address (substrate prefix 42).
 const ALICE_SS58: &str = "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY";
-
-/// Fresh empty storage backend for coordinator tests. The returned `TempDir`
-/// must outlive the backend - dropping it takes the database with it.
-fn test_storage() -> (Arc<dyn StorageBackend>, TempDir) {
-    let (storage, _nonce_store, dir) = temp_rocksdb();
-    (storage, dir)
-}
 
 /// Stand-in for the node's scheme-tagged keypair: signs with sr25519 `//Alice`,
 /// the account `ALICE_SS58` names, so attestations verify under it.
@@ -412,38 +406,11 @@ async fn test_primary_unavailable() {
     assert!(matches!(result, SyncResult::PrimaryUnavailable { .. }));
 }
 
-/// Spawn a minimal mock primary that answers `GET /mmr_peaks` with a fixed
-/// root and no peaks, so `sync_and_confirm` completes the HTTP round trip and
-/// reaches its post-sync verification step.
-async fn spawn_mock_primary(bucket_id: BucketId, mmr_root_hex: String) -> String {
-    let app = Router::new().route(
-        "/mmr_peaks",
-        get(move || {
-            let mmr_root_hex = mmr_root_hex.clone();
-            async move {
-                Json(serde_json::json!({
-                    "bucket_id": bucket_id,
-                    "mmr_root": mmr_root_hex,
-                    "peaks": Vec::<String>::new(),
-                }))
-            }
-        }),
-    );
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-    while tokio::net::TcpStream::connect(addr).await.is_err() {
-        tokio::task::yield_now().await;
-    }
-    format!("http://{addr}")
-}
-
 #[tokio::test]
 async fn test_sync_from_primary_succeeds_but_final_verification_fails() {
     let bucket_id = 1;
     let target_root = H256::repeat_byte(0xDD);
-    let target_root_hex = format!("0x{}", hex::encode(target_root.as_bytes()));
-    let primary_url = spawn_mock_primary(bucket_id, target_root_hex).await;
+    let primary_url = spawn_primary(peaks_body(&hex_hash(target_root), &[])).await;
 
     let duty = SyncDuty {
         bucket_id,

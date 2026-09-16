@@ -5,7 +5,9 @@
 //! Replicas autonomously sync data from primary providers using:
 //! 1. MMR diff detection (compare peaks)
 //! 2. Top-down chunk fetching
-//! 3. On-chain sync confirmation
+//!
+//! On-chain confirmation of what was synced is the coordinator's
+//! (`coordinator::ReplicaSyncCoordinator::confirm_on_chain`).
 
 use crate::Error;
 use base64::Engine;
@@ -175,54 +177,6 @@ impl ReplicaSync {
 
             Ok(())
         })
-    }
-
-    /// Continuous sync loop for a replica.
-    ///
-    /// This would run in a background task and periodically:
-    /// 1. Check for new data from primaries
-    /// 2. Sync new data
-    /// 3. Confirm sync on-chain (if enough time has passed since last sync)
-    pub async fn sync_loop(
-        &self,
-        bucket_id: BucketId,
-        primary_urls: Vec<String>,
-        _min_sync_interval_blocks: u32,
-    ) -> Result<(), Error> {
-        loop {
-            // Try syncing from each primary
-            for primary_url in &primary_urls {
-                match self.sync_from_primary(bucket_id, primary_url).await {
-                    Ok(new_root) => {
-                        tracing::info!(
-                            "Successfully synced bucket {} from {}: root = 0x{}",
-                            bucket_id,
-                            primary_url,
-                            hex::encode(new_root.as_bytes())
-                        );
-
-                        // In a full implementation, we would:
-                        // 1. Check time since last on-chain sync
-                        // 2. If min_sync_interval has passed, call confirm_replica_sync extrinsic
-                        // 3. This would deduct from sync_balance and pay the replica
-
-                        break;
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            "Failed to sync bucket {} from {}: {}",
-                            bucket_id,
-                            primary_url,
-                            e
-                        );
-                        continue;
-                    }
-                }
-            }
-
-            // Wait before next sync attempt
-            tokio::time::sleep(tokio::time::Duration::from_secs(60)).await;
-        }
     }
 }
 

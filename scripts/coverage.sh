@@ -80,11 +80,9 @@ verify_classification() {
 # Groups: toolchain/vendored; generated code + test scaffolding; primitives
 # crates (linked in, own tests
 # not run here); chain-access layer (needs a live chain); client SDK crates
-# (in provider-node's dep graph until #277, never executed here);
-# provider-replica's sync.rs (no chain-client trait of its own, exercised
-# only indirectly through the coordinator — measure it once it is directly
-# testable); binary entry points.
-COV_IGNORE='(/\.cargo/|/rustc/|weights\.rs|runtime_api\.rs|mock\.rs|benchmarking\.rs|/primitives/|/storage-subxt/|subxt_client\.rs|_subxt\.rs|clients/[^/]+/src/|clients/[^/]+/tests/|providers/replica/src/sync\.rs|src/main\.rs|src/cli\.rs|src/command\.rs)'
+# (in provider-node's dep graph until #277, never executed here); binary entry
+# points.
+COV_IGNORE='(/\.cargo/|/rustc/|weights\.rs|runtime_api\.rs|mock\.rs|benchmarking\.rs|/primitives/|/storage-subxt/|subxt_client\.rs|_subxt\.rs|clients/[^/]+/src/|clients/[^/]+/tests/|src/main\.rs|src/cli\.rs|src/command\.rs)'
 
 REPO_ROOT="${GITHUB_WORKSPACE:-$(git rev-parse --show-toplevel)}"
 cd "$REPO_ROOT"
