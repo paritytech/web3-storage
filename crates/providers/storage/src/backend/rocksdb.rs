@@ -24,8 +24,25 @@ const CF_ROOT_TO_BUCKET: &str = "root_to_bucket";
 /// Small metadata values (e.g. the nonce counter highest sequence nonce).
 const CF_METADATA: &str = "metadata";
 
+/// Every column family this backend opens.
+const CF_ALL: [&str; 4] = [CF_NODES, CF_BUCKETS, CF_ROOT_TO_BUCKET, CF_METADATA];
+
 /// RocksDB key for the persisted nonce counter highest sequence nonce.
 const KEY_NONCE: &[u8] = b"nonce_counter";
+
+/// RocksDB key holding the database's [`FORMAT_VERSION`].
+const KEY_FORMAT_VERSION: &[u8] = b"format_version";
+
+/// On-disk format version this build reads and writes. Covers the column-family
+/// names, the raw keys, and the SCALE encoding of the records (pinned by the
+/// golden vectors in [`types`](super::types)).
+///
+/// Bump it in the same commit that changes any of those. A bump needs either a
+/// migration that rewrites the records, or an operator moving the database aside
+/// and re-syncing the buckets - provider data cannot be rebuilt from the chain,
+/// which stores MMR roots, not chunks. The node does neither on its own: it
+/// rejects the database at startup and reports both versions.
+const FORMAT_VERSION: u32 = 1;
 
 /// Disk-based storage backend using RocksDB.
 pub struct DiskStorage {
@@ -35,17 +52,69 @@ pub struct DiskStorage {
 impl DiskStorage {
     /// Create a new disk storage instance.
     pub fn new(path: impl AsRef<Path>) -> Result<Self, Error> {
+        let path = path.as_ref();
         let mut opts = Options::default();
         opts.create_if_missing(true);
         opts.create_missing_column_families(true);
 
-        // Define column families
-        let cf_names = vec![CF_NODES, CF_BUCKETS, CF_ROOT_TO_BUCKET, CF_METADATA];
-
-        let db = DB::open_cf(&opts, path, &cf_names)
+        let db = DB::open_cf(&opts, path, CF_ALL)
             .map_err(|e| Error::Storage(format!("Failed to open RocksDB: {e}")))?;
 
+        Self::check_format_version(&db, path)?;
+
         Ok(Self { db: Arc::new(db) })
+    }
+
+    /// Compare the database's format version with [`FORMAT_VERSION`], writing
+    /// that version first if the database is still empty. Anything else was
+    /// written by a build whose layout this one does not read.
+    fn check_format_version(db: &DB, path: &Path) -> Result<(), Error> {
+        let cf = db
+            .cf_handle(CF_METADATA)
+            .ok_or_else(|| Error::Storage("Metadata CF not found".to_string()))?;
+        let incompatible = |found: String| Error::IncompatibleFormat {
+            path: path.display().to_string(),
+            found,
+            expected: FORMAT_VERSION,
+        };
+
+        match db
+            .get_cf(&cf, KEY_FORMAT_VERSION)
+            .map_err(|e| Error::Storage(e.to_string()))?
+        {
+            Some(bytes) => {
+                let Ok(raw) = <[u8; 4]>::try_from(bytes.as_slice()) else {
+                    return Err(incompatible(format!(
+                        "marked with a malformed version ({} bytes)",
+                        bytes.len()
+                    )));
+                };
+                let found = u32::from_le_bytes(raw);
+                if found == FORMAT_VERSION {
+                    Ok(())
+                } else {
+                    Err(incompatible(format!("version {found}")))
+                }
+            }
+            // A database with no records is new, whoever created the directory.
+            None if Self::is_empty(db) => db
+                .put_cf(&cf, KEY_FORMAT_VERSION, FORMAT_VERSION.to_le_bytes())
+                .map_err(|e| Error::Storage(e.to_string())),
+            None => Err(incompatible(
+                "unversioned, so it predates format versioning".to_string(),
+            )),
+        }
+    }
+
+    /// Whether no column family contains a record.
+    fn is_empty(db: &DB) -> bool {
+        CF_ALL.iter().all(|name| match db.cf_handle(name) {
+            Some(cf) => db
+                .iterator_cf(&cf, rocksdb::IteratorMode::Start)
+                .next()
+                .is_none(),
+            None => true,
+        })
     }
 
     /// Initialize a bucket with the given quota.
@@ -644,11 +713,12 @@ mod tests {
     fn on_disk_bytes() {
         // Raw keys and values as written through the public API.
         assert_eq!(
-            [CF_NODES, CF_BUCKETS, CF_ROOT_TO_BUCKET, CF_METADATA],
+            CF_ALL,
             ["nodes", "buckets", "root_to_bucket", "metadata"],
             "column-family names locate every record on disk",
         );
         assert_eq!(KEY_NONCE, b"nonce_counter");
+        assert_eq!(KEY_FORMAT_VERSION, b"format_version");
 
         let dir = TempDir::new().unwrap();
         let storage = DiskStorage::new(dir.path()).unwrap();
@@ -686,6 +756,104 @@ mod tests {
         let cf = storage.db.cf_handle(CF_METADATA).unwrap();
         let raw = storage.db.get_cf(&cf, KEY_NONCE).unwrap().unwrap();
         assert_eq!(hex::encode(&raw), "2a00000000000000");
+
+        // CF_METADATA / KEY_FORMAT_VERSION: raw u32 little-endian (not SCALE).
+        let raw = storage.db.get_cf(&cf, KEY_FORMAT_VERSION).unwrap().unwrap();
+        assert_eq!(hex::encode(&raw), "01000000", "FORMAT_VERSION = 1");
+    }
+
+    /// Overwrite a CF_METADATA key on a closed database, then reopen it.
+    fn reopen_with_metadata(dir: &TempDir, key: &[u8], value: Option<&[u8]>) -> Result<(), Error> {
+        {
+            let storage = DiskStorage::new(dir.path()).unwrap();
+            let cf = storage.db.cf_handle(CF_METADATA).unwrap();
+            match value {
+                Some(value) => storage.db.put_cf(&cf, key, value).unwrap(),
+                None => storage.db.delete_cf(&cf, key).unwrap(),
+            }
+        }
+        DiskStorage::new(dir.path()).map(|_| ())
+    }
+
+    #[test]
+    fn fresh_database_records_the_format_version() {
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        let cf = storage.db.cf_handle(CF_METADATA).unwrap();
+        let raw = storage.db.get_cf(&cf, KEY_FORMAT_VERSION).unwrap();
+        assert_eq!(raw.as_deref(), Some(&FORMAT_VERSION.to_le_bytes()[..]));
+    }
+
+    #[test]
+    fn reopen_accepts_a_matching_format_version() {
+        let dir = TempDir::new().unwrap();
+        {
+            let storage = DiskStorage::new(dir.path()).unwrap();
+            storage.init_bucket(1, 1_000).unwrap();
+        }
+        let storage = DiskStorage::new(dir.path()).expect("same version must open");
+        assert!(storage.get_bucket(1).is_some());
+    }
+
+    #[test]
+    fn rejects_a_different_format_version() {
+        let dir = TempDir::new().unwrap();
+        let err = reopen_with_metadata(&dir, KEY_FORMAT_VERSION, Some(&2u32.to_le_bytes()))
+            .expect_err("a version this build does not read must be rejected");
+        assert!(
+            matches!(err, Error::IncompatibleFormat { .. }),
+            "unexpected error: {err}"
+        );
+        assert!(err.to_string().contains("version 2"), "{err}");
+    }
+
+    #[test]
+    fn rejects_a_malformed_format_version() {
+        let dir = TempDir::new().unwrap();
+        let err = reopen_with_metadata(&dir, KEY_FORMAT_VERSION, Some(&[0x01, 0x00, 0x00]))
+            .expect_err("a version marker of the wrong width must be rejected");
+        assert!(
+            matches!(err, Error::IncompatibleFormat { .. }),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn rejects_an_unversioned_database_holding_data() {
+        let dir = TempDir::new().unwrap();
+        {
+            let storage = DiskStorage::new(dir.path()).unwrap();
+            storage.init_bucket(1, 1_000).unwrap();
+        }
+        let err = reopen_with_metadata(&dir, KEY_FORMAT_VERSION, None)
+            .expect_err("data written before format versioning must be rejected");
+        assert!(
+            matches!(err, Error::IncompatibleFormat { .. }),
+            "unexpected error: {err}"
+        );
+        assert!(err.to_string().contains("unversioned"), "{err}");
+    }
+
+    #[test]
+    fn an_empty_database_is_versioned_again_rather_than_rejected() {
+        let dir = TempDir::new().unwrap();
+        reopen_with_metadata(&dir, KEY_FORMAT_VERSION, None)
+            .expect("a database with no records is new, so it takes this build's version");
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        let cf = storage.db.cf_handle(CF_METADATA).unwrap();
+        let raw = storage.db.get_cf(&cf, KEY_FORMAT_VERSION).unwrap();
+        assert_eq!(raw.as_deref(), Some(&FORMAT_VERSION.to_le_bytes()[..]));
+    }
+
+    #[test]
+    fn the_nonce_alone_does_not_make_a_database_unversioned() {
+        let dir = TempDir::new().unwrap();
+        {
+            let storage = DiskStorage::new(dir.path()).unwrap();
+            storage.nonce_store().persist(42);
+        }
+        let storage = DiskStorage::new(dir.path()).expect("the version marker is still there");
+        assert_eq!(storage.nonce_store().load(), Some(42));
     }
 
     #[test]
