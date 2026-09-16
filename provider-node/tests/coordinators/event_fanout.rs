@@ -334,11 +334,11 @@ async fn replica_agreement_event_triggers_duty_pass() {
         poll_interval: Duration::ZERO,
         ..Default::default()
     };
-    let state = test_state();
+    let (state, _dir) = test_state();
     let coordinator = ReplicaSyncCoordinator::new(
         config,
-        state.0.storage.clone(),
-        state.0.provider_id.clone(),
+        state.storage.clone(),
+        state.provider_id.clone(),
         Box::new(Arc::clone(&mock)),
         None,
     );
