@@ -12,7 +12,7 @@ pub use coordinator::{
     ReplicaSyncCoordinatorHandle, SyncCommand, SyncCoordinatorStatus, SyncDuty, SyncResult,
 };
 pub use sync::ReplicaSync;
-pub use sync_roots::{SignedSyncRoots, SyncRoots, SyncRootsSigner};
+pub use sync_roots::{SignedSyncRoots, SigningRefused, SyncRoots, SyncRootsSigner};
 
 use std::fmt;
 use storage_primitives::BucketId;
@@ -24,16 +24,6 @@ pub enum Error {
     /// by variant, so a new engine error needs no change here.
     #[error(transparent)]
     Backend(#[from] provider_storage::Error),
-
-    #[error("Invalid hash: expected {expected}, got {actual}")]
-    InvalidHash { expected: String, actual: String },
-
-    /// This variant exists only for `provider-node`'s `From<Error> for
-    /// Error` catch-all, which maps every node error it has no dedicated
-    /// arm for onto this one via `Display`. Nothing in this crate should
-    /// construct it directly.
-    #[error("Node error: {0}")]
-    Node(String),
 
     /// A read against chain state (RPC call, storage fetch/iter, runtime API
     /// call) failed.
@@ -74,6 +64,10 @@ pub enum Error {
     /// tell apart from a real decode error.
     #[error("Bucket {0} does not hold a replica agreement")]
     NotReplicaAgreement(BucketId),
+
+    /// The signer refused to attest the roots.
+    #[error("Cannot sign sync roots: {0}")]
+    Signing(#[from] SigningRefused),
 
     /// A coordinator control or status channel was dropped.
     #[error("Coordinator channel closed")]
@@ -186,10 +180,6 @@ mod tests {
             }
             .to_string(),
             "Primary returned error for mmr peaks: status 404"
-        );
-        assert_eq!(
-            Error::Node("cannot sign sync roots: bad key".to_string()).to_string(),
-            "Node error: cannot sign sync roots: bad key"
         );
     }
 }

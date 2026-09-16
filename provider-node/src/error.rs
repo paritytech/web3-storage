@@ -180,32 +180,16 @@ impl Error {
     }
 }
 
-/// Reverse of [`Error::Replica`]: `SubxtChainClient`'s `ReplicaSyncChainClient`
-/// impl (in `subxt_client.rs`) shares chain-connection and submission helpers
-/// with `ChallengeChainClient`, which return this node's `Error`, but the
-/// replica trait's methods return `provider_replica::Error`. This direction
-/// stays hand-written: `provider_replica` cannot name this crate's `Error`
-/// without a dependency cycle, so it has no variant to `#[from]`.
-impl From<Error> for provider_replica::Error {
-    fn from(e: Error) -> Self {
+/// Each refusal has a long-standing variant here, so the HTTP layer keeps
+/// answering exactly as it did before the replica signer needed its own
+/// vocabulary.
+impl From<provider_replica::SigningRefused> for Error {
+    fn from(e: provider_replica::SigningRefused) -> Self {
+        use provider_replica::SigningRefused;
         match e {
-            Error::Replica(err) => err,
-            // `provider_replica` maps the storage error space one-to-one.
-            Error::Backend(err) => err.into(),
-            // `provider_replica` has no connection-error variant.
-            Error::Chain(err) => provider_replica::Error::chain_query("chain connection", err),
-            Error::InvalidHash { expected, actual } => {
-                provider_replica::Error::InvalidHash { expected, actual }
-            }
-            Error::ChainQuery { what, reason } => {
-                provider_replica::Error::ChainQuery { what, reason }
-            }
-            Error::TxSubmit { what, reason } => provider_replica::Error::TxSubmit { what, reason },
-            Error::TxRejected { what, reason } => {
-                provider_replica::Error::TxRejected { what, reason }
-            }
-            Error::Decode { what, reason } => provider_replica::Error::Decode { what, reason },
-            other => provider_replica::Error::Node(other.to_string()),
+            SigningRefused::NoKey => Error::SigningUnavailable,
+            SigningRefused::Unregistered => Error::ProviderInfoUnavailable,
+            SigningRefused::KeyMismatch => Error::ProviderKeyMismatch,
         }
     }
 }
@@ -797,84 +781,21 @@ mod tests {
     }
 
     #[test]
-    fn test_replica_error_round_trips_through_the_node_error() {
-        use provider_replica::Error as ReplicaError;
+    fn signing_refusals_keep_the_statuses_they_had() {
+        use provider_replica::SigningRefused;
 
-        let original = ReplicaError::chain_query("current block", "timed out");
-        let message = original.to_string();
-
-        let node_err: Error = original.into();
-        let back: ReplicaError = node_err.into();
-
-        assert!(matches!(back, ReplicaError::ChainQuery { .. }));
-        assert_eq!(back.to_string(), message);
-    }
-
-    #[test]
-    fn test_from_error_for_provider_replica_error_maps_one_to_one() {
-        use provider_replica::Error as ReplicaError;
-
-        use provider_storage::Error as StorageError;
-
-        let cases: Vec<(Error, &str)> = vec![
-            (
-                Error::Backend(StorageError::NodeNotFound("h".into())),
-                "Node not found: h",
-            ),
-            (
-                Error::Backend(StorageError::ChildrenMissing(vec!["a".into()])),
-                "Children missing: [\"a\"]",
-            ),
-            (
-                Error::Backend(StorageError::QuotaExceeded { used: 1, max: 2 }),
-                "Quota exceeded: used 1, max 2",
-            ),
-            (
-                Error::Backend(StorageError::BucketNotFound(7)),
-                "Bucket not found: 7",
-            ),
-            (
-                Error::Backend(StorageError::RootNotFound("r".into())),
-                "Root not found: r",
-            ),
-            (
-                Error::InvalidHash {
-                    expected: "e".into(),
-                    actual: "a".into(),
-                },
-                "Invalid hash: expected e, got a",
-            ),
-            (
-                Error::chain_query("current block", "timed out"),
-                "Chain query failed (current block): timed out",
-            ),
-            (
-                Error::tx_submit("confirm_replica_sync", "watch dropped"),
-                "Failed to submit confirm_replica_sync: watch dropped",
-            ),
-            (
-                Error::tx_rejected("confirm_replica_sync", "SyncTooFrequent"),
-                "confirm_replica_sync rejected: SyncTooFrequent",
-            ),
-            (
-                Error::decode("node data", "invalid base64"),
-                "Failed to decode node data: invalid base64",
-            ),
-            (
-                Error::Chain(provider_chain::Error::NotConnected),
-                "Chain query failed (chain connection): Chain connection not established yet",
-            ),
-        ];
-
-        for (node_err, expected_message) in cases {
-            let mapped: ReplicaError = node_err.into();
-            assert_eq!(mapped.to_string(), expected_message);
-        }
-
-        // Every other node `Error` variant is unreachable from the replica
-        // trait's methods but still mapped defensively via `Display`.
-        let mapped: ReplicaError = Error::InvalidSignature.into();
-        assert!(matches!(mapped, ReplicaError::Node(msg) if msg == "Invalid signature"));
+        assert_eq!(
+            status_of(SigningRefused::NoKey.into()),
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        assert_eq!(
+            status_of(SigningRefused::Unregistered.into()),
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        assert_eq!(
+            status_of(SigningRefused::KeyMismatch.into()),
+            StatusCode::SERVICE_UNAVAILABLE
+        );
     }
 
     #[test]

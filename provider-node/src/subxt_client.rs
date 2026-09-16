@@ -548,7 +548,9 @@ impl SubxtChainClient {
 #[async_trait::async_trait]
 impl ReplicaSyncChainClient for SubxtChainClient {
     async fn get_current_block(&self) -> Result<u64, provider_replica::Error> {
-        Ok(self.current_anchor_block().await?)
+        self.current_anchor_block()
+            .await
+            .map_err(|e| provider_replica::Error::chain_query("current block", e))
     }
 
     /// This provider's replica agreements for the buckets it stores locally.
@@ -578,7 +580,8 @@ impl ReplicaSyncChainClient for SubxtChainClient {
             .unvalidated();
 
         let agreements = self
-            .api()?
+            .api()
+            .map_err(|e| provider_replica::Error::chain_query("chain connection", e))?
             .at_current_block()
             .await
             .map_err(|e| provider_replica::Error::chain_query("current block", e))?
@@ -606,7 +609,8 @@ impl ReplicaSyncChainClient for SubxtChainClient {
             subxt::dynamic::storage::<(Value,), Value>("StorageProvider", "Buckets");
 
         let at = self
-            .api()?
+            .api()
+            .map_err(|e| provider_replica::Error::chain_query("chain connection", e))?
             .at_current_block()
             .await
             .map_err(|e| provider_replica::Error::chain_query("current block", e))?;
@@ -654,7 +658,8 @@ impl ReplicaSyncChainClient for SubxtChainClient {
             subxt::dynamic::storage::<(Value,), Value>("StorageProvider", "Buckets");
 
         let at = self
-            .api()?
+            .api()
+            .map_err(|e| provider_replica::Error::chain_query("chain connection", e))?
             .at_current_block()
             .await
             .map_err(|e| provider_replica::Error::chain_query("current block", e))?;
@@ -706,7 +711,8 @@ impl ReplicaSyncChainClient for SubxtChainClient {
                 subxt::dynamic::storage::<(Value,), Value>("StorageProvider", "Providers");
 
             let at = self
-                .api()?
+                .api()
+                .map_err(|e| provider_replica::Error::chain_query("chain connection", e))?
                 .at_current_block()
                 .await
                 .map_err(|e| provider_replica::Error::chain_query("current block", e))?;
@@ -762,7 +768,8 @@ impl ReplicaSyncChainClient for SubxtChainClient {
         );
 
         self.submit_and_finalize(&tx, "confirm_replica_sync")
-            .await?;
+            .await
+            .map_err(replica_submit_error)?;
 
         tracing::info!(
             "confirm_replica_sync submitted successfully for bucket {}",
@@ -811,6 +818,17 @@ fn detected_challenge(
         chunk_index: challenge.target.chunk_index,
         challenger: sp_core::crypto::AccountId32::from(challenge.challenger.0).to_ss58check(),
     })
+}
+
+/// `submit_and_finalize` reports this node's `Error`; keep its retryable-versus-
+/// rejected split, which is the only distinction the replica trait's callers
+/// could act on, and name anything else as a submission failure.
+fn replica_submit_error(e: Error) -> provider_replica::Error {
+    match e {
+        Error::TxSubmit { what, reason } => provider_replica::Error::TxSubmit { what, reason },
+        Error::TxRejected { what, reason } => provider_replica::Error::TxRejected { what, reason },
+        other => provider_replica::Error::tx_submit("confirm_replica_sync", other),
+    }
 }
 
 /// One agreement as returned by the `provider_agreements` runtime API.
@@ -1115,6 +1133,27 @@ mod tests {
             role,
             started_at: 100,
         }
+    }
+
+    #[test]
+    fn submit_errors_keep_their_retryable_versus_rejected_split() {
+        assert!(matches!(
+            replica_submit_error(Error::tx_submit("confirm_replica_sync", "watch dropped")),
+            provider_replica::Error::TxSubmit { .. }
+        ));
+        assert!(matches!(
+            replica_submit_error(Error::tx_rejected(
+                "confirm_replica_sync",
+                "SyncTooFrequent"
+            )),
+            provider_replica::Error::TxRejected { .. }
+        ));
+        // Anything else `submit_and_finalize` can return is a submission
+        // failure the caller may retry.
+        assert!(matches!(
+            replica_submit_error(Error::InvalidSignature),
+            provider_replica::Error::TxSubmit { .. }
+        ));
     }
 
     #[test]

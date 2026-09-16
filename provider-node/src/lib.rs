@@ -40,8 +40,8 @@ pub use provider_coordinator::{
 };
 pub use provider_replica::{
     ReplicaSync, ReplicaSyncChainClient, ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig,
-    ReplicaSyncCoordinatorHandle, SignedSyncRoots, SyncCommand, SyncCoordinatorStatus, SyncDuty,
-    SyncResult, SyncRoots, SyncRootsSigner,
+    ReplicaSyncCoordinatorHandle, SignedSyncRoots, SigningRefused, SyncCommand,
+    SyncCoordinatorStatus, SyncDuty, SyncResult, SyncRoots, SyncRootsSigner,
 };
 pub use types::*;
 
@@ -183,11 +183,15 @@ impl ProviderState {
     /// registration whose key matches ours, because the pallet rejects any
     /// other signature. Clears on the coordinator's next refresh, no restart.
     pub fn ensure_signing_key_registered(&self) -> Result<(), Error> {
+        Ok(self.check_signing_key()?)
+    }
+
+    /// The same check, reported as the reason rather than as this crate's
+    /// error, for callers outside it.
+    fn check_signing_key(&self) -> Result<(), SigningRefused> {
         let info = self.chain_state.provider_info.read();
-        match info.as_ref() {
-            Some(info) => self.ensure_signing_key_matches(info),
-            None => Err(Error::ProviderInfoUnavailable),
-        }
+        let info = info.as_ref().ok_or(SigningRefused::Unregistered)?;
+        self.check_signing_key_matches(info)
     }
 
     /// The same guard against a registration snapshot the caller already
@@ -198,6 +202,13 @@ impl ProviderState {
         &self,
         info: &provider_types::ProviderInfo,
     ) -> Result<(), Error> {
+        Ok(self.check_signing_key_matches(info)?)
+    }
+
+    fn check_signing_key_matches(
+        &self,
+        info: &provider_types::ProviderInfo,
+    ) -> Result<(), SigningRefused> {
         let Some(local) = self.signing_public_key.as_ref() else {
             return Ok(());
         };
@@ -207,7 +218,7 @@ impl ProviderState {
                 local = %hex::encode(local),
                 "local signing key does not match registered on-chain public_key"
             );
-            return Err(Error::ProviderKeyMismatch);
+            return Err(SigningRefused::KeyMismatch);
         }
         Ok(())
     }
@@ -227,7 +238,9 @@ impl SyncRootsSigner for ProviderState {
         &self,
         roots: &SyncRoots,
     ) -> Result<MultiSignature, provider_replica::Error> {
-        Ok(self.signing_keypair()?.sign(&roots.encode()))
+        let keypair = self.keypair.as_ref().ok_or(SigningRefused::NoKey)?;
+        self.check_signing_key()?;
+        Ok(keypair.sign(&roots.encode()))
     }
 }
 
