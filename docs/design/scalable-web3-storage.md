@@ -1211,6 +1211,14 @@ syncs today. The transfer needs no trust: chunks and internal nodes are
 content-addressed, so the receiver verifies everything against the data root it
 already knows from the chain.
 
+Such an API will likely be added, but it does not replace the client path. A
+fetch between two providers leaves no on-chain record, so a failure does not say
+whether the serving provider did not serve or the new primary did not request
+the data. The client path assigns the fault, because the client performs both
+halves and sees which one fails. A failed fetch therefore falls back to it, and
+the fallback starts with a punishment for the provider at fault: a burn instead
+of a payment for the new primary, or a challenge against the serving provider.
+
 Open points: whether serving such a fetch is voluntary or part of the agreement,
 who pays the serving provider for the egress, and whether a provider that is
 about to exit can be made to serve at all. Nothing in the core protocol depends
