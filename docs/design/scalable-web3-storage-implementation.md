@@ -1588,6 +1588,15 @@ impl<T: Config> Pallet<T> {
     /// - Signatures are verified on-chain
     /// 
     /// Providers added this way become liable for the snapshot state.
+    ///
+    /// TODO: the permissionless origin is not implemented. The pallet runs
+    /// `ensure_writer_or_admin`, so the claim above is wrong. Decide which
+    /// side changes.
+    ///
+    /// TODO: the bitfield is sized at checkpoint time and shrinks when a
+    /// provider is removed, so a signer whose index is past its length is
+    /// verified, named in `BucketCheckpointed`, and never recorded in the
+    /// snapshot. Grow the bitfield before setting the bit.
     pub fn extend_checkpoint(
         origin: OriginFor<T>,
         bucket_id: BucketId,
