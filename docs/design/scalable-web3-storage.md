@@ -1220,10 +1220,9 @@ the fallback starts with a punishment for the provider at fault: a burn instead
 of a payment for the new primary, or a challenge against the serving provider.
 
 Open points: whether serving such a fetch is voluntary or part of the agreement,
-who pays the serving provider for the egress, and whether a provider that is
-about to exit can be made to serve at all. Nothing in the core protocol depends
-on it — the client path always works — so it can be added once the cost of the
-download-and-upload round trip is measured on real bucket sizes.
+who pays the serving provider for the egress, whether a provider that is about
+to exit can be made to serve at all, and how the client reports the fault so the
+burn or the challenge is justified.
 
 ### Isolation Mode
 
