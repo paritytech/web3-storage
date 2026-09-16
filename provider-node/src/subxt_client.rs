@@ -136,18 +136,32 @@ impl SubxtChainClient {
         chain_connection::current_api(&self.chain_rx).map_err(Into::into)
     }
 
+    /// The block handle every chain read starts from: the live connection,
+    /// resolved to the current block. Both steps report the same failure, so
+    /// the mapping lives here rather than at each call site.
+    async fn at_current_block(
+        &self,
+    ) -> Result<
+        subxt::client::ClientAtBlock<
+            subxt::PolkadotConfig,
+            subxt::client::OnlineClientAtBlockImpl<subxt::PolkadotConfig>,
+        >,
+        ChainClientError,
+    > {
+        self.api()
+            .map_err(|e| ChainClientError::query("chain connection", e))?
+            .at_current_block()
+            .await
+            .map_err(|e| ChainClientError::query("current block", e))
+    }
+
     /// Get the current anchor block (the clock every on-chain duration is
     /// measured against), read at the latest finalized state via the pallet's
     /// runtime API.
     ///
     /// Backs `get_current_block` on the replica-sync trait.
     async fn current_anchor_block(&self) -> Result<u64, ChainClientError> {
-        let at = self
-            .api()
-            .map_err(|e| ChainClientError::query("chain connection", e))?
-            .at_current_block()
-            .await
-            .map_err(|e| ChainClientError::query("current block", e))?;
+        let at = self.at_current_block().await?;
         Ok(u64::from(
             provider_coordinator::fetch_current_anchor_block(&at)
                 .await
@@ -251,11 +265,8 @@ impl SubxtChainClient {
         retrying: bool,
     ) -> Attempt {
         let submitted = async {
-            self.api()
-                .map_err(|e| ChainClientError::query("chain connection", e))?
-                .at_current_block()
-                .await
-                .map_err(|e| ChainClientError::query("current block", e))?
+            self.at_current_block()
+                .await?
                 .transactions()
                 .sign_and_submit_then_watch_default(tx, &self.signer)
                 .await
@@ -590,11 +601,8 @@ impl ReplicaSyncChainClient for SubxtChainClient {
             .unvalidated();
 
         let agreements = self
-            .api()
-            .map_err(|e| ChainClientError::query("chain connection", e))?
             .at_current_block()
-            .await
-            .map_err(|e| ChainClientError::query("current block", e))?
+            .await?
             .runtime_apis()
             .call(payload)
             .await
@@ -618,12 +626,7 @@ impl ReplicaSyncChainClient for SubxtChainClient {
         let storage_address =
             subxt::dynamic::storage::<(Value,), Value>("StorageProvider", "Buckets");
 
-        let at = self
-            .api()
-            .map_err(|e| ChainClientError::query("chain connection", e))?
-            .at_current_block()
-            .await
-            .map_err(|e| ChainClientError::query("current block", e))?;
+        let at = self.at_current_block().await?;
 
         match at
             .storage()
@@ -667,12 +670,7 @@ impl ReplicaSyncChainClient for SubxtChainClient {
         let storage_address =
             subxt::dynamic::storage::<(Value,), Value>("StorageProvider", "Buckets");
 
-        let at = self
-            .api()
-            .map_err(|e| ChainClientError::query("chain connection", e))?
-            .at_current_block()
-            .await
-            .map_err(|e| ChainClientError::query("current block", e))?;
+        let at = self.at_current_block().await?;
 
         let bucket_value = match at
             .storage()
@@ -719,13 +717,6 @@ impl ReplicaSyncChainClient for SubxtChainClient {
         for provider_bytes in provider_bytes_list {
             let provider_addr =
                 subxt::dynamic::storage::<(Value,), Value>("StorageProvider", "Providers");
-
-            let at = self
-                .api()
-                .map_err(|e| ChainClientError::query("chain connection", e))?
-                .at_current_block()
-                .await
-                .map_err(|e| ChainClientError::query("current block", e))?;
 
             if let Ok(Some(value)) = at
                 .storage()
