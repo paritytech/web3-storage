@@ -170,10 +170,13 @@ impl ProviderState {
         Ok(format!("0x{}", hex::encode(keypair.sign(message).encode())))
     }
 
+    /// The keypair every signing path goes through, once the guard below
+    /// passes.
+    ///
     /// Checks `keypair` before the guard: a node with no signing key at all
     /// must report [`SigningRefused::NoKey`] (the actionable fix - configure
     /// `--keyfile`) rather than [`SigningRefused::Unregistered`].
-    fn signing_keypair(&self) -> Result<&ProviderKeypair, Error> {
+    fn signing_keypair(&self) -> Result<&ProviderKeypair, SigningRefused> {
         let keypair = self.keypair.as_ref().ok_or(SigningRefused::NoKey)?;
         self.ensure_signing_key_registered()?;
         Ok(keypair)
@@ -182,16 +185,10 @@ impl ProviderState {
     /// Guard for every signing path: signing requires a published on-chain
     /// registration whose key matches ours, because the pallet rejects any
     /// other signature. Clears on the coordinator's next refresh, no restart.
-    pub fn ensure_signing_key_registered(&self) -> Result<(), Error> {
-        Ok(self.check_signing_key()?)
-    }
-
-    /// The same check, reported as the reason rather than as this crate's
-    /// error, for callers outside it.
-    fn check_signing_key(&self) -> Result<(), SigningRefused> {
+    fn ensure_signing_key_registered(&self) -> Result<(), SigningRefused> {
         let info = self.chain_state.provider_info.read();
         let info = info.as_ref().ok_or(SigningRefused::Unregistered)?;
-        self.check_signing_key_matches(info)
+        self.ensure_signing_key_matches(info)
     }
 
     /// The same guard against a registration snapshot the caller already
@@ -199,13 +196,6 @@ impl ProviderState {
     /// the very snapshot the rest of the request is being served from, rather
     /// than one that may have been refreshed in between.
     pub fn ensure_signing_key_matches(
-        &self,
-        info: &provider_types::ProviderInfo,
-    ) -> Result<(), Error> {
-        Ok(self.check_signing_key_matches(info)?)
-    }
-
-    fn check_signing_key_matches(
         &self,
         info: &provider_types::ProviderInfo,
     ) -> Result<(), SigningRefused> {
@@ -235,9 +225,7 @@ impl ProviderState {
 /// guard every other signing path goes through.
 impl SyncRootsSigner for ProviderState {
     fn sign_sync_roots(&self, roots: &SyncRoots) -> Result<MultiSignature, SigningRefused> {
-        let keypair = self.keypair.as_ref().ok_or(SigningRefused::NoKey)?;
-        self.check_signing_key()?;
-        Ok(keypair.sign(&roots.encode()))
+        Ok(self.signing_keypair()?.sign(&roots.encode()))
     }
 }
 
@@ -261,6 +249,29 @@ mod tests {
         (deps, dir)
     }
 
+    /// A registration snapshot carrying the given signing key. The values
+    /// other than `public_key` are not asserted on; only the key matters to
+    /// these tests.
+    fn registration(public_key: Vec<u8>) -> provider_types::ProviderInfo {
+        provider_types::ProviderInfo {
+            multiaddr: "/ip4/1.2.3.4/tcp/3333".to_string(),
+            public_key,
+            stake: 1_000,
+            committed_bytes: 0,
+            settings: provider_types::ProviderSettings {
+                min_duration: 10,
+                max_duration: 100,
+                price_per_byte: 1,
+                accepting_primary: true,
+                replica_sync_price: None,
+                accepting_extensions: true,
+                max_capacity: 0,
+            },
+            stats: Default::default(),
+            deregister_at: None,
+        }
+    }
+
     /// Publish a registration snapshot whose `public_key` matches this
     /// state's own signing key, as the chain-state coordinator would once
     /// the provider is registered on chain.
@@ -270,23 +281,7 @@ mod tests {
             .chain_state
             .provider_info
             .write()
-            .replace(provider_types::ProviderInfo {
-                multiaddr: "/ip4/1.2.3.4/tcp/3333".to_string(),
-                public_key,
-                stake: 1_000,
-                committed_bytes: 0,
-                settings: provider_types::ProviderSettings {
-                    min_duration: 10,
-                    max_duration: 100,
-                    price_per_byte: 1,
-                    accepting_primary: true,
-                    replica_sync_price: None,
-                    accepting_extensions: true,
-                    max_capacity: 0,
-                },
-                stats: Default::default(),
-                deregister_at: None,
-            });
+            .replace(registration(public_key));
     }
 
     #[test]
@@ -341,29 +336,11 @@ mod tests {
         let state = ProviderState::with_seed(deps, "//Alice").unwrap();
         let local_key = state.keypair.as_ref().unwrap().public_key_bytes();
 
-        let info = |public_key: Vec<u8>| provider_types::ProviderInfo {
-            multiaddr: "/ip4/1.2.3.4/tcp/3333".to_string(),
-            public_key,
-            stake: 1_000,
-            committed_bytes: 0,
-            settings: provider_types::ProviderSettings {
-                min_duration: 10,
-                max_duration: 100,
-                price_per_byte: 1,
-                accepting_primary: true,
-                replica_sync_price: None,
-                accepting_extensions: true,
-                max_capacity: 0,
-            },
-            stats: Default::default(),
-            deregister_at: None,
-        };
-
         state
             .chain_state
             .provider_info
             .write()
-            .replace(info(vec![9u8; 32]));
+            .replace(registration(vec![9u8; 32]));
         assert!(matches!(
             state.sign(b"msg"),
             Err(Error::Signing(SigningRefused::KeyMismatch))
@@ -382,7 +359,7 @@ mod tests {
             .chain_state
             .provider_info
             .write()
-            .replace(info(local_key));
+            .replace(registration(local_key));
         assert!(state.sign(b"msg").is_ok());
     }
 
