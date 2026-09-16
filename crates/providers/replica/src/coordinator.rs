@@ -544,11 +544,9 @@ impl ReplicaSyncCoordinator {
             .map(|b| b.bucket_id)
             .collect();
 
-        let provider_account = self.provider_id.clone();
-
         let agreements = self
             .chain_client
-            .fetch_replica_agreements(&provider_account, local_buckets)
+            .fetch_replica_agreements(&self.provider_id, local_buckets)
             .await?;
 
         for agreement in agreements {
