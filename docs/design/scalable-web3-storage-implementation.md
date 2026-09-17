@@ -879,6 +879,7 @@ pub enum Event<T: Config> {
         provider: T::AccountId,
         old_owner: T::AccountId,
         new_owner: T::AccountId,
+        escrow: BalanceOf<T>,
     },
     AgreementEnded {
         bucket_id: BucketId,
