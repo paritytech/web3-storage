@@ -136,10 +136,9 @@ impl<T: Config> Pallet<T> {
     /// `establish_storage_agreement` extrinsic and by higher-layer pallets that
     /// fold bucket creation into their own flows).
     ///
-    /// Verifies the signature, advances the provider's replay window,
-    /// then runs the same provider/capacity/stake checks as
-    /// `create_bucket_with_storage` before creating the bucket + primary
-    /// agreement.
+    /// Verifies the signature, advances the provider's replay window, then
+    /// runs the provider/capacity/stake checks before creating the bucket +
+    /// primary agreement. `terms.bucket_id` must be `None`.
     pub fn establish_storage_agreement_internal(
         owner: &T::AccountId,
         provider: &T::AccountId,
@@ -147,73 +146,20 @@ impl<T: Config> Pallet<T> {
         sig: &sp_runtime::MultiSignature,
         visibility: Visibility,
     ) -> Result<BucketId, DispatchError> {
-        // Origin must match the owner the provider signed for.
-        ensure!(&terms.owner == owner, Error::<T>::TermsOwnerMismatch);
+        let anchor_block = Self::validate_terms(owner, &terms, None)?;
 
-        // Primary terms must not be bound to an existing bucket — the
-        // bucket is created at redemption.
-        ensure!(terms.bucket_id.is_none(), Error::<T>::TermsBucketMismatch);
-
-        // Request's terms.max_bytes must greater than 0
-        ensure!(terms.max_bytes > 0, Error::<T>::InvalidMaxBytesRequest);
-
-        // Quote must not be stale and must not exceed the chain-enforced window.
-        // `terms.valid_until` must in range [anchor_block, anchor_block + RequestTimeout]
-        let anchor_block = Self::current_anchor_block();
-        ensure!(terms.valid_until >= anchor_block, Error::<T>::TermsExpired);
-        ensure!(
-            terms.valid_until <= anchor_block.saturating_add(T::RequestTimeout::get()),
-            Error::<T>::TermsValidityTooLong
-        );
-
-        // Provider lookup + signature check over
-        // blake2_256(PRIMARY_TERM_CONTEXT | SCALE(terms)).
-        let provider_info = Providers::<T>::get(provider).ok_or(Error::<T>::ProviderNotFound)?;
-        Self::verify_terms_signature(
-            &provider_info,
+        let provider_info = Self::accept_quote(
+            provider,
             &terms,
             sig,
             storage_primitives::PRIMARY_TERM_CONTEXT,
         )?;
-
-        // Replay window: at most once per nonce, within the trailing REPLAY_WINDOW_BITS slots.
-        ProviderReplayStates::<T>::try_mutate(provider, |window| -> DispatchResult {
-            window.try_accept(terms.nonce).map_err(|e| match e {
-                ReplayError::AlreadyUsed => Error::<T>::NonceAlreadyUsed,
-                ReplayError::TooOld => Error::<T>::NonceTooOld,
-            })?;
-            Ok(())
-        })?;
-
-        // Validate on-chain provider's state then create bucket
         Self::ensure_provider_active(&provider_info)?;
         ensure!(
             provider_info.settings.accepting_primary,
             Error::<T>::ProviderNotAcceptingPrimary
         );
-        Self::validate_duration(&provider_info.settings, terms.duration)?;
-
-        let new_committed = provider_info
-            .committed_bytes
-            .checked_add(terms.max_bytes)
-            .ok_or(Error::<T>::ArithmeticOverflow)?;
-        if provider_info.settings.max_capacity > 0 {
-            ensure!(
-                new_committed <= provider_info.settings.max_capacity,
-                Error::<T>::CapacityExceeded
-            );
-        }
-
-        {
-            let bytes_as_balance: BalanceOf<T> = new_committed.saturated_into();
-            let required_stake = T::MinStakePerByte::get()
-                .checked_mul(&bytes_as_balance)
-                .ok_or(Error::<T>::ArithmeticOverflow)?;
-            ensure!(
-                provider_info.stake >= required_stake,
-                Error::<T>::InsufficientStakeForBytes
-            );
-        }
+        let new_committed = Self::reserve_capacity(&provider_info, &terms)?;
 
         // Pay at the price the provider signed for.
         let payment =
@@ -226,28 +172,21 @@ impl<T: Config> Pallet<T> {
         let bucket_id = Self::create_bucket_internal(owner, 1, Some(provider), visibility)?;
 
         let expires_at = anchor_block.saturating_add(terms.duration);
-        let agreement = StorageAgreement {
-            owner: owner.clone(),
-            max_bytes: terms.max_bytes,
-            payment_locked: payment,
-            price_per_byte: terms.price_per_byte,
-            expires_at,
-            extensions_blocked: false,
-            role: ProviderRole::Primary,
-            started_at: anchor_block,
-        };
-
-        Providers::<T>::mutate(provider, |maybe_provider| {
-            if let Some(p) = maybe_provider {
-                p.committed_bytes = new_committed;
-                p.stats.agreements_total = p.stats.agreements_total.saturating_add(1);
-                p.stats.total_bytes_committed = p
-                    .stats
-                    .total_bytes_committed
-                    .saturating_add(terms.max_bytes);
-            }
-        });
-        StorageAgreements::<T>::insert(bucket_id, provider, agreement);
+        Self::record_agreement(
+            bucket_id,
+            provider,
+            new_committed,
+            StorageAgreement {
+                owner: owner.clone(),
+                max_bytes: terms.max_bytes,
+                payment_locked: payment,
+                price_per_byte: terms.price_per_byte,
+                expires_at,
+                extensions_blocked: false,
+                role: ProviderRole::Primary,
+                started_at: anchor_block,
+            },
+        );
 
         Self::deposit_event(Event::StorageAgreementEstablished {
             bucket_id,
@@ -275,26 +214,7 @@ impl<T: Config> Pallet<T> {
         terms: AgreementTermsOf<T>,
         sig: &sp_runtime::MultiSignature,
     ) -> DispatchResult {
-        // Origin must match the owner the provider signed for.
-        ensure!(&terms.owner == owner, Error::<T>::TermsOwnerMismatch);
-
-        // The provider's signed quote must be bound to the bucket this
-        // extrinsic targets.
-        ensure!(
-            terms.bucket_id == Some(bucket_id),
-            Error::<T>::TermsBucketMismatch
-        );
-
-        // Request's terms.max_bytes must greater than 0
-        ensure!(terms.max_bytes > 0, Error::<T>::InvalidMaxBytesRequest);
-
-        // Quote must not be stale and must not exceed the chain-enforced window.
-        let anchor_block = Self::current_anchor_block();
-        ensure!(terms.valid_until >= anchor_block, Error::<T>::TermsExpired);
-        ensure!(
-            terms.valid_until <= anchor_block.saturating_add(T::RequestTimeout::get()),
-            Error::<T>::TermsValidityTooLong
-        );
+        let anchor_block = Self::validate_terms(owner, &terms, Some(bucket_id))?;
 
         // Target bucket must exist.
         ensure!(
@@ -315,17 +235,106 @@ impl<T: Config> Pallet<T> {
             .ok_or(Error::<T>::MissingReplicaTerms)?
             .clone();
 
-        // Provider lookup + signature check over
-        // blake2_256(REPLICA_TERM_CONTEXT | SCALE(terms)).
-        let provider_info = Providers::<T>::get(provider).ok_or(Error::<T>::ProviderNotFound)?;
-        Self::verify_terms_signature(
-            &provider_info,
+        let provider_info = Self::accept_quote(
+            provider,
             &terms,
             sig,
             storage_primitives::REPLICA_TERM_CONTEXT,
         )?;
+        Self::ensure_provider_active(&provider_info)?;
+        ensure!(
+            provider_info.settings.replica_sync_price.is_some(),
+            Error::<T>::ProviderNotAcceptingReplicas
+        );
+        let new_committed = Self::reserve_capacity(&provider_info, &terms)?;
 
-        // Replay window: at most once per nonce, within the trailing REPLAY_WINDOW_BITS slots.
+        // Pay at the price the provider signed for, plus the sync balance.
+        let payment =
+            Self::calculate_payment(terms.price_per_byte, terms.max_bytes, terms.duration)?;
+        let total_lock = payment
+            .checked_add(&replica_terms.sync_balance)
+            .ok_or(Error::<T>::ArithmeticOverflow)?;
+        Self::hold_payment(owner, total_lock)?;
+
+        let expires_at = anchor_block.saturating_add(terms.duration);
+        Self::record_agreement(
+            bucket_id,
+            provider,
+            new_committed,
+            StorageAgreement {
+                owner: owner.clone(),
+                max_bytes: terms.max_bytes,
+                payment_locked: payment,
+                price_per_byte: terms.price_per_byte,
+                expires_at,
+                extensions_blocked: false,
+                role: ProviderRole::Replica {
+                    sync_balance: replica_terms.sync_balance,
+                    sync_price: replica_terms.sync_price,
+                    min_sync_interval: replica_terms.min_sync_interval,
+                    last_sync: None,
+                },
+                started_at: anchor_block,
+            },
+        );
+
+        Self::deposit_event(Event::ReplicaAgreementEstablished {
+            bucket_id,
+            provider: provider.clone(),
+            owner: owner.clone(),
+            terms,
+            expires_at,
+        });
+
+        Ok(())
+    }
+
+    /// Checks the parts of a quote that do not depend on the provider's
+    /// on-chain record: it binds this owner and this bucket, asks for a
+    /// non-zero quota, and is still inside the chain-enforced validity
+    /// window.
+    ///
+    /// `expected_bucket` is the binding the redeeming call requires: `None`
+    /// for primary terms, which create their bucket, `Some(id)` for replica
+    /// terms, which name the bucket they attach to.
+    ///
+    /// Returns the current anchor block.
+    fn validate_terms(
+        owner: &T::AccountId,
+        terms: &AgreementTermsOf<T>,
+        expected_bucket: Option<BucketId>,
+    ) -> Result<BlockNumberFor<T>, DispatchError> {
+        ensure!(&terms.owner == owner, Error::<T>::TermsOwnerMismatch);
+        ensure!(
+            terms.bucket_id == expected_bucket,
+            Error::<T>::TermsBucketMismatch
+        );
+        ensure!(terms.max_bytes > 0, Error::<T>::InvalidMaxBytesRequest);
+
+        let anchor_block = Self::current_anchor_block();
+        ensure!(terms.valid_until >= anchor_block, Error::<T>::TermsExpired);
+        ensure!(
+            terms.valid_until <= anchor_block.saturating_add(T::RequestTimeout::get()),
+            Error::<T>::TermsValidityTooLong
+        );
+
+        Ok(anchor_block)
+    }
+
+    /// Verifies the provider's signature over `blake2_256(context |
+    /// SCALE(terms))` and consumes the quote's nonce in the provider's replay
+    /// window, so a signed quote is redeemable at most once.
+    ///
+    /// Returns the provider's on-chain record.
+    fn accept_quote(
+        provider: &T::AccountId,
+        terms: &AgreementTermsOf<T>,
+        sig: &sp_runtime::MultiSignature,
+        context: &[u8],
+    ) -> Result<ProviderInfo<T>, DispatchError> {
+        let provider_info = Providers::<T>::get(provider).ok_or(Error::<T>::ProviderNotFound)?;
+        Self::verify_terms_signature(&provider_info, terms, sig, context)?;
+
         ProviderReplayStates::<T>::try_mutate(provider, |window| -> DispatchResult {
             window.try_accept(terms.nonce).map_err(|e| match e {
                 ReplayError::AlreadyUsed => Error::<T>::NonceAlreadyUsed,
@@ -334,13 +343,17 @@ impl<T: Config> Pallet<T> {
             Ok(())
         })?;
 
-        // Validate on-chain provider's state.
-        Self::ensure_provider_active(&provider_info)?;
-        // Provider is no longer accept replica node
-        let _ = provider_info
-            .settings
-            .replica_sync_price
-            .ok_or(Error::<T>::ProviderNotAcceptingReplicas)?;
+        Ok(provider_info)
+    }
+
+    /// Checks the provider can take the quote's duration and quota on top of
+    /// what it already committed, and that its stake still backs the total.
+    ///
+    /// Returns the provider's `committed_bytes` with the quota added.
+    fn reserve_capacity(
+        provider_info: &ProviderInfo<T>,
+        terms: &AgreementTermsOf<T>,
+    ) -> Result<u64, DispatchError> {
         Self::validate_duration(&provider_info.settings, terms.duration)?;
 
         let new_committed = provider_info
@@ -354,62 +367,34 @@ impl<T: Config> Pallet<T> {
             );
         }
 
-        {
-            let bytes_as_balance: BalanceOf<T> = new_committed.saturated_into();
-            let required_stake = T::MinStakePerByte::get()
-                .checked_mul(&bytes_as_balance)
-                .ok_or(Error::<T>::ArithmeticOverflow)?;
-            ensure!(
-                provider_info.stake >= required_stake,
-                Error::<T>::InsufficientStakeForBytes
-            );
-        }
-
-        // Pay at the price the provider signed for, plus the sync balance.
-        let payment =
-            Self::calculate_payment(terms.price_per_byte, terms.max_bytes, terms.duration)?;
-        let total_lock = payment
-            .checked_add(&replica_terms.sync_balance)
+        let bytes_as_balance: BalanceOf<T> = new_committed.saturated_into();
+        let required_stake = T::MinStakePerByte::get()
+            .checked_mul(&bytes_as_balance)
             .ok_or(Error::<T>::ArithmeticOverflow)?;
-        Self::hold_payment(owner, total_lock)?;
+        ensure!(
+            provider_info.stake >= required_stake,
+            Error::<T>::InsufficientStakeForBytes
+        );
 
-        let expires_at = anchor_block.saturating_add(terms.duration);
-        let agreement = StorageAgreement {
-            owner: owner.clone(),
-            max_bytes: terms.max_bytes,
-            payment_locked: payment,
-            price_per_byte: terms.price_per_byte,
-            expires_at,
-            extensions_blocked: false,
-            role: ProviderRole::Replica {
-                sync_balance: replica_terms.sync_balance,
-                sync_price: replica_terms.sync_price,
-                min_sync_interval: replica_terms.min_sync_interval,
-                last_sync: None,
-            },
-            started_at: anchor_block,
-        };
+        Ok(new_committed)
+    }
 
+    /// Stores the agreement and moves the provider's counters to match.
+    fn record_agreement(
+        bucket_id: BucketId,
+        provider: &T::AccountId,
+        new_committed: u64,
+        agreement: StorageAgreement<T>,
+    ) {
+        let max_bytes = agreement.max_bytes;
         Providers::<T>::mutate(provider, |maybe_provider| {
             if let Some(p) = maybe_provider {
                 p.committed_bytes = new_committed;
                 p.stats.agreements_total = p.stats.agreements_total.saturating_add(1);
-                p.stats.total_bytes_committed = p
-                    .stats
-                    .total_bytes_committed
-                    .saturating_add(terms.max_bytes);
+                p.stats.total_bytes_committed =
+                    p.stats.total_bytes_committed.saturating_add(max_bytes);
             }
         });
         StorageAgreements::<T>::insert(bucket_id, provider, agreement);
-
-        Self::deposit_event(Event::ReplicaAgreementEstablished {
-            bucket_id,
-            provider: provider.clone(),
-            owner: owner.clone(),
-            terms,
-            expires_at,
-        });
-
-        Ok(())
     }
 }
