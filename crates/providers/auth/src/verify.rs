@@ -216,7 +216,7 @@ impl Authenticator {
         let access = self.membership.lookup(bucket_id).await;
         if required == RequiredRole::Reader
             && access.as_ref().is_ok_and(|entry| {
-                entry.access.visibility == Visibility::Public || entry.replica_here
+                entry.access.visibility == Visibility::Public || entry.serves_as_replica
             })
         {
             return Ok(());
@@ -384,7 +384,7 @@ mod tests {
         // only. A private bucket this node replicates must answer anonymous
         // reads, while writes keep demanding a role (which nobody holds here).
         let auth =
-            Authenticator::new(StaticMembershipResolver::private(vec![]).with_replica_here());
+            Authenticator::new(StaticMembershipResolver::private(vec![]).with_serves_as_replica());
 
         let anonymous_read = auth
             .require_role(None, "GET", 1, RequiredRole::Reader)

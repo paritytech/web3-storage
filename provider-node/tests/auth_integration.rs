@@ -933,7 +933,7 @@ async fn replica_served_private_bucket_reads_anonymously() {
         StaticMembershipResolver::private(vec![
             (AccountId32::new(alice.public().0), Role::Writer).into()
         ])
-        .with_replica_here(),
+        .with_serves_as_replica(),
     )
     .await;
     upload_and_commit_as(&server, &alice).await;

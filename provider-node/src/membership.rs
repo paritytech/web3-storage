@@ -96,7 +96,7 @@ impl MembershipResolver for ChainMembershipResolver {
     /// re-checked here, so a lapsed-but-unpruned agreement keeps serving until
     /// the entry is invalidated or falls out of the TTL, the same freshness
     /// bound the member set lives under.
-    async fn fetch_replica_here(&self, bucket_id: BucketId) -> Result<bool, MembershipError> {
+    async fn fetch_serves_as_replica(&self, bucket_id: BucketId) -> Result<bool, MembershipError> {
         let Some(own) = &self.own_account else {
             return Ok(false);
         };
@@ -173,7 +173,7 @@ impl MembershipInvalidations for BlockEventInvalidations {
                 Ok(BlockEvent::BucketMembershipChanged { bucket_id }) if !all => {
                     buckets.push(bucket_id)
                 }
-                // A new replica agreement changes the resolver's `replica_here`
+                // A new replica agreement changes the resolver's `serves_as_replica`
                 // answer for the bucket, whoever the replica is (cheaper to
                 // drop the entry than to check whether it is us).
                 Ok(BlockEvent::ReplicaAgreementEstablished { bucket_id, .. }) if !all => {
@@ -269,8 +269,8 @@ mod tests {
 
     #[test]
     fn a_replica_agreement_invalidates_its_bucket() {
-        // `replica_here` is resolved into the cached BucketAccess, so a new
-        // replica agreement must drop the bucket's entry like a member change.
+        // `serves_as_replica` is resolved into the bucket's cached entry, so a
+        // new replica agreement must drop it like a member change does.
         let (tx, rx) = broadcast::channel(4);
         let _ = tx.send(BlockEvent::ReplicaAgreementEstablished {
             bucket_id: 5,

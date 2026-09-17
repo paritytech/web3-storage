@@ -75,7 +75,7 @@ impl RequiredRole {
 
 /// Cached access entry for a bucket: the bucket's own state plus this node's
 /// standing on it. Kept as separate fields — [`BucketAccess`] is bucket state,
-/// `replica_here` is the node's relationship to the bucket — but cached as one
+/// `serves_as_replica` is the node's relationship to the bucket — but cached as one
 /// value because both resolve from the same chain read-through and expire and
 /// invalidate together.
 #[derive(Debug, Clone)]
@@ -84,15 +84,15 @@ pub(crate) struct CachedMembership {
     /// This node serves the bucket under a replica agreement, so Reader
     /// checks pass without auth (replicas serve reads to everyone —
     /// visibility gates primaries only).
-    pub(crate) replica_here: bool,
+    pub(crate) serves_as_replica: bool,
     fetched_at: Instant,
 }
 
 impl CachedMembership {
-    fn new(access: BucketAccess, replica_here: bool) -> Self {
+    fn new(access: BucketAccess, serves_as_replica: bool) -> Self {
         Self {
             access,
-            replica_here,
+            serves_as_replica,
             fetched_at: Instant::now(),
         }
     }
@@ -128,7 +128,7 @@ pub trait MembershipResolver: Send + Sync {
     /// Replicas serve reads to everyone — visibility gates primaries only —
     /// so `true` passes Reader checks without auth. Defaults to `false`, the
     /// right answer for a resolver with no node identity.
-    async fn fetch_replica_here(&self, _bucket_id: BucketId) -> Result<bool, MembershipError> {
+    async fn fetch_serves_as_replica(&self, _bucket_id: BucketId) -> Result<bool, MembershipError> {
         Ok(false)
     }
 }
@@ -140,8 +140,8 @@ impl<T: MembershipResolver + ?Sized> MembershipResolver for Box<T> {
         (**self).fetch_access(bucket_id).await
     }
 
-    async fn fetch_replica_here(&self, bucket_id: BucketId) -> Result<bool, MembershipError> {
-        (**self).fetch_replica_here(bucket_id).await
+    async fn fetch_serves_as_replica(&self, bucket_id: BucketId) -> Result<bool, MembershipError> {
+        (**self).fetch_serves_as_replica(bucket_id).await
     }
 }
 
@@ -150,14 +150,14 @@ impl<T: MembershipResolver + ?Sized> MembershipResolver for Box<T> {
 /// member-only shape.
 pub struct StaticMembershipResolver {
     pub access: BucketAccess,
-    pub replica_here: bool,
+    pub serves_as_replica: bool,
 }
 
 impl StaticMembershipResolver {
     pub fn new(access: BucketAccess) -> Self {
         Self {
             access,
-            replica_here: false,
+            serves_as_replica: false,
         }
     }
 
@@ -167,8 +167,8 @@ impl StaticMembershipResolver {
     }
 
     /// Resolve every bucket as replica-held by this node.
-    pub fn with_replica_here(mut self) -> Self {
-        self.replica_here = true;
+    pub fn with_serves_as_replica(mut self) -> Self {
+        self.serves_as_replica = true;
         self
     }
 }
@@ -179,8 +179,8 @@ impl MembershipResolver for StaticMembershipResolver {
         Ok(self.access.clone())
     }
 
-    async fn fetch_replica_here(&self, _bucket_id: BucketId) -> Result<bool, MembershipError> {
-        Ok(self.replica_here)
+    async fn fetch_serves_as_replica(&self, _bucket_id: BucketId) -> Result<bool, MembershipError> {
+        Ok(self.serves_as_replica)
     }
 }
 
@@ -415,14 +415,14 @@ impl MembershipCache {
         let fetched = match self.resolver.fetch_access(bucket_id).await {
             Ok(access) => self
                 .resolver
-                .fetch_replica_here(bucket_id)
+                .fetch_serves_as_replica(bucket_id)
                 .await
-                .map(|replica_here| (access, replica_here)),
+                .map(|serves_as_replica| (access, serves_as_replica)),
             Err(e) => Err(e),
         };
         match fetched {
-            Ok((access, replica_here)) => {
-                let entry = Arc::new(CachedMembership::new(access, replica_here));
+            Ok((access, serves_as_replica)) => {
+                let entry = Arc::new(CachedMembership::new(access, serves_as_replica));
                 // Cache it only if no invalidation landed during the fetch,
                 // then check again: no lock spans the insert, so a bump can
                 // still slip between the two lines. `invalidate` bumps
