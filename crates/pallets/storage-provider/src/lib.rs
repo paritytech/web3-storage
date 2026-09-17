@@ -2083,9 +2083,19 @@ pub mod pallet {
             )
         }
 
-        /// Owner only. Hand the agreement to `new_owner`, who can then top up,
-        /// extend, settle, or transfer it again. The escrow moves with it and
-        /// stays on hold.
+        /// Transfer the agreement to `new_owner` (current owner only). The
+        /// new owner can top up, extend, settle, or transfer it again.
+        ///
+        /// The escrow — the prepaid fee plus, for a replica, the unspent sync
+        /// balance — moves to `new_owner` and stays on hold; every later
+        /// settlement and refund uses the new owner.
+        ///
+        /// Bucket membership does not move: the new owner cannot write to or
+        /// administer the bucket, and the bucket admin keeps every admin
+        /// power over the agreement, including early termination, which pays
+        /// out or burns the new owner's escrow. Challenge rights follow the
+        /// owner; open challenges keep the authorization they were created
+        /// with.
         #[pallet::call_index(29)]
         #[pallet::weight(T::WeightInfo::transfer_agreement_ownership())]
         pub fn transfer_agreement_ownership(
