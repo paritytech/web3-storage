@@ -44,6 +44,7 @@ Unratified / WIP notes. **These need triage** ([#308](https://github.com/parityt
 - **[Client-Side Encryption](./drafts/CLIENT_SIDE_ENCRYPTION.md)** — wire format, cipher choice.
 - **[S3 Metadata Index](./drafts/S3_METADATA_INDEX.md)** — how prefix/delimiter queries are served.
 - **[Challenge Economics — Extensions](./drafts/challenge-economics-extensions.md)** — speculative "Capped Split for the general public"; also records that the design's two-tier challenger split isn't implemented yet.
+- **[Pitch Deck](./drafts/scalable-web3-storage-pitch-deck.md)** — slide-style overview of the design: problem framing, cost/scaling comparisons, use cases, provider classes, phased rollout. Removed in [#61](https://github.com/paritytech/web3-storage/pull/61), restored here; presentation material, not design-of-record.
 
 ## Clients
 
