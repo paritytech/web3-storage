@@ -39,6 +39,24 @@ impl TestServer {
         backend: StorageBackendKind,
         state: impl FnOnce(ProviderDeps) -> ProviderState,
     ) -> Self {
+        let (dir, deps) = Self::deps(backend);
+        let state = state(deps);
+        publish_matching_registration(&state);
+        Self::from_state(state, dir).await
+    }
+
+    /// Like [`start`](Self::start), but leaves the chain-state coordinator's
+    /// registration unpublished — covers the window before its first refresh,
+    /// or a provider the chain does not know about.
+    pub async fn start_unregistered(
+        backend: StorageBackendKind,
+        state: impl FnOnce(ProviderDeps) -> ProviderState,
+    ) -> Self {
+        let (dir, deps) = Self::deps(backend);
+        Self::from_state(state(deps), dir).await
+    }
+
+    fn deps(backend: StorageBackendKind) -> (TempDir, ProviderDeps) {
         let dir = tempfile::Builder::new()
             .prefix(provider_storage::TEMP_DIR_PREFIX)
             .tempdir()
@@ -54,7 +72,11 @@ impl TestServer {
                 (test_member_account(), Role::Admin).into(),
             ]))),
         };
-        let (addr, client) = serve(state(deps)).await;
+        (dir, deps)
+    }
+
+    async fn from_state(state: ProviderState, dir: TempDir) -> Self {
+        let (addr, client) = serve(state).await;
         Self {
             addr,
             client,
@@ -65,6 +87,39 @@ impl TestServer {
     pub fn url(&self, path: &str) -> String {
         format!("http://{}{}", self.addr, path)
     }
+}
+
+/// Publish a registration snapshot whose `public_key` matches this state's
+/// own signing key, as the chain-state coordinator would once the provider
+/// is registered on chain — signing endpoints refuse otherwise. Skipped for
+/// a keyless state, which has no key to register.
+pub fn publish_matching_registration(state: &ProviderState) {
+    let Some(keypair) = state.keypair.as_ref() else {
+        return;
+    };
+    state
+        .chain_state
+        .provider_info
+        .write()
+        .replace(provider_types::ProviderInfo {
+            multiaddr: "/ip4/127.0.0.1/tcp/3333".to_string(),
+            // Must match the server's own signing key — signing refuses when
+            // the registered key differs.
+            public_key: keypair.public_key_bytes(),
+            stake: 1_000_000_000_000,
+            committed_bytes: 0,
+            settings: provider_types::ProviderSettings {
+                min_duration: 10,
+                max_duration: 100_000,
+                price_per_byte: 1,
+                accepting_primary: true,
+                replica_sync_price: None,
+                accepting_extensions: true,
+                max_capacity: 0,
+            },
+            stats: Default::default(),
+            deregister_at: None,
+        });
 }
 
 /// Declare tests that run once per backend.

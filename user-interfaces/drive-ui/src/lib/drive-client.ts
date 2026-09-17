@@ -9,7 +9,6 @@
  * acceptance waits) lives in @web3-storage/sdk.
  */
 
-import type { PolkadotSigner } from "polkadot-api";
 import { parachain } from "@polkadot-api/descriptors";
 import {
   buildSignedTermsArgs,
@@ -28,7 +27,7 @@ import {
 import { FileSystemClient } from "@web3-storage/sdk/fs";
 import type { ParachainApi } from "@/state/chain.state";
 
-export type Signer = PolkadotSigner;
+export type Signer = ChainSigner["signer"];
 
 // Re-export the SDK negotiate primitives + types the create-drive components
 // (NewDriveDialog, ProviderPickerPanel) and the state layer import from here.

@@ -66,11 +66,8 @@ pub struct BucketInfo {
     pub leaf_count: u64,
 }
 
-/// Trait for storage backends (in-memory, disk, etc.).
-///
-/// Both `Storage` (in-memory) and `DiskStorage` (persistent) implement this trait,
-/// allowing the provider node to select the storage backend at startup.
-/// The disk backend is currently backed by RocksDB but the implementation may change.
+/// Storage engine interface. Callers hold an `Arc<dyn StorageBackend>` rather
+/// than a concrete engine.
 pub trait StorageBackend: Send + Sync {
     /// Initialize a bucket with the given quota.
     fn init_bucket(&self, bucket_id: BucketId, max_bytes: u64) -> Result<(), Error>;

@@ -11,7 +11,7 @@ import {
   entropyToMiniSecret,
   mnemonicToEntropy,
 } from "@polkadot-labs/hdkd-helpers";
-import { getPolkadotSigner, type PolkadotSigner } from "polkadot-api/signer";
+import { getTxCreator } from "polkadot-api/tx-creator";
 
 import { toSs58 } from "./address.js";
 
@@ -21,12 +21,12 @@ export interface Keypair {
 }
 
 /**
- * A signer bundle: the PAPI `PolkadotSigner` plus the identity details every
+ * A signer bundle: the PAPI signer-backed `TxCreator` plus the identity details every
  * caller ends up needing alongside it. Pallet wrappers take this shape so
  * call sites never juggle `(signer, address, publicKey)` triples.
  */
 export interface ChainSigner {
-  signer: PolkadotSigner;
+  signer: ReturnType<typeof getTxCreator>;
   address: string;
   publicKey: Uint8Array;
   /** SURI the signer was derived from, when known (e.g. "//Alice"). */
@@ -73,7 +73,7 @@ export function seedToKeypair(seed: string): Keypair {
 export function makeSigner(seed: string): ChainSigner {
   const keypair = seedToKeypair(seed);
   return {
-    signer: getPolkadotSigner(keypair.publicKey, "Sr25519", (input) =>
+    signer: getTxCreator(keypair.publicKey, "Sr25519", (input) =>
       keypair.sign(input),
     ),
     address: toSs58(keypair.publicKey),

@@ -13,7 +13,6 @@
  */
 
 import { Subscription } from "rxjs";
-import type { PolkadotSigner } from "polkadot-api";
 import { parachain } from "@polkadot-api/descriptors";
 import { getSs58AddressInfo } from "@polkadot-api/substrate-bindings";
 import {
@@ -39,7 +38,7 @@ import { S3Client as SdkS3Client } from "@web3-storage/sdk/s3";
 import type { PrimaryProviderInfo } from "@web3-storage/sdk/s3";
 import type { ParachainApi } from "@/state/chain.state";
 
-export type Signer = PolkadotSigner;
+export type Signer = ChainSigner["signer"];
 
 // Re-export the SDK negotiate primitives + types the create-bucket components
 // (NewBucketDialog, ProviderPickerPanel) and the state layer import from here.
