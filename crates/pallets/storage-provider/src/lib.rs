@@ -679,6 +679,20 @@ pub mod pallet {
         pub started_at: BlockNumberFor<T>,
     }
 
+    impl<T: Config> StorageAgreement<T> {
+        /// Everything this agreement keeps under `AgreementPayment` on
+        /// `owner`: the prepaid fee plus, for a replica, the unspent sync
+        /// balance.
+        pub(crate) fn escrow(&self) -> BalanceOf<T> {
+            match &self.role {
+                ProviderRole::Replica { sync_balance, .. } => {
+                    self.payment_locked.saturating_add(*sync_balance)
+                }
+                ProviderRole::Primary => self.payment_locked,
+            }
+        }
+    }
+
     /// Active challenge against a provider.
     #[derive(Clone, PartialEq, Eq, Encode, Decode, TypeInfo, MaxEncodedLen, Debug)]
     #[scale_info(skip_type_params(T))]
@@ -1806,13 +1820,9 @@ pub mod pallet {
             let agreement = StorageAgreements::<T>::take(bucket_id, &provider)
                 .ok_or(Error::<T>::AgreementNotFound)?;
 
-            // Return the locked payment to the owner (provider failed their
-            // duty), plus, for a replica, the unspent sync balance escrowed
-            // alongside it.
-            let mut returned = agreement.payment_locked;
-            if let ProviderRole::Replica { sync_balance, .. } = &agreement.role {
-                returned = returned.saturating_add(*sync_balance);
-            }
+            // The provider failed their duty, so the whole escrow returns to
+            // the owner.
+            let returned = agreement.escrow();
             Self::release_payment(&agreement.owner, returned)?;
 
             // Update provider committed_bytes
@@ -2093,13 +2103,7 @@ pub mod pallet {
                         .ok_or(Error::<T>::AgreementNotFound)?;
                     ensure!(agreement.owner == who, Error::<T>::NotAgreementOwner);
 
-                    // The whole escrow sits on the owner: the prepaid fee plus,
-                    // for a replica, the unspent sync balance.
-                    let mut escrow = agreement.payment_locked;
-                    if let ProviderRole::Replica { sync_balance, .. } = &agreement.role {
-                        escrow = escrow.saturating_add(*sync_balance);
-                    }
-                    Self::transfer_payment_on_hold(&who, &new_owner, escrow)?;
+                    Self::transfer_payment_on_hold(&who, &new_owner, agreement.escrow())?;
                     agreement.owner = new_owner.clone();
                     Ok(())
                 },
