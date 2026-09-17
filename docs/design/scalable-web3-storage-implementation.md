@@ -899,8 +899,6 @@ pub enum Event<T: Config> {
         new_expires_at: BlockNumberFor<T>,
         payment: BalanceOf<T>,
     },
-    // DRIFT-015: never emitted; the variant stays in the pallet pending #414.
-    // See the marker on transfer_agreement_ownership below and #417.
     AgreementOwnershipTransferred {
         bucket_id: BucketId,
         provider: T::AccountId,
@@ -1488,13 +1486,6 @@ impl<T: Config> Pallet<T> {
     /// - `bucket_id`: The bucket containing the agreement
     /// - `provider`: The provider of the agreement to transfer
     /// - `new_owner`: Account that will become the new agreement owner
-    // DRIFT-015: not on `dev` — remove from impl doc or implement?
-    // The never-emitted AgreementOwnershipTransferred event stays in the
-    // pallet (#403 keeps it). #414 implements this call and emits the
-    // event; the escrow is held on the owner's account, so #414 moves it to
-    // `new_owner` in the same call (see PR #372 review discussion). Whether
-    // the transfer belongs to the bucket lifecycle at all is open in #417.
-    // Proposal: decide in #417 before #414 merges.
     #[pallet::weight(...)]
     pub fn transfer_agreement_ownership(
         origin: OriginFor<T>,
