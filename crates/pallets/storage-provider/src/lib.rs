@@ -2083,7 +2083,7 @@ pub mod pallet {
         /// Owner only. Hand the agreement to `new_owner`, who can then top up,
         /// extend, settle, or transfer it again. The escrow moves with it and
         /// stays on hold.
-        #[pallet::call_index(52)]
+        #[pallet::call_index(29)]
         #[pallet::weight(T::WeightInfo::transfer_agreement_ownership())]
         pub fn transfer_agreement_ownership(
             origin: OriginFor<T>,
