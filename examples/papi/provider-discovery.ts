@@ -90,7 +90,7 @@ function printProvider({ address, info, score, reasons }: { address: string; inf
   const free = cap === 0n ? "unlimited" : (cap - info.committed_bytes).toString();
   console.log(`  ${address}`);
   console.log(`    score              = ${score}`);
-  console.log(`    multiaddr          = ${info.multiaddr.asText()}`);
+  console.log(`    multiaddr          = ${new TextDecoder().decode(info.multiaddr)}`);
   console.log(`    stake              = ${info.stake}`);
   console.log(`    price_per_byte     = ${info.settings.price_per_byte}`);
   console.log(

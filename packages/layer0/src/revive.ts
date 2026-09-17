@@ -10,7 +10,7 @@
  * NOTE on PAPI field names: the exact shape of `api.tx.Revive.*` is whatever
  * `papi generate` produces from the runtime metadata. The names below assume
  * snake_case for arguments matching `pallet_revive::Call::call`/`instantiate_with_code`
- * dispatchables on `polkadot-stable2603`. If `papi generate` surfaces a
+ * dispatchables on `polkadot-stable2606`. If `papi generate` surfaces a
  * different field name, adjust here.
  */
 

@@ -76,3 +76,13 @@ export async function negotiatePrecompileTerms(
       : `0x${signed.signature}`,
   };
 }
+
+/**
+ * uint8 tags of the precompile interfaces' Solidity enums (`IWeb3Storage.Role`
+ * / `.Visibility` and friends). Enums canonicalize to `uint8` in the ABI, so
+ * these are what crosses the encode boundary.
+ */
+export const SolRole = { Admin: 0, Writer: 1, Reader: 2 } as const;
+
+/** See {@link SolRole}. */
+export const SolVisibility = { Public: 0, Private: 1 } as const;

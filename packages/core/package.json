@@ -13,11 +13,11 @@
     "test:unit": "vitest run"
   },
   "dependencies": {
-    "@polkadot-labs/hdkd-helpers": "^0.0.30"
+    "@polkadot-labs/hdkd-helpers": "^0.0.31"
   },
   "devDependencies": {
     "@types/node": "^26.0.1",
-    "typescript": "~6.0.3",
+    "typescript": "~7.0.2",
     "vitest": "^4.1.9"
   }
 }

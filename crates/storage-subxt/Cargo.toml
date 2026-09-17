@@ -14,5 +14,6 @@ readme = "README.md"
 codec = { workspace = true, features = ["std"] }
 scale-info = { workspace = true, features = ["std"] }
 serde = { workspace = true, features = ["derive", "std"] }
+storage-primitives = { workspace = true, features = ["std"] }
 subxt = { workspace = true, features = ["jsonrpsee", "native"] }
 subxt-signer = { workspace = true, features = ["ecdsa", "sr25519", "subxt"] }

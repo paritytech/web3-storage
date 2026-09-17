@@ -11,7 +11,7 @@
   "dependencies": {
     "@polkadot-api/descriptors": "workspace:*",
     "@web3-storage/papi": "workspace:*",
-    "polkadot-api": "^2.1.7",
+    "polkadot-api": "^2.2.1",
     "rxjs": "^7.8.2"
   }
 }

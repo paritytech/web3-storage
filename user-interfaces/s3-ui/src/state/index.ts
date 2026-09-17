@@ -6,6 +6,7 @@ export {
   useIsConnected,
   useIsConnecting,
   useBlockNumber,
+  useAnchorBlock,
   useEndpoint,
   useConnectionError,
   connect,
@@ -83,6 +84,8 @@ export {
   fetchMembers,
   addMember,
   removeMember,
+  fetchVisibility,
+  setBucketVisibility,
   setEncryptionKey,
   clearEncryptionKey,
   getS3Client,
@@ -94,13 +97,9 @@ export {
 // Checkpoint
 export {
   useCheckpointInfo,
-  useCheckpointDuty,
   useCheckpointLoading,
-  useCheckpointStatus,
   refreshCheckpoint,
-  triggerCheckpoint,
   clearCheckpointState,
-  type CheckpointStatus,
 } from "./checkpoint.state";
 
 // Challenge

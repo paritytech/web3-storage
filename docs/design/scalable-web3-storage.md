@@ -11,7 +11,7 @@
 
 | Version | Changes |
 |---------|---------|
-| 2.4 | Changeable provider stake (agreements snapshot stake, not just price; lowering allowed via O(1) `cur_until`/`higher_stake_lock`, no grow-only rule); stake backs verifiable `committed_bytes`, not self-declared `max_capacity`; per-bucket `agreement_id` bound into commitments (obsolete/expired commitments void — replaces the old time-based `nonce`/`MaxNonceAge` replay guard, now removed); terms `version` pin (bumped on price ↑ / stake ↓ / virtual-member-leaving — the worse-direction terms a request doesn't pass explicitly) replaces `max_payment`. `extend_agreement` is now **owner-only** (permissionless extension let a provider force-settle the elapsed term and defer expiry, dodging the owner's burn; permissionless persistence returns later via a replacement-agreement mechanism). Deregistration reverted to **one-step** (`deregister_provider` withdraws immediately once `committed_bytes == 0`); the added two-step announcement window (`DeregisterAnnouncementPeriod` / `complete_deregister` / `cancel_deregister`) is removed — liability tracks the active agreement (all challenge paths, incl. `challenge_checkpoint`, now reject a provider with no live agreement), so there is no post-expiry challenge to race. Reverse indexes (`MemberBuckets`, new `ProviderBuckets`) are now unbounded set-membership double-maps (dropped the artificial `MaxBucketsPerMember` cap) and read **only via versioned runtime API** (`member_buckets`/`provider_buckets`/paged `provider_agreements`), never raw storage — convenience indexes, droppable once off-chain indexing exists. Removed: `create_bucket_with_storage` (unsound on-chain provider search) and all provider-initiated checkpoint machinery (redundant with replica sync). **Read**: "Provider Stake" and "Storage Agreements" here; impl doc "Changeable Stake" / "Stake vs. capacity" / "Term Pinning" and `StorageAgreement` / `CommitmentPayload`. |
+| 2.4 | Changeable provider stake (agreements snapshot stake, not just price; lowering allowed via O(1) `cur_until`/`higher_stake_lock`, no grow-only rule); stake backs verifiable `committed_bytes`, not self-declared `max_capacity`; per-bucket `agreement_id` bound into commitments (obsolete/expired commitments void — replaces the old time-based `nonce`/`MaxNonceAge` replay guard, now removed); terms `version` pin (bumped on price ↑ / replica-sync-price ↑ / stake ↓ / virtual-member-leaving — the worse-direction terms a quote doesn't carry explicitly) replaces `max_payment`: signed `AgreementTerms` name a `provider_version` instead of a price (price, sync price and stake are read from the provider at redemption, single source of truth), `extend_agreement`/`top_up_agreement` take `expected_version`. Deregistration keeps `ProviderReplayStates` so pre-deregister quotes can't replay after re-registration. `extend_agreement` is now **owner-only** (permissionless extension let a provider force-settle the elapsed term and defer expiry, dodging the owner's burn; permissionless persistence returns later via a replacement-agreement mechanism). Deregistration reverted to **one-step** (`deregister_provider` withdraws immediately once `committed_bytes == 0`); the added two-step announcement window (`DeregisterAnnouncementPeriod` / `complete_deregister` / `cancel_deregister`) is removed — liability tracks the active agreement (all challenge paths, incl. `challenge_checkpoint`, now reject a provider with no live agreement), so there is no post-expiry challenge to race. Reverse indexes (`MemberBuckets`, new `ProviderBuckets`) are now unbounded set-membership double-maps (dropped the artificial `MaxBucketsPerMember` cap) and read **only via versioned runtime API** (`member_buckets`/`provider_buckets`/paged `provider_agreements`), never raw storage — convenience indexes, droppable once off-chain indexing exists. Removed: `create_bucket_with_storage` (unsound on-chain provider search) and all provider-initiated checkpoint machinery (redundant with replica sync). **Read**: "Provider Stake" and "Storage Agreements" here; impl doc "Changeable Stake" / "Stake vs. capacity" / "Term Pinning" and `StorageAgreement` / `CommitmentPayload`. |
 | 2.3 | Private buckets clarified (visibility flag, Reader role, primary challenges gated to members + primary-agreement owners, tier-split challenge stats). **Read**: new "Bucket Visibility & Access" section; "The Challenge Game". |
 | 2.2 | Challenge cost model reworked and clarified: a valid response never touches the provider's stake. The challenger's deposit covers the on-chain response cost; authorized challengers (bucket members + agreement owners) get a split where the provider bears a fraction (challenger's share floored at 50%, as leverage—not cheap recovery), while the general public pays in full (anti-DoS, since a provider can't serve everyone equally). Stake is slashed only on a missing/invalid response. |
 | 2.1 | Clarification on rewards for the challenger: There should be none, just refund. Plus some corrections with regards to PDP and Filecoin. |
@@ -266,7 +266,7 @@ What if you don't trust aggregate metrics? What if you have strict requirements?
 trust, pay them directly, verify them yourself. Now you have at least one replica whose reliability you've personally
 established.
 
-Or simply **challenge directly.** Anyone can challenge any provider for any data they have a commitment for (exception: a private bucket's primaries accept challenges only from members and primary-agreement owners). Don't trust
+Or simply **challenge directly.** Anyone can challenge any provider for any data they have a commitment for (exceptions: a provider cannot challenge itself, and a private bucket's primaries accept challenges only from members and primary-agreement owners). Don't trust
 that a provider still has the data? Fetch one random chunk. If they respond, you've verified (and recovered that chunk).
 If they don't, you challenge, they get slashed, and the world learns they're unreliable.
 
@@ -1216,17 +1216,6 @@ For use cases requiring stronger guarantees than game-theoretic verification—p
 replicas (which lack natural client verification) and fire-and-forget archival—optional
 periodic proofs similar to Filecoin's PDP could be added as a premium feature. This can
 be layered on later without changing the core protocol.
-
-### Capped Split for the General Public
-
-Today the general public gets no cost split (challengers pay the response in
-full) to close the DDoS hole. A capped version could give the public *some*
-leverage without reopening that hole: apply the split to anonymous challenges
-too, but only up to a per-provider budget over a rolling window of X blocks.
-Once the budget is spent, further public challenges revert to full pay until the
-window resets. The budget caps the total a crowd can extract per window, so the
-DDoS attack is bounded rather than open-ended. Left out of the initial design;
-addable later without changing the core mechanism.
 
 ### Isolation Mode
 

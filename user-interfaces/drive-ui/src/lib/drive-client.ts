@@ -11,16 +11,19 @@
 
 import type { PolkadotSigner } from "polkadot-api";
 import { parachain } from "@polkadot-api/descriptors";
-import { ss58Decode } from "@polkadot-labs/hdkd-helpers";
 import {
   buildSignedTermsArgs,
   createDrive as createDriveTx,
   negotiateTerms,
   parseMultiaddrToUrl,
+  getBucketVisibility as getBucketVisibilityQuery,
+  setBucketVisibility as setBucketVisibilityTx,
   toSs58,
   type ChainSigner,
+  type Keypair,
   type NegotiateRequest,
   type SignedTerms,
+  type Visibility,
 } from "@web3-storage/sdk";
 import { FileSystemClient } from "@web3-storage/sdk/fs";
 import type { ParachainApi } from "@/state/chain.state";
@@ -30,14 +33,13 @@ export type Signer = PolkadotSigner;
 // Re-export the SDK negotiate primitives + types the create-drive components
 // (NewDriveDialog, ProviderPickerPanel) and the state layer import from here.
 export { buildSignedTermsArgs, negotiateTerms };
-export type { NegotiateRequest, SignedTerms };
+export type { NegotiateRequest, SignedTerms, Visibility };
 
 /** `parseMultiaddrToHttp` is the SDK's `parseMultiaddrToUrl` under the old name. */
 export const parseMultiaddrToHttp = parseMultiaddrToUrl;
 
 export type {
   BucketMember,
-  CheckpointDuty,
   CreateDriveOptions,
   DriveInfo,
   FsEntry,
@@ -46,7 +48,6 @@ export type {
 } from "@web3-storage/sdk/fs";
 import type {
   BucketMember,
-  CheckpointDuty,
   CreateDriveOptions,
   DriveInfo,
   FsEntry,
@@ -93,7 +94,8 @@ export interface MatchingProviders extends AvailableProvider {
   agreementsExtended: number;
   agreementsNotExtended: number;
   agreementsBurned: number;
-  challengesReceived: number;
+  /** Challenges resolved in the provider's favor (authorized + public tiers). */
+  challengesDefended: number;
   challengesFailed: number;
 }
 
@@ -111,6 +113,7 @@ export class DriveClient {
   private api: ParachainApi | null = null;
   private signer: Signer | null = null;
   private signerAddress: string | null = null;
+  private keypair: Keypair | null = null;
   private fsc: FileSystemClient | null = null;
 
   private rebuild(): void {
@@ -120,14 +123,11 @@ export class DriveClient {
     }
     let chainSigner: ChainSigner | null = null;
     if (this.signer && this.signerAddress) {
-      // Wallet flows hand us a PolkadotSigner + address; recover the public
-      // key from the address. No raw keypair here, so provider requests go
-      // unsigned (same as this app always behaved).
-      const [publicKey] = ss58Decode(this.signerAddress);
       chainSigner = {
         signer: this.signer,
         address: this.signerAddress,
-        publicKey,
+        publicKey: this.signer.publicKey,
+        keypair: this.keypair ?? undefined,
       };
     }
     this.fsc = new FileSystemClient({ api: this.api, signer: chainSigner });
@@ -140,9 +140,14 @@ export class DriveClient {
     }
   }
 
-  setSigner(signer: Signer | null, address: string | null): void {
+  setSigner(
+    signer: Signer | null,
+    address: string | null,
+    keypair: Keypair | null,
+  ): void {
     this.signer = signer;
     this.signerAddress = address;
+    this.keypair = keypair;
     this.rebuild();
   }
 
@@ -166,6 +171,16 @@ export class DriveClient {
   private requireFs(): FileSystemClient {
     if (!this.fsc) throw new Error("Not connected to chain");
     return this.fsc;
+  }
+
+  private requireOwner(): ChainSigner {
+    if (!this.signer || !this.signerAddress) throw new Error("Signer not set");
+    return {
+      signer: this.signer,
+      address: this.signerAddress,
+      publicKey: this.signer.publicKey,
+      keypair: this.keypair ?? undefined,
+    };
   }
 
   // ── Provider resolution ───────────────────────────────────────────────────
@@ -325,7 +340,8 @@ export class DriveClient {
           agreementsExtended: info.agreements_extended ?? 0,
           agreementsNotExtended: info.agreements_not_extended ?? 0,
           agreementsBurned: info.agreements_burned ?? 0,
-          challengesReceived: info.challenges_received ?? 0,
+          challengesDefended:
+            (info.challenges_received_authorized ?? 0) + (info.challenges_received_public ?? 0),
           challengesFailed: info.challenges_failed ?? 0,
           matchScore: match.match_score,
           partialReason: match.partial_reason?.type ?? "",
@@ -350,15 +366,10 @@ export class DriveClient {
     providerAccount: string,
     providerUrl: string,
     signed: SignedTerms,
+    visibility?: Visibility,
   ): Promise<DriveInfo> {
     const api = this.requireApi();
-    if (!this.signer || !this.signerAddress) throw new Error("Signer not set");
-    const [publicKey] = ss58Decode(this.signerAddress);
-    const owner: ChainSigner = {
-      signer: this.signer,
-      address: this.signerAddress,
-      publicKey,
-    };
+    const owner = this.requireOwner();
 
     // Finalize: the state layer reads the drive list back at the finalized
     // head right after this resolves, so an in-block ("best") submit would
@@ -370,13 +381,13 @@ export class DriveClient {
       name ?? "",
       { address: providerAccount },
       signed,
-      { mode: "finalized", retryStale: 0 },
+      { mode: "finalized", retryStale: 0, visibility },
     );
 
     return {
       driveId,
       bucketId,
-      owner: this.signerAddress,
+      owner: owner.address,
       name: name ?? null,
       maxCapacity: BigInt(signed.terms.max_bytes),
       createdAt: 0,
@@ -440,6 +451,14 @@ export class DriveClient {
     return this.requireFs().removeMember(bucketId, account);
   }
 
+  async getBucketVisibility(bucketId: bigint): Promise<Visibility> {
+    return getBucketVisibilityQuery(this.requireApi(), bucketId);
+  }
+
+  async setBucketVisibility(bucketId: bigint, visibility: Visibility): Promise<void> {
+    await setBucketVisibilityTx(this.requireApi(), this.requireOwner(), bucketId, visibility);
+  }
+
   // ── Checkpoint ────────────────────────────────────────────────────────────
 
   async getCheckpointInfo(bucketId: bigint): Promise<CheckpointInfo | null> {
@@ -456,14 +475,6 @@ export class DriveClient {
       leafCount: snapshot.commitment.leaf_count,
       checkpointBlock: snapshot.checkpoint_block,
     };
-  }
-
-  getCheckpointDuty(bucketId: bigint): Promise<CheckpointDuty | null> {
-    return this.requireFs().getCheckpointDuty(bucketId);
-  }
-
-  triggerCheckpoint(bucketId: bigint): Promise<void> {
-    return this.requireFs().triggerCheckpoint(bucketId);
   }
 }
 

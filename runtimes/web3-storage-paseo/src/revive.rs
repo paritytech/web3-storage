@@ -56,8 +56,12 @@ impl pallet_revive::Config for Runtime {
     type NativeToEthRatio = ConstU32<1_000_000>;
     type FindAuthor = <Runtime as pallet_authorship::Config>::FindAuthor;
     type FeeInfo = pallet_revive::evm::fees::Info<Address, Signature, EthExtraImpl>;
+    // Native-currency deposits, not the PGAS backend.
+    type Deposit = ();
     type MaxEthExtrinsicWeight = MaxEthExtrinsicWeight;
     type DebugEnabled = ConstBool<false>;
+    // Keeps the explicit `map_account` dispatchable.
+    type AutoMap = ConstBool<false>;
     type GasScale = ConstU32<1000>;
     type OnBurn = ();
 }
@@ -69,9 +73,10 @@ pub struct EthExtraImpl;
 
 impl EthExtra for EthExtraImpl {
     type Config = Runtime;
-    type Extension = TxExtension;
+    type ExtensionV0 = TxExtension;
+    type ExtensionOtherVersions = sp_runtime::traits::InvalidVersion;
 
-    fn get_eth_extension(nonce: u32, tip: Balance) -> Self::Extension {
+    fn get_eth_extension(nonce: u32, tip: Balance) -> Self::ExtensionV0 {
         (
             frame_system::CheckNonZeroSender::<Runtime>::new(),
             frame_system::CheckSpecVersion::<Runtime>::new(),

@@ -11,13 +11,16 @@
 import { BehaviorSubject, map } from 'rxjs'
 import { bind } from '@react-rxjs/core'
 import {
+  anchorBlock$,
   connectToChain,
   disconnectFromChain,
+  refreshAnchorBlock,
   subscribeToBlocks,
   getChainProperties,
 } from '@/lib/chain-client'
-import { configureFromChain } from '@/utils/format'
+import { configureFormat } from '@web3-storage/format'
 import { loadSelectedNetwork } from '@web3-storage/network-config'
+import { updateSs58Prefix } from '@/state/wallet.state'
 
 // Types
 export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'error'
@@ -42,6 +45,12 @@ let blockUnsubscribe: (() => void) | null = null
 // React hooks
 export const [useConnectionStatus] = bind(connectionStatus$, 'disconnected')
 export const [useBlockNumber] = bind(blockNumber$, 0)
+/**
+ * The pallet's anchor block — use this (never `useBlockNumber`) for anything
+ * compared against on-chain durations: deregister cooldown, agreement
+ * expiry/progress, challenge deadlines, checkpoint windows.
+ */
+export const [useAnchorBlock] = bind(anchorBlock$.pipe(map((n) => n ?? 0)), 0)
 export const [useChainInfo] = bind(chainInfo$, null)
 export const [useEndpoint] = bind(endpoint$, initialNetwork.config.parachainWs)
 export const [useConnectionError] = bind(connectionError$, undefined)
@@ -77,21 +86,35 @@ export async function connect(wsEndpoint?: string): Promise<void> {
   try {
     await connectToChain(ep)
 
-    // Fetch chain properties and apply all chain-derived config: formatting,
-    // SS58 prefix, and minProviderStake. Returns the chain identity to publish.
+    // Fetch chain properties and apply all chain-derived config: number
+    // formatting, the SS58 prefix, minProviderStake, and the chain identity.
     const chainProps = await getChainProperties()
-    const info = await configureFromChain(chainProps)
+    configureFormat(chainProps)
+    await updateSs58Prefix(chainProps.ss58Prefix)
 
-    chainInfo$.next(info)
+    // Store minProviderStake for the Registration page
+    ;(globalThis as any).__minProviderStake = chainProps.minProviderStake
+
+    chainInfo$.next({
+      name: chainProps.specName,
+      version: String(chainProps.specVersion),
+      genesisHash: chainProps.genesisHash,
+    })
 
     connectionStatus$.next('connected')
 
-    // Subscribe to blocks
+    // Subscribe to blocks; each finalized block also refreshes the pallet's
+    // anchor clock (a cheap runtime API call).
     blockUnsubscribe = subscribeToBlocks((block) => {
       blockNumber$.next(block)
+      void refreshAnchorBlock(block)
     })
 
-    // Set initial block
+    // Set initial block. The anchor is deliberately NOT seeded here: its
+    // pre-anchor-runtime fallback is the parachain height passed in, and a
+    // fabricated `1` would be published as a real anchor value. It stays 0
+    // (the safe direction — nothing shows as expired) until the first
+    // finalized block refreshes it.
     blockNumber$.next(1)
   } catch (error) {
     connectionStatus$.next('error')
@@ -148,6 +171,14 @@ export function getCurrentBlock(): number {
   return blockNumber$.getValue()
 }
 
+/**
+ * Get the pallet's anchor block (non-reactive) — the clock all on-chain
+ * durations are measured against. See [`useAnchorBlock`].
+ */
+export function getAnchorBlock(): number {
+  return anchorBlock$.getValue() ?? 0
+}
+
 // Export for testing
 export const chainActions = {
   connect,
@@ -155,5 +186,6 @@ export const chainActions = {
   reconnect,
   setEndpoint: (ep: string) => endpoint$.next(ep),
   setBlockNumber: (block: number) => blockNumber$.next(block),
+  setAnchorBlock: (block: number) => anchorBlock$.next(block),
   setConnectionStatus: (status: ConnectionStatus) => connectionStatus$.next(status),
 }

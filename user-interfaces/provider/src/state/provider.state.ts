@@ -25,7 +25,6 @@ import {
   OnChainBucketDetails,
 } from '@/lib/chain-client'
 import { isSameAddress } from '@web3-storage/sdk'
-import { getCurrentBlock } from '@/state/chain.state'
 import { getProviderHttp } from '@/state/network.state'
 import { challengeKey } from '@/state/challengeKey'
 
@@ -46,7 +45,7 @@ export interface ProviderSettings {
   maxDuration: number
   pricePerByte: bigint
   acceptingPrimary: boolean
-  acceptingReplica: boolean
+  /** Price per successful sync confirmation; `null` means not accepting replicas. */
   replicaSyncPrice: bigint | null
   acceptingExtensions: boolean
   maxCapacity: bigint
@@ -85,6 +84,8 @@ export interface Challenge {
   startSeq: number
   status: 'pending' | 'responded' | 'slashed' | 'expired'
   challengeType?: 'offchain' | 'checkpoint' | 'unknown'
+  // Optional: challenges built from event payloads don't carry the tier.
+  authorized?: boolean
   createdAt: number
   deadline: number
 }
@@ -117,6 +118,7 @@ export interface BucketDetail {
   minProviders: number
   primaryProviders: string[]
   totalSnapshots: number
+  visibility: 'Public' | 'Private'
   snapshot: { mmrRoot: string; startSeq: number; leafCount: number; checkpointBlock: number } | null
   historicalRoots: Array<{ position: number; root: string }>
   agreement: {
@@ -127,11 +129,6 @@ export interface BucketDetail {
     paymentLocked: bigint
     status: 'active' | 'expired' | 'terminated'
   }
-  checkpointConfig: { interval: number; gracePeriod: number; enabled: boolean } | null
-  lastCheckpointWindow: bigint | null
-  checkpointPoolBalance: bigint
-  checkpointReward: bigint
-  isCheckpointOverdue: boolean
 }
 
 // Persist challenges to localStorage so they survive page reloads.
@@ -296,8 +293,7 @@ export async function loadProviderData(
     )]
     if (bucketIds.length > 0) {
       try {
-        const chainBucketDetails = await getBucketDetails(bucketIds, address)
-        const currentBlock = getCurrentBlock() || 0
+        const chainBucketDetails = await getBucketDetails(bucketIds)
         const agreementsByBucket = new Map<number, typeof chainAgreements[0]>()
         for (const a of chainAgreements) {
           if (isSameAddress(a.provider, address)) agreementsByBucket.set(a.bucketId, a)
@@ -305,12 +301,7 @@ export async function loadProviderData(
         bucketDetails$.next(
           chainBucketDetails.map((bd) => {
             const agr = agreementsByBucket.get(bd.bucketId)
-            let isOverdue = false
-            if (bd.checkpointConfig?.enabled && bd.lastCheckpointWindow != null && currentBlock > 0) {
-              const expectedWindow = BigInt(Math.floor(currentBlock / bd.checkpointConfig.interval))
-              isOverdue = expectedWindow > bd.lastCheckpointWindow + 1n
-            }
-            return convertBucketDetail(bd, agr || null, isOverdue)
+            return convertBucketDetail(bd, agr || null)
           }).sort((a, b) => a.bucketId - b.bucketId)
         )
       } catch (e) {
@@ -623,7 +614,6 @@ function convertProviderSettings(chain: OnChainProviderSettings): ProviderSettin
     maxDuration: chain.maxDuration,
     pricePerByte: chain.pricePerByte,
     acceptingPrimary: chain.acceptingPrimary,
-    acceptingReplica: chain.acceptingReplica,
     replicaSyncPrice: chain.replicaSyncPrice,
     acceptingExtensions: chain.acceptingExtensions,
     maxCapacity: chain.maxCapacity,
@@ -679,6 +669,7 @@ function convertChallenge(chain: OnChainChallenge): Challenge {
     startSeq: chain.startSeq,
     status: chain.status,
     challengeType: chain.challengeType,
+    authorized: chain.authorized,
     createdAt: chain.createdAt,
     deadline: chain.deadline,
   }
@@ -687,7 +678,6 @@ function convertChallenge(chain: OnChainChallenge): Challenge {
 function convertBucketDetail(
   chain: OnChainBucketDetails,
   agreement: { bucketId: number; maxBytes: bigint; endBlock: number; startBlock: number; isPrimary: boolean; paymentLocked: bigint; status: 'active' | 'expired' | 'terminated' } | null,
-  isCheckpointOverdue: boolean
 ): BucketDetail {
   return {
     bucketId: chain.bucketId,
@@ -696,6 +686,7 @@ function convertBucketDetail(
     minProviders: chain.minProviders,
     primaryProviders: chain.primaryProviders,
     totalSnapshots: chain.totalSnapshots,
+    visibility: chain.visibility,
     snapshot: chain.snapshot,
     historicalRoots: chain.historicalRoots,
     agreement: agreement ? {
@@ -708,11 +699,6 @@ function convertBucketDetail(
     } : {
       maxBytes: 0n, expiresAt: 0, startedAt: 0, isPrimary: false, paymentLocked: 0n, status: 'expired' as const,
     },
-    checkpointConfig: chain.checkpointConfig,
-    lastCheckpointWindow: chain.lastCheckpointWindow,
-    checkpointPoolBalance: chain.checkpointPoolBalance,
-    checkpointReward: chain.checkpointReward,
-    isCheckpointOverdue,
   }
 }
 

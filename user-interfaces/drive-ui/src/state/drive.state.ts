@@ -18,9 +18,10 @@ import {
   type DriveInfo,
   type FsEntry,
   type SignedTerms,
+  type Visibility,
 } from "@/lib/drive-client";
 import { api$$, getApi } from "@/state/chain.state";
-import { signer$$, signerAddress$$, getSignerAddress, refreshBalance } from "@/state/wallet.state";
+import { signer$$, keypair$$, signerAddress$$, getSignerAddress, refreshBalance } from "@/state/wallet.state";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -45,6 +46,8 @@ export interface CreateDriveInput {
   url: string;
   /** Terms already negotiated with the provider (`POST /negotiate`). */
   signed: SignedTerms;
+  /** Read visibility of the underlying Layer 0 bucket (default Private). */
+  visibility?: Visibility;
 }
 
 export type ViewMode = "list" | "grid";
@@ -86,12 +89,11 @@ api$$.subscribe((api) => {
   client.setApi(api);
 });
 
-// Use combineLatest so the client always receives signer + address together.
-// With separate subscriptions, signer$ fires before signerAddress$ inside
-// setSigner(), leaving client.signerAddress null when refreshDrives() runs.
-combineLatest([signer$$, signerAddress$$]).subscribe(([signer, address]) => {
-  client.setSigner(signer, address);
-});
+combineLatest([signer$$, signerAddress$$, keypair$$]).subscribe(
+  ([signer, address, keypair]) => {
+    client.setSigner(signer, address, keypair);
+  },
+);
 
 export function getDriveClient(): DriveClient {
   return client;
@@ -315,6 +317,7 @@ interface RetryCtx {
   provider: AvailableProvider;
   url: string;
   signed: SignedTerms;
+  visibility?: Visibility;
 }
 const retryCtx = new Map<string, RetryCtx>();
 
@@ -328,7 +331,7 @@ async function runChainSubmit(id: string, ctx: RetryCtx): Promise<DriveInfo | nu
     // Name lives on the creation record (keyed by id), not the retry context.
     // Empty string is treated as "no name" by submitCreateDrive.
     const name = creations$.getValue().find((c) => c.id === id)?.name || undefined;
-    const drive = await client.submitCreateDrive(name, ctx.provider.account, ctx.url, ctx.signed);
+    const drive = await client.submitCreateDrive(name, ctx.provider.account, ctx.url, ctx.signed, ctx.visibility);
     updateCreation(id, { stage: "ready", bucketId: drive.bucketId });
     retryCtx.delete(id);
     await refreshDrives();
@@ -358,7 +361,12 @@ export async function createDrive(input: CreateDriveInput): Promise<DriveInfo | 
   // Terms are negotiated by the caller; this only does the chain submit.
   // Stash retry context first so a failure leaves a retry handle attached
   // to the CreationStatus.
-  const ctx: RetryCtx = { provider: input.provider, url: input.url, signed: input.signed };
+  const ctx: RetryCtx = {
+    provider: input.provider,
+    url: input.url,
+    signed: input.signed,
+    visibility: input.visibility,
+  };
   retryCtx.set(id, ctx);
   return runChainSubmit(id, ctx);
 }
@@ -422,6 +430,14 @@ export async function addMember(
 
 export async function removeMember(bucketId: bigint, account: string): Promise<void> {
   await client.removeMember(bucketId, account);
+}
+
+export async function fetchVisibility(bucketId: bigint): Promise<Visibility> {
+  return client.getBucketVisibility(bucketId);
+}
+
+export async function setBucketVisibility(bucketId: bigint, visibility: Visibility): Promise<void> {
+  await client.setBucketVisibility(bucketId, visibility);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

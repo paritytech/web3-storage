@@ -20,7 +20,10 @@ import "./IWeb3Storage.sol";
 ///      agreement, returning the new bucket id. The contract records the
 ///      (user, bucket) pair so users can wind their agreement down later
 ///      without touching the chain directly.
-///   3. To wind down, the user calls `endMyAgreement(bucketId, provider)`.
+///   3. Because the contract is the bucket admin, the buyer calls
+///      `grantWriter(bucketId, member)` to authorize a real key to upload —
+///      the provider enforces auth against the bucket's on-chain membership.
+///   4. To wind down, the user calls `endMyAgreement(bucketId, provider)`.
 ///      Only the original buyer can end their bucket's agreement.
 ///
 /// Off-chain ops (uploads, challenges, checkpoints) are unchanged and bypass
@@ -36,6 +39,7 @@ contract StorageMarketplace {
     mapping(uint64 => address) public bucketOwner;
 
     event BucketBoughtFor(address indexed user, uint64 indexed bucketId);
+    event WriterGranted(address indexed user, uint64 indexed bucketId, bytes32 member);
     event AgreementEnded(address indexed user, uint64 indexed bucketId);
 
     /// Buy storage on behalf of `msg.sender` by redeeming provider-signed
@@ -50,13 +54,25 @@ contract StorageMarketplace {
     ) external payable returns (uint64 bucketId) {
         require(msg.value > 0, "msg.value must cover the agreement payment");
         require(!terms.hasBucketId, "primary terms must not be bucket-bound");
+        // Private: the fail-safe default for wrappers that do not surface
+        // the choice to their own callers.
         bucketId = WEB3_STORAGE.establishStorageAgreement(
             provider,
             terms,
-            signature
+            signature,
+            IWeb3Storage.Visibility.Private
         );
         bucketOwner[bucketId] = msg.sender;
         emit BucketBoughtFor(msg.sender, bucketId);
+    }
+
+    /// Grant `member` (a substrate `AccountId32`) `Writer` access on a bucket the
+    /// caller bought, so that key can sign uploads to the provider. The contract
+    /// is the bucket admin; only the original buyer may grant.
+    function grantWriter(uint64 bucketId, bytes32 member) external {
+        require(bucketOwner[bucketId] == msg.sender, "Not your bucket");
+        WEB3_STORAGE.setMember(bucketId, member, IWeb3Storage.Role.Writer);
+        emit WriterGranted(msg.sender, bucketId, member);
     }
 
     /// End an agreement on a bucket the caller bought. Pays the provider in

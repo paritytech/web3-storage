@@ -3,7 +3,8 @@
 /**
  * Content-addressing verification. CIDs in this system are blake2b-256 over
  * the chunk bytes; a single-chunk blob's data_root equals its chunk hash
- * (see provider-node/src/storage single-leaf case), so whole payloads up to
+ * (see the single-leaf case in crates/providers/storage/src/backend/mod.rs
+ * `build_padded_merkle_tree`), so whole payloads up to
  * DEFAULT_CHUNK_SIZE can be verified directly against an on-chain CID.
  * Multi-chunk payloads need a Merkle DAG walk (Rust-client parity) — not
  * implemented here; callers surface those as "unverified".
@@ -13,7 +14,7 @@ import { blake2b256 } from "@polkadot-labs/hdkd-helpers";
 
 import { asHex, toHex } from "./bytes.js";
 
-/** Mirror of CHUNK_SIZE in primitives/src/lib.rs. */
+/** Mirror of DEFAULT_CHUNK_SIZE in crates/primitives/storage/src/lib.rs. */
 export const DEFAULT_CHUNK_SIZE = 256 * 1024;
 
 export class CidMismatchError extends Error {
