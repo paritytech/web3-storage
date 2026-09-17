@@ -2033,9 +2033,9 @@ pub mod pallet {
                     ensure!(payment <= max_payment, Error::<T>::PaymentExceedsMax);
 
                     // Owner-gated above, so `who == agreement.owner`; routed
-                    // through `escrow_from` anyway so every escrow in the
-                    // pallet lands on the owner by the same rule.
-                    Self::escrow_from(&who, &agreement.owner, payment)?;
+                    // through `hold_payment_from` anyway so every escrow in
+                    // the pallet reaches the owner by the same rule.
+                    Self::hold_payment_from(&who, &agreement.owner, payment)?;
 
                     // Update agreement
                     let new_max_bytes = agreement
@@ -2099,7 +2099,7 @@ pub mod pallet {
                     if let ProviderRole::Replica { sync_balance, .. } = &agreement.role {
                         escrow = escrow.saturating_add(*sync_balance);
                     }
-                    Self::move_escrow(&who, &new_owner, escrow)?;
+                    Self::transfer_payment_on_hold(&who, &new_owner, escrow)?;
                     agreement.owner = new_owner.clone();
                     Ok(())
                 },
@@ -2223,7 +2223,7 @@ pub mod pallet {
 
                     // Lock new payment from the caller (not necessarily the
                     // owner); it is escrowed on the owner regardless.
-                    Self::escrow_from(&who, &agreement.owner, extension_payment)?;
+                    Self::hold_payment_from(&who, &agreement.owner, extension_payment)?;
 
                     // Update agreement
                     agreement.expires_at = anchor_block.saturating_add(additional_duration);
@@ -2987,7 +2987,7 @@ pub mod pallet {
 
                     // Escrowed on the owner: `sync_balance` is settled from the
                     // owner's hold, whoever paid to top it up.
-                    Self::escrow_from(&who, &agreement.owner, amount)?;
+                    Self::hold_payment_from(&who, &agreement.owner, amount)?;
 
                     let sync_balance = match &mut agreement.role {
                         ProviderRole::Replica { sync_balance, .. } => sync_balance,

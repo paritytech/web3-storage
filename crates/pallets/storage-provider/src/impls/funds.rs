@@ -45,7 +45,7 @@ impl<T: Config> Pallet<T> {
     /// but settlement always pays out of the owner's hold — so a third party's
     /// funds move to the owner first. Otherwise the hold and `payment_locked`
     /// would sit on different accounts.
-    pub(crate) fn escrow_from(
+    pub(crate) fn hold_payment_from(
         payer: &T::AccountId,
         owner: &T::AccountId,
         amount: BalanceOf<T>,
@@ -98,7 +98,7 @@ impl<T: Config> Pallet<T> {
 
     /// Move an agreement's escrow to a new owner, keeping it on hold, so the
     /// hold and `StorageAgreement::owner` never point at different accounts.
-    pub(crate) fn move_escrow(
+    pub(crate) fn transfer_payment_on_hold(
         from: &T::AccountId,
         to: &T::AccountId,
         amount: BalanceOf<T>,
