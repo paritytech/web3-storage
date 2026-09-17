@@ -45,6 +45,7 @@ fn transfer_moves_owner_and_escrow_together() {
                 provider: PROVIDER,
                 old_owner: OWNER,
                 new_owner: NEW_OWNER,
+                escrow,
             }
             .into(),
         );

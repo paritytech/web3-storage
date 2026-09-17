@@ -969,6 +969,9 @@ pub mod pallet {
             old_owner: T::AccountId,
             /// New owner.
             new_owner: T::AccountId,
+            /// Escrow moved to the new owner's hold: the prepaid fee plus,
+            /// for a replica, the unspent sync balance.
+            escrow: BalanceOf<T>,
         },
         /// An agreement was settled and closed.
         AgreementEnded {
@@ -2094,18 +2097,19 @@ pub mod pallet {
             let who = ensure_signed(origin)?;
             ensure!(new_owner != who, Error::<T>::TransferToSelf);
 
-            StorageAgreements::<T>::try_mutate(
+            let escrow = StorageAgreements::<T>::try_mutate(
                 bucket_id,
                 &provider,
-                |maybe_agreement| -> DispatchResult {
+                |maybe_agreement| -> Result<BalanceOf<T>, DispatchError> {
                     let agreement = maybe_agreement
                         .as_mut()
                         .ok_or(Error::<T>::AgreementNotFound)?;
                     ensure!(agreement.owner == who, Error::<T>::NotAgreementOwner);
 
-                    Self::transfer_payment_on_hold(&who, &new_owner, agreement.escrow())?;
+                    let escrow = agreement.escrow();
+                    Self::transfer_payment_on_hold(&who, &new_owner, escrow)?;
                     agreement.owner = new_owner.clone();
-                    Ok(())
+                    Ok(escrow)
                 },
             )?;
 
@@ -2114,6 +2118,7 @@ pub mod pallet {
                 provider,
                 old_owner: who,
                 new_owner,
+                escrow,
             });
             Ok(())
         }
