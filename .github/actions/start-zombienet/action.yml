@@ -16,6 +16,12 @@ inputs:
     description: Seconds to wait before checking the process is alive.
     required: false
     default: "15"
+  base-dir:
+    description: >-
+      Directory for the network files (zombienet spawn -d), or "" for a random
+      /tmp/zombie-* one. Pin it when a later step needs the generated specs.
+    required: false
+    default: ""
 
 runs:
   using: composite
@@ -25,8 +31,9 @@ runs:
         CONFIG: ${{ inputs.config }}
         LOG_FILE: ${{ inputs.log-file }}
         STARTUP_DELAY: ${{ inputs.startup-delay }}
+        BASE_DIR: ${{ inputs.base-dir }}
       run: |
-        nohup env PROJECT_ROOT=$(pwd) .bin/zombienet spawn -p native "$CONFIG" \
+        nohup env PROJECT_ROOT=$(pwd) .bin/zombienet spawn -p native ${BASE_DIR:+-d "$BASE_DIR"} "$CONFIG" \
           > "$LOG_FILE" 2>&1 &
         ZOMBIE_PID=$!
         echo "Waiting ${STARTUP_DELAY}s for zombienet to set up nodes..."
