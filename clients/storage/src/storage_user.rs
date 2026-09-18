@@ -14,7 +14,6 @@ use crate::encryption::{Cipher, EncryptionKey, XChaCha20Poly1305Cipher};
 use crate::verification::ClientVerifier;
 use crate::Signer;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
-use provider_auth::build_auth_header;
 use sp_core::H256;
 use storage_primitives::{blake2_256, BucketId};
 
@@ -38,28 +37,6 @@ impl StorageUserClient {
             cipher: None,
             auth_signer,
         })
-    }
-
-    /// Attach the signed `Authorization` header (`method` = upper-case HTTP verb).
-    fn sign(
-        &self,
-        req: reqwest::RequestBuilder,
-        method: &str,
-        bucket_id: BucketId,
-    ) -> reqwest::RequestBuilder {
-        let signer = self.auth_signer.keypair();
-        let timestamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or_default();
-        let header = build_auth_header(
-            &signer.public_key().0,
-            method,
-            bucket_id,
-            timestamp,
-            |msg| signer.sign(msg).0,
-        );
-        req.header("Authorization", header)
     }
 
     /// Enable client-side encryption with a custom cipher (builder pattern).
@@ -369,7 +346,11 @@ impl StorageUserClient {
             .http
             .post(format!("{provider_url}/commit"))
             .json(&request);
-        let response = self.sign(req, "POST", bucket_id).send().await?;
+        let response = self
+            .auth_signer
+            .sign_request(req, "POST", bucket_id)
+            .send()
+            .await?;
 
         if !response.status().is_success() {
             return Err(ClientError::Api(format!(
@@ -395,11 +376,14 @@ impl StorageUserClient {
     ) -> ClientResult<CheckpointSignatureResponse> {
         let provider_url = self.base.get_provider_url()?;
 
-        let response = self
+        let req = self
             .base
             .http
             .get(format!("{provider_url}/checkpoint-signature"))
-            .query(&[("bucket_id", bucket_id.to_string())])
+            .query(&[("bucket_id", bucket_id.to_string())]);
+        let response = self
+            .auth_signer
+            .sign_request(req, "GET", bucket_id)
             .send()
             .await?;
 
@@ -523,7 +507,11 @@ impl StorageUserClient {
             .http
             .put(format!("{provider_url}/node"))
             .json(&request);
-        let response = self.sign(req, "PUT", bucket_id).send().await?;
+        let response = self
+            .auth_signer
+            .sign_request(req, "PUT", bucket_id)
+            .send()
+            .await?;
 
         if !response.status().is_success() {
             return Err(ClientError::Api(format!(
@@ -611,11 +599,14 @@ impl StorageUserClient {
     /// Get the current MMR commitment for a bucket from the provider.
     pub async fn get_commitment(&self, bucket_id: BucketId) -> ClientResult<CommitmentResponse> {
         let provider_url = self.base.get_provider_url()?;
-        let response = self
+        let req = self
             .base
             .http
             .get(format!("{provider_url}/commitment"))
-            .query(&[("bucket_id", bucket_id.to_string())])
+            .query(&[("bucket_id", bucket_id.to_string())]);
+        let response = self
+            .auth_signer
+            .sign_request(req, "GET", bucket_id)
             .send()
             .await?;
 
@@ -645,11 +636,14 @@ impl StorageUserClient {
                 .map(|h| BaseClient::hex_encode(h.as_bytes()))
                 .collect(),
         };
-        let response = self
+        let req = self
             .base
             .http
             .post(format!("{provider_url}/exists"))
-            .json(&request)
+            .json(&request);
+        let response = self
+            .auth_signer
+            .sign_request(req, "POST", bucket_id)
             .send()
             .await?;
 

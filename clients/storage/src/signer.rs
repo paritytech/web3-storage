@@ -38,6 +38,29 @@ impl Signer {
     pub fn keypair(&self) -> &Keypair {
         &self.0
     }
+
+    /// Attach the signed provider `Authorization` header to `req`
+    /// (`method` = upper-case HTTP verb of the request). Timestamped at call
+    /// time, so build the request freshly per attempt when retrying.
+    pub fn sign_request(
+        &self,
+        req: reqwest::RequestBuilder,
+        method: &str,
+        bucket_id: storage_primitives::BucketId,
+    ) -> reqwest::RequestBuilder {
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or_default();
+        let header = provider_auth::build_auth_header(
+            &self.0.public_key().0,
+            method,
+            bucket_id,
+            timestamp,
+            |msg| self.0.sign(msg).0,
+        );
+        req.header("Authorization", header)
+    }
 }
 
 impl From<Keypair> for Signer {

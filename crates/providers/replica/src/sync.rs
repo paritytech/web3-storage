@@ -2,9 +2,14 @@
 
 //! Replica synchronization protocol.
 //!
-//! Replicas autonomously sync data from primary providers using:
+//! Replicas autonomously sync data from other providers using:
 //! 1. MMR diff detection (compare peaks)
 //! 2. Top-down chunk fetching
+//!
+//! A source can be a primary or another replica: primaries gate reads on
+//! private buckets (a replica is not a bucket member, so an honest primary
+//! refuses it — the design's "primary gate"), while replicas serve everyone,
+//! so a private bucket's replicas seed further replicas.
 //!
 //! On-chain confirmation of what was synced is the coordinator's
 //! (`coordinator::ReplicaSyncCoordinator::confirm_on_chain`).
@@ -31,33 +36,34 @@ impl ReplicaSync {
         }
     }
 
-    /// Sync a bucket from a primary provider.
+    /// Sync a bucket from another provider (a primary, or another replica).
     ///
     /// This implements the top-down sync algorithm:
-    /// 1. Fetch MMR peaks from primary
+    /// 1. Fetch MMR peaks from the source
     /// 2. Compare with local state
     /// 3. Fetch missing MMR subtrees
     /// 4. Fetch missing chunks
     ///
-    /// Returns the synced MMR root.
-    pub async fn sync_from_primary(
+    /// Returns the synced MMR root. A 401 from a source (a private bucket's
+    /// primary) is just an error here — the caller tries the next source.
+    pub async fn sync_from_source(
         &self,
         bucket_id: BucketId,
-        primary_url: &str,
+        source_url: &str,
     ) -> Result<H256, Error> {
         // TODO: (we need to put node's RPC to separate crate,
         //               something like provider's versioned protocol)
-        // Get primary's current MMR state
+        // Get the source's current MMR state
         let response = self
             .http
-            .get(format!("{primary_url}/mmr_peaks"))
+            .get(format!("{source_url}/mmr_peaks"))
             .query(&[("bucket_id", bucket_id.to_string())])
             .send()
             .await
-            .map_err(|e| Error::primary_request("mmr peaks", e))?;
+            .map_err(|e| Error::source_request("mmr peaks", e))?;
 
         if !response.status().is_success() {
-            return Err(Error::PrimaryUnavailable {
+            return Err(Error::SourceUnavailable {
                 what: "mmr peaks",
                 status: response.status().as_u16(),
             });
@@ -92,9 +98,8 @@ impl ReplicaSync {
         // 3. Batch fetch missing nodes
         // 4. Verify each node against its hash
         //
-        // For now, we'll fetch all hashes from the primary
+        // For now, we'll fetch all hashes from the source
 
-        // Get list of all hashes from primary
         let peaks: Vec<H256> = peaks_response
             .peaks
             .iter()
@@ -106,18 +111,18 @@ impl ReplicaSync {
 
         // Fetch nodes for each peak
         for peak in peaks {
-            self.fetch_subtree(bucket_id, peak, primary_url).await?;
+            self.fetch_subtree(bucket_id, peak, source_url).await?;
         }
 
         Ok(target_root)
     }
 
-    /// Recursively fetch a subtree from a primary provider.
+    /// Recursively fetch a subtree from a source provider.
     fn fetch_subtree<'a>(
         &'a self,
         bucket_id: BucketId,
         root_hash: H256,
-        primary_url: &'a str,
+        source_url: &'a str,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), Error>> + Send + 'a>> {
         Box::pin(async move {
             // Check if we already have this node
@@ -125,17 +130,17 @@ impl ReplicaSync {
                 return Ok(());
             }
 
-            // Fetch the node from primary
+            // Fetch the node from the source
             let response = self
                 .http
-                .get(format!("{primary_url}/node"))
+                .get(format!("{source_url}/node"))
                 .query(&[("hash", format!("0x{}", hex::encode(root_hash.as_bytes())))])
                 .send()
                 .await
-                .map_err(|e| Error::primary_request("node", e))?;
+                .map_err(|e| Error::source_request("node", e))?;
 
             if !response.status().is_success() {
-                return Err(Error::PrimaryUnavailable {
+                return Err(Error::SourceUnavailable {
                     what: "node",
                     status: response.status().as_u16(),
                 });
@@ -171,7 +176,7 @@ impl ReplicaSync {
             // Recursively fetch children
             if let Some(child_hashes) = children {
                 for child in child_hashes {
-                    self.fetch_subtree(bucket_id, child, primary_url).await?;
+                    self.fetch_subtree(bucket_id, child, source_url).await?;
                 }
             }
 

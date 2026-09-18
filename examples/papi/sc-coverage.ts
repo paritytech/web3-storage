@@ -274,7 +274,7 @@ async function main() {
 
     console.log("    preconditions: uploadChunk + submitClientCheckpoint");
     const upload = await uploadChunk(providerUrl, bucketC, "coverage-test", client);
-    const ck = await fetchCheckpointSignature(providerUrl, bucketC);
+    const ck = await fetchCheckpointSignature(providerUrl, bucketC, client);
     await submitClientCheckpoint(api, client, provider, bucketC, ck);
 
     console.log("\n[9a] IWeb3Storage.challengeCheckpoint(bucketC, provider, leafIdx, chunkIdx=0)");
@@ -287,7 +287,7 @@ async function main() {
     const challenge = assertEvent(r.events, "StorageProvider", "ChallengeCreated", "challengeCheckpoint");
 
     console.log("    [substrate] respondToChallenge");
-    const proof = await fetchChallengeProof(api, providerUrl, challenge.challenge_id);
+    const proof = await fetchChallengeProof(api, providerUrl, challenge.challenge_id, provider);
     await respondToChallenge(api, provider, challenge.challenge_id, proof);
 
     console.log("\n[10] IWeb3Storage.freezeBucket(bucketC)");

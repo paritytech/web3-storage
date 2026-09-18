@@ -25,18 +25,19 @@ pub enum Error {
     #[error(transparent)]
     Backend(#[from] provider_storage::Error),
 
-    /// A value read from a primary provider did not have the expected shape.
+    /// A value read from a sync source did not have the expected shape.
     #[error("Failed to decode {what}: {reason}")]
     Decode { what: &'static str, reason: String },
 
-    /// An HTTP request to a primary provider failed at the transport level
-    /// (connection refused, timed out, DNS failure).
-    #[error("Request to primary failed ({what}): {reason}")]
-    PrimaryRequest { what: &'static str, reason: String },
+    /// An HTTP request to a sync source (a primary, or another replica)
+    /// failed at the transport level (connection refused, timed out, DNS
+    /// failure).
+    #[error("Request to sync source failed ({what}): {reason}")]
+    SourceRequest { what: &'static str, reason: String },
 
-    /// A primary provider answered but with a non-success HTTP status.
-    #[error("Primary returned error for {what}: status {status}")]
-    PrimaryUnavailable { what: &'static str, status: u16 },
+    /// A sync source answered but with a non-success HTTP status.
+    #[error("Source returned error for {what}: status {status}")]
+    SourceUnavailable { what: &'static str, status: u16 },
 
     /// A call through [`ReplicaSyncChainClient`] failed. [`ChainClientError`]
     /// is declared in `provider-types` and shared with the node; this crate
@@ -50,7 +51,7 @@ pub enum Error {
 }
 
 impl Error {
-    /// A value read from a primary provider did not decode into the expected
+    /// A value read from a sync source did not decode into the expected
     /// shape.
     pub fn decode(what: &'static str, e: impl fmt::Display) -> Self {
         Error::Decode {
@@ -59,9 +60,9 @@ impl Error {
         }
     }
 
-    /// A request to a primary provider failed at the transport level.
-    pub fn primary_request(what: &'static str, e: impl fmt::Display) -> Self {
-        Error::PrimaryRequest {
+    /// A request to a sync source failed at the transport level.
+    pub fn source_request(what: &'static str, e: impl fmt::Display) -> Self {
+        Error::SourceRequest {
             what,
             reason: e.to_string(),
         }
@@ -96,8 +97,8 @@ mod tests {
             "Failed to decode node data: invalid base64"
         );
         assert_eq!(
-            Error::primary_request("mmr peaks", "connection refused").to_string(),
-            "Request to primary failed (mmr peaks): connection refused"
+            Error::source_request("mmr peaks", "connection refused").to_string(),
+            "Request to sync source failed (mmr peaks): connection refused"
         );
     }
 
@@ -108,12 +109,12 @@ mod tests {
             "Coordinator channel closed"
         );
         assert_eq!(
-            Error::PrimaryUnavailable {
+            Error::SourceUnavailable {
                 what: "mmr peaks",
                 status: 404,
             }
             .to_string(),
-            "Primary returned error for mmr peaks: status 404"
+            "Source returned error for mmr peaks: status 404"
         );
     }
 }
