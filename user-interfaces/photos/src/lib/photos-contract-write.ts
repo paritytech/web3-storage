@@ -2,14 +2,14 @@
 //
 // Write path for the Photos contract: map the signer's account, encode
 // `createLibrary`, and submit it through `pallet_revive` via PAPI's
-// `signAndSubmit`. The browser port of the M1 create sequence in
+// `createAndSubmit`. The browser port of the M1 create sequence in
 // `scripts/photos-flow.ts` (+ `scripts/lib/contract.ts`), but submitting with
-// `tx.signAndSubmit(signer)` instead of the script-only `submitTx` loop. viem is
+// `tx.createAndSubmit(signer)` instead of the script-only `submitTx` loop. viem is
 // used for ABI encode/decode only — no EVM RPC client.
 
 import { ss58Decode } from '@polkadot-labs/hdkd-helpers'
 import { decodeEventLog } from 'viem'
-import type { PolkadotSigner } from 'polkadot-api'
+import type { TxCreator } from 'polkadot-api/tx-creator'
 import { signedTermsBucketId, toHex, type ParachainApi, type SignedTerms } from '@web3-storage/papi'
 // Reuse the SDK's ABI encoder and the shared gas/storage defaults so the browser
 // path can't drift from the headless flow (`scripts/*`) that already imports them.
@@ -187,14 +187,14 @@ function waitForNextBlock(timeoutMs = 12_000): Promise<void> {
   })
 }
 
-/** `signAndSubmit` with a bounded retry on stale-nonce rejections. */
-async function signAndSubmitWithRetry<T>(
-  tx: { signAndSubmit: (signer: PolkadotSigner) => Promise<T> },
-  signer: PolkadotSigner,
+/** `createAndSubmit` with a bounded retry on stale-nonce rejections. */
+async function createAndSubmitWithRetry<T>(
+  tx: { createAndSubmit: (signer: TxCreator) => Promise<T> },
+  signer: TxCreator,
 ): Promise<T> {
   for (let attempt = 1; ; attempt++) {
     try {
-      return await tx.signAndSubmit(signer)
+      return await tx.createAndSubmit(signer)
     } catch (err) {
       if (attempt >= STALE_MAX_ATTEMPTS || !isStaleError(err)) throw err
       await waitForNextBlock()
@@ -277,8 +277,8 @@ export function classifyDispatchError(dispatchError: unknown): CreateLibraryErro
  * re-map of an already-mapped account is treated as success. Mirrors
  * `scripts/lib/contract.ts:ensureAccountMapped`.
  */
-export async function ensureAccountMapped(api: ParachainApi, signer: PolkadotSigner): Promise<void> {
-  const result = await signAndSubmitWithRetry(api.tx.Revive.map_account(), signer)
+export async function ensureAccountMapped(api: ParachainApi, signer: TxCreator): Promise<void> {
+  const result = await createAndSubmitWithRetry(api.tx.Revive.map_account(), signer)
   if (result.ok) return
   const raw = stringifyDispatchError(result.dispatchError)
   if (raw.includes('AccountAlreadyMapped') || raw.includes('AlreadyMapped')) return
@@ -303,7 +303,7 @@ export type SubmitCreateLibraryResult =
  */
 export async function submitCreateLibrary(
   api: ParachainApi,
-  signer: PolkadotSigner,
+  signer: TxCreator,
   contractAddressBytes: Uint8Array,
   data: Uint8Array,
   { value }: { value: bigint },
@@ -315,7 +315,7 @@ export async function submitCreateLibrary(
     storage_deposit_limit: DEFAULT_STORAGE_DEPOSIT_LIMIT,
     data, // Vec<u8> → Uint8Array
   })
-  const result = await signAndSubmitWithRetry(tx, signer)
+  const result = await createAndSubmitWithRetry(tx, signer)
   if (!result.ok) {
     return { ok: false, error: classifyDispatchError(result.dispatchError) }
   }
@@ -398,7 +398,7 @@ export function encodeSetRoot(rootCid: RootCid): Uint8Array {
 /**
  * Anchor the drive's metadata Merkle root on-chain via `setRoot(rootCid)` — a
  * signed, value-less `Revive.call`. The browser port of
- * `scripts/lib/photos.ts:anchorRoot`, submitting with `signAndSubmit` (+ the
+ * `scripts/lib/photos.ts:anchorRoot`, submitting with `createAndSubmit` (+ the
  * shared stale-nonce retry) instead of the script's `submitTx` loop.
  *
  * Like `createLibrary`, a contract revert (Photos.sol's `require(lib.exists)`)
@@ -407,7 +407,7 @@ export function encodeSetRoot(rootCid: RootCid): Uint8Array {
  */
 export async function submitSetRoot(
   api: ParachainApi,
-  signer: PolkadotSigner,
+  signer: TxCreator,
   contractAddressBytes: Uint8Array,
   rootCid: RootCid,
 ): Promise<void> {
@@ -418,7 +418,7 @@ export async function submitSetRoot(
     storage_deposit_limit: DEFAULT_STORAGE_DEPOSIT_LIMIT,
     data: encodeSetRoot(rootCid),
   })
-  const result = await signAndSubmitWithRetry(tx, signer)
+  const result = await createAndSubmitWithRetry(tx, signer)
   if (!result.ok) {
     throw new Error(`setRoot failed on-chain: ${stringifyDispatchError(result.dispatchError)}`)
   }

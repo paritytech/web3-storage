@@ -176,7 +176,7 @@ async function main() {
         ...buildSignedTermsArgs(provider, signed),
         visibility: Enum("Private"),
       };
-      await api.tx.StorageProvider.create_bucket_with_primary(args).signAndSubmit(client.signer);
+      await api.tx.StorageProvider.create_bucket_with_primary(args).createAndSubmit(client.signer);
       const replay = api.tx.StorageProvider.create_bucket_with_primary(args);
       await submitTxExpectFailure(replay, client.signer, "NonceAlreadyUsed", "2.6");
     },

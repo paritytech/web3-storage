@@ -899,13 +899,12 @@ pub enum Event<T: Config> {
         new_expires_at: BlockNumberFor<T>,
         payment: BalanceOf<T>,
     },
-    // DRIFT-015: never emitted; the variant stays in the pallet pending #414.
-    // See the marker on transfer_agreement_ownership below and #417.
     AgreementOwnershipTransferred {
         bucket_id: BucketId,
         provider: T::AccountId,
         old_owner: T::AccountId,
         new_owner: T::AccountId,
+        escrow: BalanceOf<T>,
     },
     AgreementEnded {
         bucket_id: BucketId,
@@ -1465,18 +1464,28 @@ impl<T: Config> Pallet<T> {
     /// 
     /// The new owner can top up quota and transfer ownership further.
     /// Useful for selling agreement slots or transferring to a DAO.
+    ///
+    /// **The escrow moves with the agreement.** The prepaid fee, and a
+    /// replica's unspent sync balance, are held on the owner, so the hold
+    /// moves to `new_owner` and stays a hold. Every later settlement and
+    /// refund then uses the new owner.
+    ///
+    /// **Bucket membership does not move.** For a primary agreement the owner
+    /// is a bucket admin at creation, and a transfer is the one way the two
+    /// come apart: the new owner is not a member and cannot write to the
+    /// bucket or administer it, while the admin keeps every admin power over
+    /// an agreement it no longer owns — including early termination, which
+    /// pays out or burns the new owner's escrow and returns none of it.
+    ///
+    /// **Challenge rights follow the owner.** The new owner joins the
+    /// bucket's authorized challengers, and for a primary agreement on a
+    /// private bucket may challenge primaries without being a member. Open
+    /// challenges keep the tier they were created with.
     /// 
     /// Parameters:
     /// - `bucket_id`: The bucket containing the agreement
     /// - `provider`: The provider of the agreement to transfer
     /// - `new_owner`: Account that will become the new agreement owner
-    // DRIFT-015: not on `dev` — remove from impl doc or implement?
-    // The never-emitted AgreementOwnershipTransferred event stays in the
-    // pallet (#403 keeps it). #414 implements this call and emits the
-    // event; the escrow is held on the owner's account, so #414 moves it to
-    // `new_owner` in the same call (see PR #372 review discussion). Whether
-    // the transfer belongs to the bucket lifecycle at all is open in #417.
-    // Proposal: decide in #417 before #414 merges.
     #[pallet::weight(...)]
     pub fn transfer_agreement_ownership(
         origin: OriginFor<T>,
@@ -1505,7 +1514,8 @@ impl<T: Config> Pallet<T> {
     /// well - they shouldn't find the bucket dead the next day because someone
     /// terminated agreements early. If unhappy with a provider, simply don't extend.
     /// 
-    /// Note: For primary agreements, admin is the owner (created via establish_storage_agreement).
+    /// Note: For primary agreements, admin is the owner at creation (via
+    /// establish_storage_agreement); `transfer_agreement_ownership` can separate them.
     /// Admin has no special privileges over replica agreements.
     ///
     /// Blocked while a challenge against `(bucket, provider)` is unresolved

@@ -2085,10 +2085,10 @@ pub mod api {
                         "dry_run_call",
                         (origin, call, result_xcms_version),
                         [
-                            190u8, 213u8, 128u8, 167u8, 52u8, 210u8, 239u8, 1u8, 43u8, 116u8,
-                            161u8, 70u8, 116u8, 39u8, 127u8, 223u8, 86u8, 15u8, 193u8, 74u8, 246u8,
-                            156u8, 3u8, 254u8, 61u8, 255u8, 199u8, 66u8, 106u8, 127u8, 200u8,
-                            106u8,
+                            229u8, 163u8, 130u8, 139u8, 75u8, 208u8, 35u8, 112u8, 253u8, 0u8,
+                            111u8, 31u8, 191u8, 153u8, 75u8, 62u8, 34u8, 157u8, 168u8, 68u8, 46u8,
+                            43u8, 72u8, 186u8, 91u8, 197u8, 252u8, 164u8, 173u8, 53u8, 252u8,
+                            193u8,
                         ],
                     )
                 }
@@ -2106,10 +2106,10 @@ pub mod api {
                         "dry_run_xcm",
                         (origin_location, xcm),
                         [
-                            40u8, 166u8, 243u8, 192u8, 110u8, 28u8, 224u8, 58u8, 105u8, 140u8,
-                            198u8, 203u8, 248u8, 143u8, 195u8, 205u8, 164u8, 171u8, 100u8, 73u8,
-                            18u8, 53u8, 111u8, 82u8, 36u8, 69u8, 55u8, 78u8, 74u8, 116u8, 66u8,
-                            145u8,
+                            204u8, 231u8, 253u8, 225u8, 175u8, 205u8, 34u8, 205u8, 31u8, 160u8,
+                            82u8, 57u8, 21u8, 116u8, 18u8, 177u8, 236u8, 246u8, 9u8, 209u8, 217u8,
+                            194u8, 58u8, 77u8, 167u8, 210u8, 145u8, 180u8, 179u8, 133u8, 24u8,
+                            242u8,
                         ],
                     )
                 }
@@ -3468,9 +3468,9 @@ pub mod api {
             .hash();
         runtime_metadata_hash
             == [
-                77u8, 115u8, 234u8, 118u8, 30u8, 87u8, 93u8, 253u8, 234u8, 119u8, 144u8, 244u8,
-                1u8, 203u8, 124u8, 171u8, 185u8, 228u8, 122u8, 227u8, 203u8, 7u8, 102u8, 108u8,
-                205u8, 69u8, 222u8, 248u8, 61u8, 168u8, 108u8, 24u8,
+                247u8, 20u8, 76u8, 35u8, 108u8, 247u8, 128u8, 152u8, 11u8, 73u8, 16u8, 226u8,
+                186u8, 203u8, 174u8, 9u8, 125u8, 181u8, 146u8, 75u8, 32u8, 156u8, 2u8, 80u8, 254u8,
+                244u8, 113u8, 80u8, 76u8, 220u8, 215u8, 142u8,
             ]
     }
     pub mod system {
@@ -4458,10 +4458,9 @@ pub mod api {
                         "System",
                         "Events",
                         [
-                            171u8, 161u8, 148u8, 28u8, 231u8, 156u8, 186u8, 255u8, 86u8, 50u8,
-                            253u8, 189u8, 116u8, 102u8, 184u8, 205u8, 77u8, 158u8, 225u8, 135u8,
-                            236u8, 89u8, 84u8, 115u8, 85u8, 101u8, 119u8, 57u8, 157u8, 62u8, 227u8,
-                            26u8,
+                            228u8, 18u8, 160u8, 235u8, 18u8, 106u8, 159u8, 31u8, 43u8, 84u8, 24u8,
+                            186u8, 67u8, 181u8, 243u8, 115u8, 196u8, 97u8, 181u8, 88u8, 197u8,
+                            254u8, 198u8, 92u8, 181u8, 38u8, 180u8, 18u8, 184u8, 3u8, 87u8, 70u8,
                         ],
                     )
                 }
@@ -8459,10 +8458,10 @@ pub mod api {
                                 call: ::subxt::alloc::boxed::Box::new(call),
                             },
                             [
-                                68u8, 208u8, 171u8, 188u8, 251u8, 211u8, 95u8, 125u8, 56u8, 89u8,
-                                186u8, 89u8, 165u8, 50u8, 77u8, 43u8, 108u8, 20u8, 6u8, 106u8,
-                                105u8, 227u8, 48u8, 34u8, 1u8, 156u8, 216u8, 250u8, 81u8, 219u8,
-                                136u8, 189u8,
+                                16u8, 189u8, 233u8, 58u8, 172u8, 80u8, 44u8, 139u8, 208u8, 69u8,
+                                156u8, 53u8, 147u8, 210u8, 240u8, 131u8, 112u8, 210u8, 121u8, 81u8,
+                                134u8, 102u8, 64u8, 72u8, 129u8, 101u8, 94u8, 51u8, 6u8, 7u8,
+                                125u8, 4u8,
                             ],
                         )
                     }
@@ -8485,10 +8484,10 @@ pub mod api {
                                 weight,
                             },
                             [
-                                206u8, 210u8, 181u8, 114u8, 96u8, 68u8, 169u8, 120u8, 60u8, 76u8,
-                                12u8, 42u8, 82u8, 100u8, 51u8, 20u8, 141u8, 236u8, 5u8, 80u8, 66u8,
-                                56u8, 64u8, 195u8, 26u8, 219u8, 241u8, 227u8, 164u8, 75u8, 171u8,
-                                140u8,
+                                218u8, 33u8, 32u8, 207u8, 151u8, 207u8, 214u8, 80u8, 235u8, 6u8,
+                                221u8, 241u8, 9u8, 161u8, 241u8, 46u8, 9u8, 137u8, 19u8, 96u8,
+                                116u8, 153u8, 136u8, 95u8, 192u8, 55u8, 239u8, 208u8, 194u8, 245u8,
+                                242u8, 254u8,
                             ],
                         )
                     }
@@ -8527,10 +8526,9 @@ pub mod api {
                                 call: ::subxt::alloc::boxed::Box::new(call),
                             },
                             [
-                                60u8, 54u8, 201u8, 131u8, 17u8, 173u8, 241u8, 43u8, 180u8, 243u8,
-                                38u8, 220u8, 92u8, 134u8, 214u8, 99u8, 108u8, 182u8, 150u8, 250u8,
-                                129u8, 163u8, 188u8, 136u8, 221u8, 224u8, 157u8, 85u8, 243u8, 64u8,
-                                149u8, 49u8,
+                                19u8, 211u8, 51u8, 203u8, 185u8, 21u8, 162u8, 29u8, 17u8, 68u8,
+                                56u8, 229u8, 89u8, 55u8, 148u8, 47u8, 27u8, 52u8, 32u8, 243u8, 6u8,
+                                45u8, 38u8, 52u8, 77u8, 228u8, 98u8, 12u8, 5u8, 133u8, 129u8, 68u8,
                             ],
                         )
                     }
@@ -14723,10 +14721,10 @@ pub mod api {
                             "batch",
                             super::Batch { calls },
                             [
-                                230u8, 140u8, 81u8, 190u8, 41u8, 156u8, 84u8, 150u8, 161u8, 156u8,
-                                203u8, 188u8, 156u8, 129u8, 210u8, 118u8, 14u8, 32u8, 10u8, 212u8,
-                                223u8, 36u8, 91u8, 66u8, 71u8, 4u8, 67u8, 113u8, 97u8, 254u8,
-                                230u8, 186u8,
+                                231u8, 147u8, 42u8, 29u8, 60u8, 250u8, 116u8, 145u8, 237u8, 5u8,
+                                194u8, 216u8, 125u8, 113u8, 238u8, 90u8, 74u8, 90u8, 33u8, 26u8,
+                                198u8, 142u8, 150u8, 71u8, 100u8, 192u8, 79u8, 49u8, 38u8, 188u8,
+                                69u8, 125u8,
                             ],
                         )
                     }
@@ -14757,10 +14755,10 @@ pub mod api {
                                 call: ::subxt::alloc::boxed::Box::new(call),
                             },
                             [
-                                160u8, 47u8, 25u8, 43u8, 20u8, 12u8, 90u8, 112u8, 75u8, 147u8,
-                                235u8, 130u8, 163u8, 158u8, 29u8, 205u8, 72u8, 159u8, 46u8, 116u8,
-                                135u8, 196u8, 163u8, 30u8, 18u8, 60u8, 154u8, 145u8, 176u8, 81u8,
-                                156u8, 79u8,
+                                145u8, 5u8, 218u8, 92u8, 172u8, 251u8, 103u8, 4u8, 46u8, 235u8,
+                                122u8, 168u8, 222u8, 130u8, 61u8, 169u8, 100u8, 105u8, 40u8, 176u8,
+                                46u8, 140u8, 18u8, 188u8, 245u8, 1u8, 52u8, 80u8, 204u8, 129u8,
+                                114u8, 221u8,
                             ],
                         )
                     }
@@ -14786,10 +14784,10 @@ pub mod api {
                             "batch_all",
                             super::BatchAll { calls },
                             [
-                                170u8, 20u8, 49u8, 4u8, 247u8, 99u8, 156u8, 89u8, 199u8, 27u8,
-                                36u8, 236u8, 179u8, 91u8, 139u8, 183u8, 247u8, 51u8, 191u8, 190u8,
-                                65u8, 12u8, 175u8, 70u8, 18u8, 74u8, 11u8, 43u8, 230u8, 43u8, 61u8,
-                                22u8,
+                                217u8, 172u8, 183u8, 132u8, 253u8, 59u8, 100u8, 115u8, 61u8, 147u8,
+                                224u8, 220u8, 67u8, 99u8, 60u8, 82u8, 154u8, 49u8, 220u8, 74u8,
+                                184u8, 120u8, 104u8, 196u8, 96u8, 195u8, 118u8, 94u8, 38u8, 249u8,
+                                77u8, 221u8,
                             ],
                         )
                     }
@@ -14813,10 +14811,10 @@ pub mod api {
                                 call: ::subxt::alloc::boxed::Box::new(call),
                             },
                             [
-                                217u8, 142u8, 163u8, 185u8, 101u8, 61u8, 44u8, 206u8, 41u8, 38u8,
-                                71u8, 125u8, 9u8, 245u8, 236u8, 62u8, 65u8, 180u8, 88u8, 56u8,
-                                171u8, 75u8, 155u8, 28u8, 159u8, 68u8, 196u8, 51u8, 63u8, 173u8,
-                                83u8, 46u8,
+                                170u8, 32u8, 184u8, 58u8, 189u8, 41u8, 107u8, 59u8, 145u8, 90u8,
+                                120u8, 199u8, 240u8, 25u8, 181u8, 194u8, 81u8, 245u8, 137u8, 213u8,
+                                171u8, 241u8, 95u8, 136u8, 93u8, 57u8, 180u8, 35u8, 37u8, 249u8,
+                                8u8, 26u8,
                             ],
                         )
                     }
@@ -14843,10 +14841,10 @@ pub mod api {
                             "force_batch",
                             super::ForceBatch { calls },
                             [
-                                13u8, 92u8, 171u8, 247u8, 45u8, 126u8, 219u8, 3u8, 55u8, 78u8,
-                                187u8, 111u8, 205u8, 242u8, 125u8, 236u8, 212u8, 228u8, 192u8,
-                                220u8, 145u8, 20u8, 129u8, 61u8, 41u8, 0u8, 102u8, 72u8, 253u8,
-                                116u8, 112u8, 1u8,
+                                193u8, 146u8, 235u8, 1u8, 65u8, 88u8, 132u8, 200u8, 221u8, 239u8,
+                                202u8, 201u8, 2u8, 30u8, 98u8, 61u8, 213u8, 104u8, 67u8, 109u8,
+                                79u8, 56u8, 174u8, 33u8, 140u8, 35u8, 232u8, 148u8, 190u8, 27u8,
+                                228u8, 156u8,
                             ],
                         )
                     }
@@ -14870,10 +14868,10 @@ pub mod api {
                                 weight,
                             },
                             [
-                                44u8, 147u8, 193u8, 170u8, 115u8, 83u8, 3u8, 193u8, 128u8, 234u8,
-                                24u8, 184u8, 81u8, 96u8, 136u8, 101u8, 119u8, 157u8, 188u8, 30u8,
-                                188u8, 151u8, 54u8, 102u8, 24u8, 163u8, 181u8, 61u8, 204u8, 41u8,
-                                169u8, 86u8,
+                                203u8, 160u8, 201u8, 215u8, 0u8, 242u8, 186u8, 20u8, 160u8, 49u8,
+                                193u8, 135u8, 75u8, 27u8, 167u8, 193u8, 16u8, 35u8, 245u8, 162u8,
+                                205u8, 161u8, 252u8, 5u8, 220u8, 175u8, 115u8, 195u8, 146u8, 216u8,
+                                76u8, 158u8,
                             ],
                         )
                     }
@@ -14913,10 +14911,10 @@ pub mod api {
                                 fallback: ::subxt::alloc::boxed::Box::new(fallback),
                             },
                             [
-                                63u8, 11u8, 67u8, 43u8, 210u8, 81u8, 207u8, 24u8, 141u8, 24u8,
-                                74u8, 42u8, 115u8, 176u8, 130u8, 125u8, 162u8, 35u8, 77u8, 127u8,
-                                17u8, 199u8, 78u8, 16u8, 126u8, 186u8, 144u8, 239u8, 169u8, 10u8,
-                                53u8, 225u8,
+                                226u8, 223u8, 202u8, 208u8, 109u8, 253u8, 18u8, 233u8, 70u8, 203u8,
+                                173u8, 90u8, 104u8, 195u8, 164u8, 232u8, 147u8, 216u8, 248u8, 24u8,
+                                246u8, 129u8, 4u8, 187u8, 109u8, 21u8, 146u8, 200u8, 118u8, 127u8,
+                                30u8, 126u8,
                             ],
                         )
                     }
@@ -14939,10 +14937,10 @@ pub mod api {
                                 call: ::subxt::alloc::boxed::Box::new(call),
                             },
                             [
-                                79u8, 149u8, 146u8, 30u8, 69u8, 136u8, 129u8, 217u8, 148u8, 128u8,
-                                196u8, 124u8, 15u8, 189u8, 204u8, 88u8, 158u8, 33u8, 102u8, 188u8,
-                                100u8, 82u8, 102u8, 233u8, 118u8, 163u8, 192u8, 2u8, 79u8, 248u8,
-                                239u8, 148u8,
+                                63u8, 122u8, 216u8, 40u8, 208u8, 212u8, 10u8, 245u8, 96u8, 245u8,
+                                48u8, 137u8, 125u8, 251u8, 39u8, 191u8, 150u8, 185u8, 96u8, 109u8,
+                                93u8, 77u8, 234u8, 251u8, 185u8, 170u8, 91u8, 209u8, 14u8, 229u8,
+                                64u8, 18u8,
                             ],
                         )
                     }
@@ -15933,6 +15931,49 @@ pub mod api {
             )]
             #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+            #[doc = "Transfer the agreement to `new_owner` (current owner only). The"]
+            #[doc = "new owner can top up, extend, settle, or transfer it again."]
+            #[doc = ""]
+            #[doc = "The escrow — the prepaid fee plus, for a replica, the unspent sync"]
+            #[doc = "balance — moves to `new_owner` and stays on hold; every later"]
+            #[doc = "settlement and refund uses the new owner."]
+            #[doc = ""]
+            #[doc = "Bucket membership does not move: the new owner cannot write to or"]
+            #[doc = "administer the bucket, and the bucket admin keeps every admin"]
+            #[doc = "power over the agreement, including early termination, which pays"]
+            #[doc = "out or burns the new owner's escrow. Challenge rights follow the"]
+            #[doc = "owner; open challenges keep the authorization they were created"]
+            #[doc = "with."]
+            pub struct TransferAgreementOwnership {
+                pub bucket_id: transfer_agreement_ownership::BucketId,
+                pub provider: transfer_agreement_ownership::Provider,
+                pub new_owner: transfer_agreement_ownership::NewOwner,
+            }
+            pub mod transfer_agreement_ownership {
+                use super::runtime_types;
+                pub type BucketId = ::core::primitive::u64;
+                pub type Provider = ::subxt::utils::AccountId32;
+                pub type NewOwner = ::subxt::utils::AccountId32;
+            }
+            impl TransferAgreementOwnership {
+                const PALLET_NAME: &'static str = "StorageProvider";
+                const CALL_NAME: &'static str = "transfer_agreement_ownership";
+            }
+            impl ::subxt::extrinsics::DecodeAsExtrinsic for TransferAgreementOwnership {
+                fn is_extrinsic(pallet_name: &str, call_name: &str) -> bool {
+                    pallet_name == Self::PALLET_NAME && call_name == Self::CALL_NAME
+                }
+            }
+            #[derive(
+                :: subxt :: ext :: scale_decode :: DecodeAsType,
+                :: subxt :: ext :: scale_encode :: EncodeAsType,
+                Clone,
+                Debug,
+                Eq,
+                PartialEq,
+            )]
+            #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+            #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
             #[doc = "Extend agreement duration (immediate, no provider approval needed)."]
             #[doc = "Only while the agreement is live — an expired one settles via"]
             #[doc = "`end_agreement` / `claim_expired_agreement`."]
@@ -16821,6 +16862,42 @@ pub mod api {
                                 146u8, 252u8, 224u8, 38u8, 33u8, 178u8, 225u8, 134u8, 109u8, 244u8,
                                 143u8, 20u8, 182u8, 86u8, 169u8, 79u8, 41u8, 115u8, 55u8, 113u8,
                                 225u8, 228u8,
+                            ],
+                        )
+                    }
+                    #[doc = "Transfer the agreement to `new_owner` (current owner only). The"]
+                    #[doc = "new owner can top up, extend, settle, or transfer it again."]
+                    #[doc = ""]
+                    #[doc = "The escrow — the prepaid fee plus, for a replica, the unspent sync"]
+                    #[doc = "balance — moves to `new_owner` and stays on hold; every later"]
+                    #[doc = "settlement and refund uses the new owner."]
+                    #[doc = ""]
+                    #[doc = "Bucket membership does not move: the new owner cannot write to or"]
+                    #[doc = "administer the bucket, and the bucket admin keeps every admin"]
+                    #[doc = "power over the agreement, including early termination, which pays"]
+                    #[doc = "out or burns the new owner's escrow. Challenge rights follow the"]
+                    #[doc = "owner; open challenges keep the authorization they were created"]
+                    #[doc = "with."]
+                    pub fn transfer_agreement_ownership(
+                        &self,
+                        bucket_id: super::transfer_agreement_ownership::BucketId,
+                        provider: super::transfer_agreement_ownership::Provider,
+                        new_owner: super::transfer_agreement_ownership::NewOwner,
+                    ) -> ::subxt::transactions::StaticPayload<super::TransferAgreementOwnership>
+                    {
+                        ::subxt::transactions::StaticPayload::new_static(
+                            "StorageProvider",
+                            "transfer_agreement_ownership",
+                            super::TransferAgreementOwnership {
+                                bucket_id,
+                                provider,
+                                new_owner,
+                            },
+                            [
+                                178u8, 204u8, 76u8, 67u8, 39u8, 162u8, 184u8, 236u8, 140u8, 82u8,
+                                211u8, 131u8, 113u8, 186u8, 112u8, 194u8, 192u8, 251u8, 74u8, 17u8,
+                                218u8, 188u8, 40u8, 53u8, 4u8, 7u8, 135u8, 181u8, 253u8, 125u8,
+                                218u8, 36u8,
                             ],
                         )
                     }
@@ -17776,13 +17853,13 @@ pub mod api {
             )]
             #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-            #[doc = "The agreement's owner changed. Not emitted yet:"]
-            #[doc = "`transfer_agreement_ownership` lands with #414."]
+            #[doc = "The agreement's owner changed."]
             pub struct AgreementOwnershipTransferred {
                 pub bucket_id: agreement_ownership_transferred::BucketId,
                 pub provider: agreement_ownership_transferred::Provider,
                 pub old_owner: agreement_ownership_transferred::OldOwner,
                 pub new_owner: agreement_ownership_transferred::NewOwner,
+                pub escrow: agreement_ownership_transferred::Escrow,
             }
             pub mod agreement_ownership_transferred {
                 use super::runtime_types;
@@ -17790,6 +17867,7 @@ pub mod api {
                 pub type Provider = ::subxt::utils::AccountId32;
                 pub type OldOwner = ::subxt::utils::AccountId32;
                 pub type NewOwner = ::subxt::utils::AccountId32;
+                pub type Escrow = ::core::primitive::u128;
             }
             impl AgreementOwnershipTransferred {
                 const PALLET_NAME: &'static str = "StorageProvider";
@@ -18950,19 +19028,19 @@ pub mod api {
             )]
             #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-            #[doc = "Drive was deleted"]
+            #[doc = "Drive was deleted and its agreements settled."]
             pub struct DriveDeleted {
                 pub drive_id: drive_deleted::DriveId,
                 pub owner: drive_deleted::Owner,
                 pub bucket_id: drive_deleted::BucketId,
-                pub refunded: drive_deleted::Refunded,
+                pub escrow_released: drive_deleted::EscrowReleased,
             }
             pub mod drive_deleted {
                 use super::runtime_types;
                 pub type DriveId = ::core::primitive::u64;
                 pub type Owner = ::subxt::utils::AccountId32;
                 pub type BucketId = ::core::primitive::u64;
-                pub type Refunded = ::core::primitive::u128;
+                pub type EscrowReleased = ::core::primitive::u128;
             }
             impl DriveDeleted {
                 const PALLET_NAME: &'static str = "DriveRegistry";
@@ -20743,10 +20821,10 @@ pub mod api {
                                 transaction_encoded,
                             },
                             [
-                                70u8, 145u8, 189u8, 206u8, 158u8, 234u8, 46u8, 213u8, 99u8, 78u8,
-                                112u8, 105u8, 9u8, 112u8, 153u8, 4u8, 88u8, 212u8, 245u8, 76u8,
-                                198u8, 114u8, 106u8, 81u8, 249u8, 27u8, 15u8, 18u8, 197u8, 145u8,
-                                21u8, 115u8,
+                                39u8, 81u8, 66u8, 138u8, 11u8, 7u8, 197u8, 90u8, 147u8, 82u8,
+                                147u8, 254u8, 255u8, 39u8, 22u8, 220u8, 41u8, 17u8, 206u8, 171u8,
+                                220u8, 64u8, 12u8, 76u8, 153u8, 114u8, 192u8, 85u8, 134u8, 253u8,
+                                150u8, 43u8,
                             ],
                         )
                     }
@@ -20914,10 +20992,10 @@ pub mod api {
                                 call: ::subxt::alloc::boxed::Box::new(call),
                             },
                             [
-                                212u8, 36u8, 214u8, 201u8, 169u8, 141u8, 153u8, 159u8, 230u8,
-                                243u8, 49u8, 116u8, 80u8, 237u8, 101u8, 62u8, 115u8, 138u8, 243u8,
-                                195u8, 244u8, 149u8, 159u8, 140u8, 203u8, 41u8, 168u8, 129u8,
-                                159u8, 174u8, 44u8, 2u8,
+                                189u8, 251u8, 234u8, 6u8, 247u8, 33u8, 121u8, 221u8, 243u8, 22u8,
+                                73u8, 83u8, 110u8, 14u8, 186u8, 5u8, 165u8, 62u8, 184u8, 11u8,
+                                153u8, 179u8, 48u8, 153u8, 150u8, 95u8, 135u8, 22u8, 215u8, 254u8,
+                                230u8, 145u8,
                             ],
                         )
                     }
@@ -21280,9 +21358,9 @@ pub mod api {
                         "Revive",
                         "EthBlockBuilderIR",
                         [
-                            191u8, 4u8, 102u8, 110u8, 200u8, 40u8, 49u8, 157u8, 116u8, 225u8, 59u8,
-                            64u8, 19u8, 106u8, 76u8, 129u8, 155u8, 76u8, 133u8, 26u8, 241u8, 3u8,
-                            116u8, 81u8, 152u8, 121u8, 215u8, 246u8, 170u8, 43u8, 165u8, 5u8,
+                            253u8, 68u8, 53u8, 13u8, 135u8, 34u8, 155u8, 200u8, 52u8, 162u8, 179u8,
+                            176u8, 25u8, 84u8, 204u8, 81u8, 39u8, 52u8, 111u8, 137u8, 162u8, 247u8,
+                            47u8, 218u8, 75u8, 63u8, 183u8, 208u8, 85u8, 212u8, 227u8, 47u8,
                         ],
                     )
                 }
@@ -23908,12 +23986,12 @@ pub mod api {
                         bucket_id: ::core::primitive::u64,
                     },
                     #[codec(index = 1)]
-                    #[doc = "Drive was deleted"]
+                    #[doc = "Drive was deleted and its agreements settled."]
                     DriveDeleted {
                         drive_id: ::core::primitive::u64,
                         owner: ::subxt::utils::AccountId32,
                         bucket_id: ::core::primitive::u64,
-                        refunded: ::core::primitive::u128,
+                        escrow_released: ::core::primitive::u128,
                     },
                     #[codec(index = 2)]
                     #[doc = "Drive was shared with a member"]
@@ -26289,6 +26367,25 @@ pub mod api {
                         additional_bytes: ::core::primitive::u64,
                         max_payment: ::core::primitive::u128,
                     },
+                    #[codec(index = 29)]
+                    #[doc = "Transfer the agreement to `new_owner` (current owner only). The"]
+                    #[doc = "new owner can top up, extend, settle, or transfer it again."]
+                    #[doc = ""]
+                    #[doc = "The escrow — the prepaid fee plus, for a replica, the unspent sync"]
+                    #[doc = "balance — moves to `new_owner` and stays on hold; every later"]
+                    #[doc = "settlement and refund uses the new owner."]
+                    #[doc = ""]
+                    #[doc = "Bucket membership does not move: the new owner cannot write to or"]
+                    #[doc = "administer the bucket, and the bucket admin keeps every admin"]
+                    #[doc = "power over the agreement, including early termination, which pays"]
+                    #[doc = "out or burns the new owner's escrow. Challenge rights follow the"]
+                    #[doc = "owner; open challenges keep the authorization they were created"]
+                    #[doc = "with."]
+                    transfer_agreement_ownership {
+                        bucket_id: ::core::primitive::u64,
+                        provider: ::subxt::utils::AccountId32,
+                        new_owner: ::subxt::utils::AccountId32,
+                    },
                     #[codec(index = 27)]
                     #[doc = "Extend agreement duration (immediate, no provider approval needed)."]
                     #[doc = "Only while the agreement is live — an expired one settles via"]
@@ -26586,128 +26683,131 @@ pub mod api {
                     #[doc = "Only the agreement owner may do this."]
                     NotAgreementOwner,
                     #[codec(index = 34)]
+                    #[doc = "The new owner is the current owner."]
+                    TransferToSelf,
+                    #[codec(index = 35)]
                     #[doc = "The duration is below the provider's `min_duration`."]
                     DurationTooShort,
-                    #[codec(index = 35)]
+                    #[codec(index = 36)]
                     #[doc = "The duration is above the provider's `max_duration`."]
                     DurationTooLong,
-                    #[codec(index = 36)]
+                    #[codec(index = 37)]
                     #[doc = "`price_per_byte × bytes × duration` exceeds the caller's"]
                     #[doc = "`max_payment`."]
                     PaymentExceedsMax,
-                    #[codec(index = 37)]
+                    #[codec(index = 38)]
                     #[doc = "Replica agreements cannot be ended early; they run to expiry."]
                     CannotTerminateReplica,
-                    #[codec(index = 38)]
+                    #[codec(index = 39)]
                     #[doc = "More than `SettlementTimeout` has passed since expiry; only the"]
                     #[doc = "provider can settle now, via `claim_expired_agreement`."]
                     SettlementWindowPassed,
-                    #[codec(index = 39)]
+                    #[codec(index = 40)]
                     #[doc = "The agreement is not a replica agreement."]
                     NotReplica,
-                    #[codec(index = 40)]
+                    #[codec(index = 41)]
                     #[doc = "Less than `min_sync_interval` since the replica's last confirmed"]
                     #[doc = "sync."]
                     SyncTooFrequent,
-                    #[codec(index = 41)]
+                    #[codec(index = 42)]
                     #[doc = "None of the submitted roots match the bucket's current snapshot or"]
                     #[doc = "its recent root history."]
                     InvalidSyncRoot,
-                    #[codec(index = 42)]
+                    #[codec(index = 43)]
                     #[doc = "The sync balance cannot cover one more `sync_price`; top it up with"]
                     #[doc = "`top_up_replica_sync_balance`."]
                     InsufficientSyncBalance,
-                    #[codec(index = 43)]
+                    #[codec(index = 44)]
                     #[doc = "The challenger is the challenged provider. A self-challenge costs"]
                     #[doc = "nothing (the response refunds the challenger's own deposit) and"]
                     #[doc = "would pad the defended-challenge counters behind reputation."]
                     SelfChallenge,
-                    #[codec(index = 44)]
+                    #[codec(index = 45)]
                     #[doc = "No challenge with this id."]
                     ChallengeNotFound,
-                    #[codec(index = 45)]
+                    #[codec(index = 46)]
                     #[doc = "The response deadline has passed."]
                     ChallengeExpired,
-                    #[codec(index = 46)]
+                    #[codec(index = 47)]
                     #[doc = "Only the challenged provider may respond."]
                     NotChallengeProvider,
-                    #[codec(index = 47)]
+                    #[codec(index = 48)]
                     #[doc = "The provider did not sign the bucket's current snapshot, so there"]
                     #[doc = "is no on-chain commitment to challenge; use `challenge_offchain`"]
                     #[doc = "with a signed commitment instead."]
                     ProviderNotInSnapshot,
-                    #[codec(index = 48)]
+                    #[codec(index = 49)]
                     #[doc = "A provider with unresolved challenges (`PendingChallenges > 0`)"]
                     #[doc = "cannot complete deregistration — they are still slashable."]
                     ProviderHasPendingChallenges,
-                    #[codec(index = 49)]
+                    #[codec(index = 50)]
                     #[doc = "An agreement with an unresolved challenge against this"]
                     #[doc = "`(bucket, provider)` cannot be torn down until the challenge"]
                     #[doc = "resolves (defended, slashed, or timed out)."]
                     AgreementHasPendingChallenge,
-                    #[codec(index = 50)]
+                    #[codec(index = 51)]
                     #[doc = "`MaxChallengesPerDeadline` challenges have already been allocated"]
                     #[doc = "for the deadline this challenge would land on. Caps the total the"]
                     #[doc = "`on_initialize` sweep must eventually drain for a single key."]
                     TooManyChallengesThisBlock,
-                    #[codec(index = 51)]
+                    #[codec(index = 52)]
                     #[doc = "A provider signature does not verify against the commitment."]
                     InvalidSignature,
-                    #[codec(index = 52)]
+                    #[codec(index = 53)]
                     #[doc = "The bucket has no checkpoint yet."]
                     NoSnapshot,
-                    #[codec(index = 53)]
+                    #[codec(index = 54)]
                     #[doc = "A frozen bucket only accepts checkpoints that keep its"]
                     #[doc = "`frozen_start_seq`."]
                     SnapshotViolatesFrozen,
-                    #[codec(index = 54)]
+                    #[codec(index = 55)]
                     #[doc = "Fewer valid provider signatures than the bucket's `min_providers`."]
                     InsufficientSignatures,
-                    #[codec(index = 55)]
+                    #[codec(index = 56)]
                     #[doc = "A balance or counter computation overflowed."]
                     ArithmeticOverflow,
-                    #[codec(index = 56)]
+                    #[codec(index = 57)]
                     #[doc = "The public key is not 32 bytes (sr25519/ed25519) or 33 bytes"]
                     #[doc = "(compressed ecdsa), or does not match the signature's scheme."]
                     InvalidPublicKey,
-                    #[codec(index = 57)]
+                    #[codec(index = 58)]
                     #[doc = "Account is a member of too many buckets."]
                     TooManyBucketsForMember,
-                    #[codec(index = 58)]
+                    #[codec(index = 59)]
                     #[doc = "Provider signature over the SCALE-encoded terms is invalid."]
                     InvalidProviderSignature,
-                    #[codec(index = 59)]
+                    #[codec(index = 60)]
                     #[doc = "Signed terms have passed their `valid_until` block."]
                     TermsExpired,
-                    #[codec(index = 60)]
+                    #[codec(index = 61)]
                     #[doc = "Signed terms' `valid_until` extends beyond `now + RequestTimeout` —"]
                     #[doc = "the provider-signed validity window cap enforced on-chain."]
                     TermsValidityTooLong,
-                    #[codec(index = 61)]
+                    #[codec(index = 62)]
                     #[doc = "The terms' nonce has already been consumed inside the provider's"]
                     #[doc = "replay window."]
                     NonceAlreadyUsed,
-                    #[codec(index = 62)]
+                    #[codec(index = 63)]
                     #[doc = "The terms' nonce is older than the provider's replay window"]
                     #[doc = "(distance from `hsn` ≥ [`storage_primitives::REPLAY_WINDOW_BITS`])."]
                     NonceTooOld,
-                    #[codec(index = 63)]
+                    #[codec(index = 64)]
                     #[doc = "The terms' declared owner does not match the extrinsic origin."]
                     TermsOwnerMismatch,
-                    #[codec(index = 64)]
+                    #[codec(index = 65)]
                     #[doc = "Replica terms missing from a signed quote redeemed as a replica"]
                     #[doc = "agreement."]
                     MissingReplicaTerms,
-                    #[codec(index = 65)]
+                    #[codec(index = 66)]
                     #[doc = "Replica terms present in a signed quote redeemed as a primary"]
                     #[doc = "agreement."]
                     UnexpectedReplicaTerms,
-                    #[codec(index = 66)]
+                    #[codec(index = 67)]
                     #[doc = "The terms' `bucket` does not name the bucket the call targets:"]
                     #[doc = "`New` is only redeemable by `create_bucket_with_primary`, and"]
                     #[doc = "`Existing(id)` only against bucket `id`."]
                     TermsBucketMismatch,
-                    #[codec(index = 67)]
+                    #[codec(index = 68)]
                     #[doc = "Storage agreement requested 0 byte"]
                     InvalidMaxBytesRequest,
                 }
@@ -26875,13 +26975,13 @@ pub mod api {
                         payment: ::core::primitive::u128,
                     },
                     #[codec(index = 22)]
-                    #[doc = "The agreement's owner changed. Not emitted yet:"]
-                    #[doc = "`transfer_agreement_ownership` lands with #414."]
+                    #[doc = "The agreement's owner changed."]
                     AgreementOwnershipTransferred {
                         bucket_id: ::core::primitive::u64,
                         provider: ::subxt::utils::AccountId32,
                         old_owner: ::subxt::utils::AccountId32,
                         new_owner: ::subxt::utils::AccountId32,
+                        escrow: ::core::primitive::u128,
                     },
                     #[codec(index = 23)]
                     #[doc = "An agreement was settled and closed."]
