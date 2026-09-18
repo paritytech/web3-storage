@@ -217,15 +217,28 @@ pub async fn alice_challenger() -> Option<ChallengerClient> {
     Some(client)
 }
 
-/// Build a `ProviderClient` signed by Alice. Returns `None` if the chain is down.
-#[allow(dead_code)]
-pub async fn alice_provider() -> Option<ProviderClient> {
-    let mut client =
-        ProviderClient::new(chain_config(), Signer::from_seed("//Alice").ok()?).ok()?;
+/// Build a `ProviderClient` signed by the dev account at `seed`. Returns `None`
+/// if the chain is down.
+async fn dev_provider(seed: &str) -> Option<ProviderClient> {
+    let mut client = ProviderClient::new(chain_config(), Signer::from_seed(seed).ok()?).ok()?;
     if client.connect().await.is_err() {
         return None;
     }
     Some(client)
+}
+
+/// Build a `ProviderClient` signed by Alice, the provider `chain_setup`
+/// registers. Returns `None` if the chain is down.
+#[allow(dead_code)]
+pub async fn alice_provider() -> Option<ProviderClient> {
+    dev_provider("//Alice").await
+}
+
+/// Build a `ProviderClient` signed by Bob, who is never registered as a
+/// provider. Returns `None` if the chain is down.
+#[allow(dead_code)]
+pub async fn bob_provider() -> Option<ProviderClient> {
+    dev_provider("//Bob").await
 }
 
 /// Build a read-only `DiscoveryClient`. Returns `None` if the chain is down.
