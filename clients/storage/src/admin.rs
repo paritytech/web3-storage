@@ -387,6 +387,45 @@ impl AdminClient {
         Ok(())
     }
 
+    /// Hand an agreement to a new owner; the escrow moves with it.
+    pub async fn transfer_agreement_ownership(
+        &self,
+        bucket_id: BucketId,
+        provider: String,
+        new_owner: String,
+    ) -> ClientResult<()> {
+        let chain = self.base.chain()?;
+        let signer = chain.signer()?;
+        let provider_account = SubstrateClient::parse_account(&provider)?;
+        let new_owner_account = SubstrateClient::parse_account(&new_owner)?;
+
+        let tx = extrinsics::transfer_agreement_ownership(
+            bucket_id,
+            provider_account,
+            new_owner_account,
+        );
+        chain
+            .api()
+            .at_current_block()
+            .await
+            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
+            .transactions()
+            .sign_and_submit_then_watch_default(&tx, signer)
+            .await
+            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
+            .wait_for_finalized_success()
+            .await
+            .map_err(|e| ClientError::Chain(format!("Transaction failed: {e}")))?;
+
+        tracing::info!(
+            "Transferred agreement with {} for bucket {} to {}",
+            provider,
+            bucket_id,
+            new_owner
+        );
+        Ok(())
+    }
+
     /// Terminate an agreement early (admin only for primaries).
     ///
     /// You can choose to pay the provider in full or burn a percentage.
@@ -487,18 +526,19 @@ impl AdminClient {
     /// Submit a checkpoint with provider signatures.
     ///
     /// This creates a canonical on-chain snapshot of the bucket state,
-    /// enabling `challenge_checkpoint` to work against it.
+    /// enabling `challenge_checkpoint` to work against it. Signatures arrive
+    /// already typed (the SDK's provider responses deserialize them), so the
+    /// only thing left to parse here is the SS58 account strings.
     pub async fn submit_checkpoint(
         &self,
         bucket_id: BucketId,
         commitment: Commitment,
-        signatures: Vec<(String, Vec<u8>)>, // (provider SS58, signature bytes)
+        signatures: Vec<(String, sp_runtime::MultiSignature)>, // (provider SS58, signature)
     ) -> ClientResult<()> {
         let chain = self.base.chain()?;
         let signer = chain.signer()?;
 
-        // Parse provider accounts
-        let parsed_sigs: Vec<(sp_runtime::AccountId32, Vec<u8>)> = signatures
+        let parsed_sigs: Vec<(sp_runtime::AccountId32, sp_runtime::MultiSignature)> = signatures
             .into_iter()
             .map(|(account_str, sig)| {
                 let account = SubstrateClient::parse_account(&account_str)?;
@@ -506,7 +546,7 @@ impl AdminClient {
             })
             .collect::<ClientResult<Vec<_>>>()?;
 
-        let tx = extrinsics::checkpoint(bucket_id, commitment, parsed_sigs)?;
+        let tx = extrinsics::checkpoint(bucket_id, commitment, &parsed_sigs);
 
         let tx_progress = chain
             .api()

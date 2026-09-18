@@ -232,27 +232,14 @@ pub struct CommitmentCollection {
     pub start_seq: u64,
     /// Number of leaves in the MMR.
     pub leaf_count: u64,
-    /// Signatures from agreeing providers: (account_id, signature_bytes).
-    pub signatures: Vec<(AccountId32, Vec<u8>)>,
+    /// Scheme-tagged signatures from agreeing providers.
+    pub signatures: Vec<(AccountId32, sp_runtime::MultiSignature)>,
     /// Providers that agreed on the majority root.
     pub agreeing_providers: Vec<AccountId32>,
     /// Providers with different roots: (account_id, their_root).
     pub disagreeing_providers: Vec<(AccountId32, H256)>,
     /// Providers that couldn't be reached.
     pub unreachable_providers: Vec<AccountId32>,
-}
-
-/// Length of an sr25519 signature; the only scheme providers sign with.
-const SR25519_SIGNATURE_LEN: usize = 64;
-
-/// A provider response that cleared every ingestion check, reduced to the
-/// values the consensus pass consumes.
-#[derive(Clone)]
-struct ValidatedCommitment {
-    mmr_root: H256,
-    start_seq: u64,
-    leaf_count: u64,
-    signature: Vec<u8>,
 }
 
 /// Detected conflict between providers.
@@ -613,7 +600,7 @@ pub struct ChallengeEvidence {
     /// Majority commitment from agreeing providers.
     pub majority_commitment: (H256, u64, u64), // (mmr_root, start_seq, leaf_count)
     /// Signatures from majority providers.
-    pub majority_signatures: Vec<(AccountId32, Vec<u8>)>,
+    pub majority_signatures: Vec<(AccountId32, sp_runtime::MultiSignature)>,
     /// Provider's commitment that conflicts.
     pub provider_commitment: Option<(H256, u64, u64)>,
     /// Timestamps of conflict observations.
@@ -1078,7 +1065,7 @@ impl CheckpointManager {
             futures::future::join_all(provider_commitment_futures).await;
 
         // Categorize results by MMR root, keeping only usable responses
-        let mut commitments_by_root: HashMap<H256, Vec<(AccountId32, ValidatedCommitment)>> =
+        let mut commitments_by_root: HashMap<H256, Vec<(AccountId32, CommitmentResponse)>> =
             HashMap::new();
         let mut unreachable = Vec::new();
 
@@ -1091,16 +1078,15 @@ impl CheckpointManager {
                 continue;
             };
 
-            match Self::validated_commitment(bucket_id, &account, &commitment, floor) {
-                Some(valid) => {
-                    commitments_by_root
-                        .entry(valid.mmr_root)
-                        .or_default()
-                        .push((account, valid));
-                }
+            if Self::commitment_within_floor(bucket_id, &account, &commitment, floor) {
+                commitments_by_root
+                    .entry(commitment.mmr_root)
+                    .or_default()
+                    .push((account, commitment));
+            } else {
                 // An unusable response is no better than no response: the
                 // provider contributes nothing this round.
-                None => unreachable.push(account),
+                unreachable.push(account);
             }
         }
 
@@ -1125,7 +1111,7 @@ impl CheckpointManager {
 
         let signatures: Vec<_> = agreeing
             .iter()
-            .map(|(id, valid)| (id.clone(), valid.signature.clone()))
+            .map(|(id, valid)| (id.clone(), valid.provider_signature.clone()))
             .collect();
 
         let (start_seq, leaf_count) = agreeing
@@ -1172,14 +1158,18 @@ impl CheckpointManager {
             .map(|s| (s.commitment.start_seq, s.commitment.leaf_count)))
     }
 
-    /// Reduce a provider response to the values consensus needs, or `None`
-    /// (with a warning) when the response cannot be part of a checkpoint.
-    fn validated_commitment(
+    /// Whether a provider response may take part in a checkpoint: `false`
+    /// (with a warning) when its range sits behind the on-chain snapshot.
+    ///
+    /// Root and signature arrived already typed — an undecodable value fails
+    /// the provider's HTTP round at deserialization — so this floor check is
+    /// the only rejection left before consensus.
+    fn commitment_within_floor(
         bucket_id: BucketId,
         account: &AccountId32,
         commitment: &CommitmentResponse,
         floor: Option<(u64, u64)>,
-    ) -> Option<ValidatedCommitment> {
+    ) -> bool {
         // A shrinking range would narrow what the provider can be challenged
         // over — never accept it, whatever the majority says. The range is
         // `[start_seq, start_seq + leaf_count)` (design: "Canonical range");
@@ -1197,44 +1187,11 @@ impl CheckpointManager {
                     commitment.start_seq,
                     commitment.leaf_count
                 );
-                return None;
+                return false;
             }
         }
 
-        let mmr_root = match crate::substrate::parse_h256(&commitment.mmr_root) {
-            Ok(root) => root,
-            Err(e) => {
-                tracing::warn!(
-                    "Bucket {bucket_id}: provider {account} returned an unparsable MMR root: {e}"
-                );
-                return None;
-            }
-        };
-
-        let signature = match Self::decode_signature(&commitment.provider_signature) {
-            Ok(sig) if sig.len() == SR25519_SIGNATURE_LEN => sig,
-            Ok(sig) => {
-                tracing::warn!(
-                    "Bucket {bucket_id}: provider {account} returned a {}-byte signature, \
-                     expected {SR25519_SIGNATURE_LEN}",
-                    sig.len()
-                );
-                return None;
-            }
-            Err(e) => {
-                tracing::warn!(
-                    "Bucket {bucket_id}: provider {account} returned an undecodable signature: {e}"
-                );
-                return None;
-            }
-        };
-
-        Some(ValidatedCommitment {
-            mmr_root,
-            start_seq: commitment.start_seq,
-            leaf_count: commitment.leaf_count,
-            signature,
-        })
+        true
     }
 
     /// Query a single provider for their commitment with health tracking.
@@ -1397,8 +1354,8 @@ impl CheckpointManager {
                 start_seq: collection.start_seq,
                 leaf_count: collection.leaf_count,
             },
-            collection.signatures.clone(),
-        )?;
+            &collection.signatures,
+        );
 
         // Submit and wait for finalization
         let tx_progress = api
@@ -1422,12 +1379,6 @@ impl CheckpointManager {
     // ========================================================================
     // Helpers
     // ========================================================================
-
-    /// Decode a hex signature string to bytes.
-    fn decode_signature(sig_str: &str) -> Result<Vec<u8>, ClientError> {
-        let s = sig_str.strip_prefix("0x").unwrap_or(sig_str);
-        hex::decode(s).map_err(|e| ClientError::Serialization(e.to_string()))
-    }
 
     /// Invalidate the provider cache for a bucket.
     pub async fn invalidate_cache(&self, bucket_id: BucketId) {
@@ -2744,100 +2695,65 @@ mod tests {
         assert_eq!(cloned.leaf_count, 10);
     }
 
-    fn test_mmr_root() -> String {
-        format!("0x{}", hex::encode([7u8; 32]))
+    fn test_mmr_root() -> H256 {
+        H256::from([7u8; 32])
     }
 
-    fn valid_signature_hex() -> String {
-        format!("0x{}", hex::encode([9u8; SR25519_SIGNATURE_LEN]))
+    fn valid_signature() -> sp_runtime::MultiSignature {
+        sp_runtime::MultiSignature::Sr25519(sp_core::sr25519::Signature::from([9u8; 64]))
     }
 
     #[test]
-    fn validated_commitment_accepts_matching_response() {
+    fn commitment_within_floor_accepts_matching_response() {
         let account = AccountId32::new([1u8; 32]);
-        let response = CommitmentResponse::new(1, test_mmr_root(), 5, 10, valid_signature_hex());
+        let response = CommitmentResponse::new(1, test_mmr_root(), 5, 10, valid_signature());
 
-        let valid = CheckpointManager::validated_commitment(1, &account, &response, Some((5, 10)))
-            .expect("a well-formed response must be accepted");
-        assert_eq!(valid.mmr_root, H256::from([7u8; 32]));
-        assert_eq!((valid.start_seq, valid.leaf_count), (5, 10));
-        assert_eq!(valid.signature, vec![9u8; SR25519_SIGNATURE_LEN]);
+        assert!(
+            CheckpointManager::commitment_within_floor(1, &account, &response, Some((5, 10))),
+            "a well-formed response must be accepted"
+        );
+        // The response itself is what consensus carries forward, so pin the
+        // fields it is grouped and submitted by.
+        assert_eq!(response.mmr_root, H256::from([7u8; 32]));
+        assert_eq!((response.start_seq, response.leaf_count), (5, 10));
+        assert_eq!(response.provider_signature, valid_signature());
     }
 
     #[test]
-    fn validated_commitment_rejects_unparsable_root() {
-        let account = AccountId32::new([1u8; 32]);
-        // One provider's garbage root must drop that provider only, never
-        // abort the whole collection round.
-        let response =
-            CommitmentResponse::new(1, "0xnot-a-root".to_string(), 5, 10, valid_signature_hex());
-
-        assert!(CheckpointManager::validated_commitment(1, &account, &response, None).is_none());
-    }
-
-    #[test]
-    fn validated_commitment_rejects_range_regression() {
+    fn commitment_within_floor_rejects_range_regression() {
         let account = AccountId32::new([1u8; 32]);
 
         // start_seq unchanged but the range *end* moved backwards (5+9=14 < 5+10=15):
         // data disappeared with no compensating delete. Must be refused.
-        let shrunk_end = CommitmentResponse::new(1, test_mmr_root(), 5, 9, valid_signature_hex());
+        let shrunk_end = CommitmentResponse::new(1, test_mmr_root(), 5, 9, valid_signature());
         assert!(
-            CheckpointManager::validated_commitment(1, &account, &shrunk_end, Some((5, 10)))
-                .is_none(),
+            !CheckpointManager::commitment_within_floor(1, &account, &shrunk_end, Some((5, 10))),
             "a range end behind the on-chain snapshot must be refused"
         );
 
-        let rewound_start =
-            CommitmentResponse::new(1, test_mmr_root(), 4, 10, valid_signature_hex());
-        assert!(CheckpointManager::validated_commitment(
+        let rewound_start = CommitmentResponse::new(1, test_mmr_root(), 4, 10, valid_signature());
+        assert!(!CheckpointManager::commitment_within_floor(
             1,
             &account,
             &rewound_start,
             Some((5, 10))
-        )
-        .is_none());
+        ));
     }
 
     #[test]
-    fn validated_commitment_accepts_legitimate_delete() {
+    fn commitment_within_floor_accepts_legitimate_delete() {
         // Design: "Delete: Increase start_seq (old leaves no longer in range)".
         // A delete moves start_seq forward and leaf_count down by the same
         // amount, so the range end (start_seq + leaf_count) is unchanged.
         // This must NOT be treated as a regression.
         let account = AccountId32::new([1u8; 32]);
-        let post_delete = CommitmentResponse::new(1, test_mmr_root(), 8, 7, valid_signature_hex());
+        let post_delete = CommitmentResponse::new(1, test_mmr_root(), 8, 7, valid_signature());
 
         assert!(
-            CheckpointManager::validated_commitment(1, &account, &post_delete, Some((5, 10)))
-                .is_some(),
+            CheckpointManager::commitment_within_floor(1, &account, &post_delete, Some((5, 10))),
             "a post-delete range with an unchanged end must be accepted"
         );
     }
-
-    #[test]
-    fn validated_commitment_rejects_unusable_signatures() {
-        let account = AccountId32::new([1u8; 32]);
-
-        let undecodable = CommitmentResponse::new(1, test_mmr_root(), 5, 10, "not-hex".to_string());
-        assert!(CheckpointManager::validated_commitment(1, &account, &undecodable, None).is_none());
-
-        let wrong_length = CommitmentResponse::new(
-            1,
-            test_mmr_root(),
-            5,
-            10,
-            format!("0x{}", hex::encode([9u8; 63])),
-        );
-        assert!(
-            CheckpointManager::validated_commitment(1, &account, &wrong_length, None).is_none(),
-            "a short signature must not reach the extrinsic builder"
-        );
-    }
-
-    // ========================================================================
-    // ProviderInfo Tests
-    // ========================================================================
 
     #[test]
     fn test_provider_info_clone() {

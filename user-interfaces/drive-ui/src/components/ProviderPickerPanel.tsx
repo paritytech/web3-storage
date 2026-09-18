@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { RefreshCw, Server } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { AvailableProvider, MatchingProviders } from "@/lib/drive-client";
-import { formatBytes, truncateHash, formatTokens } from "@/lib/utils";
+import { formatBytes, formatUnits, truncateHash } from "@web3-storage/format";
 import { queryMatchingProviders } from "@/state/drive.state";
 interface ProviderPickerPanelProps {
   onSelect: (provider: AvailableProvider) => void;
@@ -72,8 +72,8 @@ export default function ProviderPickerPanel({
 
   const getDisabledReason = (p: AvailableProvider): string | null => {
     if (!p.acceptingPrimary) return "Not accepting";
-    // `maxCapacity === 0n` means unlimited — skip the capacity check.
-    if (p.maxCapacity !== 0n && p.availableCapacity < requiredCapacity)
+    // `undefined` free capacity means unlimited — skip the capacity check.
+    if (p.availableCapacity !== undefined && p.availableCapacity < requiredCapacity)
       return "Capacity full";
     if (requiredDuration < p.minDuration) return "Duration too short";
     if (p.maxDuration > 0 && requiredDuration > p.maxDuration)
@@ -131,14 +131,14 @@ export default function ProviderPickerPanel({
               {providers.map((p) => {
                 const reason = getDisabledReason(p);
                 const rowDisabled = reason !== null;
-                // `max_capacity == 0` is the substrate convention for
-                // "unlimited" (see runtime ProviderSettings docs).
-                const unlimited = p.maxCapacity === 0n;
-                const utilization = unlimited
-                  ? 0
-                  : Number(
-                      ((p.maxCapacity - p.availableCapacity) * 100n) / p.maxCapacity,
-                    );
+                // `undefined` is unlimited — nothing to meter.
+                const free = p.availableCapacity;
+                // Percent free: the column is "Available", and the s3-ui
+                // picker meters the same way.
+                const availablePct =
+                  free !== undefined && p.maxCapacity > 0n
+                    ? Number((free * 100n) / p.maxCapacity)
+                    : 0;
                 return (
                   <tr
                     key={p.account}
@@ -160,24 +160,22 @@ export default function ProviderPickerPanel({
                       )}
                     </td>
                     <td className="px-3 py-2">
-                      {unlimited ? (
+                      {free === undefined ? (
                         <span className="text-xs text-muted-foreground">Unlimited</span>
                       ) : (
                         <div className="space-y-1">
-                          <span className="text-xs">
-                            {formatBytes(Number(p.availableCapacity))}
-                          </span>
+                          <span className="text-xs">{formatBytes(Number(free))}</span>
                           <div className="h-1 w-16 rounded-full bg-secondary">
                             <div
                               className="h-full rounded-full bg-primary transition-all"
-                              style={{ width: `${utilization}%` }}
+                              style={{ width: `${availablePct}%` }}
                             />
                           </div>
                         </div>
                       )}
                     </td>
                     <td className="px-3 py-2 text-xs">
-                      {formatTokens(p.pricePerByte)}
+                      {formatUnits(p.pricePerByte)}
                     </td>
                     <td className="px-3 py-2 text-xs">
                       {p.minDuration}–{p.maxDuration || "∞"}

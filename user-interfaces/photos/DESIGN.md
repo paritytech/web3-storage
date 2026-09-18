@@ -135,8 +135,8 @@ contract Photos {
 ```
 
 Notes:
-- `bytes32 provider` / `bytes32 userAccount` are substrate `AccountId32`s (raw 32-byte sr25519
-  pubkeys), per the precompile's type-encoding rules. `userAccount` is the signed-in user's own
+- `bytes32 provider` / `bytes32 userAccount` are substrate `AccountId32`s (raw 32-byte account
+  ids), per the precompile's type-encoding rules. `userAccount` is the signed-in user's own
   substrate account — the one their wallet signs `/fs` requests with.
 - `terms` is the precompile's `PrimitiveAgreementTerms`; `terms.owner` must be the contract's
   substrate-mapped account (the drive owner). For a primary agreement, `hasBucketId = false` and
@@ -256,11 +256,11 @@ patterns.
 
 | Concern | Choice |
 | --- | --- |
-| Dev port | **5178** (landing 5176, drive 5174, provider 5175, s3 5177) |
+| Dev port | **5178** (landing 5176, drive 5174, provider 5175, s3 5177, explorer 5179) |
 | Wallet | Dev accounts (zero-setup) **and** Polkadot extension, like the provider UI |
 | New dep | `viem` (ABI encode/decode only) |
 | Reads | `ReviveApi.call` dry-run + viem `decodeFunctionResult` (unsigned) |
-| Writes | `Revive.call` / `Revive.instantiate_with_code` via PAPI `signSubmitAndWatch` |
+| Writes | `Revive.call` / `Revive.instantiate_with_code` via PAPI `createAndSubmit` |
 | FS ops | provider `/fs/{bucketId}/…` via the reused drive-client |
 | Base | `GITHUB_PAGES` base `/web3-storage/photos/` |
 
@@ -390,7 +390,7 @@ a dev account, shows "no library" vs "drive #N". No writes.
 Provider list from `StorageProvider.Providers` (price/capacity/accepting); size/duration inputs;
 payment compute + buffer with `value` in **substrate atomic units** (labeled in tokens);
 idempotent `Revive.map_account()` before first write; negotiate terms then `createLibrary` via
-`Revive.call` `signSubmitAndWatch`; transition to State B. Surfaces `PaymentExceedsMax` and
+`Revive.call` `createAndSubmit`; transition to State B. Surfaces `PaymentExceedsMax` and
 negotiate/expired-terms errors clearly. **Done:** a fresh account goes A→B in the browser.
 
 ### M6 — State B in UI: albums + upload + grid + view

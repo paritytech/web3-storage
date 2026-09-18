@@ -24,9 +24,18 @@ pub enum Error {
     #[error("Invalid hash: expected {expected}, got {actual}")]
     InvalidHash { expected: String, actual: String },
 
-    #[error("Storage error: {0}")]
-    Storage(String),
-
     #[error("Serialization error: {0}")]
     Serialization(String),
+
+    /// The RocksDB engine itself failed. Carries the engine's error as
+    /// `source()` so the cause survives instead of being flattened into a
+    /// message.
+    #[error("RocksDB error: {0}")]
+    RocksDb(#[from] rocksdb::Error),
+
+    /// A column family the engine expects was absent from the open database:
+    /// a layout bug or a database written by a different build, not an I/O
+    /// fault.
+    #[error("Column family not found: {0}")]
+    ColumnFamilyMissing(&'static str),
 }

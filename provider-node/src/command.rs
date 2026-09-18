@@ -108,8 +108,12 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let seed = cli.key.load_seed()?;
     let state = match &seed {
         Some(seed) => {
-            let state = ProviderState::with_seed(deps, seed)?;
-            tracing::info!("Signing enabled for account: {}", state.provider_id);
+            let state = ProviderState::with_seed_scheme(deps, seed, cli.key.key_scheme)?;
+            tracing::info!(
+                "Signing enabled for account: {} (scheme: {:?})",
+                state.provider_id,
+                cli.key.key_scheme
+            );
             state
         }
         None => {
@@ -252,7 +256,13 @@ async fn start_replica_sync_coordinator(
         auto_confirm: true,
     };
 
-    let coordinator = ReplicaSyncCoordinator::new(config, state, Box::new(chain_client));
+    let coordinator = ReplicaSyncCoordinator::new(
+        config,
+        state.storage.clone(),
+        state.provider_id.clone(),
+        Box::new(chain_client),
+        Some(state.clone()),
+    );
 
     match coordinator.start(events_rx, None).await {
         Ok(handle) => {

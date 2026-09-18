@@ -27,7 +27,7 @@ pub struct ChallengerClient {
 }
 
 /// Top of the reputation scale, mirroring
-/// `pallet_storage_provider::runtime_api::reputation_score`, which returns
+/// `pallet_storage_provider::ProviderStats::reputation`, which returns
 /// 0..=100. Not importable: this crate depends on the generated bindings
 /// rather than on the pallet.
 const REPUTATION_SCALE_MAX: u8 = 100;
@@ -153,14 +153,16 @@ impl ChallengerClient {
     /// # Parameters
     /// - `commitment`: The MMR commitment (root + range) the provider signed over
     /// - `target`: Which leaf + chunk within that commitment to challenge
-    /// - `provider_signature`: The provider's signature on the commitment (64 bytes for Sr25519)
+    /// - `provider_signature`: The provider's scheme-tagged signature on the
+    ///   commitment, as returned by
+    ///   [`CommitResponse::provider_signature`](crate::CommitResponse)
     pub async fn challenge_offchain(
         &self,
         bucket_id: BucketId,
         provider: String,
         commitment: Commitment,
         target: ChunkLocation,
-        provider_signature: Vec<u8>,
+        provider_signature: sp_runtime::MultiSignature,
     ) -> ClientResult<ChallengeId> {
         let chain = self.base.chain()?;
         let signer = chain.signer()?;
@@ -182,8 +184,8 @@ impl ChallengerClient {
             provider_account,
             commitment,
             target,
-            provider_signature,
-        )?;
+            &provider_signature,
+        );
 
         let tx_progress = chain
             .api()
@@ -333,10 +335,11 @@ impl ChallengerClient {
         let (challenges_defended, challenges_failed, reputation) = if let Some(info) = provider_info
         {
             (
-                info.challenges_received_authorized
-                    .saturating_add(info.challenges_received_public),
-                info.challenges_failed,
-                info.reputation,
+                info.stats
+                    .challenges_received_authorized
+                    .saturating_add(info.stats.challenges_received_public),
+                info.stats.challenges_failed,
+                info.stats.reputation,
             )
         } else {
             return Err(ClientError::Chain(format!("Provider {provider} not found")));
@@ -514,55 +517,6 @@ impl ChallengerClient {
     // Analytics
     // ═════════════════════════════════════════════════════════════════════════
 
-    /// Get aggregated stats for this account's challenge activity.
-    ///
-    /// Pulls counters from on-chain `ChallengerStats`. The pallet maintains
-    /// these on `create_challenge`, on `ChallengeDefended`, and on each
-    /// `slash_provider_for_failed_challenge` call.
-    pub async fn get_challenge_stats(&self) -> ClientResult<ChallengeStats> {
-        let stats = self.fetch_challenger_stats().await?;
-        Ok(ChallengeStats {
-            total_challenges: stats.total_challenges,
-            successful_challenges: stats.successful_challenges,
-            failed_challenges: stats.failed_challenges,
-            // The pallet doesn't yet track an average response time per
-            // challenger; leave at 0 until that aggregate is added.
-            avg_response_time: 0,
-        })
-    }
-
-    /// Read this account's `ChallengerStats` record from chain. Returns a
-    /// zeroed record (matching the pallet's `ValueQuery` default) if the
-    /// account has never opened a challenge.
-    async fn fetch_challenger_stats(&self) -> ClientResult<FetchedChallengerStats> {
-        let chain = self.base.chain()?;
-
-        let at = chain.at_current_block().await?;
-
-        let value = match at
-            .storage()
-            .try_fetch(
-                api::storage().storage_provider().challenger_stats(),
-                (convert::to_subxt_account(&self.challenger_account()),),
-            )
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to fetch ChallengerStats: {e}")))?
-        {
-            Some(v) => v,
-            None => return Ok(FetchedChallengerStats::default()),
-        };
-
-        let record = value
-            .decode()
-            .map_err(|e| ClientError::Chain(format!("Decode ChallengerStats: {e}")))?;
-
-        Ok(FetchedChallengerStats {
-            total_challenges: record.total_challenges,
-            successful_challenges: record.successful_challenges,
-            failed_challenges: record.failed_challenges,
-        })
-    }
-
     /// Providers worth challenging: those holding a storage agreement whose
     /// reputation is below `max_reputation`, worst first.
     ///
@@ -735,24 +689,6 @@ pub enum ChallengeRecommendation {
     Monitor,
     /// Don't challenge (provider is reliable)
     Skip,
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct ChallengeStats {
-    pub total_challenges: u32,
-    pub successful_challenges: u32,
-    pub failed_challenges: u32,
-    pub avg_response_time: u32,
-}
-
-/// Internal: the raw `ChallengerStatRecord` shape pulled from chain.
-/// Public callers see `ChallengeStats` which wraps these counters with the
-/// `avg_response_time` field the SDK historically exposed.
-#[derive(Debug, Clone, Default)]
-struct FetchedChallengerStats {
-    total_challenges: u32,
-    successful_challenges: u32,
-    failed_challenges: u32,
 }
 
 #[derive(Debug, Clone)]

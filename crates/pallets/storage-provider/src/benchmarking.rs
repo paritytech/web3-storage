@@ -7,7 +7,7 @@ use super::{Pallet as StorageProvider, *};
 use frame_benchmarking::v2::*;
 use frame_support::{
     pallet_prelude::*,
-    traits::{Currency, Hooks, ReservableCurrency},
+    traits::{fungible::Mutate, Hooks},
 };
 use frame_system::{Pallet as System, RawOrigin};
 use sp_core::H256;
@@ -31,10 +31,21 @@ fn set_block_number<T: Config>(n: BlockNumberFor<T>) {
 /// Key type used by the benchmarking keystore for provider signing material.
 const KEY_TYPE: sp_core::crypto::KeyTypeId = sp_core::crypto::KeyTypeId(*b"bnch");
 
+/// What every benchmark account is funded with, here and in the pallets that
+/// build on this one.
+///
+/// Not `max_value() / 2`: `set_balance` actually mints, so funding a handful of
+/// accounts that way overflows `TotalIssuance` and the later ones silently end
+/// up broke. This is still far more than any benchmark can spend, and every
+/// other "effectively unbounded" amount is derived from it so the two cannot
+/// drift apart.
+pub fn funding<T: Config>() -> BalanceOf<T> {
+    BalanceOf::<T>::max_value() / 1_000_000u32.into()
+}
+
 fn funded_account<T: Config>(name: &'static str, index: u32) -> T::AccountId {
     let account: T::AccountId = account(name, index, SEED);
-    let amount = BalanceOf::<T>::max_value() / 2u32.into();
-    let _ = T::Currency::make_free_balance_be(&account, amount);
+    let _ = T::Currency::set_balance(&account, funding::<T>());
     account
 }
 
@@ -115,7 +126,7 @@ fn build_replica_terms<T: Config>(
         nonce,
         bucket_id: Some(bucket_id),
         replica_params: Some(ReplicaTerms {
-            sync_balance: BalanceOf::<T>::max_value() / 20u32.into(),
+            sync_balance: funding::<T>() / 20u32.into(),
             min_sync_interval: 10u32.into(),
             sync_price: 10u32.into(),
         }),
@@ -166,7 +177,7 @@ fn setup_replica_agreement<T: Config>(
     bucket_id: BucketId,
     replica: &T::AccountId,
     replica_index: u32,
-) {
+) -> sp_core::sr25519::Public {
     let key = register_sr25519_key::<T>(replica, KEY_TYPE, replica_index);
     let terms = build_replica_terms::<T>(
         admin,
@@ -178,6 +189,18 @@ fn setup_replica_agreement<T: Config>(
     let sig = sign_terms::<T>(&key, &terms);
     Pallet::<T>::establish_replica_agreement_internal(admin, bucket_id, replica, terms, &sig)
         .expect("establish_replica_agreement_internal succeeds");
+    key
+}
+
+/// Attest sync roots for `confirm_replica_sync` with the replica's keystore
+/// key — the pallet verifies this over the SCALE-encoded array.
+fn sign_sync_roots(
+    key: &sp_core::sr25519::Public,
+    roots: &[Option<H256>; 7],
+) -> sp_runtime::MultiSignature {
+    let sig = sp_io::crypto::sr25519_sign(KEY_TYPE, key, &codec::Encode::encode(roots))
+        .expect("benchmarking keystore signs with a key it generated");
+    sp_runtime::MultiSignature::Sr25519(sig)
 }
 
 /// Direct-storage helper: register `provider` as a primary on an existing
@@ -549,7 +572,7 @@ mod benchmarks {
         let bucket_id = setup_primary_agreement::<T>(&admin, &provider, 0);
 
         let additional_bytes = 500_000u64;
-        let max_payment = BalanceOf::<T>::max_value() / 10u32.into();
+        let max_payment = funding::<T>() / 10u32.into();
 
         #[extrinsic_call]
         top_up_agreement(
@@ -562,17 +585,43 @@ mod benchmarks {
     }
 
     #[benchmark]
+    fn transfer_agreement_ownership() {
+        let admin = funded_account::<T>("admin", 0);
+        let provider = create_provider::<T>(0);
+        let bucket_id = setup_primary_agreement::<T>(&admin, &provider, 0);
+        let new_owner = funded_account::<T>("new_owner", 0);
+
+        #[extrinsic_call]
+        transfer_agreement_ownership(
+            RawOrigin::Signed(admin),
+            bucket_id,
+            provider.clone(),
+            new_owner.clone(),
+        );
+
+        assert_eq!(
+            StorageAgreements::<T>::get(bucket_id, &provider).map(|a| a.owner),
+            Some(new_owner)
+        );
+    }
+
+    #[benchmark]
     fn extend_agreement() {
         let admin = funded_account::<T>("admin", 0);
         let provider = create_provider::<T>(0);
         let bucket_id = setup_primary_agreement::<T>(&admin, &provider, 0);
 
+        // Worst case: a third-party payer after some elapsed blocks.
+        let payer = funded_account::<T>("payer", 0);
+        let elapsed_at = StorageProvider::<T>::current_anchor_block().saturating_add(10u32.into());
+        set_block_number::<T>(elapsed_at);
+
         let additional_duration: BlockNumberFor<T> = 50u32.into();
-        let max_payment = BalanceOf::<T>::max_value() / 10u32.into();
+        let max_payment = funding::<T>() / 10u32.into();
 
         #[extrinsic_call]
         extend_agreement(
-            RawOrigin::Signed(admin),
+            RawOrigin::Signed(payer),
             bucket_id,
             provider,
             additional_duration,
@@ -594,13 +643,10 @@ mod benchmarks {
             _ => storage_primitives::EndAction::Burn { burn_percent: 50 },
         };
 
-        // Ensure the treasury account exists so the burn-path transfer
-        // (KeepAlive) doesn't fail with "Account cannot exist with the
-        // funds that would be given".
-        let _ = T::Currency::make_free_balance_be(
-            &T::Treasury::get(),
-            BalanceOf::<T>::max_value() / 2u32.into(),
-        );
+        // Ensure the treasury account exists so the burn-path settlement
+        // doesn't fail with "Account cannot exist with the funds that would be
+        // given".
+        let _ = T::Currency::set_balance(&T::Treasury::get(), funding::<T>());
 
         #[extrinsic_call]
         end_agreement(RawOrigin::Signed(admin), bucket_id, provider, action);
@@ -859,18 +905,18 @@ mod benchmarks {
         );
 
         // Open the replica agreement via the signed-terms helper.
-        setup_replica_agreement::<T>(&admin, bucket_id, &replica_provider, 1);
+        let replica_key = setup_replica_agreement::<T>(&admin, bucket_id, &replica_provider, 1);
 
         // Confirm replica sync so replica has a last_sync root
         let roots: [Option<H256>; 7] = [Some(mmr_root), None, None, None, None, None, None];
-        let sig =
-            sp_runtime::MultiSignature::Sr25519(sp_core::sr25519::Signature::from_raw([0u8; 64]));
-        let _ = Pallet::<T>::confirm_replica_sync(
+        let sig = sign_sync_roots(&replica_key, &roots);
+        Pallet::<T>::confirm_replica_sync(
             RawOrigin::Signed(replica_provider.clone()).into(),
             bucket_id,
             roots,
             sig,
-        );
+        )
+        .expect("confirm_replica_sync succeeds");
 
         #[extrinsic_call]
         challenge_replica(
@@ -1061,12 +1107,11 @@ mod benchmarks {
         );
 
         // Open the replica agreement via the signed-terms helper.
-        setup_replica_agreement::<T>(&admin, bucket_id, &replica_provider, 1);
+        let replica_key = setup_replica_agreement::<T>(&admin, bucket_id, &replica_provider, 1);
 
         // roots[0] matches current snapshot mmr_root
         let roots: [Option<H256>; 7] = [Some(mmr_root), None, None, None, None, None, None];
-        let signature =
-            sp_runtime::MultiSignature::Sr25519(sp_core::sr25519::Signature::from_raw([0u8; 64]));
+        let signature = sign_sync_roots(&replica_key, &roots);
 
         #[extrinsic_call]
         confirm_replica_sync(
@@ -1087,11 +1132,13 @@ mod benchmarks {
         // Open the replica agreement via the signed-terms helper.
         setup_replica_agreement::<T>(&admin, bucket_id, &replica_provider, 1);
 
-        let top_up_amount = BalanceOf::<T>::max_value() / 50u32.into();
+        // Worst case: a third-party payer.
+        let payer = funded_account::<T>("payer", 0);
+        let top_up_amount = funding::<T>() / 50u32.into();
 
         #[extrinsic_call]
         top_up_replica_sync_balance(
-            RawOrigin::Signed(admin),
+            RawOrigin::Signed(payer),
             bucket_id,
             replica_provider,
             top_up_amount,
@@ -1125,12 +1172,12 @@ mod benchmarks {
         let deposit: BalanceOf<T> = 100u32.into();
         for i in 0..c {
             // Distinct slashable provider (stake reserved) + challenger per
-            // challenge — the worst case (each touches a distinct `Providers`,
-            // `ChallengerStats`, and pending-counter entry).
+            // challenge — the worst case (each touches a distinct `Providers`
+            // and pending-counter entry).
             let provider = create_provider::<T>(i);
             let challenger = funded_account::<T>("challenger", i);
-            // The slash unreserves the challenger's deposit, so reserve it.
-            let _ = T::Currency::reserve(&challenger, deposit);
+            // The slash releases the challenger's deposit, so hold it first.
+            let _ = StorageProvider::<T>::hold_challenge_deposit(&challenger, deposit);
             let bucket_id: BucketId = i as u64;
             let challenge = pallet::Challenge::<T> {
                 bucket_id,

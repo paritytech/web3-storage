@@ -9,10 +9,11 @@ mod common;
 use axum::http::StatusCode;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use codec::Encode;
+use provider_types::KeyScheme;
 use reqwest::Method;
 use serde_json::{json, Value};
 use sp_core::crypto::Ss58Codec;
-use sp_core::{sr25519, ByteArray, Pair, H256};
+use sp_core::{sr25519, Pair, H256};
 use storage_primitives::{Commitment, CommitmentPayload};
 use storage_provider_node::ProviderState;
 
@@ -21,8 +22,14 @@ use common::{StorageBackendKind, TestServer};
 impl TestServer {
     /// Signing provider (`//Alice`): endpoints that sign commitments work.
     async fn new(backend: StorageBackendKind) -> Self {
-        Self::start(backend, |deps| {
-            ProviderState::with_seed(deps, common::PROVIDER_SEED).expect("//Alice is a valid SURI")
+        Self::new_with_scheme(backend, KeyScheme::Sr25519).await
+    }
+
+    /// Signing provider (`//Alice`) under the given scheme.
+    async fn new_with_scheme(backend: StorageBackendKind, scheme: KeyScheme) -> Self {
+        Self::start(backend, move |deps| {
+            ProviderState::with_seed_scheme(deps, common::PROVIDER_SEED, scheme)
+                .expect("//Alice is a valid SURI")
         })
         .await
     }
@@ -32,6 +39,16 @@ impl TestServer {
     async fn new_unsigned(backend: StorageBackendKind) -> Self {
         Self::start(backend, |deps| {
             ProviderState::with_provider_id(deps, "0xtest_provider".to_string())
+        })
+        .await
+    }
+
+    /// Signing provider (`//Alice`) with no on-chain registration published,
+    /// so signing-bound endpoints must answer 503 rather than sign with a key
+    /// the chain does not (yet) know about.
+    async fn new_unregistered(backend: StorageBackendKind) -> Self {
+        Self::start_unregistered(backend, |deps| {
+            ProviderState::with_seed(deps, common::PROVIDER_SEED).expect("//Alice is a valid SURI")
         })
         .await
     }
@@ -72,12 +89,13 @@ common::backend_tests! {
         let body: Value = response.json().await.unwrap();
         assert_eq!(body["provider_id"], expect_provider_id);
 
-        // `TestServer::new` seeds a signing key but wires up neither the nonce
-        // counter nor on-chain provider info (those need a live chain at startup),
-        // so the readiness flags must reflect "can sign, not yet ready to negotiate".
+        // `TestServer::new` seeds a signing key and a matching on-chain
+        // registration, but not the nonce counter (that needs a live chain at
+        // startup), so readiness must reflect "can sign and negotiate, but
+        // the replay window isn't bootstrapped yet".
         assert_eq!(body["readiness"]["signing_configured"], true);
         assert_eq!(body["readiness"]["nonce_counter_ready"], false);
-        assert_eq!(body["readiness"]["provider_info_loaded"], false);
+        assert_eq!(body["readiness"]["provider_info_loaded"], true);
     }
 }
 
@@ -446,6 +464,22 @@ fn alice_public() -> sr25519::Public {
     common::test_member_pair().public()
 }
 
+/// Decode a `provider_signature` field: 0x-prefixed hex of a SCALE-encoded
+/// `MultiSignature`, as emitted by `ProviderState::sign`.
+fn decode_provider_signature(sig_hex: &str) -> sp_runtime::MultiSignature {
+    use codec::Decode;
+    let bytes = hex_decode(sig_hex).expect("signature hex parses");
+    sp_runtime::MultiSignature::decode(&mut &bytes[..]).expect("valid SCALE MultiSignature")
+}
+
+/// Expect the signature to be the Sr25519 variant and unwrap it.
+fn expect_sr25519(sig: sp_runtime::MultiSignature) -> sr25519::Signature {
+    match sig {
+        sp_runtime::MultiSignature::Sr25519(sig) => sig,
+        other => panic!("expected an Sr25519 signature, got {other:?}"),
+    }
+}
+
 common::backend_tests! {
     async fn commit_returns_valid_sr25519_signature_over_commitment_payload(backend) {
         // The whole point of the zero-byte-signing fix: when a key IS configured,
@@ -462,13 +496,10 @@ common::backend_tests! {
             .as_str()
             .expect("provider_signature present");
 
-        // Defensive: the zero-byte placeholder this PR removes was exactly 64
-        // hex-encoded zero bytes. If it ever returns, this catches it.
-        let sig_bytes = hex_decode(sig_hex).expect("signature hex parses");
-        assert_eq!(sig_bytes.len(), 64, "sr25519 signatures are 64 bytes");
+        // Defensive: if the zero-byte placeholder ever returns, this catches it.
+        let sig = expect_sr25519(decode_provider_signature(sig_hex));
         assert_ne!(
-            sig_bytes,
-            vec![0u8; 64],
+            sig.0, [0u8; 64],
             "server returned zero-byte placeholder instead of a real signature"
         );
 
@@ -489,7 +520,6 @@ common::backend_tests! {
         );
         let encoded = payload.encode();
 
-        let sig = sr25519::Signature::from_slice(&sig_bytes).expect("64-byte signature");
         assert!(
             sr25519::Pair::verify(&sig, &encoded, &alice_public()),
             "signature did not verify against //Alice over the expected commitment payload"
@@ -521,8 +551,10 @@ common::backend_tests! {
         let leaf_count = body["leaf_count"].as_u64().unwrap();
         assert!(leaf_count > 0, "leaf_count must be the real on-disk value");
 
-        let sig_bytes = hex_decode(body["provider_signature"].as_str().unwrap()).unwrap();
-        assert_ne!(sig_bytes, vec![0u8; 64]);
+        let sig = expect_sr25519(decode_provider_signature(
+            body["provider_signature"].as_str().unwrap(),
+        ));
+        assert_ne!(sig.0, [0u8; 64]);
 
         let payload = CommitmentPayload::new(
             bucket_id,
@@ -532,7 +564,6 @@ common::backend_tests! {
                 leaf_count,
             },
         );
-        let sig = sr25519::Signature::from_slice(&sig_bytes).unwrap();
         assert!(sr25519::Pair::verify(
             &sig,
             payload.encode(),
@@ -551,10 +582,9 @@ common::backend_tests! {
         let (_h, body) = upload_and_commit(&server, bucket_id).await;
         let mmr_root = H256::from_slice(&hex_decode(body["mmr_root"].as_str().unwrap()).unwrap());
         let start_seq = body["start_seq"].as_u64().unwrap();
-        let sig = sr25519::Signature::from_slice(
-            &hex_decode(body["provider_signature"].as_str().unwrap()).unwrap(),
-        )
-        .unwrap();
+        let sig = expect_sr25519(decode_provider_signature(
+            body["provider_signature"].as_str().unwrap(),
+        ));
         let encoded = CommitmentPayload::new(
             bucket_id,
             Commitment {
@@ -571,6 +601,43 @@ common::backend_tests! {
             "Alice's signature wrongly verifies under Bob's key"
         );
     }
+}
+
+#[tokio::test]
+async fn commit_signs_with_configured_ed25519_scheme() {
+    // A node started with --key-scheme ed25519 must emit Ed25519-tagged
+    // MultiSignatures that verify under the ed25519 key derived from the
+    // same seed — the full multi-scheme wire path.
+    use sp_core::ed25519;
+
+    let server = TestServer::new_with_scheme(StorageBackendKind::RocksDb, KeyScheme::Ed25519).await;
+    let bucket_id = 11;
+
+    let (_h, body) = upload_and_commit(&server, bucket_id).await;
+    let mmr_root = H256::from_slice(&hex_decode(body["mmr_root"].as_str().unwrap()).unwrap());
+    let start_seq = body["start_seq"].as_u64().unwrap();
+    let leaf_count = body["leaf_count"].as_u64().unwrap();
+
+    let sig = match decode_provider_signature(body["provider_signature"].as_str().unwrap()) {
+        sp_runtime::MultiSignature::Ed25519(sig) => sig,
+        other => panic!("expected an Ed25519 signature, got {other:?}"),
+    };
+
+    let payload = CommitmentPayload::new(
+        bucket_id,
+        Commitment {
+            mmr_root,
+            start_seq,
+            leaf_count,
+        },
+    );
+    let alice_ed = ed25519::Pair::from_string(common::PROVIDER_SEED, None)
+        .unwrap()
+        .public();
+    assert!(
+        ed25519::Pair::verify(&sig, payload.encode(), &alice_ed),
+        "Ed25519 signature did not verify under the ed25519 //Alice key"
+    );
 }
 
 common::backend_tests! {
@@ -652,6 +719,52 @@ common::backend_tests! {
         assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
         let body: Value = resp.json().await.unwrap();
         assert_eq!(body["error"], "signing_unavailable");
+    }
+}
+
+common::backend_tests! {
+    async fn commitment_endpoint_returns_503_when_registration_not_published(backend) {
+        // A signing key alone is not enough: without a published on-chain
+        // registration, the pallet has no key to verify against, so signing
+        // must refuse rather than emit a signature that can never verify.
+        let server = TestServer::new_unregistered(backend).await;
+
+        // Seed the bucket via storage so the bucket-lookup gate passes and the
+        // handler actually reaches the signing step. Calling /commit reaches
+        // sign() and returns 503, but still mutates storage, which is enough
+        // to make /commitment reach state.sign(...) too.
+        let data = b"chunk-for-commitment-unregistered";
+        let hash = storage_primitives::blake2_256(data);
+        let hash_hex = format!("0x{}", hex_encode(hash.as_bytes()));
+        server
+            .client
+            .put(server.url("/node"))
+            .json(&json!({
+                "bucket_id": 1,
+                "hash": hash_hex,
+                "data": BASE64.encode(data),
+                "children": null,
+            }))
+            .send()
+            .await
+            .unwrap();
+        server
+            .client
+            .post(server.url("/commit"))
+            .json(&json!({ "bucket_id": 1, "data_roots": [hash_hex] }))
+            .send()
+            .await
+            .unwrap();
+
+        let resp = server
+            .client
+            .get(server.url("/commitment?bucket_id=1"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let body: Value = resp.json().await.unwrap();
+        assert_eq!(body["error"], "provider_info_unavailable");
     }
 }
 
@@ -1054,11 +1167,30 @@ common::backend_tests! {
         let body: Value = resp.json().await.unwrap();
         assert_eq!(body["start_seq"], 1);
         assert_eq!(body["leaf_count"], 1);
-        assert!(body["mmr_root"].is_string());
-        assert!(body["provider_signature"]
-            .as_str()
-            .unwrap()
-            .starts_with("0x"));
+
+        // The deletion proof is the one signing path with no consumer in this
+        // repo, so nothing else would catch it regressing. Verify it like the
+        // /commit proofs: a real signature, in the SCALE MultiSignature wire
+        // format, over the *post-delete* commitment. A zero placeholder or a
+        // raw untagged signature both pass a `starts_with("0x")` check.
+        let mmr_root = H256::from_slice(&hex_decode(body["mmr_root"].as_str().unwrap()).unwrap());
+        let sig = expect_sr25519(decode_provider_signature(
+            body["provider_signature"].as_str().unwrap(),
+        ));
+        assert_ne!(sig.0, [0u8; 64], "delete returned a zeroed placeholder");
+
+        let payload = CommitmentPayload::new(
+            1,
+            Commitment {
+                mmr_root,
+                start_seq: 1,
+                leaf_count: 1,
+            },
+        );
+        assert!(
+            sr25519::Pair::verify(&sig, payload.encode(), &alice_public()),
+            "delete proof did not verify against //Alice over the post-delete commitment"
+        );
     }
 }
 

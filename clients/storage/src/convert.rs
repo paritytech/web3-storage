@@ -10,7 +10,6 @@
 use storage_subxt::api::runtime_types;
 
 use crate::agreement::AgreementTermsOf;
-use crate::base::ClientError;
 use runtime_types::bounded_collections::bounded_vec::BoundedVec;
 use runtime_types::storage_primitives as rt;
 
@@ -73,20 +72,6 @@ pub fn multisig(sig: &sp_runtime::MultiSignature) -> runtime_types::sp_runtime::
         sp_runtime::MultiSignature::Ecdsa(s) => RtSig::Ecdsa(s.0),
         sp_runtime::MultiSignature::Eth(s) => RtSig::Eth(s.0),
     }
-}
-
-/// Raw sr25519 signature bytes (as served by provider HTTP endpoints) →
-/// generated `MultiSignature::Sr25519`.
-pub fn sr25519_signature(
-    sig: Vec<u8>,
-) -> Result<runtime_types::sp_runtime::MultiSignature, ClientError> {
-    let bytes: [u8; 64] = sig.try_into().map_err(|v: Vec<u8>| {
-        ClientError::Serialization(format!(
-            "sr25519 signature must be 64 bytes, got {}",
-            v.len()
-        ))
-    })?;
-    Ok(runtime_types::sp_runtime::MultiSignature::Sr25519(bytes))
 }
 
 /// [`storage_primitives::Commitment`] → generated twin.
@@ -219,16 +204,6 @@ mod tests {
         assert_eq!(
             multisig(&sp_runtime::MultiSignature::Eth(eth.into())),
             RtSig::Eth(eth)
-        );
-    }
-
-    #[test]
-    fn sr25519_signature_rejects_wrong_length() {
-        assert!(sr25519_signature(vec![0u8; 63]).is_err());
-        assert!(sr25519_signature(vec![0u8; 65]).is_err());
-        assert_eq!(
-            sr25519_signature(vec![7u8; 64]).unwrap(),
-            runtime_types::sp_runtime::MultiSignature::Sr25519([7u8; 64])
         );
     }
 

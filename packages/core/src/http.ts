@@ -69,7 +69,7 @@ export async function httpFetch(
 
 /**
  * The signing surface needed to authenticate a provider request. Matches the
- * subset of PAPI's `PolkadotSigner` we use, so both a derived dev signer and a
+ * subset of PAPI's `SignerTxCreator` we use, so both a derived dev signer and a
  * browser wallet extension satisfy it. `signBytes` is async and — for wallets
  * and PAPI signers alike — wraps the payload in `<Bytes>…</Bytes>`; the provider
  * accepts that wrapped form (see `wrap_bytes` in crates/providers/auth).
@@ -145,7 +145,10 @@ export interface SignedTerms {
     bucket_id?: bigint | number | string | null;
     replica_params?: ReplicaTermsWire | null;
   };
-  /** SCALE-encoded MultiSignature as 0x-hex, e.g. `0x01<64-byte sr25519 sig>`. */
+  /**
+   * SCALE-encoded MultiSignature as 0x-hex — the variant byte tags the
+   * scheme, e.g. `0x01<64-byte sr25519 sig>` or `0x02<65-byte ecdsa sig>`.
+   */
   signature: string;
 }
 

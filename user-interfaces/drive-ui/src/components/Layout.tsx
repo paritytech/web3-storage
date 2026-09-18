@@ -20,7 +20,7 @@ import {
 } from "@/state/network.state";
 import { withNetworkHandoff } from "@web3-storage/network-config";
 import { NetworkPicker } from "@web3-storage/network-picker";
-import { formatTokens, truncateHash } from "@/lib/utils";
+import { formatUnits, truncateHash } from "@web3-storage/format";
 import DriveList from "./DriveList";
 import ConnectDialog from "./ConnectDialog";
 import AccountDialog from "./AccountDialog";
@@ -127,7 +127,7 @@ export default function Layout() {
                   {balance && (
                     <span data-testid="balance-display" className="flex items-center gap-1 text-muted-foreground">
                       <Wallet className="h-3 w-3" />
-                      {formatTokens(balance.free)} tokens
+                      {formatUnits(balance.free)} tokens
                     </span>
                   )}
                 </div>

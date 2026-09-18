@@ -4,7 +4,7 @@
 // and walks a fresh account A→B: map the account, negotiate signed terms with
 // the chosen provider (owner = the contract's mapped account), then call
 // `createLibrary{value}` on the Photos contract. Mirrors the headless sequence
-// in `scripts/photos-flow.ts`, submitting via PAPI `signAndSubmit`.
+// in `scripts/photos-flow.ts`, submitting via PAPI `createAndSubmit`.
 
 import { BehaviorSubject } from 'rxjs'
 import { bind } from '@react-rxjs/core'
@@ -103,7 +103,7 @@ export async function createLibrary(input: CreateLibraryInput): Promise<void> {
   lastInput = input
   const { account, contract, provider, sizeBytes, durationBlocks, name } = input
   const api = requireApi()
-  const signer = account.polkadotSigner
+  const signer = account.txCreator
 
   try {
     // Idempotent: a fresh account must be mapped before any contract write.
@@ -111,8 +111,9 @@ export async function createLibrary(input: CreateLibraryInput): Promise<void> {
     await ensureAccountMapped(api, signer)
 
     // Re-read the provider's locked price right before negotiating — the list
-    // may be stale, and a drifted price means `PaymentExceedsMax`.
-    const info = await api.query.StorageProvider.Providers.getValue(provider.account)
+    // may be stale, and a drifted price means `PaymentExceedsMax`. Same runtime
+    // API the list uses, so free capacity has one definition, not two.
+    const info = await api.apis.StorageProviderApi.provider_info(provider.account)
     if (!info) {
       creation$.next({
         stage: 'failed',
@@ -120,7 +121,7 @@ export async function createLibrary(input: CreateLibraryInput): Promise<void> {
       })
       return
     }
-    if (!info.settings.accepting_primary) {
+    if (!info.accepting_primary) {
       creation$.next({
         stage: 'failed',
         error: { kind: 'negotiate', message: 'Provider is no longer accepting new agreements.' },
@@ -128,11 +129,10 @@ export async function createLibrary(input: CreateLibraryInput): Promise<void> {
       return
     }
     // Re-check capacity against fresh state too — the cached list (which gated
-    // the button) can be stale. `max_capacity === 0` is unlimited.
-    const maxCapacity = BigInt(info.settings.max_capacity ?? 0)
-    const committedBytes = BigInt(info.committed_bytes ?? 0)
-    const availableCapacity = maxCapacity > committedBytes ? maxCapacity - committedBytes : 0n
-    if (maxCapacity !== 0n && availableCapacity < sizeBytes) {
+    // the button) can be stale. `null` is unlimited, not "full".
+    const availableCapacity =
+      info.available_capacity == null ? undefined : BigInt(info.available_capacity)
+    if (availableCapacity !== undefined && availableCapacity < sizeBytes) {
       creation$.next({
         stage: 'failed',
         error: {
@@ -142,7 +142,7 @@ export async function createLibrary(input: CreateLibraryInput): Promise<void> {
       })
       return
     }
-    const pricePerByte = BigInt(info.settings.price_per_byte ?? 0)
+    const pricePerByte = info.price_per_byte
     const { value } = computePaymentAndValue(pricePerByte, sizeBytes, durationBlocks)
 
     // The terms are bound to the *contract's* mapped account, not the user's.

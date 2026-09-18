@@ -36,7 +36,7 @@ import { UploadButton } from '@/components/UploadButton'
 import { PhotoGrid } from '@/components/PhotoGrid'
 import { Lightbox } from '@/components/Lightbox'
 import { PhotoEditor } from '@/components/PhotoEditor'
-import { formatAddress, formatHash } from '@/utils/format'
+import { formatAddress, formatHash } from '@web3-storage/format'
 
 type ReadState =
   | { kind: 'idle' }
@@ -85,7 +85,7 @@ export function Library() {
     if (isReload) setState({ kind: 'loading' })
     ;(async () => {
       try {
-        const userH160 = substrateToH160(account.polkadotSigner.publicKey)
+        const userH160 = substrateToH160(account.txCreator.publicKey)
         const library = await readLibraryOf(requireApi(), contract.address, userH160, account.address)
         if (!cancelled) setState({ kind: 'ready', library, contract })
       } catch (e) {

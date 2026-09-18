@@ -63,6 +63,9 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
 
+      - name: Check the lockfile is deduplicated
+        run: pnpm dedupe --check
+
       - name: Typecheck sdk packages + examples
         run: pnpm run typecheck:packages
 
@@ -86,6 +89,8 @@ jobs:
             filter: provider-dashboard
           - ui: photos
             filter: "@web3-storage/photos"
+          - ui: explorer
+            filter: "@web3-storage/explorer"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
         with:
