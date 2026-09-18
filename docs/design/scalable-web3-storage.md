@@ -11,6 +11,7 @@
 
 | Version | Changes |
 |---------|---------|
+| 2.5 | `MinStakePerByte` removed: no stake-per-byte requirement is enforced against `committed_bytes` or `max_capacity`. Both remain informative; `set_stake` now checks only `MinProviderStake` and the `higher_stake_lock`. **Read**: "Provider Stake" here; impl doc "Stake vs. capacity". |
 | 2.4 | Changeable provider stake (agreements snapshot stake, not just price; lowering allowed via O(1) `cur_until`/`higher_stake_lock`, no grow-only rule); stake backs verifiable `committed_bytes`, not self-declared `max_capacity`; per-bucket `agreement_id` bound into commitments (obsolete/expired commitments void — replaces the old time-based `nonce`/`MaxNonceAge` replay guard, now removed); terms `version` pin (bumped on price ↑ / replica-sync-price ↑ / stake ↓ / virtual-member-leaving — the worse-direction terms a quote doesn't carry explicitly) replaces `max_payment`: signed `AgreementTerms` name a `provider_version` instead of a price (price, sync price and stake are read from the provider at redemption, single source of truth), `extend_agreement`/`top_up_agreement` take `expected_version`. Deregistration keeps `ProviderReplayStates` so pre-deregister quotes can't replay after re-registration. `extend_agreement` is now **owner-only** (permissionless extension let a provider force-settle the elapsed term and defer expiry, dodging the owner's burn; permissionless persistence returns later via a replacement-agreement mechanism). Deregistration reverted to **one-step** (`deregister_provider` withdraws immediately once `committed_bytes == 0`); the added two-step announcement window (`DeregisterAnnouncementPeriod` / `complete_deregister` / `cancel_deregister`) is removed — liability tracks the active agreement (all challenge paths, incl. `challenge_checkpoint`, now reject a provider with no live agreement), so there is no post-expiry challenge to race. Reverse indexes (`MemberBuckets`, new `ProviderBuckets`) are now unbounded set-membership double-maps (dropped the artificial `MaxBucketsPerMember` cap) and read **only via versioned runtime API** (`member_buckets`/`provider_buckets`/paged `provider_agreements`), never raw storage — convenience indexes, droppable once off-chain indexing exists. Removed: `create_bucket_with_storage` (unsound on-chain provider search) and all provider-initiated checkpoint machinery (redundant with replica sync). **Read**: "Provider Stake" and "Storage Agreements" here; impl doc "Changeable Stake" / "Stake vs. capacity" / "Term Pinning" and `StorageAgreement` / `CommitmentPayload`. |
 | 2.3 | Private buckets clarified (visibility flag, Reader role, primary challenges gated to members + primary-agreement owners, tier-split challenge stats). **Read**: new "Bucket Visibility & Access" section; "The Challenge Game". |
 | 2.2 | Challenge cost model reworked and clarified: a valid response never touches the provider's stake. The challenger's deposit covers the on-chain response cost; authorized challengers (bucket members + agreement owners) get a split where the provider bears a fraction (challenger's share floored at 50%, as leverage—not cheap recovery), while the general public pays in full (anti-DoS, since a provider can't serve everyone equally). Stake is slashed only on a missing/invalid response. |
@@ -605,10 +606,8 @@ provider stays liable at each agreement's snapshot until that agreement ends. `s
 agreements; a lowering only frees capital once the agreements made under the higher figure expire. (This is done with
 O(1) bookkeeping, not by scanning agreements — see the implementation doc's "Changeable Stake".)
 
-**Stake backs committed bytes, not self-declared capacity.** The stake requirement is enforced against
-`committed_bytes`—the bytes a provider actually agreed to store—because that is the only figure the chain can verify. A
-provider's advertised `max_capacity` is a courtesy signal (it sets it, it could misreport it) and carries no stake
-guarantee.
+**Stake is not tied to capacity.** No stake-per-byte requirement is enforced, against either `committed_bytes` or the
+advertised `max_capacity`.
 
 ### The Challenge Game
 

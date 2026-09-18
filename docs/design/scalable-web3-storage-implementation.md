@@ -155,11 +155,6 @@ pub trait Config: frame_system::Config<RuntimeEvent: From<Event<Self>>> {
     /// Treasury account to receive burned payments.
     type Treasury: Get<Self::AccountId>;
 
-    /// Minimum stake per byte committed (e.g., 1 token per GB = 1e12 per 1e9 bytes).
-    /// Prevents providers from over-committing relative to their collateral.
-    #[pallet::constant]
-    type MinStakePerByte: Get<BalanceOf<Self>>;
-
     /// Maximum length of provider multiaddr.
     #[pallet::constant]
     type MaxMultiaddrLength: Get<u32>;
@@ -222,7 +217,6 @@ parachain `HOURS`:
 | Constant | Value |
 |---|---|
 | `MinProviderStake` | `1_000 * UNIT` (1000 tokens) |
-| `MinStakePerByte` | `1_000` |
 | `MaxMultiaddrLength` | `128` |
 | `MaxMembers` | `100` |
 | `MaxPrimaryProviders` | `5` |
@@ -370,9 +364,8 @@ pub struct ProviderSettings<T: Config> {
     /// Self-declared advisory capacity ceiling in bytes. `0` means unlimited.
     /// When non-zero, the provider will not accept agreements that push
     /// `committed_bytes` past it. This is a courtesy signal only — the provider
-    /// sets it and could misreport it, so it is NOT used for the stake
-    /// invariant. Stake is backed against the verifiable `committed_bytes`
-    /// instead (see "Stake vs. capacity").
+    /// sets it and could misreport it. No stake check is tied to it, nor to
+    /// `committed_bytes` (see "Stake vs. capacity").
     pub max_capacity: u64,
 }
 
@@ -779,17 +772,14 @@ needs a decrement.
 
 ### Stake vs. capacity
 
-The only capacity figure the chain can trust is **`committed_bytes`** — the sum
-of `max_bytes` over agreements the provider actually accepted. `max_capacity` is
+**The chain enforces no relation between stake and capacity.** `max_capacity` is
 self-declared and unverifiable, so it is advisory only (a "not accepting past
-here" hint). The stake invariant is therefore enforced against real obligations:
+here" hint). `committed_bytes` — the sum of `max_bytes` over agreements the
+provider accepted — is verifiable, but a stake-per-byte constraint on it
+(`stake >= committed_bytes * MinStakePerByte`) would enforce nothing real.
 
-```
-locked_stake(provider) >= committed_bytes * MinStakePerByte
-```
-
-checked when an agreement is accepted (the new `max_bytes` must fit) and when
-`set_stake` lowers stake. There is no stake check tied to `max_capacity`.
+`committed_bytes` remains as an informative figure — clients read it to judge
+how loaded a provider is, and deregistration requires it to reach zero.
 
 ### Term Pinning (no-surprise agreements)
 
@@ -1213,8 +1203,7 @@ impl<T: Config> Pallet<T> {
     ///
     /// Raising takes effect immediately. Lowering is allowed only when no higher
     /// stake generation is still owed (`higher_stake_lock` expired, i.e.
-    /// `now >= higher_stake_lock.until`) and the new value still covers current obligations
-    /// (`new >= committed_bytes * MinStakePerByte` and `>= MinProviderStake`);
+    /// `now >= higher_stake_lock.until`) and the new value is `>= MinProviderStake`;
     /// otherwise `StakeStillLocked` / `InsufficientStakeForCommitted`. Existing
     /// agreements keep the stake they snapshotted — see "Changeable Stake".
     /// Bumps `version` only when lowering (a raise is strictly better — see
@@ -1257,10 +1246,7 @@ impl<T: Config> Pallet<T> {
     /// - `min_duration <= max_duration` (`MinDurationExceedsMaxDuration`).
     /// - If `max_capacity > 0`: must be `>= committed_bytes`
     ///   (`CapacityBelowCommitted`). `max_capacity` is a self-declared *advisory*
-    ///   ceiling only — it is not stake-enforced (the provider sets it and could
-    ///   lie), so there is no `stake >= max_capacity * MinStakePerByte` check. The
-    ///   real, verifiable stake invariant is against `committed_bytes` (see
-    ///   "Stake vs. capacity" below), enforced when agreements are accepted.
+    ///   ceiling only.
     /// - Bumps `version` iff `price_per_byte` or `replica_sync_price` increased
     ///   (`None` → `Some` counts as an increase). Other settings (durations,
     ///   capacity, `accepting_*`) are checked directly against a quote's
