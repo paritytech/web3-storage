@@ -41,11 +41,9 @@ pub struct AgreementTerms<AccountId, Balance, BlockNumber> {
     /// Provider-chosen replay-protection nonce; uniqueness is enforced
     /// through the provider's sliding replay window.
     pub nonce: u64,
-    /// Bucket the quote is bound to.
-    /// - `None` for primary terms
-    /// - `Some(id)` for replica terms — must match the bucket targeted by
-    ///   the extrinsic.
-    pub bucket_id: Option<crate::BucketId>,
+    /// Bucket the quote is for. The provider signs it, so a quote cannot be
+    /// redirected to another bucket.
+    pub bucket: BucketTarget,
     /// Replica-specific parameters.
     /// - `None` means these are primary terms;
     /// - `Some(_)` means the provider has quoted a replica agreement and the extra per-sync funding is included.
@@ -72,6 +70,38 @@ impl<AccountId: Encode, Balance: Encode, BlockNumber: Encode>
         let mut payload = self.signing_context().to_vec();
         self.encode_to(&mut payload);
         payload
+    }
+}
+
+/// Bucket a quote is for.
+#[derive(
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Encode,
+    Decode,
+    DecodeWithMemTracking,
+    TypeInfo,
+    MaxEncodedLen,
+    Debug,
+)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum BucketTarget {
+    /// A bucket created when the quote is redeemed. Only
+    /// `create_bucket_with_primary` accepts it.
+    New,
+    /// An existing bucket. Only `add_primary_provider` and
+    /// `add_replica_provider` accept it, and only for this bucket id.
+    Existing(crate::BucketId),
+}
+
+/// `Some(id)` maps to [`BucketTarget::Existing`], `None` to
+/// [`BucketTarget::New`] — the shape callers that model the target as an
+/// optional bucket id (the `/negotiate` request, the Solidity mirrors) send.
+impl From<Option<crate::BucketId>> for BucketTarget {
+    fn from(bucket_id: Option<crate::BucketId>) -> Self {
+        bucket_id.map_or(Self::New, Self::Existing)
     }
 }
 

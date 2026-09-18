@@ -46,9 +46,9 @@ interface IWeb3Storage {
         uint32 validUntil;
         /// Provider-chosen replay-protection nonce.
         uint64 nonce;
-        /// `true` if the quote is bound to an existing bucket (`Some(_)` on
-        /// the Rust side) — required for replica terms; primary terms leave
-        /// this false.
+        /// `true` if the quote names an existing bucket
+        /// (`BucketTarget::Existing` on the Rust side); `false` for a bucket
+        /// created at redemption (`BucketTarget::New`).
         bool hasBucketId;
         /// Target bucket id; only read when `hasBucketId` is true.
         uint64 bucketId;
@@ -60,19 +60,37 @@ interface IWeb3Storage {
 
     // --- Bucket lifecycle ---------------------------------------------------
 
-    /// Redeem provider-signed agreement terms: create a bucket and open a
-    /// primary agreement atomically. `terms` must match the SCALE payload the
-    /// provider signed; `terms.owner` must be the caller's substrate-mapped
-    /// account. `signature` is the SCALE-encoded `MultiSignature` from the
-    /// provider's `/negotiate` response (variant byte + raw signature bytes).
+    /// Create an empty bucket with the caller as its sole admin.
+    /// `minProviders` is how many primary-provider signatures each checkpoint
+    /// needs. Returns the new bucket id.
+    function createBucket(uint32 minProviders, Visibility visibility)
+        external
+        returns (uint64 bucketId);
+
+    /// Redeem provider-signed primary terms: create a bucket and open its
+    /// first primary agreement atomically. `terms` must match the SCALE
+    /// payload the provider signed, with `hasBucketId` false;
+    /// `terms.owner` must be the caller's substrate-mapped account.
+    /// `signature` is the SCALE-encoded `MultiSignature` from the provider's
+    /// `/negotiate` response (variant byte + raw signature bytes).
     /// `visibility` sets the new bucket's read visibility. Returns the new
     /// bucket id.
-    function establishStorageAgreement(
+    function createBucketWithPrimary(
         bytes32 provider,
         PrimitiveAgreementTerms calldata terms,
         bytes calldata signature,
         Visibility visibility
     ) external returns (uint64 bucketId);
+
+    /// Admin only. Redeem provider-signed primary terms against an existing
+    /// bucket, adding the provider to its primary set. `terms.hasBucketId`
+    /// must be true and `terms.bucketId` must equal `bucketId`.
+    function addPrimaryProvider(
+        uint64 bucketId,
+        bytes32 provider,
+        PrimitiveAgreementTerms calldata terms,
+        bytes calldata signature
+    ) external;
 
     /// Freeze a bucket — append-only, irreversible.
     function freezeBucket(uint64 bucketId) external;

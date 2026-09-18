@@ -68,7 +68,7 @@ pub mod extrinsics {
     ///
     /// `terms` + `sig` are the provider-signed agreement bundle returned by
     /// `ProviderClient::negotiate_terms`. Layer 0 verifies the signature
-    /// inside `establish_storage_agreement_internal`; bucket creation +
+    /// inside `create_bucket_with_primary_internal`; bucket creation +
     /// primary-agreement opening happen atomically alongside drive
     /// registration.
     pub fn create_drive(

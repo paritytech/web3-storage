@@ -18,7 +18,7 @@ use sp_core::{sr25519, Pair};
 use sp_runtime::{AccountId32, MultiSignature};
 use std::net::SocketAddr;
 use std::sync::Arc;
-use storage_primitives::ReplicaTerms;
+use storage_primitives::{BucketTarget, ReplicaTerms};
 use storage_provider_node::{
     create_router, NegotiateRequest, NonceCounter, PalletConstants, ProviderDeps, ProviderState,
     SignedTerms,
@@ -154,7 +154,7 @@ fn primary_request() -> NegotiateRequest {
         max_bytes: 1024,
         duration: 50,
         price_per_byte: 5,
-        bucket_id: None,
+        bucket: None,
         replica_params: None,
     }
 }
@@ -181,7 +181,7 @@ async fn negotiate_returns_signed_terms_with_valid_signature() {
     assert_eq!(signed.terms.price_per_byte, 5);
     assert_eq!(signed.terms.max_bytes, 1024);
     assert_eq!(signed.terms.duration, 50);
-    assert_eq!(signed.terms.bucket_id, None);
+    assert_eq!(signed.terms.bucket, BucketTarget::New);
     assert!(signed.terms.replica_params.is_none());
 
     // The signature must verify under //Alice over blake2_256(signing_payload).
@@ -307,7 +307,7 @@ async fn negotiate_accepts_replica_when_sync_price_configured() {
     let server = TestServer::ready(info).await;
 
     let mut req = primary_request();
-    req.bucket_id = Some(42);
+    req.bucket = Some(42);
     req.replica_params = Some(ReplicaTerms {
         sync_balance: 1_000,
         min_sync_interval: 10,
@@ -317,7 +317,7 @@ async fn negotiate_accepts_replica_when_sync_price_configured() {
     let resp = server.negotiate(&req).await;
     assert_eq!(resp.status(), StatusCode::OK);
     let signed: SignedTerms = resp.json().await.unwrap();
-    assert_eq!(signed.terms.bucket_id, Some(42));
+    assert_eq!(signed.terms.bucket, BucketTarget::Existing(42));
     assert!(signed.terms.replica_params.is_some());
 }
 
@@ -661,7 +661,7 @@ async fn negotiate_422_not_accepting_replicas() {
     let server = TestServer::ready(provider_info()).await;
 
     let mut req = primary_request();
-    req.bucket_id = Some(1);
+    req.bucket = Some(1);
     req.replica_params = Some(ReplicaTerms {
         sync_balance: 1_000,
         min_sync_interval: 10,

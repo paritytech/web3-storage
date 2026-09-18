@@ -10,7 +10,7 @@
 import { ss58Decode } from '@polkadot-labs/hdkd-helpers'
 import { decodeEventLog } from 'viem'
 import type { TxCreator } from 'polkadot-api/tx-creator'
-import { toHex, type ParachainApi, type SignedTerms } from '@web3-storage/papi'
+import { signedTermsBucketId, toHex, type ParachainApi, type SignedTerms } from '@web3-storage/papi'
 // Reuse the SDK's ABI encoder and the shared gas/storage defaults so the browser
 // path can't drift from the headless flow (`scripts/*`) that already imports them.
 import { DEFAULT_GAS_LIMIT, DEFAULT_STORAGE_DEPOSIT_LIMIT, encodeCall } from '@web3-storage/sdk/revive'
@@ -74,7 +74,7 @@ export function toContractTerms(
     min_sync_interval?: number
     sync_price?: number | bigint
   } | null
-  const bucket = t.bucket_id
+  const bucketId = signedTermsBucketId(signed)
   return {
     terms: {
       owner: toHex(ownerPublicKey) as `0x${string}`,
@@ -89,8 +89,8 @@ export function toContractTerms(
         minSyncInterval: Number(rp?.min_sync_interval ?? 0),
         syncPrice: BigInt(rp?.sync_price ?? 0),
       },
-      hasBucketId: bucket != null,
-      bucketId: BigInt(bucket ?? 0),
+      hasBucketId: bucketId != null,
+      bucketId: bucketId ?? 0n,
     },
     signature: (signed.signature.startsWith('0x')
       ? signed.signature

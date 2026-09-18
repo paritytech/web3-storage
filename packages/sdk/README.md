@@ -68,6 +68,38 @@ app supplies a listener. `submitTx` streams `created`/`in-pool`/`best`/
 `finalized` phases with a `final` flag; the default console listener prints
 only the final one.
 
+## Buckets and their providers
+
+Bucket creation and provider assignment are separate calls. A quote names the
+bucket it is for, so negotiate it against the bucket the redeeming call
+targets:
+
+| Wrapper | Negotiate with | Redeems |
+| --- | --- | --- |
+| `createBucket` | — | `create_bucket` |
+| `createBucketWithPrimary` | `bucket: null` | `create_bucket_with_primary` |
+| `addPrimaryProvider` | `bucket: <id>` | `add_primary_provider` (admin only) |
+| `addReplicaProvider` | `bucket: <id>` | `add_replica_provider` |
+
+`signedTermsBucketId(signed)` reads the bucket id back out of a signed quote;
+it returns `undefined` for a quote that creates its bucket.
+
+### Changing a bucket's primary provider
+
+A bucket outlives its agreements, and its `bucket_id` never changes, so
+switching provider does not break any reference to it:
+
+1. `addPrimaryProvider` with a quote for the bucket. Both primaries are now on
+   the bucket; only the old one has the data.
+2. Download the bucket's data from the old primary (skip this if a local copy
+   remains) and upload it to the new one.
+3. Ask the new primary to sign a commitment and `checkpoint` it, so the new
+   primary enters the snapshot's signer bitfield.
+4. `endAgreement` against the old primary.
+
+The client moves the data: primaries do not sync with each other, and nothing
+on-chain transfers it.
+
 ## Download verification
 
 | Path | Verified? | Why |

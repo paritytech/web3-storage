@@ -134,7 +134,7 @@ mod tests {
             price_per_byte: 5,
             valid_until: 100,
             nonce: 1,
-            bucket_id: None,
+            bucket: provider_negotiation::BucketTarget::New,
             replica_params: None,
         };
 
