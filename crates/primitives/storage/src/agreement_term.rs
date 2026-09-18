@@ -25,6 +25,12 @@ pub const REPLICA_TERM_CONTEXT: &[u8] = b"replica-term-v1:";
 #[derive(
     Clone, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo, MaxEncodedLen, Debug,
 )]
+// DRIFT-001: the off-chain signed-terms quote that supersedes the design docs'
+// on-chain request/accept flow (AgreementRequest).
+// Proposal: keep; document this type in the design.
+// TODO: the virtual-provider extension
+// (https://github.com/paritytech/web3-storage/issues/316) may reshape these
+// terms; fold its changes in early to avoid an interface change.
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct AgreementTerms<AccountId, Balance, BlockNumber> {
     /// Owner that will be bound by these terms (must match the extrinsic

@@ -245,6 +245,8 @@ pub mod pallet {
         /// is slashed. Sets the floor on challenge spam economics — too low
         /// and griefing is free; too high and legitimate challenges become
         /// unaffordable.
+        // DRIFT-005: this config item is missing from the design doc's Config
+        // sketch. Proposal: keep; add it to the design's sketch and values table.
         #[pallet::constant]
         type ChallengeDeposit: Get<BalanceOf<Self>>;
 
@@ -920,6 +922,8 @@ pub mod pallet {
             /// Providers whose signatures back it.
             providers: Vec<T::AccountId>,
         },
+        // DRIFT-016: never emitted. Proposal: implement the join path or remove
+        // the variant; see the marker in the design doc's Event listing.
         /// A primary provider joined the bucket's provider set. Not emitted
         /// yet: no call adds a primary to an existing bucket (#417).
         ProviderAddedToBucket {
@@ -1616,6 +1620,13 @@ pub mod pallet {
         // Bucket Management
         // ─────────────────────────────────────────────────────────────────────
 
+        // DRIFT-001 / DRIFT-002: this signed-terms flow supersedes the design
+        // docs' on-chain request/accept round-trip and standalone create_bucket
+        // (bucket creation is folded in here).
+        // Proposal: DRIFT-001, keep this flow and realign the design docs to
+        // it. DRIFT-002, implement standalone create_bucket /
+        // create_bucket_with_storage or remove their sketches from the design
+        // doc; decision tracked in #417.
         /// Redeem provider-signed terms: create a bucket + primary agreement
         /// in a single call.
         ///
