@@ -627,7 +627,7 @@ export async function fetchChallengeProof(
   signer: InjectedPolkadotAccount,
 ): Promise<ChallengeProofData> {
   // Step 1: MMR proof
-  const headers = await signProviderRequest(signer.polkadotSigner, 'GET', bucketId)
+  const headers = await signProviderRequest(signer.txCreator, 'GET', bucketId)
   const mmrRes = await fetch(
     `${providerHttp}/mmr_proof?bucket_id=${bucketId}&leaf_index=${leafIndex}`,
     { headers },
