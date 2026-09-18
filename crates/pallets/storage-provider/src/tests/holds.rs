@@ -207,21 +207,6 @@ fn try_state_catches_bookkeeping_with_no_funds_behind_it() {
     });
 }
 
-/// A replica-accepting provider that charges for storage, so both the fee and
-/// the sync balance escrow non-zero amounts.
-fn replica_provider(who: u64, stake: u64) {
-    register_provider_with_settings(
-        who,
-        stake,
-        ProviderSettings {
-            price_per_byte: 1,
-            accepting_primary: true,
-            replica_sync_price: Some(10),
-            ..Default::default()
-        },
-    );
-}
-
 /// Escrow shape shared by the release-path tests: a replica agreement whose
 /// hold on the owner is the storage fee plus a 100-unit sync balance. Returns
 /// `(bucket_id, fee)`.
