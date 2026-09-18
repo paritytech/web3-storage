@@ -241,7 +241,7 @@ async fn get_node(
 
     let node = state
         .storage
-        .get_node(&hash)
+        .get_node(&hash)?
         .ok_or_else(|| provider_storage::Error::NodeNotFound(query.hash.clone()))?;
 
     Ok(Json(DownloadNodeResponse {
@@ -383,6 +383,8 @@ async fn commit(
     let leaf_count = state
         .storage
         .get_bucket(request.bucket_id)
+        .ok()
+        .flatten()
         .map(|b| b.leaf_count)
         .unwrap_or(0);
 
@@ -460,7 +462,7 @@ async fn get_commitment(
 ) -> Result<Json<CommitmentResponse>, Error> {
     let bucket = state
         .storage
-        .get_bucket(query.bucket_id)
+        .get_bucket(query.bucket_id)?
         .ok_or(provider_storage::Error::BucketNotFound(query.bucket_id))?;
 
     // Sign with the real leaf_count — the pallet's `challenge_offchain` now
@@ -495,7 +497,7 @@ async fn get_checkpoint_signature(
 ) -> Result<Json<CheckpointSignatureResponse>, Error> {
     let bucket = state
         .storage
-        .get_bucket(query.bucket_id)
+        .get_bucket(query.bucket_id)?
         .ok_or(provider_storage::Error::BucketNotFound(query.bucket_id))?;
 
     let leaf_count = bucket.leaf_count;
@@ -665,7 +667,7 @@ async fn get_mmr_subtree(
     // Simplified implementation
     let bucket = state
         .storage
-        .get_bucket(query.bucket_id)
+        .get_bucket(query.bucket_id)?
         .ok_or(provider_storage::Error::BucketNotFound(query.bucket_id))?;
 
     Ok(Json(MmrSubtreeResponse {
@@ -693,7 +695,7 @@ async fn fetch_nodes(
             })?;
         let hash = H256::from_slice(&hash_bytes);
 
-        if let Some(node) = state.storage.get_node(&hash) {
+        if let Ok(Some(node)) = state.storage.get_node(&hash) {
             nodes.push(FetchedNode {
                 hash: hash_str.clone(),
                 data: BASE64.encode(&node.data),
@@ -723,7 +725,7 @@ async fn get_historical_roots(
 ) -> Result<Json<HistoricalRootsResponse>, Error> {
     let bucket = state
         .storage
-        .get_bucket(query.bucket_id)
+        .get_bucket(query.bucket_id)?
         .ok_or(provider_storage::Error::BucketNotFound(query.bucket_id))?;
 
     Ok(Json(HistoricalRootsResponse {
@@ -847,7 +849,7 @@ async fn get_replica_sync_status(
 ) -> Result<Json<BucketSyncStatusResponse>, Error> {
     let bucket = state
         .storage
-        .get_bucket(query.bucket_id)
+        .get_bucket(query.bucket_id)?
         .ok_or(provider_storage::Error::BucketNotFound(query.bucket_id))?;
 
     Ok(Json(BucketSyncStatusResponse {

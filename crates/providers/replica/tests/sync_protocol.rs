@@ -336,5 +336,8 @@ async fn a_peak_naming_a_stored_node_is_fetched_and_stored() {
         f.sync.sync_from_primary(BUCKET, &url).await.unwrap(),
         target
     );
-    assert_eq!(f.storage.get_node(&leaf).unwrap().data, b"leaf payload");
+    assert_eq!(
+        f.storage.get_node(&leaf).unwrap().unwrap().data,
+        b"leaf payload"
+    );
 }
