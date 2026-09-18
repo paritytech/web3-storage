@@ -5,11 +5,12 @@
  *
  * Accounts: //Alice (provider), //Bob (client), //Charlie (non-party)
  *
- * Agreements are opened by redeeming provider-signed terms via
- * `establish_storage_agreement` — the bucket is created atomically and there
- * is no separate request/accept/reject/withdraw step. Tests cover establish,
- * end (Pay/Burn), and the on-chain/off-chain rejections that replace the old
- * request-flow failures.
+ * Agreements are opened by redeeming provider-signed terms. Bucket creation
+ * and provider assignment are separate calls: `create_bucket_with_primary`
+ * does both at once, or `create_bucket` then `add_primary_provider` against
+ * the existing bucket. There is no request/accept/reject/withdraw step. Tests
+ * cover both paths, end (Pay/Burn), and the on-chain/off-chain rejections
+ * that replace the old request-flow failures.
  *
  * Usage: node e2e/02-agreement-lifecycle.js [chain_ws] [provider_url]
  */
@@ -17,7 +18,9 @@
 import assert from "node:assert";
 import { Enum } from "polkadot-api";
 import {
+  addPrimaryProvider,
   buildSignedTermsArgs,
+  createBucket,
   endAgreement,
   ensureProviderRegistered,
   makeSigner,
@@ -153,7 +156,7 @@ async function main() {
         maxBytes,
         duration,
       });
-      const tx = api.tx.StorageProvider.establish_storage_agreement({
+      const tx = api.tx.StorageProvider.create_bucket_with_primary({
         ...buildSignedTermsArgs(provider, signed),
         visibility: Enum("Private"),
       });
@@ -173,8 +176,8 @@ async function main() {
         ...buildSignedTermsArgs(provider, signed),
         visibility: Enum("Private"),
       };
-      await api.tx.StorageProvider.establish_storage_agreement(args).signAndSubmit(client.signer);
-      const replay = api.tx.StorageProvider.establish_storage_agreement(args);
+      await api.tx.StorageProvider.create_bucket_with_primary(args).signAndSubmit(client.signer);
+      const replay = api.tx.StorageProvider.create_bucket_with_primary(args);
       await submitTxExpectFailure(replay, client.signer, "NonceAlreadyUsed", "2.6");
     },
   });
@@ -221,11 +224,65 @@ async function main() {
             duration,
             price_per_byte: 0n,
             replica_params: null,
-            bucket_id: null,
+            bucket: null,
           }),
         "price_below_listed",
         "2.9"
       );
+    },
+  });
+
+  tests.push({
+    name: "2.10 create_bucket then add_primary_provider",
+    fn: async () => {
+      // The two-step path: an empty bucket first, a provider assigned after.
+      const { bucketId } = await createBucket(api, client, { minProviders: 1 });
+      const empty = (await api.query.StorageProvider.Buckets.getValue(bucketId, READ_OPTS))!;
+      assert.strictEqual(
+        empty.primary_providers.length,
+        0,
+        "create_bucket should leave the bucket without providers"
+      );
+
+      // The quote names this bucket, so it is redeemable only against it.
+      const signed = await negotiateSigned(api, PROVIDER_URL, client, provider, {
+        maxBytes,
+        duration,
+        bucketId,
+      });
+      await addPrimaryProvider(api, client, provider, signed);
+
+      const bucket = (await api.query.StorageProvider.Buckets.getValue(bucketId, READ_OPTS))!;
+      assert.ok(
+        bucket.primary_providers.some((p: string) => sameAddress(p, provider.address)),
+        "Provider should be in primary_providers after add_primary_provider"
+      );
+      const agreement = (await api.query.StorageProvider.StorageAgreements.getValue(
+        bucketId,
+        provider.address,
+        READ_OPTS
+      ))!;
+      assert.ok(agreement, "Agreement should exist after add_primary_provider");
+    },
+  });
+
+  tests.push({
+    name: "2.11 add_primary_provider rejects a quote for another bucket",
+    fn: async () => {
+      const { bucketId } = await createBucket(api, client, { minProviders: 1 });
+      const { bucketId: other } = await createBucket(api, client, { minProviders: 1 });
+
+      // Signed for `other`, submitted against `bucketId`.
+      const signed = await negotiateSigned(api, PROVIDER_URL, client, provider, {
+        maxBytes,
+        duration,
+        bucketId: other,
+      });
+      const tx = api.tx.StorageProvider.add_primary_provider({
+        bucket_id: bucketId,
+        ...buildSignedTermsArgs(provider, signed),
+      });
+      await submitTxExpectFailure(tx, client.signer, "TermsBucketMismatch", "2.11");
     },
   });
 

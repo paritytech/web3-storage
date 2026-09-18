@@ -152,6 +152,16 @@ pub fn mmr_proof(p: &storage_primitives::MmrProof) -> rt::MmrProof {
     }
 }
 
+/// `storage_primitives::BucketTarget` → generated `BucketTarget`.
+pub fn bucket_target(b: storage_primitives::BucketTarget) -> rt::agreement_term::BucketTarget {
+    match b {
+        storage_primitives::BucketTarget::New => rt::agreement_term::BucketTarget::New,
+        storage_primitives::BucketTarget::Existing(id) => {
+            rt::agreement_term::BucketTarget::Existing(id)
+        }
+    }
+}
+
 /// [`AgreementTermsOf`] → generated `AgreementTerms`.
 ///
 /// Unlike the old dynamic encoder, this includes `ReplicaTerms::sync_price`
@@ -167,7 +177,7 @@ pub fn agreement_terms(
         price_per_byte: t.price_per_byte,
         valid_until: t.valid_until,
         nonce: t.nonce,
-        bucket_id: t.bucket_id,
+        bucket: bucket_target(t.bucket),
         replica_params: t.replica_params.as_ref().map(|r| at::ReplicaTerms {
             sync_balance: r.sync_balance,
             min_sync_interval: r.min_sync_interval,
@@ -235,7 +245,7 @@ mod tests {
             price_per_byte: 30,
             valid_until: 40,
             nonce: 50,
-            bucket_id: Some(60),
+            bucket: storage_primitives::BucketTarget::Existing(60),
             replica_params: Some(crate::agreement::ReplicaTermsOf {
                 sync_balance: 70,
                 min_sync_interval: 80,
@@ -245,7 +255,10 @@ mod tests {
         let rt_terms = agreement_terms(&terms);
         assert_eq!(rt_terms.owner.0, [1u8; 32]);
         assert_eq!(rt_terms.max_bytes, 10);
-        assert_eq!(rt_terms.bucket_id, Some(60));
+        assert_eq!(
+            rt_terms.bucket,
+            rt::agreement_term::BucketTarget::Existing(60)
+        );
         let rp = rt_terms.replica_params.expect("replica params present");
         assert_eq!(rp.sync_balance, 70);
         assert_eq!(rp.min_sync_interval, 80);

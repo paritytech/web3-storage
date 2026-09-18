@@ -2,7 +2,7 @@
 
 //! Provider matching moved off-chain: clients query
 //! `query_find_matching_providers` (runtime API), pick a provider, obtain
-//! signed terms, and redeem them via `establish_storage_agreement`.
+//! signed terms, and redeem them via `create_bucket_with_primary`.
 
 use super::*;
 use crate::runtime_api::{PartialMatchReason, StorageRequirements};

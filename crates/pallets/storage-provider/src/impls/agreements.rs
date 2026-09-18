@@ -4,7 +4,7 @@ use crate::*;
 use frame_support::pallet_prelude::*;
 use sp_runtime::traits::{CheckedAdd, CheckedMul, SaturatedConversion, Saturating, Zero};
 use storage_primitives::{
-    BucketId, EndAction, ProviderRole, RemovalReason, ReplayError, Visibility,
+    BucketId, BucketTarget, EndAction, ProviderRole, RemovalReason, ReplayError, Visibility,
 };
 
 impl<T: Config> Pallet<T> {
@@ -128,103 +128,87 @@ impl<T: Config> Pallet<T> {
         Ok(())
     }
 
-    /// Redeem provider-signed terms (used directly by the
-    /// `establish_storage_agreement` extrinsic and by higher-layer pallets that
-    /// fold bucket creation into their own flows).
+    /// Creates a bucket and opens its first primary agreement atomically.
     ///
-    /// Verifies the signature, advances the provider's replay window, then
-    /// runs the provider/capacity/stake checks before creating the bucket +
-    /// primary agreement. `terms.bucket_id` must be `None`.
-    pub fn establish_storage_agreement_internal(
+    /// Used by the `create_bucket_with_primary` extrinsic and by higher-layer
+    /// pallets that fold bucket creation into their own flows. The quote must
+    /// name [`BucketTarget::New`].
+    pub fn create_bucket_with_primary_internal(
         owner: &T::AccountId,
         provider: &T::AccountId,
         terms: AgreementTermsOf<T>,
         sig: &sp_runtime::MultiSignature,
         visibility: Visibility,
     ) -> Result<BucketId, DispatchError> {
-        let anchor_block = Self::validate_terms(owner, &terms, None)?;
-
-        let provider_info = Self::accept_quote(
-            provider,
-            &terms,
-            sig,
-            storage_primitives::PRIMARY_TERM_CONTEXT,
-        )?;
-        Self::ensure_provider_active(&provider_info)?;
-        ensure!(
-            provider_info.settings.accepting_primary,
-            Error::<T>::ProviderNotAcceptingPrimary
-        );
-        let new_committed = Self::reserve_capacity(&provider_info, &terms)?;
-
-        // Pay at the price the provider signed for.
-        let payment =
-            Self::calculate_payment(terms.price_per_byte, terms.max_bytes, terms.duration)?;
-        Self::hold_payment(owner, payment)?;
-
-        // Bucket creation folded in: owner is sole admin, provider is the
-        // bucket's single primary. `create_bucket_internal` emits
-        // `BucketCreated` for us.
-        let bucket_id = Self::create_bucket_internal(owner, 1, Some(provider), visibility)?;
-
-        let expires_at = anchor_block.saturating_add(terms.duration);
-        Self::record_agreement(
-            bucket_id,
-            provider,
-            new_committed,
-            StorageAgreement {
-                owner: owner.clone(),
-                max_bytes: terms.max_bytes,
-                payment_locked: payment,
-                price_per_byte: terms.price_per_byte,
-                expires_at,
-                extensions_blocked: false,
-                role: ProviderRole::Primary,
-                started_at: anchor_block,
-            },
-        );
-
-        Self::deposit_event(Event::StorageAgreementEstablished {
-            bucket_id,
-            provider: provider.clone(),
-            owner: owner.clone(),
-            terms,
-            expires_at,
-        });
-
-        Ok(bucket_id)
+        Self::open_primary_agreement(owner, provider, terms, sig, BucketTarget::New, || {
+            Self::create_bucket_internal(owner, 1, Some(provider), visibility)
+        })
     }
 
-    /// Redeem provider-signed terms for a replica agreement (used directly
-    /// by the `establish_replica_agreement` extrinsic and by higher-layer
-    /// pallets that fold replica establishment into their own flows).
-    ///
-    /// Verifies the signature, advances the provider's replay window, then
-    /// runs the provider/capacity/stake checks before opening the replica
-    /// agreement on an existing bucket. `terms.replica_params` must be
-    /// `Some(_)`.
-    pub(crate) fn establish_replica_agreement_internal(
+    /// Adds a primary provider to an existing bucket. `admin` must be a bucket
+    /// admin; the quote must name [`BucketTarget::Existing`] with `bucket_id`.
+    pub fn add_primary_provider_internal(
+        admin: &T::AccountId,
+        bucket_id: BucketId,
+        provider: &T::AccountId,
+        terms: AgreementTermsOf<T>,
+        sig: &sp_runtime::MultiSignature,
+    ) -> DispatchResult {
+        let bucket = Buckets::<T>::get(bucket_id).ok_or(Error::<T>::BucketNotFound)?;
+        Self::ensure_admin(admin, &bucket)?;
+        ensure!(
+            !StorageAgreements::<T>::contains_key(bucket_id, provider),
+            Error::<T>::AgreementAlreadyExists
+        );
+        ensure!(
+            (bucket.primary_providers.len() as u32) < T::MaxPrimaryProviders::get(),
+            Error::<T>::MaxPrimaryProvidersReached
+        );
+
+        Self::open_primary_agreement(
+            admin,
+            provider,
+            terms,
+            sig,
+            BucketTarget::Existing(bucket_id),
+            || Ok(bucket_id),
+        )?;
+
+        // Appended, never inserted: the snapshot's signer bitfield is indexed
+        // by position, so the existing entries must keep theirs. Last, so the
+        // quote is fully accepted before the bucket changes.
+        Buckets::<T>::try_mutate(bucket_id, |maybe_bucket| -> DispatchResult {
+            let bucket = maybe_bucket.as_mut().ok_or(Error::<T>::BucketNotFound)?;
+            bucket
+                .primary_providers
+                .try_push(provider.clone())
+                .map_err(|_| Error::<T>::MaxPrimaryProvidersReached)?;
+            Ok(())
+        })
+    }
+
+    /// Opens a replica agreement on an existing bucket. Anyone the provider
+    /// quoted for may redeem it; the quote must name
+    /// [`BucketTarget::Existing`] with `bucket_id` and carry
+    /// `replica_params`.
+    pub(crate) fn add_replica_provider_internal(
         owner: &T::AccountId,
         bucket_id: BucketId,
         provider: &T::AccountId,
         terms: AgreementTermsOf<T>,
         sig: &sp_runtime::MultiSignature,
     ) -> DispatchResult {
-        let anchor_block = Self::validate_terms(owner, &terms, Some(bucket_id))?;
+        let anchor_block = Self::validate_terms(owner, &terms, BucketTarget::Existing(bucket_id))?;
 
-        // Target bucket must exist.
         ensure!(
             Buckets::<T>::contains_key(bucket_id),
             Error::<T>::BucketNotFound
         );
-
-        // No existing agreement for (bucket, provider).
         ensure!(
             !StorageAgreements::<T>::contains_key(bucket_id, provider),
             Error::<T>::AgreementAlreadyExists
         );
 
-        // Replica terms must be present for a replica agreement.
         let replica_terms = terms
             .replica_params
             .as_ref()
@@ -290,21 +274,14 @@ impl<T: Config> Pallet<T> {
     /// non-zero quota, and is still inside the chain-enforced validity
     /// window.
     ///
-    /// `expected_bucket` is the binding the redeeming call requires: `None`
-    /// for primary terms, which create their bucket, `Some(id)` for replica
-    /// terms, which name the bucket they attach to.
-    ///
     /// Returns the current anchor block.
     fn validate_terms(
         owner: &T::AccountId,
         terms: &AgreementTermsOf<T>,
-        expected_bucket: Option<BucketId>,
+        target: BucketTarget,
     ) -> Result<BlockNumberFor<T>, DispatchError> {
         ensure!(&terms.owner == owner, Error::<T>::TermsOwnerMismatch);
-        ensure!(
-            terms.bucket_id == expected_bucket,
-            Error::<T>::TermsBucketMismatch
-        );
+        ensure!(terms.bucket == target, Error::<T>::TermsBucketMismatch);
         ensure!(terms.max_bytes > 0, Error::<T>::InvalidMaxBytesRequest);
 
         let anchor_block = Self::current_anchor_block();
@@ -392,5 +369,78 @@ impl<T: Config> Pallet<T> {
             }
         });
         StorageAgreements::<T>::insert(bucket_id, provider, agreement);
+    }
+
+    /// Redeems provider-signed primary terms and records the agreement.
+    ///
+    /// `target` is the [`BucketTarget`] the quote must name. `bucket` runs
+    /// once the quote is accepted and the payment held, and returns the bucket
+    /// the agreement goes on: the caller either creates it there
+    /// ([`BucketTarget::New`]) or returns one it has already checked
+    /// ([`BucketTarget::Existing`]). Nothing is written before the quote is
+    /// accepted, so a rejected quote always reports its own error.
+    fn open_primary_agreement(
+        owner: &T::AccountId,
+        provider: &T::AccountId,
+        terms: AgreementTermsOf<T>,
+        sig: &sp_runtime::MultiSignature,
+        target: BucketTarget,
+        bucket: impl FnOnce() -> Result<BucketId, DispatchError>,
+    ) -> Result<BucketId, DispatchError> {
+        let anchor_block = Self::validate_terms(owner, &terms, target)?;
+        ensure!(
+            terms.replica_params.is_none(),
+            Error::<T>::UnexpectedReplicaTerms
+        );
+
+        let provider_info = Self::accept_quote(
+            provider,
+            &terms,
+            sig,
+            storage_primitives::PRIMARY_TERM_CONTEXT,
+        )?;
+        Self::ensure_provider_active(&provider_info)?;
+        ensure!(
+            provider_info.settings.accepting_primary,
+            Error::<T>::ProviderNotAcceptingPrimary
+        );
+        let new_committed = Self::reserve_capacity(&provider_info, &terms)?;
+
+        let payment =
+            Self::calculate_payment(terms.price_per_byte, terms.max_bytes, terms.duration)?;
+        Self::hold_payment(owner, payment)?;
+
+        let bucket_id = bucket()?;
+
+        let expires_at = anchor_block.saturating_add(terms.duration);
+        Self::record_agreement(
+            bucket_id,
+            provider,
+            new_committed,
+            StorageAgreement {
+                owner: owner.clone(),
+                max_bytes: terms.max_bytes,
+                payment_locked: payment,
+                price_per_byte: terms.price_per_byte,
+                expires_at,
+                extensions_blocked: false,
+                role: ProviderRole::Primary,
+                started_at: anchor_block,
+            },
+        );
+
+        Self::deposit_event(Event::ProviderAddedToBucket {
+            bucket_id,
+            provider: provider.clone(),
+        });
+        Self::deposit_event(Event::StorageAgreementEstablished {
+            bucket_id,
+            provider: provider.clone(),
+            owner: owner.clone(),
+            terms,
+            expires_at,
+        });
+
+        Ok(bucket_id)
     }
 }

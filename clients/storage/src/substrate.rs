@@ -150,23 +150,48 @@ pub mod extrinsics {
             .update_provider_settings(settings)
     }
 
-    /// Build an `establish_storage_agreement` extrinsic payload.
+    /// Build a `create_bucket` extrinsic payload.
+    pub fn create_bucket(
+        min_providers: u32,
+        visibility: storage_primitives::Visibility,
+    ) -> impl Payload {
+        api::tx()
+            .storage_provider()
+            .create_bucket(min_providers, convert::visibility(visibility))
+    }
+
+    /// Build a `create_bucket_with_primary` extrinsic payload.
     ///
     /// Bundles the SCALE-encoded provider-signed terms and signature into
-    /// the dynamic call shape Layer 0 expects. The chain hashes
+    /// the call shape Layer 0 expects. The chain hashes
     /// `blake2_256(TERM_CONTEXT | SCALE(terms))` and verifies the
     /// signature against the provider's registered public key.
-    pub fn establish_storage_agreement(
+    pub fn create_bucket_with_primary(
         provider: AccountId32,
         terms: &crate::agreement::AgreementTermsOf,
         sig: &sp_runtime::MultiSignature,
         visibility: storage_primitives::Visibility,
     ) -> impl Payload {
-        api::tx().storage_provider().establish_storage_agreement(
+        api::tx().storage_provider().create_bucket_with_primary(
             convert::to_subxt_account(&provider),
             convert::agreement_terms(terms),
             convert::multisig(sig),
             convert::visibility(visibility),
+        )
+    }
+
+    /// Build an `add_primary_provider` extrinsic payload (admin only).
+    pub fn add_primary_provider(
+        bucket_id: u64,
+        provider: AccountId32,
+        terms: &crate::agreement::AgreementTermsOf,
+        sig: &sp_runtime::MultiSignature,
+    ) -> impl Payload {
+        api::tx().storage_provider().add_primary_provider(
+            bucket_id,
+            convert::to_subxt_account(&provider),
+            convert::agreement_terms(terms),
+            convert::multisig(sig),
         )
     }
 

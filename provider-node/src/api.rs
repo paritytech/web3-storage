@@ -90,7 +90,9 @@ pub fn create_router(state: Arc<ProviderState>) -> Router {
         .route("/mmr_peaks", get(get_mmr_peaks))
         .route("/mmr_subtree", get(get_mmr_subtree))
         .route("/fetch_nodes", post(fetch_nodes))
-        // Off-chain term negotiation (signed AgreementTerms for `establish_storage_agreement`)
+        // Off-chain term negotiation: signed AgreementTerms the caller redeems
+        // on-chain (create_bucket_with_primary / add_primary_provider /
+        // add_replica_provider).
         .route(
             "/negotiate",
             post(negotiate_terms).layer(from_fn_with_state(
@@ -831,7 +833,7 @@ async fn negotiate_terms(
         price_per_byte: info.settings.price_per_byte,
         valid_until: anchor_block.saturating_add(request_timeout),
         nonce: nonce_counter.next(),
-        bucket_id: req.bucket_id,
+        bucket: req.bucket.into(),
         replica_params: req.replica_params,
     };
     Ok(Json(keypair.sign_terms(terms)))

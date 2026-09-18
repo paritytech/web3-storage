@@ -47,7 +47,7 @@ fn primary_terms(owner: u64, max_bytes: u64, duration: u64, nonce: u64) -> Agree
         valid_until: frame_system::Pallet::<Test>::block_number()
             .saturating_add(<Test as pallet_storage_provider::Config>::RequestTimeout::get()),
         nonce,
-        bucket_id: None,
+        bucket: storage_primitives::BucketTarget::New,
         replica_params: None,
     }
 }

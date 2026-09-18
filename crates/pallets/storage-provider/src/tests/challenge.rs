@@ -674,7 +674,7 @@ fn challenge_slashes_multiple_challenges_in_sweep() {
         register_provider(3, 200);
         let bucket_id = setup_agreement(2, 1, 50, 200);
 
-        // Add second provider to same bucket (establish_storage_agreement always
+        // Add second provider to same bucket (create_bucket_with_primary always
         // creates a fresh single-primary bucket, so the shape is synthesized).
         add_primary_to_bucket(3, 1, bucket_id, 50);
 

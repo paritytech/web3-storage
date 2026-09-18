@@ -178,7 +178,7 @@ impl FileSystemClient {
     /// # Returns
     ///
     /// The newly created drive ID. Bucket creation and the primary agreement
-    /// open atomically inside Layer 0's `establish_storage_agreement_internal`.
+    /// open atomically inside Layer 0's `create_bucket_with_primary_internal`.
     ///
     /// # Example
     ///

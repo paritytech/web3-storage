@@ -270,6 +270,26 @@ impl<T: frame_system::Config> pallet_storage_provider::WeightInfo for WeightInfo
 			.saturating_add(T::DbWeight::get().reads(5))
 			.saturating_add(T::DbWeight::get().writes(5))
 	}
+	// TODO: needs re-benchmarking
+	fn create_bucket() -> Weight {
+		// Proof Size summary in bytes:
+		//  Measured:  `354`
+		//  Estimated: `11515`
+		// Minimum execution time: 48_000_000 picoseconds.
+		Weight::from_parts(52_000_000, 11515)
+			.saturating_add(T::DbWeight::get().reads(5_u64))
+			.saturating_add(T::DbWeight::get().writes(7_u64))
+	}
+	// TODO: needs re-benchmarking
+	fn add_primary_provider() -> Weight {
+		// Proof Size summary in bytes:
+		//  Measured:  `354`
+		//  Estimated: `11515`
+		// Minimum execution time: 48_000_000 picoseconds.
+		Weight::from_parts(52_000_000, 11515)
+			.saturating_add(T::DbWeight::get().reads(5_u64))
+			.saturating_add(T::DbWeight::get().writes(7_u64))
+	}
 	/// Storage: `ParachainSystem::ValidationData` (r:1 w:0)
 	/// Proof: `ParachainSystem::ValidationData` (`max_values`: Some(1), `max_size`: None, mode: `Measured`)
 	/// Storage: `ParachainSystem::LastRelayChainBlockNumber` (r:1 w:0)
@@ -294,7 +314,7 @@ impl<T: frame_system::Config> pallet_storage_provider::WeightInfo for WeightInfo
 	/// Proof: `StorageProvider::Buckets` (`max_values`: None, `max_size`: None, mode: `Measured`)
 	/// Storage: `StorageProvider::StorageAgreements` (r:0 w:1)
 	/// Proof: `StorageProvider::StorageAgreements` (`max_values`: None, `max_size`: Some(243), added: 2718, mode: `MaxEncodedLen`)
-	fn establish_storage_agreement() -> Weight {
+	fn create_bucket_with_primary() -> Weight {
 		// Proof Size summary in bytes:
 		//  Measured:  `940`
 		//  Estimated: `11515`
@@ -324,7 +344,7 @@ impl<T: frame_system::Config> pallet_storage_provider::WeightInfo for WeightInfo
 	/// Proof: `System::Account` (`max_values`: None, `max_size`: Some(128), added: 2603, mode: `MaxEncodedLen`)
 	/// Storage: `Balances::Holds` (r:1 w:1)
 	/// Proof: `Balances::Holds` (`max_values`: None, `max_size`: Some(193), added: 2668, mode: `MaxEncodedLen`)
-	fn establish_replica_agreement() -> Weight {
+	fn add_replica_provider() -> Weight {
 		// Proof Size summary in bytes:
 		//  Measured:  `1248`
 		//  Estimated: `4713`

@@ -868,10 +868,7 @@ pub mod pallet {
             /// Providers whose signatures back it.
             providers: Vec<T::AccountId>,
         },
-        // DRIFT-016: never emitted. Proposal: implement the join path or remove
-        // the variant; see the marker in the design doc's Event listing.
-        /// A primary provider joined the bucket's provider set. Not emitted
-        /// yet: no call adds a primary to an existing bucket (#417).
+        /// A primary provider joined the bucket's provider set.
         ProviderAddedToBucket {
             /// The bucket.
             bucket_id: BucketId,
@@ -972,10 +969,10 @@ pub mod pallet {
             /// Escrow burned because the owner chose `EndAction::Burn`.
             burned: BalanceOf<T>,
         },
-        /// Owner redeemed provider-signed terms; bucket created and agreement
-        /// opened atomically.
+        /// A primary agreement was opened, by `create_bucket_with_primary` or
+        /// `add_primary_provider`. Always follows `ProviderAddedToBucket`.
         StorageAgreementEstablished {
-            /// The new bucket.
+            /// The bucket.
             bucket_id: BucketId,
             /// The provider.
             provider: T::AccountId,
@@ -1120,7 +1117,10 @@ pub mod pallet {
         /// The current snapshot carries fewer provider signatures than the
         /// bucket's `min_providers`.
         MinProvidersNotMet,
-        /// `min_providers` exceeds the bucket's primary provider count.
+        /// A `min_providers` value the bucket cannot satisfy: above
+        /// `MaxPrimaryProviders` at creation, or above the bucket's current
+        /// primary count in `set_min_providers`. Pass a smaller number, or
+        /// add primaries first.
         InvalidMinProviders,
         /// Only members and primary-agreement owners may challenge a primary
         /// provider of a private bucket.
@@ -1217,7 +1217,7 @@ pub mod pallet {
         /// Account is a member of too many buckets.
         TooManyBucketsForMember,
 
-        // establish_storage_agreement errors
+        // Quote-redemption errors
         /// Provider signature over the SCALE-encoded terms is invalid.
         InvalidProviderSignature,
         /// Signed terms have passed their `valid_until` block.
@@ -1236,9 +1236,12 @@ pub mod pallet {
         /// Replica terms missing from a signed quote redeemed as a replica
         /// agreement.
         MissingReplicaTerms,
-        /// The terms' bucket binding does not match the redeeming extrinsic:
-        /// primary terms must carry no bucket, replica terms must name the
-        /// targeted bucket.
+        /// Replica terms present in a signed quote redeemed as a primary
+        /// agreement.
+        UnexpectedReplicaTerms,
+        /// The terms' `bucket` does not name the bucket the call targets:
+        /// `New` is only redeemable by `create_bucket_with_primary`, and
+        /// `Existing(id)` only against bucket `id`.
         TermsBucketMismatch,
         /// Storage agreement requested 0 byte
         InvalidMaxBytesRequest,
@@ -1562,28 +1565,56 @@ pub mod pallet {
         // Bucket Management
         // ─────────────────────────────────────────────────────────────────────
 
-        // DRIFT-001 / DRIFT-002: this signed-terms flow supersedes the design
-        // docs' on-chain request/accept round-trip and standalone create_bucket
-        // (bucket creation is folded in here).
-        // Proposal: DRIFT-001, keep this flow and realign the design docs to
-        // it. DRIFT-002, implement standalone create_bucket /
-        // create_bucket_with_storage or remove their sketches from the design
-        // doc; decision tracked in #417.
-        /// Redeem provider-signed terms: create a bucket + primary agreement
-        /// in a single call.
+        /// Create an empty bucket with the caller as its sole admin.
         ///
-        /// The provider signs a SCALE-encoded [`AgreementTermsOf<T>`] off-chain;
-        /// the owner submits it here. The pallet verifies the signature,
-        /// rejects replays via the provider's sliding nonce window, then runs
-        /// the standard provider/capacity/stake checks and opens the
-        /// agreement.
+        /// The bucket has no providers and no data, so it cannot be
+        /// checkpointed until `min_providers` primaries have joined; add one
+        /// with [`Pallet::add_primary_provider`].
+        ///
+        /// Parameters:
+        /// - `min_providers`: primary-provider signatures each checkpoint
+        ///   needs. Capped at `MaxPrimaryProviders`, because a bucket can
+        ///   never hold more primaries than that and a higher value would
+        ///   make the bucket impossible to checkpoint
+        ///   (`InvalidMinProviders`). Changeable later with
+        ///   [`Pallet::set_min_providers`].
+        /// - `visibility`: who may read the bucket (see [`Visibility`]).
+        ///
+        /// Layer 0 has no call that deletes a bucket, so one created here
+        /// stays on-chain even with no agreements.
+        #[pallet::call_index(10)]
+        #[pallet::weight(T::WeightInfo::create_bucket())]
+        pub fn create_bucket(
+            origin: OriginFor<T>,
+            min_providers: u32,
+            visibility: Visibility,
+        ) -> DispatchResult {
+            let who = ensure_signed(origin)?;
+            Self::create_bucket_internal(&who, min_providers, None, visibility)?;
+            Ok(())
+        }
+
+        // DRIFT-001: this signed-terms flow supersedes the design docs'
+        // on-chain request/accept round-trip.
+        // Proposal: keep this flow and realign the design docs to it.
+        /// Redeem provider-signed primary terms: create a bucket and its first
+        /// primary agreement in one call.
+        ///
+        /// The provider signs a SCALE-encoded [`AgreementTermsOf<T>`] with
+        /// `bucket: BucketTarget::New` off-chain; the owner submits it here.
+        /// The pallet verifies the signature, rejects replays via the
+        /// provider's sliding nonce window, then runs the standard
+        /// provider/capacity/stake checks and opens the agreement.
+        ///
+        /// Equivalent to [`Pallet::create_bucket`] followed by
+        /// [`Pallet::add_primary_provider`], in one transaction.
         ///
         /// `visibility` sets the new bucket's read visibility (see
         /// [`Visibility`]); it is the owner's choice and not part of the
         /// provider-signed terms.
         #[pallet::call_index(17)]
-        #[pallet::weight(T::WeightInfo::establish_storage_agreement())]
-        pub fn establish_storage_agreement(
+        #[pallet::weight(T::WeightInfo::create_bucket_with_primary())]
+        pub fn create_bucket_with_primary(
             origin: OriginFor<T>,
             provider: T::AccountId,
             terms: AgreementTermsOf<T>,
@@ -1591,8 +1622,31 @@ pub mod pallet {
             visibility: Visibility,
         ) -> DispatchResult {
             let who = ensure_signed(origin)?;
-            Self::establish_storage_agreement_internal(&who, &provider, terms, &sig, visibility)?;
+            Self::create_bucket_with_primary_internal(&who, &provider, terms, &sig, visibility)?;
             Ok(())
+        }
+
+        /// Admin only. Redeem provider-signed primary terms against an
+        /// existing bucket, adding the provider to its primary set.
+        ///
+        /// The quote must name `bucket: BucketTarget::Existing(bucket_id)`.
+        /// Works on a bucket whose earlier agreements have all ended and on a
+        /// frozen bucket.
+        ///
+        /// The new provider holds no data yet and is not in the current
+        /// snapshot's signer bitfield: upload the bucket's data to it and
+        /// include its signature in the next checkpoint.
+        #[pallet::call_index(18)]
+        #[pallet::weight(T::WeightInfo::add_primary_provider())]
+        pub fn add_primary_provider(
+            origin: OriginFor<T>,
+            bucket_id: BucketId,
+            provider: T::AccountId,
+            terms: AgreementTermsOf<T>,
+            sig: sp_runtime::MultiSignature,
+        ) -> DispatchResult {
+            let who = ensure_signed(origin)?;
+            Self::add_primary_provider_internal(&who, bucket_id, &provider, terms, &sig)
         }
 
         /// Admin only. Set how many primary-provider signatures a checkpoint
@@ -1867,17 +1921,19 @@ pub mod pallet {
         // Storage Agreements
         // ─────────────────────────────────────────────────────────────────────
 
-        /// Redeem provider-signed terms for a replica storage agreement.
+        /// Redeem provider-signed replica terms against an existing bucket.
+        /// Callable by whoever the provider quoted for, not only the bucket's
+        /// members.
         ///
         /// The provider signs a SCALE-encoded [`AgreementTermsOf<T>`] with
-        /// `replica_params: Some(_)` off-chain; the owner submits it here.
+        /// `bucket: BucketTarget::Existing(bucket_id)` and
+        /// `replica_params: Some(_)` off-chain; the caller submits it here.
         /// The pallet verifies the signature, rejects replays via the
         /// provider's sliding nonce window, then runs the standard
-        /// provider/capacity/stake checks and opens the replica agreement on
-        /// an existing bucket.
+        /// provider/capacity/stake checks and opens the replica agreement.
         #[pallet::call_index(20)]
-        #[pallet::weight(T::WeightInfo::establish_replica_agreement())]
-        pub fn establish_replica_agreement(
+        #[pallet::weight(T::WeightInfo::add_replica_provider())]
+        pub fn add_replica_provider(
             origin: OriginFor<T>,
             bucket_id: BucketId,
             provider: T::AccountId,
@@ -1885,8 +1941,7 @@ pub mod pallet {
             sig: sp_runtime::MultiSignature,
         ) -> DispatchResult {
             let who = ensure_signed(origin)?;
-            Self::establish_replica_agreement_internal(&who, bucket_id, &provider, terms, &sig)?;
-            Ok(())
+            Self::add_replica_provider_internal(&who, bucket_id, &provider, terms, &sig)
         }
 
         /// Owner only. Settle and close an agreement, choosing whether the

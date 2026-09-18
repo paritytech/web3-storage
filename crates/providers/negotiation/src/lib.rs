@@ -27,6 +27,8 @@ use sp_crypto_hashing::blake2_256;
 use sp_runtime::{AccountId32, MultiSignature};
 use storage_primitives::{AgreementTerms, BucketId};
 
+pub use storage_primitives::BucketTarget;
+
 /// Concrete [`AgreementTerms`] type for the storage parachain.
 ///
 /// Balance is `u128`, BlockNumber is `u32`; matches
@@ -56,11 +58,10 @@ pub struct NegotiateRequest {
     /// FIX: Safely handles the JS BigInt sent as a string
     #[serde_as(as = "PickFirst<(DisplayFromStr, _)>")]
     pub price_per_byte: u128,
-    /// Bucket the quote is bound to.
-    /// - `None` for primary terms;
-    /// - `Some(id)` for replica terms — must match the bucket targeted by
-    ///   the extrinsic.
-    pub bucket_id: Option<BucketId>,
+    /// Bucket the quote is for: the id of an existing bucket, or `None` for
+    /// a bucket created when the quote is redeemed. Maps to
+    /// [`storage_primitives::BucketTarget`] in the signed terms.
+    pub bucket: Option<BucketId>,
     /// `Some(_)` to negotiate a replica agreement (per-sync funding +
     /// minimum sync interval); `None` for a primary agreement.
     pub replica_params: Option<ReplicaTermsOf>,
@@ -127,7 +128,7 @@ mod tests {
             max_bytes: 1_000_000_000,
             duration: 500,
             price_per_byte: 1,
-            bucket_id: None,
+            bucket: None,
             replica_params: None,
         };
         let json = serde_json::to_string(&req).unwrap();
@@ -140,7 +141,7 @@ mod tests {
     #[test]
     fn negotiate_request_accepts_js_bigint_strings() {
         let json = format!(
-            r#"{{"owner":"{}","max_bytes":"1073741824","duration":50,"price_per_byte":"340282366920938463463374607431768211455","bucket_id":null,"replica_params":null}}"#,
+            r#"{{"owner":"{}","max_bytes":"1073741824","duration":50,"price_per_byte":"340282366920938463463374607431768211455","bucket":null,"replica_params":null}}"#,
             AccountId32::new([0u8; 32])
         );
         let decoded: NegotiateRequest = serde_json::from_str(&json).unwrap();
