@@ -33,6 +33,7 @@ export {
   u64le,
   type HttpFetchOpts,
   type MerkleEntry,
+  type BucketTargetWire,
   type NegotiateRequest,
   type SignedTerms,
   type ProviderRequestSigner,

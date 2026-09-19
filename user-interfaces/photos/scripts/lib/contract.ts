@@ -9,7 +9,13 @@
 // decodeContractEmitted / substrateToH160 / ensureAccountMapped) come from
 // `@web3-storage/sdk/revive`.
 
-import { asHex, negotiateTerms, type ChainSigner, type MappedAccount } from "@web3-storage/sdk";
+import {
+  asHex,
+  negotiateTerms,
+  signedTermsBucketId,
+  type ChainSigner,
+  type MappedAccount,
+} from "@web3-storage/sdk";
 
 /** Mirror of `IDriveRegistry.PrimitiveAgreementTerms` for viem ABI encoding. */
 export interface PrimitiveAgreementTerms {
@@ -47,11 +53,11 @@ export async function negotiatePrecompileTerms(
     duration,
     price_per_byte: pricePerByte,
     replica_params: null,
-    bucket_id: null,
+    bucket: null,
   });
   const t = signed.terms;
   const rp = t.replica_params;
-  const bucket = t.bucket_id;
+  const bucketId = signedTermsBucketId(signed);
   return {
     terms: {
       owner: asHex(owner.publicKey),
@@ -66,8 +72,8 @@ export async function negotiatePrecompileTerms(
         minSyncInterval: Number(rp?.min_sync_interval ?? 0),
         syncPrice: BigInt(rp?.sync_price ?? 0),
       },
-      hasBucketId: bucket != null,
-      bucketId: BigInt(bucket ?? 0),
+      hasBucketId: bucketId != null,
+      bucketId: bucketId ?? 0n,
     },
     signature: asHex(signed.signature),
   };

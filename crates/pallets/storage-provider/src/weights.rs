@@ -68,8 +68,10 @@ pub trait WeightInfo {
 	fn set_bucket_member() -> Weight;
 	fn remove_bucket_member() -> Weight;
 	fn remove_slashed() -> Weight;
-	fn establish_storage_agreement() -> Weight;
-	fn establish_replica_agreement() -> Weight;
+	fn create_bucket() -> Weight;
+	fn create_bucket_with_primary() -> Weight;
+	fn add_primary_provider() -> Weight;
+	fn add_replica_provider() -> Weight;
 	fn top_up_agreement() -> Weight;
 	fn transfer_agreement_ownership() -> Weight;
 	fn extend_agreement() -> Weight;
@@ -260,6 +262,26 @@ impl<T: frame_system::Config> WeightInfo for SubstrateWeight<T> {
 			.saturating_add(T::DbWeight::get().reads(4_u64))
 			.saturating_add(T::DbWeight::get().writes(4_u64))
 	}
+	// TODO: needs re-benchmarking
+	fn create_bucket() -> Weight {
+		// Proof Size summary in bytes:
+		//  Measured:  `354`
+		//  Estimated: `11515`
+		// Minimum execution time: 48_000_000 picoseconds.
+		Weight::from_parts(52_000_000, 11515)
+			.saturating_add(T::DbWeight::get().reads(5_u64))
+			.saturating_add(T::DbWeight::get().writes(7_u64))
+	}
+	// TODO: needs re-benchmarking
+	fn add_primary_provider() -> Weight {
+		// Proof Size summary in bytes:
+		//  Measured:  `354`
+		//  Estimated: `11515`
+		// Minimum execution time: 48_000_000 picoseconds.
+		Weight::from_parts(52_000_000, 11515)
+			.saturating_add(T::DbWeight::get().reads(5_u64))
+			.saturating_add(T::DbWeight::get().writes(7_u64))
+	}
 	/// Storage: `StorageProvider::Providers` (r:1 w:1)
 	/// Proof: `StorageProvider::Providers` (`max_values`: None, `max_size`: Some(360), added: 2835, mode: `MaxEncodedLen`)
 	/// Storage: `StorageProvider::ProviderReplayState` (r:1 w:1)
@@ -274,7 +296,7 @@ impl<T: frame_system::Config> WeightInfo for SubstrateWeight<T> {
 	/// Proof: `StorageProvider::Buckets` (`max_values`: None, `max_size`: None, mode: `Measured`)
 	/// Storage: `StorageProvider::StorageAgreements` (r:0 w:1)
 	/// Proof: `StorageProvider::StorageAgreements` (`max_values`: None, `max_size`: Some(227), added: 2702, mode: `MaxEncodedLen`)
-	fn establish_storage_agreement() -> Weight {
+	fn create_bucket_with_primary() -> Weight {
 		// Proof Size summary in bytes:
 		//  Measured:  `354`
 		//  Estimated: `11515`
@@ -293,7 +315,7 @@ impl<T: frame_system::Config> WeightInfo for SubstrateWeight<T> {
 	/// Proof: `StorageProvider::ProviderReplayState` (`max_values`: None, `max_size`: Some(88), added: 2563, mode: `MaxEncodedLen`)
 	/// Storage: `System::Account` (r:1 w:1)
 	/// Proof: `System::Account` (`max_values`: None, `max_size`: Some(128), added: 2603, mode: `MaxEncodedLen`)
-	fn establish_replica_agreement() -> Weight {
+	fn add_replica_provider() -> Weight {
 		// Proof Size summary in bytes:
 		//  Measured:  `737`
 		//  Estimated: `4202`
@@ -728,6 +750,26 @@ impl WeightInfo for () {
 			.saturating_add(RocksDbWeight::get().reads(4_u64))
 			.saturating_add(RocksDbWeight::get().writes(4_u64))
 	}
+	// TODO: needs re-benchmarking
+	fn create_bucket() -> Weight {
+		// Proof Size summary in bytes:
+		//  Measured:  `354`
+		//  Estimated: `11515`
+		// Minimum execution time: 48_000_000 picoseconds.
+		Weight::from_parts(52_000_000, 11515)
+			.saturating_add(RocksDbWeight::get().reads(5_u64))
+			.saturating_add(RocksDbWeight::get().writes(7_u64))
+	}
+	// TODO: needs re-benchmarking
+	fn add_primary_provider() -> Weight {
+		// Proof Size summary in bytes:
+		//  Measured:  `354`
+		//  Estimated: `11515`
+		// Minimum execution time: 48_000_000 picoseconds.
+		Weight::from_parts(52_000_000, 11515)
+			.saturating_add(RocksDbWeight::get().reads(5_u64))
+			.saturating_add(RocksDbWeight::get().writes(7_u64))
+	}
 	/// Storage: `StorageProvider::Providers` (r:1 w:1)
 	/// Proof: `StorageProvider::Providers` (`max_values`: None, `max_size`: Some(360), added: 2835, mode: `MaxEncodedLen`)
 	/// Storage: `StorageProvider::ProviderReplayState` (r:1 w:1)
@@ -742,7 +784,7 @@ impl WeightInfo for () {
 	/// Proof: `StorageProvider::Buckets` (`max_values`: None, `max_size`: None, mode: `Measured`)
 	/// Storage: `StorageProvider::StorageAgreements` (r:0 w:1)
 	/// Proof: `StorageProvider::StorageAgreements` (`max_values`: None, `max_size`: Some(227), added: 2702, mode: `MaxEncodedLen`)
-	fn establish_storage_agreement() -> Weight {
+	fn create_bucket_with_primary() -> Weight {
 		// Proof Size summary in bytes:
 		//  Measured:  `354`
 		//  Estimated: `11515`
@@ -761,7 +803,7 @@ impl WeightInfo for () {
 	/// Proof: `StorageProvider::ProviderReplayState` (`max_values`: None, `max_size`: Some(88), added: 2563, mode: `MaxEncodedLen`)
 	/// Storage: `System::Account` (r:1 w:1)
 	/// Proof: `System::Account` (`max_values`: None, `max_size`: Some(128), added: 2603, mode: `MaxEncodedLen`)
-	fn establish_replica_agreement() -> Weight {
+	fn add_replica_provider() -> Weight {
 		// Proof Size summary in bytes:
 		//  Measured:  `737`
 		//  Estimated: `4202`

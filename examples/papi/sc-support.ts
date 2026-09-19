@@ -13,7 +13,7 @@
  */
 
 import { ss58Address } from "@polkadot-labs/hdkd-helpers";
-import { negotiateTerms, toHex, type ChainSigner } from "@web3-storage/sdk";
+import { negotiateTerms, signedTermsBucketId, toHex, type ChainSigner } from "@web3-storage/sdk";
 
 /**
  * Derive a contract's substrate account from its H160 via the
@@ -49,11 +49,11 @@ export async function negotiatePrecompileTerms(
     duration,
     price_per_byte: pricePerByte,
     replica_params: null,
-    bucket_id: null,
+    bucket: null,
   });
   const t = signed.terms;
   const rp = t.replica_params;
-  const bucket = t.bucket_id;
+  const bucketId = signedTermsBucketId(signed);
   return {
     terms: {
       owner: toHex(owner.publicKey),
@@ -68,8 +68,8 @@ export async function negotiatePrecompileTerms(
         minSyncInterval: Number(rp?.min_sync_interval ?? 0),
         syncPrice: 0n,
       },
-      hasBucketId: bucket != null,
-      bucketId: BigInt(bucket ?? 0),
+      hasBucketId: bucketId != null,
+      bucketId: bucketId ?? 0n,
     },
     signature: signed.signature.startsWith("0x")
       ? signed.signature

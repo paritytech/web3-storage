@@ -4,7 +4,7 @@
 
 use crate::{mock::*, *};
 use frame_support::{assert_err, assert_noop, assert_ok};
-use storage_primitives::{ProviderRole, Role};
+use storage_primitives::{BucketTarget, ProviderRole, Role};
 
 /// Helper function to create a test public key (32 bytes).
 fn test_public_key() -> frame_support::BoundedVec<u8, frame_support::traits::ConstU32<64>> {
@@ -72,6 +72,7 @@ mod genesis;
 mod holds;
 mod member_buckets;
 mod misc;
+mod primary_provider;
 mod provider;
 mod replica;
 mod runtime_api;

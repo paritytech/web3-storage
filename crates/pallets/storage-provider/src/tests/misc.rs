@@ -201,7 +201,7 @@ fn establish_agreement_emits_event() {
         let bucket_id = setup_agreement(2, 1, 50, 100);
 
         // `setup_agreement` redeems provider-signed terms via
-        // `establish_storage_agreement`, which emits StorageAgreementEstablished.
+        // `create_bucket_with_primary`, which emits StorageAgreementEstablished.
         let events = frame_system::Pallet::<Test>::events();
         let found = events.iter().any(|r| {
             matches!(

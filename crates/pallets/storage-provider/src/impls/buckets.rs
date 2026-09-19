@@ -131,10 +131,12 @@ impl<T: Config> Pallet<T> {
     /// Parameters:
     /// - `admin`: Account that will be the bucket admin.
     /// - `min_providers`: Minimum number of primary providers required to
-    ///   sign each checkpoint.
+    ///   sign each checkpoint. Capped at `MaxPrimaryProviders`: a bucket can
+    ///   never hold more primaries than that, so a higher value would make
+    ///   the bucket impossible to checkpoint.
     /// - `initial_primary`: Optional provider to seed as the bucket's
     ///   first `primary_providers` entry. Used by
-    ///   `establish_storage_agreement_internal` to atomically create the
+    ///   `create_bucket_with_primary_internal` to atomically create the
     ///   bucket together with its primary agreement; pass `None` for
     ///   buckets that will register primaries later.
     /// - `visibility`: Read visibility. Creation surfaces that omit the
@@ -147,6 +149,11 @@ impl<T: Config> Pallet<T> {
         initial_primary: Option<&T::AccountId>,
         visibility: Visibility,
     ) -> Result<BucketId, DispatchError> {
+        ensure!(
+            min_providers <= T::MaxPrimaryProviders::get(),
+            Error::<T>::InvalidMinProviders
+        );
+
         let bucket_id = NextBucketId::<T>::get();
         NextBucketId::<T>::put(bucket_id.saturating_add(1));
 

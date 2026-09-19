@@ -248,7 +248,7 @@ pub mod pallet {
             // errors (bad signature, replay, capacity, price, …) surface
             // directly so callers can act on them.
             let layer0_bucket_id =
-                pallet_storage_provider::Pallet::<T>::establish_storage_agreement_internal(
+                pallet_storage_provider::Pallet::<T>::create_bucket_with_primary_internal(
                     &who, &provider, terms, &sig, visibility,
                 )?;
 
