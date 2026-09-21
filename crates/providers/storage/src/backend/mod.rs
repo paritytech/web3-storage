@@ -183,7 +183,10 @@ pub trait StorageBackend: Send + Sync {
         let chunk_hashes = self.collect_chunk_hashes(data_root);
 
         if chunk_index as usize >= chunk_hashes.len() {
-            return Err(Error::ResourceNotFound(format!("chunk_{chunk_index}")));
+            return Err(Error::ChunkNotFound {
+                data_root,
+                chunk_index,
+            });
         }
 
         let chunk_hash = chunk_hashes[chunk_index as usize];

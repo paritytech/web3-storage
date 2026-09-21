@@ -149,11 +149,40 @@ impl IntoResponse for Error {
                         details: Some(serde_json::json!({ "hash": hash })),
                     },
                 ),
-                StorageError::ResourceNotFound(resource) => (
+                StorageError::ChunkNotFound {
+                    data_root,
+                    chunk_index,
+                } => (
                     StatusCode::NOT_FOUND,
                     ErrorResponse {
                         error: "not_found".to_string(),
-                        details: Some(serde_json::json!({ "resource": resource })),
+                        details: Some(
+                            serde_json::json!({ "data_root": data_root, "chunk_index": chunk_index }),
+                        ),
+                    },
+                ),
+                StorageError::LeafNotFound {
+                    bucket_id,
+                    leaf_index,
+                } => (
+                    StatusCode::NOT_FOUND,
+                    ErrorResponse {
+                        error: "not_found".to_string(),
+                        details: Some(
+                            serde_json::json!({ "bucket_id": bucket_id, "leaf_index": leaf_index }),
+                        ),
+                    },
+                ),
+                StorageError::MmrProofNotFound {
+                    bucket_id,
+                    leaf_index,
+                } => (
+                    StatusCode::NOT_FOUND,
+                    ErrorResponse {
+                        error: "not_found".to_string(),
+                        details: Some(
+                            serde_json::json!({ "bucket_id": bucket_id, "leaf_index": leaf_index }),
+                        ),
                     },
                 ),
                 StorageError::ChildrenMissing(children) => (

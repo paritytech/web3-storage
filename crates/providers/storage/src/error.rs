@@ -10,9 +10,17 @@ pub enum Error {
     #[error("Node not found: {0:?}")]
     NodeNotFound(H256),
 
-    /// A chunk, leaf, or proof addressed by index rather than by hash.
-    #[error("Resource not found: {0}")]
-    ResourceNotFound(String),
+    /// A chunk index past the end of a data root's chunk list.
+    #[error("Chunk not found: index {chunk_index} in data root {data_root:?}")]
+    ChunkNotFound { data_root: H256, chunk_index: u64 },
+
+    /// A leaf index past the end of a bucket's leaf list.
+    #[error("Leaf not found: index {leaf_index} in bucket {bucket_id}")]
+    LeafNotFound { bucket_id: u64, leaf_index: u64 },
+
+    /// The MMR holds no proof for this leaf index.
+    #[error("MMR proof not found: leaf index {leaf_index} in bucket {bucket_id}")]
+    MmrProofNotFound { bucket_id: u64, leaf_index: u64 },
 
     #[error("Children missing: {0:?}")]
     ChildrenMissing(Vec<H256>),

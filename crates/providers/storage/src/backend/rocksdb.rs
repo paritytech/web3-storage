@@ -386,7 +386,10 @@ impl DiskStorage {
         let leaf = bucket
             .leaves
             .get(leaf_index as usize)
-            .ok_or(Error::ResourceNotFound(format!("leaf_{leaf_index}")))?
+            .ok_or(Error::LeafNotFound {
+                bucket_id,
+                leaf_index,
+            })?
             .clone();
 
         // Build MMR and generate proof
@@ -395,9 +398,12 @@ impl DiskStorage {
             mmr.push(blake2_256(&l.encode()));
         }
 
-        let (siblings, path, peaks) = mmr
-            .proof_with_path(leaf_index)
-            .ok_or(Error::ResourceNotFound(format!("mmr_proof_{leaf_index}")))?;
+        let (siblings, path, peaks) =
+            mmr.proof_with_path(leaf_index)
+                .ok_or(Error::MmrProofNotFound {
+                    bucket_id,
+                    leaf_index,
+                })?;
 
         Ok(storage_primitives::MmrProof {
             peaks,
