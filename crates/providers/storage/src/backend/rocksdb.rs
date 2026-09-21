@@ -53,8 +53,7 @@ impl DiskStorage {
         // Define column families
         let cf_names = vec![CF_NODES, CF_BUCKETS, CF_ROOT_TO_BUCKET, CF_METADATA];
 
-        let db = DB::open_cf(&opts, path, &cf_names)
-            .map_err(|e| Error::Storage(format!("Failed to open RocksDB: {e}")))?;
+        let db = DB::open_cf(&opts, path, &cf_names)?;
 
         Self::check_format_version(&db)?;
 
@@ -72,30 +71,25 @@ impl DiskStorage {
     fn check_format_version(db: &DB) -> Result<(), Error> {
         let cf = db
             .cf_handle(CF_METADATA)
-            .ok_or_else(|| Error::Storage("Metadata CF not found".to_string()))?;
+            .ok_or(Error::ColumnFamilyMissing(CF_METADATA))?;
 
-        match db
-            .get_cf(&cf, KEY_FORMAT_VERSION)
-            .map_err(|e| Error::Storage(e.to_string()))?
-        {
+        match db.get_cf(&cf, KEY_FORMAT_VERSION)? {
             Some(raw) => {
-                let stored = u32::from_le_bytes(
-                    raw.as_slice()
-                        .try_into()
-                        .map_err(|_| Error::Storage("Corrupt format_version value".to_string()))?,
-                );
+                let stored = u32::from_le_bytes(raw.as_slice().try_into().map_err(|_| {
+                    Error::IncompatibleFormat("corrupt format_version value".to_string())
+                })?);
                 if stored != FORMAT_VERSION {
-                    return Err(Error::Storage(format!(
+                    return Err(Error::IncompatibleFormat(format!(
                         "database format version {stored} is incompatible with this build \
                          (expects {FORMAT_VERSION}); a migration is required"
                     )));
                 }
                 Ok(())
             }
-            None if Self::is_empty(db)? => db
-                .put_cf(&cf, KEY_FORMAT_VERSION, FORMAT_VERSION.to_le_bytes())
-                .map_err(|e| Error::Storage(e.to_string())),
-            None => Err(Error::Storage(
+            None if Self::is_empty(db)? => {
+                Ok(db.put_cf(&cf, KEY_FORMAT_VERSION, FORMAT_VERSION.to_le_bytes())?)
+            }
+            None => Err(Error::IncompatibleFormat(
                 "database has data but no recorded format version - it predates format \
                  versioning and cannot be safely opened by this build"
                     .to_string(),
@@ -108,7 +102,7 @@ impl DiskStorage {
         for cf_name in [CF_NODES, CF_BUCKETS, CF_ROOT_TO_BUCKET, CF_METADATA] {
             let cf = db
                 .cf_handle(cf_name)
-                .ok_or_else(|| Error::Storage(format!("{cf_name} CF not found")))?;
+                .ok_or(Error::ColumnFamilyMissing(cf_name))?;
             if db
                 .iterator_cf(&cf, rocksdb::IteratorMode::Start)
                 .flatten()
@@ -126,25 +120,18 @@ impl DiskStorage {
         let cf = self
             .db
             .cf_handle(CF_BUCKETS)
-            .ok_or_else(|| Error::Storage("Buckets CF not found".to_string()))?;
+            .ok_or(Error::ColumnFamilyMissing(CF_BUCKETS))?;
 
         // Check if bucket already exists
         let key = bucket_id.to_le_bytes();
-        if self
-            .db
-            .get_cf(&cf, key)
-            .map_err(|e| Error::Storage(e.to_string()))?
-            .is_some()
-        {
+        if self.db.get_cf(&cf, key)?.is_some() {
             return Ok(()); // Already exists
         }
 
         let bucket = BucketState::new(max_bytes);
         let value = bucket.encode();
 
-        self.db
-            .put_cf(&cf, key, &value)
-            .map_err(|e| Error::Storage(e.to_string()))?;
+        self.db.put_cf(&cf, key, &value)?;
 
         Ok(())
     }
@@ -168,14 +155,12 @@ impl DiskStorage {
         let cf = self
             .db
             .cf_handle(CF_BUCKETS)
-            .ok_or_else(|| Error::Storage("Buckets CF not found".to_string()))?;
+            .ok_or(Error::ColumnFamilyMissing(CF_BUCKETS))?;
 
         let key = bucket_id.to_le_bytes();
         let value = bucket.encode();
 
-        self.db
-            .put_cf(&cf, key, &value)
-            .map_err(|e| Error::Storage(e.to_string()))?;
+        self.db.put_cf(&cf, key, &value)?;
 
         Ok(())
     }
@@ -271,7 +256,7 @@ impl DiskStorage {
             let cf_nodes = self
                 .db
                 .cf_handle(CF_NODES)
-                .ok_or_else(|| Error::Storage("Nodes CF not found".to_string()))?;
+                .ok_or(Error::ColumnFamilyMissing(CF_NODES))?;
 
             let missing: Vec<String> = child_hashes
                 .iter()
@@ -315,20 +300,13 @@ impl DiskStorage {
         let cf_nodes = self
             .db
             .cf_handle(CF_NODES)
-            .ok_or_else(|| Error::Storage("Nodes CF not found".to_string()))?;
+            .ok_or(Error::ColumnFamilyMissing(CF_NODES))?;
 
         let key = expected_hash.as_bytes();
-        if self
-            .db
-            .get_cf(&cf_nodes, key)
-            .map_err(|e| Error::Storage(e.to_string()))?
-            .is_none()
-        {
+        if self.db.get_cf(&cf_nodes, key)?.is_none() {
             let value = node.encode();
 
-            self.db
-                .put_cf(&cf_nodes, key, &value)
-                .map_err(|e| Error::Storage(e.to_string()))?;
+            self.db.put_cf(&cf_nodes, key, &value)?;
 
             // Update quota
             bucket.used_bytes = bucket.used_bytes.saturating_add(charge);
@@ -384,16 +362,11 @@ impl DiskStorage {
         let cf_nodes = self
             .db
             .cf_handle(CF_NODES)
-            .ok_or_else(|| Error::Storage("Nodes CF not found".to_string()))?;
+            .ok_or(Error::ColumnFamilyMissing(CF_NODES))?;
 
         for root in &data_roots {
             let key = root.as_bytes();
-            if self
-                .db
-                .get_cf(&cf_nodes, key)
-                .map_err(|e| Error::Storage(e.to_string()))?
-                .is_none()
-            {
+            if self.db.get_cf(&cf_nodes, key)?.is_none() {
                 return Err(Error::RootNotFound(format!(
                     "0x{}",
                     hex::encode(root.as_bytes())
@@ -1048,7 +1021,7 @@ mod tests {
         drop(db);
 
         match DiskStorage::new(dir.path()) {
-            Err(Error::Storage(_)) => {}
+            Err(Error::IncompatibleFormat(_)) => {}
             other => panic!(
                 "expected an incompatible-format error, got {}",
                 other.is_ok()
@@ -1078,11 +1051,28 @@ mod tests {
         drop(db);
 
         match DiskStorage::new(dir.path()) {
-            Err(Error::Storage(_)) => {}
+            Err(Error::IncompatibleFormat(_)) => {}
             other => panic!(
                 "expected an incompatible-format error, got {}",
                 other.is_ok()
             ),
         }
+    }
+
+    #[test]
+    fn new_wraps_rocksdb_open_failure() {
+        // A regular file where RocksDB expects a directory: `DB::open_cf` must
+        // fail, and that failure must surface as `Error::RocksDb`.
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("not_a_directory");
+        std::fs::write(&path, b"not a rocksdb database").unwrap();
+
+        let Err(err) = DiskStorage::new(&path) else {
+            panic!("opening a non-directory path must fail");
+        };
+        assert!(
+            matches!(err, Error::RocksDb(_)),
+            "expected Error::RocksDb, got {err}"
+        );
     }
 }
