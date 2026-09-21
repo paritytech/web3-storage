@@ -3,7 +3,7 @@
 //! The replica's signed attestation of the sync roots it holds, and the
 //! trait that produces the signature over it.
 
-use crate::Error;
+use provider_types::SigningRefused;
 use sp_core::H256;
 
 /// The roots array `confirm_replica_sync` takes: position 0 is the target
@@ -26,7 +26,10 @@ pub struct SignedSyncRoots {
 
 impl SignedSyncRoots {
     /// Attest the target root with the provider's registered signing key.
-    pub fn sign(signer: &dyn SyncRootsSigner, target_mmr_root: H256) -> Result<Self, Error> {
+    pub fn sign(
+        signer: &dyn SyncRootsSigner,
+        target_mmr_root: H256,
+    ) -> Result<Self, SigningRefused> {
         let mut roots: SyncRoots = [None; 7];
         roots[0] = Some(target_mmr_root);
         let signature = signer.sign_sync_roots(&roots)?;
@@ -45,7 +48,10 @@ impl SignedSyncRoots {
 pub trait SyncRootsSigner: Send + Sync {
     /// Sign the SCALE encoding of `roots` with the registered key, or
     /// explain why not.
-    fn sign_sync_roots(&self, roots: &SyncRoots) -> Result<sp_runtime::MultiSignature, Error>;
+    fn sign_sync_roots(
+        &self,
+        roots: &SyncRoots,
+    ) -> Result<sp_runtime::MultiSignature, SigningRefused>;
 }
 
 #[cfg(test)]
@@ -59,7 +65,10 @@ mod tests {
     struct TestSigner(sp_core::sr25519::Pair);
 
     impl SyncRootsSigner for TestSigner {
-        fn sign_sync_roots(&self, roots: &SyncRoots) -> Result<sp_runtime::MultiSignature, Error> {
+        fn sign_sync_roots(
+            &self,
+            roots: &SyncRoots,
+        ) -> Result<sp_runtime::MultiSignature, SigningRefused> {
             Ok(sp_runtime::MultiSignature::Sr25519(
                 self.0.sign(&roots.encode()),
             ))

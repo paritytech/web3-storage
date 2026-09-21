@@ -585,6 +585,27 @@ mod benchmarks {
     }
 
     #[benchmark]
+    fn transfer_agreement_ownership() {
+        let admin = funded_account::<T>("admin", 0);
+        let provider = create_provider::<T>(0);
+        let bucket_id = setup_primary_agreement::<T>(&admin, &provider, 0);
+        let new_owner = funded_account::<T>("new_owner", 0);
+
+        #[extrinsic_call]
+        transfer_agreement_ownership(
+            RawOrigin::Signed(admin),
+            bucket_id,
+            provider.clone(),
+            new_owner.clone(),
+        );
+
+        assert_eq!(
+            StorageAgreements::<T>::get(bucket_id, &provider).map(|a| a.owner),
+            Some(new_owner)
+        );
+    }
+
+    #[benchmark]
     fn extend_agreement() {
         let admin = funded_account::<T>("admin", 0);
         let provider = create_provider::<T>(0);

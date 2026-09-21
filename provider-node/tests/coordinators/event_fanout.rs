@@ -283,7 +283,7 @@ struct MockReplicaClient {
 
 #[async_trait::async_trait]
 impl ReplicaSyncChainClient for MockReplicaClient {
-    async fn get_current_block(&self) -> Result<u64, provider_replica::Error> {
+    async fn get_current_block(&self) -> Result<u64, provider_replica::ChainClientError> {
         Ok(100)
     }
 
@@ -291,7 +291,7 @@ impl ReplicaSyncChainClient for MockReplicaClient {
         &self,
         _provider_account: &str,
         _local_buckets: Vec<BucketId>,
-    ) -> Result<Vec<ReplicaAgreementInfo>, provider_replica::Error> {
+    ) -> Result<Vec<ReplicaAgreementInfo>, provider_replica::ChainClientError> {
         self.duty_passes.fetch_add(1, Ordering::SeqCst);
         Ok(self.agreement.clone().into_iter().collect())
     }
@@ -299,7 +299,7 @@ impl ReplicaSyncChainClient for MockReplicaClient {
     async fn fetch_bucket_snapshot(
         &self,
         _bucket_id: BucketId,
-    ) -> Result<BucketSnapshot, provider_replica::Error> {
+    ) -> Result<BucketSnapshot, provider_replica::ChainClientError> {
         Ok(BucketSnapshot {
             mmr_root: self.snapshot_root,
             leaf_count: 1,
@@ -309,7 +309,7 @@ impl ReplicaSyncChainClient for MockReplicaClient {
     async fn fetch_primary_endpoints(
         &self,
         _bucket_id: BucketId,
-    ) -> Result<Vec<String>, provider_replica::Error> {
+    ) -> Result<Vec<String>, provider_replica::ChainClientError> {
         Ok(vec![])
     }
 
@@ -317,7 +317,7 @@ impl ReplicaSyncChainClient for MockReplicaClient {
         &self,
         _bucket_id: BucketId,
         _attestation: provider_replica::SignedSyncRoots,
-    ) -> Result<(u8, u128), provider_replica::Error> {
+    ) -> Result<(u8, u128), provider_replica::ChainClientError> {
         Ok((0, 0))
     }
 }
@@ -334,11 +334,11 @@ async fn replica_agreement_event_triggers_duty_pass() {
         poll_interval: Duration::ZERO,
         ..Default::default()
     };
-    let state = test_state();
+    let (state, _dir) = test_state();
     let coordinator = ReplicaSyncCoordinator::new(
         config,
-        state.0.storage.clone(),
-        state.0.provider_id.clone(),
+        state.storage.clone(),
+        state.provider_id.clone(),
         Box::new(Arc::clone(&mock)),
         None,
     );

@@ -337,6 +337,11 @@ pub struct ProviderStats<T: Config> {
     /// resolves into exactly one of received_authorized / received_public
     /// (successfully defended), failed (slashed), or nothing (cancelled).
     pub challenges_failed: u32,
+    /// Total payment ever received by this provider for storage service:
+    /// agreement settlements, extension payments, and replica sync
+    /// payments. Monotonically increasing, never reset by a slash or
+    /// anything else. A historical record, not a live balance.
+    pub lifetime_revenue: BalanceOf<T>,
 }
 
 pub struct ProviderSettings<T: Config> {
@@ -879,6 +884,7 @@ pub enum Event<T: Config> {
         provider: T::AccountId,
         old_owner: T::AccountId,
         new_owner: T::AccountId,
+        escrow: BalanceOf<T>,
     },
     AgreementEnded {
         bucket_id: BucketId,
@@ -987,7 +993,7 @@ sp_api::decl_runtime_apis! {
 
 Response types live in `crates/pallets/storage-provider/src/runtime_api.rs` (`ProviderInfoResponse`,
 `StorageRequirements`, `MatchedProvider`, `BucketResponse`,
-`AgreementResponse`, `ChallengeResponse`, `ChallengeCandidate`, etc.). They flatten the on-chain
+`AgreementResponse`, `ChallengeResponse`, `ChallengeCandidate`, etc.). Most flatten the on-chain
 structs into encode/decode-friendly shapes (e.g. `AccountId` as `Vec<u8>`,
 `Balance` as `u128`) so client-side SDKs don't need to depend on the runtime's
 generics. `MatchedProvider` also carries a `match_score` (0–100) and an
@@ -995,11 +1001,14 @@ optional `PartialMatchReason` (price, capacity, duration, not-accepting) for
 the marketplace UI to surface why a provider didn't qualify.
 `ProviderInfoResponse` carries `deregister_at` so clients can tell a
 winding-down provider from an active one without a second storage read.
+Its historical counters are grouped separately, under a nested
+`stats: ProviderStatsInfo` — track record kept apart from settings and
+connection info, the one place this response doesn't fully flatten.
 
 `challenge_candidates` is the challenger-side counterpart of
 `find_matching_providers`: both fold a whole-map scan plus a scoring pass into
 one call so the SDK never pages a storage map to rank providers. Reputation is
-defined once, on-chain, by `runtime_api::reputation_score` — a provider with no
+defined once, on-chain, by `ProviderStats::reputation` — a provider with no
 resolved challenges scores 100, otherwise the score is the share of resolved
 challenges it defended (both tallied at resolution, so pending ones never count). `limit` is clamped to `MAX_CHALLENGE_CANDIDATES`; it bounds the
 response, not the scan.
@@ -1393,6 +1402,23 @@ impl<T: Config> Pallet<T> {
     /// 
     /// The new owner can top up quota and transfer ownership further.
     /// Useful for selling agreement slots or transferring to a DAO.
+    ///
+    /// **The escrow moves with the agreement.** The prepaid fee, and a
+    /// replica's unspent sync balance, are held on the owner, so the hold
+    /// moves to `new_owner` and stays a hold. Every later settlement and
+    /// refund then uses the new owner.
+    ///
+    /// **Bucket membership does not move.** For a primary agreement the owner
+    /// is a bucket admin at creation, and a transfer is the one way the two
+    /// come apart: the new owner is not a member and cannot write to the
+    /// bucket or administer it, while the admin keeps every admin power over
+    /// an agreement it no longer owns — including early termination, which
+    /// pays out or burns the new owner's escrow and returns none of it.
+    ///
+    /// **Challenge rights follow the owner.** The new owner joins the
+    /// bucket's authorized challengers, and for a primary agreement on a
+    /// private bucket may challenge primaries without being a member. Open
+    /// challenges keep the tier they were created with.
     /// 
     /// Parameters:
     /// - `bucket_id`: The bucket containing the agreement
@@ -1426,7 +1452,8 @@ impl<T: Config> Pallet<T> {
     /// well - they shouldn't find the bucket dead the next day because someone
     /// terminated agreements early. If unhappy with a provider, simply don't extend.
     /// 
-    /// Note: For primary agreements, admin is the owner (created via establish_storage_agreement).
+    /// Note: For primary agreements, admin is the owner at creation (via
+    /// establish_storage_agreement); `transfer_agreement_ownership` can separate them.
     /// Admin has no special privileges over replica agreements.
     ///
     /// Blocked while a challenge against `(bucket, provider)` is unresolved

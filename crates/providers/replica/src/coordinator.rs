@@ -16,6 +16,7 @@ use crate::sync_roots::{SignedSyncRoots, SyncRootsSigner};
 use crate::Error;
 use provider_chain::{BlockEvent, BlockEventRx};
 use provider_storage::StorageBackend;
+use provider_types::ChainClientError;
 use sp_core::H256;
 use sp_runtime::AccountId32;
 use std::collections::HashMap;
@@ -159,20 +160,26 @@ pub struct BucketSnapshot {
 #[async_trait::async_trait]
 pub trait ReplicaSyncChainClient: Send + Sync {
     /// Get the current block number.
-    async fn get_current_block(&self) -> Result<u64, Error>;
+    async fn get_current_block(&self) -> Result<u64, ChainClientError>;
 
     /// Fetch replica agreements for this provider.
     async fn fetch_replica_agreements(
         &self,
         provider_account: &str,
         local_buckets: Vec<BucketId>,
-    ) -> Result<Vec<ReplicaAgreementInfo>, Error>;
+    ) -> Result<Vec<ReplicaAgreementInfo>, ChainClientError>;
 
     /// Fetch the bucket snapshot (latest checkpoint state) from chain.
-    async fn fetch_bucket_snapshot(&self, bucket_id: BucketId) -> Result<BucketSnapshot, Error>;
+    async fn fetch_bucket_snapshot(
+        &self,
+        bucket_id: BucketId,
+    ) -> Result<BucketSnapshot, ChainClientError>;
 
     /// Fetch primary provider HTTP endpoints for a bucket.
-    async fn fetch_primary_endpoints(&self, bucket_id: BucketId) -> Result<Vec<String>, Error>;
+    async fn fetch_primary_endpoints(
+        &self,
+        bucket_id: BucketId,
+    ) -> Result<Vec<String>, ChainClientError>;
 
     /// Submit a confirm_replica_sync extrinsic carrying the replica's
     /// signed roots attestation — the pallet verifies it against the
@@ -181,12 +188,12 @@ pub trait ReplicaSyncChainClient: Send + Sync {
         &self,
         bucket_id: BucketId,
         attestation: SignedSyncRoots,
-    ) -> Result<(u8, u128), Error>;
+    ) -> Result<(u8, u128), ChainClientError>;
 }
 
 #[async_trait::async_trait]
 impl<T: ReplicaSyncChainClient> ReplicaSyncChainClient for Arc<T> {
-    async fn get_current_block(&self) -> Result<u64, Error> {
+    async fn get_current_block(&self) -> Result<u64, ChainClientError> {
         self.as_ref().get_current_block().await
     }
 
@@ -194,17 +201,23 @@ impl<T: ReplicaSyncChainClient> ReplicaSyncChainClient for Arc<T> {
         &self,
         provider_account: &str,
         local_buckets: Vec<BucketId>,
-    ) -> Result<Vec<ReplicaAgreementInfo>, Error> {
+    ) -> Result<Vec<ReplicaAgreementInfo>, ChainClientError> {
         self.as_ref()
             .fetch_replica_agreements(provider_account, local_buckets)
             .await
     }
 
-    async fn fetch_bucket_snapshot(&self, bucket_id: BucketId) -> Result<BucketSnapshot, Error> {
+    async fn fetch_bucket_snapshot(
+        &self,
+        bucket_id: BucketId,
+    ) -> Result<BucketSnapshot, ChainClientError> {
         self.as_ref().fetch_bucket_snapshot(bucket_id).await
     }
 
-    async fn fetch_primary_endpoints(&self, bucket_id: BucketId) -> Result<Vec<String>, Error> {
+    async fn fetch_primary_endpoints(
+        &self,
+        bucket_id: BucketId,
+    ) -> Result<Vec<String>, ChainClientError> {
         self.as_ref().fetch_primary_endpoints(bucket_id).await
     }
 
@@ -212,7 +225,7 @@ impl<T: ReplicaSyncChainClient> ReplicaSyncChainClient for Arc<T> {
         &self,
         bucket_id: BucketId,
         attestation: SignedSyncRoots,
-    ) -> Result<(u8, u128), Error> {
+    ) -> Result<(u8, u128), ChainClientError> {
         self.as_ref()
             .submit_sync_confirmation(bucket_id, attestation)
             .await
@@ -531,11 +544,9 @@ impl ReplicaSyncCoordinator {
             .map(|b| b.bucket_id)
             .collect();
 
-        let provider_account = self.provider_id.clone();
-
         let agreements = self
             .chain_client
-            .fetch_replica_agreements(&provider_account, local_buckets)
+            .fetch_replica_agreements(&self.provider_id, local_buckets)
             .await?;
 
         for agreement in agreements {

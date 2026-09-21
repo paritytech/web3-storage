@@ -8,6 +8,7 @@ use axum::{
     Json,
 };
 use provider_auth::{AuthError, MembershipError};
+use provider_types::{ChainClientError, SigningRefused};
 use serde::Serialize;
 use std::fmt;
 use thiserror::Error;
@@ -26,30 +27,17 @@ pub enum Error {
     #[error("Not authorized: {0}")]
     NotAuthorized(String),
 
-    /// A read against chain state (RPC call, storage fetch/iter, runtime API
-    /// call) failed.
-    #[error("Chain query failed ({what}): {reason}")]
-    ChainQuery { what: &'static str, reason: String },
+    /// A call against the chain failed: a state read, or an extrinsic that
+    /// could not be submitted or was rejected.
+    #[error(transparent)]
+    ChainClient(#[from] ChainClientError),
 
-    /// An extrinsic could not be submitted or its watch died before a
-    /// verdict was seen; the transaction may or may not have landed, so this
-    /// is safe to retry.
-    #[error("Failed to submit {what}: {reason}")]
-    TxSubmit { what: &'static str, reason: String },
-
-    /// The chain rejected the extrinsic itself; resubmitting would fail
-    /// identically.
-    #[error("{what} rejected: {reason}")]
-    TxRejected { what: &'static str, reason: String },
-
-    /// A value read from the chain or from a request body did not have the
-    /// expected shape.
+    /// A value read from a request body or a peer response did not have the
+    /// expected shape. Chain-state decode failures are
+    /// [`ChainClientError::Decode`], which is not the caller's fault and does
+    /// not share this status.
     #[error("Failed to decode {what}: {reason}")]
     Decode { what: &'static str, reason: String },
-
-    /// The provider's signing key could not be parsed or constructed.
-    #[error("Signing key error ({what}): {reason}")]
-    Signer { what: &'static str, reason: String },
 
     /// The rate limiter itself failed (e.g. its backing store is
     /// unreachable). The request is rejected fail-closed rather than let
@@ -76,9 +64,6 @@ pub enum Error {
     #[error(transparent)]
     Auth(#[from] AuthError),
 
-    #[error("Signing unavailable: provider has no keypair configured")]
-    SigningUnavailable,
-
     #[error("Nonce counter unavailable; provider has not bootstrapped replay state")]
     NonceCounterUnavailable,
 
@@ -104,14 +89,8 @@ pub enum Error {
         max_capacity: u64,
     },
 
-    #[error("Provider on-chain info unavailable; cannot validate terms")]
-    ProviderInfoUnavailable,
-
     #[error("Provider is deregistering; not accepting new agreements")]
     ProviderDeregistering,
-
-    #[error("Local signing key does not match the registered on-chain public_key")]
-    ProviderKeyMismatch,
 
     #[error(
         "Chain state not ready: current_anchor_block and request_timeout must both be non-zero"
@@ -124,8 +103,10 @@ pub enum Error {
     #[error(transparent)]
     Coordinator(#[from] provider_coordinator::Error),
 
+    /// The node cannot sign with its registered key. Each reason keeps the
+    /// response code it had when these were three separate variants.
     #[error(transparent)]
-    Replica(#[from] provider_replica::Error),
+    Signing(#[from] provider_types::SigningRefused),
 
     #[error("Storage agreement requested 0 byte")]
     InvalidMaxBytesRequest,
@@ -135,80 +116,12 @@ pub enum Error {
 }
 
 impl Error {
-    /// A chain-state read failed. `what` names the read (e.g. `"current
-    /// block"`); `e` is the underlying transport/RPC error, captured via its
-    /// `Display` so callers never need to name the chain client's own error
-    /// type.
-    pub fn chain_query(what: &'static str, e: impl fmt::Display) -> Self {
-        Error::ChainQuery {
-            what,
-            reason: e.to_string(),
-        }
-    }
-
-    /// A value read from the chain or from a request body did not decode
+    /// A value read from a request body or a peer response did not decode
     /// into the expected shape.
     pub fn decode(what: &'static str, e: impl fmt::Display) -> Self {
         Error::Decode {
             what,
             reason: e.to_string(),
-        }
-    }
-
-    /// An extrinsic submission failed in a way that may be safe to retry.
-    pub fn tx_submit(what: &'static str, e: impl fmt::Display) -> Self {
-        Error::TxSubmit {
-            what,
-            reason: e.to_string(),
-        }
-    }
-
-    /// The chain rejected an extrinsic outright.
-    pub fn tx_rejected(what: &'static str, e: impl fmt::Display) -> Self {
-        Error::TxRejected {
-            what,
-            reason: e.to_string(),
-        }
-    }
-
-    /// The provider's signing key could not be parsed or constructed.
-    pub fn signer(what: &'static str, e: impl fmt::Display) -> Self {
-        Error::Signer {
-            what,
-            reason: e.to_string(),
-        }
-    }
-}
-
-/// Reverse of [`Error::Replica`]: `SubxtChainClient`'s `ReplicaSyncChainClient`
-/// impl (in `subxt_client.rs`) shares chain-connection and submission helpers
-/// with `ChallengeChainClient`, which return this node's `Error`, but the
-/// replica trait's methods return `provider_replica::Error`. This direction
-/// stays hand-written: `provider_replica` cannot name this crate's `Error`
-/// without a dependency cycle, so it has no variant to `#[from]`.
-impl From<Error> for provider_replica::Error {
-    fn from(e: Error) -> Self {
-        match e {
-            Error::Replica(err) => err,
-            // `provider_replica` maps the storage error space one-to-one.
-            Error::Backend(err) => err.into(),
-            Error::Chain(err) => provider_replica::Error::Chain(err),
-            // The node's own `InvalidHash` reports text that failed to parse as
-            // a hash, so it cannot feed the replica variant, which holds two
-            // real `H256`s.
-            Error::InvalidHash { expected, actual } => provider_replica::Error::Decode {
-                what: "hash",
-                reason: format!("expected {expected}, got {actual}"),
-            },
-            Error::ChainQuery { what, reason } => {
-                provider_replica::Error::ChainQuery { what, reason }
-            }
-            Error::TxSubmit { what, reason } => provider_replica::Error::TxSubmit { what, reason },
-            Error::TxRejected { what, reason } => {
-                provider_replica::Error::TxRejected { what, reason }
-            }
-            Error::Decode { what, reason } => provider_replica::Error::Decode { what, reason },
-            other => provider_replica::Error::Node(other.to_string()),
         }
     }
 }
@@ -320,10 +233,7 @@ impl IntoResponse for Error {
                     details: Some(serde_json::json!({ "reason": reason })),
                 },
             ),
-            e @ (Error::ChainQuery { .. }
-            | Error::TxSubmit { .. }
-            | Error::TxRejected { .. }
-            | Error::Signer { .. }) => (
+            e @ Error::ChainClient(_) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 ErrorResponse {
                     error: "internal_error".to_string(),
@@ -411,13 +321,33 @@ impl IntoResponse for Error {
                     details: Some(serde_json::json!({ "message": err.to_string() })),
                 },
             ),
-            Error::SigningUnavailable => (
+            // One variant, but each reason keeps the code and message it had
+            // when these were three: a client tells "configure a key" from
+            // "wait for the registration" by the `error` field.
+            Error::Signing(refusal) => (
                 StatusCode::SERVICE_UNAVAILABLE,
-                ErrorResponse {
-                    error: "signing_unavailable".to_string(),
-                    details: Some(serde_json::json!({
-                        "message": "provider node signer is not available."
-                    })),
+                match refusal {
+                    SigningRefused::NoKey => ErrorResponse {
+                        error: "signing_unavailable".to_string(),
+                        details: Some(serde_json::json!({
+                            "message": "provider node signer is not available."
+                        })),
+                    },
+                    SigningRefused::Unregistered => ErrorResponse {
+                        error: "provider_info_unavailable".to_string(),
+                        details: Some(serde_json::json!({
+                            "message": "provider's on-chain registration info is not loaded; \
+                                        cannot validate agreement terms"
+                        })),
+                    },
+                    SigningRefused::KeyMismatch => ErrorResponse {
+                        error: "provider_key_mismatch".to_string(),
+                        details: Some(serde_json::json!({
+                            "message": "the node's signing key does not match the public_key \
+                                        registered on-chain; signatures would never verify — \
+                                        check --keyfile / --key-scheme against the registration"
+                        })),
+                    },
                 },
             ),
             Error::NonceCounterUnavailable => (
@@ -489,16 +419,6 @@ impl IntoResponse for Error {
                     details: None,
                 },
             ),
-            Error::ProviderInfoUnavailable => (
-                StatusCode::SERVICE_UNAVAILABLE,
-                ErrorResponse {
-                    error: "provider_info_unavailable".to_string(),
-                    details: Some(serde_json::json!({
-                        "message": "provider's on-chain registration info is not loaded; \
-                                    cannot validate agreement terms"
-                    })),
-                },
-            ),
             Error::ChainStateNotReady => (
                 StatusCode::SERVICE_UNAVAILABLE,
                 ErrorResponse {
@@ -538,16 +458,6 @@ impl IntoResponse for Error {
                     details: Some(serde_json::json!({ "message": msg })),
                 },
             ),
-            // Replica sync runs on the background chain-client path, never
-            // behind a request, so this is a catch-all for a case no handler
-            // reaches rather than a considered per-variant status.
-            Error::Replica(err) => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                ErrorResponse {
-                    error: "internal_error".to_string(),
-                    details: Some(serde_json::json!({ "message": err.to_string() })),
-                },
-            ),
             Error::ProviderDeregistering => (
                 StatusCode::SERVICE_UNAVAILABLE,
                 ErrorResponse {
@@ -555,17 +465,6 @@ impl IntoResponse for Error {
                     details: Some(serde_json::json!({
                         "message": "provider has announced deregistration and is no \
                                     longer accepting new storage agreements"
-                    })),
-                },
-            ),
-            Error::ProviderKeyMismatch => (
-                StatusCode::SERVICE_UNAVAILABLE,
-                ErrorResponse {
-                    error: "provider_key_mismatch".to_string(),
-                    details: Some(serde_json::json!({
-                        "message": "the node's signing key does not match the public_key \
-                                    registered on-chain; signatures would never verify — \
-                                    check --keyfile / --key-scheme against the registration"
                     })),
                 },
             ),
@@ -644,22 +543,17 @@ mod tests {
             StatusCode::FORBIDDEN
         );
         assert_eq!(
-            status_of(Error::chain_query("current block", "timed out")),
+            status_of(ChainClientError::query("current block", "timed out").into()),
             StatusCode::INTERNAL_SERVER_ERROR
         );
         assert_eq!(
-            status_of(Error::tx_submit("confirm_replica_sync", "watch dropped")),
+            status_of(ChainClientError::tx_submit("confirm_replica_sync", "watch dropped").into()),
             StatusCode::INTERNAL_SERVER_ERROR
         );
         assert_eq!(
-            status_of(Error::tx_rejected(
-                "confirm_replica_sync",
-                "SyncTooFrequent"
-            )),
-            StatusCode::INTERNAL_SERVER_ERROR
-        );
-        assert_eq!(
-            status_of(Error::signer("keypair", "bad seed")),
+            status_of(
+                ChainClientError::tx_rejected("confirm_replica_sync", "SyncTooFrequent").into()
+            ),
             StatusCode::INTERNAL_SERVER_ERROR
         );
         assert_eq!(
@@ -730,7 +624,7 @@ mod tests {
             StatusCode::INTERNAL_SERVER_ERROR
         );
         assert_eq!(
-            status_of(Error::SigningUnavailable),
+            status_of(SigningRefused::NoKey.into()),
             StatusCode::SERVICE_UNAVAILABLE
         );
         assert_eq!(
@@ -749,10 +643,6 @@ mod tests {
         );
         assert_eq!(
             status_of(provider_coordinator::Error::Internal("boom".into()).into()),
-            StatusCode::INTERNAL_SERVER_ERROR
-        );
-        assert_eq!(
-            status_of(provider_replica::Error::ChannelClosed.into()),
             StatusCode::INTERNAL_SERVER_ERROR
         );
     }
@@ -796,7 +686,7 @@ mod tests {
 
     #[test]
     fn test_signing_unavailable_503() {
-        let resp = Error::SigningUnavailable.into_response();
+        let resp = Error::from(SigningRefused::NoKey).into_response();
         let (parts, body) = resp.into_parts();
         assert_eq!(parts.status, StatusCode::SERVICE_UNAVAILABLE);
 
@@ -812,80 +702,19 @@ mod tests {
     }
 
     #[test]
-    fn test_replica_error_round_trips_through_the_node_error() {
-        use provider_replica::Error as ReplicaError;
-
-        let original = ReplicaError::chain_query("current block", "timed out");
-        let message = original.to_string();
-
-        let node_err: Error = original.into();
-        let back: ReplicaError = node_err.into();
-
-        assert!(matches!(back, ReplicaError::ChainQuery { .. }));
-        assert_eq!(back.to_string(), message);
-    }
-
-    #[test]
-    fn test_from_error_for_provider_replica_error_maps_one_to_one() {
-        use provider_replica::Error as ReplicaError;
-
-        use provider_storage::Error as StorageError;
-
-        let cases: Vec<(Error, &str)> = vec![
-            (
-                Error::Backend(StorageError::NodeNotFound(H256::zero())),
-                "Node not found: 0x0000000000000000000000000000000000000000000000000000000000000000",
-            ),
-            (
-                Error::Backend(StorageError::ChildrenMissing(vec![H256::zero()])),
-                "Children missing: [0x0000000000000000000000000000000000000000000000000000000000000000]",
-            ),
-            (
-                Error::Backend(StorageError::QuotaExceeded { used: 1, max: 2 }),
-                "Quota exceeded: used 1, max 2",
-            ),
-            (
-                Error::Backend(StorageError::BucketNotFound(7)),
-                "Bucket not found: 7",
-            ),
-            (
-                Error::Backend(StorageError::RootNotFound(H256::zero())),
-                "Root not found: 0x0000000000000000000000000000000000000000000000000000000000000000",
-            ),
-            (
-                Error::InvalidHash {
-                    expected: "e".into(),
-                    actual: "a".into(),
-                },
-                "Failed to decode hash: expected e, got a",
-            ),
-            (
-                Error::chain_query("current block", "timed out"),
-                "Chain query failed (current block): timed out",
-            ),
-            (
-                Error::tx_submit("confirm_replica_sync", "watch dropped"),
-                "Failed to submit confirm_replica_sync: watch dropped",
-            ),
-            (
-                Error::tx_rejected("confirm_replica_sync", "SyncTooFrequent"),
-                "confirm_replica_sync rejected: SyncTooFrequent",
-            ),
-            (
-                Error::decode("node data", "invalid base64"),
-                "Failed to decode node data: invalid base64",
-            ),
-        ];
-
-        for (node_err, expected_message) in cases {
-            let mapped: ReplicaError = node_err.into();
-            assert_eq!(mapped.to_string(), expected_message);
-        }
-
-        // Every other node `Error` variant is unreachable from the replica
-        // trait's methods but still mapped defensively via `Display`.
-        let mapped: ReplicaError = Error::InvalidSignature.into();
-        assert!(matches!(mapped, ReplicaError::Node(msg) if msg == "Invalid signature"));
+    fn signing_refusals_keep_the_statuses_they_had() {
+        assert_eq!(
+            status_of(SigningRefused::NoKey.into()),
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        assert_eq!(
+            status_of(SigningRefused::Unregistered.into()),
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        assert_eq!(
+            status_of(SigningRefused::KeyMismatch.into()),
+            StatusCode::SERVICE_UNAVAILABLE
+        );
     }
 
     #[test]

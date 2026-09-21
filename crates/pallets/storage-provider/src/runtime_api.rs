@@ -38,6 +38,23 @@ pub struct ProviderInfoResponse {
     pub replica_sync_price: Option<u128>,
     /// Whether agreement extensions are accepted.
     pub accepting_extensions: bool,
+    /// Maximum storage capacity in bytes (0 = unlimited).
+    pub max_capacity: u64,
+    /// Available capacity in bytes (None if unlimited).
+    pub available_capacity: Option<u64>,
+    /// Anchor block at which deregistration becomes finalisable
+    /// (`None` = not deregistering).
+    pub deregister_at: Option<u32>,
+    /// Historical, quality-signal statistics for this provider.
+    pub stats: ProviderStatsInfo,
+}
+
+/// Historical, quality-signal statistics for a provider, returned as a
+/// group by runtime API so clients can consume "track record" separately
+/// from settings and connection info.
+#[derive(Clone, PartialEq, Eq, Encode, Decode, TypeInfo, Debug)]
+#[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
+pub struct ProviderStatsInfo {
     /// Anchor block of registration.
     pub registered_at: u32,
     /// Agreements ever opened.
@@ -48,6 +65,8 @@ pub struct ProviderInfoResponse {
     pub agreements_not_extended: u32,
     /// Agreements the owner closed with a burn.
     pub agreements_burned: u32,
+    /// Lifetime cumulative quota ever committed — NOT current usage.
+    pub total_bytes_committed: u64,
     /// Successfully defended challenges from authorized challengers
     /// (member/agreement owner at creation). Counted at resolution.
     pub challenges_received_authorized: u32,
@@ -55,15 +74,13 @@ pub struct ProviderInfoResponse {
     pub challenges_received_public: u32,
     /// Challenges lost, each of which slashed the provider.
     pub challenges_failed: u32,
-    /// Maximum storage capacity in bytes (0 = unlimited).
-    pub max_capacity: u64,
-    /// Available capacity in bytes (None if unlimited).
-    pub available_capacity: Option<u64>,
-    /// Anchor block at which deregistration becomes finalisable
-    /// (`None` = not deregistering).
-    pub deregister_at: Option<u32>,
-    /// Reputation 0-100, from [`reputation_score`]. Carried here so clients
-    /// never re-implement the formula.
+    /// Total payment ever received for storage service. Never resets, not
+    /// even on a slash.
+    pub lifetime_revenue: u128,
+    /// Reputation 0-100, from [`ProviderStats::reputation`]. Carried here so
+    /// clients never re-implement the formula.
+    ///
+    /// [`ProviderStats::reputation`]: crate::ProviderStats::reputation
     pub reputation: u8,
 }
 
@@ -191,22 +208,10 @@ pub struct ChallengeCandidate {
     pub challenges_received_public: u32,
     /// Challenges lost, each of which slashed the provider.
     pub challenges_failed: u32,
-    /// Reputation 0–100, from [`reputation_score`].
+    /// Reputation 0–100, from [`ProviderStats::reputation`].
+    ///
+    /// [`ProviderStats::reputation`]: crate::ProviderStats::reputation
     pub reputation: u8,
-}
-
-/// A provider's 0–100 reputation from its on-chain challenge record: the
-/// share of resolved challenges it defended. Both counters are tallied at
-/// resolution, so pending challenges never count against a provider.
-///
-/// Providers with no resolved challenges score 100 — benefit of the doubt, so
-/// a newly registered provider is not immediately challenge-worthy.
-pub fn reputation_score(challenges_defended: u32, challenges_failed: u32) -> u8 {
-    let total = challenges_defended as u64 + challenges_failed as u64;
-    if total == 0 {
-        return 100;
-    }
-    ((challenges_defended as u64 * 100) / total).min(100) as u8
 }
 
 /// Challenge information.
@@ -304,7 +309,9 @@ sp_api::decl_runtime_apis! {
         /// appears once, paired with one of its buckets, so a caller challenges
         /// it at most once per round.
         ///
-        /// Reputation runs from 0 to 100 (see [`reputation_score`]).
+        /// Reputation runs from 0 to 100 (see [`ProviderStats::reputation`]).
+        ///
+        /// [`ProviderStats::reputation`]: crate::ProviderStats::reputation
         /// `max_reputation` saturates outside that range instead of erroring:
         /// `0` matches nothing, and any value above 100 disables the filter.
         ///

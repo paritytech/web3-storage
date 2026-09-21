@@ -7274,6 +7274,7 @@ dependencies = [
  "parity-scale-codec",
  "provider-chain",
  "provider-storage",
+ "provider-types",
  "reqwest",
  "serde",
  "serde_json",
@@ -7315,6 +7316,7 @@ dependencies = [
  "sp-core",
  "sp-crypto-hashing",
  "sp-runtime",
+ "thiserror 2.0.18",
 ]
 
 [[package]]

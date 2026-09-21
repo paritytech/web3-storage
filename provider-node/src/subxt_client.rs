@@ -14,7 +14,7 @@ use crate::challenge_responder::{ChallengeChainClient, ChallengeError, DetectedC
 use crate::Error;
 use provider_chain::chain_connection::{self, ChainWatch};
 use provider_replica::coordinator::{BucketSnapshot, ReplicaAgreementInfo};
-use provider_replica::{ReplicaSyncChainClient, SignedSyncRoots};
+use provider_replica::{ChainClientError, ReplicaSyncChainClient, SignedSyncRoots};
 use sp_core::crypto::Ss58Codec;
 use sp_core::H256;
 use std::collections::HashSet;
@@ -59,9 +59,9 @@ enum Attempt {
     /// Transport-level failure: the transaction may or may not have landed, so
     /// resubmitting is safe only because a duplicate rejection counts as
     /// success.
-    Retryable(Error),
+    Retryable(ChainClientError),
     /// The chain rejected the call itself; resubmitting would fail identically.
-    Rejected(Error),
+    Rejected(ChainClientError),
 }
 
 /// Encode a `MultiSignature` as the dynamic variant value the runtime's
@@ -95,16 +95,28 @@ pub struct SubxtChainClient {
     submit_lock: Arc<tokio::sync::Mutex<()>>,
 }
 
+/// Turning the configured seed into a keypair is all [`SubxtChainClient::new`]
+/// can fail at, and it happens once at startup: `command.rs` logs it and runs
+/// without a chain client. It never reaches a request, so it is deliberately
+/// not one of the HTTP [`Error`] variants.
+#[derive(Debug, thiserror::Error)]
+pub enum SignerSetupError {
+    /// The `--keyfile` contents are not a valid seed URI.
+    #[error("invalid seed URI: {0}")]
+    SecretUri(#[from] subxt_signer::SecretUriError),
+    /// The seed parsed but no sr25519 keypair could be derived from it.
+    #[error("cannot build keypair from seed: {0}")]
+    Keypair(#[from] subxt_signer::sr25519::Error),
+}
+
 impl SubxtChainClient {
     /// Create the signing chain client from the connection watch channel and
     /// the provider's seed URI (e.g. `//Alice` or a mnemonic), which
     /// reproduces the provider's registered account — the identity every
     /// on-chain action must be signed by.
-    pub fn new(chain_rx: ChainWatch, seed: &str) -> Result<Self, Error> {
-        let uri: subxt_signer::SecretUri =
-            seed.parse().map_err(|e| Error::signer("seed URI", e))?;
-        let signer = subxt_signer::sr25519::Keypair::from_uri(&uri)
-            .map_err(|e| Error::signer("keypair", e))?;
+    pub fn new(chain_rx: ChainWatch, seed: &str) -> Result<Self, SignerSetupError> {
+        let uri: subxt_signer::SecretUri = seed.parse()?;
+        let signer = subxt_signer::sr25519::Keypair::from_uri(&uri)?;
 
         tracing::info!(
             "Chain client signing as {}",
@@ -124,19 +136,36 @@ impl SubxtChainClient {
         chain_connection::current_api(&self.chain_rx).map_err(Into::into)
     }
 
+    /// The block handle every chain read starts from: the live connection,
+    /// resolved to the current block. Both steps report the same failure, so
+    /// the mapping lives here rather than at each call site.
+    async fn at_current_block(
+        &self,
+    ) -> Result<
+        subxt::client::ClientAtBlock<
+            subxt::PolkadotConfig,
+            subxt::client::OnlineClientAtBlockImpl<subxt::PolkadotConfig>,
+        >,
+        ChainClientError,
+    > {
+        self.api()
+            .map_err(|e| ChainClientError::query("chain connection", e))?
+            .at_current_block()
+            .await
+            .map_err(|e| ChainClientError::query("current block", e))
+    }
+
     /// Get the current anchor block (the clock every on-chain duration is
     /// measured against), read at the latest finalized state via the pallet's
     /// runtime API.
     ///
     /// Backs `get_current_block` on the replica-sync trait.
-    async fn current_anchor_block(&self) -> Result<u64, Error> {
-        let at = self
-            .api()?
-            .at_current_block()
-            .await
-            .map_err(|e| Error::chain_query("current block", e))?;
+    async fn current_anchor_block(&self) -> Result<u64, ChainClientError> {
+        let at = self.at_current_block().await?;
         Ok(u64::from(
-            provider_coordinator::fetch_current_anchor_block(&at).await?,
+            provider_coordinator::fetch_current_anchor_block(&at)
+                .await
+                .map_err(|e| ChainClientError::query("current anchor block", e))?,
         ))
     }
 
@@ -183,7 +212,7 @@ impl SubxtChainClient {
         &self,
         tx: &C,
         what: &'static str,
-    ) -> Result<Option<H256>, Error> {
+    ) -> Result<Option<H256>, ChainClientError> {
         const RETRY_DELAY: Duration = Duration::from_secs(6);
 
         // One transaction at a time across every clone (see `submit_lock`).
@@ -220,7 +249,7 @@ impl SubxtChainClient {
     ) -> Attempt {
         match tokio::time::timeout(SUBMIT_TIMEOUT, self.submit_once(tx, what, retrying)).await {
             Ok(attempt) => attempt,
-            Err(_) => Attempt::Retryable(Error::tx_submit(
+            Err(_) => Attempt::Retryable(ChainClientError::tx_submit(
                 what,
                 format!("not finalized within {}s", SUBMIT_TIMEOUT.as_secs()),
             )),
@@ -236,14 +265,12 @@ impl SubxtChainClient {
         retrying: bool,
     ) -> Attempt {
         let submitted = async {
-            self.api()?
-                .at_current_block()
-                .await
-                .map_err(|e| Error::chain_query("current block", e))?
+            self.at_current_block()
+                .await?
                 .transactions()
                 .sign_and_submit_then_watch_default(tx, &self.signer)
                 .await
-                .map_err(|e| Error::tx_submit(what, e))
+                .map_err(|e| ChainClientError::tx_submit(what, e))
         }
         .await;
 
@@ -272,10 +299,10 @@ impl SubxtChainClient {
             // Non-dispatch failure (e.g. the watch subscription died): the tx
             // may or may not have landed, so resubmit and let the duplicate
             // classification above decide.
-            Err(e) if !Self::is_dispatch_failure(&e) => {
-                Attempt::Retryable(Error::tx_submit(what, format!("tx watch failed: {e}")))
-            }
-            Err(e) => Attempt::Rejected(Error::tx_rejected(what, e)),
+            Err(e) if !Self::is_dispatch_failure(&e) => Attempt::Retryable(
+                ChainClientError::tx_submit(what, format!("tx watch failed: {e}")),
+            ),
+            Err(e) => Attempt::Rejected(ChainClientError::tx_rejected(what, e)),
         }
     }
 
@@ -547,8 +574,8 @@ impl SubxtChainClient {
 
 #[async_trait::async_trait]
 impl ReplicaSyncChainClient for SubxtChainClient {
-    async fn get_current_block(&self) -> Result<u64, provider_replica::Error> {
-        Ok(self.current_anchor_block().await?)
+    async fn get_current_block(&self) -> Result<u64, ChainClientError> {
+        self.current_anchor_block().await
     }
 
     /// This provider's replica agreements for the buckets it stores locally.
@@ -562,15 +589,11 @@ impl ReplicaSyncChainClient for SubxtChainClient {
         &self,
         provider_account: &str,
         local_buckets: Vec<BucketId>,
-    ) -> Result<Vec<ReplicaAgreementInfo>, provider_replica::Error> {
+    ) -> Result<Vec<ReplicaAgreementInfo>, ChainClientError> {
         // Accepts both SS58 and 0x-prefixed hex, the two forms `--provider-id`
         // is given in.
-        let account = sp_core::crypto::AccountId32::from_str(provider_account).map_err(|e| {
-            provider_replica::Error::InvalidAccount {
-                account: provider_account.to_string(),
-                reason: e.to_string(),
-            }
-        })?;
+        let account = sp_core::crypto::AccountId32::from_str(provider_account)
+            .map_err(|e| ChainClientError::invalid_account(provider_account, e))?;
 
         let payload = storage_subxt::api::runtime_apis()
             .storage_provider_api()
@@ -578,14 +601,12 @@ impl ReplicaSyncChainClient for SubxtChainClient {
             .unvalidated();
 
         let agreements = self
-            .api()?
             .at_current_block()
-            .await
-            .map_err(|e| provider_replica::Error::chain_query("current block", e))?
+            .await?
             .runtime_apis()
             .call(payload)
             .await
-            .map_err(|e| provider_replica::Error::chain_query("provider agreements", e))?;
+            .map_err(|e| ChainClientError::query("provider agreements", e))?;
 
         let local_buckets: HashSet<BucketId> = local_buckets.into_iter().collect();
 
@@ -599,17 +620,13 @@ impl ReplicaSyncChainClient for SubxtChainClient {
     async fn fetch_bucket_snapshot(
         &self,
         bucket_id: BucketId,
-    ) -> Result<BucketSnapshot, provider_replica::Error> {
+    ) -> Result<BucketSnapshot, ChainClientError> {
         use subxt::ext::scale_value::ValueDef;
 
         let storage_address =
             subxt::dynamic::storage::<(Value,), Value>("StorageProvider", "Buckets");
 
-        let at = self
-            .api()?
-            .at_current_block()
-            .await
-            .map_err(|e| provider_replica::Error::chain_query("current block", e))?;
+        let at = self.at_current_block().await?;
 
         match at
             .storage()
@@ -620,7 +637,7 @@ impl ReplicaSyncChainClient for SubxtChainClient {
                 use subxt::ext::scale_value::At;
                 let decoded = value
                     .decode()
-                    .map_err(|e| provider_replica::Error::decode("bucket", e))?;
+                    .map_err(|e| ChainClientError::decode("bucket", e))?;
 
                 if let Some(snapshot_opt) = decoded.at(4) {
                     if let ValueDef::Variant(variant) = &snapshot_opt.value {
@@ -647,17 +664,13 @@ impl ReplicaSyncChainClient for SubxtChainClient {
     async fn fetch_primary_endpoints(
         &self,
         bucket_id: BucketId,
-    ) -> Result<Vec<String>, provider_replica::Error> {
+    ) -> Result<Vec<String>, ChainClientError> {
         use subxt::ext::scale_value::{At, Composite, Primitive, ValueDef};
 
         let storage_address =
             subxt::dynamic::storage::<(Value,), Value>("StorageProvider", "Buckets");
 
-        let at = self
-            .api()?
-            .at_current_block()
-            .await
-            .map_err(|e| provider_replica::Error::chain_query("current block", e))?;
+        let at = self.at_current_block().await?;
 
         let bucket_value = match at
             .storage()
@@ -670,7 +683,7 @@ impl ReplicaSyncChainClient for SubxtChainClient {
 
         let decoded = bucket_value
             .decode()
-            .map_err(|e| provider_replica::Error::decode("bucket", e))?;
+            .map_err(|e| ChainClientError::decode("bucket", e))?;
 
         let mut provider_bytes_list = Vec::new();
 
@@ -705,12 +718,6 @@ impl ReplicaSyncChainClient for SubxtChainClient {
             let provider_addr =
                 subxt::dynamic::storage::<(Value,), Value>("StorageProvider", "Providers");
 
-            let at = self
-                .api()?
-                .at_current_block()
-                .await
-                .map_err(|e| provider_replica::Error::chain_query("current block", e))?;
-
             if let Ok(Some(value)) = at
                 .storage()
                 .try_fetch(provider_addr, (Value::from_bytes(&provider_bytes),))
@@ -735,7 +742,7 @@ impl ReplicaSyncChainClient for SubxtChainClient {
         &self,
         bucket_id: BucketId,
         attestation: SignedSyncRoots,
-    ) -> Result<(u8, u128), provider_replica::Error> {
+    ) -> Result<(u8, u128), ChainClientError> {
         let roots_value: Vec<Value> = attestation
             .roots
             .iter()
