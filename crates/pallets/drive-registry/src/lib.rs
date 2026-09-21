@@ -26,10 +26,11 @@
 //! ### Queries
 //!
 //! - `Drives`: Maps DriveId → DriveInfo
-//! - `UserDrives`: Maps AccountId → Vec<DriveId>
+//! - `UserDrives`: Maps AccountId → `Vec<DriveId>`
 //! - `NextDriveId`: Auto-incrementing counter for drive IDs
 
 #![cfg_attr(not(feature = "std"), no_std)]
+#![warn(missing_docs)]
 
 extern crate alloc;
 
@@ -37,7 +38,6 @@ pub use pallet::*;
 
 #[cfg(feature = "runtime-benchmarks")]
 pub mod benchmarking;
-pub mod migrations;
 pub mod weights;
 pub use weights::WeightInfo;
 
@@ -66,9 +66,7 @@ pub mod pallet {
     use sp_runtime::{traits::Saturating, BoundedVec};
     use storage_primitives::Role;
 
-    /// In-code storage version. v1 drops the `payment` field from
-    /// [`DriveInfo`]; see [`crate::migrations::v1`].
-    const STORAGE_VERSION: StorageVersion = StorageVersion::new(1);
+    const STORAGE_VERSION: StorageVersion = StorageVersion::new(0);
 
     #[pallet::pallet]
     #[pallet::storage_version(STORAGE_VERSION)]
@@ -143,26 +141,40 @@ pub mod pallet {
     pub enum Event<T: Config> {
         /// A new drive was created
         DriveCreated {
+            /// The new drive.
             drive_id: DriveId,
+            /// Its owner.
             owner: T::AccountId,
+            /// Layer 0 bucket backing the drive.
             bucket_id: u64,
         },
-        /// Drive was deleted
+        /// Drive was deleted and its agreements settled.
         DriveDeleted {
+            /// The removed drive.
             drive_id: DriveId,
+            /// The drive owner who deleted it.
             owner: T::AccountId,
+            /// Layer 0 bucket that backed it.
             bucket_id: u64,
-            refunded: BalanceOf<T>,
+            /// Unspent escrow released back to the agreements' owners. Each
+            /// agreement refunds its own owner, which after an ownership
+            /// transfer need not be `owner`.
+            escrow_released: BalanceOf<T>,
         },
         /// Drive was shared with a member
         DriveShared {
+            /// The drive.
             drive_id: DriveId,
+            /// Account granted access.
             member: T::AccountId,
+            /// Role granted on the underlying bucket.
             role: Role,
         },
         /// Member was removed from a shared drive
         DriveUnshared {
+            /// The drive.
             drive_id: DriveId,
+            /// Account whose access was removed.
             member: T::AccountId,
         },
     }
@@ -180,12 +192,6 @@ pub mod pallet {
         DriveNameTooLong,
         /// Drive ID overflow
         DriveIdOverflow,
-        /// Failed to cleanup bucket in Layer 0
-        BucketCleanupFailed,
-        /// Not authorized to share this drive (must be owner or bucket admin)
-        NotAuthorizedToShare,
-        /// Failed to update bucket membership in Layer 0
-        MembershipUpdateFailed,
     }
 
     #[pallet::call]
@@ -305,8 +311,7 @@ pub mod pallet {
             let total_refunded = pallet_storage_provider::Pallet::<T>::cleanup_bucket_internal(
                 drive.bucket_id,
                 &who,
-            )
-            .map_err(|_| Error::<T>::BucketCleanupFailed)?;
+            )?;
 
             // Remove bucket-to-drive mapping
             BucketToDrive::<T>::remove(drive.bucket_id);
@@ -324,7 +329,7 @@ pub mod pallet {
                 drive_id,
                 owner: who,
                 bucket_id: drive.bucket_id,
-                refunded: total_refunded,
+                escrow_released: total_refunded,
             });
 
             Ok(())
@@ -333,7 +338,8 @@ pub mod pallet {
         /// Share a drive with another account by adding them as a member of
         /// the underlying Layer 0 bucket.
         ///
-        /// The caller must be the drive owner or an Admin of the underlying bucket.
+        /// The caller must be an admin of the underlying bucket; the drive owner
+        /// is one unless they stepped down. Layer 0 errors surface unchanged.
         ///
         /// Parameters:
         /// - `drive_id`: The drive to share
@@ -351,19 +357,12 @@ pub mod pallet {
 
             let drive = Drives::<T>::get(drive_id).ok_or(Error::<T>::DriveNotFound)?;
 
-            // Drive owner always has permission; non-owners must be bucket Admin
-            if drive.owner != who {
-                // Delegate the admin check to set_member_internal which calls ensure_admin
-                // If the caller isn't an admin, set_member_internal will return NotBucketAdmin
-            }
-
             pallet_storage_provider::Pallet::<T>::set_member_internal(
                 &who,
                 drive.bucket_id,
                 member.clone(),
                 role,
-            )
-            .map_err(|_| Error::<T>::MembershipUpdateFailed)?;
+            )?;
 
             Self::deposit_event(Event::DriveShared {
                 drive_id,
@@ -376,7 +375,8 @@ pub mod pallet {
 
         /// Remove a member's access to a shared drive.
         ///
-        /// The caller must be the drive owner or an Admin of the underlying bucket.
+        /// The caller must be an admin of the underlying bucket. Layer 0 errors
+        /// surface unchanged.
         ///
         /// Parameters:
         /// - `drive_id`: The drive to unshare
@@ -396,8 +396,7 @@ pub mod pallet {
                 &who,
                 drive.bucket_id,
                 member.clone(),
-            )
-            .map_err(|_| Error::<T>::MembershipUpdateFailed)?;
+            )?;
 
             Self::deposit_event(Event::DriveUnshared { drive_id, member });
 

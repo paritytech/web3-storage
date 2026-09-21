@@ -415,6 +415,11 @@ fn confirm_replica_sync_happy_path() {
 
         // Provider should receive sync_price (10)
         assert_eq!(Balances::free_balance(2), provider_balance_before + 10);
+        // ...and it counts as lifetime revenue.
+        assert_eq!(
+            Providers::<Test>::get(2).unwrap().stats.lifetime_revenue,
+            10
+        );
 
         // Sync balance should decrease
         let agreement = StorageAgreements::<Test>::get(bucket_id, 2).unwrap();

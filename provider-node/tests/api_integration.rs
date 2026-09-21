@@ -9,12 +9,13 @@ mod common;
 use axum::http::StatusCode;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use codec::Encode;
+use provider_types::KeyScheme;
 use reqwest::Method;
 use serde_json::{json, Value};
 use sp_core::crypto::Ss58Codec;
 use sp_core::{sr25519, Pair, H256};
 use storage_primitives::{Commitment, CommitmentPayload};
-use storage_provider_node::{KeyScheme, ProviderState};
+use storage_provider_node::ProviderState;
 
 use common::{StorageBackendKind, TestServer};
 
@@ -38,6 +39,16 @@ impl TestServer {
     async fn new_unsigned(backend: StorageBackendKind) -> Self {
         Self::start(backend, |deps| {
             ProviderState::with_provider_id(deps, "0xtest_provider".to_string())
+        })
+        .await
+    }
+
+    /// Signing provider (`//Alice`) with no on-chain registration published,
+    /// so signing-bound endpoints must answer 503 rather than sign with a key
+    /// the chain does not (yet) know about.
+    async fn new_unregistered(backend: StorageBackendKind) -> Self {
+        Self::start_unregistered(backend, |deps| {
+            ProviderState::with_seed(deps, common::PROVIDER_SEED).expect("//Alice is a valid SURI")
         })
         .await
     }
@@ -78,12 +89,13 @@ common::backend_tests! {
         let body: Value = response.json().await.unwrap();
         assert_eq!(body["provider_id"], expect_provider_id);
 
-        // `TestServer::new` seeds a signing key but wires up neither the nonce
-        // counter nor on-chain provider info (those need a live chain at startup),
-        // so the readiness flags must reflect "can sign, not yet ready to negotiate".
+        // `TestServer::new` seeds a signing key and a matching on-chain
+        // registration, but not the nonce counter (that needs a live chain at
+        // startup), so readiness must reflect "can sign and negotiate, but
+        // the replay window isn't bootstrapped yet".
         assert_eq!(body["readiness"]["signing_configured"], true);
         assert_eq!(body["readiness"]["nonce_counter_ready"], false);
-        assert_eq!(body["readiness"]["provider_info_loaded"], false);
+        assert_eq!(body["readiness"]["provider_info_loaded"], true);
     }
 }
 
@@ -707,6 +719,52 @@ common::backend_tests! {
         assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
         let body: Value = resp.json().await.unwrap();
         assert_eq!(body["error"], "signing_unavailable");
+    }
+}
+
+common::backend_tests! {
+    async fn commitment_endpoint_returns_503_when_registration_not_published(backend) {
+        // A signing key alone is not enough: without a published on-chain
+        // registration, the pallet has no key to verify against, so signing
+        // must refuse rather than emit a signature that can never verify.
+        let server = TestServer::new_unregistered(backend).await;
+
+        // Seed the bucket via storage so the bucket-lookup gate passes and the
+        // handler actually reaches the signing step. Calling /commit reaches
+        // sign() and returns 503, but still mutates storage, which is enough
+        // to make /commitment reach state.sign(...) too.
+        let data = b"chunk-for-commitment-unregistered";
+        let hash = storage_primitives::blake2_256(data);
+        let hash_hex = format!("0x{}", hex_encode(hash.as_bytes()));
+        server
+            .client
+            .put(server.url("/node"))
+            .json(&json!({
+                "bucket_id": 1,
+                "hash": hash_hex,
+                "data": BASE64.encode(data),
+                "children": null,
+            }))
+            .send()
+            .await
+            .unwrap();
+        server
+            .client
+            .post(server.url("/commit"))
+            .json(&json!({ "bucket_id": 1, "data_roots": [hash_hex] }))
+            .send()
+            .await
+            .unwrap();
+
+        let resp = server
+            .client
+            .get(server.url("/commitment?bucket_id=1"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let body: Value = resp.json().await.unwrap();
+        assert_eq!(body["error"], "provider_info_unavailable");
     }
 }
 

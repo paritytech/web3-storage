@@ -20,10 +20,10 @@
 //! seed; `scheme` only selects the signing key registered on-chain (what the
 //! provider node signs commitments/terms with — its --key-scheme must match).
 
+use provider_types::{KeyScheme, ProviderKeypair};
 use sp_core::crypto::Ss58Codec;
 use std::env;
 use storage_client::{ClientConfig, ProviderClient, ProviderSettings};
-use storage_provider_node::{KeyScheme, ProviderKeypair};
 use subxt_signer::{sr25519::Keypair, SecretUri};
 
 const DEFAULT_CHAIN_WS: &str = "ws://127.0.0.1:2222";

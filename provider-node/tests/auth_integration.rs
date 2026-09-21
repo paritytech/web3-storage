@@ -86,6 +86,7 @@ impl AuthTestServer {
             auth: Arc::new(Authenticator::new(resolver)),
         };
         let state = ProviderState::with_seed(deps, "//Alice").expect("//Alice is valid");
+        common::publish_matching_registration(&state);
 
         let app = create_router(Arc::new(state));
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
