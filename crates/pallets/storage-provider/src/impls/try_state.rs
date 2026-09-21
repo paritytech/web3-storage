@@ -46,12 +46,7 @@ impl<T: Config> Pallet<T> {
 
         let mut escrow_by_owner: BTreeMap<T::AccountId, BalanceOf<T>> = BTreeMap::new();
         for (_bucket_id, _provider, agreement) in StorageAgreements::<T>::iter() {
-            // A replica's unspent sync balance is escrowed alongside the
-            // storage fee, under the same reason and on the same account.
-            let mut owed = agreement.payment_locked;
-            if let ProviderRole::Replica { sync_balance, .. } = agreement.role {
-                owed = owed.saturating_add(sync_balance);
-            }
+            let owed = agreement.escrow();
             let total = escrow_by_owner.entry(agreement.owner).or_default();
             *total = total.saturating_add(owed);
         }

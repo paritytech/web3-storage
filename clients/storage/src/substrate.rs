@@ -323,6 +323,19 @@ pub mod extrinsics {
         )
     }
 
+    /// Create a transfer_agreement_ownership extrinsic payload.
+    pub fn transfer_agreement_ownership(
+        bucket_id: u64,
+        provider: AccountId32,
+        new_owner: AccountId32,
+    ) -> impl Payload {
+        api::tx().storage_provider().transfer_agreement_ownership(
+            bucket_id,
+            convert::to_subxt_account(&provider),
+            convert::to_subxt_account(&new_owner),
+        )
+    }
+
     /// Create an end_agreement extrinsic payload.
     pub fn end_agreement(
         bucket_id: u64,

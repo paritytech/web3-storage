@@ -1,13 +1,16 @@
 #!/bin/bash
 # Build runtime and generate chain spec for zombienet
-set -e
+set -eo pipefail
 
 cd "$(dirname "$0")/.."
 
 # Clean up any existing chain spec
 rm -f chain_spec.json
 
-WASM=target/release/wbuild/storage-paseo-runtime/storage_paseo_runtime.compact.compressed.wasm
+# Ask cargo where it puts artifacts; a hardcoded target/ serves a stale wasm
+# when CARGO_TARGET_DIR or build.target-dir redirects the build.
+TARGET_DIR=$(cargo metadata --format-version 1 --no-deps | jq -r .target_directory)
+WASM="$TARGET_DIR/release/wbuild/storage-paseo-runtime/storage_paseo_runtime.compact.compressed.wasm"
 
 # In CI the build job uploads this exact wasm and every test job downloads it
 # into target/release before calling this script, so rebuilding it here is pure
