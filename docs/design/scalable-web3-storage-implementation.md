@@ -169,6 +169,12 @@ See "Provider-to-Provider Fetch" in the design doc's Future Directions.
 
 **Liability**: A provider is only liable for MMR states they acknowledged (signed). Challenges against the canonical checkpoint only work for providers listed in the snapshot's provider bitfield.
 
+**Reads**: the chain records what each provider acknowledged, which is what a
+reader can act on. A primary that signed the current snapshot acknowledged
+storing the range that snapshot covers; a replica's last confirmed sync names
+the root it synced to. Neither record covers data appended since the last
+checkpoint, so a reader queries providers in turn until one serves it.
+
 **Replica providers** sync autonomously from primaries or other replicas. They confirm sync on-chain and are liable for the roots they've confirmed.
 
 ---
@@ -1609,6 +1615,15 @@ impl<T: Config> Pallet<T> {
     /// - Signatures are verified on-chain
     /// 
     /// Providers added this way become liable for the snapshot state.
+    ///
+    /// TODO: the permissionless origin is not implemented. The pallet runs
+    /// `ensure_writer_or_admin`, so the claim above is wrong. Decide which
+    /// side changes.
+    ///
+    /// TODO: the bitfield is sized at checkpoint time and shrinks when a
+    /// provider is removed, so a signer whose index is past its length is
+    /// verified, named in `BucketCheckpointed`, and never recorded in the
+    /// snapshot. Grow the bitfield before setting the bit.
     pub fn extend_checkpoint(
         origin: OriginFor<T>,
         bucket_id: BucketId,

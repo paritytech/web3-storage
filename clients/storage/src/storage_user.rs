@@ -138,6 +138,11 @@ impl StorageUserClient {
     }
 
     /// Upload data to multiple providers for redundancy.
+    ///
+    /// Uploads to the first provider only. The other URLs are logged, not
+    /// written to.
+    // TODO: upload to every provider, or remove this method (it has no
+    // callers).
     pub async fn upload_replicated(
         &self,
         bucket_id: BucketId,

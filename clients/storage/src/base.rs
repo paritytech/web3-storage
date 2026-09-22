@@ -52,6 +52,7 @@ pub struct ClientConfig {
     /// Request timeout in seconds
     pub timeout_secs: u64,
     /// Enable automatic retries
+    // TODO: never read. Implement retries or remove the field.
     pub enable_retries: bool,
 }
 
@@ -132,7 +133,13 @@ impl BaseClient {
         }
     }
 
-    /// Get a provider URL (round-robin or based on strategy).
+    /// Get a provider URL.
+    ///
+    /// TODO: returns the first configured URL. Pick from the bucket's providers
+    /// on chain instead, preferring primaries whose bit is set in the current
+    /// snapshot, and try the next provider when a read fails. See "Reads" under
+    /// Multi-Provider Coordination in
+    /// `docs/design/scalable-web3-storage-implementation.md`.
     pub(crate) fn get_provider_url(&self) -> Result<&str, ClientError> {
         self.config
             .provider_urls
