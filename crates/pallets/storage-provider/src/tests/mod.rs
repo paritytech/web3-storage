@@ -71,6 +71,7 @@ mod extend_topup;
 mod genesis;
 mod holds;
 mod member_buckets;
+mod migrations;
 mod misc;
 mod provider;
 mod replica;

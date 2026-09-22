@@ -25,6 +25,7 @@ pub use pallet::*;
 /// Pallet internals: the agreement, bucket, challenge, and payment logic behind
 /// the extrinsics and runtime APIs.
 pub mod impls;
+pub mod migrations;
 pub mod runtime_api;
 pub mod weights;
 pub use weights::WeightInfo;
@@ -89,7 +90,10 @@ pub mod pallet {
         BlockNumberFor<T>,
     >;
 
-    const STORAGE_VERSION: StorageVersion = StorageVersion::new(0);
+    /// In-code storage version. v1 re-encodes `Buckets` and `Providers` after
+    /// the `visibility` and `ProviderStats` changes; see
+    /// [`crate::migrations::v1`].
+    const STORAGE_VERSION: StorageVersion = StorageVersion::new(1);
 
     #[pallet::pallet]
     #[pallet::storage_version(STORAGE_VERSION)]
