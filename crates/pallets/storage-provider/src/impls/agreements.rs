@@ -159,7 +159,7 @@ impl<T: Config> Pallet<T> {
             provider_info.settings.accepting_primary,
             Error::<T>::ProviderNotAcceptingPrimary
         );
-        let new_committed = Self::reserve_capacity(&provider_info, &terms)?;
+        let new_committed = Self::ensure_capacity(&provider_info, &terms)?;
 
         // Pay at the price the provider signed for.
         let payment =
@@ -246,7 +246,7 @@ impl<T: Config> Pallet<T> {
             provider_info.settings.replica_sync_price.is_some(),
             Error::<T>::ProviderNotAcceptingReplicas
         );
-        let new_committed = Self::reserve_capacity(&provider_info, &terms)?;
+        let new_committed = Self::ensure_capacity(&provider_info, &terms)?;
 
         // Pay at the price the provider signed for, plus the sync balance.
         let payment =
@@ -350,7 +350,7 @@ impl<T: Config> Pallet<T> {
     /// what it already committed, and that its stake still backs the total.
     ///
     /// Returns the provider's `committed_bytes` with the quota added.
-    fn reserve_capacity(
+    fn ensure_capacity(
         provider_info: &ProviderInfo<T>,
         terms: &AgreementTermsOf<T>,
     ) -> Result<u64, DispatchError> {
