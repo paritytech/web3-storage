@@ -1219,10 +1219,11 @@ halves and sees which one fails. A failed fetch therefore falls back to it, and
 the fallback starts with a punishment for the provider at fault: a burn instead
 of a payment for the new primary, or a challenge against the serving provider.
 
-Open points: whether serving such a fetch is voluntary or part of the agreement,
-who pays the serving provider for the egress, whether a provider that is about
-to exit can be made to serve at all, and how the client reports the fault so the
-burn or the challenge is justified.
+Serving the fetch is part of the serving provider's agreement: a provider is
+paid to store and to serve, and one full download at a reasonable speed is
+included in the price it quotes. A provider that does not serve while its
+agreement is active gets burned or challenged like any provider that does not
+serve reads.
 
 ### Isolation Mode
 
