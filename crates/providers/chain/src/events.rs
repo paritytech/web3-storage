@@ -60,4 +60,9 @@ pub enum BlockEvent {
     /// is unaffected; only the membership cache needs to react, by
     /// distrusting every cached bucket.
     MembershipScopeUnknown { at_block: u32 },
+    /// The best chain moved to another fork, or the best-block stream skipped
+    /// blocks, at `at_block`. Membership cached from the previous best fork
+    /// may describe state that no longer exists, so the cache drops
+    /// everything, as for [`Resubscribed`](Self::Resubscribed).
+    BestForkChanged { at_block: u32 },
 }

@@ -290,11 +290,18 @@ fn spec_id(spec: &str) -> Result<String, Error> {
         })
 }
 
+/// A best block of a connection, as published by the chain-state coordinator.
+pub type BestBlock = subxt::client::Block<PolkadotConfig>;
+
 /// A live chain connection, cheap to clone (`OnlineClient` is `Arc`-backed).
 #[derive(Clone)]
 pub struct ChainHandle {
     /// The subxt client for storage reads, event decoding, and tx submission.
     pub api: OnlineClient<PolkadotConfig>,
+    /// The connection's latest best block, published by the chain-state
+    /// coordinator; `None` while no best-block stream is live. Holding the
+    /// `Block` keeps it pinned on the chainHead backend while it is the latest.
+    pub best_block: tokio::sync::watch::Receiver<Option<BestBlock>>,
     /// Keeps the embedded smoldot instance alive for the handle's lifetime;
     /// dropping the last clone tears the light client down. `None` on the
     /// RPC transport.
@@ -305,7 +312,20 @@ impl ChainHandle {
     /// Handle over an existing client with no embedded light client to keep
     /// alive: the RPC transport, and tests driving a mock connection.
     pub fn from_api(api: OnlineClient<PolkadotConfig>) -> Self {
-        Self { api, _light: None }
+        Self {
+            api,
+            best_block: tokio::sync::watch::channel(None).1,
+            _light: None,
+        }
+    }
+
+    /// The same connection with `best_block` fed by the coordinator's sender.
+    pub fn with_best_block(
+        mut self,
+        best_block: tokio::sync::watch::Receiver<Option<BestBlock>>,
+    ) -> Self {
+        self.best_block = best_block;
+        self
     }
 }
 
@@ -362,6 +382,7 @@ pub async fn connect(transport: &ChainTransport) -> Result<ChainHandle, Error> {
             tracing::info!("Embedded light client started (relay + parachain)");
             Ok(ChainHandle {
                 api,
+                best_block: tokio::sync::watch::channel(None).1,
                 _light: Some(light_client),
             })
         }
