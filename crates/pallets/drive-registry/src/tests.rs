@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
+mod migrations;
 mod try_state;
 
 use crate::{

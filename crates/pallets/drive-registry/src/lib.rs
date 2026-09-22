@@ -38,6 +38,7 @@ pub use pallet::*;
 
 #[cfg(feature = "runtime-benchmarks")]
 pub mod benchmarking;
+pub mod migrations;
 pub mod weights;
 pub use weights::WeightInfo;
 
@@ -66,7 +67,9 @@ pub mod pallet {
     use sp_runtime::{traits::Saturating, BoundedVec};
     use storage_primitives::Role;
 
-    const STORAGE_VERSION: StorageVersion = StorageVersion::new(0);
+    /// In-code storage version. v1 drops the `payment` field from
+    /// [`DriveInfo`]; see [`crate::migrations::v1`].
+    const STORAGE_VERSION: StorageVersion = StorageVersion::new(1);
 
     #[pallet::pallet]
     #[pallet::storage_version(STORAGE_VERSION)]
