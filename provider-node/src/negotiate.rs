@@ -3,18 +3,14 @@
 //! Off-chain terms negotiation — provider-signed [`AgreementTerms`].
 //!
 //! Bucket owners ask the provider node for signed terms via
-//! `POST /negotiate`. The provider node:
+//! `POST /negotiate`, including the nonce they expect to redeem the quote at
+//! (their next expected value in the pallet's per-owner agreement nonce). The
+//! provider node:
 //!
-//! 1. Allocates a fresh nonce from an in-memory monotonic counter
-//!    ([`provider_coordinator::NonceCounter`]). The chain-state coordinator aligns the counter with the
-//!    chain's `ProviderReplayState.hsn + 1` (on connect and on every relevant
-//!    provider event), so a restart can't reissue a nonce the chain already
-//!    accepted (the on-chain replay window is authoritative and rejects any
-//!    out-of-range reuse).
-//! 2. Builds [`AgreementTerms`] from the request, the provider's current
+//! 1. Builds [`AgreementTerms`] from the request, the provider's current
 //!    `price_per_byte` setting (read from chain), and
 //!    `valid_until = current_anchor_block + valid_until_offset`.
-//! 3. Signs `blake2_256(TERM_CONTEXT | SCALE(terms))` with the provider's
+//! 2. Signs `blake2_256(TERM_CONTEXT | SCALE(terms))` with the provider's
 //!    signing keypair (the same one used to sign commitments; any
 //!    [`provider_types::KeyScheme`]). The context is `primary-term-v1:` or
 //!    `replica-term-v1:` depending on the quote's flavour.

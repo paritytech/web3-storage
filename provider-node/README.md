@@ -31,14 +31,10 @@ the scheme tag travels with them (`0x01<64-byte sr25519>`,
 
 ## Storage backend
 
-`--storage-backend` picks the storage engine (default `rocksdb`). Chunks, MMR
-state and the nonce counter go under `--storage-path` (`./provider-data`, or
-`$STORAGE_PATH`) and survive a restart — a provider that forgot its data could
-not answer challenges for buckets it still has agreements for.
-
-Writes are not fsynced (RocksDB's default `WriteOptions`), so what they survive
-is a clean process restart, not a power loss or kernel panic. `DiskNonceStore`
-documents what that costs the nonce counter.
+`--storage-backend` picks the storage engine (default `rocksdb`). Chunks and
+MMR state go under `--storage-path` (`./provider-data`, or `$STORAGE_PATH`)
+and survive a restart — a provider that forgot its data could not answer
+challenges for buckets it still has agreements for.
 
 ## Authentication
 

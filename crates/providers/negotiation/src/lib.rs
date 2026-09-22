@@ -37,10 +37,10 @@ pub type AgreementTermsOf = AgreementTerms<AccountId32, u128, u32>;
 /// `(Balance, BlockNumber) = (u128, u32)`.
 pub type ReplicaTermsOf = storage_primitives::ReplicaTerms<u128, u32>;
 
-/// The owner proposes the agreement shape they want; the provider node
-/// allocates a fresh nonce and a validity window from its own state,
-/// builds the full [`AgreementTermsOf`], signs it, and returns
-/// [`SignedTerms`].
+/// The owner proposes the agreement shape they want, including the nonce
+/// they expect to redeem it at (their next expected value in the pallet's
+/// per-owner agreement nonce); the provider node builds the full
+/// [`AgreementTermsOf`], signs it, and returns [`SignedTerms`].
 #[serde_as]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NegotiateRequest {
@@ -56,6 +56,10 @@ pub struct NegotiateRequest {
     /// FIX: Safely handles the JS BigInt sent as a string
     #[serde_as(as = "PickFirst<(DisplayFromStr, _)>")]
     pub price_per_byte: u128,
+    /// The owner's next expected agreement nonce.
+    /// FIX: Safely handles the JS BigInt sent as a string
+    #[serde_as(as = "PickFirst<(DisplayFromStr, _)>")]
+    pub nonce: u64,
     /// Bucket the quote is bound to.
     /// - `None` for primary terms;
     /// - `Some(id)` for replica terms — must match the bucket targeted by
@@ -127,6 +131,7 @@ mod tests {
             max_bytes: 1_000_000_000,
             duration: 500,
             price_per_byte: 1,
+            nonce: 0,
             bucket_id: None,
             replica_params: None,
         };
@@ -134,17 +139,19 @@ mod tests {
         let decoded: NegotiateRequest = serde_json::from_str(&json).unwrap();
         assert_eq!(decoded.max_bytes, req.max_bytes);
         assert_eq!(decoded.price_per_byte, req.price_per_byte);
+        assert_eq!(decoded.nonce, req.nonce);
     }
 
     // JS clients send BigInt fields as decimal strings (commit 17528eb).
     #[test]
     fn negotiate_request_accepts_js_bigint_strings() {
         let json = format!(
-            r#"{{"owner":"{}","max_bytes":"1073741824","duration":50,"price_per_byte":"340282366920938463463374607431768211455","bucket_id":null,"replica_params":null}}"#,
+            r#"{{"owner":"{}","max_bytes":"1073741824","duration":50,"price_per_byte":"340282366920938463463374607431768211455","nonce":"18446744073709551615","bucket_id":null,"replica_params":null}}"#,
             AccountId32::new([0u8; 32])
         );
         let decoded: NegotiateRequest = serde_json::from_str(&json).unwrap();
         assert_eq!(decoded.max_bytes, 1_073_741_824);
         assert_eq!(decoded.price_per_byte, u128::MAX);
+        assert_eq!(decoded.nonce, u64::MAX);
     }
 }

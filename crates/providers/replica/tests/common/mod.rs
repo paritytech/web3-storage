@@ -37,8 +37,7 @@ pub fn body(body: impl Into<String>) -> Reply {
 /// Fresh empty storage backend. The returned `TempDir` must outlive the
 /// backend - dropping it takes the database with it.
 pub fn test_storage() -> (Arc<dyn StorageBackend>, TempDir) {
-    let (storage, _nonce_store, dir) = temp_rocksdb();
-    (storage, dir)
+    temp_rocksdb()
 }
 
 /// `0x`-prefixed hex, the form both provider endpoints use for hashes.
