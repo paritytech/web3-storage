@@ -107,7 +107,7 @@ async function main() {
     //    account as owner; msg.value funds that account's payment reserve.
     console.log("\n[2/4] createTeam{value: 10 UNIT}('team-cov', provider, terms[1MiB×50], sig)");
     const contractAccount = h160ToSubstrate(deployed.addressBytes);
-    const signed = await negotiatePrecompileTerms(providerUrl, contractAccount, {
+    const signed = await negotiatePrecompileTerms(api, providerUrl, contractAccount, {
       maxBytes: 1n << 20n, // 1 MiB capacity
       duration: 50,
       pricePerByte: PRICE_PER_BYTE,

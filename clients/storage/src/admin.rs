@@ -54,6 +54,28 @@ impl AdminClient {
         self.base.set_signer(self.signer.clone())
     }
 
+    /// Read `owner`'s next expected agreement nonce from chain: the value to
+    /// pass as `NegotiateRequest.nonce` when requesting a quote. `0` for an
+    /// owner who has never redeemed a quote yet.
+    pub async fn agreement_nonce(&self, owner: &AccountId32) -> ClientResult<u64> {
+        let chain = self.base.chain()?;
+        let at = chain.at_current_block().await?;
+        let value = at
+            .storage()
+            .try_fetch(
+                api::storage().storage_provider().agreement_nonces(),
+                (convert::to_subxt_account(owner),),
+            )
+            .await
+            .map_err(|e| ClientError::Chain(format!("Failed to fetch agreement nonce: {e}")))?;
+        match value {
+            Some(v) => v
+                .decode()
+                .map_err(|e| ClientError::Chain(format!("Failed to decode agreement nonce: {e}"))),
+            None => Ok(0),
+        }
+    }
+
     // ═════════════════════════════════════════════════════════════════════════
     // Bucket Management
     // ═════════════════════════════════════════════════════════════════════════
@@ -68,15 +90,19 @@ impl AdminClient {
     /// # Example
     /// ```no_run
     /// # use storage_client::{AdminClient, NegotiateRequest, ProviderClient, Signer};
+    /// # use sp_runtime::AccountId32;
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let client = AdminClient::with_defaults(Signer::from_seed("//Alice")?)?;
+    /// let owner: AccountId32 = "5GrwvaEF...".parse()?;
+    /// let nonce = client.agreement_nonce(&owner).await?;
     /// let signed = ProviderClient::negotiate_terms(
     ///     "http://provider.example:3333",
     ///     &NegotiateRequest {
-    ///         owner: "5GrwvaEF...".parse()?,
+    ///         owner,
     ///         max_bytes: 1_000_000,
     ///         duration: 100,
     ///         price_per_byte: 1_000_000,
+    ///         nonce,
     ///         replica_params: None,
     ///         bucket_id: None,
     ///     },

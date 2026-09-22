@@ -20,6 +20,7 @@ import {
   buildSignedTermsArgs,
   endAgreement,
   ensureProviderRegistered,
+  getAgreementNonce,
   makeSigner,
   negotiateTerms,
   READ_OPTS,
@@ -213,6 +214,7 @@ async function main() {
       // The node refuses to sign terms priced below its listed
       // price_per_byte (Alice lists 1), since the chain treats its
       // signature as consent to those terms.
+      const nonce = await getAgreementNonce(api, client.address);
       await assertNegotiateRejects(
         () =>
           negotiateTerms(PROVIDER_URL, {
@@ -220,6 +222,7 @@ async function main() {
             max_bytes: maxBytes,
             duration,
             price_per_byte: 0n,
+            nonce,
             replica_params: null,
             bucket_id: null,
           }),

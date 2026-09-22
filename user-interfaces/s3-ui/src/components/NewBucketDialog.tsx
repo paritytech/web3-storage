@@ -15,6 +15,7 @@ import {
   canRetryCreation,
   createBucket,
   dismissCreation,
+  getApi,
   getSignerAddress,
   retryCreation,
   useCreations,
@@ -23,7 +24,7 @@ import {
 import { type AvailableProvider, type Visibility } from "@/lib/s3-client";
 import { formatBytes } from "@web3-storage/format";
 import ProviderPickerPanel from "./ProviderPickerPanel";
-import { negotiateProviderTerms } from "@web3-storage/sdk";
+import { getAgreementNonce, negotiateProviderTerms } from "@web3-storage/sdk";
 
 interface NewBucketDialogProps {
   open: boolean;
@@ -117,12 +118,19 @@ export default function NewBucketDialog({ open, onOpenChange }: NewBucketDialogP
         setNegotiateError("Signer not set");
         return;
       }
+      const api = getApi();
+      if (!api) {
+        setNegotiateError("Not connected to chain");
+        return;
+      }
 
+      const nonce = await getAgreementNonce(api, owner);
       const result = await negotiateProviderTerms(provider, {
         owner,
         max_bytes: BigInt(capacity),
         duration: parseInt(duration, 10),
         price_per_byte: BigInt(pricePerByte || "0"),
+        nonce,
         replica_params: null,
         bucket_id: null,
       });
