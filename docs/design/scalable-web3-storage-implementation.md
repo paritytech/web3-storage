@@ -70,9 +70,9 @@ Four calls cover them:
 | Call | Who | Effect |
 | --- | --- | --- |
 | `create_bucket` | anyone | Empty bucket, caller is sole admin |
-| `create_bucket_with_primary` | anyone | `create_bucket` + `add_primary_provider` in one atomic call |
+| `create_bucket_with_primary` | the quoted account (`terms.owner`) | `create_bucket` + `add_primary_provider` in one atomic call |
 | `add_primary_provider` | bucket admin | Primary agreement on an existing bucket |
-| `add_replica_provider` | anyone | Replica agreement on an existing bucket |
+| `add_replica_provider` | the quoted account (`terms.owner`) | Replica agreement on an existing bucket |
 
 Every agreement is established by redeeming provider-signed terms: the
 provider quotes `AgreementTerms` off-chain (`POST /negotiate`), signs them,

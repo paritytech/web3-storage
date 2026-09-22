@@ -365,8 +365,9 @@ Bucket (on-chain, stable identifier)
 A content hash names data but doesn't guarantee anyone stores it. A bucket makes availability explicit and controllable:
 
 - **Stable identity**: The bucket_id never changes, even as providers come and go. Applications reference buckets, not
-  providers. Switch providers without breaking links. Providers join a bucket one agreement each, at creation or
-  later, and a bucket whose agreements have all ended remains on-chain; the admin can add a new provider later.
+  providers. Switch providers without breaking links. Each provider joins a bucket with one agreement, at bucket
+  creation or later, and a bucket whose agreements have all ended remains on-chain; the admin can add a new provider
+  later.
 
 - **Explicit availability**: On-chain state shows exactly which providers have agreements. No guessing, no DHT lookups,
   no hoping.
@@ -1212,12 +1213,13 @@ content-addressed, so the receiver verifies everything against the data root it
 already knows from the chain.
 
 Such an API will likely be added, but it does not replace the client path. A
-fetch between two providers leaves no on-chain record, so a failure does not say
-whether the serving provider did not serve or the new primary did not request
-the data. The client path assigns the fault, because the client performs both
-halves and sees which one fails. A failed fetch therefore falls back to it, and
-the fallback starts with a punishment for the provider at fault: a burn instead
-of a payment for the new primary, or a challenge against the serving provider.
+fetch between two providers leaves no on-chain record, so a failure does not
+show whether the serving provider did not serve or the new primary did not
+request the data. The client path assigns the fault, because the client performs
+both halves and sees which one fails. A failed fetch therefore falls back to it,
+and the fallback starts with a punishment for the provider at fault: a burn
+instead of a payment for the new primary, or a challenge against the serving
+provider.
 
 Serving the fetch is part of the serving provider's agreement: a provider is
 paid to store and to serve, and one full download at a reasonable speed is
