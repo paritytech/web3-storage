@@ -184,8 +184,8 @@ impl DiskStorage {
         let actual_hash = blake2_256(&data);
         if actual_hash != expected_hash {
             return Err(Error::InvalidHash {
-                expected: format!("0x{}", hex::encode(expected_hash.as_bytes())),
-                actual: format!("0x{}", hex::encode(actual_hash.as_bytes())),
+                expected: expected_hash,
+                actual: actual_hash,
             });
         }
 
@@ -196,7 +196,7 @@ impl DiskStorage {
                 .cf_handle(CF_NODES)
                 .ok_or(Error::ColumnFamilyMissing(CF_NODES))?;
 
-            let missing: Vec<String> = child_hashes
+            let missing: Vec<H256> = child_hashes
                 .iter()
                 .filter(|h| {
                     **h != H256::zero()
@@ -207,7 +207,7 @@ impl DiskStorage {
                             .flatten()
                             .is_none()
                 })
-                .map(|h| format!("0x{}", hex::encode(h.as_bytes())))
+                .copied()
                 .collect();
 
             if !missing.is_empty() {
@@ -307,10 +307,7 @@ impl DiskStorage {
         for root in &data_roots {
             let key = root.as_bytes();
             if self.db.get_cf(&cf_nodes, key)?.is_none() {
-                return Err(Error::RootNotFound(format!(
-                    "0x{}",
-                    hex::encode(root.as_bytes())
-                )));
+                return Err(Error::RootNotFound(*root));
             }
         }
 
@@ -402,7 +399,10 @@ impl DiskStorage {
         let leaf = bucket
             .leaves
             .get(leaf_index as usize)
-            .ok_or(Error::NodeNotFound(format!("leaf_{leaf_index}")))?
+            .ok_or(Error::LeafNotFound {
+                bucket_id,
+                leaf_index,
+            })?
             .clone();
 
         // Build MMR and generate proof
@@ -411,9 +411,12 @@ impl DiskStorage {
             mmr.push(blake2_256(&l.encode()));
         }
 
-        let (siblings, path, peaks) = mmr
-            .proof_with_path(leaf_index)
-            .ok_or(Error::NodeNotFound(format!("mmr_proof_{leaf_index}")))?;
+        let (siblings, path, peaks) =
+            mmr.proof_with_path(leaf_index)
+                .ok_or(Error::MmrProofNotFound {
+                    bucket_id,
+                    leaf_index,
+                })?;
 
         Ok(storage_primitives::MmrProof {
             peaks,
@@ -838,7 +841,7 @@ mod tests {
             .unwrap();
 
         let err = storage.get_chunk_at_index(chunk_hash, 5).unwrap_err();
-        assert!(matches!(err, Error::NodeNotFound(_)));
+        assert!(matches!(err, Error::ChunkNotFound { .. }));
     }
 
     #[test]

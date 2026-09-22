@@ -242,7 +242,7 @@ async fn get_node(
     let node = state
         .storage
         .get_node(&hash)?
-        .ok_or_else(|| provider_storage::Error::NodeNotFound(query.hash.clone()))?;
+        .ok_or(provider_storage::Error::NodeNotFound(hash))?;
 
     Ok(Json(DownloadNodeResponse {
         hash: query.hash,

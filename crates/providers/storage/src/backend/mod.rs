@@ -176,9 +176,7 @@ pub trait StorageBackend: Send + Sync {
             if hash == H256::zero() {
                 continue;
             }
-            let node = self
-                .get_node(&hash)?
-                .ok_or_else(|| Error::NodeNotFound(hash.to_string()))?;
+            let node = self.get_node(&hash)?.ok_or(Error::NodeNotFound(hash))?;
             if let Some(ref children) = node.children {
                 for child in children.iter().rev() {
                     stack.push(*child);
@@ -200,13 +198,16 @@ pub trait StorageBackend: Send + Sync {
         let chunk_hashes = self.collect_chunk_hashes(data_root)?;
 
         if chunk_index as usize >= chunk_hashes.len() {
-            return Err(Error::NodeNotFound(format!("chunk_{chunk_index}")));
+            return Err(Error::ChunkNotFound {
+                data_root,
+                chunk_index,
+            });
         }
 
         let chunk_hash = chunk_hashes[chunk_index as usize];
         let chunk_data = self
             .get_node(&chunk_hash)?
-            .ok_or_else(|| Error::NodeNotFound(format!("chunk_data_{chunk_index}")))?
+            .ok_or(Error::NodeNotFound(chunk_hash))?
             .data;
 
         let proof = build_merkle_proof(&chunk_hashes, chunk_index as usize);

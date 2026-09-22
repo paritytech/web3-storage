@@ -50,15 +50,19 @@ impl ChallengeProofSource for StorageProofSource {
 /// Translate a storage-layer failure into what the challenge responder needs
 /// to know: is the proof data provably gone, or did the backend itself fail?
 ///
-/// `NodeNotFound` / `BucketNotFound` mean the storage layer looked and found
-/// nothing there - genuine absence, once the reads underneath stopped
-/// collapsing a backend failure into the same signal (see `StorageBackend`).
-/// Everything else means the lookup didn't complete cleanly, so the data's
-/// actual presence is unknown. `RocksDb`, `ColumnFamilyMissing` and
-/// `Serialization` are the ones a read path really produces: the engine
-/// failed, the database layout is wrong, or a record decoded to garbage -
-/// in none of those did storage get to look and find nothing. It also
-/// includes variants that structurally
+/// `NodeNotFound`, `BucketNotFound`, `ChunkNotFound` and `LeafNotFound` mean
+/// the storage layer looked and found nothing there - genuine absence, once
+/// the reads underneath stopped collapsing a backend failure into the same
+/// signal (see `StorageBackend`). `MmrProofNotFound` is included for the same
+/// reason even though the current MMR implementation cannot produce it (the
+/// bucket lookup that precedes it already fails with `LeafNotFound` for any
+/// out-of-range index); treating it as absence rather than a backend failure
+/// stays correct if that constraint ever changes. Everything else means the
+/// lookup didn't complete cleanly, so the data's actual presence is unknown.
+/// `RocksDb`, `ColumnFamilyMissing` and `Serialization` are the ones a read
+/// path really produces: the engine failed, the database layout is wrong, or
+/// a record decoded to garbage - in none of those did storage get to look and
+/// find nothing. It also includes variants that structurally
 /// cannot come back from either read path (`ChildrenMissing`, `QuotaExceeded`
 /// and `InvalidHash` are write-side only; `RootNotFound` is produced solely
 /// by `commit`, confirmed by grepping the backend for its only call site) -
@@ -68,9 +72,11 @@ impl ChallengeProofSource for StorageProofSource {
 fn classify(e: provider_storage::Error, target: ProofTarget) -> ChallengeError {
     use provider_storage::Error;
     match e {
-        Error::NodeNotFound(_) | Error::BucketNotFound(_) => {
-            ChallengeError::ProofDataMissing { target }
-        }
+        Error::NodeNotFound(_)
+        | Error::BucketNotFound(_)
+        | Error::ChunkNotFound { .. }
+        | Error::LeafNotFound { .. }
+        | Error::MmrProofNotFound { .. } => ChallengeError::ProofDataMissing { target },
         other => ChallengeError::StorageUnavailable {
             target,
             detail: other.to_string(),
