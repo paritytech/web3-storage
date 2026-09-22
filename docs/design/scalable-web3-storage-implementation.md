@@ -203,8 +203,7 @@ pub trait Config: frame_system::Config<RuntimeEvent: From<Event<Self>>> {
     /// Minimum number of blocks between announcing a deregistration and
     /// being allowed to complete it. Must be strictly `> ChallengeTimeout`
     /// so any challenge created up to the announcement block matures while
-    /// the provider is still slashable, and `> RequestTimeout` so a
-    /// pre-deregistration agreement quote expires before re-registration.
+    /// the provider is still slashable.
     #[pallet::constant]
     type DeregisterAnnouncementPeriod: Get<BlockNumberFor<Self>>;
 
@@ -556,8 +555,8 @@ pub struct AgreementTerms<AccountId, Balance, BlockNumber> {
     pub price_per_byte: Balance,
     /// Block number after which the quote is no longer redeemable.
     pub valid_until: BlockNumber,
-    /// Provider-chosen replay-protection nonce: a signed quote is redeemable
-    /// at most once.
+    /// Owner-chosen replay-protection nonce: must equal the owner's next
+    /// expected value, so a signed quote is redeemable at most once.
     pub nonce: u64,
     /// Bucket the quote is bound to:
     /// - `None` for primary terms (the bucket is created at redemption)
@@ -1278,8 +1277,8 @@ impl<T: Config> Pallet<T> {
     //   (`TermsExpired` / `TermsValidityTooLong`)
     // - the signature must verify against the provider's registered key over
     //   `blake2_256(context | SCALE(terms))` with the flavour's context
-    // - `terms.nonce` must not replay an already-redeemed quote
-    //   (`NonceAlreadyUsed` / `NonceTooOld`)
+    // - `terms.nonce` must equal the owner's next expected agreement nonce
+    //   (`NonceMismatch`)
     // - the provider must be active (registered, not deregistering), within
     //   its duration bounds, and the added `terms.max_bytes` must fit its
     //   declared capacity (`CapacityExceeded`) and stake
