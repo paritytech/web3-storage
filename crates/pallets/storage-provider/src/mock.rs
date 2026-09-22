@@ -12,7 +12,6 @@ use sp_runtime::{
     traits::{BlakeTwo256, IdentityLookup},
     BuildStorage,
 };
-use std::sync::atomic::{AtomicU64, Ordering};
 
 type Block = frame_system::mocking::MockBlock<Test>;
 
@@ -91,9 +90,9 @@ impl pallet_storage_provider::Config for Test {
     type SettlementTimeout = ConstU64<50>;
     type RequestTimeout = ConstU64<50>;
     type MaxBucketsPerMember = ConstU32<100>;
-    // Must be > ChallengeTimeout (100) AND > RequestTimeout (50) per the
-    // pallet's `integrity_test`. 100 + 50 grace; small enough that tests can
-    // advance past the period quickly.
+    // Must be > ChallengeTimeout (100) per the pallet's `integrity_test`.
+    // 150 gives headroom beyond that; small enough that tests can advance
+    // past the period quickly.
     type DeregisterAnnouncementPeriod = ConstU64<150>;
     // Small cap so the cap-enforcement test can hit it without creating
     // thousands of challenges.
@@ -219,16 +218,6 @@ pub fn register_provider_with_settings(
     ));
 }
 
-/// Monotonic nonce for signed terms. The replay window only requires
-/// per-provider uniqueness, so a process-wide counter satisfies it across
-/// all tests.
-static TERMS_NONCE: AtomicU64 = AtomicU64::new(1);
-
-#[allow(dead_code)]
-pub fn next_terms_nonce() -> u64 {
-    TERMS_NONCE.fetch_add(1, Ordering::Relaxed)
-}
-
 /// Helper: deterministic keypair of any scheme for `provider`, stamped into
 /// the provider's on-chain `public_key` so signatures verify.
 pub fn provider_signer_with<P: sp_core::Pair>(provider: u64) -> P {
@@ -286,7 +275,7 @@ pub fn sign_sync_roots(
 }
 
 /// Helper: primary terms
-/// + with a fresh nonce
+/// + at the owner's next expected nonce
 /// + valid for the current RequestTimeout window.
 #[allow(dead_code)]
 pub fn primary_terms(
@@ -302,7 +291,7 @@ pub fn primary_terms(
         price_per_byte,
         valid_until: frame_system::Pallet::<Test>::block_number()
             .saturating_add(<Test as pallet_storage_provider::Config>::RequestTimeout::get()),
-        nonce: next_terms_nonce(),
+        nonce: crate::AgreementNonces::<Test>::get(owner),
         bucket_id: None,
         replica_params: None,
     }
@@ -326,7 +315,7 @@ pub fn replica_terms(
         price_per_byte,
         valid_until: frame_system::Pallet::<Test>::block_number()
             .saturating_add(<Test as pallet_storage_provider::Config>::RequestTimeout::get()),
-        nonce: next_terms_nonce(),
+        nonce: crate::AgreementNonces::<Test>::get(owner),
         bucket_id: Some(bucket_id),
         replica_params: Some(params),
     }

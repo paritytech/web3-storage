@@ -64,8 +64,8 @@ pub mod pallet {
     use sp_runtime::TryRuntimeError;
     use storage_primitives::{
         BucketId, BucketSnapshot, ChallengeId, ChunkLocation, Commitment, CommitmentPayload,
-        EndAction, MerkleProof, MmrProof, ProviderRole, RemovalReason, ReplayWindow,
-        ReplicaSyncRecord, Role, SlashReason, Visibility,
+        EndAction, MerkleProof, MmrProof, ProviderRole, RemovalReason, ReplicaSyncRecord, Role,
+        SlashReason, Visibility,
     };
 
     /// Balance type of the configured currency.
@@ -162,23 +162,14 @@ pub mod pallet {
         }
 
         fn integrity_test() {
-            // The re-register replay defense relies on RequestTimeout being strictly
-            // shorter than DeregisterAnnouncementPeriod: a quote signed at block S
-            // expires at S+RequestTimeout, which is before the provider can complete
-            // deregistration and re-register (requiring DeregisterAnnouncementPeriod
-            // more blocks), so an old quote cannot be replayed against the new
-            // incarnation.
-            // At the same time, the deregistration announcement window must be
-            // strictly longer than the challenge response timeout, so any
-            // challenge created up to the announcement block matures (and the
-            // provider stays slashable) strictly before the provider can
-            // complete deregistration.
+            // The deregistration announcement window must be strictly longer
+            // than the challenge response timeout, so any challenge created up
+            // to the announcement block matures (and the provider stays
+            // slashable) strictly before the provider can complete
+            // deregistration.
             assert!(
-                T::RequestTimeout::get() < T::DeregisterAnnouncementPeriod::get()
-                    && T::DeregisterAnnouncementPeriod::get() > T::ChallengeTimeout::get(),
-                "RequestTimeout must be less than DeregisterAnnouncementPeriod \
-                to close the re-register replay window, and \
-                DeregisterAnnouncementPeriod must be > ChallengeTimeout so a \
+                T::DeregisterAnnouncementPeriod::get() > T::ChallengeTimeout::get(),
+                "DeregisterAnnouncementPeriod must be > ChallengeTimeout so a \
                 challenge created at the announcement block matures while the \
                 provider is still slashable"
             );
@@ -316,12 +307,13 @@ pub mod pallet {
     #[pallet::getter(fn providers)]
     pub type Providers<T: Config> = StorageMap<_, Blake2_128Concat, T::AccountId, ProviderInfo<T>>;
 
-    /// Per-provider sliding replay window over signed agreement-term nonces.
-    /// See [`storage_primitives::ReplayWindow`] for the bit layout
+    /// Next expected `AgreementTerms.nonce` for this owner. Redemption
+    /// requires an exact match and advances the counter by one, so a signed
+    /// quote is redeemable at most once and in the order it was requested.
     #[pallet::storage]
-    #[pallet::getter(fn provider_replay_states)]
-    pub type ProviderReplayStates<T: Config> =
-        StorageMap<_, Blake2_128Concat, T::AccountId, ReplayWindow, ValueQuery>;
+    #[pallet::getter(fn agreement_nonces)]
+    pub type AgreementNonces<T: Config> =
+        StorageMap<_, Blake2_128Concat, T::AccountId, u64, ValueQuery>;
 
     /// Monotonically increasing bucket ID counter.
     #[pallet::storage]
@@ -1279,12 +1271,9 @@ pub mod pallet {
         /// Signed terms' `valid_until` extends beyond `now + RequestTimeout` —
         /// the provider-signed validity window cap enforced on-chain.
         TermsValidityTooLong,
-        /// The terms' nonce has already been consumed inside the provider's
-        /// replay window.
-        NonceAlreadyUsed,
-        /// The terms' nonce is older than the provider's replay window
-        /// (distance from `hsn` ≥ [`storage_primitives::REPLAY_WINDOW_BITS`]).
-        NonceTooOld,
+        /// The terms' nonce does not match the owner's next expected
+        /// [`AgreementNonces`] value.
+        NonceMismatch,
         /// The terms' declared owner does not match the extrinsic origin.
         TermsOwnerMismatch,
         /// Replica terms missing from a signed quote redeemed as a replica
@@ -1457,7 +1446,6 @@ pub mod pallet {
 
             Self::release_stake(&who, provider.stake)?;
             Providers::<T>::remove(&who);
-            ProviderReplayStates::<T>::remove(&who);
 
             Self::deposit_event(Event::ProviderDeregistered {
                 provider: who,

@@ -81,10 +81,6 @@ impl<T: Config> Pallet<T> {
     /// against live storage so a `setStorage`/migration mutation is caught.
     fn check_timing_config() -> Result<(), TryRuntimeError> {
         ensure!(
-            T::RequestTimeout::get() < T::DeregisterAnnouncementPeriod::get(),
-            "RequestTimeout must be < DeregisterAnnouncementPeriod (re-register replay window)"
-        );
-        ensure!(
             T::DeregisterAnnouncementPeriod::get() > T::ChallengeTimeout::get(),
             "DeregisterAnnouncementPeriod must be > ChallengeTimeout (challenge maturity)"
         );
