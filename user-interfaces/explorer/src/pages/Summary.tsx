@@ -16,6 +16,15 @@ export function Summary() {
     [snapshot, anchorBlock]
   )
 
+  /**
+   * `null` keeps StatTile's loading placeholder; '—' marks a stat whose
+   * section failed, so a failed load never renders as a real 0.
+   */
+  function show<T>(value: T | undefined, format: (v: T) => string): string | null {
+    if (!stats) return null
+    return value === undefined ? '—' : format(value)
+  }
+
   return (
     <div className="space-y-6">
       <div>
@@ -34,34 +43,40 @@ export function Summary() {
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
         <StatTile
           label="Providers"
-          value={stats ? stats.providerCount.toLocaleString() : null}
+          value={show(stats?.providerCount, (v) => v.toLocaleString())}
           testId="summary-stat-providers"
         />
         <StatTile
           label="Total stake locked"
-          value={stats ? formatTokens(stats.totalStake) : null}
+          value={show(stats?.totalStake, formatTokens)}
           testId="summary-stat-stake"
         />
         <StatTile
           label="Data under agreement"
-          value={stats ? formatBytes(stats.totalData) : null}
+          value={show(stats?.totalData, formatBytes)}
           testId="summary-stat-data"
           sub="Committed quota across all providers"
         />
         <StatTile
           label="Active agreements"
-          value={stats ? stats.activeAgreements.toLocaleString() : null}
+          value={show(stats?.activeAgreements, (v) => v.toLocaleString())}
           testId="summary-stat-agreements"
         />
         <StatTile
           label="Buckets"
-          value={stats ? stats.bucketCount.toLocaleString() : null}
+          value={show(stats?.bucketCount, (v) => v.toLocaleString())}
           testId="summary-stat-buckets"
-          sub={snapshot ? `${snapshot.bucketsEverCreated.toLocaleString()} ever created` : undefined}
+          sub={
+            // No sub-line when the counter failed: the banner above already
+            // names the section, and its fallback 0 is not a count.
+            stats?.bucketsEverCreated !== undefined
+              ? `${stats.bucketsEverCreated.toLocaleString()} ever created`
+              : undefined
+          }
         />
         <StatTile
           label="Open challenges"
-          value={stats ? stats.openChallenges.toLocaleString() : null}
+          value={show(stats?.openChallenges, (v) => v.toLocaleString())}
           testId="summary-stat-challenges"
         />
       </div>

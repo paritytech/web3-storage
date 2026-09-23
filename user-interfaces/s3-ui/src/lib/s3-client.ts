@@ -81,7 +81,8 @@ export interface AvailableProvider {
   account: string;
   multiaddr: string;
   stake: bigint;
-  availableCapacity: bigint;
+  /** Free capacity per the chain; `undefined` = unlimited, not `0n` ("full"). */
+  availableCapacity: bigint | undefined;
   maxCapacity: bigint;
   pricePerByte: bigint;
   minDuration: number;
@@ -103,6 +104,25 @@ export interface MatchingProviders extends AvailableProvider {
   /** Challenges resolved in the provider's favor (authorized + public tiers). */
   challengesDefended: number;
   challengesFailed: number;
+  /** 0-100, computed on-chain by `ProviderStats::reputation`. */
+  reputation: number;
+}
+
+/**
+ * `StorageProviderApi.providers` limit for the full list. One page for
+ * everything: paging over the hash-ordered `Providers` map skips or repeats a
+ * provider when a registration or deregistration occurs between two pages,
+ * and this client has no block handle to pin the pages to. The storage scan
+ * this replaced read the whole map in one call too.
+ */
+const ALL_PROVIDERS = 0xffff_ffff;
+
+/** Most free capacity first; unlimited (`undefined`) sorts ahead of metered. */
+function byFreeCapacityDesc(a: AvailableProvider, b: AvailableProvider): number {
+  if (a.availableCapacity === b.availableCapacity) return 0;
+  if (a.availableCapacity === undefined) return -1;
+  if (b.availableCapacity === undefined) return 1;
+  return b.availableCapacity > a.availableCapacity ? 1 : -1;
 }
 
 export type MemberRole = "Admin" | "Writer" | "Reader";
@@ -363,45 +383,30 @@ export class S3Client {
     await setBucketVisibilityTx(this.requireApi(), this.requireOwner(), bucketId, visibility);
   }
 
-  // ── Provider discovery (UI-side; raw `StorageProvider.Providers` + the
-  // `find_matching_providers` runtime API — not modelled by the SDK) ──────────
+  // ── Provider discovery (UI-side; the `providers` and
+  // `find_matching_providers` runtime APIs — not modelled by the SDK) ─────────
 
+  /** Every registered provider, sorted by free capacity descending. */
   async listAvailableProviders(): Promise<AvailableProvider[]> {
     const api = this.requireApi();
-    const entries = await api.query.StorageProvider.Providers.getEntries();
-    const providers: AvailableProvider[] = [];
+    const page = await api.apis.StorageProviderApi.providers(0, ALL_PROVIDERS);
 
-    for (const entry of entries) {
-      const provider = entry.value;
-      const account = entry.keyArgs[0] as string;
-      const settings = provider.settings;
+    const providers: AvailableProvider[] = page.map(([account, info]) => ({
+      account,
+      multiaddr: new TextDecoder().decode(info.multiaddr),
+      stake: info.stake,
+      // The chain already computed this; `null` is its "unlimited".
+      availableCapacity:
+        info.available_capacity == null ? undefined : BigInt(info.available_capacity),
+      maxCapacity: BigInt(info.max_capacity),
+      pricePerByte: info.price_per_byte,
+      minDuration: info.min_duration,
+      maxDuration: info.max_duration,
+      acceptingPrimary: info.accepting_primary,
+      agreementsTotal: info.stats.agreements_total,
+    }));
 
-      const multiaddrStr = new TextDecoder().decode(provider.multiaddr);
-      const maxCapacity = BigInt(settings.max_capacity ?? 0);
-      const committedBytes = BigInt(provider.committed_bytes ?? 0);
-      const availableCapacity =
-        maxCapacity > committedBytes ? maxCapacity - committedBytes : 0n;
-
-      providers.push({
-        account,
-        multiaddr: multiaddrStr,
-        stake: BigInt(provider.stake ?? 0),
-        availableCapacity,
-        maxCapacity,
-        pricePerByte: BigInt(settings.price_per_byte ?? 0),
-        minDuration: settings.min_duration ?? 0,
-        maxDuration: settings.max_duration ?? 0,
-        acceptingPrimary: settings.accepting_primary ?? false,
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        agreementsTotal: (provider.stats as any)?.agreements_total ?? 0,
-      });
-    }
-
-    providers.sort((a, b) => {
-      if (b.availableCapacity > a.availableCapacity) return 1;
-      if (b.availableCapacity < a.availableCapacity) return -1;
-      return 0;
-    });
+    providers.sort(byFreeCapacityDesc);
 
     return providers;
   }
@@ -426,8 +431,9 @@ export class S3Client {
         const info = match.info;
         const maxCapacity = BigInt(info.max_capacity ?? 0);
         const committedBytes = BigInt(info.committed_bytes ?? 0);
+        // The chain already computed this; `null` is its "unlimited".
         const availableCapacity =
-          maxCapacity > committedBytes ? maxCapacity - committedBytes : 0n;
+          info.available_capacity == null ? undefined : BigInt(info.available_capacity);
 
         return {
           account: toSs58(match.account),
@@ -443,14 +449,16 @@ export class S3Client {
           replicaSyncPrice:
             info.replica_sync_price != null ? BigInt(info.replica_sync_price) : undefined,
           acceptingExtensions: info.accepting_extensions ?? false,
-          registeredAt: Number(info.registered_at ?? 0),
-          agreementsTotal: info.agreements_total ?? 0,
-          agreementsExtended: info.agreements_extended ?? 0,
-          agreementsNotExtended: info.agreements_not_extended ?? 0,
-          agreementsBurned: info.agreements_burned ?? 0,
+          registeredAt: Number(info.stats.registered_at ?? 0),
+          agreementsTotal: info.stats.agreements_total ?? 0,
+          agreementsExtended: info.stats.agreements_extended ?? 0,
+          agreementsNotExtended: info.stats.agreements_not_extended ?? 0,
+          agreementsBurned: info.stats.agreements_burned ?? 0,
           challengesDefended:
-            (info.challenges_received_authorized ?? 0) + (info.challenges_received_public ?? 0),
-          challengesFailed: info.challenges_failed ?? 0,
+            (info.stats.challenges_received_authorized ?? 0) +
+            (info.stats.challenges_received_public ?? 0),
+          challengesFailed: info.stats.challenges_failed ?? 0,
+          reputation: info.stats.reputation,
           matchScore: match.match_score,
           partialReason: match.partial_reason?.type ?? "",
         };

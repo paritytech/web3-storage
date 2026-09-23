@@ -59,7 +59,7 @@ pub mod pallet {
     pub use frame_system::pallet_prelude::BlockNumberFor as SystemBlockNumberFor;
     use frame_system::pallet_prelude::*;
     use sp_core::H256;
-    use sp_runtime::traits::{Bounded, CheckedAdd, Saturating, Zero};
+    use sp_runtime::traits::{Bounded, CheckedAdd, SaturatedConversion, Saturating, Zero};
     #[cfg(feature = "try-runtime")]
     use sp_runtime::TryRuntimeError;
     use storage_primitives::{
@@ -611,6 +611,11 @@ pub mod pallet {
         /// Number of challenges where provider was slashed. Tier-independent
         /// and disjoint from the received counters.
         pub challenges_failed: u32,
+        /// Total payment ever received by this provider for storage service:
+        /// agreement settlements, extension payments, and replica sync
+        /// payments. Monotonically increasing, never reset by a slash or
+        /// anything else. A historical record, not a live balance.
+        pub lifetime_revenue: BalanceOf<T>,
     }
 
     impl<T: Config> ProviderStats<T> {
@@ -618,6 +623,41 @@ pub mod pallet {
         pub fn challenges_defended(&self) -> u32 {
             self.challenges_received_authorized
                 .saturating_add(self.challenges_received_public)
+        }
+
+        /// A provider's 0–100 reputation from its on-chain challenge record:
+        /// the share of resolved challenges it defended. Both counters are
+        /// tallied at resolution, so pending challenges never count against a
+        /// provider.
+        ///
+        /// Providers with no resolved challenges score 100 — benefit of the
+        /// doubt, so a newly registered provider is not immediately
+        /// challenge-worthy.
+        pub fn reputation(&self) -> u8 {
+            let defended = self.challenges_defended();
+            let total = defended as u64 + self.challenges_failed as u64;
+            if total == 0 {
+                return 100;
+            }
+            ((defended as u64 * 100) / total).min(100) as u8
+        }
+    }
+
+    impl<T: Config> From<&ProviderStats<T>> for crate::runtime_api::ProviderStatsInfo {
+        fn from(stats: &ProviderStats<T>) -> Self {
+            Self {
+                registered_at: stats.registered_at.saturated_into::<u32>(),
+                agreements_total: stats.agreements_total,
+                agreements_extended: stats.agreements_extended,
+                agreements_not_extended: stats.agreements_not_extended,
+                agreements_burned: stats.agreements_burned,
+                total_bytes_committed: stats.total_bytes_committed,
+                challenges_received_authorized: stats.challenges_received_authorized,
+                challenges_received_public: stats.challenges_received_public,
+                challenges_failed: stats.challenges_failed,
+                lifetime_revenue: stats.lifetime_revenue.saturated_into::<u128>(),
+                reputation: stats.reputation(),
+            }
         }
     }
 
@@ -2284,6 +2324,10 @@ pub mod pallet {
                         if let Some(provider_info) = maybe_provider {
                             provider_info.stats.agreements_extended =
                                 provider_info.stats.agreements_extended.saturating_add(1);
+                            provider_info.stats.lifetime_revenue = provider_info
+                                .stats
+                                .lifetime_revenue
+                                .saturating_add(elapsed_payment);
                         }
                     });
 
@@ -2980,7 +3024,17 @@ pub mod pallet {
                     });
 
                     // Pay the sync fee straight out of escrow.
-                    Self::settle_payment(&agreement.owner, &who, *sync_price)?;
+                    let sync_payment = *sync_price;
+                    Self::settle_payment(&agreement.owner, &who, sync_payment)?;
+
+                    Providers::<T>::mutate(&who, |maybe_provider| {
+                        if let Some(provider_info) = maybe_provider {
+                            provider_info.stats.lifetime_revenue = provider_info
+                                .stats
+                                .lifetime_revenue
+                                .saturating_add(sync_payment);
+                        }
+                    });
 
                     Self::deposit_event(Event::ReplicaSynced {
                         bucket_id,
