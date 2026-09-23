@@ -26,8 +26,10 @@ pub const REPLICA_TERM_CONTEXT: &[u8] = b"replica-term-v1:";
     Clone, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo, MaxEncodedLen, Debug,
 )]
 // DRIFT-001: the off-chain signed-terms quote that supersedes the design docs'
-// on-chain request/accept flow (AgreementRequest).
-// Proposal: keep; document this type in the design.
+// on-chain request/accept flow (AgreementRequest). Documented in the design
+// since #395. #423 replaces `bucket_id: Option<BucketId>` with
+// `bucket: BucketTarget` (`New` / `Existing(id)`, same SCALE encoding); #446
+// implements it.
 // TODO: the virtual-provider extension
 // (https://github.com/paritytech/web3-storage/issues/316) may reshape these
 // terms; fold its changes in early to avoid an interface change.

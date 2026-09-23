@@ -35,8 +35,9 @@ primaries (replicas stay challengeable by anyone).
 
 **Redundancy**: A bucket can have storage agreements with multiple providers. The `min_providers` setting controls how many providers must acknowledge a state before it can be checkpointed. This ensures minimum redundancy for critical data.
 
-<!-- DRIFT-020: multi-primary still the target? Decide in #417. -->
-**Implementation status**: today every bucket has exactly one primary provider, fixed when `establish_storage_agreement` creates the bucket; no call adds another, so `min_providers` is always 1 and the late-signer path of `extend_checkpoint` is unreachable. Replicas are the redundancy mechanism in use. Multi-primary buckets remain the design target, and the `min_providers`, signature-bitfield and `extend_checkpoint` machinery below is written for them.
+<!-- DRIFT-020: decided in #423 (via #417): multi-primary stays the target and
+`add_primary_provider` is the join path. Not on `dev` yet; #446 implements it. -->
+**Implementation status**: on `dev` today every bucket has exactly one primary provider, fixed when `establish_storage_agreement` (renamed `create_bucket_with_primary` by #423) creates the bucket; until #446 lands no call adds another, so `min_providers` is always 1 and the late-signer path of `extend_checkpoint` is unreachable. Replicas are the redundancy mechanism in use. The `min_providers`, signature-bitfield and `extend_checkpoint` machinery below is written for multi-primary buckets.
 
 **Append-only mode**: When `frozen_start_seq` is set, the bucket becomes append-only from that point. The start_seq can never decrease below the frozen value, preventing deletion of historical data. This is irreversible and requires the current snapshot to meet `min_providers` threshold.
 
@@ -781,7 +782,8 @@ hex, so the scheme tag travels with the signature on every wire path.
 
 <!-- DRIFT-010: on `dev` this list is wrong in both directions: (a) a THIRD
 provider-signed payload exists — the AgreementTerms/ReplicaTerms redeemed by
-establish_*_agreement (the DRIFT-001 flow), signed as
+`create_bucket_with_primary` / `add_*_provider` (`establish_*_agreement` on
+`dev` until #446; the DRIFT-001 flow), signed as
 blake2_256(context | terms.encode()) with PRIMARY_TERM_CONTEXT /
 REPLICA_TERM_CONTEXT domain separation; (b) only CommitmentPayload carries a
 `version: u8` — the replica `roots` array is signed bare, with no version
@@ -1262,13 +1264,12 @@ impl<T: Config> Pallet<T> {
     // Bucket management
     // ─────────────────────────────────────────────────────────────
 
-    // DRIFT-002: no standalone create_bucket / create_bucket_with_storage on
-    // `dev`; a bucket is created by establish_storage_agreement redeeming
-    // primary terms (#105).
-    // Proposal: implement both calls, or remove the two sketches below. The
-    // design owner questioned on #376 whether creation and provider
-    // assignment should stay separate steps; decision tracked in #417 (bucket
-    // lifecycle).
+    // DRIFT-002: decided in #423 — bucket creation and provider assignment
+    // are separate calls (`create_bucket`, `create_bucket_with_primary`,
+    // `add_primary_provider`); `create_bucket_with_storage` is dropped from
+    // the design. On `dev` none of them exists yet: a bucket is created by
+    // `establish_storage_agreement` redeeming primary terms (#105). #446
+    // implements the four calls; resolved once it merges.
     /// Create a new bucket.
     /// 
     /// The caller becomes the bucket admin. The bucket starts empty with no
@@ -1371,10 +1372,11 @@ impl<T: Config> Pallet<T> {
     // DRIFT-001: request_agreement / accept_agreement / reject_agreement /
     // withdraw_agreement_request / request_primary_agreement are superseded on
     // `dev` by establish_storage_agreement / establish_replica_agreement, which
-    // redeem provider-signed AgreementTerms (#105).
-    // Proposal: remove the five calls from the design and document the
-    // signed-terms flow (establish_* + AgreementTerms/ReplicaTerms +
-    // ProviderReplayStates) in their place.
+    // redeem provider-signed AgreementTerms (#105). #395 removed the five
+    // calls from the design and documented the signed-terms flow in their
+    // place; #423 named the calls `create_bucket_with_primary` /
+    // `add_replica_provider`. Remaining drift: the call names on `dev`, until
+    // #446 merges.
 
     // Agreements are established by redeeming provider-signed AgreementTerms
     // (see the storage section) — there is no on-chain request/accept

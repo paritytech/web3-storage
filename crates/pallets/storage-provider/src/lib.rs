@@ -922,10 +922,12 @@ pub mod pallet {
             /// Providers whose signatures back it.
             providers: Vec<T::AccountId>,
         },
-        // DRIFT-016: never emitted. Proposal: implement the join path or remove
-        // the variant; see the marker in the design doc's Event listing.
+        // DRIFT-016: decided in #423 — emitted by create_bucket_with_primary
+        // and add_primary_provider; #446 implements both. See the marker in
+        // the design doc's Event listing.
         /// A primary provider joined the bucket's provider set. Not emitted
-        /// yet: no call adds a primary to an existing bucket (#417).
+        /// yet on `dev`: no call adds a primary to an existing bucket until
+        /// #446 lands.
         ProviderAddedToBucket {
             /// The bucket.
             bucket_id: BucketId,
@@ -1621,12 +1623,12 @@ pub mod pallet {
         // ─────────────────────────────────────────────────────────────────────
 
         // DRIFT-001 / DRIFT-002: this signed-terms flow supersedes the design
-        // docs' on-chain request/accept round-trip and standalone create_bucket
-        // (bucket creation is folded in here).
-        // Proposal: DRIFT-001, keep this flow and realign the design docs to
-        // it. DRIFT-002, implement standalone create_bucket /
-        // create_bucket_with_storage or remove their sketches from the design
-        // doc; decision tracked in #417.
+        // docs' on-chain request/accept round-trip (DRIFT-001; the design was
+        // realigned to it in #395). #423 decided DRIFT-002: bucket creation
+        // and provider assignment are separate calls (create_bucket,
+        // create_bucket_with_primary, add_primary_provider); this call is
+        // create_bucket_with_primary under its pre-#423 name. #446 implements
+        // the split.
         /// Redeem provider-signed terms: create a bucket + primary agreement
         /// in a single call.
         ///
