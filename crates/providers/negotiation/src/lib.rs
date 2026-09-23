@@ -169,9 +169,6 @@ mod tests {
         let null: NegotiateRequest = serde_json::from_str(&body("null")).unwrap();
         assert_eq!(null.bucket, None);
 
-        // Both wire-type declarations document the key as omittable, and
-        // `serde_as` keeps that only because it emits `#[serde(default)]`
-        // for an `Option` field with an `Option` adapter.
         let omitted = format!(
             r#"{{"owner":"{}","max_bytes":1024,"duration":50,"price_per_byte":1,"replica_params":null}}"#,
             AccountId32::new([0u8; 32])
