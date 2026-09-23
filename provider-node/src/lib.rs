@@ -17,8 +17,6 @@ pub mod error;
 pub mod fs_api;
 pub mod membership;
 pub mod negotiate;
-pub mod replica_sync;
-pub mod replica_sync_coordinator;
 pub mod s3_api;
 pub(crate) mod subxt_client;
 pub mod types;
@@ -40,92 +38,20 @@ pub use provider_coordinator::{
     ChainState, ChainStateChainClient, ChainStateCoordinator, ChainStateCoordinatorHandle,
     NonceCounter, PalletConstants, ProviderLifecycleEvent,
 };
-pub use replica_sync::ReplicaSync;
-pub use replica_sync_coordinator::{
-    ReplicaSyncChainClient, ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig,
+pub use provider_replica::{
+    ReplicaSync, ReplicaSyncChainClient, ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig,
     ReplicaSyncCoordinatorHandle, SignedSyncRoots, SyncCommand, SyncCoordinatorStatus, SyncDuty,
-    SyncResult,
+    SyncResult, SyncRoots, SyncRootsSigner,
 };
 pub use types::*;
 
 use codec::Encode;
 use provider_storage::{FsIndexManager, NonceStore, S3IndexManager, StorageBackend};
-use sp_core::crypto::{ByteArray, Ss58Codec};
-use sp_core::{ecdsa, ed25519, sr25519, Pair};
+use provider_types::{KeyScheme, ProviderKeypair, SigningRefused};
+use sp_core::crypto::Ss58Codec;
+use sp_core::{sr25519, Pair};
 use sp_runtime::MultiSignature;
 use std::sync::Arc;
-
-/// Signature scheme of the provider's signing keypair — the key registered
-/// on-chain as `public_key` and verified by the pallet via `MultiSignature`.
-/// The extrinsic-submission account stays sr25519 regardless (see
-/// [`ProviderState::with_seed_scheme`]). `Eth` is ecdsa over keccak digests
-/// with revive-style account derivation — what Ethereum wallets produce.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, clap::ValueEnum)]
-pub enum KeyScheme {
-    #[default]
-    Sr25519,
-    Ed25519,
-    Ecdsa,
-    Eth,
-}
-
-/// The provider's signing keypair, scheme-tagged so every signature leaves
-/// the node as a self-describing [`MultiSignature`].
-#[allow(clippy::large_enum_variant)]
-#[derive(Clone)]
-pub enum ProviderKeypair {
-    Sr25519(sr25519::Pair),
-    Ed25519(ed25519::Pair),
-    Ecdsa(ecdsa::Pair),
-    Eth(ecdsa::KeccakPair),
-}
-
-impl ProviderKeypair {
-    /// Derive from a SURI (e.g. `//Alice` or a mnemonic) for the given scheme.
-    pub fn from_seed(seed: &str, scheme: KeyScheme) -> Result<Self, String> {
-        fn derive<P: Pair>(seed: &str) -> Result<P, String> {
-            P::from_string(seed, None).map_err(|e| format!("Failed to create keypair: {e:?}"))
-        }
-        Ok(match scheme {
-            KeyScheme::Sr25519 => Self::Sr25519(derive(seed)?),
-            KeyScheme::Ed25519 => Self::Ed25519(derive(seed)?),
-            KeyScheme::Ecdsa => Self::Ecdsa(derive(seed)?),
-            KeyScheme::Eth => Self::Eth(derive(seed)?),
-        })
-    }
-
-    /// Sign a raw message, tagging the signature with its scheme.
-    pub fn sign(&self, message: &[u8]) -> MultiSignature {
-        match self {
-            Self::Sr25519(pair) => MultiSignature::Sr25519(pair.sign(message)),
-            Self::Ed25519(pair) => MultiSignature::Ed25519(pair.sign(message)),
-            Self::Ecdsa(pair) => MultiSignature::Ecdsa(pair.sign(message)),
-            Self::Eth(pair) => MultiSignature::Eth(pair.sign(message)),
-        }
-    }
-
-    /// Raw public key bytes as registered on-chain: 32 for Sr25519/Ed25519,
-    /// 33 (compressed) for Ecdsa/Eth.
-    pub fn public_key_bytes(&self) -> Vec<u8> {
-        match self {
-            Self::Sr25519(pair) => pair.public().to_raw_vec(),
-            Self::Ed25519(pair) => pair.public().to_raw_vec(),
-            Self::Ecdsa(pair) => pair.public().to_raw_vec(),
-            Self::Eth(pair) => pair.public().to_raw_vec(),
-        }
-    }
-
-    /// Sign negotiated terms, bundling terms + scheme-tagged signature.
-    ///
-    /// The digest is the one `provider_negotiation` defines; signing goes
-    /// through [`Self::sign`] rather than the generic helper there, which
-    /// cannot cover `Eth` (upstream has no `From<KeccakSignature>` for
-    /// `MultiSignature`).
-    pub fn sign_terms(&self, terms: AgreementTermsOf) -> SignedTerms {
-        let signature = self.sign(&sp_crypto_hashing::blake2_256(&terms.signing_payload()));
-        SignedTerms { terms, signature }
-    }
-}
 
 /// Everything a servable [`ProviderState`] requires.
 pub struct ProviderDeps {
@@ -235,28 +161,34 @@ impl ProviderState {
     /// `0x`-prefixed hex — the same wire format `/negotiate` uses, so the
     /// scheme tag travels with every signature.
     ///
-    /// Returns `Err(Error::SigningUnavailable)` if no keypair is configured.
+    /// Returns [`SigningRefused::NoKey`] if no keypair is configured.
     /// Callers must propagate this so the HTTP layer returns 503 rather than
     /// silently emitting a zeroed placeholder signature, which would be a
     /// cryptographically invalid commitment masquerading as a real one.
     pub fn sign(&self, message: &[u8]) -> Result<String, Error> {
-        self.ensure_signing_key_registered()?;
-        let keypair = self.keypair.as_ref().ok_or(Error::SigningUnavailable)?;
+        let keypair = self.signing_keypair()?;
         Ok(format!("0x{}", hex::encode(keypair.sign(message).encode())))
     }
 
-    /// Best-effort guard for every signing path: once the coordinator has
-    /// loaded our on-chain registration, refuse to sign with a key the chain
-    /// doesn't know — such signatures can never verify, so failing here beats
-    /// handing out dead ones. While no registration is loaded (chainless dev
-    /// mode, or before the first refresh) signing proceeds; a re-registration
-    /// heals a mismatch on the coordinator's next refresh without a restart.
-    pub fn ensure_signing_key_registered(&self) -> Result<(), Error> {
+    /// The keypair every signing path goes through, once the guard below
+    /// passes.
+    ///
+    /// Checks `keypair` before the guard: a node with no signing key at all
+    /// must report [`SigningRefused::NoKey`] (the actionable fix - configure
+    /// `--keyfile`) rather than [`SigningRefused::Unregistered`].
+    fn signing_keypair(&self) -> Result<&ProviderKeypair, SigningRefused> {
+        let keypair = self.keypair.as_ref().ok_or(SigningRefused::NoKey)?;
+        self.ensure_signing_key_registered()?;
+        Ok(keypair)
+    }
+
+    /// Guard for every signing path: signing requires a published on-chain
+    /// registration whose key matches ours, because the pallet rejects any
+    /// other signature. Clears on the coordinator's next refresh, no restart.
+    fn ensure_signing_key_registered(&self) -> Result<(), SigningRefused> {
         let info = self.chain_state.provider_info.read();
-        match info.as_ref() {
-            Some(info) => self.ensure_signing_key_matches(info),
-            None => Ok(()),
-        }
+        let info = info.as_ref().ok_or(SigningRefused::Unregistered)?;
+        self.ensure_signing_key_matches(info)
     }
 
     /// The same guard against a registration snapshot the caller already
@@ -265,8 +197,8 @@ impl ProviderState {
     /// than one that may have been refreshed in between.
     pub fn ensure_signing_key_matches(
         &self,
-        info: &provider_coordinator::ProviderInfo,
-    ) -> Result<(), Error> {
+        info: &provider_types::ProviderInfo,
+    ) -> Result<(), SigningRefused> {
         let Some(local) = self.signing_public_key.as_ref() else {
             return Ok(());
         };
@@ -276,7 +208,7 @@ impl ProviderState {
                 local = %hex::encode(local),
                 "local signing key does not match registered on-chain public_key"
             );
-            return Err(Error::ProviderKeyMismatch);
+            return Err(SigningRefused::KeyMismatch);
         }
         Ok(())
     }
@@ -285,6 +217,15 @@ impl ProviderState {
     /// storage.
     pub fn challenge_proof_source(&self) -> Arc<dyn ChallengeProofSource> {
         Arc::new(StorageProofSource::new(self.storage.clone()))
+    }
+}
+
+/// Lets the replica sync coordinator attest its sync roots with the node's
+/// scheme-tagged key, under the same "must match the on-chain registration"
+/// guard every other signing path goes through.
+impl SyncRootsSigner for ProviderState {
+    fn sign_sync_roots(&self, roots: &SyncRoots) -> Result<MultiSignature, SigningRefused> {
+        Ok(self.signing_keypair()?.sign(&roots.encode()))
     }
 }
 
@@ -308,6 +249,41 @@ mod tests {
         (deps, dir)
     }
 
+    /// A registration snapshot carrying the given signing key. The values
+    /// other than `public_key` are not asserted on; only the key matters to
+    /// these tests.
+    fn registration(public_key: Vec<u8>) -> provider_types::ProviderInfo {
+        provider_types::ProviderInfo {
+            multiaddr: "/ip4/1.2.3.4/tcp/3333".to_string(),
+            public_key,
+            stake: 1_000,
+            committed_bytes: 0,
+            settings: provider_types::ProviderSettings {
+                min_duration: 10,
+                max_duration: 100,
+                price_per_byte: 1,
+                accepting_primary: true,
+                replica_sync_price: None,
+                accepting_extensions: true,
+                max_capacity: 0,
+            },
+            stats: Default::default(),
+            deregister_at: None,
+        }
+    }
+
+    /// Publish a registration snapshot whose `public_key` matches this
+    /// state's own signing key, as the chain-state coordinator would once
+    /// the provider is registered on chain.
+    fn publish_matching_registration(state: &ProviderState) {
+        let public_key = state.keypair.as_ref().unwrap().public_key_bytes();
+        state
+            .chain_state
+            .provider_info
+            .write()
+            .replace(registration(public_key));
+    }
+
     #[test]
     fn sign_without_keypair_refuses_with_signing_unavailable() {
         // The pre-fix behaviour silently returned 64 zero bytes. The new
@@ -319,7 +295,7 @@ mod tests {
         let err = state
             .sign(b"any message")
             .expect_err("must refuse to sign without a keypair");
-        assert!(matches!(err, Error::SigningUnavailable));
+        assert!(matches!(err, Error::Signing(SigningRefused::NoKey)));
     }
 
     #[test]
@@ -331,6 +307,7 @@ mod tests {
         // aren't valid sr25519.
         let (deps, _dir) = test_deps();
         let state = ProviderState::with_seed(deps, "//Alice").unwrap();
+        publish_matching_registration(&state);
         let message = b"commitment-payload-bytes";
 
         let sig_hex = state.sign(message).expect("signing succeeds with keypair");
@@ -359,41 +336,30 @@ mod tests {
         let state = ProviderState::with_seed(deps, "//Alice").unwrap();
         let local_key = state.keypair.as_ref().unwrap().public_key_bytes();
 
-        let info = |public_key: Vec<u8>| provider_coordinator::ProviderInfo {
-            multiaddr: "/ip4/1.2.3.4/tcp/3333".to_string(),
-            public_key,
-            stake: 1_000,
-            committed_bytes: 0,
-            max_capacity: 0,
-            min_duration: 10,
-            max_duration: 100,
-            price_per_byte: 1,
-            accepting_primary: true,
-            replica_sync_price: None,
-            accepting_extensions: true,
-            agreements_total: 0,
-            challenges_failed: 0,
-            deregister_at: None,
-        };
-
         state
             .chain_state
             .provider_info
             .write()
-            .replace(info(vec![9u8; 32]));
+            .replace(registration(vec![9u8; 32]));
         assert!(matches!(
             state.sign(b"msg"),
-            Err(Error::ProviderKeyMismatch)
+            Err(Error::Signing(SigningRefused::KeyMismatch))
         ));
 
-        // No snapshot (chainless mode) and a matching snapshot both sign.
+        // No snapshot at all must also refuse: an unpublished registration
+        // means the pallet has no key to verify against.
         state.chain_state.provider_info.write().take();
-        assert!(state.sign(b"msg").is_ok());
+        assert!(matches!(
+            state.sign(b"msg"),
+            Err(Error::Signing(SigningRefused::Unregistered))
+        ));
+
+        // A matching snapshot signs.
         state
             .chain_state
             .provider_info
             .write()
-            .replace(info(local_key));
+            .replace(registration(local_key));
         assert!(state.sign(b"msg").is_ok());
     }
 
@@ -405,106 +371,6 @@ mod tests {
         match MultiSignature::decode(&mut &bytes[..]).expect("valid SCALE MultiSignature") {
             MultiSignature::Sr25519(sig) => sig,
             other => panic!("expected an Sr25519 signature, got {other:?}"),
-        }
-    }
-
-    /// sign_terms produces, for every scheme, a signature the pallet's
-    /// terms verification accepts: over `blake2_256(signing_payload())`,
-    /// against the account derived from the raw registered key.
-    /// The account the pallet will verify against, derived from the raw
-    /// registered key the way `Pallet::expected_signer_account` does — the
-    /// signature's variant picks the derivation.
-    fn expected_signer(key: &[u8], sig: &MultiSignature) -> sp_runtime::AccountId32 {
-        use sp_runtime::{traits::IdentifyAccount, MultiSigner};
-        match sig {
-            MultiSignature::Sr25519(_) => {
-                MultiSigner::Sr25519(sr25519::Public::try_from(key).unwrap())
-            }
-            MultiSignature::Ed25519(_) => {
-                MultiSigner::Ed25519(ed25519::Public::try_from(key).unwrap())
-            }
-            MultiSignature::Ecdsa(_) => MultiSigner::Ecdsa(ecdsa::Public::try_from(key).unwrap()),
-            MultiSignature::Eth(_) => MultiSigner::Eth(ecdsa::KeccakPublic::try_from(key).unwrap()),
-        }
-        .into_account()
-    }
-
-    #[test]
-    fn sign_terms_round_trips_for_every_scheme() {
-        use sp_runtime::traits::Verify;
-        use sp_runtime::AccountId32;
-
-        let terms = AgreementTermsOf {
-            owner: AccountId32::new([7u8; 32]),
-            max_bytes: 1024,
-            duration: 50,
-            price_per_byte: 5,
-            valid_until: 100,
-            nonce: 1,
-            bucket_id: None,
-            replica_params: None,
-        };
-
-        for scheme in [
-            KeyScheme::Sr25519,
-            KeyScheme::Ed25519,
-            KeyScheme::Ecdsa,
-            KeyScheme::Eth,
-        ] {
-            let keypair = ProviderKeypair::from_seed("//Alice", scheme).unwrap();
-            let key = keypair.public_key_bytes();
-            let signed = keypair.sign_terms(terms.clone());
-            assert_eq!(
-                signed.terms, terms,
-                "{scheme:?} must bundle the terms unchanged"
-            );
-
-            let hash = sp_crypto_hashing::blake2_256(&signed.terms.signing_payload());
-            assert!(
-                signed
-                    .signature
-                    .verify(&hash[..], &expected_signer(&key, &signed.signature)),
-                "{scheme:?} terms signature failed verification"
-            );
-        }
-    }
-
-    /// Every scheme round-trips: sign() emits a SCALE MultiSignature whose
-    /// variant matches the configured scheme and whose registered key shape
-    /// is 32 (Sr25519/Ed25519) or 33 (Ecdsa/Eth) bytes.
-    #[test]
-    fn sign_round_trips_for_every_scheme() {
-        use codec::Decode;
-        use sp_runtime::traits::Verify;
-
-        let msg = b"scheme-round-trip";
-        for (scheme, key_len) in [
-            (KeyScheme::Sr25519, 32),
-            (KeyScheme::Ed25519, 32),
-            (KeyScheme::Ecdsa, 33),
-            (KeyScheme::Eth, 33),
-        ] {
-            let keypair = ProviderKeypair::from_seed("//Alice", scheme).unwrap();
-            let key = keypair.public_key_bytes();
-            assert_eq!(key.len(), key_len, "{scheme:?} key length");
-
-            let encoded = keypair.sign(msg).encode();
-            let sig = MultiSignature::decode(&mut &encoded[..]).unwrap();
-            let matches_scheme = matches!(
-                (&sig, scheme),
-                (MultiSignature::Sr25519(_), KeyScheme::Sr25519)
-                    | (MultiSignature::Ed25519(_), KeyScheme::Ed25519)
-                    | (MultiSignature::Ecdsa(_), KeyScheme::Ecdsa)
-                    | (MultiSignature::Eth(_), KeyScheme::Eth)
-            );
-            assert!(matches_scheme, "{scheme:?} produced {sig:?}");
-
-            // Verify the same way the pallet does: derive the expected
-            // account from the raw key bytes for this scheme.
-            assert!(
-                sig.verify(&msg[..], &expected_signer(&key, &sig)),
-                "{scheme:?} signature failed verification"
-            );
         }
     }
 
@@ -521,6 +387,7 @@ mod tests {
         // returns a constant value (e.g. zero bytes).
         let (deps, _dir) = test_deps();
         let state = ProviderState::with_seed(deps, "//Alice").unwrap();
+        publish_matching_registration(&state);
         let alice_pub = keypair_for("//Alice").public();
         let msg = b"commitment-payload";
 
@@ -544,6 +411,8 @@ mod tests {
         let (bob_deps, _bob_dir) = test_deps();
         let alice = ProviderState::with_seed(alice_deps, "//Alice").unwrap();
         let bob = ProviderState::with_seed(bob_deps, "//Bob").unwrap();
+        publish_matching_registration(&alice);
+        publish_matching_registration(&bob);
         let alice_pub = keypair_for("//Alice").public();
         let msg = b"checkpoint payload";
 

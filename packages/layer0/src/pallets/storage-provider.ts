@@ -104,7 +104,7 @@ export async function ensureProviderRegistered(
     const priceSynced =
       readiness.provider_info_loaded &&
       provider_registration_info != null &&
-      BigInt(provider_registration_info.price_per_byte) === pricePerByte;
+      BigInt(provider_registration_info.settings.price_per_byte) === pricePerByte;
     if (readiness.signing_configured && readiness.nonce_counter_ready && priceSynced) return;
     await new Promise((resolve) => setTimeout(resolve, 3000));
   }
@@ -565,6 +565,25 @@ export async function topUpAgreement(
     }),
     client.signer,
     { label: "top_up_agreement", ...opts },
+  );
+}
+
+export async function transferAgreementOwnership(
+  api: ParachainApi,
+  client: ChainSigner,
+  bucketId: bigint,
+  provider: ChainSigner | { address: string },
+  newOwner: ChainSigner | { address: string },
+  opts: SubmitOpts = {},
+) {
+  return submitTx(
+    api.tx.StorageProvider.transfer_agreement_ownership({
+      bucket_id: bucketId,
+      provider: provider.address,
+      new_owner: newOwner.address,
+    }),
+    client.signer,
+    { label: "transfer_agreement_ownership", ...opts },
   );
 }
 

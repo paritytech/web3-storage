@@ -18,6 +18,7 @@ use axum::{
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use codec::Encode;
 use provider_auth::RequiredRole;
+use provider_types::SigningRefused;
 use sp_core::H256;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -142,7 +143,7 @@ async fn rate_limit_by_ip_middleware(
         // hide detail error from client.
         Err(err) => {
             tracing::warn!("rate limiter error for {ip}: {err}; rejecting request");
-            Err(Error::Internal("RateLimited".to_string()))
+            Err(Error::RateLimiterFailed(err.to_string()))
         }
     }
 }
@@ -279,7 +280,7 @@ async fn upload_node(
     // Decode data
     let data = BASE64
         .decode(&request.data)
-        .map_err(|e| Error::Serialization(e.to_string()))?;
+        .map_err(|e| Error::decode("node data", e))?;
 
     // Decode children
     let children = request
@@ -767,7 +768,7 @@ async fn negotiate_terms(
     State(state): State<Arc<ProviderState>>,
     Json(req): Json<NegotiateRequest>,
 ) -> Result<Json<SignedTerms>, Error> {
-    let keypair = state.keypair.as_ref().ok_or(Error::SigningUnavailable)?;
+    let keypair = state.keypair.as_ref().ok_or(SigningRefused::NoKey)?;
 
     // Both the anchor block and RequestTimeout must be known before we can sign
     // — otherwise we'd emit unbounded or already-expired terms.
@@ -793,7 +794,7 @@ async fn negotiate_terms(
         .provider_info
         .read()
         .clone()
-        .ok_or(Error::ProviderInfoUnavailable)?;
+        .ok_or(SigningRefused::Unregistered)?;
 
     // A provider that has announced deregistration is winding down and must not
     // sign new terms — the on-chain pallet rejects them too once deregistering.
@@ -828,7 +829,7 @@ async fn negotiate_terms(
         owner: req.owner,
         max_bytes: req.max_bytes,
         duration: req.duration,
-        price_per_byte: info.price_per_byte,
+        price_per_byte: info.settings.price_per_byte,
         valid_until: anchor_block.saturating_add(request_timeout),
         nonce: nonce_counter.next(),
         bucket_id: req.bucket_id,

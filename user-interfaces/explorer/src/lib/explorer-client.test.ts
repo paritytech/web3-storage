@@ -4,7 +4,6 @@ import { describe, it, expect } from 'vitest'
 import {
   agreementStatus,
   bucketQuotas,
-  reputationScore,
   summarize,
   type AgreementRow,
   type NetworkSnapshot,
@@ -33,6 +32,7 @@ function provider(overrides: Partial<ProviderRow>): ProviderRow {
     multiaddr: '/ip4/127.0.0.1/tcp/3333',
     stake: 0n,
     committedBytes: 0n,
+    availableCapacity: undefined,
     settings: {
       minDuration: 0,
       maxDuration: 0,
@@ -52,6 +52,8 @@ function provider(overrides: Partial<ProviderRow>): ProviderRow {
       challengesDefendedAuthorized: 0,
       challengesDefendedPublic: 0,
       challengesFailed: 0,
+      lifetimeRevenue: 0n,
+      reputation: 100,
     },
     deregisterAt: undefined,
     ...overrides,
@@ -95,26 +97,9 @@ describe('bucketQuotas', () => {
   })
 })
 
-// Mirrors the pallet's reputation_score (runtime_api.rs) — keep in lockstep.
-describe('reputationScore', () => {
-  const stats = (authorized: number, pub_: number, failed: number) => ({
-    ...provider({}).stats,
-    challengesDefendedAuthorized: authorized,
-    challengesDefendedPublic: pub_,
-    challengesFailed: failed,
-  })
-
-  it('scores 100 with no resolved challenges (benefit of the doubt)', () => {
-    expect(reputationScore(stats(0, 0, 0))).toBe(100)
-  })
-
-  it('is the floored share of resolved challenges defended, both tiers counted', () => {
-    expect(reputationScore(stats(2, 1, 1))).toBe(75)
-    expect(reputationScore(stats(1, 0, 2))).toBe(33)
-    expect(reputationScore(stats(0, 0, 5))).toBe(0)
-    expect(reputationScore(stats(4, 3, 0))).toBe(100)
-  })
-})
+// Reputation is no longer computed here: it comes from the chain via
+// `StorageProviderApi.providers`, so there is no local formula left to test
+// against the pallet. The pallet's own tests cover it.
 
 describe('summarize', () => {
   it('computes bigint-safe totals and anchor-filtered active count', () => {
@@ -130,7 +115,6 @@ describe('summarize', () => {
       ],
       buckets: [],
       openChallenges: [],
-      challengeAggregates: { totalIssued: 0, upheld: 0, dismissed: 0 },
       bucketsEverCreated: 3,
       failedSections: [],
       fetchedAt: 0,
@@ -142,5 +126,31 @@ describe('summarize', () => {
     // expiresAt 100 is still active at anchor 50 (extensions_blocked or not);
     // expiresAt 10 is expired
     expect(stats.activeAgreements).toBe(2)
+    expect(stats.bucketCount).toBe(0)
+    expect(stats.bucketsEverCreated).toBe(3)
+    expect(stats.openChallenges).toBe(0)
+  })
+
+  it('reports undefined, not 0, for a section that failed to load', () => {
+    const snapshot: NetworkSnapshot = {
+      providers: [],
+      agreements: [agreement({ expiresAt: 100 })],
+      buckets: [],
+      openChallenges: [],
+      // The loader's fallback for a failed NextBucketId read.
+      bucketsEverCreated: 0,
+      failedSections: ['providers', 'bucket counter'],
+      fetchedAt: 0,
+    }
+    const stats = summarize(snapshot, 50)
+    // A failed providers call must not read as "this network has no providers".
+    expect(stats.providerCount).toBeUndefined()
+    expect(stats.totalStake).toBeUndefined()
+    expect(stats.totalData).toBeUndefined()
+    // Nor a failed counter as "0 buckets ever created".
+    expect(stats.bucketsEverCreated).toBeUndefined()
+    // Sections that did load still report their real value, including 0.
+    expect(stats.activeAgreements).toBe(1)
+    expect(stats.bucketCount).toBe(0)
   })
 })

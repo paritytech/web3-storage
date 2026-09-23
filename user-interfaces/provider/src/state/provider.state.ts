@@ -45,7 +45,7 @@ export interface ProviderSettings {
   maxDuration: number
   pricePerByte: bigint
   acceptingPrimary: boolean
-  acceptingReplica: boolean
+  /** Price per successful sync confirmation; `null` means not accepting replicas. */
   replicaSyncPrice: bigint | null
   acceptingExtensions: boolean
   maxCapacity: bigint
@@ -100,6 +100,7 @@ export interface AgreementRequest {
 }
 
 export interface EarningsSummary {
+  /** The chain's `lifetime_revenue` for the current registration. */
   totalEarned: bigint
   pendingPayouts: bigint
   lastPayoutBlock: number
@@ -333,7 +334,8 @@ export async function loadProviderData(
     )
 
     earnings$.next({
-      totalEarned: 0n, // Would need historical data
+      // Chain's running total, so no event replay; reset by deregistering.
+      totalEarned: providerData?.info.lifetimeRevenue ?? 0n,
       pendingPayouts: 0n, // Would need escrow queries
       lastPayoutBlock: 0,
       activeAgreementValue: activeValue,
@@ -614,7 +616,6 @@ function convertProviderSettings(chain: OnChainProviderSettings): ProviderSettin
     maxDuration: chain.maxDuration,
     pricePerByte: chain.pricePerByte,
     acceptingPrimary: chain.acceptingPrimary,
-    acceptingReplica: chain.acceptingReplica,
     replicaSyncPrice: chain.replicaSyncPrice,
     acceptingExtensions: chain.acceptingExtensions,
     maxCapacity: chain.maxCapacity,
