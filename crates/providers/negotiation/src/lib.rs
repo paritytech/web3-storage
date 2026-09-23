@@ -61,6 +61,7 @@ pub struct NegotiateRequest {
     /// Bucket the quote is for: the id of an existing bucket, or `None` for
     /// a bucket created when the quote is redeemed. Maps to
     /// [`storage_primitives::BucketTarget`] in the signed terms.
+    #[serde_as(as = "Option<PickFirst<(DisplayFromStr, _)>>")]
     pub bucket: Option<BucketId>,
     /// `Some(_)` to negotiate a replica agreement (per-sync funding +
     /// minimum sync interval); `None` for a primary agreement.
@@ -147,5 +148,24 @@ mod tests {
         let decoded: NegotiateRequest = serde_json::from_str(&json).unwrap();
         assert_eq!(decoded.max_bytes, 1_073_741_824);
         assert_eq!(decoded.price_per_byte, u128::MAX);
+    }
+
+    #[test]
+    fn negotiate_request_accepts_bucket_as_string_or_number() {
+        let body = |bucket: &str| {
+            format!(
+                r#"{{"owner":"{}","max_bytes":1024,"duration":50,"price_per_byte":1,"bucket":{bucket},"replica_params":null}}"#,
+                AccountId32::new([0u8; 32])
+            )
+        };
+
+        let from_string: NegotiateRequest = serde_json::from_str(&body(r#""7""#)).unwrap();
+        assert_eq!(from_string.bucket, Some(7));
+
+        let from_number: NegotiateRequest = serde_json::from_str(&body("7")).unwrap();
+        assert_eq!(from_number.bucket, Some(7));
+
+        let absent: NegotiateRequest = serde_json::from_str(&body("null")).unwrap();
+        assert_eq!(absent.bucket, None);
     }
 }
