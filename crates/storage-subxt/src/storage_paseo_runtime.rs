@@ -1302,9 +1302,10 @@ pub mod api {
                         "provider_info",
                         (provider,),
                         [
-                            5u8, 59u8, 71u8, 84u8, 51u8, 150u8, 226u8, 235u8, 223u8, 79u8, 114u8,
-                            81u8, 165u8, 111u8, 128u8, 147u8, 87u8, 69u8, 160u8, 231u8, 59u8, 11u8,
-                            204u8, 125u8, 91u8, 155u8, 26u8, 200u8, 200u8, 172u8, 170u8, 230u8,
+                            102u8, 249u8, 150u8, 139u8, 145u8, 176u8, 68u8, 250u8, 228u8, 67u8,
+                            45u8, 79u8, 245u8, 33u8, 165u8, 60u8, 86u8, 48u8, 46u8, 168u8, 182u8,
+                            204u8, 74u8, 24u8, 218u8, 172u8, 181u8, 7u8, 171u8, 128u8, 205u8,
+                            107u8,
                         ],
                     )
                 }
@@ -1322,9 +1323,9 @@ pub mod api {
                         "providers",
                         (offset, limit),
                         [
-                            132u8, 13u8, 201u8, 138u8, 219u8, 152u8, 81u8, 20u8, 227u8, 254u8,
-                            244u8, 12u8, 254u8, 119u8, 182u8, 228u8, 84u8, 187u8, 34u8, 223u8, 6u8,
-                            141u8, 82u8, 64u8, 95u8, 145u8, 6u8, 36u8, 41u8, 176u8, 152u8, 113u8,
+                            158u8, 167u8, 47u8, 21u8, 218u8, 57u8, 66u8, 51u8, 128u8, 53u8, 44u8,
+                            159u8, 74u8, 198u8, 123u8, 77u8, 250u8, 64u8, 112u8, 244u8, 93u8, 53u8,
+                            107u8, 110u8, 229u8, 1u8, 80u8, 206u8, 217u8, 63u8, 94u8, 88u8,
                         ],
                     )
                 }
@@ -1567,9 +1568,9 @@ pub mod api {
                         "find_matching_providers",
                         (requirements, limit),
                         [
-                            173u8, 197u8, 19u8, 135u8, 197u8, 123u8, 185u8, 45u8, 214u8, 147u8,
-                            102u8, 208u8, 192u8, 178u8, 205u8, 212u8, 9u8, 38u8, 65u8, 8u8, 245u8,
-                            144u8, 8u8, 248u8, 97u8, 167u8, 148u8, 9u8, 236u8, 183u8, 110u8, 97u8,
+                            98u8, 35u8, 116u8, 63u8, 14u8, 150u8, 201u8, 22u8, 148u8, 151u8, 187u8,
+                            74u8, 55u8, 170u8, 251u8, 240u8, 69u8, 44u8, 194u8, 183u8, 205u8, 16u8,
+                            121u8, 32u8, 238u8, 38u8, 54u8, 12u8, 146u8, 82u8, 9u8, 66u8,
                         ],
                     )
                 }
@@ -1592,10 +1593,10 @@ pub mod api {
                         "providers_with_capacity",
                         (bytes_needed, offset, limit),
                         [
-                            45u8, 27u8, 86u8, 215u8, 144u8, 227u8, 109u8, 217u8, 179u8, 191u8,
-                            54u8, 101u8, 182u8, 79u8, 219u8, 100u8, 205u8, 86u8, 144u8, 115u8,
-                            34u8, 230u8, 255u8, 50u8, 243u8, 126u8, 24u8, 224u8, 23u8, 209u8,
-                            106u8, 112u8,
+                            22u8, 179u8, 8u8, 166u8, 242u8, 102u8, 50u8, 14u8, 196u8, 79u8, 177u8,
+                            226u8, 154u8, 58u8, 171u8, 73u8, 232u8, 89u8, 235u8, 112u8, 197u8,
+                            14u8, 226u8, 20u8, 157u8, 136u8, 10u8, 64u8, 212u8, 184u8, 209u8,
+                            166u8,
                         ],
                     )
                 }
@@ -1606,7 +1607,9 @@ pub mod api {
                 #[doc = " appears once, paired with one of its buckets, so a caller challenges"]
                 #[doc = " it at most once per round."]
                 #[doc = ""]
-                #[doc = " Reputation runs from 0 to 100 (see [`reputation_score`])."]
+                #[doc = " Reputation runs from 0 to 100 (see [`ProviderStats::reputation`])."]
+                #[doc = ""]
+                #[doc = " [`ProviderStats::reputation`]: crate::ProviderStats::reputation"]
                 #[doc = " `max_reputation` saturates outside that range instead of erroring:"]
                 #[doc = " `0` matches nothing, and any value above 100 disables the filter."]
                 #[doc = ""]
@@ -2085,9 +2088,9 @@ pub mod api {
                         "dry_run_call",
                         (origin, call, result_xcms_version),
                         [
-                            123u8, 218u8, 23u8, 205u8, 125u8, 254u8, 26u8, 29u8, 149u8, 208u8,
-                            150u8, 7u8, 80u8, 46u8, 38u8, 20u8, 178u8, 61u8, 75u8, 71u8, 41u8,
-                            200u8, 30u8, 105u8, 108u8, 250u8, 68u8, 31u8, 68u8, 237u8, 71u8, 109u8,
+                            46u8, 38u8, 84u8, 150u8, 71u8, 217u8, 38u8, 221u8, 166u8, 72u8, 254u8,
+                            114u8, 215u8, 218u8, 227u8, 255u8, 160u8, 6u8, 47u8, 206u8, 59u8,
+                            220u8, 35u8, 136u8, 165u8, 127u8, 85u8, 28u8, 47u8, 218u8, 20u8, 233u8,
                         ],
                     )
                 }
@@ -2105,10 +2108,9 @@ pub mod api {
                         "dry_run_xcm",
                         (origin_location, xcm),
                         [
-                            154u8, 227u8, 66u8, 99u8, 113u8, 248u8, 151u8, 225u8, 145u8, 78u8,
-                            139u8, 107u8, 116u8, 133u8, 123u8, 70u8, 14u8, 211u8, 88u8, 212u8,
-                            221u8, 85u8, 114u8, 142u8, 48u8, 254u8, 76u8, 19u8, 188u8, 213u8, 5u8,
-                            45u8,
+                            218u8, 178u8, 172u8, 75u8, 158u8, 84u8, 226u8, 27u8, 206u8, 246u8,
+                            179u8, 5u8, 124u8, 174u8, 25u8, 133u8, 240u8, 18u8, 62u8, 189u8, 219u8,
+                            95u8, 118u8, 187u8, 197u8, 3u8, 133u8, 30u8, 82u8, 142u8, 250u8, 62u8,
                         ],
                     )
                 }
@@ -3467,9 +3469,9 @@ pub mod api {
             .hash();
         runtime_metadata_hash
             == [
-                108u8, 68u8, 52u8, 182u8, 171u8, 162u8, 112u8, 183u8, 190u8, 32u8, 145u8, 70u8,
-                139u8, 182u8, 137u8, 111u8, 153u8, 12u8, 174u8, 54u8, 143u8, 158u8, 207u8, 80u8,
-                27u8, 66u8, 64u8, 240u8, 223u8, 92u8, 138u8, 106u8,
+                63u8, 79u8, 172u8, 179u8, 215u8, 92u8, 165u8, 185u8, 23u8, 127u8, 252u8, 43u8,
+                253u8, 207u8, 212u8, 33u8, 104u8, 228u8, 88u8, 111u8, 16u8, 186u8, 133u8, 216u8,
+                94u8, 42u8, 255u8, 238u8, 242u8, 119u8, 26u8, 202u8,
             ]
     }
     pub mod system {
@@ -4457,10 +4459,9 @@ pub mod api {
                         "System",
                         "Events",
                         [
-                            43u8, 124u8, 208u8, 71u8, 102u8, 202u8, 82u8, 147u8, 15u8, 162u8,
-                            114u8, 13u8, 49u8, 238u8, 185u8, 190u8, 146u8, 110u8, 193u8, 27u8,
-                            54u8, 96u8, 212u8, 173u8, 23u8, 31u8, 87u8, 74u8, 156u8, 82u8, 138u8,
-                            104u8,
+                            130u8, 7u8, 105u8, 214u8, 236u8, 217u8, 6u8, 184u8, 105u8, 114u8, 99u8,
+                            186u8, 172u8, 170u8, 81u8, 129u8, 9u8, 58u8, 94u8, 233u8, 155u8, 91u8,
+                            47u8, 20u8, 116u8, 184u8, 62u8, 174u8, 103u8, 153u8, 27u8, 84u8,
                         ],
                     )
                 }
@@ -8458,10 +8459,10 @@ pub mod api {
                                 call: ::subxt::alloc::boxed::Box::new(call),
                             },
                             [
-                                145u8, 217u8, 47u8, 18u8, 29u8, 167u8, 84u8, 98u8, 49u8, 232u8,
-                                153u8, 98u8, 231u8, 65u8, 93u8, 78u8, 227u8, 125u8, 133u8, 100u8,
-                                165u8, 83u8, 128u8, 175u8, 83u8, 101u8, 173u8, 198u8, 112u8, 55u8,
-                                22u8, 10u8,
+                                11u8, 9u8, 210u8, 80u8, 167u8, 145u8, 216u8, 32u8, 228u8, 89u8,
+                                125u8, 251u8, 124u8, 119u8, 172u8, 21u8, 104u8, 134u8, 245u8, 47u8,
+                                50u8, 118u8, 100u8, 207u8, 59u8, 225u8, 75u8, 198u8, 12u8, 216u8,
+                                0u8, 98u8,
                             ],
                         )
                     }
@@ -8484,10 +8485,10 @@ pub mod api {
                                 weight,
                             },
                             [
-                                145u8, 133u8, 158u8, 81u8, 138u8, 79u8, 145u8, 181u8, 189u8, 70u8,
-                                49u8, 97u8, 168u8, 163u8, 94u8, 225u8, 213u8, 148u8, 204u8, 112u8,
-                                172u8, 250u8, 127u8, 195u8, 91u8, 4u8, 68u8, 123u8, 65u8, 236u8,
-                                53u8, 102u8,
+                                113u8, 236u8, 194u8, 180u8, 78u8, 247u8, 157u8, 87u8, 129u8, 67u8,
+                                200u8, 157u8, 216u8, 83u8, 97u8, 108u8, 128u8, 238u8, 83u8, 70u8,
+                                57u8, 184u8, 67u8, 129u8, 70u8, 28u8, 30u8, 145u8, 120u8, 254u8,
+                                146u8, 170u8,
                             ],
                         )
                     }
@@ -8526,10 +8527,10 @@ pub mod api {
                                 call: ::subxt::alloc::boxed::Box::new(call),
                             },
                             [
-                                40u8, 74u8, 122u8, 35u8, 27u8, 87u8, 19u8, 95u8, 52u8, 167u8,
-                                158u8, 122u8, 227u8, 238u8, 106u8, 180u8, 66u8, 109u8, 103u8,
-                                123u8, 43u8, 41u8, 195u8, 167u8, 135u8, 119u8, 165u8, 86u8, 243u8,
-                                169u8, 212u8, 15u8,
+                                96u8, 240u8, 21u8, 101u8, 153u8, 78u8, 243u8, 187u8, 241u8, 77u8,
+                                89u8, 132u8, 95u8, 191u8, 140u8, 253u8, 58u8, 102u8, 20u8, 50u8,
+                                69u8, 227u8, 119u8, 76u8, 190u8, 219u8, 6u8, 90u8, 121u8, 254u8,
+                                206u8, 38u8,
                             ],
                         )
                     }
@@ -14722,10 +14723,10 @@ pub mod api {
                             "batch",
                             super::Batch { calls },
                             [
-                                123u8, 41u8, 143u8, 168u8, 106u8, 27u8, 30u8, 30u8, 227u8, 133u8,
-                                154u8, 237u8, 178u8, 92u8, 229u8, 188u8, 113u8, 4u8, 44u8, 85u8,
-                                198u8, 36u8, 20u8, 161u8, 141u8, 224u8, 94u8, 201u8, 199u8, 155u8,
-                                137u8, 93u8,
+                                195u8, 159u8, 149u8, 180u8, 182u8, 131u8, 11u8, 189u8, 79u8, 154u8,
+                                138u8, 240u8, 2u8, 135u8, 32u8, 119u8, 90u8, 94u8, 176u8, 13u8,
+                                26u8, 143u8, 214u8, 43u8, 72u8, 105u8, 150u8, 142u8, 71u8, 243u8,
+                                37u8, 164u8,
                             ],
                         )
                     }
@@ -14756,10 +14757,10 @@ pub mod api {
                                 call: ::subxt::alloc::boxed::Box::new(call),
                             },
                             [
-                                168u8, 101u8, 11u8, 8u8, 83u8, 137u8, 7u8, 157u8, 255u8, 101u8,
-                                190u8, 105u8, 63u8, 88u8, 239u8, 231u8, 49u8, 247u8, 22u8, 92u8,
-                                173u8, 82u8, 127u8, 199u8, 9u8, 62u8, 85u8, 248u8, 93u8, 116u8,
-                                254u8, 68u8,
+                                6u8, 139u8, 247u8, 155u8, 125u8, 179u8, 192u8, 15u8, 217u8, 92u8,
+                                98u8, 166u8, 6u8, 196u8, 215u8, 155u8, 126u8, 22u8, 170u8, 16u8,
+                                127u8, 163u8, 186u8, 157u8, 12u8, 1u8, 213u8, 28u8, 13u8, 68u8,
+                                255u8, 127u8,
                             ],
                         )
                     }
@@ -14785,10 +14786,10 @@ pub mod api {
                             "batch_all",
                             super::BatchAll { calls },
                             [
-                                84u8, 154u8, 133u8, 1u8, 205u8, 98u8, 226u8, 150u8, 59u8, 180u8,
-                                72u8, 49u8, 137u8, 245u8, 190u8, 66u8, 208u8, 201u8, 113u8, 207u8,
-                                69u8, 231u8, 210u8, 17u8, 150u8, 142u8, 208u8, 8u8, 235u8, 49u8,
-                                175u8, 136u8,
+                                152u8, 161u8, 191u8, 118u8, 161u8, 187u8, 153u8, 123u8, 38u8,
+                                145u8, 142u8, 37u8, 244u8, 251u8, 8u8, 161u8, 135u8, 11u8, 158u8,
+                                202u8, 18u8, 212u8, 150u8, 47u8, 222u8, 82u8, 183u8, 212u8, 15u8,
+                                38u8, 19u8, 131u8,
                             ],
                         )
                     }
@@ -14812,10 +14813,10 @@ pub mod api {
                                 call: ::subxt::alloc::boxed::Box::new(call),
                             },
                             [
-                                100u8, 92u8, 12u8, 252u8, 26u8, 71u8, 43u8, 182u8, 166u8, 24u8,
-                                19u8, 221u8, 195u8, 164u8, 252u8, 114u8, 171u8, 155u8, 51u8, 121u8,
-                                153u8, 95u8, 194u8, 56u8, 61u8, 82u8, 171u8, 179u8, 159u8, 177u8,
-                                175u8, 94u8,
+                                225u8, 186u8, 169u8, 173u8, 233u8, 74u8, 16u8, 77u8, 20u8, 158u8,
+                                157u8, 5u8, 156u8, 148u8, 193u8, 249u8, 160u8, 33u8, 52u8, 175u8,
+                                41u8, 210u8, 82u8, 46u8, 179u8, 229u8, 96u8, 2u8, 74u8, 65u8, 56u8,
+                                113u8,
                             ],
                         )
                     }
@@ -14842,10 +14843,10 @@ pub mod api {
                             "force_batch",
                             super::ForceBatch { calls },
                             [
-                                107u8, 165u8, 157u8, 232u8, 127u8, 93u8, 39u8, 128u8, 156u8, 19u8,
-                                70u8, 174u8, 242u8, 83u8, 240u8, 220u8, 145u8, 42u8, 31u8, 41u8,
-                                234u8, 134u8, 23u8, 172u8, 85u8, 99u8, 198u8, 5u8, 190u8, 77u8,
-                                202u8, 16u8,
+                                101u8, 187u8, 67u8, 106u8, 84u8, 12u8, 46u8, 45u8, 184u8, 36u8,
+                                237u8, 71u8, 186u8, 81u8, 131u8, 88u8, 209u8, 26u8, 242u8, 0u8,
+                                254u8, 142u8, 248u8, 28u8, 209u8, 107u8, 38u8, 96u8, 227u8, 185u8,
+                                59u8, 214u8,
                             ],
                         )
                     }
@@ -14869,10 +14870,10 @@ pub mod api {
                                 weight,
                             },
                             [
-                                74u8, 118u8, 20u8, 67u8, 218u8, 159u8, 212u8, 42u8, 136u8, 202u8,
-                                20u8, 253u8, 11u8, 78u8, 93u8, 154u8, 15u8, 109u8, 98u8, 204u8,
-                                202u8, 211u8, 2u8, 211u8, 151u8, 100u8, 194u8, 5u8, 154u8, 78u8,
-                                180u8, 180u8,
+                                45u8, 67u8, 194u8, 219u8, 190u8, 198u8, 127u8, 35u8, 15u8, 218u8,
+                                249u8, 210u8, 192u8, 16u8, 88u8, 27u8, 120u8, 27u8, 100u8, 54u8,
+                                53u8, 222u8, 105u8, 151u8, 202u8, 40u8, 31u8, 104u8, 52u8, 23u8,
+                                131u8, 37u8,
                             ],
                         )
                     }
@@ -14912,10 +14913,10 @@ pub mod api {
                                 fallback: ::subxt::alloc::boxed::Box::new(fallback),
                             },
                             [
-                                255u8, 25u8, 113u8, 86u8, 207u8, 213u8, 85u8, 57u8, 173u8, 173u8,
-                                229u8, 81u8, 248u8, 181u8, 197u8, 95u8, 203u8, 221u8, 58u8, 177u8,
-                                252u8, 145u8, 160u8, 126u8, 68u8, 170u8, 162u8, 208u8, 245u8,
-                                150u8, 121u8, 180u8,
+                                185u8, 104u8, 74u8, 125u8, 66u8, 57u8, 74u8, 167u8, 49u8, 48u8,
+                                198u8, 171u8, 33u8, 110u8, 19u8, 236u8, 36u8, 246u8, 241u8, 67u8,
+                                160u8, 8u8, 98u8, 208u8, 48u8, 30u8, 119u8, 173u8, 19u8, 35u8,
+                                44u8, 79u8,
                             ],
                         )
                     }
@@ -14938,10 +14939,10 @@ pub mod api {
                                 call: ::subxt::alloc::boxed::Box::new(call),
                             },
                             [
-                                105u8, 128u8, 254u8, 133u8, 103u8, 3u8, 157u8, 57u8, 108u8, 62u8,
-                                52u8, 196u8, 240u8, 76u8, 189u8, 200u8, 223u8, 237u8, 241u8, 111u8,
-                                224u8, 179u8, 197u8, 172u8, 47u8, 19u8, 133u8, 46u8, 172u8, 172u8,
-                                233u8, 109u8,
+                                216u8, 208u8, 76u8, 1u8, 226u8, 44u8, 188u8, 92u8, 217u8, 119u8,
+                                210u8, 2u8, 51u8, 47u8, 154u8, 207u8, 169u8, 87u8, 84u8, 187u8,
+                                187u8, 132u8, 64u8, 29u8, 13u8, 115u8, 234u8, 41u8, 77u8, 20u8,
+                                136u8, 191u8,
                             ],
                         )
                     }
@@ -15235,7 +15236,8 @@ pub mod api {
             )]
             #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-            #[doc = "Add stake to an existing provider registration."]
+            #[doc = "Lock more stake for the calling provider. Stake caps the bytes and"]
+            #[doc = "capacity a provider may commit to."]
             pub struct AddStake {
                 pub amount: add_stake::Amount,
             }
@@ -15357,7 +15359,12 @@ pub mod api {
             )]
             #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-            #[doc = "Update provider settings."]
+            #[doc = "Replace the calling provider's settings: accepted durations, price"]
+            #[doc = "per byte, replica sync price, acceptance flags, and capacity."]
+            #[doc = ""]
+            #[doc = "Rejected while a deregistration is announced, if"]
+            #[doc = "`min_duration > max_duration`, if capacity drops below the bytes"]
+            #[doc = "already committed, or if the stake cannot back the capacity."]
             pub struct UpdateProviderSettings {
                 pub settings: update_provider_settings::Settings,
             }
@@ -15385,7 +15392,8 @@ pub mod api {
             )]
             #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-            #[doc = "Update the provider's multiaddr (network endpoint)."]
+            #[doc = "Change the network address clients use to reach the calling"]
+            #[doc = "provider."]
             pub struct UpdateProviderMultiaddr {
                 pub multiaddr: update_provider_multiaddr::Multiaddr,
             }
@@ -15414,7 +15422,9 @@ pub mod api {
             )]
             #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-            #[doc = "Block or unblock extensions for a specific bucket."]
+            #[doc = "Provider only. Refuse (or allow again) extensions of the caller's"]
+            #[doc = "live agreement on `bucket_id`, so a provider can wind down one"]
+            #[doc = "agreement without leaving the network."]
             pub struct SetExtensionsBlocked {
                 pub bucket_id: set_extensions_blocked::BucketId,
                 pub blocked: set_extensions_blocked::Blocked,
@@ -15491,7 +15501,8 @@ pub mod api {
             )]
             #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-            #[doc = "Set minimum providers required for checkpoint."]
+            #[doc = "Admin only. Set how many primary-provider signatures a checkpoint"]
+            #[doc = "needs. Cannot exceed the bucket's primary provider count."]
             pub struct SetMinProviders {
                 pub bucket_id: set_min_providers::BucketId,
                 pub min_providers: set_min_providers::MinProviders,
@@ -15520,7 +15531,9 @@ pub mod api {
             )]
             #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-            #[doc = "Freeze bucket - make append-only (irreversible)."]
+            #[doc = "Admin only. Make the bucket append-only from its current snapshot"]
+            #[doc = "on. Irreversible; the snapshot must already carry `min_providers`"]
+            #[doc = "signatures."]
             pub struct FreezeBucket {
                 pub bucket_id: freeze_bucket::BucketId,
             }
@@ -15581,7 +15594,9 @@ pub mod api {
             )]
             #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-            #[doc = "Add or update a member's role."]
+            #[doc = "Admin only. Add a member or change their role. An admin may step"]
+            #[doc = "down themselves but cannot demote another admin, and the last"]
+            #[doc = "admin cannot step down."]
             pub struct SetMember {
                 pub bucket_id: set_member::BucketId,
                 pub member: set_member::Member,
@@ -15612,7 +15627,8 @@ pub mod api {
             )]
             #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-            #[doc = "Remove member from bucket."]
+            #[doc = "Admin only. Remove a member. Same admin protections as"]
+            #[doc = "`set_member`."]
             pub struct RemoveMember {
                 pub bucket_id: remove_member::BucketId,
                 pub member: remove_member::Member,
@@ -15718,7 +15734,14 @@ pub mod api {
             )]
             #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-            #[doc = "End agreement with pay/burn decision."]
+            #[doc = "Owner only. Settle and close an agreement, choosing whether the"]
+            #[doc = "remaining escrow goes to the provider or is (partly) burned."]
+            #[doc = ""]
+            #[doc = "Before expiry the owner must also be a bucket admin, and only"]
+            #[doc = "primary agreements can be ended early. After expiry the owner has"]
+            #[doc = "`SettlementTimeout` to call this; then only the provider can"]
+            #[doc = "settle, via `claim_expired_agreement`. Blocked while a challenge"]
+            #[doc = "against the agreement is pending."]
             pub struct EndAgreement {
                 pub bucket_id: end_agreement::BucketId,
                 pub provider: end_agreement::Provider,
@@ -15749,7 +15772,9 @@ pub mod api {
             )]
             #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-            #[doc = "Claim payment for expired agreement (provider only)."]
+            #[doc = "Provider only. Collect the escrow of an expired agreement once the"]
+            #[doc = "owner's `SettlementTimeout` window has passed without settlement."]
+            #[doc = "Blocked while a challenge against the agreement is pending."]
             pub struct ClaimExpiredAgreement {
                 pub bucket_id: claim_expired_agreement::BucketId,
             }
@@ -15812,6 +15837,49 @@ pub mod api {
             )]
             #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+            #[doc = "Transfer the agreement to `new_owner` (current owner only). The"]
+            #[doc = "new owner can top up, extend, settle, or transfer it again."]
+            #[doc = ""]
+            #[doc = "The escrow — the prepaid fee plus, for a replica, the unspent sync"]
+            #[doc = "balance — moves to `new_owner` and stays on hold; every later"]
+            #[doc = "settlement and refund uses the new owner."]
+            #[doc = ""]
+            #[doc = "Bucket membership does not move: the new owner cannot write to or"]
+            #[doc = "administer the bucket, and the bucket admin keeps every admin"]
+            #[doc = "power over the agreement, including early termination, which pays"]
+            #[doc = "out or burns the new owner's escrow. Challenge rights follow the"]
+            #[doc = "owner; open challenges keep the authorization they were created"]
+            #[doc = "with."]
+            pub struct TransferAgreementOwnership {
+                pub bucket_id: transfer_agreement_ownership::BucketId,
+                pub provider: transfer_agreement_ownership::Provider,
+                pub new_owner: transfer_agreement_ownership::NewOwner,
+            }
+            pub mod transfer_agreement_ownership {
+                use super::runtime_types;
+                pub type BucketId = ::core::primitive::u64;
+                pub type Provider = ::subxt::utils::AccountId32;
+                pub type NewOwner = ::subxt::utils::AccountId32;
+            }
+            impl TransferAgreementOwnership {
+                const PALLET_NAME: &'static str = "StorageProvider";
+                const CALL_NAME: &'static str = "transfer_agreement_ownership";
+            }
+            impl ::subxt::extrinsics::DecodeAsExtrinsic for TransferAgreementOwnership {
+                fn is_extrinsic(pallet_name: &str, call_name: &str) -> bool {
+                    pallet_name == Self::PALLET_NAME && call_name == Self::CALL_NAME
+                }
+            }
+            #[derive(
+                :: subxt :: ext :: scale_decode :: DecodeAsType,
+                :: subxt :: ext :: scale_encode :: EncodeAsType,
+                Clone,
+                Debug,
+                Eq,
+                PartialEq,
+            )]
+            #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+            #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
             #[doc = "Extend agreement duration (immediate, no provider approval needed)."]
             #[doc = "Only while the agreement is live — an expired one settles via"]
             #[doc = "`end_agreement` / `claim_expired_agreement`."]
@@ -15860,7 +15928,10 @@ pub mod api {
             )]
             #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-            #[doc = "Submit a new checkpoint with provider signatures."]
+            #[doc = "Writer or admin. Make a provider-signed commitment the bucket's"]
+            #[doc = "canonical state. Needs valid signatures from at least"]
+            #[doc = "`min_providers` of the bucket's primary providers; a frozen bucket"]
+            #[doc = "only accepts commitments that keep its `frozen_start_seq`."]
             pub struct Checkpoint {
                 pub bucket_id: checkpoint::BucketId,
                 pub commitment: checkpoint::Commitment,
@@ -15895,10 +15966,8 @@ pub mod api {
             )]
             #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-            #[doc = "Add additional provider signatures to existing checkpoint."]
-            #[doc = ""]
-            #[doc = "Allows late-signing providers to add their signatures to the current"]
-            #[doc = "snapshot. Useful when a provider signs off-chain commitments later."]
+            #[doc = "Writer or admin. Add signatures from primary providers that signed"]
+            #[doc = "the current snapshot late."]
             pub struct ExtendCheckpoint {
                 pub bucket_id: extend_checkpoint::BucketId,
                 pub additional_signatures: extend_checkpoint::AdditionalSignatures,
@@ -16042,7 +16111,13 @@ pub mod api {
             )]
             #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-            #[doc = "Respond to a challenge."]
+            #[doc = "Challenged provider only. Answer before the deadline with a chunk"]
+            #[doc = "proof, a proof that the data was legitimately deleted, or a note"]
+            #[doc = "that the challenged state has been superseded."]
+            #[doc = ""]
+            #[doc = "A valid response settles the deposit between challenger and"]
+            #[doc = "provider; an invalid one slashes the provider on the spot. A"]
+            #[doc = "missing one is slashed by the deadline sweep."]
             pub struct RespondToChallenge {
                 pub challenge_id: respond_to_challenge::ChallengeId,
                 pub response: respond_to_challenge::Response,
@@ -16073,7 +16148,11 @@ pub mod api {
             )]
             #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-            #[doc = "Replica confirms sync to MMR roots."]
+            #[doc = "Replica provider only. Attest, with a signature over `roots`, that"]
+            #[doc = "the replica holds the bucket at one of them. If a root matches the"]
+            #[doc = "current snapshot or recent history, the replica is paid"]
+            #[doc = "`sync_price` from its sync balance. Rate-limited by"]
+            #[doc = "`min_sync_interval`."]
             pub struct ConfirmReplicaSync {
                 pub bucket_id: confirm_replica_sync::BucketId,
                 pub roots: confirm_replica_sync::Roots,
@@ -16104,7 +16183,8 @@ pub mod api {
             )]
             #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-            #[doc = "Top up a replica's sync balance."]
+            #[doc = "Add funds to the balance that pays a replica per confirmed sync."]
+            #[doc = "Anyone may pay; the funds are escrowed on the agreement owner."]
             pub struct TopUpReplicaSyncBalance {
                 pub bucket_id: top_up_replica_sync_balance::BucketId,
                 pub provider: top_up_replica_sync_balance::Provider,
@@ -16157,7 +16237,8 @@ pub mod api {
                             ],
                         )
                     }
-                    #[doc = "Add stake to an existing provider registration."]
+                    #[doc = "Lock more stake for the calling provider. Stake caps the bytes and"]
+                    #[doc = "capacity a provider may commit to."]
                     pub fn add_stake(
                         &self,
                         amount: super::add_stake::Amount,
@@ -16257,7 +16338,12 @@ pub mod api {
                             ],
                         )
                     }
-                    #[doc = "Update provider settings."]
+                    #[doc = "Replace the calling provider's settings: accepted durations, price"]
+                    #[doc = "per byte, replica sync price, acceptance flags, and capacity."]
+                    #[doc = ""]
+                    #[doc = "Rejected while a deregistration is announced, if"]
+                    #[doc = "`min_duration > max_duration`, if capacity drops below the bytes"]
+                    #[doc = "already committed, or if the stake cannot back the capacity."]
                     pub fn update_provider_settings(
                         &self,
                         settings: super::update_provider_settings::Settings,
@@ -16275,7 +16361,8 @@ pub mod api {
                             ],
                         )
                     }
-                    #[doc = "Update the provider's multiaddr (network endpoint)."]
+                    #[doc = "Change the network address clients use to reach the calling"]
+                    #[doc = "provider."]
                     pub fn update_provider_multiaddr(
                         &self,
                         multiaddr: super::update_provider_multiaddr::Multiaddr,
@@ -16293,7 +16380,9 @@ pub mod api {
                             ],
                         )
                     }
-                    #[doc = "Block or unblock extensions for a specific bucket."]
+                    #[doc = "Provider only. Refuse (or allow again) extensions of the caller's"]
+                    #[doc = "live agreement on `bucket_id`, so a provider can wind down one"]
+                    #[doc = "agreement without leaving the network."]
                     pub fn set_extensions_blocked(
                         &self,
                         bucket_id: super::set_extensions_blocked::BucketId,
@@ -16349,7 +16438,8 @@ pub mod api {
                             ],
                         )
                     }
-                    #[doc = "Set minimum providers required for checkpoint."]
+                    #[doc = "Admin only. Set how many primary-provider signatures a checkpoint"]
+                    #[doc = "needs. Cannot exceed the bucket's primary provider count."]
                     pub fn set_min_providers(
                         &self,
                         bucket_id: super::set_min_providers::BucketId,
@@ -16371,7 +16461,9 @@ pub mod api {
                             ],
                         )
                     }
-                    #[doc = "Freeze bucket - make append-only (irreversible)."]
+                    #[doc = "Admin only. Make the bucket append-only from its current snapshot"]
+                    #[doc = "on. Irreversible; the snapshot must already carry `min_providers`"]
+                    #[doc = "signatures."]
                     pub fn freeze_bucket(
                         &self,
                         bucket_id: super::freeze_bucket::BucketId,
@@ -16416,7 +16508,9 @@ pub mod api {
                             ],
                         )
                     }
-                    #[doc = "Add or update a member's role."]
+                    #[doc = "Admin only. Add a member or change their role. An admin may step"]
+                    #[doc = "down themselves but cannot demote another admin, and the last"]
+                    #[doc = "admin cannot step down."]
                     pub fn set_member(
                         &self,
                         bucket_id: super::set_member::BucketId,
@@ -16440,7 +16534,8 @@ pub mod api {
                             ],
                         )
                     }
-                    #[doc = "Remove member from bucket."]
+                    #[doc = "Admin only. Remove a member. Same admin protections as"]
+                    #[doc = "`set_member`."]
                     pub fn remove_member(
                         &self,
                         bucket_id: super::remove_member::BucketId,
@@ -16518,7 +16613,14 @@ pub mod api {
                             ],
                         )
                     }
-                    #[doc = "End agreement with pay/burn decision."]
+                    #[doc = "Owner only. Settle and close an agreement, choosing whether the"]
+                    #[doc = "remaining escrow goes to the provider or is (partly) burned."]
+                    #[doc = ""]
+                    #[doc = "Before expiry the owner must also be a bucket admin, and only"]
+                    #[doc = "primary agreements can be ended early. After expiry the owner has"]
+                    #[doc = "`SettlementTimeout` to call this; then only the provider can"]
+                    #[doc = "settle, via `claim_expired_agreement`. Blocked while a challenge"]
+                    #[doc = "against the agreement is pending."]
                     pub fn end_agreement(
                         &self,
                         bucket_id: super::end_agreement::BucketId,
@@ -16542,7 +16644,9 @@ pub mod api {
                             ],
                         )
                     }
-                    #[doc = "Claim payment for expired agreement (provider only)."]
+                    #[doc = "Provider only. Collect the escrow of an expired agreement once the"]
+                    #[doc = "owner's `SettlementTimeout` window has passed without settlement."]
+                    #[doc = "Blocked while a challenge against the agreement is pending."]
                     pub fn claim_expired_agreement(
                         &self,
                         bucket_id: super::claim_expired_agreement::BucketId,
@@ -16589,6 +16693,42 @@ pub mod api {
                             ],
                         )
                     }
+                    #[doc = "Transfer the agreement to `new_owner` (current owner only). The"]
+                    #[doc = "new owner can top up, extend, settle, or transfer it again."]
+                    #[doc = ""]
+                    #[doc = "The escrow — the prepaid fee plus, for a replica, the unspent sync"]
+                    #[doc = "balance — moves to `new_owner` and stays on hold; every later"]
+                    #[doc = "settlement and refund uses the new owner."]
+                    #[doc = ""]
+                    #[doc = "Bucket membership does not move: the new owner cannot write to or"]
+                    #[doc = "administer the bucket, and the bucket admin keeps every admin"]
+                    #[doc = "power over the agreement, including early termination, which pays"]
+                    #[doc = "out or burns the new owner's escrow. Challenge rights follow the"]
+                    #[doc = "owner; open challenges keep the authorization they were created"]
+                    #[doc = "with."]
+                    pub fn transfer_agreement_ownership(
+                        &self,
+                        bucket_id: super::transfer_agreement_ownership::BucketId,
+                        provider: super::transfer_agreement_ownership::Provider,
+                        new_owner: super::transfer_agreement_ownership::NewOwner,
+                    ) -> ::subxt::transactions::StaticPayload<super::TransferAgreementOwnership>
+                    {
+                        ::subxt::transactions::StaticPayload::new_static(
+                            "StorageProvider",
+                            "transfer_agreement_ownership",
+                            super::TransferAgreementOwnership {
+                                bucket_id,
+                                provider,
+                                new_owner,
+                            },
+                            [
+                                178u8, 204u8, 76u8, 67u8, 39u8, 162u8, 184u8, 236u8, 140u8, 82u8,
+                                211u8, 131u8, 113u8, 186u8, 112u8, 194u8, 192u8, 251u8, 74u8, 17u8,
+                                218u8, 188u8, 40u8, 53u8, 4u8, 7u8, 135u8, 181u8, 253u8, 125u8,
+                                218u8, 36u8,
+                            ],
+                        )
+                    }
                     #[doc = "Extend agreement duration (immediate, no provider approval needed)."]
                     #[doc = "Only while the agreement is live — an expired one settles via"]
                     #[doc = "`end_agreement` / `claim_expired_agreement`."]
@@ -16630,7 +16770,10 @@ pub mod api {
                             ],
                         )
                     }
-                    #[doc = "Submit a new checkpoint with provider signatures."]
+                    #[doc = "Writer or admin. Make a provider-signed commitment the bucket's"]
+                    #[doc = "canonical state. Needs valid signatures from at least"]
+                    #[doc = "`min_providers` of the bucket's primary providers; a frozen bucket"]
+                    #[doc = "only accepts commitments that keep its `frozen_start_seq`."]
                     pub fn checkpoint(
                         &self,
                         bucket_id: super::checkpoint::BucketId,
@@ -16654,10 +16797,8 @@ pub mod api {
                             ],
                         )
                     }
-                    #[doc = "Add additional provider signatures to existing checkpoint."]
-                    #[doc = ""]
-                    #[doc = "Allows late-signing providers to add their signatures to the current"]
-                    #[doc = "snapshot. Useful when a provider signs off-chain commitments later."]
+                    #[doc = "Writer or admin. Add signatures from primary providers that signed"]
+                    #[doc = "the current snapshot late."]
                     pub fn extend_checkpoint(
                         &self,
                         bucket_id: super::extend_checkpoint::BucketId,
@@ -16769,7 +16910,13 @@ pub mod api {
                             ],
                         )
                     }
-                    #[doc = "Respond to a challenge."]
+                    #[doc = "Challenged provider only. Answer before the deadline with a chunk"]
+                    #[doc = "proof, a proof that the data was legitimately deleted, or a note"]
+                    #[doc = "that the challenged state has been superseded."]
+                    #[doc = ""]
+                    #[doc = "A valid response settles the deposit between challenger and"]
+                    #[doc = "provider; an invalid one slashes the provider on the spot. A"]
+                    #[doc = "missing one is slashed by the deadline sweep."]
                     pub fn respond_to_challenge(
                         &self,
                         challenge_id: super::respond_to_challenge::ChallengeId,
@@ -16791,7 +16938,11 @@ pub mod api {
                             ],
                         )
                     }
-                    #[doc = "Replica confirms sync to MMR roots."]
+                    #[doc = "Replica provider only. Attest, with a signature over `roots`, that"]
+                    #[doc = "the replica holds the bucket at one of them. If a root matches the"]
+                    #[doc = "current snapshot or recent history, the replica is paid"]
+                    #[doc = "`sync_price` from its sync balance. Rate-limited by"]
+                    #[doc = "`min_sync_interval`."]
                     pub fn confirm_replica_sync(
                         &self,
                         bucket_id: super::confirm_replica_sync::BucketId,
@@ -16815,7 +16966,8 @@ pub mod api {
                             ],
                         )
                     }
-                    #[doc = "Top up a replica's sync balance."]
+                    #[doc = "Add funds to the balance that pays a replica per confirmed sync."]
+                    #[doc = "Anyone may pay; the funds are escrowed on the agreement owner."]
                     pub fn top_up_replica_sync_balance(
                         &self,
                         bucket_id: super::top_up_replica_sync_balance::BucketId,
@@ -16856,6 +17008,7 @@ pub mod api {
             )]
             #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+            #[doc = "A new provider registered and locked its initial stake."]
             pub struct ProviderRegistered {
                 pub provider: provider_registered::Provider,
                 pub stake: provider_registered::Stake,
@@ -16884,6 +17037,7 @@ pub mod api {
             )]
             #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+            #[doc = "A provider completed deregistration and got its stake back."]
             pub struct ProviderDeregistered {
                 pub provider: provider_deregistered::Provider,
                 pub stake_returned: provider_deregistered::StakeReturned,
@@ -16970,6 +17124,7 @@ pub mod api {
             )]
             #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+            #[doc = "A provider locked more stake."]
             pub struct ProviderStakeAdded {
                 pub provider: provider_stake_added::Provider,
                 pub amount: provider_stake_added::Amount,
@@ -17000,6 +17155,7 @@ pub mod api {
             )]
             #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+            #[doc = "A provider changed its pricing, limits, or acceptance flags."]
             pub struct ProviderSettingsUpdated {
                 pub provider: provider_settings_updated::Provider,
                 pub settings: provider_settings_updated::Settings,
@@ -17029,6 +17185,7 @@ pub mod api {
             )]
             #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+            #[doc = "A provider changed the network address clients connect to."]
             pub struct ProviderMultiaddrUpdated {
                 pub provider: provider_multiaddr_updated::Provider,
                 pub multiaddr: provider_multiaddr_updated::Multiaddr,
@@ -17059,6 +17216,8 @@ pub mod api {
             )]
             #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+            #[doc = "A provider blocked or unblocked extensions of its agreement on a"]
+            #[doc = "bucket."]
             pub struct ExtensionsBlocked {
                 pub bucket_id: extensions_blocked::BucketId,
                 pub provider: extensions_blocked::Provider,
@@ -17089,6 +17248,7 @@ pub mod api {
             )]
             #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+            #[doc = "A bucket was created."]
             pub struct BucketCreated {
                 pub bucket_id: bucket_created::BucketId,
                 pub admin: bucket_created::Admin,
@@ -17117,6 +17277,7 @@ pub mod api {
             )]
             #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+            #[doc = "A bucket became append-only from `frozen_start_seq` on."]
             pub struct BucketFrozen {
                 pub bucket_id: bucket_frozen::BucketId,
                 pub frozen_start_seq: bucket_frozen::FrozenStartSeq,
@@ -17145,6 +17306,7 @@ pub mod api {
             )]
             #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+            #[doc = "A bucket and its agreements were torn down."]
             pub struct BucketDeleted {
                 pub bucket_id: bucket_deleted::BucketId,
             }
@@ -17171,6 +17333,7 @@ pub mod api {
             )]
             #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+            #[doc = "An admin changed who may read the bucket."]
             pub struct BucketVisibilityChanged {
                 pub bucket_id: bucket_visibility_changed::BucketId,
                 pub visibility: bucket_visibility_changed::Visibility,
@@ -17199,6 +17362,7 @@ pub mod api {
             )]
             #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+            #[doc = "A member was added or given a different role."]
             pub struct MemberSet {
                 pub bucket_id: member_set::BucketId,
                 pub member: member_set::Member,
@@ -17229,6 +17393,7 @@ pub mod api {
             )]
             #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+            #[doc = "A member lost access to the bucket."]
             pub struct MemberRemoved {
                 pub bucket_id: member_removed::BucketId,
                 pub member: member_removed::Member,
@@ -17257,6 +17422,8 @@ pub mod api {
             )]
             #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+            #[doc = "A commitment became the bucket's canonical state, or gained more"]
+            #[doc = "provider signatures."]
             pub struct BucketCheckpointed {
                 pub bucket_id: bucket_checkpointed::BucketId,
                 pub commitment: bucket_checkpointed::Commitment,
@@ -17287,6 +17454,8 @@ pub mod api {
             )]
             #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+            #[doc = "A primary provider joined the bucket's provider set. Not emitted"]
+            #[doc = "yet: no call adds a primary to an existing bucket (#417)."]
             pub struct ProviderAddedToBucket {
                 pub bucket_id: provider_added_to_bucket::BucketId,
                 pub provider: provider_added_to_bucket::Provider,
@@ -17315,6 +17484,7 @@ pub mod api {
             )]
             #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+            #[doc = "A primary provider left the bucket's provider set."]
             pub struct PrimaryProviderRemoved {
                 pub bucket_id: primary_provider_removed::BucketId,
                 pub provider: primary_provider_removed::Provider,
@@ -17345,38 +17515,8 @@ pub mod api {
             )]
             #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-            pub struct PrimaryAgreementEndedEarly {
-                pub bucket_id: primary_agreement_ended_early::BucketId,
-                pub provider: primary_agreement_ended_early::Provider,
-                pub payment_to_provider: primary_agreement_ended_early::PaymentToProvider,
-                pub burned: primary_agreement_ended_early::Burned,
-            }
-            pub mod primary_agreement_ended_early {
-                use super::runtime_types;
-                pub type BucketId = ::core::primitive::u64;
-                pub type Provider = ::subxt::utils::AccountId32;
-                pub type PaymentToProvider = ::core::primitive::u128;
-                pub type Burned = ::core::primitive::u128;
-            }
-            impl PrimaryAgreementEndedEarly {
-                const PALLET_NAME: &'static str = "StorageProvider";
-                const EVENT_NAME: &'static str = "PrimaryAgreementEndedEarly";
-            }
-            impl ::subxt::events::DecodeAsEvent for PrimaryAgreementEndedEarly {
-                fn is_event(pallet_name: &str, event_name: &str) -> bool {
-                    pallet_name == Self::PALLET_NAME && event_name == Self::EVENT_NAME
-                }
-            }
-            #[derive(
-                :: subxt :: ext :: scale_decode :: DecodeAsType,
-                :: subxt :: ext :: scale_encode :: EncodeAsType,
-                Clone,
-                Debug,
-                Eq,
-                PartialEq,
-            )]
-            #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
-            #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+            #[doc = "A slashed provider was cleaned out of a bucket and the owner's"]
+            #[doc = "escrow released."]
             pub struct SlashedProviderRemoved {
                 pub bucket_id: slashed_provider_removed::BucketId,
                 pub provider: slashed_provider_removed::Provider,
@@ -17407,6 +17547,8 @@ pub mod api {
             )]
             #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+            #[doc = "A replica confirmed it holds the bucket's data at `mmr_root` and"]
+            #[doc = "was paid for the sync."]
             pub struct ReplicaSynced {
                 pub bucket_id: replica_synced::BucketId,
                 pub provider: replica_synced::Provider,
@@ -17441,6 +17583,7 @@ pub mod api {
             )]
             #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+            #[doc = "Funds were added to the balance that pays a replica per sync."]
             pub struct ReplicaSyncBalanceToppedUp {
                 pub bucket_id: replica_sync_balance_topped_up::BucketId,
                 pub provider: replica_sync_balance_topped_up::Provider,
@@ -17473,36 +17616,7 @@ pub mod api {
             )]
             #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-            pub struct AgreementAccepted {
-                pub bucket_id: agreement_accepted::BucketId,
-                pub provider: agreement_accepted::Provider,
-                pub expires_at: agreement_accepted::ExpiresAt,
-            }
-            pub mod agreement_accepted {
-                use super::runtime_types;
-                pub type BucketId = ::core::primitive::u64;
-                pub type Provider = ::subxt::utils::AccountId32;
-                pub type ExpiresAt = ::core::primitive::u32;
-            }
-            impl AgreementAccepted {
-                const PALLET_NAME: &'static str = "StorageProvider";
-                const EVENT_NAME: &'static str = "AgreementAccepted";
-            }
-            impl ::subxt::events::DecodeAsEvent for AgreementAccepted {
-                fn is_event(pallet_name: &str, event_name: &str) -> bool {
-                    pallet_name == Self::PALLET_NAME && event_name == Self::EVENT_NAME
-                }
-            }
-            #[derive(
-                :: subxt :: ext :: scale_decode :: DecodeAsType,
-                :: subxt :: ext :: scale_encode :: EncodeAsType,
-                Clone,
-                Debug,
-                Eq,
-                PartialEq,
-            )]
-            #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
-            #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+            #[doc = "The owner bought more quota on an agreement."]
             pub struct AgreementToppedUp {
                 pub bucket_id: agreement_topped_up::BucketId,
                 pub provider: agreement_topped_up::Provider,
@@ -17535,6 +17649,7 @@ pub mod api {
             )]
             #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+            #[doc = "An agreement's expiry was pushed out and the extension paid for."]
             pub struct AgreementExtended {
                 pub bucket_id: agreement_extended::BucketId,
                 pub provider: agreement_extended::Provider,
@@ -17567,11 +17682,13 @@ pub mod api {
             )]
             #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+            #[doc = "The agreement's owner changed."]
             pub struct AgreementOwnershipTransferred {
                 pub bucket_id: agreement_ownership_transferred::BucketId,
                 pub provider: agreement_ownership_transferred::Provider,
                 pub old_owner: agreement_ownership_transferred::OldOwner,
                 pub new_owner: agreement_ownership_transferred::NewOwner,
+                pub escrow: agreement_ownership_transferred::Escrow,
             }
             pub mod agreement_ownership_transferred {
                 use super::runtime_types;
@@ -17579,6 +17696,7 @@ pub mod api {
                 pub type Provider = ::subxt::utils::AccountId32;
                 pub type OldOwner = ::subxt::utils::AccountId32;
                 pub type NewOwner = ::subxt::utils::AccountId32;
+                pub type Escrow = ::core::primitive::u128;
             }
             impl AgreementOwnershipTransferred {
                 const PALLET_NAME: &'static str = "StorageProvider";
@@ -17599,6 +17717,7 @@ pub mod api {
             )]
             #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+            #[doc = "An agreement was settled and closed."]
             pub struct AgreementEnded {
                 pub bucket_id: agreement_ended::BucketId,
                 pub provider: agreement_ended::Provider,
@@ -17617,36 +17736,6 @@ pub mod api {
                 const EVENT_NAME: &'static str = "AgreementEnded";
             }
             impl ::subxt::events::DecodeAsEvent for AgreementEnded {
-                fn is_event(pallet_name: &str, event_name: &str) -> bool {
-                    pallet_name == Self::PALLET_NAME && event_name == Self::EVENT_NAME
-                }
-            }
-            #[derive(
-                :: subxt :: ext :: scale_decode :: DecodeAsType,
-                :: subxt :: ext :: scale_encode :: EncodeAsType,
-                Clone,
-                Debug,
-                Eq,
-                PartialEq,
-            )]
-            #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
-            #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-            pub struct AgreementExpiredClaimed {
-                pub bucket_id: agreement_expired_claimed::BucketId,
-                pub provider: agreement_expired_claimed::Provider,
-                pub payment_to_provider: agreement_expired_claimed::PaymentToProvider,
-            }
-            pub mod agreement_expired_claimed {
-                use super::runtime_types;
-                pub type BucketId = ::core::primitive::u64;
-                pub type Provider = ::subxt::utils::AccountId32;
-                pub type PaymentToProvider = ::core::primitive::u128;
-            }
-            impl AgreementExpiredClaimed {
-                const PALLET_NAME: &'static str = "StorageProvider";
-                const EVENT_NAME: &'static str = "AgreementExpiredClaimed";
-            }
-            impl ::subxt::events::DecodeAsEvent for AgreementExpiredClaimed {
                 fn is_event(pallet_name: &str, event_name: &str) -> bool {
                     pallet_name == Self::PALLET_NAME && event_name == Self::EVENT_NAME
                 }
@@ -17741,6 +17830,7 @@ pub mod api {
             )]
             #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+            #[doc = "Someone challenged a provider to prove it still holds a chunk."]
             pub struct ChallengeCreated {
                 pub challenge_id: challenge_created::ChallengeId,
                 pub bucket_id: challenge_created::BucketId,
@@ -17814,6 +17904,7 @@ pub mod api {
             )]
             #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+            #[doc = "A provider failed a challenge and lost stake."]
             pub struct ChallengeSlashed {
                 pub challenge_id: challenge_slashed::ChallengeId,
                 pub provider: challenge_slashed::Provider,
@@ -17857,9 +17948,10 @@ pub mod api {
                         "StorageProvider",
                         "Providers",
                         [
-                            195u8, 215u8, 197u8, 19u8, 154u8, 128u8, 9u8, 216u8, 68u8, 204u8,
-                            127u8, 13u8, 120u8, 228u8, 24u8, 235u8, 56u8, 60u8, 13u8, 224u8, 56u8,
-                            211u8, 176u8, 4u8, 71u8, 41u8, 44u8, 77u8, 39u8, 51u8, 26u8, 196u8,
+                            139u8, 130u8, 107u8, 93u8, 239u8, 166u8, 60u8, 57u8, 144u8, 108u8,
+                            249u8, 78u8, 45u8, 82u8, 97u8, 238u8, 185u8, 108u8, 127u8, 63u8, 162u8,
+                            166u8, 161u8, 27u8, 54u8, 228u8, 48u8, 149u8, 224u8, 141u8, 200u8,
+                            223u8,
                         ],
                     )
                 }
@@ -18766,19 +18858,19 @@ pub mod api {
             )]
             #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-            #[doc = "Drive was deleted"]
+            #[doc = "Drive was deleted and its agreements settled."]
             pub struct DriveDeleted {
                 pub drive_id: drive_deleted::DriveId,
                 pub owner: drive_deleted::Owner,
                 pub bucket_id: drive_deleted::BucketId,
-                pub refunded: drive_deleted::Refunded,
+                pub escrow_released: drive_deleted::EscrowReleased,
             }
             pub mod drive_deleted {
                 use super::runtime_types;
                 pub type DriveId = ::core::primitive::u64;
                 pub type Owner = ::subxt::utils::AccountId32;
                 pub type BucketId = ::core::primitive::u64;
-                pub type Refunded = ::core::primitive::u128;
+                pub type EscrowReleased = ::core::primitive::u128;
             }
             impl DriveDeleted {
                 const PALLET_NAME: &'static str = "DriveRegistry";
@@ -20559,10 +20651,10 @@ pub mod api {
                                 transaction_encoded,
                             },
                             [
-                                142u8, 44u8, 5u8, 54u8, 178u8, 27u8, 217u8, 159u8, 91u8, 149u8,
-                                82u8, 73u8, 101u8, 30u8, 125u8, 11u8, 152u8, 87u8, 130u8, 48u8,
-                                78u8, 17u8, 131u8, 160u8, 40u8, 104u8, 248u8, 229u8, 143u8, 110u8,
-                                247u8, 94u8,
+                                53u8, 129u8, 241u8, 58u8, 81u8, 157u8, 118u8, 82u8, 151u8, 181u8,
+                                245u8, 184u8, 29u8, 228u8, 111u8, 145u8, 236u8, 92u8, 156u8, 198u8,
+                                71u8, 68u8, 153u8, 251u8, 60u8, 226u8, 135u8, 98u8, 102u8, 199u8,
+                                72u8, 12u8,
                             ],
                         )
                     }
@@ -20730,10 +20822,10 @@ pub mod api {
                                 call: ::subxt::alloc::boxed::Box::new(call),
                             },
                             [
-                                106u8, 50u8, 238u8, 19u8, 43u8, 223u8, 65u8, 49u8, 175u8, 61u8,
-                                36u8, 65u8, 142u8, 13u8, 181u8, 236u8, 243u8, 164u8, 89u8, 2u8,
-                                92u8, 1u8, 172u8, 146u8, 35u8, 70u8, 3u8, 235u8, 187u8, 25u8,
-                                206u8, 61u8,
+                                81u8, 10u8, 251u8, 169u8, 79u8, 104u8, 74u8, 73u8, 155u8, 198u8,
+                                11u8, 35u8, 206u8, 237u8, 241u8, 54u8, 248u8, 189u8, 119u8, 90u8,
+                                206u8, 205u8, 172u8, 162u8, 237u8, 21u8, 8u8, 120u8, 109u8, 98u8,
+                                182u8, 254u8,
                             ],
                         )
                     }
@@ -23724,12 +23816,12 @@ pub mod api {
                         bucket_id: ::core::primitive::u64,
                     },
                     #[codec(index = 1)]
-                    #[doc = "Drive was deleted"]
+                    #[doc = "Drive was deleted and its agreements settled."]
                     DriveDeleted {
                         drive_id: ::core::primitive::u64,
                         owner: ::subxt::utils::AccountId32,
                         bucket_id: ::core::primitive::u64,
-                        refunded: ::core::primitive::u128,
+                        escrow_released: ::core::primitive::u128,
                     },
                     #[codec(index = 2)]
                     #[doc = "Drive was shared with a member"]
@@ -25824,6 +25916,7 @@ pub mod api {
                     pub members: runtime_types::bounded_collections::bounded_vec::BoundedVec<
                         runtime_types::pallet_storage_provider::pallet::Member,
                     >,
+                    pub visibility: runtime_types::storage_primitives::Visibility,
                     pub frozen_start_seq: ::core::option::Option<::core::primitive::u64>,
                     pub min_providers: ::core::primitive::u32,
                     pub primary_providers:
@@ -25835,7 +25928,6 @@ pub mod api {
                     >,
                     pub historical_roots: [(::core::primitive::u32, ::subxt::utils::H256); 6usize],
                     pub total_snapshots: ::core::primitive::u32,
-                    pub visibility: runtime_types::storage_primitives::Visibility,
                 }
                 #[derive(
                     :: subxt :: ext :: scale_decode :: DecodeAsType,
@@ -25866,7 +25958,8 @@ pub mod api {
                         stake: ::core::primitive::u128,
                     },
                     #[codec(index = 1)]
-                    #[doc = "Add stake to an existing provider registration."]
+                    #[doc = "Lock more stake for the calling provider. Stake caps the bytes and"]
+                    #[doc = "capacity a provider may commit to."]
                     add_stake { amount: ::core::primitive::u128 },
                     #[codec(index = 2)]
                     #[doc = "Announce intent to deregister."]
@@ -25910,19 +26003,27 @@ pub mod api {
                     #[doc = "`update_provider_settings` afterwards."]
                     cancel_deregister,
                     #[codec(index = 3)]
-                    #[doc = "Update provider settings."]
+                    #[doc = "Replace the calling provider's settings: accepted durations, price"]
+                    #[doc = "per byte, replica sync price, acceptance flags, and capacity."]
+                    #[doc = ""]
+                    #[doc = "Rejected while a deregistration is announced, if"]
+                    #[doc = "`min_duration > max_duration`, if capacity drops below the bytes"]
+                    #[doc = "already committed, or if the stake cannot back the capacity."]
                     update_provider_settings {
                         settings: runtime_types::pallet_storage_provider::pallet::ProviderSettings,
                     },
                     #[codec(index = 5)]
-                    #[doc = "Update the provider's multiaddr (network endpoint)."]
+                    #[doc = "Change the network address clients use to reach the calling"]
+                    #[doc = "provider."]
                     update_provider_multiaddr {
                         multiaddr: runtime_types::bounded_collections::bounded_vec::BoundedVec<
                             ::core::primitive::u8,
                         >,
                     },
                     #[codec(index = 4)]
-                    #[doc = "Block or unblock extensions for a specific bucket."]
+                    #[doc = "Provider only. Refuse (or allow again) extensions of the caller's"]
+                    #[doc = "live agreement on `bucket_id`, so a provider can wind down one"]
+                    #[doc = "agreement without leaving the network."]
                     set_extensions_blocked {
                         bucket_id: ::core::primitive::u64,
                         blocked: ::core::primitive::bool,
@@ -25951,13 +26052,16 @@ pub mod api {
                         visibility: runtime_types::storage_primitives::Visibility,
                     },
                     #[codec(index = 11)]
-                    #[doc = "Set minimum providers required for checkpoint."]
+                    #[doc = "Admin only. Set how many primary-provider signatures a checkpoint"]
+                    #[doc = "needs. Cannot exceed the bucket's primary provider count."]
                     set_min_providers {
                         bucket_id: ::core::primitive::u64,
                         min_providers: ::core::primitive::u32,
                     },
                     #[codec(index = 12)]
-                    #[doc = "Freeze bucket - make append-only (irreversible)."]
+                    #[doc = "Admin only. Make the bucket append-only from its current snapshot"]
+                    #[doc = "on. Irreversible; the snapshot must already carry `min_providers`"]
+                    #[doc = "signatures."]
                     freeze_bucket { bucket_id: ::core::primitive::u64 },
                     #[codec(index = 16)]
                     #[doc = "Set bucket read visibility (admin only)."]
@@ -25971,14 +26075,17 @@ pub mod api {
                         visibility: runtime_types::storage_primitives::Visibility,
                     },
                     #[codec(index = 13)]
-                    #[doc = "Add or update a member's role."]
+                    #[doc = "Admin only. Add a member or change their role. An admin may step"]
+                    #[doc = "down themselves but cannot demote another admin, and the last"]
+                    #[doc = "admin cannot step down."]
                     set_member {
                         bucket_id: ::core::primitive::u64,
                         member: ::subxt::utils::AccountId32,
                         role: runtime_types::storage_primitives::Role,
                     },
                     #[codec(index = 14)]
-                    #[doc = "Remove member from bucket."]
+                    #[doc = "Admin only. Remove a member. Same admin protections as"]
+                    #[doc = "`set_member`."]
                     remove_member {
                         bucket_id: ::core::primitive::u64,
                         member: ::subxt::utils::AccountId32,
@@ -26013,14 +26120,23 @@ pub mod api {
                         sig: runtime_types::sp_runtime::MultiSignature,
                     },
                     #[codec(index = 25)]
-                    #[doc = "End agreement with pay/burn decision."]
+                    #[doc = "Owner only. Settle and close an agreement, choosing whether the"]
+                    #[doc = "remaining escrow goes to the provider or is (partly) burned."]
+                    #[doc = ""]
+                    #[doc = "Before expiry the owner must also be a bucket admin, and only"]
+                    #[doc = "primary agreements can be ended early. After expiry the owner has"]
+                    #[doc = "`SettlementTimeout` to call this; then only the provider can"]
+                    #[doc = "settle, via `claim_expired_agreement`. Blocked while a challenge"]
+                    #[doc = "against the agreement is pending."]
                     end_agreement {
                         bucket_id: ::core::primitive::u64,
                         provider: ::subxt::utils::AccountId32,
                         action: runtime_types::storage_primitives::EndAction,
                     },
                     #[codec(index = 26)]
-                    #[doc = "Claim payment for expired agreement (provider only)."]
+                    #[doc = "Provider only. Collect the escrow of an expired agreement once the"]
+                    #[doc = "owner's `SettlementTimeout` window has passed without settlement."]
+                    #[doc = "Blocked while a challenge against the agreement is pending."]
                     claim_expired_agreement { bucket_id: ::core::primitive::u64 },
                     #[codec(index = 28)]
                     #[doc = "Top up quota for an existing agreement (owner only)."]
@@ -26032,6 +26148,25 @@ pub mod api {
                         provider: ::subxt::utils::AccountId32,
                         additional_bytes: ::core::primitive::u64,
                         max_payment: ::core::primitive::u128,
+                    },
+                    #[codec(index = 29)]
+                    #[doc = "Transfer the agreement to `new_owner` (current owner only). The"]
+                    #[doc = "new owner can top up, extend, settle, or transfer it again."]
+                    #[doc = ""]
+                    #[doc = "The escrow — the prepaid fee plus, for a replica, the unspent sync"]
+                    #[doc = "balance — moves to `new_owner` and stays on hold; every later"]
+                    #[doc = "settlement and refund uses the new owner."]
+                    #[doc = ""]
+                    #[doc = "Bucket membership does not move: the new owner cannot write to or"]
+                    #[doc = "administer the bucket, and the bucket admin keeps every admin"]
+                    #[doc = "power over the agreement, including early termination, which pays"]
+                    #[doc = "out or burns the new owner's escrow. Challenge rights follow the"]
+                    #[doc = "owner; open challenges keep the authorization they were created"]
+                    #[doc = "with."]
+                    transfer_agreement_ownership {
+                        bucket_id: ::core::primitive::u64,
+                        provider: ::subxt::utils::AccountId32,
+                        new_owner: ::subxt::utils::AccountId32,
                     },
                     #[codec(index = 27)]
                     #[doc = "Extend agreement duration (immediate, no provider approval needed)."]
@@ -26057,7 +26192,10 @@ pub mod api {
                         max_payment: ::core::primitive::u128,
                     },
                     #[codec(index = 30)]
-                    #[doc = "Submit a new checkpoint with provider signatures."]
+                    #[doc = "Writer or admin. Make a provider-signed commitment the bucket's"]
+                    #[doc = "canonical state. Needs valid signatures from at least"]
+                    #[doc = "`min_providers` of the bucket's primary providers; a frozen bucket"]
+                    #[doc = "only accepts commitments that keep its `frozen_start_seq`."]
                     checkpoint {
                         bucket_id: ::core::primitive::u64,
                         commitment: runtime_types::storage_primitives::Commitment,
@@ -26067,10 +26205,8 @@ pub mod api {
                         )>,
                     },
                     #[codec(index = 31)]
-                    #[doc = "Add additional provider signatures to existing checkpoint."]
-                    #[doc = ""]
-                    #[doc = "Allows late-signing providers to add their signatures to the current"]
-                    #[doc = "snapshot. Useful when a provider signs off-chain commitments later."]
+                    #[doc = "Writer or admin. Add signatures from primary providers that signed"]
+                    #[doc = "the current snapshot late."]
                     extend_checkpoint {
                         bucket_id: ::core::primitive::u64,
                         additional_signatures:
@@ -26117,21 +26253,32 @@ pub mod api {
                         target: runtime_types::storage_primitives::ChunkLocation,
                     },
                     #[codec(index = 41)]
-                    #[doc = "Respond to a challenge."]
+                    #[doc = "Challenged provider only. Answer before the deadline with a chunk"]
+                    #[doc = "proof, a proof that the data was legitimately deleted, or a note"]
+                    #[doc = "that the challenged state has been superseded."]
+                    #[doc = ""]
+                    #[doc = "A valid response settles the deposit between challenger and"]
+                    #[doc = "provider; an invalid one slashes the provider on the spot. A"]
+                    #[doc = "missing one is slashed by the deadline sweep."]
                     respond_to_challenge {
                         challenge_id:
                             runtime_types::storage_primitives::ChallengeId<::core::primitive::u32>,
                         response: runtime_types::pallet_storage_provider::pallet::ChallengeResponse,
                     },
                     #[codec(index = 50)]
-                    #[doc = "Replica confirms sync to MMR roots."]
+                    #[doc = "Replica provider only. Attest, with a signature over `roots`, that"]
+                    #[doc = "the replica holds the bucket at one of them. If a root matches the"]
+                    #[doc = "current snapshot or recent history, the replica is paid"]
+                    #[doc = "`sync_price` from its sync balance. Rate-limited by"]
+                    #[doc = "`min_sync_interval`."]
                     confirm_replica_sync {
                         bucket_id: ::core::primitive::u64,
                         roots: [::core::option::Option<::subxt::utils::H256>; 7usize],
                         signature: runtime_types::sp_runtime::MultiSignature,
                     },
                     #[codec(index = 51)]
-                    #[doc = "Top up a replica's sync balance."]
+                    #[doc = "Add funds to the balance that pays a replica per confirmed sync."]
+                    #[doc = "Anyone may pay; the funds are escrowed on the agreement owner."]
                     top_up_replica_sync_balance {
                         bucket_id: ::core::primitive::u64,
                         provider: ::subxt::utils::AccountId32,
@@ -26200,22 +26347,35 @@ pub mod api {
                 #[doc = "The `Error` enum of this pallet."]
                 pub enum Error {
                     #[codec(index = 0)]
+                    #[doc = "The account is already a registered provider."]
                     ProviderAlreadyRegistered,
                     #[codec(index = 1)]
+                    #[doc = "The account is not a registered provider."]
                     ProviderNotFound,
                     #[codec(index = 2)]
+                    #[doc = "The stake is below `MinProviderStake`."]
                     InsufficientStake,
                     #[codec(index = 3)]
+                    #[doc = "The provider's stake cannot back the bytes it would commit to"]
+                    #[doc = "(`committed_bytes × MinStakePerByte`); add stake or commit less."]
                     InsufficientStakeForBytes,
                     #[codec(index = 4)]
+                    #[doc = "The provider still has committed bytes; its agreements must end"]
+                    #[doc = "before it can deregister."]
                     ProviderHasActiveAgreements,
                     #[codec(index = 5)]
+                    #[doc = "The provider is not accepting new primary agreements."]
                     ProviderNotAcceptingPrimary,
                     #[codec(index = 6)]
+                    #[doc = "The provider has no replica sync price set, so it takes no replica"]
+                    #[doc = "agreements."]
                     ProviderNotAcceptingReplicas,
                     #[codec(index = 7)]
+                    #[doc = "The provider is not accepting agreement extensions."]
                     ProviderNotAcceptingExtensions,
                     #[codec(index = 8)]
+                    #[doc = "`remove_slashed` only applies to a provider whose stake was slashed"]
+                    #[doc = "to zero."]
                     ProviderNotSlashed,
                     #[codec(index = 9)]
                     #[doc = "Cannot set max_capacity below current committed_bytes."]
@@ -26227,7 +26387,7 @@ pub mod api {
                     #[doc = "Stake insufficient to back declared capacity."]
                     InsufficientStakeForCapacity,
                     #[codec(index = 12)]
-                    #[doc = "Provider settings specify `min_duration > max_duration"]
+                    #[doc = "Provider settings specify `min_duration > max_duration`."]
                     MinDurationExceedsMaxDuration,
                     #[codec(index = 13)]
                     #[doc = "Provider has already announced a deregistration; the action is"]
@@ -26241,146 +26401,188 @@ pub mod api {
                     #[doc = "elapsed."]
                     DeregisterPeriodNotElapsed,
                     #[codec(index = 16)]
+                    #[doc = "No bucket with this id."]
                     BucketNotFound,
                     #[codec(index = 17)]
+                    #[doc = "The bucket is already frozen."]
                     BucketFrozen,
                     #[codec(index = 18)]
-                    BucketNotFrozen,
-                    #[codec(index = 19)]
+                    #[doc = "The caller is not an admin of the bucket."]
                     NotBucketAdmin,
-                    #[codec(index = 20)]
-                    NotBucketMember,
-                    #[codec(index = 21)]
+                    #[codec(index = 19)]
+                    #[doc = "The caller is neither a writer nor an admin of the bucket."]
                     NotBucketWriter,
-                    #[codec(index = 22)]
+                    #[codec(index = 20)]
+                    #[doc = "The account is not a member of the bucket."]
                     MemberNotFound,
-                    #[codec(index = 23)]
+                    #[codec(index = 21)]
+                    #[doc = "An admin cannot demote or remove another admin; admins only step"]
+                    #[doc = "down themselves."]
                     CannotDemoteAdmin,
-                    #[codec(index = 24)]
+                    #[codec(index = 22)]
+                    #[doc = "The bucket must keep at least one admin; promote another member"]
+                    #[doc = "first."]
                     LastAdminCannotBeRemoved,
-                    #[codec(index = 25)]
+                    #[codec(index = 23)]
+                    #[doc = "The bucket already has `MaxMembers` members."]
                     MaxMembersReached,
-                    #[codec(index = 26)]
+                    #[codec(index = 24)]
+                    #[doc = "The bucket already has `MaxPrimaryProviders` primary providers."]
                     MaxPrimaryProvidersReached,
-                    #[codec(index = 27)]
+                    #[codec(index = 25)]
+                    #[doc = "The current snapshot carries fewer provider signatures than the"]
+                    #[doc = "bucket's `min_providers`."]
                     MinProvidersNotMet,
-                    #[codec(index = 28)]
+                    #[codec(index = 26)]
+                    #[doc = "`min_providers` exceeds the bucket's primary provider count."]
                     InvalidMinProviders,
-                    #[codec(index = 29)]
+                    #[codec(index = 27)]
+                    #[doc = "Only members and primary-agreement owners may challenge a primary"]
+                    #[doc = "provider of a private bucket."]
                     NotAuthorizedForPrivateBucket,
-                    #[codec(index = 30)]
+                    #[codec(index = 28)]
+                    #[doc = "No agreement between this bucket and provider."]
                     AgreementNotFound,
-                    #[codec(index = 31)]
+                    #[codec(index = 29)]
+                    #[doc = "This bucket and provider already have an agreement."]
                     AgreementAlreadyExists,
-                    #[codec(index = 32)]
+                    #[codec(index = 30)]
+                    #[doc = "The agreement has expired; settle it with `end_agreement` or"]
+                    #[doc = "`claim_expired_agreement`."]
                     AgreementExpired,
-                    #[codec(index = 33)]
+                    #[codec(index = 31)]
+                    #[doc = "The agreement is still live, or the owner's settlement window has"]
+                    #[doc = "not passed yet."]
                     AgreementNotExpired,
-                    #[codec(index = 34)]
+                    #[codec(index = 32)]
+                    #[doc = "The provider blocked extensions of this agreement"]
+                    #[doc = "(`set_extensions_blocked`)."]
                     AgreementExtensionsBlocked,
-                    #[codec(index = 35)]
+                    #[codec(index = 33)]
+                    #[doc = "Only the agreement owner may do this."]
                     NotAgreementOwner,
-                    #[codec(index = 36)]
+                    #[codec(index = 34)]
+                    #[doc = "The new owner is the current owner."]
+                    TransferToSelf,
+                    #[codec(index = 35)]
+                    #[doc = "The duration is below the provider's `min_duration`."]
                     DurationTooShort,
-                    #[codec(index = 37)]
+                    #[codec(index = 36)]
+                    #[doc = "The duration is above the provider's `max_duration`."]
                     DurationTooLong,
-                    #[codec(index = 38)]
+                    #[codec(index = 37)]
+                    #[doc = "`price_per_byte × bytes × duration` exceeds the caller's"]
+                    #[doc = "`max_payment`."]
                     PaymentExceedsMax,
-                    #[codec(index = 39)]
+                    #[codec(index = 38)]
+                    #[doc = "Replica agreements cannot be ended early; they run to expiry."]
                     CannotTerminateReplica,
-                    #[codec(index = 40)]
+                    #[codec(index = 39)]
+                    #[doc = "More than `SettlementTimeout` has passed since expiry; only the"]
+                    #[doc = "provider can settle now, via `claim_expired_agreement`."]
                     SettlementWindowPassed,
-                    #[codec(index = 41)]
+                    #[codec(index = 40)]
+                    #[doc = "The agreement is not a replica agreement."]
                     NotReplica,
-                    #[codec(index = 42)]
+                    #[codec(index = 41)]
+                    #[doc = "Less than `min_sync_interval` since the replica's last confirmed"]
+                    #[doc = "sync."]
                     SyncTooFrequent,
-                    #[codec(index = 43)]
+                    #[codec(index = 42)]
+                    #[doc = "None of the submitted roots match the bucket's current snapshot or"]
+                    #[doc = "its recent root history."]
                     InvalidSyncRoot,
-                    #[codec(index = 44)]
+                    #[codec(index = 43)]
+                    #[doc = "The sync balance cannot cover one more `sync_price`; top it up with"]
+                    #[doc = "`top_up_replica_sync_balance`."]
                     InsufficientSyncBalance,
-                    #[codec(index = 45)]
+                    #[codec(index = 44)]
                     #[doc = "The challenger is the challenged provider. A self-challenge costs"]
                     #[doc = "nothing (the response refunds the challenger's own deposit) and"]
                     #[doc = "would pad the defended-challenge counters behind reputation."]
                     SelfChallenge,
-                    #[codec(index = 46)]
+                    #[codec(index = 45)]
+                    #[doc = "No challenge with this id."]
                     ChallengeNotFound,
-                    #[codec(index = 47)]
-                    ChallengeAlreadyExists,
-                    #[codec(index = 48)]
-                    InvalidChallengeProof,
-                    #[codec(index = 49)]
+                    #[codec(index = 46)]
+                    #[doc = "The response deadline has passed."]
                     ChallengeExpired,
-                    #[codec(index = 50)]
+                    #[codec(index = 47)]
+                    #[doc = "Only the challenged provider may respond."]
                     NotChallengeProvider,
-                    #[codec(index = 51)]
+                    #[codec(index = 48)]
+                    #[doc = "The provider did not sign the bucket's current snapshot, so there"]
+                    #[doc = "is no on-chain commitment to challenge; use `challenge_offchain`"]
+                    #[doc = "with a signed commitment instead."]
                     ProviderNotInSnapshot,
-                    #[codec(index = 52)]
-                    LeafBeyondCanonical,
-                    #[codec(index = 53)]
-                    InvalidDeletionProof,
-                    #[codec(index = 54)]
+                    #[codec(index = 49)]
                     #[doc = "A provider with unresolved challenges (`PendingChallenges > 0`)"]
                     #[doc = "cannot complete deregistration — they are still slashable."]
                     ProviderHasPendingChallenges,
-                    #[codec(index = 55)]
+                    #[codec(index = 50)]
                     #[doc = "An agreement with an unresolved challenge against this"]
                     #[doc = "`(bucket, provider)` cannot be torn down until the challenge"]
                     #[doc = "resolves (defended, slashed, or timed out)."]
                     AgreementHasPendingChallenge,
-                    #[codec(index = 56)]
+                    #[codec(index = 51)]
                     #[doc = "`MaxChallengesPerDeadline` challenges have already been allocated"]
                     #[doc = "for the deadline this challenge would land on. Caps the total the"]
                     #[doc = "`on_initialize` sweep must eventually drain for a single key."]
                     TooManyChallengesThisBlock,
-                    #[codec(index = 57)]
+                    #[codec(index = 52)]
+                    #[doc = "A provider signature does not verify against the commitment."]
                     InvalidSignature,
-                    #[codec(index = 58)]
+                    #[codec(index = 53)]
+                    #[doc = "The bucket has no checkpoint yet."]
                     NoSnapshot,
-                    #[codec(index = 59)]
+                    #[codec(index = 54)]
+                    #[doc = "A frozen bucket only accepts checkpoints that keep its"]
+                    #[doc = "`frozen_start_seq`."]
                     SnapshotViolatesFrozen,
-                    #[codec(index = 60)]
+                    #[codec(index = 55)]
+                    #[doc = "Fewer valid provider signatures than the bucket's `min_providers`."]
                     InsufficientSignatures,
-                    #[codec(index = 61)]
+                    #[codec(index = 56)]
+                    #[doc = "A balance or counter computation overflowed."]
                     ArithmeticOverflow,
-                    #[codec(index = 62)]
-                    InvalidMultiaddr,
-                    #[codec(index = 63)]
+                    #[codec(index = 57)]
+                    #[doc = "The public key is not 32 bytes (sr25519/ed25519) or 33 bytes"]
+                    #[doc = "(compressed ecdsa), or does not match the signature's scheme."]
                     InvalidPublicKey,
-                    #[codec(index = 64)]
+                    #[codec(index = 58)]
                     #[doc = "Account is a member of too many buckets."]
                     TooManyBucketsForMember,
-                    #[codec(index = 65)]
+                    #[codec(index = 59)]
                     #[doc = "Provider signature over the SCALE-encoded terms is invalid."]
                     InvalidProviderSignature,
-                    #[codec(index = 66)]
+                    #[codec(index = 60)]
                     #[doc = "Signed terms have passed their `valid_until` block."]
                     TermsExpired,
-                    #[codec(index = 67)]
+                    #[codec(index = 61)]
                     #[doc = "Signed terms' `valid_until` extends beyond `now + RequestTimeout` —"]
                     #[doc = "the provider-signed validity window cap enforced on-chain."]
                     TermsValidityTooLong,
-                    #[codec(index = 68)]
+                    #[codec(index = 62)]
                     #[doc = "The terms' nonce has already been consumed inside the provider's"]
                     #[doc = "replay window."]
                     NonceAlreadyUsed,
-                    #[codec(index = 69)]
+                    #[codec(index = 63)]
                     #[doc = "The terms' nonce is older than the provider's replay window"]
                     #[doc = "(distance from `hsn` ≥ [`storage_primitives::REPLAY_WINDOW_BITS`])."]
                     NonceTooOld,
-                    #[codec(index = 70)]
+                    #[codec(index = 64)]
                     #[doc = "The terms' declared owner does not match the extrinsic origin."]
                     TermsOwnerMismatch,
-                    #[codec(index = 71)]
+                    #[codec(index = 65)]
                     #[doc = "Replica terms missing from a signed quote redeemed as a replica"]
                     #[doc = "agreement."]
                     MissingReplicaTerms,
-                    #[codec(index = 72)]
+                    #[codec(index = 66)]
                     #[doc = "The terms' bucket binding does not match the redeeming extrinsic:"]
                     #[doc = "primary terms must carry no bucket, replica terms must name the"]
                     #[doc = "targeted bucket."]
                     TermsBucketMismatch,
-                    #[codec(index = 73)]
+                    #[codec(index = 67)]
                     #[doc = "Storage agreement requested 0 byte"]
                     InvalidMaxBytesRequest,
                 }
@@ -26397,11 +26599,13 @@ pub mod api {
                 #[doc = "The `Event` enum of this pallet"]
                 pub enum Event {
                     #[codec(index = 0)]
+                    #[doc = "A new provider registered and locked its initial stake."]
                     ProviderRegistered {
                         provider: ::subxt::utils::AccountId32,
                         stake: ::core::primitive::u128,
                     },
                     #[codec(index = 1)]
+                    #[doc = "A provider completed deregistration and got its stake back."]
                     ProviderDeregistered {
                         provider: ::subxt::utils::AccountId32,
                         stake_returned: ::core::primitive::u128,
@@ -26420,17 +26624,20 @@ pub mod api {
                         provider: ::subxt::utils::AccountId32,
                     },
                     #[codec(index = 4)]
+                    #[doc = "A provider locked more stake."]
                     ProviderStakeAdded {
                         provider: ::subxt::utils::AccountId32,
                         amount: ::core::primitive::u128,
                         total_stake: ::core::primitive::u128,
                     },
                     #[codec(index = 5)]
+                    #[doc = "A provider changed its pricing, limits, or acceptance flags."]
                     ProviderSettingsUpdated {
                         provider: ::subxt::utils::AccountId32,
                         settings: runtime_types::pallet_storage_provider::pallet::ProviderSettings,
                     },
                     #[codec(index = 6)]
+                    #[doc = "A provider changed the network address clients connect to."]
                     ProviderMultiaddrUpdated {
                         provider: ::subxt::utils::AccountId32,
                         multiaddr: runtime_types::bounded_collections::bounded_vec::BoundedVec<
@@ -26438,70 +26645,80 @@ pub mod api {
                         >,
                     },
                     #[codec(index = 7)]
+                    #[doc = "A provider blocked or unblocked extensions of its agreement on a"]
+                    #[doc = "bucket."]
                     ExtensionsBlocked {
                         bucket_id: ::core::primitive::u64,
                         provider: ::subxt::utils::AccountId32,
                         blocked: ::core::primitive::bool,
                     },
                     #[codec(index = 8)]
+                    #[doc = "A bucket was created."]
                     BucketCreated {
                         bucket_id: ::core::primitive::u64,
                         admin: ::subxt::utils::AccountId32,
                     },
                     #[codec(index = 9)]
+                    #[doc = "A bucket became append-only from `frozen_start_seq` on."]
                     BucketFrozen {
                         bucket_id: ::core::primitive::u64,
                         frozen_start_seq: ::core::primitive::u64,
                     },
                     #[codec(index = 10)]
+                    #[doc = "A bucket and its agreements were torn down."]
                     BucketDeleted { bucket_id: ::core::primitive::u64 },
                     #[codec(index = 11)]
+                    #[doc = "An admin changed who may read the bucket."]
                     BucketVisibilityChanged {
                         bucket_id: ::core::primitive::u64,
                         visibility: runtime_types::storage_primitives::Visibility,
                     },
                     #[codec(index = 12)]
+                    #[doc = "A member was added or given a different role."]
                     MemberSet {
                         bucket_id: ::core::primitive::u64,
                         member: ::subxt::utils::AccountId32,
                         role: runtime_types::storage_primitives::Role,
                     },
                     #[codec(index = 13)]
+                    #[doc = "A member lost access to the bucket."]
                     MemberRemoved {
                         bucket_id: ::core::primitive::u64,
                         member: ::subxt::utils::AccountId32,
                     },
                     #[codec(index = 14)]
+                    #[doc = "A commitment became the bucket's canonical state, or gained more"]
+                    #[doc = "provider signatures."]
                     BucketCheckpointed {
                         bucket_id: ::core::primitive::u64,
                         commitment: runtime_types::storage_primitives::Commitment,
                         providers: ::subxt::alloc::vec::Vec<::subxt::utils::AccountId32>,
                     },
                     #[codec(index = 15)]
+                    #[doc = "A primary provider joined the bucket's provider set. Not emitted"]
+                    #[doc = "yet: no call adds a primary to an existing bucket (#417)."]
                     ProviderAddedToBucket {
                         bucket_id: ::core::primitive::u64,
                         provider: ::subxt::utils::AccountId32,
                     },
                     #[codec(index = 16)]
+                    #[doc = "A primary provider left the bucket's provider set."]
                     PrimaryProviderRemoved {
                         bucket_id: ::core::primitive::u64,
                         provider: ::subxt::utils::AccountId32,
                         reason: runtime_types::storage_primitives::RemovalReason,
                     },
                     #[codec(index = 17)]
-                    PrimaryAgreementEndedEarly {
-                        bucket_id: ::core::primitive::u64,
-                        provider: ::subxt::utils::AccountId32,
-                        payment_to_provider: ::core::primitive::u128,
-                        burned: ::core::primitive::u128,
-                    },
-                    #[codec(index = 18)]
+                    #[doc = "A slashed provider was cleaned out of a bucket and the owner's"]
+                    #[doc = "escrow released."]
                     SlashedProviderRemoved {
                         bucket_id: ::core::primitive::u64,
                         provider: ::subxt::utils::AccountId32,
                         payment_returned_to_owner: ::core::primitive::u128,
                     },
-                    #[codec(index = 19)]
+                    #[codec(index = 18)]
+                    #[doc = "A replica confirmed it holds the bucket's data at `mmr_root` and"]
+                    #[doc = "was paid for the sync."]
                     ReplicaSynced {
                         bucket_id: ::core::primitive::u64,
                         provider: ::subxt::utils::AccountId32,
@@ -26509,54 +26726,48 @@ pub mod api {
                         position_matched: ::core::primitive::u8,
                         sync_payment: ::core::primitive::u128,
                     },
-                    #[codec(index = 20)]
+                    #[codec(index = 19)]
+                    #[doc = "Funds were added to the balance that pays a replica per sync."]
                     ReplicaSyncBalanceToppedUp {
                         bucket_id: ::core::primitive::u64,
                         provider: ::subxt::utils::AccountId32,
                         amount: ::core::primitive::u128,
                         new_total: ::core::primitive::u128,
                     },
-                    #[codec(index = 21)]
-                    AgreementAccepted {
-                        bucket_id: ::core::primitive::u64,
-                        provider: ::subxt::utils::AccountId32,
-                        expires_at: ::core::primitive::u32,
-                    },
-                    #[codec(index = 22)]
+                    #[codec(index = 20)]
+                    #[doc = "The owner bought more quota on an agreement."]
                     AgreementToppedUp {
                         bucket_id: ::core::primitive::u64,
                         provider: ::subxt::utils::AccountId32,
                         amount: ::core::primitive::u128,
                         new_max_bytes: ::core::primitive::u64,
                     },
-                    #[codec(index = 23)]
+                    #[codec(index = 21)]
+                    #[doc = "An agreement's expiry was pushed out and the extension paid for."]
                     AgreementExtended {
                         bucket_id: ::core::primitive::u64,
                         provider: ::subxt::utils::AccountId32,
                         new_expires_at: ::core::primitive::u32,
                         payment: ::core::primitive::u128,
                     },
-                    #[codec(index = 24)]
+                    #[codec(index = 22)]
+                    #[doc = "The agreement's owner changed."]
                     AgreementOwnershipTransferred {
                         bucket_id: ::core::primitive::u64,
                         provider: ::subxt::utils::AccountId32,
                         old_owner: ::subxt::utils::AccountId32,
                         new_owner: ::subxt::utils::AccountId32,
+                        escrow: ::core::primitive::u128,
                     },
-                    #[codec(index = 25)]
+                    #[codec(index = 23)]
+                    #[doc = "An agreement was settled and closed."]
                     AgreementEnded {
                         bucket_id: ::core::primitive::u64,
                         provider: ::subxt::utils::AccountId32,
                         payment_to_provider: ::core::primitive::u128,
                         burned: ::core::primitive::u128,
                     },
-                    #[codec(index = 26)]
-                    AgreementExpiredClaimed {
-                        bucket_id: ::core::primitive::u64,
-                        provider: ::subxt::utils::AccountId32,
-                        payment_to_provider: ::core::primitive::u128,
-                    },
-                    #[codec(index = 27)]
+                    #[codec(index = 24)]
                     #[doc = "Owner redeemed provider-signed terms; bucket created and agreement"]
                     #[doc = "opened atomically."]
                     StorageAgreementEstablished {
@@ -26570,7 +26781,7 @@ pub mod api {
                         >,
                         expires_at: ::core::primitive::u32,
                     },
-                    #[codec(index = 28)]
+                    #[codec(index = 25)]
                     #[doc = "Owner redeemed provider-signed replica terms; replica agreement"]
                     #[doc = "opened against an existing bucket."]
                     ReplicaAgreementEstablished {
@@ -26584,7 +26795,8 @@ pub mod api {
                         >,
                         expires_at: ::core::primitive::u32,
                     },
-                    #[codec(index = 29)]
+                    #[codec(index = 26)]
+                    #[doc = "Someone challenged a provider to prove it still holds a chunk."]
                     ChallengeCreated {
                         challenge_id:
                             runtime_types::storage_primitives::ChallengeId<::core::primitive::u32>,
@@ -26593,7 +26805,7 @@ pub mod api {
                         challenger: ::subxt::utils::AccountId32,
                         respond_by: ::core::primitive::u32,
                     },
-                    #[codec(index = 30)]
+                    #[codec(index = 27)]
                     #[doc = "The provider proved it holds the data. The two `*_cost` fields"]
                     #[doc = "say who pays which part of the response cost, not who receives"]
                     #[doc = "money — together they always sum to the deposit."]
@@ -26605,7 +26817,8 @@ pub mod api {
                         challenger_cost: ::core::primitive::u128,
                         provider_cost: ::core::primitive::u128,
                     },
-                    #[codec(index = 31)]
+                    #[codec(index = 28)]
+                    #[doc = "A provider failed a challenge and lost stake."]
                     ChallengeSlashed {
                         challenge_id:
                             runtime_types::storage_primitives::ChallengeId<::core::primitive::u32>,
@@ -26715,6 +26928,7 @@ pub mod api {
                     pub challenges_received_authorized: ::core::primitive::u32,
                     pub challenges_received_public: ::core::primitive::u32,
                     pub challenges_failed: ::core::primitive::u32,
+                    pub lifetime_revenue: ::core::primitive::u128,
                 }
                 #[derive(
                     :: subxt :: ext :: scale_decode :: DecodeAsType,
@@ -26909,17 +27123,33 @@ pub mod api {
                     pub accepting_primary: ::core::primitive::bool,
                     pub replica_sync_price: ::core::option::Option<::core::primitive::u128>,
                     pub accepting_extensions: ::core::primitive::bool,
+                    pub max_capacity: ::core::primitive::u64,
+                    pub available_capacity: ::core::option::Option<::core::primitive::u64>,
+                    pub deregister_at: ::core::option::Option<::core::primitive::u32>,
+                    pub stats:
+                        runtime_types::pallet_storage_provider::runtime_api::ProviderStatsInfo,
+                }
+                #[derive(
+                    :: subxt :: ext :: scale_decode :: DecodeAsType,
+                    :: subxt :: ext :: scale_encode :: EncodeAsType,
+                    Clone,
+                    Debug,
+                    Eq,
+                    PartialEq,
+                )]
+                #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                pub struct ProviderStatsInfo {
                     pub registered_at: ::core::primitive::u32,
                     pub agreements_total: ::core::primitive::u32,
                     pub agreements_extended: ::core::primitive::u32,
                     pub agreements_not_extended: ::core::primitive::u32,
                     pub agreements_burned: ::core::primitive::u32,
+                    pub total_bytes_committed: ::core::primitive::u64,
                     pub challenges_received_authorized: ::core::primitive::u32,
                     pub challenges_received_public: ::core::primitive::u32,
                     pub challenges_failed: ::core::primitive::u32,
-                    pub max_capacity: ::core::primitive::u64,
-                    pub available_capacity: ::core::option::Option<::core::primitive::u64>,
-                    pub deregister_at: ::core::option::Option<::core::primitive::u32>,
+                    pub lifetime_revenue: ::core::primitive::u128,
                     pub reputation: ::core::primitive::u8,
                 }
                 #[derive(
