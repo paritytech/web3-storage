@@ -64,24 +64,57 @@ Users who create conflicts without checkpointing waste their quota—providers m
 
 ### Provider Lifecycle in Bucket
 
-Agreements are established by redeeming provider-signed terms: the provider
-quotes `AgreementTerms` off-chain (e.g. over HTTP), signs them, and the
-client submits the signed quote on-chain in a single call — there is no
-on-chain request/accept round-trip.
+Bucket creation and provider assignment are separate on-chain operations.
+Four calls cover them:
 
-**Adding a provider:**
-1. Provider quotes primary `AgreementTerms` off-chain and signs them
-2. Owner calls `establish_storage_agreement` with the signed terms → bucket
-   created with the owner as sole admin, `StorageAgreement` created, provider
-   added to `bucket.primary_providers`
-3. Client uploads data to provider
+| Call | Who | Effect |
+| --- | --- | --- |
+| `create_bucket` | anyone | Empty bucket, caller is sole admin |
+| `create_bucket_with_primary` | the quoted account (`terms.owner`) | `create_bucket` + `add_primary_provider` in one atomic call |
+| `add_primary_provider` | bucket admin | Primary agreement on an existing bucket |
+| `add_replica_provider` | the quoted account (`terms.owner`) | Replica agreement on an existing bucket |
+
+Every agreement is established by redeeming provider-signed terms: the
+provider quotes `AgreementTerms` off-chain (`POST /negotiate`), signs them,
+and the client submits the signed quote on-chain in a single call — there is
+no on-chain request/accept round-trip. `terms.bucket` names which bucket the
+quote is for: `BucketTarget::New` for `create_bucket_with_primary`, where the
+bucket does not exist yet, and `BucketTarget::Existing(id)` for
+`add_primary_provider` and `add_replica_provider`, which must target that
+same bucket. The provider signs the target, so
+it can decline one bucket without declining the account.
+
+**Creating a bucket:**
+1. Admin calls `create_bucket` → bucket created with the caller as sole
+   admin, no providers, no data. The `bucket_id` is assigned here and never
+   changes.
+2. Or: admin requests primary `AgreementTerms` with
+   `bucket: BucketTarget::New`, the provider signs them, admin calls
+   `create_bucket_with_primary` →
+   bucket created and the provider added as its first primary in the same
+   block. One transaction instead of two; a caller that needs bucket and
+   provider in the same block uses this path.
+
+**Adding a primary provider:**
+1. Admin requests primary `AgreementTerms` for the `bucket_id` from the
+   provider off-chain; the provider signs them
+2. Admin calls `add_primary_provider` with the signed terms →
+   `StorageAgreement` created, provider appended to
+   `bucket.primary_providers`, `ProviderAddedToBucket` emitted
+3. Client uploads data to the provider. For a bucket that already has data,
+   the client uploads the existing data too — primaries do not sync with
+   each other (see Multi-Provider Coordination)
 4. Client requests commit, provider signs → client has provider signature
 5. Client calls `checkpoint` with provider signature → provider added to `snapshot.primary_signers` bitfield
+
+Adding a second primary before the first agreement ends is how a client
+changes provider without downtime: the new primary receives the data and
+signs a checkpoint while the old one is still bound.
 
 **Adding a replica provider (optional, permissionless):**
 1. Provider quotes replica `AgreementTerms` (with `replica_params`: sync
    funding and interval) off-chain and signs them
-2. Anyone calls `establish_replica_agreement` with the signed terms on an
+2. Anyone calls `add_replica_provider` with the signed terms on an
    existing bucket → `StorageAgreement` created with `ProviderRole::Replica`
 3. Replica syncs data autonomously from primaries, other replicas, or any data
    holder willing to push it (everything is content-addressed and self-verifying)
@@ -103,6 +136,13 @@ When `expires_at` is reached:
 3. Provider is no longer bound to store data
 4. Provider won't be included in future checkpoints
 
+**Bucket without providers:** ending the last agreement removes the provider
+from `bucket.primary_providers` and deletes the agreement, not the bucket.
+The bucket, its members, `snapshot` and `frozen_start_seq` remain on-chain.
+The admin can add a new primary with `add_primary_provider` at any later
+time and re-upload the data; the `bucket_id` and every external reference to
+it stay valid.
+
 **Snapshot liability**: Providers remain liable for snapshots they signed until those snapshots are superseded by a new checkpoint that doesn't include them, or until the bucket's canonical depth grows past the data they signed for.
 
 ### Multi-Provider Coordination (Primary Providers)
@@ -115,6 +155,17 @@ Primary providers don't sync with each other. Clients are responsible for upload
 3. Client checkpoints on-chain with collected signatures
 4. Primaries not in the snapshot should sync (client re-uploads)
 5. After checkpoint, providers can prune non-canonical roots
+
+**The client moves the data**: a primary added to a bucket that already has
+data receives that data from the client, not from the chain and not from the
+other providers. The client uploads the data to the new primary and includes
+the new primary's signature in the next checkpoint. It first downloads the data
+from a provider that has it, unless it still keeps a local copy; changing
+provider then costs a full download and a full upload.
+
+A provider-to-provider fetch could remove that download, but it does not
+replace the client path: only the client sees which provider failed a transfer.
+See "Provider-to-Provider Fetch" in the design doc's Future Directions.
 
 **Liability**: A provider is only liable for MMR states they acknowledged (signed). Challenges against the canonical checkpoint only work for providers listed in the snapshot's provider bitfield.
 
@@ -538,8 +589,8 @@ pub enum ProviderRole<T: Config> {
 }
 
 /// Defined in `storage_primitives`: the off-chain quote a provider signs and
-/// the owner redeems on-chain (see `establish_storage_agreement` /
-/// `establish_replica_agreement`). The provider signs
+/// the owner redeems on-chain (see `create_bucket_with_primary` /
+/// `add_primary_provider` / `add_replica_provider`). The provider signs
 /// `blake2_256(context | SCALE(terms))`, where `context` is
 /// `PRIMARY_TERM_CONTEXT` (`"primary-term-v1:"`) or `REPLICA_TERM_CONTEXT`
 /// (`"replica-term-v1:"`) — domain separation between the two flavours.
@@ -558,14 +609,23 @@ pub struct AgreementTerms<AccountId, Balance, BlockNumber> {
     /// Owner-chosen replay-protection nonce: must equal the owner's next
     /// expected value, so a signed quote is redeemable at most once.
     pub nonce: u64,
-    /// Bucket the quote is bound to:
-    /// - `None` for primary terms (the bucket is created at redemption)
-    /// - `Some(id)` for replica terms — must match the bucket targeted by
-    ///   the extrinsic.
-    pub bucket_id: Option<BucketId>,
+    /// Bucket the quote is for (see `BucketTarget` below).
+    pub bucket: BucketTarget,
     /// `None` for primary terms; `Some(_)` for replica terms, carrying the
     /// per-sync funding parameters.
     pub replica_params: Option<ReplicaTerms<Balance, BlockNumber>>,
+}
+
+/// Which bucket a quote is for. Signed as part of the terms, so a provider
+/// can decline one bucket without declining the account.
+pub enum BucketTarget {
+    /// A bucket created when the quote is redeemed. Only
+    /// `create_bucket_with_primary` accepts it.
+    New,
+    /// An existing bucket. Must equal the `bucket_id` the redeeming call
+    /// targets; only `add_primary_provider` and `add_replica_provider`
+    /// accept it.
+    Existing(BucketId),
 }
 
 /// Replica-specific parameters of a signed quote.
@@ -795,6 +855,8 @@ pub enum Event<T: Config> {
         commitment: Commitment,
         providers: Vec<T::AccountId>,
     },
+    /// Emitted by `create_bucket_with_primary` and `add_primary_provider`,
+    /// together with `StorageAgreementEstablished`.
     ProviderAddedToBucket {
         bucket_id: BucketId,
         provider: T::AccountId,
@@ -1161,28 +1223,6 @@ impl<T: Config> Pallet<T> {
         visibility: Visibility,
     ) -> DispatchResult;
 
-    /// Create a bucket and an agreement with an auto-selected provider in one call.
-    ///
-    /// Convenience extrinsic that:
-    /// 1. Runs `find_matching_provider(max_bytes, duration, max_price_per_byte)`
-    ///    against on-chain provider settings.
-    /// 2. Creates a bucket with `min_providers = 1` and the matched provider
-    ///    pushed straight into `primary_providers` (no pending request flow).
-    /// 3. Holds `provider.price_per_byte * max_bytes * duration` from the
-    ///    caller as locked payment.
-    ///
-    /// Providers who set `accepting_primary: true` have pre-consented to
-    /// agreements within their advertised parameters, so no acceptance step
-    /// is needed. Fails with `NoMatchingProvider` if nothing fits.
-    #[pallet::weight(...)]
-    pub fn create_bucket_with_storage(
-        origin: OriginFor<T>,
-        max_bytes: u64,
-        duration: BlockNumberFor<T>,
-        max_price_per_byte: BalanceOf<T>,
-        visibility: Visibility,
-    ) -> DispatchResult;
-
     /// Set minimum providers required for checkpoint (admin only).
     /// 
     /// Controls redundancy: checkpoints require at least this many primary provider
@@ -1269,8 +1309,16 @@ impl<T: Config> Pallet<T> {
     // Agreements are established by redeeming provider-signed AgreementTerms
     // (see the storage section) — there is no on-chain request/accept
     // round-trip. The provider quotes and signs terms off-chain; the owner
-    // submits them in a single call. Both establish_* calls share the same
+    // submits them in a single call. `create_bucket_with_primary`,
+    // `add_primary_provider` and `add_replica_provider` share the same
     // validation skeleton:
+    // - `terms.bucket` must match the call (`TermsBucketMismatch`):
+    //   `BucketTarget::New` for `create_bucket_with_primary`,
+    //   `BucketTarget::Existing(bucket_id)` of the targeted bucket for
+    //   `add_primary_provider` and `add_replica_provider`
+    // - `add_primary_provider` and `add_replica_provider` also require that
+    //   the bucket exists (`BucketNotFound`) and that no agreement already
+    //   exists for this provider on it (`AgreementAlreadyExists`)
     // - `terms.owner` must match the origin (`TermsOwnerMismatch`)
     // - `terms.max_bytes > 0` (`InvalidMaxBytesRequest`)
     // - `now <= terms.valid_until <= now + T::RequestTimeout`
@@ -1289,27 +1337,62 @@ impl<T: Config> Pallet<T> {
     // quote itself is the price protection; there is no `max_payment`
     // parameter.
 
-    /// Redeem provider-signed primary terms: create a bucket + primary
-    /// agreement in a single call.
+    /// Redeem provider-signed primary terms: create a bucket and its first
+    /// primary agreement in one atomic call. Equivalent to `create_bucket`
+    /// followed by `add_primary_provider`, and emits the same events
+    /// (`BucketCreated`, `ProviderAddedToBucket`,
+    /// `StorageAgreementEstablished`).
     ///
     /// In addition to the shared checks above:
-    /// - `terms.bucket_id` must be `None` — the bucket is created at
-    ///   redemption (`TermsBucketMismatch`)
+    /// - `terms.bucket` must be `BucketTarget::New` (`TermsBucketMismatch`).
+    ///   This is the only call that accepts it; a quote for an existing
+    ///   bucket cannot be redirected into a new one
     /// - `terms.replica_params` must be `None`
     /// - the provider must be accepting primaries
     ///   (`ProviderNotAcceptingPrimary`)
     ///
-    /// The bucket is created with the owner as sole admin and the provider
-    /// as its single primary. `visibility` sets the new bucket's read
-    /// visibility; it is the owner's choice and not part of the
+    /// The bucket is created with the owner as sole admin, `min_providers =
+    /// 1` and the provider as its single primary. `visibility` sets the new
+    /// bucket's read visibility; it is the owner's choice and not part of the
     /// provider-signed terms.
     #[pallet::weight(...)]
-    pub fn establish_storage_agreement(
+    pub fn create_bucket_with_primary(
         origin: OriginFor<T>,
         provider: T::AccountId,
         terms: AgreementTerms<T>,
         sig: MultiSignature,
         visibility: Visibility,
+    ) -> DispatchResult;
+
+    /// Redeem provider-signed primary terms: add a primary provider to an
+    /// existing bucket (admin only).
+    ///
+    /// In addition to the shared checks above:
+    /// - `terms.bucket` must be `BucketTarget::Existing(bucket_id)`
+    ///   (`TermsBucketMismatch`)
+    /// - the origin must be a bucket admin (`NotBucketAdmin`)
+    /// - `terms.replica_params` must be `None`
+    /// - the provider must be accepting primaries
+    ///   (`ProviderNotAcceptingPrimary`)
+    /// - `bucket.primary_providers` must have fewer than
+    ///   `T::MaxPrimaryProviders` entries (`MaxPrimaryProvidersReached`)
+    ///
+    /// Creates the `StorageAgreement` with `ProviderRole::Primary` and the
+    /// admin as agreement owner, appends the provider to
+    /// `bucket.primary_providers`, and emits `ProviderAddedToBucket` and
+    /// `StorageAgreementEstablished`. The new primary is not in the current
+    /// snapshot's signer bitfield until it signs a checkpoint; the client
+    /// uploads the bucket's data to it (see Multi-Provider Coordination).
+    ///
+    /// Works on a bucket with zero primaries (all earlier agreements ended)
+    /// and on a frozen bucket.
+    #[pallet::weight(...)]
+    pub fn add_primary_provider(
+        origin: OriginFor<T>,
+        bucket_id: BucketId,
+        provider: T::AccountId,
+        terms: AgreementTerms<T>,
+        sig: MultiSignature,
     ) -> DispatchResult;
 
     /// Redeem provider-signed replica terms: open a replica agreement on an
@@ -1329,10 +1412,9 @@ impl<T: Config> Pallet<T> {
     /// ownership).
     ///
     /// In addition to the shared checks above:
-    /// - the bucket must exist (`BucketNotFound`) and carry no existing
-    ///   agreement for this provider (`AgreementAlreadyExists`)
-    /// - `terms.bucket_id` must be `Some(bucket_id)` — the quote is bound to
-    ///   the targeted bucket (`TermsBucketMismatch`)
+    /// - `terms.bucket` must be `BucketTarget::Existing(bucket_id)`
+    ///   (`TermsBucketMismatch`). The replica names the bucket it commits to
+    ///   sync, so a quote cannot be redirected to a bucket it cannot read
     /// - `terms.replica_params` must be `Some(_)` (`MissingReplicaTerms`):
     ///   - `sync_balance`: Held on the owner on top of the storage
     ///     payment to fund per-sync payments at the signed `sync_price`.
@@ -1343,7 +1425,7 @@ impl<T: Config> Pallet<T> {
     /// - the provider must be accepting replicas, i.e. have a
     ///   `replica_sync_price` set (`ProviderNotAcceptingReplicas`)
     #[pallet::weight(...)]
-    pub fn establish_replica_agreement(
+    pub fn add_replica_provider(
         origin: OriginFor<T>,
         bucket_id: BucketId,
         provider: T::AccountId,
@@ -1452,7 +1534,8 @@ impl<T: Config> Pallet<T> {
     /// terminated agreements early. If unhappy with a provider, simply don't extend.
     /// 
     /// Note: For primary agreements, admin is the owner at creation (via
-    /// establish_storage_agreement); `transfer_agreement_ownership` can separate them.
+    /// `create_bucket_with_primary` / `add_primary_provider`);
+    /// `transfer_agreement_ownership` can separate them.
     /// Admin has no special privileges over replica agreements.
     ///
     /// Blocked while a challenge against `(bucket, provider)` is unresolved
@@ -1968,6 +2051,31 @@ Response:
 Note: Provider settings (prices, durations, accepting flags) are intentionally
 omitted — the chain is the source of truth. Clients should query the chain via
 runtime API for authoritative provider information.
+
+Negotiate Terms
+───────────────
+POST /negotiate
+
+Request:
+{
+  "owner": "<ss58 account that redeems the quote>",
+  "bucket": 1234 | null,
+  "max_bytes": "1073741824",
+  "duration": 201600,
+  "price_per_byte": "1000",
+  "replica_params": null | { "sync_balance": 5000000000, "min_sync_interval": 0, "sync_price": 1000000 }
+}
+
+`bucket` is the bucket id the quote is for, or `null` for a bucket created at
+redemption; the node maps it to `BucketTarget`.
+
+Response (200 OK): the signed `AgreementTerms` plus the provider's signature,
+to pass to `create_bucket_with_primary` (`bucket: null`),
+`add_primary_provider` (`bucket` set, `replica_params: null`) or
+`add_replica_provider` (both set).
+
+The provider rejects requests below its listed price, outside its duration
+bounds, or beyond its capacity, and rejects requests while deregistering.
 
 Download Node
 ─────────────
