@@ -9947,7 +9947,7 @@ dependencies = [
  "anyhow",
  "clap",
  "hex",
- "rand 0.8.5",
+ "rand 0.8.8",
  "serde",
  "serde_json",
  "sp-core",
@@ -9955,7 +9955,7 @@ dependencies = [
  "storage-client",
  "tempfile",
  "tokio",
- "tracing-subscriber 0.3.19",
+ "tracing-subscriber 0.3.23",
 ]
 
 [[package]]
