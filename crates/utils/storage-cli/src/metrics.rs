@@ -15,6 +15,8 @@ use std::time::Duration;
 use clap::ValueEnum;
 use serde::Serialize;
 
+use crate::prepare::PreparationReport;
+
 /// How to render the collected metrics.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum OutputFormat {
@@ -252,10 +254,24 @@ pub fn print_text(results: &[OpSummary]) {
     }
 }
 
-/// Render all scenario metrics as a pretty-printed JSON array (the `--output
-/// json` view).
-pub fn to_json(results: &[OpSummary]) -> serde_json::Result<String> {
-    let view: Vec<OpSummaryJson> = results.iter().map(OpSummary::as_json).collect();
+/// The whole run as JSON. Preparation is its own object and `results` covers
+/// uploads only, so setup cost stays out of the load metrics.
+#[derive(Debug, Serialize)]
+struct RunJson<'a> {
+    preparation: Option<&'a PreparationReport>,
+    results: Vec<OpSummaryJson<'a>>,
+}
+
+/// Render the run as pretty-printed JSON (the `--output json` view):
+/// `{"preparation": {...} | null, "results": [...]}`.
+pub fn to_json(
+    results: &[OpSummary],
+    preparation: Option<&PreparationReport>,
+) -> serde_json::Result<String> {
+    let view = RunJson {
+        preparation,
+        results: results.iter().map(OpSummary::as_json).collect(),
+    };
     serde_json::to_string_pretty(&view)
 }
 
@@ -382,9 +398,10 @@ mod tests {
             OpOutcome::failure(1024, Duration::from_millis(5), "boom".into()),
         ];
         let m = summarize(TestOp, &outcomes, Duration::from_secs(2));
-        let json = to_json(&[m]).expect("serializes");
+        let json = to_json(&[m], None).expect("serializes");
         let v: serde_json::Value = serde_json::from_str(&json).expect("valid json");
-        let entry = &v[0];
+        assert!(v["preparation"].is_null());
+        let entry = &v["results"][0];
         assert_eq!(entry["operation"], "test");
         assert_eq!(entry["total"], 2);
         assert_eq!(entry["ok"], 1);
@@ -397,5 +414,30 @@ mod tests {
         assert_eq!(entry["latency_p95_secs"], 0.01);
         assert_eq!(entry["latency_p99_secs"], 0.01);
         assert_eq!(entry["sample_errors"][0], "boom");
+    }
+
+    #[test]
+    fn to_json_reports_preparation_separately() {
+        let report = PreparationReport {
+            buckets: vec![17, 18],
+            max_bytes: 5_767_168,
+            duration: 100,
+            price_per_byte: 1,
+            elapsed_secs: 14.21,
+        };
+        let m = summarize(
+            TestOp,
+            &[OpOutcome::success(1, Duration::from_millis(1))],
+            Duration::from_secs(1),
+        );
+        let json = to_json(&[m], Some(&report)).expect("serializes");
+        let v: serde_json::Value = serde_json::from_str(&json).expect("valid json");
+        let prep = &v["preparation"];
+        assert_eq!(prep["buckets"], serde_json::json!([17, 18]));
+        assert_eq!(prep["max_bytes"], 5_767_168);
+        assert_eq!(prep["duration"], 100);
+        assert_eq!(prep["price_per_byte"], "1");
+        assert_eq!(prep["elapsed_secs"], 14.21);
+        assert_eq!(v["results"][0]["ok"], 1);
     }
 }
