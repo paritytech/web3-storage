@@ -419,7 +419,6 @@ impl DiskStorage {
 
         Ok((mmr.root(), mmr.peaks()))
     }
-
 }
 
 impl StorageBackend for DiskStorage {
@@ -554,7 +553,11 @@ mod tests {
         // nothing writes to it any more.
         let cf = storage.db.cf_handle(CF_METADATA).unwrap();
         assert!(
-            storage.db.iterator_cf(&cf, rocksdb::IteratorMode::Start).next().is_none(),
+            storage
+                .db
+                .iterator_cf(&cf, rocksdb::IteratorMode::Start)
+                .next()
+                .is_none(),
             "metadata column family must be empty"
         );
     }

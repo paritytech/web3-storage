@@ -27,6 +27,7 @@ export interface PrimitiveAgreementTerms {
   duration: number
   pricePerByte: bigint
   validUntil: number
+  /** Owner-chosen replay-protection nonce: must equal the owner's next expected on-chain value. */
   nonce: bigint
   hasBucketId: boolean
   bucketId: bigint
@@ -254,10 +255,10 @@ export function classifyDispatchError(dispatchError: unknown): CreateLibraryErro
       message: 'The provider-signed terms expired before the transaction landed. Try again to re-negotiate.',
     }
   }
-  if (raw.includes('NonceAlreadyUsed')) {
+  if (raw.includes('NonceMismatch')) {
     return {
       kind: 'terms-reused',
-      message: 'The signed terms were already used. Try again to re-negotiate fresh terms.',
+      message: 'The signed terms nonce was claimed by another transaction through this contract. Try again.',
     }
   }
   if (raw.includes('InvalidSignature') || raw.includes('BadSignature')) {
