@@ -129,13 +129,14 @@ mod tests {
             max_bytes: 1_000_000_000,
             duration: 500,
             price_per_byte: 1,
-            bucket: None,
+            bucket: Some(7),
             replica_params: None,
         };
         let json = serde_json::to_string(&req).unwrap();
         let decoded: NegotiateRequest = serde_json::from_str(&json).unwrap();
         assert_eq!(decoded.max_bytes, req.max_bytes);
         assert_eq!(decoded.price_per_byte, req.price_per_byte);
+        assert_eq!(decoded.bucket, req.bucket);
     }
 
     // JS clients send BigInt fields as decimal strings (commit 17528eb).
@@ -165,7 +166,17 @@ mod tests {
         let from_number: NegotiateRequest = serde_json::from_str(&body("7")).unwrap();
         assert_eq!(from_number.bucket, Some(7));
 
-        let absent: NegotiateRequest = serde_json::from_str(&body("null")).unwrap();
-        assert_eq!(absent.bucket, None);
+        let null: NegotiateRequest = serde_json::from_str(&body("null")).unwrap();
+        assert_eq!(null.bucket, None);
+
+        // Both wire-type declarations document the key as omittable, and
+        // `serde_as` keeps that only because it emits `#[serde(default)]`
+        // for an `Option` field with an `Option` adapter.
+        let omitted = format!(
+            r#"{{"owner":"{}","max_bytes":1024,"duration":50,"price_per_byte":1,"replica_params":null}}"#,
+            AccountId32::new([0u8; 32])
+        );
+        let omitted: NegotiateRequest = serde_json::from_str(&omitted).unwrap();
+        assert_eq!(omitted.bucket, None);
     }
 }
