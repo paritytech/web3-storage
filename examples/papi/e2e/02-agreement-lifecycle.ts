@@ -176,7 +176,7 @@ async function main() {
       };
       await api.tx.StorageProvider.establish_storage_agreement(args).createAndSubmit(client.signer);
       const replay = api.tx.StorageProvider.establish_storage_agreement(args);
-      await submitTxExpectFailure(replay, client.signer, "NonceAlreadyUsed", "2.6");
+      await submitTxExpectFailure(replay, client.signer, "NonceMismatch", "2.6");
     },
   });
 
