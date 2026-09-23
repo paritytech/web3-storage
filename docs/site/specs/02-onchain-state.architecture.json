@@ -1,0 +1,366 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "On-chain State",
+    "quality_profile": "showcase",
+    "viewBox": [
+      1240,
+      650
+    ],
+    "views": [
+      {
+        "id": "agreements",
+        "label": "Agreement keys",
+        "focus": [
+          "agreements",
+          "providers",
+          "buckets"
+        ],
+        "note": "StorageAgreements is a double map keyed by BucketId and provider AccountId."
+      },
+      {
+        "id": "challenges",
+        "label": "Challenge gates",
+        "focus": [
+          "challenges",
+          "pending",
+          "pendingbybucket",
+          "providers",
+          "agreements",
+          "anchor"
+        ],
+        "note": "Open challenges increment two counters that block provider exit and agreement teardown."
+      },
+      {
+        "id": "reads",
+        "label": "Client reads",
+        "focus": [
+          "api",
+          "agreements",
+          "buckets"
+        ],
+        "note": "Clients read state through the StorageProviderApi runtime API without submitting transactions."
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "holds",
+      "type": "security",
+      "label": "Fungible holds",
+      "sublabel": "HoldReason",
+      "tag": "ProviderStake, AgreementPayment, ChallengeDeposit",
+      "pos": [
+        20,
+        30
+      ],
+      "size": [
+        190,
+        100
+      ]
+    },
+    {
+      "id": "api",
+      "type": "frontend",
+      "label": "StorageProviderApi",
+      "sublabel": "runtime API, read-only",
+      "tag": "providers, buckets, agreements, challenges",
+      "pos": [
+        20,
+        335
+      ],
+      "size": [
+        190,
+        110
+      ]
+    },
+    {
+      "id": "providers",
+      "type": "database",
+      "label": "Providers",
+      "sublabel": "AccountId \u2192 ProviderInfo",
+      "tag": "stake, committed_bytes, settings, deregister_at",
+      "pos": [
+        330,
+        30
+      ],
+      "size": [
+        220,
+        110
+      ]
+    },
+    {
+      "id": "agreements",
+      "type": "database",
+      "label": "StorageAgreements",
+      "sublabel": "BucketId \u00d7 AccountId",
+      "tag": "owner, max_bytes, payment_locked, expires_at, role",
+      "pos": [
+        330,
+        255
+      ],
+      "size": [
+        220,
+        110
+      ]
+    },
+    {
+      "id": "buckets",
+      "type": "database",
+      "label": "Buckets",
+      "sublabel": "BucketId \u2192 Bucket",
+      "tag": "members, primary_providers, snapshot",
+      "pos": [
+        330,
+        480
+      ],
+      "size": [
+        220,
+        110
+      ]
+    },
+    {
+      "id": "pending",
+      "type": "database",
+      "label": "PendingChallenges",
+      "sublabel": "AccountId \u2192 u32",
+      "pos": [
+        740,
+        40
+      ],
+      "size": [
+        200,
+        90
+      ]
+    },
+    {
+      "id": "pendingbybucket",
+      "type": "database",
+      "label": "PendingChallengesByBucket",
+      "sublabel": "BucketId \u00d7 AccountId \u2192 u32",
+      "pos": [
+        740,
+        265
+      ],
+      "size": [
+        200,
+        90
+      ]
+    },
+    {
+      "id": "memberbuckets",
+      "type": "database",
+      "label": "MemberBuckets",
+      "sublabel": "AccountId \u2192 BucketIds",
+      "pos": [
+        740,
+        490
+      ],
+      "size": [
+        200,
+        100
+      ]
+    },
+    {
+      "id": "challenges",
+      "type": "database",
+      "label": "Challenges",
+      "sublabel": "deadline \u00d7 index \u2192 Challenge",
+      "tag": "NextChallengeIndex, LastSweptChallengeBlock",
+      "pos": [
+        1030,
+        120
+      ],
+      "size": [
+        170,
+        100
+      ]
+    },
+    {
+      "id": "anchor",
+      "type": "external",
+      "label": "Anchor clock",
+      "sublabel": "BlockNumberProvider",
+      "tag": "relay chain in production",
+      "pos": [
+        1030,
+        490
+      ],
+      "size": [
+        170,
+        100
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "Providers",
+      "wraps": [
+        "providers"
+      ]
+    },
+    {
+      "kind": "region",
+      "label": "Agreements",
+      "wraps": [
+        "agreements"
+      ]
+    },
+    {
+      "kind": "region",
+      "label": "Buckets",
+      "wraps": [
+        "buckets",
+        "memberbuckets"
+      ]
+    },
+    {
+      "kind": "region",
+      "label": "Challenges",
+      "wraps": [
+        "pending",
+        "pendingbybucket",
+        "challenges"
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "agr-provider",
+      "from": "agreements",
+      "to": "providers",
+      "label": "provider key",
+      "fromSide": "top",
+      "toSide": "bottom"
+    },
+    {
+      "id": "agr-bucket",
+      "from": "agreements",
+      "to": "buckets",
+      "label": "BucketId key",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelDx": -60,
+      "labelDy": 24
+    },
+    {
+      "id": "primary-set",
+      "from": "buckets",
+      "to": "agreements",
+      "label": "primary_providers: role Primary",
+      "variant": "emphasis",
+      "fromSide": "top",
+      "toSide": "bottom",
+      "labelDx": 95
+    },
+    {
+      "id": "gate-deregister",
+      "from": "pending",
+      "to": "providers",
+      "label": "gates complete_deregister",
+      "variant": "security",
+      "fromSide": "left",
+      "toSide": "right"
+    },
+    {
+      "id": "gate-teardown",
+      "from": "pendingbybucket",
+      "to": "agreements",
+      "label": "gates end_agreement",
+      "variant": "security",
+      "fromSide": "left",
+      "toSide": "right"
+    },
+    {
+      "id": "count-provider",
+      "from": "challenges",
+      "to": "pending",
+      "label": "per provider",
+      "fromSide": "left",
+      "toSide": "right"
+    },
+    {
+      "id": "count-bucket",
+      "from": "challenges",
+      "to": "pendingbybucket",
+      "label": "per bucket, provider",
+      "fromSide": "left",
+      "toSide": "right"
+    },
+    {
+      "id": "deadline",
+      "from": "anchor",
+      "to": "challenges",
+      "label": "deadline anchor block",
+      "fromSide": "top",
+      "toSide": "bottom"
+    },
+    {
+      "id": "member-index",
+      "from": "memberbuckets",
+      "to": "buckets",
+      "label": "reverse of members",
+      "fromSide": "left",
+      "toSide": "right",
+      "labelDx": -50
+    },
+    {
+      "id": "stake-hold",
+      "from": "providers",
+      "to": "holds",
+      "label": "stake",
+      "variant": "security",
+      "fromSide": "left",
+      "toSide": "right"
+    },
+    {
+      "id": "api-agreements",
+      "from": "api",
+      "to": "agreements",
+      "label": "reads",
+      "variant": "dashed",
+      "fromSide": "right",
+      "toSide": "left"
+    },
+    {
+      "id": "api-buckets",
+      "from": "api",
+      "to": "buckets",
+      "label": "reads",
+      "variant": "dashed",
+      "fromSide": "right",
+      "toSide": "left"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Providers and agreements",
+      "items": [
+        "ProviderInfo also has multiaddr, public_key, stats",
+        "role: Primary, or Replica { sync_balance, sync_price, min_sync_interval, last_sync }",
+        "PendingChallengesByBucket also gates claim_expired_agreement"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Buckets",
+      "items": [
+        "Bucket also has visibility, frozen_start_seq, min_providers, historical_roots",
+        "snapshot.primary_signers: bit i set if primary_providers[i] signed",
+        "NextBucketId allocates each BucketId"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Challenges",
+      "items": [
+        "Challenge includes bucket_id, provider, challenger, mmr_root, start_seq, target, deposit, authorized",
+        "Hold: deposit as ChallengeDeposit",
+        "on_initialize sweep slashes providers with expired challenges"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,401 @@
+{
+  "schema_version": 1,
+  "diagram_type": "dataflow",
+  "meta": {
+    "title": "Funds Flow",
+    "quality_profile": "showcase",
+    "views": [
+      {
+        "id": "stake",
+        "label": "Provider stake",
+        "focus": [
+          "provider_acct",
+          "stake",
+          "treasury",
+          "challenger_out"
+        ],
+        "note": "A failed challenge slashes the full stake to the Treasury; the challenger is made whole from the slash."
+      },
+      {
+        "id": "agreement",
+        "label": "Agreement payment",
+        "focus": [
+          "owner_acct",
+          "payment",
+          "sync_hold",
+          "provider_out",
+          "replica_out",
+          "treasury",
+          "owner_out"
+        ],
+        "note": "The prepaid fee and a replica's sync_balance are held on the agreement owner until settlement."
+      },
+      {
+        "id": "challenge",
+        "label": "Challenge deposit",
+        "focus": [
+          "challenger_acct",
+          "deposit",
+          "provider_out",
+          "challenger_out"
+        ],
+        "note": "The deposit reimburses the provider's response fee; the excess returns to the challenger."
+      }
+    ],
+    "viewBox": [
+      1068,
+      604
+    ],
+    "legend": {
+      "entries": {
+        "emphasis": {
+          "label": "funding / payout"
+        },
+        "security": {
+          "label": "slash"
+        },
+        "default": {
+          "label": "refund, reimbursement, burn"
+        },
+        "database": {
+          "label": "hold"
+        }
+      }
+    }
+  },
+  "stages": [
+    {
+      "label": "Free balance"
+    },
+    {
+      "label": "Hold (HoldReason)"
+    },
+    {
+      "label": "Trigger"
+    },
+    {
+      "label": "Payout"
+    },
+    {
+      "label": "Burn / slash"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "provider_acct",
+      "type": "external",
+      "label": "Provider",
+      "sublabel": "free balance",
+      "stage": 0,
+      "row": 0
+    },
+    {
+      "id": "challenger_acct",
+      "type": "external",
+      "label": "Challenger",
+      "sublabel": "free balance",
+      "stage": 0,
+      "row": 1
+    },
+    {
+      "id": "owner_acct",
+      "type": "frontend",
+      "label": "Agreement owner",
+      "sublabel": "free balance",
+      "stage": 0,
+      "row": 2
+    },
+    {
+      "id": "stake",
+      "type": "security",
+      "label": "ProviderStake",
+      "sublabel": "held on provider",
+      "stage": 1,
+      "row": 0
+    },
+    {
+      "id": "deposit",
+      "type": "database",
+      "label": "ChallengeDeposit",
+      "sublabel": "held on challenger",
+      "stage": 1,
+      "row": 1
+    },
+    {
+      "id": "payment",
+      "type": "database",
+      "label": "AgreementPayment",
+      "sublabel": "payment_locked",
+      "stage": 1,
+      "row": 2
+    },
+    {
+      "id": "sync_hold",
+      "type": "database",
+      "label": "AgreementPayment",
+      "sublabel": "sync_balance",
+      "stage": 1,
+      "row": 3
+    },
+    {
+      "id": "challenger_out",
+      "type": "external",
+      "label": "Challenger",
+      "sublabel": "free balance",
+      "stage": 3,
+      "row": 0
+    },
+    {
+      "id": "provider_out",
+      "type": "external",
+      "label": "Provider",
+      "sublabel": "free balance",
+      "stage": 3,
+      "row": 1
+    },
+    {
+      "id": "owner_out",
+      "type": "frontend",
+      "label": "Agreement owner",
+      "sublabel": "free balance",
+      "stage": 3,
+      "row": 2
+    },
+    {
+      "id": "replica_out",
+      "type": "external",
+      "label": "Replica provider",
+      "sublabel": "free balance",
+      "stage": 3,
+      "row": 3
+    },
+    {
+      "id": "treasury",
+      "type": "cloud",
+      "label": "Treasury",
+      "sublabel": "burn and slash",
+      "stage": 4,
+      "row": 2
+    }
+  ],
+  "flows": [
+    {
+      "id": "stake-in",
+      "from": "provider_acct",
+      "to": "stake",
+      "label": "register_provider, add_stake",
+      "classification": "stake + ED free",
+      "variant": "emphasis",
+      "labelAt": [
+        208,
+        105
+      ]
+    },
+    {
+      "id": "deposit-in",
+      "from": "challenger_acct",
+      "to": "deposit",
+      "label": "challenge_*",
+      "classification": "over-estimated response cost",
+      "variant": "emphasis",
+      "labelAt": [
+        208,
+        214
+      ]
+    },
+    {
+      "id": "escrow-in",
+      "from": "owner_acct",
+      "to": "payment",
+      "label": "redeem terms",
+      "classification": "price_per_byte × max_bytes × duration",
+      "variant": "emphasis",
+      "labelAt": [
+        208,
+        328
+      ]
+    },
+    {
+      "id": "sync-in",
+      "from": "owner_acct",
+      "to": "sync_hold",
+      "label": "sync_balance",
+      "classification": "add_replica_provider",
+      "fromSide": "bottom",
+      "toSide": "left",
+      "via": [
+        [
+          100,
+          499
+        ]
+      ],
+      "labelAt": [
+        180,
+        499
+      ],
+      "variant": "emphasis"
+    },
+    {
+      "id": "made-whole",
+      "from": "stake",
+      "to": "challenger_out",
+      "label": "tx fees from slash",
+      "classification": "no reward",
+      "variant": "security",
+      "route": "straight"
+    },
+    {
+      "id": "slash",
+      "from": "stake",
+      "to": "treasury",
+      "label": "slash: full stake",
+      "classification": "failed challenge",
+      "variant": "security",
+      "fromSide": "top",
+      "toSide": "top",
+      "via": [
+        [
+          315,
+          105
+        ],
+        [
+          960,
+          105
+        ]
+      ],
+      "labelAt": [
+        640,
+        105
+      ]
+    },
+    {
+      "id": "excess",
+      "from": "deposit",
+      "to": "challenger_out",
+      "label": "excess deposit",
+      "classification": "refund on resolution",
+      "fromSide": "top",
+      "toSide": "bottom",
+      "via": [
+        [
+          315,
+          214
+        ],
+        [
+          745,
+          214
+        ]
+      ],
+      "labelAt": [
+        530,
+        214
+      ]
+    },
+    {
+      "id": "fee",
+      "from": "deposit",
+      "to": "provider_out",
+      "label": "response fee reimbursed",
+      "classification": "public 100% / authorized split",
+      "route": "straight"
+    },
+    {
+      "id": "pay",
+      "from": "payment",
+      "to": "provider_out",
+      "label": "Pay / Burn remainder / claim",
+      "classification": "extend_agreement: elapsed period",
+      "variant": "emphasis",
+      "fromSide": "top",
+      "toSide": "bottom",
+      "via": [
+        [
+          315,
+          328
+        ],
+        [
+          745,
+          328
+        ]
+      ],
+      "labelAt": [
+        530,
+        328
+      ]
+    },
+    {
+      "id": "burn",
+      "from": "payment",
+      "to": "treasury",
+      "label": "Burn { burn_percent }",
+      "classification": "end_agreement",
+      "fromSide": "bottom",
+      "toSide": "left",
+      "via": [
+        [
+          315,
+          442
+        ],
+        [
+          850,
+          442
+        ],
+        [
+          850,
+          385
+        ]
+      ],
+      "labelAt": [
+        600,
+        442
+      ]
+    },
+    {
+      "id": "refund",
+      "from": "payment",
+      "to": "owner_out",
+      "label": "remove_slashed",
+      "classification": "remaining payment",
+      "route": "straight"
+    },
+    {
+      "id": "sync-pay",
+      "from": "sync_hold",
+      "to": "replica_out",
+      "label": "sync_price",
+      "classification": "per confirm_replica_sync",
+      "route": "straight",
+      "variant": "emphasis"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Three hold reasons",
+      "items": [
+        "ProviderStake: provider collateral",
+        "AgreementPayment: fee and sync_balance, on the owner; moves on transfer_agreement_ownership",
+        "ChallengeDeposit: challenger deposit"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Stake and challenges",
+      "items": [
+        "Failed challenge: full stake slashed to the Treasury",
+        "Challenger made whole from the slash, no reward",
+        "Valid response: stake untouched",
+        "complete_deregister releases the stake"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Who pays the response cost",
+      "items": [
+        "Provider pays the fee from its own account",
+        "Public challenger: deposit reimburses 100%",
+        "Authorized: split by response time, challenger pays at least 50%"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Scalable Web3 Storage</title>
+<meta name="description" content="Architecture and workflow diagrams for Scalable Web3 Storage, and a guide for dApp developers.">
+<link rel="stylesheet" href="site.css">
+</head>
+<body>
+<main>
+<header class="top">
+  <h1>Scalable Web3 Storage</h1>
+  <p class="lede">
+    Storage providers lock stake and store bucket data off-chain. Clients read and write directly with providers,
+    and use the chain for setup, checkpoints and disputes. Every page here is derived from the design documents
+    <a href="https://github.com/paritytech/web3-storage/blob/dev/docs/design/scalable-web3-storage.md">scalable-web3-storage.md</a> (v2.4) and
+    <a href="https://github.com/paritytech/web3-storage/blob/dev/docs/design/scalable-web3-storage-implementation.md">scalable-web3-storage-implementation.md</a>.
+    Where a page and the design disagree, the design is correct.
+  </p>
+  <div class="audiences">
+    <a class="audience" href="#diagrams">
+      <h2>Protocol developers</h2>
+      <p>Fifteen diagrams in five forms (architecture, workflow, sequence, data flow, lifecycle): providers, buckets, agreements, on-chain state, funds, commitments, replica sync, challenges and settlement.</p>
+      <span class="go">Diagrams below</span>
+    </a>
+    <a class="audience" href="dapp-guide.html">
+      <h2>dApp developers</h2>
+      <p>How to store and read data from an application: create a bucket, get a provider quote, upload, commit, checkpoint, read, verify, and what each step costs.</p>
+      <span class="go">Open the dApp guide</span>
+    </a>
+  </div>
+</header>
+
+<div id="diagrams"></div>
+
+<h2 class="group">Overview</h2>
+<div class="grid">
+  <a class="card" href="01-system-architecture.html">
+    <div class="head"><span class="num">01</span><span class="kind">architecture</span></div>
+    <h3>System architecture</h3>
+    <p>Clients, primary and replica providers, challengers, the storage pallet and the anchor clock. Shows which actions stay off-chain and which reach the chain.</p>
+    <span class="src">Design: Architecture Overview; Two Classes of Providers; Bucket Visibility &amp; Access; The Chain as Credible Threat. Implementation: Off-Chain: Provider Node API</span>
+  </a>
+  <a class="card" href="02-onchain-state.html">
+    <div class="head"><span class="num">02</span><span class="kind">architecture</span></div>
+    <h3>On-chain state</h3>
+    <p>The storage pallet's storage items (providers, buckets, agreements, challenges, pending-challenge counters) and how they reference each other.</p>
+    <span class="src">Implementation: Storage Items; Pallet Config; Funds on Hold; Runtime API</span>
+  </a>
+  <a class="card" href="03-funds-flow.html">
+    <div class="head"><span class="num">03</span><span class="kind">dataflow</span></div>
+    <h3>Funds flow</h3>
+    <p>Where money moves: stake, agreement payment, sync balance and challenge deposit holds, and what settlement, burn, slash and refunds do with them.</p>
+    <span class="src">Design: Economic Model; The Burn Option; The Challenge Game. Implementation: Funds on Hold; Challenge Protocol</span>
+  </a>
+</div>
+
+<h2 class="group">Using the system from a dApp</h2>
+<div class="grid">
+  <a class="card" href="04-dapp-integration.html">
+    <div class="head"><span class="num">04</span><span class="kind">workflow</span></div>
+    <h3>dApp integration flow</h3>
+    <p>The steps a dApp runs from choosing providers to settlement, with branches for a provider that does not serve and for adding a replica.</p>
+    <span class="src">Design: Selecting Providers; Automated Verification; When to Challenge. Implementation: Runtime API; Extrinsics; Multi-Provider Coordination; Off-Chain: Provider Node API</span>
+  </a>
+</div>
+
+<h2 class="group">Providers and buckets</h2>
+<div class="grid">
+  <a class="card" href="05-provider-lifecycle.html">
+    <div class="head"><span class="num">05</span><span class="kind">lifecycle</span></div>
+    <h3>Provider lifecycle</h3>
+    <p>Register with stake, serve agreements, and the two-step exit that keeps stake slashable until every open challenge resolves.</p>
+    <span class="src">Implementation: Extrinsics (provider management); Pallet Config; Funds on Hold</span>
+  </a>
+  <a class="card" href="06-bucket-and-providers.html">
+    <div class="head"><span class="num">06</span><span class="kind">sequence</span></div>
+    <h3>Bucket creation and provider assignment</h3>
+    <p><code>create_bucket</code>, <code>create_bucket_with_primary</code>, <code>add_primary_provider</code> and <code>add_replica_provider</code>: the provider signs a quote for a bucket off-chain, the client redeems it in one call.</p>
+    <span class="src">Implementation: Provider Lifecycle in Bucket; Extrinsics (storage agreements); POST /negotiate</span>
+  </a>
+  <a class="card" href="07-bucket-lifecycle.html">
+    <div class="head"><span class="num">07</span><span class="kind">lifecycle</span></div>
+    <h3>Bucket lifecycle</h3>
+    <p>A bucket from creation to frozen, and the bucket that remains on-chain after its last agreement ends and can get new providers later.</p>
+    <span class="src">Design: Buckets: Stable Identity in a Fluid Provider Market. Implementation: Bucket Semantics; Provider Lifecycle in Bucket</span>
+  </a>
+</div>
+
+<h2 class="group">Writing data</h2>
+<div class="grid">
+  <a class="card" href="08-write-commit-checkpoint.html">
+    <div class="head"><span class="num">08</span><span class="kind">sequence</span></div>
+    <h3>Upload, commit, checkpoint</h3>
+    <p>Why upload and commit are separate, what the provider signature guarantees before any chain write, and what a checkpoint adds.</p>
+    <span class="src">Design: The Chain as Credible Threat. Implementation: Storage Model; Multi-Provider Coordination; Off-Chain: Provider Node API</span>
+  </a>
+  <a class="card" href="09-data-commitment.html">
+    <div class="head"><span class="num">09</span><span class="kind">dataflow</span></div>
+    <h3>From bytes to on-chain commitment</h3>
+    <p>Chunks and internal nodes to a <code>data_root</code>, the per-bucket MMR, the on-chain snapshot, and the proofs that tie a chunk to a committed root.</p>
+    <span class="src">Design: Data Model. Implementation: Data Structures</span>
+  </a>
+</div>
+
+<h2 class="group">Reading data</h2>
+<div class="grid">
+  <a class="card" href="10-read-and-verify.html">
+    <div class="head"><span class="num">10</span><span class="kind">sequence</span></div>
+    <h3>Read and verify</h3>
+    <p>Find the bucket's providers on-chain, read with a signed request on a private bucket, check every chunk against its hash and proof, and move to another provider when one fails.</p>
+    <span class="src">Design: The Chain as Credible Threat; Bucket Visibility &amp; Access; Automated Verification. Implementation: Authentication &amp; RBAC; Read; Runtime API</span>
+  </a>
+</div>
+
+<h2 class="group">Keeping data available</h2>
+<div class="grid">
+  <a class="card" href="11-replica-sync.html">
+    <div class="head"><span class="num">11</span><span class="kind">workflow</span></div>
+    <h3>Replica sync</h3>
+    <p>Take the trusted root from the chain, verify peaks, fetch missing nodes top-down, then confirm on-chain to receive the per-sync payment.</p>
+    <span class="src">Implementation: Replica Sync API; confirm_replica_sync</span>
+  </a>
+  <a class="card" href="12-challenge-protocol.html">
+    <div class="head"><span class="num">12</span><span class="kind">workflow</span></div>
+    <h3>Challenge protocol</h3>
+    <p>The three challenge modes, the private-bucket gate, the response window, the three valid responses, and who pays what on each outcome.</p>
+    <span class="src">Design: The Challenge Game. Implementation: Challenge Protocol; Extrinsics (challenges)</span>
+  </a>
+  <a class="card" href="13-challenge-sequence.html">
+    <div class="head"><span class="num">13</span><span class="kind">sequence</span></div>
+    <h3>Challenge, response and slash</h3>
+    <p>The same protocol in time order: the evidence a client keeps, challenge creation, the provider's response, and the sweep that slashes a provider that did not respond.</p>
+    <span class="src">Design: The Challenge Game. Implementation: Challenge Protocol; Extrinsics (challenges); Commit</span>
+  </a>
+</div>
+
+<h2 class="group">Changing and ending agreements</h2>
+<div class="grid">
+  <a class="card" href="14-change-provider.html">
+    <div class="head"><span class="num">14</span><span class="kind">sequence</span></div>
+    <h3>Changing a primary provider</h3>
+    <p>Add a second primary before the first agreement ends, move the data through the client, checkpoint with the new primary, then end the old agreement.</p>
+    <span class="src">Implementation: Provider Lifecycle in Bucket; Multi-Provider Coordination. Design: Provider-to-Provider Fetch</span>
+  </a>
+  <a class="card" href="15-agreement-settlement.html">
+    <div class="head"><span class="num">15</span><span class="kind">lifecycle</span></div>
+    <h3>Agreement settlement</h3>
+    <p>Extension, expiry, the settlement window, pay or burn with its premium, the provider claim after the timeout, and what an open challenge blocks.</p>
+    <span class="src">Design: Storage Agreements; The Burn Option. Implementation: Provider Lifecycle in Bucket; Extrinsics (storage agreements)</span>
+  </a>
+</div>
+
+<footer>
+  <p>Diagrams are built from the specs in
+    <a href="https://github.com/paritytech/web3-storage/tree/dev/docs/site/specs"><code>docs/site/specs/</code></a>.
+  </p>
+</footer>
+</main>
+</body>
+</html>

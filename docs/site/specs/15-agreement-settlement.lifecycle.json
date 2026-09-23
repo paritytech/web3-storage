@@ -1,0 +1,275 @@
+{
+  "schema_version": 1,
+  "diagram_type": "lifecycle",
+  "meta": {
+    "title": "Agreement Settlement",
+    "quality_profile": "showcase",
+    "viewBox": [
+      1000,
+      700
+    ],
+    "views": [
+      {
+        "id": "main-path",
+        "label": "Pay path",
+        "focus": [
+          "quoted",
+          "active",
+          "expired",
+          "settlement",
+          "paid"
+        ],
+        "note": "From provider-signed terms to payment after expiry."
+      },
+      {
+        "id": "owner-choice",
+        "label": "Pay or burn",
+        "focus": [
+          "settlement",
+          "paid",
+          "burned",
+          "claimed"
+        ],
+        "note": "The owner settles within SettlementTimeout; after that the provider claims."
+      },
+      {
+        "id": "early-exits",
+        "label": "Before expiry",
+        "focus": [
+          "active",
+          "ended-early"
+        ],
+        "note": "Only a bucket admin can end a primary agreement before expiry."
+      },
+      {
+        "id": "challenge-guard",
+        "label": "Challenge guard",
+        "focus": [
+          "expired",
+          "blocked",
+          "settlement"
+        ],
+        "note": "An unresolved challenge blocks end_agreement and claim_expired_agreement."
+      }
+    ]
+  },
+  "lanes": [
+    {
+      "id": "main",
+      "label": "Agreement"
+    },
+    {
+      "id": "gates",
+      "label": "Guard and burn"
+    },
+    {
+      "id": "terminal",
+      "label": "Admin and provider exits"
+    }
+  ],
+  "states": [
+    {
+      "id": "quoted",
+      "type": "start",
+      "label": "Terms Quoted",
+      "sublabel": "signed, valid_until",
+      "lane": "main",
+      "col": 0,
+      "step": "01"
+    },
+    {
+      "id": "active",
+      "type": "active",
+      "label": "Active",
+      "sublabel": "escrow held on owner",
+      "lane": "main",
+      "col": 1,
+      "step": "02",
+      "tag": "binding"
+    },
+    {
+      "id": "expired",
+      "type": "waiting",
+      "label": "Expired",
+      "sublabel": "expires_at reached",
+      "lane": "main",
+      "col": 2,
+      "step": "03"
+    },
+    {
+      "id": "settlement",
+      "type": "decision",
+      "label": "Settlement Window",
+      "sublabel": "SettlementTimeout",
+      "lane": "main",
+      "col": 3,
+      "step": "04",
+      "tag": "owner"
+    },
+    {
+      "id": "paid",
+      "type": "success",
+      "label": "Paid",
+      "sublabel": "AgreementEnded",
+      "lane": "main",
+      "col": 4,
+      "step": "05"
+    },
+    {
+      "id": "blocked",
+      "type": "waiting",
+      "label": "Settlement Blocked",
+      "sublabel": "AgreementHasPendingChallenge",
+      "lane": "gates",
+      "col": 0
+    },
+    {
+      "id": "burned",
+      "type": "failure",
+      "label": "Burned",
+      "sublabel": "burn_percent to Treasury",
+      "lane": "gates",
+      "col": 2
+    },
+    {
+      "id": "ended-early",
+      "type": "neutral",
+      "label": "Ended Early",
+      "sublabel": "PrimaryAgreementEndedEarly",
+      "lane": "terminal",
+      "col": 0
+    },
+    {
+      "id": "claimed",
+      "type": "neutral",
+      "label": "Claimed By Provider",
+      "sublabel": "AgreementExpiredClaimed",
+      "lane": "terminal",
+      "col": 1
+    }
+  ],
+  "transitions": [
+    {
+      "id": "redeem",
+      "from": "quoted",
+      "to": "active",
+      "label": "terms redeemed",
+      "labelDy": -25,
+      "route": "straight"
+    },
+    {
+      "id": "run",
+      "from": "active",
+      "to": "expired",
+      "label": "duration elapses",
+      "labelDy": -25
+    },
+    {
+      "id": "settle-open",
+      "from": "expired",
+      "to": "settlement",
+      "label": "SettlementTimeout starts",
+      "labelDy": -25
+    },
+    {
+      "id": "pay",
+      "from": "settlement",
+      "to": "paid",
+      "label": "owner: end_agreement(Pay)",
+      "variant": "emphasis",
+      "labelDy": -25
+    },
+    {
+      "id": "burn",
+      "from": "settlement",
+      "to": "burned",
+      "label": "owner: end_agreement(Burn)",
+      "variant": "security",
+      "fromSide": "bottom",
+      "toSide": "left",
+      "labelAt": [
+        640,
+        350
+      ]
+    },
+    {
+      "id": "timeout",
+      "from": "settlement",
+      "to": "claimed",
+      "label": "after SettlementTimeout: claim",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelAt": [
+        556,
+        400
+      ]
+    },
+    {
+      "id": "hold",
+      "from": "expired",
+      "to": "blocked",
+      "label": "pending challenge",
+      "variant": "security",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelDy": 24
+    },
+    {
+      "id": "clear",
+      "from": "blocked",
+      "to": "settlement",
+      "label": "challenge resolved",
+      "variant": "dashed",
+      "fromSide": "right",
+      "toSide": "bottom",
+      "labelAt": [
+        500,
+        265
+      ]
+    },
+    {
+      "id": "terminate",
+      "from": "active",
+      "to": "ended-early",
+      "label": "admin: end_agreement",
+      "variant": "security",
+      "fromSide": "bottom",
+      "toSide": "left",
+      "labelAt": [
+        312,
+        400
+      ]
+    }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "While active",
+      "items": [
+        "top_up_agreement (owner only) raises max_bytes for the remaining duration",
+        "extend_agreement: anyone if the current price is at or below the locked price, else owner only; fails once expired",
+        "set_extensions_blocked lets the provider refuse extensions for one bucket",
+        "transfer_agreement_ownership moves the escrow hold to the new owner; bucket membership stays"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Pay or burn",
+      "items": [
+        "EndAction::Burn { burn_percent } burns that share to Treasury and pays the rest",
+        "A burn also charges the owner a governance-set premium; without the funds the burn fails",
+        "After SettlementTimeout the provider calls claim_expired_agreement and the owner loses the burn option"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Early exits and guards",
+      "items": [
+        "Before expiry only a bucket admin can end an agreement, and only a primary; the full remaining payment is paid or burned",
+        "Replica agreements cannot be ended early",
+        "AgreementHasPendingChallenge blocks end_agreement and claim_expired_agreement",
+        "Anyone can call remove_slashed; the remaining payment returns to the owner"
+      ]
+    }
+  ]
+}

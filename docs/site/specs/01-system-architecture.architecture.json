@@ -1,0 +1,335 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "System Architecture",
+    "quality_profile": "showcase",
+    "viewBox": [
+      1240,
+      700
+    ],
+    "views": [
+      {
+        "id": "setup",
+        "label": "Bucket setup",
+        "focus": [
+          "client",
+          "primaries",
+          "pallet",
+          "bucket"
+        ],
+        "note": "create_bucket makes an empty bucket; a primary joins when the admin redeems its signed quote from POST /negotiate."
+      },
+      {
+        "id": "write-path",
+        "label": "Write path",
+        "focus": [
+          "client",
+          "primaries",
+          "pallet",
+          "bucket"
+        ],
+        "note": "The client uploads and commits to primaries off-chain, then submits their signatures in a checkpoint."
+      },
+      {
+        "id": "redundancy",
+        "label": "Read redundancy",
+        "focus": [
+          "funder",
+          "client",
+          "primaries",
+          "replica",
+          "pallet"
+        ],
+        "note": "Any account adds a replica with add_replica_provider; the replica syncs and calls confirm_replica_sync to get paid."
+      },
+      {
+        "id": "enforcement",
+        "label": "Enforcement",
+        "focus": [
+          "funder",
+          "pallet",
+          "stake",
+          "primaries",
+          "replica"
+        ],
+        "note": "A challenge requires an on-chain response; a missing or invalid response slashes the full stake."
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "podot",
+      "type": "external",
+      "label": "Proof-of-DOT",
+      "sublabel": "identity, read priority",
+      "pos": [
+        140,
+        10
+      ],
+      "size": [
+        190,
+        72
+      ]
+    },
+    {
+      "id": "client",
+      "type": "frontend",
+      "label": "Client / SDK",
+      "sublabel": "bucket admin, writers, readers",
+      "tag": "uploads, reads, verifies hashes",
+      "pos": [
+        140,
+        130
+      ],
+      "size": [
+        190,
+        92
+      ]
+    },
+    {
+      "id": "primaries",
+      "type": "backend",
+      "label": "Primary Providers",
+      "sublabel": "receive writes, sign checkpoints",
+      "tag": "admin or bucket creator, max 5",
+      "pos": [
+        140,
+        290
+      ],
+      "size": [
+        190,
+        92
+      ]
+    },
+    {
+      "id": "replica",
+      "type": "backend",
+      "label": "Replica Providers",
+      "sublabel": "permissionless, serve everyone",
+      "tag": "permissionless",
+      "pos": [
+        140,
+        450
+      ],
+      "size": [
+        190,
+        92
+      ]
+    },
+    {
+      "id": "funder",
+      "type": "external",
+      "label": "Any Account",
+      "sublabel": "funds replicas, challenges",
+      "pos": [
+        140,
+        596
+      ],
+      "size": [
+        190,
+        92
+      ],
+      "tag": "member, agreement owner, or public"
+    },
+    {
+      "id": "anchor",
+      "type": "external",
+      "label": "Relay Chain",
+      "sublabel": "anchor block clock",
+      "pos": [
+        530,
+        20
+      ],
+      "size": [
+        210,
+        80
+      ]
+    },
+    {
+      "id": "pallet",
+      "type": "backend",
+      "label": "Storage Pallet",
+      "sublabel": "extrinsics, signature and proof checks",
+      "tag": "parachain runtime",
+      "pos": [
+        520,
+        290
+      ],
+      "size": [
+        230,
+        110
+      ]
+    },
+    {
+      "id": "bucket",
+      "type": "database",
+      "label": "Bucket State",
+      "sublabel": "members, visibility, snapshot, agreements",
+      "pos": [
+        880,
+        170
+      ],
+      "size": [
+        210,
+        90
+      ]
+    },
+    {
+      "id": "stake",
+      "type": "security",
+      "label": "Funds on Hold",
+      "sublabel": "provider stake, payment, deposits",
+      "pos": [
+        880,
+        430
+      ],
+      "size": [
+        210,
+        90
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "On-chain",
+      "wraps": [
+        "pallet",
+        "bucket",
+        "stake"
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "podot-id",
+      "from": "client",
+      "to": "podot",
+      "label": "lock DOT for identity",
+      "variant": "dashed",
+      "fromSide": "top",
+      "toSide": "bottom"
+    },
+    {
+      "id": "client-write",
+      "from": "client",
+      "to": "primaries",
+      "label": "POST /negotiate, upload, commit",
+      "variant": "emphasis",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelDy": 24
+    },
+    {
+      "id": "replica-sync",
+      "from": "replica",
+      "to": "primaries",
+      "label": "sync peaks and nodes",
+      "fromSide": "top",
+      "toSide": "bottom"
+    },
+    {
+      "id": "client-read",
+      "from": "client",
+      "to": "replica",
+      "label": "read and verify",
+      "variant": "dashed",
+      "fromSide": "left",
+      "toSide": "left",
+      "labelDy": -40
+    },
+    {
+      "id": "client-checkpoint",
+      "from": "client",
+      "to": "pallet",
+      "label": "create_bucket, add_primary_provider, checkpoint",
+      "variant": "emphasis",
+      "fromSide": "right",
+      "toSide": "top",
+      "labelSegment": 0,
+      "labelDy": -30
+    },
+    {
+      "id": "provider-response",
+      "from": "primaries",
+      "to": "pallet",
+      "label": "respond_to_challenge",
+      "variant": "security",
+      "fromSide": "right",
+      "toSide": "left"
+    },
+    {
+      "id": "replica-confirm",
+      "from": "replica",
+      "to": "pallet",
+      "label": "confirm_replica_sync",
+      "fromSide": "right",
+      "toSide": "left"
+    },
+    {
+      "id": "open-challenge",
+      "from": "funder",
+      "to": "pallet",
+      "label": "add_replica_provider, challenge + deposit",
+      "variant": "security",
+      "fromSide": "right",
+      "toSide": "bottom"
+    },
+    {
+      "id": "anchor-clock",
+      "from": "anchor",
+      "to": "pallet",
+      "label": "anchor block number",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelDy": 24
+    },
+    {
+      "id": "pallet-bucket",
+      "from": "pallet",
+      "to": "bucket",
+      "label": "snapshot and agreements",
+      "fromSide": "right",
+      "toSide": "left"
+    },
+    {
+      "id": "pallet-stake",
+      "from": "pallet",
+      "to": "stake",
+      "label": "hold, slash, settle",
+      "variant": "security",
+      "fromSide": "right",
+      "toSide": "left"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Off-chain by default",
+      "items": [
+        "Writes, reads and replica sync do not use the chain",
+        "Private bucket: primaries serve members only; replicas serve everyone",
+        "POST /negotiate quotes name the bucket"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "On-chain only when needed",
+      "items": [
+        "create_bucket, then providers join by signed terms",
+        "A bucket remains after its last agreement ends",
+        "Checkpoints, sync confirmations, disputes"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Enforcement",
+      "items": [
+        "A failed challenge slashes the entire stake",
+        "Private bucket: members and primary-agreement owners challenge primaries",
+        "Counterparty challenges cost the provider part of the response fee"
+      ]
+    }
+  ]
+}

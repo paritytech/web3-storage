@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>dApp Developer Guide</title>
+<meta name="description" content="How a dApp stores, reads and verifies data on Scalable Web3 Storage.">
+<link rel="stylesheet" href="site.css">
+</head>
+<body>
+<main>
+<header class="top">
+  <p class="crumb"><a href="index.html">Scalable Web3 Storage</a> / dApp guide</p>
+  <h1>dApp developer guide</h1>
+  <p class="lede">
+    How an application stores, reads and verifies data. Your client uploads data to providers over HTTP and
+    submits transactions to the storage pallet only for setup, checkpoints and disputes.
+    Names on this page follow design v2.4. Check the runtime metadata of the chain you connect to for the
+    exact call signatures.
+  </p>
+</header>
+
+<div class="guide">
+<nav class="toc" aria-label="Contents">
+  <p>Contents</p>
+  <ol>
+    <li><a href="#guarantees">What you can rely on</a></li>
+    <li><a href="#concepts">Concepts</a></li>
+    <li><a href="#flow">Integration flow</a></li>
+    <li><a href="#private">Private buckets</a></li>
+    <li><a href="#costs">Costs and timeouts</a></li>
+    <li><a href="#http">Provider HTTP API</a></li>
+    <li><a href="#sdk">SDKs</a></li>
+  </ol>
+</nav>
+
+<article>
+
+<section id="guarantees">
+<h2>What you can rely on</h2>
+<ul>
+  <li><strong>After commit</strong>: the provider returns a signature over the new bucket state (MMR root) that includes your data. With this signature you can challenge the provider on-chain (<code>challenge_offchain</code>). You get this guarantee without a transaction.</li>
+  <li><strong>After checkpoint</strong>: the MMR root is on-chain. Anyone can challenge the providers that signed it (on a private bucket: members and primary-agreement owners), and the commitment remains in chain history if you lose the signature.</li>
+  <li><strong>Stake</strong>: a provider that fails to answer a challenge in time, or answers with an invalid proof, loses its entire stake, which covers all of its agreements.</li>
+  <li><strong>Duration</strong>: agreements bind both sides until expiry. The provider cannot leave early. You cannot cancel and reclaim the payment.</li>
+</ul>
+<p class="muted">The chain does not check that providers serve reads fast. Your client checks that, and punishes a slow provider with a burn at settlement, a challenge, or by not extending the agreement.</p>
+<p class="see">Diagram: <a href="01-system-architecture.html">01 System architecture</a></p>
+</section>
+
+<section id="concepts">
+<h2>Concepts</h2>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Term</th><th>Meaning</th></tr></thead>
+  <tbody>
+    <tr><td>Bucket</td><td>On-chain container with a permanent <code>bucket_id</code>. It lists members, providers and the current snapshot. Providers can change; the id does not.</td></tr>
+    <tr><td>Roles</td><td><code>Admin</code> (members, settings, delete data), <code>Writer</code> (append), <code>Reader</code> (read, only meaningful on a private bucket). Each role includes the next.</td></tr>
+    <tr><td>Visibility</td><td><code>Public</code> or <code>Private</code>. On a private bucket, primaries serve reads only to members. See <a href="#private">Private buckets</a>.</td></tr>
+    <tr><td>Primary provider</td><td>Added by the admin. Receives writes from clients and signs checkpoints. At most <code>MaxPrimaryProviders</code> (5) per bucket.</td></tr>
+    <tr><td>Replica provider</td><td>Added by any account that gets a replica quote from the provider (the quote names that account). Syncs data from other providers, confirms sync on-chain, and receives a payment per confirmation. No limit per bucket.</td></tr>
+    <tr><td>Storage agreement</td><td>One per provider per bucket: quota (<code>max_bytes</code>), locked price, expiry, role, and owner. The payment is held on the owner until settlement.</td></tr>
+    <tr><td><code>data_root</code></td><td>Merkle root of a chunk tree. Chunks are at most 256 KiB and addressed by <code>blake2_256</code> hash.</td></tr>
+    <tr><td>MMR and commitment</td><td>Each bucket has one Merkle Mountain Range. Each leaf holds a <code>data_root</code>. A <code>Commitment</code> is <code>(mmr_root, start_seq, leaf_count)</code>.</td></tr>
+    <tr><td>Checkpoint</td><td>A commitment written on-chain with signatures from at least <code>min_providers</code> primaries.</td></tr>
+    <tr><td>Challenge</td><td>An on-chain request that forces a provider to post one chunk with Merkle proofs, or lose its stake.</td></tr>
+  </tbody>
+</table>
+</div>
+<h3>References to data</h3>
+<pre><code>bucket://42/&lt;data_root&gt;              immutable: pins exact content
+bucket://42/latest/leaf/17            mutable: current leaf 17
+bucket://42/fs/my_website/logo.png    mutable: path in the latest snapshot</code></pre>
+<p>Your client looks up the bucket on-chain to find which providers store it, their stake, and their agreement expiry, with one chain query.</p>
+<p class="see">Diagrams: <a href="09-data-commitment.html">09 From bytes to on-chain commitment</a>, <a href="07-bucket-lifecycle.html">07 Bucket lifecycle</a></p>
+</section>
+
+<section id="flow">
+<h2>Integration flow</h2>
+<p class="see">Diagram of the whole flow: <a href="04-dapp-integration.html">04 dApp integration flow</a></p>
+<ol class="steps">
+  <li>
+    <h3>Choose providers</h3>
+    <p>Query the runtime API: <code>find_matching_providers(requirements, limit)</code> returns providers sorted by match score; <code>providers_with_capacity</code> and <code>provider_info</code> return settings, stake and stats.</p>
+    <p>Compare stake, agreements extended against agreements burned, and <code>challenges_failed</code>. Do not mix high-stake and low-stake providers in one bucket: the low-stake provider can copy from the other and risk little. Pick providers in different regions and track read latency over time.</p>
+  </li>
+  <li>
+    <h3>Get a signed quote</h3>
+    <p>Call <code>POST /negotiate</code> on the provider with the owner account, <code>bucket</code> (<code>null</code> for a new bucket, or the bucket id), <code>max_bytes</code>, <code>duration</code>, <code>price_per_byte</code>, and <code>replica_params</code> for a replica. The provider returns signed <code>AgreementTerms</code>.</p>
+    <p>The quote is for one owner and one bucket target. You can redeem it once, until <code>valid_until</code>. At redemption the chain requires <code>valid_until</code> to be at most <code>RequestTimeout</code> (6 hours) after the current anchor block.</p>
+  </li>
+  <li>
+    <h3>Create the bucket</h3>
+    <p>One transaction: <code>create_bucket_with_primary(provider, terms, sig, visibility)</code> with a quote for <code>bucket: null</code>. Or two: <code>create_bucket(min_providers, visibility)</code>, then <code>add_primary_provider(bucket_id, provider, terms, sig)</code> as admin with a quote for that bucket id.</p>
+    <p>The pallet holds <code>price_per_byte × max_bytes × duration</code> on the owner. Add more primaries the same way. Add members with <code>set_member(bucket_id, member, role)</code>. If your wrapper lets the user skip the visibility choice, default to <code>Private</code>.</p>
+    <p class="see">Diagram: <a href="06-bucket-and-providers.html">06 Bucket creation and provider assignment</a></p>
+  </li>
+  <li>
+    <h3>Upload</h3>
+    <p>Split data into chunks of at most 256 KiB and build the Merkle tree. Call <code>POST /exists</code> with hashes, top-down, to skip subtrees the provider already has. Upload missing nodes bottom-up with <code>PUT /node</code>: a parent is rejected (<code>children_missing</code>) until its children exist. Uploads above the agreement quota fail with <code>507 quota_exceeded</code>.</p>
+    <p>Primaries do not sync with each other. Upload to every primary that must store the data.</p>
+  </li>
+  <li>
+    <h3>Commit</h3>
+    <p>Call <code>POST /commit</code> with the <code>data_roots</code> to append. The response contains the new <code>mmr_root</code>, <code>start_seq</code>, <code>leaf_count</code>, the <code>leaf_indices</code> of your roots, and <code>provider_signature</code>. Store the signature: it is the evidence for <code>challenge_offchain</code>.</p>
+  </li>
+  <li>
+    <h3>Checkpoint</h3>
+    <p>Get a signature from each primary with <code>GET /checkpoint-signature</code>, then submit <code>checkpoint(bucket_id, commitment, signatures)</code> as a writer or admin, with at least <code>min_providers</code> primary signatures. Anyone can add more signatures to the current snapshot later with <code>extend_checkpoint</code>.</p>
+    <p>Checkpoints are optional and can be infrequent. Without one, <code>challenge_checkpoint</code> is not available and providers must keep every state they signed.</p>
+    <p class="see">Diagram: <a href="08-write-commit-checkpoint.html">08 Upload, commit, checkpoint</a></p>
+  </li>
+  <li>
+    <h3>Read and verify</h3>
+    <p>Read with <code>GET /read?data_root=…&amp;offset=…&amp;length=…</code> or <code>GET /node?hash=…</code> from any primary or replica, and check each chunk against its hash. Every read is a storage check. In the background, fetch a few random chunks per week and record failures and latency per provider. Three random chunks per week detect a provider that deleted 10% of the data with 98% probability within 13 weeks.</p>
+    <p class="see">Diagram: <a href="10-read-and-verify.html">10 Read and verify</a></p>
+  </li>
+  <li>
+    <h3>Challenge a provider that does not serve</h3>
+    <p>Use a challenge only when the provider does not serve data. Pick the mode:</p>
+    <ul>
+      <li><code>challenge_offchain</code>: with a commit signature. Use it on buckets with frequent writes.</li>
+      <li><code>challenge_checkpoint</code>: against the on-chain snapshot. Use it on buckets with infrequent writes. It fails if a new checkpoint no longer lists the provider.</li>
+      <li><code>challenge_replica</code>: against the root a replica confirmed on-chain.</li>
+    </ul>
+    <p>You lock a deposit that covers the provider's response cost. The provider has <code>ChallengeTimeout</code> (48 hours) to respond. See <a href="#costs">Costs</a> for who pays.</p>
+    <p class="see">Diagrams: <a href="12-challenge-protocol.html">12 Challenge protocol</a>, <a href="13-challenge-sequence.html">13 Challenge, response and slash</a></p>
+  </li>
+  <li>
+    <h3>Keep the data stored</h3>
+    <ul>
+      <li><code>extend_agreement</code> before expiry. Anyone can extend if the provider's price did not increase; otherwise only the owner.</li>
+      <li><code>top_up_agreement</code> to raise the quota.</li>
+      <li><code>add_replica_provider</code> to add a replica with a replica quote; fund its syncs with <code>top_up_replica_sync_balance</code>.</li>
+      <li>To change a primary without downtime, add the new primary first, upload the data to it, and checkpoint with its signature before the old agreement ends.</li>
+    </ul>
+    <p class="see">Diagrams: <a href="14-change-provider.html">14 Changing a primary provider</a>, <a href="11-replica-sync.html">11 Replica sync</a></p>
+  </li>
+  <li>
+    <h3>Settle</h3>
+    <p>After expiry, the owner calls <code>end_agreement</code> with <code>Pay</code> or <code>Burn { burn_percent }</code> within <code>SettlementTimeout</code> (24 hours). A burn costs the owner an extra premium. After the window, the provider can call <code>claim_expired_agreement</code> and receive the payment. The admin can end a primary agreement early; the full remaining payment is then paid or burned. Replica agreements cannot end early.</p>
+    <p>When the last agreement ends, the bucket remains on-chain with its members and snapshot. The admin can add a new primary later and upload the data again.</p>
+    <p class="see">Diagram: <a href="15-agreement-settlement.html">15 Agreement settlement</a></p>
+  </li>
+  <li>
+    <h3>Delete data or freeze</h3>
+    <p>An admin deletes old leaves with <code>POST /delete</code> and a <code>new_start_seq</code>; the provider returns a new commitment. <code>freeze_bucket</code> makes the bucket append-only. Freezing cannot be undone.</p>
+  </li>
+</ol>
+</section>
+
+<section id="private">
+<h2>Private buckets</h2>
+<ul>
+  <li><code>Private</code> controls access only. Honest primaries serve reads only to members; the chain cannot enforce this. To keep data confidential, encrypt it on the client.</li>
+  <li>On-chain metadata is public on every bucket: MMR roots, sizes, leaf counts, checkpoints, challenge events. A challenge response posts the chunk on-chain.</li>
+  <li>On a private bucket, only members and primary-agreement owners can challenge primaries.</li>
+  <li>Replicas serve everyone and anyone can challenge them, on public and private buckets.</li>
+  <li>Changing a bucket from public to private does not recall data that replicas already have. Changing it from private to public discloses data from then on.</li>
+</ul>
+</section>
+
+<section id="costs">
+<h2>Costs and timeouts</h2>
+<p class="see">Diagram: <a href="03-funds-flow.html">03 Funds flow</a></p>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Cost</th><th>Who pays</th><th>Rule</th></tr></thead>
+  <tbody>
+    <tr><td>Storage payment</td><td>Agreement owner</td><td><code>price_per_byte × max_bytes × duration</code>, held on the owner, paid to the provider at settlement</td></tr>
+    <tr><td>Replica sync</td><td>Agreement owner (anyone can top up)</td><td><code>sync_price</code> per accepted sync confirmation, drawn from <code>sync_balance</code></td></tr>
+    <tr><td>Challenge response, public challenger</td><td>Challenger: 100%</td><td>The deposit reimburses the provider's response fee in full</td></tr>
+    <tr><td>Challenge response, member or agreement owner</td><td>Challenger: at least 50%. Provider: the rest</td><td>A slower response makes the provider pay a larger share. The design gives example tiers from 90% / 10% to 50% / 50%</td></tr>
+    <tr><td>Failed challenge response</td><td>Provider</td><td>The provider loses its full stake. The challenger gets the deposit and fees back, with no reward</td></tr>
+    <tr><td>Burn</td><td>Agreement owner</td><td>The locked payment plus a premium from the owner's free balance. Without the premium funds, the burn fails</td></tr>
+  </tbody>
+</table>
+</div>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Timeout</th><th>Reference value</th></tr></thead>
+  <tbody>
+    <tr><td><code>RequestTimeout</code>: maximum quote validity</td><td>6 hours</td></tr>
+    <tr><td><code>ChallengeTimeout</code>: response window</td><td>48 hours</td></tr>
+    <tr><td><code>SettlementTimeout</code>: owner window after expiry</td><td>24 hours</td></tr>
+  </tbody>
+</table>
+</div>
+<p class="muted">All durations are in anchor (relay-chain) blocks of 6 seconds, not parachain blocks. Read the current anchor block with the <code>current_anchor_block</code> runtime API. Values are the reference runtime values; the chain you connect to can set others.</p>
+</section>
+
+<section id="http">
+<h2>Provider HTTP API</h2>
+<p>JSON over HTTP. A local provider node listens on <code>http://localhost:3333</code>. The provider's address is in its on-chain <code>multiaddr</code>.</p>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Endpoint</th><th>Role required</th><th>Use</th></tr></thead>
+  <tbody>
+    <tr><td><code>POST /negotiate</code></td><td>—</td><td>Get signed agreement terms</td></tr>
+    <tr><td><code>POST /exists</code></td><td>—</td><td>Find which hashes the provider is missing</td></tr>
+    <tr><td><code>PUT /node</code></td><td>Writer</td><td>Upload a chunk or internal node</td></tr>
+    <tr><td><code>POST /commit</code></td><td>Writer</td><td>Append <code>data_roots</code> to the MMR; returns a signed commitment</td></tr>
+    <tr><td><code>GET /checkpoint-signature</code></td><td>—</td><td>Signature for the <code>checkpoint</code> call</td></tr>
+    <tr><td><code>GET /commitment</code></td><td>—</td><td>Signed commitment for <code>challenge_offchain</code></td></tr>
+    <tr><td><code>GET /read</code>, <code>GET /node</code></td><td>Reader on a private bucket</td><td>Read chunks</td></tr>
+    <tr><td><code>GET /mmr_proof</code>, <code>GET /chunk_proof</code></td><td>—</td><td>Proofs that a chunk is in a committed root</td></tr>
+    <tr><td><code>POST /delete</code></td><td>Admin</td><td>Delete leaves before <code>new_start_seq</code></td></tr>
+    <tr><td><code>GET /health</code>, <code>GET /info</code></td><td>—</td><td>Status</td></tr>
+  </tbody>
+</table>
+</div>
+<p class="muted">The design requires a signed header for <code>PUT /node</code>, <code>POST /commit</code>, <code>POST /delete</code> and reads of access-controlled data. A dash means the design does not list a role.</p>
+<h3>Authentication</h3>
+<pre><code>Authorization: Web3Storage &lt;pubkey_hex&gt;:&lt;signature_hex&gt;:&lt;unix_timestamp&gt;
+Signed message: "web3storage:&lt;METHOD&gt;:&lt;bucket_id&gt;:&lt;unix_timestamp&gt;"</code></pre>
+<p>The signature is sr25519. The timestamp must be within 5 minutes of the provider's clock. The provider reads your role from <code>bucket.members</code> on-chain and caches it. A chain event clears the cache for that bucket; otherwise it expires after 30 seconds (<code>--auth-cache-ttl</code>). If a refetch fails, the provider uses the cached roles for up to 5 minutes (<code>--auth-max-stale</code>), then rejects requests with <code>503 membership_unavailable</code>.</p>
+<div class="note"><p>The design marks this scheme as under-specified: the signed message does not cover the request body or the provider. Tracked in <a href="https://github.com/paritytech/web3-storage/issues/304">#304</a>.</p></div>
+</section>
+
+<section id="sdk">
+<h2>SDKs</h2>
+<p>The SDKs wrap the calls above. They are not part of the design documents; their READMEs describe them.</p>
+<ul>
+  <li><a href="https://github.com/paritytech/web3-storage/blob/dev/packages/sdk/README.md">TypeScript: <code>@web3-storage/sdk</code></a>, built on <code>polkadot-api</code>. Transaction semantics and read options are in its README.</li>
+  <li><a href="https://github.com/paritytech/web3-storage/blob/dev/clients/storage/README.md">Rust: storage client</a> for the flow on this page.</li>
+  <li><a href="https://github.com/paritytech/web3-storage/blob/dev/clients/file-system/README.md">Rust: file-system client</a> and <a href="https://github.com/paritytech/web3-storage/blob/dev/clients/s3/README.md">S3 client</a>, which add drives, directories and objects on top of buckets.</li>
+</ul>
+<p>For a short TypeScript example with the <code>Web3Storage</code> facade, see "Entry points" in the <a href="https://github.com/paritytech/web3-storage/blob/dev/packages/sdk/README.md#entry-points">SDK README</a>.</p>
+<p>To run a local chain and provider, follow the <a href="https://github.com/paritytech/web3-storage/blob/dev/docs/getting-started/FILE_SYSTEM_QUICKSTART.md">quick start</a>.</p>
+</section>
+
+</article>
+</div>
+
+<footer>
+  <p>Derived from <a href="https://github.com/paritytech/web3-storage/tree/dev/docs/design"><code>docs/design/</code></a>. Where this page and the design disagree, the design is correct.</p>
+</footer>
+</main>
+</body>
+</html>

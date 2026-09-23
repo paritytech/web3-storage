@@ -1,0 +1,247 @@
+{
+  "schema_version": 1,
+  "diagram_type": "dataflow",
+  "meta": {
+    "title": "From Bytes to On-Chain Commitment",
+    "quality_profile": "showcase",
+    "viewBox": [
+      1068,
+      600
+    ],
+    "views": [
+      {
+        "id": "addressing",
+        "label": "Content addressing",
+        "focus": [
+          "file",
+          "chunks",
+          "internal",
+          "data_root"
+        ],
+        "note": "Chunks and internal nodes are addressed by hash and uploaded children first."
+      },
+      {
+        "id": "commitment",
+        "label": "Commitment",
+        "focus": [
+          "data_root",
+          "mmr",
+          "snapshot"
+        ],
+        "note": "One canonical MMR per bucket. A checkpoint records it as the BucketSnapshot."
+      },
+      {
+        "id": "consumers",
+        "label": "Verified use",
+        "focus": [
+          "snapshot",
+          "historical",
+          "proof",
+          "replica_confirm"
+        ],
+        "note": "Challenges and replica sync confirmations verify against the committed roots."
+      }
+    ],
+    "legend": {
+      "entries": {
+        "security": {
+          "label": "challenge target"
+        }
+      }
+    }
+  },
+  "stages": [
+    {
+      "label": "Client data"
+    },
+    {
+      "label": "Content addressing"
+    },
+    {
+      "label": "Bucket commitment"
+    },
+    {
+      "label": "On-chain state"
+    },
+    {
+      "label": "Verified use"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "file",
+      "type": "frontend",
+      "label": "Client Layout",
+      "sublabel": "files and directories",
+      "stage": 0,
+      "row": 1,
+      "tag": "client-controlled"
+    },
+    {
+      "id": "chunks",
+      "type": "database",
+      "label": "Chunks",
+      "sublabel": "blake2_256(data)",
+      "stage": 1,
+      "row": 0,
+      "tag": "leaves"
+    },
+    {
+      "id": "internal",
+      "type": "database",
+      "label": "Internal Nodes",
+      "sublabel": "content is child hashes",
+      "stage": 1,
+      "row": 2,
+      "tag": "bottom-up"
+    },
+    {
+      "id": "data_root",
+      "type": "backend",
+      "label": "data_root",
+      "sublabel": "Merkle root of chunk tree",
+      "stage": 2,
+      "row": 0,
+      "tag": "MmrLeaf.data_root"
+    },
+    {
+      "id": "mmr",
+      "type": "backend",
+      "label": "Bucket MMR",
+      "sublabel": "one canonical range",
+      "stage": 2,
+      "row": 2,
+      "tag": "append / delete / freeze"
+    },
+    {
+      "id": "snapshot",
+      "type": "database",
+      "label": "BucketSnapshot",
+      "sublabel": "Commitment + block",
+      "stage": 3,
+      "row": 0,
+      "tag": "primary_signers"
+    },
+    {
+      "id": "historical",
+      "type": "database",
+      "label": "historical_roots",
+      "sublabel": "3, 7, 11, 23, 47, 113",
+      "stage": 3,
+      "row": 2,
+      "tag": "prime intervals"
+    },
+    {
+      "id": "proof",
+      "type": "security",
+      "label": "Challenge Proof",
+      "sublabel": "chunk_proof + mmr_proof",
+      "stage": 4,
+      "row": 0
+    },
+    {
+      "id": "replica_confirm",
+      "type": "backend",
+      "label": "Replica Sync",
+      "sublabel": "signed roots array",
+      "stage": 4,
+      "row": 2
+    }
+  ],
+  "flows": [
+    {
+      "id": "split",
+      "from": "file",
+      "to": "chunks",
+      "label": "split by client layout",
+      "classification": "plaintext or ciphertext",
+      "variant": "emphasis"
+    },
+    {
+      "id": "build-tree",
+      "from": "chunks",
+      "to": "internal",
+      "label": "parent = hash(child hashes)",
+      "classification": "content-addressed",
+      "labelDy": 60
+    },
+    {
+      "id": "tree-root",
+      "from": "internal",
+      "to": "data_root",
+      "label": "complete tree implies root",
+      "classification": "self-verifying"
+    },
+    {
+      "id": "append-leaf",
+      "from": "data_root",
+      "to": "mmr",
+      "label": "POST /commit appends MmrLeaf",
+      "classification": "CommitmentPayload signed",
+      "variant": "emphasis",
+      "labelDy": 24
+    },
+    {
+      "id": "checkpoint-root",
+      "from": "mmr",
+      "to": "snapshot",
+      "label": "checkpoint(commitment, signatures)",
+      "classification": "min_providers signatures",
+      "variant": "emphasis"
+    },
+    {
+      "id": "history",
+      "from": "snapshot",
+      "to": "historical",
+      "label": "checkpoint updates at prime intervals",
+      "classification": "anti-race",
+      "labelDy": 140
+    },
+    {
+      "id": "challenge-target",
+      "from": "snapshot",
+      "to": "proof",
+      "label": "ChunkLocation",
+      "classification": "leaf_index, chunk_index",
+      "variant": "security",
+      "labelDy": 53
+    },
+    {
+      "id": "confirm",
+      "from": "historical",
+      "to": "replica_confirm",
+      "label": "confirm_replica_sync(roots)",
+      "classification": "matched root is new",
+      "labelDy": 53
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Content addressing",
+      "items": [
+        "Chunks and internal nodes are both addressed by hash",
+        "Upload is bottom-up: children must exist before the parent",
+        "If the root hash exists, the whole tree is present"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "One MMR per bucket",
+      "items": [
+        "Append adds a leaf; delete raises start_seq; freeze locks start_seq",
+        "Canonical range: [start_seq, start_seq + leaf_count)",
+        "Non-canonical [A, A+N) is prunable once canonical [B, B+M) has B+M > A+N"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "What a proof must show",
+      "items": [
+        "chunk_proof (MerkleProof): the chunk is in the leaf's data_root",
+        "mmr_proof (MmrProof): peaks, leaf and leaf_proof to the mmr_root",
+        "If either check fails, the provider is slashed with InvalidProof"
+      ]
+    }
+  ]
+}

@@ -4,6 +4,7 @@
 docs/
 ├── getting-started/   — quickstart
 ├── design/            — canonical system design (review-gated)
+├── site/              — architecture diagrams and dApp guide, derived from design/
 └── drafts/            — unratified / WIP notes (need triage)
 ```
 
@@ -31,6 +32,10 @@ The canonical system design. Changes require review (see [`.github/CODEOWNERS`](
 
 - **[Scalable Web3 Storage](./design/scalable-web3-storage.md)** — architecture, economic model, comparisons with Filecoin/IPFS/Arweave, rebuttals to common review concerns.
 - **[Implementation Details](./design/scalable-web3-storage-implementation.md)** — pallet extrinsics, provider HTTP API, MMR layout, challenge mechanism, replica sync.
+
+## Site
+
+**[`site/`](./site/)** — architecture and workflow diagrams for web3-storage developers, and a guide for dApp developers. Every page is derived from `design/`; when `design/` changes, update the site in the same PR (`/generate-docs` skill, checked in CI by [`scripts/check-docs-site.sh`](../scripts/check-docs-site.sh)).
 
 ## Drafts
 

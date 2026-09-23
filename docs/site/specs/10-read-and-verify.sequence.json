@@ -1,0 +1,90 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "Read and Verify",
+    "quality_profile": "showcase",
+    "viewBox": [1380, 760],
+    "column_fit": "spread",
+    "views": [
+      {
+        "id": "discovery",
+        "label": "Discovery",
+        "focus": ["client", "chain"],
+        "note": "The client reads the bucket, its agreements and each provider's multiaddr from the chain through the runtime API."
+      },
+      {
+        "id": "read",
+        "label": "Read and verify",
+        "focus": ["client", "primary", "chain"],
+        "note": "The client checks each chunk hash, the Merkle path to data_root, and the MMR proof to the on-chain mmr_root."
+      },
+      {
+        "id": "fallback",
+        "label": "Fallback",
+        "focus": ["client", "replica", "chain"],
+        "note": "If a provider does not serve or the data does not match, the client reads from another provider. A challenge is the last resort."
+      }
+    ]
+  },
+  "participants": [
+    { "id": "client", "type": "external", "label": "Client (Reader)" },
+    { "id": "chain", "type": "backend", "label": "Storage Pallet" },
+    { "id": "primary", "type": "backend", "label": "Primary provider" },
+    { "id": "replica", "type": "backend", "label": "Replica (optional)" }
+  ],
+  "segments": [
+    { "from": 165, "to": 350, "label": "Discovery (runtime API): bucket → agreements → provider endpoints" },
+    { "from": 370, "to": 555, "label": "Read: chunks with proofs, checked by the client" },
+    { "from": 575, "to": 695, "label": "Fallback: another provider, then challenge" }
+  ],
+  "messages": [
+    { "id": "bucket-info", "from": "client", "to": "chain", "y": 190, "label": "bucket_info(bucket_id)", "variant": "default" },
+    { "id": "bucket-state", "from": "chain", "to": "client", "y": 226, "label": "snapshot, visibility, members", "variant": "return" },
+    { "id": "agreements", "from": "client", "to": "chain", "y": 262, "label": "bucket_agreements(bucket_id)", "variant": "default", "note": "primary and replica agreements" },
+    { "id": "provider-info", "from": "client", "to": "chain", "y": 298, "label": "provider_info(provider)", "variant": "default" },
+    { "id": "endpoint", "from": "chain", "to": "client", "y": 334, "label": "multiaddr, public_key", "variant": "return" },
+    { "id": "read", "from": "client", "to": "primary", "y": 395, "label": "GET /read?data_root&offset&length", "variant": "emphasis", "note": "private: Authorization header, Reader role" },
+    { "id": "members", "from": "primary", "to": "chain", "y": 431, "label": "bucket.members (TTL-cached)", "variant": "security" },
+    { "id": "chunks", "from": "primary", "to": "client", "y": 467, "label": "chunks: hash, data, proof", "variant": "return", "note": "client checks blake2_256 and Merkle path" },
+    { "id": "mmr-proof", "from": "client", "to": "primary", "y": 503, "label": "GET /mmr_proof?bucket_id&leaf_index", "variant": "default", "note": "data_root from a checkpoint or a signed commit" },
+    { "id": "mmr-leaf", "from": "primary", "to": "client", "y": 539, "label": "leaf, peaks, siblings", "variant": "return", "note": "client checks against the snapshot or the signed commit mmr_root" },
+    { "id": "replica-read", "from": "client", "to": "replica", "y": 600, "label": "GET /read (same range)", "variant": "default", "note": "replicas serve everyone" },
+    { "id": "replica-chunks", "from": "replica", "to": "client", "y": 636, "label": "chunks with proofs", "variant": "return" },
+    { "id": "challenge", "from": "client", "to": "chain", "y": 672, "label": "challenge (persistent failure)", "variant": "dashed", "note": "see pages 12 and 13" }
+  ],
+  "activations": [
+    { "participant": "chain", "from": 185, "to": 340, "type": "backend" },
+    { "participant": "primary", "from": 390, "to": 545, "type": "backend" },
+    { "participant": "replica", "from": 595, "to": 642, "type": "backend" }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "What the client verifies",
+      "items": [
+        "blake2_256(chunk) equals its hash",
+        "Merkle path from chunk to data_root",
+        "MMR proof from data_root to mmr_root"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Private and public reads",
+      "items": [
+        "Private: primaries serve members only",
+        "Replicas and public primaries serve anyone",
+        "Chain does not enforce it; encrypt data"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Background spot checks",
+      "items": [
+        "Example: 3 random chunks per week",
+        "Record latency and failures per provider",
+        "Challenge only if a provider does not serve"
+      ]
+    }
+  ]
+}

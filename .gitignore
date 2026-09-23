@@ -79,3 +79,5 @@ coverage-summary.txt
 lcov-integration.info
 lcov.info
 patch-coverage.md
+# Receipts and screenshots from a manual archify visual-check run in docs/site/
+docs/site/*.visual-check.*

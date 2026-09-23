@@ -1,0 +1,31 @@
+name: Docs Site
+
+# Fails when docs/design/ changed and docs/site/ was not updated with it.
+# No `paths:` filter so the check always reports and is safe to require.
+on:
+  push:
+    branches: [main, dev]
+  # No base-branch filter: stacked PRs (base = another feature branch)
+  # must get the same CI as dev-targeted PRs.
+  pull_request:
+  merge_group:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  design-in-sync:
+    name: docs/site matches docs/design
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check design hashes
+        run: scripts/check-docs-site.sh
