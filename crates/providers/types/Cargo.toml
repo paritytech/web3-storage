@@ -5,7 +5,7 @@ authors.workspace = true
 edition.workspace = true
 license = "Apache-2.0"
 repository.workspace = true
-description = "Shared provider identity and registration types"
+description = "Shared types used across the provider crates"
 
 [dependencies]
 provider-negotiation = { workspace = true }
@@ -13,6 +13,7 @@ serde = { workspace = true, features = ["std"] }
 sp-core = { workspace = true, features = ["std"] }
 sp-crypto-hashing = { workspace = true, features = ["std"] }
 sp-runtime = { workspace = true, features = ["std"] }
+thiserror = { workspace = true }
 clap = { workspace = true, optional = true, features = ["derive"] }
 
 [features]

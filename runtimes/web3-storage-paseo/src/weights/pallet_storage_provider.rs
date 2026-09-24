@@ -356,6 +356,22 @@ impl<T: frame_system::Config> pallet_storage_provider::WeightInfo for WeightInfo
 			.saturating_add(T::DbWeight::get().reads(6))
 			.saturating_add(T::DbWeight::get().writes(4))
 	}
+	/// Storage: `StorageProvider::StorageAgreements` (r:1 w:1)
+	/// Proof: `StorageProvider::StorageAgreements` (`max_values`: None, `max_size`: Some(243), added: 2718, mode: `MaxEncodedLen`)
+	/// Storage: `Balances::Holds` (r:2 w:2)
+	/// Proof: `Balances::Holds` (`max_values`: None, `max_size`: Some(193), added: 2668, mode: `MaxEncodedLen`)
+	/// Storage: `System::Account` (r:2 w:2)
+	/// Proof: `System::Account` (`max_values`: None, `max_size`: Some(128), added: 2603, mode: `MaxEncodedLen`)
+	fn transfer_agreement_ownership() -> Weight {
+		// Proof Size summary in bytes:
+		//  Measured:  `663`
+		//  Estimated: `6326`
+		// Minimum execution time: 67_610_000 picoseconds.
+		Weight::from_parts(74_312_000, 0)
+			.saturating_add(Weight::from_parts(0, 6326))
+			.saturating_add(T::DbWeight::get().reads(5))
+			.saturating_add(T::DbWeight::get().writes(5))
+	}
 	/// Storage: `StorageProvider::Providers` (r:1 w:1)
 	/// Proof: `StorageProvider::Providers` (`max_values`: None, `max_size`: Some(364), added: 2839, mode: `MaxEncodedLen`)
 	/// Storage: `StorageProvider::StorageAgreements` (r:1 w:1)
