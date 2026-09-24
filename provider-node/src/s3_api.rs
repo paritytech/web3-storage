@@ -151,7 +151,7 @@ pub async fn s3_get_object(
         })?;
 
     // Collect chunks and reassemble
-    let chunks = state.storage.collect_chunks(meta.data_root);
+    let chunks = state.storage.collect_chunks(meta.data_root)?;
     let mut data = Vec::with_capacity(meta.size as usize);
     for chunk in chunks {
         data.extend_from_slice(&chunk);

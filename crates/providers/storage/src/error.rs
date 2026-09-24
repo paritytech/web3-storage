@@ -28,6 +28,12 @@ pub enum Error {
     #[error("Root not found: {0}")]
     RootNotFound(String),
 
+    /// The content tree under a data root has more than `max_nodes` nodes
+    /// when every shared subtree is counted once per path that reaches it.
+    /// Deduplication lets a few stored nodes span such a tree.
+    #[error("Content tree exceeds {max_nodes} nodes")]
+    TreeTooLarge { max_nodes: u64 },
+
     #[error("Invalid hash: expected {expected}, got {actual}")]
     InvalidHash { expected: String, actual: String },
 

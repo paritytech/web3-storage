@@ -39,6 +39,7 @@ pub struct DiskStorage {
     /// Deliberately one global lock: write volume is far below contention
     /// territory; switch to per-bucket locks if that ever changes.
     write_lock: parking_lot::Mutex<()>,
+    max_tree_nodes: u64,
 }
 
 impl DiskStorage {
@@ -56,7 +57,14 @@ impl DiskStorage {
         Ok(Self {
             db: Arc::new(db),
             write_lock: parking_lot::Mutex::new(()),
+            max_tree_nodes: super::MAX_TREE_NODES,
         })
+    }
+
+    #[cfg(test)]
+    fn with_max_tree_nodes(mut self, max_nodes: u64) -> Self {
+        self.max_tree_nodes = max_nodes;
+        self
     }
 
     /// Acquire the write lock serializing read-modify-write paths (the
@@ -351,8 +359,7 @@ impl DiskStorage {
         for (i, data_root) in data_roots.iter().enumerate() {
             leaf_indices.push(start_index + i as u64);
 
-            // Calculate data size by traversing the stored node tree
-            let data_size = self.calculate_tree_size(*data_root);
+            let data_size = self.calculate_tree_size(*data_root)?;
             let total_size = bucket
                 .leaves
                 .last()
@@ -552,6 +559,10 @@ impl DiskStorage {
 }
 
 impl StorageBackend for DiskStorage {
+    fn max_tree_nodes(&self) -> u64 {
+        self.max_tree_nodes
+    }
+
     fn init_bucket(&self, bucket_id: BucketId, max_bytes: u64) -> Result<(), Error> {
         self.init_bucket(bucket_id, max_bytes)
     }
@@ -859,6 +870,116 @@ mod tests {
         // Persist at a low value must now succeed (watermark was zeroed by reset).
         store.persist(2);
         assert_eq!(store.load(), Some(2));
+    }
+
+    /// Level 0 is one 8-byte chunk; each level above lists the level below
+    /// twice as its children. `depth` levels store `depth + 1` nodes but span
+    /// `2^depth` logical chunks.
+    fn diamond_tree(storage: &DiskStorage, bucket_id: BucketId, depth: u32) -> H256 {
+        let chunk = vec![0u8; 8];
+        let mut hash = blake2_256(&chunk);
+        storage.store_node(bucket_id, hash, chunk, None).unwrap();
+        for level in 1..=depth {
+            let data = vec![level as u8; 8];
+            let node_hash = blake2_256(&data);
+            storage
+                .store_node(bucket_id, node_hash, data, Some(vec![hash, hash]))
+                .unwrap();
+            hash = node_hash;
+        }
+        hash
+    }
+
+    /// `data_size` is the logical size: reads and challenge chunk indices
+    /// address the logical chunk list, so a chunk referenced twice counts
+    /// twice. Deduplication shows up in `used_bytes` only.
+    #[test]
+    fn commit_records_logical_size_of_deduplicated_tree() {
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        storage.init_bucket(1, u64::MAX).unwrap();
+        let root = diamond_tree(&storage, 1, 10);
+
+        storage.commit(1, vec![root]).unwrap();
+
+        let bucket = storage.get_bucket(1).unwrap();
+        assert_eq!(bucket.leaves[0].data_size, 1024 * 8);
+        assert_eq!(bucket.used_bytes, 11 * 8);
+        assert_eq!(storage.collect_chunk_hashes(root).unwrap().len(), 1024);
+    }
+
+    /// Eleven uploads span 2^10 logical chunks, so every traversal of the
+    /// tree costs 2^depth node reads. The budget rejects such a root before
+    /// `commit` signs it into the MMR, and rejects reads of it the same way.
+    #[test]
+    fn traversal_rejects_tree_over_node_budget() {
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path())
+            .unwrap()
+            .with_max_tree_nodes(1000);
+        storage.init_bucket(1, u64::MAX).unwrap();
+        let root = diamond_tree(&storage, 1, 10);
+
+        assert!(matches!(
+            storage.commit(1, vec![root]),
+            Err(Error::TreeTooLarge { max_nodes: 1000 })
+        ));
+        assert!(matches!(
+            storage.collect_chunk_hashes(root),
+            Err(Error::TreeTooLarge { .. })
+        ));
+        assert!(storage.get_bucket(1).unwrap().leaves.is_empty());
+    }
+
+    /// A range read walks the tree once and drops indices past the end, so a
+    /// `/read` over many chunks costs one traversal, not one per chunk. Each
+    /// proof must still verify against the root.
+    #[test]
+    fn range_read_clamps_to_chunk_list_with_valid_proofs() {
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        storage.init_bucket(1, u64::MAX).unwrap();
+        let chunks: Vec<Vec<u8>> = (0u8..3).map(|byte| vec![byte; 8]).collect();
+        let chunk_hashes: Vec<H256> = chunks
+            .iter()
+            .map(|chunk| {
+                let hash = blake2_256(chunk);
+                storage.store_node(1, hash, chunk.clone(), None).unwrap();
+                hash
+            })
+            .collect();
+        let root = crate::build_padded_merkle_tree(&storage, 1, &chunk_hashes);
+
+        let read = storage.get_chunks_in_range(root, 1..10).unwrap();
+
+        assert_eq!(read.len(), 2);
+        for (offset, (data, proof)) in read.iter().enumerate() {
+            let index = 1 + offset as u64;
+            assert_eq!(*data, chunks[index as usize]);
+            assert!(storage_primitives::verify_merkle_proof(
+                blake2_256(data),
+                index,
+                proof,
+                &root
+            ));
+        }
+        assert!(matches!(
+            storage.get_chunks_in_range(H256::repeat_byte(9), 0..1),
+            Err(Error::NodeNotFound(_))
+        ));
+    }
+
+    /// A tree with a missing node is incomplete data: serving the chunks that
+    /// remain would return a truncated file as if it were whole.
+    #[test]
+    fn traversal_fails_on_missing_node() {
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+
+        assert!(matches!(
+            storage.collect_chunks(H256::repeat_byte(7)),
+            Err(Error::NodeNotFound(_))
+        ));
     }
 
     /// Create a bucket and commit `n` single-node leaves, returning their roots.

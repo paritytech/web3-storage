@@ -190,6 +190,13 @@ impl IntoResponse for Error {
                         details: Some(serde_json::json!({ "data_root": root })),
                     },
                 ),
+                StorageError::TreeTooLarge { max_nodes } => (
+                    StatusCode::BAD_REQUEST,
+                    ErrorResponse {
+                        error: "tree_too_large".to_string(),
+                        details: Some(serde_json::json!({ "max_nodes": max_nodes })),
+                    },
+                ),
                 StorageError::InvalidHash { expected, actual } => (
                     StatusCode::BAD_REQUEST,
                     ErrorResponse {
@@ -536,6 +543,12 @@ mod tests {
                 "x".into()
             ))),
             StatusCode::NOT_FOUND
+        );
+        assert_eq!(
+            status_of(Error::from(provider_storage::Error::TreeTooLarge {
+                max_nodes: 1
+            })),
+            StatusCode::BAD_REQUEST
         );
         assert_eq!(
             status_of(Error::from(provider_storage::Error::ColumnFamilyMissing(
