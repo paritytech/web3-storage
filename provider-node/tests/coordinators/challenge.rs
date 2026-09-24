@@ -200,7 +200,7 @@ async fn erased_leaves_are_defended_with_the_deletion_receipt() {
     // the admin, and physically erased: the proof cannot be rebuilt, but the
     // stored receipt defends via the Deleted response.
     let (state, challenge, _dir) = test_state_with_data();
-    let (post_root, _, _) = state.storage.delete_before(1, 1).unwrap();
+    let post_root = state.storage.delete_before(1, 1).unwrap().mmr_root;
     state
         .storage
         .attach_deletion_receipt(

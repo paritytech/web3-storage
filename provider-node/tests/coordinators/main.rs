@@ -8,7 +8,6 @@ mod challenge;
 mod event_fanout;
 mod gc;
 mod membership;
-mod replica_sync;
 
 use provider_auth::{Authenticator, StaticMembershipResolver};
 use provider_storage::{build_padded_merkle_tree, temp_rocksdb, StorageBackend};
@@ -21,7 +20,6 @@ use tempfile::TempDir;
 
 /// Full Alice SS58 address (substrate prefix 42).
 pub const ALICE_SS58: &str = "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY";
-pub const ALICE_SEED: &str = "//Alice";
 
 /// [`ALICE_SS58`] decoded to an [`AccountId32`].
 pub fn alice_account() -> AccountId32 {
@@ -48,13 +46,6 @@ pub fn test_state() -> (Arc<ProviderState>, TempDir) {
         test_deps(storage, nonce_store),
         ALICE_SS58.to_string(),
     ));
-    (state, dir)
-}
-
-/// Create a test `ProviderState` with a keypair derived from the given seed.
-pub fn test_state_with_seed(seed: &str) -> (Arc<ProviderState>, TempDir) {
-    let (storage, nonce_store, dir) = temp_rocksdb();
-    let state = Arc::new(ProviderState::with_seed(test_deps(storage, nonce_store), seed).unwrap());
     (state, dir)
 }
 
@@ -91,11 +82,15 @@ pub fn test_state_with_data() -> (Arc<ProviderState>, DetectedChallenge, TempDir
         .store_node(1, chunk_hash, chunk_data.to_vec(), None)
         .unwrap();
 
-    let data_root = build_padded_merkle_tree(storage.as_ref(), 1, &[chunk_hash]);
+    let data_root = build_padded_merkle_tree(storage.as_ref(), 1, &[chunk_hash]).unwrap();
     assert_eq!(data_root, chunk_hash);
 
-    let (mmr_root, start_seq, leaf_indices) = storage.commit(1, vec![data_root]).unwrap();
-    assert_eq!(leaf_indices, vec![0]);
+    let committed = storage.commit(1, vec![data_root]).unwrap();
+    assert_eq!(committed.leaf_indices, vec![0]);
+    let (mmr_root, start_seq) = (
+        committed.commitment.mmr_root,
+        committed.commitment.start_seq,
+    );
 
     let challenge = DetectedChallenge {
         bucket_id: 1,

@@ -8,17 +8,20 @@
 //! [`types`]: super::types
 
 use super::{
-    BucketInfo, BucketState, BucketStats, BucketSummary, DeletionReceipt, PrunedRange,
-    StorageBackend, StoredNode,
+    BucketInfo, BucketState, BucketStats, BucketSummary, CommitOutcome, DeletionReceipt,
+    PrunedRange, StorageBackend, StoredNode,
 };
 use crate::error::Error;
 use crate::nonce::NonceStore;
 use codec::{DecodeAll, Encode};
-use rocksdb::{Options, DB};
+use rocksdb::{
+    ErrorKind, Options, Transaction, TransactionDB, TransactionDBOptions, TransactionOptions,
+    WriteOptions,
+};
 use sp_core::H256;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
-use storage_primitives::{blake2_256, BucketId, MmrLeaf};
+use storage_primitives::{blake2_256, BucketId, Commitment, MmrLeaf};
 
 /// Column families for organizing data
 const CF_NODES: &str = "nodes";
@@ -37,18 +40,41 @@ mod refcounts;
 
 use refcounts::{decode_refcount, encode_refcount};
 
+/// How long a writer waits for another writer on the same bucket before
+/// failing with [`Error::BucketBusy`]. A `commit` holds the bucket for the
+/// MMR rebuild only, so a longer wait means a stuck writer, and the caller
+/// can retry.
+const BUCKET_LOCK_TIMEOUT_MS: i64 = 30_000;
+
 /// Disk-based storage backend using RocksDB.
+///
+/// The read-modify-write paths (`init_bucket`, `store_node`, `commit`,
+/// `delete_before`) each run in one pessimistic transaction that locks the
+/// bucket row exclusively, so writers to one bucket serialize and writers to
+/// different buckets do not. Every transaction runs with deadlock detection,
+/// so a lock cycle fails one side immediately with [`Error::BucketBusy`]
+/// instead of waiting out the lock timeout. Reads run outside transactions.
 pub struct DiskStorage {
-    db: Arc<DB>,
-    /// Serializes the read-modify-write paths (`init_bucket`, `store_node`,
-    /// `commit`, `delete_before`): they read `BucketState`, mutate it, and
-    /// write several keys, so two concurrent writers would lose updates
-    /// (e.g. a `used_bytes` increment). Reads never take this lock —
-    /// RocksDB handles concurrent reads itself.
-    ///
-    /// Deliberately one global lock: write volume is far below contention
-    /// territory; switch to per-bucket locks if that ever changes.
-    write_lock: parking_lot::Mutex<()>,
+    db: Arc<TransactionDB>,
+    max_tree_nodes: u64,
+}
+
+/// The commitment the provider signs for the bucket in this state.
+fn commitment_of(bucket: &BucketState) -> Commitment {
+    Commitment {
+        mmr_root: bucket.mmr_root,
+        start_seq: bucket.start_seq,
+        leaf_count: bucket.leaf_count(),
+    }
+}
+
+/// A lock wait that timed out is the caller's signal to retry; every other
+/// engine failure stays an engine error.
+fn bucket_write_error(bucket_id: BucketId, error: rocksdb::Error) -> Error {
+    match error.kind() {
+        ErrorKind::TimedOut | ErrorKind::Busy => Error::BucketBusy(bucket_id),
+        _ => Error::RocksDb(error),
+    }
 }
 
 impl DiskStorage {
@@ -67,62 +93,108 @@ impl DiskStorage {
             CF_METADATA,
         ];
 
-        let db = DB::open_cf(&opts, path, &cf_names)
-            .map_err(|e| Error::Storage(format!("Failed to open RocksDB: {e}")))?;
+        let mut txn_db_opts = TransactionDBOptions::default();
+        txn_db_opts.set_txn_lock_timeout(BUCKET_LOCK_TIMEOUT_MS);
+        txn_db_opts.set_default_lock_timeout(BUCKET_LOCK_TIMEOUT_MS);
+        let db = TransactionDB::open_cf(&opts, &txn_db_opts, path, &cf_names)?;
 
         let storage = Self {
             db: Arc::new(db),
-            write_lock: parking_lot::Mutex::new(()),
+            max_tree_nodes: super::MAX_TREE_NODES,
         };
         Ok(storage)
     }
 
-    /// Read a CF_REFCOUNTS entry: `(count, charged_bucket, size)`.
+    /// Read a CF_REFCOUNTS entry outside a transaction:
+    /// `(count, charged_bucket, size)`.
+    #[cfg(test)]
     fn refcount_entry(&self, hash: &H256) -> Result<Option<(u64, u64, u64)>, Error> {
         let cf = self
             .db
             .cf_handle(CF_REFCOUNTS)
-            .ok_or_else(|| Error::Storage("Refcounts CF not found".to_string()))?;
+            .ok_or(Error::ColumnFamilyMissing(CF_REFCOUNTS))?;
         self.db
-            .get_cf(&cf, hash.as_bytes())
-            .map_err(|e| Error::Storage(e.to_string()))?
-            .map(|v| decode_refcount(&v))
+            .get_cf(&cf, hash.as_bytes())?
+            .map(|value| decode_refcount(&value))
             .transpose()
     }
 
-    /// Acquire the write lock serializing read-modify-write paths (the
-    /// guard protects no in-memory state — everything lives in RocksDB).
-    fn lock_writes(&self) -> parking_lot::MutexGuard<'_, ()> {
-        self.write_lock.lock()
+    /// Lock a CF_REFCOUNTS entry for `txn` and decode it:
+    /// `(count, charged_bucket, size)`.
+    fn refcount_for_update(
+        &self,
+        txn: &Transaction<'_, TransactionDB>,
+        bucket_id: BucketId,
+        hash: &H256,
+    ) -> Result<Option<(u64, u64, u64)>, Error> {
+        let cf = self
+            .db
+            .cf_handle(CF_REFCOUNTS)
+            .ok_or(Error::ColumnFamilyMissing(CF_REFCOUNTS))?;
+        txn.get_for_update_cf(&cf, hash.as_bytes(), true)
+            .map_err(|error| bucket_write_error(bucket_id, error))?
+            .map(|value| decode_refcount(&value))
+            .transpose()
+    }
+
+    #[cfg(test)]
+    fn with_max_tree_nodes(mut self, max_nodes: u64) -> Self {
+        self.max_tree_nodes = max_nodes;
+        self
     }
 
     /// Initialize a bucket with the given quota.
     pub fn init_bucket(&self, bucket_id: BucketId, max_bytes: u64) -> Result<(), Error> {
-        let _guard = self.lock_writes();
+        let txn = self.transaction();
+        if self.bucket_for_update(&txn, bucket_id)?.is_some() {
+            return Ok(());
+        }
+        self.put_bucket(&txn, bucket_id, &BucketState::new(max_bytes))?;
+        txn.commit()?;
+        Ok(())
+    }
+
+    /// Begin a pessimistic transaction with deadlock detection.
+    fn transaction(&self) -> Transaction<'_, TransactionDB> {
+        let mut txn_opts = TransactionOptions::default();
+        txn_opts.set_deadlock_detect(true);
+        self.db.transaction_opt(&WriteOptions::default(), &txn_opts)
+    }
+
+    /// Lock the bucket row exclusively for `txn` and decode it.
+    fn bucket_for_update(
+        &self,
+        txn: &Transaction<'_, TransactionDB>,
+        bucket_id: BucketId,
+    ) -> Result<Option<BucketState>, Error> {
         let cf = self
             .db
             .cf_handle(CF_BUCKETS)
-            .ok_or_else(|| Error::Storage("Buckets CF not found".to_string()))?;
+            .ok_or(Error::ColumnFamilyMissing(CF_BUCKETS))?;
+        let Some(value) = txn
+            .get_for_update_cf(&cf, bucket_id.to_le_bytes(), true)
+            .map_err(|error| bucket_write_error(bucket_id, error))?
+        else {
+            return Ok(None);
+        };
+        BucketState::decode_all(&mut &value[..])
+            .map(Some)
+            .map_err(|error| Error::Serialization(error.to_string()))
+    }
 
-        // Check if bucket already exists
-        let key = bucket_id.to_le_bytes();
-        if self
+    /// Write the bucket row within `txn`.
+    fn put_bucket(
+        &self,
+        txn: &Transaction<'_, TransactionDB>,
+        bucket_id: BucketId,
+        bucket: &BucketState,
+    ) -> Result<(), Error> {
+        let cf = self
             .db
-            .get_cf(&cf, key)
-            .map_err(|e| Error::Storage(e.to_string()))?
-            .is_some()
-        {
-            return Ok(()); // Already exists
-        }
-
-        let bucket = BucketState::new(max_bytes);
-        let value = bucket.encode();
-
-        self.db
-            .put_cf(&cf, key, &value)
-            .map_err(|e| Error::Storage(e.to_string()))?;
-
-        Ok(())
+            .cf_handle(CF_BUCKETS)
+            .ok_or(Error::ColumnFamilyMissing(CF_BUCKETS))?;
+        txn.put_cf(&cf, bucket_id.to_le_bytes(), bucket.encode())
+            .map_err(|error| bucket_write_error(bucket_id, error))
     }
 
     /// Get bucket state (internal, returns full BucketState).
@@ -137,23 +209,6 @@ impl DiskStorage {
                 None
             }
         }
-    }
-
-    /// Update bucket state.
-    fn update_bucket(&self, bucket_id: BucketId, bucket: &BucketState) -> Result<(), Error> {
-        let cf = self
-            .db
-            .cf_handle(CF_BUCKETS)
-            .ok_or_else(|| Error::Storage("Buckets CF not found".to_string()))?;
-
-        let key = bucket_id.to_le_bytes();
-        let value = bucket.encode();
-
-        self.db
-            .put_cf(&cf, key, &value)
-            .map_err(|e| Error::Storage(e.to_string()))?;
-
-        Ok(())
     }
 
     /// Iterate over all buckets, applying a mapping function to each.
@@ -234,9 +289,6 @@ impl DiskStorage {
         data: Vec<u8>,
         children: Option<Vec<H256>>,
     ) -> Result<(), Error> {
-        let _guard = self.lock_writes();
-
-        // Verify hash
         let actual_hash = blake2_256(&data);
         if actual_hash != expected_hash {
             return Err(Error::InvalidHash {
@@ -245,13 +297,13 @@ impl DiskStorage {
             });
         }
 
+        let cf_nodes = self
+            .db
+            .cf_handle(CF_NODES)
+            .ok_or(Error::ColumnFamilyMissing(CF_NODES))?;
+
         // If internal node, verify children exist
         if let Some(ref child_hashes) = children {
-            let cf_nodes = self
-                .db
-                .cf_handle(CF_NODES)
-                .ok_or_else(|| Error::Storage("Nodes CF not found".to_string()))?;
-
             let missing: Vec<String> = child_hashes
                 .iter()
                 .filter(|h| {
@@ -271,9 +323,9 @@ impl DiskStorage {
             }
         }
 
-        // Check quota
+        let txn = self.transaction();
         let mut bucket = self
-            .get_bucket(bucket_id)
+            .bucket_for_update(&txn, bucket_id)?
             .ok_or(Error::BucketNotFound(bucket_id))?;
 
         let new_size = bucket.used_bytes.saturating_add(data.len() as u64);
@@ -284,46 +336,26 @@ impl DiskStorage {
             });
         }
 
-        // Store node
-        let cf_nodes = self
-            .db
-            .cf_handle(CF_NODES)
-            .ok_or_else(|| Error::Storage("Nodes CF not found".to_string()))?;
-
         let key = expected_hash.as_bytes();
-        if self
-            .db
-            .get_cf(&cf_nodes, key)
-            .map_err(|e| Error::Storage(e.to_string()))?
-            .is_none()
-        {
+        let stored = txn
+            .get_for_update_cf(&cf_nodes, key, true)
+            .map_err(|error| bucket_write_error(bucket_id, error))?;
+        if stored.is_none() {
             let data_len = data.len() as u64;
             let node = StoredNode { data, children };
-            let value = node.encode();
-
-            // Node and quota update land atomically: a crash between two
-            // separate puts would leak an uncharged node.
+            txn.put_cf(&cf_nodes, key, node.encode())
+                .map_err(|error| bucket_write_error(bucket_id, error))?;
             bucket.used_bytes = bucket.used_bytes.saturating_add(data_len);
-            let cf_buckets = self
-                .db
-                .cf_handle(CF_BUCKETS)
-                .ok_or_else(|| Error::Storage("Buckets CF not found".to_string()))?;
-            let bucket_value = bucket.encode();
-
             let cf_refcounts = self
                 .db
                 .cf_handle(CF_REFCOUNTS)
-                .ok_or_else(|| Error::Storage("Refcounts CF not found".to_string()))?;
-
-            let mut batch = rocksdb::WriteBatch::default();
-            batch.put_cf(&cf_nodes, key, &value);
-            batch.put_cf(&cf_buckets, bucket_id.to_le_bytes(), &bucket_value);
+                .ok_or(Error::ColumnFamilyMissing(CF_REFCOUNTS))?;
             // Charge record: count stays 0 until a commit references the
             // node; erasure credits `bucket_id`'s used_bytes by `data_len`.
-            batch.put_cf(&cf_refcounts, key, encode_refcount(0, bucket_id, data_len));
-            self.db
-                .write(batch)
-                .map_err(|e| Error::Storage(e.to_string()))?;
+            txn.put_cf(&cf_refcounts, key, encode_refcount(0, bucket_id, data_len))
+                .map_err(|error| bucket_write_error(bucket_id, error))?;
+            self.put_bucket(&txn, bucket_id, &bucket)?;
+            txn.commit()?;
         }
 
         Ok(())
@@ -370,23 +402,15 @@ impl DiskStorage {
         &self,
         bucket_id: BucketId,
         data_roots: Vec<H256>,
-    ) -> Result<(H256, u64, Vec<u64>), Error> {
-        let _guard = self.lock_writes();
-
-        // Verify all roots exist (missing roots keep their dedicated error)
+    ) -> Result<CommitOutcome, Error> {
         let cf_nodes = self
             .db
             .cf_handle(CF_NODES)
-            .ok_or_else(|| Error::Storage("Nodes CF not found".to_string()))?;
+            .ok_or(Error::ColumnFamilyMissing(CF_NODES))?;
 
         for root in &data_roots {
             let key = root.as_bytes();
-            if self
-                .db
-                .get_cf(&cf_nodes, key)
-                .map_err(|e| Error::Storage(e.to_string()))?
-                .is_none()
-            {
+            if self.db.get_cf(&cf_nodes, key)?.is_none() {
                 return Err(Error::RootNotFound(format!(
                     "0x{}",
                     hex::encode(root.as_bytes())
@@ -394,31 +418,30 @@ impl DiskStorage {
             }
         }
 
-        // Get bucket and update MMR
-        let mut bucket = self
-            .get_bucket(bucket_id)
-            .ok_or(Error::BucketNotFound(bucket_id))?;
-
         // Walk each root once: verify the whole tree is present (committing
         // to a partially-uploaded tree would create liability the provider
         // cannot prove), measure its content size, and gather the refcount
         // increments this commit adds.
         let mut increments: std::collections::HashMap<H256, u64> = std::collections::HashMap::new();
         let mut node_sizes: std::collections::HashMap<H256, u64> = std::collections::HashMap::new();
-        let mut root_sizes = Vec::with_capacity(data_roots.len());
+        let mut data_sizes = Vec::with_capacity(data_roots.len());
         for root in &data_roots {
             let mut data_size = 0u64;
-            self.try_walk_tree(*root, &mut |hash, node| {
+            self.walk_tree(*root, &mut |hash, node| {
                 *increments.entry(hash).or_default() += 1;
                 node_sizes.entry(hash).or_insert(node.data.len() as u64);
                 if node.children.is_none() {
                     data_size = data_size.saturating_add(node.data.len() as u64);
                 }
             })?;
-            root_sizes.push(data_size);
+            data_sizes.push(data_size);
         }
 
-        let start_seq = bucket.start_seq;
+        let txn = self.transaction();
+        let mut bucket = self
+            .bucket_for_update(&txn, bucket_id)?
+            .ok_or(Error::BucketNotFound(bucket_id))?;
+
         let mut leaf_indices = Vec::new();
         let mut mmr = crate::mmr::Mmr::new();
 
@@ -429,10 +452,9 @@ impl DiskStorage {
 
         // Add new leaves
         let start_index = bucket.leaves.len() as u64;
-        for (i, data_root) in data_roots.iter().enumerate() {
+        for (i, (data_root, data_size)) in data_roots.iter().zip(data_sizes).enumerate() {
             leaf_indices.push(start_index + i as u64);
 
-            let data_size = root_sizes[i];
             let total_size = bucket
                 .leaves
                 .last()
@@ -452,38 +474,32 @@ impl DiskStorage {
 
         bucket.mmr_root = mmr.root();
 
-        // Bucket row and refcount increments land in one atomic batch.
-        let cf_buckets = self
-            .db
-            .cf_handle(CF_BUCKETS)
-            .ok_or_else(|| Error::Storage("Buckets CF not found".to_string()))?;
         let cf_refcounts = self
             .db
             .cf_handle(CF_REFCOUNTS)
-            .ok_or_else(|| Error::Storage("Refcounts CF not found".to_string()))?;
-
-        let mut batch = rocksdb::WriteBatch::default();
+            .ok_or(Error::ColumnFamilyMissing(CF_REFCOUNTS))?;
         for (hash, n) in increments {
             // A missing entry means the node predates refcounting (or its
             // charge record was created by another bucket's migration skip);
             // charge attribution defaults to the committing bucket.
             let fallback_size = node_sizes.get(&hash).copied().unwrap_or(0);
-            let (count, charged_bucket, size) =
-                self.refcount_entry(&hash)?
-                    .unwrap_or((0, bucket_id, fallback_size));
-            batch.put_cf(
+            let (count, charged_bucket, size) = self
+                .refcount_for_update(&txn, bucket_id, &hash)?
+                .unwrap_or((0, bucket_id, fallback_size));
+            txn.put_cf(
                 &cf_refcounts,
                 hash.as_bytes(),
                 encode_refcount(count.saturating_add(n), charged_bucket, size),
-            );
+            )
+            .map_err(|error| bucket_write_error(bucket_id, error))?;
         }
-        let bucket_value = bucket.encode();
-        batch.put_cf(&cf_buckets, bucket_id.to_le_bytes(), &bucket_value);
-        self.db
-            .write(batch)
-            .map_err(|e| Error::Storage(e.to_string()))?;
+        self.put_bucket(&txn, bucket_id, &bucket)?;
+        txn.commit()?;
 
-        Ok((bucket.mmr_root, start_seq, leaf_indices))
+        Ok(CommitOutcome {
+            commitment: commitment_of(&bucket),
+            leaf_indices,
+        })
     }
 
     /// Delete data before a given sequence number.
@@ -498,11 +514,10 @@ impl DiskStorage {
         &self,
         bucket_id: BucketId,
         new_start_seq: u64,
-    ) -> Result<(H256, u64, u64), Error> {
-        let _guard = self.lock_writes();
-
+    ) -> Result<Commitment, Error> {
+        let txn = self.transaction();
         let mut bucket = self
-            .get_bucket(bucket_id)
+            .bucket_for_update(&txn, bucket_id)?
             .ok_or(Error::BucketNotFound(bucket_id))?;
 
         // start_seq can only advance, and no further than one past the last
@@ -534,21 +549,23 @@ impl DiskStorage {
             }
             bucket.mmr_root = mmr.root();
 
-            self.update_bucket(bucket_id, &bucket)?;
+            self.put_bucket(&txn, bucket_id, &bucket)?;
+            txn.commit()?;
         }
 
-        Ok((bucket.mmr_root, bucket.start_seq, bucket.leaf_count()))
+        Ok(commitment_of(&bucket))
     }
 
     /// Set/refresh the bucket quota learned from the chain agreement.
     pub fn set_bucket_quota(&self, bucket_id: BucketId, max_bytes: u64) -> Result<(), Error> {
-        let _guard = self.lock_writes();
+        let txn = self.transaction();
         let mut bucket = self
-            .get_bucket(bucket_id)
+            .bucket_for_update(&txn, bucket_id)?
             .ok_or(Error::BucketNotFound(bucket_id))?;
         if bucket.max_bytes != max_bytes {
             bucket.max_bytes = max_bytes;
-            self.update_bucket(bucket_id, &bucket)?;
+            self.put_bucket(&txn, bucket_id, &bucket)?;
+            txn.commit()?;
         }
         Ok(())
     }
@@ -582,9 +599,9 @@ impl DiskStorage {
         bucket_id: BucketId,
         receipt: DeletionReceipt,
     ) -> Result<(), Error> {
-        let _guard = self.lock_writes();
+        let txn = self.transaction();
         let mut bucket = self
-            .get_bucket(bucket_id)
+            .bucket_for_update(&txn, bucket_id)?
             .ok_or(Error::BucketNotFound(bucket_id))?;
         let covers_stashed_range = bucket
             .pruned
@@ -600,7 +617,9 @@ impl DiskStorage {
         bucket
             .deletion_receipts
             .insert(receipt.new_start_seq, receipt);
-        self.update_bucket(bucket_id, &bucket)
+        self.put_bucket(&txn, bucket_id, &bucket)?;
+        txn.commit()?;
+        Ok(())
     }
 
     /// The stored receipt with the smallest `new_start_seq` strictly greater
@@ -622,8 +641,8 @@ impl DiskStorage {
     /// bucket condemned; `erase_pruned_range` later erases the stash and
     /// removes the row. If nothing is stored, the row is dropped right away.
     pub fn condemn_bucket(&self, bucket_id: BucketId) -> Result<(), Error> {
-        let _guard = self.lock_writes();
-        let Some(mut bucket) = self.get_bucket(bucket_id) else {
+        let txn = self.transaction();
+        let Some(mut bucket) = self.bucket_for_update(&txn, bucket_id)? else {
             return Ok(()); // already torn down
         };
         if bucket.condemned {
@@ -649,13 +668,14 @@ impl DiskStorage {
             let cf = self
                 .db
                 .cf_handle(CF_BUCKETS)
-                .ok_or_else(|| Error::Storage("Buckets CF not found".to_string()))?;
-            self.db
-                .delete_cf(&cf, bucket_id.to_le_bytes())
-                .map_err(|e| Error::Storage(e.to_string()))?;
-            return Ok(());
+                .ok_or(Error::ColumnFamilyMissing(CF_BUCKETS))?;
+            txn.delete_cf(&cf, bucket_id.to_le_bytes())
+                .map_err(|error| bucket_write_error(bucket_id, error))?;
+        } else {
+            self.put_bucket(&txn, bucket_id, &bucket)?;
         }
-        self.update_bucket(bucket_id, &bucket)
+        txn.commit()?;
+        Ok(())
     }
 
     /// Physically erase one stashed range. See the trait docs for the
@@ -665,9 +685,9 @@ impl DiskStorage {
         bucket_id: BucketId,
         first_seq: u64,
     ) -> Result<super::EraseOutcome, Error> {
-        let _guard = self.lock_writes();
+        let txn = self.transaction();
         let mut bucket = self
-            .get_bucket(bucket_id)
+            .bucket_for_update(&txn, bucket_id)?
             .ok_or(Error::BucketNotFound(bucket_id))?;
         let Some(pos) = bucket.pruned.iter().position(|r| r.first_seq == first_seq) else {
             return Ok(super::EraseOutcome::default()); // already erased
@@ -678,7 +698,7 @@ impl DiskStorage {
         // symmetric with commit's increments.
         let mut decrements: std::collections::HashMap<H256, u64> = std::collections::HashMap::new();
         for leaf in &range.leaves {
-            let walk = self.try_walk_tree(leaf.data_root, &mut |hash, _| {
+            let walk = self.walk_tree(leaf.data_root, &mut |hash, _| {
                 *decrements.entry(hash).or_default() += 1;
             });
             if let Err(e) = walk {
@@ -696,22 +716,24 @@ impl DiskStorage {
         let cf_nodes = self
             .db
             .cf_handle(CF_NODES)
-            .ok_or_else(|| Error::Storage("Nodes CF not found".to_string()))?;
+            .ok_or(Error::ColumnFamilyMissing(CF_NODES))?;
         let cf_refcounts = self
             .db
             .cf_handle(CF_REFCOUNTS)
-            .ok_or_else(|| Error::Storage("Refcounts CF not found".to_string()))?;
+            .ok_or(Error::ColumnFamilyMissing(CF_REFCOUNTS))?;
         let cf_buckets = self
             .db
             .cf_handle(CF_BUCKETS)
-            .ok_or_else(|| Error::Storage("Buckets CF not found".to_string()))?;
+            .ok_or(Error::ColumnFamilyMissing(CF_BUCKETS))?;
+        let write_error = |error: rocksdb::Error| bucket_write_error(bucket_id, error);
 
-        let mut batch = rocksdb::WriteBatch::default();
         let mut nodes_deleted = 0u64;
         // charged bucket -> bytes to credit back to its used_bytes
         let mut credits: std::collections::HashMap<u64, u64> = std::collections::HashMap::new();
         for (hash, n) in decrements {
-            let Some((count, charged_bucket, size)) = self.refcount_entry(&hash)? else {
+            let Some((count, charged_bucket, size)) =
+                self.refcount_for_update(&txn, bucket_id, &hash)?
+            else {
                 tracing::warn!(
                     bucket_id,
                     hash = %format!("0x{}", hex::encode(hash.as_bytes())),
@@ -721,16 +743,19 @@ impl DiskStorage {
             };
             let new_count = count.saturating_sub(n);
             if new_count == 0 {
-                batch.delete_cf(&cf_nodes, hash.as_bytes());
-                batch.delete_cf(&cf_refcounts, hash.as_bytes());
+                txn.delete_cf(&cf_nodes, hash.as_bytes())
+                    .map_err(write_error)?;
+                txn.delete_cf(&cf_refcounts, hash.as_bytes())
+                    .map_err(write_error)?;
                 nodes_deleted += 1;
                 *credits.entry(charged_bucket).or_default() += size;
             } else {
-                batch.put_cf(
+                txn.put_cf(
                     &cf_refcounts,
                     hash.as_bytes(),
                     encode_refcount(new_count, charged_bucket, size),
-                );
+                )
+                .map_err(write_error)?;
             }
         }
         let bytes_freed: u64 = credits.values().sum();
@@ -741,7 +766,7 @@ impl DiskStorage {
         rows.insert(bucket_id, bucket);
         for (credited, bytes) in credits {
             if let std::collections::hash_map::Entry::Vacant(entry) = rows.entry(credited) {
-                match DiskStorage::get_bucket(self, credited) {
+                match self.bucket_for_update(&txn, credited)? {
                     Some(state) => {
                         entry.insert(state);
                     }
@@ -765,16 +790,14 @@ impl DiskStorage {
                 && state.leaves.is_empty()
                 && state.pruned.is_empty();
             if fully_gone {
-                batch.delete_cf(&cf_buckets, id.to_le_bytes());
+                txn.delete_cf(&cf_buckets, id.to_le_bytes())
+                    .map_err(write_error)?;
             } else {
-                let value = state.encode();
-                batch.put_cf(&cf_buckets, id.to_le_bytes(), value);
+                self.put_bucket(&txn, id, &state)?;
             }
         }
 
-        self.db
-            .write(batch)
-            .map_err(|e| Error::Storage(e.to_string()))?;
+        txn.commit()?;
         Ok(super::EraseOutcome {
             nodes_deleted,
             bytes_freed,
@@ -918,7 +941,7 @@ impl DiskStorage {
 
     /// Return a nonce store backed by this DB's metadata column family.
     ///
-    /// The returned [`DiskNonceStore`] shares the open [`DB`] handle so there
+    /// The returned [`DiskNonceStore`] shares the open [`TransactionDB`] handle so there
     /// is no second DB to manage. Pass it to the negotiation nonce counter so
     /// the replay watermark survives restarts.
     pub fn nonce_store(&self) -> Arc<dyn NonceStore> {
@@ -927,6 +950,10 @@ impl DiskStorage {
 }
 
 impl StorageBackend for DiskStorage {
+    fn max_tree_nodes(&self) -> u64 {
+        self.max_tree_nodes
+    }
+
     fn init_bucket(&self, bucket_id: BucketId, max_bytes: u64) -> Result<(), Error> {
         self.init_bucket(bucket_id, max_bytes)
     }
@@ -974,19 +1001,11 @@ impl StorageBackend for DiskStorage {
         self.check_exists(bucket_id, hashes)
     }
 
-    fn commit(
-        &self,
-        bucket_id: BucketId,
-        data_roots: Vec<H256>,
-    ) -> Result<(H256, u64, Vec<u64>), Error> {
+    fn commit(&self, bucket_id: BucketId, data_roots: Vec<H256>) -> Result<CommitOutcome, Error> {
         self.commit(bucket_id, data_roots)
     }
 
-    fn delete_before(
-        &self,
-        bucket_id: BucketId,
-        new_start_seq: u64,
-    ) -> Result<(H256, u64, u64), Error> {
+    fn delete_before(&self, bucket_id: BucketId, new_start_seq: u64) -> Result<Commitment, Error> {
         self.delete_before(bucket_id, new_start_seq)
     }
 
@@ -1073,14 +1092,14 @@ impl StorageBackend for DiskStorage {
 /// before this persistence layer was added, which is still safe — the chain's
 /// replay window rejects any duplicate redemption.
 pub struct DiskNonceStore {
-    db: Arc<DB>,
+    db: Arc<TransactionDB>,
     /// Monotonicity guard: always holds the highest value written so far,
     /// so concurrent `persist` calls can cheaply skip stale lower writes.
     watermark: Mutex<u64>,
 }
 
 impl DiskNonceStore {
-    pub fn new(db: Arc<DB>) -> Self {
+    pub fn new(db: Arc<TransactionDB>) -> Self {
         // Initialize the in-memory watermark from the DB so we're consistent
         // from the first call to persist() even if load() is never called.
         let initial = Self::read_from_db(&db).unwrap_or(0);
@@ -1090,7 +1109,7 @@ impl DiskNonceStore {
         }
     }
 
-    fn read_from_db(db: &DB) -> Option<u64> {
+    fn read_from_db(db: &TransactionDB) -> Option<u64> {
         let cf = db.cf_handle(CF_METADATA)?;
         let bytes = db.get_cf(&cf, KEY_NONCE).ok()??;
         bytes.try_into().ok().map(u64::from_le_bytes)
@@ -1274,6 +1293,194 @@ mod tests {
         assert_eq!(store.load(), Some(2));
     }
 
+    /// Level 0 is one 8-byte chunk; each level above lists the level below
+    /// twice as its children. `depth` levels store `depth + 1` nodes but span
+    /// `2^depth` logical chunks.
+    fn diamond_tree(storage: &DiskStorage, bucket_id: BucketId, depth: u32) -> H256 {
+        let chunk = vec![0u8; 8];
+        let mut hash = blake2_256(&chunk);
+        storage.store_node(bucket_id, hash, chunk, None).unwrap();
+        for level in 1..=depth {
+            let data = vec![level as u8; 8];
+            let node_hash = blake2_256(&data);
+            storage
+                .store_node(bucket_id, node_hash, data, Some(vec![hash, hash]))
+                .unwrap();
+            hash = node_hash;
+        }
+        hash
+    }
+
+    /// `data_size` is the logical size: reads and challenge chunk indices
+    /// address the logical chunk list, so a chunk referenced twice counts
+    /// twice. Deduplication shows up in `used_bytes` only.
+    #[test]
+    fn commit_records_logical_size_of_deduplicated_tree() {
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        storage.init_bucket(1, u64::MAX).unwrap();
+        let root = diamond_tree(&storage, 1, 10);
+
+        let committed = storage.commit(1, vec![root]).unwrap();
+
+        let bucket = storage.get_bucket(1).unwrap();
+        assert_eq!(committed.commitment.leaf_count, 1);
+        assert_eq!(bucket.leaves[0].data_size, 1024 * 8);
+        assert_eq!(bucket.used_bytes, 11 * 8);
+        assert_eq!(storage.collect_chunk_hashes(root).unwrap().len(), 1024);
+    }
+
+    /// Eleven uploads span 2^10 logical chunks, so every traversal of the
+    /// tree costs 2^depth node reads. The budget rejects such a root before
+    /// `commit` signs it into the MMR, and rejects reads of it the same way.
+    #[test]
+    fn traversal_rejects_tree_over_node_budget() {
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path())
+            .unwrap()
+            .with_max_tree_nodes(1000);
+        storage.init_bucket(1, u64::MAX).unwrap();
+        let root = diamond_tree(&storage, 1, 10);
+
+        assert!(matches!(
+            storage.commit(1, vec![root]),
+            Err(Error::TreeTooLarge { max_nodes: 1000 })
+        ));
+        assert!(matches!(
+            storage.collect_chunk_hashes(root),
+            Err(Error::TreeTooLarge { .. })
+        ));
+        assert!(storage.get_bucket(1).unwrap().leaves.is_empty());
+    }
+
+    /// A range read walks the tree once and drops indices past the end, so a
+    /// `/read` over many chunks costs one traversal, not one per chunk. Each
+    /// proof must still verify against the root.
+    #[test]
+    fn range_read_clamps_to_chunk_list_with_valid_proofs() {
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        storage.init_bucket(1, u64::MAX).unwrap();
+        let chunks: Vec<Vec<u8>> = (0u8..3).map(|byte| vec![byte; 8]).collect();
+        let chunk_hashes: Vec<H256> = chunks
+            .iter()
+            .map(|chunk| {
+                let hash = blake2_256(chunk);
+                storage.store_node(1, hash, chunk.clone(), None).unwrap();
+                hash
+            })
+            .collect();
+        let root = crate::build_padded_merkle_tree(&storage, 1, &chunk_hashes).unwrap();
+
+        let read = storage.get_chunks_in_range(root, 1..10).unwrap();
+
+        assert_eq!(read.len(), 2);
+        for (offset, (data, proof)) in read.iter().enumerate() {
+            let index = 1 + offset as u64;
+            assert_eq!(*data, chunks[index as usize]);
+            assert!(storage_primitives::verify_merkle_proof(
+                blake2_256(data),
+                index,
+                proof,
+                &root
+            ));
+        }
+        assert!(matches!(
+            storage.get_chunks_in_range(H256::repeat_byte(9), 0..1),
+            Err(Error::NodeNotFound(_))
+        ));
+    }
+
+    /// Two transactions that lock two bucket rows in opposite order must not
+    /// wait out the 30 s lock timeout: deadlock detection fails one of them
+    /// at once with `Busy`, which maps to `BucketBusy` and a retry.
+    #[test]
+    fn lock_cycle_fails_fast_with_busy() {
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        for bucket_id in [1u64, 2] {
+            storage.init_bucket(bucket_id, u64::MAX).unwrap();
+        }
+        let both_locked = std::sync::Barrier::new(2);
+        let started = std::time::Instant::now();
+
+        let lock_in_order = |first: u64, second: u64| {
+            let cf = storage.db.cf_handle(CF_BUCKETS).unwrap();
+            let txn = storage.transaction();
+            txn.get_for_update_cf(&cf, first.to_le_bytes(), true)
+                .unwrap();
+            both_locked.wait();
+            txn.get_for_update_cf(&cf, second.to_le_bytes(), true)
+                .map(|_| ())
+        };
+        let (forward, backward) = std::thread::scope(|scope| {
+            let forward = scope.spawn(|| lock_in_order(1, 2));
+            let backward = scope.spawn(|| lock_in_order(2, 1));
+            (forward.join().unwrap(), backward.join().unwrap())
+        });
+
+        let mut failures: Vec<rocksdb::Error> = [forward, backward]
+            .into_iter()
+            .filter_map(Result::err)
+            .collect();
+        assert_eq!(failures.len(), 1);
+        assert_eq!(failures[0].kind(), ErrorKind::Busy);
+        assert!(matches!(
+            bucket_write_error(1, failures.pop().unwrap()),
+            Error::BucketBusy(1)
+        ));
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
+    }
+
+    /// Concurrent writers to one bucket must not lose `used_bytes` updates,
+    /// and writers to different buckets must not corrupt each other.
+    #[test]
+    fn concurrent_writers_keep_bucket_accounting_exact() {
+        const WRITERS: u64 = 8;
+        const NODES_PER_WRITER: u64 = 25;
+        const NODE_LEN: u64 = 8;
+
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        for bucket_id in [1, 2] {
+            storage.init_bucket(bucket_id, u64::MAX).unwrap();
+        }
+
+        std::thread::scope(|scope| {
+            for writer in 0..WRITERS {
+                let storage = &storage;
+                scope.spawn(move || {
+                    let bucket_id = 1 + writer % 2;
+                    for index in 0..NODES_PER_WRITER {
+                        let data = (writer * NODES_PER_WRITER + index).to_le_bytes().to_vec();
+                        let hash = blake2_256(&data);
+                        storage.store_node(bucket_id, hash, data, None).unwrap();
+                        storage.commit(bucket_id, vec![hash]).unwrap();
+                    }
+                });
+            }
+        });
+
+        for bucket_id in [1, 2] {
+            let bucket = storage.get_bucket(bucket_id).unwrap();
+            assert_eq!(bucket.used_bytes, WRITERS / 2 * NODES_PER_WRITER * NODE_LEN);
+            assert_eq!(bucket.leaf_count(), WRITERS / 2 * NODES_PER_WRITER);
+        }
+    }
+
+    /// A tree with a missing node is incomplete data: serving the chunks that
+    /// remain would return a truncated file as if it were whole.
+    #[test]
+    fn traversal_fails_on_missing_node() {
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+
+        assert!(matches!(
+            storage.collect_chunks(H256::repeat_byte(7)),
+            Err(Error::NodeNotFound(_))
+        ));
+    }
+
     /// Create a bucket and commit `n` single-node leaves, returning their roots.
     fn bucket_with_leaves(storage: &DiskStorage, bucket_id: BucketId, n: usize) -> Vec<H256> {
         storage.init_bucket(bucket_id, u64::MAX).unwrap();
@@ -1325,7 +1532,11 @@ mod tests {
         bucket_with_leaves(&storage, 1, 2);
         let before = storage.get_bucket(1).unwrap();
 
-        let (root, start_seq, leaf_count) = storage.delete_before(1, before.start_seq).unwrap();
+        let Commitment {
+            mmr_root: root,
+            start_seq,
+            leaf_count,
+        } = storage.delete_before(1, before.start_seq).unwrap();
 
         assert_eq!(root, before.mmr_root);
         assert_eq!(start_seq, before.start_seq);
@@ -1339,7 +1550,11 @@ mod tests {
         bucket_with_leaves(&storage, 1, 3);
         let before = storage.get_bucket(1).unwrap();
 
-        let (root, start_seq, leaf_count) = storage.delete_before(1, 2).unwrap();
+        let Commitment {
+            mmr_root: root,
+            start_seq,
+            leaf_count,
+        } = storage.delete_before(1, 2).unwrap();
 
         assert_eq!(start_seq, 2);
         assert_eq!(leaf_count, 1);
@@ -1352,7 +1567,11 @@ mod tests {
         }
         assert_eq!(root, mmr.root());
         // Deleting up to the end (empty bucket) is a valid full prune.
-        let (_, start_seq, leaf_count) = storage.delete_before(1, 3).unwrap();
+        let Commitment {
+            start_seq,
+            leaf_count,
+            ..
+        } = storage.delete_before(1, 3).unwrap();
         assert_eq!((start_seq, leaf_count), (3, 0));
     }
 
@@ -1574,7 +1793,7 @@ mod tests {
             let data = vec![i; 8];
             let hash = blake2_256(&data);
             storage.store_node(1, hash, data, None).unwrap();
-            let (root, _, _) = storage.commit(1, vec![hash]).unwrap();
+            let root = storage.commit(1, vec![hash]).unwrap().commitment.mmr_root;
             roots.push(root);
         }
 
@@ -1599,7 +1818,11 @@ mod tests {
         bucket_with_leaves(&storage, 1, 3);
         let expected = storage.get_bucket(1).unwrap().leaves[2].clone();
 
-        let (post_prune_root, start_seq, _) = storage.delete_before(1, 1).unwrap();
+        let Commitment {
+            mmr_root: post_prune_root,
+            start_seq,
+            ..
+        } = storage.delete_before(1, 1).unwrap();
         assert_eq!(start_seq, 1);
 
         // Challenge cites the post-prune commitment (start_seq 1); its
@@ -1680,5 +1903,22 @@ mod tests {
             storage.store_node(1, hash, data, None),
             Err(Error::QuotaExceeded { max: 100, .. })
         ));
+    }
+
+    #[test]
+    fn new_wraps_rocksdb_open_failure() {
+        // A regular file where RocksDB expects a directory: `TransactionDB::open_cf`
+        // must fail, and that failure must surface as `Error::RocksDb`.
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("not_a_directory");
+        std::fs::write(&path, b"not a rocksdb database").unwrap();
+
+        let Err(err) = DiskStorage::new(&path) else {
+            panic!("opening a non-directory path must fail");
+        };
+        assert!(
+            matches!(err, Error::RocksDb(_)),
+            "expected Error::RocksDb, got {err}"
+        );
     }
 }

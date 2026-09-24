@@ -24,6 +24,7 @@
 
 use crate::{Error, ProviderState};
 use provider_chain::{BlockEvent, BlockEventRx};
+use provider_types::ChainClientError;
 use std::sync::Arc;
 use std::time::Duration;
 use storage_primitives::BucketId;
@@ -49,14 +50,17 @@ pub trait GcChainClient: Send + Sync {
     async fn fetch_canonical_bucket(
         &self,
         bucket_id: BucketId,
-    ) -> Result<CanonicalBucketState, Error>;
+    ) -> Result<CanonicalBucketState, ChainClientError>;
 
     /// This provider's agreement `max_bytes` on the bucket;
     /// `Ok(None)` = no agreement row.
-    async fn fetch_agreement_max_bytes(&self, bucket_id: BucketId) -> Result<Option<u64>, Error>;
+    async fn fetch_agreement_max_bytes(
+        &self,
+        bucket_id: BucketId,
+    ) -> Result<Option<u64>, ChainClientError>;
 
     /// Whether any pending challenge targets this provider on the bucket.
-    async fn has_pending_challenges(&self, bucket_id: BucketId) -> Result<bool, Error>;
+    async fn has_pending_challenges(&self, bucket_id: BucketId) -> Result<bool, ChainClientError>;
 }
 
 /// GC coordinator configuration.

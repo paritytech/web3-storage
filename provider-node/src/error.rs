@@ -8,7 +8,9 @@ use axum::{
     Json,
 };
 use provider_auth::{AuthError, MembershipError};
+use provider_types::{ChainClientError, SigningRefused};
 use serde::Serialize;
+use std::fmt;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -31,14 +33,28 @@ pub enum Error {
     #[error("Not authorized: {0}")]
     NotAuthorized(String),
 
-    #[error("Storage error: {0}")]
-    Storage(String),
+    /// A call against the chain failed: a state read, or an extrinsic that
+    /// could not be submitted or was rejected.
+    #[error(transparent)]
+    ChainClient(#[from] ChainClientError),
 
-    #[error("Serialization error: {0}")]
-    Serialization(String),
+    /// A value read from a request body or a peer response did not have the
+    /// expected shape. Chain-state decode failures are
+    /// [`ChainClientError::Decode`], which is not the caller's fault and does
+    /// not share this status.
+    #[error("Failed to decode {what}: {reason}")]
+    Decode { what: &'static str, reason: String },
 
-    #[error("Internal error: {0}")]
-    Internal(String),
+    /// The rate limiter itself failed (e.g. its backing store is
+    /// unreachable). The request is rejected fail-closed rather than let
+    /// through, but this is a distinct condition from [`Error::RateLimited`],
+    /// which means the limiter ran and denied the request.
+    #[error("Rate limiter failed: {0}")]
+    RateLimiterFailed(String),
+
+    /// The blocking task running a storage call panicked or was cancelled.
+    #[error("Storage task failed: {0}")]
+    StorageTaskFailed(String),
 
     #[error("Object not found: bucket {bucket_id}, key {key}")]
     ObjectNotFound { bucket_id: u64, key: String },
@@ -57,9 +73,6 @@ pub enum Error {
 
     #[error(transparent)]
     Auth(#[from] AuthError),
-
-    #[error("Signing unavailable: provider has no keypair configured")]
-    SigningUnavailable,
 
     #[error("Nonce counter unavailable; provider has not bootstrapped replay state")]
     NonceCounterUnavailable,
@@ -86,14 +99,8 @@ pub enum Error {
         max_capacity: u64,
     },
 
-    #[error("Provider on-chain info unavailable; cannot validate terms")]
-    ProviderInfoUnavailable,
-
     #[error("Provider is deregistering; not accepting new agreements")]
     ProviderDeregistering,
-
-    #[error("Local signing key does not match the registered on-chain public_key")]
-    ProviderKeyMismatch,
 
     #[error(
         "Chain state not ready: current_anchor_block and request_timeout must both be non-zero"
@@ -106,11 +113,27 @@ pub enum Error {
     #[error(transparent)]
     Coordinator(#[from] provider_coordinator::Error),
 
+    /// The node cannot sign with its registered key. Each reason keeps the
+    /// response code it had when these were three separate variants.
+    #[error(transparent)]
+    Signing(#[from] provider_types::SigningRefused),
+
     #[error("Storage agreement requested 0 byte")]
     InvalidMaxBytesRequest,
 
     #[error("Too many requests")]
     RateLimited,
+}
+
+impl Error {
+    /// A value read from a request body or a peer response did not decode
+    /// into the expected shape.
+    pub fn decode(what: &'static str, e: impl fmt::Display) -> Self {
+        Error::Decode {
+            what,
+            reason: e.to_string(),
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -177,6 +200,20 @@ impl IntoResponse for Error {
                         details: Some(serde_json::json!({ "data_root": root })),
                     },
                 ),
+                StorageError::BucketBusy(bucket_id) => (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    ErrorResponse {
+                        error: "bucket_busy".to_string(),
+                        details: Some(serde_json::json!({ "bucket_id": bucket_id })),
+                    },
+                ),
+                StorageError::TreeTooLarge { max_nodes } => (
+                    StatusCode::BAD_REQUEST,
+                    ErrorResponse {
+                        error: "tree_too_large".to_string(),
+                        details: Some(serde_json::json!({ "max_nodes": max_nodes })),
+                    },
+                ),
                 StorageError::InvalidHash { expected, actual } => (
                     StatusCode::BAD_REQUEST,
                     ErrorResponse {
@@ -187,11 +224,11 @@ impl IntoResponse for Error {
                         })),
                     },
                 ),
-                StorageError::Storage(msg) => (
+                e @ (StorageError::RocksDb(_) | StorageError::ColumnFamilyMissing(_)) => (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     ErrorResponse {
                         error: "internal_error".to_string(),
-                        details: Some(serde_json::json!({ "message": msg })),
+                        details: Some(serde_json::json!({ "message": e.to_string() })),
                     },
                 ),
                 StorageError::Serialization(msg) => (
@@ -240,18 +277,28 @@ impl IntoResponse for Error {
                     details: Some(serde_json::json!({ "reason": reason })),
                 },
             ),
-            Error::Storage(msg) | Error::Internal(msg) => (
+            e @ Error::ChainClient(_) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 ErrorResponse {
                     error: "internal_error".to_string(),
-                    details: Some(serde_json::json!({ "message": msg })),
+                    details: Some(serde_json::json!({ "message": e.to_string() })),
                 },
             ),
-            Error::Serialization(msg) => (
+            // The reason is logged where it occurs (the rate-limit middleware,
+            // `ProviderState::blocking_storage`) but kept out of the response:
+            // it may say more than an unauthenticated caller should learn.
+            Error::RateLimiterFailed(_) | Error::StorageTaskFailed(_) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                ErrorResponse {
+                    error: "internal_error".to_string(),
+                    details: None,
+                },
+            ),
+            e @ Error::Decode { .. } => (
                 StatusCode::BAD_REQUEST,
                 ErrorResponse {
                     error: "serialization_error".to_string(),
-                    details: Some(serde_json::json!({ "message": msg })),
+                    details: Some(serde_json::json!({ "message": e.to_string() })),
                 },
             ),
             Error::ObjectNotFound { bucket_id, key } => (
@@ -318,13 +365,33 @@ impl IntoResponse for Error {
                     details: Some(serde_json::json!({ "message": err.to_string() })),
                 },
             ),
-            Error::SigningUnavailable => (
+            // One variant, but each reason keeps the code and message it had
+            // when these were three: a client tells "configure a key" from
+            // "wait for the registration" by the `error` field.
+            Error::Signing(refusal) => (
                 StatusCode::SERVICE_UNAVAILABLE,
-                ErrorResponse {
-                    error: "signing_unavailable".to_string(),
-                    details: Some(serde_json::json!({
-                        "message": "provider node signer is not available."
-                    })),
+                match refusal {
+                    SigningRefused::NoKey => ErrorResponse {
+                        error: "signing_unavailable".to_string(),
+                        details: Some(serde_json::json!({
+                            "message": "provider node signer is not available."
+                        })),
+                    },
+                    SigningRefused::Unregistered => ErrorResponse {
+                        error: "provider_info_unavailable".to_string(),
+                        details: Some(serde_json::json!({
+                            "message": "provider's on-chain registration info is not loaded; \
+                                        cannot validate agreement terms"
+                        })),
+                    },
+                    SigningRefused::KeyMismatch => ErrorResponse {
+                        error: "provider_key_mismatch".to_string(),
+                        details: Some(serde_json::json!({
+                            "message": "the node's signing key does not match the public_key \
+                                        registered on-chain; signatures would never verify — \
+                                        check --keyfile / --key-scheme against the registration"
+                        })),
+                    },
                 },
             ),
             Error::NonceCounterUnavailable => (
@@ -396,16 +463,6 @@ impl IntoResponse for Error {
                     details: None,
                 },
             ),
-            Error::ProviderInfoUnavailable => (
-                StatusCode::SERVICE_UNAVAILABLE,
-                ErrorResponse {
-                    error: "provider_info_unavailable".to_string(),
-                    details: Some(serde_json::json!({
-                        "message": "provider's on-chain registration info is not loaded; \
-                                    cannot validate agreement terms"
-                    })),
-                },
-            ),
             Error::ChainStateNotReady => (
                 StatusCode::SERVICE_UNAVAILABLE,
                 ErrorResponse {
@@ -452,17 +509,6 @@ impl IntoResponse for Error {
                     details: Some(serde_json::json!({
                         "message": "provider has announced deregistration and is no \
                                     longer accepting new storage agreements"
-                    })),
-                },
-            ),
-            Error::ProviderKeyMismatch => (
-                StatusCode::SERVICE_UNAVAILABLE,
-                ErrorResponse {
-                    error: "provider_key_mismatch".to_string(),
-                    details: Some(serde_json::json!({
-                        "message": "the node's signing key does not match the public_key \
-                                    registered on-chain; signatures would never verify — \
-                                    check --keyfile / --key-scheme against the registration"
                     })),
                 },
             ),
@@ -538,6 +584,22 @@ mod tests {
             StatusCode::NOT_FOUND
         );
         assert_eq!(
+            status_of(Error::from(provider_storage::Error::TreeTooLarge {
+                max_nodes: 1
+            })),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            status_of(Error::from(provider_storage::Error::BucketBusy(1))),
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        assert_eq!(
+            status_of(Error::from(provider_storage::Error::ColumnFamilyMissing(
+                "nodes"
+            ))),
+            StatusCode::INTERNAL_SERVER_ERROR
+        );
+        assert_eq!(
             status_of(Error::InvalidHash {
                 expected: "a".into(),
                 actual: "b".into()
@@ -550,15 +612,29 @@ mod tests {
             StatusCode::FORBIDDEN
         );
         assert_eq!(
-            status_of(Error::Storage("x".into())),
+            status_of(ChainClientError::query("current block", "timed out").into()),
             StatusCode::INTERNAL_SERVER_ERROR
         );
         assert_eq!(
-            status_of(Error::Internal("x".into())),
+            status_of(ChainClientError::tx_submit("confirm_replica_sync", "watch dropped").into()),
             StatusCode::INTERNAL_SERVER_ERROR
         );
         assert_eq!(
-            status_of(Error::Serialization("x".into())),
+            status_of(
+                ChainClientError::tx_rejected("confirm_replica_sync", "SyncTooFrequent").into()
+            ),
+            StatusCode::INTERNAL_SERVER_ERROR
+        );
+        assert_eq!(
+            status_of(Error::RateLimiterFailed("backend unreachable".into())),
+            StatusCode::INTERNAL_SERVER_ERROR
+        );
+        assert_eq!(
+            status_of(Error::StorageTaskFailed("panicked".into())),
+            StatusCode::INTERNAL_SERVER_ERROR
+        );
+        assert_eq!(
+            status_of(Error::decode("node data", "invalid base64")),
             StatusCode::BAD_REQUEST
         );
         assert_eq!(
@@ -621,7 +697,7 @@ mod tests {
             StatusCode::INTERNAL_SERVER_ERROR
         );
         assert_eq!(
-            status_of(Error::SigningUnavailable),
+            status_of(SigningRefused::NoKey.into()),
             StatusCode::SERVICE_UNAVAILABLE
         );
         assert_eq!(
@@ -661,8 +737,25 @@ mod tests {
     }
 
     #[test]
+    fn test_rate_limiter_failed_hides_detail_from_response() {
+        let resp =
+            Error::RateLimiterFailed("backend store unreachable".to_string()).into_response();
+        let (parts, body) = resp.into_parts();
+        assert_eq!(parts.status, StatusCode::INTERNAL_SERVER_ERROR);
+
+        let body_bytes = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(async { axum::body::to_bytes(body, usize::MAX).await.unwrap() });
+        let json: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        assert_eq!(json["error"], "internal_error");
+        // The limiter's own failure reason must never reach the client - only
+        // the tracing log (see the rate-limit middleware) carries it.
+        assert!(json.get("details").is_none());
+    }
+
+    #[test]
     fn test_signing_unavailable_503() {
-        let resp = Error::SigningUnavailable.into_response();
+        let resp = Error::from(SigningRefused::NoKey).into_response();
         let (parts, body) = resp.into_parts();
         assert_eq!(parts.status, StatusCode::SERVICE_UNAVAILABLE);
 
@@ -675,6 +768,22 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("signer is not available."));
+    }
+
+    #[test]
+    fn signing_refusals_keep_the_statuses_they_had() {
+        assert_eq!(
+            status_of(SigningRefused::NoKey.into()),
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        assert_eq!(
+            status_of(SigningRefused::Unregistered.into()),
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        assert_eq!(
+            status_of(SigningRefused::KeyMismatch.into()),
+            StatusCode::SERVICE_UNAVAILABLE
+        );
     }
 
     #[test]
