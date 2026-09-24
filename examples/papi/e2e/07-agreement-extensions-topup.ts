@@ -16,8 +16,10 @@ import {
   extendAgreement,
   makeSigner,
   READ_OPTS,
+  sameAddress,
   setExtensionsBlocked,
   topUpAgreement,
+  transferAgreementOwnership,
   updateProviderSettings,
 } from "@web3-storage/sdk";
 import { negotiateAndEstablish, runSuite, submitTxExpectFailure, setupChain } from "./helpers.js";
@@ -193,7 +195,34 @@ async function main() {
   });
 
   tests.push({
-    name: "7.6 Payment too low on extend",
+    name: "7.6 Transfer agreement ownership",
+    fn: async () => {
+      const result = await transferAgreementOwnership(api, client, bucketId, provider, charlie);
+      const events = api.event.StorageProvider.AgreementOwnershipTransferred.filter(
+        result.events as never
+      );
+      assert.strictEqual(events.length, 1, "Expected AgreementOwnershipTransferred event");
+      const after = (await api.query.StorageProvider.StorageAgreements.getValue(
+        bucketId,
+        provider.address,
+        READ_OPTS
+      ))!;
+      assert.ok(sameAddress(after.owner, charlie.address), "owner should now be Charlie");
+
+      // Top-up is owner-only: Bob lost it, Charlie gained it.
+      const topUp = { additional_bytes: 1024n, max_payment: 1_000_000_000n };
+      const tx = api.tx.StorageProvider.top_up_agreement({
+        bucket_id: bucketId,
+        provider: provider.address,
+        ...topUp,
+      });
+      await submitTxExpectFailure(tx, client.signer, "NotAgreementOwner", "7.6");
+      await topUpAgreement(api, charlie, bucketId, provider, topUp);
+    },
+  });
+
+  tests.push({
+    name: "7.7 Payment too low on extend",
     fn: async () => {
       const tx = api.tx.StorageProvider.extend_agreement({
         bucket_id: bucketId,
@@ -201,7 +230,7 @@ async function main() {
         additional_duration: 10,
         max_payment: 1n, // Way too low
       });
-      await submitTxExpectFailure(tx, client.signer, "PaymentExceedsMax", "7.6");
+      await submitTxExpectFailure(tx, client.signer, "PaymentExceedsMax", "7.7");
     },
   });
 

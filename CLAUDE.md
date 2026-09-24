@@ -207,7 +207,7 @@ functionality PAPI already provides, drag in 20+ transitive deps, and force
 | Need | Use |
 | --- | --- |
 | Chain client + typed API | `polkadot-api` (`createClient`; `getWsProvider` from `polkadot-api/ws`) |
-| Signer wrapper | `getPolkadotSigner` from `polkadot-api/signer` |
+| Signer wrapper | `getTxCreator` from `polkadot-api/tx-creator` |
 | SCALE / `Binary` / `Enum` | `import { Binary, Enum } from "polkadot-api"` — NOT `@polkadot-api/substrate-bindings` (its 0.20+ `Binary` is a codec helper without `fromBytes`/`asBytes`) |
 | Sr25519 key derivation (`//Alice`) | `sr25519CreateDerive` from `@polkadot-labs/hdkd` + `DEV_PHRASE` + `entropyToMiniSecret` + `mnemonicToEntropy` from `@polkadot-labs/hdkd-helpers` |
 | SS58 encode / decode | `ss58Address` / `ss58Decode` from `@polkadot-labs/hdkd-helpers` |

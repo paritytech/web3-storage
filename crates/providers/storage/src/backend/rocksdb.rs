@@ -51,8 +51,7 @@ impl DiskStorage {
         // Define column families
         let cf_names = vec![CF_NODES, CF_BUCKETS, CF_ROOT_TO_BUCKET, CF_METADATA];
 
-        let db = DB::open_cf(&opts, path, &cf_names)
-            .map_err(|e| Error::Storage(format!("Failed to open RocksDB: {e}")))?;
+        let db = DB::open_cf(&opts, path, &cf_names)?;
 
         Ok(Self {
             db: Arc::new(db),
@@ -72,25 +71,18 @@ impl DiskStorage {
         let cf = self
             .db
             .cf_handle(CF_BUCKETS)
-            .ok_or_else(|| Error::Storage("Buckets CF not found".to_string()))?;
+            .ok_or(Error::ColumnFamilyMissing(CF_BUCKETS))?;
 
         // Check if bucket already exists
         let key = bucket_id.to_le_bytes();
-        if self
-            .db
-            .get_cf(&cf, key)
-            .map_err(|e| Error::Storage(e.to_string()))?
-            .is_some()
-        {
+        if self.db.get_cf(&cf, key)?.is_some() {
             return Ok(()); // Already exists
         }
 
         let bucket = BucketState::new(max_bytes);
         let value = bucket.encode();
 
-        self.db
-            .put_cf(&cf, key, &value)
-            .map_err(|e| Error::Storage(e.to_string()))?;
+        self.db.put_cf(&cf, key, &value)?;
 
         Ok(())
     }
@@ -114,14 +106,12 @@ impl DiskStorage {
         let cf = self
             .db
             .cf_handle(CF_BUCKETS)
-            .ok_or_else(|| Error::Storage("Buckets CF not found".to_string()))?;
+            .ok_or(Error::ColumnFamilyMissing(CF_BUCKETS))?;
 
         let key = bucket_id.to_le_bytes();
         let value = bucket.encode();
 
-        self.db
-            .put_cf(&cf, key, &value)
-            .map_err(|e| Error::Storage(e.to_string()))?;
+        self.db.put_cf(&cf, key, &value)?;
 
         Ok(())
     }
@@ -218,7 +208,7 @@ impl DiskStorage {
             let cf_nodes = self
                 .db
                 .cf_handle(CF_NODES)
-                .ok_or_else(|| Error::Storage("Nodes CF not found".to_string()))?;
+                .ok_or(Error::ColumnFamilyMissing(CF_NODES))?;
 
             let missing: Vec<String> = child_hashes
                 .iter()
@@ -256,15 +246,10 @@ impl DiskStorage {
         let cf_nodes = self
             .db
             .cf_handle(CF_NODES)
-            .ok_or_else(|| Error::Storage("Nodes CF not found".to_string()))?;
+            .ok_or(Error::ColumnFamilyMissing(CF_NODES))?;
 
         let key = expected_hash.as_bytes();
-        if self
-            .db
-            .get_cf(&cf_nodes, key)
-            .map_err(|e| Error::Storage(e.to_string()))?
-            .is_none()
-        {
+        if self.db.get_cf(&cf_nodes, key)?.is_none() {
             let data_len = data.len() as u64;
             let node = StoredNode { data, children };
             let value = node.encode();
@@ -275,15 +260,13 @@ impl DiskStorage {
             let cf_buckets = self
                 .db
                 .cf_handle(CF_BUCKETS)
-                .ok_or_else(|| Error::Storage("Buckets CF not found".to_string()))?;
+                .ok_or(Error::ColumnFamilyMissing(CF_BUCKETS))?;
             let bucket_value = bucket.encode();
 
             let mut batch = rocksdb::WriteBatch::default();
             batch.put_cf(&cf_nodes, key, &value);
             batch.put_cf(&cf_buckets, bucket_id.to_le_bytes(), &bucket_value);
-            self.db
-                .write(batch)
-                .map_err(|e| Error::Storage(e.to_string()))?;
+            self.db.write(batch)?;
         }
 
         Ok(())
@@ -337,16 +320,11 @@ impl DiskStorage {
         let cf_nodes = self
             .db
             .cf_handle(CF_NODES)
-            .ok_or_else(|| Error::Storage("Nodes CF not found".to_string()))?;
+            .ok_or(Error::ColumnFamilyMissing(CF_NODES))?;
 
         for root in &data_roots {
             let key = root.as_bytes();
-            if self
-                .db
-                .get_cf(&cf_nodes, key)
-                .map_err(|e| Error::Storage(e.to_string()))?
-                .is_none()
-            {
+            if self.db.get_cf(&cf_nodes, key)?.is_none() {
                 return Err(Error::RootNotFound(format!(
                     "0x{}",
                     hex::encode(root.as_bytes())
@@ -1053,5 +1031,22 @@ mod tests {
                 "reset must persist across DB reopen"
             );
         }
+    }
+
+    #[test]
+    fn new_wraps_rocksdb_open_failure() {
+        // A regular file where RocksDB expects a directory: `DB::open_cf` must
+        // fail, and that failure must surface as `Error::RocksDb`.
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("not_a_directory");
+        std::fs::write(&path, b"not a rocksdb database").unwrap();
+
+        let Err(err) = DiskStorage::new(&path) else {
+            panic!("opening a non-directory path must fail");
+        };
+        assert!(
+            matches!(err, Error::RocksDb(_)),
+            "expected Error::RocksDb, got {err}"
+        );
     }
 }
