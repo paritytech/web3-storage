@@ -46,6 +46,20 @@ fn slash_provider_stake(provider: u64) {
     });
 }
 
+/// Register a provider that also takes replica agreements at a fixed sync price.
+fn replica_provider(who: u64, stake: u64) {
+    register_provider_with_settings(
+        who,
+        stake,
+        ProviderSettings {
+            price_per_byte: 1,
+            accepting_primary: true,
+            replica_sync_price: Some(10),
+            ..Default::default()
+        },
+    );
+}
+
 mod agreement;
 mod auto_matching;
 mod bucket;
@@ -62,5 +76,6 @@ mod provider;
 mod replica;
 mod runtime_api;
 mod signatures;
+mod transfer;
 mod try_state;
 mod visibility;

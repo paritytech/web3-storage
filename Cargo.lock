@@ -7264,6 +7264,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "provider-replica"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "axum",
+ "base64",
+ "hex",
+ "parity-scale-codec",
+ "provider-chain",
+ "provider-storage",
+ "provider-types",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sp-core",
+ "sp-runtime",
+ "storage-primitives",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "provider-storage"
 version = "0.1.0"
 dependencies = [
@@ -7293,6 +7317,7 @@ dependencies = [
  "sp-core",
  "sp-crypto-hashing",
  "sp-runtime",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -10133,6 +10158,7 @@ dependencies = [
  "provider-challenge",
  "provider-coordinator",
  "provider-negotiation",
+ "provider-replica",
  "provider-storage",
  "provider-types",
  "reqwest",
