@@ -10,7 +10,7 @@
 //! stream is confirmed up (see [`SubxtChainSession::subscribe`]), so
 //! consumers never observe a handle whose backend failed immediately.
 
-use provider_chain::chain_connection::{self, ChainHandle, ChainTransport};
+use crate::chain_connection::{self, ChainHandle, ChainTransport};
 use provider_chain::decode_block_events;
 use provider_coordinator::{
     BlockUpdate, ChainFollower, ChainSession, ChainStateChainClient, Error, FinalizedBlock,

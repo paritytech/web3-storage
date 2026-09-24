@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: GPL-3.0-only
 
 //! Chain-connection construction: the single place a subxt client is built.
 //!
@@ -9,12 +9,25 @@
 //! in its reconnect loop and publishes each new handle, so consumers always
 //! borrow the live client and nobody else carries reconnect logic.
 
-use crate::Error;
 use serde_json::{json, Value};
 use std::path::PathBuf;
 use subxt::lightclient::LightClient;
 use subxt::{OnlineClient, PolkadotConfig};
 use subxt_rpcs::client::{rpc_params, RpcClient};
+use thiserror::Error;
+
+/// Error connecting to the chain or building a connection's chain spec.
+#[derive(Error, Debug)]
+pub enum Error {
+    #[error("Failed to connect to chain: {0}")]
+    Connection(#[from] subxt::error::OnlineClientError),
+
+    #[error("Chain connection not established yet")]
+    NotConnected,
+
+    #[error("Internal error: {0}")]
+    Internal(String),
+}
 
 /// How the provider node talks to the chain.
 #[derive(Clone, Debug)]

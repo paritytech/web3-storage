@@ -98,7 +98,7 @@ pub enum Error {
     ChainStateNotReady,
 
     #[error(transparent)]
-    Chain(#[from] provider_chain::Error),
+    Chain(#[from] crate::chain_connection::Error),
 
     #[error(transparent)]
     Coordinator(#[from] provider_coordinator::Error),
@@ -135,7 +135,7 @@ struct ErrorResponse {
 
 impl IntoResponse for Error {
     fn into_response(self) -> Response {
-        use provider_chain::Error as ChainError;
+        use crate::chain_connection::Error as ChainError;
         use provider_coordinator::Error as CoordinatorError;
         use provider_storage::Error as StorageError;
         let (status, error_response) = match &self {
@@ -624,11 +624,11 @@ mod tests {
         // A connection that was never established is retryable; a failed
         // connect attempt is a bug. They must not share a status code.
         assert_eq!(
-            status_of(provider_chain::Error::NotConnected.into()),
+            status_of(crate::chain_connection::Error::NotConnected.into()),
             StatusCode::SERVICE_UNAVAILABLE
         );
         assert_eq!(
-            status_of(provider_chain::Error::Internal("boom".into()).into()),
+            status_of(crate::chain_connection::Error::Internal("boom".into()).into()),
             StatusCode::INTERNAL_SERVER_ERROR
         );
         assert_eq!(
