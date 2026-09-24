@@ -7238,6 +7238,7 @@ dependencies = [
 name = "provider-http"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "axum",
  "base64",
  "hex",
@@ -7248,9 +7249,11 @@ dependencies = [
  "provider-replica",
  "provider-storage",
  "provider-types",
+ "reqwest",
  "serde",
  "serde_json",
  "sp-core",
+ "sp-crypto-hashing",
  "sp-runtime",
  "storage-primitives",
  "tempfile",
@@ -9965,6 +9968,7 @@ dependencies = [
  "hex",
  "parity-scale-codec",
  "provider-auth",
+ "provider-http",
  "provider-negotiation",
  "provider-storage",
  "provider-types",
@@ -9977,7 +9981,6 @@ dependencies = [
  "sp-runtime",
  "storage-indexers",
  "storage-primitives",
- "storage-provider-node",
  "storage-subxt",
  "subxt",
  "subxt-signer 0.50.2",
@@ -10160,7 +10163,6 @@ version = "0.4.1"
 dependencies = [
  "async-trait",
  "axum",
- "base64",
  "clap",
  "hex",
  "parity-scale-codec",
@@ -10173,7 +10175,6 @@ dependencies = [
  "provider-replica",
  "provider-storage",
  "provider-types",
- "reqwest",
  "serde_json",
  "sp-core",
  "sp-crypto-hashing",

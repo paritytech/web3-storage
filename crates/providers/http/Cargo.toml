@@ -29,6 +29,9 @@ tower-http = { workspace = true }
 tracing = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
+async-trait = { workspace = true }
 provider-storage = { workspace = true, features = ["test-helpers"] }
+reqwest = { workspace = true }
+sp-crypto-hashing = { workspace = true, features = ["std"] }
 tempfile = { workspace = true }
 tokio = { workspace = true }

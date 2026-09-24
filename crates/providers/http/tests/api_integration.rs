@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! Integration tests for the provider node HTTP API.
 //!
@@ -17,16 +17,17 @@ use sp_core::crypto::Ss58Codec;
 use sp_core::{sr25519, Pair, H256};
 use storage_primitives::{Commitment, CommitmentPayload};
 
-use common::{StorageBackendKind, TestServer};
+use common::TestServer;
+use provider_storage::StorageBackendSpec;
 
 impl TestServer {
     /// Signing provider (`//Alice`): endpoints that sign commitments work.
-    async fn new(backend: StorageBackendKind) -> Self {
+    async fn new(backend: StorageBackendSpec) -> Self {
         Self::new_with_scheme(backend, KeyScheme::Sr25519).await
     }
 
     /// Signing provider (`//Alice`) under the given scheme.
-    async fn new_with_scheme(backend: StorageBackendKind, scheme: KeyScheme) -> Self {
+    async fn new_with_scheme(backend: StorageBackendSpec, scheme: KeyScheme) -> Self {
         Self::start(backend, move |deps| {
             ProviderState::with_seed_scheme(deps, common::PROVIDER_SEED, scheme)
                 .expect("//Alice is a valid SURI")
@@ -36,7 +37,7 @@ impl TestServer {
 
     /// No signing key, so signing-bound endpoints must answer 503 rather than
     /// emit zero-byte placeholder signatures.
-    async fn new_unsigned(backend: StorageBackendKind) -> Self {
+    async fn new_unsigned(backend: StorageBackendSpec) -> Self {
         Self::start(backend, |deps| {
             ProviderState::with_provider_id(deps, "0xtest_provider".to_string())
         })
@@ -46,7 +47,7 @@ impl TestServer {
     /// Signing provider (`//Alice`) with no on-chain registration published,
     /// so signing-bound endpoints must answer 503 rather than sign with a key
     /// the chain does not (yet) know about.
-    async fn new_unregistered(backend: StorageBackendKind) -> Self {
+    async fn new_unregistered(backend: StorageBackendSpec) -> Self {
         Self::start_unregistered(backend, |deps| {
             ProviderState::with_seed(deps, common::PROVIDER_SEED).expect("//Alice is a valid SURI")
         })
@@ -610,7 +611,13 @@ async fn commit_signs_with_configured_ed25519_scheme() {
     // same seed — the full multi-scheme wire path.
     use sp_core::ed25519;
 
-    let server = TestServer::new_with_scheme(StorageBackendKind::RocksDb, KeyScheme::Ed25519).await;
+    let server = TestServer::new_with_scheme(
+        StorageBackendSpec::RocksDb {
+            path: std::path::PathBuf::new(),
+        },
+        KeyScheme::Ed25519,
+    )
+    .await;
     let bucket_id = 11;
 
     let (_h, body) = upload_and_commit(&server, bucket_id).await;

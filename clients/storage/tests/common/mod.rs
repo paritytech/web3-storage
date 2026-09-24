@@ -3,6 +3,7 @@
 //! Shared test helpers for integration tests.
 
 use provider_auth::{Authenticator, StaticMembershipResolver};
+use provider_http::{create_router, ProviderDeps, ProviderState};
 use provider_storage::temp_rocksdb;
 use sp_core::crypto::Ss58Codec;
 use sp_core::Pair;
@@ -13,7 +14,6 @@ use storage_client::{
     ProviderClient, ProviderSettings, Signer, StorageUserClient,
 };
 use storage_primitives::{AgreementTerms, Role};
-use storage_provider_node::{create_router, ProviderDeps, ProviderState};
 use tokio::net::TcpListener;
 use tokio::sync::{Mutex, MutexGuard};
 

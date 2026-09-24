@@ -26,6 +26,7 @@ COV_PACKAGES=(
 	storage-provider-node
 	provider-events
 	provider-coordinator
+	provider-http
 	provider-negotiation
 	provider-auth
 	provider-replica

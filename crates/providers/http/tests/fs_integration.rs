@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! Integration tests for the file system HTTP API endpoints.
 
@@ -8,10 +8,11 @@ use axum::http::StatusCode;
 use provider_http::ProviderState;
 use serde_json::Value;
 
-use common::{StorageBackendKind, TestServer};
+use common::TestServer;
+use provider_storage::StorageBackendSpec;
 
 impl TestServer {
-    async fn new(backend: StorageBackendKind) -> Self {
+    async fn new(backend: StorageBackendSpec) -> Self {
         Self::start(backend, |deps| {
             ProviderState::with_provider_id(deps, "0xtest_provider".to_string())
         })
