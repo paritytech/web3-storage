@@ -15,7 +15,7 @@ use provider_auth::{
     build_auth_header, Authenticator, BucketAccess, MembershipError, MembershipResolver,
     RequiredRole,
 };
-use provider_chain::BlockEvent;
+use provider_events::BlockEvent;
 use sp_core::{sr25519, Pair};
 use sp_runtime::AccountId32;
 use std::sync::atomic::{AtomicUsize, Ordering};

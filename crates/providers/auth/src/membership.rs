@@ -502,7 +502,7 @@ mod tests {
     async fn invalidating_a_never_cached_bucket_leaves_the_map_empty() {
         // The chain-wide membership feed carries every bucket's changes:
         // `BlockEvent::BucketMembershipChanged` is decoded by pallet and event
-        // name only (crates/providers/chain/src/event_decoding.rs), with no
+        // name only (provider-node/src/event_decoding.rs), with no
         // is-this-our-bucket predicate, so `invalidate` is routinely called
         // for buckets this cache has never seen. It must be a no-op on the
         // map, not a slot-creating write - otherwise every chain-wide

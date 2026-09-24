@@ -10,8 +10,8 @@
 //! stream is confirmed up (see [`SubxtChainSession::subscribe`]), so
 //! consumers never observe a handle whose backend failed immediately.
 
-use provider_chain::chain_connection::{self, ChainHandle, ChainTransport};
-use provider_chain::decode_block_events;
+use crate::chain_connection::{self, ChainHandle, ChainTransport};
+use crate::event_decoding::decode_block_events;
 use provider_coordinator::{
     BlockUpdate, ChainFollower, ChainSession, ChainStateChainClient, Error, FinalizedBlock,
     FinalizedBlocks, ProviderLifecycleEvent,
@@ -399,7 +399,7 @@ impl FinalizedBlocks for SubxtFinalizedBlocks {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use provider_chain::BlockEvent;
+    use provider_events::BlockEvent;
     use subxt::backend::LegacyBackend;
     use subxt::ext::scale_value::scale::encode_as_type;
     use subxt::ext::scale_value::Value;
