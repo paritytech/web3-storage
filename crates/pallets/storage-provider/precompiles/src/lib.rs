@@ -157,9 +157,6 @@ where
                 env.charge(
                     <Runtime as pallet_storage_provider::Config>::WeightInfo::create_bucket(),
                 )?;
-                // `NextBucketId` is incremented inside the extrinsic; capture
-                // the pre-dispatch value so we can return the id assigned to
-                // this call.
                 let bucket_id: BucketId = pallet_storage_provider::NextBucketId::<Runtime>::get();
                 pallet_storage_provider::Pallet::<Runtime>::create_bucket(
                     frame_origin,

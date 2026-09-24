@@ -7,6 +7,8 @@ use storage_primitives::{
     BucketId, BucketTarget, EndAction, ProviderRole, RemovalReason, ReplayError, Visibility,
 };
 
+const DEFAULT_MIN_PROVIDERS: u32 = 1;
+
 impl<T: Config> Pallet<T> {
     pub(crate) fn validate_duration(
         settings: &ProviderSettings<T>,
@@ -132,11 +134,10 @@ impl<T: Config> Pallet<T> {
         Ok(())
     }
 
-    /// Creates a bucket and opens its first primary agreement atomically.
+    /// Creates a bucket with `provider` as its first primary.
     ///
-    /// Used by the `create_bucket_with_primary` extrinsic and by higher-layer
-    /// pallets that fold bucket creation into their own flows. The quote must
-    /// name [`BucketTarget::New`].
+    /// The quote must be for a new bucket. Call this inside a storage
+    /// transaction: if the quote is rejected, the bucket is already written.
     pub fn create_bucket_with_primary_internal(
         owner: &T::AccountId,
         provider: &T::AccountId,
@@ -144,14 +145,15 @@ impl<T: Config> Pallet<T> {
         sig: &sp_runtime::MultiSignature,
         visibility: Visibility,
     ) -> Result<BucketId, DispatchError> {
-        Self::open_primary_agreement(owner, provider, terms, sig, BucketTarget::New, || {
-            Self::create_bucket_internal(owner, 1, Some(provider), visibility)
-        })
+        let bucket_id =
+            Self::create_bucket_internal(owner, DEFAULT_MIN_PROVIDERS, Some(provider), visibility)?;
+        Self::open_primary_agreement(owner, provider, terms, sig, BucketTarget::New, bucket_id)?;
+        Ok(bucket_id)
     }
 
     /// Adds a primary provider to an existing bucket. `admin` must be a bucket
     /// admin; the quote must name [`BucketTarget::Existing`] with `bucket_id`.
-    pub fn add_primary_provider_internal(
+    pub(crate) fn add_primary_provider_internal(
         admin: &T::AccountId,
         bucket_id: BucketId,
         provider: &T::AccountId,
@@ -175,12 +177,9 @@ impl<T: Config> Pallet<T> {
             terms,
             sig,
             BucketTarget::Existing(bucket_id),
-            || Ok(bucket_id),
+            bucket_id,
         )?;
 
-        // Appended, never inserted: the snapshot's signer bitfield is indexed
-        // by position, so the existing entries must keep theirs. Last, so the
-        // quote is fully accepted before the bucket changes.
         Buckets::<T>::try_mutate(bucket_id, |maybe_bucket| -> DispatchResult {
             let bucket = maybe_bucket.as_mut().ok_or(Error::<T>::BucketNotFound)?;
             bucket
@@ -389,8 +388,8 @@ impl<T: Config> Pallet<T> {
         terms: AgreementTermsOf<T>,
         sig: &sp_runtime::MultiSignature,
         target: BucketTarget,
-        bucket: impl FnOnce() -> Result<BucketId, DispatchError>,
-    ) -> Result<BucketId, DispatchError> {
+        bucket_id: BucketId,
+    ) -> DispatchResult {
         let anchor_block = Self::validate_terms(owner, &terms, target)?;
         ensure!(
             terms.replica_params.is_none(),
@@ -413,8 +412,6 @@ impl<T: Config> Pallet<T> {
         let payment =
             Self::calculate_payment(terms.price_per_byte, terms.max_bytes, terms.duration)?;
         Self::hold_payment(owner, payment)?;
-
-        let bucket_id = bucket()?;
 
         let expires_at = anchor_block.saturating_add(terms.duration);
         Self::record_agreement(
@@ -445,6 +442,6 @@ impl<T: Config> Pallet<T> {
             expires_at,
         });
 
-        Ok(bucket_id)
+        Ok(())
     }
 }

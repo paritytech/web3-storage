@@ -6,6 +6,7 @@ use sp_core::Pair as _;
 #[test]
 fn create_bucket_with_primary_works() {
     new_test_ext().execute_with(|| {
+        run_to_block(1);
         register_provider(2, 200);
 
         let (terms, sig) = signed_primary_terms(2, 1, BucketTarget::New, 100, 100);
@@ -35,6 +36,14 @@ fn create_bucket_with_primary_works() {
         let provider = Providers::<Test>::get(2).unwrap();
         assert_eq!(provider.committed_bytes, 100);
         assert_eq!(provider.stats.agreements_total, 1);
+
+        System::assert_has_event(
+            Event::ProviderAddedToBucket {
+                bucket_id: 0,
+                provider: 2,
+            }
+            .into(),
+        );
     });
 }
 
