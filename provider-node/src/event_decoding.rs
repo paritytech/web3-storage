@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: GPL-3.0-only
 
 //! Decoding raw on-chain events into [`BlockEvent`]s.
 //!
@@ -7,75 +7,85 @@
 //! (logged, backstopped by the safety-net scans) instead of silently
 //! yielding `None` on dynamic field lookups.
 
-use crate::events::BlockEvent;
+use provider_chain::BlockEvent;
 use sp_runtime::AccountId32;
 use storage_subxt::api::storage_provider::events as provider_events;
 use subxt::PolkadotConfig;
 
-impl From<provider_events::ChallengeCreated> for BlockEvent {
-    fn from(ev: provider_events::ChallengeCreated) -> Self {
+/// Maps a decoded pallet event into its coordinator-relevant [`BlockEvent`].
+///
+/// A local trait rather than `std::convert::From`: neither `BlockEvent`
+/// (defined in `provider-chain`) nor the pallet event types (defined in
+/// `storage-subxt`) are local to this crate, so a foreign `From` impl would
+/// violate the orphan rules. The trait itself being local is enough.
+trait IntoBlockEvent {
+    fn into_block_event(self) -> BlockEvent;
+}
+
+impl IntoBlockEvent for provider_events::ChallengeCreated {
+    fn into_block_event(self) -> BlockEvent {
         BlockEvent::ChallengeCreated {
-            deadline: ev.challenge_id.deadline,
-            index: ev.challenge_id.index,
-            bucket_id: ev.bucket_id,
-            provider: AccountId32::new(ev.provider.0),
+            deadline: self.challenge_id.deadline,
+            index: self.challenge_id.index,
+            bucket_id: self.bucket_id,
+            provider: AccountId32::new(self.provider.0),
         }
     }
 }
 
-impl From<provider_events::ReplicaAgreementEstablished> for BlockEvent {
-    fn from(ev: provider_events::ReplicaAgreementEstablished) -> Self {
+impl IntoBlockEvent for provider_events::ReplicaAgreementEstablished {
+    fn into_block_event(self) -> BlockEvent {
         BlockEvent::ReplicaAgreementEstablished {
-            bucket_id: ev.bucket_id,
-            provider: AccountId32::new(ev.provider.0),
+            bucket_id: self.bucket_id,
+            provider: AccountId32::new(self.provider.0),
         }
     }
 }
 
-impl From<provider_events::BucketCheckpointed> for BlockEvent {
-    fn from(ev: provider_events::BucketCheckpointed) -> Self {
+impl IntoBlockEvent for provider_events::BucketCheckpointed {
+    fn into_block_event(self) -> BlockEvent {
         BlockEvent::BucketCheckpointed {
-            bucket_id: ev.bucket_id,
+            bucket_id: self.bucket_id,
         }
     }
 }
 
-impl From<provider_events::BucketCreated> for BlockEvent {
-    fn from(ev: provider_events::BucketCreated) -> Self {
+impl IntoBlockEvent for provider_events::BucketCreated {
+    fn into_block_event(self) -> BlockEvent {
         BlockEvent::BucketMembershipChanged {
-            bucket_id: ev.bucket_id,
+            bucket_id: self.bucket_id,
         }
     }
 }
 
-impl From<provider_events::MemberSet> for BlockEvent {
-    fn from(ev: provider_events::MemberSet) -> Self {
+impl IntoBlockEvent for provider_events::MemberSet {
+    fn into_block_event(self) -> BlockEvent {
         BlockEvent::BucketMembershipChanged {
-            bucket_id: ev.bucket_id,
+            bucket_id: self.bucket_id,
         }
     }
 }
 
-impl From<provider_events::MemberRemoved> for BlockEvent {
-    fn from(ev: provider_events::MemberRemoved) -> Self {
+impl IntoBlockEvent for provider_events::MemberRemoved {
+    fn into_block_event(self) -> BlockEvent {
         BlockEvent::BucketMembershipChanged {
-            bucket_id: ev.bucket_id,
+            bucket_id: self.bucket_id,
         }
     }
 }
 
-impl From<provider_events::BucketDeleted> for BlockEvent {
-    fn from(ev: provider_events::BucketDeleted) -> Self {
+impl IntoBlockEvent for provider_events::BucketDeleted {
+    fn into_block_event(self) -> BlockEvent {
         BlockEvent::BucketMembershipChanged {
-            bucket_id: ev.bucket_id,
+            bucket_id: self.bucket_id,
         }
     }
 }
 
-impl From<provider_events::BucketVisibilityChanged> for BlockEvent {
-    fn from(ev: provider_events::BucketVisibilityChanged) -> Self {
+impl IntoBlockEvent for provider_events::BucketVisibilityChanged {
+    fn into_block_event(self) -> BlockEvent {
         BlockEvent::BucketMembershipChanged {
-            bucket_id: ev.bucket_id,
+            bucket_id: self.bucket_id,
         }
     }
 }
@@ -99,13 +109,14 @@ pub fn decode_block_events(
         .filter_map(|event| event.ok())
         .filter_map(|event| {
             decode::<provider_events::ChallengeCreated>(&event)
-                .map(BlockEvent::from)
+                .map(IntoBlockEvent::into_block_event)
                 .or_else(|| {
                     decode::<provider_events::ReplicaAgreementEstablished>(&event)
-                        .map(BlockEvent::from)
+                        .map(IntoBlockEvent::into_block_event)
                 })
                 .or_else(|| {
-                    decode::<provider_events::BucketCheckpointed>(&event).map(BlockEvent::from)
+                    decode::<provider_events::BucketCheckpointed>(&event)
+                        .map(IntoBlockEvent::into_block_event)
                 })
                 .or_else(|| {
                     decode_membership::<provider_events::BucketCreated>(&event, block_number)
@@ -156,11 +167,10 @@ fn decode_membership<E>(
     block_number: u32,
 ) -> Option<BlockEvent>
 where
-    E: subxt::events::DecodeAsEvent,
-    BlockEvent: From<E>,
+    E: subxt::events::DecodeAsEvent + IntoBlockEvent,
 {
     match event.decode_fields_as::<E>()? {
-        Ok(decoded) => Some(BlockEvent::from(decoded)),
+        Ok(decoded) => Some(decoded.into_block_event()),
         Err(e) => Some(escalate_membership_decode_failure(
             event.pallet_name(),
             event.event_name(),
@@ -219,7 +229,7 @@ mod tests {
         let BlockEvent::ReplicaAgreementEstablished {
             bucket_id,
             provider,
-        } = BlockEvent::from(ev)
+        } = ev.into_block_event()
         else {
             panic!("expected ReplicaAgreementEstablished");
         };
@@ -239,7 +249,7 @@ mod tests {
             providers: vec![subxt::utils::AccountId32([4u8; 32])],
         };
         assert!(matches!(
-            BlockEvent::from(checkpointed),
+            checkpointed.into_block_event(),
             BlockEvent::BucketCheckpointed { bucket_id: 22 }
         ));
     }
@@ -261,7 +271,7 @@ mod tests {
             index,
             bucket_id,
             provider,
-        } = BlockEvent::from(ev)
+        } = ev.into_block_event()
         else {
             panic!("expected ChallengeCreated");
         };
@@ -278,7 +288,7 @@ mod tests {
             admin: subxt::utils::AccountId32([4u8; 32]),
         };
         assert!(matches!(
-            BlockEvent::from(ev),
+            ev.into_block_event(),
             BlockEvent::BucketMembershipChanged { bucket_id: 9 }
         ));
     }
@@ -293,7 +303,7 @@ mod tests {
             role: Role::Writer,
         };
         assert!(matches!(
-            BlockEvent::from(ev),
+            ev.into_block_event(),
             BlockEvent::BucketMembershipChanged { bucket_id: 7 }
         ));
     }
@@ -305,7 +315,7 @@ mod tests {
             member: subxt::utils::AccountId32([3u8; 32]),
         };
         assert!(matches!(
-            BlockEvent::from(ev),
+            ev.into_block_event(),
             BlockEvent::BucketMembershipChanged { bucket_id: 7 }
         ));
     }
@@ -314,7 +324,7 @@ mod tests {
     fn bucket_deleted_maps_bucket_id() {
         let ev = provider_events::BucketDeleted { bucket_id: 8 };
         assert!(matches!(
-            BlockEvent::from(ev),
+            ev.into_block_event(),
             BlockEvent::BucketMembershipChanged { bucket_id: 8 }
         ));
     }
@@ -328,7 +338,7 @@ mod tests {
             visibility: Visibility::Private,
         };
         assert!(matches!(
-            BlockEvent::from(ev),
+            ev.into_block_event(),
             BlockEvent::BucketMembershipChanged { bucket_id: 6 }
         ));
     }

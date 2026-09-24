@@ -10,8 +10,8 @@
 //! `OnlineClient`/`Keypair` clone that shares the underlying WebSocket
 //! connection).
 
-use crate::challenge_responder::{ChallengeChainClient, ChallengeError, DetectedChallenge};
 use crate::chain_connection::{self, ChainWatch};
+use crate::challenge_responder::{ChallengeChainClient, ChallengeError, DetectedChallenge};
 use crate::Error;
 use provider_replica::coordinator::{BucketSnapshot, ReplicaAgreementInfo};
 use provider_replica::{ChainClientError, ReplicaSyncChainClient, SignedSyncRoots};

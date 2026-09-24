@@ -11,7 +11,7 @@
 //! consumers never observe a handle whose backend failed immediately.
 
 use crate::chain_connection::{self, ChainHandle, ChainTransport};
-use provider_chain::decode_block_events;
+use crate::event_decoding::decode_block_events;
 use provider_coordinator::{
     BlockUpdate, ChainFollower, ChainSession, ChainStateChainClient, Error, FinalizedBlock,
     FinalizedBlocks, ProviderLifecycleEvent,
