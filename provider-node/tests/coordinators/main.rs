@@ -84,8 +84,12 @@ pub fn test_state_with_data() -> (Arc<ProviderState>, DetectedChallenge, TempDir
     let data_root = build_padded_merkle_tree(storage.as_ref(), 1, &[chunk_hash]).unwrap();
     assert_eq!(data_root, chunk_hash);
 
-    let (mmr_root, start_seq, leaf_indices) = storage.commit(1, vec![data_root]).unwrap();
-    assert_eq!(leaf_indices, vec![0]);
+    let committed = storage.commit(1, vec![data_root]).unwrap();
+    assert_eq!(committed.leaf_indices, vec![0]);
+    let (mmr_root, start_seq) = (
+        committed.commitment.mmr_root,
+        committed.commitment.start_seq,
+    );
 
     let challenge = DetectedChallenge {
         bucket_id: 1,

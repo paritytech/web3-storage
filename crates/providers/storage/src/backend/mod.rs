@@ -20,7 +20,7 @@ use std::fmt;
 use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::Arc;
-use storage_primitives::{hash_children, BucketId};
+use storage_primitives::{hash_children, BucketId, Commitment};
 
 /// A built backend: the storage, and the nonce store matching its persistence.
 pub type OpenedBackend = (Arc<dyn StorageBackend>, Arc<dyn NonceStore>);
@@ -63,6 +63,14 @@ impl fmt::Display for StorageBackendSpec {
             Self::RocksDb { path } => write!(f, "RocksDB at {}", path.display()),
         }
     }
+}
+
+/// What `commit` produced: the commitment the provider signs, and the MMR
+/// index of each committed data root, in input order.
+#[derive(Debug)]
+pub struct CommitOutcome {
+    pub commitment: Commitment,
+    pub leaf_indices: Vec<u64>,
 }
 
 /// Bucket information returned by the storage backend.
@@ -130,12 +138,9 @@ pub trait StorageBackend: Send + Sync {
     /// Check which hashes exist in storage.
     fn check_exists(&self, bucket_id: BucketId, hashes: &[H256]) -> (Vec<H256>, Vec<H256>);
 
-    /// Commit data roots to the bucket's MMR.
-    fn commit(
-        &self,
-        bucket_id: BucketId,
-        data_roots: Vec<H256>,
-    ) -> Result<(H256, u64, Vec<u64>), Error>;
+    /// Commit data roots to the bucket's MMR. The returned commitment is the
+    /// bucket state after the commit, read in the same transaction.
+    fn commit(&self, bucket_id: BucketId, data_roots: Vec<H256>) -> Result<CommitOutcome, Error>;
 
     /// Node budget for one content-tree traversal; see [`MAX_TREE_NODES`].
     fn max_tree_nodes(&self) -> u64 {
@@ -226,12 +231,9 @@ pub trait StorageBackend: Send + Sync {
             .ok_or_else(|| Error::NodeNotFound(format!("chunk_{chunk_index}")))
     }
 
-    /// Delete data before a sequence number.
-    fn delete_before(
-        &self,
-        bucket_id: BucketId,
-        new_start_seq: u64,
-    ) -> Result<(H256, u64, u64), Error>;
+    /// Delete data before a sequence number. Returns the commitment after
+    /// the prune.
+    fn delete_before(&self, bucket_id: BucketId, new_start_seq: u64) -> Result<Commitment, Error>;
 
     /// Get MMR proof for a leaf.
     fn get_mmr_proof(
@@ -296,8 +298,9 @@ pub fn commit_blob(
         })
         .collect::<Result<Vec<_>, Error>>()?;
     let data_root = build_padded_merkle_tree(storage, bucket_id, &chunk_hashes)?;
-    let (_mmr_root, _start_seq, leaf_indices) = storage.commit(bucket_id, vec![data_root])?;
-    let leaf_index = leaf_indices
+    let leaf_index = storage
+        .commit(bucket_id, vec![data_root])?
+        .leaf_indices
         .first()
         .copied()
         .ok_or(Error::RootNotFound(format!(

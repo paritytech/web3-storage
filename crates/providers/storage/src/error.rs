@@ -28,6 +28,11 @@ pub enum Error {
     #[error("Root not found: {0}")]
     RootNotFound(String),
 
+    /// Another writer held the bucket past the lock timeout. Retry the
+    /// request.
+    #[error("Bucket {0} is busy")]
+    BucketBusy(u64),
+
     /// The content tree under a data root has more than `max_nodes` nodes
     /// when every shared subtree is counted once per path that reaches it.
     /// Deduplication lets a few stored nodes span such a tree.

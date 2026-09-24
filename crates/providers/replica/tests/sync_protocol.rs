@@ -281,7 +281,12 @@ async fn a_root_we_already_hold_returns_without_fetching_any_node() {
     let leaf = blake2_256(&data);
     f.storage.init_bucket(BUCKET, u64::MAX).unwrap();
     f.storage.store_node(BUCKET, leaf, data, None).unwrap();
-    let (local_root, _, _) = f.storage.commit(BUCKET, vec![leaf]).unwrap();
+    let local_root = f
+        .storage
+        .commit(BUCKET, vec![leaf])
+        .unwrap()
+        .commitment
+        .mmr_root;
 
     // Answering the leaf with an error proves `/node` is never requested.
     let nodes = HashMap::from([(hex_hash(leaf), status(StatusCode::INTERNAL_SERVER_ERROR))]);

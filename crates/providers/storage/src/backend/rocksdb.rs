@@ -7,15 +7,20 @@
 //!
 //! [`types`]: super::types
 
-use super::{BucketInfo, BucketState, BucketStats, BucketSummary, StorageBackend, StoredNode};
+use super::{
+    BucketInfo, BucketState, BucketStats, BucketSummary, CommitOutcome, StorageBackend, StoredNode,
+};
 use crate::error::Error;
 use crate::nonce::NonceStore;
 use codec::{DecodeAll, Encode};
-use rocksdb::{Options, DB};
+use rocksdb::{
+    ErrorKind, Options, Transaction, TransactionDB, TransactionDBOptions, TransactionOptions,
+    WriteOptions,
+};
 use sp_core::H256;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
-use storage_primitives::{blake2_256, BucketId, MmrLeaf};
+use storage_primitives::{blake2_256, BucketId, Commitment, MmrLeaf};
 
 /// Column families for organizing data
 const CF_NODES: &str = "nodes";
@@ -27,19 +32,41 @@ const CF_METADATA: &str = "metadata";
 /// RocksDB key for the persisted nonce counter highest sequence nonce.
 const KEY_NONCE: &[u8] = b"nonce_counter";
 
+/// How long a writer waits for another writer on the same bucket before
+/// failing with [`Error::BucketBusy`]. A `commit` holds the bucket for the
+/// MMR rebuild only, so a longer wait means a stuck writer, and the caller
+/// can retry.
+const BUCKET_LOCK_TIMEOUT_MS: i64 = 30_000;
+
 /// Disk-based storage backend using RocksDB.
+///
+/// The read-modify-write paths (`init_bucket`, `store_node`, `commit`,
+/// `delete_before`) each run in one pessimistic transaction that locks the
+/// bucket row exclusively, so writers to one bucket serialize and writers to
+/// different buckets do not. Every transaction runs with deadlock detection,
+/// so a lock cycle fails one side immediately with [`Error::BucketBusy`]
+/// instead of waiting out the lock timeout. Reads run outside transactions.
 pub struct DiskStorage {
-    db: Arc<DB>,
-    /// Serializes the read-modify-write paths (`init_bucket`, `store_node`,
-    /// `commit`, `delete_before`): they read `BucketState`, mutate it, and
-    /// write several keys, so two concurrent writers would lose updates
-    /// (e.g. a `used_bytes` increment). Reads never take this lock —
-    /// RocksDB handles concurrent reads itself.
-    ///
-    /// Deliberately one global lock: write volume is far below contention
-    /// territory; switch to per-bucket locks if that ever changes.
-    write_lock: parking_lot::Mutex<()>,
+    db: Arc<TransactionDB>,
     max_tree_nodes: u64,
+}
+
+/// The commitment the provider signs for the bucket in this state.
+fn commitment_of(bucket: &BucketState) -> Commitment {
+    Commitment {
+        mmr_root: bucket.mmr_root,
+        start_seq: bucket.start_seq,
+        leaf_count: bucket.leaf_count(),
+    }
+}
+
+/// A lock wait that timed out is the caller's signal to retry; every other
+/// engine failure stays an engine error.
+fn bucket_write_error(bucket_id: BucketId, error: rocksdb::Error) -> Error {
+    match error.kind() {
+        ErrorKind::TimedOut | ErrorKind::Busy => Error::BucketBusy(bucket_id),
+        _ => Error::RocksDb(error),
+    }
 }
 
 impl DiskStorage {
@@ -52,11 +79,13 @@ impl DiskStorage {
         // Define column families
         let cf_names = vec![CF_NODES, CF_BUCKETS, CF_ROOT_TO_BUCKET, CF_METADATA];
 
-        let db = DB::open_cf(&opts, path, &cf_names)?;
+        let mut txn_db_opts = TransactionDBOptions::default();
+        txn_db_opts.set_txn_lock_timeout(BUCKET_LOCK_TIMEOUT_MS);
+        txn_db_opts.set_default_lock_timeout(BUCKET_LOCK_TIMEOUT_MS);
+        let db = TransactionDB::open_cf(&opts, &txn_db_opts, path, &cf_names)?;
 
         Ok(Self {
             db: Arc::new(db),
-            write_lock: parking_lot::Mutex::new(()),
             max_tree_nodes: super::MAX_TREE_NODES,
         })
     }
@@ -67,32 +96,58 @@ impl DiskStorage {
         self
     }
 
-    /// Acquire the write lock serializing read-modify-write paths (the
-    /// guard protects no in-memory state — everything lives in RocksDB).
-    fn lock_writes(&self) -> parking_lot::MutexGuard<'_, ()> {
-        self.write_lock.lock()
-    }
-
     /// Initialize a bucket with the given quota.
     pub fn init_bucket(&self, bucket_id: BucketId, max_bytes: u64) -> Result<(), Error> {
-        let _guard = self.lock_writes();
+        let txn = self.transaction();
+        if self.bucket_for_update(&txn, bucket_id)?.is_some() {
+            return Ok(());
+        }
+        self.put_bucket(&txn, bucket_id, &BucketState::new(max_bytes))?;
+        txn.commit()?;
+        Ok(())
+    }
+
+    /// Begin a pessimistic transaction with deadlock detection.
+    fn transaction(&self) -> Transaction<'_, TransactionDB> {
+        let mut txn_opts = TransactionOptions::default();
+        txn_opts.set_deadlock_detect(true);
+        self.db.transaction_opt(&WriteOptions::default(), &txn_opts)
+    }
+
+    /// Lock the bucket row exclusively for `txn` and decode it.
+    fn bucket_for_update(
+        &self,
+        txn: &Transaction<'_, TransactionDB>,
+        bucket_id: BucketId,
+    ) -> Result<Option<BucketState>, Error> {
         let cf = self
             .db
             .cf_handle(CF_BUCKETS)
             .ok_or(Error::ColumnFamilyMissing(CF_BUCKETS))?;
+        let Some(value) = txn
+            .get_for_update_cf(&cf, bucket_id.to_le_bytes(), true)
+            .map_err(|error| bucket_write_error(bucket_id, error))?
+        else {
+            return Ok(None);
+        };
+        BucketState::decode_all(&mut &value[..])
+            .map(Some)
+            .map_err(|error| Error::Serialization(error.to_string()))
+    }
 
-        // Check if bucket already exists
-        let key = bucket_id.to_le_bytes();
-        if self.db.get_cf(&cf, key)?.is_some() {
-            return Ok(()); // Already exists
-        }
-
-        let bucket = BucketState::new(max_bytes);
-        let value = bucket.encode();
-
-        self.db.put_cf(&cf, key, &value)?;
-
-        Ok(())
+    /// Write the bucket row within `txn`.
+    fn put_bucket(
+        &self,
+        txn: &Transaction<'_, TransactionDB>,
+        bucket_id: BucketId,
+        bucket: &BucketState,
+    ) -> Result<(), Error> {
+        let cf = self
+            .db
+            .cf_handle(CF_BUCKETS)
+            .ok_or(Error::ColumnFamilyMissing(CF_BUCKETS))?;
+        txn.put_cf(&cf, bucket_id.to_le_bytes(), bucket.encode())
+            .map_err(|error| bucket_write_error(bucket_id, error))
     }
 
     /// Get bucket state (internal, returns full BucketState).
@@ -107,21 +162,6 @@ impl DiskStorage {
                 None
             }
         }
-    }
-
-    /// Update bucket state.
-    fn update_bucket(&self, bucket_id: BucketId, bucket: &BucketState) -> Result<(), Error> {
-        let cf = self
-            .db
-            .cf_handle(CF_BUCKETS)
-            .ok_or(Error::ColumnFamilyMissing(CF_BUCKETS))?;
-
-        let key = bucket_id.to_le_bytes();
-        let value = bucket.encode();
-
-        self.db.put_cf(&cf, key, &value)?;
-
-        Ok(())
     }
 
     /// Iterate over all buckets, applying a mapping function to each.
@@ -208,15 +248,13 @@ impl DiskStorage {
             });
         }
 
-        let _guard = self.lock_writes();
+        let cf_nodes = self
+            .db
+            .cf_handle(CF_NODES)
+            .ok_or(Error::ColumnFamilyMissing(CF_NODES))?;
 
         // If internal node, verify children exist
         if let Some(ref child_hashes) = children {
-            let cf_nodes = self
-                .db
-                .cf_handle(CF_NODES)
-                .ok_or(Error::ColumnFamilyMissing(CF_NODES))?;
-
             let missing: Vec<String> = child_hashes
                 .iter()
                 .filter(|h| {
@@ -236,9 +274,9 @@ impl DiskStorage {
             }
         }
 
-        // Check quota
+        let txn = self.transaction();
         let mut bucket = self
-            .get_bucket(bucket_id)
+            .bucket_for_update(&txn, bucket_id)?
             .ok_or(Error::BucketNotFound(bucket_id))?;
 
         let new_size = bucket.used_bytes.saturating_add(data.len() as u64);
@@ -249,31 +287,18 @@ impl DiskStorage {
             });
         }
 
-        // Store node
-        let cf_nodes = self
-            .db
-            .cf_handle(CF_NODES)
-            .ok_or(Error::ColumnFamilyMissing(CF_NODES))?;
-
         let key = expected_hash.as_bytes();
-        if self.db.get_cf(&cf_nodes, key)?.is_none() {
+        let stored = txn
+            .get_for_update_cf(&cf_nodes, key, true)
+            .map_err(|error| bucket_write_error(bucket_id, error))?;
+        if stored.is_none() {
             let data_len = data.len() as u64;
             let node = StoredNode { data, children };
-            let value = node.encode();
-
-            // Node and quota update land atomically: a crash between two
-            // separate puts would leak an uncharged node.
+            txn.put_cf(&cf_nodes, key, node.encode())
+                .map_err(|error| bucket_write_error(bucket_id, error))?;
             bucket.used_bytes = bucket.used_bytes.saturating_add(data_len);
-            let cf_buckets = self
-                .db
-                .cf_handle(CF_BUCKETS)
-                .ok_or(Error::ColumnFamilyMissing(CF_BUCKETS))?;
-            let bucket_value = bucket.encode();
-
-            let mut batch = rocksdb::WriteBatch::default();
-            batch.put_cf(&cf_nodes, key, &value);
-            batch.put_cf(&cf_buckets, bucket_id.to_le_bytes(), &bucket_value);
-            self.db.write(batch)?;
+            self.put_bucket(&txn, bucket_id, &bucket)?;
+            txn.commit()?;
         }
 
         Ok(())
@@ -320,7 +345,7 @@ impl DiskStorage {
         &self,
         bucket_id: BucketId,
         data_roots: Vec<H256>,
-    ) -> Result<(H256, u64, Vec<u64>), Error> {
+    ) -> Result<CommitOutcome, Error> {
         let cf_nodes = self
             .db
             .cf_handle(CF_NODES)
@@ -340,14 +365,11 @@ impl DiskStorage {
             .map(|root| self.calculate_tree_size(*root))
             .collect::<Result<Vec<_>, Error>>()?;
 
-        let _guard = self.lock_writes();
-
-        // Get bucket and update MMR
+        let txn = self.transaction();
         let mut bucket = self
-            .get_bucket(bucket_id)
+            .bucket_for_update(&txn, bucket_id)?
             .ok_or(Error::BucketNotFound(bucket_id))?;
 
-        let start_seq = bucket.start_seq;
         let mut leaf_indices = Vec::new();
         let mut mmr = crate::mmr::Mmr::new();
 
@@ -380,10 +402,13 @@ impl DiskStorage {
 
         bucket.mmr_root = mmr.root();
 
-        // Update bucket
-        self.update_bucket(bucket_id, &bucket)?;
+        self.put_bucket(&txn, bucket_id, &bucket)?;
+        txn.commit()?;
 
-        Ok((bucket.mmr_root, start_seq, leaf_indices))
+        Ok(CommitOutcome {
+            commitment: commitment_of(&bucket),
+            leaf_indices,
+        })
     }
 
     /// Delete data before a given sequence number.
@@ -391,11 +416,10 @@ impl DiskStorage {
         &self,
         bucket_id: BucketId,
         new_start_seq: u64,
-    ) -> Result<(H256, u64, u64), Error> {
-        let _guard = self.lock_writes();
-
+    ) -> Result<Commitment, Error> {
+        let txn = self.transaction();
         let mut bucket = self
-            .get_bucket(bucket_id)
+            .bucket_for_update(&txn, bucket_id)?
             .ok_or(Error::BucketNotFound(bucket_id))?;
 
         // start_seq can only advance, and no further than one past the last
@@ -422,10 +446,11 @@ impl DiskStorage {
             }
             bucket.mmr_root = mmr.root();
 
-            self.update_bucket(bucket_id, &bucket)?;
+            self.put_bucket(&txn, bucket_id, &bucket)?;
+            txn.commit()?;
         }
 
-        Ok((bucket.mmr_root, bucket.start_seq, bucket.leaf_count()))
+        Ok(commitment_of(&bucket))
     }
 
     /// Get MMR proof for a leaf.
@@ -551,7 +576,7 @@ impl DiskStorage {
 
     /// Return a nonce store backed by this DB's metadata column family.
     ///
-    /// The returned [`DiskNonceStore`] shares the open [`DB`] handle so there
+    /// The returned [`DiskNonceStore`] shares the open [`TransactionDB`] handle so there
     /// is no second DB to manage. Pass it to the negotiation nonce counter so
     /// the replay watermark survives restarts.
     pub fn nonce_store(&self) -> Arc<dyn NonceStore> {
@@ -611,19 +636,11 @@ impl StorageBackend for DiskStorage {
         self.check_exists(bucket_id, hashes)
     }
 
-    fn commit(
-        &self,
-        bucket_id: BucketId,
-        data_roots: Vec<H256>,
-    ) -> Result<(H256, u64, Vec<u64>), Error> {
+    fn commit(&self, bucket_id: BucketId, data_roots: Vec<H256>) -> Result<CommitOutcome, Error> {
         self.commit(bucket_id, data_roots)
     }
 
-    fn delete_before(
-        &self,
-        bucket_id: BucketId,
-        new_start_seq: u64,
-    ) -> Result<(H256, u64, u64), Error> {
+    fn delete_before(&self, bucket_id: BucketId, new_start_seq: u64) -> Result<Commitment, Error> {
         self.delete_before(bucket_id, new_start_seq)
     }
 
@@ -674,14 +691,14 @@ impl StorageBackend for DiskStorage {
 /// before this persistence layer was added, which is still safe — the chain's
 /// replay window rejects any duplicate redemption.
 pub struct DiskNonceStore {
-    db: Arc<DB>,
+    db: Arc<TransactionDB>,
     /// Monotonicity guard: always holds the highest value written so far,
     /// so concurrent `persist` calls can cheaply skip stale lower writes.
     watermark: Mutex<u64>,
 }
 
 impl DiskNonceStore {
-    pub fn new(db: Arc<DB>) -> Self {
+    pub fn new(db: Arc<TransactionDB>) -> Self {
         // Initialize the in-memory watermark from the DB so we're consistent
         // from the first call to persist() even if load() is never called.
         let initial = Self::read_from_db(&db).unwrap_or(0);
@@ -691,7 +708,7 @@ impl DiskNonceStore {
         }
     }
 
-    fn read_from_db(db: &DB) -> Option<u64> {
+    fn read_from_db(db: &TransactionDB) -> Option<u64> {
         let cf = db.cf_handle(CF_METADATA)?;
         let bytes = db.get_cf(&cf, KEY_NONCE).ok()??;
         bytes.try_into().ok().map(u64::from_le_bytes)
@@ -901,9 +918,10 @@ mod tests {
         storage.init_bucket(1, u64::MAX).unwrap();
         let root = diamond_tree(&storage, 1, 10);
 
-        storage.commit(1, vec![root]).unwrap();
+        let committed = storage.commit(1, vec![root]).unwrap();
 
         let bucket = storage.get_bucket(1).unwrap();
+        assert_eq!(committed.commitment.leaf_count, 1);
         assert_eq!(bucket.leaves[0].data_size, 1024 * 8);
         assert_eq!(bucket.used_bytes, 11 * 8);
         assert_eq!(storage.collect_chunk_hashes(root).unwrap().len(), 1024);
@@ -970,6 +988,83 @@ mod tests {
         ));
     }
 
+    /// Two transactions that lock two bucket rows in opposite order must not
+    /// wait out the 30 s lock timeout: deadlock detection fails one of them
+    /// at once with `Busy`, which maps to `BucketBusy` and a retry.
+    #[test]
+    fn lock_cycle_fails_fast_with_busy() {
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        for bucket_id in [1u64, 2] {
+            storage.init_bucket(bucket_id, u64::MAX).unwrap();
+        }
+        let both_locked = std::sync::Barrier::new(2);
+        let started = std::time::Instant::now();
+
+        let lock_in_order = |first: u64, second: u64| {
+            let cf = storage.db.cf_handle(CF_BUCKETS).unwrap();
+            let txn = storage.transaction();
+            txn.get_for_update_cf(&cf, first.to_le_bytes(), true)
+                .unwrap();
+            both_locked.wait();
+            txn.get_for_update_cf(&cf, second.to_le_bytes(), true)
+                .map(|_| ())
+        };
+        let (forward, backward) = std::thread::scope(|scope| {
+            let forward = scope.spawn(|| lock_in_order(1, 2));
+            let backward = scope.spawn(|| lock_in_order(2, 1));
+            (forward.join().unwrap(), backward.join().unwrap())
+        });
+
+        let mut failures: Vec<rocksdb::Error> = [forward, backward]
+            .into_iter()
+            .filter_map(Result::err)
+            .collect();
+        assert_eq!(failures.len(), 1);
+        assert_eq!(failures[0].kind(), ErrorKind::Busy);
+        assert!(matches!(
+            bucket_write_error(1, failures.pop().unwrap()),
+            Error::BucketBusy(1)
+        ));
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
+    }
+
+    /// Concurrent writers to one bucket must not lose `used_bytes` updates,
+    /// and writers to different buckets must not corrupt each other.
+    #[test]
+    fn concurrent_writers_keep_bucket_accounting_exact() {
+        const WRITERS: u64 = 8;
+        const NODES_PER_WRITER: u64 = 25;
+        const NODE_LEN: u64 = 8;
+
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        for bucket_id in [1, 2] {
+            storage.init_bucket(bucket_id, u64::MAX).unwrap();
+        }
+
+        std::thread::scope(|scope| {
+            for writer in 0..WRITERS {
+                let storage = &storage;
+                scope.spawn(move || {
+                    let bucket_id = 1 + writer % 2;
+                    for index in 0..NODES_PER_WRITER {
+                        let data = (writer * NODES_PER_WRITER + index).to_le_bytes().to_vec();
+                        let hash = blake2_256(&data);
+                        storage.store_node(bucket_id, hash, data, None).unwrap();
+                        storage.commit(bucket_id, vec![hash]).unwrap();
+                    }
+                });
+            }
+        });
+
+        for bucket_id in [1, 2] {
+            let bucket = storage.get_bucket(bucket_id).unwrap();
+            assert_eq!(bucket.used_bytes, WRITERS / 2 * NODES_PER_WRITER * NODE_LEN);
+            assert_eq!(bucket.leaf_count(), WRITERS / 2 * NODES_PER_WRITER);
+        }
+    }
+
     /// A tree with a missing node is incomplete data: serving the chunks that
     /// remain would return a truncated file as if it were whole.
     #[test]
@@ -1034,7 +1129,11 @@ mod tests {
         bucket_with_leaves(&storage, 1, 2);
         let before = storage.get_bucket(1).unwrap();
 
-        let (root, start_seq, leaf_count) = storage.delete_before(1, before.start_seq).unwrap();
+        let Commitment {
+            mmr_root: root,
+            start_seq,
+            leaf_count,
+        } = storage.delete_before(1, before.start_seq).unwrap();
 
         assert_eq!(root, before.mmr_root);
         assert_eq!(start_seq, before.start_seq);
@@ -1048,7 +1147,11 @@ mod tests {
         bucket_with_leaves(&storage, 1, 3);
         let before = storage.get_bucket(1).unwrap();
 
-        let (root, start_seq, leaf_count) = storage.delete_before(1, 2).unwrap();
+        let Commitment {
+            mmr_root: root,
+            start_seq,
+            leaf_count,
+        } = storage.delete_before(1, 2).unwrap();
 
         assert_eq!(start_seq, 2);
         assert_eq!(leaf_count, 1);
@@ -1061,7 +1164,11 @@ mod tests {
         }
         assert_eq!(root, mmr.root());
         // Deleting up to the end (empty bucket) is a valid full prune.
-        let (_, start_seq, leaf_count) = storage.delete_before(1, 3).unwrap();
+        let Commitment {
+            start_seq,
+            leaf_count,
+            ..
+        } = storage.delete_before(1, 3).unwrap();
         assert_eq!((start_seq, leaf_count), (3, 0));
     }
 
@@ -1077,7 +1184,7 @@ mod tests {
             let data = vec![i; 8];
             let hash = blake2_256(&data);
             storage.store_node(1, hash, data, None).unwrap();
-            let (root, _, _) = storage.commit(1, vec![hash]).unwrap();
+            let root = storage.commit(1, vec![hash]).unwrap().commitment.mmr_root;
             roots.push(root);
         }
 
@@ -1102,7 +1209,11 @@ mod tests {
         bucket_with_leaves(&storage, 1, 3);
         let expected = storage.get_bucket(1).unwrap().leaves[2].clone();
 
-        let (post_prune_root, start_seq, _) = storage.delete_before(1, 1).unwrap();
+        let Commitment {
+            mmr_root: post_prune_root,
+            start_seq,
+            ..
+        } = storage.delete_before(1, 1).unwrap();
         assert_eq!(start_seq, 1);
 
         // Challenge cites the post-prune commitment (start_seq 1); its
@@ -1157,8 +1268,8 @@ mod tests {
 
     #[test]
     fn new_wraps_rocksdb_open_failure() {
-        // A regular file where RocksDB expects a directory: `DB::open_cf` must
-        // fail, and that failure must surface as `Error::RocksDb`.
+        // A regular file where RocksDB expects a directory: `TransactionDB::open_cf`
+        // must fail, and that failure must surface as `Error::RocksDb`.
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("not_a_directory");
         std::fs::write(&path, b"not a rocksdb database").unwrap();

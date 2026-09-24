@@ -18,6 +18,7 @@ use axum::{
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use codec::Encode;
 use provider_auth::RequiredRole;
+use provider_storage::CommitOutcome;
 use provider_types::SigningRefused;
 use sp_core::H256;
 use std::net::SocketAddr;
@@ -382,28 +383,20 @@ async fn commit(
         })
         .collect::<Result<Vec<_>, Error>>()?;
 
-    // The signed payload carries the post-commit `leaf_count`, which is what
-    // the pallet reconstructs from the challenger's args.
     let bucket_id = request.bucket_id;
-    let (mmr_root, start_seq, leaf_indices, leaf_count) = state
-        .blocking_storage(move |storage| {
-            let (mmr_root, start_seq, leaf_indices) = storage.commit(bucket_id, data_roots)?;
-            let leaf_count = storage
-                .get_bucket(bucket_id)
-                .map(|b| b.leaf_count)
-                .unwrap_or(0);
-            Ok::<_, provider_storage::Error>((mmr_root, start_seq, leaf_indices, leaf_count))
-        })
+    let CommitOutcome {
+        commitment,
+        leaf_indices,
+    } = state
+        .blocking_storage(move |storage| storage.commit(bucket_id, data_roots))
         .await??;
+    let Commitment {
+        mmr_root,
+        start_seq,
+        leaf_count,
+    } = commitment;
 
-    let payload = CommitmentPayload::new(
-        request.bucket_id,
-        Commitment {
-            mmr_root,
-            start_seq,
-            leaf_count,
-        },
-    );
+    let payload = CommitmentPayload::new(request.bucket_id, commitment);
     let signature = state.sign(&payload.encode())?;
 
     Ok(Json(CommitResponse {
@@ -630,19 +623,16 @@ async fn delete_data(
     .await?;
 
     let (bucket_id, new_start_seq) = (request.bucket_id, request.new_start_seq);
-    let (mmr_root, start_seq, leaf_count) = state
+    let commitment = state
         .blocking_storage(move |storage| storage.delete_before(bucket_id, new_start_seq))
         .await??;
+    let Commitment {
+        mmr_root,
+        start_seq,
+        leaf_count,
+    } = commitment;
 
-    // Sign with the real post-delete leaf_count — pallet honours it now.
-    let payload = CommitmentPayload::new(
-        request.bucket_id,
-        Commitment {
-            mmr_root,
-            start_seq,
-            leaf_count,
-        },
-    );
+    let payload = CommitmentPayload::new(request.bucket_id, commitment);
     let signature = state.sign(&payload.encode())?;
 
     Ok(Json(DeleteResponse {

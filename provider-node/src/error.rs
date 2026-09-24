@@ -194,6 +194,13 @@ impl IntoResponse for Error {
                         details: Some(serde_json::json!({ "data_root": root })),
                     },
                 ),
+                StorageError::BucketBusy(bucket_id) => (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    ErrorResponse {
+                        error: "bucket_busy".to_string(),
+                        details: Some(serde_json::json!({ "bucket_id": bucket_id })),
+                    },
+                ),
                 StorageError::TreeTooLarge { max_nodes } => (
                     StatusCode::BAD_REQUEST,
                     ErrorResponse {
@@ -553,6 +560,10 @@ mod tests {
                 max_nodes: 1
             })),
             StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            status_of(Error::from(provider_storage::Error::BucketBusy(1))),
+            StatusCode::SERVICE_UNAVAILABLE
         );
         assert_eq!(
             status_of(Error::from(provider_storage::Error::ColumnFamilyMissing(
