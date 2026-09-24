@@ -728,15 +728,16 @@ async fn confirm_deletion(
     .and_then(|b| sp_runtime::MultiSignature::decode(&mut b.as_slice()).ok())
     .ok_or(Error::InvalidSignature)?;
 
-    state.storage.attach_deletion_receipt(
-        request.bucket_id,
-        provider_storage::DeletionReceipt {
-            mmr_root,
-            new_start_seq: request.new_start_seq,
-            admin,
-            signature,
-        },
-    )?;
+    let bucket_id = request.bucket_id;
+    let receipt = provider_storage::DeletionReceipt {
+        mmr_root,
+        new_start_seq: request.new_start_seq,
+        admin,
+        signature,
+    };
+    state
+        .blocking_storage(move |storage| storage.attach_deletion_receipt(bucket_id, receipt))
+        .await??;
 
     Ok(Json(DeleteConfirmResponse { stored: true }))
 }
