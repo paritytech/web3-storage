@@ -200,9 +200,6 @@ impl DiskStorage {
         data: Vec<u8>,
         children: Option<Vec<H256>>,
     ) -> Result<(), Error> {
-        let _guard = self.lock_writes();
-
-        // Verify hash
         let actual_hash = blake2_256(&data);
         if actual_hash != expected_hash {
             return Err(Error::InvalidHash {
@@ -210,6 +207,8 @@ impl DiskStorage {
                 actual: format!("0x{}", hex::encode(actual_hash.as_bytes())),
             });
         }
+
+        let _guard = self.lock_writes();
 
         // If internal node, verify children exist
         if let Some(ref child_hashes) = children {
@@ -322,9 +321,6 @@ impl DiskStorage {
         bucket_id: BucketId,
         data_roots: Vec<H256>,
     ) -> Result<(H256, u64, Vec<u64>), Error> {
-        let _guard = self.lock_writes();
-
-        // Verify all roots exist
         let cf_nodes = self
             .db
             .cf_handle(CF_NODES)
@@ -339,6 +335,12 @@ impl DiskStorage {
                 )));
             }
         }
+        let data_sizes = data_roots
+            .iter()
+            .map(|root| self.calculate_tree_size(*root))
+            .collect::<Result<Vec<_>, Error>>()?;
+
+        let _guard = self.lock_writes();
 
         // Get bucket and update MMR
         let mut bucket = self
@@ -356,10 +358,9 @@ impl DiskStorage {
 
         // Add new leaves
         let start_index = bucket.leaves.len() as u64;
-        for (i, data_root) in data_roots.iter().enumerate() {
+        for (i, (data_root, data_size)) in data_roots.iter().zip(data_sizes).enumerate() {
             leaf_indices.push(start_index + i as u64);
 
-            let data_size = self.calculate_tree_size(*data_root)?;
             let total_size = bucket
                 .leaves
                 .last()
