@@ -436,6 +436,10 @@ fn respond_to_challenge_superseded_cost_split_block_1() {
         let stats = Providers::<Test>::get(2).unwrap().stats;
         assert_eq!(stats.challenges_received_authorized, 1);
         assert_eq!(stats.challenges_received_public, 0);
+
+        // Challenge-defense payouts don't count as lifetime revenue: that
+        // money is a deterrent fee, not payment for storage service.
+        assert_eq!(stats.lifetime_revenue, 0);
     });
 }
 

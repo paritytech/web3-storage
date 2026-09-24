@@ -266,7 +266,8 @@ jobs:
           cargo build --release -p "$PACKAGE_NAME" --features "$FEATURES" -q --locked
 
           RUNTIME_BLOB_NAME=$(echo "$PACKAGE_NAME" | sed 's/-/_/g').compact.compressed.wasm
-          RUNTIME_BLOB_PATH="./target/release/wbuild/$PACKAGE_NAME/$RUNTIME_BLOB_NAME"
+          TARGET_DIR=$(cargo metadata --format-version 1 --no-deps | jq -r .target_directory)
+          RUNTIME_BLOB_PATH="$TARGET_DIR/release/wbuild/$PACKAGE_NAME/$RUNTIME_BLOB_NAME"
           export RUST_LOG=remote-ext=debug,runtime=trace
 
           (set -x; .bin/try-runtime \

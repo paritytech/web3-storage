@@ -31,7 +31,7 @@ pub(super) fn encode_refcount(count: u64, charged_bucket: u64, size: u64) -> Vec
 /// Decode a CF_REFCOUNTS value into `(count, charged_bucket, size)`.
 pub(super) fn decode_refcount(value: &[u8]) -> Result<(u64, u64, u64), Error> {
     let entry = RefcountEntry::decode_all(&mut &value[..])
-        .map_err(|e| Error::Storage(format!("corrupt refcount entry: {e}")))?;
+        .map_err(|e| Error::Serialization(format!("corrupt refcount entry: {e}")))?;
     Ok((entry.count, entry.charged_bucket, entry.size))
 }
 
