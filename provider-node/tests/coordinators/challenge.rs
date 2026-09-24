@@ -2,9 +2,7 @@
 
 //! Integration tests for the challenge responder.
 
-use super::{
-    alice_account, proof_source, test_state, test_state_with_data, wait_for, ALICE_SS58,
-};
+use super::{alice_account, proof_source, test_state, test_state_with_data, wait_for, ALICE_SS58};
 use sp_core::H256;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -117,11 +115,8 @@ async fn test_no_challenges() {
         poll_interval: Duration::from_millis(50),
         ..ChallengeResponderConfig::new(alice_account())
     };
-    let responder = ChallengeResponder::new(
-        config,
-        proof_source(&state),
-        Box::new(Arc::clone(&mock)),
-    );
+    let responder =
+        ChallengeResponder::new(config, proof_source(&state), Box::new(Arc::clone(&mock)));
     let handle = responder
         .start(tokio::sync::broadcast::channel(16).1, None)
         .await
@@ -142,11 +137,8 @@ async fn test_paused_skips_poll() {
         poll_interval: Duration::from_millis(50),
         ..ChallengeResponderConfig::new(alice_account())
     };
-    let responder = ChallengeResponder::new(
-        config,
-        proof_source(&state),
-        Box::new(Arc::clone(&mock)),
-    );
+    let responder =
+        ChallengeResponder::new(config, proof_source(&state), Box::new(Arc::clone(&mock)));
     let handle = responder
         .start(tokio::sync::broadcast::channel(16).1, None)
         .await
@@ -192,11 +184,8 @@ async fn test_successful_challenge_response() {
         auto_respond: true,
         ..ChallengeResponderConfig::new(alice_account())
     };
-    let responder = ChallengeResponder::new(
-        config,
-        proof_source(&state),
-        Box::new(Arc::clone(&mock)),
-    );
+    let responder =
+        ChallengeResponder::new(config, proof_source(&state), Box::new(Arc::clone(&mock)));
     let handle = responder
         .start(tokio::sync::broadcast::channel(16).1, None)
         .await
@@ -250,11 +239,8 @@ async fn test_proof_generation_failed_no_bucket() {
         auto_respond: true,
         ..ChallengeResponderConfig::new(alice_account())
     };
-    let responder = ChallengeResponder::new(
-        config,
-        proof_source(&state),
-        Box::new(Arc::clone(&mock)),
-    );
+    let responder =
+        ChallengeResponder::new(config, proof_source(&state), Box::new(Arc::clone(&mock)));
     let handle = responder
         .start(tokio::sync::broadcast::channel(16).1, Some(callback))
         .await
@@ -302,11 +288,8 @@ async fn test_data_not_found_bad_chunk_index() {
         auto_respond: true,
         ..ChallengeResponderConfig::new(alice_account())
     };
-    let responder = ChallengeResponder::new(
-        config,
-        proof_source(&state),
-        Box::new(Arc::clone(&mock)),
-    );
+    let responder =
+        ChallengeResponder::new(config, proof_source(&state), Box::new(Arc::clone(&mock)));
     let handle = responder
         .start(tokio::sync::broadcast::channel(16).1, Some(callback))
         .await
@@ -354,11 +337,8 @@ async fn test_submission_failed() {
         auto_respond: true,
         ..ChallengeResponderConfig::new(alice_account())
     };
-    let responder = ChallengeResponder::new(
-        config,
-        proof_source(&state),
-        Box::new(Arc::clone(&mock)),
-    );
+    let responder =
+        ChallengeResponder::new(config, proof_source(&state), Box::new(Arc::clone(&mock)));
     let handle = responder
         .start(tokio::sync::broadcast::channel(16).1, Some(callback))
         .await
@@ -402,11 +382,8 @@ async fn test_callback_invoked_on_success() {
         auto_respond: true,
         ..ChallengeResponderConfig::new(alice_account())
     };
-    let responder = ChallengeResponder::new(
-        config,
-        proof_source(&state),
-        Box::new(Arc::clone(&mock)),
-    );
+    let responder =
+        ChallengeResponder::new(config, proof_source(&state), Box::new(Arc::clone(&mock)));
     let handle = responder
         .start(tokio::sync::broadcast::channel(16).1, Some(callback))
         .await
@@ -446,11 +423,8 @@ async fn test_resume_after_pause() {
         auto_respond: true,
         ..ChallengeResponderConfig::new(alice_account())
     };
-    let responder = ChallengeResponder::new(
-        config,
-        proof_source(&state),
-        Box::new(Arc::clone(&mock)),
-    );
+    let responder =
+        ChallengeResponder::new(config, proof_source(&state), Box::new(Arc::clone(&mock)));
     let handle = responder
         .start(tokio::sync::broadcast::channel(16).1, None)
         .await

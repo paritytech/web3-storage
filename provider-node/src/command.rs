@@ -7,16 +7,16 @@ use crate::{
     chain_follower::SubxtChainFollower,
     chain_state_coordinator::ChainStateCoordinator,
     cli::{Cli, DEFAULT_PROVIDER_ID},
-    create_router,
     membership::{BlockEventInvalidations, ChainMembershipResolver},
     subxt_client::SubxtChainClient,
     ChainFollower, ChainStateCoordinatorHandle, ChallengeResponder, ChallengeResponderConfig,
-    ChallengeResponderHandle, ProviderDeps, ProviderState, ReplicaSyncCoordinator,
-    ReplicaSyncCoordinatorConfig, ReplicaSyncCoordinatorHandle, StorageProofSource,
+    ChallengeResponderHandle, ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig,
+    ReplicaSyncCoordinatorHandle, StorageProofSource,
 };
 use clap::Parser;
 use provider_auth::Authenticator;
 use provider_events::{BlockEvent, BlockEventRx, BlockEventTx, EVENT_CHANNEL_CAPACITY};
+use provider_http::{create_router, ProviderDeps, ProviderState};
 use std::net::SocketAddr;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -28,8 +28,9 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::registry()
         .with(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "storage_provider_node=debug,tower_http=debug".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+                "storage_provider_node=debug,provider_http=debug,tower_http=debug".into()
+            }),
         )
         .with(tracing_subscriber::fmt::layer())
         .init();

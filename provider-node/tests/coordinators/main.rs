@@ -9,14 +9,13 @@ mod event_fanout;
 mod membership;
 
 use provider_auth::{Authenticator, StaticMembershipResolver};
+use provider_http::{ProviderDeps, ProviderState};
 use provider_storage::{build_padded_merkle_tree, temp_rocksdb, StorageBackend};
 use sp_runtime::AccountId32;
 use std::str::FromStr;
 use std::sync::Arc;
 use storage_primitives::blake2_256;
-use storage_provider_node::{
-    ChallengeProofSource, DetectedChallenge, ProviderDeps, ProviderState, StorageProofSource,
-};
+use storage_provider_node::{ChallengeProofSource, DetectedChallenge, StorageProofSource};
 use tempfile::TempDir;
 
 /// Full Alice SS58 address (substrate prefix 42).

@@ -5,8 +5,8 @@
 mod common;
 
 use axum::http::StatusCode;
+use provider_http::ProviderState;
 use serde_json::Value;
-use storage_provider_node::ProviderState;
 
 use common::{StorageBackendKind, TestServer};
 

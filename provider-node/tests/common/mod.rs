@@ -9,6 +9,7 @@
 #![allow(dead_code)]
 
 use provider_auth::{build_auth_header, Authenticator, StaticMembershipResolver};
+use provider_http::{create_router, ProviderDeps, ProviderState};
 use reqwest::{Method, RequestBuilder};
 use sp_core::{sr25519, Pair};
 use std::net::SocketAddr;
@@ -16,7 +17,6 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use storage_primitives::Role;
 pub use storage_provider_node::cli::StorageBackendKind;
-use storage_provider_node::{create_router, ProviderDeps, ProviderState};
 use tempfile::TempDir;
 
 type AccountId32 = sp_core::crypto::AccountId32;

@@ -7235,6 +7235,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "provider-http"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "base64",
+ "hex",
+ "parity-scale-codec",
+ "provider-auth",
+ "provider-coordinator",
+ "provider-negotiation",
+ "provider-replica",
+ "provider-storage",
+ "provider-types",
+ "serde",
+ "serde_json",
+ "sp-core",
+ "sp-runtime",
+ "storage-primitives",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-rate-limit",
+ "tower-http",
+ "tracing",
+]
+
+[[package]]
 name = "provider-negotiation"
 version = "0.1.0"
 dependencies = [
@@ -10142,12 +10169,11 @@ dependencies = [
  "provider-challenge",
  "provider-coordinator",
  "provider-events",
- "provider-negotiation",
+ "provider-http",
  "provider-replica",
  "provider-storage",
  "provider-types",
  "reqwest",
- "serde",
  "serde_json",
  "sp-core",
  "sp-crypto-hashing",
@@ -10160,8 +10186,6 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
- "tokio-rate-limit",
- "tower-http",
  "tracing",
  "tracing-subscriber 0.3.23",
 ]
