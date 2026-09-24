@@ -215,12 +215,6 @@ impl ProviderState {
         }
         Ok(())
     }
-
-    /// Proof source for the challenge responder, backed by this state's
-    /// storage.
-    pub fn challenge_proof_source(&self) -> Arc<dyn ChallengeProofSource> {
-        Arc::new(StorageProofSource::new(self.storage.clone()))
-    }
 }
 
 /// Lets the replica sync coordinator attest its sync roots with the node's

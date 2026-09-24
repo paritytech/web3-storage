@@ -12,7 +12,7 @@ use crate::{
     subxt_client::SubxtChainClient,
     ChainFollower, ChainStateCoordinatorHandle, ChallengeResponder, ChallengeResponderConfig,
     ChallengeResponderHandle, ProviderDeps, ProviderState, ReplicaSyncCoordinator,
-    ReplicaSyncCoordinatorConfig, ReplicaSyncCoordinatorHandle,
+    ReplicaSyncCoordinatorConfig, ReplicaSyncCoordinatorHandle, StorageProofSource,
 };
 use clap::Parser;
 use provider_auth::Authenticator;
@@ -304,7 +304,7 @@ async fn start_challenge_responder(
 
     let responder = ChallengeResponder::new(
         config,
-        state.challenge_proof_source(),
+        Arc::new(StorageProofSource::new(state.storage.clone())),
         Box::new(chain_client),
     );
 
