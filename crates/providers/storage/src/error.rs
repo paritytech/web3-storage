@@ -28,12 +28,32 @@ pub enum Error {
     #[error("Root not found: {0}")]
     RootNotFound(String),
 
+    /// Another writer held the bucket past the lock timeout. Retry the
+    /// request.
+    #[error("Bucket {0} is busy")]
+    BucketBusy(u64),
+
+    /// The content tree under a data root has more than `max_nodes` nodes
+    /// when every shared subtree is counted once per path that reaches it.
+    /// Deduplication lets a few stored nodes span such a tree.
+    #[error("Content tree exceeds {max_nodes} nodes")]
+    TreeTooLarge { max_nodes: u64 },
+
     #[error("Invalid hash: expected {expected}, got {actual}")]
     InvalidHash { expected: String, actual: String },
 
-    #[error("Storage error: {0}")]
-    Storage(String),
-
     #[error("Serialization error: {0}")]
     Serialization(String),
+
+    /// The RocksDB engine itself failed. Carries the engine's error as
+    /// `source()` so the cause survives instead of being flattened into a
+    /// message.
+    #[error("RocksDB error: {0}")]
+    RocksDb(#[from] rocksdb::Error),
+
+    /// A column family the engine expects was absent from the open database:
+    /// a layout bug or a database written by a different build, not an I/O
+    /// fault.
+    #[error("Column family not found: {0}")]
+    ColumnFamilyMissing(&'static str),
 }

@@ -9,13 +9,14 @@
 use parking_lot::Mutex;
 use provider_chain::EVENT_CHANNEL_CAPACITY;
 use provider_storage::DeletionReceipt;
+use provider_types::ChainClientError;
 use sp_core::H256;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 use storage_primitives::{blake2_256, BucketId};
 use storage_provider_node::{
-    CanonicalBucketState, Error, GcChainClient, GcCoordinator, GcCoordinatorConfig, ProviderState,
+    CanonicalBucketState, GcChainClient, GcCoordinator, GcCoordinatorConfig, ProviderState,
 };
 
 use super::{test_state, wait_for};
@@ -63,7 +64,7 @@ impl GcChainClient for MockGcChainClient {
     async fn fetch_canonical_bucket(
         &self,
         bucket_id: BucketId,
-    ) -> Result<CanonicalBucketState, Error> {
+    ) -> Result<CanonicalBucketState, ChainClientError> {
         Ok(self
             .buckets
             .lock()
@@ -72,11 +73,14 @@ impl GcChainClient for MockGcChainClient {
             .unwrap_or_default())
     }
 
-    async fn fetch_agreement_max_bytes(&self, bucket_id: BucketId) -> Result<Option<u64>, Error> {
+    async fn fetch_agreement_max_bytes(
+        &self,
+        bucket_id: BucketId,
+    ) -> Result<Option<u64>, ChainClientError> {
         Ok(self.agreements.lock().get(&bucket_id).copied())
     }
 
-    async fn has_pending_challenges(&self, bucket_id: BucketId) -> Result<bool, Error> {
+    async fn has_pending_challenges(&self, bucket_id: BucketId) -> Result<bool, ChainClientError> {
         Ok(self.pending.lock().contains(&bucket_id))
     }
 }
@@ -101,10 +105,11 @@ fn seed_bucket(state: &Arc<ProviderState>, bucket_id: BucketId, n: u8) -> Vec<H2
 /// Prune to `new_start_seq` and attach an admin deletion receipt for it
 /// (the backend stores receipts opaquely; validity is the pallet's concern).
 fn prune_with_receipt(state: &Arc<ProviderState>, bucket_id: BucketId, new_start_seq: u64) {
-    let (mmr_root, _, _) = state
+    let mmr_root = state
         .storage
         .delete_before(bucket_id, new_start_seq)
-        .unwrap();
+        .unwrap()
+        .mmr_root;
     state
         .storage
         .attach_deletion_receipt(

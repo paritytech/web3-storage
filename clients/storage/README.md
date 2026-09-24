@@ -95,8 +95,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Accept storage agreements
     client.accept_agreement(1).await?;
 
-    // Monitor your stats
-    let stats = client.get_stats().await?;
+    // Monitor your stats. `None` means this account is not a registered
+    // provider; it is registered above, so unwrap.
+    let stats = client.get_stats().await?.expect("registered above");
     println!("Reputation: {}/100", stats.reputation);
 
     Ok(())
@@ -370,13 +371,17 @@ loop {
 ```rust
 let client = ProviderClient::with_defaults("5FHneW46...".to_string())?;
 
-let capacity = client.get_capacity_info().await?;
-let utilization = (capacity.committed_bytes as f64 /
-                   capacity.available_bytes as f64) * 100.0;
+// `None`: this account is not a registered provider.
+let capacity = client.get_capacity_info().await?.expect("registered provider");
 
-if utilization > 80.0 {
-    println!("Warning: {}% capacity used", utilization);
-    // Add more stake or reduce commitments
+// `available_bytes` is `None` for a provider with unlimited capacity.
+if let Some(available) = capacity.available_bytes {
+    let max_capacity = capacity.committed_bytes + available;
+    let utilization = capacity.committed_bytes as f64 / max_capacity as f64 * 100.0;
+    if utilization > 80.0 {
+        println!("Warning: {utilization:.0}% capacity used");
+        // Raise max_capacity (and the stake backing it) or stop accepting agreements
+    }
 }
 ```
 

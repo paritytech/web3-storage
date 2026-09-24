@@ -59,7 +59,7 @@ pub mod pallet {
     pub use frame_system::pallet_prelude::BlockNumberFor as SystemBlockNumberFor;
     use frame_system::pallet_prelude::*;
     use sp_core::H256;
-    use sp_runtime::traits::{Bounded, CheckedAdd, Saturating, Zero};
+    use sp_runtime::traits::{Bounded, CheckedAdd, SaturatedConversion, Saturating, Zero};
     #[cfg(feature = "try-runtime")]
     use sp_runtime::TryRuntimeError;
     use storage_primitives::{
@@ -609,6 +609,11 @@ pub mod pallet {
         /// Number of challenges where provider was slashed. Tier-independent
         /// and disjoint from the received counters.
         pub challenges_failed: u32,
+        /// Total payment ever received by this provider for storage service:
+        /// agreement settlements, extension payments, and replica sync
+        /// payments. Monotonically increasing, never reset by a slash or
+        /// anything else. A historical record, not a live balance.
+        pub lifetime_revenue: BalanceOf<T>,
     }
 
     impl<T: Config> ProviderStats<T> {
@@ -616,6 +621,41 @@ pub mod pallet {
         pub fn challenges_defended(&self) -> u32 {
             self.challenges_received_authorized
                 .saturating_add(self.challenges_received_public)
+        }
+
+        /// A provider's 0–100 reputation from its on-chain challenge record:
+        /// the share of resolved challenges it defended. Both counters are
+        /// tallied at resolution, so pending challenges never count against a
+        /// provider.
+        ///
+        /// Providers with no resolved challenges score 100 — benefit of the
+        /// doubt, so a newly registered provider is not immediately
+        /// challenge-worthy.
+        pub fn reputation(&self) -> u8 {
+            let defended = self.challenges_defended();
+            let total = defended as u64 + self.challenges_failed as u64;
+            if total == 0 {
+                return 100;
+            }
+            ((defended as u64 * 100) / total).min(100) as u8
+        }
+    }
+
+    impl<T: Config> From<&ProviderStats<T>> for crate::runtime_api::ProviderStatsInfo {
+        fn from(stats: &ProviderStats<T>) -> Self {
+            Self {
+                registered_at: stats.registered_at.saturated_into::<u32>(),
+                agreements_total: stats.agreements_total,
+                agreements_extended: stats.agreements_extended,
+                agreements_not_extended: stats.agreements_not_extended,
+                agreements_burned: stats.agreements_burned,
+                total_bytes_committed: stats.total_bytes_committed,
+                challenges_received_authorized: stats.challenges_received_authorized,
+                challenges_received_public: stats.challenges_received_public,
+                challenges_failed: stats.challenges_failed,
+                lifetime_revenue: stats.lifetime_revenue.saturated_into::<u128>(),
+                reputation: stats.reputation(),
+            }
         }
     }
 
@@ -677,6 +717,20 @@ pub mod pallet {
         pub role: ProviderRole<BalanceOf<T>, BlockNumberFor<T>>,
         /// Block when agreement became active.
         pub started_at: BlockNumberFor<T>,
+    }
+
+    impl<T: Config> StorageAgreement<T> {
+        /// Everything this agreement keeps under `AgreementPayment` on
+        /// `owner`: the prepaid fee plus, for a replica, the unspent sync
+        /// balance.
+        pub(crate) fn escrow(&self) -> BalanceOf<T> {
+            match &self.role {
+                ProviderRole::Replica { sync_balance, .. } => {
+                    self.payment_locked.saturating_add(*sync_balance)
+                }
+                ProviderRole::Primary => self.payment_locked,
+            }
+        }
     }
 
     /// Active challenge against a provider.
@@ -945,8 +999,7 @@ pub mod pallet {
             /// Escrowed for the extension.
             payment: BalanceOf<T>,
         },
-        /// The agreement's owner changed. Not emitted yet:
-        /// `transfer_agreement_ownership` lands with #414.
+        /// The agreement's owner changed.
         AgreementOwnershipTransferred {
             /// The bucket.
             bucket_id: BucketId,
@@ -956,6 +1009,9 @@ pub mod pallet {
             old_owner: T::AccountId,
             /// New owner.
             new_owner: T::AccountId,
+            /// Escrow moved to the new owner's hold: the prepaid fee plus,
+            /// for a replica, the unspent sync balance.
+            escrow: BalanceOf<T>,
         },
         /// An agreement was settled and closed.
         AgreementEnded {
@@ -1138,6 +1194,8 @@ pub mod pallet {
         AgreementExtensionsBlocked,
         /// Only the agreement owner may do this.
         NotAgreementOwner,
+        /// The new owner is the current owner.
+        TransferToSelf,
         /// The duration is below the provider's `min_duration`.
         DurationTooShort,
         /// The duration is above the provider's `max_duration`.
@@ -1805,13 +1863,9 @@ pub mod pallet {
             let agreement = StorageAgreements::<T>::take(bucket_id, &provider)
                 .ok_or(Error::<T>::AgreementNotFound)?;
 
-            // Return the locked payment to the owner (provider failed their
-            // duty), plus, for a replica, the unspent sync balance escrowed
-            // alongside it.
-            let mut returned = agreement.payment_locked;
-            if let ProviderRole::Replica { sync_balance, .. } = &agreement.role {
-                returned = returned.saturating_add(*sync_balance);
-            }
+            // The provider failed their duty, so the whole escrow returns to
+            // the owner.
+            let returned = agreement.escrow();
             Self::release_payment(&agreement.owner, returned)?;
 
             // Update provider committed_bytes
@@ -2032,9 +2086,9 @@ pub mod pallet {
                     ensure!(payment <= max_payment, Error::<T>::PaymentExceedsMax);
 
                     // Owner-gated above, so `who == agreement.owner`; routed
-                    // through `escrow_from` anyway so every escrow in the
-                    // pallet lands on the owner by the same rule.
-                    Self::escrow_from(&who, &agreement.owner, payment)?;
+                    // through `hold_payment_from` anyway so every escrow in
+                    // the pallet reaches the owner by the same rule.
+                    Self::hold_payment_from(&who, &agreement.owner, payment)?;
 
                     // Update agreement
                     let new_max_bytes = agreement
@@ -2067,6 +2121,56 @@ pub mod pallet {
                     Ok(())
                 },
             )
+        }
+
+        /// Transfer the agreement to `new_owner` (current owner only). The
+        /// new owner can top up, extend, settle, or transfer it again.
+        ///
+        /// The escrow — the prepaid fee plus, for a replica, the unspent sync
+        /// balance — moves to `new_owner` and stays on hold; every later
+        /// settlement and refund uses the new owner.
+        ///
+        /// Bucket membership does not move: the new owner cannot write to or
+        /// administer the bucket, and the bucket admin keeps every admin
+        /// power over the agreement, including early termination, which pays
+        /// out or burns the new owner's escrow. Challenge rights follow the
+        /// owner; open challenges keep the authorization they were created
+        /// with.
+        #[pallet::call_index(29)]
+        #[pallet::weight(T::WeightInfo::transfer_agreement_ownership())]
+        pub fn transfer_agreement_ownership(
+            origin: OriginFor<T>,
+            bucket_id: BucketId,
+            provider: T::AccountId,
+            new_owner: T::AccountId,
+        ) -> DispatchResult {
+            let who = ensure_signed(origin)?;
+            ensure!(new_owner != who, Error::<T>::TransferToSelf);
+
+            let escrow = StorageAgreements::<T>::try_mutate(
+                bucket_id,
+                &provider,
+                |maybe_agreement| -> Result<BalanceOf<T>, DispatchError> {
+                    let agreement = maybe_agreement
+                        .as_mut()
+                        .ok_or(Error::<T>::AgreementNotFound)?;
+                    ensure!(agreement.owner == who, Error::<T>::NotAgreementOwner);
+
+                    let escrow = agreement.escrow();
+                    Self::transfer_payment_on_hold(&who, &new_owner, escrow)?;
+                    agreement.owner = new_owner.clone();
+                    Ok(escrow)
+                },
+            )?;
+
+            Self::deposit_event(Event::AgreementOwnershipTransferred {
+                bucket_id,
+                provider,
+                old_owner: who,
+                new_owner,
+                escrow,
+            });
+            Ok(())
         }
 
         /// Extend agreement duration (immediate, no provider approval needed).
@@ -2178,7 +2282,7 @@ pub mod pallet {
 
                     // Lock new payment from the caller (not necessarily the
                     // owner); it is escrowed on the owner regardless.
-                    Self::escrow_from(&who, &agreement.owner, extension_payment)?;
+                    Self::hold_payment_from(&who, &agreement.owner, extension_payment)?;
 
                     // Update agreement
                     agreement.expires_at = anchor_block.saturating_add(additional_duration);
@@ -2209,6 +2313,10 @@ pub mod pallet {
                         if let Some(provider_info) = maybe_provider {
                             provider_info.stats.agreements_extended =
                                 provider_info.stats.agreements_extended.saturating_add(1);
+                            provider_info.stats.lifetime_revenue = provider_info
+                                .stats
+                                .lifetime_revenue
+                                .saturating_add(elapsed_payment);
                         }
                     });
 
@@ -2908,7 +3016,17 @@ pub mod pallet {
                     });
 
                     // Pay the sync fee straight out of escrow.
-                    Self::settle_payment(&agreement.owner, &who, *sync_price)?;
+                    let sync_payment = *sync_price;
+                    Self::settle_payment(&agreement.owner, &who, sync_payment)?;
+
+                    Providers::<T>::mutate(&who, |maybe_provider| {
+                        if let Some(provider_info) = maybe_provider {
+                            provider_info.stats.lifetime_revenue = provider_info
+                                .stats
+                                .lifetime_revenue
+                                .saturating_add(sync_payment);
+                        }
+                    });
 
                     Self::deposit_event(Event::ReplicaSynced {
                         bucket_id,
@@ -2945,7 +3063,7 @@ pub mod pallet {
 
                     // Escrowed on the owner: `sync_balance` is settled from the
                     // owner's hold, whoever paid to top it up.
-                    Self::escrow_from(&who, &agreement.owner, amount)?;
+                    Self::hold_payment_from(&who, &agreement.owner, amount)?;
 
                     let sync_balance = match &mut agreement.role {
                         ProviderRole::Replica { sync_balance, .. } => sync_balance,
