@@ -463,10 +463,11 @@ async fn get_commitment(
     State(state): State<Arc<ProviderState>>,
     Query(query): Query<CommitmentQuery>,
 ) -> Result<Json<CommitmentResponse>, Error> {
+    let bucket_id = query.bucket_id;
     let bucket = state
-        .storage
-        .get_bucket(query.bucket_id)
-        .ok_or(provider_storage::Error::BucketNotFound(query.bucket_id))?;
+        .blocking_storage(move |storage| storage.get_bucket(bucket_id))
+        .await?
+        .ok_or(provider_storage::Error::BucketNotFound(bucket_id))?;
 
     // Sign with the real leaf_count — the pallet's `challenge_offchain` now
     // honours leaf_count rather than hardcoding `0`.
@@ -498,10 +499,11 @@ async fn get_checkpoint_signature(
     State(state): State<Arc<ProviderState>>,
     Query(query): Query<CommitmentQuery>,
 ) -> Result<Json<CheckpointSignatureResponse>, Error> {
+    let bucket_id = query.bucket_id;
     let bucket = state
-        .storage
-        .get_bucket(query.bucket_id)
-        .ok_or(provider_storage::Error::BucketNotFound(query.bucket_id))?;
+        .blocking_storage(move |storage| storage.get_bucket(bucket_id))
+        .await?
+        .ok_or(provider_storage::Error::BucketNotFound(bucket_id))?;
 
     let leaf_count = bucket.leaf_count;
 
@@ -529,9 +531,10 @@ async fn get_mmr_proof(
     State(state): State<Arc<ProviderState>>,
     Query(query): Query<MmrProofQuery>,
 ) -> Result<Json<MmrProofResponse>, Error> {
+    let (bucket_id, leaf_index) = (query.bucket_id, query.leaf_index);
     let mmr_proof = state
-        .storage
-        .get_mmr_proof(query.bucket_id, query.leaf_index)?;
+        .blocking_storage(move |storage| storage.get_mmr_proof(bucket_id, leaf_index))
+        .await??;
 
     Ok(Json(MmrProofResponse {
         leaf: MmrLeafData {
@@ -572,9 +575,10 @@ async fn get_chunk_proof(
     })?;
     let data_root = H256::from_slice(&root_bytes);
 
+    let chunk_index = query.chunk_index;
     let (chunk_data, proof) = state
-        .storage
-        .get_chunk_at_index(data_root, query.chunk_index)?;
+        .blocking_storage(move |storage| storage.get_chunk_at_index(data_root, chunk_index))
+        .await??;
     let chunk_hash = storage_primitives::blake2_256(&chunk_data);
 
     Ok(Json(ChunkProofResponse {
@@ -956,10 +960,11 @@ async fn get_replica_sync_status(
     State(state): State<Arc<ProviderState>>,
     Query(query): Query<BucketSyncStatusQuery>,
 ) -> Result<Json<BucketSyncStatusResponse>, Error> {
+    let bucket_id = query.bucket_id;
     let bucket = state
-        .storage
-        .get_bucket(query.bucket_id)
-        .ok_or(provider_storage::Error::BucketNotFound(query.bucket_id))?;
+        .blocking_storage(move |storage| storage.get_bucket(bucket_id))
+        .await?
+        .ok_or(provider_storage::Error::BucketNotFound(bucket_id))?;
 
     Ok(Json(BucketSyncStatusResponse {
         bucket_id: query.bucket_id,
