@@ -8,7 +8,7 @@
 
 use crate::{ChainStateChainClient, Error, ProviderLifecycleEvent};
 use async_trait::async_trait;
-use provider_chain::BlockEvent;
+use provider_events::BlockEvent;
 use std::sync::Arc;
 
 /// Builds chain connections for the coordinator's reconnect loop.

@@ -24,7 +24,7 @@ COV_PACKAGES=(
 	pallet-drive-registry
 	pallet-s3-registry
 	storage-provider-node
-	provider-chain
+	provider-events
 	provider-coordinator
 	provider-negotiation
 	provider-auth

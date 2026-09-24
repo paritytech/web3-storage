@@ -7,7 +7,7 @@ use provider_auth::{
     BucketAccess, Invalidation, Member, MembershipError, MembershipInvalidations,
     MembershipResolver,
 };
-use provider_chain::{BlockEvent, BlockEventRx};
+use provider_events::{BlockEvent, BlockEventRx};
 use sp_core::crypto::AccountId32;
 use std::sync::atomic::{AtomicBool, Ordering};
 use storage_primitives::BucketId;

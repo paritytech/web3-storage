@@ -399,7 +399,7 @@ impl FinalizedBlocks for SubxtFinalizedBlocks {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use provider_chain::BlockEvent;
+    use provider_events::BlockEvent;
     use subxt::backend::LegacyBackend;
     use subxt::ext::scale_value::scale::encode_as_type;
     use subxt::ext::scale_value::Value;

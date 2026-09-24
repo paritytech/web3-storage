@@ -29,7 +29,7 @@ pub use chain_client::ChainStateChainClient;
 pub use follower::{BlockUpdate, ChainFollower, ChainSession, FinalizedBlock, FinalizedBlocks};
 
 use parking_lot::RwLock;
-use provider_chain::{BlockEvent, BlockEventTx};
+use provider_events::{BlockEvent, BlockEventTx};
 use provider_storage::NonceStore;
 use provider_types::ProviderInfo;
 use sp_runtime::AccountId32;

@@ -1,5 +1,5 @@
 [package]
-name = "provider-chain"
+name = "provider-events"
 version = "0.1.0"
 authors.workspace = true
 edition.workspace = true
@@ -10,14 +10,5 @@ description = "Per-block chain event types shared by the provider node's coordin
 [dependencies]
 sp-runtime = { workspace = true, features = ["std"] }
 storage-primitives = { workspace = true, features = ["std"] }
-storage-subxt = { workspace = true, optional = true }
-subxt = { workspace = true, optional = true }
 tokio = { workspace = true }
 tracing = { workspace = true, features = ["std"] }
-
-[features]
-default = ["decode"]
-# Decoding raw on-chain events (via the storage-subxt static bindings) into
-# BlockEvent. The BlockEvent enum itself is always available; this feature
-# gates only the subxt-dependent decoding on top of it.
-decode = ["dep:storage-subxt", "dep:subxt"]

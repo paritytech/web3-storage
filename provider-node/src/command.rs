@@ -16,7 +16,7 @@ use crate::{
 };
 use clap::Parser;
 use provider_auth::Authenticator;
-use provider_chain::{BlockEvent, BlockEventRx, BlockEventTx, EVENT_CHANNEL_CAPACITY};
+use provider_events::{BlockEvent, BlockEventRx, BlockEventTx, EVENT_CHANNEL_CAPACITY};
 use std::net::SocketAddr;
 use std::str::FromStr;
 use std::sync::Arc;

@@ -9,9 +9,9 @@ description = "Off-chain provider node for scalable Web3 storage"
 
 [dependencies]
 provider-auth = { workspace = true }
-provider-chain = { workspace = true, features = ["decode"] }
 provider-challenge = { workspace = true }
 provider-coordinator = { workspace = true }
+provider-events = { workspace = true }
 provider-negotiation = { workspace = true }
 provider-replica = { workspace = true }
 provider-storage = { workspace = true }
