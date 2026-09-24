@@ -25,6 +25,7 @@ COV_PACKAGES=(
 	pallet-s3-registry
 	storage-provider-node
 	provider-coordinator
+	provider-http
 	provider-negotiation
 	provider-auth
 	provider-replica

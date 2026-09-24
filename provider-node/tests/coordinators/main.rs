@@ -9,12 +9,13 @@ mod event_fanout;
 mod membership;
 
 use provider_auth::{Authenticator, StaticMembershipResolver};
+use provider_http::{ProviderDeps, ProviderState};
 use provider_storage::{build_padded_merkle_tree, temp_rocksdb, StorageBackend};
 use sp_runtime::AccountId32;
 use std::str::FromStr;
 use std::sync::Arc;
 use storage_primitives::blake2_256;
-use storage_provider_node::{DetectedChallenge, ProviderDeps, ProviderState};
+use storage_provider_node::{ChallengeProofSource, DetectedChallenge, StorageProofSource};
 use tempfile::TempDir;
 
 /// Full Alice SS58 address (substrate prefix 42).
@@ -36,6 +37,11 @@ pub fn test_deps(
         nonce_store,
         auth: Arc::new(Authenticator::new(StaticMembershipResolver(vec![]))),
     }
+}
+
+/// Challenge proof source over `state`'s storage, as the node wires it.
+pub fn proof_source(state: &ProviderState) -> Arc<dyn ChallengeProofSource> {
+    Arc::new(StorageProofSource::new(state.storage.clone()))
 }
 
 /// Create a standard test `ProviderState` for coordinator tests.

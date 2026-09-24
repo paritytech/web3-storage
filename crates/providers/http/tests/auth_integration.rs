@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! Integration tests for auth-enabled HTTP endpoints.
 //!
@@ -17,6 +17,7 @@ use provider_auth::{
     Authenticator, BucketAccess, Member, MembershipError, MembershipResolver,
     StaticMembershipResolver,
 };
+use provider_http::{create_router, ProviderDeps, ProviderState};
 use provider_storage::temp_rocksdb;
 use reqwest::Client;
 use serde_json::Value;
@@ -24,7 +25,6 @@ use sp_core::{sr25519, Pair};
 use std::sync::Arc;
 use std::time::Duration;
 use storage_primitives::{BucketId, Role, Visibility};
-use storage_provider_node::{create_router, ProviderDeps, ProviderState};
 use tokio::net::TcpListener;
 
 type AccountId32 = sp_core::crypto::AccountId32;
