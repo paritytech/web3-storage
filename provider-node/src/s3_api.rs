@@ -19,12 +19,11 @@ use axum::{
     Json,
 };
 use provider_auth::RequiredRole;
-use provider_storage::{build_padded_merkle_tree, ListResult, ObjectMeta};
+use provider_storage::{commit_blob, ListResult, ObjectMeta};
 use serde::{Deserialize, Serialize};
-use sp_core::H256;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
-use storage_primitives::{blake2_256, BucketId};
+use storage_primitives::BucketId;
 
 /// Query parameter for object key.
 #[derive(Debug, Deserialize)]
@@ -48,40 +47,12 @@ pub async fn s3_put_object(
         return Err(Error::InvalidObjectKey("empty key".to_string()));
     }
 
-    let data = body.to_vec();
-    let size = data.len() as u64;
+    let size = body.len() as u64;
+    let (data_root, leaf_index) = state
+        .blocking_storage(move |storage| commit_blob(storage, bucket_id, &body))
+        .await??;
 
-    // Initialize bucket if needed
-    let _ = state.storage.init_bucket(bucket_id, u64::MAX);
-
-    // 1. Split into chunks (256 KiB)
-    let chunk_size = storage_primitives::DEFAULT_CHUNK_SIZE as usize;
-    let chunks: Vec<&[u8]> = if data.is_empty() {
-        vec![&[]]
-    } else {
-        data.chunks(chunk_size).collect()
-    };
-
-    // 2. Hash and store each chunk
-    let chunk_hashes: Vec<H256> = chunks
-        .iter()
-        .map(|chunk| {
-            let hash = blake2_256(chunk);
-            state
-                .storage
-                .store_node(bucket_id, hash, chunk.to_vec(), None)?;
-            Ok(hash)
-        })
-        .collect::<Result<Vec<_>, Error>>()?;
-
-    // 3. Build balanced Merkle tree
-    let data_root = build_padded_merkle_tree(&*state.storage, bucket_id, &chunk_hashes);
-
-    // 4. Commit data_root to MMR
-    let (_mmr_root, _start_seq, leaf_indices) = state.storage.commit(bucket_id, vec![data_root])?;
-    let leaf_index = leaf_indices[0];
-
-    // 5. Extract metadata from headers
+    // Extract metadata from headers
     let content_type = headers
         .get("content-type")
         .and_then(|v| v.to_str().ok())
@@ -110,7 +81,7 @@ pub async fn s3_put_object(
 
     let etag = format!("0x{}", hex::encode(data_root.as_bytes()));
 
-    // 6. Create ObjectMeta and insert into index
+    // Create ObjectMeta and insert into index
     let meta = ObjectMeta {
         data_root,
         size,
@@ -151,7 +122,10 @@ pub async fn s3_get_object(
         })?;
 
     // Collect chunks and reassemble
-    let chunks = state.storage.collect_chunks(meta.data_root)?;
+    let data_root = meta.data_root;
+    let chunks = state
+        .blocking_storage(move |storage| storage.collect_chunks(data_root))
+        .await??;
     let mut data = Vec::with_capacity(meta.size as usize);
     for chunk in chunks {
         data.extend_from_slice(&chunk);

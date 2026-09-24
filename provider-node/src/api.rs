@@ -203,18 +203,24 @@ async fn info(State(state): State<Arc<ProviderState>>) -> Json<InfoResponse> {
     })
 }
 
-async fn stats(State(state): State<Arc<ProviderState>>) -> Json<StatsResponse> {
-    let bucket_stats = state.storage.get_bucket_stats();
-    let total_bytes = state.storage.total_bytes();
-    let total_nodes = state.storage.total_nodes();
+async fn stats(State(state): State<Arc<ProviderState>>) -> Result<Json<StatsResponse>, Error> {
+    let (bucket_stats, total_bytes, total_nodes) = state
+        .blocking_storage(|storage| {
+            (
+                storage.get_bucket_stats(),
+                storage.total_bytes(),
+                storage.total_nodes(),
+            )
+        })
+        .await?;
 
-    Json(StatsResponse {
+    Ok(Json(StatsResponse {
         provider_id: state.provider_id.clone(),
         total_buckets: bucket_stats.len(),
         total_nodes,
         total_bytes,
         buckets: bucket_stats,
-    })
+    }))
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -240,8 +246,8 @@ async fn get_node(
     let hash = H256::from_slice(&hash_bytes);
 
     let node = state
-        .storage
-        .get_node(&hash)
+        .blocking_storage(move |storage| storage.get_node(&hash))
+        .await?
         .ok_or_else(|| provider_storage::Error::NodeNotFound(query.hash.clone()))?;
 
     Ok(Json(DownloadNodeResponse {
@@ -300,13 +306,13 @@ async fn upload_node(
         })
         .transpose()?;
 
-    // Initialize bucket if needed
-    state.storage.init_bucket(request.bucket_id, u64::MAX)?;
-
-    // Store node
+    let bucket_id = request.bucket_id;
     state
-        .storage
-        .store_node(request.bucket_id, hash, data, children)?;
+        .blocking_storage(move |storage| {
+            storage.init_bucket(bucket_id, u64::MAX)?;
+            storage.store_node(bucket_id, hash, data, children)
+        })
+        .await??;
 
     Ok(Json(UploadNodeResponse { stored: true }))
 }
@@ -328,7 +334,10 @@ async fn check_exists(
         })
         .collect::<Result<Vec<_>, Error>>()?;
 
-    let (exists, missing) = state.storage.check_exists(request.bucket_id, &hashes);
+    let bucket_id = request.bucket_id;
+    let (exists, missing) = state
+        .blocking_storage(move |storage| storage.check_exists(bucket_id, &hashes))
+        .await?;
 
     Ok(Json(ExistsResponse {
         exists: exists
@@ -373,18 +382,19 @@ async fn commit(
         })
         .collect::<Result<Vec<_>, Error>>()?;
 
-    let (mmr_root, start_seq, leaf_indices) =
-        state.storage.commit(request.bucket_id, data_roots)?;
-
-    // Read the post-commit `leaf_count` so the signed payload matches what
-    // the pallet reconstructs from the challenger's args. Previously this
-    // signed with `leaf_count = 0` as a workaround for the pallet using `0`
-    // as a placeholder; now the pallet honours the real value.
-    let leaf_count = state
-        .storage
-        .get_bucket(request.bucket_id)
-        .map(|b| b.leaf_count)
-        .unwrap_or(0);
+    // The signed payload carries the post-commit `leaf_count`, which is what
+    // the pallet reconstructs from the challenger's args.
+    let bucket_id = request.bucket_id;
+    let (mmr_root, start_seq, leaf_indices, leaf_count) = state
+        .blocking_storage(move |storage| {
+            let (mmr_root, start_seq, leaf_indices) = storage.commit(bucket_id, data_roots)?;
+            let leaf_count = storage
+                .get_bucket(bucket_id)
+                .map(|b| b.leaf_count)
+                .unwrap_or(0);
+            Ok::<_, provider_storage::Error>((mmr_root, start_seq, leaf_indices, leaf_count))
+        })
+        .await??;
 
     let payload = CommitmentPayload::new(
         request.bucket_id,
@@ -421,31 +431,32 @@ async fn read_chunks(
     })?;
     let data_root = H256::from_slice(&root_bytes);
 
-    // Calculate chunk indices
     let chunk_size = storage_primitives::DEFAULT_CHUNK_SIZE as u64;
     let start_chunk = query.offset / chunk_size;
-    let end_chunk = (query.offset + query.length).div_ceil(chunk_size);
+    let end_chunk = query
+        .offset
+        .saturating_add(query.length)
+        .div_ceil(chunk_size);
 
-    let mut chunks = Vec::new();
-    for chunk_idx in start_chunk..end_chunk {
-        match state.storage.get_chunk_at_index(data_root, chunk_idx) {
-            Ok((data, proof)) => {
-                chunks.push(ChunkWithProof {
-                    hash: format!(
-                        "0x{}",
-                        hex::encode(storage_primitives::blake2_256(&data).as_bytes())
-                    ),
-                    data: BASE64.encode(&data),
-                    proof: proof
-                        .siblings
-                        .iter()
-                        .map(|h| format!("0x{}", hex::encode(h.as_bytes())))
-                        .collect(),
-                });
-            }
-            Err(_) => break,
-        }
-    }
+    let chunks = state
+        .blocking_storage(move |storage| {
+            storage.get_chunks_in_range(data_root, start_chunk..end_chunk)
+        })
+        .await??
+        .into_iter()
+        .map(|(data, proof)| ChunkWithProof {
+            hash: format!(
+                "0x{}",
+                hex::encode(storage_primitives::blake2_256(&data).as_bytes())
+            ),
+            data: BASE64.encode(&data),
+            proof: proof
+                .siblings
+                .iter()
+                .map(|h| format!("0x{}", hex::encode(h.as_bytes())))
+                .collect(),
+        })
+        .collect();
 
     Ok(Json(ReadResponse { chunks }))
 }
@@ -590,10 +601,13 @@ async fn get_chunk_proof(
 // Bucket Operations
 // ─────────────────────────────────────────────────────────────────────────────
 
-async fn list_buckets(State(state): State<Arc<ProviderState>>) -> Json<ListBucketsResponse> {
-    Json(ListBucketsResponse {
-        buckets: state.storage.list_buckets(),
-    })
+async fn list_buckets(
+    State(state): State<Arc<ProviderState>>,
+) -> Result<Json<ListBucketsResponse>, Error> {
+    let buckets = state
+        .blocking_storage(|storage| storage.list_buckets())
+        .await?;
+    Ok(Json(ListBucketsResponse { buckets }))
 }
 
 async fn delete_data(
@@ -615,9 +629,10 @@ async fn delete_data(
     )
     .await?;
 
+    let (bucket_id, new_start_seq) = (request.bucket_id, request.new_start_seq);
     let (mmr_root, start_seq, leaf_count) = state
-        .storage
-        .delete_before(request.bucket_id, request.new_start_seq)?;
+        .blocking_storage(move |storage| storage.delete_before(bucket_id, new_start_seq))
+        .await??;
 
     // Sign with the real post-delete leaf_count — pallet honours it now.
     let payload = CommitmentPayload::new(
@@ -646,7 +661,10 @@ async fn get_mmr_peaks(
     State(state): State<Arc<ProviderState>>,
     Query(query): Query<MmrPeaksQuery>,
 ) -> Result<Json<MmrPeaksResponse>, Error> {
-    let (mmr_root, peaks) = state.storage.get_mmr_peaks(query.bucket_id)?;
+    let bucket_id = query.bucket_id;
+    let (mmr_root, peaks) = state
+        .blocking_storage(move |storage| storage.get_mmr_peaks(bucket_id))
+        .await??;
 
     Ok(Json(MmrPeaksResponse {
         bucket_id: query.bucket_id,
@@ -663,10 +681,11 @@ async fn get_mmr_subtree(
     Query(query): Query<MmrSubtreeQuery>,
 ) -> Result<Json<MmrSubtreeResponse>, Error> {
     // Simplified implementation
+    let bucket_id = query.bucket_id;
     let bucket = state
-        .storage
-        .get_bucket(query.bucket_id)
-        .ok_or(provider_storage::Error::BucketNotFound(query.bucket_id))?;
+        .blocking_storage(move |storage| storage.get_bucket(bucket_id))
+        .await?
+        .ok_or(provider_storage::Error::BucketNotFound(bucket_id))?;
 
     Ok(Json(MmrSubtreeResponse {
         nodes: vec![MmrNode {
@@ -681,30 +700,37 @@ async fn fetch_nodes(
     State(state): State<Arc<ProviderState>>,
     Json(request): Json<FetchNodesRequest>,
 ) -> Result<Json<FetchNodesResponse>, Error> {
-    let mut nodes = Vec::new();
-
-    for hash_str in &request.hashes {
-        let hash_bytes =
-            hex::decode(hash_str.strip_prefix("0x").unwrap_or(hash_str)).map_err(|_| {
-                Error::InvalidHash {
+    let hashes = request
+        .hashes
+        .into_iter()
+        .map(|hash_str| {
+            let hash_bytes = hex::decode(hash_str.strip_prefix("0x").unwrap_or(&hash_str))
+                .map_err(|_| Error::InvalidHash {
                     expected: hash_str.clone(),
                     actual: "invalid hex".to_string(),
-                }
-            })?;
-        let hash = H256::from_slice(&hash_bytes);
+                })?;
+            Ok((hash_str, H256::from_slice(&hash_bytes)))
+        })
+        .collect::<Result<Vec<_>, Error>>()?;
 
-        if let Some(node) = state.storage.get_node(&hash) {
-            nodes.push(FetchedNode {
-                hash: hash_str.clone(),
-                data: BASE64.encode(&node.data),
-                children: node.children.map(|c| {
-                    c.iter()
-                        .map(|h| format!("0x{}", hex::encode(h.as_bytes())))
-                        .collect()
-                }),
-            });
-        }
-    }
+    let nodes = state
+        .blocking_storage(move |storage| {
+            hashes
+                .into_iter()
+                .filter_map(|(hash_str, hash)| {
+                    storage.get_node(&hash).map(|node| FetchedNode {
+                        hash: hash_str,
+                        data: BASE64.encode(&node.data),
+                        children: node.children.map(|c| {
+                            c.iter()
+                                .map(|h| format!("0x{}", hex::encode(h.as_bytes())))
+                                .collect()
+                        }),
+                    })
+                })
+                .collect::<Vec<_>>()
+        })
+        .await?;
 
     Ok(Json(FetchNodesResponse { nodes }))
 }
@@ -721,10 +747,11 @@ async fn get_historical_roots(
     State(state): State<Arc<ProviderState>>,
     Query(query): Query<HistoricalRootsQuery>,
 ) -> Result<Json<HistoricalRootsResponse>, Error> {
+    let bucket_id = query.bucket_id;
     let bucket = state
-        .storage
-        .get_bucket(query.bucket_id)
-        .ok_or(provider_storage::Error::BucketNotFound(query.bucket_id))?;
+        .blocking_storage(move |storage| storage.get_bucket(bucket_id))
+        .await?
+        .ok_or(provider_storage::Error::BucketNotFound(bucket_id))?;
 
     Ok(Json(HistoricalRootsResponse {
         bucket_id: query.bucket_id,

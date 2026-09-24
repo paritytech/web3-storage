@@ -948,7 +948,7 @@ mod tests {
                 hash
             })
             .collect();
-        let root = crate::build_padded_merkle_tree(&storage, 1, &chunk_hashes);
+        let root = crate::build_padded_merkle_tree(&storage, 1, &chunk_hashes).unwrap();
 
         let read = storage.get_chunks_in_range(root, 1..10).unwrap();
 

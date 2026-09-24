@@ -46,6 +46,10 @@ pub enum Error {
     #[error("Rate limiter failed: {0}")]
     RateLimiterFailed(String),
 
+    /// The blocking task running a storage call panicked or was cancelled.
+    #[error("Storage task failed: {0}")]
+    StorageTaskFailed(String),
+
     #[error("Object not found: bucket {bucket_id}, key {key}")]
     ObjectNotFound { bucket_id: u64, key: String },
 
@@ -253,10 +257,10 @@ impl IntoResponse for Error {
                     details: Some(serde_json::json!({ "message": e.to_string() })),
                 },
             ),
-            // The reason is logged (see the rate-limit middleware) but kept out
-            // of the response: it comes from the limiter's own backend and may
-            // say more than an unauthenticated caller should learn.
-            Error::RateLimiterFailed(_) => (
+            // The reason is logged where it occurs (the rate-limit middleware,
+            // `ProviderState::blocking_storage`) but kept out of the response:
+            // it may say more than an unauthenticated caller should learn.
+            Error::RateLimiterFailed(_) | Error::StorageTaskFailed(_) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 ErrorResponse {
                     error: "internal_error".to_string(),
@@ -584,6 +588,10 @@ mod tests {
         );
         assert_eq!(
             status_of(Error::RateLimiterFailed("backend unreachable".into())),
+            StatusCode::INTERNAL_SERVER_ERROR
+        );
+        assert_eq!(
+            status_of(Error::StorageTaskFailed("panicked".into())),
             StatusCode::INTERNAL_SERVER_ERROR
         );
         assert_eq!(

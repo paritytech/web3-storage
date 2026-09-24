@@ -271,6 +271,42 @@ pub trait StorageBackend: Send + Sync {
     }
 }
 
+/// Chunk `data` at [`storage_primitives::DEFAULT_CHUNK_SIZE`], store the
+/// chunks and their Merkle tree, and commit the root to the bucket's MMR.
+/// Creates the bucket with an unlimited quota if it does not exist. Returns
+/// the data root and its leaf index.
+pub fn commit_blob(
+    storage: &dyn StorageBackend,
+    bucket_id: BucketId,
+    data: &[u8],
+) -> Result<(H256, u64), Error> {
+    storage.init_bucket(bucket_id, u64::MAX)?;
+    let chunks: Vec<&[u8]> = if data.is_empty() {
+        vec![&[]]
+    } else {
+        data.chunks(storage_primitives::DEFAULT_CHUNK_SIZE as usize)
+            .collect()
+    };
+    let chunk_hashes = chunks
+        .iter()
+        .map(|chunk| {
+            let hash = storage_primitives::blake2_256(chunk);
+            storage.store_node(bucket_id, hash, chunk.to_vec(), None)?;
+            Ok(hash)
+        })
+        .collect::<Result<Vec<_>, Error>>()?;
+    let data_root = build_padded_merkle_tree(storage, bucket_id, &chunk_hashes)?;
+    let (_mmr_root, _start_seq, leaf_indices) = storage.commit(bucket_id, vec![data_root])?;
+    let leaf_index = leaf_indices
+        .first()
+        .copied()
+        .ok_or(Error::RootNotFound(format!(
+            "0x{}",
+            hex::encode(data_root.as_bytes())
+        )))?;
+    Ok((data_root, leaf_index))
+}
+
 /// Build a balanced Merkle tree from leaf hashes, storing intermediate nodes in storage.
 ///
 /// Pads to the next power of 2 with `H256::zero()`. Returns the tree root hash.
@@ -278,12 +314,12 @@ pub fn build_padded_merkle_tree(
     storage: &dyn StorageBackend,
     bucket_id: BucketId,
     leaves: &[H256],
-) -> H256 {
+) -> Result<H256, Error> {
     if leaves.is_empty() {
-        return H256::zero();
+        return Ok(H256::zero());
     }
     if leaves.len() == 1 {
-        return leaves[0];
+        return Ok(leaves[0]);
     }
 
     let padded_len = leaves.len().next_power_of_two();
@@ -297,13 +333,13 @@ pub fn build_padded_merkle_tree(
             let mut node_data = Vec::new();
             node_data.extend_from_slice(pair[0].as_bytes());
             node_data.extend_from_slice(pair[1].as_bytes());
-            let _ = storage.store_node(bucket_id, parent, node_data, Some(vec![pair[0], pair[1]]));
+            storage.store_node(bucket_id, parent, node_data, Some(vec![pair[0], pair[1]]))?;
             next_level.push(parent);
         }
         current_level = next_level;
     }
 
-    current_level[0]
+    Ok(current_level[0])
 }
 
 #[cfg(test)]
@@ -327,5 +363,31 @@ mod tests {
         let (_storage, nonce_store) = spec.build().expect("RocksDB reopens");
         assert_eq!(nonce_store.load(), Some(7));
         assert!(spec.to_string().starts_with("RocksDB at "));
+    }
+
+    /// Storing a blob under one data root must commit its full length as
+    /// `data_size` (the signed leaf describes what was uploaded), an empty
+    /// blob still yields one leaf, and each call appends one leaf.
+    #[test]
+    fn commit_blob_commits_body_length_and_appends_leaves() {
+        let dir = TempDir::new().unwrap();
+        let (storage, _nonce_store) = StorageBackendSpec::RocksDb {
+            path: dir.path().to_path_buf(),
+        }
+        .build()
+        .unwrap();
+        let body = vec![7u8; storage_primitives::DEFAULT_CHUNK_SIZE as usize * 2 + 1];
+
+        let (root, leaf_index) = commit_blob(storage.as_ref(), 1, &body).unwrap();
+        let (_, empty_leaf_index) = commit_blob(storage.as_ref(), 1, &[]).unwrap();
+
+        assert_eq!(leaf_index, 0);
+        assert_eq!(empty_leaf_index, 1);
+        assert_eq!(storage.collect_chunks(root).unwrap().concat(), body);
+        assert_eq!(
+            storage.calculate_tree_size(root).unwrap(),
+            body.len() as u64
+        );
+        assert_eq!(storage.get_bucket(1).unwrap().leaf_count, 2);
     }
 }
