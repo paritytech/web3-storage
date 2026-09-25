@@ -1,0 +1,243 @@
+{
+  "schema_version": 1,
+  "diagram_type": "lifecycle",
+  "meta": {
+    "title": "Provider Lifecycle",
+    "quality_profile": "showcase",
+    "viewBox": [
+      1000,
+      580
+    ],
+    "views": [
+      {
+        "id": "main-path",
+        "label": "Registration to exit",
+        "focus": [
+          "unregistered",
+          "registered",
+          "serving",
+          "idle",
+          "deregistered"
+        ],
+        "note": "The ordered path from staking in to releasing the stake."
+      },
+      {
+        "id": "two-step-exit",
+        "label": "Two-step exit",
+        "focus": [
+          "idle",
+          "announced",
+          "deregistered",
+          "slashed"
+        ],
+        "note": "complete_deregister runs after DeregisterAnnouncementPeriod with PendingChallenges == 0; cancel_deregister returns to Idle."
+      },
+      {
+        "id": "slash-path",
+        "label": "Slash path",
+        "focus": [
+          "serving",
+          "slashed",
+          "removed"
+        ],
+        "note": "A failed challenge slashes the entire stake. Exit Announced stays slashable too."
+      }
+    ],
+    "legend": {
+      "mode": "hidden"
+    }
+  },
+  "lanes": [
+    {
+      "id": "main",
+      "label": "Provider registration"
+    },
+    {
+      "id": "gates",
+      "label": "Exit and slash"
+    },
+    {
+      "id": "terminal",
+      "label": "Exit and cleanup"
+    }
+  ],
+  "states": [
+    {
+      "id": "unregistered",
+      "type": "start",
+      "label": "Unregistered",
+      "sublabel": "no stake held",
+      "lane": "main",
+      "col": 0,
+      "step": "01"
+    },
+    {
+      "id": "registered",
+      "type": "active",
+      "label": "Registered",
+      "sublabel": "stake held",
+      "lane": "main",
+      "col": 1,
+      "step": "02",
+      "tag": "accepting"
+    },
+    {
+      "id": "serving",
+      "type": "active",
+      "label": "Serving",
+      "sublabel": "committed_bytes > 0",
+      "lane": "main",
+      "col": 2,
+      "step": "03",
+      "tag": "slashable"
+    },
+    {
+      "id": "idle",
+      "type": "active",
+      "label": "Idle",
+      "sublabel": "committed_bytes == 0",
+      "lane": "main",
+      "col": 3,
+      "step": "04"
+    },
+    {
+      "id": "deregistered",
+      "type": "success",
+      "label": "Deregistered",
+      "sublabel": "stake released",
+      "lane": "terminal",
+      "col": 2,
+      "step": "05",
+      "yOffset": -60
+    },
+    {
+      "id": "announced",
+      "type": "waiting",
+      "label": "Exit Announced",
+      "sublabel": "settings frozen",
+      "lane": "gates",
+      "col": 1,
+      "tag": "still slashable"
+    },
+    {
+      "id": "slashed",
+      "type": "failure",
+      "label": "Slashed",
+      "sublabel": "entire stake slashed",
+      "lane": "gates",
+      "col": 0,
+      "tag": "ChallengeSlashed"
+    },
+    {
+      "id": "removed",
+      "type": "neutral",
+      "label": "Removed from bucket",
+      "sublabel": "payment to owner",
+      "lane": "terminal",
+      "col": 0,
+      "yOffset": -60
+    }
+  ],
+  "transitions": [
+    {
+      "id": "register",
+      "from": "unregistered",
+      "to": "registered",
+      "label": "register_provider(stake)",
+      "labelDy": -25
+    },
+    {
+      "id": "first-agreement",
+      "from": "registered",
+      "to": "serving",
+      "label": "signed terms redeemed",
+      "labelDy": -25
+    },
+    {
+      "id": "agreements-expire",
+      "from": "serving",
+      "to": "idle",
+      "label": "agreements ended",
+      "labelDy": -25
+    },
+    {
+      "id": "announce",
+      "from": "idle",
+      "to": "announced",
+      "label": "deregister_provider",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelAt": [
+        478,
+        240
+      ]
+    },
+    {
+      "id": "complete",
+      "from": "announced",
+      "to": "deregistered",
+      "label": "complete_deregister",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "variant": "emphasis"
+    },
+    {
+      "id": "cancel",
+      "from": "announced",
+      "to": "idle",
+      "label": "cancel_deregister",
+      "fromSide": "right",
+      "toSide": "right",
+      "route": "right-channel",
+      "channelX": 660
+    },
+    {
+      "id": "slash",
+      "from": "serving",
+      "to": "slashed",
+      "label": "no or invalid response",
+      "variant": "security",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelDy": 24
+    },
+    {
+      "id": "cleanup",
+      "from": "slashed",
+      "to": "removed",
+      "label": "remove_slashed (anyone)",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelDy": 24
+    }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "Entry and settings",
+      "items": [
+        "stake >= MinProviderStake",
+        "add_stake only increases stake",
+        "if max_capacity > 0: stake >= max_capacity * MinStakePerByte"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Two-step exit",
+      "items": [
+        "Announce needs committed_bytes == 0",
+        "DeregisterAnnouncementPeriod > ChallengeTimeout",
+        "Completion needs PendingChallenges == 0"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Slash path",
+      "items": [
+        "A failed challenge slashes the entire stake",
+        "Exit Announced is still slashable",
+        "remove_slashed returns payment to owner"
+      ]
+    }
+  ]
+}

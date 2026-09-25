@@ -1,0 +1,298 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "Challenge, Response and Slash",
+    "quality_profile": "showcase",
+    "viewBox": [
+      1380,
+      730
+    ],
+    "column_fit": "spread",
+    "legend": {
+      "entries": {
+        "dashed": {
+          "label": "optional step"
+        },
+        "security": {
+          "label": "hold or slash"
+        }
+      }
+    },
+    "views": [
+      {
+        "id": "evidence",
+        "label": "Evidence",
+        "focus": [
+          "challenger",
+          "provider",
+          "pallet"
+        ],
+        "note": "A provider signature from POST /commit or GET /commitment, or the on-chain snapshot for a cold bucket."
+      },
+      {
+        "id": "create",
+        "label": "Create",
+        "focus": [
+          "challenger",
+          "pallet",
+          "sweep",
+          "holds"
+        ],
+        "note": "The pallet checks the caller, holds ChallengeDeposit and stores the challenge under its deadline."
+      },
+      {
+        "id": "defend",
+        "label": "Defend",
+        "focus": [
+          "provider",
+          "pallet",
+          "holds"
+        ],
+        "note": "A valid response before the deadline leaves the stake untouched. The deposit reimburses the response fee."
+      },
+      {
+        "id": "timeout",
+        "label": "Timeout and slash",
+        "focus": [
+          "challenger",
+          "pallet",
+          "sweep",
+          "holds"
+        ],
+        "note": "The on_initialize sweep slashes the full stake of a provider that did not respond before the deadline."
+      }
+    ]
+  },
+  "participants": [
+    {
+      "id": "challenger",
+      "type": "external",
+      "label": "Challenger"
+    },
+    {
+      "id": "provider",
+      "type": "backend",
+      "label": "Provider Node"
+    },
+    {
+      "id": "pallet",
+      "type": "backend",
+      "label": "Storage Pallet"
+    },
+    {
+      "id": "sweep",
+      "type": "messagebus",
+      "label": "on_initialize Sweep"
+    },
+    {
+      "id": "holds",
+      "type": "database",
+      "label": "Holds"
+    }
+  ],
+  "segments": [
+    {
+      "from": 166,
+      "to": 264,
+      "label": "Evidence: what the provider committed to"
+    },
+    {
+      "from": 278,
+      "to": 406,
+      "label": "Create: checks, deposit, deadline"
+    },
+    {
+      "from": 418,
+      "to": 514,
+      "label": "Defend: respond before the deadline"
+    },
+    {
+      "from": 526,
+      "to": 656,
+      "label": "Timeout: on_initialize slashes, then remove"
+    }
+  ],
+  "messages": [
+    {
+      "id": "commit",
+      "from": "challenger",
+      "to": "provider",
+      "y": 186,
+      "label": "POST /commit (data_roots) or GET /commitment",
+      "variant": "default"
+    },
+    {
+      "id": "signed",
+      "from": "provider",
+      "to": "challenger",
+      "y": 218,
+      "label": "mmr_root, start_seq, leaf_count, leaf_indices, provider_signature",
+      "variant": "return"
+    },
+    {
+      "id": "snapshot",
+      "from": "challenger",
+      "to": "pallet",
+      "y": 250,
+      "label": "cold bucket: read on-chain snapshot",
+      "variant": "dashed"
+    },
+    {
+      "id": "challenge",
+      "from": "challenger",
+      "to": "pallet",
+      "y": 298,
+      "label": "challenge_checkpoint | challenge_offchain | challenge_replica",
+      "variant": "emphasis",
+      "note": "checks SelfChallenge, NotAuthorizedForPrivateBucket; tier to Challenge.authorized"
+    },
+    {
+      "id": "deposit",
+      "from": "pallet",
+      "to": "holds",
+      "y": 330,
+      "label": "hold ChallengeDeposit (challenger)",
+      "variant": "security"
+    },
+    {
+      "id": "store",
+      "from": "pallet",
+      "to": "sweep",
+      "y": 362,
+      "label": "Challenges[deadline]",
+      "variant": "default",
+      "note": "deadline = now + ChallengeTimeout (48h, anchor blocks)"
+    },
+    {
+      "id": "created",
+      "from": "pallet",
+      "to": "provider",
+      "y": 394,
+      "label": "ChallengeCreated { respond_by }",
+      "variant": "return"
+    },
+    {
+      "id": "respond",
+      "from": "provider",
+      "to": "pallet",
+      "y": 438,
+      "label": "respond_to_challenge(challenge_id, response)",
+      "variant": "emphasis",
+      "note": "Proof (chunk_data, chunk_proof, mmr_proof) | Deleted | Superseded"
+    },
+    {
+      "id": "settle",
+      "from": "pallet",
+      "to": "holds",
+      "y": 470,
+      "label": "fee share to provider, excess to challenger",
+      "variant": "default",
+      "note": "public 100%; authorized per table, challenger >= 50%"
+    },
+    {
+      "id": "defended",
+      "from": "pallet",
+      "to": "provider",
+      "y": 502,
+      "label": "ChallengeDefended",
+      "variant": "return",
+      "note": "response_time_blocks, challenger_cost, provider_cost"
+    },
+    {
+      "id": "slash",
+      "from": "sweep",
+      "to": "holds",
+      "y": 546,
+      "label": "deadline passed: slash full ProviderStake, release ChallengeDeposit",
+      "variant": "security",
+      "note": "challenger made whole, no reward"
+    },
+    {
+      "id": "slashed",
+      "from": "sweep",
+      "to": "provider",
+      "y": 578,
+      "label": "ChallengeSlashed { reason: Timeout }",
+      "variant": "return"
+    },
+    {
+      "id": "remove",
+      "from": "challenger",
+      "to": "pallet",
+      "y": 610,
+      "label": "remove_slashed(bucket_id, provider)",
+      "variant": "dashed",
+      "note": "anyone may call"
+    },
+    {
+      "id": "payment",
+      "from": "pallet",
+      "to": "holds",
+      "y": 642,
+      "label": "remaining AgreementPayment to owner",
+      "variant": "default"
+    }
+  ],
+  "activations": [
+    {
+      "participant": "provider",
+      "from": 181,
+      "to": 223,
+      "type": "backend"
+    },
+    {
+      "participant": "pallet",
+      "from": 293,
+      "to": 399,
+      "type": "backend"
+    },
+    {
+      "participant": "pallet",
+      "from": 433,
+      "to": 507,
+      "type": "backend"
+    },
+    {
+      "participant": "sweep",
+      "from": 541,
+      "to": 583,
+      "type": "messagebus"
+    },
+    {
+      "participant": "pallet",
+      "from": 605,
+      "to": 647,
+      "type": "backend"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Which challenge extrinsic",
+      "items": [
+        "challenge_checkpoint: cold buckets, snapshot as evidence",
+        "challenge_offchain: hot buckets, signed commitment",
+        "challenge_replica: replicas, confirmed sync root as evidence"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Invalid response",
+      "items": [
+        "Slashed at once with a SlashReason",
+        "InvalidProof, InvalidDeletionClaim, InvalidSupersededClaim",
+        "Malformed call: dispatch error, provider may resend"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "PendingChallenges",
+      "items": [
+        "Gates complete_deregister",
+        "PendingChallengesByBucket gates end_agreement, claim_expired_agreement",
+        "Each resolution decrements both once"
+      ]
+    }
+  ]
+}

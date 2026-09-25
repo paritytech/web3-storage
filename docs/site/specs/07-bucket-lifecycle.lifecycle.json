@@ -1,0 +1,257 @@
+{
+  "schema_version": 1,
+  "diagram_type": "lifecycle",
+  "meta": {
+    "title": "Bucket Lifecycle",
+    "quality_profile": "showcase",
+    "viewBox": [
+      1000,
+      640
+    ],
+    "views": [
+      {
+        "id": "main-path",
+        "label": "Creation to freeze",
+        "focus": [
+          "absent",
+          "empty",
+          "assigned",
+          "checkpointed",
+          "frozen"
+        ],
+        "note": "Two creation paths, then checkpoint and the irreversible freeze."
+      },
+      {
+        "id": "no-providers",
+        "label": "Bucket without providers",
+        "focus": [
+          "checkpointed",
+          "frozen",
+          "unserved",
+          "assigned"
+        ],
+        "note": "Ending the last agreement keeps the bucket; the admin can add a new primary."
+      },
+      {
+        "id": "visibility",
+        "label": "Visibility",
+        "focus": [
+          "public",
+          "private"
+        ],
+        "note": "set_bucket_visibility flips Public and Private in both directions at any state."
+      }
+    ]
+  },
+  "lanes": [
+    {
+      "id": "main",
+      "label": "Bucket state"
+    },
+    {
+      "id": "providers",
+      "label": "Agreements ended"
+    },
+    {
+      "id": "terminal",
+      "label": "Visibility"
+    }
+  ],
+  "states": [
+    {
+      "id": "absent",
+      "type": "start",
+      "label": "No Bucket",
+      "sublabel": "no bucket_id",
+      "lane": "main",
+      "col": 0,
+      "step": "01"
+    },
+    {
+      "id": "empty",
+      "type": "active",
+      "label": "Empty",
+      "sublabel": "no providers, no data",
+      "lane": "main",
+      "col": 1,
+      "step": "02",
+      "tag": "sole admin"
+    },
+    {
+      "id": "assigned",
+      "type": "active",
+      "label": "Primaries Assigned",
+      "sublabel": "primary_providers set",
+      "lane": "main",
+      "col": 2,
+      "step": "03"
+    },
+    {
+      "id": "checkpointed",
+      "type": "active",
+      "label": "Checkpointed",
+      "sublabel": "snapshot exists",
+      "lane": "main",
+      "col": 3,
+      "step": "04"
+    },
+    {
+      "id": "frozen",
+      "type": "success",
+      "label": "Frozen",
+      "sublabel": "frozen_start_seq set",
+      "lane": "main",
+      "col": 4,
+      "step": "05",
+      "tag": "append-only"
+    },
+    {
+      "id": "unserved",
+      "type": "waiting",
+      "label": "No Providers",
+      "sublabel": "members, snapshot kept",
+      "lane": "providers",
+      "col": 1,
+      "tag": "on-chain"
+    },
+    {
+      "id": "public",
+      "type": "neutral",
+      "label": "Public",
+      "sublabel": "primaries serve anyone",
+      "lane": "terminal",
+      "col": 0
+    },
+    {
+      "id": "private",
+      "type": "neutral",
+      "label": "Private",
+      "sublabel": "primaries serve members",
+      "lane": "terminal",
+      "col": 2
+    }
+  ],
+  "transitions": [
+    {
+      "id": "create",
+      "from": "absent",
+      "to": "empty",
+      "label": "create_bucket",
+      "labelDy": -25
+    },
+    {
+      "id": "create-with-primary",
+      "from": "absent",
+      "to": "assigned",
+      "label": "create_bucket_with_primary",
+      "variant": "emphasis",
+      "fromSide": "top",
+      "toSide": "top",
+      "route": "top-channel"
+    },
+    {
+      "id": "add-primary",
+      "from": "empty",
+      "to": "assigned",
+      "label": "add_primary_provider",
+      "labelDy": -25
+    },
+    {
+      "id": "checkpoint",
+      "from": "assigned",
+      "to": "checkpointed",
+      "label": "checkpoint",
+      "labelDy": -25
+    },
+    {
+      "id": "freeze",
+      "from": "checkpointed",
+      "to": "frozen",
+      "label": "freeze_bucket",
+      "variant": "security",
+      "labelDy": -25
+    },
+    {
+      "id": "last-ends",
+      "from": "checkpointed",
+      "to": "unserved",
+      "label": "last agreement ends",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelDy": 24
+    },
+    {
+      "id": "frozen-last-ends",
+      "from": "frozen",
+      "to": "unserved",
+      "label": "last agreement ends",
+      "fromSide": "bottom",
+      "toSide": "right",
+      "labelDy": -23
+    },
+    {
+      "id": "re-add",
+      "from": "unserved",
+      "to": "assigned",
+      "label": "add_primary_provider",
+      "variant": "emphasis",
+      "fromSide": "left",
+      "toSide": "bottom"
+    },
+    {
+      "id": "to-private",
+      "from": "public",
+      "to": "private",
+      "label": "set_bucket_visibility(Private)"
+    },
+    {
+      "id": "to-public",
+      "from": "private",
+      "to": "public",
+      "label": "set_bucket_visibility(Public)",
+      "variant": "dashed",
+      "fromSide": "bottom",
+      "toSide": "bottom",
+      "route": "bottom-channel"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "Creation",
+      "items": [
+        "create_bucket: anyone; caller is sole admin; bucket_id assigned and never changes",
+        "create_bucket_with_primary: bucket and first primary in one call, min_providers = 1",
+        "add_primary_provider: bucket admin, below MaxPrimaryProviders"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Checkpoint and freeze",
+      "items": [
+        "checkpoint needs min_providers primary signatures and records primary_signers",
+        "freeze_bucket: admin only, irreversible, needs a snapshot with min_providers acknowledgments",
+        "Frozen: start_seq cannot decrease below frozen_start_seq"
+      ]
+    },
+    {
+      "dot": "slate",
+      "title": "Without providers",
+      "items": [
+        "Ending the last agreement deletes the agreement, not the bucket",
+        "Members, snapshot and frozen_start_seq remain; a frozen bucket stays frozen",
+        "add_primary_provider works on a bucket with zero primaries and on a frozen bucket"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "Visibility",
+      "items": [
+        "Admin only, both directions, no precondition on replicas",
+        "Public to Private: gates new appends; replicated data stays public",
+        "Private to Public: the disclosure cannot be undone",
+        "On-chain effect: Private limits primary challenges to members and primary-agreement owners"
+      ]
+    }
+  ]
+}

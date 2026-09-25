@@ -1,0 +1,113 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "Bucket Creation and Provider Assignment",
+    "quality_profile": "showcase",
+    "viewBox": [1040, 1000],
+    "column_fit": "spread",
+    "views": [
+      {
+        "id": "empty-bucket",
+        "label": "Empty bucket",
+        "focus": ["admin", "pallet"],
+        "note": "create_bucket takes no provider and no terms. The caller becomes sole admin."
+      },
+      {
+        "id": "new-with-primary",
+        "label": "New bucket with primary",
+        "focus": ["admin", "primary", "pallet", "holds"],
+        "note": "Terms with BucketTarget::New create the bucket and its first primary in one call."
+      },
+      {
+        "id": "add-primary",
+        "label": "Primary on existing bucket",
+        "focus": ["admin", "primary", "pallet", "holds"],
+        "note": "Only a bucket admin can redeem primary terms for BucketTarget::Existing(id)."
+      },
+      {
+        "id": "add-replica",
+        "label": "Replica on existing bucket",
+        "focus": ["funder", "replica", "pallet", "holds"],
+        "note": "Any account the replica provider quoted as terms.owner can redeem."
+      }
+    ]
+  },
+  "participants": [
+    { "id": "admin", "type": "external", "label": "Bucket Admin", "sublabel": "client account" },
+    { "id": "funder", "type": "external", "label": "Replica Funder", "sublabel": "any account" },
+    { "id": "primary", "type": "backend", "label": "Primary Provider", "sublabel": "provider node" },
+    { "id": "replica", "type": "backend", "label": "Replica Provider", "sublabel": "provider node" },
+    { "id": "pallet", "type": "backend", "label": "Storage Pallet", "sublabel": "extrinsics" },
+    { "id": "holds", "type": "security", "label": "Holds", "sublabel": "on terms.owner" }
+  ],
+  "segments": [
+    { "from": 150, "to": 250, "label": "create_bucket: empty bucket" },
+    { "from": 265, "to": 475, "label": "create_bucket_with_primary: BucketTarget::New" },
+    { "from": 490, "to": 700, "label": "add_primary_provider: BucketTarget::Existing(id)" },
+    { "from": 715, "to": 925, "label": "add_replica_provider: replica_params set" }
+  ],
+  "messages": [
+    { "id": "create", "from": "admin", "to": "pallet", "y": 185, "label": "create_bucket(min_providers, visibility)", "variant": "emphasis" },
+    { "id": "created", "from": "pallet", "to": "admin", "y": 225, "label": "BucketCreated", "variant": "return" },
+
+    { "id": "neg-new", "from": "admin", "to": "primary", "y": 300, "label": "POST /negotiate, bucket: null", "variant": "default" },
+    { "id": "terms-new", "from": "primary", "to": "admin", "y": 340, "label": "signed AgreementTerms, BucketTarget::New", "variant": "return" },
+    { "id": "redeem-new", "from": "admin", "to": "pallet", "y": 380, "label": "create_bucket_with_primary(provider, terms, sig, visibility)", "variant": "emphasis" },
+    { "id": "hold-new", "from": "pallet", "to": "holds", "y": 420, "label": "hold AgreementPayment", "variant": "security" },
+    { "id": "ev-new", "from": "pallet", "to": "admin", "y": 455, "label": "BucketCreated, ProviderAddedToBucket, StorageAgreementEstablished", "variant": "return" },
+
+    { "id": "neg-existing", "from": "admin", "to": "primary", "y": 525, "label": "POST /negotiate, bucket: id", "variant": "default" },
+    { "id": "terms-existing", "from": "primary", "to": "admin", "y": 565, "label": "signed AgreementTerms, BucketTarget::Existing(id)", "variant": "return" },
+    { "id": "redeem-existing", "from": "admin", "to": "pallet", "y": 605, "label": "add_primary_provider(bucket_id, provider, terms, sig)", "variant": "emphasis" },
+    { "id": "hold-existing", "from": "pallet", "to": "holds", "y": 645, "label": "hold AgreementPayment", "variant": "security" },
+    { "id": "ev-existing", "from": "pallet", "to": "admin", "y": 680, "label": "ProviderAddedToBucket, StorageAgreementEstablished", "variant": "return" },
+
+    { "id": "neg-replica", "from": "funder", "to": "replica", "y": 750, "label": "POST /negotiate, bucket: id, replica_params", "variant": "default" },
+    { "id": "terms-replica", "from": "replica", "to": "funder", "y": 790, "label": "signed AgreementTerms, Existing(id) + replica_params", "variant": "return" },
+    { "id": "redeem-replica", "from": "funder", "to": "pallet", "y": 830, "label": "add_replica_provider(bucket_id, provider, terms, sig)", "variant": "emphasis" },
+    { "id": "hold-replica", "from": "pallet", "to": "holds", "y": 870, "label": "hold AgreementPayment + sync_balance", "variant": "security" },
+    { "id": "ev-replica", "from": "pallet", "to": "funder", "y": 905, "label": "replica agreement stored", "variant": "return" }
+  ],
+  "activations": [
+    { "participant": "pallet", "from": 180, "to": 230, "type": "backend" },
+    { "participant": "primary", "from": 295, "to": 345, "type": "backend" },
+    { "participant": "pallet", "from": 375, "to": 460, "type": "backend" },
+    { "participant": "primary", "from": 520, "to": 570, "type": "backend" },
+    { "participant": "pallet", "from": 600, "to": 685, "type": "backend" },
+    { "participant": "replica", "from": 745, "to": 795, "type": "backend" },
+    { "participant": "pallet", "from": 825, "to": 910, "type": "backend" }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Who may call",
+      "items": [
+        "create_bucket: anyone; the caller becomes sole admin",
+        "create_bucket_with_primary: terms.owner; creates the bucket with min_providers = 1",
+        "add_primary_provider: bucket admin (NotBucketAdmin)",
+        "add_replica_provider: terms.owner, any account the provider quoted"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Shared checks on signed terms",
+      "items": [
+        "terms.bucket matches the call (TermsBucketMismatch); terms.owner matches the origin (TermsOwnerMismatch)",
+        "now <= terms.valid_until <= now + RequestTimeout (TermsExpired / TermsValidityTooLong)",
+        "Signature over blake2_256(context | SCALE(terms)); terms.nonce not replayed (NonceAlreadyUsed / NonceTooOld)",
+        "Provider active, terms.max_bytes > 0 and within capacity and stake (CapacityExceeded / InsufficientStakeForBytes)"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Role-specific checks",
+      "items": [
+        "Primary: replica_params = None, ProviderNotAcceptingPrimary, MaxPrimaryProvidersReached",
+        "Replica: replica_params = Some (MissingReplicaTerms), ProviderNotAcceptingReplicas",
+        "Existing bucket: BucketNotFound, AgreementAlreadyExists",
+        "Held payment: terms.price_per_byte * terms.max_bytes * terms.duration"
+      ]
+    }
+  ]
+}
