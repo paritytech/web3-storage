@@ -150,11 +150,26 @@ async function main() {
       const ownerBefore = await getFree(api, owner);
       const event = await deleteDrive(api, owner, driveId);
       assert.ok(event, "Should get DriveDeleted event");
+      assert.ok(event.refunded > 0n, "Deletion mid-agreement should refund unused time");
       const ownerAfter = await getFree(api, owner);
       // Owner should get a refund (balance increased, minus tx fees).
       console.log("    owner free delta = %s", (ownerAfter - ownerBefore).toString());
       const driveAfter = await api.query.DriveRegistry.Drives.getValue(driveId, READ_OPTS);
       assert.strictEqual(driveAfter, undefined, "Drive should be gone after delete");
+
+      // With the on-chain obligation gone, the provider tears the bucket's
+      // data down shortly after seeing BucketDeleted (or its next rescan).
+      const deadline = Date.now() + 120_000;
+      for (;;) {
+        const resp = await fetch(`${PROVIDER_URL}/buckets`);
+        const { buckets } = (await resp.json()) as {
+          buckets: Array<{ bucket_id: number | string }>;
+        };
+        if (!buckets.some((b) => BigInt(b.bucket_id) === bucketId)) break;
+        if (Date.now() > deadline)
+          throw new Error("provider still lists the deleted bucket after 120s");
+        await new Promise((resolve) => setTimeout(resolve, 3000));
+      }
     },
   });
 
