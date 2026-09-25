@@ -45,6 +45,7 @@ Unratified / WIP notes. **These need triage** ([#308](https://github.com/parityt
 - **[Client-Side Encryption](./drafts/CLIENT_SIDE_ENCRYPTION.md)** — wire format, cipher choice.
 - **[S3 Metadata Index](./drafts/S3_METADATA_INDEX.md)** — how prefix/delimiter queries are served.
 - **[Challenge Economics — Extensions](./drafts/challenge-economics-extensions.md)** — speculative "Capped Split for the general public"; also records that the design's two-tier challenger split isn't implemented yet.
+- **[RFC draft: Bucket Lifecycle and Transfer](./drafts/RFC_BUCKET_TRANSFER.md)** — bucket states and transitions as implemented, and what is missing to move a bucket to a new primary provider under the same `bucket_id`. Questions for the design owner, no proposal yet.
 
 ## Clients
 
