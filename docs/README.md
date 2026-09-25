@@ -3,6 +3,7 @@
 ```
 docs/
 ├── getting-started/   — quickstart
+├── contributor/       - PR bot commands (`/cmd fmt`, `/cmd bench`)
 ├── design/            — canonical system design (review-gated)
 └── drafts/            — unratified / WIP notes (need triage)
 ```
@@ -24,6 +25,7 @@ Every public pallet item must carry a doc comment; the `missing_docs` CI gate th
 
 - **[Quick Start](./getting-started/FILE_SYSTEM_QUICKSTART.md)** — three-terminal setup (chain → provider → demo).
 - **[`CLAUDE.md`](../CLAUDE.md)** (repo root) — agent/contributor rules and the source-of-truth map.
+- **[Running Commands in PRs](./contributor/commands-readme.md)** - `/cmd` bot usage; **[Weight Generation](./contributor/weight-generation.md)** - `/cmd bench`.
 
 ## Design
 
