@@ -135,7 +135,7 @@ jobs:
           COMMENT_BODY: ${{ github.event.comment.body }}
         with:
           script: |
-            // see explanation in docs/contributor/commands-readme.md#examples
+            // see explanation in CONTRIBUTING.md#pr-bot-commands
             const match = process.env.COMMENT_BODY.match(/^(\/cmd )([-\/\s\w.=:]+)$/);
             core.setOutput('group2', match ? match[2] : '');
 

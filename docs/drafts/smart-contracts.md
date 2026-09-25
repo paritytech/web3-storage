@@ -114,16 +114,16 @@ For extrinsics with parameterized weights (e.g. `end_agreement(a: u32)`), we pas
    - dispatch with `RawOrigin::Signed(env.caller_account_id())`,
    - encode the return value via `SolValue::abi_encode()`.
 3. Mirror the function declaration into `examples/contracts/IWeb3Storage.sol` (the vendored ABI) and any contract that calls it.
-4. Add a happy-path exercise to `examples/papi/sc-coverage.js` — direct `Revive.call(precompileAddr, calldata)` plus an assertion on the resulting on-chain state.
+4. Add a happy-path exercise to `examples/papi/sc-coverage.ts` — direct `Revive.call(precompileAddr, calldata)` plus an assertion on the resulting on-chain state.
 
 ## Testing
 
 Four scripts cover the surface end-to-end:
 
 - **`just sc-demo`** (`examples/papi/sc-flow.ts`) — full marketplace dApp story via `StorageMarketplace.sol`: deploy, `buyStorage` with `msg.value`, off-chain upload/challenge round-trip, `endMyAgreement`. Asserts provider earned tokens + contract events fired.
-- **`just sc-coverage`** (`examples/papi/sc-coverage.js`) — direct precompile invocations (no intermediate contract) for every selector across all three precompiles. Each call submits as a signed substrate tx whose `dest` is the precompile address; on success, the script asserts the underlying pallet's storage / event was updated.
-- **`just sc-team-drive`** (`examples/papi/sc-team-drive.js`) — drive-registry dApp via `SharedTeamDrive.sol`: deploy, `createTeam`, `invite` / `kick`, `disband`.
-- **`just sc-token-gated`** (`examples/papi/sc-token-gated.js`) — s3-registry dApp via `TokenGatedDrive.sol`: deploy, `initialize`, `mint` an NFT-shaped access token per S3 object, `transfer`, `burn` (deletes object metadata), `shutdown`.
+- **`just sc-coverage`** (`examples/papi/sc-coverage.ts`) — direct precompile invocations (no intermediate contract) for every selector across all three precompiles. Each call submits as a signed substrate tx whose `dest` is the precompile address; on success, the script asserts the underlying pallet's storage / event was updated.
+- **`just sc-team-drive`** (`examples/papi/sc-team-drive.ts`) — drive-registry dApp via `SharedTeamDrive.sol`: deploy, `createTeam`, `invite` / `kick`, `disband`.
+- **`just sc-token-gated`** (`examples/papi/sc-token-gated.ts`) — s3-registry dApp via `TokenGatedDrive.sol`: deploy, `initialize`, `mint` an NFT-shaped access token per S3 object, `transfer`, `burn` (deletes object metadata), `shutdown`.
 
 All four run in CI under `.github/workflows/integration-tests.yml` against both runtime matrix entries.
 
