@@ -116,7 +116,20 @@ async fn non_hex_mmr_root_is_a_decode_error() {
     assert_err!(
         sync_serving_peaks(peaks_body("0xnothex", &[])).await,
         Error::Decode {
-            what: "mmr_root",
+            what: "mmr peaks response",
+            ..
+        }
+    );
+}
+
+/// Well-formed hex, but not 32 bytes: rejected while deserializing the
+/// response rather than reaching a `H256::from_slice` that would panic.
+#[tokio::test]
+async fn wrong_length_mmr_root_is_a_decode_error() {
+    assert_err!(
+        sync_serving_peaks(peaks_body("0xab", &[])).await,
+        Error::Decode {
+            what: "mmr peaks response",
             ..
         }
     );
@@ -131,7 +144,7 @@ async fn non_hex_peak_is_a_decode_error() {
         ))
         .await,
         Error::Decode {
-            what: "peak hash",
+            what: "mmr peaks response",
             ..
         }
     );
@@ -186,7 +199,7 @@ async fn non_hex_child_hash_is_a_decode_error() {
     assert_err!(
         sync_serving_node(peak, reply).await,
         Error::Decode {
-            what: "child hash",
+            what: "node response",
             ..
         }
     );
@@ -336,5 +349,8 @@ async fn a_peak_naming_a_stored_node_is_fetched_and_stored() {
         f.sync.sync_from_primary(BUCKET, &url).await.unwrap(),
         target
     );
-    assert_eq!(f.storage.get_node(&leaf).unwrap().data, b"leaf payload");
+    assert_eq!(
+        f.storage.get_node(&leaf).unwrap().unwrap().data,
+        b"leaf payload"
+    );
 }
