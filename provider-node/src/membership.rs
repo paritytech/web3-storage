@@ -10,20 +10,32 @@ use provider_chain::chain_connection::{self, ChainWatch};
 use provider_chain::{BlockEvent, BlockEventRx};
 use sp_core::crypto::AccountId32;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 use storage_primitives::BucketId;
 use storage_subxt::api::runtime_types::pallet_storage_provider::pallet::Member as RuntimeMember;
 use subxt::{OnlineClient, PolkadotConfig};
-use tokio::sync::broadcast::error::TryRecvError;
+use tokio::sync::broadcast::error::{RecvError, TryRecvError};
 
 /// Membership resolver over the node's shared chain connection, so lookups
 /// follow reconnects instead of pinning their own socket.
 pub struct ChainMembershipResolver {
     chain_rx: ChainWatch,
+    /// Never read directly: each lookup `resubscribe`s, so it only sees events
+    /// published after that lookup started.
+    events: BlockEventRx,
+    finality_grace: Duration,
 }
 
 impl ChainMembershipResolver {
-    pub fn new(chain_rx: ChainWatch) -> Self {
-        Self { chain_rx }
+    /// `finality_grace` bounds how long a bucket unknown at the connection's
+    /// finalized head waits for its creation event before it counts as
+    /// nonexistent; zero answers at once.
+    pub fn new(chain_rx: ChainWatch, events: BlockEventRx, finality_grace: Duration) -> Self {
+        Self {
+            chain_rx,
+            events,
+            finality_grace,
+        }
     }
 
     /// Resolved per lookup so reconnects are picked up.
@@ -31,11 +43,9 @@ impl ChainMembershipResolver {
         chain_connection::current_api(&self.chain_rx)
             .map_err(|e| MembershipError::Unavailable(e.to_string()))
     }
-}
 
-#[async_trait::async_trait]
-impl MembershipResolver for ChainMembershipResolver {
-    async fn fetch_access(&self, bucket_id: BucketId) -> Result<BucketAccess, MembershipError> {
+    /// The bucket at the connection's finalized head.
+    async fn lookup(&self, bucket_id: BucketId) -> Result<Lookup, MembershipError> {
         let api = self.api()?;
 
         // `unvalidated`: see the `storage-subxt` crate docs.
@@ -54,10 +64,31 @@ impl MembershipResolver for ChainMembershipResolver {
             .await
             .map_err(|e| MembershipError::Unavailable(e.to_string()))?;
 
-        // No such bucket: memberless and member-only, so nobody gets in.
-        // Distinct from a bucket we cannot decode, below.
+        // Absent. An id the chain has not handed out yet, close enough to the
+        // counter to have been handed out in blocks we have not seen, may
+        // still be on its way; anything else is deleted, or a probe.
         let Some(bucket_value) = result else {
-            return Ok(BucketAccess::private(Vec::new()));
+            let next_id: BucketId = match at
+                .storage()
+                .try_fetch(
+                    storage_subxt::api::storage()
+                        .storage_provider()
+                        .next_bucket_id()
+                        .unvalidated(),
+                    (),
+                )
+                .await
+                .map_err(|e| MembershipError::Unavailable(e.to_string()))?
+            {
+                Some(value) => value.decode().map_err(|e| MembershipError::Decode {
+                    bucket_id,
+                    reason: format!("NextBucketId: {e}"),
+                })?,
+                None => 0,
+            };
+            let pending =
+                bucket_id >= next_id && bucket_id.saturating_sub(next_id) < PENDING_ID_WINDOW;
+            return Ok(Lookup::Absent { pending });
         };
 
         let bucket = bucket_value.decode().map_err(|e| MembershipError::Decode {
@@ -76,10 +107,74 @@ impl MembershipResolver for ChainMembershipResolver {
             tracing::debug!(bucket_id, count = members.len(), "auth: resolved members");
         }
 
-        Ok(BucketAccess {
+        Ok(Lookup::Found(BucketAccess {
             members,
             visibility: bucket.visibility.into(),
-        })
+        }))
+    }
+}
+
+/// How far above the chain's `NextBucketId` an absent bucket id may lie and
+/// still be waited for: ids the chain could have allocated in the finality
+/// step this node has not seen yet. Beyond it, a miss is a probe and gets no
+/// grace, which caps how many connections a signed id scan can park.
+const PENDING_ID_WINDOW: BucketId = 64;
+
+enum Lookup {
+    Found(BucketAccess),
+    /// No such bucket at the finalized head; `pending` when it may still be
+    /// created in blocks this node has not seen.
+    Absent {
+        pending: bool,
+    },
+}
+
+#[async_trait::async_trait]
+impl MembershipResolver for ChainMembershipResolver {
+    async fn fetch_access(&self, bucket_id: BucketId) -> Result<BucketAccess, MembershipError> {
+        // Subscribed before the read, so a creation event landing between the
+        // read and the wait below cannot be missed.
+        let events = self.events.resubscribe();
+        // A missing bucket is memberless and member-only, so nobody gets in.
+        match self.lookup(bucket_id).await? {
+            Lookup::Found(access) => return Ok(access),
+            Lookup::Absent { pending: false } => return Ok(BucketAccess::private(Vec::new())),
+            Lookup::Absent { pending: true } if self.finality_grace.is_zero() => {
+                return Ok(BucketAccess::private(Vec::new()));
+            }
+            Lookup::Absent { pending: true } => {}
+        }
+        // A client that has just watched its `create_bucket` finalize can be a
+        // finality step ahead of us: the embedded light client learns finality
+        // seconds after a full node reports it. Give the bucket's creation
+        // event that long to arrive before answering "not a member".
+        await_bucket_event(events, bucket_id, self.finality_grace).await;
+        match self.lookup(bucket_id).await? {
+            Lookup::Found(access) => Ok(access),
+            Lookup::Absent { .. } => Ok(BucketAccess::private(Vec::new())),
+        }
+    }
+}
+
+/// Block until an event that could make `bucket_id` resolvable arrives - its
+/// own membership change, or a wholesale re-read / lag that may have carried
+/// it - or `grace` elapses. A closed feed returns at once. The caller re-reads
+/// either way, so returning early is never wrong, only cheaper.
+async fn await_bucket_event(mut events: BlockEventRx, bucket_id: BucketId, grace: Duration) {
+    let deadline = tokio::time::Instant::now() + grace;
+    loop {
+        match tokio::time::timeout_at(deadline, events.recv()).await {
+            Ok(Ok(BlockEvent::BucketMembershipChanged { bucket_id: changed }))
+                if changed == bucket_id =>
+            {
+                return;
+            }
+            Ok(Ok(BlockEvent::Resubscribed { .. } | BlockEvent::MembershipScopeUnknown { .. })) => {
+                return;
+            }
+            Ok(Ok(_)) => {}
+            Ok(Err(RecvError::Lagged(_) | RecvError::Closed)) | Err(_) => return,
+        }
     }
 }
 
@@ -169,7 +264,8 @@ mod tests {
         // Before the chain-state coordinator publishes a connection, auth
         // lookups must surface a retryable error rather than panic or hang.
         let (_tx, rx) = tokio::sync::watch::channel(None);
-        let resolver = ChainMembershipResolver::new(rx);
+        let (_events_tx, events_rx) = tokio::sync::broadcast::channel(1);
+        let resolver = ChainMembershipResolver::new(rx, events_rx, Duration::ZERO);
         let err = resolver
             .fetch_access(1)
             .await
@@ -247,5 +343,355 @@ mod tests {
         // has nothing more to report, leaving the TTL as the only bound.
         let feed = BlockEventInvalidations::new(rx);
         assert_eq!(feed.drain(), Invalidation::None);
+    }
+
+    // ── finality grace ──────────────────────────────────────────────────────
+
+    #[tokio::test(start_paused = true)]
+    async fn grace_wait_ends_on_the_buckets_own_event_only() {
+        let (tx, rx) = broadcast::channel(8);
+        let waited = tokio::spawn(await_bucket_event(rx, 7, Duration::from_secs(60)));
+        // Another bucket's change must not release the wait.
+        tx.send(BlockEvent::BucketMembershipChanged { bucket_id: 9 })
+            .unwrap();
+        tokio::task::yield_now().await;
+        assert!(!waited.is_finished());
+        tx.send(BlockEvent::BucketMembershipChanged { bucket_id: 7 })
+            .unwrap();
+        waited.await.unwrap();
+        // Released by the event, not by the deadline.
+        assert!(tokio::time::Instant::now().elapsed() < Duration::from_secs(60));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn grace_wait_ends_on_a_wholesale_reread_or_a_closed_feed() {
+        let (tx, rx) = broadcast::channel(8);
+        tx.send(BlockEvent::Resubscribed { at_block: 3 }).unwrap();
+        await_bucket_event(rx, 7, Duration::from_secs(60)).await;
+
+        let (tx, rx) = broadcast::channel::<BlockEvent>(8);
+        drop(tx);
+        await_bucket_event(rx, 7, Duration::from_secs(60)).await;
+        assert!(tokio::time::Instant::now().elapsed() < Duration::from_secs(60));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn grace_wait_gives_up_at_the_deadline() {
+        let (_tx, rx) = broadcast::channel::<BlockEvent>(8);
+        let start = tokio::time::Instant::now();
+        await_bucket_event(rx, 7, Duration::from_secs(12)).await;
+        assert_eq!(start.elapsed(), Duration::from_secs(12));
+    }
+
+    /// The resolver over a real `OnlineClient`, backed by a mock RPC that
+    /// serves the tracked runtime metadata and a bucket that "appears" on cue.
+    mod real_client {
+        use super::*;
+        use provider_chain::chain_connection::ChainHandle;
+        use std::sync::atomic::AtomicUsize;
+        use std::sync::Arc;
+        use storage_subxt::api::runtime_types::bounded_collections::bounded_vec::BoundedVec;
+        use storage_subxt::api::runtime_types::pallet_storage_provider::pallet::Bucket;
+        use storage_subxt::api::runtime_types::storage_primitives::Role as RuntimeRole;
+        use storage_subxt::api::runtime_types::storage_primitives::Visibility as RuntimeVisibility;
+        use subxt::backend::LegacyBackend;
+        use subxt_rpcs::client::mock_rpc_client::Json;
+        use subxt_rpcs::client::{MockRpcClient, RpcClient};
+
+        /// Tracked runtime metadata snapshot (shared with the PAPI codegen).
+        const METADATA: &[u8] = include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../packages/papi/.papi/metadata/parachain.scale"
+        ));
+        const GENESIS_HASH: &str =
+            "0x1111111111111111111111111111111111111111111111111111111111111111";
+        const FINALIZED_HASH: &str =
+            "0x2222222222222222222222222222222222222222222222222222222222222222";
+        const ADMIN: [u8; 32] = [7u8; 32];
+        const BUCKET: BucketId = 7;
+
+        fn storage_prefix(entry: &str) -> String {
+            let mut key = sp_crypto_hashing::twox_128(b"StorageProvider").to_vec();
+            key.extend(sp_crypto_hashing::twox_128(entry.as_bytes()));
+            format!("0x{}", hex::encode(key))
+        }
+
+        /// SCALE-encoded `Buckets` value with a single admin, as the node
+        /// would serve it. The generated types only implement `EncodeAsType`,
+        /// so the encoding goes through the metadata's type registry.
+        fn bucket_with_admin() -> String {
+            use codec::Decode;
+            use subxt::ext::scale_encode::EncodeAsType;
+            let md = subxt::Metadata::decode(&mut &METADATA[..]).expect("tracked metadata decodes");
+            let value_ty = md
+                .pallet_by_name("StorageProvider")
+                .expect("pallet in metadata")
+                .storage()
+                .expect("pallet has storage")
+                .entry_by_name("Buckets")
+                .expect("entry in metadata")
+                .value_ty();
+            let bucket = Bucket {
+                members: BoundedVec(vec![RuntimeMember {
+                    account: subxt::utils::AccountId32(ADMIN),
+                    role: RuntimeRole::Admin,
+                }]),
+                frozen_start_seq: None,
+                min_providers: 1,
+                primary_providers: BoundedVec(vec![]),
+                snapshot: None,
+                historical_roots: [(0, subxt::utils::H256([0u8; 32])); 6],
+                total_snapshots: 0,
+                visibility: RuntimeVisibility::Private,
+            };
+            let bytes = bucket
+                .encode_as_type(value_ty, md.types())
+                .expect("bucket encodes as its runtime type");
+            format!("0x{}", hex::encode(bytes))
+        }
+
+        /// A real `OnlineClient` over a mock node. `Buckets(BUCKET)` reads as
+        /// absent until `created` is set and `NextBucketId` reads as `next_id`;
+        /// `reads` counts the `Buckets` reads.
+        async fn mock_api(
+            created: Arc<AtomicBool>,
+            reads: Arc<AtomicUsize>,
+            next_id: BucketId,
+        ) -> OnlineClient<PolkadotConfig> {
+            let metadata_hex = format!("0x{}", hex::encode(METADATA));
+            let value_hex = bucket_with_admin();
+            let next_id_hex = {
+                use codec::Encode;
+                format!("0x{}", hex::encode(next_id.encode()))
+            };
+            let buckets_prefix = storage_prefix("Buckets");
+            let next_id_prefix = storage_prefix("NextBucketId");
+            let mock = MockRpcClient::builder()
+                .method_handler("state_getMetadata", move |_params| {
+                    let metadata_hex = metadata_hex.clone();
+                    async move { Json(metadata_hex) }
+                })
+                .method_handler("state_call", move |params| async move {
+                    use codec::Encode;
+                    let raw = params.map(|p| p.get().to_string()).unwrap_or_default();
+                    let function: String = serde_json::from_str::<Vec<serde_json::Value>>(&raw)
+                        .ok()
+                        .and_then(|p| p.first().and_then(|f| f.as_str().map(str::to_string)))
+                        .unwrap_or_default();
+                    let response = match function.as_str() {
+                        "Metadata_metadata_versions" => vec![u32::from(METADATA[4])].encode(),
+                        "Metadata_metadata_at_version" => Some(METADATA.to_vec()).encode(),
+                        "Metadata_metadata" => METADATA.to_vec().encode(),
+                        // sp_version::RuntimeVersion, field by field.
+                        "Core_version" => (
+                            "test".to_string(),
+                            "test".to_string(),
+                            1u32,
+                            1u32,
+                            1u32,
+                            Vec::<([u8; 8], u32)>::new(),
+                            1u32,
+                            1u8,
+                        )
+                            .encode(),
+                        other => panic!("mock RPC: unhandled state_call {other}"),
+                    };
+                    Json(format!("0x{}", hex::encode(response)))
+                })
+                .method_handler("chain_getBlockHash", |_params| async {
+                    Json(GENESIS_HASH.to_string())
+                })
+                .method_handler("chain_getFinalizedHead", |_params| async {
+                    Json(FINALIZED_HASH.to_string())
+                })
+                .method_handler("chain_getHeader", |_params| async {
+                    Json(serde_json::json!({
+                        "parentHash": GENESIS_HASH,
+                        "number": "0x2a",
+                        "stateRoot": GENESIS_HASH,
+                        "extrinsicsRoot": GENESIS_HASH,
+                        "digest": { "logs": [] }
+                    }))
+                })
+                .method_handler("state_getRuntimeVersion", |_params| async {
+                    Json(serde_json::json!({
+                        "specName": "test",
+                        "implName": "test",
+                        "authoringVersion": 1,
+                        "specVersion": 1,
+                        "implVersion": 1,
+                        "apis": [],
+                        "transactionVersion": 1,
+                        "stateVersion": 1
+                    }))
+                })
+                .method_handler("state_getStorage", move |params| {
+                    let created = created.clone();
+                    let reads = reads.clone();
+                    let value_hex = value_hex.clone();
+                    let next_id_hex = next_id_hex.clone();
+                    let buckets_prefix = buckets_prefix.clone();
+                    let next_id_prefix = next_id_prefix.clone();
+                    async move {
+                        let raw = params.map(|p| p.get().to_string()).unwrap_or_default();
+                        let key: String = serde_json::from_str::<Vec<serde_json::Value>>(&raw)
+                            .ok()
+                            .and_then(|p| p.first().and_then(|k| k.as_str().map(str::to_string)))
+                            .unwrap_or_default();
+                        if key.starts_with(&buckets_prefix) {
+                            reads.fetch_add(1, Ordering::Relaxed);
+                            Json(created.load(Ordering::Relaxed).then_some(value_hex))
+                        } else if key.starts_with(&next_id_prefix) {
+                            Json(Some(next_id_hex))
+                        } else {
+                            panic!("mock RPC: unexpected storage key {key}");
+                        }
+                    }
+                })
+                .method_fallback(|name, _params| async move {
+                    panic!("mock RPC: unhandled method {name}");
+                    #[allow(unreachable_code)]
+                    Json(serde_json::Value::Null)
+                })
+                .subscription_fallback(|name, _params, _unsub| async move {
+                    panic!("mock RPC: unhandled subscription {name}");
+                    #[allow(unreachable_code)]
+                    Vec::<Json<serde_json::Value>>::new()
+                })
+                .build();
+            let backend = LegacyBackend::builder().build(RpcClient::new(mock));
+            OnlineClient::<PolkadotConfig>::from_backend(Arc::new(backend))
+                .await
+                .expect("client over mock RPC")
+        }
+
+        struct Harness {
+            resolver: ChainMembershipResolver,
+            created: Arc<AtomicBool>,
+            reads: Arc<AtomicUsize>,
+            events: broadcast::Sender<BlockEvent>,
+            // Keeps the published connection alive for the resolver's watch.
+            _chain: tokio::sync::watch::Sender<Option<ChainHandle>>,
+        }
+
+        /// `next_id` is the chain's `NextBucketId` at the finalized head.
+        async fn harness(created: bool, next_id: BucketId, grace: Duration) -> Harness {
+            let created = Arc::new(AtomicBool::new(created));
+            let reads = Arc::new(AtomicUsize::new(0));
+            let api = mock_api(created.clone(), reads.clone(), next_id).await;
+            let (chain_tx, chain_rx) =
+                tokio::sync::watch::channel(Some(ChainHandle::from_api(api)));
+            let (events, events_rx) = broadcast::channel(8);
+            Harness {
+                resolver: ChainMembershipResolver::new(chain_rx, events_rx, grace),
+                created,
+                reads,
+                events,
+                _chain: chain_tx,
+            }
+        }
+
+        fn admin_only() -> BucketAccess {
+            BucketAccess::private(vec![(AccountId32::new(ADMIN), Role::Admin).into()])
+        }
+
+        #[tokio::test(start_paused = true)]
+        async fn a_known_bucket_resolves_on_the_first_read() {
+            let h = harness(true, BUCKET + 1, Duration::from_secs(12)).await;
+            assert_eq!(h.resolver.fetch_access(BUCKET).await.unwrap(), admin_only());
+            assert_eq!(h.reads.load(Ordering::Relaxed), 1);
+        }
+
+        #[tokio::test(start_paused = true)]
+        async fn an_unknown_bucket_waits_for_its_creation_event_then_resolves() {
+            let h = harness(false, BUCKET, Duration::from_secs(12)).await;
+            let created = h.created.clone();
+            let events = h.events.clone();
+            // The bucket's block reaches this node's finalized view 2s later
+            // than the client's: state flips, then the follower fans the
+            // creation event out.
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_secs(2)).await;
+                created.store(true, Ordering::Relaxed);
+                events
+                    .send(BlockEvent::BucketMembershipChanged { bucket_id: BUCKET })
+                    .unwrap();
+            });
+            let start = tokio::time::Instant::now();
+            assert_eq!(h.resolver.fetch_access(BUCKET).await.unwrap(), admin_only());
+            assert_eq!(h.reads.load(Ordering::Relaxed), 2);
+            assert!(
+                start.elapsed() < Duration::from_secs(12),
+                "released by the event"
+            );
+        }
+
+        #[tokio::test(start_paused = true)]
+        async fn an_unknown_bucket_is_empty_once_the_grace_runs_out() {
+            let h = harness(false, BUCKET, Duration::from_secs(12)).await;
+            let start = tokio::time::Instant::now();
+            assert!(h
+                .resolver
+                .fetch_access(BUCKET)
+                .await
+                .unwrap()
+                .members
+                .is_empty());
+            // Re-read after the grace, in case the event was simply not fanned out.
+            assert_eq!(h.reads.load(Ordering::Relaxed), 2);
+            assert_eq!(start.elapsed(), Duration::from_secs(12));
+        }
+
+        #[tokio::test(start_paused = true)]
+        async fn zero_grace_answers_unknown_buckets_at_once() {
+            let h = harness(false, BUCKET, Duration::ZERO).await;
+            assert!(h
+                .resolver
+                .fetch_access(BUCKET)
+                .await
+                .unwrap()
+                .members
+                .is_empty());
+            assert_eq!(h.reads.load(Ordering::Relaxed), 1);
+        }
+
+        #[tokio::test(start_paused = true)]
+        async fn a_deleted_bucket_gets_no_grace() {
+            // The chain has moved past BUCKET, so its absence is final.
+            let h = harness(false, BUCKET + 20, Duration::from_secs(12)).await;
+            let start = tokio::time::Instant::now();
+            assert!(h
+                .resolver
+                .fetch_access(BUCKET)
+                .await
+                .unwrap()
+                .members
+                .is_empty());
+            assert_eq!(h.reads.load(Ordering::Relaxed), 1);
+            assert_eq!(start.elapsed(), Duration::ZERO);
+        }
+
+        #[tokio::test(start_paused = true)]
+        async fn an_id_scan_far_above_the_counter_gets_no_grace() {
+            let h = harness(false, 1, Duration::from_secs(12)).await;
+            let start = tokio::time::Instant::now();
+            assert!(h
+                .resolver
+                .fetch_access(1_000_007)
+                .await
+                .unwrap()
+                .members
+                .is_empty());
+            // First id past the window: no grace either.
+            assert!(h
+                .resolver
+                .fetch_access(1 + PENDING_ID_WINDOW)
+                .await
+                .unwrap()
+                .members
+                .is_empty());
+            assert_eq!(h.reads.load(Ordering::Relaxed), 2);
+            assert_eq!(start.elapsed(), Duration::ZERO);
+        }
     }
 }
