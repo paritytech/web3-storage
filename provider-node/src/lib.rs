@@ -10,6 +10,7 @@
 //! - Syncing data between providers (for replicas)
 
 pub mod api;
+pub(crate) mod chain_follower;
 pub mod challenge_proofs;
 pub mod cli;
 pub mod command;
@@ -35,8 +36,8 @@ pub use provider_challenge::{
 pub use provider_coordinator as chain_state_coordinator;
 pub use provider_coordinator::{
     is_relevant_provider_event, refresh_if_relevant_event, refresh_provider_state, sync_constants,
-    ChainState, ChainStateChainClient, ChainStateCoordinator, ChainStateCoordinatorHandle,
-    NonceCounter, PalletConstants, ProviderLifecycleEvent,
+    ChainFollower, ChainState, ChainStateChainClient, ChainStateCoordinator,
+    ChainStateCoordinatorHandle, NonceCounter, PalletConstants, ProviderLifecycleEvent,
 };
 pub use provider_replica::{
     ReplicaSync, ReplicaSyncChainClient, ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig,

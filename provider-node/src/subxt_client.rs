@@ -163,7 +163,7 @@ impl SubxtChainClient {
     async fn current_anchor_block(&self) -> Result<u64, ChainClientError> {
         let at = self.at_current_block().await?;
         Ok(u64::from(
-            provider_coordinator::fetch_current_anchor_block(&at)
+            crate::chain_follower::fetch_current_anchor_block(&at)
                 .await
                 .map_err(|e| ChainClientError::query("current anchor block", e))?,
         ))
