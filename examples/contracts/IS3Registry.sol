@@ -38,9 +38,9 @@ interface IS3Registry {
         uint32 validUntil;
         /// Provider-chosen replay-protection nonce.
         uint64 nonce;
-        /// `true` if the quote is bound to an existing bucket (`Some(_)` on
-        /// the Rust side) — required for replica terms; primary terms leave
-        /// this false.
+        /// `true` if the quote names an existing bucket
+        /// (`BucketTarget::Existing` on the Rust side); `false` for a bucket
+        /// created at redemption (`BucketTarget::New`).
         bool hasBucketId;
         /// Target bucket id; only read when `hasBucketId` is true.
         uint64 bucketId;

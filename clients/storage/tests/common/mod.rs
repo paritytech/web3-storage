@@ -173,11 +173,11 @@ pub async fn chain_setup() -> Option<ChainSetup> {
         valid_until: u32::MAX,
         nonce,
         replica_params: None,
-        bucket_id: None,
+        bucket: storage_primitives::BucketTarget::New,
     };
     let signed_terms = sign_terms(&alice_keypair, terms);
     let bucket_id = admin
-        .establish_storage_agreement(
+        .create_bucket_with_primary(
             alice_ss58.clone(),
             signed_terms,
             // Public: the shared harness backs suites written under the open

@@ -4,12 +4,13 @@ use super::*;
 use sp_core::Pair as _;
 
 #[test]
-fn establish_storage_agreement_works() {
+fn create_bucket_with_primary_works() {
     new_test_ext().execute_with(|| {
+        run_to_block(1);
         register_provider(2, 200);
 
-        let (terms, sig) = signed_primary_terms(2, 1, 100, 100);
-        assert_ok!(StorageProvider::establish_storage_agreement(
+        let (terms, sig) = signed_primary_terms(2, 1, BucketTarget::New, 100, 100);
+        assert_ok!(StorageProvider::create_bucket_with_primary(
             RuntimeOrigin::signed(1),
             2,
             terms,
@@ -35,11 +36,19 @@ fn establish_storage_agreement_works() {
         let provider = Providers::<Test>::get(2).unwrap();
         assert_eq!(provider.committed_bytes, 100);
         assert_eq!(provider.stats.agreements_total, 1);
+
+        System::assert_has_event(
+            Event::ProviderAddedToBucket {
+                bucket_id: 0,
+                provider: 2,
+            }
+            .into(),
+        );
     });
 }
 
 #[test]
-fn establish_storage_agreement_reserves_payment() {
+fn create_bucket_with_primary_reserves_payment() {
     new_test_ext().execute_with(|| {
         register_provider_with_settings(
             2,
@@ -54,8 +63,8 @@ fn establish_storage_agreement_reserves_payment() {
         let balance_before = Balances::free_balance(1);
 
         // payment = price_per_byte(1) * max_bytes(100) * duration(10) = 1000
-        let (terms, sig) = signed_primary_terms(2, 1, 100, 10);
-        assert_ok!(StorageProvider::establish_storage_agreement(
+        let (terms, sig) = signed_primary_terms(2, 1, BucketTarget::New, 100, 10);
+        assert_ok!(StorageProvider::create_bucket_with_primary(
             RuntimeOrigin::signed(1),
             2,
             terms,
@@ -70,14 +79,14 @@ fn establish_storage_agreement_reserves_payment() {
 }
 
 #[test]
-fn establish_storage_agreement_fails_for_wrong_owner() {
+fn create_bucket_with_primary_fails_for_wrong_owner() {
     new_test_ext().execute_with(|| {
         register_provider(2, 200);
 
         // Terms signed for owner 1, redeemed by account 3.
-        let (terms, sig) = signed_primary_terms(2, 1, 100, 100);
+        let (terms, sig) = signed_primary_terms(2, 1, BucketTarget::New, 100, 100);
         assert_noop!(
-            StorageProvider::establish_storage_agreement(
+            StorageProvider::create_bucket_with_primary(
                 RuntimeOrigin::signed(3),
                 2,
                 terms,
@@ -90,18 +99,17 @@ fn establish_storage_agreement_fails_for_wrong_owner() {
 }
 
 #[test]
-fn establish_storage_agreement_fails_with_bucket_bound_terms() {
+fn create_bucket_with_primary_fails_with_bucket_bound_terms() {
     new_test_ext().execute_with(|| {
         register_provider(2, 200);
 
-        // Primary terms must not be bound to a bucket.
+        // `create_bucket_with_primary` only redeems `BucketTarget::New`.
         let pair = provider_signer(2);
-        let mut terms = primary_terms(1, 100, 100, 0);
-        terms.bucket_id = Some(0);
+        let terms = primary_terms(1, BucketTarget::Existing(0), 100, 100, 0);
         let sig = sign_terms(&pair, &terms);
 
         assert_noop!(
-            StorageProvider::establish_storage_agreement(
+            StorageProvider::create_bucket_with_primary(
                 RuntimeOrigin::signed(1),
                 2,
                 terms,
@@ -114,18 +122,18 @@ fn establish_storage_agreement_fails_with_bucket_bound_terms() {
 }
 
 #[test]
-fn establish_storage_agreement_fails_when_terms_expired() {
+fn create_bucket_with_primary_fails_when_terms_expired() {
     new_test_ext().execute_with(|| {
         register_provider(2, 200);
         run_to_block(10);
 
         let pair = provider_signer(2);
-        let mut terms = primary_terms(1, 100, 100, 0);
+        let mut terms = primary_terms(1, BucketTarget::New, 100, 100, 0);
         terms.valid_until = 5; // already past at block 10
         let sig = sign_terms(&pair, &terms);
 
         assert_noop!(
-            StorageProvider::establish_storage_agreement(
+            StorageProvider::create_bucket_with_primary(
                 RuntimeOrigin::signed(1),
                 2,
                 terms,
@@ -138,18 +146,18 @@ fn establish_storage_agreement_fails_when_terms_expired() {
 }
 
 #[test]
-fn establish_storage_agreement_fails_with_invalid_signature() {
+fn create_bucket_with_primary_fails_with_invalid_signature() {
     new_test_ext().execute_with(|| {
         register_provider(2, 200);
 
         // Stamp the provider's real key, then sign with a different key.
         provider_signer(2);
         let wrong_pair = sp_core::sr25519::Pair::from_seed(&[99u8; 32]);
-        let terms = primary_terms(1, 100, 100, 0);
+        let terms = primary_terms(1, BucketTarget::New, 100, 100, 0);
         let sig = sign_terms(&wrong_pair, &terms);
 
         assert_noop!(
-            StorageProvider::establish_storage_agreement(
+            StorageProvider::create_bucket_with_primary(
                 RuntimeOrigin::signed(1),
                 2,
                 terms,
@@ -162,12 +170,12 @@ fn establish_storage_agreement_fails_with_invalid_signature() {
 }
 
 #[test]
-fn establish_storage_agreement_fails_on_nonce_replay() {
+fn create_bucket_with_primary_fails_on_nonce_replay() {
     new_test_ext().execute_with(|| {
         register_provider(2, 200);
 
-        let (terms, sig) = signed_primary_terms(2, 1, 50, 100);
-        assert_ok!(StorageProvider::establish_storage_agreement(
+        let (terms, sig) = signed_primary_terms(2, 1, BucketTarget::New, 50, 100);
+        assert_ok!(StorageProvider::create_bucket_with_primary(
             RuntimeOrigin::signed(1),
             2,
             terms.clone(),
@@ -177,7 +185,7 @@ fn establish_storage_agreement_fails_on_nonce_replay() {
 
         // Redeeming the exact same quote again is a replay.
         assert_noop!(
-            StorageProvider::establish_storage_agreement(
+            StorageProvider::create_bucket_with_primary(
                 RuntimeOrigin::signed(1),
                 2,
                 terms,
@@ -190,11 +198,11 @@ fn establish_storage_agreement_fails_on_nonce_replay() {
 }
 
 #[test]
-fn establish_storage_agreement_fails_provider_not_found() {
+fn create_bucket_with_primary_fails_provider_not_found() {
     new_test_ext().execute_with(|| {
-        let terms = primary_terms(1, 50, 100, 0);
+        let terms = primary_terms(1, BucketTarget::New, 50, 100, 0);
         assert_noop!(
-            StorageProvider::establish_storage_agreement(
+            StorageProvider::create_bucket_with_primary(
                 RuntimeOrigin::signed(1),
                 99, // not registered
                 terms,
@@ -207,7 +215,7 @@ fn establish_storage_agreement_fails_provider_not_found() {
 }
 
 #[test]
-fn establish_storage_agreement_fails_not_accepting_primary() {
+fn create_bucket_with_primary_fails_not_accepting_primary() {
     new_test_ext().execute_with(|| {
         register_provider_with_settings(
             2,
@@ -220,9 +228,9 @@ fn establish_storage_agreement_fails_not_accepting_primary() {
 
         // The acceptance check runs after the nonce window advances, so
         // storage is mutated even on failure — assert the error only.
-        let (terms, sig) = signed_primary_terms(2, 1, 50, 100);
+        let (terms, sig) = signed_primary_terms(2, 1, BucketTarget::New, 50, 100);
         assert_err!(
-            StorageProvider::establish_storage_agreement(
+            StorageProvider::create_bucket_with_primary(
                 RuntimeOrigin::signed(1),
                 2,
                 terms,
@@ -235,7 +243,7 @@ fn establish_storage_agreement_fails_not_accepting_primary() {
 }
 
 #[test]
-fn establish_storage_agreement_fails_duration_too_long() {
+fn create_bucket_with_primary_fails_duration_too_long() {
     new_test_ext().execute_with(|| {
         register_provider_with_settings(
             2,
@@ -247,9 +255,9 @@ fn establish_storage_agreement_fails_duration_too_long() {
             },
         );
 
-        let (terms, sig) = signed_primary_terms(2, 1, 50, 100); // exceeds max_duration
+        let (terms, sig) = signed_primary_terms(2, 1, BucketTarget::New, 50, 100); // exceeds max_duration
         assert_err!(
-            StorageProvider::establish_storage_agreement(
+            StorageProvider::create_bucket_with_primary(
                 RuntimeOrigin::signed(1),
                 2,
                 terms,
@@ -262,14 +270,14 @@ fn establish_storage_agreement_fails_duration_too_long() {
 }
 
 #[test]
-fn establish_storage_agreement_fails_insufficient_stake() {
+fn create_bucket_with_primary_fails_insufficient_stake() {
     new_test_ext().execute_with(|| {
         // Stake of 200 only covers 200 bytes (MinStakePerByte = 1).
         register_provider(2, 200);
 
-        let (terms, sig) = signed_primary_terms(2, 1, 300, 100);
+        let (terms, sig) = signed_primary_terms(2, 1, BucketTarget::New, 300, 100);
         assert_err!(
-            StorageProvider::establish_storage_agreement(
+            StorageProvider::create_bucket_with_primary(
                 RuntimeOrigin::signed(1),
                 2,
                 terms,
@@ -282,18 +290,18 @@ fn establish_storage_agreement_fails_insufficient_stake() {
 }
 
 #[test]
-fn establish_storage_agreement_fails_when_terms_validity_too_long() {
+fn create_bucket_with_primary_fails_when_terms_validity_too_long() {
     new_test_ext().execute_with(|| {
         register_provider(2, 200);
 
         // valid_until one block past the cap (now=0, cap = 0 + RequestTimeout(50) = 50)
         let pair = provider_signer(2);
-        let mut terms = primary_terms(1, 50, 100, 0);
+        let mut terms = primary_terms(1, BucketTarget::New, 50, 100, 0);
         terms.valid_until = 51;
         let sig = sign_terms(&pair, &terms);
 
         assert_noop!(
-            StorageProvider::establish_storage_agreement(
+            StorageProvider::create_bucket_with_primary(
                 RuntimeOrigin::signed(1),
                 2,
                 terms,
@@ -315,7 +323,7 @@ fn re_register_replay_blocked_by_expiry() {
 
         // Quote at block 0: valid_until = 0 + RequestTimeout(50) = 50.
         let pair = provider_signer(2);
-        let terms = primary_terms(1, 50, 100, 0);
+        let terms = primary_terms(1, BucketTarget::New, 50, 100, 0);
         let sig = sign_terms(&pair, &terms);
 
         // Announce deregistration (committed_bytes == 0).
@@ -337,7 +345,7 @@ fn re_register_replay_blocked_by_expiry() {
         // At block 150 the old quote is expired (valid_until=50 < 150): TermsExpired
         // fires before the signature check so key mismatch is irrelevant.
         assert_noop!(
-            StorageProvider::establish_storage_agreement(
+            StorageProvider::create_bucket_with_primary(
                 RuntimeOrigin::signed(1),
                 2,
                 terms,
@@ -356,10 +364,10 @@ fn early_terminated_agreement_nonce_not_reusable() {
     new_test_ext().execute_with(|| {
         register_provider(2, 200);
 
-        let (terms, sig) = signed_primary_terms(2, 1, 50, 100);
+        let (terms, sig) = signed_primary_terms(2, 1, BucketTarget::New, 50, 100);
 
         // Redeem the quote — nonce is consumed in ProviderReplayStates[2].
-        assert_ok!(StorageProvider::establish_storage_agreement(
+        assert_ok!(StorageProvider::create_bucket_with_primary(
             RuntimeOrigin::signed(1),
             2,
             terms.clone(),
@@ -377,7 +385,7 @@ fn early_terminated_agreement_nonce_not_reusable() {
 
         // Replay window is intact; the same quote cannot be redeemed again.
         assert_noop!(
-            StorageProvider::establish_storage_agreement(
+            StorageProvider::create_bucket_with_primary(
                 RuntimeOrigin::signed(1),
                 2,
                 terms,

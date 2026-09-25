@@ -66,13 +66,13 @@
 //!         duration: 100_000,
 //!         price_per_byte: 1_000_000,
 //!         replica_params: None,
-//!         bucket_id: None,
+//!         bucket: None,
 //!     },
 //! ).await?;
 //!
 //! // 2. Redeem them on-chain — bucket creation + primary agreement
-//! //    happen atomically inside `establish_storage_agreement`.
-//! let bucket_id = client.establish_storage_agreement(
+//! //    happen atomically inside `create_bucket_with_primary`.
+//! let bucket_id = client.create_bucket_with_primary(
 //!     "5FHneW46...".to_string(), // provider account
 //!     signed,
 //!     storage_primitives::Visibility::Private,

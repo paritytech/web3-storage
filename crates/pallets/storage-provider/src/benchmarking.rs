@@ -14,7 +14,8 @@ use sp_core::H256;
 use sp_runtime::traits::{Bounded, SaturatedConversion};
 use sp_runtime::Saturating;
 use storage_primitives::{
-    AgreementTerms, BucketId, ChunkLocation, Commitment, ProviderRole, ReplicaTerms, Visibility,
+    AgreementTerms, BucketId, BucketTarget, ChunkLocation, Commitment, ProviderRole, ReplicaTerms,
+    Visibility,
 };
 
 const SEED: u32 = 0;
@@ -91,6 +92,7 @@ fn setup_bucket<T: Config>(admin: &T::AccountId) -> BucketId {
 /// Build primary [`AgreementTerms`] suitable for a benchmark agreement.
 fn build_primary_terms<T: Config>(
     owner: &T::AccountId,
+    bucket: BucketTarget,
     max_bytes: u64,
     duration: BlockNumberFor<T>,
     nonce: u64,
@@ -103,7 +105,7 @@ fn build_primary_terms<T: Config>(
         valid_until: StorageProvider::<T>::current_anchor_block()
             .saturating_add(T::RequestTimeout::get()),
         nonce,
-        bucket_id: None,
+        bucket,
         replica_params: None,
     }
 }
@@ -124,7 +126,7 @@ fn build_replica_terms<T: Config>(
         valid_until: StorageProvider::<T>::current_anchor_block()
             .saturating_add(T::RequestTimeout::get()),
         nonce,
-        bucket_id: Some(bucket_id),
+        bucket: BucketTarget::Existing(bucket_id),
         replica_params: Some(ReplicaTerms {
             sync_balance: funding::<T>() / 20u32.into(),
             min_sync_interval: 10u32.into(),
@@ -153,25 +155,26 @@ fn setup_primary_agreement<T: Config>(
     let key = register_sr25519_key::<T>(provider, KEY_TYPE, provider_index);
     let terms = build_primary_terms::<T>(
         admin,
+        BucketTarget::New,
         1_000_000u64,
         100u32.into(),
         provider_index as u64 + 1,
     );
     let sig = sign_terms::<T>(&key, &terms);
-    Pallet::<T>::establish_storage_agreement_internal(
+    Pallet::<T>::create_bucket_with_primary_internal(
         admin,
         provider,
         terms,
         &sig,
         Visibility::Private,
     )
-    .expect("establish_storage_agreement_internal succeeds")
+    .expect("create_bucket_with_primary_internal succeeds")
 }
 
 /// Open a replica agreement against an existing bucket.
 ///
 /// Generates an sr25519 key for the replica provider, signs replica terms,
-/// and calls `establish_replica_agreement_internal`.
+/// and calls `add_replica_provider_internal`.
 fn setup_replica_agreement<T: Config>(
     admin: &T::AccountId,
     bucket_id: BucketId,
@@ -187,8 +190,8 @@ fn setup_replica_agreement<T: Config>(
         replica_index as u64 + 1,
     );
     let sig = sign_terms::<T>(&key, &terms);
-    Pallet::<T>::establish_replica_agreement_internal(admin, bucket_id, replica, terms, &sig)
-        .expect("establish_replica_agreement_internal succeeds");
+    Pallet::<T>::add_replica_provider_internal(admin, bucket_id, replica, terms, &sig)
+        .expect("add_replica_provider_internal succeeds");
     key
 }
 
@@ -204,13 +207,12 @@ fn sign_sync_roots(
 }
 
 /// Direct-storage helper: register `provider` as a primary on an existing
-/// bucket without going through `establish_storage_agreement_internal`.
+/// bucket without a provider-signed quote.
 ///
-/// `establish_storage_agreement_internal` always creates a fresh
-/// single-primary bucket, so it can't grow the primary set on an existing
-/// bucket. The checkpoint benchmarks need *N* primaries on the *same*
-/// bucket to exercise worst-case signature verification, so we synthesize
-/// that shape directly.
+/// The checkpoint benchmarks need *N* primaries on the *same* bucket to
+/// exercise worst-case signature verification, and `add_primary_provider`
+/// would need a fresh quote per provider, so we synthesize that shape
+/// directly.
 fn add_primary_to_bucket<T: Config>(
     admin: &T::AccountId,
     provider: &T::AccountId,
@@ -519,21 +521,30 @@ mod benchmarks {
     // Agreement Management
     // ─────────────────────────────────────────────────────────────────────────
 
+    #[benchmark]
+    fn create_bucket() {
+        let admin = funded_account::<T>("admin", 0);
+
+        #[extrinsic_call]
+        create_bucket(RawOrigin::Signed(admin), 1, Visibility::Private);
+    }
+
     /// Worst case: full signature verification + replay-window mutation +
     /// bucket creation + agreement insertion.
     #[benchmark]
-    fn establish_storage_agreement() {
+    fn create_bucket_with_primary() {
         let admin = funded_account::<T>("admin", 0);
         let provider = create_provider::<T>(0);
 
         // Generate an sr25519 key for the provider and store it so
         // verify_terms_signature can resolve a valid signer.
         let key = register_sr25519_key::<T>(&provider, KEY_TYPE, 0);
-        let terms = build_primary_terms::<T>(&admin, 1_000_000u64, 100u32.into(), 1);
+        let terms =
+            build_primary_terms::<T>(&admin, BucketTarget::New, 1_000_000u64, 100u32.into(), 1);
         let signature = sign_terms::<T>(&key, &terms);
 
         #[extrinsic_call]
-        establish_storage_agreement(
+        create_bucket_with_primary(
             RawOrigin::Signed(admin),
             provider,
             terms,
@@ -542,10 +553,47 @@ mod benchmarks {
         );
     }
 
+    /// Worst case: full signature verification + replay-window mutation +
+    /// agreement insertion + push onto a full-but-one primary set.
+    #[benchmark]
+    fn add_primary_provider() {
+        let admin = funded_account::<T>("admin", 0);
+        let first = create_provider::<T>(0);
+        let bucket_id = setup_primary_agreement::<T>(&admin, &first, 0);
+
+        // `Buckets` is measured, so both the read and the write scale with
+        // `primary_providers`. Fill it to one below the cap so the benchmarked
+        // call pushes onto the largest set it ever can.
+        for i in 1..T::MaxPrimaryProviders::get().saturating_sub(1) {
+            let filler = create_provider::<T>(100 + i);
+            add_primary_to_bucket::<T>(&admin, &filler, bucket_id, 1_000u64);
+        }
+
+        let provider = create_provider::<T>(1);
+        let key = register_sr25519_key::<T>(&provider, KEY_TYPE, 1);
+        let terms = build_primary_terms::<T>(
+            &admin,
+            BucketTarget::Existing(bucket_id),
+            1_000_000u64,
+            100u32.into(),
+            1,
+        );
+        let signature = sign_terms::<T>(&key, &terms);
+
+        #[extrinsic_call]
+        add_primary_provider(
+            RawOrigin::Signed(admin),
+            bucket_id,
+            provider,
+            terms,
+            signature,
+        );
+    }
+
     /// Worst case: replica signature verification + replay-window
     /// mutation + agreement insertion on top of an existing bucket.
     #[benchmark]
-    fn establish_replica_agreement() {
+    fn add_replica_provider() {
         let admin = funded_account::<T>("admin", 0);
         let primary = create_provider::<T>(0);
         let bucket_id = setup_primary_agreement::<T>(&admin, &primary, 0);
@@ -556,7 +604,7 @@ mod benchmarks {
         let signature = sign_terms::<T>(&key, &terms);
 
         #[extrinsic_call]
-        establish_replica_agreement(
+        add_replica_provider(
             RawOrigin::Signed(admin),
             bucket_id,
             replica,
@@ -786,7 +834,7 @@ mod benchmarks {
         let bucket_id = setup_primary_agreement::<T>(&admin, &provider, 0);
 
         // Drop min_providers to 0 so the bootstrapping checkpoint with
-        // empty signatures is accepted (establish_storage_agreement_internal
+        // empty signatures is accepted (create_bucket_with_primary_internal
         // anchors the bucket at min_providers=1).
         let _ =
             Pallet::<T>::set_min_providers(RawOrigin::Signed(admin.clone()).into(), bucket_id, 0);

@@ -107,9 +107,10 @@ export async function signProviderRequest(
 // The off-chain half of the negotiate -> establish flow (#105). The bucket
 // owner POSTs a quote to the provider node's /negotiate endpoint; the provider
 // signs AgreementTerms and returns them as SignedTerms, which the owner then
-// redeems on-chain via establish_storage_agreement / create_drive /
-// create_s3_bucket. Pure HTTP here — the SCALE/Enum shaping of the response
-// lives in layer0 (buildSignedTermsArgs), so core stays chain-free.
+// redeems on-chain via create_bucket_with_primary, add_primary_provider,
+// add_replica_provider, create_drive or create_s3_bucket. Pure HTTP here —
+// the SCALE/Enum shaping of the response lives in layer0
+// (buildSignedTermsArgs), so core stays chain-free.
 
 /** Replica-sync parameters carried by replica agreement terms. */
 export interface ReplicaTermsWire {
@@ -129,9 +130,24 @@ export interface NegotiateRequest {
   max_bytes: bigint | number | string;
   duration: number;
   price_per_byte?: bigint | number | string;
-  bucket_id?: bigint | number | string | null;
+  /**
+   * Bucket the quote is for: an existing bucket id, or null/omitted for a
+   * bucket created when the quote is redeemed. The provider node maps it to
+   * the signed `BucketTarget`.
+   */
+  bucket?: bigint | number | string | null;
   replica_params?: ReplicaTermsWire | null;
 }
+
+/**
+ * Bucket a signed quote is for — serde's encoding of the runtime's
+ * `BucketTarget`: `"New"` for a bucket created at redemption,
+ * `{ Existing: <bucket id> }` for one that already exists.
+ *
+ * `@web3-storage/papi` carries its own copy for the UIs, which do not depend
+ * on this package — keep the two in step.
+ */
+export type BucketTargetWire = "New" | { Existing: bigint | number | string };
 
 /** Provider-signed terms returned by POST /negotiate. */
 export interface SignedTerms {
@@ -142,7 +158,7 @@ export interface SignedTerms {
     price_per_byte: bigint | number | string;
     valid_until: number;
     nonce: bigint | number | string;
-    bucket_id?: bigint | number | string | null;
+    bucket: BucketTargetWire;
     replica_params?: ReplicaTermsWire | null;
   };
   /**

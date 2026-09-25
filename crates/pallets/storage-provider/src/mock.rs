@@ -291,6 +291,7 @@ pub fn sign_sync_roots(
 #[allow(dead_code)]
 pub fn primary_terms(
     owner: u64,
+    bucket: storage_primitives::BucketTarget,
     max_bytes: u64,
     duration: u64,
     price_per_byte: u64,
@@ -303,7 +304,7 @@ pub fn primary_terms(
         valid_until: frame_system::Pallet::<Test>::block_number()
             .saturating_add(<Test as pallet_storage_provider::Config>::RequestTimeout::get()),
         nonce: next_terms_nonce(),
-        bucket_id: None,
+        bucket,
         replica_params: None,
     }
 }
@@ -327,7 +328,7 @@ pub fn replica_terms(
         valid_until: frame_system::Pallet::<Test>::block_number()
             .saturating_add(<Test as pallet_storage_provider::Config>::RequestTimeout::get()),
         nonce: next_terms_nonce(),
-        bucket_id: Some(bucket_id),
+        bucket: storage_primitives::BucketTarget::Existing(bucket_id),
         replica_params: Some(params),
     }
 }
@@ -337,6 +338,7 @@ pub fn replica_terms(
 pub fn signed_primary_terms(
     provider: u64,
     owner: u64,
+    bucket: storage_primitives::BucketTarget,
     max_bytes: u64,
     duration: u64,
 ) -> (crate::AgreementTermsOf<Test>, sp_runtime::MultiSignature) {
@@ -344,7 +346,7 @@ pub fn signed_primary_terms(
     let price = crate::Providers::<Test>::get(provider)
         .map(|p| p.settings.price_per_byte)
         .unwrap_or(0);
-    let terms = primary_terms(owner, max_bytes, duration, price);
+    let terms = primary_terms(owner, bucket, max_bytes, duration, price);
     let sig = sign_terms(&pair, &terms);
     (terms, sig)
 }
@@ -388,8 +390,14 @@ pub fn create_bucket(admin: u64, min_providers: u32) -> u64 {
 /// its Primary agreement. Returns bucket_id.
 pub fn setup_agreement(provider: u64, client: u64, max_bytes: u64, duration: u64) -> u64 {
     use frame_support::assert_ok;
-    let (terms, sig) = signed_primary_terms(provider, client, max_bytes, duration);
-    assert_ok!(StorageProvider::establish_storage_agreement(
+    let (terms, sig) = signed_primary_terms(
+        provider,
+        client,
+        storage_primitives::BucketTarget::New,
+        max_bytes,
+        duration,
+    );
+    assert_ok!(StorageProvider::create_bucket_with_primary(
         RuntimeOrigin::signed(client),
         provider,
         terms,
@@ -414,7 +422,7 @@ pub fn setup_replica_agreement(
     use frame_support::assert_ok;
     let (terms, sig) =
         signed_replica_terms(provider, client, bucket_id, max_bytes, duration, params);
-    assert_ok!(StorageProvider::establish_replica_agreement(
+    assert_ok!(StorageProvider::add_replica_provider(
         RuntimeOrigin::signed(client),
         bucket_id,
         provider,
@@ -423,9 +431,35 @@ pub fn setup_replica_agreement(
     ));
 }
 
+/// Helper: redeem signed primary terms against an existing bucket.
+#[allow(dead_code)]
+pub fn setup_added_primary(
+    provider: u64,
+    admin: u64,
+    bucket_id: u64,
+    max_bytes: u64,
+    duration: u64,
+) {
+    use frame_support::assert_ok;
+    let (terms, sig) = signed_primary_terms(
+        provider,
+        admin,
+        storage_primitives::BucketTarget::Existing(bucket_id),
+        max_bytes,
+        duration,
+    );
+    assert_ok!(StorageProvider::add_primary_provider(
+        RuntimeOrigin::signed(admin),
+        bucket_id,
+        provider,
+        terms,
+        sig
+    ));
+}
+
 /// Helper: register `provider` as an additional primary on an existing
-/// bucket via direct storage. `establish_storage_agreement` always creates
-/// a fresh single-primary bucket, so multi-primary shapes are synthesized.
+/// bucket via direct storage, skipping the quote. Tests that only need the
+/// multi-primary shape use this instead of `setup_added_primary`.
 #[allow(dead_code)]
 pub fn add_primary_to_bucket(provider: u64, owner: u64, bucket_id: u64, max_bytes: u64) {
     let anchor_block = System::block_number();

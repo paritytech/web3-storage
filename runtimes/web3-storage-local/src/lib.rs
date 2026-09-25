@@ -174,7 +174,7 @@ pub const VERSION: RuntimeVersion = RuntimeVersion {
     spec_name: Cow::Borrowed("web3-storage-parachain"),
     impl_name: Cow::Borrowed("web3-storage-parachain"),
     authoring_version: 1,
-    spec_version: 4_008,
+    spec_version: 4_009,
     impl_version: 0,
     apis: RUNTIME_API_VERSIONS,
     // Bumped whenever call encoding changes, so offline signers and stale-metadata
@@ -184,7 +184,7 @@ pub const VERSION: RuntimeVersion = RuntimeVersion {
     // * 3 for dropping the commitment nonce: `checkpoint` and `challenge_offchain` each lost
     //   a `nonce` argument, and `respond_to_challenge`'s `ChallengeResponse::Deleted` variant
     //   lost its `nonce` field (#339);
-    // * 4 for the `visibility` argument appended to `establish_storage_agreement`,
+    // * 4 for the `visibility` argument appended to `create_bucket_with_primary`,
     //   `create_drive` and `create_s3_bucket` (#330).
     transaction_version: 4,
     system_version: 1,
