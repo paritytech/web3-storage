@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Sync in-scope runtime code from origin/dev into staging.
+# Sync in-scope runtime code and design docs from origin/dev into staging.
 # Staging-owned files (never synced): Cargo.toml, .github/workflows/check.yml,
 # sync-staging.sh.
 set -euo pipefail
@@ -17,6 +17,7 @@ SYNC_PATHS=(
   LICENSE-GPL3
   licenserc.apache.toml
   licenserc.gpl.toml
+  docs/design
 )
 
 # Subdirectories of SYNC_PATHS that are out of scope.
