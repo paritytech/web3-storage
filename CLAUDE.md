@@ -84,6 +84,21 @@ design doc.
   code, delegate to the `reviewer` agent so the review starts from a clean
   context.
 
+**Addressing PR review comments:**
+- For each comment, first check whether it is a GitHub suggestion (a
+  `suggestion` block). If it is and the change is correct, apply it as
+  written. Do not rewrite it into a different change. If it is wrong, do
+  not apply it; tell the user why.
+- For a free-form comment, make the fix the comment requests. If the fix
+  is unclear or you disagree, ask the user before changing code.
+- Every comment you fix and push must end in one of two states: the
+  thread has a reply `Fixed by: <commit_hash>` and is resolved, or your
+  report to the user lists the thread and says the user has to resolve it.
+  Never push a fix and leave the thread unmentioned.
+- Replying to or resolving a thread is a GitHub write. Do it only when the
+  user's current message asks for it (see the work flow rules); otherwise
+  list the threads for the user to resolve manually.
+
 **Conventions**
 
 - Pull requests: base branch, single responsibility, regenerated files, benchmarks, description structure, stacking. More detail in [Pull Request](#pull-requests) section.
