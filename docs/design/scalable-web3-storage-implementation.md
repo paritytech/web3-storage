@@ -163,9 +163,16 @@ pub trait Config: frame_system::Config<RuntimeEvent: From<Event<Self>>> {
     #[pallet::constant]
     type MaxMembers: Get<u32>;
 
-    /// Maximum primary providers per bucket (e.g., 5).
+    /// Maximum physical signers per bucket across its primary agreements — a
+    /// virtual primary counts its members. Bounds the checkpoint bitfield and
+    /// the signatures verified per checkpoint.
     #[pallet::constant]
-    type MaxPrimaryProviders: Get<u32>;
+    type MaxPrimarySlots: Get<u32>;
+
+    /// Maximum members of a virtual provider (virtual-provider extension);
+    /// `<= MaxPrimarySlots`.
+    #[pallet::constant]
+    type MaxPhysicalMembers: Get<u32>;
 
     /// Minimum stake required to register as a provider.
     /// Governance-controlled to bound total provider count and provide sybil resistance.
@@ -219,7 +226,8 @@ parachain `HOURS`:
 | `MinProviderStake` | `1_000 * UNIT` (1000 tokens) |
 | `MaxMultiaddrLength` | `128` |
 | `MaxMembers` | `100` |
-| `MaxPrimaryProviders` | `5` |
+| `MaxPrimarySlots` | `8` |
+| `MaxPhysicalMembers` | `4` |
 | `MaxChunkSize` | `262_144` (256 KiB) |
 | `ChallengeTimeout` | `48 * RC_HOURS` |
 | `SettlementTimeout` | `48 * RC_HOURS` |
@@ -428,14 +436,16 @@ pub struct Bucket<T: Config> {
     /// If Some, bucket is append-only from this start_seq.
     /// Checkpoints with start_seq < frozen_start_seq are rejected (prevents deletions).
     pub frozen_start_seq: Option<u64>,
-    /// Minimum primary provider signatures required for checkpoint.
+    /// Minimum signing slots required for a checkpoint. Bounded by the bucket's
+    /// slot layout; clamped down, with an event, when the layout shrinks.
     pub min_providers: u32,
-    /// Primary provider account IDs (limited to T::MaxPrimaryProviders, e.g., 5).
-    /// These are admin-controlled providers that:
+    /// Primary provider account IDs. Each expands to one checkpoint slot, or to
+    /// one per member for a virtual provider; the expansion is bounded by
+    /// `T::MaxPrimarySlots`. These are admin-controlled providers that:
     /// - Receive data directly from writers
     /// - Count toward min_providers for checkpoints
     /// Stored inline for efficient checkpoint reads (one storage access).
-    pub primary_providers: BoundedVec<T::AccountId, T::MaxPrimaryProviders>,
+    pub primary_providers: BoundedVec<T::AccountId, T::MaxPrimarySlots>,
     /// Current canonical state
     pub snapshot: Option<BucketSnapshot<T>>,
     /// Historical MMR roots for replica sync validation.
@@ -474,13 +484,17 @@ pub struct BucketSnapshot<BlockNumber> {
     pub commitment: Commitment,
     /// Block at which checkpointed
     pub checkpoint_block: BlockNumber,
-    /// Bitfield indicating which primary providers signed this snapshot.
-    /// Bit i (LSB0) is set if `primary_providers[i]` signed.
+    /// Bitfield over the bucket's slot layout: `primary_providers` expanded in
+    /// order, a virtual provider to its snapshotted members. Bit i (LSB0) is set
+    /// if slot i signed. A virtual's members enter only as a group of at least
+    /// its threshold `k` per call (virtual-provider extension, "Checkpoints"),
+    /// so a set bit always means a liable signer.
     /// Stored as `Vec<u8>` with explicit `count_signers()` / `has_provider_signed()`
     /// helpers rather than `BitVec` to keep encoding stable and `no_std`-friendly.
-    /// `primary_providers` is bounded by `T::MaxPrimaryProviders` (e.g., 5), so
-    /// indices are stable within a checkpoint; if it changes between checkpoints
-    /// the bitfield is regenerated at the next checkpoint.
+    /// The layout is bounded by `T::MaxPrimarySlots`, so indices are stable
+    /// within a checkpoint; if it changes between checkpoints (a primary added or
+    /// removed, a virtual's member set re-snapshotted) the bits are adjusted in
+    /// place on that extrinsic.
     pub primary_signers: Vec<u8>,
 }
 // Canonical range is [start_seq, start_seq + leaf_count)
@@ -525,6 +539,8 @@ pub struct StorageAgreement<T: Config> {
     pub role: ProviderRole<T>,
     /// Block when agreement became active (for statistics)
     pub started_at: BlockNumberFor<T>,
+    /// Owner-created successor, not yet live ("Replacement agreements").
+    pub pending_replacement: Option<PendingReplacement<T>>,
 }
 
 #[derive(Clone, Encode, Decode, TypeInfo, MaxEncodedLen)]
@@ -780,6 +796,40 @@ provider accepted — is verifiable, but a stake-per-byte constraint on it
 
 `committed_bytes` remains as an informative figure — clients read it to judge
 how loaded a provider is, and deregistration requires it to reach zero.
+
+### Replacement agreements
+
+The owner-only path that ends an agreement early. `create_replacement` stores a
+pending successor in the agreement record (`StorageAgreement.pending_replacement`):
+a fresh `agreement_id`, the provider's current terms — for a virtual provider its
+current member set and `per_provider_stake` — a duration, and the new payment,
+held. Pending means not live: no liability, commitments naming it are not valid,
+no checkpoint slots. The old agreement runs on unchanged.
+
+```rust
+pub struct PendingReplacement<T: Config> {
+    pub agreement_id: u64,
+    /// Provider terms at creation; for a virtual provider includes its member
+    /// set and `per_provider_stake` (virtual-provider extension).
+    pub terms: AgreementTerms<T>,
+    pub duration: BlockNumberFor<T>,
+    pub payment_locked: BalanceOf<T>,
+}
+```
+
+The first `checkpoint` carrying the successor's signature — for a virtual
+provider, at least `k` of its members' — **activates** it: the record becomes the
+new agreement with `expires_at = now + duration`, and the old one settles exactly
+as `extend_agreement` step 1 does — elapsed period paid to the old provider (a
+virtual's snapshotted members, equal split), unelapsed remainder rolled into the
+successor's escrow. If the old agreement expires first, the successor activates
+at that block unsigned; it is the continuation the owner paid for. Nothing is
+refunded.
+
+Owner-only because activation spends the owner's escrow. A third party keeping a
+frozen bucket alive funds its own replica instead (design doc "Permissionless
+persistence"). The virtual-provider extension uses replacements to swap a
+member set without a gap in the client's guarantee.
 
 ### Term Pinning (no-surprise agreements)
 
@@ -1497,6 +1547,16 @@ impl<T: Config> Pallet<T> {
         expected_version: u32,
     ) -> DispatchResult;
 
+    /// Store a pending successor for a live agreement (**owner only**); see
+    /// "Replacement agreements". Fails if one is already pending.
+    pub fn create_replacement(
+        origin: OriginFor<T>,
+        bucket_id: BucketId,
+        provider: T::AccountId,
+        duration: BlockNumberFor<T>,
+        expected_version: u32,
+    ) -> DispatchResult;
+
     /// Extend agreement duration (**owner only**).
     /// Only while the agreement is live — an expired one settles via
     /// `end_agreement` / `claim_expired_agreement`, never here.
@@ -1514,10 +1574,11 @@ impl<T: Config> Pallet<T> {
     /// owner may spend its own locked payment this way, so only the owner extends.
     /// The `expected_version` pin still applies (owner pays no more than it saw).
     ///
-    /// Permissionless *persistence* (keeping a frozen/public bucket alive without
-    /// the owner) is deliberately dropped here; it returns via a replacement-
-    /// agreement mechanism in the virtual-provider extension, which opens a fresh
-    /// agreement rather than mutating and force-settling the existing one.
+    /// Ending an agreement early, against a proven successor, is
+    /// `create_replacement` plus activation ("Replacement agreements"), also
+    /// owner-only. A third party keeps a frozen/public bucket alive by funding
+    /// its own replica, never by touching the owner's agreement (design doc
+    /// "Permissionless persistence").
     ///
     /// Also fails if:
     /// - The agreement has expired (`AgreementExpired`)
@@ -1649,13 +1710,18 @@ impl<T: Config> Pallet<T> {
     /// Submit a new checkpoint with provider signatures (writers/admin only).
     /// 
     /// Creates a new canonical state (new `Commitment`).
-    /// Requires at least min_providers signatures from providers in bucket.primary_providers.
+    /// Requires at least `min_providers` signing slots of the bucket's layout
+    /// (`BucketSnapshot.primary_signers`). A virtual primary's signatures in one
+    /// call are all-or-nothing: at least its threshold `k`, or none — fewer
+    /// rejects the call (virtual-provider extension, "Checkpoints"). Signatures of a pending
+    /// replacement's provider set are accepted only to activate it
+    /// ("Replacement agreements").
     /// For frozen buckets: start_seq must equal frozen_start_seq (only leaf_count can increase).
     pub fn checkpoint(
         origin: OriginFor<T>,
         bucket_id: BucketId,
         commitment: Commitment,
-        signatures: BoundedVec<(T::AccountId, Signature), T::MaxPrimaryProviders>,
+        signatures: BoundedVec<(T::AccountId, Signature), T::MaxPrimarySlots>,
     ) -> DispatchResult;
 
     /// Extend an existing checkpoint's provider bitfield (anyone can call).
@@ -1670,7 +1736,22 @@ impl<T: Config> Pallet<T> {
     pub fn extend_checkpoint(
         origin: OriginFor<T>,
         bucket_id: BucketId,
-        additional_signatures: BoundedVec<(T::AccountId, Signature), T::MaxPrimaryProviders>,
+        additional_signatures: BoundedVec<(T::AccountId, Signature), T::MaxPrimarySlots>,
+    ) -> DispatchResult;
+
+    /// Add members to an open off-chain challenge against a virtual provider
+    /// (anyone can call).
+    ///
+    /// Verifies further signatures over the challenged `CommitmentPayload` from
+    /// members of the challenged agreement's snapshot and adds them to the
+    /// challenge's liable set. Fails for a physical provider. Permissionless
+    /// like `extend_checkpoint`: it only adds accountability. Without it a
+    /// challenger could present the minimum `k` signatures and let the other
+    /// signers walk away (virtual-provider extension, "Stake and Slashing").
+    pub fn extend_challenge(
+        origin: OriginFor<T>,
+        challenge_id: ChallengeId<BlockNumberFor<T>>,
+        additional_signatures: BoundedVec<(T::AccountId, Signature), T::MaxPhysicalMembers>,
     ) -> DispatchResult;
 
     // ─────────────────────────────────────────────────────────────
@@ -2658,6 +2739,32 @@ fn verify_challenge_response(
     }
 }
 ```
+
+### Response transaction extension
+
+A response carries a chunk of up to 256 KiB, so its fee is dominated by length.
+Two responses to one challenge — a provider racing its challenger's
+`cancel_challenge`, or two members of a virtual provider — would today both be
+included and both charged: transaction validity does not consult pallet state,
+and a dispatch that fails still pays. A runtime `TransactionExtension` (the
+`CheckNonce` pattern) handles `respond_to_challenge { challenge_id, .. }`:
+
+- `validate` fails with `Stale` if the challenge does not exist and with
+  `BadSigner` if the signer is not an eligible responder — the challenged
+  provider, or for a virtual provider a member of the challenged agreement's
+  snapshot. Such a transaction is rejected by the first pool that sees it and
+  never gossiped further.
+- Otherwise it returns `provides: [challenge_id]`. The pool keeps at most one
+  ready transaction per tag, so a second response is rejected at import. Once a
+  response is included, every pool extracts its tags (validating at the parent
+  block, where it is still valid) and prunes the others. A straggler that
+  reaches the block builder anyway fails `validate` there and is dropped
+  uncharged.
+
+The loser of a race pays nothing and takes no block space. A response that
+passes `validate` but fails at dispatch — a squatter taking the tag with garbage
+— is included and pays the full fee. Other calls pass through the extension
+unchanged.
 
 ---
 
