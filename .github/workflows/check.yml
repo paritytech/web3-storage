@@ -50,7 +50,7 @@ jobs:
               - '.github/env'
             markdown:
               - '**/*.md'
-              - 'lychee.toml'
+              - '.config/lychee.toml'
               - '.github/workflows/check.yml'
 
   check-fmt:
@@ -106,13 +106,13 @@ jobs:
         with:
           persist-credentials: false
 
-      # lychee.toml sets offline: true, so this only checks relative links
-      # (no network calls), and can't fail CI on an external site being down.
+      # .config/lychee.toml sets offline: true, so this only checks relative
+      # links (no network calls), and can't fail CI on an external site being down.
       - name: Check links
         uses: lycheeverse/lychee-action@e7477775783ea5526144ba13e8db5eec57747ce8 # v2.9.0
         with:
           lycheeVersion: v0.24.2
-          args: --no-progress --verbose "./**/*.md"
+          args: --config .config/lychee.toml --no-progress --verbose "./**/*.md"
 
   check-workspace-inheritance:
     runs-on: ubuntu-latest

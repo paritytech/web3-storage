@@ -205,7 +205,7 @@ web3-storage/
 ├── scripts/                # Helper scripts (chain spec, health checks, smoke test)
 ├── chain-specs/            # Chain specification files
 ├── zombienet/              # Local relay+parachain network configs (zombienet-parachain-local.toml, storage-paseo-local.toml)
-└── docs/                   # getting-started, contributor, design (review-gated), drafts
+└── docs/                   # getting-started, design (review-gated), drafts
 ```
 
 ## Development
