@@ -24,6 +24,7 @@ Every public pallet item must carry a doc comment; the `missing_docs` CI gate th
 
 - **[Quick Start](./getting-started/FILE_SYSTEM_QUICKSTART.md)** — three-terminal setup (chain → provider → demo).
 - **[`CLAUDE.md`](../CLAUDE.md)** (repo root) — agent/contributor rules and the source-of-truth map.
+- **[Contributing](../CONTRIBUTING.md)** - setup, PR process, and `/cmd` bot usage (`/cmd fmt`, `/cmd bench`).
 
 ## Design
 
