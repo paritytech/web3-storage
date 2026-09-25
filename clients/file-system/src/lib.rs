@@ -185,6 +185,7 @@ impl FileSystemClient {
     /// ```ignore
     /// use storage_client::{NegotiateRequest, ProviderClient};
     ///
+    /// let nonce = admin_client.agreement_nonce(&owner_account).await?;
     /// let signed = ProviderClient::negotiate_terms(
     ///     "http://127.0.0.1:3333",
     ///     &NegotiateRequest {
@@ -192,6 +193,7 @@ impl FileSystemClient {
     ///         max_bytes: 10_000_000_000,
     ///         duration: 500,
     ///         price_per_byte: 1,
+    ///         nonce,
     ///         replica_params: None,
     ///     },
     /// ).await?;

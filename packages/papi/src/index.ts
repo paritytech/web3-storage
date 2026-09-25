@@ -115,6 +115,8 @@ export interface NegotiateRequest {
   max_bytes: number | bigint;
   duration: number;
   price_per_byte: number | bigint;
+  /** The owner's next expected agreement nonce (read from chain). */
+  nonce: number | bigint;
   replica_params: unknown | null;
   bucket_id?: bigint | null;
 }

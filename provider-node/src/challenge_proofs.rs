@@ -48,7 +48,7 @@ mod tests {
     /// Constructing this from a bare `Arc<dyn StorageBackend>`, with no
     /// `ProviderState` in sight, is the point of the newtype.
     fn source_over_committed_chunk() -> (Arc<dyn ChallengeProofSource>, sp_core::H256, Vec<u8>) {
-        let (storage, _nonce_store, _dir) = temp_rocksdb();
+        let (storage, _dir) = temp_rocksdb();
         storage.init_bucket(1, 1024 * 1024).unwrap();
 
         let chunk_data = b"proof-source-test-chunk".to_vec();
@@ -65,7 +65,7 @@ mod tests {
 
     #[test]
     fn get_mmr_proof_matches_the_backend() {
-        let (storage, _nonce_store, _dir) = temp_rocksdb();
+        let (storage, _dir) = temp_rocksdb();
         storage.init_bucket(1, 1024 * 1024).unwrap();
         let chunk_hash = blake2_256(b"mmr-proof-test-chunk");
         storage
@@ -91,7 +91,7 @@ mod tests {
 
     #[test]
     fn backend_error_surfaces_as_challenge_error_storage() {
-        let (storage, _nonce_store, _dir) = temp_rocksdb();
+        let (storage, _dir) = temp_rocksdb();
         storage.init_bucket(1, 1024 * 1024).unwrap();
 
         let backend_err = storage

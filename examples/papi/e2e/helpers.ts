@@ -12,6 +12,7 @@ import {
   connect,
   establishStorageAgreement,
   formatDispatchError,
+  getAgreementNonce,
   negotiateTerms,
   READ_OPTS,
   waitForBlockProduction,
@@ -227,11 +228,13 @@ export async function negotiateSigned(
     const info = await api.query.StorageProvider.Providers.getValue(provider.address, READ_OPTS);
     price = info?.settings?.price_per_byte ?? 1n;
   }
+  const nonce = await getAgreementNonce(api, owner.address);
   return negotiateTerms(providerUrl, {
     owner: owner.address,
     max_bytes: maxBytes,
     duration,
     price_per_byte: price,
+    nonce,
     bucket_id: bucketId,
     replica_params: replicaParams,
   });

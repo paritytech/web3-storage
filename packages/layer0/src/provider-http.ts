@@ -64,8 +64,6 @@ export async function providerFetch(
 export interface ProviderNodeReadiness {
   /** The node holds a signing keypair (from --keyfile). */
   signing_configured: boolean;
-  /** The replay-nonce counter is bootstrapped, so /negotiate can issue quotes. */
-  nonce_counter_ready: boolean;
   /** The node has synced its on-chain registration from a finalized block. */
   provider_info_loaded: boolean;
   /** The synced registration is in its deregister-announcement window. */

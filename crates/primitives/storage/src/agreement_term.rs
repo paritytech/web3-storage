@@ -38,8 +38,8 @@ pub struct AgreementTerms<AccountId, Balance, BlockNumber> {
     pub price_per_byte: Balance,
     /// Block number after which the quote is no longer redeemable.
     pub valid_until: BlockNumber,
-    /// Provider-chosen replay-protection nonce; uniqueness is enforced
-    /// through the provider's sliding replay window.
+    /// Owner-chosen replay-protection nonce; must equal the owner's next
+    /// expected agreement nonce at redemption.
     pub nonce: u64,
     /// Bucket the quote is bound to.
     /// - `None` for primary terms

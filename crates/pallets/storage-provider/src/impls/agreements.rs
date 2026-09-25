@@ -3,9 +3,7 @@
 use crate::*;
 use frame_support::pallet_prelude::*;
 use sp_runtime::traits::{CheckedAdd, CheckedMul, SaturatedConversion, Saturating, Zero};
-use storage_primitives::{
-    BucketId, EndAction, ProviderRole, RemovalReason, ReplayError, Visibility,
-};
+use storage_primitives::{BucketId, EndAction, ProviderRole, RemovalReason, Visibility};
 
 impl<T: Config> Pallet<T> {
     pub(crate) fn validate_duration(
@@ -136,7 +134,7 @@ impl<T: Config> Pallet<T> {
     /// `establish_storage_agreement` extrinsic and by higher-layer pallets that
     /// fold bucket creation into their own flows).
     ///
-    /// Verifies the signature, advances the provider's replay window,
+    /// Verifies the signature, advances the owner's agreement nonce,
     /// then runs the same provider/capacity/stake checks as
     /// `create_bucket_with_storage` before creating the bucket + primary
     /// agreement.
@@ -176,14 +174,13 @@ impl<T: Config> Pallet<T> {
             storage_primitives::PRIMARY_TERM_CONTEXT,
         )?;
 
-        // Replay window: at most once per nonce, within the trailing REPLAY_WINDOW_BITS slots.
-        ProviderReplayStates::<T>::try_mutate(provider, |window| -> DispatchResult {
-            window.try_accept(terms.nonce).map_err(|e| match e {
-                ReplayError::AlreadyUsed => Error::<T>::NonceAlreadyUsed,
-                ReplayError::TooOld => Error::<T>::NonceTooOld,
-            })?;
-            Ok(())
-        })?;
+        // Nonce must match the owner's next expected value; advance it so the
+        // same quote cannot be redeemed twice.
+        ensure!(
+            terms.nonce == AgreementNonces::<T>::get(owner),
+            Error::<T>::NonceMismatch
+        );
+        AgreementNonces::<T>::mutate(owner, |n| *n = n.saturating_add(1));
 
         // Validate on-chain provider's state then create bucket
         Self::ensure_provider_active(&provider_info)?;
@@ -264,7 +261,7 @@ impl<T: Config> Pallet<T> {
     /// by the `establish_replica_agreement` extrinsic and by higher-layer
     /// pallets that fold replica establishment into their own flows).
     ///
-    /// Verifies the signature, advances the provider's replay window, then
+    /// Verifies the signature, advances the owner's agreement nonce, then
     /// runs the provider/capacity/stake checks before opening the replica
     /// agreement on an existing bucket. `terms.replica_params` must be
     /// `Some(_)`.
@@ -325,14 +322,13 @@ impl<T: Config> Pallet<T> {
             storage_primitives::REPLICA_TERM_CONTEXT,
         )?;
 
-        // Replay window: at most once per nonce, within the trailing REPLAY_WINDOW_BITS slots.
-        ProviderReplayStates::<T>::try_mutate(provider, |window| -> DispatchResult {
-            window.try_accept(terms.nonce).map_err(|e| match e {
-                ReplayError::AlreadyUsed => Error::<T>::NonceAlreadyUsed,
-                ReplayError::TooOld => Error::<T>::NonceTooOld,
-            })?;
-            Ok(())
-        })?;
+        // Nonce must match the owner's next expected value; advance it so the
+        // same quote cannot be redeemed twice.
+        ensure!(
+            terms.nonce == AgreementNonces::<T>::get(owner),
+            Error::<T>::NonceMismatch
+        );
+        AgreementNonces::<T>::mutate(owner, |n| *n = n.saturating_add(1));
 
         // Validate on-chain provider's state.
         Self::ensure_provider_active(&provider_info)?;

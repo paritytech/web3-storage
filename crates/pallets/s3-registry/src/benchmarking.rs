@@ -232,7 +232,7 @@ mod benchmarks {
             price_per_byte: 1u32.into(),
             valid_until: pallet_storage_provider::Pallet::<T>::current_anchor_block()
                 .saturating_add(<T as pallet_storage_provider::Config>::RequestTimeout::get()),
-            nonce: 1,
+            nonce: pallet_storage_provider::AgreementNonces::<T>::get(&user),
             bucket_id: None,
             replica_params: None,
         };

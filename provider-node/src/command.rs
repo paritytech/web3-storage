@@ -59,7 +59,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     let backend = cli.storage.spec();
     tracing::info!("Storage backend: {backend}");
-    let (storage, nonce_store) = backend.build()?;
+    let storage = backend.build()?;
 
     // Membership-based auth over the chain's bucket member sets, resolved
     // through the shared watch connection. Subscribed here rather than after
@@ -91,11 +91,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         cli.auth.auth_cache_max_entries
     );
 
-    let deps = ProviderDeps {
-        storage,
-        nonce_store,
-        auth,
-    };
+    let deps = ProviderDeps { storage, auth };
 
     // Resolve provider identity
     let seed = cli.key.load_seed()?;

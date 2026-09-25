@@ -94,10 +94,10 @@ export async function ensureProviderRegistered(
     opts,
   );
 
-  // The provider node keeps its chain state (signing key, nonce counter,
-  // registered settings) live from finalized blocks and rejects /negotiate
-  // with 503 ChainStateNotReady until it has synced. Wait for it to catch up
-  // to this registration + price so the very next negotiate succeeds.
+  // The provider node keeps its chain state (signing key, registered
+  // settings) live from finalized blocks and rejects /negotiate with 503
+  // ChainStateNotReady until it has synced. Wait for it to catch up to this
+  // registration + price so the very next negotiate succeeds.
   const MAX_ATTEMPTS = 20; // 20 × 3s = 60s
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     const { readiness, provider_registration_info } = await getProviderNodeInfo(providerUrl);
@@ -105,7 +105,7 @@ export async function ensureProviderRegistered(
       readiness.provider_info_loaded &&
       provider_registration_info != null &&
       BigInt(provider_registration_info.settings.price_per_byte) === pricePerByte;
-    if (readiness.signing_configured && readiness.nonce_counter_ready && priceSynced) return;
+    if (readiness.signing_configured && priceSynced) return;
     await new Promise((resolve) => setTimeout(resolve, 3000));
   }
   throw new Error(
@@ -148,6 +148,16 @@ export function decodeMultiSignature(sigHex: string) {
     );
   }
   return Enum(variant.name as never, asHex(inner));
+}
+
+/**
+ * Read `owner`'s next expected agreement nonce — the value to pass as
+ * `NegotiateRequest.nonce` when requesting a quote. Reads at the best block:
+ * a finalized read can lag an owner's own just-redeemed agreement and hand
+ * back a stale (already-consumed) nonce.
+ */
+export async function getAgreementNonce(api: ParachainApi, owner: string): Promise<bigint> {
+  return api.query.StorageProvider.AgreementNonces.getValue(owner, READ_OPTS);
 }
 
 /**

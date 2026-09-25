@@ -90,11 +90,8 @@ common::backend_tests! {
         assert_eq!(body["provider_id"], expect_provider_id);
 
         // `TestServer::new` seeds a signing key and a matching on-chain
-        // registration, but not the nonce counter (that needs a live chain at
-        // startup), so readiness must reflect "can sign and negotiate, but
-        // the replay window isn't bootstrapped yet".
+        // registration, so readiness must reflect "can sign and negotiate".
         assert_eq!(body["readiness"]["signing_configured"], true);
-        assert_eq!(body["readiness"]["nonce_counter_ready"], false);
         assert_eq!(body["readiness"]["provider_info_loaded"], true);
     }
 }

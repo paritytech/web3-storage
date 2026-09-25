@@ -99,8 +99,9 @@ fn sign_terms<T: Config>(
     sp_runtime::MultiSignature::Sr25519(sig)
 }
 
-/// Build primary terms with the standard benchmark shape.
-fn make_primary_terms<T: Config>(owner: &T::AccountId, nonce: u64) -> AgreementTermsOf<T> {
+/// Build primary terms with the standard benchmark shape, at the owner's
+/// next expected nonce.
+fn make_primary_terms<T: Config>(owner: &T::AccountId) -> AgreementTermsOf<T> {
     AgreementTerms {
         owner: owner.clone(),
         max_bytes: 1_000u64,
@@ -108,7 +109,7 @@ fn make_primary_terms<T: Config>(owner: &T::AccountId, nonce: u64) -> AgreementT
         price_per_byte: 1u32.into(),
         valid_until: pallet_storage_provider::Pallet::<T>::current_anchor_block()
             .saturating_add(<T as pallet_storage_provider::Config>::RequestTimeout::get()),
-        nonce,
+        nonce: pallet_storage_provider::AgreementNonces::<T>::get(owner),
         bucket_id: None,
         replica_params: None,
     }
@@ -120,9 +121,8 @@ fn create_drive_for<T: Config>(
     user: &T::AccountId,
     provider: &T::AccountId,
     provider_pk: &sp_core::sr25519::Public,
-    nonce: u64,
 ) -> (DriveId, u64) {
-    let terms = make_primary_terms::<T>(user, nonce);
+    let terms = make_primary_terms::<T>(user);
     let sig = sign_terms::<T>(provider_pk, &terms);
     let _ = DriveRegistry::<T>::create_drive(
         RawOrigin::Signed(user.clone()).into(),
@@ -173,7 +173,7 @@ mod benchmarks {
         prefill_user_drives::<T>(&user);
 
         let name = vec![b'x'; T::MaxDriveNameLength::get() as usize];
-        let terms = make_primary_terms::<T>(&user, 1);
+        let terms = make_primary_terms::<T>(&user);
         let sig = sign_terms::<T>(&provider_pk, &terms);
 
         #[extrinsic_call]
@@ -198,7 +198,7 @@ mod benchmarks {
         let (provider, provider_pk) = create_provider::<T>(0);
         let user = funded_account::<T>("user", 0);
 
-        let (drive_id, bucket_id) = create_drive_for::<T>(&user, &provider, &provider_pk, 1);
+        let (drive_id, bucket_id) = create_drive_for::<T>(&user, &provider, &provider_pk);
 
         // Fill members up to MaxMembers (owner is already a member).
         let max_members = <T as pallet_storage_provider::Config>::MaxMembers::get();
@@ -235,7 +235,7 @@ mod benchmarks {
     fn share_drive() {
         let (provider, provider_pk) = create_provider::<T>(0);
         let user = funded_account::<T>("user", 0);
-        let (drive_id, bucket_id) = create_drive_for::<T>(&user, &provider, &provider_pk, 1);
+        let (drive_id, bucket_id) = create_drive_for::<T>(&user, &provider, &provider_pk);
 
         // Push members up to MaxMembers - 1 (owner counts as the first member).
         let max_members = <T as pallet_storage_provider::Config>::MaxMembers::get();
@@ -258,7 +258,7 @@ mod benchmarks {
     fn unshare_drive() {
         let (provider, provider_pk) = create_provider::<T>(0);
         let user = funded_account::<T>("user", 0);
-        let (drive_id, bucket_id) = create_drive_for::<T>(&user, &provider, &provider_pk, 1);
+        let (drive_id, bucket_id) = create_drive_for::<T>(&user, &provider, &provider_pk);
 
         // Fill the bucket to MaxMembers, with the removal target inserted last.
         let max_members = <T as pallet_storage_provider::Config>::MaxMembers::get();
