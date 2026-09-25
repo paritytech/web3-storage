@@ -18,11 +18,11 @@ use common::{
     spawn_primary_with_nodes, status, test_storage, Reply,
 };
 use provider_replica::{Error, ReplicaSync};
-use provider_storage::StorageBackend;
+use provider_storage::{ChunkTreeNode, StorageBackend};
 use sp_core::H256;
 use std::collections::HashMap;
 use std::sync::Arc;
-use storage_primitives::{blake2_256, BucketId, MmrLeaf};
+use storage_primitives::{blake2_256, hash_children, BucketId, MmrLeaf};
 use tempfile::TempDir;
 
 const BUCKET: BucketId = 1;
@@ -236,16 +236,19 @@ async fn peak_hashes_are_not_node_keys_so_every_real_sync_404s() {
     );
 }
 
-/// KNOWN DEFECT: `fetch_subtree` stores a node before recursing into its
-/// children, but `store_node` rejects an internal node whose children are not
-/// yet stored. Reachable only with the mock below; against a real primary the
-/// 404 above happens first. Part of the rework in #65.
+/// The defect #392 and #65 describe - `fetch_subtree` storing a node before
+/// the children it names exist - is fixed: children are fetched first, so an
+/// internal peak stores cleanly together with the subtree beneath it.
 #[tokio::test]
-async fn an_internal_peak_fails_because_the_parent_is_stored_first() {
-    let child_data = b"child payload".to_vec();
-    let child = blake2_256(&child_data);
-    let parent_data = b"parent payload".to_vec();
-    let parent = blake2_256(&parent_data);
+async fn an_internal_peak_is_stored_after_the_children_beneath_it() {
+    let left_data = b"left-chunk".to_vec();
+    let left = blake2_256(&left_data);
+    let right_data = b"right-chunk".to_vec();
+    let right = blake2_256(&right_data);
+    // An internal node is identified by its children, and a real primary
+    // serves their concatenation as its `data`.
+    let parent = hash_children(left, right);
+    let parent_data = [left.as_bytes(), right.as_bytes()].concat();
 
     let nodes = HashMap::from([
         (
@@ -253,24 +256,40 @@ async fn an_internal_peak_fails_because_the_parent_is_stored_first() {
             node_body(
                 &hex_hash(parent),
                 &base64(&parent_data),
-                Some(vec![hex_hash(child)]),
+                Some(vec![hex_hash(left), hex_hash(right)]),
             ),
         ),
         (
-            hex_hash(child),
-            node_body(&hex_hash(child), &base64(&child_data), None),
+            hex_hash(left),
+            node_body(&hex_hash(left), &base64(&left_data), None),
+        ),
+        (
+            hex_hash(right),
+            node_body(&hex_hash(right), &base64(&right_data), None),
         ),
     ]);
     let f = fixture();
-    let url = spawn_primary_with_nodes(
-        peaks_body(&hex_hash(unheld_root()), &[hex_hash(parent)]),
-        nodes,
-    )
-    .await;
+    f.storage.init_bucket(BUCKET, u64::MAX).unwrap();
+    let target = unheld_root();
+    let url =
+        spawn_primary_with_nodes(peaks_body(&hex_hash(target), &[hex_hash(parent)]), nodes).await;
 
-    assert_err!(
-        f.sync.sync_from_primary(BUCKET, &url).await,
-        Error::Backend(provider_storage::Error::ChildrenMissing(_))
+    assert_eq!(
+        f.sync.sync_from_primary(BUCKET, &url).await.unwrap(),
+        target
+    );
+    assert_eq!(
+        f.storage.get_node(&parent),
+        Some(ChunkTreeNode::Internal([left, right])),
+        "the parent must be stored once its children are present"
+    );
+    assert_eq!(
+        f.storage.get_node(&left),
+        Some(ChunkTreeNode::Chunk(left_data))
+    );
+    assert_eq!(
+        f.storage.get_node(&right),
+        Some(ChunkTreeNode::Chunk(right_data))
     );
 }
 
@@ -280,7 +299,9 @@ async fn a_root_we_already_hold_returns_without_fetching_any_node() {
     let data = b"already stored".to_vec();
     let leaf = blake2_256(&data);
     f.storage.init_bucket(BUCKET, u64::MAX).unwrap();
-    f.storage.store_node(BUCKET, leaf, data, None).unwrap();
+    f.storage
+        .store_node(BUCKET, leaf, ChunkTreeNode::Chunk(data))
+        .unwrap();
     let (local_root, _, _) = f.storage.commit(BUCKET, vec![leaf]).unwrap();
 
     // Answering the leaf with an error proves `/node` is never requested.
@@ -300,7 +321,9 @@ async fn a_node_we_already_hold_is_not_refetched() {
     let data = b"cached payload".to_vec();
     let leaf = blake2_256(&data);
     f.storage.init_bucket(BUCKET, u64::MAX).unwrap();
-    f.storage.store_node(BUCKET, leaf, data, None).unwrap();
+    f.storage
+        .store_node(BUCKET, leaf, ChunkTreeNode::Chunk(data))
+        .unwrap();
 
     let nodes = HashMap::from([(hex_hash(leaf), status(StatusCode::INTERNAL_SERVER_ERROR))]);
     let target = unheld_root();
@@ -336,5 +359,8 @@ async fn a_peak_naming_a_stored_node_is_fetched_and_stored() {
         f.sync.sync_from_primary(BUCKET, &url).await.unwrap(),
         target
     );
-    assert_eq!(f.storage.get_node(&leaf).unwrap().data, b"leaf payload");
+    assert_eq!(
+        f.storage.get_node(&leaf),
+        Some(ChunkTreeNode::Chunk(b"leaf payload".to_vec()))
+    );
 }

@@ -12,6 +12,9 @@ pub enum Error {
     #[error("Children missing: {0:?}")]
     ChildrenMissing(Vec<String>),
 
+    #[error("Invalid child count: expected 2, got {0}")]
+    InvalidChildCount(usize),
+
     #[error("Quota exceeded: used {used}, max {max}")]
     QuotaExceeded { used: u64, max: u64 },
 
@@ -38,4 +41,10 @@ pub enum Error {
     /// fault.
     #[error("Column family not found: {0}")]
     ColumnFamilyMissing(&'static str),
+
+    /// The database on disk was written in a format this build cannot read.
+    /// Opening it anyway would decode its records wrongly, so the engine
+    /// refuses rather than reporting phantom missing data.
+    #[error("Incompatible on-disk format: {0}")]
+    IncompatibleFormat(String),
 }
