@@ -13,8 +13,8 @@ pub mod nonce;
 
 pub use backend::{
     build_padded_merkle_tree, commit_blob, BucketInfo, BucketState, BucketStats, BucketSummary,
-    CommitOutcome, DiskNonceStore, DiskStorage, OpenedBackend, StorageBackend, StorageBackendSpec,
-    StoredNode,
+    CommitOutcome, DeletionReceipt, DiskNonceStore, DiskStorage, OpenedBackend, StorageBackend,
+    StorageBackendSpec, StoredNode,
 };
 pub use error::Error;
 pub use index::{
