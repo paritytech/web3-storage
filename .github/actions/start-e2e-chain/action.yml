@@ -1,0 +1,55 @@
+name: Start E2E dev chain
+description: >-
+  Start polkadot-omni-node in standalone mode with fast block production
+  for E2E testing. No relay chain required — blocks finalize instantly.
+
+inputs:
+  chain-spec-script:
+    description: Script that generates the chain spec to stdout.
+    required: true
+  block-time:
+    description: Block production interval in milliseconds.
+    required: false
+    default: "2000"
+  rpc-port:
+    description: RPC port for the node.
+    required: false
+    default: "2222"
+  log-file:
+    description: Where to redirect omni-node stdout/stderr.
+    required: false
+    default: /tmp/omni-node.log
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        CHAIN_SPEC_SCRIPT: ${{ inputs.chain-spec-script }}
+        BLOCK_TIME: ${{ inputs.block-time }}
+        RPC_PORT: ${{ inputs.rpc-port }}
+        LOG_FILE: ${{ inputs.log-file }}
+      run: |
+        SPEC_FILE="/tmp/e2e-chain-spec.json"
+        echo "Generating chain spec from ${CHAIN_SPEC_SCRIPT}..."
+        $CHAIN_SPEC_SCRIPT > "$SPEC_FILE"
+
+        echo "Starting polkadot-omni-node with ${BLOCK_TIME}ms blocks..."
+        nohup .bin/polkadot-omni-node \
+          --chain "$SPEC_FILE" \
+          --alice --tmp \
+          --unsafe-force-node-key-generation \
+          --dev-block-time "$BLOCK_TIME" \
+          --rpc-port "$RPC_PORT" \
+          --rpc-cors all \
+          -lruntime=info \
+          > "$LOG_FILE" 2>&1 &
+
+        NODE_PID=$!
+        sleep 10
+        if ! kill -0 $NODE_PID 2>/dev/null; then
+          echo "ERROR: polkadot-omni-node exited early"
+          cat "$LOG_FILE" || true
+          exit 1
+        fi
+        echo "polkadot-omni-node running with ${BLOCK_TIME}ms blocks (PID $NODE_PID)"

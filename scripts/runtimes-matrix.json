@@ -1,0 +1,42 @@
+[
+  {
+    "name": "web3-storage-paseo",
+    "package": "storage-paseo-runtime",
+    "path": "runtimes/web3-storage-paseo",
+    "build_command": "build-paseo-runtime",
+    "zombienet_config": "zombienet/storage-paseo-local.toml",
+    "chain_spec_script": "scripts/build-paseo-chain-spec.sh",
+    "uris": [
+      "wss://previewnet.substrate.dev/web3-storage"
+    ],
+    "integration_tests": true,
+    "try_runtime": {
+      "spec_name_check": "--disable-spec-name-check",
+      "extra_flags": "--blocktime 6000 --disable-spec-version-check"
+    },
+    "benchmarks_templates": {
+      "pallet_xcm_benchmarks::generic": "templates/xcm-bench-template.hbs",
+      "pallet_xcm_benchmarks::fungible": "templates/xcm-bench-template.hbs"
+    }
+  },
+  {
+    "name": "storage-parachain-runtime",
+    "package": "storage-parachain-runtime",
+    "path": "runtimes/web3-storage-local",
+    "build_command": "build-runtime",
+    "zombienet_config": "zombienet/zombienet-parachain-local.toml",
+    "chain_spec_script": "scripts/build-chain-spec.sh",
+    "uris": [
+      "TODO: update WSS"
+    ],
+    "integration_tests": false,
+    "try_runtime": {
+      "spec_name_check": "--disable-spec-name-check",
+      "extra_flags": "--blocktime 6000 --disable-spec-version-check"
+    },
+    "benchmarks_templates": {
+      "pallet_xcm_benchmarks::generic": "templates/xcm-bench-template.hbs",
+      "pallet_xcm_benchmarks::fungible": "templates/xcm-bench-template.hbs"
+    }
+  }
+]

@@ -1,0 +1,159 @@
+/*
+ * Theme palettes. Dark is the default (applied to the picker roots); a
+ * `data-theme="light"` on a root flips the variables for that subtree. Each
+ * `--np-*` still carries its dark value as a CSS fallback so the component
+ * renders correctly even if a consumer drops the stylesheet's variable block.
+ */
+.np-root,
+.np-compact-root {
+  --np-fg: #e5e5e5;
+  --np-bg: #1a1a2e;
+  --np-button-bg: #1f2937;
+  --np-input-bg: #0a0a0f;
+  --np-border: #2a2a3e;
+  --np-muted: #888;
+  --np-accent: #7c3aed;
+  --np-shadow: rgba(0, 0, 0, 0.5);
+}
+
+.np-root[data-theme='light'],
+.np-compact-root[data-theme='light'] {
+  --np-fg: #1a1a2e;
+  --np-bg: #ffffff;
+  --np-button-bg: #ffffff;
+  --np-input-bg: #f7f7fb;
+  --np-border: #d6d6e0;
+  --np-muted: #6b7280;
+  --np-accent: #7c3aed;
+  --np-shadow: rgba(15, 23, 42, 0.18);
+}
+
+.np-root {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  font-family: inherit;
+  font-size: 0.78rem;
+  color: var(--np-fg, #e5e5e5);
+  background: var(--np-bg, #1a1a2e);
+  border: 1px solid var(--np-border, #2a2a3e);
+  border-radius: 8px;
+  padding: 0.6rem 0.75rem;
+  width: 100%;
+}
+
+.np-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.np-label {
+  color: var(--np-muted, #888);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  flex-shrink: 0;
+}
+
+.np-select,
+.np-input {
+  flex: 1;
+  min-width: 0;
+  background: var(--np-input-bg, #0a0a0f);
+  color: inherit;
+  border: 1px solid var(--np-border, #2a2a3e);
+  border-radius: 5px;
+  padding: 0.32rem 0.5rem;
+  font: inherit;
+}
+
+.np-select:focus,
+.np-input:focus {
+  outline: none;
+  border-color: var(--np-accent, #7c3aed);
+}
+
+.np-custom {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.np-endpoints {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  column-gap: 0.5rem;
+  row-gap: 0.2rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.7rem;
+  padding-top: 0.35rem;
+  border-top: 1px dashed var(--np-border, #2a2a3e);
+}
+
+.np-endpoints dt { color: var(--np-muted, #6b6b80); }
+.np-endpoints dd {
+  color: var(--np-fg, #c4c4d6);
+  word-break: break-all;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0;
+}
+.np-endpoints dd.placeholder { color: var(--np-muted, #555); font-style: italic; }
+
+.np-status {
+  flex-shrink: 0;
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 50%;
+  background: #555;
+}
+.np-status[data-state="checking"] { background: #facc15; animation: np-pulse 1s ease-in-out infinite; }
+.np-status[data-state="up"]       { background: #4ade80; box-shadow: 0 0 6px #4ade80aa; }
+.np-status[data-state="down"]     { background: #f87171; }
+.np-status[data-state="idle"]     { background: #444; }
+
+.np-status-text {
+  color: #f87171;
+  font-style: italic;
+  font-size: 0.68rem;
+}
+
+.np-error {
+  color: #f87171;
+  font-size: 0.72rem;
+}
+
+@keyframes np-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+
+/* Compact mode: button + popover */
+.np-compact-root { position: relative; display: inline-block; }
+.np-compact-button {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  background: var(--np-button-bg, #1f2937);
+  color: var(--np-fg, #e5e5e5);
+  border: 1px solid var(--np-border, #2a2a3e);
+  border-radius: 6px;
+  padding: 0.32rem 0.65rem;
+  font: inherit;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+.np-compact-button:hover { border-color: var(--np-accent, #7c3aed); }
+.np-compact-name { white-space: nowrap; }
+.np-compact-chevron { opacity: 0.6; font-size: 0.7rem; }
+.np-status-button { width: 0.5rem; height: 0.5rem; }
+.np-backdrop { position: fixed; inset: 0; z-index: 40; }
+.np-popover {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 0.4rem);
+  z-index: 50;
+  width: 22rem;
+  box-shadow: 0 10px 30px var(--np-shadow, rgba(0, 0, 0, 0.5));
+}
+
+.np-endpoints-standalone { border-top: none; padding-top: 0; }
