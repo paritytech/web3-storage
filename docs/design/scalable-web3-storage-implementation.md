@@ -415,6 +415,9 @@ pub struct ProviderSettings<T: Config> {
     /// `committed_bytes` past this value, and the provider's stake must back
     /// it: `stake >= max_capacity * MinStakePerByte`.
     pub max_capacity: u64,
+    /// Minimum `max_bytes` per agreement, primary or replica. `0` means no
+    /// minimum. Redeem calls reject `terms.max_bytes` below this value.
+    pub min_bytes: u64,
 }
 
 /// Monotonically increasing bucket ID counter. Ensures stable, unique IDs.
@@ -1155,9 +1158,9 @@ impl<T: Config> Pallet<T> {
 
     /// Update provider settings.
     /// 
-    /// Allows provider to change pricing, duration limits, capacity, and
-    /// availability. Changes apply to new agreements only; existing agreements
-    /// retain their locked terms.
+    /// Allows provider to change pricing, duration limits, capacity,
+    /// minimum agreement size, and availability. Changes apply to new
+    /// agreements only; existing agreements retain their locked terms.
     ///
     /// Validation:
     /// - `min_duration <= max_duration` (`MinDurationExceedsMaxDuration`).
@@ -1165,6 +1168,8 @@ impl<T: Config> Pallet<T> {
     ///   (`CapacityBelowCommitted`) and stake must cover it,
     ///   i.e. `stake >= max_capacity * MinStakePerByte`
     ///   (`InsufficientStakeForCapacity`).
+    /// - If `max_capacity > 0`: `min_bytes` must be `<= max_capacity`
+    ///   (`MinBytesExceedsMaxCapacity`).
     /// - Settings are frozen while a deregister announcement is in flight —
     ///   call `cancel_deregister` first.
     /// 
@@ -1332,6 +1337,7 @@ impl<T: Config> Pallet<T> {
     //   its duration bounds, and the added `terms.max_bytes` must fit its
     //   declared capacity (`CapacityExceeded`) and stake
     //   (`InsufficientStakeForBytes`)
+    // - `terms.max_bytes` must be `>= settings.min_bytes` (`MaxBytesBelowMinimum`)
     //
     // Payment `terms.price_per_byte * terms.max_bytes * terms.duration` is
     // held on the owner at the price the provider signed for — the
@@ -2076,7 +2082,8 @@ to pass to `create_bucket_with_primary` (`bucket: null`),
 `add_replica_provider` (both set).
 
 The provider rejects requests below its listed price, outside its duration
-bounds, or beyond its capacity, and rejects requests while deregistering.
+bounds, below its minimum agreement size, or beyond its capacity, and rejects
+requests while deregistering.
 
 Download Node
 ─────────────
