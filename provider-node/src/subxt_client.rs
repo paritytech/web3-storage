@@ -526,50 +526,6 @@ impl SubxtChainClient {
             Err(e) => tracing::error!("Multiaddr update tx failed: {}", e),
         }
     }
-
-    /// Parse a BucketSnapshot value from scale_value.
-    fn parse_bucket_snapshot_value<T>(value: &subxt::ext::scale_value::Value<T>) -> BucketSnapshot {
-        use subxt::ext::scale_value::{At, Composite, Primitive, ValueDef};
-
-        let mmr_root = if let Some(field0) = value.at(0) {
-            if let ValueDef::Composite(Composite::Unnamed(bytes_vec)) = &field0.value {
-                let bytes: Vec<u8> = bytes_vec
-                    .iter()
-                    .filter_map(|v| {
-                        if let ValueDef::Primitive(Primitive::U128(n)) = &v.value {
-                            Some(*n as u8)
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
-                if bytes.len() == 32 {
-                    H256::from_slice(&bytes)
-                } else {
-                    H256::zero()
-                }
-            } else {
-                H256::zero()
-            }
-        } else {
-            H256::zero()
-        };
-
-        let leaf_count = if let Some(field2) = value.at(2) {
-            if let ValueDef::Primitive(Primitive::U128(n)) = &field2.value {
-                *n as u64
-            } else {
-                0
-            }
-        } else {
-            0
-        };
-
-        BucketSnapshot {
-            mmr_root,
-            leaf_count,
-        }
-    }
 }
 
 #[async_trait::async_trait]
@@ -621,44 +577,42 @@ impl ReplicaSyncChainClient for SubxtChainClient {
         &self,
         bucket_id: BucketId,
     ) -> Result<BucketSnapshot, ChainClientError> {
-        use subxt::ext::scale_value::ValueDef;
-
-        let storage_address =
-            subxt::dynamic::storage::<(Value,), Value>("StorageProvider", "Buckets");
+        // Never treat a fetch error as "no snapshot" — the GC erases
+        // data based on this answer.
+        let storage_address = storage_subxt::api::storage()
+            .storage_provider()
+            .buckets()
+            .unvalidated();
 
         let at = self.at_current_block().await?;
 
-        match at
+        let Some(value) = at
             .storage()
-            .try_fetch(storage_address, (Value::u128(bucket_id as u128),))
+            .try_fetch(storage_address, (bucket_id,))
             .await
-        {
-            Ok(Some(value)) => {
-                use subxt::ext::scale_value::At;
-                let decoded = value
-                    .decode()
-                    .map_err(|e| ChainClientError::decode("bucket", e))?;
-
-                if let Some(snapshot_opt) = decoded.at(4) {
-                    if let ValueDef::Variant(variant) = &snapshot_opt.value {
-                        if variant.name == "Some" {
-                            if let Some(snapshot_val) = variant.values.values().next() {
-                                return Ok(Self::parse_bucket_snapshot_value(snapshot_val));
-                            }
-                        }
-                    }
-                }
-
-                Ok(BucketSnapshot {
-                    mmr_root: H256::zero(),
-                    leaf_count: 0,
-                })
-            }
-            _ => Ok(BucketSnapshot {
+            .map_err(|e| ChainClientError::query("bucket", e))?
+        else {
+            // No such bucket: nothing canonical yet.
+            return Ok(BucketSnapshot {
                 mmr_root: H256::zero(),
                 leaf_count: 0,
-            }),
-        }
+            });
+        };
+
+        let bucket = value
+            .decode()
+            .map_err(|e| ChainClientError::decode("bucket", e))?;
+
+        Ok(match bucket.snapshot {
+            Some(snapshot) => BucketSnapshot {
+                mmr_root: H256::from(snapshot.commitment.mmr_root.0),
+                leaf_count: snapshot.commitment.leaf_count,
+            },
+            None => BucketSnapshot {
+                mmr_root: H256::zero(),
+                leaf_count: 0,
+            },
+        })
     }
 
     async fn fetch_primary_endpoints(
