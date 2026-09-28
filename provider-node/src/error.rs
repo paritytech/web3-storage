@@ -13,6 +13,9 @@ use serde::Serialize;
 use std::fmt;
 use thiserror::Error;
 
+/// `Retry-After` for a bucket the node has not seen yet: one parachain block.
+const RETRY_AFTER_BLOCK_SECS: &str = "2";
+
 #[derive(Error, Debug)]
 pub enum Error {
     #[error(transparent)]
@@ -299,6 +302,15 @@ impl IntoResponse for Error {
                     details: None,
                 },
             ),
+            Error::Auth(AuthError::MembershipLookup(MembershipError::BlockNotKnown {
+                bucket_id,
+            })) => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                ErrorResponse {
+                    error: "block_not_known".to_string(),
+                    details: Some(serde_json::json!({ "bucket_id": bucket_id })),
+                },
+            ),
             // Transient and worth retrying, unlike a decode failure.
             Error::Auth(err @ AuthError::MembershipLookup(MembershipError::Unavailable(_))) => (
                 StatusCode::SERVICE_UNAVAILABLE,
@@ -470,7 +482,16 @@ impl IntoResponse for Error {
             ),
         };
 
-        (status, Json(error_response)).into_response()
+        let mut response = (status, Json(error_response)).into_response();
+        if let Error::Auth(AuthError::MembershipLookup(MembershipError::BlockNotKnown { .. })) =
+            &self
+        {
+            response.headers_mut().insert(
+                axum::http::header::RETRY_AFTER,
+                axum::http::HeaderValue::from_static(RETRY_AFTER_BLOCK_SECS),
+            );
+        }
+        response
     }
 }
 
@@ -482,6 +503,22 @@ mod tests {
 
     fn status_of(err: Error) -> StatusCode {
         err.into_response().status()
+    }
+
+    #[test]
+    fn block_not_known_is_retryable() {
+        let response = Error::from(AuthError::MembershipLookup(
+            MembershipError::BlockNotKnown { bucket_id: 7 },
+        ))
+        .into_response();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(
+            response
+                .headers()
+                .get(axum::http::header::RETRY_AFTER)
+                .and_then(|value| value.to_str().ok()),
+            Some("2")
+        );
     }
 
     #[test]

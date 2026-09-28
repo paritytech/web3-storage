@@ -21,6 +21,7 @@ tokio = { workspace = true }
 tracing = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
+provider-chain = { workspace = true, features = ["test-helpers"] }
 codec = { workspace = true, features = ["std"] }
 hex = { workspace = true, features = ["std"] }
 provider-storage = { workspace = true, features = ["test-helpers"] }
