@@ -3,8 +3,7 @@
 //! Integration tests for the challenge responder.
 
 use super::{
-    alice_account, proof_source, test_deps, test_state, test_state_with_data, wait_for,
-    ALICE_SS58,
+    alice_account, proof_source, test_deps, test_state, test_state_with_data, wait_for, ALICE_SS58,
 };
 use provider_http::ProviderState;
 use provider_storage::{build_padded_merkle_tree, temp_rocksdb, StorageBackend};
@@ -219,8 +218,7 @@ async fn test_stop_command() {
 #[tokio::test(start_paused = true)]
 async fn test_successful_challenge_response() {
     let (state, challenge, _dir) = test_state_with_data();
-    let mock =
-        Arc::new(MockChallengeChainClient::new().with_challenges(vec![challenge.clone()]));
+    let mock = Arc::new(MockChallengeChainClient::new().with_challenges(vec![challenge.clone()]));
 
     let config = ChallengeResponderConfig {
         poll_interval: Duration::from_millis(50),

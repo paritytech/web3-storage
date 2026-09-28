@@ -201,6 +201,13 @@ impl IntoResponse for Error {
                         details: Some(serde_json::json!({ "message": msg })),
                     },
                 ),
+                StorageError::CommitmentMismatch => (
+                    StatusCode::BAD_REQUEST,
+                    ErrorResponse {
+                        error: "commitment_mismatch".to_string(),
+                        details: None,
+                    },
+                ),
             },
             Error::InvalidHash { expected, actual } => (
                 StatusCode::BAD_REQUEST,
