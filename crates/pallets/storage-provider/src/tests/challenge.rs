@@ -1542,6 +1542,189 @@ mod challenge_tests {
         });
     }
 
+    /// A proof that genuinely verifies under the challenged root — but for a
+    /// leaf other than the one challenged — must not defend the challenge.
+    /// Without a position check, both leaf 0's and leaf 1's proofs hash up to
+    /// the same peak, so a provider holding only leaf 0 could otherwise
+    /// "defend" a challenge against leaf 1.
+    #[test]
+    fn respond_with_proof_for_a_different_leaf_slashes_immediately() {
+        new_test_ext().execute_with(|| {
+            System::set_block_number(1);
+
+            let leaf0 = MmrLeaf {
+                data_root: blake2_256(b"chunk-0"),
+                data_size: 7,
+                total_size: 7,
+            };
+            let leaf1 = MmrLeaf {
+                data_root: blake2_256(b"chunk-1"),
+                data_size: 7,
+                total_size: 14,
+            };
+            let hash0 = blake2_256(&leaf0.encode());
+            let hash1 = blake2_256(&leaf1.encode());
+            // 3-leaf MMR: peaks are [height-1 subtree over leaves 0-1, leaf 2].
+            let peak01 = storage_primitives::hash_children(hash0, hash1);
+            let leaf2 = MmrLeaf {
+                data_root: blake2_256(b"chunk-2"),
+                data_size: 7,
+                total_size: 21,
+            };
+            let hash2 = blake2_256(&leaf2.encode());
+            let mmr_root = storage_primitives::hash_children(peak01, hash2);
+
+            setup_primary_with_snapshot(mmr_root, 0, 3);
+
+            // Two challenges against leaf 1, so each response can be tried once.
+            assert_ok!(StorageProvider::challenge_checkpoint(
+                RuntimeOrigin::signed(3),
+                0,
+                2,
+                ChunkLocation {
+                    leaf_index: 1,
+                    chunk_index: 0,
+                },
+            ));
+            assert_ok!(StorageProvider::challenge_checkpoint(
+                RuntimeOrigin::signed(3),
+                0,
+                2,
+                ChunkLocation {
+                    leaf_index: 1,
+                    chunk_index: 0,
+                },
+            ));
+
+            // A real, valid proof — but for leaf 0, not the challenged leaf 1.
+            let proof_for_leaf0 = MmrProof {
+                peaks: vec![peak01, hash2],
+                leaf: leaf0.clone(),
+                leaf_proof: MerkleProof {
+                    siblings: vec![hash1],
+                    path: vec![false],
+                },
+            };
+            assert_ok!(StorageProvider::respond_to_challenge(
+                RuntimeOrigin::signed(2),
+                ChallengeId {
+                    deadline: 101u64,
+                    index: 0u16,
+                },
+                ChallengeResponse::Proof {
+                    chunk_data: make_chunk_bv(b"chunk-0"),
+                    mmr_proof: proof_for_leaf0,
+                    chunk_proof: MerkleProof {
+                        siblings: vec![],
+                        path: vec![],
+                    },
+                },
+            ));
+            assert_eq!(Providers::<Test>::get(2).unwrap().stake, 0);
+
+            // The real proof for the challenged leaf (leaf 1) defends it.
+            let proof_for_leaf1 = MmrProof {
+                peaks: vec![peak01, hash2],
+                leaf: leaf1,
+                leaf_proof: MerkleProof {
+                    siblings: vec![hash0],
+                    path: vec![true],
+                },
+            };
+            assert_ok!(StorageProvider::respond_to_challenge(
+                RuntimeOrigin::signed(2),
+                ChallengeId {
+                    deadline: 101u64,
+                    index: 1u16,
+                },
+                ChallengeResponse::Proof {
+                    chunk_data: make_chunk_bv(b"chunk-1"),
+                    mmr_proof: proof_for_leaf1,
+                    chunk_proof: MerkleProof {
+                        siblings: vec![],
+                        path: vec![],
+                    },
+                },
+            ));
+            // Already slashed to 0 above; a defended response leaves it there
+            // (defense never restores stake) but must not slash again or error.
+            assert_eq!(Providers::<Test>::get(2).unwrap().stake, 0);
+            assert_eq!(
+                Providers::<Test>::get(2).unwrap().stats.challenges_failed,
+                1
+            );
+        });
+    }
+
+    /// A challenge naming an older, smaller commitment is still defended by a
+    /// proof scoped to that commitment's leaf range — a later, larger root
+    /// (not modeled here) never invalidates a still-signed earlier one.
+    #[test]
+    fn respond_with_proof_scoped_to_an_older_smaller_commitment_defends() {
+        new_test_ext().execute_with(|| {
+            System::set_block_number(1);
+
+            let leaf0 = MmrLeaf {
+                data_root: blake2_256(b"chunk-0"),
+                data_size: 7,
+                total_size: 7,
+            };
+            let leaf1 = MmrLeaf {
+                data_root: blake2_256(b"chunk-1"),
+                data_size: 7,
+                total_size: 14,
+            };
+            let hash0 = blake2_256(&leaf0.encode());
+            let hash1 = blake2_256(&leaf1.encode());
+            // Root of the 2-leaf commitment as it stood before any further
+            // chunk was committed.
+            let mmr_root = storage_primitives::hash_children(hash0, hash1);
+
+            setup_primary_with_snapshot(mmr_root, 0, 2);
+
+            assert_ok!(StorageProvider::challenge_checkpoint(
+                RuntimeOrigin::signed(3),
+                0,
+                2,
+                ChunkLocation {
+                    leaf_index: 1,
+                    chunk_index: 0,
+                },
+            ));
+
+            let mmr_proof = MmrProof {
+                peaks: vec![mmr_root],
+                leaf: leaf1,
+                leaf_proof: MerkleProof {
+                    siblings: vec![hash0],
+                    path: vec![true],
+                },
+            };
+            assert_ok!(StorageProvider::respond_to_challenge(
+                RuntimeOrigin::signed(2),
+                ChallengeId {
+                    deadline: 101u64,
+                    index: 0u16,
+                },
+                ChallengeResponse::Proof {
+                    chunk_data: make_chunk_bv(b"chunk-1"),
+                    mmr_proof,
+                    chunk_proof: MerkleProof {
+                        siblings: vec![],
+                        path: vec![],
+                    },
+                },
+            ));
+
+            let provider = Providers::<Test>::get(2).unwrap();
+            assert_eq!(
+                provider.stake, 200,
+                "a defended challenge must not touch the stake"
+            );
+            assert_eq!(provider.stats.challenges_failed, 0);
+        });
+    }
+
     /// `ChallengeResponse::Superseded` claimed against a leaf the CURRENT
     /// snapshot doesn't actually cover is a lie — slash.
     #[test]

@@ -2757,8 +2757,15 @@ pub mod pallet {
                         chunk_proof,
                         &mmr_proof.leaf.data_root,
                     );
-                    let mmr_ok =
-                        storage_primitives::verify_mmr_proof(mmr_proof, &challenge.mmr_root);
+                    // Must prove the CHALLENGED leaf, not merely some leaf
+                    // under the root — otherwise a provider holding only one
+                    // leaf could defend any challenge against that root.
+                    let mmr_ok = storage_primitives::verify_mmr_proof_at(
+                        mmr_proof,
+                        &challenge.mmr_root,
+                        challenge.target.leaf_index,
+                        challenge.leaf_count,
+                    );
                     if chunk_ok && mmr_ok {
                         Ok(())
                     } else {
