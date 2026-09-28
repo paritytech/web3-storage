@@ -9,7 +9,7 @@ pub mod rocksdb;
 pub mod types;
 
 pub use rocksdb::{DiskNonceStore, DiskStorage};
-pub use types::{BucketState, StoredNode};
+pub use types::{BucketState, DeletionReceipt, PrunedRange, StoredNode};
 
 use crate::error::Error;
 use crate::merkle::build_merkle_proof;
@@ -100,6 +100,29 @@ pub struct BucketStats {
     pub leaf_count: u64,
     pub node_count: u64,
     pub bytes_stored: u64,
+}
+
+/// View of one pruned-but-not-yet-erased leaf range (the GC work queue).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PrunedRangeInfo {
+    /// Global sequence number of the first stashed leaf.
+    pub first_seq: u64,
+    /// One past the last stashed leaf (`first_seq + len`).
+    pub end_seq: u64,
+    /// The start_seq the prune advanced the bucket to.
+    pub new_start_seq: u64,
+    /// Whether an admin-signed deletion receipt covering this range is held
+    /// (required before the range may be physically erased).
+    pub has_receipt: bool,
+}
+
+/// Result of physically erasing one pruned range.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct EraseOutcome {
+    /// Nodes whose refcount reached zero and were deleted.
+    pub nodes_deleted: u64,
+    /// Bytes credited back to bucket quotas (sum over charged buckets).
+    pub bytes_freed: u64,
 }
 
 /// Storage engine interface. Callers hold an `Arc<dyn StorageBackend>` rather
@@ -231,9 +254,59 @@ pub trait StorageBackend: Send + Sync {
             .ok_or_else(|| Error::NodeNotFound(format!("chunk_{chunk_index}")))
     }
 
-    /// Delete data before a sequence number. Returns the commitment after
-    /// the prune.
+    /// Delete data before a sequence number.
+    ///
+    /// The pruned leaves are moved into a retention stash, not erased: the
+    /// provider stays able to prove challenges against commitments covering
+    /// them until an admin-signed deletion receipt is held and the canonical
+    /// checkpoint has passed the range.
     fn delete_before(&self, bucket_id: BucketId, new_start_seq: u64) -> Result<Commitment, Error>;
+
+    /// Store an admin-signed deletion receipt for a stashed range (matched
+    /// by `new_start_seq`). Replaces a previous receipt for the same range.
+    fn attach_deletion_receipt(
+        &self,
+        bucket_id: BucketId,
+        receipt: DeletionReceipt,
+    ) -> Result<(), Error>;
+
+    /// The stored receipt with the smallest `new_start_seq` strictly greater
+    /// than `seq` — the evidence defending a challenge on leaf `seq` after
+    /// its bytes were erased.
+    fn deletion_receipt_covering(&self, bucket_id: BucketId, seq: u64) -> Option<DeletionReceipt>;
+
+    /// Set/refresh the bucket quota learned from the chain agreement.
+    /// Never creates a bucket; errors if it does not exist.
+    fn set_bucket_quota(&self, bucket_id: BucketId, max_bytes: u64) -> Result<(), Error>;
+
+    /// Pruned ranges awaiting physical erasure, oldest first.
+    fn pruned_ranges(&self, bucket_id: BucketId) -> Vec<PrunedRangeInfo>;
+
+    /// Whether the bucket was condemned (deleted on-chain / agreement gone).
+    fn is_condemned(&self, bucket_id: BucketId) -> bool;
+
+    /// Physically erase one stashed range: decrement refcounts along each
+    /// leaf's tree, delete zero-ref nodes, credit `used_bytes` back to each
+    /// node's charged bucket, and drop the range — one atomic write.
+    /// Idempotent: an unknown `first_seq` is a no-op `Ok`. On a condemned
+    /// bucket, removes the bucket row once nothing stashed or live remains.
+    ///
+    /// Callers are responsible for checking that liability has passed
+    /// (canonical checkpoint past the range, the admin's deletion receipt
+    /// held, no pending challenges).
+    fn erase_pruned_range(
+        &self,
+        bucket_id: BucketId,
+        first_seq: u64,
+    ) -> Result<EraseOutcome, Error>;
+
+    /// Bucket teardown, first half: stash all remaining leaves as one pruned
+    /// range and mark the bucket condemned. The second half is the caller
+    /// (the GC) invoking [`erase_pruned_range`](Self::erase_pruned_range)
+    /// once liability has passed — on a condemned bucket that also removes
+    /// the bucket row itself. Idempotent; `Ok` if the bucket is already
+    /// condemned or already gone.
+    fn condemn_bucket(&self, bucket_id: BucketId) -> Result<(), Error>;
 
     /// Get MMR proof for a leaf.
     fn get_mmr_proof(
