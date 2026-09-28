@@ -149,6 +149,42 @@ impl IntoResponse for Error {
                         details: Some(serde_json::json!({ "hash": hash })),
                     },
                 ),
+                StorageError::ChunkNotFound {
+                    data_root,
+                    chunk_index,
+                } => (
+                    StatusCode::NOT_FOUND,
+                    ErrorResponse {
+                        error: "not_found".to_string(),
+                        details: Some(
+                            serde_json::json!({ "data_root": data_root, "chunk_index": chunk_index }),
+                        ),
+                    },
+                ),
+                StorageError::LeafNotFound {
+                    bucket_id,
+                    leaf_index,
+                } => (
+                    StatusCode::NOT_FOUND,
+                    ErrorResponse {
+                        error: "not_found".to_string(),
+                        details: Some(
+                            serde_json::json!({ "bucket_id": bucket_id, "leaf_index": leaf_index }),
+                        ),
+                    },
+                ),
+                StorageError::MmrProofNotFound {
+                    bucket_id,
+                    leaf_index,
+                } => (
+                    StatusCode::NOT_FOUND,
+                    ErrorResponse {
+                        error: "not_found".to_string(),
+                        details: Some(
+                            serde_json::json!({ "bucket_id": bucket_id, "leaf_index": leaf_index }),
+                        ),
+                    },
+                ),
                 StorageError::ChildrenMissing(children) => (
                     StatusCode::BAD_REQUEST,
                     ErrorResponse {
@@ -479,6 +515,7 @@ mod tests {
     use super::*;
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
+    use sp_core::H256;
 
     fn status_of(err: Error) -> StatusCode {
         err.into_response().status()
@@ -488,7 +525,7 @@ mod tests {
     fn test_all_error_variants_status_codes() {
         assert_eq!(
             status_of(Error::from(provider_storage::Error::NodeNotFound(
-                "x".into()
+                H256::zero()
             ))),
             StatusCode::NOT_FOUND
         );
@@ -512,7 +549,7 @@ mod tests {
         );
         assert_eq!(
             status_of(Error::from(provider_storage::Error::RootNotFound(
-                "x".into()
+                H256::zero()
             ))),
             StatusCode::NOT_FOUND
         );
@@ -641,8 +678,8 @@ mod tests {
 
     #[test]
     fn test_error_response_json_structure() {
-        let resp =
-            Error::from(provider_storage::Error::NodeNotFound("0xabc".into())).into_response();
+        let hash = H256::repeat_byte(0xab);
+        let resp = Error::from(provider_storage::Error::NodeNotFound(hash)).into_response();
         let (parts, body) = resp.into_parts();
         assert_eq!(parts.status, StatusCode::NOT_FOUND);
 
@@ -652,7 +689,11 @@ mod tests {
         let json: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
         assert_eq!(json["error"], "not_found");
         assert!(json.get("details").is_some());
-        assert_eq!(json["details"]["hash"], "0xabc");
+        // The storage engine holds an H256; the response renders it as hex.
+        assert_eq!(
+            json["details"]["hash"],
+            "0xabababababababababababababababababababababababababababababababab"
+        );
     }
 
     #[test]

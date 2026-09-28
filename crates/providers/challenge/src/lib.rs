@@ -19,18 +19,86 @@ use std::time::Duration;
 use storage_primitives::{BucketId, MerkleProof, MmrProof};
 use tokio::sync::{broadcast, mpsc};
 
+/// What proof data a failure was about.
+///
+/// `get_mmr_proof` and `get_chunk_at_index` identify what they're looking
+/// for differently (a bucket and leaf index vs. a data root and chunk
+/// index), so a single error payload can't share fields across both without
+/// fields that don't apply to one side or the other.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ProofTarget {
+    /// A leaf of a bucket's MMR commitment.
+    MmrLeaf {
+        bucket_id: BucketId,
+        leaf_index: u64,
+    },
+    /// A chunk under a data root.
+    Chunk { data_root: H256, chunk_index: u64 },
+}
+
 /// Errors surfaced by the challenge responder.
+///
+/// Each variant names one condition and implies one response to it, rather
+/// than only naming which layer the failure came from.
+/// [`ChallengeError::is_retryable`] and [`ChallengeError::risks_slashing`]
+/// let a caller act on that meaning without matching every variant.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum ChallengeError {
-    /// Chain interaction failed (polling or submitting).
-    #[error("chain error: {0}")]
-    Chain(String),
-    /// Local storage could not produce the requested proof data.
-    #[error("storage error: {0}")]
-    Storage(String),
-    /// Internal service error (e.g. control channel closed).
-    #[error("internal error: {0}")]
-    Internal(String),
+    /// The requested proof data is provably absent from local storage. The
+    /// challenge cannot be answered; unless the data is restored before the
+    /// deadline, the provider's entire stake is slashed. Retrying will not
+    /// help.
+    #[error("proof data is provably missing: {target:?}")]
+    ProofDataMissing {
+        /// What could not be found.
+        target: ProofTarget,
+    },
+    /// The storage backend itself failed - a database read errored, or a
+    /// stored record could not be decoded. The proof data may still be
+    /// present. Operator action: inspect, restart, or restore the backend,
+    /// then retry.
+    #[error("storage backend unavailable for {target:?}: {detail}")]
+    StorageUnavailable {
+        /// What was being looked up when the backend failed.
+        target: ProofTarget,
+        /// The backend's own error, as text.
+        detail: String,
+    },
+    /// The chain could not be reached, or the connection dropped mid-call.
+    /// Nothing is known about whether the call took effect. Retryable.
+    #[error("chain unreachable: {detail}")]
+    ChainUnavailable {
+        /// The transport failure, as text.
+        detail: String,
+    },
+    /// The chain was reached and rejected the call. Resubmitting the same
+    /// call will fail identically.
+    #[error("chain rejected the call: {detail}")]
+    ChainRejected {
+        /// The chain's rejection, as text.
+        detail: String,
+    },
+    /// The responder is shutting down; its control channel is closed.
+    #[error("challenge responder is shutting down")]
+    Shutdown,
+}
+
+impl ChallengeError {
+    /// Whether repeating the operation could plausibly succeed.
+    pub fn is_retryable(&self) -> bool {
+        matches!(
+            self,
+            Self::StorageUnavailable { .. } | Self::ChainUnavailable { .. }
+        )
+    }
+
+    /// Whether this failure, left unresolved, leads to the provider's stake
+    /// being slashed at the challenge deadline.
+    pub fn risks_slashing(&self) -> bool {
+        matches!(self, Self::ProofDataMissing { .. })
+    }
 }
 
 /// Local proof data the responder needs to answer a challenge.
@@ -111,7 +179,9 @@ pub enum ChallengeResponseResult {
         challenge_id: (u32, u16),
         block_hash: H256,
     },
-    /// Failed to gather proof data.
+    /// Gathering proof data failed for a reason other than the data being
+    /// provably absent (e.g. the storage backend itself errored). Retryable -
+    /// the next safety-net scan will try again.
     ProofGenerationFailed {
         challenge_id: (u32, u16),
         error: String,
@@ -121,7 +191,8 @@ pub enum ChallengeResponseResult {
         challenge_id: (u32, u16),
         error: String,
     },
-    /// Challenge data not found locally.
+    /// The proof data is provably absent from local storage. Unless it is
+    /// restored before the deadline, the provider's stake is slashed.
     DataNotFound {
         challenge_id: (u32, u16),
         bucket_id: BucketId,
@@ -212,7 +283,7 @@ impl ChallengeResponderHandle {
         self.command_tx
             .send(ResponderCommand::Stop)
             .await
-            .map_err(|_| ChallengeError::Internal("Responder channel closed".to_string()))
+            .map_err(|_| ChallengeError::Shutdown)
     }
 
     /// Pause automatic responses.
@@ -220,7 +291,7 @@ impl ChallengeResponderHandle {
         self.command_tx
             .send(ResponderCommand::Pause)
             .await
-            .map_err(|_| ChallengeError::Internal("Responder channel closed".to_string()))
+            .map_err(|_| ChallengeError::Shutdown)
     }
 
     /// Resume automatic responses.
@@ -228,7 +299,7 @@ impl ChallengeResponderHandle {
         self.command_tx
             .send(ResponderCommand::Resume)
             .await
-            .map_err(|_| ChallengeError::Internal("Responder channel closed".to_string()))
+            .map_err(|_| ChallengeError::Shutdown)
     }
 }
 
@@ -437,7 +508,14 @@ impl ChallengeResponder {
         {
             Ok(proof) => proof,
             Err(e) => {
-                tracing::error!("Failed to generate MMR proof: {}", e);
+                log_proof_failure(challenge, "Failed to generate MMR proof", &e);
+                if e.risks_slashing() {
+                    return ChallengeResponseResult::DataNotFound {
+                        challenge_id,
+                        bucket_id: challenge.bucket_id,
+                        leaf_index: challenge.leaf_index,
+                    };
+                }
                 return ChallengeResponseResult::ProofGenerationFailed {
                     challenge_id,
                     error: e.to_string(),
@@ -453,11 +531,17 @@ impl ChallengeResponder {
         {
             Ok(data) => data,
             Err(e) => {
-                tracing::error!("Failed to get chunk data: {}", e);
-                return ChallengeResponseResult::DataNotFound {
+                log_proof_failure(challenge, "Failed to get chunk data", &e);
+                if e.risks_slashing() {
+                    return ChallengeResponseResult::DataNotFound {
+                        challenge_id,
+                        bucket_id: challenge.bucket_id,
+                        leaf_index: challenge.leaf_index,
+                    };
+                }
+                return ChallengeResponseResult::ProofGenerationFailed {
                     challenge_id,
-                    bucket_id: challenge.bucket_id,
-                    leaf_index: challenge.leaf_index,
+                    error: e.to_string(),
                 };
             }
         };
@@ -487,5 +571,735 @@ impl ChallengeResponder {
                 }
             }
         }
+    }
+}
+
+/// Log a proof-gathering failure with the fields an operator needs to act on
+/// it, at a level that matches what the failure means: [`ChallengeError::risks_slashing`]
+/// failures are an emergency (the stake is on the line at `deadline`
+/// regardless of which step failed), everything else is a routine failure
+/// the safety-net scan will retry.
+fn log_proof_failure(challenge: &DetectedChallenge, what: &str, e: &ChallengeError) {
+    if e.risks_slashing() {
+        tracing::error!(
+            bucket_id = challenge.bucket_id,
+            leaf_index = challenge.leaf_index,
+            chunk_index = challenge.chunk_index,
+            deadline = challenge.deadline,
+            "{what}: {e}"
+        );
+    } else {
+        tracing::warn!(
+            bucket_id = challenge.bucket_id,
+            leaf_index = challenge.leaf_index,
+            chunk_index = challenge.chunk_index,
+            deadline = challenge.deadline,
+            "{what}: {e}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::Mutex;
+    use storage_primitives::MmrLeaf;
+
+    const CHUNK: &[u8] = b"chunk bytes";
+
+    fn me() -> AccountId32 {
+        AccountId32::new([1u8; 32])
+    }
+
+    fn someone_else() -> AccountId32 {
+        AccountId32::new([2u8; 32])
+    }
+
+    fn data_root() -> H256 {
+        H256::repeat_byte(0xda)
+    }
+
+    fn response_block() -> H256 {
+        H256::repeat_byte(0xbb)
+    }
+
+    fn challenge(deadline: u32, index: u16, bucket_id: BucketId) -> DetectedChallenge {
+        DetectedChallenge {
+            bucket_id,
+            deadline,
+            index,
+            mmr_root: H256::repeat_byte(0x11),
+            start_seq: 0,
+            leaf_index: 7,
+            chunk_index: 3,
+            challenger: "challenger".to_string(),
+        }
+    }
+
+    /// What a proof lookup does when the responder asks for it.
+    #[derive(Clone, Copy)]
+    enum Lookup {
+        /// The data is there.
+        Found,
+        /// The data is provably absent - the slashing case.
+        Missing,
+        /// The backend itself failed; the data may well still be there.
+        BackendFailed,
+    }
+
+    struct MockProofSource {
+        mmr: Lookup,
+        chunk: Lookup,
+        mmr_calls: Mutex<Vec<(BucketId, u64)>>,
+        chunk_calls: Mutex<Vec<(H256, u64)>>,
+    }
+
+    impl MockProofSource {
+        fn new(mmr: Lookup, chunk: Lookup) -> Arc<Self> {
+            Arc::new(Self {
+                mmr,
+                chunk,
+                mmr_calls: Mutex::new(Vec::new()),
+                chunk_calls: Mutex::new(Vec::new()),
+            })
+        }
+
+        fn serving_everything() -> Arc<Self> {
+            Self::new(Lookup::Found, Lookup::Found)
+        }
+
+        fn chunk_calls(&self) -> Vec<(H256, u64)> {
+            self.chunk_calls.lock().expect("lock").clone()
+        }
+    }
+
+    impl ChallengeProofSource for MockProofSource {
+        fn get_mmr_proof(
+            &self,
+            bucket_id: BucketId,
+            leaf_index: u64,
+        ) -> Result<MmrProof, ChallengeError> {
+            self.mmr_calls
+                .lock()
+                .expect("lock")
+                .push((bucket_id, leaf_index));
+            let target = ProofTarget::MmrLeaf {
+                bucket_id,
+                leaf_index,
+            };
+            match self.mmr {
+                Lookup::Found => Ok(MmrProof {
+                    peaks: vec![H256::repeat_byte(0x22)],
+                    leaf: MmrLeaf {
+                        data_root: data_root(),
+                        data_size: 1024,
+                        total_size: 1024,
+                    },
+                    leaf_proof: MerkleProof {
+                        siblings: vec![],
+                        path: vec![],
+                    },
+                }),
+                Lookup::Missing => Err(ChallengeError::ProofDataMissing { target }),
+                Lookup::BackendFailed => Err(ChallengeError::StorageUnavailable {
+                    target,
+                    detail: "rocksdb read failed".to_string(),
+                }),
+            }
+        }
+
+        fn get_chunk_at_index(
+            &self,
+            data_root: H256,
+            chunk_index: u64,
+        ) -> Result<(Vec<u8>, MerkleProof), ChallengeError> {
+            self.chunk_calls
+                .lock()
+                .expect("lock")
+                .push((data_root, chunk_index));
+            let target = ProofTarget::Chunk {
+                data_root,
+                chunk_index,
+            };
+            match self.chunk {
+                Lookup::Found => Ok((
+                    CHUNK.to_vec(),
+                    MerkleProof {
+                        siblings: vec![H256::repeat_byte(0x33)],
+                        path: vec![true],
+                    },
+                )),
+                Lookup::Missing => Err(ChallengeError::ProofDataMissing { target }),
+                Lookup::BackendFailed => Err(ChallengeError::StorageUnavailable {
+                    target,
+                    detail: "chunk file unreadable".to_string(),
+                }),
+            }
+        }
+    }
+
+    /// What one `submit_response` call carried, as the chain saw it.
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    struct Submission {
+        challenge_id: (u32, u16),
+        chunk_data: Vec<u8>,
+        /// The root the submitted MMR leaf commits to.
+        data_root: H256,
+    }
+
+    struct MockChainClient {
+        /// Returned by every full scan.
+        scan: Vec<DetectedChallenge>,
+        /// Point-reads that resolve; anything else reads as gone.
+        fetchable: HashMap<(u32, u16), DetectedChallenge>,
+        accepts_response: bool,
+        poll_calls: AtomicUsize,
+        fetch_calls: Mutex<Vec<(u32, u16)>>,
+        submissions: Mutex<Vec<Submission>>,
+    }
+
+    impl MockChainClient {
+        fn new() -> Self {
+            Self {
+                scan: Vec::new(),
+                fetchable: HashMap::new(),
+                accepts_response: true,
+                poll_calls: AtomicUsize::new(0),
+                fetch_calls: Mutex::new(Vec::new()),
+                submissions: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn scanning(mut self, challenges: Vec<DetectedChallenge>) -> Self {
+            self.scan = challenges;
+            self
+        }
+
+        fn serving(mut self, challenges: Vec<DetectedChallenge>) -> Self {
+            self.fetchable = challenges
+                .into_iter()
+                .map(|c| ((c.deadline, c.index), c))
+                .collect();
+            self
+        }
+
+        fn rejecting_responses(mut self) -> Self {
+            self.accepts_response = false;
+            self
+        }
+
+        fn poll_calls(&self) -> usize {
+            self.poll_calls.load(Ordering::SeqCst)
+        }
+
+        fn fetch_calls(&self) -> Vec<(u32, u16)> {
+            self.fetch_calls.lock().expect("lock").clone()
+        }
+
+        fn submissions(&self) -> Vec<Submission> {
+            self.submissions.lock().expect("lock").clone()
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl ChallengeChainClient for MockChainClient {
+        async fn poll_challenges(&self) -> Result<Vec<DetectedChallenge>, ChallengeError> {
+            self.poll_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(self.scan.clone())
+        }
+
+        async fn fetch_challenge(
+            &self,
+            deadline: u32,
+            index: u16,
+        ) -> Result<Option<DetectedChallenge>, ChallengeError> {
+            self.fetch_calls
+                .lock()
+                .expect("lock")
+                .push((deadline, index));
+            Ok(self.fetchable.get(&(deadline, index)).cloned())
+        }
+
+        async fn submit_response(
+            &self,
+            challenge_id: (u32, u16),
+            chunk_data: Vec<u8>,
+            mmr_proof: MmrProof,
+            _chunk_proof: MerkleProof,
+        ) -> Result<H256, ChallengeError> {
+            self.submissions.lock().expect("lock").push(Submission {
+                challenge_id,
+                chunk_data,
+                data_root: mmr_proof.leaf.data_root,
+            });
+            if self.accepts_response {
+                Ok(response_block())
+            } else {
+                Err(ChallengeError::ChainRejected {
+                    detail: "proof did not verify".to_string(),
+                })
+            }
+        }
+    }
+
+    fn config() -> ChallengeResponderConfig {
+        ChallengeResponderConfig {
+            // Safety net off by default: tests that want scans either drive
+            // them through events or set an interval explicitly.
+            poll_interval: Duration::ZERO,
+            ..ChallengeResponderConfig::new(me())
+        }
+    }
+
+    fn responder(
+        config: ChallengeResponderConfig,
+        proofs: Arc<MockProofSource>,
+        chain: Arc<MockChainClient>,
+    ) -> ChallengeResponder {
+        ChallengeResponder::new(config, proofs, Box::new(chain))
+    }
+
+    /// A started responder plus the ends of every channel a test drives it
+    /// through.
+    struct Harness {
+        handle: ChallengeResponderHandle,
+        events_tx: broadcast::Sender<BlockEvent>,
+        results: mpsc::UnboundedReceiver<ChallengeResponseResult>,
+    }
+
+    impl Harness {
+        async fn start(
+            config: ChallengeResponderConfig,
+            proofs: Arc<MockProofSource>,
+            chain: Arc<MockChainClient>,
+            event_capacity: usize,
+        ) -> Self {
+            let (events_tx, events_rx) = broadcast::channel(event_capacity);
+            let (results_tx, results) = mpsc::unbounded_channel();
+            let handle = responder(config, proofs, chain)
+                .start(
+                    events_rx,
+                    Some(Arc::new(move |result| {
+                        let _ = results_tx.send(result);
+                    })),
+                )
+                .await
+                .expect("responder starts");
+            Self {
+                handle,
+                events_tx,
+                results,
+            }
+        }
+
+        fn challenge_created(&self, c: &DetectedChallenge, provider: AccountId32) {
+            self.events_tx
+                .send(BlockEvent::ChallengeCreated {
+                    deadline: c.deadline,
+                    index: c.index,
+                    bucket_id: c.bucket_id,
+                    provider,
+                })
+                .expect("responder is subscribed");
+        }
+
+        async fn next_result(&mut self) -> ChallengeResponseResult {
+            tokio::time::timeout(Duration::from_secs(1), self.results.recv())
+                .await
+                .expect("responder produced a result")
+                .expect("callback channel stays open")
+        }
+
+        /// Drop the responder's only event sender, closing its event channel.
+        fn close_event_channel(&mut self) {
+            self.events_tx = broadcast::channel(1).0;
+        }
+
+        /// Let the responder run itself out and assert it responded to
+        /// nothing. Time is paused in these tests, so it only advances once
+        /// every task is idle - an elapsed timeout therefore also proves the
+        /// loop parked rather than busy-spun.
+        async fn assert_idle_with_no_response(&mut self) {
+            let unexpected =
+                tokio::time::timeout(Duration::from_millis(50), self.results.recv()).await;
+            assert!(
+                unexpected.is_err(),
+                "expected no challenge response, got {:?}",
+                unexpected.ok()
+            );
+        }
+    }
+
+    // ── respond_to_challenge: what each failure means for the operator ──
+
+    #[tokio::test]
+    async fn response_proves_the_chunk_under_the_data_root_named_by_the_mmr_leaf() {
+        let c = challenge(100, 0, 5);
+        let proofs = MockProofSource::serving_everything();
+        let chain = Arc::new(MockChainClient::new());
+        let responder = responder(config(), proofs.clone(), chain.clone());
+
+        let result = responder.respond_to_challenge(&c).await;
+
+        assert!(
+            matches!(
+                result,
+                ChallengeResponseResult::Success { challenge_id, block_hash }
+                    if challenge_id == (100, 0) && block_hash == response_block()
+            ),
+            "unexpected result: {result:?}"
+        );
+        // The chunk lookup must use the data root the MMR leaf commits to -
+        // proving a chunk under any other root answers a different question
+        // than the one the chain asked.
+        assert_eq!(proofs.chunk_calls(), vec![(data_root(), c.chunk_index)]);
+        assert_eq!(
+            chain.submissions(),
+            vec![Submission {
+                challenge_id: (100, 0),
+                chunk_data: CHUNK.to_vec(),
+                data_root: data_root(),
+            }]
+        );
+    }
+
+    #[tokio::test]
+    async fn missing_mmr_leaf_reports_data_not_found_and_submits_nothing() {
+        let c = challenge(100, 1, 5);
+        let proofs = MockProofSource::new(Lookup::Missing, Lookup::Found);
+        let chain = Arc::new(MockChainClient::new());
+        let responder = responder(config(), proofs.clone(), chain.clone());
+
+        let result = responder.respond_to_challenge(&c).await;
+
+        assert!(
+            matches!(
+                result,
+                ChallengeResponseResult::DataNotFound { challenge_id, bucket_id, leaf_index }
+                    if challenge_id == (100, 1) && bucket_id == 5 && leaf_index == c.leaf_index
+            ),
+            "unexpected result: {result:?}"
+        );
+        assert!(proofs.chunk_calls().is_empty());
+        assert!(chain.submissions().is_empty());
+    }
+
+    #[tokio::test]
+    async fn missing_chunk_reports_data_not_found_rather_than_a_retryable_failure() {
+        // The MMR leaf is intact but the chunk under it is gone: still the
+        // slashing case, and reporting it as retryable would have the operator
+        // wait for a scan that can never succeed.
+        let c = challenge(100, 2, 5);
+        let proofs = MockProofSource::new(Lookup::Found, Lookup::Missing);
+        let chain = Arc::new(MockChainClient::new());
+        let responder = responder(config(), proofs, chain.clone());
+
+        let result = responder.respond_to_challenge(&c).await;
+
+        assert!(
+            matches!(
+                result,
+                ChallengeResponseResult::DataNotFound { challenge_id, bucket_id, leaf_index }
+                    if challenge_id == (100, 2) && bucket_id == 5 && leaf_index == c.leaf_index
+            ),
+            "unexpected result: {result:?}"
+        );
+        assert!(chain.submissions().is_empty());
+    }
+
+    #[tokio::test]
+    async fn storage_backend_failure_reports_proof_generation_failed_not_data_loss() {
+        let c = challenge(100, 3, 5);
+        let proofs = MockProofSource::new(Lookup::BackendFailed, Lookup::Found);
+        let chain = Arc::new(MockChainClient::new());
+        let responder = responder(config(), proofs, chain.clone());
+
+        let result = responder.respond_to_challenge(&c).await;
+
+        assert!(
+            matches!(
+                result,
+                ChallengeResponseResult::ProofGenerationFailed { challenge_id, ref error }
+                    if challenge_id == (100, 3) && error.contains("storage backend unavailable")
+            ),
+            "unexpected result: {result:?}"
+        );
+        assert!(chain.submissions().is_empty());
+    }
+
+    #[tokio::test]
+    async fn chain_rejection_reports_submission_failed() {
+        let c = challenge(100, 4, 5);
+        let chain = Arc::new(MockChainClient::new().rejecting_responses());
+        let responder = responder(
+            config(),
+            MockProofSource::serving_everything(),
+            chain.clone(),
+        );
+
+        let result = responder.respond_to_challenge(&c).await;
+
+        assert!(
+            matches!(
+                result,
+                ChallengeResponseResult::SubmissionFailed { challenge_id, ref error }
+                    if challenge_id == (100, 4) && error.contains("chain rejected")
+            ),
+            "unexpected result: {result:?}"
+        );
+    }
+
+    // ── run loop: which challenges reach respond_to_challenge, and when ──
+
+    #[tokio::test]
+    async fn challenge_event_for_another_provider_is_ignored() {
+        let theirs = challenge(200, 0, 5);
+        let ours = challenge(201, 0, 6);
+        let chain = Arc::new(MockChainClient::new().serving(vec![theirs.clone(), ours.clone()]));
+        let mut h = Harness::start(
+            config(),
+            MockProofSource::serving_everything(),
+            chain.clone(),
+            16,
+        )
+        .await;
+
+        h.challenge_created(&theirs, someone_else());
+        h.challenge_created(&ours, me());
+
+        // Events are handled in order, so the first response arriving for our
+        // own challenge means the other provider's was skipped, not merely slow.
+        let result = h.next_result().await;
+        assert!(
+            matches!(result, ChallengeResponseResult::Success { challenge_id, .. } if challenge_id == (201, 0)),
+            "unexpected result: {result:?}"
+        );
+        assert_eq!(chain.fetch_calls(), vec![(201, 0)]);
+    }
+
+    #[tokio::test]
+    async fn challenge_that_is_already_gone_produces_no_response() {
+        let gone = challenge(300, 0, 5);
+        let live = challenge(301, 0, 6);
+        // Only `live` is point-readable: `gone` was already answered or reaped.
+        let chain = Arc::new(MockChainClient::new().serving(vec![live.clone()]));
+        let mut h = Harness::start(
+            config(),
+            MockProofSource::serving_everything(),
+            chain.clone(),
+            16,
+        )
+        .await;
+
+        h.challenge_created(&gone, me());
+        h.challenge_created(&live, me());
+
+        let result = h.next_result().await;
+        assert!(
+            matches!(result, ChallengeResponseResult::Success { challenge_id, .. } if challenge_id == (301, 0)),
+            "unexpected result: {result:?}"
+        );
+        assert_eq!(chain.fetch_calls(), vec![(300, 0), (301, 0)]);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn auto_respond_disabled_drops_events_without_touching_the_chain() {
+        let ours = challenge(400, 0, 5);
+        let chain = Arc::new(MockChainClient::new().serving(vec![ours.clone()]));
+        let config = ChallengeResponderConfig {
+            auto_respond: false,
+            ..config()
+        };
+        let mut h = Harness::start(
+            config,
+            MockProofSource::serving_everything(),
+            chain.clone(),
+            16,
+        )
+        .await;
+
+        h.challenge_created(&ours, me());
+
+        h.assert_idle_with_no_response().await;
+        assert!(chain.fetch_calls().is_empty());
+    }
+
+    #[tokio::test]
+    async fn resubscribing_reconciles_with_a_full_scan() {
+        // A resubscription means events may have been missed while the
+        // follower was down, so every open challenge has to be re-derived
+        // from chain state rather than from the event stream.
+        let first = challenge(500, 0, 5);
+        let second = challenge(500, 1, 6);
+        let chain = Arc::new(MockChainClient::new().scanning(vec![first, second]));
+        let mut h = Harness::start(
+            config(),
+            MockProofSource::serving_everything(),
+            chain.clone(),
+            16,
+        )
+        .await;
+
+        h.events_tx
+            .send(BlockEvent::Resubscribed { at_block: 42 })
+            .expect("responder is subscribed");
+
+        for expected in [(500u32, 0u16), (500, 1)] {
+            let result = h.next_result().await;
+            assert!(
+                matches!(result, ChallengeResponseResult::Success { challenge_id, .. } if challenge_id == expected),
+                "unexpected result: {result:?}"
+            );
+        }
+        assert_eq!(chain.poll_calls(), 1);
+        assert!(chain.fetch_calls().is_empty());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn pausing_queues_events_and_resuming_answers_them() {
+        // Dropping events while paused would leave the provider silently
+        // liable for a challenge it never saw, so they must survive the pause.
+        let ours = challenge(600, 0, 5);
+        let chain = Arc::new(MockChainClient::new().serving(vec![ours.clone()]));
+        let mut h = Harness::start(
+            config(),
+            MockProofSource::serving_everything(),
+            chain.clone(),
+            16,
+        )
+        .await;
+
+        h.handle.pause().await.expect("pause is accepted");
+        h.assert_idle_with_no_response().await;
+
+        h.challenge_created(&ours, me());
+        h.assert_idle_with_no_response().await;
+        assert!(chain.fetch_calls().is_empty(), "event handled while paused");
+
+        h.handle.resume().await.expect("resume is accepted");
+
+        let result = h.next_result().await;
+        assert!(
+            matches!(result, ChallengeResponseResult::Success { challenge_id, .. } if challenge_id == (600, 0)),
+            "unexpected result: {result:?}"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn overflowing_the_event_channel_reconciles_with_a_full_scan() {
+        // Events lost to a lagging receiver are indistinguishable from events
+        // that never arrived, so the responder falls back to chain state.
+        let missed_one = challenge(700, 0, 5);
+        let missed_two = challenge(700, 1, 5);
+        let found_by_scan = challenge(700, 2, 5);
+        let chain = Arc::new(MockChainClient::new().scanning(vec![found_by_scan]));
+        let mut h = Harness::start(
+            config(),
+            MockProofSource::serving_everything(),
+            chain.clone(),
+            // One slot, so a second queued event evicts the first.
+            1,
+        )
+        .await;
+
+        h.handle.pause().await.expect("pause is accepted");
+        h.assert_idle_with_no_response().await;
+        h.challenge_created(&missed_one, me());
+        h.challenge_created(&missed_two, me());
+        h.handle.resume().await.expect("resume is accepted");
+
+        let result = h.next_result().await;
+        assert!(
+            matches!(result, ChallengeResponseResult::Success { challenge_id, .. } if challenge_id == (700, 2)),
+            "unexpected result: {result:?}"
+        );
+        assert_eq!(chain.poll_calls(), 1);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn safety_net_scans_at_startup_and_then_every_interval() {
+        // The startup scan is what catches challenges raised while the node
+        // was down; the interval is what catches a silently broken event path.
+        let interval = Duration::from_secs(300);
+        let chain = Arc::new(MockChainClient::new().scanning(vec![challenge(800, 0, 5)]));
+        let config = ChallengeResponderConfig {
+            poll_interval: interval,
+            ..config()
+        };
+        let mut h = Harness::start(
+            config,
+            MockProofSource::serving_everything(),
+            chain.clone(),
+            16,
+        )
+        .await;
+
+        h.next_result().await;
+        assert_eq!(chain.poll_calls(), 1, "no scan at startup");
+
+        tokio::time::sleep(interval + Duration::from_secs(1)).await;
+
+        h.next_result().await;
+        assert_eq!(chain.poll_calls(), 2, "no scan on the safety-net interval");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_zero_interval_disables_the_safety_net_scan() {
+        let chain = Arc::new(MockChainClient::new().scanning(vec![challenge(900, 0, 5)]));
+        let mut h = Harness::start(
+            config(),
+            MockProofSource::serving_everything(),
+            chain.clone(),
+            16,
+        )
+        .await;
+
+        tokio::time::sleep(Duration::from_secs(24 * 60 * 60)).await;
+
+        h.assert_idle_with_no_response().await;
+        assert_eq!(chain.poll_calls(), 0);
+    }
+
+    #[tokio::test]
+    async fn a_closed_event_channel_does_not_starve_the_safety_net_scan() {
+        // A closed broadcast channel reports `Closed` on every poll. If that
+        // arm stays armed it is always ready, and `biased` select then starves
+        // the safety-net scan while spinning at 100% CPU - i.e. the one
+        // remaining way to notice a challenge stops running. Real time here
+        // rather than paused time: under paused time a spinning loop never
+        // lets the clock advance, so the regression would hang the test
+        // instead of failing it.
+        let interval = Duration::from_millis(20);
+        let chain = Arc::new(MockChainClient::new().scanning(vec![challenge(1000, 0, 5)]));
+        let config = ChallengeResponderConfig {
+            poll_interval: interval,
+            ..config()
+        };
+        let mut h = Harness::start(
+            config,
+            MockProofSource::serving_everything(),
+            chain.clone(),
+            16,
+        )
+        .await;
+
+        h.next_result().await;
+        h.close_event_channel();
+
+        // Scans keep coming after the channel closed.
+        h.next_result().await;
+        h.next_result().await;
+
+        assert!(h.handle.is_running());
+        h.handle.stop().await.expect("stop is accepted");
+        for _ in 0..100 {
+            if !h.handle.is_running() {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        panic!("stop did not end the loop");
     }
 }
