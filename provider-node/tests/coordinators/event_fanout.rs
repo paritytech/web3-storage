@@ -70,6 +70,14 @@ impl ChallengeChainClient for MockChallengeClient {
         self.submitted.lock().unwrap().push(challenge_id);
         Ok(H256::zero())
     }
+
+    async fn submit_deleted_response(
+        &self,
+        _challenge_id: (u32, u16),
+        _receipt: &provider_challenge::DeletionReceipt,
+    ) -> Result<H256, provider_challenge::ChallengeError> {
+        unimplemented!("event_fanout tests never submit Deleted responses")
+    }
 }
 
 /// Config with the safety net disabled: only the event path may act.
