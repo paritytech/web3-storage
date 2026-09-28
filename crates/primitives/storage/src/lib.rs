@@ -576,6 +576,84 @@ pub fn verify_mmr_proof(proof: &MmrProof, root: &H256) -> bool {
     bagged_root == *root
 }
 
+/// Verify an MMR proof for a specific leaf position.
+///
+/// [`verify_mmr_proof`] accepts a proof for any leaf under `root`.
+/// This function also derives, from `leaf_count`, the peak and position of
+/// `leaf_index`, and checks the proof against that peak and position.
+pub fn verify_mmr_proof_at(
+    proof: &MmrProof,
+    root: &H256,
+    leaf_index: u64,
+    leaf_count: u64,
+) -> bool {
+    if leaf_index >= leaf_count {
+        return false;
+    }
+    if proof.peaks.len() as u64 != leaf_count.count_ones() as u64 {
+        return false;
+    }
+    if proof.leaf_proof.siblings.len() != proof.leaf_proof.path.len() {
+        return false;
+    }
+
+    let mut remaining = leaf_count;
+    let mut leaf_offset = 0u64;
+    let mut peak_position = 0usize;
+    let (peak_height, local_leaf_index) = loop {
+        let height = 63 - remaining.leading_zeros();
+        let subtree_leaves = 1u64 << height;
+        if leaf_index < leaf_offset + subtree_leaves {
+            break (height, leaf_index - leaf_offset);
+        }
+        leaf_offset += subtree_leaves;
+        remaining -= subtree_leaves;
+        peak_position += 1;
+    };
+
+    if proof.leaf_proof.siblings.len() as u32 != peak_height {
+        return false;
+    }
+
+    let leaf_hash = blake2_256(&proof.leaf.encode());
+    let mut current = leaf_hash;
+    for (level, (sibling, is_right)) in proof
+        .leaf_proof
+        .siblings
+        .iter()
+        .zip(proof.leaf_proof.path.iter())
+        .enumerate()
+    {
+        let expected_right = (local_leaf_index >> level) & 1 == 1;
+        if *is_right != expected_right {
+            return false;
+        }
+        current = if *is_right {
+            hash_children(*sibling, current)
+        } else {
+            hash_children(current, *sibling)
+        };
+    }
+
+    if current != proof.peaks[peak_position] {
+        return false;
+    }
+
+    let bagged_root = proof
+        .peaks
+        .iter()
+        .rev()
+        .fold(None, |acc: Option<H256>, &peak| {
+            Some(match acc {
+                None => peak,
+                Some(right) => hash_children(peak, right),
+            })
+        })
+        .unwrap_or(H256::zero());
+
+    bagged_root == *root
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

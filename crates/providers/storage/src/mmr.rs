@@ -376,4 +376,128 @@ mod tests {
             );
         }
     }
+
+    /// Build an MMR of `leaf_count` leaves and return it with the leaves and root.
+    fn build_mmr(leaf_count: u64) -> (Mmr, Vec<storage_primitives::MmrLeaf>, H256) {
+        use codec::Encode;
+
+        let mut mmr = Mmr::new();
+        let leaves: Vec<storage_primitives::MmrLeaf> = (0..leaf_count)
+            .map(|i| storage_primitives::MmrLeaf {
+                data_root: blake2_256(format!("root{leaf_count}-{i}").as_bytes()),
+                data_size: i + 1,
+                total_size: i + 1,
+            })
+            .collect();
+        for leaf in &leaves {
+            mmr.push(blake2_256(&leaf.encode()));
+        }
+        let root = mmr.root();
+        (mmr, leaves, root)
+    }
+
+    /// Build a `storage_primitives::MmrProof` for `leaf_index` of an MMR built by [`build_mmr`].
+    fn proof_for(
+        mmr: &Mmr,
+        leaves: &[storage_primitives::MmrLeaf],
+        leaf_index: u64,
+    ) -> storage_primitives::MmrProof {
+        let (siblings, path, peaks) = mmr.proof_with_path(leaf_index).expect("proof should exist");
+        storage_primitives::MmrProof {
+            peaks,
+            leaf: leaves[leaf_index as usize].clone(),
+            leaf_proof: storage_primitives::MerkleProof { siblings, path },
+        }
+    }
+
+    #[test]
+    fn test_verify_mmr_proof_at_every_leaf_every_count() {
+        for leaf_count in 1u64..=64 {
+            let (mmr, leaves, root) = build_mmr(leaf_count);
+
+            for leaf_index in 0..leaf_count {
+                let proof = proof_for(&mmr, &leaves, leaf_index);
+
+                assert!(
+                    storage_primitives::verify_mmr_proof_at(&proof, &root, leaf_index, leaf_count),
+                    "leaf {leaf_index} of {leaf_count} should verify at its own position"
+                );
+
+                for other_index in 0..leaf_count {
+                    if other_index == leaf_index {
+                        continue;
+                    }
+                    assert!(
+                        !storage_primitives::verify_mmr_proof_at(
+                            &proof, &root, other_index, leaf_count
+                        ),
+                        "proof for leaf {leaf_index} of {leaf_count} must not verify at leaf_index {other_index}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_verify_mmr_proof_at_rejects_leaf_index_out_of_range() {
+        let (mmr, leaves, root) = build_mmr(5);
+        let proof = proof_for(&mmr, &leaves, 2);
+
+        assert!(storage_primitives::verify_mmr_proof_at(&proof, &root, 2, 5));
+        assert!(!storage_primitives::verify_mmr_proof_at(
+            &proof, &root, 5, 5
+        ));
+        assert!(!storage_primitives::verify_mmr_proof_at(
+            &proof, &root, 999, 5
+        ));
+    }
+
+    #[test]
+    fn test_verify_mmr_proof_at_rejects_a_different_peak_layout() {
+        // 6 leaves = peaks [height 2 (leaves 0-3), height 1 (leaves 4-5)].
+        // Leaf 0 sits at height 2, position 0 in that layout.
+        let (mmr6, leaves6, root6) = build_mmr(6);
+        let proof = proof_for(&mmr6, &leaves6, 0);
+        assert!(storage_primitives::verify_mmr_proof_at(
+            &proof, &root6, 0, 6
+        ));
+
+        // 4 and 8 leaves both decompose into a single peak (count_ones == 1),
+        // which does not match this proof's 2 peaks.
+        assert!(!storage_primitives::verify_mmr_proof_at(
+            &proof, &root6, 0, 4
+        ));
+        assert!(!storage_primitives::verify_mmr_proof_at(
+            &proof, &root6, 0, 8
+        ));
+    }
+
+    #[test]
+    fn test_verify_mmr_proof_at_rejects_tampered_proof() {
+        let (mmr, leaves, root) = build_mmr(5);
+        let proof = proof_for(&mmr, &leaves, 2);
+        assert!(storage_primitives::verify_mmr_proof_at(&proof, &root, 2, 5));
+
+        let mut bad_peaks = proof.clone();
+        bad_peaks.peaks[0] = blake2_256(b"tampered-peak");
+        assert!(!storage_primitives::verify_mmr_proof_at(
+            &bad_peaks, &root, 2, 5
+        ));
+
+        let mut bad_sibling = proof.clone();
+        bad_sibling.leaf_proof.siblings[0] = blake2_256(b"tampered-sibling");
+        assert!(!storage_primitives::verify_mmr_proof_at(
+            &bad_sibling,
+            &root,
+            2,
+            5
+        ));
+
+        let mut bad_path = proof.clone();
+        let first = bad_path.leaf_proof.path[0];
+        bad_path.leaf_proof.path[0] = !first;
+        assert!(!storage_primitives::verify_mmr_proof_at(
+            &bad_path, &root, 2, 5
+        ));
+    }
 }
