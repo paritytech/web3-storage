@@ -2,10 +2,7 @@
 
 //! Integration tests for the challenge responder.
 
-use super::{
-    alice_account, proof_source, test_deps, test_state, test_state_with_data, wait_for, ALICE_SS58,
-};
-use provider_http::ProviderState;
+use super::{alice_account, test_deps, test_state, test_state_with_data, wait_for, ALICE_SS58};
 use provider_storage::{build_padded_merkle_tree, temp_rocksdb, StorageBackend};
 use sp_core::H256;
 use std::sync::{Arc, Mutex};
@@ -14,7 +11,7 @@ use storage_primitives::{blake2_256, BucketId, MerkleProof, MmrProof};
 use storage_provider_node::challenge_responder::ChallengeError;
 use storage_provider_node::{
     ChallengeChainClient, ChallengeResponder, ChallengeResponderConfig, ChallengeResponseResult,
-    DetectedChallenge,
+    DetectedChallenge, ProviderState,
 };
 use tempfile::TempDir;
 
@@ -27,8 +24,9 @@ struct RecordedResponse {
 
 /// Checks a recorded response the same way
 /// `StorageProvider::respond_to_challenge`'s `Proof` arm does: the chunk
-/// proves into the MMR leaf's `data_root`, and the MMR proof bags to the
-/// challenged root, not whatever root the provider holds now.
+/// proves into the MMR leaf's `data_root`, and the MMR proof proves the
+/// challenged leaf position in the challenged commitment, not merely some
+/// leaf under whatever root the provider holds now.
 fn response_matches_challenge(challenge: &DetectedChallenge, response: &RecordedResponse) -> bool {
     let chunk_hash = storage_primitives::blake2_256(&response.chunk_data);
     let chunk_ok = storage_primitives::verify_merkle_proof(
@@ -37,7 +35,12 @@ fn response_matches_challenge(challenge: &DetectedChallenge, response: &Recorded
         &response.chunk_proof,
         &response.mmr_proof.leaf.data_root,
     );
-    let mmr_ok = storage_primitives::verify_mmr_proof(&response.mmr_proof, &challenge.mmr_root);
+    let mmr_ok = storage_primitives::verify_mmr_proof_at(
+        &response.mmr_proof,
+        &challenge.mmr_root,
+        challenge.leaf_index,
+        challenge.leaf_count,
+    );
     chunk_ok && mmr_ok
 }
 
@@ -120,6 +123,7 @@ fn make_challenge(bucket_id: BucketId, deadline: u32, index: u16) -> DetectedCha
         index,
         mmr_root: H256::zero(),
         start_seq: 0,
+        leaf_count: 6,
         leaf_index: 5,
         chunk_index: 0,
         challenger: ALICE_SS58.to_string(),
@@ -271,6 +275,7 @@ async fn test_proof_generation_failed_no_bucket() {
         index: 0,
         mmr_root: H256::zero(),
         start_seq: 0,
+        leaf_count: 1,
         leaf_index: 0,
         chunk_index: 0,
         challenger: ALICE_SS58.to_string(),
@@ -563,6 +568,7 @@ fn two_commit_bucket() -> (
         index: 0,
         mmr_root: mmr_root_a,
         start_seq: start_seq_a,
+        leaf_count: 1,
         leaf_index: 0,
         chunk_index: 0,
         challenger: ALICE_SS58.to_string(),
@@ -573,6 +579,7 @@ fn two_commit_bucket() -> (
         index: 0,
         mmr_root: mmr_root_ab,
         start_seq: start_seq_ab,
+        leaf_count: 2,
         leaf_index: 1,
         chunk_index: 0,
         challenger: ALICE_SS58.to_string(),
@@ -605,8 +612,11 @@ async fn respond_once(
         auto_respond: true,
         ..ChallengeResponderConfig::new(alice_account())
     };
-    let responder =
-        ChallengeResponder::new(config, proof_source(state), Box::new(Arc::clone(mock)));
+    let responder = ChallengeResponder::new(
+        config,
+        state.challenge_proof_source(),
+        Box::new(Arc::clone(mock)),
+    );
     let handle = responder
         .start(tokio::sync::broadcast::channel(16).1, Some(callback))
         .await

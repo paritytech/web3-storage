@@ -16,7 +16,7 @@ use sp_runtime::AccountId32;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use storage_primitives::{BucketId, MerkleProof, MmrProof};
+use storage_primitives::{BucketId, Commitment, MerkleProof, MmrProof};
 use tokio::sync::{broadcast, mpsc};
 
 /// Errors surfaced by the challenge responder.
@@ -38,10 +38,12 @@ pub enum ChallengeError {
 /// Backed by the provider node's storage backend; kept narrow so this crate
 /// stays decoupled from the full storage engine.
 pub trait ChallengeProofSource: Send + Sync {
-    /// Generate an MMR proof for the given leaf of a bucket's commitment.
+    /// Generate an MMR proof for the given leaf of the given commitment - the
+    /// one the challenge names, not necessarily the bucket's current one.
     fn get_mmr_proof(
         &self,
         bucket_id: BucketId,
+        commitment: Commitment,
         leaf_index: u64,
     ) -> Result<MmrProof, ChallengeError>;
 
@@ -95,6 +97,8 @@ pub struct DetectedChallenge {
     pub mmr_root: H256,
     /// Start sequence of the commitment.
     pub start_seq: u64,
+    /// Leaf count of the commitment.
+    pub leaf_count: u64,
     /// Leaf index in the MMR to prove.
     pub leaf_index: u64,
     /// Chunk index within the leaf to prove.
@@ -430,11 +434,18 @@ impl ChallengeResponder {
             challenge.bucket_id
         );
 
-        // Step 1: Generate MMR proof (includes the leaf with data_root)
-        let mmr_proof = match self
-            .proof_source
-            .get_mmr_proof(challenge.bucket_id, challenge.leaf_index)
-        {
+        // Step 1: Generate MMR proof for the challenged commitment (includes
+        // the leaf with data_root)
+        let commitment = Commitment {
+            mmr_root: challenge.mmr_root,
+            start_seq: challenge.start_seq,
+            leaf_count: challenge.leaf_count,
+        };
+        let mmr_proof = match self.proof_source.get_mmr_proof(
+            challenge.bucket_id,
+            commitment,
+            challenge.leaf_index,
+        ) {
             Ok(proof) => proof,
             Err(e) => {
                 tracing::error!("Failed to generate MMR proof: {}", e);

@@ -93,6 +93,7 @@ pub fn test_state_with_data() -> (Arc<ProviderState>, DetectedChallenge, TempDir
         index: 0,
         mmr_root,
         start_seq,
+        leaf_count: 1,
         leaf_index: 0,
         chunk_index: 0,
         challenger: ALICE_SS58.to_string(),
