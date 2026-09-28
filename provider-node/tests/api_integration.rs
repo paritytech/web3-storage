@@ -1372,12 +1372,10 @@ common::backend_tests! {
             .send()
             .await
             .unwrap();
-        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 
-        // No chunks found for nonexistent root → empty chunks array
         let body: Value = resp.json().await.unwrap();
-        let chunks = body["chunks"].as_array().unwrap();
-        assert!(chunks.is_empty());
+        assert_eq!(body["error"], "not_found");
     }
 }
 
