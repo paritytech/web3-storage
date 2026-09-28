@@ -6,6 +6,7 @@
 
 mod challenge;
 mod event_fanout;
+mod gc;
 mod membership;
 
 use provider_auth::{Authenticator, StaticMembershipResolver};
