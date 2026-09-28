@@ -524,9 +524,35 @@ async fn get_mmr_proof(
     State(state): State<Arc<ProviderState>>,
     Query(query): Query<MmrProofQuery>,
 ) -> Result<Json<MmrProofResponse>, Error> {
-    let mmr_proof = state
-        .storage
-        .get_mmr_proof(query.bucket_id, query.leaf_index)?;
+    let mmr_proof = match (query.mmr_root, query.start_seq, query.leaf_count) {
+        (Some(mmr_root), Some(start_seq), Some(leaf_count)) => {
+            let root_bytes = hex::decode(mmr_root.strip_prefix("0x").unwrap_or(&mmr_root))
+                .map_err(|_| Error::InvalidHash {
+                    expected: mmr_root.clone(),
+                    actual: "invalid hex".to_string(),
+                })?;
+            // `H256::from_slice` panics on anything but exactly 32 bytes, and
+            // `mmr_root` is caller-supplied.
+            if root_bytes.len() != 32 {
+                return Err(Error::InvalidHash {
+                    expected: mmr_root.clone(),
+                    actual: format!("{} bytes, expected 32", root_bytes.len()),
+                });
+            }
+            let commitment = storage_primitives::Commitment {
+                mmr_root: H256::from_slice(&root_bytes),
+                start_seq,
+                leaf_count,
+            };
+            state
+                .storage
+                .get_mmr_proof_for(query.bucket_id, commitment, query.leaf_index)?
+        }
+        (None, None, None) => state
+            .storage
+            .get_mmr_proof(query.bucket_id, query.leaf_index)?,
+        _ => return Err(Error::PartialCommitmentQuery),
+    };
 
     Ok(Json(MmrProofResponse {
         leaf: MmrLeafData {
