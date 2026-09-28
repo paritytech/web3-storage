@@ -17,6 +17,7 @@ fn challenge_to_response<T: Config>(
         challenger: c.challenger.encode(),
         mmr_root: c.mmr_root,
         start_seq: c.start_seq,
+        leaf_count: c.leaf_count,
         leaf_index: c.target.leaf_index,
         chunk_index: c.target.chunk_index,
         deadline: deadline.saturated_into(),

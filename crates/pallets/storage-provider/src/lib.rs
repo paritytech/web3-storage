@@ -747,6 +747,10 @@ pub mod pallet {
         pub mmr_root: H256,
         /// Start sequence of the commitment.
         pub start_seq: u64,
+        /// Leaf count of the commitment. Needed to verify `target.leaf_index`'s
+        /// exact position in the MMR, not just that some leaf under `mmr_root`
+        /// exists — see `verify_mmr_proof_at`.
+        pub leaf_count: u64,
         /// Leaf + chunk being challenged.
         pub target: ChunkLocation,
         /// Deposit locked by challenger.
@@ -1248,6 +1252,10 @@ pub mod pallet {
         /// for the deadline this challenge would land on. Caps the total the
         /// `on_initialize` sweep must eventually drain for a single key.
         TooManyChallengesThisBlock,
+        /// The challenged leaf index does not exist in the commitment's MMR:
+        /// `target.leaf_index >= commitment.leaf_count`. Such a leaf cannot
+        /// be proven, so the challenge could never be answered.
+        LeafOutOfRange,
 
         // Checkpoint errors
         /// A provider signature does not verify against the commitment.

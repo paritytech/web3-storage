@@ -1314,6 +1314,29 @@ mod challenge_tests {
         });
     }
 
+    #[test]
+    fn challenge_checkpoint_fails_leaf_out_of_range() {
+        new_test_ext().execute_with(|| {
+            System::set_block_number(1);
+            let (mmr_root, _, _) = single_chunk_proof(b"chunk-0");
+            // Snapshot covers only leaf 0.
+            setup_primary_with_snapshot(mmr_root, 0, 1);
+
+            assert_noop!(
+                StorageProvider::challenge_checkpoint(
+                    RuntimeOrigin::signed(3),
+                    0,
+                    2,
+                    ChunkLocation {
+                        leaf_index: 1,
+                        chunk_index: 0
+                    }
+                ),
+                Error::<Test>::LeafOutOfRange
+            );
+        });
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
     // respond_to_challenge — happy paths and rejections
     // ─────────────────────────────────────────────────────────────────────────
@@ -1519,15 +1542,15 @@ mod challenge_tests {
         });
     }
 
-    /// `ChallengeResponse::Superseded` claimed against a leaf the snapshot
-    /// doesn't actually cover is a lie — slash.
+    /// `ChallengeResponse::Superseded` claimed against a leaf the CURRENT
+    /// snapshot doesn't actually cover is a lie — slash.
     #[test]
     fn respond_with_bogus_superseded_claim_slashes_immediately() {
         new_test_ext().execute_with(|| {
             System::set_block_number(1);
             let (mmr_root, _, _) = single_chunk_proof(b"chunk-0");
-            // Snapshot covers seq 0..1. Pick leaf 5 — way beyond canonical.
-            setup_primary_with_snapshot(mmr_root, 0, 1);
+            // Snapshot covers seq 0..6, so challenging leaf 5 is valid at creation.
+            setup_primary_with_snapshot(mmr_root, 0, 6);
 
             assert_ok!(StorageProvider::challenge_checkpoint(
                 RuntimeOrigin::signed(3),
@@ -1538,6 +1561,23 @@ mod challenge_tests {
                     chunk_index: 0,
                 },
             ));
+
+            // Re-checkpoint to a smaller canonical range that no longer
+            // covers seq 5 — the Superseded defense requires the challenged
+            // seq to still be canonical, so claiming it here is a lie.
+            Buckets::<Test>::mutate(0u64, |bucket| {
+                let bucket = bucket.as_mut().expect("bucket exists");
+                bucket.snapshot = Some(BucketSnapshot {
+                    commitment: Commitment {
+                        mmr_root: H256::repeat_byte(0xCD),
+                        start_seq: 0,
+                        leaf_count: 1,
+                    },
+                    checkpoint_block: System::block_number(),
+                    primary_signers: vec![0b0000_0001],
+                });
+            });
+
             assert_ok!(StorageProvider::respond_to_challenge(
                 RuntimeOrigin::signed(2),
                 ChallengeId {
@@ -2349,6 +2389,36 @@ mod challenge_tests {
         });
     }
 
+    #[test]
+    fn challenge_offchain_fails_leaf_out_of_range() {
+        new_test_ext().execute_with(|| {
+            System::set_block_number(1);
+            let (mmr_root, _, _) = single_chunk_proof(b"chunk-0");
+            setup_primary_with_snapshot(mmr_root, 0, 1);
+
+            // Sign a commitment covering only leaf 0, but target leaf 1.
+            let sig = signed_offchain_commitment(2, 0, mmr_root, 0, 1);
+            assert_noop!(
+                StorageProvider::challenge_offchain(
+                    RuntimeOrigin::signed(3),
+                    0,
+                    2,
+                    Commitment {
+                        mmr_root,
+                        start_seq: 0,
+                        leaf_count: 1,
+                    },
+                    ChunkLocation {
+                        leaf_index: 1,
+                        chunk_index: 0,
+                    },
+                    sig,
+                ),
+                Error::<Test>::LeafOutOfRange
+            );
+        });
+    }
+
     /// `challenge_replica` succeeds while the agreement is live and fails with
     /// `AgreementExpired` once the block reaches `expires_at`.
     #[test]
@@ -2414,6 +2484,58 @@ mod challenge_tests {
                     }
                 ),
                 Error::<Test>::AgreementExpired
+            );
+        });
+    }
+
+    #[test]
+    fn challenge_replica_fails_leaf_out_of_range() {
+        new_test_ext().execute_with(|| {
+            System::set_block_number(1);
+            let bucket_id = create_bucket(1, 1);
+            let replica_addr = b"/ip4/127.0.0.1/tcp/3001".to_vec();
+            assert_ok!(StorageProvider::register_provider(
+                RuntimeOrigin::signed(4),
+                replica_addr.try_into().unwrap(),
+                test_public_key(),
+                200
+            ));
+            // Confirmed sync covers only leaves 0..1.
+            let replica_agreement = StorageAgreement::<Test> {
+                owner: 1,
+                max_bytes: 100,
+                payment_locked: 0,
+                price_per_byte: 0,
+                expires_at: 50,
+                extensions_blocked: false,
+                role: ProviderRole::Replica {
+                    sync_balance: 100,
+                    sync_price: 1,
+                    min_sync_interval: 0,
+                    last_sync: Some(ReplicaSyncRecord {
+                        commitment: Commitment {
+                            mmr_root: H256::repeat_byte(0xAB),
+                            start_seq: 0,
+                            leaf_count: 1,
+                        },
+                        block: 1u64,
+                    }),
+                },
+                started_at: 1,
+            };
+            StorageAgreements::<Test>::insert(bucket_id, 4u64, replica_agreement);
+
+            assert_noop!(
+                StorageProvider::challenge_replica(
+                    RuntimeOrigin::signed(3),
+                    bucket_id,
+                    4,
+                    ChunkLocation {
+                        leaf_index: 1,
+                        chunk_index: 0
+                    }
+                ),
+                Error::<Test>::LeafOutOfRange
             );
         });
     }

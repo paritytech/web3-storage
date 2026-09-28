@@ -228,6 +228,8 @@ pub struct ChallengeResponse {
     pub mmr_root: H256,
     /// Start sequence of that commitment.
     pub start_seq: u64,
+    /// Leaf count of that commitment.
+    pub leaf_count: u64,
     /// Challenged leaf.
     pub leaf_index: u64,
     /// Challenged chunk within the leaf.
@@ -248,7 +250,11 @@ sp_api::decl_runtime_apis! {
     /// v2 reshaped `ProviderInfoResponse` (`deregister_at`, `reputation`) and added
     /// `challenge_candidates`. Declared explicitly so callers can probe the version
     /// instead of decoding a v1 shape that no longer exists.
-    #[api_version(3)]
+    ///
+    /// v4 added `leaf_count` to `ChallengeResponse`, so a challenge response can
+    /// be verified against the exact leaf position in the committed MMR instead
+    /// of merely some leaf under the committed root.
+    #[api_version(4)]
     pub trait StorageProviderApi<AccountId, BlockNumber, Balance>
     where
         AccountId: Encode + Decode,
