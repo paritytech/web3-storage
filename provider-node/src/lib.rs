@@ -95,7 +95,7 @@ impl ProviderState {
         provider_id: String,
         keypair: Option<ProviderKeypair>,
     ) -> Self {
-        let ProviderDeps { storage, auth, .. } = deps;
+        let ProviderDeps { storage, auth } = deps;
         Self {
             storage,
             provider_id,

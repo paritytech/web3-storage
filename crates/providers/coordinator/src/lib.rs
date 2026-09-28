@@ -116,6 +116,7 @@ fn provider_info_from_runtime(info: RuntimeProviderInfo) -> ProviderInfo {
 ///
 /// Held behind `Arc` inside the provider node's `ProviderState` so the coordinator can hold
 /// its own handle without a back-reference to the whole node state.
+#[derive(Default)]
 pub struct ChainState {
     /// The pallet's anchor block — the clock all on-chain durations (timeouts,
     /// `valid_until`) are measured against — read via the
@@ -141,12 +142,6 @@ impl ChainState {
             constants: RwLock::new(None),
             provider_info: RwLock::new(None),
         }
-    }
-}
-
-impl Default for ChainState {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

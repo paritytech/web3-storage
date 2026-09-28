@@ -20,8 +20,6 @@ use storage_primitives::{blake2_256, BucketId, MmrLeaf};
 const CF_NODES: &str = "nodes";
 const CF_BUCKETS: &str = "buckets";
 const CF_ROOT_TO_BUCKET: &str = "root_to_bucket";
-/// Small metadata values. Currently unused — retained so existing databases
-/// still open; a previous version stored the negotiation nonce counter here.
 const CF_METADATA: &str = "metadata";
 
 /// Disk-based storage backend using RocksDB.
@@ -549,8 +547,6 @@ mod tests {
         let raw = storage.db.get_cf(&cf, hash.as_bytes()).unwrap().unwrap();
         assert_eq!(hex::encode(&raw), "14010203040500");
 
-        // CF_METADATA: retained for existing databases to reopen into, but
-        // nothing writes to it any more.
         let cf = storage.db.cf_handle(CF_METADATA).unwrap();
         assert!(
             storage

@@ -47,17 +47,17 @@ pub struct NegotiateRequest {
     /// Account that will own the resulting bucket.
     pub owner: AccountId32,
     /// Storage quota requested, in bytes.
-    /// FIX: Safely handles the JS BigInt sent as a string
+    /// JSON number or decimal string
     #[serde_as(as = "PickFirst<(DisplayFromStr, _)>")]
     pub max_bytes: u64,
     /// Agreement duration in blocks from activation.
     pub duration: u32,
     /// Price per byte per block the owner is willing to lock in.
-    /// FIX: Safely handles the JS BigInt sent as a string
+    /// JSON number or decimal string
     #[serde_as(as = "PickFirst<(DisplayFromStr, _)>")]
     pub price_per_byte: u128,
     /// The owner's next expected agreement nonce.
-    /// FIX: Safely handles the JS BigInt sent as a string
+    /// JSON number or decimal string
     #[serde_as(as = "PickFirst<(DisplayFromStr, _)>")]
     pub nonce: u64,
     /// Bucket the quote is bound to.

@@ -640,6 +640,13 @@ pub struct ReplicaTerms<Balance, BlockNumber> {
     pub sync_price: Balance,
 }
 
+/// Next expected `AgreementTerms.nonce` for this owner. Redemption
+/// requires an exact match and advances the counter by one, so a signed
+/// quote is redeemable at most once and in the order it was requested.
+#[pallet::storage]
+pub type AgreementNonces<T: Config> =
+    StorageMap<_, Blake2_128Concat, T::AccountId, u64, ValueQuery>;
+
 /// Pending challenges, keyed by (deadline anchor block, per-deadline index).
 /// At most `MaxChallengesPerDeadline` challenges share a deadline; expired
 /// deadlines are drained by the `on_initialize` slash sweep.

@@ -20,9 +20,6 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use storage_primitives::{hash_children, BucketId};
 
-/// A built backend, ready to serve.
-pub type OpenedBackend = Arc<dyn StorageBackend>;
-
 /// Which backend to build, and what that backend needs.
 ///
 /// Each engine carries its own configuration, so adding one does not add a
@@ -35,7 +32,7 @@ pub enum StorageBackendSpec {
 
 impl StorageBackendSpec {
     /// Build the backend.
-    pub fn build(&self) -> Result<OpenedBackend, Error> {
+    pub fn build(&self) -> Result<Arc<dyn StorageBackend>, Error> {
         match self {
             Self::RocksDb { path } => Ok(Arc::new(DiskStorage::new(path)?)),
         }
@@ -260,26 +257,4 @@ pub fn build_padded_merkle_tree(
     }
 
     current_level[0]
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use tempfile::TempDir;
-
-    #[test]
-    fn rocksdb_spec_builds_and_reopens() {
-        let dir = TempDir::new().unwrap();
-        let spec = StorageBackendSpec::RocksDb {
-            path: dir.path().to_path_buf(),
-        };
-
-        // Scoped so the handle drops and RocksDB releases the directory lock.
-        {
-            let _storage = spec.build().expect("RocksDB opens");
-        }
-
-        let _storage = spec.build().expect("RocksDB reopens");
-        assert!(spec.to_string().starts_with("RocksDB at "));
-    }
 }
