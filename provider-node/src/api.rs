@@ -17,7 +17,7 @@ use axum::{
 };
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use codec::Encode;
-use provider_auth::RequiredRole;
+use provider_auth::{AuthError, RequiredRole};
 use provider_types::SigningRefused;
 use sp_core::H256;
 use std::net::SocketAddr;
@@ -155,6 +155,14 @@ pub(crate) fn auth_header(headers: &axum::http::HeaderMap) -> Option<&str> {
         .and_then(|v| v.to_str().ok())
 }
 
+/// The `X-Web3Storage-Context` header value, if the request carries one.
+fn context_header(headers: &axum::http::HeaderMap) -> Result<Option<&str>, AuthError> {
+    headers
+        .get(provider_auth::CONTEXT_HEADER)
+        .map(|v| v.to_str().map_err(|_| AuthError::ContextBlockInvalid))
+        .transpose()
+}
+
 /// Convenience wrapper around `provider_auth::require_role` using request headers.
 pub(crate) async fn check_role(
     state: &ProviderState,
@@ -163,9 +171,10 @@ pub(crate) async fn check_role(
     bucket_id: u64,
     required: RequiredRole,
 ) -> Result<(), Error> {
+    let context = context_header(headers)?;
     state
         .auth
-        .require_role(auth_header(headers), method, bucket_id, required)
+        .require_role(auth_header(headers), context, method, bucket_id, required)
         .await
         .map_err(Into::into)
 }
