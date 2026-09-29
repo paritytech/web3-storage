@@ -819,12 +819,17 @@ pub struct PendingReplacement<T: Config> {
 
 The first `checkpoint` carrying the successor's signature — for a virtual
 provider, at least `k` of its members' — **activates** it: the record becomes the
-new agreement with `expires_at = now + duration`, and the old one settles exactly
+new agreement with `expires_at = now + duration` (bumping `cur_until` as any
+agreement creation does), and the old one settles exactly
 as `extend_agreement` step 1 does — elapsed period paid to the old provider (a
 virtual's snapshotted members, equal split), unelapsed remainder rolled into the
-successor's escrow. If the old agreement expires first, the successor activates
-at that block unsigned; it is the continuation the owner paid for. Nothing is
-refunded.
+successor's escrow. Activation requires the old agreement to be live; if it
+expires first, the pending successor ends with it and settles as an expired
+agreement in the same call — payment to the provider, or burned by the owner.
+For a virtual
+provider, activation also raises the `until` of any snapshotted member that has
+since left (virtual-provider extension, "Changing a live agreement's member
+set").
 
 Owner-only because activation spends the owner's escrow. A third party keeping a
 frozen bucket alive funds its own replica instead (design doc "Permissionless
@@ -841,7 +846,7 @@ The provider-side terms a client relied on but that the quote does *not* carry
 are **price** (payment is computed from the provider's current price — the
 original race), **replica sync price**, **stake** (it picked the provider for its
 backing), and — for a virtual provider — its **composition** (a member leaving
-drops redundancy, e.g. `3`-of-`5` → `3`-of-`4`, even at unchanged `stake`; see the
+drops redundancy, e.g. `3`-of-`4` → `3`-of-`3`, even at unchanged `stake`; see the
 virtual-provider extension). So `ProviderInfo.version` bumps on `price ↑`,
 `replica_sync_price ↑`, `stake ↓`, or a virtual member leaving; strictly-better
 changes (price ↓, stake ↑, a member joining) never bump.
@@ -1548,7 +1553,9 @@ impl<T: Config> Pallet<T> {
     ) -> DispatchResult;
 
     /// Store a pending successor for a live agreement (**owner only**); see
-    /// "Replacement agreements". Fails if one is already pending.
+    /// "Replacement agreements". Fails if one is already pending. The successor
+    /// activates only while this agreement is live; otherwise it ends with it
+    /// and settles as expired.
     pub fn create_replacement(
         origin: OriginFor<T>,
         bucket_id: BucketId,
@@ -1570,9 +1577,14 @@ impl<T: Config> Pallet<T> {
     /// portion out to the provider, so if a third party (or the provider itself)
     /// could extend, it could force-settle the elapsed term and defer expiry
     /// indefinitely, stripping the owner of its burn/exit lever
-    /// ([The Burn Option](./scalable-web3-storage.md#the-burn-option)). Only the
+    /// (design doc "The Burn Option"). Only the
     /// owner may spend its own locked payment this way, so only the owner extends.
     /// The `expected_version` pin still applies (owner pays no more than it saw).
+    ///
+    /// For a virtual provider: rejected unless every member in the agreement's
+    /// snapshot is still in the live set (otherwise the owner creates a
+    /// replacement), and rejected if the re-snapshotted set would push the
+    /// bucket's slot layout past `MaxPrimarySlots` (virtual-provider extension).
     ///
     /// Ending an agreement early, against a proven successor, is
     /// `create_replacement` plus activation ("Replacement agreements"), also
