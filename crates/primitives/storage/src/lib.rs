@@ -322,7 +322,7 @@ pub struct Commitment {
     pub mmr_root: H256,
     /// Sequence number of the first leaf covered by this commitment.
     pub start_seq: u64,
-    /// Number of leaves covered by this commitment.
+    /// Number of leaves in the MMR whose root is `mmr_root`.
     pub leaf_count: u64,
 }
 

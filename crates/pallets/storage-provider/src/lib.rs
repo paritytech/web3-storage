@@ -2996,15 +2996,8 @@ pub mod pallet {
                     );
                     *sync_balance = sync_balance.saturating_sub(*sync_price);
 
-                    // Capture sequence metadata for the matched root so a
-                    // future `challenge_replica` can target a specific leaf.
-                    // For the current snapshot (position_matched == 0) we
-                    // know start_seq + leaf_count exactly. Historical roots
-                    // don't carry sequence metadata in `historical_roots`, so
-                    // they default to 0 here — challenges targeting a leaf
-                    // beyond seq 0 in that case still work because
-                    // `challenge_replica` only uses `start_seq` as an offset
-                    // additive identity.
+                    // TODO: reject the sync when `leaf_count == 0`.
+                    // If there is no data sync, the replica should not be able to claim the fund.
                     let (start_seq, leaf_count) = if position_matched == 0 {
                         bucket
                             .snapshot
