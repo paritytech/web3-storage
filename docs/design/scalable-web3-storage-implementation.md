@@ -1944,7 +1944,8 @@ Rules:
   `503 membership_unavailable`.
 - `X-Web3Storage-Context` is optional and unsigned: the block the client acted
   on. The provider never reads at that block. It matters only when the bucket
-  or member is absent at the block the provider read: a context block newer
+  or member is absent, or the member's role is below the required one, at the
+  block the provider read: a context block newer
   than that block means the client's block has not reached the provider yet,
   answered `503 block_not_known` with `Retry-After`; anything else is
   `403 insufficient_role`. A malformed header is `400 context_block_invalid`.
