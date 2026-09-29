@@ -11,7 +11,7 @@
  * with each other, so the client uploads to each one and collects both
  * signatures for the checkpoint. Tests cover a bucket with two primaries and
  * a provider switch, where the client moves the data from the old primary to
- * a new one and checkpoints without the old one.
+ * a new one, checkpoints without the old one, and ends the old agreement.
  *
  * Usage: node e2e/13-multi-primary-providers.js [chain_ws] [provider_url] [second_provider_url]
  */
@@ -24,8 +24,10 @@ import {
   bytesEq,
   challengeCheckpoint,
   createBucket,
+  currentRelayBlock,
   decodeMultiSignature,
   downloadChunk,
+  endAgreement,
   ensureProviderRegistered,
   fetchChallengeProof,
   makeSigner,
@@ -35,6 +37,7 @@ import {
   submitTx,
   updateProviderMultiaddr,
   uploadChunk,
+  waitForRelayBlock,
   type ChainSigner,
   type ParachainApi,
 } from "@web3-storage/sdk";
@@ -57,7 +60,6 @@ type Commit = {
   provider_signature: string;
 };
 
-/** Build a `checkpoint` call carrying one signature per provider. */
 function checkpointTx(
   api: ParachainApi,
   bucketId: bigint,
@@ -92,20 +94,15 @@ async function main() {
   const { papi, api } = await setupChain(CHAIN_WS);
   await ensureProviderRegistered(api, first, PROVIDER_URL);
   await ensureProviderRegistered(api, second, SECOND_PROVIDER_URL);
-  // Workflow 01 registers //Charlie with the first node's address, and
-  // registration is skipped when it exists. Point it at the second node.
   await updateProviderMultiaddr(
     api,
     second,
     `/ip4/127.0.0.1/tcp/${new URL(SECOND_PROVIDER_URL).port}`
   );
 
-  const maxBytes = 1_048_576n; // 1 MiB
+  const maxBytes = 1_048_576n;
   const duration = 200;
 
-  // A bucket that needs both signatures on every checkpoint. Both primaries
-  // are added with finalized transactions: a provider node reads bucket
-  // membership from finalized state, and the uploads below follow at once.
   const { bucketId } = await createBucket(api, client, { minProviders: 2 });
   for (const [provider, url] of [
     [first, PROVIDER_URL],
@@ -119,38 +116,20 @@ async function main() {
     await addPrimaryProvider(api, client, provider, signed, { mode: "finalized" });
   }
 
-  // The client uploads the same data to each primary.
   const payload = `two-primaries @ ${Date.now()}`;
   const firstUpload = await uploadChunk(PROVIDER_URL, bucketId, payload, client);
   const secondUpload = await uploadChunk(SECOND_PROVIDER_URL, bucketId, payload, client);
 
-  // Provider switch: a bucket on the first provider only, with data and a
-  // checkpoint. 13.7–13.9 move it to the second provider.
-  const { bucketId: moved } = await negotiateAndEstablish(
-    api,
-    PROVIDER_URL,
-    client,
-    first,
-    { maxBytes, duration },
-    true,
-  );
-  const old = await uploadChunk(PROVIDER_URL, moved, `switch-provider @ ${Date.now()}`, client);
-  await submitTx(
-    checkpointTx(api, moved, old.commit, [{ provider: first, commit: old.commit }]),
-    client.signer,
-    { label: "checkpoint (old primary)" }
-  );
+  let moved!: bigint;
+  let old!: Awaited<ReturnType<typeof uploadChunk>>;
 
   const tests: Array<{ name: string; fn: () => Promise<void> }> = [];
-
-  // ── Two primaries on one bucket ─────────────────────────────────────────
 
   tests.push({
     name: "13.1 Both providers are primaries of one bucket",
     fn: async () => {
       const bucket = (await api.query.StorageProvider.Buckets.getValue(bucketId, READ_OPTS))!;
       assert.strictEqual(bucket.primary_providers.length, 2, "bucket should have two primaries");
-      // Order matters: bit i of the snapshot bitfield is primary_providers[i].
       assert.ok(sameAddress(bucket.primary_providers[0], first.address), "first primary at index 0");
       assert.ok(
         sameAddress(bucket.primary_providers[1], second.address),
@@ -241,12 +220,33 @@ async function main() {
     },
   });
 
-  // ── Provider switch ─────────────────────────────────────────────────────
-
   tests.push({
     name: "13.7 Add a new primary while the old agreement is active",
     fn: async () => {
+      ({ bucketId: moved } = await negotiateAndEstablish(
+        api,
+        PROVIDER_URL,
+        client,
+        first,
+        { maxBytes, duration: 30 },
+        true,
+      ));
+      old = await uploadChunk(PROVIDER_URL, moved, `switch-provider @ ${Date.now()}`, client);
+      await submitTx(
+        checkpointTx(api, moved, old.commit, [{ provider: first, commit: old.commit }]),
+        client.signer,
+        { label: "checkpoint (old primary)" }
+      );
       assert.deepStrictEqual(await snapshotSigners(api, moved), [0b01]);
+      const agreement = (await api.query.StorageProvider.StorageAgreements.getValue(
+        moved,
+        first.address,
+        READ_OPTS
+      ))!;
+      assert.ok(
+        (await currentRelayBlock(api)) < Number(agreement.expires_at),
+        "old agreement should not have expired yet"
+      );
       const signed = await negotiateSigned(api, SECOND_PROVIDER_URL, client, second, {
         maxBytes,
         duration,
@@ -261,7 +261,7 @@ async function main() {
   tests.push({
     name: "13.8 Move the data and checkpoint with the new primary only",
     fn: async () => {
-      // The client downloads from the old primary and uploads to the new one.
+      assert.ok(old, "13.7 must pass first");
       const bytes = await downloadChunk(PROVIDER_URL, old.hash);
       const next = await uploadChunk(SECOND_PROVIDER_URL, moved, bytes, client);
       assert.strictEqual(
@@ -289,6 +289,7 @@ async function main() {
   tests.push({
     name: "13.9 Old primary is not challengeable against the new snapshot",
     fn: async () => {
+      assert.ok(old, "13.7 must pass first");
       assert.deepStrictEqual(await snapshotSigners(api, moved), [0b10], "13.8 must pass first");
       const tx = api.tx.StorageProvider.challenge_checkpoint({
         bucket_id: moved,
@@ -296,6 +297,55 @@ async function main() {
         target: { leaf_index: BigInt(old.commit.leaf_indices[0]), chunk_index: 0n },
       });
       await submitTxExpectFailure(tx, client.signer, "ProviderNotInSnapshot", "13.9");
+    },
+  });
+
+  tests.push({
+    name: "13.10 End the old agreement after expiry",
+    fn: async () => {
+      assert.ok(old, "13.7 must pass first");
+      const agreement = (await api.query.StorageProvider.StorageAgreements.getValue(
+        moved,
+        first.address,
+        READ_OPTS
+      ))!;
+      console.log("    Waiting for expiry at block %d...", Number(agreement.expires_at));
+      await waitForRelayBlock(papi, api, Number(agreement.expires_at));
+      const result = await endAgreement(api, client, first, moved, "Pay");
+      const events = api.event.StorageProvider.PrimaryProviderRemoved.filter(
+        result.events as never
+      );
+      assert.strictEqual(events.length, 1, "Expected PrimaryProviderRemoved event");
+      assert.strictEqual(events[0].payload.reason.type, "Expired", "removal should take the expiry path");
+      const bucket = (await api.query.StorageProvider.Buckets.getValue(moved, READ_OPTS))!;
+      assert.strictEqual(bucket.primary_providers.length, 1, "bucket should have one primary");
+      assert.ok(
+        sameAddress(bucket.primary_providers[0], second.address),
+        "new primary should be at index 0"
+      );
+      assert.deepStrictEqual(
+        await snapshotSigners(api, moved),
+        [0b01],
+        "snapshot bit should move to the new primary's index"
+      );
+    },
+  });
+
+  tests.push({
+    name: "13.11 Remaining primary defends a challenge",
+    fn: async () => {
+      assert.deepStrictEqual(await snapshotSigners(api, moved), [0b01], "13.10 must pass first");
+      const challengeId = await challengeCheckpoint(
+        api,
+        client,
+        second,
+        moved,
+        old.commit.leaf_indices[0]
+      );
+      const proof = await fetchChallengeProof(api, SECOND_PROVIDER_URL, challengeId);
+      const result = await respondToChallenge(api, second, challengeId, proof);
+      const events = api.event.StorageProvider.ChallengeDefended.filter(result.events as never);
+      assert.strictEqual(events.length, 1, "Expected ChallengeDefended event");
     },
   });
 

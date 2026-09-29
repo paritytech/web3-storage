@@ -359,8 +359,6 @@ jobs:
           label: default
           auth-cache-max-entries: "64"
 
-      # Second node for the multi-provider workflow (13). It signs as //Charlie,
-      # which workflow 13 registers on-chain.
       - name: Start second provider (//Charlie)
         uses: ./.github/actions/start-provider
         with:
