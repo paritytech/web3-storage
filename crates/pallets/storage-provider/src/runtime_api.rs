@@ -246,14 +246,6 @@ pub struct ChallengeResponse {
 
 sp_api::decl_runtime_apis! {
     /// Runtime API for the storage provider pallet.
-    ///
-    /// v2 reshaped `ProviderInfoResponse` (`deregister_at`, `reputation`) and added
-    /// `challenge_candidates`. Declared explicitly so callers can probe the version
-    /// instead of decoding a v1 shape that no longer exists.
-    ///
-    /// v4 added `leaf_count` to `ChallengeResponse`, so a challenge response can
-    /// be verified against the exact leaf position in the committed MMR instead
-    /// of merely some leaf under the committed root.
     #[api_version(4)]
     pub trait StorageProviderApi<AccountId, BlockNumber, Balance>
     where

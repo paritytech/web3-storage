@@ -15,8 +15,4 @@ pub type Migrations = (
     // applied.
     cumulus_pallet_parachain_system::migration::Migration<Runtime>,
     cumulus_pallet_xcmp_queue::migration::v7::MigrateV6ToV7<Runtime>,
-    // `Challenge` gained `leaf_count` (v0 -> v1). Drops pending challenges,
-    // refunding deposits, since an old value doesn't carry a leaf count to
-    // translate.
-    pallet_storage_provider::migrations::v1::MigrateV0ToV1<Runtime>,
 );

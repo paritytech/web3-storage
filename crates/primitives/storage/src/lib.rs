@@ -576,6 +576,10 @@ pub fn verify_mmr_proof(proof: &MmrProof, root: &H256) -> bool {
     bagged_root == *root
 }
 
+// Bit index of a `u64`'s most significant bit
+// aka `u64::BITS - 1`
+const HIGHEST_BIT: u32 = 63;
+
 /// Verify an MMR proof for a specific leaf position.
 ///
 /// [`verify_mmr_proof`] accepts a proof for any leaf under `root`.
@@ -601,7 +605,7 @@ pub fn verify_mmr_proof_at(
     let mut leaf_offset = 0u64;
     let mut peak_position = 0usize;
     let (peak_height, local_leaf_index) = loop {
-        let height = 63 - remaining.leading_zeros();
+        let height = HIGHEST_BIT - remaining.leading_zeros();
         let subtree_leaves = 1u64 << height;
         if leaf_index < leaf_offset + subtree_leaves {
             break (height, leaf_index - leaf_offset);

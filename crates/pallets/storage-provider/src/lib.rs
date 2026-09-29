@@ -25,7 +25,6 @@ pub use pallet::*;
 /// Pallet internals: the agreement, bucket, challenge, and payment logic behind
 /// the extrinsics and runtime APIs.
 pub mod impls;
-pub mod migrations;
 pub mod runtime_api;
 pub mod weights;
 pub use weights::WeightInfo;
@@ -90,7 +89,7 @@ pub mod pallet {
         BlockNumberFor<T>,
     >;
 
-    const STORAGE_VERSION: StorageVersion = StorageVersion::new(1);
+    const STORAGE_VERSION: StorageVersion = StorageVersion::new(0);
 
     #[pallet::pallet]
     #[pallet::storage_version(STORAGE_VERSION)]
@@ -748,9 +747,7 @@ pub mod pallet {
         pub mmr_root: H256,
         /// Start sequence of the commitment.
         pub start_seq: u64,
-        /// Leaf count of the commitment. Needed to verify `target.leaf_index`'s
-        /// exact position in the MMR, not just that some leaf under `mmr_root`
-        /// exists — see `verify_mmr_proof_at`.
+        /// Leaf count of the commitment. see more in `verify_mmr_proof_at`.
         pub leaf_count: u64,
         /// Leaf + chunk being challenged.
         pub target: ChunkLocation,
