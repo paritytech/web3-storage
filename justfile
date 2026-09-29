@@ -184,12 +184,13 @@ start-e2e-chain RUNTIME="web3-storage-paseo": check
         -lruntime=info
 
 # Start the storage provider node (without registering on-chain)
+# Arguments are positional: BACKEND PORT STORAGE_PATH KEYFILE KEY_SCHEME ("" skips one).
 # Examples:
 #   just start-provider                                            # default backend in ./provider-data, //Alice key, port 3333
-#   just start-provider BACKEND=rocksdb STORAGE_PATH=/tmp/rocks    # pick the engine and where it stores
-#   just start-provider PORT=3334 STORAGE_PATH=/tmp/p2             # second provider, separate data dir
-#   just start-provider KEYFILE=/path/to/seed                      # custom key from file
-#   just start-provider KEY_SCHEME=ed25519                         # non-sr25519 signing key
+#   just start-provider rocksdb 3333 /tmp/rocks                    # pick the engine and where it stores
+#   just start-provider rocksdb 3334 /tmp/p2                       # second provider, separate data dir
+#   just start-provider rocksdb 3333 ./provider-data /path/to/seed # custom key from file
+#   just start-provider rocksdb 3333 ./provider-data "" ed25519    # non-sr25519 signing key
 start-provider BACKEND="rocksdb" PORT=PROVIDER_PORT STORAGE_PATH="./provider-data" KEYFILE="" KEY_SCHEME="": build-provider
     #!/usr/bin/env bash
     set -euo pipefail
@@ -225,7 +226,7 @@ start-provider BACKEND="rocksdb" PORT=PROVIDER_PORT STORAGE_PATH="./provider-dat
 # runs in the foreground and never returns.
 register-then-start-provider BACKEND="rocksdb" PORT=PROVIDER_PORT STORAGE_PATH="./provider-data" KEYFILE="" KEY_SCHEME="":
     just register-provider "{{KEYFILE}}" "{{KEY_SCHEME}}"
-    just start-provider BACKEND="{{BACKEND}}" PORT="{{PORT}}" STORAGE_PATH="{{STORAGE_PATH}}" KEYFILE="{{KEYFILE}}" KEY_SCHEME="{{KEY_SCHEME}}"
+    just start-provider "{{BACKEND}}" "{{PORT}}" "{{STORAGE_PATH}}" "{{KEYFILE}}" "{{KEY_SCHEME}}"
 
 # Register provider on-chain (idempotent). Requires a running chain.
 # Called automatically by register-then-start-provider, or run standalone.
