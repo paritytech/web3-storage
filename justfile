@@ -33,12 +33,14 @@ try_runtime_sha256 := if os == "darwin" { env("TRY_RUNTIME_AARCH64_APPLE_DARWIN_
 RELAY_PORT := "9900"
 CHAIN_PORT := "2222"
 PROVIDER_PORT := "3333"
+SECOND_PROVIDER_PORT := "3334"
 
 # Network URLs (constructed from ports)
 RELAY_WS := "ws://127.0.0.1:" + RELAY_PORT
 CHAIN_WS := "ws://127.0.0.1:" + CHAIN_PORT
 PROVIDER_URL := "http://127.0.0.1:" + PROVIDER_PORT
 PROVIDER_MULTI_ADDR := "/ip4/127.0.0.1/tcp/" + PROVIDER_PORT
+SECOND_PROVIDER_URL := "http://127.0.0.1:" + SECOND_PROVIDER_PORT
 
 # Default recipe
 default:
@@ -220,6 +222,16 @@ start-provider BACKEND="rocksdb" PORT=PROVIDER_PORT STORAGE_PATH="./provider-dat
         --bind-addr "0.0.0.0:{{PORT}}" \
         --chain-rpc "{{ CHAIN_WS }}"
 
+# Second provider node for the multi-provider E2E workflow (13), signing as
+# //Charlie. The workflow registers //Charlie on-chain itself.
+start-second-provider BACKEND="rocksdb" PORT=SECOND_PROVIDER_PORT STORAGE_PATH="./provider-data-2":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    CHARLIE_KEY=$(mktemp)
+    echo "//Charlie" > "$CHARLIE_KEY" && chmod 600 "$CHARLIE_KEY"
+    trap "rm -f $CHARLIE_KEY" EXIT
+    just start-provider "{{BACKEND}}" "{{PORT}}" "{{STORAGE_PATH}}" "$CHARLIE_KEY"
+
 # Register on-chain then start the provider node (original behavior)
 # Registration is a chain-only extrinsic, so it must run first: start-provider
 # runs in the foreground and never returns.
@@ -393,14 +405,16 @@ papi-provider-discovery BYTES="1073741824" DURATION="100" MAX_PRICE="10": papi-s
 # E2E Test Suite
 # ============================================================
 
-# Run comprehensive E2E test suite (all 10 workflows sequentially)
-e2e PROVIDER_URL=PROVIDER_URL: papi-setup
+# Run comprehensive E2E test suite (all workflows sequentially). Needs the
+# provider node (`just start-provider`) and, for workflow 13, the second
+# provider node (`just start-second-provider`).
+e2e PROVIDER_URL=PROVIDER_URL SECOND_PROVIDER_URL=SECOND_PROVIDER_URL: papi-setup
     npx c8 --reporter=text --reporter=json --report-dir=examples/papi/coverage \
         --include="examples/papi/**" --include="packages/sdk/src/**" \
-        node --import tsx examples/papi/e2e/runner.bin.ts "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}"
+        node --import tsx examples/papi/e2e/runner.bin.ts "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}" "{{ SECOND_PROVIDER_URL }}"
 
 # Run a single E2E workflow by number (e.g. just e2e-single 01)
-e2e-single NUM PROVIDER_URL=PROVIDER_URL: papi-setup
+e2e-single NUM PROVIDER_URL=PROVIDER_URL SECOND_PROVIDER_URL=SECOND_PROVIDER_URL: papi-setup
     #!/usr/bin/env bash
     set -euo pipefail
     FILE=$(ls examples/papi/e2e/{{ NUM }}-*.ts 2>/dev/null | head -1)
@@ -408,7 +422,7 @@ e2e-single NUM PROVIDER_URL=PROVIDER_URL: papi-setup
         echo "No workflow file matching examples/papi/e2e/{{ NUM }}-*.ts"
         exit 1
     fi
-    node --import tsx "$FILE" "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}"
+    node --import tsx "$FILE" "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}" "{{ SECOND_PROVIDER_URL }}"
 
 # ============================================================
 # File System (Layer 1)
