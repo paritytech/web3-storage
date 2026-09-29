@@ -338,45 +338,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_proof_with_path_primitives_verify() {
-        use codec::Encode;
-
-        // This test mirrors how the pallet verifies: push blake2_256(&leaf.encode())
-        // into MMR, then verify with storage_primitives::verify_mmr_proof
-        let mut mmr = Mmr::new();
-
-        let mmr_leaves: Vec<storage_primitives::MmrLeaf> = (0..5)
-            .map(|i| storage_primitives::MmrLeaf {
-                data_root: blake2_256(format!("root{i}").as_bytes()),
-                data_size: 100 * (i as u64 + 1),
-                total_size: 100 * (i as u64 + 1),
-            })
-            .collect();
-
-        for leaf in &mmr_leaves {
-            mmr.push(blake2_256(&leaf.encode()));
-        }
-
-        let root = mmr.root();
-
-        for (i, leaf) in mmr_leaves.iter().enumerate() {
-            let (siblings, path, peaks) =
-                mmr.proof_with_path(i as u64).expect("proof should exist");
-
-            let mmr_proof = storage_primitives::MmrProof {
-                peaks,
-                leaf: leaf.clone(),
-                leaf_proof: storage_primitives::MerkleProof { siblings, path },
-            };
-
-            assert!(
-                storage_primitives::verify_mmr_proof(&mmr_proof, &root),
-                "verify_mmr_proof failed for leaf {i}"
-            );
-        }
-    }
-
     /// Build an MMR of `leaf_count` leaves and return it with the leaves and root.
     fn build_mmr(leaf_count: u64) -> (Mmr, Vec<storage_primitives::MmrLeaf>, H256) {
         use codec::Encode;

@@ -468,7 +468,11 @@ impl DiskStorage {
             )));
         }
 
-        let pruned = self.get_pruned_leaves(bucket_id);
+        let pruned = if range_start < bucket.start_seq {
+            self.get_pruned_leaves(bucket_id)
+        } else {
+            Vec::new()
+        };
         let mut range_leaves = Vec::with_capacity(commitment.leaf_count as usize);
         for seq in range_start..range_end {
             let leaf = if seq < bucket.start_seq {
