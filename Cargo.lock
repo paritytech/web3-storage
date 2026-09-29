@@ -7231,7 +7231,6 @@ dependencies = [
  "sp-runtime",
  "storage-primitives",
  "tokio",
- "tracing",
 ]
 
 [[package]]
