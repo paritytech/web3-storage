@@ -206,6 +206,11 @@ pub trait Config: frame_system::Config<RuntimeEvent: From<Event<Self>>> {
     /// Treasury account to receive burned payments.
     type Treasury: Get<Self::AccountId>;
 
+    /// Premium the owner pays from free balance, on top of the locked
+    /// payment, when it burns an agreement (design doc "The Burn Option").
+    #[pallet::constant]
+    type BurnPremium: Get<Permill>;
+
     /// Maximum length of provider multiaddr.
     #[pallet::constant]
     type MaxMultiaddrLength: Get<u32>;
@@ -286,6 +291,7 @@ parachain `HOURS`:
 | `MaxChallengesPerDeadline` | `1_000` |
 | `AnchorBlockTimeMillis` | `6_000` |
 | `Treasury` | derived from `PalletId(*b"py/trsry")` |
+| `BurnPremium` | `Permill::from_percent(10)` |
 
 ### Funds on Hold
 
@@ -346,20 +352,26 @@ pub struct ProviderInfo<T: Config> {
     /// only by `set_stake` when lowering (see "Changeable Stake").
     pub higher_stake_lock: StakeLock<BalanceOf<T>, BlockNumberFor<T>>,
     /// Total contracted bytes (sum of max_bytes across all agreements).
-    /// The *only* verifiable capacity figure — the stake/bytes invariant is
-    /// enforced against this, not the self-declared `max_capacity`.
+    /// Verifiable, unlike the self-declared `max_capacity`; informative only,
+    /// no stake check is tied to it (see "Stake vs. capacity").
     pub committed_bytes: u64,
     /// Pins the provider-side terms an agreement is struck against. Every call
     /// that binds an owner to the provider's terms — the three redemption calls,
     /// `extend_agreement`, `top_up_agreement` and `create_replacement` — takes the client's
-    /// `expected_version` and fails if it has moved. This is what removes the
+    /// `expected_version` and fails if it changed. This is what removes the
     /// need for a `max_payment` bound. Bumped on the worse-direction change to a term the
     /// quote/request doesn't carry explicitly: **price ↑**, **replica sync price
-    /// ↑**, **stake ↓**, or (virtual providers) a member leaving. Duration,
+    /// ↑**, **stake ↓**, or (virtual providers) a member leaving or `k` rising. Duration,
     /// capacity and `accepting_*` are checked directly against the quote's
     /// `max_bytes`/`duration`, and strictly-better changes never bump. See
     /// "Term Pinning".
     pub version: u32,
+    /// Block of the last slash that may have reduced the backing behind this
+    /// provider's agreements: a slash of the provider itself or, for a virtual
+    /// provider, of one of its members anywhere. `None` if never slashed. Lets
+    /// a client detect a slash from state instead of the event log
+    /// (virtual-provider extension, "Stake and Slashing").
+    pub last_stake_event: Option<BlockNumberFor<T>>,
     /// Provider settings
     pub settings: ProviderSettings<T>,
     /// Provider statistics - clients use these to evaluate quality
@@ -840,7 +852,7 @@ Maintenance is O(1) per event, no scan:
 - **lower stake** to `X` (`set_stake`): allowed **only if `higher_stake_lock` has
   expired** (`now >= higher_stake_lock.until`; trivially true for the default).
   Then fold the current generation into it —
-  `higher_stake_lock = { stake, until: cur_until }` — reset `cur_until = 0` (technically not needed, but good to keep intent: current gen's max), and
+  `higher_stake_lock = { stake, until: cur_until }` — reset `cur_until = 0` (it now tracks the new generation only), and
   set `stake = X`. The old (higher) figure stays locked until `cur_until`, the
   latest expiry of any agreement struck under it.
 - **agreement end:** nothing.
@@ -869,33 +881,68 @@ how loaded a provider is, and deregistration requires it to reach zero.
 
 The owner-only path that ends an agreement early. `create_replacement` stores a
 pending successor in the agreement record (`StorageAgreement.pending_replacement`):
-a fresh `agreement_id`, the provider's current terms — for a virtual provider its
-current member set and `per_provider_stake` — a duration, and the new payment,
-held. Pending means not live: no liability, commitments naming it are not valid,
-no checkpoint slots. The old agreement runs on unchanged.
+a fresh `agreement_id`, the provider's stake — for a virtual provider also its
+`VirtualSnapshot` (current member set and `per_provider_stake`) — its expiry
+`old.expires_at + additional_duration`, and the payment for
+`additional_duration` at the current price, held. `additional_duration` may be
+0 (a pure provider-set swap, the virtual-provider case). It needs no new quote
+and is gated like `extend_agreement`: rejected if `expected_version` changed,
+and, for a nonzero `additional_duration`, if the provider is not accepting
+extensions (globally, or `extensions_blocked` on this agreement), if it is
+below the provider's `min_duration`, or if the successor's `expires_at − now`
+exceeds its `max_duration`. A zero-duration replacement adds no term, so the
+extension gates do not apply: a provider-set swap is always possible. While it
+is pending, `extend_agreement` and `top_up_agreement` on the old agreement are
+rejected (the successor's expiry and payment are fixed against the current
+term), and there is no cancel: the successor's provider may already have
+synced and signed, so the owner is bound once created. It ends by activation or
+with the old agreement. For a virtual
+provider the in-place member-set check of `extend_agreement` does not apply.
+Pending means not live: no liability, commitments naming it are not valid, no
+checkpoint slots. The old agreement runs on unchanged.
 
 ```rust
 pub struct PendingReplacement<T: Config> {
     pub agreement_id: u64,
-    /// Provider terms at creation; for a virtual provider includes its member
-    /// set and `per_provider_stake` (virtual-provider extension).
-    pub terms: AgreementTerms<T>,
-    pub duration: BlockNumberFor<T>,
+    /// Provider stake at creation; becomes `StorageAgreement.stake`.
+    pub stake: BalanceOf<T>,
+    /// Virtual provider only: taken at creation, becomes
+    /// `StorageAgreement.virtual_snapshot` at activation.
+    pub virtual_snapshot: Option<VirtualSnapshot<T>>,
+    /// `old.expires_at + additional_duration`, fixed at creation.
+    pub expires_at: BlockNumberFor<T>,
+    /// Payment for `additional_duration` at the price at creation. At
+    /// activation the old agreement's unelapsed remainder is added.
     pub payment_locked: BalanceOf<T>,
 }
 ```
 
 The first `checkpoint` carrying the successor's signature — for a virtual
-provider, at least `k` of its members' — **activates** it: the record becomes the
-new agreement with `expires_at = now + duration` (bumping `cur_until` as any
-agreement creation does), and the old one settles exactly
-as `extend_agreement` step 1 does — elapsed period paid to the old provider (a
-virtual's snapshotted members, equal split), unelapsed remainder rolled into the
-successor's escrow. Activation requires the old agreement to be live; if it
-expires first, the pending successor ends with it and settles as an expired
-agreement in the same call — payment to the provider, or burned by the owner.
-For a virtual
-provider, activation also raises the `until` of any snapshotted member that has
+provider, at least `k` of its members' — **activates** it. Only `checkpoint`,
+never `extend_checkpoint`: a checkpoint is the owner attesting the latest
+state, off-chain commitments included, and that is what the new set must have
+proven before it takes over; signatures over an old snapshot prove nothing
+about the data since. Activation therefore needs the owner. The record becomes the
+new agreement with the fixed `expires_at` (bumping `cur_until` as any agreement
+creation does). The old one settles as `extend_agreement` step 1 does: elapsed
+period paid to the old provider (a virtual's snapshotted members, equal split),
+unelapsed remainder moved into the successor's escrow next to the payment for
+`additional_duration`. The successor serves the rest of the old stretch at the
+old price and the added stretch at the new one. As with an extension, the owner
+pays once for every block and the provider is paid for every block served.
+Activation requires
+the old agreement to be live; if it expires first, the pending successor never
+activated: the old agreement settles as usual (its provider served the whole
+term), the successor's payment is released to the owner (nobody served the
+added stretch, nobody was liable for it), and `ReplacementExpired` is emitted.
+Any sync work the successor's provider did is unpaid — the graceful failure
+when the new set does not sign — or when the owner never submits the
+checkpoint. An owner can make a set sync for nothing; the provider's defence is
+`accepting_extensions` / `set_extensions_blocked`, which gate replacements
+too. Activation by checkpoint is what makes the
+handover safe: the new set becomes liable, and paid, only once it has signed
+the tip, so the client never pays for a guarantee it does not hold and there is
+no block in which nobody is liable. For a virtual provider, activation also raises the `until` of any snapshotted member that has
 since left (virtual-provider extension, "Changing a live agreement's member
 set").
 
@@ -916,7 +963,8 @@ original race), **replica sync price**, **stake** (it picked the provider for it
 backing), and — for a virtual provider — its **composition** (a member leaving
 drops redundancy, e.g. `3`-of-`4` → `3`-of-`3`, even at unchanged `stake`; see the
 virtual-provider extension). So `ProviderInfo.version` bumps on `price ↑`,
-`replica_sync_price ↑`, `stake ↓`, or a virtual member leaving; strictly-better
+`replica_sync_price ↑`, `stake ↓`, or (virtual providers) a member leaving or
+`k` rising; strictly-better
 changes (price ↓, stake ↑, a member joining) never bump.
 
 Deliberately, **none of those figures travel inside the signed quote** — they are
@@ -1177,6 +1225,32 @@ pub enum Event<T: Config> {
         new_expires_at: BlockNumberFor<T>,
         payment: BalanceOf<T>,
     },
+    /// Owner stored a pending successor ("Replacement agreements").
+    ReplacementCreated {
+        bucket_id: BucketId,
+        provider: T::AccountId,
+        agreement_id: u64,
+        expires_at: BlockNumberFor<T>,
+        payment_locked: BalanceOf<T>,
+    },
+    /// A checkpoint activated the successor: the old agreement settled
+    /// (`payment_to_provider` for its elapsed period), the new one is live.
+    ReplacementActivated {
+        bucket_id: BucketId,
+        provider: T::AccountId,
+        old_agreement_id: u64,
+        agreement_id: u64,
+        expires_at: BlockNumberFor<T>,
+        payment_to_provider: BalanceOf<T>,
+    },
+    /// The predecessor settled before the successor activated; the
+    /// successor's payment returned to the owner.
+    ReplacementExpired {
+        bucket_id: BucketId,
+        provider: T::AccountId,
+        agreement_id: u64,
+        refunded: BalanceOf<T>,
+    },
     AgreementOwnershipTransferred {
         bucket_id: BucketId,
         provider: T::AccountId,
@@ -1346,7 +1420,7 @@ impl<T: Config> Pallet<T> {
     /// - `stake`: Initial stake to lock (must meet minimum, provides sybil resistance)
     ///
     /// Initialises `cur_until = 0`, `higher_stake_lock = { stake: 0, until: 0 }`,
-    /// `version = 0`.
+    /// `version = 0`, `last_stake_event = None`.
     #[pallet::weight(...)]
     pub fn register_provider(
         origin: OriginFor<T>,
@@ -1692,6 +1766,8 @@ impl<T: Config> Pallet<T> {
     /// Actual payment = provider.price_per_byte * additional_bytes * remaining_duration.
     /// Fails with `ProviderVersionMismatch` if `expected_version != provider.version`
     /// (see "Term Pinning") — the pin replaces a `max_payment` bound here too.
+    /// Fails with `ReplacementPending` while a replacement is pending (its
+    /// payment was computed for the current `max_bytes`).
     #[pallet::weight(...)]
     pub fn top_up_agreement(
         origin: OriginFor<T>,
@@ -1702,9 +1778,17 @@ impl<T: Config> Pallet<T> {
     ) -> DispatchResult;
 
     /// Store a pending successor for a live agreement (**owner only**); see
-    /// "Replacement agreements". Fails if one is already pending. The successor
-    /// activates only while this agreement is live; otherwise it ends with it
-    /// and settles as expired.
+    /// "Replacement agreements". Gated like `extend_agreement`:
+    /// `expected_version`, accepting extensions (global and per agreement),
+    /// `min_duration` on a nonzero `additional_duration`, `max_duration` on
+    /// the successor's `expires_at − now`. No new quote. `additional_duration`
+    /// may be 0: a pure provider-set swap.
+    /// Blocks `extend_agreement` and `top_up_agreement` on this agreement
+    /// until activated or settled; cannot be cancelled. Locks the payment for
+    /// `additional_duration` at the current price. Fails if one is already
+    /// pending. The successor activates only while this agreement is live;
+    /// otherwise it lapses when this agreement settles and its payment is
+    /// released to the owner.
     pub fn create_replacement(
         origin: OriginFor<T>,
         bucket_id: BucketId,
@@ -1716,11 +1800,20 @@ impl<T: Config> Pallet<T> {
     /// Extend agreement duration (**owner only**).
     /// Only while the agreement is live — an expired one settles via
     /// `end_agreement` / `claim_expired_agreement`, never here.
-    /// 1. Settles current period: pays provider for elapsed time out of
-    ///    escrow, capped at the agreement's `payment_locked`
-    /// 2. Locks new payment for the extension at current provider terms
-    /// 3. Updates end date to now + additional_duration
+    /// 1. Settles the elapsed period: pays the provider
+    ///    `payment_locked × (now − started_at) / (expires_at − started_at)` out
+    ///    of escrow and sets `started_at = now`. Pro-rata of the escrow, so no
+    ///    price is stored and an escrow that mixes stretches at different
+    ///    prices settles exactly over the whole term.
+    /// 2. Locks new payment for `additional_duration` at the current price;
+    ///    the unelapsed remainder stays in escrow for the original stretch
+    /// 3. `expires_at += additional_duration`
     /// 4. Re-snapshots the provider's current terms into the agreement
+    ///
+    /// The owner pays once for every block. Step 1 pays the provider at every
+    /// extension, and the remaining term after the call is bounded (below), so
+    /// the provider is paid at least once per `max_duration` regardless of how
+    /// many extensions.
     ///
     /// **Owner-only** — extension is NOT permissionless. Step 1 pays the elapsed
     /// portion out to the provider, so if a third party (or the provider itself)
@@ -1743,7 +1836,11 @@ impl<T: Config> Pallet<T> {
     ///
     /// Also fails if:
     /// - The agreement has expired (`AgreementExpired`)
-    /// - Duration below provider's min_duration or above max_duration
+    /// - A replacement is pending (`ReplacementPending`): its expiry and
+    ///   payment were fixed against this agreement's current term
+    /// - `additional_duration` is below the provider's `min_duration`, or the
+    ///   remaining term after the call, `expires_at − now`, is above its
+    ///   `max_duration`
     /// - Provider has globally paused extensions (settings.accepting_extensions == false)
     /// - Provider has blocked extensions for this specific bucket (agreement.extensions_blocked == true)
     /// - `expected_version != provider.version` (`ProviderVersionMismatch`)
@@ -1815,15 +1912,8 @@ impl<T: Config> Pallet<T> {
     /// reason to be wary of early-termination-with-burn unless it also *ends* the
     /// agreement's obligations.)
     /// 
-    /// **Should we have early termination for primaries?**
-    /// Admin could use ability to remove hostile or misbehaving primary
-    /// providers. Without this, a malicious primary could hold the bucket
-    /// hostage until expiry. Primary providers are admin-controlled for write
-    /// coordination; admin must maintain control over who can accept writes. I
-    /// think we can avoid this, by just having the number of allowed providers
-    /// high enough, to make this scenario highly unlikely. Alternatively, we
-    /// could enable early termination for primaries, but it should be
-    /// exceptional: Burn not pay & only if at capacity for example.
+    /// Early termination of primaries by the admin is an open question (see
+    /// "Open Questions").
     /// 
     /// **Replicas cannot be early-terminated:** There's no use case, and allowing
     /// it would violate the principle of least surprise. A business checking on a
@@ -1865,7 +1955,8 @@ impl<T: Config> Pallet<T> {
     ///
     /// Origin: the provider, with `approvals` empty; for a virtual provider,
     /// any live member, with `approvals` carrying member signatures over the
-    /// refund and the virtual's `governance_nonce` that together hold a
+    /// governance payload (virtual account, `governance_nonce`, the refund)
+    /// that together hold a
     /// seniority majority (virtual-provider extension, "Payment" and
     /// "Membership Governance").
     ///
@@ -1937,7 +2028,8 @@ impl<T: Config> Pallet<T> {
     /// Providers added this way become liable for the snapshot state. For a
     /// virtual primary, either its whole group at ≥`k` in one call, or further
     /// members of a group that already reached `k` in this snapshot
-    /// (virtual-provider extension, "Checkpoints").
+    /// (virtual-provider extension, "Checkpoints"). Never activates a pending
+    /// replacement: only a fresh `checkpoint` does ("Replacement agreements").
     pub fn extend_checkpoint(
         origin: OriginFor<T>,
         bucket_id: BucketId,
@@ -2220,8 +2312,6 @@ pub enum EndAction {
 pub enum RemovalReason {
     /// Provider was slashed for failing a challenge
     Slashed,
-    /// Admin terminated agreement early - iff we end up wanting this - see previous comment.
-    AdminTerminated,
     /// Agreement expired naturally
     Expired,
 }
@@ -2465,7 +2555,7 @@ requested, adding only `valid_until`.
 The quote carries no price and no version. When redeeming, the client passes
 the version at which it read the provider's terms as `expected_version`; the
 chain reads price, replica sync price and stake from the provider and fails with
-`ProviderVersionMismatch` if that version has moved (see "Term Pinning").
+`ProviderVersionMismatch` if that version changed (see "Term Pinning").
 
 Response (200 OK):
 {
@@ -3057,3 +3147,12 @@ unchanged.
 ---
 
 ## Open Questions
+
+- **Early termination of primaries by the admin.** Primaries are
+  admin-controlled for write coordination, so the admin must keep control over
+  who accepts writes; without early termination a hostile or misbehaving
+  primary keeps its slot until expiry. `MaxPrimarySlots` may make that rare
+  enough to ignore. If it is added, it should be exceptional: burn, not pay,
+  and only when the bucket is at capacity. Not in the design today; the
+  pallet still has `RemovalReason::AdminTerminated` and an early-termination
+  path in `end_agreement`, to be removed.
