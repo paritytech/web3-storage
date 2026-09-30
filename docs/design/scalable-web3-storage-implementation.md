@@ -612,6 +612,19 @@ pub struct StorageAgreement<T: Config> {
     pub started_at: BlockNumberFor<T>,
     /// Owner-created successor, not yet live ("Replacement agreements").
     pub pending_replacement: Option<PendingReplacement<T>>,
+    /// `Some` for a virtual provider: the members liable for this agreement
+    /// and their slice (virtual-provider extension). `None` for a physical one.
+    pub virtual_snapshot: Option<VirtualSnapshot<T>>,
+}
+
+/// What a virtual provider's agreement holds liable (virtual-provider
+/// extension): the members snapshotted when the agreement was struck and the
+/// slice each of them is slashed for. Fixed for the agreement's lifetime.
+pub struct VirtualSnapshot<T: Config> {
+    /// Liable members, in checkpoint slot order.
+    pub members: BoundedVec<T::AccountId, T::MaxPhysicalMembers>,
+    /// `per_provider_stake` in force at creation.
+    pub per_provider_stake: BalanceOf<T>,
 }
 
 #[derive(Clone, Encode, Decode, TypeInfo, MaxEncodedLen)]
@@ -705,9 +718,11 @@ pub struct ReplicaTerms<Balance, BlockNumber> {
 
 /// Next expected `AgreementTerms.nonce` for this owner. Redemption requires an
 /// exact match (`NonceMismatch`) and advances the counter by one, so a signed
-/// quote is redeemable at most once, in the order it was requested. Keyed by
-/// owner, not provider, so replay protection does not depend on a provider's
-/// registration and nothing has to outlive deregistration.
+/// quote is redeemable at most once, in the order it was requested. A quote
+/// whose predecessor was never redeemed is re-requested; a quote costs nothing
+/// until redeemed. Keyed by owner, not provider, so replay protection does not
+/// depend on a provider's registration and nothing has to outlive
+/// deregistration.
 #[pallet::storage]
 pub type AgreementNonces<T: Config> =
     StorageMap<_, Blake2_128Concat, T::AccountId, u64, ValueQuery>;
@@ -886,12 +901,13 @@ a fresh `agreement_id`, the provider's stake — for a virtual provider also its
 `old.expires_at + additional_duration`, and the payment for
 `additional_duration` at the current price, held. `additional_duration` may be
 0 (a pure provider-set swap, the virtual-provider case). It needs no new quote
-and is gated like `extend_agreement`: rejected if `expected_version` changed,
-and, for a nonzero `additional_duration`, if the provider is not accepting
-extensions (globally, or `extensions_blocked` on this agreement), if it is
-below the provider's `min_duration`, or if the successor's `expires_at − now`
-exceeds its `max_duration`. A zero-duration replacement adds no term, so the
-extension gates do not apply: a provider-set swap is always possible. While it
+and is gated exactly like `extend_agreement`, zero duration included: rejected
+if `expected_version` changed, if the provider is not accepting extensions
+(globally, or `extensions_blocked` on this agreement), if a nonzero
+`additional_duration` is below the provider's `min_duration`, or if the
+successor's `expires_at − now` exceeds its `max_duration`. The extension gates
+are the provider's defence against an owner that makes a set sync again and
+again without ever activating (see below). While it
 is pending, `extend_agreement` and `top_up_agreement` on the old agreement are
 rejected (the successor's expiry and payment are fixed against the current
 term), and there is no cancel: the successor's provider may already have
@@ -1793,7 +1809,7 @@ impl<T: Config> Pallet<T> {
         origin: OriginFor<T>,
         bucket_id: BucketId,
         provider: T::AccountId,
-        duration: BlockNumberFor<T>,
+        additional_duration: BlockNumberFor<T>,
         expected_version: u32,
     ) -> DispatchResult;
 
