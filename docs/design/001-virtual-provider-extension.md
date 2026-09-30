@@ -72,6 +72,9 @@ struct VirtualProvider<T: Config> {
     /// Incremented by every governance change; approval signatures cover it,
     /// so an approval cannot be replayed (see "Membership Governance").
     governance_nonce: u32,
+    /// Creator; holds the storage deposit for the virtual's records until
+    /// dissolution, even after leaving.
+    depositor: T::AccountId,
 }
 
 /// Entry of `ProviderVirtuals[member]`: one per virtual provider the member is
@@ -128,13 +131,13 @@ A member need not accept any direct business: it sets `accepting_primary = false
 
 The virtual's own `stake` holds nothing and needs no lock. Changing `per_provider_stake` through `set_virtual_settings`: raising requires every live member's stake to cover the new value; lowering writes `higher_pps_lock = (old, cur_until)` and is rejected while a previous lock is unexpired — the base stake-lowering rule, applied to the figure members are actually bound to.
 
-**`k` is a strict majority.** Any two valid bundles then share a signer, so the group cannot split into two disjoint sets producing conflicting commitments, checkpoints or governance decisions — each backed by the full advertised `stake`, which only one of them can cover.
+**`k` is a strict majority.** Any two valid bundles then share a signer, so the group cannot split into two disjoint sets producing conflicting commitments or checkpoints — each backed by the full advertised `stake`, which only one of them can cover. Governance has its own threshold ([Membership Governance](#membership-governance)).
 
 **Slashing cascades to a member's other backings.** A member's stake is shared across everything it backs. Losing `per_provider_stake` here lowers what remains; if the remainder falls below another virtual's `per_provider_stake`, the member can no longer cover that slice and is **auto-removed from that virtual's live `members`** (affecting only new agreements — existing ones keep their snapshot and the member's residual liability). A member slashed for its *own* direct agreement loses its whole stake and is auto-removed from all its virtuals. The cascade *is* the team-vetting incentive: a member bears the risk of whom it pools with.
 
-Auto-removal changes membership only; `k` and `stake` stay. If it leaves `n < k`, the virtual stops accepting agreements until the seniority majority admits a member or lowers `stake` ([Membership Governance](#membership-governance)). The removed member's `ProviderVirtuals` entry turns `Leaving`; it stays bound to the agreements that name it.
+Auto-removal changes membership only; `k` and `stake` stay. If it leaves `n < k`, the virtual stops accepting agreements until the seniority majority admits a member or lowers `stake` ([Membership Governance](#membership-governance)) — unless it is empty, which is terminal. The removed member's `ProviderVirtuals` entry turns `Leaving`; it stays bound to the agreements that name it.
 
-**The last member is not removed.** An empty virtual could not govern, so at `n = 1` the member stays — with stake below the slice and the virtual not accepting — and, holding all the weight, lowers the figures or dissolves. Its live agreements keep their snapshotted figures.
+**An empty virtual is terminal.** Removal has no exception, so every live member always holds at least the slice, and the last member can go too — slashed out or leaving. A virtual with no members accepts no agreements and takes no joins; its live agreements run to expiry on their snapshots and the members' `Leaving` entries. Once it has no live agreement and no open challenge, anyone may dissolve it ([Dissolution](#dissolution)).
 
 **Clients learn about a slash from provider state, not (only) the event log.** Both a slash of the provider itself and (for a virtual) a slash of one of its members elsewhere bump `ProviderInfo.last_stake_event`. A client returning after arbitrary downtime walks its own agreements, reads each provider's field, and compares against the last block it checked, bounded by its agreement count. The field is deliberately coarse: it reports that backing *may* have been reduced, not that any particular agreement lost any. To determine actual exposure the client reads the agreement's snapshotted signer set and those members' current stake, which the `provider_agreements` runtime API returns per agreement ([On-Chain Changes](#on-chain-changes)). A member slashed elsewhere leaves live agreements naming it under-backed relative to their snapshot even when the virtual's own advertised `stake` is unchanged — which is why the bump is not conditional on `stake` moving.
 
@@ -163,6 +166,10 @@ The base "immediate guarantee from one signature" ([design doc](./scalable-web3-
 3. Once it holds ≥`k` signatures it returns the **bundle** — the client's guarantee — with every signature collected so far, and hands the same bundle to every member, so each signer holds proof of its co-signers ([Stake and Slashing](#stake-and-slashing)). Waiting briefly past `k` for stragglers trades latency for backing; a group setting, not a protocol rule. A member that keeps missing the bundle bears less risk for the same pay; coordinators (chosen per write, so rotating) see this, and signer sets are on-chain in every checkpoint and challenge response.
 
 **If collection stalls** (member down, or coordinator withholds): a sub-`k` bundle is not a commitment, so the client simply retries via a *different* coordinator (data is idempotent). A coordinator can withhold but not forge — every signature is checked against member keys by client and chain.
+
+### Quotes
+
+A quote (`AgreementTerms`) binds the provider to a new agreement, so for a virtual provider it needs the group's consent in the same form as a commitment: at least `k` signatures of its live `members`, which the new agreement snapshots. The member serving `/negotiate` collects them before responding. One stolen key cannot commit the group to an agreement. Every base call that takes one provider's signature takes a `ProviderSignatures` set for this reason — one entry for a physical provider, at least `k` members for a virtual one; checkpoints, which combine several providers, take flat pairs under the same per-provider rule, and `extend_challenge` adds further members to a challenge that already has ≥`k` ([impl doc "Provider Public Key & Signature Type"](./scalable-web3-storage-implementation.md#provider-public-key--signature-type)).
 
 ### Checkpoints
 
@@ -198,12 +205,16 @@ The chain assigns no duty. It records one figure per member and virtual provider
 
 Unchanged from base ([Challenge Game](./scalable-web3-storage.md#the-challenge-game)): the virtual account is the `provider`; tiering and the ≥50% floor apply. The responding member pays its response fee and is reimbursed from the challenger's deposit exactly as a physical provider is. Whatever it bears stays with it and is added to its `response_cost_borne`; the response order, not redistribution, shares the cost. The agreement's payment is no source for it — it settles at expiry and may be burned entirely.
 
+### Replicas
+
+A virtual provider can hold replica agreements like any provider. Its liability as a replica is its last confirmed sync, so `confirm_replica_sync` takes the same group consent: at least `k` signatures of the agreement's snapshot over the `roots` array, submitted by any snapshotted member. The accepted signers are stored with the sync in `last_sync_signers` (a bitmask over the snapshot, like a checkpoint's slots), and a failed `challenge_replica` against that sync slashes them; any snapshotted member may respond. The per-sync `sync_price` is paid into the same escrow as the rest of the agreement and split with it, equally among the snapshot ([Payment](#payment)).
+
 ### Residual key-theft surface
 
 Threshold commitments close the forged-commitment path. What one stolen member key can still do, all short of a slash:
 
 - **not respond** → another snapshotted member answers;
-- **forge a replica sync** → hits only that member's *own* replica agreements, not the `k`-signed virtual commitments;
+- **forge a replica sync** → only for that member's *own* replica agreements; a virtual provider's sync needs `k` signatures;
 - **trigger governance** → needs a seniority majority ([Membership Governance](#membership-governance)).
 
 So a stolen key can degrade service but cannot slash — the concrete gain over a lone provider.
@@ -214,6 +225,8 @@ So a stolen key can degrade service but cannot slash — the concrete gain over 
 
 Each agreement's payment accrues to the synthetic account and is split **equally among the members it snapshotted** — natural, since they store the same data and risk the same `per_provider_stake`. Challenge-response fees are not redistributed here — they stay with the member that paid them, and the response order evens them out over time ([Who answers](#who-answers)).
 
+A **refund** (base `refund_agreement`) gives the snapshotted members' payment back to the client, so it needs a seniority majority of the current members; members that left lose their share without a vote. It is the group's way out when a snapshotted member will not sign and the group cannot deliver, where the replacement flow is the client's.
+
 Payment follows the snapshot, period: a member named in an agreement is paid for it whether it later left, was kicked, or was auto-removed — it carried the liability. Kicking a **freeloader** (never signs / never responds) therefore changes nothing already struck; it only keeps the member out of future agreements. Since a kick cannot take money, a majority gains nothing by kicking an honest member. The remaining signal is reputational — a kicked-count on the provider's own record, so other groups can see it before admitting it; its exact shape is open.
 
 ---
@@ -222,7 +235,13 @@ Payment follows the snapshot, period: a member named in an agreement is paid for
 
 Changes to the **live `members`** set affect only *future* agreements — existing agreements keep their snapshot ([Model](#model)). So membership churns freely; the only invariant is that `k` stays a strict majority of `members.len()`, checked on joins and settings changes. **Agreements are rejected while `members.len() < k`** — the group cannot deliver its advertised `stake`. That state is normal at creation, and it is how independent providers find each other: an open, under-`k` virtual advertises the slice and the target it wants filled.
 
-**Two thresholds.** Liability is by count: a commitment needs `k` signatures, one slice each, and a newcomer's slice is worth the same as a veteran's. Governance — settings, join, kick, dissolve — is by **seniority**: a member's weight is the blocks it has been `Active` in this virtual, and a change passes when its approvers hold more than half of all current members' weight. Approvals are member signatures over the proposed change and a per-virtual governance nonce, gathered between provider nodes the way commitment signatures are and submitted in the call by any member; the pallet sums the signers' weight. (The `coordination_channel` is for the people behind the nodes; an operator app with a chat is planned as the default.) Fork-safe like a count majority: two disjoint sets cannot both exceed half. Unanimity below `k` would already keep an under-`k` group able to act; seniority additionally means a newcomer holds nothing until it has earned parity block for block, so nobody can join a valuable virtual and hold it hostage. Seniority lives in the member's `ProviderVirtuals` entry (`seniority` accrued, `since` the current `Active` stretch started), frozen while `Leaving`: a member that leaves and rejoins keeps it as long as it keeps the slot; pruning the entry burns it. A creator holds all the weight while alone and loses control as others accrue — from three members on, the group outgrows it; in a pair the first member stays dominant, which is the tie-break a pair needs, and the junior's protection is that it can leave. A market for seniority can be added later without changing this.
+**Two thresholds.** Liability is by count: a commitment needs `k` signatures, one slice each, and a newcomer's slice counts the same as a veteran's. Governance — settings, join, kick, refund, dissolve — is by **seniority**.
+
+- **Weight.** A member's weight is the number of blocks it has been `Active` in this virtual. It is stored in the member's `ProviderVirtuals` entry and frozen while `Leaving`, so a member that leaves and rejoins keeps it, as long as the entry still exists.
+- **Decision.** A change passes when its approvers hold more than half of the current members' total weight. Two disjoint sets cannot both hold more than half, so conflicting decisions cannot both pass.
+- **Approvals.** Members sign the proposed change together with the virtual's `governance_nonce`. The provider nodes collect the signatures, as they do for commitments, and any member submits them with the call; the pallet adds up the signers' weight. The `coordination_channel` is where the operators discuss changes; an operator app with a chat is planned as the default.
+- **Why seniority.** A newcomer has no weight until it has been a member for as long as the others, so nobody can join a valuable virtual and block its decisions.
+- **Effect over time.** A creator holds all the weight while alone and loses control as others accrue. From three members on, the group outweighs it. In a pair the first member stays dominant; a pair needs some tie-break, and the junior can always leave.
 
 **A member leaving bumps the provider's `version`** (base [Term Pinning](./scalable-web3-storage-implementation.md)). Composition is part of what a client buys: `3`-of-`4` is more resilient than `3`-of-`3` even at identical `k` and `stake` (one more member can go dark before the group can't cover). So a departure is a worse-terms change a client may have declined, and its pinned request/extension correctly fails. A join (more redundancy, strictly better) does not bump.
 
@@ -233,13 +252,13 @@ Two liabilities to separate:
 
 ### Create / join / kick
 
-- **Create:** a `Physical` provider calls `create_virtual` with `stake` (a multiple of `per_provider_stake`), `per_provider_stake` and the coordination channel; the pallet derives the synthetic account, registers a `Virtual` `ProviderInfo`, and writes the caller as sole member — under `k` until enough members join.
+- **Create:** a `Physical` provider calls `create_virtual` with `stake` (a multiple of `per_provider_stake`), `per_provider_stake` and the coordination channel; the pallet derives the synthetic account, registers a `Virtual` `ProviderInfo`, writes the caller as sole member — under `k` until enough members join — and holds a storage deposit for the virtual's records from the creator, released to it at dissolution.
 - **Join** (`join_virtual`): the candidate's signature plus a seniority-majority approval. Candidate must be `Physical` with `stake >= per_provider_stake`, below `MaxVirtualsPerProvider` (expired `Leaving` entries pruned first); rejected if it would make `k` a non-majority. A rejoin resumes the candidate's kept seniority.
 - **Kick** (seniority majority; the target's weight counts in the total, so a member holding more than half cannot be kicked): moves the member to `Leaving`. No challenge freeze — a kicked member keeps its residual liability, so nothing is shed.
 
 ### Leaving
 
-A member can always leave, alone, with `leave_virtual` — the one membership change that needs no approval, so nobody is held hostage. It moves to `Leaving`; `k` and `stake` stay, and if the group is now under `k` it stops accepting until it recruits or lowers `stake`. The leaver drops out of signing immediately but stays bound to what it already backs until expiry — never worse off than a lone provider. Because clients contracted with the *virtual* account, this churn never breaks the client-facing "data stays until expiry".
+A member can always leave, alone, with `leave_virtual` — the one membership change that needs no approval, so nobody is held hostage. It moves to `Leaving`; `k` and `stake` stay, and if the group is now under `k` it stops accepting until it recruits or lowers `stake`; if the leaver was the last member, the virtual is empty and terminal. The leaver drops out of signing immediately but stays bound to what it already backs until expiry — never worse off than a lone provider. Because clients contracted with the *virtual* account, this churn never breaks the client-facing "data stays until expiry".
 
 ### Changing a live agreement's member set
 
@@ -255,7 +274,7 @@ So a client starts a swap early enough for the new set to sync before the old ag
 
 ### Dissolution
 
-Seniority-majority approved once the synthetic account has no live agreement (`committed_bytes == 0`) and no open challenge: removes the `VirtualProviders` entry, the synthetic `ProviderInfo`, and the `Active` entries in its members' `ProviderVirtuals` (`n ≤ 4` writes). `Leaving` entries are all expired by then and are pruned by their owners' next call. No funds move — nothing was escrowed.
+A virtual provider can be dissolved once it has no live agreement (`committed_bytes == 0`) and no open challenge. Normally a seniority majority decides; an empty virtual can be dissolved by anyone. Dissolution removes the `VirtualProviders` entry, the synthetic `ProviderInfo` and the members' `Active` entries, and returns the creator's storage deposit, even if the creator has left. No other funds are held.
 
 ---
 
@@ -271,7 +290,7 @@ Clients select on **stake**, unchanged — virtual-ness is not a selection axis 
 
 - `ProviderInfoResponse` gains a physical/virtual discriminant. A virtual provider already reports its `stake` in the existing field (so stake sorting/matching works unchanged); it adds `per_provider_stake`, `k` and `member_count`.
 - Member accounts (and voluntary jurisdiction attestations) may optionally be exposed as transparency — granularity is a per-deployment choice, defaulting to count + aggregate (independence is provider-self-attested in the base design anyway).
-- `find_matching_providers` needs no virtual-specific scoring — a virtual provider competes on aggregate stake like any other.
+- Discovery ranks providers off-chain (base impl doc "Runtime API"); a virtual provider needs no special handling there — it competes on its `stake` like any other.
 
 ---
 
@@ -282,30 +301,22 @@ Concrete additions the base pallet needs. All additive — `Physical` behaviour 
 | Area | Change |
 |---|---|
 | `ProviderInfo` | `multiaddr` becomes `endpoint: ProviderEndpoint<T>` (`Physical(multiaddr)` \| `Virtual`) — the tag is the discriminant. A virtual provider's base `stake` field holds `k * per_provider_stake`, written only by `set_virtual_settings`. New `last_stake_event: Option<BlockNumberFor<T>>` (see [Stake and Slashing](#stake-and-slashing)). |
-| `VirtualProviders` map | New `StorageMap<AccountId, VirtualProvider<T>>` (`per_provider_stake`, `higher_pps_lock`, member accounts, coordination channel, `governance_nonce`), keyed by the synthetic account; loaded only when members are needed. Invariants: `stake` a multiple of `per_provider_stake`, `k` a strict majority of `members.len()`. The pallet writes the virtual's `stake` field only from `set_virtual_settings`, without the base `set_stake` bookkeeping, so its `cur_until` is never reset and is the max expiry over its live agreements. |
+| `VirtualProviders` map | New `StorageMap<AccountId, VirtualProvider<T>>` (`per_provider_stake`, `higher_pps_lock`, member accounts, coordination channel, `governance_nonce`, `depositor`), keyed by the synthetic account; loaded only when members are needed. Invariants: `stake` a multiple of `per_provider_stake`, `k` a strict majority of `members.len()`. The pallet writes the virtual's `stake` field only from `set_virtual_settings`, without the base `set_stake` bookkeeping, so its `cur_until` is never reset and is the max expiry over its live agreements. |
 | `StorageAgreement` (virtual) | Additionally snapshots the **member set** and `per_provider_stake` in force at creation/extension (base already snapshots `agreement_id`, price, stake). Liability and the set of eligible responders resolve against this snapshot, not the live set. |
 | Synthetic account | `PalletId` + virtual-provider id (treasury-style), so all `AccountId`-keyed extrinsics/queries work unchanged. |
-| New extrinsics | `create_virtual`, `join_virtual`, `leave_virtual` (the leaver alone), `kick_member`, `set_virtual_settings`, `dissolve_virtual` — all but `create_virtual` and `leave_virtual` approved by a seniority majority ([Membership Governance](#membership-governance)). `set_virtual_settings` takes `stake` and `per_provider_stake` together; lowering `per_provider_stake` sets `higher_pps_lock = (old, cur_until)` and is rejected while a previous lock is unexpired, raising requires every live member's stake to cover the new value. Enforce `stake` a multiple of `per_provider_stake`, `k` a strict majority of `members.len()`, `Providers[m].stake >= per_provider_stake` per member, `MaxVirtualsPerProvider` on the candidate (expired `Leaving` entries pruned first), and reject a `Virtual` candidate. |
+| New extrinsics | `create_virtual`, `join_virtual`, `leave_virtual` (the leaver alone), `kick_member`, `set_virtual_settings`, `dissolve_virtual` — all but `create_virtual`, `leave_virtual` and the dissolution of an empty virtual approved by a seniority majority ([Membership Governance](#membership-governance)); `join_virtual` is rejected for an empty virtual. `set_virtual_settings` takes `stake` and `per_provider_stake` together; lowering `per_provider_stake` sets `higher_pps_lock = (old, cur_until)` and is rejected while a previous lock is unexpired, raising requires every live member's stake to cover the new value. Enforce `stake` a multiple of `per_provider_stake`, `k` a strict majority of `members.len()`, `Providers[m].stake >= per_provider_stake` per member, `MaxVirtualsPerProvider` on the candidate (expired `Leaving` entries pruned first), and reject a `Virtual` candidate. |
 | Agreement creation (virtual) | Rejected while `members.len() < k`. |
-| Commitment verification | For a virtual account, verify a **`k`-signature bundle** (signers ∈ the `agreement_id`'s snapshotted set) over `CommitmentPayload` instead of a single signature. |
+| Provider signatures | Base `ProviderSignatures` set on every call that takes one provider's signature (checkpoints and `extend_challenge` take flat pairs, see `checkpoint`): for a virtual account at least `k` distinct members, each verified against its own key. Member set: live `members` for the three redemption calls (quotes); the agreement's snapshot for `challenge_offchain` (commitments) and `confirm_replica_sync`. |
+| `confirm_replica_sync` (virtual) | Callable by any snapshotted member (`provider` names the virtual). Stores the accepted signers in `last_sync_signers`; a failed `challenge_replica` slashes them. |
 | `checkpoint` / `extend_checkpoint` | Signature format unchanged (`(AccountId, Signature)` pairs). Slots derived from `primary_providers`, a virtual expanded to its snapshotted members; a virtual's signatures per call are all-or-nothing (≥`k` or absent, else the call is rejected); `min_providers` is the popcount. The current snapshot's bits are adjusted in place when a virtual's snapshot changes, and `min_providers` is clamped to the layout size whenever the layout shrinks (removal, smaller re-snapshot), with an event. Signatures of a pending replacement's set are accepted only to activate it ([Changing a live agreement's member set](#changing-a-live-agreements-member-set)); activation is rejected if the new set would push the layout past `MaxPrimarySlots`. |
+| `refund_agreement` (virtual) | Base extrinsic; for a virtual account approved by a seniority majority of its current members ([Payment](#payment)). |
 | `extend_agreement` (virtual) | Rejected unless every snapshotted member is still in the live set; otherwise the owner creates a replacement (base mechanism, [impl doc](./scalable-web3-storage-implementation.md#replacement-agreements)). Also rejected if the re-snapshotted set would push the bucket's slot layout past `MaxPrimarySlots`. |
 | `Challenge` | No virtual-specific fields. Any member of the challenged agreement's snapshot may respond; who goes first is decided off-chain ([Who answers](#who-answers)). No membership freeze — liability is fixed by the agreement snapshot. |
 | `extend_challenge` | Base extrinsic, permissionless, mirroring `extend_checkpoint`: adds verified signatures over the challenged payload from the snapshotted set to an open off-chain challenge's liable set. Only adds accountability. |
 | Response transaction extension | Base change ([impl doc](./scalable-web3-storage-implementation.md#response-transaction-extension)). For a virtual account the eligible responders are the challenged agreement's snapshotted members. Duplicate responses are dropped at pool import and never charged, so members need no coordination to avoid racing. |
-| `respond_to_challenge` / `ChallengeSlashed` | On failure, slash every signer of the challenged bundle (or the checkpoint's set bits in the virtual's slots) by the snapshotted `per_provider_stake`; event lists them. After any slash, move to `Leaving` any member of a virtual's live set whose remaining stake `< per_provider_stake` (a direct-agreement slash zeroes its stake → all its virtuals); `k` and `stake` stay, and the last member is never removed. Bump `last_stake_event` on the slashed provider and on every virtual in its `ProviderVirtuals`. On a valid response, add the responder's non-reimbursed share to `response_cost_borne` in its entry. |
+| `respond_to_challenge` / `ChallengeSlashed` | On failure, slash every signer of the challenged bundle (or the checkpoint's set bits in the virtual's slots, or a replica sync's `last_sync_signers`) by the snapshotted `per_provider_stake`; event lists them. After any slash, move to `Leaving` any member of a virtual's live set whose remaining stake `< per_provider_stake` (a direct-agreement slash zeroes its stake → all its virtuals); `k` and `stake` stay; removing the last member leaves the virtual empty and terminal. Bump `last_stake_event` on the slashed provider and on every virtual in its `ProviderVirtuals`. On a valid response, add the responder's non-reimbursed share to `response_cost_borne` in its entry. |
 | `ProviderVirtuals` map | New `StorageMap<AccountId, BoundedVec<VirtualMembership<T>, MaxVirtualsPerProvider>>`: per virtual the member is `Active` in or `Leaving` from, with its `response_cost_borne` and seniority. Created by `join_virtual`; leave/kick/auto-removal set `Leaving { until: virtual.cur_until, stake_at_risk }` and freeze seniority (a replacement activating later raises `until`); a rejoin flips it back to `Active` and resumes it; `Active` entries removed by `dissolve_virtual`, `Leaving` ones pruned once `until` passed. Read on the slash path (cascade, `last_stake_event`), by `set_stake` and `deregister_provider`, and off-chain for the response order. A side map, not an inline `ProviderInfo` field, so it stays out of every provider's `MaxEncodedLen` and the cap is raiseable. |
 | `set_stake` / `deregister_provider` | Base extrinsics gain a check over the caller's `ProviderVirtuals` (≤2 entries): `set_stake` may not lower below any `Active` virtual's `per_provider_stake` (or its unexpired `higher_pps_lock`) nor any unexpired `Leaving.stake_at_risk`; `deregister_provider` is rejected while any such entry exists. Expired `Leaving` entries are pruned on the way. |
 | Config constants | `MaxPhysicalMembers` (4: two full virtuals fit in `MaxPrimarySlots`; defence is 4-way, while signing at `k = 3` tolerates one member down — the same as `n = 3`; two-fault signing would need `n = 5`, and two such virtuals more than 8 slots), `MaxVirtualsPerProvider` (2, see [Members](#members-are-registered-physical-providers)), `MaxCoordChannelLen` (`coordination_channel` is `BoundedVec`, not `String`). |
 | Runtime API | `provider_type` + virtual composition in `ProviderInfoResponse` ([Discovery](#discovery)). `provider_agreements` additionally returns each virtual agreement's snapshotted member set and `per_provider_stake`, so a client can assess its own exposure after a `last_stake_event` bump from state alone. |
 | Member stake release | A leaver's `stake_at_risk` stays locked until its `Leaving.until` — the virtual's `cur_until` when it left, raised by any replacement it is snapshotted in when that activates, an O(1) upper bound on the expiry of every agreement naming it ([Membership Governance](#membership-governance)). Then the entry is pruned and the stake is free; no announcement window. |
-
----
-
-## Non-Solutions Considered
-
-**Enforce encryption instead.**
-
-1. Not meaningfully enforceable at the protocol level.
-2. Would not even solve the problem: a provider can be ordered to take down *encrypted* content too.
-3. Enforcing encryption could read as willful blindness to a court and *increase* liability.
