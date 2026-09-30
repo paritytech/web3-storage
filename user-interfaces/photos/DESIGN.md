@@ -21,7 +21,7 @@ as the on-chain control plane.
 | --- | --- | --- |
 | Transport / signing | **Substrate-native only** (Polkadot extension + dev accounts) | Off-chain provider auth keeps working; no extra infra. |
 | Storage layer | **Layer 1 (drive registry)** | Directories give us **albums for free**, and the provider's `/fs` API + drive-ui's client are reusable. |
-| Contract calls | **PAPI `Revive` dispatchables** (`call`, `instantiate_with_code`), **viem for ABI only** | The CI-verified [`sc-api.js`](../../examples/papi/sc-api.js) / [`sc-team-drive.js`](../../examples/papi/sc-team-drive.js) pattern. |
+| Contract calls | **PAPI `Revive` dispatchables** (`call`, `instantiate_with_code`), **viem for ABI only** | The CI-verified [`sc-coverage.ts`](../../examples/papi/sc-coverage.ts) / [`sc-team-drive.ts`](../../examples/papi/sc-team-drive.ts) pattern. |
 | EVM JSON-RPC / MetaMask | **Out of scope** | Runtime is eth-rpc-ready (`runtimes/web3-storage-local/src/revive.rs`), so a MetaMask UX is a clean future follow-up. |
 | Architecture | **Layer 1 + custom `Photos` contract, contract-owned drive per user** | The contract creates/owns the drive via the **drive-registry precompile** (`0x…0902`) and anchors the album-tree root on-chain — a real job the bare registry doesn't do. |
 | Provider model | **Single user-chosen primary provider** per drive | Post-#97 `create_drive` opens a bucket + one primary atomically; the user picks the provider at creation. |
@@ -38,7 +38,7 @@ provider — so Layer 1 no longer abstracts away provider choice.
 The custom contract is still the headline integration: the **drive-registry precompile**
 (`IDriveRegistry`, `0x…09020000`) lets `Photos.sol` create and own a drive on the user's behalf
 and grant the user write access — exactly the pattern proven by
-[`SharedTeamDrive.sol`](../../examples/papi/sc-team-drive.js). On top of that, the contract stores
+[`SharedTeamDrive.sol`](../../examples/contracts/SharedTeamDrive.sol). On top of that, the contract stores
 each drive's current album-tree root CID on-chain (`setRoot`), which the drive registry itself
 does not track — giving the contract a genuine job and the app a demonstrable integrity property.
 
@@ -63,7 +63,7 @@ provider node  /fs/{bucketId}/…    holds the photo blobs, thumbnails, and the 
         (off-chain, browser ↔ provider; client-computed tree root anchored on-chain by the contract)
 ```
 
-Origin model (from [`smart-contracts.md`](../../docs/design/smart-contracts.md)): precompile calls dispatch as
+Origin model (from [`smart-contracts.md`](../../docs/drafts/smart-contracts.md)): precompile calls dispatch as
 `RawOrigin::Signed(contract_account)`, so the **contract** owns every user's drive. Per-user
 attribution lives in the contract (`driveOwner`). At creation the contract grants the user a
 **Writer** role on the drive (`shareDrive` → `set_member_internal` on the storage-provider
@@ -327,7 +327,7 @@ source, build, and deploy — lives **inside the app**, so Photos is self-contai
 
 ## Testing
 
-- **Integration** (the headless source of truth, mirroring [`sc-team-drive.js`](../../examples/papi/sc-team-drive.js)):
+- **Integration** (the headless source of truth, mirroring [`sc-team-drive.ts`](../../examples/papi/sc-team-drive.ts)):
   deploy `Photos` → `createLibrary(chosenProvider)` → `mkdir` an album → `PUT` photo + thumbnail →
   recompute the root locally → `setRoot` → re-list and assert the locally-recomputed root equals
   the on-chain anchor → `PUT` an edited photo (COW) → `setRoot` → assert library state, ownership, and the
