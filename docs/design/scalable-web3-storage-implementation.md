@@ -125,7 +125,7 @@ signs a checkpoint while the old one is still bound.
 Once established, agreements are binding for both parties until expiry:
 - **No early exit for providers**: Providers cannot voluntarily leave. They committed to store data for the agreed duration.
 - **No early cancellation for clients**: Clients cannot cancel and reclaim locked payment. They committed to pay for the agreed duration.
-- **Provider's protection**: Providers author every quote they sign — owner, quota, duration, a `valid_until` expiry, and the `provider_version` whose posted terms (price, stake) the quote is redeemable against — so nothing binds them that they didn't explicitly offer. They can also block future extensions via `set_extensions_blocked`.
+- **Provider's protection**: Providers author every quote they sign — owner, quota, duration and a `valid_until` expiry — and the price, sync price and stake applied at redemption are their own posted terms, so nothing binds them that they didn't explicitly offer. They can also block future extensions via `set_extensions_blocked`.
 - **Client's protection**: Clients can challenge if provider loses data (slashing). At settlement, clients can burn payment to signal poor service (burns cost an additional premium, making them a credible but costly signal).
 
 **Agreement expiry:**
@@ -349,11 +349,11 @@ pub struct ProviderInfo<T: Config> {
     /// The *only* verifiable capacity figure — the stake/bytes invariant is
     /// enforced against this, not the self-declared `max_capacity`.
     pub committed_bytes: u64,
-    /// Pins the provider-side terms an agreement is struck against. A signed
-    /// quote names the `provider_version` it was issued under and is redeemable
-    /// only while that is still current; `extend_agreement`/`top_up_agreement`
-    /// take it as `expected_version`. This is what removes the need for a
-    /// `max_payment` bound. Bumped on the worse-direction change to a term the
+    /// Pins the provider-side terms an agreement is struck against. Every call
+    /// that binds an owner to the provider's terms — the three redemption calls,
+    /// `extend_agreement`, `top_up_agreement` and `create_replacement` — takes the client's
+    /// `expected_version` and fails if it has moved. This is what removes the
+    /// need for a `max_payment` bound. Bumped on the worse-direction change to a term the
     /// quote/request doesn't carry explicitly: **price ↑**, **replica sync price
     /// ↑**, **stake ↓**, or (virtual providers) a member leaving. Duration,
     /// capacity and `accepting_*` are checked directly against the quote's
@@ -632,11 +632,11 @@ pub enum ProviderRole<T: Config> {
 /// (`"replica-term-v2:"`) — domain separation between the two flavours.
 ///
 /// The quote is a **consent token**, not a price carrier: it names *who* may
-/// redeem, *how much* and *how long*, and the `provider_version` under which
-/// the provider is willing to serve that. Every provider-side term — price,
+/// redeem, *how much* and *how long*. Every provider-side term — price,
 /// replica sync price, stake (and, for virtual providers, composition) — is
-/// read from `ProviderInfo` at redemption and guarded by the version pin, so
-/// there is exactly one source for those figures (see "Term Pinning").
+/// read from `ProviderInfo` at redemption and guarded by the client's
+/// `expected_version`, so there is exactly one source for those figures (see
+/// "Term Pinning").
 pub struct AgreementTerms<AccountId, Balance, BlockNumber> {
     /// Owner that will be bound by these terms (must match the extrinsic
     /// origin at redemption).
@@ -645,11 +645,6 @@ pub struct AgreementTerms<AccountId, Balance, BlockNumber> {
     pub max_bytes: u64,
     /// Agreement duration in blocks from activation.
     pub duration: BlockNumber,
-    /// `ProviderInfo.version` the quote was issued under. Redemption fails with
-    /// `ProviderVersionMismatch` if the provider's version has since moved —
-    /// i.e. the provider worsened its posted terms after quoting and thereby
-    /// voided its own outstanding quotes.
-    pub provider_version: u32,
     /// Block number after which the quote is no longer redeemable.
     pub valid_until: BlockNumber,
     /// Provider-chosen replay-protection nonce: a signed quote is redeemable
@@ -676,7 +671,8 @@ pub enum BucketTarget {
 
 /// Replica-specific parameters of a signed quote. The per-sync price is *not*
 /// here — it is `provider.settings.replica_sync_price` at redemption, pinned
-/// by `provider_version`, and snapshotted into `ProviderRole::Replica.sync_price`.
+/// by the client's `expected_version`, and snapshotted into
+/// `ProviderRole::Replica.sync_price`.
 pub struct ReplicaTerms<Balance, BlockNumber> {
     /// Balance held on the owner to fund per-sync confirmations. The
     /// pallet draws down the snapshotted `sync_price` from this on each
@@ -921,16 +917,19 @@ read from `ProviderInfo` at redemption. Snapshotting some terms from the provide
 and carrying others in the quote would give two sources of truth for what an
 agreement was struck against; the version pin makes a single source sufficient.
 
-The pin is checked in two places. `establish_storage_agreement` /
-`establish_replica_agreement` compare the provider-signed
-`terms.provider_version` against the current `version` — a provider that worsens
-its posted terms after quoting has voided its own outstanding quotes and must
-re-quote. `extend_agreement` and `top_up_agreement` are not quote-based and
-recompute payment at the current price, so they take a client-passed
-`expected_version`. Both fail with `ProviderVersionMismatch` if the current
-`version` differs. This closes the race where terms worsen between the client
-reading them and its extrinsic landing, and because it pins the price a separate
-`max_payment` bound is unnecessary anywhere.
+The pin is the client's, and it is checked the same way everywhere. Every call
+that binds an owner to the provider's terms — `create_bucket_with_primary`,
+`add_primary_provider`, `add_replica_provider`, `extend_agreement`,
+`top_up_agreement`, `create_replacement` — takes the version at which the client read those terms as
+`expected_version` and fails with `ProviderVersionMismatch` if the current
+`version` differs. The quote carries no version: the provider gains nothing from
+signing one, since whatever is applied at redemption is its own posted terms,
+and a client-supplied pin is enforced by the chain rather than depending on the
+client re-checking a provider-supplied value. A provider that worsens its terms
+after quoting still voids its outstanding quotes — the bump fails the client's
+pin. This closes the race where terms worsen between the client reading them and
+its extrinsic landing, and because it pins the price a separate `max_payment`
+bound is unnecessary anywhere.
 
 The one-directional bump (worse-only) means a client isn't spuriously rejected
 when the provider's terms got *better* between its read and submit (a price drop
@@ -1282,8 +1281,6 @@ structs into encode/decode-friendly shapes (e.g. `AccountId` as `Vec<u8>`,
 generics. `MatchedProvider` also carries a `match_score` (0–100) and an
 optional `PartialMatchReason` (price, capacity, duration, not-accepting) for
 the marketplace UI to surface why a provider didn't qualify.
-`ProviderInfoResponse` carries `deregister_at` so clients can tell a
-winding-down provider from an active one without a second storage read.
 Its historical counters are grouped separately, under a nested
 `stats: ProviderStatsInfo` — track record kept apart from settings and
 connection info, the one place this response doesn't fully flatten.
@@ -1549,11 +1546,11 @@ impl<T: Config> Pallet<T> {
     // - `terms.nonce` must not replay an already-redeemed quote
     //   (`NonceAlreadyUsed` / `NonceTooOld`; the window survives
     //   deregistration — see `ProviderReplayStates`)
-    // - `terms.provider_version == provider.version`
+    // - `expected_version == provider.version`
     //   (`ProviderVersionMismatch`; see "Term Pinning")
     // - the provider must be registered, within its duration bounds, and the
     //   added `terms.max_bytes` must fit its declared capacity
-    //   (`CapacityExceeded`) and stake (`InsufficientStakeForBytes`)
+    //   (`CapacityExceeded`)
     //
     // Payment `provider.settings.price_per_byte * terms.max_bytes *
     // terms.duration` is held on the owner. The price is read from the
@@ -1586,6 +1583,7 @@ impl<T: Config> Pallet<T> {
         provider: T::AccountId,
         terms: AgreementTerms<T>,
         sig: MultiSignature,
+        expected_version: u32,
         visibility: Visibility,
     ) -> DispatchResult;
 
@@ -1619,6 +1617,7 @@ impl<T: Config> Pallet<T> {
         provider: T::AccountId,
         terms: AgreementTerms<T>,
         sig: MultiSignature,
+        expected_version: u32,
     ) -> DispatchResult;
 
     /// Redeem provider-signed replica terms: open a replica agreement on an
@@ -1658,6 +1657,7 @@ impl<T: Config> Pallet<T> {
         provider: T::AccountId,
         terms: AgreementTerms<T>,
         sig: MultiSignature,
+        expected_version: u32,
     ) -> DispatchResult;
 
     /// Top up quota for an existing agreement (owner only).
@@ -2377,20 +2377,24 @@ Request:
   "bucket": 1234 | null,
   "max_bytes": "1073741824",
   "duration": 201600,
-  "price_per_byte": "1000",
-  "replica_params": null | { "sync_balance": 5000000000, "min_sync_interval": 0, "sync_price": 1000000 }
+  "replica_params": null | { "sync_balance": 5000000000, "min_sync_interval": 0 }
 }
 
 `bucket` is the bucket id the quote is for, or `null` for a bucket created at
 redemption; the node maps it to `BucketTarget`.
+
+The quote carries no price and no version. When redeeming, the client passes
+the version at which it read the provider's terms as `expected_version`; the
+chain reads price, replica sync price and stake from the provider and fails with
+`ProviderVersionMismatch` if that version has moved (see "Term Pinning").
 
 Response (200 OK): the signed `AgreementTerms` plus the provider's signature,
 to pass to `create_bucket_with_primary` (`bucket: null`),
 `add_primary_provider` (`bucket` set, `replica_params: null`) or
 `add_replica_provider` (both set).
 
-The provider rejects requests below its listed price, outside its duration
-bounds, or beyond its capacity, and rejects requests while deregistering.
+The provider rejects requests outside its duration bounds, beyond its capacity,
+or for a role it is not accepting.
 
 Download Node
 ─────────────
