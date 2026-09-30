@@ -15,4 +15,4 @@ cargo build -p storage-parachain-runtime --release --features runtime-benchmarks
 
 ## License
 
-Licensed under [GPL-3.0-only](../LICENSE-GPL3).
+Licensed under [GPL-3.0-only](../../LICENSE-GPL3).

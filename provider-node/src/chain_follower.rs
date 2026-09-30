@@ -199,62 +199,49 @@ fn parse_provider_lifecycle_events(
         .collect()
 }
 
-/// Match `event` against the `StorageProvider` events that affect
-/// [`ProviderLifecycleEvent`] and decode it against whichever one it is.
+/// Decode `event` into a [`ProviderLifecycleEvent`], or `None` if it is not one.
 ///
-/// A shape mismatch (a runtime whose event fields drifted from the bindings)
-/// is logged and skipped. For most of these events that is recoverable: the
-/// next relevant event still triggers a fresh `refresh_provider_state`. A
-/// missed `ProviderDeregistered` is the exception - a deregistered provider
-/// emits nothing further, so only the next reconnect's bootstrap refresh
-/// corrects it. The persisted nonce watermark is unaffected either way: its
-/// reset is gated on a successfully decoded `Deregistered` in
-/// `refresh_if_relevant_event`, so a missed decode simply leaves it as-is.
+/// A decode failure (event fields that differ from the bindings) is logged and
+/// skipped. The next relevant event triggers a new `refresh_provider_state`,
+/// except after `ProviderDeregistered`: then only the bootstrap refresh on
+/// reconnect corrects the state. The nonce watermark does not change, because
+/// `refresh_if_relevant_event` resets it only on a decoded `Deregistered`.
 fn lifecycle_event(
     event: &subxt::events::Event<'_, PolkadotConfig>,
 ) -> Option<ProviderLifecycleEvent> {
-    use storage_subxt::api::storage_provider::events::{
-        DeregisterAnnounced, DeregisterCancelled, ProviderDeregistered, ProviderMultiaddrUpdated,
-        ProviderRegistered, ProviderSettingsUpdated,
-    };
+    use storage_subxt::api::{storage_provider::Event as StorageProviderEvent, Event};
 
-    macro_rules! try_decode {
-        ($ty:ty, $deregistered:expr) => {
-            if let Some(result) = event.decode_fields_as::<$ty>() {
-                return match result {
-                    Ok(decoded) => Some(provider_lifecycle_event($deregistered, decoded.provider)),
-                    Err(e) => {
-                        tracing::warn!(
-                            "chain-state coordinator: failed to decode {}::{} against the \
-                             static bindings: {e}",
-                            event.pallet_name(),
-                            event.event_name(),
-                        );
-                        None
-                    }
-                };
-            }
-        };
+    if event.pallet_name() != "StorageProvider" {
+        return None;
     }
-
-    try_decode!(ProviderDeregistered, true);
-    try_decode!(ProviderRegistered, false);
-    try_decode!(ProviderSettingsUpdated, false);
-    try_decode!(ProviderMultiaddrUpdated, false);
-    try_decode!(DeregisterAnnounced, false);
-    try_decode!(DeregisterCancelled, false);
-    None
-}
-
-fn provider_lifecycle_event(
-    deregistered: bool,
-    provider: subxt::utils::AccountId32,
-) -> ProviderLifecycleEvent {
-    let provider = AccountId32::new(provider.0);
-    if deregistered {
-        ProviderLifecycleEvent::Deregistered { provider }
-    } else {
-        ProviderLifecycleEvent::Updated { provider }
+    let decoded = match event.decode_as::<Event>() {
+        Ok(Event::StorageProvider(decoded)) => decoded,
+        Ok(_) => return None,
+        Err(e) => {
+            tracing::warn!(
+                "chain-state coordinator: failed to decode {}::{} against the static bindings: {e}",
+                event.pallet_name(),
+                event.event_name(),
+            );
+            return None;
+        }
+    };
+    match decoded {
+        StorageProviderEvent::ProviderDeregistered { provider, .. } => {
+            Some(ProviderLifecycleEvent::Deregistered {
+                provider: AccountId32::new(provider.0),
+            })
+        }
+        StorageProviderEvent::ProviderRegistered { provider, .. }
+        | StorageProviderEvent::ProviderSettingsUpdated { provider, .. }
+        | StorageProviderEvent::ProviderMultiaddrUpdated { provider, .. }
+        | StorageProviderEvent::DeregisterAnnounced { provider, .. }
+        | StorageProviderEvent::DeregisterCancelled { provider } => {
+            Some(ProviderLifecycleEvent::Updated {
+                provider: AccountId32::new(provider.0),
+            })
+        }
+        _ => None,
     }
 }
 
