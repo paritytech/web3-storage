@@ -19,7 +19,7 @@
  *   1.11 accepting_primary=false blocks matching
  *   1.12 max_capacity=0 (unlimited)
  *
- * Usage: node e2e/01-provider-registration.js [chain_ws] [provider_url]
+ * Usage: node --import tsx e2e/01-provider-registration.ts [chain_ws] [provider_url]
  */
 
 import assert from "node:assert";

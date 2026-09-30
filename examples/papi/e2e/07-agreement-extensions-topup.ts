@@ -7,7 +7,7 @@
  *
  * Tests: extend duration, top up bytes, block extensions, failure cases.
  *
- * Usage: node e2e/07-agreement-extensions-topup.js [chain_ws] [provider_url]
+ * Usage: node --import tsx e2e/07-agreement-extensions-topup.ts [chain_ws] [provider_url]
  */
 
 import assert from "node:assert";

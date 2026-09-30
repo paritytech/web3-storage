@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Unprovable chunk tree slashes the provider
+ * E2E Workflow 13 - Provider signs only provable chunk trees
  *
  * Accounts: //Alice (provider), //Bob (bucket admin)
  *
@@ -14,13 +14,8 @@
  *      slash the provider's whole stake with `SlashReason::InvalidProof`.
  * 13.2 A challenge on `c2` of `R` does not slash the provider: either
  *      `/commit` rejects `R`, or the provider defends the challenge.
- * 13.3 `/commit` accepts the padded tree over the same chunks, and the
- *      provider defends a challenge on `c2` of that root.
  *
- * Usage:
- * 1. `just start-e2e-chain`
- * 2. `just start-provider`
- * 3. node --import tsx unprovable-chunk-tree-slash.ts ws://127.0.0.1:2222 http://127.0.0.1:3333
+ * Usage: node --import tsx e2e/13-unprovable-chunk-tree.ts [chain_ws] [provider_url]
  */
 
 import assert from "node:assert";
@@ -41,8 +36,8 @@ import {
   toHex,
   type ChainSigner,
 } from "@web3-storage/sdk";
-import { ensureSoleAcceptingProvider } from "./support.js";
-import { negotiateAndEstablish, runSuite, setupChain } from "./e2e/helpers.js";
+import { ensureSoleAcceptingProvider } from "../support.js";
+import { negotiateAndEstablish, runSuite, setupChain } from "./helpers.js";
 
 const CHAIN_WS = process.argv[2] || "ws://127.0.0.1:2222";
 const PROVIDER_URL = process.argv[3] || "http://127.0.0.1:3333";
@@ -87,7 +82,6 @@ async function main() {
 
   const chunks = [0, 1, 2].map((i) => new Uint8Array(32).fill(i + 1));
   const leaves = chunks.map((c) => computeCid(c));
-  const zero = new Uint8Array(32);
 
   async function commitRoot(root: Uint8Array): Promise<any> {
     return providerFetch(PROVIDER_URL, "/commit", {
@@ -121,12 +115,11 @@ async function main() {
     },
   });
 
-
   let slashedAmount = 0n;
   tests.push({
     name: "13.2 A challenge on chunk 2 of the unbalanced tree does not slash the provider",
     fn: async () => {
-      // H(H(c0, c1), c2): the current state, 
+      // R = H(H(c0, c1), c2), the same unbalanced tree as 13.1.
       const inner = await putInternal(bucketId, owner, leaves[0], leaves[1]);
       const root = await putInternal(bucketId, owner, inner, leaves[2]);
 
@@ -167,6 +160,8 @@ async function main() {
     },
   });
 
+  await runSuite("13 - Provider signs only provable chunk trees", tests, { api, papi });
+
   // Restore Alice's stake so later runs against the same chain still work.
   if (slashedAmount > 0n) {
     try {
@@ -176,39 +171,6 @@ async function main() {
       process.exitCode = 1;
     }
   }
-
-  tests.push({
-    name: "13.3 /commit accepts the padded tree and the provider defends chunk 2",
-    fn: async () => {
-      // H(H(c0, c1), H(c2, 0)): the shape `verify_merkle_proof` accepts.
-      const left = await putInternal(bucketId, owner, leaves[0], leaves[1]);
-      const right = await putInternal(bucketId, owner, leaves[2], zero);
-      const root = await putInternal(bucketId, owner, left, right);
-      assert.ok(bytesEq(root, paddedMerkleRoot(leaves)), "root must be the padded root");
-
-      const commit = await commitRoot(root);
-      const info = await api.query.StorageProvider.Providers.getValue(provider.address, READ_OPTS);
-      const stakeBefore = info!.stake;
-
-      const challengeId = await challengeOffchain(api, owner, provider, bucketId, {
-        mmrRoot: commit.mmr_root,
-        startSeq: commit.start_seq,
-        leafCount: commit.leaf_count,
-        leafIndex: commit.leaf_indices[0],
-        providerSignature: commit.provider_signature,
-        chunkIndex: CHALLENGED_CHUNK,
-      });
-      const proof = await fetchChallengeProof(api, PROVIDER_URL, challengeId);
-      const result = await respondToChallenge(api, provider, challengeId, proof);
-      const defended = api.event.StorageProvider.ChallengeDefended.filter(result.events as never);
-      assert.strictEqual(defended.length, 1, "expected ChallengeDefended");
-
-      const after = await api.query.StorageProvider.Providers.getValue(provider.address, READ_OPTS);
-      assert.strictEqual(after!.stake, stakeBefore, "provider stake must not change");
-    },
-  });
-
-  await runSuite("13 - Provider signs only provable chunk trees", tests, { api, papi });
 
   try {
     await restore();

@@ -8,7 +8,7 @@
  * (non-admin writes, freeze without a checkpoint, unsigned/non-member
  * provider uploads).
  *
- * Usage: node e2e/10-edge-cases-and-adversarial.js [chain_ws] [provider_url]
+ * Usage: node --import tsx e2e/10-edge-cases-and-adversarial.ts [chain_ws] [provider_url]
  */
 
 import assert from "node:assert";
