@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! Error types for the provider node.
 
@@ -98,9 +98,6 @@ pub enum Error {
     ChainStateNotReady,
 
     #[error(transparent)]
-    Chain(#[from] crate::chain_connection::Error),
-
-    #[error(transparent)]
     Coordinator(#[from] provider_coordinator::Error),
 
     /// The node cannot sign with its registered key. Each reason keeps the
@@ -135,7 +132,6 @@ struct ErrorResponse {
 
 impl IntoResponse for Error {
     fn into_response(self) -> Response {
-        use crate::chain_connection::Error as ChainError;
         use provider_coordinator::Error as CoordinatorError;
         use provider_storage::Error as StorageError;
         let (status, error_response) = match &self {
@@ -422,24 +418,6 @@ impl IntoResponse for Error {
                     })),
                 },
             ),
-            Error::Chain(err) => match err {
-                ChainError::NotConnected => (
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    ErrorResponse {
-                        error: "chain_unavailable".to_string(),
-                        details: Some(serde_json::json!({
-                            "message": "the node has not yet established a connection to the chain"
-                        })),
-                    },
-                ),
-                ChainError::Connection(_) | ChainError::Internal(_) => (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    ErrorResponse {
-                        error: "internal_error".to_string(),
-                        details: Some(serde_json::json!({ "message": err.to_string() })),
-                    },
-                ),
-            },
             // Destructured rather than stringified: the inner message is already
             // the full text, so `to_string()` would prefix it a second time.
             Error::Coordinator(CoordinatorError::Internal(msg)) => (
@@ -620,16 +598,6 @@ mod tests {
         assert_eq!(
             status_of(Error::NonceCounterUnavailable),
             StatusCode::SERVICE_UNAVAILABLE
-        );
-        // A connection that was never established is retryable; a failed
-        // connect attempt is a bug. They must not share a status code.
-        assert_eq!(
-            status_of(crate::chain_connection::Error::NotConnected.into()),
-            StatusCode::SERVICE_UNAVAILABLE
-        );
-        assert_eq!(
-            status_of(crate::chain_connection::Error::Internal("boom".into()).into()),
-            StatusCode::INTERNAL_SERVER_ERROR
         );
         assert_eq!(
             status_of(provider_coordinator::Error::Internal("boom".into()).into()),

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! Shared test helpers for the provider-node integration suites.
 //!
@@ -9,14 +9,14 @@
 #![allow(dead_code)]
 
 use provider_auth::{build_auth_header, Authenticator, StaticMembershipResolver};
+use provider_http::{create_router, ProviderDeps, ProviderState};
+pub use provider_storage::StorageBackendSpec;
 use reqwest::{Method, RequestBuilder};
 use sp_core::{sr25519, Pair};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use storage_primitives::Role;
-pub use storage_provider_node::cli::StorageBackendKind;
-use storage_provider_node::{create_router, ProviderDeps, ProviderState};
 use tempfile::TempDir;
 
 type AccountId32 = sp_core::crypto::AccountId32;
@@ -36,7 +36,7 @@ pub struct TestServer {
 impl TestServer {
     /// `state` picks the identity: seeded (signing) or provider-id only.
     pub async fn start(
-        backend: StorageBackendKind,
+        backend: StorageBackendSpec,
         state: impl FnOnce(ProviderDeps) -> ProviderState,
     ) -> Self {
         let (dir, deps) = Self::deps(backend);
@@ -49,22 +49,27 @@ impl TestServer {
     /// registration unpublished — covers the window before its first refresh,
     /// or a provider the chain does not know about.
     pub async fn start_unregistered(
-        backend: StorageBackendKind,
+        backend: StorageBackendSpec,
         state: impl FnOnce(ProviderDeps) -> ProviderState,
     ) -> Self {
         let (dir, deps) = Self::deps(backend);
         Self::from_state(state(deps), dir).await
     }
 
-    fn deps(backend: StorageBackendKind) -> (TempDir, ProviderDeps) {
+    /// `backend` only selects the engine; its own `path` is discarded here in
+    /// favour of a fresh temp dir, since every test server needs its own
+    /// throwaway location regardless of what the caller passed in.
+    fn deps(backend: StorageBackendSpec) -> (TempDir, ProviderDeps) {
         let dir = tempfile::Builder::new()
             .prefix(provider_storage::TEMP_DIR_PREFIX)
             .tempdir()
             .expect("temp dir");
-        let (storage, nonce_store) = backend
-            .spec(dir.path().to_path_buf())
-            .build()
-            .expect("backend opens");
+        let backend = match backend {
+            StorageBackendSpec::RocksDb { .. } => StorageBackendSpec::RocksDb {
+                path: dir.path().to_path_buf(),
+            },
+        };
+        let (storage, nonce_store) = backend.build().expect("backend opens");
         let deps = ProviderDeps {
             storage,
             nonce_store,
@@ -144,12 +149,17 @@ pub fn publish_matching_registration(state: &ProviderState) {
 macro_rules! backend_tests {
     ($(async fn $name:ident($backend:ident) $body:block)*) => {
         $(
-            async fn $name($backend: common::StorageBackendKind) $body
+            async fn $name($backend: common::StorageBackendSpec) $body
 
             mod $name {
                 #[tokio::test]
                 async fn rocksdb() {
-                    super::$name(super::common::StorageBackendKind::RocksDb).await
+                    // The path is discarded and replaced with a fresh temp dir
+                    // by `TestServer::deps`; only the engine choice matters here.
+                    super::$name(super::common::StorageBackendSpec::RocksDb {
+                        path: std::path::PathBuf::new(),
+                    })
+                    .await
                 }
             }
         )*

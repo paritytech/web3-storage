@@ -214,7 +214,7 @@ Implications:
   atomically; the user picks the provider at library creation. (Redundancy via protocol replicas
   is a native-only follow-up — see open questions.)
 - **No auto-accept polling.** The provider signs the deal terms off-chain at `POST /negotiate`
-  (`provider-node/src/api.rs`); the client redeems that signature on-chain via the contract's
+  (`crates/providers/http/src/api.rs`); the client redeems that signature on-chain via the contract's
   `createLibrary` → `createDrive`. The signature is synchronous consent, so the drive is active
   as soon as the extrinsic is included — no waiting for the provider to accept.
 

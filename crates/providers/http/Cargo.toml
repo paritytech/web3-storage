@@ -1,0 +1,37 @@
+[package]
+name = "provider-http"
+version = "0.1.0"
+authors.workspace = true
+edition.workspace = true
+license = "Apache-2.0"
+repository.workspace = true
+description = "Provider HTTP API: axum handlers for uploads, downloads, negotiation, and the provider node's servable state"
+
+[dependencies]
+axum = { workspace = true }
+base64 = { workspace = true }
+codec = { workspace = true, features = ["std"] }
+hex = { workspace = true, features = ["std"] }
+provider-auth = { workspace = true }
+provider-coordinator = { workspace = true }
+provider-negotiation = { workspace = true }
+provider-replica = { workspace = true }
+provider-storage = { workspace = true }
+provider-types = { workspace = true }
+serde = { workspace = true, features = ["std"] }
+serde_json = { workspace = true }
+sp-core = { workspace = true, features = ["std"] }
+sp-runtime = { workspace = true, features = ["std"] }
+storage-primitives = { workspace = true, features = ["serde", "std"] }
+thiserror = { workspace = true }
+tokio-rate-limit = { workspace = true }
+tower-http = { workspace = true }
+tracing = { workspace = true, features = ["std"] }
+
+[dev-dependencies]
+async-trait = { workspace = true }
+provider-storage = { workspace = true, features = ["test-helpers"] }
+reqwest = { workspace = true }
+sp-crypto-hashing = { workspace = true, features = ["std"] }
+tempfile = { workspace = true }
+tokio = { workspace = true }
