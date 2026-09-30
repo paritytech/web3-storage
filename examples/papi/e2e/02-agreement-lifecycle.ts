@@ -173,7 +173,7 @@ async function main() {
         ...buildSignedTermsArgs(provider, signed),
         visibility: Enum("Private"),
       };
-      await api.tx.StorageProvider.establish_storage_agreement(args).signAndSubmit(client.signer);
+      await api.tx.StorageProvider.establish_storage_agreement(args).createAndSubmit(client.signer);
       const replay = api.tx.StorageProvider.establish_storage_agreement(args);
       await submitTxExpectFailure(replay, client.signer, "NonceAlreadyUsed", "2.6");
     },

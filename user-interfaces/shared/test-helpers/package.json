@@ -12,10 +12,10 @@
   "scripts": {},
   "dependencies": {
     "@polkadot-api/descriptors": "workspace:*",
-    "@polkadot-api/substrate-bindings": "^0.20.3",
+    "@polkadot-api/substrate-bindings": "^0.21.1",
     "@polkadot-labs/hdkd-helpers": "^0.0.31",
     "@web3-storage/sdk": "workspace:*",
-    "polkadot-api": "^2.2.1"
+    "polkadot-api": "^3.1.0"
   },
   "devDependencies": {
     "@types/node": "^26.0.1"

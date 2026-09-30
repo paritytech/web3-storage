@@ -103,7 +103,7 @@ export const [useEditorOpen] = bind(editorOpen$, false)
 // ─────────────────────────────────────────────────────────────────────────────
 
 let api: ParachainApi | null = null
-let signer: InjectedPolkadotAccount['polkadotSigner'] | null = null
+let signer: InjectedPolkadotAccount['txCreator'] | null = null
 let contractBytes: Uint8Array | null = null
 let currentDriveId: bigint | null = null
 
@@ -150,7 +150,7 @@ export async function initLibrary(
   onAnchored: () => void,
 ): Promise<void> {
   api = requireApi()
-  signer = account.polkadotSigner
+  signer = account.txCreator
   contractBytes = fromHex(contract.address)
   anchoredCallback = onAnchored
 

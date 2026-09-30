@@ -211,7 +211,8 @@ start-provider BACKEND="rocksdb" PORT=PROVIDER_PORT STORAGE_PATH="./provider-dat
         trap "rm -f $ALICE_KEY" EXIT
     fi
 
-    ./target/release/storage-provider-node \
+    TARGET_DIR=$(cargo metadata --format-version 1 --no-deps | jq -r .target_directory)
+    "$TARGET_DIR/release/storage-provider-node" \
         $KEY_ARGS \
         $EXTRA_ARGS \
         --storage-backend "{{BACKEND}}" \

@@ -387,6 +387,45 @@ impl AdminClient {
         Ok(())
     }
 
+    /// Hand an agreement to a new owner; the escrow moves with it.
+    pub async fn transfer_agreement_ownership(
+        &self,
+        bucket_id: BucketId,
+        provider: String,
+        new_owner: String,
+    ) -> ClientResult<()> {
+        let chain = self.base.chain()?;
+        let signer = chain.signer()?;
+        let provider_account = SubstrateClient::parse_account(&provider)?;
+        let new_owner_account = SubstrateClient::parse_account(&new_owner)?;
+
+        let tx = extrinsics::transfer_agreement_ownership(
+            bucket_id,
+            provider_account,
+            new_owner_account,
+        );
+        chain
+            .api()
+            .at_current_block()
+            .await
+            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
+            .transactions()
+            .sign_and_submit_then_watch_default(&tx, signer)
+            .await
+            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
+            .wait_for_finalized_success()
+            .await
+            .map_err(|e| ClientError::Chain(format!("Transaction failed: {e}")))?;
+
+        tracing::info!(
+            "Transferred agreement with {} for bucket {} to {}",
+            provider,
+            bucket_id,
+            new_owner
+        );
+        Ok(())
+    }
+
     /// Terminate an agreement early (admin only for primaries).
     ///
     /// You can choose to pay the provider in full or burn a percentage.

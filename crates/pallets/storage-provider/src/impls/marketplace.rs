@@ -98,21 +98,10 @@ impl<T: Config> Pallet<T> {
                     .replica_sync_price
                     .map(|p| p.saturated_into::<u128>()),
                 accepting_extensions: info.settings.accepting_extensions,
-                registered_at: info.stats.registered_at.saturated_into::<u32>(),
-                agreements_total: info.stats.agreements_total,
-                agreements_extended: info.stats.agreements_extended,
-                agreements_not_extended: info.stats.agreements_not_extended,
-                agreements_burned: info.stats.agreements_burned,
-                challenges_received_authorized: info.stats.challenges_received_authorized,
-                challenges_received_public: info.stats.challenges_received_public,
-                challenges_failed: info.stats.challenges_failed,
                 max_capacity,
                 available_capacity,
                 deregister_at: info.deregister_at.map(|b| b.saturated_into::<u32>()),
-                reputation: crate::runtime_api::reputation_score(
-                    info.stats.challenges_defended(),
-                    info.stats.challenges_failed,
-                ),
+                stats: crate::runtime_api::ProviderStatsInfo::from(&info.stats),
             };
 
             results.push(MatchedProvider {
@@ -193,21 +182,10 @@ impl<T: Config> Pallet<T> {
                             .replica_sync_price
                             .map(|p| p.saturated_into::<u128>()),
                         accepting_extensions: info.settings.accepting_extensions,
-                        registered_at: info.stats.registered_at.saturated_into::<u32>(),
-                        agreements_total: info.stats.agreements_total,
-                        agreements_extended: info.stats.agreements_extended,
-                        agreements_not_extended: info.stats.agreements_not_extended,
-                        agreements_burned: info.stats.agreements_burned,
-                        challenges_received_authorized: info.stats.challenges_received_authorized,
-                        challenges_received_public: info.stats.challenges_received_public,
-                        challenges_failed: info.stats.challenges_failed,
                         max_capacity,
                         available_capacity,
                         deregister_at: info.deregister_at.map(|b| b.saturated_into::<u32>()),
-                        reputation: crate::runtime_api::reputation_score(
-                            info.stats.challenges_defended(),
-                            info.stats.challenges_failed,
-                        ),
+                        stats: crate::runtime_api::ProviderStatsInfo::from(&info.stats),
                     },
                 )
             })
@@ -224,7 +202,7 @@ impl<T: Config> Pallet<T> {
         max_reputation: u8,
         limit: u32,
     ) -> Vec<crate::runtime_api::ChallengeCandidate> {
-        use crate::runtime_api::{reputation_score, ChallengeCandidate};
+        use crate::runtime_api::ChallengeCandidate;
 
         let mut seen = BTreeSet::new();
         let mut candidates: Vec<ChallengeCandidate> = Vec::new();
@@ -240,10 +218,7 @@ impl<T: Config> Pallet<T> {
                 continue;
             };
 
-            let reputation = reputation_score(
-                info.stats.challenges_defended(),
-                info.stats.challenges_failed,
-            );
+            let reputation = info.stats.reputation();
             if reputation >= max_reputation {
                 continue;
             }

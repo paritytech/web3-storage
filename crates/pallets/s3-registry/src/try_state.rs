@@ -16,6 +16,7 @@ use s3_primitives::S3BucketId;
 use sp_runtime::TryRuntimeError;
 
 impl<T: Config> Pallet<T> {
+    /// Checks the pallet's storage invariants; run by `try-runtime`.
     pub fn do_try_state() -> Result<(), TryRuntimeError> {
         Self::check_buckets()?;
         Self::check_name_index()?;

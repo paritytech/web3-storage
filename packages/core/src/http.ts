@@ -69,7 +69,7 @@ export async function httpFetch(
 
 /**
  * The signing surface needed to authenticate a provider request. Matches the
- * subset of PAPI's `PolkadotSigner` we use, so both a derived dev signer and a
+ * subset of PAPI's `SignerTxCreator` we use, so both a derived dev signer and a
  * browser wallet extension satisfy it. `signBytes` is async and — for wallets
  * and PAPI signers alike — wraps the payload in `<Bytes>…</Bytes>`; the provider
  * accepts that wrapped form (see `wrap_bytes` in crates/providers/auth).

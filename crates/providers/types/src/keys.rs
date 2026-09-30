@@ -5,6 +5,25 @@ use sp_core::crypto::ByteArray;
 use sp_core::{ecdsa, ed25519, sr25519, Pair};
 use sp_runtime::MultiSignature;
 
+/// Why the node cannot sign with its registered key. The pallet verifies
+/// every provider signature against the `public_key` in the registration, so
+/// in each case a signature produced now could not verify - refusing beats
+/// emitting one that is dead on arrival.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum SigningRefused {
+    /// No signing key is configured. Set `--keyfile`.
+    #[error("no signing key configured")]
+    NoKey,
+    /// No registration is published on chain yet, so the pallet has no key
+    /// to verify against. Clears once the registration lands.
+    #[error("provider registration not published")]
+    Unregistered,
+    /// The local key differs from the registered one. Re-register, or point
+    /// the node at the key it registered with.
+    #[error("local key does not match the on-chain registration")]
+    KeyMismatch,
+}
+
 /// Signature scheme of the provider's signing keypair — the key registered
 /// on-chain as `public_key` and verified by the pallet via `MultiSignature`.
 /// The extrinsic-submission account stays sr25519 regardless (see

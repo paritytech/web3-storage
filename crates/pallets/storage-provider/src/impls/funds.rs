@@ -9,7 +9,7 @@
 //!   bookkeeping says exactly what is held, so a shortfall is a broken
 //!   invariant, not something to silently under-pay.
 //! * Challenge money and slashes: [`Precision::BestEffort`], infallible.
-//!   [`Pallet::slash_provider_for_failed_challenge`] is shared with the
+//!   `slash_provider_for_failed_challenge` is shared with the
 //!   `on_initialize` sweep, which has no caller to return an error to.
 
 use crate::*;
@@ -45,7 +45,7 @@ impl<T: Config> Pallet<T> {
     /// but settlement always pays out of the owner's hold — so a third party's
     /// funds move to the owner first. Otherwise the hold and `payment_locked`
     /// would sit on different accounts.
-    pub(crate) fn escrow_from(
+    pub(crate) fn hold_payment_from(
         payer: &T::AccountId,
         owner: &T::AccountId,
         amount: BalanceOf<T>,
@@ -91,6 +91,28 @@ impl<T: Config> Pallet<T> {
             amount,
             Precision::Exact,
             Restriction::Free,
+            Fortitude::Polite,
+        )
+        .map(|_| ())
+    }
+
+    /// Move an agreement's escrow to a new owner, keeping it on hold, so the
+    /// hold and `StorageAgreement::owner` never point at different accounts.
+    pub(crate) fn transfer_payment_on_hold(
+        from: &T::AccountId,
+        to: &T::AccountId,
+        amount: BalanceOf<T>,
+    ) -> DispatchResult {
+        if amount.is_zero() {
+            return Ok(());
+        }
+        T::Currency::transfer_on_hold(
+            &HoldReason::AgreementPayment.into(),
+            from,
+            to,
+            amount,
+            Precision::Exact,
+            Restriction::OnHold,
             Fortitude::Polite,
         )
         .map(|_| ())

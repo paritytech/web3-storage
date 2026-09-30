@@ -10,9 +10,6 @@ use crate::Runtime;
 
 /// Storage migrations run on runtime upgrade, in order.
 pub type Migrations = (
-    // Drop the `payment` field from `DriveInfo` (#105). A real data transform,
-    // so it stays a `VersionedMigration` gated on the pallet's storage version.
-    pallet_drive_registry::migrations::v1::MigrateV0ToV1<Runtime>,
     // SDK `polkadot-stable2606` bumped both pallets' in-code storage versions.
     // Each migration is gated on the on-chain version, so both are no-ops once
     // applied.

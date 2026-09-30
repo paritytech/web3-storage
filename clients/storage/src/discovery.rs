@@ -80,6 +80,8 @@ pub struct ProviderInfo {
     pub committed_bytes: u64,
     /// Maximum capacity (0 = unlimited).
     pub max_capacity: u64,
+    /// Free capacity per the chain; `None` is unlimited, not `Some(0)` ("full").
+    pub available_capacity: Option<u64>,
     /// Minimum agreement duration.
     pub min_duration: u32,
     /// Maximum agreement duration.
@@ -94,11 +96,20 @@ pub struct ProviderInfo {
     pub accepting_extensions: bool,
     /// Total agreements ever.
     pub agreements_total: u32,
+    /// Agreements extended at least once.
+    pub agreements_extended: u32,
+    /// Defended challenges from authorized (member/owner) challengers.
+    pub challenges_received_authorized: u32,
+    /// Same, for general-public challengers.
+    pub challenges_received_public: u32,
     /// Failed challenges count.
     pub challenges_failed: u32,
+    /// Total payment ever received for storage service. Never resets, not
+    /// even on a slash.
+    pub lifetime_revenue: u128,
     /// Block at which deregistration becomes finalisable (`None` = not deregistering).
     pub deregister_at: Option<u32>,
-    /// Reputation 0-100, computed on-chain by `runtime_api::reputation_score`.
+    /// Reputation 0-100, computed on-chain by `ProviderStats::reputation`.
     pub reputation: u8,
 }
 
@@ -110,16 +121,21 @@ impl From<rt_api::ProviderInfoResponse> for ProviderInfo {
             stake: p.stake,
             committed_bytes: p.committed_bytes,
             max_capacity: p.max_capacity,
+            available_capacity: p.available_capacity,
             min_duration: p.min_duration,
             max_duration: p.max_duration,
             price_per_byte: p.price_per_byte,
             accepting_primary: p.accepting_primary,
             replica_sync_price: p.replica_sync_price,
             accepting_extensions: p.accepting_extensions,
-            agreements_total: p.agreements_total,
-            challenges_failed: p.challenges_failed,
+            agreements_total: p.stats.agreements_total,
+            agreements_extended: p.stats.agreements_extended,
+            challenges_received_authorized: p.stats.challenges_received_authorized,
+            challenges_received_public: p.stats.challenges_received_public,
+            challenges_failed: p.stats.challenges_failed,
+            lifetime_revenue: p.stats.lifetime_revenue,
             deregister_at: p.deregister_at,
-            reputation: p.reputation,
+            reputation: p.stats.reputation,
         }
     }
 }
@@ -379,7 +395,7 @@ impl DiscoveryClient {
                 }
 
                 // Reputation is defined once, on-chain, by
-                // `runtime_api::reputation_score` - never recomputed here.
+                // `ProviderStats::reputation` - never recomputed here.
                 let reliability_score = provider.info.reputation;
 
                 // Generate recommendation reason

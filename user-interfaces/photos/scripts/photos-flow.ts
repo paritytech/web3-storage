@@ -5,7 +5,7 @@
 //   M2 — mkdir album → PUT photo + thumbnail → compute the metadata Merkle root
 //        client-side → setRoot → re-list, recompute from scratch, and assert it
 //        equals both the on-chain anchor and the provider's index_root; plus a
-//        tamper check. Mirrors `examples/papi/sc-team-drive.js`.
+//        tamper check. Mirrors `examples/papi/sc-team-drive.ts`.
 //   M3 — edit the photo copy-on-write: re-PUT edited bytes to the *same* path
 //        (a new content-addressed blob; the pre-edit blob lingers) → recompute
 //        + setRoot → download back and byte-compare → assert the anchor moved,

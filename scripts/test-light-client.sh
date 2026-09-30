@@ -24,7 +24,7 @@ set -euo pipefail
 
 PROVIDER_PORT="${PROVIDER_PORT:-3433}"
 TIMEOUT="${1:-300}"
-BIN="${BIN:-./target/release/storage-provider-node}"
+BIN="${BIN:-$(cargo metadata --format-version 1 --no-deps | jq -r .target_directory)/release/storage-provider-node}"
 RELAY_RPC="${RELAY_RPC:-ws://127.0.0.1:9900}"
 PARA_RPC="${PARA_RPC:-ws://127.0.0.1:2222}"
 

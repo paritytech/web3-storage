@@ -17,7 +17,7 @@ import { SearchInput } from '@/components/SearchInput'
 import { SectionUnavailable } from '@/components/SectionUnavailable'
 import { useSnapshot } from '@/state/explorer.state'
 import { useIsMine } from '@/state/wallet.state'
-import { reputationScore, type ProviderRow } from '@/lib/explorer-client'
+import { type ProviderRow } from '@/lib/explorer-client'
 import {
   formatAddress,
   formatBytes,
@@ -125,6 +125,8 @@ export function Providers() {
                       <TableCell>{formatTokens(p.stake)}</TableCell>
                       <TableCell>
                         {formatBytes(p.committedBytes)} /{' '}
+                        {/* Same test as the detail panel's Max capacity: the
+                            cell renders maxCapacity, so it reads maxCapacity. */}
                         {p.settings.maxCapacity === 0n
                           ? 'unlimited'
                           : formatBytes(p.settings.maxCapacity)}
@@ -210,6 +212,14 @@ function ProviderDetails({ provider: p }: { provider: ProviderRow }) {
               </dd>
               <dt className="text-gray-400">Lifetime bytes committed</dt>
               <dd className="text-gray-200">{formatBytes(p.stats.totalBytesCommitted)}</dd>
+              <dt className="text-gray-400">Lifetime revenue</dt>
+              <dd className="text-gray-200">{formatTokens(p.stats.lifetimeRevenue)}</dd>
+              <dt className="text-gray-400">Available capacity</dt>
+              <dd className="text-gray-200">
+                {p.availableCapacity === undefined
+                  ? 'Unlimited'
+                  : formatBytes(p.availableCapacity)}
+              </dd>
               <dt className="text-gray-400">Challenges defended (authorized / public)</dt>
               <dd className="text-gray-200">
                 {p.stats.challengesDefendedAuthorized.toLocaleString()} /{' '}
@@ -226,7 +236,7 @@ function ProviderDetails({ provider: p }: { provider: ProviderRow }) {
 }
 
 function ReputationBadge({ stats }: { stats: ProviderRow['stats'] }) {
-  const score = reputationScore(stats)
+  const score = stats.reputation
   const resolved =
     stats.challengesDefendedAuthorized + stats.challengesDefendedPublic + stats.challengesFailed
   return (

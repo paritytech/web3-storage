@@ -568,6 +568,25 @@ export async function topUpAgreement(
   );
 }
 
+export async function transferAgreementOwnership(
+  api: ParachainApi,
+  client: ChainSigner,
+  bucketId: bigint,
+  provider: ChainSigner | { address: string },
+  newOwner: ChainSigner | { address: string },
+  opts: SubmitOpts = {},
+) {
+  return submitTx(
+    api.tx.StorageProvider.transfer_agreement_ownership({
+      bucket_id: bucketId,
+      provider: provider.address,
+      new_owner: newOwner.address,
+    }),
+    client.signer,
+    { label: "transfer_agreement_ownership", ...opts },
+  );
+}
+
 export async function setExtensionsBlocked(
   api: ParachainApi,
   provider: ChainSigner,

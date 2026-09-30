@@ -64,7 +64,7 @@ Canonical rules, established by the E2E suite's finalization fixes
 Every pallet wrapper accepts a trailing `SubmitOpts` so apps can override the
 test-suite defaults: the layer-1 clients pass `retryStale: 0` (a user-visible
 retry is the right UX, not an automatic one) and `onStatus: null` unless the
-app supplies a listener. `submitTx` streams `signed`/`in-pool`/`best`/
+app supplies a listener. `submitTx` streams `created`/`in-pool`/`best`/
 `finalized` phases with a `final` flag; the default console listener prints
 only the final one.
 
@@ -111,7 +111,7 @@ The signer/derive pattern behind `makeSigner` — set up the derive function
 once at module load, then call `makeSigner("//Alice")` etc.:
 
 ```js
-import { getPolkadotSigner } from "polkadot-api/signer";
+import { getTxCreator } from "polkadot-api/tx-creator";
 import { sr25519CreateDerive } from "@polkadot-labs/hdkd";
 import {
   DEV_PHRASE,
@@ -126,7 +126,7 @@ const deriveSr25519 = sr25519CreateDerive(devMiniSecret);
 export function makeSigner(seed) {
   const keyPair = deriveSr25519(seed); // seed is a SURI path like "//Alice"
   return {
-    signer: getPolkadotSigner(keyPair.publicKey, "Sr25519", keyPair.sign),
+    signer: getTxCreator(keyPair.publicKey, "Sr25519", keyPair.sign),
     address: ss58Address(keyPair.publicKey), // prefix 42 (`5…`), same as @polkadot/keyring default
     publicKey: keyPair.publicKey,
     seed,

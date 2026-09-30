@@ -18,7 +18,7 @@
  */
 
 import type { PolkadotClient, TxEvent } from "polkadot-api";
-import type { PolkadotSigner } from "polkadot-api/signer";
+import type { TxCreator } from "polkadot-api/tx-creator";
 import type { Observable } from "rxjs";
 
 /**
@@ -53,15 +53,15 @@ export const TX_MODE_FINALIZED_BLOCK: TxMode = "finalized";
 
 /** Minimal structural view of a PAPI transaction (kept loose on purpose). */
 export interface SubmittableTx {
-  signSubmitAndWatch(
-    signer: PolkadotSigner,
+  createSubmitAndWatch(
+    creator: TxCreator,
     txOpts?: Record<string, unknown>,
   ): Observable<TxEvent>;
   getBareTx?(): Promise<unknown>;
 }
 
 export interface TxStatusUpdate {
-  phase: "signed" | "in-pool" | "best" | "finalized" | "retry-stale";
+  phase: "created" | "in-pool" | "best" | "finalized" | "retry-stale";
   label: string;
   /** True for the event the chosen mode resolves at. */
   final?: boolean;
@@ -136,7 +136,7 @@ export interface SubmitOpts {
   onStatus?: TxStatusListener | null;
   /** Required for unsigned submission (`signer === null`). */
   client?: PolkadotClient;
-  /** Extra options forwarded verbatim to `signSubmitAndWatch`. */
+  /** Extra options forwarded verbatim to `createSubmitAndWatch`. */
   txOpts?: Record<string, unknown>;
 }
 
@@ -144,7 +144,7 @@ const STALE_RETRY_DELAY_MS = 6_500; // ~1 block time
 
 const MODE_MATCH: Record<TxMode, (ev: TxEvent) => boolean> = {
   "in-pool": (ev) => ev.type === "broadcasted",
-  best: (ev) => ev.type === "txBestBlocksState" && ev.found,
+  best: (ev) => ev.type === "inBestBlock",
   finalized: (ev) => ev.type === "finalized",
 };
 
@@ -165,12 +165,12 @@ function statusFor(
 /** Map a PAPI tx event to a status phase (undefined = not user-relevant). */
 function PHASE_FOR_EVENT(ev: TxEvent): TxStatusUpdate["phase"] | undefined {
   switch (ev.type) {
-    case "signed":
-      return "signed";
+    case "created":
+      return "created";
     case "broadcasted":
       return "in-pool";
-    case "txBestBlocksState":
-      return ev.found ? "best" : undefined;
+    case "inBestBlock":
+      return "best";
     case "finalized":
       return "finalized";
     default:
@@ -181,7 +181,7 @@ function PHASE_FOR_EVENT(ev: TxEvent): TxStatusUpdate["phase"] | undefined {
 /** Single submission attempt: subscribe, resolve at `mode`, bounded by timeout. */
 function submitOnce(
   tx: SubmittableTx,
-  signer: PolkadotSigner | null,
+  signer: TxCreator | null,
   mode: TxMode,
   label: string,
   timeoutMs: number,
@@ -206,7 +206,7 @@ function submitOnce(
       const bareTx = await tx.getBareTx();
       return client.submitAndWatch(bareTx as never) as Observable<TxEvent>;
     }
-    return tx.signSubmitAndWatch(signer, txOpts);
+    return tx.createSubmitAndWatch(signer, txOpts);
   })();
 
   return new Promise((resolve, reject) => {
@@ -236,8 +236,8 @@ function submitOnce(
             // as `ev.ok === false` (it only throws on an *invalid* tx). Catch
             // them here so callers don't have to.
             if (
-              (ev.type === "txBestBlocksState" && ev.found && ev.ok === false) ||
-              (ev.type === "finalized" && ev.ok === false)
+              (ev.type === "inBestBlock" || ev.type === "finalized") &&
+              ev.ok === false
             ) {
               cleanup();
               reject(new TxDispatchError(label, ev.dispatchError));
@@ -279,7 +279,7 @@ function submitOnce(
  */
 export async function submitTx(
   tx: SubmittableTx,
-  signer: PolkadotSigner | null,
+  signer: TxCreator | null,
   optsOrLabel: SubmitOpts | string = {},
   positionalTimeoutMs?: number,
 ): Promise<TxEvent & { events: unknown[] }> {
@@ -329,7 +329,7 @@ export async function submitTx(
  */
 export async function submitTxFinalized(
   tx: SubmittableTx,
-  signer: PolkadotSigner | null,
+  signer: TxCreator | null,
   optsOrLabel: SubmitOpts | string = {},
   positionalTimeoutMs?: number,
 ): Promise<TxEvent & { events: unknown[] }> {
@@ -346,7 +346,7 @@ export async function submitTxFinalized(
  */
 export async function waitForTransaction(
   tx: SubmittableTx,
-  signer: PolkadotSigner | null,
+  signer: TxCreator | null,
   label: string,
   txMode: TxMode = "best",
   timeoutMs: number = DEFAULT_TX_TIMEOUT_MS,

@@ -109,7 +109,7 @@ function createDevAccountsWithKnownAddresses(): InjectedPolkadotAccount[] {
       return {
         address,
         name: `${name} (Dev)`,
-        polkadotSigner: signer,
+        txCreator: signer,
       }
     })
   } catch (error) {

@@ -4,15 +4,16 @@
 | --- | --- |
 | **Authors** | eskimor |
 | **Status** | Draft |
-| **Version** | 2.4 |
+| **Version** | 2.6 |
 | **Related** | [Implementation Details](./scalable-web3-storage-implementation.md), [Proof-of-DOT Infrastructure Strategy](https://docs.google.com/document/d/1fNv75FCEBFkFoG__s_Xu10UZd0QsGIE9AKnrouzz-U8/) |
 
 ## Version History
 
 | Version | Changes |
 |---------|---------|
-| 2.5 | `MinStakePerByte` removed: no stake-per-byte requirement is enforced against `committed_bytes` or `max_capacity`. Both remain informative; `set_stake` now checks only `MinProviderStake` and the `higher_stake_lock`. Transaction extension on `respond_to_challenge`: one `provides` tag per challenge, so a duplicate response is dropped at pool import and never charged. Replacement agreements: an owner-created pending successor, activated by the first checkpoint the successor signs, the old agreement settled as in an extension. `MaxPrimaryProviders` → `MaxPrimarySlots` (8): the checkpoint bitfield is over physical signers, a virtual primary expanded to its members. `extend_challenge`: permissionless addition of verified signers to an open challenge, mirroring `extend_checkpoint`. `version` also bumps when a virtual provider's member leaves (impl doc "Term Pinning"). **Read**: "Provider Stake" here; impl doc "Stake vs. capacity", "Response transaction extension", "Replacement agreements", `BucketSnapshot.primary_signers`. |
-| 2.4 | Changeable provider stake (agreements snapshot stake, not just price; lowering allowed via O(1) `cur_until`/`higher_stake_lock`, no grow-only rule); stake backs verifiable `committed_bytes`, not self-declared `max_capacity`; per-bucket `agreement_id` bound into commitments (obsolete/expired commitments void — replaces the old time-based `nonce`/`MaxNonceAge` replay guard, now removed); terms `version` pin (bumped on price ↑ / replica-sync-price ↑ / stake ↓ — the worse-direction terms a quote doesn't carry explicitly) replaces `max_payment`: signed `AgreementTerms` name a `provider_version` instead of a price (price, sync price and stake are read from the provider at redemption, single source of truth), `extend_agreement`/`top_up_agreement` take `expected_version`. Deregistration keeps `ProviderReplayStates` so pre-deregister quotes can't replay after re-registration. `extend_agreement` is now **owner-only** (permissionless extension let a provider force-settle the elapsed term and defer expiry, dodging the owner's burn; permissionless persistence returns later via a replacement-agreement mechanism). Deregistration reverted to **one-step** (`deregister_provider` withdraws immediately once `committed_bytes == 0`); the added two-step announcement window (`DeregisterAnnouncementPeriod` / `complete_deregister` / `cancel_deregister`) is removed — liability tracks the active agreement (all challenge paths, incl. `challenge_checkpoint`, now reject a provider with no live agreement), so there is no post-expiry challenge to race. Reverse indexes (`MemberBuckets`, new `ProviderBuckets`) are now unbounded set-membership double-maps (dropped the artificial `MaxBucketsPerMember` cap) and read **only via versioned runtime API** (`member_buckets`/`provider_buckets`/paged `provider_agreements`), never raw storage — convenience indexes, droppable once off-chain indexing exists. Removed: `create_bucket_with_storage` (unsound on-chain provider search) and all provider-initiated checkpoint machinery (redundant with replica sync). **Read**: "Provider Stake" and "Storage Agreements" here; impl doc "Changeable Stake" / "Stake vs. capacity" / "Term Pinning" and `StorageAgreement` / `CommitmentPayload`. |
+| 2.6 | `MinStakePerByte` removed: no stake-per-byte requirement is enforced against `committed_bytes` or `max_capacity`. Both remain informative; `set_stake` now checks only `MinProviderStake` and the `higher_stake_lock`. Transaction extension on `respond_to_challenge`: one `provides` tag per challenge, so a duplicate response is dropped at pool import and never charged. Replacement agreements: an owner-created pending successor, activated by the first checkpoint the successor signs, the old agreement settled as in an extension. `MaxPrimaryProviders` → `MaxPrimarySlots` (8): the checkpoint bitfield is over physical signers, a virtual primary expanded to its members. `extend_challenge`: permissionless addition of verified signers to an open challenge, mirroring `extend_checkpoint`. `version` also bumps when a virtual provider's member leaves (impl doc "Term Pinning"). **Read**: "Provider Stake" here; impl doc "Stake vs. capacity", "Response transaction extension", "Replacement agreements", `BucketSnapshot.primary_signers`. |
+| 2.5 | Changeable provider stake (agreements snapshot stake, not just price; lowering allowed via O(1) `cur_until`/`higher_stake_lock`, no grow-only rule); stake backs verifiable `committed_bytes`, not self-declared `max_capacity`; per-bucket `agreement_id` bound into commitments (obsolete/expired commitments void — replaces the old time-based `nonce`/`MaxNonceAge` replay guard, now removed); terms `version` pin (bumped on price ↑ / replica-sync-price ↑ / stake ↓ — the worse-direction terms a quote doesn't carry explicitly) replaces `max_payment`: signed `AgreementTerms` name a `provider_version` instead of a price (price, sync price and stake are read from the provider at redemption, single source of truth), `extend_agreement`/`top_up_agreement` take `expected_version`. Deregistration keeps `ProviderReplayStates` so pre-deregister quotes can't replay after re-registration. `extend_agreement` is now **owner-only** (permissionless extension let a provider force-settle the elapsed term and defer expiry, dodging the owner's burn; permissionless persistence returns later via a replacement-agreement mechanism). Deregistration reverted to **one-step** (`deregister_provider` withdraws immediately once `committed_bytes == 0`); the added two-step announcement window (`DeregisterAnnouncementPeriod` / `complete_deregister` / `cancel_deregister`) is removed — liability tracks the active agreement (all challenge paths, incl. `challenge_checkpoint`, now reject a provider with no live agreement), so there is no post-expiry challenge to race. Reverse indexes (`MemberBuckets`, new `ProviderBuckets`) are now unbounded set-membership double-maps (dropped the artificial `MaxBucketsPerMember` cap) and read **only via versioned runtime API** (`member_buckets`/`provider_buckets`/paged `provider_agreements`), never raw storage — convenience indexes, droppable once off-chain indexing exists. Removed: `create_bucket_with_storage` (unsound on-chain provider search) and all provider-initiated checkpoint machinery (redundant with replica sync). **Read**: "Provider Stake" and "Storage Agreements" here; impl doc "Changeable Stake" / "Stake vs. capacity" / "Term Pinning" and `StorageAgreement` / `CommitmentPayload`. |
+| 2.4 | Bucket creation and provider assignment are separate on-chain operations: `create_bucket`, `create_bucket_with_primary`, `add_primary_provider`, `add_replica_provider`. Provider-signed quotes name the bucket they are for. A bucket remains after its last agreement ends and can get new providers later; the client moves the data when a provider is added. **Read**: "Buckets: Stable Identity in a Fluid Provider Market"; "Two Classes of Providers"; "Provider Lifecycle in Bucket" in [Implementation Details](./scalable-web3-storage-implementation.md) for the four calls. |
 | 2.3 | Private buckets clarified (visibility flag, Reader role, primary challenges gated to members + primary-agreement owners, tier-split challenge stats). **Read**: new "Bucket Visibility & Access" section; "The Challenge Game". |
 | 2.2 | Challenge cost model reworked and clarified: a valid response never touches the provider's stake. The challenger's deposit covers the on-chain response cost; authorized challengers (bucket members + agreement owners) get a split where the provider bears a fraction (challenger's share floored at 50%, as leverage—not cheap recovery), while the general public pays in full (anti-DoS, since a provider can't serve everyone equally). Stake is slashed only on a missing/invalid response. |
 | 2.1 | Clarification on rewards for the challenger: There should be none, just refund. Plus some corrections with regards to PDP and Filecoin. |
@@ -366,7 +367,9 @@ Bucket (on-chain, stable identifier)
 A content hash names data but doesn't guarantee anyone stores it. A bucket makes availability explicit and controllable:
 
 - **Stable identity**: The bucket_id never changes, even as providers come and go. Applications reference buckets, not
-  providers. Switch providers without breaking links.
+  providers. Switch providers without breaking links. Each provider joins a bucket with one agreement, at bucket
+  creation or later, and a bucket whose agreements have all ended remains on-chain; the admin can add a new provider
+  later.
 
 - **Explicit availability**: On-chain state shows exactly which providers have agreements. No guessing, no DHT lookups,
   no hoping.
@@ -384,13 +387,13 @@ A content hash names data but doesn't guarantee anyone stores it. A bucket makes
 Providers fall into two categories with different trust models:
 
 **Primary Providers** (admin-controlled):
-- Added only by bucket admin
+- Added only by bucket admin, by redeeming a provider-signed quote (`create_bucket_with_primary`, `add_primary_provider`)
 - Receive writes directly from clients
 - Count toward `min_providers` for checkpoints
 - Limited to ~5 per bucket (prevents bloat)
 
 **Replica Providers** (permissionless):
-- Added by anyone (you, a third party, a charity)
+- Added by anyone (you, a third party, a charity) by redeeming a provider-signed quote (`add_replica_provider`)
 - Sync data autonomously from primaries or other replicas
 - Paid per successful sync confirmation
 - Unlimited count
@@ -1217,6 +1220,31 @@ For use cases requiring stronger guarantees than game-theoretic verification—p
 replicas (which lack natural client verification) and fire-and-forget archival—optional
 periodic proofs similar to Filecoin's PDP could be added as a premium feature. This can
 be layered on later without changing the core protocol.
+
+### Provider-to-Provider Fetch
+
+A primary joining a bucket that already has data gets that data from the client,
+which uploads it to the new primary and may first download it from a provider
+that has it (a client that still keeps a local copy only uploads). A provider
+API could let the new primary fetch the data directly instead, the way a replica
+syncs today. The transfer needs no trust: chunks and internal nodes are
+content-addressed, so the receiver verifies everything against the data root it
+already knows from the chain.
+
+Such an API will likely be added, but it does not replace the client path. A
+fetch between two providers leaves no on-chain record, so a failure does not
+show whether the serving provider did not serve or the new primary did not
+request the data. The client path assigns the fault, because the client performs
+both halves and sees which one fails. A failed fetch therefore falls back to it,
+and the fallback starts with a punishment for the provider at fault: a burn
+instead of a payment for the new primary, or a challenge against the serving
+provider.
+
+Serving the fetch is part of the serving provider's agreement: a provider is
+paid to store and to serve, and one full download at a reasonable speed is
+included in the price it quotes. A provider that does not serve while its
+agreement is active gets burned or challenged like any provider that does not
+serve reads.
 
 ### Isolation Mode
 

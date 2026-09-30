@@ -63,7 +63,7 @@ test("add Reader → list refreshes without manual click", async ({ localPage })
   await localPage.getByTestId("add-member-submit").click();
 
   // After tx settles, Charlie's row should appear without clicking refresh.
-  // signAndSubmit waits for finalization (~24-36s on local zombienet) and
+  // createAndSubmit waits for finalization (~24-36s on local zombienet) and
   // refresh follows. 45s used to be "comfortable headroom" but CI runs the
   // drive-ui suite back-to-back with file-ops which holds the chain busy
   // for several minutes, and the set_member finalize has overshot 45s

@@ -7,7 +7,7 @@
  * workflow file can focus on scenario logic.
  */
 
-import type { PolkadotSigner } from "polkadot-api/signer";
+import type { TxCreator } from "polkadot-api/tx-creator";
 import {
   connect,
   establishStorageAgreement,
@@ -103,7 +103,7 @@ export async function runSuite<C>(
  * Submit a transaction and assert it is *included* but *dispatches with an
  * error* whose stringified representation contains `expectedError`.
  *
- * The included-block result (`txBestBlocksState`) is the source of truth: a
+ * The included-block result (`inBestBlock`) is the source of truth: a
  * dispatch failure surfaces as `result.ok === false` with a typed
  * `result.dispatchError`, which we match via {@link formatDispatchError}. The
  * "tx succeeded" and "wrong error" assertions are checked on that typed result
@@ -118,13 +118,13 @@ export async function runSuite<C>(
  */
 export async function submitTxExpectFailure(
   tx: SubmittableTx,
-  signer: PolkadotSigner,
+  signer: TxCreator,
   expectedError: string,
   label: string,
 ) {
   let result: any;
   try {
-    const observable = tx.signSubmitAndWatch(signer);
+    const observable = tx.createSubmitAndWatch(signer);
     result = await new Promise<any>((resolve, reject) => {
       let done = false;
       let sub: { unsubscribe(): void } | undefined;
@@ -142,7 +142,7 @@ export async function submitTxExpectFailure(
       sub = observable.subscribe({
         next: (ev) => {
           if (done) return;
-          if (ev.type === "txBestBlocksState" && ev.found) {
+          if (ev.type === "inBestBlock") {
             cleanup();
             resolve(ev);
           }

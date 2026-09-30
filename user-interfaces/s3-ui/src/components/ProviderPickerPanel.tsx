@@ -90,9 +90,12 @@ export default function ProviderPickerPanel({
             </thead>
             <tbody>
               {providers.map((p) => {
-                const capacityPct =
-                  p.maxCapacity > 0n
-                    ? Number((p.availableCapacity * 100n) / p.maxCapacity)
+                // `undefined` is unlimited — nothing to meter.
+                const free = p.availableCapacity;
+                // Percent free, like the drive-ui picker.
+                const availablePct =
+                  free !== undefined && p.maxCapacity > 0n
+                    ? Number((free * 100n) / p.maxCapacity)
                     : 0;
                 const isPartial = p.matchScore < 100;
 
@@ -110,19 +113,31 @@ export default function ProviderPickerPanel({
                       </span>
                     </td>
                     <td className="px-3 py-2">
-                      <div className="space-y-1">
-                        <Progress value={capacityPct} className="h-1.5" />
-                        <p className="text-xs text-muted-foreground">
-                          {formatBytes(Number(p.availableCapacity))} / {formatBytes(Number(p.maxCapacity))}
-                        </p>
-                      </div>
+                      {free === undefined ? (
+                        <p className="text-xs text-muted-foreground">Unlimited</p>
+                      ) : (
+                        <div className="space-y-1">
+                          <Progress value={availablePct} className="h-1.5" />
+                          <p className="text-xs text-muted-foreground">
+                            {formatBytes(Number(free))} / {formatBytes(Number(p.maxCapacity))}
+                          </p>
+                        </div>
+                      )}
                     </td>
                     <td className="px-3 py-2 text-xs">{p.pricePerByte.toString()}</td>
                     <td className="px-3 py-2 text-xs">
                       {p.minDuration}–{p.maxDuration}
                     </td>
                     <td className="px-3 py-2 text-xs text-muted-foreground">
-                      {p.agreementsTotal} agmt{p.agreementsTotal !== 1 && "s"}
+                      {/* The chain's own score, not a UI-side formula. */}
+                      <span
+                        className={`font-medium ${p.reputation >= 90 ? "text-emerald-600" : p.reputation >= 50 ? "text-amber-600" : "text-red-600"}`}
+                      >
+                        {p.reputation}
+                      </span>
+                      <span className="ml-1">
+                        · {p.agreementsTotal} agmt{p.agreementsTotal !== 1 && "s"}
+                      </span>
                       {p.challengesFailed > 0 && (
                         <span className="text-red-500 ml-1">
                           ({p.challengesFailed} fail)

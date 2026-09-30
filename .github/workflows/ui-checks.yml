@@ -63,6 +63,9 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
 
+      - name: Check the lockfile is deduplicated
+        run: pnpm dedupe --check
+
       - name: Typecheck sdk packages + examples
         run: pnpm run typecheck:packages
 

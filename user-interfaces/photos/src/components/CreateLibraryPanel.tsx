@@ -288,7 +288,10 @@ function ProviderList({
                 </code>
                 {eligible ? (
                   <Badge variant="secondary">
-                    {p.maxCapacity === 0n ? 'unmetered' : formatBytesBinary(p.availableCapacity)} free
+                    {p.availableCapacity === undefined
+                      ? 'unmetered'
+                      : formatBytesBinary(p.availableCapacity)}{' '}
+                    free
                   </Badge>
                 ) : (
                   <Badge variant="warning">{reasons[0]}</Badge>

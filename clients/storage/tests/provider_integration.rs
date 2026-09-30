@@ -13,7 +13,7 @@
 
 mod common;
 
-use common::{alice_provider, chain_guard, chain_setup, dev_account};
+use common::{alice_provider, bob_provider, chain_guard, chain_setup, dev_account};
 use storage_client::ProviderSettings;
 
 /// After `chain_setup`, Alice is a registered provider, so `get_provider_info`
@@ -93,6 +93,49 @@ async fn test_get_provider_info_unregistered_returns_none() {
         .expect("get_provider_info should not error");
 
     assert!(info.is_none(), "Bob should not be a registered provider");
+}
+
+/// Bob is never registered, so the monitoring methods return `Ok(None)` — not
+/// a default record, which would read as "reputation 0, capacity full".
+#[tokio::test]
+async fn test_monitoring_unregistered_returns_none() {
+    let _guard = chain_guard().await;
+
+    // Read-only: no `chain_setup`, which would create a bucket and an
+    // agreement on every run only to probe reachability.
+    let Some(bob) = bob_provider().await else {
+        eprintln!("Chain not reachable — skipping test_monitoring_unregistered_returns_none");
+        return;
+    };
+
+    assert!(
+        bob.get_stats()
+            .await
+            .expect("get_stats should not error")
+            .is_none(),
+        "get_stats should be None for an unregistered account"
+    );
+    assert!(
+        bob.get_total_earnings()
+            .await
+            .expect("get_total_earnings should not error")
+            .is_none(),
+        "get_total_earnings should be None for an unregistered account"
+    );
+    assert!(
+        bob.get_capacity_info()
+            .await
+            .expect("get_capacity_info should not error")
+            .is_none(),
+        "get_capacity_info should be None for an unregistered account"
+    );
+    assert!(
+        bob.get_reputation()
+            .await
+            .expect("get_reputation should not error")
+            .is_none(),
+        "get_reputation should be None for an unregistered account"
+    );
 }
 
 /// `list_active_agreements` should succeed and return a (possibly empty) list.
@@ -180,7 +223,8 @@ async fn test_get_stats_consistent() {
     let stats = provider
         .get_stats()
         .await
-        .expect("get_stats should not error");
+        .expect("get_stats should not error")
+        .expect("Alice should be registered");
 
     println!(
         "Alice stats: stake={} committed={} agreements_total={} extended={} defended(auth={} public={}) failed={} reputation={}",
@@ -210,13 +254,17 @@ async fn test_get_stats_consistent() {
         .expect("challenge counters must not overflow");
 }
 
-/// `get_total_earnings` always returns `Ok(0)` — earnings aren't tracked on-chain.
+/// `get_total_earnings` reports the chain's `lifetime_revenue`, cross-checked
+/// against `get_provider_info` so reading the wrong field shows up as a
+/// mismatch rather than as a plausible-looking number.
 #[tokio::test]
-async fn test_get_total_earnings_returns_zero() {
+async fn test_get_total_earnings_matches_lifetime_revenue() {
     let _guard = chain_guard().await;
 
     if chain_setup().await.is_none() {
-        eprintln!("Chain not reachable — skipping test_get_total_earnings_returns_zero");
+        eprintln!(
+            "Chain not reachable — skipping test_get_total_earnings_matches_lifetime_revenue"
+        );
         return;
     }
 
@@ -227,11 +275,19 @@ async fn test_get_total_earnings_returns_zero() {
     let earnings = provider
         .get_total_earnings()
         .await
-        .expect("get_total_earnings should not error");
+        .expect("get_total_earnings should not error")
+        .expect("Alice should be registered");
 
+    let pi = provider
+        .get_provider_info(&dev_account("alice"))
+        .await
+        .expect("get_provider_info should not error")
+        .expect("Alice should be registered");
+
+    println!("Alice's lifetime revenue: {earnings}");
     assert_eq!(
-        earnings, 0,
-        "earnings are not stored on-chain; get_total_earnings always returns 0"
+        earnings, pi.lifetime_revenue,
+        "get_total_earnings should report the chain's lifetime_revenue"
     );
 }
 
@@ -252,10 +308,11 @@ async fn test_get_capacity_info() {
     let info = provider
         .get_capacity_info()
         .await
-        .expect("get_capacity_info should not error");
+        .expect("get_capacity_info should not error")
+        .expect("Alice should be registered");
 
     println!(
-        "Capacity: committed={} available={} stake={}",
+        "Capacity: committed={} available={:?} stake={}",
         info.committed_bytes, info.available_bytes, info.stake
     );
 
@@ -263,8 +320,9 @@ async fn test_get_capacity_info() {
         info.stake > 0,
         "stake should be positive for registered provider"
     );
-    // get_capacity_info uses saturating_sub internally; the sum is therefore bounded
-    // by max_capacity. Re-query max_capacity through ProviderInfo and cross-check.
+    // `available_bytes` is the chain's `available_capacity` verbatim, so this
+    // cross-checks the two APIs instead of re-deriving the number. An unlimited
+    // provider reports `None`, never a silent 0.
     let pi = provider
         .get_provider_info(&dev_account("alice"))
         .await
@@ -275,10 +333,15 @@ async fn test_get_capacity_info() {
         "committed_bytes should match ProviderInfo"
     );
     assert_eq!(
-        info.available_bytes,
-        pi.max_capacity.saturating_sub(pi.committed_bytes),
-        "available_bytes should equal max_capacity − committed_bytes"
+        info.available_bytes, pi.available_capacity,
+        "available_bytes should be the chain's available_capacity"
     );
+    if pi.max_capacity == 0 {
+        assert!(
+            info.available_bytes.is_none(),
+            "an unlimited provider reports None, not Some(0)"
+        );
+    }
 }
 
 /// `get_reputation` delegates to `get_stats().reputation`. With no failed challenges
@@ -299,11 +362,13 @@ async fn test_get_reputation_matches_stats() {
     let reputation = provider
         .get_reputation()
         .await
-        .expect("get_reputation should not error");
+        .expect("get_reputation should not error")
+        .expect("Alice should be registered");
     let stats = provider
         .get_stats()
         .await
-        .expect("get_stats should not error");
+        .expect("get_stats should not error")
+        .expect("Alice should be registered");
 
     println!("Alice's reputation: {reputation}");
     assert!(reputation <= 100, "reputation must be 0–100");
@@ -400,6 +465,7 @@ async fn test_add_stake_increases_stake() {
         .get_stats()
         .await
         .expect("get_stats should succeed")
+        .expect("Alice should be registered")
         .stake;
 
     let increment = 1_000_000_000_000u128; // 1 token.
@@ -413,6 +479,7 @@ async fn test_add_stake_increases_stake() {
         .get_stats()
         .await
         .expect("get_stats should succeed")
+        .expect("Alice should be registered")
         .stake;
 
     assert_eq!(
