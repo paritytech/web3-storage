@@ -643,6 +643,8 @@ pub struct ReplicaTerms<Balance, BlockNumber> {
 /// Next expected `AgreementTerms.nonce` for this owner. Redemption
 /// requires an exact match and advances the counter by one, so a signed
 /// quote is redeemable at most once and in the order it was requested.
+/// The entry is removed when the account is reaped (see the
+/// `OnKilledAccount` impl for `Pallet`).
 #[pallet::storage]
 pub type AgreementNonces<T: Config> =
     StorageMap<_, Blake2_128Concat, T::AccountId, u64, ValueQuery>;

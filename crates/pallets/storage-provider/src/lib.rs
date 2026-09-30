@@ -186,6 +186,22 @@ pub mod pallet {
         }
     }
 
+    /// Gives [`AgreementNonces`] the same lifetime `frame_system` gives the
+    /// account: the entry exists until the account is reaped, and the
+    /// existential deposit pays for it. Runtimes set
+    /// `frame_system::Config::OnKilledAccount` to this pallet.
+    ///
+    /// A quote redeemed before the reap becomes redeemable again only while it is
+    /// still valid, which is at most `RequestTimeout` after its redemption. Only
+    /// the owner can redeem it, and it pays the price the provider signed. A held
+    /// payment keeps the owner alive, so a reap inside that window needs an owner
+    /// with no paid agreement.
+    impl<T: Config> frame_support::traits::OnKilledAccount<T::AccountId> for Pallet<T> {
+        fn on_killed_account(who: &T::AccountId) {
+            AgreementNonces::<T>::remove(who);
+        }
+    }
+
     #[pallet::config]
     pub trait Config: frame_system::Config<RuntimeEvent: From<Event<Self>>> {
         /// Currency for payments and staking.
@@ -310,6 +326,8 @@ pub mod pallet {
     /// Next expected `AgreementTerms.nonce` for this owner. Redemption
     /// requires an exact match and advances the counter by one, so a signed
     /// quote is redeemable at most once and in the order it was requested.
+    /// The entry is removed when the account is reaped (see the
+    /// `OnKilledAccount` impl for `Pallet`).
     #[pallet::storage]
     #[pallet::getter(fn agreement_nonces)]
     pub type AgreementNonces<T: Config> =

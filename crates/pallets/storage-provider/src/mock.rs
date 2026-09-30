@@ -43,7 +43,7 @@ impl frame_system::Config for Test {
     type PalletInfo = PalletInfo;
     type AccountData = pallet_balances::AccountData<u64>;
     type OnNewAccount = ();
-    type OnKilledAccount = ();
+    type OnKilledAccount = StorageProvider;
     type SystemWeightInfo = ();
     type SS58Prefix = ();
     type OnSetCode = ();

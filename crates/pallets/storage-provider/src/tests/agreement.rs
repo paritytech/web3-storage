@@ -404,3 +404,128 @@ fn early_terminated_agreement_nonce_not_reusable() {
         );
     });
 }
+
+/// Move an account's whole free balance to account 9 so that `frame_system`
+/// reaps it.
+fn reap(who: u64) {
+    assert_ok!(Balances::transfer_allow_death(
+        RuntimeOrigin::signed(who),
+        9,
+        Balances::free_balance(who)
+    ));
+    assert!(!System::account_exists(&who));
+}
+
+/// Fund an account again after it was reaped.
+fn refund(who: u64) {
+    assert_ok!(Balances::transfer_allow_death(
+        RuntimeOrigin::signed(9),
+        who,
+        1_000
+    ));
+}
+
+#[test]
+fn reaping_the_owner_removes_its_agreement_nonce() {
+    new_test_ext().execute_with(|| {
+        register_provider(2, 200);
+        let (terms, sig) = signed_primary_terms(2, 1, 50, 100);
+        assert_ok!(StorageProvider::establish_storage_agreement(
+            RuntimeOrigin::signed(1),
+            2,
+            terms,
+            sig,
+            storage_primitives::Visibility::Public
+        ));
+        assert_eq!(AgreementNonces::<Test>::get(1), 1);
+
+        reap(1);
+
+        assert!(!AgreementNonces::<Test>::contains_key(1));
+    });
+}
+
+#[test]
+fn owner_with_a_paid_agreement_keeps_its_agreement_nonce() {
+    new_test_ext().execute_with(|| {
+        priced_provider(2, 200);
+        let (terms, sig) = signed_primary_terms(2, 1, 50, 100);
+        assert_ok!(StorageProvider::establish_storage_agreement(
+            RuntimeOrigin::signed(1),
+            2,
+            terms,
+            sig,
+            storage_primitives::Visibility::Public
+        ));
+        assert!(held(HoldReason::AgreementPayment, 1) > 0);
+
+        // The hold keeps the account alive, so it cannot be reaped.
+        assert_noop!(
+            Balances::transfer_allow_death(RuntimeOrigin::signed(1), 9, Balances::free_balance(1)),
+            sp_runtime::TokenError::Frozen
+        );
+        assert!(System::account_exists(&1));
+        assert_eq!(AgreementNonces::<Test>::get(1), 1);
+    });
+}
+
+#[test]
+fn reaped_owner_restarts_at_nonce_zero() {
+    new_test_ext().execute_with(|| {
+        register_provider(2, 200);
+        let (terms, sig) = signed_primary_terms(2, 1, 50, 100);
+        assert_ok!(StorageProvider::establish_storage_agreement(
+            RuntimeOrigin::signed(1),
+            2,
+            terms,
+            sig,
+            storage_primitives::Visibility::Public
+        ));
+
+        reap(1);
+        refund(1);
+
+        let (terms, sig) = signed_primary_terms(2, 1, 50, 100);
+        assert_eq!(terms.nonce, 0);
+        assert_ok!(StorageProvider::establish_storage_agreement(
+            RuntimeOrigin::signed(1),
+            2,
+            terms,
+            sig,
+            storage_primitives::Visibility::Public
+        ));
+        assert_eq!(AgreementNonces::<Test>::get(1), 1);
+    });
+}
+
+#[test]
+fn quote_redeemed_before_a_reap_expires_within_request_timeout() {
+    new_test_ext().execute_with(|| {
+        register_provider(2, 200);
+        let (terms, sig) = signed_primary_terms(2, 1, 50, 100);
+        assert_ok!(StorageProvider::establish_storage_agreement(
+            RuntimeOrigin::signed(1),
+            2,
+            terms.clone(),
+            sig.clone(),
+            storage_primitives::Visibility::Public
+        ));
+
+        reap(1);
+        refund(1);
+
+        // Once the quote's `valid_until` has passed, the reset nonce no
+        // longer lets the owner redeem it again.
+        run_to_block(terms.valid_until + 1);
+        assert_noop!(
+            StorageProvider::establish_storage_agreement(
+                RuntimeOrigin::signed(1),
+                2,
+                terms,
+                sig,
+                storage_primitives::Visibility::Public
+            ),
+            Error::<Test>::TermsExpired
+        );
+    });
+}
