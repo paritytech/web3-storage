@@ -24,6 +24,14 @@ pub enum Error {
     #[error("Invalid hash: expected {expected}, got {actual}")]
     InvalidHash { expected: String, actual: String },
 
+    /// The root is not the zero-padded balanced binary tree over its own
+    /// chunks, so the provider cannot prove its chunks. Upload the chunks as a
+    /// balanced binary tree padded with zero hashes to a power of two, then
+    /// commit that root. A tree with a missing child node also fails this
+    /// check.
+    #[error("Non-canonical tree: {0}")]
+    NonCanonicalTree(String),
+
     #[error("Serialization error: {0}")]
     Serialization(String),
 

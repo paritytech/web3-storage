@@ -60,7 +60,7 @@ primaries (replicas stay challengeable by anyone).
 
 Users who create conflicts without checkpointing waste their quota—providers must keep all signed data.
 
-**Content-addressed storage**: Everything (chunks and internal nodes) is addressed by hash. Internal nodes are data whose content is child hashes. Upload is bottom-up: children must exist before parent can be stored. If a root hash exists, the entire tree is guaranteed complete.
+**Content-addressed storage**: Everything (chunks and internal nodes) is addressed by hash. Internal nodes are data whose content is child hashes. Upload is bottom-up: children must exist before parent can be stored. If a root hash exists, the entire tree is guaranteed complete. The provider signs a commitment only over roots that are the zero-padded balanced binary tree over their chunks, and rejects other shapes.
 
 ### Provider Lifecycle in Bucket
 
