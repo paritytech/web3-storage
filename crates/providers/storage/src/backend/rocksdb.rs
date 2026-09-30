@@ -302,9 +302,7 @@ impl DiskStorage {
             }
         }
 
-        // The challenge responder proves chunks against the zero-padded
-        // balanced tree over the root's leaves. Signing any other shape would
-        // commit to a root whose proofs fail verification.
+        // Verify balanced tree
         for root in &data_roots {
             if padded_merkle_root(&self.collect_chunk_hashes(*root)) != *root {
                 return Err(Error::NonCanonicalTree(format!(
