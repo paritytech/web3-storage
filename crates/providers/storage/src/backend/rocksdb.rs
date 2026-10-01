@@ -751,6 +751,81 @@ mod tests {
         assert_eq!(storage.get_bucket(BUCKET).unwrap().leaves.len(), 2);
     }
 
+    /// Check that `get_challenge_proof` returns the expected bytes for each
+    /// index, with a proof that verifies against `root` at that original index.
+    fn assert_challenge_proofs(storage: &DiskStorage, root: H256, expected: &[(u64, Vec<u8>)]) {
+        for (index, bytes) in expected {
+            let (data, proof) = storage.get_challenge_proof(root, *index).unwrap();
+            assert_eq!(&data, bytes, "index {index}");
+            let leaf = if data.is_empty() {
+                H256::zero()
+            } else {
+                blake2_256(&data)
+            };
+            assert!(
+                storage_primitives::verify_merkle_proof(leaf, *index, &proof, &root),
+                "index {index}"
+            );
+        }
+    }
+
+    #[test]
+    fn challenge_proof_covers_real_padding_and_past_padded_indices() {
+        let (_dir, storage) = committing_storage();
+        let [c0, c1, c2] = [1, 2, 3].map(|b| store_chunk(&storage, b));
+        let left = store_parent(&storage, vec![c0, c1]);
+        let right = store_parent(&storage, vec![c2, H256::zero()]);
+        let root = store_parent(&storage, vec![left, right]);
+        storage.commit(BUCKET, vec![root]).unwrap();
+
+        assert_challenge_proofs(
+            &storage,
+            root,
+            &[
+                (2, vec![3; 8]),
+                (3, vec![]),
+                (4, vec![1; 8]),
+                (7, vec![]),
+                (u64::MAX, vec![]),
+            ],
+        );
+    }
+
+    #[test]
+    fn challenge_proof_on_single_chunk_maps_every_index_to_it() {
+        let (_dir, storage) = committing_storage();
+        let c0 = store_chunk(&storage, 1);
+        storage.commit(BUCKET, vec![c0]).unwrap();
+
+        assert_challenge_proofs(&storage, c0, &[(0, vec![1; 8]), (5, vec![1; 8])]);
+    }
+
+    #[test]
+    fn challenge_proof_rejects_unknown_data_root() {
+        let (_dir, storage) = committing_storage();
+        assert!(matches!(
+            storage.get_challenge_proof(H256::repeat_byte(9), 0),
+            Err(Error::NodeNotFound(_))
+        ));
+    }
+
+    #[test]
+    fn chunk_at_index_still_rejects_padding_and_past_end_indices() {
+        let (_dir, storage) = committing_storage();
+        let [c0, c1, c2] = [1, 2, 3].map(|b| store_chunk(&storage, b));
+        let left = store_parent(&storage, vec![c0, c1]);
+        let right = store_parent(&storage, vec![c2, H256::zero()]);
+        let root = store_parent(&storage, vec![left, right]);
+
+        assert_eq!(storage.get_chunk_at_index(root, 2).unwrap().0, vec![3; 8]);
+        for index in [3, 4, 7] {
+            assert!(matches!(
+                storage.get_chunk_at_index(root, index),
+                Err(Error::NodeNotFound(_))
+            ));
+        }
+    }
+
     #[test]
     fn nonce_store_persist_and_load_round_trip() {
         let dir = TempDir::new().unwrap();

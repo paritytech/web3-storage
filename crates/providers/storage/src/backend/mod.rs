@@ -197,6 +197,37 @@ pub trait StorageBackend: Send + Sync {
         Ok((chunk_data, proof))
     }
 
+    /// Get the chunk bytes and Merkle proof that answer a challenge on
+    /// `chunk_index`.
+    ///
+    /// The on-chain check uses only the low bits of the index, so the index
+    /// maps to slot `chunk_index % padded_len` of the zero-padded tree. A real
+    /// slot returns its chunk bytes. A padding slot returns empty bytes and the
+    /// path from its zero leaf.
+    fn get_challenge_proof(
+        &self,
+        data_root: H256,
+        chunk_index: u64,
+    ) -> Result<(Vec<u8>, storage_primitives::MerkleProof), Error> {
+        let chunk_hashes = self.collect_chunk_hashes(data_root);
+        if chunk_hashes.is_empty() {
+            return Err(Error::NodeNotFound(format!("data_root_{data_root:?}")));
+        }
+        let padded_len = chunk_hashes.len().next_power_of_two() as u64;
+        let slot = (chunk_index % padded_len) as usize;
+
+        let chunk_data = match chunk_hashes.get(slot) {
+            Some(chunk_hash) => {
+                self.get_node(chunk_hash)
+                    .ok_or_else(|| Error::NodeNotFound(format!("chunk_data_{chunk_index}")))?
+                    .data
+            }
+            None => Vec::new(),
+        };
+
+        Ok((chunk_data, build_merkle_proof(&chunk_hashes, slot)))
+    }
+
     /// Delete data before a sequence number.
     fn delete_before(
         &self,
