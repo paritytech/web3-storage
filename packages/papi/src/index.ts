@@ -114,8 +114,8 @@ export interface SignedTerms {
  * `BucketTarget`: `"New"` for a bucket created at redemption,
  * `{ Existing: <bucket id> }` for one that already exists.
  *
- * Copy of the type in `@web3-storage/core`; this package is standalone for the
- * UIs, so both must stay in step.
+ * `@web3-storage/core` declares the same type; neither package depends on
+ * the other, so both must stay in step.
  */
 export type BucketTargetWire = "New" | { Existing: bigint | number | string };
 
@@ -135,12 +135,12 @@ export interface NegotiateRequest {
 
 /**
  * Bucket id a signed quote names, or `undefined` when it is for a bucket
- * created at redemption.
- *
- * Copy of the helper in `@web3-storage/layer0`; this package is standalone for
- * the UIs, so both decode the same `BucketTarget` and must stay in step.
+ * created at redemption. Accepts any `SignedTerms` shape whose `terms.bucket`
+ * is a {@link BucketTargetWire}; `@web3-storage/layer0` re-exports it.
  */
-export function signedTermsBucketId(signed: SignedTerms): bigint | undefined {
+export function signedTermsBucketId(signed: {
+  terms: { bucket: BucketTargetWire };
+}): bigint | undefined {
   const bucket = signed.terms.bucket;
   return typeof bucket === "object" && bucket !== null && "Existing" in bucket
     ? BigInt(bucket.Existing)

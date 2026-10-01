@@ -11,6 +11,9 @@
 import { Enum } from "polkadot-api";
 
 import type { SignedTerms } from "@web3-storage/core";
+import { signedTermsBucketId } from "@web3-storage/papi";
+
+export { signedTermsBucketId };
 
 import { asHex, hexToBytes, type ParachainApi } from "../address.js";
 import { getProviderNodeInfo } from "../provider-http.js";
@@ -151,20 +154,6 @@ export function decodeMultiSignature(sigHex: string) {
 }
 
 /**
- * Bucket id a signed quote names, or `undefined` when it is for a bucket
- * created at redemption.
- *
- * `@web3-storage/papi` carries its own copy for the UIs, which do not depend
- * on this package — keep the two in step.
- */
-export function signedTermsBucketId(signed: SignedTerms): bigint | undefined {
-  const bucket = signed.terms.bucket;
-  return typeof bucket === "object" && bucket !== null && "Existing" in bucket
-    ? BigInt(bucket.Existing)
-    : undefined;
-}
-
-/**
  * Shape a provider's SignedTerms into the `{ provider, terms, sig }` argument
  * the quote-redeeming extrinsics (and create_drive / create_s3_bucket) expect.
  */
@@ -273,8 +262,7 @@ export async function createBucketWithPrimary(
 /**
  * Redeem provider-signed primary terms via `add_primary_provider`: adds a
  * primary to the existing bucket the terms name. Admin only. The new primary
- * has none of the bucket's data — upload it and include the provider's
- * signature in the next checkpoint.
+ * has none of the bucket's data.
  */
 export async function addPrimaryProvider(
   api: ParachainApi,

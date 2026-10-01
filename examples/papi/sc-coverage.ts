@@ -6,9 +6,6 @@
  * transactions. No marketplace contract in between; just the bare precompile
  * surface and its on-chain effect.
  *
- * One gap: `IWeb3Storage.addPrimaryProvider` needs a second registered
- * provider to quote for, which this script does not set up.
- *
  * Each selector gets one happy-path invocation, and the script asserts the
  * pallet's storage or events were updated as expected. Preconditions
  * (bucket existence, accepted agreement, checkpoint) are chained where

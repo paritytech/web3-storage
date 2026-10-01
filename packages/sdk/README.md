@@ -86,19 +86,11 @@ it returns `undefined` for a quote that creates its bucket.
 
 ### Changing a bucket's primary provider
 
-A bucket outlives its agreements, and its `bucket_id` never changes, so
-switching provider does not break any reference to it:
-
-1. `addPrimaryProvider` with a quote for the bucket. Both primaries are now on
-   the bucket; only the old one has the data.
-2. Download the bucket's data from the old primary (skip this if a local copy
-   remains) and upload it to the new one.
-3. Ask the new primary to sign a commitment and `checkpoint` it, so the new
-   primary enters the snapshot's signer bitfield.
-4. `endAgreement` against the old primary.
-
-The client moves the data: primaries do not sync with each other, and nothing
-on-chain transfers it.
+The procedure is specified in the design doc, [Provider Lifecycle in
+Bucket](../../docs/design/scalable-web3-storage-implementation.md#provider-lifecycle-in-bucket).
+The wrappers for its steps are `addPrimaryProvider` (new provider joins),
+`checkpoint` (new provider signs the snapshot after the client uploaded the
+data to it) and `endAgreement` (old provider leaves).
 
 ## Download verification
 
