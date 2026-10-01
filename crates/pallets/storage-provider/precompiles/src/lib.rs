@@ -82,6 +82,13 @@ where
     })
 }
 
+/// The id the next bucket-creating call assigns. `NextBucketId` is
+/// incremented inside the extrinsic, so read it before dispatch to return
+/// the id of the bucket this call creates.
+fn pending_bucket_id<Runtime: pallet_storage_provider::Config>() -> BucketId {
+    pallet_storage_provider::NextBucketId::<Runtime>::get()
+}
+
 /// Decode the SCALE-encoded `MultiSignature` the provider returned from
 /// `/negotiate`.
 fn decode_signature(signature: &[u8]) -> Result<sp_runtime::MultiSignature, Error> {
@@ -157,7 +164,7 @@ where
                 env.charge(
                     <Runtime as pallet_storage_provider::Config>::WeightInfo::create_bucket(),
                 )?;
-                let bucket_id: BucketId = pallet_storage_provider::NextBucketId::<Runtime>::get();
+                let bucket_id = pending_bucket_id::<Runtime>();
                 pallet_storage_provider::Pallet::<Runtime>::create_bucket(
                     frame_origin,
                     *minProviders,
@@ -179,7 +186,7 @@ where
                 let provider = decode_account::<Runtime>(&provider.0)?;
                 let terms = decode_terms::<Runtime>(terms)?;
                 let sig = decode_signature(signature)?;
-                let bucket_id: BucketId = pallet_storage_provider::NextBucketId::<Runtime>::get();
+                let bucket_id = pending_bucket_id::<Runtime>();
                 pallet_storage_provider::Pallet::<Runtime>::create_bucket_with_primary(
                     frame_origin,
                     provider,

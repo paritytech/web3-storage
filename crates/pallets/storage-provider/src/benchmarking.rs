@@ -565,7 +565,7 @@ mod benchmarks {
         // `primary_providers`. Fill it to one below the cap so the benchmarked
         // call pushes onto the largest set it ever can.
         for i in 1..T::MaxPrimaryProviders::get().saturating_sub(1) {
-            let filler = create_provider::<T>(100 + i);
+            let filler = funded_account::<T>("filler", i);
             add_primary_to_bucket::<T>(&admin, &filler, bucket_id, 1_000u64);
         }
 

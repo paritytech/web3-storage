@@ -192,8 +192,6 @@ impl<T: Config> Pallet<T> {
     ///
     /// Returns every primary, including one just added by
     /// `add_primary_provider` that has not received the bucket's data yet.
-    /// Nothing on-chain marks which primary can serve reads; a reader can
-    /// prefer the primaries set in the current snapshot's signer bitfield.
     pub fn query_bucket_providers(bucket_id: BucketId) -> Vec<T::AccountId> {
         Buckets::<T>::get(bucket_id)
             .map(|bucket| bucket.primary_providers.to_vec())

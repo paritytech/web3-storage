@@ -1623,17 +1623,13 @@ pub mod pallet {
 
         /// Create an empty bucket with the caller as its sole admin.
         ///
-        /// The bucket has no providers and no data, so it cannot be
-        /// checkpointed until `min_providers` primaries have joined; add one
-        /// with [`Pallet::add_primary_provider`].
+        /// The bucket has no providers and no data. Add a primary with
+        /// [`Pallet::add_primary_provider`].
         ///
         /// Parameters:
         /// - `min_providers`: primary-provider signatures each checkpoint
-        ///   needs. Capped at `MaxPrimaryProviders`, because a bucket can
-        ///   never hold more primaries than that and a higher value would
-        ///   make the bucket impossible to checkpoint
-        ///   (`InvalidMinProviders`). Changeable later with
-        ///   [`Pallet::set_min_providers`].
+        ///   needs. At most `MaxPrimaryProviders` (`InvalidMinProviders`).
+        ///   Changeable later with [`Pallet::set_min_providers`].
         /// - `visibility`: who may read the bucket (see [`Visibility`]).
         ///
         /// Layer 0 has no call that deletes a bucket, so one created here
@@ -1686,9 +1682,8 @@ pub mod pallet {
         /// Works on a bucket whose earlier agreements have all ended and on a
         /// frozen bucket.
         ///
-        /// The new provider holds no data yet and is not in the current
-        /// snapshot's signer bitfield: upload the bucket's data to it and
-        /// include its signature in the next checkpoint.
+        /// The new provider has none of the bucket's data and is not in the
+        /// current snapshot's signer bitfield.
         #[pallet::call_index(18)]
         #[pallet::weight(T::WeightInfo::add_primary_provider())]
         pub fn add_primary_provider(

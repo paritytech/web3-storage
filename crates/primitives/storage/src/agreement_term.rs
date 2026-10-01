@@ -96,9 +96,9 @@ pub enum BucketTarget {
     Existing(crate::BucketId),
 }
 
-/// `Some(id)` maps to [`BucketTarget::Existing`], `None` to
-/// [`BucketTarget::New`] — the shape callers that model the target as an
-/// optional bucket id (the `/negotiate` request, the Solidity mirrors) send.
+/// `None` → [`BucketTarget::New`], `Some(id)` → [`BucketTarget::Existing`].
+/// Used by the `/negotiate` request and the Solidity `hasBucketId` /
+/// `bucketId` pair.
 impl From<Option<crate::BucketId>> for BucketTarget {
     fn from(bucket_id: Option<crate::BucketId>) -> Self {
         bucket_id.map_or(Self::New, Self::Existing)

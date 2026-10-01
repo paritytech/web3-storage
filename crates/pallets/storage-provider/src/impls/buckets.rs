@@ -127,17 +127,15 @@ impl<T: Config> Pallet<T> {
         Ok(total_refunded)
     }
 
-    /// Create a bucket internally (for use by other pallets like Layer 1 File System).
-    ///
-    /// This bypasses the normal extrinsic flow and creates a bucket directly,
-    /// with the specified account as admin.
+    /// Creates a bucket with `admin` as its sole admin. Shared by
+    /// `create_bucket`, `create_bucket_with_primary_internal` and the Layer 1
+    /// pallets.
     ///
     /// Parameters:
     /// - `admin`: Account that will be the bucket admin.
     /// - `min_providers`: Minimum number of primary providers required to
-    ///   sign each checkpoint. Capped at `MaxPrimaryProviders`: a bucket can
-    ///   never hold more primaries than that, so a higher value would make
-    ///   the bucket impossible to checkpoint.
+    ///   sign each checkpoint. At most `MaxPrimaryProviders`
+    ///   (`InvalidMinProviders`).
     /// - `initial_primary`: Optional provider to seed as the bucket's
     ///   first `primary_providers` entry. Used by
     ///   `create_bucket_with_primary_internal` to atomically create the
