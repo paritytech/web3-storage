@@ -956,6 +956,7 @@ mod benchmarks {
         let mmr_leaf = storage_primitives::MmrLeaf {
             data_root,
             data_size: chunk_size as u64,
+            chunk_count: 1,
             total_size: chunk_size as u64,
         };
         let leaf_hash = storage_primitives::blake2_256(&codec::Encode::encode(&mmr_leaf));
