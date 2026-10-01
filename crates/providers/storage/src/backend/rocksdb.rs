@@ -302,17 +302,14 @@ impl DiskStorage {
             }
         }
 
-        // Verify balanced tree, and keep each tree's chunk count for its leaf
-        let mut chunk_counts = Vec::with_capacity(data_roots.len());
+        // Verify balanced tree
         for root in &data_roots {
-            let chunk_hashes = self.collect_chunk_hashes(*root);
-            if padded_merkle_root(&chunk_hashes) != *root {
+            if padded_merkle_root(&self.collect_chunk_hashes(*root)) != *root {
                 return Err(Error::NonCanonicalTree(format!(
                     "0x{}",
                     hex::encode(root.as_bytes())
                 )));
             }
-            chunk_counts.push(chunk_hashes.len() as u64);
         }
 
         // Get bucket and update MMR
@@ -343,10 +340,12 @@ impl DiskStorage {
                 .unwrap_or(0)
                 .saturating_add(data_size);
 
+            let chunk_count = self.collect_chunk_hashes(*data_root).len() as u64;
+
             let leaf = MmrLeaf {
                 data_root: *data_root,
                 data_size,
-                chunk_count: chunk_counts[i],
+                chunk_count,
                 total_size,
             };
             let leaf_hash = blake2_256(&leaf.encode());

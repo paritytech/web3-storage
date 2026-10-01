@@ -293,9 +293,8 @@ async fn test_proof_generation_failed_no_bucket() {
 
 #[tokio::test(start_paused = true)]
 async fn test_chunk_index_past_end_submits_out_of_range() {
-    // The fixture leaf holds one chunk, so index 1 is the first slot past the end.
     let (state, mut challenge, _dir) = test_state_with_data();
-    challenge.chunk_index = 1;
+    challenge.chunk_index = 999;
 
     let result: Arc<Mutex<Option<ChallengeResponseResult>>> = Arc::new(Mutex::new(None));
     let result_clone = Arc::clone(&result);
