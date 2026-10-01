@@ -1814,11 +1814,12 @@ impl<T: Config> Pallet<T> {
     /// 
     /// Must provide the challenged chunk with Merkle proofs, or prove the data
     /// was legitimately deleted (newer commitment with higher start_seq), or
-    /// show the challenged state has been superseded by canonical.
+    /// show the challenged state has been superseded by canonical, or show that
+    /// the challenged chunk index is past the leaf's chunk count.
     /// 
     /// Parameters:
     /// - `challenge_id`: The challenge to respond to (deadline + index)
-    /// - `response`: Proof, Deleted, or Superseded response
+    /// - `response`: Proof, Deleted, Superseded, or ChunkOutOfRange response
     #[pallet::weight(...)]
     pub fn respond_to_challenge(
         origin: OriginFor<T>,
@@ -1883,6 +1884,12 @@ pub enum ChallengeResponse<T: Config> {
     /// (For challenged_seq < canonical.start_seq, use Deleted response instead)
     /// (For challenged_seq >= canonical_end, provider is liable - must use Proof)
     Superseded,
+    /// The challenged chunk index is at or past the leaf's `chunk_count`, so no chunk
+    /// exists there (the chunk tree is padded to a power of two). Valid when the MMR
+    /// proof verifies and chunk_index >= mmr_proof.leaf.chunk_count.
+    ChunkOutOfRange {
+        mmr_proof: MmrProof,
+    },
 }
 ```
 
@@ -2436,6 +2443,9 @@ pub struct MmrLeaf {
     pub data_root: H256,
     /// Size of content under this data_root
     pub data_size: u64,
+    /// Number of chunks in the chunk tree. The leaf is signed through the
+    /// MMR root, so a provider cannot change it after committing.
+    pub chunk_count: u64,
     /// Cumulative unique bytes in MMR at this point
     pub total_size: u64,
 }
@@ -2540,6 +2550,15 @@ fn verify_challenge_response(
             );
             let mmr_ok = verify_mmr_proof(mmr_proof, &challenge.mmr_root);
             if chunk_ok && mmr_ok { Ok(()) } else { Err(SlashReason::InvalidProof) }
+        }
+
+        ChallengeResponse::ChunkOutOfRange { mmr_proof } => {
+            let mmr_ok = verify_mmr_proof(mmr_proof, &challenge.mmr_root);
+            if mmr_ok && challenge.target.chunk_index >= mmr_proof.leaf.chunk_count {
+                Ok(())
+            } else {
+                Err(SlashReason::InvalidProof)
+            }
         }
 
         ChallengeResponse::Deleted { new_mmr_root, new_start_seq, admin, admin_signature } => {

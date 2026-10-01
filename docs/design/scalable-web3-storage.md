@@ -967,6 +967,7 @@ BucketSnapshot
 MmrLeaf
 ├── data_root: H256      // Merkle root of chunk tree
 ├── data_size: u64       // logical size of this data
+├── chunk_count: u64     // number of chunks in the chunk tree
 ├── total_size: u64      // cumulative unique bytes in bucket
 ```
 
