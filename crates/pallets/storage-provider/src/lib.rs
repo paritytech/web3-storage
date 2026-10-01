@@ -780,13 +780,6 @@ pub mod pallet {
             /// Proves the chunk is part of the leaf.
             chunk_proof: MerkleProof,
         },
-        /// The challenged chunk index is past the end of the leaf's chunk tree,
-        /// so no chunk exists there. The leaf, signed through the MMR root,
-        /// states its chunk count.
-        ChunkOutOfRange {
-            /// Proves the leaf, and its chunk count, is part of the committed MMR.
-            mmr_proof: MmrProof,
-        },
         /// Data was deleted - show newer commitment without this seq.
         Deleted {
             /// Root of the newer commitment that no longer holds the
@@ -2694,8 +2687,6 @@ pub mod pallet {
         #[pallet::call_index(41)]
         #[pallet::weight(match response {
             ChallengeResponse::Proof { .. } => T::WeightInfo::respond_to_challenge_proof(),
-            // TODO: needs re-benchmarking (uses the `Proof` weight, which does more work)
-            ChallengeResponse::ChunkOutOfRange { .. } => T::WeightInfo::respond_to_challenge_proof(),
             ChallengeResponse::Deleted { .. } => T::WeightInfo::respond_to_challenge_deleted(),
             ChallengeResponse::Superseded => T::WeightInfo::respond_to_challenge_superseded(),
         })]
@@ -2761,15 +2752,6 @@ pub mod pallet {
                     let mmr_ok =
                         storage_primitives::verify_mmr_proof(mmr_proof, &challenge.mmr_root);
                     if chunk_ok && mmr_ok {
-                        Ok(())
-                    } else {
-                        Err(SlashReason::InvalidProof)
-                    }
-                }
-                ChallengeResponse::ChunkOutOfRange { mmr_proof } => {
-                    let mmr_ok =
-                        storage_primitives::verify_mmr_proof(mmr_proof, &challenge.mmr_root);
-                    if mmr_ok && challenge.target.chunk_index >= mmr_proof.leaf.chunk_count {
                         Ok(())
                     } else {
                         Err(SlashReason::InvalidProof)

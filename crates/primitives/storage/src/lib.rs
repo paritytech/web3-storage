@@ -266,8 +266,6 @@ pub struct MmrLeaf {
     pub data_root: H256,
     /// Size of content under this data_root
     pub data_size: u64,
-    /// Number of chunks in the chunk tree under this data_root
-    pub chunk_count: u64,
     /// Cumulative unique bytes in MMR at this point
     pub total_size: u64,
 }

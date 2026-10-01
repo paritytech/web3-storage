@@ -1174,7 +1174,6 @@ mod challenge_tests {
         let leaf = MmrLeaf {
             data_root,
             data_size: chunk_data.len() as u64,
-            chunk_count: 1,
             total_size: chunk_data.len() as u64,
         };
         let leaf_hash = blake2_256(&leaf.encode());
@@ -1492,7 +1491,6 @@ mod challenge_tests {
             let bad_leaf = MmrLeaf {
                 data_root: H256::repeat_byte(0xff),
                 data_size: 1,
-                chunk_count: 1,
                 total_size: 1,
             };
             let bad_peak = blake2_256(&bad_leaf.encode());
@@ -1518,79 +1516,6 @@ mod challenge_tests {
             ));
             let provider = Providers::<Test>::get(2).unwrap();
             assert_eq!(provider.stake, 0);
-        });
-    }
-
-    /// Challenge `chunk_index` on a single-chunk leaf and answer with
-    /// `ChunkOutOfRange`. Returns the provider's stake afterwards.
-    fn respond_out_of_range(chunk_index: u64, use_bad_proof: bool) -> u64 {
-        let (mmr_root, mmr_proof, _) = single_chunk_proof(b"chunk-0");
-        setup_primary_with_snapshot(mmr_root, 0, 1);
-        assert_ok!(StorageProvider::challenge_checkpoint(
-            RuntimeOrigin::signed(3),
-            0,
-            2,
-            ChunkLocation {
-                leaf_index: 0,
-                chunk_index,
-            },
-        ));
-        let mmr_proof = if use_bad_proof {
-            let mut bad = mmr_proof;
-            bad.leaf.data_root = H256::repeat_byte(0xff);
-            bad
-        } else {
-            mmr_proof
-        };
-        assert_ok!(StorageProvider::respond_to_challenge(
-            RuntimeOrigin::signed(2),
-            ChallengeId {
-                deadline: 101u64,
-                index: 0u16,
-            },
-            ChallengeResponse::ChunkOutOfRange { mmr_proof },
-        ));
-        Providers::<Test>::get(2).unwrap().stake
-    }
-
-    /// A chunk index at or past the leaf's chunk count holds no chunk, so
-    /// the `ChunkOutOfRange` response defends the challenge.
-    #[test]
-    fn respond_chunk_out_of_range_defends_challenge() {
-        new_test_ext().execute_with(|| {
-            System::set_block_number(1);
-            assert_eq!(respond_out_of_range(1, false), 200);
-            System::assert_has_event(RuntimeEvent::StorageProvider(
-                crate::Event::ChallengeDefended {
-                    challenge_id: ChallengeId {
-                        deadline: 101u64,
-                        index: 0u16,
-                    },
-                    provider: 2,
-                    response_time_blocks: 0,
-                    challenger_cost: 100,
-                    provider_cost: 0,
-                },
-            ));
-        });
-    }
-
-    /// `ChunkOutOfRange` for an index inside the chunk tree is a lie - slash.
-    #[test]
-    fn respond_chunk_out_of_range_for_existing_chunk_slashes() {
-        new_test_ext().execute_with(|| {
-            System::set_block_number(1);
-            assert_eq!(respond_out_of_range(0, false), 0);
-        });
-    }
-
-    /// `ChunkOutOfRange` with an MMR proof that does not match the challenged
-    /// root is invalid - slash.
-    #[test]
-    fn respond_chunk_out_of_range_with_bad_mmr_proof_slashes() {
-        new_test_ext().execute_with(|| {
-            System::set_block_number(1);
-            assert_eq!(respond_out_of_range(1, true), 0);
         });
     }
 
