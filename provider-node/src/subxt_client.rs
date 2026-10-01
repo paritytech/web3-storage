@@ -796,19 +796,6 @@ fn to_runtime_merkle_proof(proof: storage_primitives::MerkleProof) -> RuntimeMer
     }
 }
 
-fn to_runtime_mmr_proof(proof: storage_primitives::MmrProof) -> RuntimeMmrProof {
-    RuntimeMmrProof {
-        peaks: proof.peaks.into_iter().map(to_runtime_hash).collect(),
-        leaf: RuntimeMmrLeaf {
-            data_root: to_runtime_hash(proof.leaf.data_root),
-            data_size: proof.leaf.data_size,
-            chunk_count: proof.leaf.chunk_count,
-            total_size: proof.leaf.total_size,
-        },
-        leaf_proof: to_runtime_merkle_proof(proof.leaf_proof),
-    }
-}
-
 /// Map an on-chain `Challenge` at `(deadline, index)` into the responder's
 /// `DetectedChallenge`, or `None` when it targets a different provider.
 fn detected_challenge(
@@ -988,33 +975,16 @@ impl ChallengeChainClient for SubxtChainClient {
 
         let response = RuntimeChallengeResponse::Proof {
             chunk_data: BoundedVec(chunk_data),
-            mmr_proof: to_runtime_mmr_proof(mmr_proof),
+            mmr_proof: RuntimeMmrProof {
+                peaks: mmr_proof.peaks.into_iter().map(to_runtime_hash).collect(),
+                leaf: RuntimeMmrLeaf {
+                    data_root: to_runtime_hash(mmr_proof.leaf.data_root),
+                    data_size: mmr_proof.leaf.data_size,
+                    total_size: mmr_proof.leaf.total_size,
+                },
+                leaf_proof: to_runtime_merkle_proof(mmr_proof.leaf_proof),
+            },
             chunk_proof: to_runtime_merkle_proof(chunk_proof),
-        };
-
-        let tx = storage_subxt::api::tx()
-            .storage_provider()
-            .respond_to_challenge(RuntimeChallengeId { deadline, index }, response);
-
-        // Zero only when success was inferred from a duplicate rejection, where
-        // the block that took the response is genuinely unknown.
-        let block_hash = self
-            .submit_and_finalize(&tx, "respond_to_challenge")
-            .await
-            .map_err(|e| ChallengeError::Chain(e.to_string()))?;
-
-        Ok(block_hash.unwrap_or_default())
-    }
-
-    async fn submit_out_of_range(
-        &self,
-        challenge_id: (u32, u16),
-        mmr_proof: storage_primitives::MmrProof,
-    ) -> Result<H256, ChallengeError> {
-        let (deadline, index) = challenge_id;
-
-        let response = RuntimeChallengeResponse::ChunkOutOfRange {
-            mmr_proof: to_runtime_mmr_proof(mmr_proof),
         };
 
         let tx = storage_subxt::api::tx()

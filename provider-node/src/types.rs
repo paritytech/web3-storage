@@ -154,7 +154,6 @@ pub struct MmrProofQuery {
 pub struct MmrLeafData {
     pub data_root: String,
     pub data_size: u64,
-    pub chunk_count: u64,
     pub total_size: u64,
 }
 

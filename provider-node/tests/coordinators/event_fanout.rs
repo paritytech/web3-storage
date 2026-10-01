@@ -70,15 +70,6 @@ impl ChallengeChainClient for MockChallengeClient {
         self.submitted.lock().unwrap().push(challenge_id);
         Ok(H256::zero())
     }
-
-    async fn submit_out_of_range(
-        &self,
-        challenge_id: (u32, u16),
-        _mmr_proof: storage_primitives::MmrProof,
-    ) -> Result<H256, ChallengeError> {
-        self.submitted.lock().unwrap().push(challenge_id);
-        Ok(H256::zero())
-    }
 }
 
 /// Config with the safety net disabled: only the event path may act.

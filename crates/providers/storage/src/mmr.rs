@@ -350,7 +350,6 @@ mod tests {
             .map(|i| storage_primitives::MmrLeaf {
                 data_root: blake2_256(format!("root{i}").as_bytes()),
                 data_size: 100 * (i as u64 + 1),
-                chunk_count: 1,
                 total_size: 100 * (i as u64 + 1),
             })
             .collect();

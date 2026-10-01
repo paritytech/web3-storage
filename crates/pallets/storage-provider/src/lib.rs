@@ -780,6 +780,13 @@ pub mod pallet {
             /// Proves the chunk is part of the leaf.
             chunk_proof: MerkleProof,
         },
+        /// The challenged chunk index is past the end of the leaf's chunk tree,
+        /// so no chunk exists there. The leaf, signed through the MMR root,
+        /// states its chunk count.
+        ChunkOutOfRange {
+            /// Proves the leaf, and its chunk count, is part of the committed MMR.
+            mmr_proof: MmrProof,
+        },
         /// Data was deleted - show newer commitment without this seq.
         Deleted {
             /// Root of the newer commitment that no longer holds the
@@ -795,13 +802,6 @@ pub mod pallet {
         },
         /// Challenged state has been superseded by canonical.
         Superseded,
-        /// The challenged chunk index is past the end of the leaf's chunk tree,
-        /// so no chunk exists there. The leaf, signed through the MMR root,
-        /// states its chunk count.
-        ChunkOutOfRange {
-            /// Proves the leaf, and its chunk count, is part of the committed MMR.
-            mmr_proof: MmrProof,
-        },
     }
 
     // ─────────────────────────────────────────────────────────────────────────

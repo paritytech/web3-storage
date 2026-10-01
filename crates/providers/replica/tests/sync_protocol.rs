@@ -220,7 +220,6 @@ async fn peak_hashes_are_not_node_keys_so_every_real_sync_404s() {
         &MmrLeaf {
             data_root: blake2_256(b"chunk"),
             data_size: 5,
-            chunk_count: 1,
             total_size: 5,
         }
         .encode(),

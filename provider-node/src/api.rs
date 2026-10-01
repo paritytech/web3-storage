@@ -532,7 +532,6 @@ async fn get_mmr_proof(
         leaf: MmrLeafData {
             data_root: format!("0x{}", hex::encode(mmr_proof.leaf.data_root.as_bytes())),
             data_size: mmr_proof.leaf.data_size,
-            chunk_count: mmr_proof.leaf.chunk_count,
             total_size: mmr_proof.leaf.total_size,
         },
         proof: MmrProofData {
