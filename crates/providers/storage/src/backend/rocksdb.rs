@@ -340,9 +340,12 @@ impl DiskStorage {
                 .unwrap_or(0)
                 .saturating_add(data_size);
 
+            let chunk_count = self.collect_chunk_hashes(*data_root).len() as u64;
+
             let leaf = MmrLeaf {
                 data_root: *data_root,
                 data_size,
+                chunk_count,
                 total_size,
             };
             let leaf_hash = blake2_256(&leaf.encode());
@@ -749,6 +752,24 @@ mod tests {
         let root = store_parent(&storage, vec![left, right]);
         storage.commit(BUCKET, vec![root, c0]).unwrap();
         assert_eq!(storage.get_bucket(BUCKET).unwrap().leaves.len(), 2);
+    }
+
+    #[test]
+    fn commit_records_chunk_count() {
+        let (_dir, storage) = committing_storage();
+        let [c0, c1, c2] = [1, 2, 3].map(|b| store_chunk(&storage, b));
+        let left = store_parent(&storage, vec![c0, c1]);
+        let right = store_parent(&storage, vec![c2, H256::zero()]);
+        let root = store_parent(&storage, vec![left, right]);
+        storage.commit(BUCKET, vec![root, c0]).unwrap();
+        let counts: Vec<u64> = storage
+            .get_bucket(BUCKET)
+            .unwrap()
+            .leaves
+            .iter()
+            .map(|l| l.chunk_count)
+            .collect();
+        assert_eq!(counts, vec![3, 1]);
     }
 
     #[test]

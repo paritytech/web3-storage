@@ -146,6 +146,7 @@ pub fn mmr_proof(p: &storage_primitives::MmrProof) -> rt::MmrProof {
         leaf: rt::MmrLeaf {
             data_root: p.leaf.data_root,
             data_size: p.leaf.data_size,
+            chunk_count: p.leaf.chunk_count,
             total_size: p.leaf.total_size,
         },
         leaf_proof: merkle_proof(&p.leaf_proof),

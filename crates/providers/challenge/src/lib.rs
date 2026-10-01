@@ -153,6 +153,14 @@ pub trait ChallengeChainClient: Send + Sync {
         mmr_proof: MmrProof,
         chunk_proof: MerkleProof,
     ) -> Result<H256, ChallengeError>;
+
+    /// Submit a `ChunkOutOfRange` response: the challenged chunk index is
+    /// past the leaf's chunk count, so no chunk exists to prove.
+    async fn submit_out_of_range(
+        &self,
+        challenge_id: (u32, u16),
+        mmr_proof: MmrProof,
+    ) -> Result<H256, ChallengeError>;
 }
 
 #[async_trait::async_trait]
@@ -178,6 +186,16 @@ impl<T: ChallengeChainClient> ChallengeChainClient for Arc<T> {
     ) -> Result<H256, ChallengeError> {
         self.as_ref()
             .submit_response(challenge_id, chunk_data, mmr_proof, chunk_proof)
+            .await
+    }
+
+    async fn submit_out_of_range(
+        &self,
+        challenge_id: (u32, u16),
+        mmr_proof: MmrProof,
+    ) -> Result<H256, ChallengeError> {
+        self.as_ref()
+            .submit_out_of_range(challenge_id, mmr_proof)
             .await
     }
 }
@@ -445,7 +463,18 @@ impl ChallengeResponder {
             }
         };
 
-        // Step 2: Get chunk data and Merkle proof using data_root from MMR leaf
+        // Step 2: A chunk index past the leaf's chunk count holds no chunk.
+        // Answer with the leaf, whose chunk count the MMR root commits to.
+        if challenge.chunk_index >= mmr_proof.leaf.chunk_count {
+            return self.finish(
+                challenge_id,
+                self.chain_client
+                    .submit_out_of_range(challenge_id, mmr_proof)
+                    .await,
+            );
+        }
+
+        // Step 3: Get chunk data and Merkle proof using data_root from MMR leaf
         let data_root = mmr_proof.leaf.data_root;
         let (chunk_data, chunk_proof) = match self
             .proof_source
@@ -462,12 +491,22 @@ impl ChallengeResponder {
             }
         };
 
-        // Step 3: Submit response transaction
-        match self
-            .chain_client
-            .submit_response(challenge_id, chunk_data, mmr_proof, chunk_proof)
-            .await
-        {
+        // Step 4: Submit response transaction
+        self.finish(
+            challenge_id,
+            self.chain_client
+                .submit_response(challenge_id, chunk_data, mmr_proof, chunk_proof)
+                .await,
+        )
+    }
+
+    /// Turn a submission result into the response outcome, logging it.
+    fn finish(
+        &self,
+        challenge_id: (u32, u16),
+        result: Result<H256, ChallengeError>,
+    ) -> ChallengeResponseResult {
+        match result {
             Ok(block_hash) => {
                 tracing::info!(
                     "Successfully responded to challenge {:?} in block {:?}",

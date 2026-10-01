@@ -16,6 +16,7 @@ use storage_provider_node::{
 struct MockChallengeChainClient {
     challenges: Mutex<Vec<DetectedChallenge>>,
     submitted: Mutex<Vec<(u32, u16)>>,
+    out_of_range: Mutex<Vec<(u32, u16)>>,
     submit_error: Mutex<Option<String>>,
 }
 
@@ -24,6 +25,7 @@ impl MockChallengeChainClient {
         Self {
             challenges: Mutex::new(Vec::new()),
             submitted: Mutex::new(Vec::new()),
+            out_of_range: Mutex::new(Vec::new()),
             submit_error: Mutex::new(None),
         }
     }
@@ -74,6 +76,15 @@ impl ChallengeChainClient for MockChallengeChainClient {
         if let Some(err) = self.submit_error.lock().unwrap().as_ref() {
             return Err(ChallengeError::Internal(err.clone()));
         }
+        Ok(H256::zero())
+    }
+
+    async fn submit_out_of_range(
+        &self,
+        challenge_id: (u32, u16),
+        _mmr_proof: storage_primitives::MmrProof,
+    ) -> Result<H256, ChallengeError> {
+        self.out_of_range.lock().unwrap().push(challenge_id);
         Ok(H256::zero())
     }
 }
@@ -281,7 +292,7 @@ async fn test_proof_generation_failed_no_bucket() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn test_data_not_found_bad_chunk_index() {
+async fn test_chunk_index_past_end_submits_out_of_range() {
     let (state, mut challenge, _dir) = test_state_with_data();
     challenge.chunk_index = 999;
 
@@ -323,10 +334,12 @@ async fn test_data_not_found_bad_chunk_index() {
 
     let r = result.lock().unwrap();
     assert!(
-        matches!(&*r, Some(ChallengeResponseResult::DataNotFound { .. })),
-        "expected DataNotFound, got {:?}",
+        matches!(&*r, Some(ChallengeResponseResult::Success { .. })),
+        "expected Success, got {:?}",
         r
     );
+    assert_eq!(*mock.out_of_range.lock().unwrap(), vec![(1000, 0)]);
+    assert!(mock.submitted.lock().unwrap().is_empty());
 }
 
 #[tokio::test(start_paused = true)]

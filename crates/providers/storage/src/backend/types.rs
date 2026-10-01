@@ -99,6 +99,7 @@ mod tests {
                     leaves: vec![MmrLeaf {
                         data_root: H256::repeat_byte(0xcd),
                         data_size: 111,
+                        chunk_count: 3,
                         total_size: 222,
                     }],
                     used_bytes: 999,
@@ -111,9 +112,11 @@ mod tests {
                     "0700000000000000",
                     // leaves: Vec<MmrLeaf>, compact length 1
                     "04",
-                    // leaves[0]: data_root (0xcd * 32), data_size = 111, total_size = 222
+                    // leaves[0]: data_root (0xcd * 32), data_size = 111, chunk_count = 3,
+                    // total_size = 222
                     "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
                     "6f00000000000000",
+                    "0300000000000000",
                     "de00000000000000",
                     // used_bytes: u64 = 999
                     "e703000000000000",
@@ -157,6 +160,7 @@ mod tests {
                 MmrLeaf {
                     data_root: H256::repeat_byte(0xcd),
                     data_size: 111,
+                    chunk_count: 3,
                     total_size: 222,
                 },
                 concat!(
@@ -164,6 +168,8 @@ mod tests {
                     "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
                     // data_size: u64 = 111 (little-endian)
                     "6f00000000000000",
+                    // chunk_count: u64 = 3
+                    "0300000000000000",
                     // total_size: u64 = 222
                     "de00000000000000",
                 ),
@@ -200,6 +206,7 @@ mod tests {
         bucket.leaves.push(MmrLeaf {
             data_root: H256::repeat_byte(0xcd),
             data_size: 111,
+            chunk_count: 3,
             total_size: 222,
         });
         assert_eq!(bucket.leaf_count(), 1);
