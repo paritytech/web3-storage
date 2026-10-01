@@ -2742,13 +2742,17 @@ pub mod pallet {
                     mmr_proof,
                     chunk_proof,
                 } => {
-                    let chunk_hash = storage_primitives::blake2_256(chunk_data);
-                    let chunk_ok = storage_primitives::verify_merkle_proof(
-                        chunk_hash,
-                        challenge.target.chunk_index,
-                        chunk_proof,
-                        &mmr_proof.leaf.data_root,
-                    );
+                    let proves_leaf = |leaf_hash| {
+                        storage_primitives::verify_merkle_proof(
+                            leaf_hash,
+                            challenge.target.chunk_index,
+                            chunk_proof,
+                            &mmr_proof.leaf.data_root,
+                        )
+                    };
+                    // A padding slot has a zero leaf; the provider answers it with empty `chunk_data`
+                    let chunk_ok = proves_leaf(storage_primitives::blake2_256(chunk_data))
+                        || (chunk_data.is_empty() && proves_leaf(H256::zero()));
                     let mmr_ok =
                         storage_primitives::verify_mmr_proof(mmr_proof, &challenge.mmr_root);
                     if chunk_ok && mmr_ok {

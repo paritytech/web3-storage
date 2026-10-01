@@ -1859,7 +1859,8 @@ pub enum SlashReason {
 }
 
 pub enum ChallengeResponse<T: Config> {
-    /// Provide the chunk with proofs
+    /// Provide the chunk with proofs. Empty `chunk_data` with a path from a
+    /// zero leaf answers a padding slot of the zero-padded data tree.
     Proof {
         chunk_data: BoundedVec<u8, T::MaxChunkSize>,
         mmr_proof: MmrProof,
@@ -2534,10 +2535,12 @@ fn verify_challenge_response(
     match response {
         ChallengeResponse::Proof { chunk_data, mmr_proof, chunk_proof } => {
             // The chunk must sit in the leaf and the leaf in the committed MMR.
-            let chunk_hash = blake2_256(chunk_data);
-            let chunk_ok = verify_merkle_proof(
-                chunk_hash, challenge.target.chunk_index, chunk_proof, &mmr_proof.leaf.data_root,
+            // Empty `chunk_data` may instead prove a zero padding leaf.
+            let proves_leaf = |leaf_hash| verify_merkle_proof(
+                leaf_hash, challenge.target.chunk_index, chunk_proof, &mmr_proof.leaf.data_root,
             );
+            let chunk_ok = proves_leaf(blake2_256(chunk_data))
+                || (chunk_data.is_empty() && proves_leaf(H256::zero()));
             let mmr_ok = verify_mmr_proof(mmr_proof, &challenge.mmr_root);
             if chunk_ok && mmr_ok { Ok(()) } else { Err(SlashReason::InvalidProof) }
         }

@@ -281,7 +281,7 @@ async fn test_proof_generation_failed_no_bucket() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn test_data_not_found_bad_chunk_index() {
+async fn test_out_of_range_chunk_index_is_answered() {
     let (state, mut challenge, _dir) = test_state_with_data();
     challenge.chunk_index = 999;
 
@@ -323,8 +323,8 @@ async fn test_data_not_found_bad_chunk_index() {
 
     let r = result.lock().unwrap();
     assert!(
-        matches!(&*r, Some(ChallengeResponseResult::DataNotFound { .. })),
-        "expected DataNotFound, got {:?}",
+        matches!(&*r, Some(ChallengeResponseResult::Success { .. })),
+        "expected Success, got {:?}",
         r
     );
 }

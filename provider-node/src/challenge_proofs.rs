@@ -34,7 +34,7 @@ impl ChallengeProofSource for StorageProofSource {
         chunk_index: u64,
     ) -> Result<(Vec<u8>, storage_primitives::MerkleProof), ChallengeError> {
         self.0
-            .get_chunk_at_index(data_root, chunk_index)
+            .get_challenge_proof(data_root, chunk_index)
             .map_err(|e| ChallengeError::Storage(e.to_string()))
     }
 }
@@ -95,7 +95,7 @@ mod tests {
         storage.init_bucket(1, 1024 * 1024).unwrap();
 
         let backend_err = storage
-            .get_chunk_at_index(sp_core::H256::zero(), 0)
+            .get_challenge_proof(sp_core::H256::zero(), 0)
             .unwrap_err();
 
         let source = StorageProofSource::new(storage);

@@ -7,22 +7,19 @@
  *
  * The provider commits the valid zero-padded tree over 3 chunks, which has 4
  * slots. Slot 3 is padding: no chunk exists for it.
- * 
- * `challenge_offchain` does not bound `chunk_index` against the leaf count,
- * so it accepts a challenge on slot 3.
- * 
- * The provider cannot build a proof for that slot, so the challenge
- * stays open until the timeout sweep slashes the provider with
- * `SlashReason::Timeout`. The runtime tests cover the timeout slash; this
- * workflow stops at the provider's response.
  *
- * When 14.2 fails, its challenge stays open. It blocks `complete_deregister`
- * for //Alice, and on a chain that runs past `ChallengeTimeout` the sweep
- * slashes //Alice's stake.
+ * `challenge_offchain` does not bound `chunk_index` against the leaf count,
+ * so it accepts a challenge on slot 3 and on any index past the 4 slots.
+ * `verify_merkle_proof` uses only the low bits of the index, so index 4 is
+ * slot 0 and index 7 is slot 3.
+ *
+ * The provider answers a padding slot with empty `chunk_data` and the Merkle
+ * path from the zero leaf, which the pallet accepts.
  *
  * 14.1 The provider answers a challenge on chunk 2 of a 3-chunk tree.
- * 14.2 A challenge on chunk 3 (the padding slot) is either rejected by
- *      `challenge_offchain` or answered by the provider.
+ * 14.2 The provider answers a challenge on chunk 3 (the padding slot).
+ * 14.3 The provider answers challenges on chunk 4 (slot 0) and chunk 7
+ *      (slot 3), which are past the padded size.
  *
  * Usage: node --import tsx e2e/14-padding-slot-challenge.ts [chain_ws] [provider_url]
  */
@@ -38,7 +35,6 @@ import {
   paddedMerkleRoot,
   providerFetch,
   putChunk,
-  READ_OPTS,
   respondToChallenge,
   toHex,
 } from "@web3-storage/sdk";
@@ -53,6 +49,9 @@ const LAST_CHUNK = 2n;
 
 /** The padding slot of a 3-chunk tree. */
 const PADDING_CHUNK = 3n;
+
+/** Indices past the 4 slots: 4 is slot 0 and 7 is slot 3. */
+const PAST_PADDED_CHUNKS = [4n, 7n];
 
 async function main() {
   const provider = makeSigner("//Alice");
@@ -121,43 +120,21 @@ async function main() {
         },
       },
       {
-        name: "14.2 A challenge on the padding slot is rejected or answered",
+        name: "14.2 The provider answers a challenge on the padding slot",
         fn: async () => {
-          let challengeId: { deadline: number; index: number };
-          try {
-            challengeId = await challenge(PADDING_CHUNK);
-          } catch (err) {
-            // The error variant for an out-of-range `chunk_index` does not exist yet.
-            assert.match((err as Error).message, /dispatch failed: Module::StorageProvider::/);
-            console.log(`          challenge_offchain rejected: ${(err as Error).message}`);
-            return;
-          }
-
-          const open = await api.query.StorageProvider.Challenges.getValue(
-            challengeId.deadline,
-            challengeId.index,
-            READ_OPTS,
-          );
-          assert.strictEqual(open?.target.chunk_index, PADDING_CHUNK, "challenge must target slot 3");
-          console.log(`          challenge_offchain accepted chunk_index=${PADDING_CHUNK}`);
-
-          let proof: unknown;
-          try {
-            proof = await fetchChallengeProof(api, PROVIDER_URL, challengeId);
-          } catch (err) {
-            const message = (err as Error).message;
-            console.log(`          provider response: ${message}`);
-            assert.match(
-              message,
-              /^\/chunk_proof: 404 .*"not_found".*"chunk_3"/,
-              "unexpected provider failure",
-            );
-            assert.fail(
-              "the provider has no proof for padding slot 3, so the challenge stays open " +
-                "until its deadline and the timeout sweep slashes the provider",
-            );
-          }
+          const challengeId = await challenge(PADDING_CHUNK);
+          const proof = await fetchChallengeProof(api, PROVIDER_URL, challengeId);
           await respondAndExpectDefended(challengeId, proof);
+        },
+      },
+      {
+        name: "14.3 The provider answers challenges past the padded size",
+        fn: async () => {
+          for (const chunkIndex of PAST_PADDED_CHUNKS) {
+            const challengeId = await challenge(chunkIndex);
+            const proof = await fetchChallengeProof(api, PROVIDER_URL, challengeId);
+            await respondAndExpectDefended(challengeId, proof);
+          }
         },
       },
     ];
