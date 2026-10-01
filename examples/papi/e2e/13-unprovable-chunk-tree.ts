@@ -26,7 +26,6 @@ import {
   computeCid,
   ensureProviderRegistered,
   fetchChallengeProof,
-  hashChildren,
   makeSigner,
   paddedMerkleRoot,
   providerFetch,
@@ -34,34 +33,15 @@ import {
   READ_OPTS,
   respondToChallenge,
   toHex,
-  type ChainSigner,
 } from "@web3-storage/sdk";
 import { ensureSoleAcceptingProvider } from "../support.js";
-import { negotiateAndEstablish, runSuite, setupChain } from "./helpers.js";
+import { negotiateAndEstablish, putInternal, runSuite, setupChain } from "./helpers.js";
 
 const CHAIN_WS = process.argv[2] || "ws://127.0.0.1:2222";
 const PROVIDER_URL = process.argv[3] || "http://127.0.0.1:3333";
 
 /** No binary proof for chunk 2 verifies against the unbalanced root `R`. */
 const CHALLENGED_CHUNK = 2n;
-
-/**
- * PUT a self-consistent internal node: `data = left || right` and
- * `hash = blake2(data)`, so the provider's hash check passes.
- */
-async function putInternal(
-  bucketId: bigint,
-  signer: ChainSigner,
-  left: Uint8Array,
-  right: Uint8Array,
-): Promise<Uint8Array> {
-  const data = new Uint8Array(64);
-  data.set(left, 0);
-  data.set(right, 32);
-  const { cid } = await putChunk(PROVIDER_URL, bucketId, data, signer, [left, right]);
-  assert.ok(bytesEq(cid, hashChildren(left, right)), "internal node hash must equal H(left, right)");
-  return cid;
-}
 
 async function main() {
   const provider = makeSigner("//Alice");
@@ -100,8 +80,8 @@ async function main() {
         await putChunk(PROVIDER_URL, bucketId, chunks[i], owner);
       }
       // R = H(H(c0, c1), c2): every node passes the provider's upload checks.
-      const inner = await putInternal(bucketId, owner, leaves[0], leaves[1]);
-      const root = await putInternal(bucketId, owner, inner, leaves[2]);
+      const inner = await putInternal(PROVIDER_URL, bucketId, owner, leaves[0], leaves[1]);
+      const root = await putInternal(PROVIDER_URL, bucketId, owner, inner, leaves[2]);
       assert.ok(
         !bytesEq(root, paddedMerkleRoot(leaves)),
         "R must differ from the zero-padded balanced root",
@@ -120,8 +100,8 @@ async function main() {
     name: "13.2 A challenge on chunk 2 of the unbalanced tree does not slash the provider",
     fn: async () => {
       // R = H(H(c0, c1), c2), the same unbalanced tree as 13.1.
-      const inner = await putInternal(bucketId, owner, leaves[0], leaves[1]);
-      const root = await putInternal(bucketId, owner, inner, leaves[2]);
+      const inner = await putInternal(PROVIDER_URL, bucketId, owner, leaves[0], leaves[1]);
+      const root = await putInternal(PROVIDER_URL, bucketId, owner, inner, leaves[2]);
 
       let commit: any;
       try {
