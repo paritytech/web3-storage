@@ -601,17 +601,21 @@ export async function submitCompleteDeregister(
 // ── Challenge proof fetching & response submission ──────────────────────────
 
 export interface ChallengeProofData {
-  chunkData: Uint8Array
+  /** Absent when the chunk index is past the leaf's chunk count. */
+  chunkData?: Uint8Array
   mmrProof: {
     peaks: string[]
-    leaf: { dataRoot: string; dataSize: bigint; totalSize: bigint }
+    leaf: { dataRoot: string; dataSize: bigint; chunkCount: bigint; totalSize: bigint }
     leafProof: { siblings: string[]; path: boolean[] }
   }
-  chunkProof: { siblings: string[]; path: boolean[] }
+  /** Absent when the chunk index is past the leaf's chunk count. */
+  chunkProof?: { siblings: string[]; path: boolean[] }
 }
 
 /**
  * Fetch MMR proof + chunk proof from the provider node HTTP API.
+ * When `chunkIndex` is past the leaf's chunk count there is no chunk to
+ * prove, so only the MMR proof is returned.
  */
 export async function fetchChallengeProof(
   providerHttp: string,
@@ -628,9 +632,25 @@ export async function fetchChallengeProof(
   }
   const mmr = await mmrRes.json()
 
+  const mmrProof = {
+    peaks: mmr.proof.peaks as string[],
+    leaf: {
+      dataRoot: mmr.leaf.data_root as string,
+      dataSize: BigInt(mmr.leaf.data_size),
+      chunkCount: BigInt(mmr.leaf.chunk_count),
+      totalSize: BigInt(mmr.leaf.total_size),
+    },
+    leafProof: {
+      siblings: mmr.proof.siblings as string[],
+      path: mmr.proof.path as boolean[],
+    },
+  }
+  if (BigInt(chunkIndex) >= mmrProof.leaf.chunkCount) {
+    return { mmrProof }
+  }
+
   // Step 2: Chunk proof — provider hex_decode doesn't accept 0x prefix
-  const dataRoot: string = mmr.leaf.data_root
-  const dataRootBare = dataRoot.replace(/^0x/, '')
+  const dataRootBare = mmrProof.leaf.dataRoot.replace(/^0x/, '')
   const chunkRes = await fetch(
     `${providerHttp}/chunk_proof?data_root=${dataRootBare}&chunk_index=${chunkIndex}`,
   )
@@ -646,18 +666,7 @@ export async function fetchChallengeProof(
 
   return {
     chunkData,
-    mmrProof: {
-      peaks: mmr.proof.peaks as string[],
-      leaf: {
-        dataRoot,
-        dataSize: BigInt(mmr.leaf.data_size),
-        totalSize: BigInt(mmr.leaf.total_size),
-      },
-      leafProof: {
-        siblings: mmr.proof.siblings as string[],
-        path: mmr.proof.path as boolean[],
-      },
-    },
+    mmrProof,
     chunkProof: {
       siblings: chunk.proof.siblings as string[],
       path: chunk.proof.path as boolean[],
@@ -666,7 +675,8 @@ export async function fetchChallengeProof(
 }
 
 /**
- * Build and submit a `respond_to_challenge` extrinsic with a Proof response.
+ * Build and submit a `respond_to_challenge` extrinsic with a Proof response,
+ * or a ChunkOutOfRange response when the proof has no chunk.
  */
 export async function submitRespondToChallenge(
   challengeId: { deadline: number; index: number },
@@ -677,27 +687,34 @@ export async function submitRespondToChallenge(
   const a = requireApi()
   onProgress?.({ type: 'signing', message: 'Signing challenge response...' })
 
+  const mmrProof = {
+    peaks: proof.mmrProof.peaks,
+    leaf: {
+      data_root: proof.mmrProof.leaf.dataRoot,
+      data_size: proof.mmrProof.leaf.dataSize,
+      chunk_count: proof.mmrProof.leaf.chunkCount,
+      total_size: proof.mmrProof.leaf.totalSize,
+    },
+    leaf_proof: {
+      siblings: proof.mmrProof.leafProof.siblings,
+      path: proof.mmrProof.leafProof.path,
+    },
+  }
+  const response =
+    proof.chunkData && proof.chunkProof
+      ? Enum('Proof', {
+          chunk_data: proof.chunkData,
+          mmr_proof: mmrProof,
+          chunk_proof: {
+            siblings: proof.chunkProof.siblings,
+            path: proof.chunkProof.path,
+          },
+        })
+      : Enum('ChunkOutOfRange', { mmr_proof: mmrProof })
+
   const tx = a.tx.StorageProvider.respond_to_challenge({
     challenge_id: challengeId,
-    response: Enum('Proof', {
-      chunk_data: proof.chunkData,
-      mmr_proof: {
-        peaks: proof.mmrProof.peaks,
-        leaf: {
-          data_root: proof.mmrProof.leaf.dataRoot,
-          data_size: proof.mmrProof.leaf.dataSize,
-          total_size: proof.mmrProof.leaf.totalSize,
-        },
-        leaf_proof: {
-          siblings: proof.mmrProof.leafProof.siblings,
-          path: proof.mmrProof.leafProof.path,
-        },
-      },
-      chunk_proof: {
-        siblings: proof.chunkProof.siblings,
-        path: proof.chunkProof.path,
-      },
-    }),
+    response,
   })
 
   return submit(tx, signer, 'Challenge response', onProgress)

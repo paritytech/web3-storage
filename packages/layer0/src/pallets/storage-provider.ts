@@ -406,7 +406,8 @@ export async function respondToChallenge(
   return submitTx(
     api.tx.StorageProvider.respond_to_challenge({
       challenge_id: challengeId,
-      response: Enum("Proof", proof),
+      response:
+        "chunk_data" in proof ? Enum("Proof", proof) : Enum("ChunkOutOfRange", proof),
     }),
     provider.signer,
     { label: "respond_to_challenge", ...opts },

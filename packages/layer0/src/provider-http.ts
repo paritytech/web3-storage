@@ -193,6 +193,9 @@ export async function fetchCheckpointSignature(
 /**
  * Build the proof payload for `respond_to_challenge` by reading the challenge
  * from chain state and fetching MMR + chunk proofs from the provider node.
+ * When the challenged chunk index is past the leaf's chunk count there is no
+ * chunk to prove, so the result holds only the MMR proof (a `ChunkOutOfRange`
+ * response).
  */
 export async function fetchChallengeProof(
   api: ParachainApi,
@@ -221,6 +224,22 @@ export async function fetchChallengeProof(
       leaf_index: challenge.target.leaf_index,
     },
   });
+  const mmrProof = {
+    peaks: mmr.proof.peaks.map((h: string) => asHex(h)),
+    leaf: {
+      data_root: asHex(mmr.leaf.data_root),
+      data_size: BigInt(mmr.leaf.data_size),
+      chunk_count: BigInt(mmr.leaf.chunk_count),
+      total_size: BigInt(mmr.leaf.total_size),
+    },
+    leaf_proof: {
+      siblings: mmr.proof.siblings.map((h: string) => asHex(h)),
+      path: mmr.proof.path,
+    },
+  };
+  if (BigInt(challenge.target.chunk_index) >= mmrProof.leaf.chunk_count) {
+    return { mmr_proof: mmrProof };
+  }
   const chunk = await providerFetch(providerUrl, "/chunk_proof", {
     params: {
       data_root: mmr.leaf.data_root,
@@ -230,18 +249,7 @@ export async function fetchChallengeProof(
 
   return {
     chunk_data: base64ToBytes(chunk.chunk_data),
-    mmr_proof: {
-      peaks: mmr.proof.peaks.map((h: string) => asHex(h)),
-      leaf: {
-        data_root: asHex(mmr.leaf.data_root),
-        data_size: BigInt(mmr.leaf.data_size),
-        total_size: BigInt(mmr.leaf.total_size),
-      },
-      leaf_proof: {
-        siblings: mmr.proof.siblings.map((h: string) => asHex(h)),
-        path: mmr.proof.path,
-      },
-    },
+    mmr_proof: mmrProof,
     chunk_proof: {
       siblings: chunk.proof.siblings.map((h: string) => asHex(h)),
       path: chunk.proof.path,
