@@ -1152,7 +1152,7 @@ mod challenge_tests {
     use super::*;
     use codec::Encode;
     use frame_support::{traits::Hooks, BoundedVec};
-    use sp_core::{Pair, H256};
+    use sp_core::H256;
     use storage_primitives::{
         blake2_256, BucketSnapshot, ChallengeId, ChunkLocation, Commitment, EndAction, MerkleProof,
         MmrLeaf, MmrProof, ProviderRole, ReplicaSyncRecord,
@@ -2157,18 +2157,15 @@ mod challenge_tests {
         start_seq: u64,
         leaf_count: u64,
     ) -> sp_runtime::MultiSignature {
-        let pair = provider_signer(provider);
-        let payload = storage_primitives::CommitmentPayload::new(
+        sign_commitment(
+            provider,
             bucket_id,
             Commitment {
                 mmr_root,
                 start_seq,
                 leaf_count,
             },
-        );
-        // `verify_signature` checks the raw encoded payload (sr25519 hashes
-        // internally), so sign the encoding directly — no extra blake2 round.
-        sp_runtime::MultiSignature::Sr25519(pair.sign(&payload.encode()))
+        )
     }
 
     // Counter lifecycle ───────────────────────────────────────────────────────
