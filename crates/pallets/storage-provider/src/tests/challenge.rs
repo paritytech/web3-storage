@@ -352,11 +352,8 @@ fn challenge_slashes_provider_on_timeout() {
     });
 }
 
-// NOTE: dev's `respond_to_challenge_superseded_fails_leaf_beyond_canonical`
-// was dropped here. PR #125 changed an out-of-range `Superseded` claim from
-// erroring with `LeafBeyondCanonical` to slashing the provider immediately.
-// The equivalent merged-behavior test is
-// `challenge_tests::respond_with_bogus_superseded_claim_slashes_immediately`.
+// An out-of-range `Superseded` claim is covered by
+// `challenge_tests::respond_with_bogus_superseded_claim_is_rejected`.
 
 #[test]
 fn respond_to_challenge_superseded_cost_split_block_1() {
@@ -890,7 +887,6 @@ fn challenge_slashes_routes_full_slash_to_treasury() {
         // no burn — the slash is moved to the Treasury, not destroyed).
         assert_eq!(Balances::total_issuance(), total_issuance_before);
 
-        // Verify ChallengeSlashed event (challenger_reward is always zero).
         let expected_event = RuntimeEvent::StorageProvider(crate::Event::ChallengeSlashed {
             challenge_id: ChallengeId {
                 deadline: 101,
@@ -898,8 +894,6 @@ fn challenge_slashes_routes_full_slash_to_treasury() {
             },
             provider: 2,
             slashed_amount: provider_stake,
-            challenger_reward: 0,
-            reason: storage_primitives::SlashReason::Timeout,
         });
         assert!(frame_system::Pallet::<Test>::events()
             .iter()
@@ -1229,6 +1223,15 @@ mod challenge_tests {
         });
     }
 
+    /// The challenge at `(101, 0)` against provider 2 is still pending and
+    /// nothing was slashed.
+    fn assert_challenge_still_open() {
+        assert!(Challenges::<Test>::get(101, 0).is_some());
+        let provider = Providers::<Test>::get(2).unwrap();
+        assert_eq!(provider.stake, 200);
+        assert_eq!(provider.stats.challenges_failed, 0);
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
     // challenge_checkpoint — challenge creation
     // ─────────────────────────────────────────────────────────────────────────
@@ -1422,11 +1425,11 @@ mod challenge_tests {
         });
     }
 
-    /// A response whose chunk-Merkle proof doesn't verify is a clear-cut
-    /// lie — the provider is slashed immediately rather than the extrinsic
-    /// erroring out (which previously let them stall until timeout).
+    /// A response whose chunk-Merkle proof does not verify is rejected and
+    /// slashes nothing: a bad answer must not cost the provider its stake,
+    /// and the challenge stays open for a correct one.
     #[test]
-    fn respond_with_invalid_chunk_proof_slashes_immediately() {
+    fn respond_with_invalid_chunk_proof_is_rejected() {
         new_test_ext().execute_with(|| {
             System::set_block_number(1);
             let chunk_data = b"chunk-0".to_vec();
@@ -1447,30 +1450,28 @@ mod challenge_tests {
                 siblings: vec![H256::repeat_byte(0xab)],
                 path: vec![true],
             };
-            assert_ok!(StorageProvider::respond_to_challenge(
-                RuntimeOrigin::signed(2),
-                ChallengeId {
-                    deadline: 101u64,
-                    index: 0u16,
-                },
-                ChallengeResponse::Proof {
-                    chunk_data: make_chunk_bv(&chunk_data),
-                    mmr_proof,
-                    chunk_proof: bad_chunk_proof,
-                },
-            ));
-
-            // Challenge gone, provider stake gone, stats reflect the loss.
-            assert!(Challenges::<Test>::get(101, 0).is_none());
-            let provider = Providers::<Test>::get(2).unwrap();
-            assert_eq!(provider.stake, 0);
-            assert_eq!(provider.stats.challenges_failed, 1);
+            assert_noop!(
+                StorageProvider::respond_to_challenge(
+                    RuntimeOrigin::signed(2),
+                    ChallengeId {
+                        deadline: 101u64,
+                        index: 0u16,
+                    },
+                    ChallengeResponse::Proof {
+                        chunk_data: make_chunk_bv(&chunk_data),
+                        mmr_proof,
+                        chunk_proof: bad_chunk_proof,
+                    },
+                ),
+                Error::<Test>::InvalidProof
+            );
+            assert_challenge_still_open();
         });
     }
 
-    /// Same for an MMR proof that doesn't bag to the challenged root.
+    /// Same for an MMR proof that does not bag to the challenged root.
     #[test]
-    fn respond_with_invalid_mmr_proof_slashes_immediately() {
+    fn respond_with_invalid_mmr_proof_is_rejected() {
         new_test_ext().execute_with(|| {
             System::set_block_number(1);
             let chunk_data = b"chunk-0".to_vec();
@@ -1486,8 +1487,8 @@ mod challenge_tests {
                 },
             ));
 
-            // Construct an MMR proof for a different leaf — its bagged root
-            // won't match the challenged root.
+            // An MMR proof for a different leaf — its bagged root won't match
+            // the challenged root.
             let bad_leaf = MmrLeaf {
                 data_root: H256::repeat_byte(0xff),
                 data_size: 1,
@@ -1502,27 +1503,29 @@ mod challenge_tests {
                     path: vec![],
                 },
             };
-            assert_ok!(StorageProvider::respond_to_challenge(
-                RuntimeOrigin::signed(2),
-                ChallengeId {
-                    deadline: 101u64,
-                    index: 0u16,
-                },
-                ChallengeResponse::Proof {
-                    chunk_data: make_chunk_bv(&chunk_data),
-                    mmr_proof: bad_mmr_proof,
-                    chunk_proof,
-                },
-            ));
-            let provider = Providers::<Test>::get(2).unwrap();
-            assert_eq!(provider.stake, 0);
+            assert_noop!(
+                StorageProvider::respond_to_challenge(
+                    RuntimeOrigin::signed(2),
+                    ChallengeId {
+                        deadline: 101u64,
+                        index: 0u16,
+                    },
+                    ChallengeResponse::Proof {
+                        chunk_data: make_chunk_bv(&chunk_data),
+                        mmr_proof: bad_mmr_proof,
+                        chunk_proof,
+                    },
+                ),
+                Error::<Test>::InvalidProof
+            );
+            assert_challenge_still_open();
         });
     }
 
-    /// `ChallengeResponse::Superseded` claimed against a leaf the snapshot
-    /// doesn't actually cover is a lie — slash.
+    /// `Superseded` claimed against a leaf the snapshot does not cover is
+    /// rejected: the data may still be live, so the provider has to prove it.
     #[test]
-    fn respond_with_bogus_superseded_claim_slashes_immediately() {
+    fn respond_with_bogus_superseded_claim_is_rejected() {
         new_test_ext().execute_with(|| {
             System::set_block_number(1);
             let (mmr_root, _, _) = single_chunk_proof(b"chunk-0");
@@ -1538,17 +1541,118 @@ mod challenge_tests {
                     chunk_index: 0,
                 },
             ));
+            assert_noop!(
+                StorageProvider::respond_to_challenge(
+                    RuntimeOrigin::signed(2),
+                    ChallengeId {
+                        deadline: 101u64,
+                        index: 0u16,
+                    },
+                    ChallengeResponse::Superseded,
+                ),
+                Error::<Test>::InvalidSupersededClaim
+            );
+            assert_challenge_still_open();
+        });
+    }
+
+    /// A rejected response is not final: the provider can still answer
+    /// correctly before the deadline and defend the challenge.
+    #[test]
+    fn invalid_response_can_be_corrected_before_deadline() {
+        new_test_ext().execute_with(|| {
+            System::set_block_number(1);
+            let chunk_data = b"chunk-0".to_vec();
+            let (mmr_root, mmr_proof, chunk_proof) = single_chunk_proof(&chunk_data);
+            setup_primary_with_snapshot(mmr_root, 0, 1);
+            assert_ok!(StorageProvider::challenge_checkpoint(
+                RuntimeOrigin::signed(3),
+                0,
+                2,
+                ChunkLocation {
+                    leaf_index: 0,
+                    chunk_index: 0,
+                },
+            ));
+
+            assert_noop!(
+                StorageProvider::respond_to_challenge(
+                    RuntimeOrigin::signed(2),
+                    ChallengeId {
+                        deadline: 101u64,
+                        index: 0u16,
+                    },
+                    ChallengeResponse::Superseded,
+                ),
+                Error::<Test>::InvalidSupersededClaim
+            );
             assert_ok!(StorageProvider::respond_to_challenge(
                 RuntimeOrigin::signed(2),
                 ChallengeId {
                     deadline: 101u64,
                     index: 0u16,
                 },
-                ChallengeResponse::Superseded,
+                ChallengeResponse::Proof {
+                    chunk_data: make_chunk_bv(&chunk_data),
+                    mmr_proof,
+                    chunk_proof,
+                },
             ));
-            let provider = Providers::<Test>::get(2).unwrap();
-            assert_eq!(provider.stake, 0);
-            assert_eq!(provider.stats.challenges_failed, 1);
+            assert!(Challenges::<Test>::get(101, 0).is_none());
+            assert_eq!(Providers::<Test>::get(2).unwrap().stake, 200);
+        });
+    }
+
+    /// A `Deleted` claim must cover the challenged leaf and carry a valid
+    /// admin signature; anything else is rejected and the challenge stays
+    /// open.
+    #[test]
+    fn deleted_claim_is_rejected() {
+        new_test_ext().execute_with(|| {
+            System::set_block_number(1);
+            let (mmr_root, _, _) = single_chunk_proof(b"chunk-0");
+            setup_primary_with_snapshot(mmr_root, 0, 1);
+            assert_ok!(StorageProvider::challenge_checkpoint(
+                RuntimeOrigin::signed(3),
+                0,
+                2,
+                ChunkLocation {
+                    leaf_index: 0,
+                    chunk_index: 0,
+                },
+            ));
+            let deleted = |new_start_seq: u64| ChallengeResponse::<Test>::Deleted {
+                new_mmr_root: H256::repeat_byte(0x77),
+                new_start_seq,
+                admin: 1,
+                admin_signature: sp_runtime::MultiSignature::Sr25519([0u8; 64].into()),
+            };
+
+            // `new_start_seq` 0 does not cover the challenged seq 0.
+            assert_noop!(
+                StorageProvider::respond_to_challenge(
+                    RuntimeOrigin::signed(2),
+                    ChallengeId {
+                        deadline: 101u64,
+                        index: 0u16,
+                    },
+                    deleted(0),
+                ),
+                Error::<Test>::InvalidDeletionClaim
+            );
+            // Covers the leaf, but the signature does not verify.
+            assert_noop!(
+                StorageProvider::respond_to_challenge(
+                    RuntimeOrigin::signed(2),
+                    ChallengeId {
+                        deadline: 101u64,
+                        index: 0u16,
+                    },
+                    deleted(1),
+                ),
+                Error::<Test>::InvalidDeletionClaim
+            );
+            assert_challenge_still_open();
         });
     }
 
@@ -1601,9 +1705,9 @@ mod challenge_tests {
     /// challenged root still equals the live snapshot root) is unsound: the
     /// data is live and the provider must answer with a `Proof`. Even though
     /// the challenged seq sits inside the canonical range, the matching root
-    /// means the claim is rejected and the provider is slashed.
+    /// means the claim is rejected and the challenge stays open.
     #[test]
-    fn superseded_slashes_when_root_matches_canonical() {
+    fn superseded_is_rejected_when_root_matches_canonical() {
         new_test_ext().execute_with(|| {
             System::set_block_number(1);
             let (mmr_root, _, _) = single_chunk_proof(b"chunk-0");
@@ -1621,26 +1725,28 @@ mod challenge_tests {
                     chunk_index: 0,
                 },
             ));
-            assert_ok!(StorageProvider::respond_to_challenge(
-                RuntimeOrigin::signed(2),
-                ChallengeId {
-                    deadline: 101u64,
-                    index: 0u16,
-                },
-                ChallengeResponse::Superseded,
-            ));
-            let provider = Providers::<Test>::get(2).unwrap();
-            assert_eq!(provider.stake, 0);
-            assert_eq!(provider.stats.challenges_failed, 1);
+            assert_noop!(
+                StorageProvider::respond_to_challenge(
+                    RuntimeOrigin::signed(2),
+                    ChallengeId {
+                        deadline: 101u64,
+                        index: 0u16,
+                    },
+                    ChallengeResponse::Superseded,
+                ),
+                Error::<Test>::InvalidSupersededClaim
+            );
+            assert_challenge_still_open();
         });
     }
 
     /// Data that rolled off the front of the canonical range (challenged seq
     /// below the advanced snapshot `start_seq`) must go through the admin-signed
     /// `Deleted` path, not `Superseded`. Even with a freshly advanced root, a
-    /// seq below `start_seq` fails the `contains_seq` lower bound and slashes.
+    /// seq below `start_seq` fails the `contains_seq` lower bound and is
+    /// rejected.
     #[test]
-    fn superseded_slashes_when_seq_below_canonical_start() {
+    fn superseded_is_rejected_when_seq_below_canonical_start() {
         new_test_ext().execute_with(|| {
             System::set_block_number(1);
             let (mmr_root, _, _) = single_chunk_proof(b"chunk-0");
@@ -1672,17 +1778,18 @@ mod challenge_tests {
                 });
             });
 
-            assert_ok!(StorageProvider::respond_to_challenge(
-                RuntimeOrigin::signed(2),
-                ChallengeId {
-                    deadline: 101u64,
-                    index: 0u16,
-                },
-                ChallengeResponse::Superseded,
-            ));
-            let provider = Providers::<Test>::get(2).unwrap();
-            assert_eq!(provider.stake, 0);
-            assert_eq!(provider.stats.challenges_failed, 1);
+            assert_noop!(
+                StorageProvider::respond_to_challenge(
+                    RuntimeOrigin::signed(2),
+                    ChallengeId {
+                        deadline: 101u64,
+                        index: 0u16,
+                    },
+                    ChallengeResponse::Superseded,
+                ),
+                Error::<Test>::InvalidSupersededClaim
+            );
+            assert_challenge_still_open();
         });
     }
 
@@ -2214,10 +2321,10 @@ mod challenge_tests {
         });
     }
 
-    /// An invalid-response slash also resolves the challenge, so both counters
-    /// return to 0.
+    /// A rejected response resolves nothing: both counters stay at 1 until
+    /// the provider answers correctly or the deadline passes.
     #[test]
-    fn pending_counters_zero_after_invalid_response_slash() {
+    fn pending_counters_unchanged_after_rejected_response() {
         new_test_ext().execute_with(|| {
             System::set_block_number(1);
             let chunk_data = b"chunk-0".to_vec();
@@ -2236,26 +2343,27 @@ mod challenge_tests {
             assert_eq!(PendingChallenges::<Test>::get(2), 1);
             assert_eq!(PendingChallengesByBucket::<Test>::get(0, 2), 1);
 
-            // A bogus chunk proof is a demonstrable lie → immediate slash.
             let bad_proof = MerkleProof {
                 siblings: vec![H256::repeat_byte(0xab)],
                 path: vec![true],
             };
-            assert_ok!(StorageProvider::respond_to_challenge(
-                RuntimeOrigin::signed(2),
-                ChallengeId {
-                    deadline: 101u64,
-                    index: 0u16,
-                },
-                ChallengeResponse::Proof {
-                    chunk_data: make_chunk_bv(&chunk_data),
-                    mmr_proof,
-                    chunk_proof: bad_proof,
-                },
-            ));
-            assert_eq!(Providers::<Test>::get(2).unwrap().stake, 0);
-            assert_eq!(PendingChallenges::<Test>::get(2), 0);
-            assert_eq!(PendingChallengesByBucket::<Test>::get(0, 2), 0);
+            assert_noop!(
+                StorageProvider::respond_to_challenge(
+                    RuntimeOrigin::signed(2),
+                    ChallengeId {
+                        deadline: 101u64,
+                        index: 0u16,
+                    },
+                    ChallengeResponse::Proof {
+                        chunk_data: make_chunk_bv(&chunk_data),
+                        mmr_proof,
+                        chunk_proof: bad_proof,
+                    },
+                ),
+                Error::<Test>::InvalidProof
+            );
+            assert_eq!(PendingChallenges::<Test>::get(2), 1);
+            assert_eq!(PendingChallengesByBucket::<Test>::get(0, 2), 1);
         });
     }
 

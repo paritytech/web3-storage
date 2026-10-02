@@ -4,7 +4,7 @@ use crate::*;
 use frame_support::pallet_prelude::*;
 use sp_runtime::traits::{One, Saturating, Zero};
 use storage_primitives::{
-    BucketId, ChallengeId, ChunkLocation, Commitment, ProviderRole, SlashReason, Visibility,
+    BucketId, ChallengeId, ChunkLocation, Commitment, ProviderRole, Visibility,
 };
 
 impl<T: Config> Pallet<T> {
@@ -101,15 +101,9 @@ impl<T: Config> Pallet<T> {
                 index,
             };
             // Timeout is a resolution: decrement the pending counters exactly
-            // once here, mirroring the increment in `create_challenge`. (The
-            // slash helper is shared with the invalid-response path, so it must
-            // NOT touch the counters.)
+            // once here, mirroring the increment in `create_challenge`.
             Self::decrement_pending(challenge.bucket_id, &challenge.provider);
-            Self::slash_provider_for_failed_challenge(
-                &challenge,
-                challenge_id,
-                SlashReason::Timeout,
-            );
+            Self::slash_provider_for_failed_challenge(&challenge, challenge_id);
             count = count.saturating_add(1);
             if count >= budget {
                 break;
@@ -192,7 +186,7 @@ impl<T: Config> Pallet<T> {
         Challenges::<T>::insert(deadline, index, &challenge);
 
         // Bump the pending-challenge counters. These are decremented
-        // exactly once per resolution (defended/invalid-response in
+        // exactly once per resolution (defended in
         // `respond_to_challenge`, or timeout in the `on_initialize` sweep), so a
         // fully-resolved provider/bucket returns to 0. They gate
         // `complete_deregister` and agreement teardown so a provider can't
@@ -213,22 +207,13 @@ impl<T: Config> Pallet<T> {
         Ok(())
     }
 
-    /// Slash a provider for failing a challenge.
-    ///
-    /// This:
-    /// 1. Slashes the provider's entire stake, routing it to the Treasury
-    /// 2. Refunds the challenger's deposit (no reward — see body)
-    /// 3. Updates provider statistics
-    /// 4. Emits `ChallengeSlashed` with the supplied `SlashReason`
-    ///
-    /// `reason` distinguishes a timeout (`on_initialize` sweep) from an
-    /// invalid response (`respond_to_challenge` paths). Both lead to the
-    /// same financial outcome — the distinction is for observers
-    /// reading the event log.
+    /// Slash a provider for a challenge that expired unanswered: the whole
+    /// stake goes to the Treasury, the challenger's deposit is released in
+    /// full (no reward), `challenges_failed` is bumped and `ChallengeSlashed`
+    /// is emitted. Does not touch the pending counters; the caller does.
     pub(crate) fn slash_provider_for_failed_challenge(
         challenge: &Challenge<T>,
         challenge_id: ChallengeId<BlockNumberFor<T>>,
-        reason: SlashReason,
     ) {
         Providers::<T>::mutate(&challenge.provider, |maybe_provider| {
             let Some(provider_info) = maybe_provider else {
@@ -240,10 +225,6 @@ impl<T: Config> Pallet<T> {
             let actually_slashed =
                 Self::slash_stake_to_treasury(&challenge.provider, provider_info.stake);
 
-            // Per the design, a successful challenger receives NO reward —
-            // only their deposit back. Paying the challenger a cut of the slash
-            // would create a profit-from-slashing incentive (the "refund me or
-            // I burn" blackmail channel the design explicitly closes).
             Self::release_challenge_deposit(&challenge.challenger, challenge.deposit);
 
             provider_info.stats.challenges_failed =
@@ -258,8 +239,6 @@ impl<T: Config> Pallet<T> {
                 challenge_id,
                 provider: challenge.provider.clone(),
                 slashed_amount: actually_slashed,
-                challenger_reward: Zero::zero(),
-                reason,
             });
         });
     }
@@ -267,11 +246,10 @@ impl<T: Config> Pallet<T> {
     /// Decrement both pending-challenge counters for a resolved
     /// `(bucket, provider)` challenge. Called from the two resolution
     /// sites — `respond_to_challenge` (after the `take` consumes the
-    /// challenge, covering both the defended and invalid-response paths)
-    /// and the `on_initialize` sweep (per drained timed-out challenge) — never from
-    /// `slash_provider_for_failed_challenge`, which both sites share and
-    /// which would otherwise double-count. `saturating_sub` keeps the
-    /// counters non-negative even if invariants are ever violated.
+    /// challenge) and the `on_initialize` sweep (per drained timed-out
+    /// challenge) — never from `slash_provider_for_failed_challenge`.
+    /// `saturating_sub` keeps the counters non-negative even if invariants
+    /// are ever violated.
     pub(crate) fn decrement_pending(bucket_id: BucketId, provider: &T::AccountId) {
         PendingChallenges::<T>::mutate(provider, |n| *n = n.saturating_sub(1));
         PendingChallengesByBucket::<T>::mutate(bucket_id, provider, |n| *n = n.saturating_sub(1));
