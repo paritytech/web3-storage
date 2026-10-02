@@ -251,12 +251,15 @@ impl<T: Config> Pallet<T> {
             .collect()
     }
 
-    /// Query all challenges targeting a specific provider.
+    /// Challenges targeting a provider that it can still answer
+    /// (`deadline >= current_anchor_block`). Expired ones are omitted; they
+    /// wait for `resolve_expired_challenge`.
     pub fn query_provider_challenges(
         provider: &T::AccountId,
     ) -> Vec<crate::runtime_api::ChallengeResponse> {
+        let now = Self::current_anchor_block();
         Challenges::<T>::iter()
-            .filter(|(_, _, c)| &c.provider == provider)
+            .filter(|(deadline, _, c)| &c.provider == provider && *deadline >= now)
             .map(|(deadline, index, c)| challenge_to_response::<T>(deadline, index, c))
             .collect()
     }
