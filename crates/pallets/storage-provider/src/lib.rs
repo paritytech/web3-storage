@@ -83,6 +83,12 @@ pub mod pallet {
 
     /// Provider-signed agreement quote bound to this pallet's account, balance,
     /// and block-number types.
+    ///
+    /// Every call that redeems a quote (`create_bucket_with_primary`,
+    /// `add_primary_provider`, `add_replica_provider`) verifies the provider's
+    /// signature, rejects replays via the provider's sliding nonce window,
+    /// then runs the provider/capacity/stake checks and holds the payment
+    /// before it writes the agreement.
     pub type AgreementTermsOf<T> = storage_primitives::AgreementTerms<
         <T as frame_system::Config>::AccountId,
         BalanceOf<T>,
@@ -1632,9 +1638,6 @@ pub mod pallet {
         ///   needs. At most `MaxPrimaryProviders` (`InvalidMinProviders`).
         ///   Changeable later with [`Pallet::set_min_providers`].
         /// - `visibility`: who may read the bucket (see [`Visibility`]).
-        ///
-        /// Layer 0 has no call that deletes a bucket, so one created here
-        /// stays on-chain even with no agreements.
         #[pallet::call_index(10)]
         #[pallet::weight(T::WeightInfo::create_bucket())]
         pub fn create_bucket(
@@ -1652,9 +1655,6 @@ pub mod pallet {
         ///
         /// The provider signs a SCALE-encoded [`AgreementTermsOf<T>`] with
         /// `bucket: BucketTarget::New` off-chain; the owner submits it here.
-        /// The pallet verifies the signature, rejects replays via the
-        /// provider's sliding nonce window, then runs the standard
-        /// provider/capacity/stake checks and opens the agreement.
         ///
         /// Equivalent to [`Pallet::create_bucket`] followed by
         /// [`Pallet::add_primary_provider`], in one transaction.
@@ -1973,9 +1973,6 @@ pub mod pallet {
         /// The provider signs a SCALE-encoded [`AgreementTermsOf<T>`] with
         /// `bucket: BucketTarget::Existing(bucket_id)` and
         /// `replica_params: Some(_)` off-chain; the caller submits it here.
-        /// The pallet verifies the signature, rejects replays via the
-        /// provider's sliding nonce window, then runs the standard
-        /// provider/capacity/stake checks and opens the replica agreement.
         #[pallet::call_index(20)]
         #[pallet::weight(T::WeightInfo::add_replica_provider())]
         pub fn add_replica_provider(

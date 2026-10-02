@@ -210,9 +210,9 @@ fn sign_sync_roots(
 /// bucket without a provider-signed quote.
 ///
 /// The checkpoint benchmarks need *N* primaries on the *same* bucket to
-/// exercise worst-case signature verification, and `add_primary_provider`
-/// would need a fresh quote per provider, so we synthesize that shape
-/// directly.
+/// exercise worst-case signature verification. `add_primary_provider` would
+/// need a signed quote per provider, so this helper writes the agreement and
+/// the primary entry directly.
 fn add_primary_to_bucket<T: Config>(
     admin: &T::AccountId,
     provider: &T::AccountId,

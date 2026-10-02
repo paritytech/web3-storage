@@ -11,11 +11,12 @@ fn test_public_key() -> frame_support::BoundedVec<u8, frame_support::traits::Con
     vec![1u8; 32].try_into().unwrap()
 }
 
-/// Position of the first event matching `pred` in this block's event list.
-fn event_position(pred: impl Fn(&RuntimeEvent) -> bool) -> usize {
+/// Position of the first pallet event matching `pred` in this block's event
+/// list.
+fn event_position(pred: impl Fn(&Event<Test>) -> bool) -> usize {
     System::events()
         .iter()
-        .position(|record| pred(&record.event))
+        .position(|record| matches!(&record.event, RuntimeEvent::StorageProvider(e) if pred(e)))
         .expect("event emitted")
 }
 

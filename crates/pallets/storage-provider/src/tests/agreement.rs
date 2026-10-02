@@ -39,26 +39,11 @@ fn create_bucket_with_primary_works() {
 
         // Event order: BucketCreated, ProviderAddedToBucket,
         // StorageAgreementEstablished.
-        let created = event_position(|e| {
-            matches!(
-                e,
-                RuntimeEvent::StorageProvider(Event::BucketCreated { bucket_id: 0, .. })
-            )
-        });
-        let added = event_position(|e| {
-            matches!(
-                e,
-                RuntimeEvent::StorageProvider(Event::ProviderAddedToBucket { bucket_id: 0, .. })
-            )
-        });
+        let created = event_position(|e| matches!(e, Event::BucketCreated { bucket_id: 0, .. }));
+        let added =
+            event_position(|e| matches!(e, Event::ProviderAddedToBucket { bucket_id: 0, .. }));
         let established = event_position(|e| {
-            matches!(
-                e,
-                RuntimeEvent::StorageProvider(Event::StorageAgreementEstablished {
-                    bucket_id: 0,
-                    ..
-                })
-            )
+            matches!(e, Event::StorageAgreementEstablished { bucket_id: 0, .. })
         });
         assert!(created < added && added < established);
     });

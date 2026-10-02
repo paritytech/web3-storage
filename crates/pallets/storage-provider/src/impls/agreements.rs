@@ -143,9 +143,15 @@ impl<T: Config> Pallet<T> {
         sig: &sp_runtime::MultiSignature,
         visibility: Visibility,
     ) -> Result<BucketId, DispatchError> {
-        let accepted = Self::accept_primary_quote(owner, provider, &terms, sig, BucketTarget::New)?;
-        // One primary, so one signature per checkpoint until the admin calls
-        // `set_min_providers`.
+        let accepted = Self::accept_quote(
+            owner,
+            provider,
+            &terms,
+            sig,
+            BucketTarget::New,
+            QuoteKind::Primary,
+        )?;
+        // min_providers = 1: the single primary signs every checkpoint.
         let bucket_id = Self::create_bucket_internal(owner, 1, Some(provider), visibility)?;
         Self::record_primary_agreement(bucket_id, owner, provider, terms, accepted);
         Ok(bucket_id)
@@ -168,12 +174,13 @@ impl<T: Config> Pallet<T> {
             .try_push(provider.clone())
             .map_err(|_| Error::<T>::MaxPrimaryProvidersReached)?;
 
-        let accepted = Self::accept_primary_quote(
+        let accepted = Self::accept_quote(
             admin,
             provider,
             &terms,
             sig,
             BucketTarget::Existing(bucket_id),
+            QuoteKind::Primary,
         )?;
         Buckets::<T>::insert(bucket_id, bucket);
         Self::record_primary_agreement(bucket_id, admin, provider, terms, accepted);
@@ -182,7 +189,7 @@ impl<T: Config> Pallet<T> {
 
     /// Opens a replica agreement on an existing bucket. Anyone the provider
     /// quoted for may redeem it; the quote must name
-    /// [`BucketTarget::Existing`] with `bucket_id` and carry
+    /// [`BucketTarget::Existing`] with `bucket_id` and contain
     /// `replica_params`.
     pub(crate) fn add_replica_provider_internal(
         owner: &T::AccountId,
@@ -196,56 +203,16 @@ impl<T: Config> Pallet<T> {
             Error::<T>::BucketNotFound
         );
         Self::ensure_no_agreement(bucket_id, provider)?;
-        let anchor_block = Self::validate_terms(owner, &terms, BucketTarget::Existing(bucket_id))?;
-        let replica_terms = terms
-            .replica_params
-            .as_ref()
-            .ok_or(Error::<T>::MissingReplicaTerms)?
-            .clone();
 
-        let provider_info = Self::accept_quote(
+        let accepted = Self::accept_quote(
+            owner,
             provider,
             &terms,
             sig,
-            storage_primitives::REPLICA_TERM_CONTEXT,
+            BucketTarget::Existing(bucket_id),
+            QuoteKind::Replica,
         )?;
-        Self::ensure_provider_active(&provider_info)?;
-        ensure!(
-            provider_info.settings.replica_sync_price.is_some(),
-            Error::<T>::ProviderNotAcceptingReplicas
-        );
-        let new_committed = Self::reserve_capacity(&provider_info, &terms)?;
-
-        // Pay at the price the provider signed for, plus the sync balance.
-        let payment =
-            Self::calculate_payment(terms.price_per_byte, terms.max_bytes, terms.duration)?;
-        let total_lock = payment
-            .checked_add(&replica_terms.sync_balance)
-            .ok_or(Error::<T>::ArithmeticOverflow)?;
-        Self::hold_payment(owner, total_lock)?;
-
-        let expires_at = anchor_block.saturating_add(terms.duration);
-        Self::record_agreement(
-            bucket_id,
-            provider,
-            provider_info,
-            new_committed,
-            StorageAgreement {
-                owner: owner.clone(),
-                max_bytes: terms.max_bytes,
-                payment_locked: payment,
-                price_per_byte: terms.price_per_byte,
-                expires_at,
-                extensions_blocked: false,
-                role: ProviderRole::Replica {
-                    sync_balance: replica_terms.sync_balance,
-                    sync_price: replica_terms.sync_price,
-                    min_sync_interval: replica_terms.min_sync_interval,
-                    last_sync: None,
-                },
-                started_at: anchor_block,
-            },
-        );
+        let expires_at = Self::record_agreement(bucket_id, owner, provider, &terms, accepted);
 
         Self::deposit_event(Event::ReplicaAgreementEstablished {
             bucket_id,
@@ -254,7 +221,6 @@ impl<T: Config> Pallet<T> {
             terms,
             expires_at,
         });
-
         Ok(())
     }
 
@@ -267,11 +233,7 @@ impl<T: Config> Pallet<T> {
         Ok(())
     }
 
-    /// Checks the parts of a quote that do not depend on the provider's
-    /// on-chain record: it binds this owner and this bucket, has
-    /// `max_bytes > 0`, and is still inside the chain-enforced validity
-    /// window.
-    ///
+    /// Checks owner, bucket target, `max_bytes > 0` and the validity window.
     /// Returns the current anchor block.
     fn validate_terms(
         owner: &T::AccountId,
@@ -292,20 +254,58 @@ impl<T: Config> Pallet<T> {
         Ok(anchor_block)
     }
 
-    /// Verifies the provider's signature over `blake2_256(context |
-    /// SCALE(terms))` and consumes the quote's nonce in the provider's replay
-    /// window, so a signed quote is redeemable at most once.
+    /// Runs every check on a quote, consumes its nonce in the provider's
+    /// replay window and holds the payment (plus the sync balance for a
+    /// replica). Writes nothing else, so a rejected quote leaves no bucket or
+    /// agreement state behind.
     ///
-    /// Returns the provider's on-chain record.
+    /// `target` is the [`BucketTarget`] the quote must name; `kind` is the
+    /// agreement the calling extrinsic opens, which the quote's
+    /// `replica_params` must match.
     fn accept_quote(
+        owner: &T::AccountId,
         provider: &T::AccountId,
         terms: &AgreementTermsOf<T>,
         sig: &sp_runtime::MultiSignature,
-        context: &[u8],
-    ) -> Result<ProviderInfo<T>, DispatchError> {
+        target: BucketTarget,
+        kind: QuoteKind,
+    ) -> Result<AcceptedQuote<T>, DispatchError> {
+        let anchor_block = Self::validate_terms(owner, terms, target)?;
+
+        let (context, role, sync_balance): (&[u8], _, BalanceOf<T>) = match kind {
+            QuoteKind::Primary => {
+                ensure!(
+                    terms.replica_params.is_none(),
+                    Error::<T>::UnexpectedReplicaTerms
+                );
+                (
+                    storage_primitives::PRIMARY_TERM_CONTEXT,
+                    ProviderRole::Primary,
+                    Zero::zero(),
+                )
+            }
+            QuoteKind::Replica => {
+                let replica = terms
+                    .replica_params
+                    .as_ref()
+                    .ok_or(Error::<T>::MissingReplicaTerms)?;
+                (
+                    storage_primitives::REPLICA_TERM_CONTEXT,
+                    ProviderRole::Replica {
+                        sync_balance: replica.sync_balance,
+                        sync_price: replica.sync_price,
+                        min_sync_interval: replica.min_sync_interval,
+                        last_sync: None,
+                    },
+                    replica.sync_balance,
+                )
+            }
+        };
+
+        // Signature over `blake2_256(context | SCALE(terms))`, then the nonce:
+        // a signed quote is redeemable at most once.
         let provider_info = Providers::<T>::get(provider).ok_or(Error::<T>::ProviderNotFound)?;
         Self::verify_terms_signature(&provider_info, terms, sig, context)?;
-
         ProviderReplayStates::<T>::try_mutate(provider, |window| -> DispatchResult {
             window.try_accept(terms.nonce).map_err(|e| match e {
                 ReplayError::AlreadyUsed => Error::<T>::NonceAlreadyUsed,
@@ -314,7 +314,34 @@ impl<T: Config> Pallet<T> {
             Ok(())
         })?;
 
-        Ok(provider_info)
+        Self::ensure_provider_active(&provider_info)?;
+        match kind {
+            QuoteKind::Primary => ensure!(
+                provider_info.settings.accepting_primary,
+                Error::<T>::ProviderNotAcceptingPrimary
+            ),
+            QuoteKind::Replica => ensure!(
+                provider_info.settings.replica_sync_price.is_some(),
+                Error::<T>::ProviderNotAcceptingReplicas
+            ),
+        }
+        let new_committed = Self::reserve_capacity(&provider_info, terms)?;
+
+        // Pay at the price the provider signed for.
+        let payment =
+            Self::calculate_payment(terms.price_per_byte, terms.max_bytes, terms.duration)?;
+        let total_hold = payment
+            .checked_add(&sync_balance)
+            .ok_or(Error::<T>::ArithmeticOverflow)?;
+        Self::hold_payment(owner, total_hold)?;
+
+        Ok(AcceptedQuote {
+            anchor_block,
+            provider_info,
+            new_committed,
+            payment,
+            role,
+        })
     }
 
     /// Checks the provider can take the quote's duration and quota on top of
@@ -350,71 +377,53 @@ impl<T: Config> Pallet<T> {
         Ok(new_committed)
     }
 
-    /// Stores the agreement and writes `provider_info` back with its counters
-    /// updated.
+    /// Stores the agreement an accepted quote pays for and writes the
+    /// provider record back with its counters updated. Returns the
+    /// agreement's `expires_at`.
     fn record_agreement(
         bucket_id: BucketId,
+        owner: &T::AccountId,
         provider: &T::AccountId,
-        mut provider_info: ProviderInfo<T>,
-        new_committed: u64,
-        agreement: StorageAgreement<T>,
-    ) {
+        terms: &AgreementTermsOf<T>,
+        accepted: AcceptedQuote<T>,
+    ) -> BlockNumberFor<T> {
+        let AcceptedQuote {
+            anchor_block,
+            mut provider_info,
+            new_committed,
+            payment,
+            role,
+        } = accepted;
+        let expires_at = anchor_block.saturating_add(terms.duration);
+
         provider_info.committed_bytes = new_committed;
         provider_info.stats.agreements_total =
             provider_info.stats.agreements_total.saturating_add(1);
         provider_info.stats.total_bytes_committed = provider_info
             .stats
             .total_bytes_committed
-            .saturating_add(agreement.max_bytes);
+            .saturating_add(terms.max_bytes);
         Providers::<T>::insert(provider, provider_info);
-        StorageAgreements::<T>::insert(bucket_id, provider, agreement);
-    }
 
-    /// Runs every check on primary terms, consumes the quote's nonce and
-    /// holds the payment. Writes nothing else, so a rejected quote leaves no
-    /// bucket or agreement state behind.
-    ///
-    /// `target` is the [`BucketTarget`] the quote must name.
-    fn accept_primary_quote(
-        owner: &T::AccountId,
-        provider: &T::AccountId,
-        terms: &AgreementTermsOf<T>,
-        sig: &sp_runtime::MultiSignature,
-        target: BucketTarget,
-    ) -> Result<AcceptedQuote<T>, DispatchError> {
-        let anchor_block = Self::validate_terms(owner, terms, target)?;
-        ensure!(
-            terms.replica_params.is_none(),
-            Error::<T>::UnexpectedReplicaTerms
-        );
-
-        let provider_info = Self::accept_quote(
+        StorageAgreements::<T>::insert(
+            bucket_id,
             provider,
-            terms,
-            sig,
-            storage_primitives::PRIMARY_TERM_CONTEXT,
-        )?;
-        Self::ensure_provider_active(&provider_info)?;
-        ensure!(
-            provider_info.settings.accepting_primary,
-            Error::<T>::ProviderNotAcceptingPrimary
+            StorageAgreement {
+                owner: owner.clone(),
+                max_bytes: terms.max_bytes,
+                payment_locked: payment,
+                price_per_byte: terms.price_per_byte,
+                expires_at,
+                extensions_blocked: false,
+                role,
+                started_at: anchor_block,
+            },
         );
-        let new_committed = Self::reserve_capacity(&provider_info, terms)?;
-
-        let payment =
-            Self::calculate_payment(terms.price_per_byte, terms.max_bytes, terms.duration)?;
-        Self::hold_payment(owner, payment)?;
-
-        Ok(AcceptedQuote {
-            anchor_block,
-            provider_info,
-            new_committed,
-            payment,
-        })
+        expires_at
     }
 
-    /// Records the primary agreement an accepted quote pays for and emits
-    /// `ProviderAddedToBucket` and `StorageAgreementEstablished`.
+    /// [`Pallet::record_agreement`] plus the primary events,
+    /// `ProviderAddedToBucket` then `StorageAgreementEstablished`.
     fn record_primary_agreement(
         bucket_id: BucketId,
         owner: &T::AccountId,
@@ -422,24 +431,7 @@ impl<T: Config> Pallet<T> {
         terms: AgreementTermsOf<T>,
         accepted: AcceptedQuote<T>,
     ) {
-        let expires_at = accepted.anchor_block.saturating_add(terms.duration);
-        Self::record_agreement(
-            bucket_id,
-            provider,
-            accepted.provider_info,
-            accepted.new_committed,
-            StorageAgreement {
-                owner: owner.clone(),
-                max_bytes: terms.max_bytes,
-                payment_locked: accepted.payment,
-                price_per_byte: terms.price_per_byte,
-                expires_at,
-                extensions_blocked: false,
-                role: ProviderRole::Primary,
-                started_at: accepted.anchor_block,
-            },
-        );
-
+        let expires_at = Self::record_agreement(bucket_id, owner, provider, &terms, accepted);
         Self::deposit_event(Event::ProviderAddedToBucket {
             bucket_id,
             provider: provider.clone(),
@@ -454,11 +446,18 @@ impl<T: Config> Pallet<T> {
     }
 }
 
-/// What [`Pallet::accept_primary_quote`] checked and held, for
-/// [`Pallet::record_primary_agreement`] to store.
+/// The agreement an extrinsic opens from a quote.
+#[derive(Clone, Copy)]
+enum QuoteKind {
+    Primary,
+    Replica,
+}
+
+/// Output of `accept_quote`, input to `record_agreement`.
 struct AcceptedQuote<T: Config> {
     anchor_block: BlockNumberFor<T>,
     provider_info: ProviderInfo<T>,
     new_committed: u64,
     payment: BalanceOf<T>,
+    role: ProviderRole<BalanceOf<T>, BlockNumberFor<T>>,
 }
