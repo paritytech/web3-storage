@@ -379,13 +379,17 @@ pub fn signed_replica_terms(
 #[allow(dead_code)]
 pub fn create_bucket(admin: u64, min_providers: u32) -> u64 {
     use frame_support::assert_ok;
-    let bucket_id = crate::NextBucketId::<Test>::get();
     assert_ok!(StorageProvider::create_bucket(
         RuntimeOrigin::signed(admin),
         min_providers,
         storage_primitives::Visibility::Public,
     ));
-    bucket_id
+    last_created_bucket_id()
+}
+
+/// Id of the bucket the previous call created.
+fn last_created_bucket_id() -> u64 {
+    crate::NextBucketId::<Test>::get() - 1
 }
 
 /// Helper: redeem signed primary terms, creating the bucket together with
@@ -403,7 +407,7 @@ pub fn setup_agreement(provider: u64, client: u64, max_bytes: u64, duration: u64
         // suite was written under; Private-bucket tests opt in explicitly.
         storage_primitives::Visibility::Public,
     ));
-    crate::NextBucketId::<Test>::get() - 1
+    last_created_bucket_id()
 }
 
 /// Helper: redeem signed replica terms against an existing bucket.

@@ -127,9 +127,7 @@ impl<T: Config> Pallet<T> {
         Ok(total_refunded)
     }
 
-    /// Creates a bucket with `admin` as its sole admin. Shared by
-    /// `create_bucket`, `create_bucket_with_primary_internal` and the Layer 1
-    /// pallets.
+    /// Creates a bucket with `admin` as its sole admin.
     ///
     /// Parameters:
     /// - `admin`: Account that will be the bucket admin.

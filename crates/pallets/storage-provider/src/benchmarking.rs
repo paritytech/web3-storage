@@ -563,8 +563,8 @@ mod benchmarks {
         let bucket_id = setup_primary_agreement::<T>(&admin, &first, 0);
 
         // `Buckets` is measured, so both the read and the write scale with
-        // `primary_providers`. Fill it to one below the cap so the benchmarked
-        // call pushes onto the largest set it ever can.
+        // `primary_providers`. Fill it to `MaxPrimaryProviders - 1` so the
+        // call pushes onto the largest allowed set.
         for i in 1..T::MaxPrimaryProviders::get().saturating_sub(1) {
             let filler = funded_account::<T>("filler", i);
             add_primary_to_bucket::<T>(&admin, &filler, bucket_id, 1_000u64);

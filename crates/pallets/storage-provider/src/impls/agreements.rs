@@ -168,7 +168,6 @@ impl<T: Config> Pallet<T> {
     ) -> DispatchResult {
         let mut bucket = Buckets::<T>::get(bucket_id).ok_or(Error::<T>::BucketNotFound)?;
         Self::ensure_admin(admin, &bucket)?;
-        Self::ensure_no_agreement(bucket_id, provider)?;
         bucket
             .primary_providers
             .try_push(provider.clone())
@@ -198,12 +197,6 @@ impl<T: Config> Pallet<T> {
         terms: AgreementTermsOf<T>,
         sig: &sp_runtime::MultiSignature,
     ) -> DispatchResult {
-        ensure!(
-            Buckets::<T>::contains_key(bucket_id),
-            Error::<T>::BucketNotFound
-        );
-        Self::ensure_no_agreement(bucket_id, provider)?;
-
         let accepted = Self::accept_quote(
             owner,
             provider,
@@ -221,15 +214,6 @@ impl<T: Config> Pallet<T> {
             terms,
             expires_at,
         });
-        Ok(())
-    }
-
-    /// Rejects a second agreement between `bucket_id` and `provider`.
-    fn ensure_no_agreement(bucket_id: BucketId, provider: &T::AccountId) -> DispatchResult {
-        ensure!(
-            !StorageAgreements::<T>::contains_key(bucket_id, provider),
-            Error::<T>::AgreementAlreadyExists
-        );
         Ok(())
     }
 
@@ -254,14 +238,11 @@ impl<T: Config> Pallet<T> {
         Ok(anchor_block)
     }
 
-    /// Runs every check on a quote, consumes its nonce in the provider's
-    /// replay window and holds the payment (plus the sync balance for a
-    /// replica). Writes nothing else, so a rejected quote leaves no bucket or
-    /// agreement state behind.
-    ///
-    /// `target` is the [`BucketTarget`] the quote must name; `kind` is the
-    /// agreement the calling extrinsic opens, which the quote's
-    /// `replica_params` must match.
+    /// Runs the shared quote checks for `kind` and `target` (terms, bucket,
+    /// signature, provider state, capacity), consumes the quote's nonce in
+    /// the provider's replay window and holds the payment (plus the sync
+    /// balance for a replica). Writes nothing else; a rejected quote creates
+    /// no bucket and no agreement.
     fn accept_quote(
         owner: &T::AccountId,
         provider: &T::AccountId,
@@ -271,41 +252,43 @@ impl<T: Config> Pallet<T> {
         kind: QuoteKind,
     ) -> Result<AcceptedQuote<T>, DispatchError> {
         let anchor_block = Self::validate_terms(owner, terms, target)?;
+        if let BucketTarget::Existing(bucket_id) = target {
+            ensure!(
+                Buckets::<T>::contains_key(bucket_id),
+                Error::<T>::BucketNotFound
+            );
+            ensure!(
+                !StorageAgreements::<T>::contains_key(bucket_id, provider),
+                Error::<T>::AgreementAlreadyExists
+            );
+        }
 
-        let (context, role, sync_balance): (&[u8], _, BalanceOf<T>) = match kind {
+        let role = match kind {
             QuoteKind::Primary => {
                 ensure!(
                     terms.replica_params.is_none(),
                     Error::<T>::UnexpectedReplicaTerms
                 );
-                (
-                    storage_primitives::PRIMARY_TERM_CONTEXT,
-                    ProviderRole::Primary,
-                    Zero::zero(),
-                )
+                ProviderRole::Primary
             }
             QuoteKind::Replica => {
                 let replica = terms
                     .replica_params
                     .as_ref()
                     .ok_or(Error::<T>::MissingReplicaTerms)?;
-                (
-                    storage_primitives::REPLICA_TERM_CONTEXT,
-                    ProviderRole::Replica {
-                        sync_balance: replica.sync_balance,
-                        sync_price: replica.sync_price,
-                        min_sync_interval: replica.min_sync_interval,
-                        last_sync: None,
-                    },
-                    replica.sync_balance,
-                )
+                ProviderRole::Replica {
+                    sync_balance: replica.sync_balance,
+                    sync_price: replica.sync_price,
+                    min_sync_interval: replica.min_sync_interval,
+                    last_sync: None,
+                }
             }
         };
 
         // Signature over `blake2_256(context | SCALE(terms))`, then the nonce:
         // a signed quote is redeemable at most once.
         let provider_info = Providers::<T>::get(provider).ok_or(Error::<T>::ProviderNotFound)?;
-        Self::verify_terms_signature(&provider_info, terms, sig, context)?;
+        Self::verify_terms_signature(&provider_info, terms, sig, kind.context())?;
         ProviderReplayStates::<T>::try_mutate(provider, |window| -> DispatchResult {
             window.try_accept(terms.nonce).map_err(|e| match e {
                 ReplayError::AlreadyUsed => Error::<T>::NonceAlreadyUsed,
@@ -325,11 +308,16 @@ impl<T: Config> Pallet<T> {
                 Error::<T>::ProviderNotAcceptingReplicas
             ),
         }
-        let new_committed = Self::reserve_capacity(&provider_info, terms)?;
+        let new_committed = Self::check_capacity(&provider_info, terms)?;
 
         // Pay at the price the provider signed for.
         let payment =
             Self::calculate_payment(terms.price_per_byte, terms.max_bytes, terms.duration)?;
+        // Read from `role`, the field `finalize_agreement` releases it from.
+        let sync_balance = match &role {
+            ProviderRole::Replica { sync_balance, .. } => *sync_balance,
+            ProviderRole::Primary => Zero::zero(),
+        };
         let total_hold = payment
             .checked_add(&sync_balance)
             .ok_or(Error::<T>::ArithmeticOverflow)?;
@@ -344,11 +332,9 @@ impl<T: Config> Pallet<T> {
         })
     }
 
-    /// Checks the provider can take the quote's duration and quota on top of
-    /// what it already committed, and that its stake still backs the total.
-    ///
-    /// Returns the provider's `committed_bytes` with the quota added.
-    fn reserve_capacity(
+    /// Checks duration, capacity and stake for `terms`. Returns the
+    /// provider's `committed_bytes` with `terms.max_bytes` added.
+    fn check_capacity(
         provider_info: &ProviderInfo<T>,
         terms: &AgreementTermsOf<T>,
     ) -> Result<u64, DispatchError> {
@@ -451,6 +437,16 @@ impl<T: Config> Pallet<T> {
 enum QuoteKind {
     Primary,
     Replica,
+}
+
+impl QuoteKind {
+    /// Domain-separation prefix the provider signed the terms under.
+    fn context(self) -> &'static [u8] {
+        match self {
+            Self::Primary => storage_primitives::PRIMARY_TERM_CONTEXT,
+            Self::Replica => storage_primitives::REPLICA_TERM_CONTEXT,
+        }
+    }
 }
 
 /// Output of `accept_quote`, input to `record_agreement`.

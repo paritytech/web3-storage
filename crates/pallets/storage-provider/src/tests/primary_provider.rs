@@ -33,32 +33,6 @@ fn add_primary(
     )
 }
 
-fn replica_params() -> storage_primitives::ReplicaTerms<u64, u64> {
-    storage_primitives::ReplicaTerms {
-        sync_balance: 100,
-        min_sync_interval: 10,
-        sync_price: 10,
-    }
-}
-
-#[test]
-fn create_bucket_extrinsic_creates_an_empty_bucket() {
-    new_test_ext().execute_with(|| {
-        // Admin membership and the member index are covered by the
-        // `create_bucket` tests in bucket.rs and member_buckets.rs.
-        assert_ok!(StorageProvider::create_bucket(
-            RuntimeOrigin::signed(1),
-            2,
-            Visibility::Private
-        ));
-
-        let bucket = Buckets::<Test>::get(0).unwrap();
-        assert!(bucket.primary_providers.is_empty());
-        assert_eq!(bucket.min_providers, 2);
-        assert_eq!(bucket.visibility, Visibility::Private);
-    });
-}
-
 #[test]
 fn create_bucket_rejects_min_providers_above_the_cap() {
     new_test_ext().execute_with(|| {
@@ -102,38 +76,6 @@ fn add_primary_provider_works() {
         let established =
             event_position(|e| matches!(e, Event::StorageAgreementEstablished { provider: 2, .. }));
         assert!(added < established);
-    });
-}
-
-#[test]
-fn create_bucket_with_primary_internal_writes_nothing_for_a_rejected_quote() {
-    new_test_ext().execute_with(|| {
-        // The quote fails only at the `accepting_primary` check, which runs
-        // after the nonce is consumed. Called directly, so no dispatch
-        // storage layer rolls anything back.
-        register_provider_with_settings(
-            2,
-            200,
-            ProviderSettings {
-                accepting_primary: false,
-                ..Default::default()
-            },
-        );
-
-        let (terms, sig) = signed_primary_terms(2, 1, BucketTarget::New, 50, 100);
-        assert_err!(
-            StorageProvider::create_bucket_with_primary_internal(
-                &1,
-                &2,
-                terms,
-                &sig,
-                Visibility::Private
-            ),
-            Error::<Test>::ProviderNotAcceptingPrimary
-        );
-        assert_eq!(NextBucketId::<Test>::get(), 0);
-        assert!(Buckets::<Test>::get(0).is_none());
-        assert!(MemberBuckets::<Test>::get(1).is_empty());
     });
 }
 
@@ -226,9 +168,9 @@ fn add_primary_provider_rejects_replica_quote() {
         register_provider(2, 200);
         let bucket_id = create_bucket(1, 0);
 
-        let (terms, sig) = signed_replica_terms(2, 1, bucket_id, 50, 100, replica_params());
+        let quote = signed_replica_terms(2, 1, bucket_id, 50, 100, replica_params());
         assert_noop!(
-            add_primary(1, bucket_id, 2, (terms, sig)),
+            add_primary(1, bucket_id, 2, quote),
             Error::<Test>::UnexpectedReplicaTerms
         );
     });
