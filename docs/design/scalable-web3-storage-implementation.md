@@ -69,7 +69,7 @@ Four calls cover them:
 
 | Call | Who | Effect |
 | --- | --- | --- |
-| `create_bucket` | anyone | Empty bucket, caller is sole admin (holds `BucketDeposit`, proposed, see Open Questions) |
+| `create_bucket` | anyone | Empty bucket, caller is sole admin and pays its storage deposit |
 | `create_bucket_with_primary` | the quoted account (`terms.owner`) | `create_bucket` + `add_primary_provider` in one atomic call |
 | `add_primary_provider` | bucket admin | Primary agreement on an existing bucket |
 | `add_replica_provider` | the quoted account (`terms.owner`) | Replica agreement on an existing bucket |
@@ -251,13 +251,18 @@ pub trait Config: frame_system::Config<RuntimeEvent: From<Event<Self>>> {
     #[pallet::constant]
     type MaxBucketsPerMember: Get<u32>;
 
-    /// Deposit held on a bucket's creator, released by `delete_bucket`.
-    /// One flat amount for every bucket, not calculated from how big it
-    /// actually is, set high enough to cover the largest a bucket can ever
-    /// grow to, since `MaxMembers` and `MaxPrimaryProviders` already put a
-    /// hard cap on that. See "Open Questions".
-    #[pallet::constant]
-    type BucketDeposit: Get<BalanceOf<Self>>;
+    /// Storage deposit for records a user creates, priced from the record's
+    /// encoded size (`Footprint`). The runtime sets it to a
+    /// `HoldConsideration` under `HoldReason::StorageDeposit`: creating the
+    /// ticket puts the deposit on hold on the depositor's balance, and
+    /// dropping it when the record is removed releases the hold.
+    type StorageDeposit: Consideration<Self::AccountId, Footprint>;
+
+    /// Whether a Layer 1 record (a drive or an S3 bucket) uses a Layer 0
+    /// bucket. `delete_bucket` rejects such buckets; they are removed
+    /// through their Layer 1 pallet. The runtime implements it over
+    /// drive-registry and s3-registry.
+    type BucketInUse: Contains<BucketId>;
 
     /// Minimum number of blocks between announcing a deregistration and
     /// being allowed to complete it. Must be strictly `> ChallengeTimeout`
@@ -303,7 +308,7 @@ parachain `HOURS`:
 | `SettlementTimeout` | `24 * RC_HOURS` |
 | `RequestTimeout` | `6 * RC_HOURS` |
 | `MaxBucketsPerMember` | `1_000` |
-| `BucketDeposit` | `10 * UNIT` (proposed, see Open Questions) |
+| `StorageDeposit` | `HoldConsideration<AccountId, Balances, StorageDepositReason, LinearStoragePrice<StorageDepositBase, StorageDepositPerByte, Balance>>` with base `UNIT / 10` and `MICROUNIT` per byte, the rates the contracts pallet (`revive.rs`) charges per regular storage item and per byte |
 | `DeregisterAnnouncementPeriod` | `54 * RC_HOURS` (48h challenge window + 6h grace) |
 | `MaxChallengesPerDeadline` | `1_000` |
 | `AnchorBlockTimeMillis` | `6_000` |
@@ -326,9 +331,9 @@ pub enum HoldReason {
     /// A challenger's anti-spam deposit, refunded on resolution minus the
     /// provider's response-cost share.
     ChallengeDeposit,
-    /// A bucket's creation deposit, held on its `deposit_payer` and
-    /// released by `delete_bucket`.
-    BucketDeposit,
+    /// A deposit for a record a user created, held on the depositor until
+    /// the record is removed.
+    StorageDeposit,
 }
 ```
 
@@ -524,16 +529,30 @@ pub struct Bucket<T: Config> {
     pub historical_roots: [(u32, H256); 6],
     /// Total snapshots created for this bucket (for statistics)
     pub total_snapshots: u32,
-    /// Account the creation deposit is held on and refunded to by
-    /// `delete_bucket`. Set at creation to the caller; changes only when
-    /// that account deliberately hands it off via `set_member` /
-    /// `remove_member`'s `hand_deposit_to` while stepping down from Admin,
-    /// never as a side effect of any other membership change. A bucket
-    /// has no single owner (`Role::Admin` can be held by several members at
-    /// once), so deposit ownership is tracked separately from admin
-    /// control, the same way `StorageAgreement.owner` is separate from
-    /// which provider is assigned. See "Open Questions".
-    pub deposit_payer: T::AccountId,
+    /// The storage deposit: the depositor and the `T::StorageDeposit`
+    /// ticket. The ticket records only the amount, so the depositor is
+    /// stored next to it (the same pairing `pallet-preimage` uses).
+    /// Released when the bucket is removed: by `delete_bucket`, or by
+    /// `cleanup_bucket_internal` when a drive is deleted. Both reject the
+    /// removal while `PendingChallengesInBucket` is not 0. Buckets created
+    /// at genesis get their ticket on their admin the same way.
+    ///
+    /// The footprint is the same for every bucket: one item, sized to the
+    /// state `create_bucket` adds. That is the encoded size of a new
+    /// `Bucket` (one member, no providers, no snapshot, including this
+    /// field), plus its `Buckets` key and the creator's `MemberBuckets`
+    /// entry. The pallet computes it from those types, so it follows any
+    /// change to `Bucket`; today it is 342 bytes (310 + 24 + 8). This
+    /// deposit does not cover records added later, such as members and
+    /// agreements.
+    ///
+    /// Set at creation to the caller and never changed. A bucket has no
+    /// single owner (`Role::Admin` can be held by several members at once),
+    /// so the depositor is tracked separately from admin control, the same
+    /// way `StorageAgreement.owner` is separate from which provider is
+    /// assigned. The depositor gets the deposit back when the bucket is
+    /// removed, even if it is no longer an admin or member by then.
+    pub deposit: (T::AccountId, T::StorageDeposit),
 }
 
 pub struct BucketSnapshot<BlockNumber> {
@@ -737,6 +756,16 @@ pub type PendingChallengesByBucket<T: Config> = StorageDoubleMap<
     u32,
     ValueQuery,
 >;
+
+/// Number of unresolved challenges outstanding against any provider on a
+/// bucket. Maintained in lockstep with `PendingChallengesByBucket`, so
+/// `delete_bucket` and `cleanup_bucket_internal` check a bucket with one
+/// read. Iterating `PendingChallengesByBucket` is not bounded: decrementing
+/// to 0 keeps the entry, so it contains every provider ever challenged on
+/// the bucket.
+#[pallet::storage]
+pub type PendingChallengesInBucket<T: Config> =
+    StorageMap<_, Blake2_128Concat, BucketId, u32, ValueQuery>;
 
 /// Reverse index: account → bucket IDs they are a member of.
 /// Bounded by `T::MaxBucketsPerMember` to keep iteration costs predictable.
@@ -1245,9 +1274,11 @@ impl<T: Config> Pallet<T> {
 
     /// Create a new bucket.
     /// 
-    /// The caller becomes the bucket admin and `deposit_payer`, holding
-    /// `T::BucketDeposit` until the bucket is removed by `delete_bucket`.
-    /// The bucket starts empty with no providers or data.
+    /// The caller becomes the bucket admin and the depositor: a
+    /// `T::StorageDeposit` ticket for the fixed bucket footprint (see
+    /// `Bucket.deposit`) is created on the caller and held until the
+    /// bucket is removed. The bucket starts empty with no providers or
+    /// data.
     /// 
     /// Parameters:
     /// - `min_providers`: Minimum primary provider signatures required for checkpoints
@@ -1261,20 +1292,28 @@ impl<T: Config> Pallet<T> {
         visibility: Visibility,
     ) -> DispatchResult;
 
-    /// Delete an empty bucket and release its creation deposit (admin only).
+    /// Delete an empty bucket and release its storage deposit (admin only).
     ///
-    /// Requires zero storage agreements on the bucket (`BucketNotEmpty`).
-    /// This is already the full safety condition: `end_agreement` and
-    /// `remove_slashed` both refuse to tear down an agreement while a
-    /// challenge is pending on it, so by the time no agreements remain,
-    /// nothing is mid-challenge either. Removes the bucket from every
-    /// current member's `MemberBuckets` reverse index (bounded by
-    /// `MaxMembers`), then the bucket itself, and releases `BucketDeposit`
-    /// to `deposit_payer`, who may not be the caller, since any admin can
-    /// call this. `deposit_payer` is always a current admin:
-    /// `set_member`/`remove_member` (below) never let the payer leave
-    /// Admin without handing the deposit to someone who still is one.
-    /// See "Open Questions".
+    /// Requires:
+    /// - zero storage agreements on the bucket (`BucketNotEmpty`);
+    /// - zero pending challenges on it, read from
+    ///   `PendingChallengesInBucket` (`BucketHasPendingChallenge`). Zero
+    ///   agreements alone is not enough: `remove_slashed` removes a slashed
+    ///   provider's agreement without checking for pending challenges, so
+    ///   another challenge against that provider can still be open, and
+    ///   answering it reads the bucket;
+    /// - no Layer 1 record that uses the bucket, checked through
+    ///   `T::BucketInUse` (`BucketInUse`). A drive whose bucket is gone
+    ///   cannot be removed (`delete_drive` fails on a missing bucket), and
+    ///   an S3 bucket would point to a bucket that no longer exists.
+    ///
+    /// Removes the bucket from every current member's `MemberBuckets`
+    /// reverse index (bounded by `MaxMembers`), then the bucket itself,
+    /// and drops the deposit ticket, which releases it to the depositor in
+    /// `Bucket.deposit`, even if the depositor is no longer an admin. The
+    /// caller may be a different admin. While the depositor is an admin,
+    /// the refund gives it a reason to delete a bucket nobody uses. Emits
+    /// `BucketDeleted`.
     #[pallet::weight(...)]
     pub fn delete_bucket(
         origin: OriginFor<T>,
@@ -1324,14 +1363,6 @@ impl<T: Config> Pallet<T> {
     /// Self-demotion (and self-removal via `remove_member`) is refused for
     /// the bucket's only admin (`LastAdminCannotBeRemoved`): a bucket always
     /// keeps ≥ 1 admin.
-    ///
-    /// If the caller is also the current `deposit_payer`, self-demoting out
-    /// of Admin requires `hand_deposit_to: Some(other_admin)` in the same
-    /// call. `Bucket.deposit_payer` moves atomically with the role change
-    /// (`DepositPayerMustTransferFirst` if omitted). `hand_deposit_to` is
-    /// ignored otherwise, and `other_admin` must currently hold `Role::Admin`
-    /// (`NotBucketAdmin`): the deposit should only ever sit with someone
-    /// who actually has ongoing control.
     /// 
     /// This prevents a single compromised admin from seizing control.
     ///
@@ -1344,7 +1375,6 @@ impl<T: Config> Pallet<T> {
         bucket_id: BucketId,
         member: T::AccountId,
         role: Role,
-        hand_deposit_to: Option<T::AccountId>,
     ) -> DispatchResult;
 
     /// Remove member from bucket (admin only).
@@ -1353,11 +1383,6 @@ impl<T: Config> Pallet<T> {
     /// - Remove non-admin members
     /// - Remove themselves (refused for the bucket's only admin,
     ///   `LastAdminCannotBeRemoved` — a bucket always keeps ≥ 1 admin)
-    ///
-    /// If the caller is also the current `deposit_payer`, self-removal
-    /// requires `hand_deposit_to: Some(other_admin)` in the same call, moved
-    /// atomically with the removal (`DepositPayerMustTransferFirst` if
-    /// omitted). See `set_member` above.
     /// 
     /// This prevents a single compromised admin from seizing control.
     /// 
@@ -1370,7 +1395,6 @@ impl<T: Config> Pallet<T> {
         origin: OriginFor<T>,
         bucket_id: BucketId,
         member: T::AccountId,
-        hand_deposit_to: Option<T::AccountId>,
     ) -> DispatchResult;
 
 
@@ -2681,65 +2705,3 @@ fn verify_challenge_response(
 ---
 
 ## Open Questions
-
-### Bucket creation deposit (`BucketDeposit`, `delete_bucket`)
-
-Buckets can be created for a single transaction fee and never removed.
-Issue #451. I noticed the same missing delete call is also mentioned,
-from a different angle, in #417's "Not implemented" list
-(`docs/drafts/RFC_BUCKET_TRANSFER.md`, unratified). I tried to keep
-`delete_bucket`'s precondition here compatible with whatever #417
-eventually decides about agreement-end phases.
-
-Proposed above: `BucketDeposit` held at creation, refunded by
-`delete_bucket` once the bucket has zero agreements. A few things I'm not
-sure about and would like input on.
-
-**1. What should `BucketDeposit` actually be?** I checked issue #44,
-where the current `10 * UNIT` comes from, and couldn't find a formula or
-any reasoning behind it, just the number. Not sure what the right
-approach is here.
-
-I also checked `MinStakePerByte`, since it's the only per-byte rate
-anywhere in this runtime, but I don't think it applies. It prices a
-provider's collateral against data it committed to store, not the cost of
-leaving a record in chain state, so it doesn't seem like the right thing
-to base this on.
-
-I did try to work out the bucket's actual worst-case size, every bound
-maxed (`crates/pallets/storage-provider/src/lib.rs:675-694`,
-`crates/primitives/storage/src/lib.rs:320-327`, `:418-427`):
-
-  | Field | Bytes |
-  |---|---|
-  | `members` (100 × 33B) | 3,302 |
-  | `primary_providers` (5 × 32B) | 161 |
-  | `snapshot` | 55 |
-  | `historical_roots` | 216 |
-  | scalars | 18 |
-  | `deposit_payer` | 32 |
-  | **Total** | **≈ 3,784 bytes** |
-
-That's about 3,784 bytes. I don't know how that should convert into an
-actual deposit amount though, that's the part I'm stuck on.
-
-**2. Does the `deposit_payer` / `hand_deposit_to` mechanism make sense?**
-Here's what I landed on: `deposit_payer` tracks who paid, separate from
-`Role::Admin`. If they leave Admin, `set_member`/`remove_member` require
-handing the deposit to another admin in the same transaction
-(`hand_deposit_to`), so it never ends up owed to someone who no longer
-has any say over the bucket.
-
-Why the refund needs to go to a specific person: if nobody actually gets
-their money back, nobody has a reason to bother deleting an unused
-bucket. Giving it to a real person gives them a reason to clean it up
-themselves.
-
-Let me know if this seems reasonable or if I'm missing something.
-
-**3. Should this land before #299?** Right now a bucket can only have up
-to 100 members, so `delete_bucket` can clean all of them up in one
-transaction. #299 would remove that cap, and once it does, cleanup can no
-longer happen in one step, it would need to be split across several. I
-think this should get built first, while it's still simple, but wanted to
-check that fits your plans for when #299 actually lands.
