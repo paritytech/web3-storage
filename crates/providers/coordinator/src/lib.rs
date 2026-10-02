@@ -1137,21 +1137,20 @@ mod tests {
     // generated `storage-subxt` bindings - as a live chain, without one.
     mod real_client {
         use super::*;
+        use provider_chain::mock_node::{
+            header_json, mock_node, runtime_version_json, GENESIS_HASH,
+        };
         use std::sync::atomic::Ordering;
         use subxt::backend::LegacyBackend;
         use subxt::ext::scale_value::scale::encode_as_type;
         use subxt_rpcs::client::mock_rpc_client::Json;
-        use subxt_rpcs::client::{MockRpcClient, RpcClient};
+        use subxt_rpcs::client::RpcClient;
 
         /// Tracked runtime metadata snapshot (shared with the PAPI codegen).
         const METADATA: &[u8] = include_bytes!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../../../packages/papi/.papi/metadata/parachain.scale"
         ));
-        const BLOCK_HASH: &str =
-            "0x2222222222222222222222222222222222222222222222222222222222222222";
-        const GENESIS_HASH: &str =
-            "0x1111111111111111111111111111111111111111111111111111111111111111";
 
         fn metadata() -> subxt::Metadata {
             use codec::Decode;
@@ -1352,33 +1351,6 @@ mod tests {
                 .collect()
         }
 
-        fn header_json(number: u32) -> serde_json::Value {
-            header_json_with_parent(number, GENESIS_HASH)
-        }
-
-        fn header_json_with_parent(number: u32, parent_hash: &str) -> serde_json::Value {
-            serde_json::json!({
-                "parentHash": parent_hash,
-                "number": format!("{number:#x}"),
-                "stateRoot": GENESIS_HASH,
-                "extrinsicsRoot": GENESIS_HASH,
-                "digest": { "logs": [] }
-            })
-        }
-
-        fn runtime_version_json() -> serde_json::Value {
-            serde_json::json!({
-                "specName": "test",
-                "implName": "test",
-                "authoringVersion": 1,
-                "specVersion": 1,
-                "implVersion": 1,
-                "apis": [],
-                "transactionVersion": 1,
-                "stateVersion": 1
-            })
-        }
-
         /// Build a real `OnlineClient` over a mock RPC connection.
         ///
         /// `storage` maps a storage-key prefix (see [`key_prefix`]) to the
@@ -1393,99 +1365,53 @@ mod tests {
             storage: Vec<(String, String)>,
             best_heads: Vec<serde_json::Value>,
         ) -> subxt::OnlineClient<subxt::PolkadotConfig> {
-            let metadata_hex = format!("0x{}", hex::encode(METADATA));
-            let mock = MockRpcClient::builder()
-                .method_handler("state_getMetadata", move |_params| {
-                    let metadata_hex = metadata_hex.clone();
-                    async move { Json(metadata_hex) }
-                })
-                .method_handler("state_call", move |params| async move {
-                    use codec::Encode;
-                    let raw = params.map(|p| p.get().to_string()).unwrap_or_default();
-                    let function: String = serde_json::from_str::<Vec<serde_json::Value>>(&raw)
-                        .ok()
-                        .and_then(|p| p.first().and_then(|f| f.as_str().map(str::to_string)))
+            let mock = mock_node(METADATA, |function| {
+                (function == "StorageProviderApi_current_anchor_block")
+                    .then(|| codec::Encode::encode(&4242u32))
+            })
+            .method_handler("state_getStorage", move |params| {
+                let storage = storage.clone();
+                async move {
+                    let key: String = params
+                        .map(|p| {
+                            let (key, _rest): (String, serde_json::Value) =
+                                serde_json::from_str(p.get())
+                                    .or_else(|_| {
+                                        serde_json::from_str::<(String,)>(p.get())
+                                            .map(|(k,)| (k, serde_json::Value::Null))
+                                    })
+                                    .expect("storage params decode");
+                            key
+                        })
                         .unwrap_or_default();
-                    let response = match function.as_str() {
-                        // The runtime metadata version(s) this "node" serves:
-                        // exactly the tracked snapshot's version.
-                        "Metadata_metadata_versions" => vec![u32::from(METADATA[4])].encode(),
-                        "Metadata_metadata_at_version" => Some(METADATA.to_vec()).encode(),
-                        "Metadata_metadata" => METADATA.to_vec().encode(),
-                        // Anchor block the coordinator reads per finalized block.
-                        // Deliberately distinct from the mocked header number
-                        // (42) so the assertion below fails if the coordinator
-                        // ever regresses to storing the parachain height.
-                        "StorageProviderApi_current_anchor_block" => 4242u32.encode(),
-                        // sp_version::RuntimeVersion, field by field.
-                        "Core_version" => (
-                            "test".to_string(),           // spec_name
-                            "test".to_string(),           // impl_name
-                            1u32,                         // authoring_version
-                            1u32,                         // spec_version
-                            1u32,                         // impl_version
-                            Vec::<([u8; 8], u32)>::new(), // apis
-                            1u32,                         // transaction_version
-                            1u8,                          // system_version
-                        )
-                            .encode(),
-                        other => panic!("mock RPC: unhandled state_call {other}"),
-                    };
-                    Json(format!("0x{}", hex::encode(response)))
-                })
-                .method_handler("chain_getBlockHash", |_params| async {
-                    Json(GENESIS_HASH.to_string())
-                })
-                .method_handler("chain_getFinalizedHead", |_params| async {
-                    Json(BLOCK_HASH.to_string())
-                })
-                .method_handler("chain_getHeader", |_params| async { Json(header_json(42)) })
-                .method_handler("state_getRuntimeVersion", |_params| async {
-                    Json(runtime_version_json())
-                })
-                .method_handler("state_getStorage", move |params| {
-                    let storage = storage.clone();
-                    async move {
-                        let key: String = params
-                            .map(|p| {
-                                let (key, _rest): (String, serde_json::Value) =
-                                    serde_json::from_str(p.get())
-                                        .or_else(|_| {
-                                            serde_json::from_str::<(String,)>(p.get())
-                                                .map(|(k,)| (k, serde_json::Value::Null))
-                                        })
-                                        .expect("storage params decode");
-                                key
-                            })
-                            .unwrap_or_default();
-                        let value = storage
-                            .iter()
-                            .find(|(prefix, _)| key.starts_with(prefix.as_str()))
-                            .map(|(_, value)| value.clone());
-                        Json(value)
-                    }
-                })
-                .subscription_handler("chain_subscribeFinalizedHeads", |_params, _unsub| async {
-                    vec![Json(header_json(42))]
-                })
-                .subscription_handler("chain_subscribeNewHeads", move |_params, _unsub| {
-                    let best_heads = best_heads.clone();
-                    async move { best_heads.into_iter().map(Json).collect::<Vec<_>>() }
-                })
-                .subscription_handler("state_subscribeRuntimeVersion", |_params, _unsub| async {
-                    vec![Json(runtime_version_json())]
-                })
-                .method_fallback(|name, _params| async move {
-                    panic!("mock RPC: unhandled method {name}");
-                    #[allow(unreachable_code)]
-                    Json(serde_json::Value::Null)
-                })
-                .subscription_fallback(|name, _params, _unsub| async move {
-                    panic!("mock RPC: unhandled subscription {name}");
-                    #[allow(unreachable_code)]
-                    Vec::<Json<serde_json::Value>>::new()
-                })
-                .build();
+                    let value = storage
+                        .iter()
+                        .find(|(prefix, _)| key.starts_with(prefix.as_str()))
+                        .map(|(_, value)| value.clone());
+                    Json(value)
+                }
+            })
+            .subscription_handler("chain_subscribeFinalizedHeads", |_params, _unsub| async {
+                vec![Json(header_json(42, GENESIS_HASH))]
+            })
+            .subscription_handler("chain_subscribeNewHeads", move |_params, _unsub| {
+                let best_heads = best_heads.clone();
+                async move { best_heads.into_iter().map(Json).collect::<Vec<_>>() }
+            })
+            .subscription_handler("state_subscribeRuntimeVersion", |_params, _unsub| async {
+                vec![Json(runtime_version_json())]
+            })
+            .method_fallback(|name, _params| async move {
+                panic!("mock RPC: unhandled method {name}");
+                #[allow(unreachable_code)]
+                Json(serde_json::Value::Null)
+            })
+            .subscription_fallback(|name, _params, _unsub| async move {
+                panic!("mock RPC: unhandled subscription {name}");
+                #[allow(unreachable_code)]
+                Vec::<Json<serde_json::Value>>::new()
+            })
+            .build();
 
             let backend = LegacyBackend::builder().build(RpcClient::new(mock));
             subxt::OnlineClient::<subxt::PolkadotConfig>::from_backend(Arc::new(backend))
@@ -1946,7 +1872,7 @@ mod tests {
             let events_bytes = encoded_membership_events(&md, &account);
 
             let head_42: SubstrateHeader<subxt::utils::H256> =
-                serde_json::from_value(header_json(42)).expect("header json decodes");
+                serde_json::from_value(header_json(42, GENESIS_HASH)).expect("header json decodes");
             let hash_42 = format!("{:?}", DynamicHasher256::new(&md).hash(&head_42.encode()));
             let api = mock_api_with_best_heads(
                 vec![(
@@ -1954,9 +1880,9 @@ mod tests {
                     format!("0x{}", hex::encode(events_bytes)),
                 )],
                 vec![
-                    header_json(42),
-                    header_json_with_parent(43, &hash_42),
-                    header_json(44),
+                    header_json(42, GENESIS_HASH),
+                    header_json(43, &hash_42),
+                    header_json(44, GENESIS_HASH),
                 ],
             )
             .await;

@@ -17,6 +17,8 @@ pub mod error;
 #[cfg(feature = "decode")]
 pub mod event_decoding;
 pub mod events;
+#[cfg(feature = "test-helpers")]
+pub mod mock_node;
 
 #[cfg(feature = "connection")]
 pub use chain_connection::{

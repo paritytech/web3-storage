@@ -8,6 +8,7 @@ repository.workspace = true
 description = "Chain connection handling and typed event decoding for provider nodes"
 
 [dependencies]
+codec = { workspace = true, features = ["std"], optional = true }
 hex = { workspace = true, features = ["std"], optional = true }
 serde_json = { workspace = true, optional = true }
 sp-runtime = { workspace = true, features = ["std"] }
@@ -40,3 +41,5 @@ connection = [
 # BlockEvent. The BlockEvent enum itself is always available; this feature
 # gates only the subxt-dependent decoding on top of it.
 decode = ["dep:storage-subxt", "dep:subxt"]
+# A mock node for tests that drive a real subxt client.
+test-helpers = ["connection", "dep:codec", "subxt-rpcs/mock-rpc-client"]
