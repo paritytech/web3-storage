@@ -682,38 +682,15 @@ impl<T: frame_system::Config> pallet_storage_provider::WeightInfo for WeightInfo
 			.saturating_add(T::DbWeight::get().reads(4))
 			.saturating_add(T::DbWeight::get().writes(4))
 	}
-	/// Storage: `ParachainSystem::ValidationData` (r:1 w:0)
-	/// Proof: `ParachainSystem::ValidationData` (`max_values`: Some(1), `max_size`: None, mode: `Measured`)
-	/// Storage: `StorageProvider::LastSweptChallengeBlock` (r:1 w:1)
-	/// Proof: `StorageProvider::LastSweptChallengeBlock` (`max_values`: Some(1), `max_size`: Some(4), added: 499, mode: `MaxEncodedLen`)
-	/// Storage: `StorageProvider::Challenges` (r:101 w:100)
-	/// Proof: `StorageProvider::Challenges` (`max_values`: None, `max_size`: Some(175), added: 2650, mode: `MaxEncodedLen`)
-	/// Storage: `StorageProvider::PendingChallenges` (r:100 w:100)
-	/// Proof: `StorageProvider::PendingChallenges` (`max_values`: None, `max_size`: Some(52), added: 2527, mode: `MaxEncodedLen`)
-	/// Storage: `StorageProvider::PendingChallengesByBucket` (r:100 w:100)
-	/// Proof: `StorageProvider::PendingChallengesByBucket` (`max_values`: None, `max_size`: Some(76), added: 2551, mode: `MaxEncodedLen`)
-	/// Storage: `StorageProvider::Providers` (r:100 w:100)
-	/// Proof: `StorageProvider::Providers` (`max_values`: None, `max_size`: Some(364), added: 2839, mode: `MaxEncodedLen`)
-	/// Storage: `Balances::Holds` (r:200 w:200)
-	/// Proof: `Balances::Holds` (`max_values`: None, `max_size`: Some(193), added: 2668, mode: `MaxEncodedLen`)
-	/// Storage: `System::Account` (r:201 w:201)
-	/// Proof: `System::Account` (`max_values`: None, `max_size`: Some(128), added: 2603, mode: `MaxEncodedLen`)
-	/// Storage: `StorageProvider::NextChallengeIndex` (r:0 w:1)
-	/// Proof: `StorageProvider::NextChallengeIndex` (`max_values`: None, `max_size`: Some(22), added: 2497, mode: `MaxEncodedLen`)
-	/// The range of component `c` is `[0, 100]`.
-	fn on_initialize_slash_challenges(c: u32, ) -> Weight {
-		// Proof Size summary in bytes:
-		//  Measured:  `68 + c * (955 ±0)`
-		//  Estimated: `3640 + c * (5336 ±0)`
-		// Minimum execution time: 11_194_000 picoseconds.
-		Weight::from_parts(11_442_000, 0)
-			.saturating_add(Weight::from_parts(0, 3640))
-			// Standard Error: 68_709
-			.saturating_add(Weight::from_parts(97_969_828, 0).saturating_mul(c.into()))
-			.saturating_add(T::DbWeight::get().reads(4))
-			.saturating_add(T::DbWeight::get().reads((8_u64).saturating_mul(c.into())))
-			.saturating_add(T::DbWeight::get().writes(3))
-			.saturating_add(T::DbWeight::get().writes((8_u64).saturating_mul(c.into())))
-			.saturating_add(Weight::from_parts(0, 5336).saturating_mul(c.into()))
+	/// Hand-written estimate from the measured per-challenge cost of the former
+	/// slash sweep: one challenge removed, its provider slashed to the Treasury,
+	/// the challenger's deposit released, both pending counters and the index
+	/// allocator written.
+	// TODO: needs re-benchmarking
+	fn resolve_expired_challenge() -> Weight {
+		Weight::from_parts(110_000_000, 0)
+			.saturating_add(Weight::from_parts(0, 9000))
+			.saturating_add(T::DbWeight::get().reads(10))
+			.saturating_add(T::DbWeight::get().writes(10))
 	}
 }

@@ -85,7 +85,7 @@ pub trait WeightInfo {
 	fn respond_to_challenge_superseded() -> Weight;
 	fn confirm_replica_sync() -> Weight;
 	fn top_up_replica_sync_balance() -> Weight;
-	fn on_initialize_slash_challenges(c: u32, ) -> Weight;
+	fn resolve_expired_challenge() -> Weight;
 }
 
 /// Weights for `pallet_storage_provider` using the Substrate node and recommended hardware.
@@ -545,15 +545,14 @@ impl<T: frame_system::Config> WeightInfo for SubstrateWeight<T> {
 			.saturating_add(T::DbWeight::get().reads(2_u64))
 			.saturating_add(T::DbWeight::get().writes(2_u64))
 	}
-	/// Placeholder: DB-weight upper bound for the per-deadline slash sweep
-	/// (`on_finalize`), base + `c` per-challenge ops. Regenerate measured
-	/// values with `/cmd bench`. The range of component `c` is `[0, 100]`.
-	fn on_initialize_slash_challenges(c: u32, ) -> Weight {
-		Weight::from_parts(0, 0)
-			.saturating_add(T::DbWeight::get().reads(1_u64))
-			.saturating_add(T::DbWeight::get().writes(1_u64))
-			.saturating_add(T::DbWeight::get().reads((10_u64).saturating_mul(c.into())))
-			.saturating_add(T::DbWeight::get().writes((10_u64).saturating_mul(c.into())))
+	/// Hand-written estimate copied from the runtime weight files' measured
+	/// per-challenge cost of the former slash sweep; `/cmd bench` regenerates
+	/// those files, not this one.
+	// TODO: needs re-benchmarking
+	fn resolve_expired_challenge() -> Weight {
+		Weight::from_parts(110_000_000, 9000)
+			.saturating_add(T::DbWeight::get().reads(10_u64))
+			.saturating_add(T::DbWeight::get().writes(10_u64))
 	}
 }
 
@@ -1013,14 +1012,13 @@ impl WeightInfo for () {
 			.saturating_add(RocksDbWeight::get().reads(2_u64))
 			.saturating_add(RocksDbWeight::get().writes(2_u64))
 	}
-	/// Placeholder: DB-weight upper bound for the per-deadline slash sweep
-	/// (`on_finalize`), base + `c` per-challenge ops. Regenerate measured
-	/// values with `/cmd bench`. The range of component `c` is `[0, 100]`.
-	fn on_initialize_slash_challenges(c: u32, ) -> Weight {
-		Weight::from_parts(0, 0)
-			.saturating_add(RocksDbWeight::get().reads(1_u64))
-			.saturating_add(RocksDbWeight::get().writes(1_u64))
-			.saturating_add(RocksDbWeight::get().reads((10_u64).saturating_mul(c.into())))
-			.saturating_add(RocksDbWeight::get().writes((10_u64).saturating_mul(c.into())))
+	/// Hand-written estimate copied from the runtime weight files' measured
+	/// per-challenge cost of the former slash sweep; `/cmd bench` regenerates
+	/// those files, not this one.
+	// TODO: needs re-benchmarking
+	fn resolve_expired_challenge() -> Weight {
+		Weight::from_parts(110_000_000, 9000)
+			.saturating_add(RocksDbWeight::get().reads(10_u64))
+			.saturating_add(RocksDbWeight::get().writes(10_u64))
 	}
 }
