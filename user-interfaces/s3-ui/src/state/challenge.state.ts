@@ -16,7 +16,7 @@ import { BehaviorSubject } from "rxjs";
 import { bind } from "@react-rxjs/core";
 import type { OpenChallenge, ChallengeDefenseResult, ChallengeSlashResult } from "@/lib/s3-client";
 import { getS3Client } from "@/state/s3.state";
-import { getClient, getApi } from "@/state/chain.state";
+import { getClient, getApi, getAnchorBlock } from "@/state/chain.state";
 
 export type ChallengeStatus = "idle" | "submitting" | "submitted" | "defended" | "slashed";
 
@@ -30,7 +30,6 @@ export interface ChallengeDefenseDetails {
 
 export interface ChallengeSlashDetails {
   slashedAmount: bigint;
-  challengerReward: bigint;
   blockNumber: number;
   blockHash: string;
 }
@@ -182,6 +181,44 @@ export async function submitChallenge(
   }
 }
 
+/** Persist a slash in the bucket's history and return its details. */
+function recordSlash(result: ChallengeSlashResult, bucketId: bigint): ChallengeSlashDetails {
+  const details: ChallengeSlashDetails = {
+    slashedAmount: result.slashedAmount,
+    blockNumber: result.blockNumber,
+    blockHash: result.blockHash,
+  };
+  publishHistory(
+    [
+      {
+        challengeId: result.challengeId,
+        bucketId: bucketId.toString(),
+        provider: result.provider,
+        status: "slashed",
+        blockNumber: result.blockNumber,
+        blockHash: result.blockHash,
+        slashDetails: details,
+      },
+    ],
+    bucketId.toString(),
+  );
+  return details;
+}
+
+/**
+ * Slash the provider of an expired challenge (anyone may) and record the
+ * outcome in this bucket's history. A challenge watched in this session is
+ * also reported through its event watcher.
+ */
+export async function resolveExpiredChallenge(
+  challengeId: { deadline: number; index: number },
+  bucketId: bigint,
+): Promise<void> {
+  const result = await getS3Client().resolveExpiredChallenge(challengeId);
+  recordSlash(result, bucketId);
+  refreshOpenChallenges(bucketId).catch(() => {});
+}
+
 function startEventWatch(
   challengeId: { deadline: number; index: number },
   provider: string,
@@ -202,6 +239,20 @@ function startEventWatch(
       blockNumber: result.blockNumber,
       blockHash: result.blockHash,
     };
+    publishHistory(
+      [
+        {
+          challengeId,
+          bucketId: bucketId.toString(),
+          provider,
+          status: "defended",
+          blockNumber: result.blockNumber,
+          blockHash: result.blockHash,
+          defenseDetails: details,
+        },
+      ],
+      bucketId.toString(),
+    );
     // Update active challenge UI only if this is the one we're currently tracking
     const current = activeChallenge$.getValue();
     if (current && current.challengeId.deadline === challengeId.deadline
@@ -211,18 +262,12 @@ function startEventWatch(
       showOutcomeModal$.next(true);
     }
     refreshOpenChallenges(bucketId).catch(() => {});
-    refreshChallengeHistory(bucketId).catch(() => {});
   };
 
   const onSlashed = (result: ChallengeSlashResult): void => {
     stopPolling(key);
     stopEventWatch(key);
-    const details: ChallengeSlashDetails = {
-      slashedAmount: result.slashedAmount,
-      challengerReward: result.challengerReward,
-      blockNumber: result.blockNumber,
-      blockHash: result.blockHash,
-    };
+    const details = recordSlash(result, bucketId);
     const current = activeChallenge$.getValue();
     if (current && current.challengeId.deadline === challengeId.deadline
         && current.challengeId.index === challengeId.index) {
@@ -231,7 +276,6 @@ function startEventWatch(
       showOutcomeModal$.next(true);
     }
     refreshOpenChallenges(bucketId).catch(() => {});
-    refreshChallengeHistory(bucketId).catch(() => {});
   };
 
   const unsub = client.watchChallengeOutcome(challengeId.deadline, provider, onDefended, onSlashed);
@@ -253,19 +297,40 @@ function startFallbackPoll(
       try {
         const client = getS3Client();
         if (!client.hasApi()) return false;
-        const stillActive = await client.isChallengeActive(challengeId.deadline);
+        if (getAnchorBlock() > challengeId.deadline) {
+          // Expired: nothing changes until someone resolves it, and the event
+          // watcher reports the slash when that happens.
+          stopPolling(key);
+          return true;
+        }
+        const stillActive = await client.isChallengeActive(challengeId);
         if (!stillActive) {
           stopEventWatch(key);
           stopPolling(key);
-          // Update active challenge UI if this is the current one
+          // The event was missed; the history scan is the only record left.
+          await refreshChallengeHistory(bucketId);
           const current = activeChallenge$.getValue();
           if (current && current.challengeId.deadline === challengeId.deadline
               && current.challengeId.index === challengeId.index) {
-            setStatus("defended");
-            showOutcomeModal$.next(true);
+            const outcome = challengeHistory$.getValue().find(
+              (e) => e.challengeId.deadline === challengeId.deadline
+                && e.challengeId.index === challengeId.index,
+            );
+            if (outcome) {
+              activeChallenge$.next({
+                ...current,
+                status: outcome.status,
+                defenseDetails: outcome.defenseDetails,
+                slashDetails: outcome.slashDetails,
+              });
+              challengeStatus$.next(outcome.status);
+              showOutcomeModal$.next(true);
+            } else {
+              activeChallenge$.next(null);
+              challengeStatus$.next("idle");
+            }
           }
           refreshOpenChallenges(bucketId).catch(() => {});
-          refreshChallengeHistory(bucketId).catch(() => {});
           return true; // resolved
         }
       } catch {
@@ -323,7 +388,6 @@ interface StoredHistoryEntry {
   };
   slashDetails?: {
     slashedAmount: string;    // bigint serialized as string
-    challengerReward: string;
     blockNumber: number;
     blockHash: string;
   };
@@ -345,7 +409,6 @@ function serializeEntry(e: ChallengeHistoryEntry): StoredHistoryEntry {
     slashDetails: e.slashDetails ? {
       ...e.slashDetails,
       slashedAmount: e.slashDetails.slashedAmount.toString(),
-      challengerReward: e.slashDetails.challengerReward.toString(),
     } : undefined,
   };
 }
@@ -366,7 +429,6 @@ function deserializeEntry(s: StoredHistoryEntry): ChallengeHistoryEntry {
     slashDetails: s.slashDetails ? {
       ...s.slashDetails,
       slashedAmount: BigInt(s.slashDetails.slashedAmount),
-      challengerReward: BigInt(s.slashDetails.challengerReward),
     } : undefined,
   };
 }
@@ -392,6 +454,13 @@ function saveHistory(entries: ChallengeHistoryEntry[]): void {
 
 function historyKey(e: { challengeId: { deadline: number; index: number }; status: string }): string {
   return `${e.challengeId.deadline}:${e.challengeId.index}:${e.status}`;
+}
+
+/** Merge new entries into the persisted history and publish the bucket's view. */
+function publishHistory(entries: ChallengeHistoryEntry[], bucketId: string): void {
+  const merged = mergeHistory(loadStoredHistory(), entries);
+  saveHistory(merged);
+  challengeHistory$.next(merged.filter((e) => e.bucketId === bucketId));
 }
 
 function mergeHistory(existing: ChallengeHistoryEntry[], scanned: ChallengeHistoryEntry[]): ChallengeHistoryEntry[] {
@@ -525,21 +594,13 @@ export async function refreshChallengeHistory(bucketId: bigint | null): Promise<
         blockHash,
         slashDetails: {
           slashedAmount: p.slashed_amount,
-          challengerReward: p.challenger_reward,
           blockNumber,
           blockHash,
         },
       });
     }
 
-    // Merge chain-scanned entries with localStorage-persisted history
-    const existing = loadStoredHistory();
-    const merged = mergeHistory(existing, scanned);
-    saveHistory(merged);
-
-    // Filter for the requested bucket and publish
-    const forBucket = merged.filter((e) => e.bucketId === bucketId.toString());
-    challengeHistory$.next(forBucket);
+    publishHistory(scanned, bucketId.toString());
   } catch (err) {
     console.error("[challenge-history] scan failed:", err);
   } finally {
