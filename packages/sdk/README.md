@@ -81,7 +81,7 @@ targets:
 | `addPrimaryProvider` | `bucket: <id>` | `add_primary_provider` (admin only) |
 | `addReplicaProvider` | `bucket: <id>` | `add_replica_provider` |
 
-`signedTermsBucketId(signed)` reads the bucket id back out of a signed quote;
+`signedTermsBucketId(signed)` returns the bucket id a signed quote names;
 it returns `undefined` for a quote that creates its bucket.
 
 ### Changing a bucket's primary provider

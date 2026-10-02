@@ -268,8 +268,8 @@ impl<T: Config> Pallet<T> {
     }
 
     /// Checks the parts of a quote that do not depend on the provider's
-    /// on-chain record: it binds this owner and this bucket, asks for a
-    /// non-zero quota, and is still inside the chain-enforced validity
+    /// on-chain record: it binds this owner and this bucket, has
+    /// `max_bytes > 0`, and is still inside the chain-enforced validity
     /// window.
     ///
     /// Returns the current anchor block.

@@ -37,13 +37,30 @@ fn create_bucket_with_primary_works() {
         assert_eq!(provider.committed_bytes, 100);
         assert_eq!(provider.stats.agreements_total, 1);
 
-        System::assert_has_event(
-            Event::ProviderAddedToBucket {
-                bucket_id: 0,
-                provider: 2,
-            }
-            .into(),
-        );
+        // Event order: BucketCreated, ProviderAddedToBucket,
+        // StorageAgreementEstablished.
+        let created = event_position(|e| {
+            matches!(
+                e,
+                RuntimeEvent::StorageProvider(Event::BucketCreated { bucket_id: 0, .. })
+            )
+        });
+        let added = event_position(|e| {
+            matches!(
+                e,
+                RuntimeEvent::StorageProvider(Event::ProviderAddedToBucket { bucket_id: 0, .. })
+            )
+        });
+        let established = event_position(|e| {
+            matches!(
+                e,
+                RuntimeEvent::StorageProvider(Event::StorageAgreementEstablished {
+                    bucket_id: 0,
+                    ..
+                })
+            )
+        });
+        assert!(created < added && added < established);
     });
 }
 

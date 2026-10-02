@@ -1293,7 +1293,8 @@ pub mod pallet {
         /// agreement.
         MissingReplicaTerms,
         /// Replica terms present in a signed quote redeemed as a primary
-        /// agreement.
+        /// agreement. Negotiate the quote without `replica_params`, or
+        /// redeem it with `add_replica_provider`.
         UnexpectedReplicaTerms,
         /// The terms' `bucket` does not name the bucket the call targets:
         /// `New` is only redeemable by `create_bucket_with_primary`, and

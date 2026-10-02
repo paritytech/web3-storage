@@ -99,29 +99,46 @@ fn add_primary_provider_works() {
         assert_eq!(Providers::<Test>::get(2).unwrap().committed_bytes, 50);
 
         // `StorageAgreementEstablished` follows `ProviderAddedToBucket`.
-        let events: Vec<RuntimeEvent> = System::events().into_iter().map(|r| r.event).collect();
-        let added = events
-            .iter()
-            .position(|e| {
-                matches!(
-                    e,
-                    RuntimeEvent::StorageProvider(Event::ProviderAddedToBucket { provider: 2, .. })
-                )
-            })
-            .expect("ProviderAddedToBucket emitted");
-        let established = events
-            .iter()
-            .position(|e| {
-                matches!(
-                    e,
-                    RuntimeEvent::StorageProvider(Event::StorageAgreementEstablished {
-                        provider: 2,
-                        ..
-                    })
-                )
-            })
-            .expect("StorageAgreementEstablished emitted");
+        let added = event_position(|e| {
+            matches!(
+                e,
+                RuntimeEvent::StorageProvider(Event::ProviderAddedToBucket { provider: 2, .. })
+            )
+        });
+        let established = event_position(|e| {
+            matches!(
+                e,
+                RuntimeEvent::StorageProvider(Event::StorageAgreementEstablished {
+                    provider: 2,
+                    ..
+                })
+            )
+        });
         assert!(added < established);
+    });
+}
+
+#[test]
+fn create_bucket_with_primary_internal_writes_nothing_for_a_rejected_quote() {
+    new_test_ext().execute_with(|| {
+        register_provider(2, 200);
+        register_provider(3, 200);
+
+        // Signed by provider 3, redeemed against provider 2. Called directly,
+        // so no dispatch storage layer rolls anything back.
+        let (terms, sig) = signed_primary_terms(3, 1, BucketTarget::New, 50, 100);
+        assert_err!(
+            StorageProvider::create_bucket_with_primary_internal(
+                &1,
+                &2,
+                terms,
+                &sig,
+                Visibility::Private
+            ),
+            Error::<Test>::InvalidProviderSignature
+        );
+        assert_eq!(NextBucketId::<Test>::get(), 0);
+        assert!(MemberBuckets::<Test>::get(1).is_empty());
     });
 }
 

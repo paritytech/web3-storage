@@ -11,6 +11,14 @@ fn test_public_key() -> frame_support::BoundedVec<u8, frame_support::traits::Con
     vec![1u8; 32].try_into().unwrap()
 }
 
+/// Position of the first event matching `pred` in this block's event list.
+fn event_position(pred: impl Fn(&RuntimeEvent) -> bool) -> usize {
+    System::events()
+        .iter()
+        .position(|record| pred(&record.event))
+        .expect("event emitted")
+}
+
 /// What this pallet is holding from `who` under one reason.
 fn held(reason: HoldReason, who: u64) -> u64 {
     use frame_support::traits::fungible::InspectHold;

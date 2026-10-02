@@ -554,7 +554,8 @@ mod benchmarks {
     }
 
     /// Worst case: full signature verification + replay-window mutation +
-    /// agreement insertion + push onto a full-but-one primary set.
+    /// agreement insertion + push onto a primary set one below
+    /// `MaxPrimaryProviders`.
     #[benchmark]
     fn add_primary_provider() {
         let admin = funded_account::<T>("admin", 0);
