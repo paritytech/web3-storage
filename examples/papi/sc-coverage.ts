@@ -286,6 +286,15 @@ async function main() {
     ]);
     const challenge = assertEvent(r.events, "StorageProvider", "ChallengeCreated", "challengeCheckpoint");
 
+    console.log("\n[9b] IWeb3Storage.resolveExpiredChallenge(deadline, index) before the deadline reverts");
+    await assert.rejects(
+      callPrecompile(api, client, WEB3_STORAGE_ADDR, iWeb3, "resolveExpiredChallenge", [
+        challenge.challenge_id.deadline,
+        challenge.challenge_id.index,
+      ]),
+      /ContractReverted/,
+    );
+
     console.log("    [substrate] respondToChallenge");
     const proof = await fetchChallengeProof(api, providerUrl, challenge.challenge_id);
     await respondToChallenge(api, provider, challenge.challenge_id, proof);

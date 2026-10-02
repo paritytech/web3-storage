@@ -2476,42 +2476,8 @@ pub mod pallet {
             target: ChunkLocation,
         ) -> DispatchResult {
             let who = ensure_signed(origin)?;
-
-            let bucket = Buckets::<T>::get(bucket_id).ok_or(Error::<T>::BucketNotFound)?;
-            let snapshot = bucket.snapshot.as_ref().ok_or(Error::<T>::NoSnapshot)?;
-
-            // Verify provider is in snapshot
-            let provider_idx = bucket
-                .primary_providers
-                .iter()
-                .position(|p| p == &provider)
-                .ok_or(Error::<T>::ProviderNotInSnapshot)?;
-
-            // Check if provider bit is set in the bitfield
-            let provider_signed = snapshot.has_provider_signed(provider_idx);
-            ensure!(provider_signed, Error::<T>::ProviderNotInSnapshot);
-
-            // Verify provider has an ACTIVE agreement for this bucket. As with
-            // `challenge_offchain`/`challenge_replica`, challengeability must
-            // track genuine obligation: a challenge can only open while the
-            // agreement is live (not into the settlement window), so an expired
-            // checkpoint can no longer be challenged.
-            let agreement = StorageAgreements::<T>::get(bucket_id, &provider)
-                .ok_or(Error::<T>::AgreementNotFound)?;
-            ensure!(
-                Self::current_anchor_block() < agreement.expires_at,
-                Error::<T>::AgreementExpired
-            );
-
-            Self::create_challenge(
-                who,
-                bucket_id,
-                &bucket,
-                provider,
-                &agreement.role,
-                snapshot.commitment,
-                target,
-            )
+            Self::do_challenge_checkpoint(who, bucket_id, provider, target)?;
+            Ok(())
         }
 
         /// Challenge off-chain commitment (requires provider signature).
@@ -2577,7 +2543,8 @@ pub mod pallet {
                 &agreement.role,
                 commitment,
                 target,
-            )
+            )?;
+            Ok(())
         }
 
         /// Challenge a replica based on their on-chain sync confirmation.
@@ -2627,7 +2594,8 @@ pub mod pallet {
                 &agreement.role,
                 commitment,
                 target,
-            )
+            )?;
+            Ok(())
         }
 
         /// Challenged provider only. Answer before the deadline with a chunk

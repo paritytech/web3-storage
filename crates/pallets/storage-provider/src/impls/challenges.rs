@@ -8,6 +8,50 @@ use storage_primitives::{
 };
 
 impl<T: Config> Pallet<T> {
+    /// Open a challenge against `provider`'s signature on the bucket's current
+    /// snapshot and return the new challenge's id. Shared by the
+    /// `challenge_checkpoint` call and the precompile, which hands the id back
+    /// to the contract.
+    pub fn do_challenge_checkpoint(
+        who: T::AccountId,
+        bucket_id: BucketId,
+        provider: T::AccountId,
+        target: ChunkLocation,
+    ) -> Result<ChallengeId<BlockNumberFor<T>>, DispatchError> {
+        let bucket = Buckets::<T>::get(bucket_id).ok_or(Error::<T>::BucketNotFound)?;
+        let snapshot = bucket.snapshot.as_ref().ok_or(Error::<T>::NoSnapshot)?;
+
+        let provider_idx = bucket
+            .primary_providers
+            .iter()
+            .position(|p| p == &provider)
+            .ok_or(Error::<T>::ProviderNotInSnapshot)?;
+        ensure!(
+            snapshot.has_provider_signed(provider_idx),
+            Error::<T>::ProviderNotInSnapshot
+        );
+
+        // A challenge can only open while the agreement is live (not into the
+        // settlement window), so an expired checkpoint can no longer be
+        // challenged.
+        let agreement = StorageAgreements::<T>::get(bucket_id, &provider)
+            .ok_or(Error::<T>::AgreementNotFound)?;
+        ensure!(
+            Self::current_anchor_block() < agreement.expires_at,
+            Error::<T>::AgreementExpired
+        );
+
+        Self::create_challenge(
+            who,
+            bucket_id,
+            &bucket,
+            provider,
+            &agreement.role,
+            snapshot.commitment,
+            target,
+        )
+    }
+
     pub(crate) fn create_challenge(
         challenger: T::AccountId,
         bucket_id: BucketId,
@@ -16,7 +60,7 @@ impl<T: Config> Pallet<T> {
         provider_role: &ProviderRole<BalanceOf<T>, BlockNumberFor<T>>,
         commitment: Commitment,
         target: ChunkLocation,
-    ) -> DispatchResult {
+    ) -> Result<ChallengeId<BlockNumberFor<T>>, DispatchError> {
         ensure!(challenger != provider, Error::<T>::SelfChallenge);
 
         // Private-bucket gate: the public has no legitimate reliance on data
@@ -98,7 +142,7 @@ impl<T: Config> Pallet<T> {
             respond_by: deadline,
         });
 
-        Ok(())
+        Ok(challenge_id)
     }
 
     /// Slash a provider for a challenge that expired unanswered: the whole
