@@ -9,6 +9,7 @@
 
 use super::{BucketInfo, BucketState, BucketStats, BucketSummary, StorageBackend, StoredNode};
 use crate::error::Error;
+use crate::merkle::padded_merkle_root;
 use crate::nonce::NonceStore;
 use codec::{DecodeAll, Encode};
 use rocksdb::{Options, DB};
@@ -295,6 +296,16 @@ impl DiskStorage {
             let key = root.as_bytes();
             if self.db.get_cf(&cf_nodes, key)?.is_none() {
                 return Err(Error::RootNotFound(format!(
+                    "0x{}",
+                    hex::encode(root.as_bytes())
+                )));
+            }
+        }
+
+        // Verify balanced tree
+        for root in &data_roots {
+            if padded_merkle_root(&self.collect_chunk_hashes(*root)) != *root {
+                return Err(Error::NonCanonicalTree(format!(
                     "0x{}",
                     hex::encode(root.as_bytes())
                 )));
@@ -664,6 +675,80 @@ mod tests {
         let cf = storage.db.cf_handle(CF_METADATA).unwrap();
         let raw = storage.db.get_cf(&cf, KEY_NONCE).unwrap().unwrap();
         assert_eq!(hex::encode(&raw), "2a00000000000000");
+    }
+
+    const BUCKET: BucketId = 1;
+
+    fn store_chunk(storage: &DiskStorage, byte: u8) -> H256 {
+        let data = vec![byte; 8];
+        let hash = blake2_256(&data);
+        storage.store_node(BUCKET, hash, data, None).unwrap();
+        hash
+    }
+
+    fn store_parent(storage: &DiskStorage, children: Vec<H256>) -> H256 {
+        let data: Vec<u8> = children
+            .iter()
+            .flat_map(|c| c.as_bytes().to_vec())
+            .collect();
+        let hash = blake2_256(&data);
+        storage
+            .store_node(BUCKET, hash, data, Some(children))
+            .unwrap();
+        hash
+    }
+
+    fn assert_rejected_and_bucket_unchanged(storage: &DiskStorage, root: H256) {
+        let before = storage.get_bucket(BUCKET).unwrap();
+        let err = storage.commit(BUCKET, vec![root]).unwrap_err();
+        assert!(matches!(err, Error::NonCanonicalTree(_)), "got {err:?}");
+        let after = storage.get_bucket(BUCKET).unwrap();
+        assert_eq!(after.leaves, before.leaves);
+        assert_eq!(after.mmr_root, before.mmr_root);
+    }
+
+    fn committing_storage() -> (TempDir, DiskStorage) {
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        storage.init_bucket(BUCKET, 1_000_000).unwrap();
+        (dir, storage)
+    }
+
+    #[test]
+    fn commit_rejects_unbalanced_tree() {
+        let (_dir, storage) = committing_storage();
+        let [c0, c1, c2] = [1, 2, 3].map(|b| store_chunk(&storage, b));
+        let left = store_parent(&storage, vec![c0, c1]);
+        let root = store_parent(&storage, vec![left, c2]);
+        assert_rejected_and_bucket_unchanged(&storage, root);
+    }
+
+    #[test]
+    fn commit_rejects_node_with_three_children() {
+        let (_dir, storage) = committing_storage();
+        let [c0, c1, c2] = [1, 2, 3].map(|b| store_chunk(&storage, b));
+        let root = store_parent(&storage, vec![c0, c1, c2]);
+        assert_rejected_and_bucket_unchanged(&storage, root);
+    }
+
+    #[test]
+    fn commit_rejects_zero_child_in_the_middle() {
+        let (_dir, storage) = committing_storage();
+        let [c0, c1] = [1, 2].map(|b| store_chunk(&storage, b));
+        let left = store_parent(&storage, vec![c0, H256::zero()]);
+        let root = store_parent(&storage, vec![left, c1]);
+        assert_rejected_and_bucket_unchanged(&storage, root);
+    }
+
+    #[test]
+    fn commit_accepts_padded_tree_and_single_leaf() {
+        let (_dir, storage) = committing_storage();
+        let [c0, c1, c2] = [1, 2, 3].map(|b| store_chunk(&storage, b));
+        let left = store_parent(&storage, vec![c0, c1]);
+        let right = store_parent(&storage, vec![c2, H256::zero()]);
+        let root = store_parent(&storage, vec![left, right]);
+        storage.commit(BUCKET, vec![root, c0]).unwrap();
+        assert_eq!(storage.get_bucket(BUCKET).unwrap().leaves.len(), 2);
     }
 
     #[test]

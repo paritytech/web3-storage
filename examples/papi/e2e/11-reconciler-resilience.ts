@@ -20,7 +20,7 @@
  * short `--reconcile-interval-secs` in CI; the poll budget below also covers
  * the 30s default for local runs.
  *
- * Usage: node e2e/11-reconciler-resilience.js [chain_ws] [provider_url]
+ * Usage: node --import tsx e2e/11-reconciler-resilience.ts [chain_ws] [provider_url]
  */
 
 import assert from "node:assert";

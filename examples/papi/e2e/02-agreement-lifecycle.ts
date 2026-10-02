@@ -11,7 +11,7 @@
  * end (Pay/Burn), and the on-chain/off-chain rejections that replace the old
  * request-flow failures.
  *
- * Usage: node e2e/02-agreement-lifecycle.js [chain_ws] [provider_url]
+ * Usage: node --import tsx e2e/02-agreement-lifecycle.ts [chain_ws] [provider_url]
  */
 
 import assert from "node:assert";

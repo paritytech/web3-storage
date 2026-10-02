@@ -19,7 +19,7 @@
  * Workflow 06 covers the same ACL on-chain; this one is the off-chain half —
  * it is the only workflow that sends an `Authorization` header.
  *
- * Usage: node e2e/12-provider-http-auth.js [chain_ws] [provider_url]
+ * Usage: node --import tsx e2e/12-provider-http-auth.ts [chain_ws] [provider_url]
  */
 
 import assert from "node:assert";

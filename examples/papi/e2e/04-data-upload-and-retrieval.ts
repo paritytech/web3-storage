@@ -7,7 +7,7 @@
  *
  * Tests: different sizes, S3 HTTP endpoints, roundtrip integrity, edge cases.
  *
- * Usage: node e2e/04-data-upload-and-retrieval.js [chain_ws] [provider_url]
+ * Usage: node --import tsx e2e/04-data-upload-and-retrieval.ts [chain_ws] [provider_url]
  */
 
 import assert from "node:assert";
