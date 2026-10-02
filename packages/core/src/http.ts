@@ -144,8 +144,8 @@ export interface NegotiateRequest {
  * `BucketTarget`: `"New"` for a bucket created at redemption,
  * `{ Existing: <bucket id> }` for one that already exists.
  *
- * `@web3-storage/papi` carries its own copy for the UIs, which do not depend
- * on this package — keep the two in step.
+ * `@web3-storage/papi` declares the same type; neither package depends on
+ * the other, so the two declarations must match.
  */
 export type BucketTargetWire = "New" | { Existing: bigint | number | string };
 

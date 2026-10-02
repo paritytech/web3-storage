@@ -39,13 +39,10 @@ pub fn validate_request(req: &NegotiateRequest, info: &ProviderInfo) -> Result<(
         Some(_) if info.settings.replica_sync_price.is_none() => {
             return Err(Error::NotAcceptingReplicas)
         }
+        // Only `add_replica_provider` redeems a replica quote, and it needs
+        // an existing bucket; the pallet rejects the quote otherwise.
+        Some(_) if req.bucket.is_none() => return Err(Error::ReplicaQuoteWithoutBucket),
         _ => {}
-    }
-
-    // Only `add_replica_provider` redeems a replica quote, and it needs an
-    // existing bucket; the pallet rejects the quote otherwise.
-    if req.replica_params.is_some() && req.bucket.is_none() {
-        return Err(Error::ReplicaQuoteWithoutBucket);
     }
 
     if req.price_per_byte < info.settings.price_per_byte {

@@ -115,7 +115,7 @@ export interface SignedTerms {
  * `{ Existing: <bucket id> }` for one that already exists.
  *
  * `@web3-storage/core` declares the same type; neither package depends on
- * the other, so both must stay in step.
+ * the other, so the two declarations must match.
  */
 export type BucketTargetWire = "New" | { Existing: bigint | number | string };
 

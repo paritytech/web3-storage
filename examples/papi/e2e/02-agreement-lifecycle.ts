@@ -235,33 +235,28 @@ async function main() {
   tests.push({
     name: "2.10 create_bucket then add_primary_provider",
     fn: async () => {
-      // The two-step path: an empty bucket first, a provider assigned after.
       const { bucketId } = await createBucket(api, client, { minProviders: 1 });
-      const empty = (await api.query.StorageProvider.Buckets.getValue(bucketId, READ_OPTS))!;
+      // The quote names this bucket, so it is redeemable only against it.
+      const [empty, signed] = await Promise.all([
+        api.query.StorageProvider.Buckets.getValue(bucketId, READ_OPTS),
+        negotiateSigned(api, PROVIDER_URL, client, provider, { maxBytes, duration, bucketId }),
+      ]);
       assert.strictEqual(
-        empty.primary_providers.length,
+        empty!.primary_providers.length,
         0,
         "create_bucket should leave the bucket without providers"
       );
 
-      // The quote names this bucket, so it is redeemable only against it.
-      const signed = await negotiateSigned(api, PROVIDER_URL, client, provider, {
-        maxBytes,
-        duration,
-        bucketId,
-      });
       await addPrimaryProvider(api, client, provider, signed);
 
-      const bucket = (await api.query.StorageProvider.Buckets.getValue(bucketId, READ_OPTS))!;
+      const [bucket, agreement] = await Promise.all([
+        api.query.StorageProvider.Buckets.getValue(bucketId, READ_OPTS),
+        api.query.StorageProvider.StorageAgreements.getValue(bucketId, provider.address, READ_OPTS),
+      ]);
       assert.ok(
-        bucket.primary_providers.some((p: string) => sameAddress(p, provider.address)),
+        bucket!.primary_providers.some((p: string) => sameAddress(p, provider.address)),
         "Provider should be in primary_providers after add_primary_provider"
       );
-      const agreement = (await api.query.StorageProvider.StorageAgreements.getValue(
-        bucketId,
-        provider.address,
-        READ_OPTS
-      ))!;
       assert.ok(agreement, "Agreement should exist after add_primary_provider");
     },
   });
