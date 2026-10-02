@@ -42,6 +42,12 @@ pub fn validate_request(req: &NegotiateRequest, info: &ProviderInfo) -> Result<(
         _ => {}
     }
 
+    // Only `add_replica_provider` redeems a replica quote, and it needs an
+    // existing bucket; the pallet rejects the quote otherwise.
+    if req.replica_params.is_some() && req.bucket.is_none() {
+        return Err(Error::ReplicaQuoteWithoutBucket);
+    }
+
     if req.price_per_byte < info.settings.price_per_byte {
         return Err(Error::PriceBelowListed {
             proposed: req.price_per_byte,

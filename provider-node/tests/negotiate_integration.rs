@@ -322,6 +322,26 @@ async fn negotiate_accepts_replica_when_sync_price_configured() {
 }
 
 #[tokio::test]
+async fn negotiate_422_replica_quote_without_bucket() {
+    let mut info = provider_info();
+    info.settings.replica_sync_price = Some(7);
+    let server = TestServer::ready(info).await;
+
+    // No call redeems a replica quote for a bucket that does not exist yet.
+    let mut req = primary_request();
+    req.replica_params = Some(ReplicaTerms {
+        sync_balance: 1_000,
+        min_sync_interval: 10,
+        sync_price: 10,
+    });
+
+    let resp = server.negotiate(&req).await;
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "replica_quote_without_bucket");
+}
+
+#[tokio::test]
 async fn negotiate_503_when_no_signing_key() {
     // No keypair configured → the handler refuses before doing any work.
     let (deps, dir) = test_deps();
