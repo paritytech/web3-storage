@@ -2,8 +2,8 @@
 
 //! Request signature verification (sr25519) and role-based access control.
 
-use crate::error::AuthError;
-use crate::http_auth::auth_message;
+use crate::error::{AuthError, MembershipError};
+use crate::http_auth::{auth_message, hex_array, ContextBlock};
 use crate::membership::{
     MembershipCache, MembershipInvalidations, MembershipResolver, RequiredRole,
 };
@@ -83,31 +83,9 @@ fn verify_signature(
         return Err(AuthError::TimestampExpired);
     }
 
-    // Decode public key
-    let pubkey_bytes = hex::decode(pubkey_hex.strip_prefix("0x").unwrap_or(pubkey_hex))
-        .map_err(|_| AuthError::AuthRequired)?;
-    if pubkey_bytes.len() != 32 {
-        return Err(AuthError::AuthRequired);
-    }
-    let pubkey = sr25519::Public::from_raw(
-        pubkey_bytes
-            .as_slice()
-            .try_into()
-            .map_err(|_| AuthError::AuthRequired)?,
-    );
-
-    // Decode signature
-    let sig_bytes = hex::decode(sig_hex.strip_prefix("0x").unwrap_or(sig_hex))
-        .map_err(|_| AuthError::AuthRequired)?;
-    if sig_bytes.len() != 64 {
-        return Err(AuthError::AuthRequired);
-    }
-    let signature = sr25519::Signature::from_raw(
-        sig_bytes
-            .as_slice()
-            .try_into()
-            .map_err(|_| AuthError::AuthRequired)?,
-    );
+    let pubkey = sr25519::Public::from_raw(hex_array(pubkey_hex).ok_or(AuthError::AuthRequired)?);
+    let signature =
+        sr25519::Signature::from_raw(hex_array(sig_hex).ok_or(AuthError::AuthRequired)?);
 
     // Verify signature. Two signing surfaces reach this endpoint:
     // - the Rust SDK / provider tests sign the raw message bytes;
@@ -187,13 +165,25 @@ impl Authenticator {
     /// Writer/Admin request) needs a valid signed `Authorization` header whose
     /// account holds `required` for the bucket. A bucket whose visibility
     /// cannot be established gates like `Private`.
+    ///
+    /// A refusal is `InsufficientRole`, except when the node may simply not
+    /// have seen the client's block yet, which is `BlockNotKnown` (retry):
+    /// without `context_header` (`X-Web3Storage-Context`, the block the
+    /// client acted on) that is what the resolver reports for a bucket id the
+    /// chain has not allocated yet; with it, any refusal whose context is
+    /// newer than the block the membership was read at, and never a refusal
+    /// whose context is at or before it. The context block is never read at,
+    /// so it cannot widen access; a malformed one is `ContextBlockInvalid`.
     pub async fn require_role(
         &self,
         auth_header: Option<&str>,
+        context_header: Option<&str>,
         method: &str,
         bucket_id: BucketId,
         required: RequiredRole,
     ) -> Result<(), AuthError> {
+        let context = context_header.map(ContextBlock::parse).transpose()?;
+
         // One lookup serves both gates; its failure only matters once the
         // request has proven it needs a role.
         let access = self.membership.lookup(bucket_id).await;
@@ -208,15 +198,32 @@ impl Authenticator {
         let header = auth_header.ok_or(AuthError::AuthRequired)?;
         let account = verify_signature(header, method, bucket_id, self.max_skew)?;
 
-        let role = access?
+        let entry = match access {
+            Ok(entry) => entry,
+            Err(MembershipError::BlockNotKnown { read_block, .. })
+                if context.is_some_and(|context| context.number <= read_block) =>
+            {
+                return Err(AuthError::InsufficientRole);
+            }
+            Err(error) => return Err(error.into()),
+        };
+
+        let granted = entry
             .role_of(&account)
-            .ok_or(AuthError::InsufficientRole)?;
-
-        if !required.is_satisfied_by(role) {
-            return Err(AuthError::InsufficientRole);
+            .is_some_and(|role| required.is_satisfied_by(role));
+        if granted {
+            return Ok(());
         }
-
-        Ok(())
+        match (context, entry.access.read_block) {
+            (Some(context), Some(read_block)) if context.number > read_block => {
+                Err(MembershipError::BlockNotKnown {
+                    bucket_id,
+                    read_block,
+                }
+                .into())
+            }
+            _ => Err(AuthError::InsufficientRole),
+        }
     }
 }
 
@@ -342,6 +349,7 @@ mod tests {
             Ok(BucketAccess {
                 members: self.0.clone(),
                 visibility: Visibility::Public,
+                read_block: None,
             })
         }
     }
@@ -356,18 +364,18 @@ mod tests {
             .into()]));
 
         let anonymous_read = auth
-            .require_role(None, "GET", 1, RequiredRole::Reader)
+            .require_role(None, None, "GET", 1, RequiredRole::Reader)
             .await;
         assert!(anonymous_read.is_ok(), "got {anonymous_read:?}");
 
         let anonymous_write = auth
-            .require_role(None, "PUT", 1, RequiredRole::Writer)
+            .require_role(None, None, "PUT", 1, RequiredRole::Writer)
             .await;
         assert!(matches!(anonymous_write, Err(AuthError::AuthRequired)));
 
         let header = make_auth_header(&alice, "PUT", 1, current_timestamp());
         let reader_write = auth
-            .require_role(Some(&header), "PUT", 1, RequiredRole::Writer)
+            .require_role(Some(&header), None, "PUT", 1, RequiredRole::Writer)
             .await;
         assert!(matches!(reader_write, Err(AuthError::InsufficientRole)));
     }
@@ -379,7 +387,7 @@ mod tests {
             (AccountId32::new(alice.public().0), Role::Reader).into()
         ]);
         let anonymous_read = auth
-            .require_role(None, "GET", 1, RequiredRole::Reader)
+            .require_role(None, None, "GET", 1, RequiredRole::Reader)
             .await;
         assert!(matches!(anonymous_read, Err(AuthError::AuthRequired)));
     }
@@ -389,7 +397,8 @@ mod tests {
         let auth = authenticator(vec![(AccountId32::new(keypair.public().0), granted).into()]);
         let header = make_auth_header(&keypair, "PUT", 1, current_timestamp());
 
-        auth.require_role(Some(&header), "PUT", 1, required).await
+        auth.require_role(Some(&header), None, "PUT", 1, required)
+            .await
     }
 
     #[tokio::test]
@@ -442,7 +451,7 @@ mod tests {
         let header = make_auth_header(&keypair, "PUT", 1, current_timestamp());
 
         assert!(auth
-            .require_role(Some(&header), "PUT", 1, RequiredRole::Admin)
+            .require_role(Some(&header), None, "PUT", 1, RequiredRole::Admin)
             .await
             .is_ok());
     }
@@ -459,7 +468,7 @@ mod tests {
         let header = make_auth_header(&bob, "GET", 1, current_timestamp());
 
         let result = auth
-            .require_role(Some(&header), "GET", 1, RequiredRole::Reader)
+            .require_role(Some(&header), None, "GET", 1, RequiredRole::Reader)
             .await;
         assert!(matches!(result, Err(AuthError::InsufficientRole)));
     }
@@ -472,7 +481,7 @@ mod tests {
         ]);
 
         let missing = auth
-            .require_role(None, "GET", 1, RequiredRole::Reader)
+            .require_role(None, None, "GET", 1, RequiredRole::Reader)
             .await;
         assert!(matches!(missing, Err(AuthError::AuthRequired)));
 
@@ -480,7 +489,7 @@ mod tests {
         // the signer is an Admin of the bucket it did sign for.
         let header = make_auth_header(&alice, "GET", 1, current_timestamp());
         let replayed = auth
-            .require_role(Some(&header), "GET", 2, RequiredRole::Reader)
+            .require_role(Some(&header), None, "GET", 2, RequiredRole::Reader)
             .await;
         assert!(matches!(replayed, Err(AuthError::AuthRequired)));
     }
@@ -504,13 +513,13 @@ mod tests {
         let header = make_auth_header(&keypair, "GET", 1, current_timestamp());
 
         // Seeds the cache via the resolver's one successful call.
-        auth.require_role(Some(&header), "GET", 1, RequiredRole::Reader)
+        auth.require_role(Some(&header), None, "GET", 1, RequiredRole::Reader)
             .await
             .expect("first lookup must succeed and cache the member set");
         assert_eq!(calls.load(Ordering::SeqCst), 1);
 
         let result = auth
-            .require_role(Some(&header), "GET", 1, RequiredRole::Reader)
+            .require_role(Some(&header), None, "GET", 1, RequiredRole::Reader)
             .await;
         assert!(
             matches!(
@@ -538,17 +547,146 @@ mod tests {
         .with_max_stale(Duration::from_secs(300));
         let header = make_auth_header(&keypair, "GET", 1, current_timestamp());
 
-        auth.require_role(Some(&header), "GET", 1, RequiredRole::Reader)
+        auth.require_role(Some(&header), None, "GET", 1, RequiredRole::Reader)
             .await
             .expect("first lookup must succeed and cache the member set");
 
         let result = auth
-            .require_role(Some(&header), "GET", 1, RequiredRole::Reader)
+            .require_role(Some(&header), None, "GET", 1, RequiredRole::Reader)
             .await;
         assert!(
             result.is_ok(),
             "within the configured max_stale the cached role must still authorize, got {result:?}"
         );
         assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
+
+    /// Members read at block 10, as a chain-backed resolver reports them.
+    struct ReadAtTenResolver(Vec<Member>);
+
+    #[async_trait::async_trait]
+    impl MembershipResolver for ReadAtTenResolver {
+        async fn fetch_access(
+            &self,
+            _bucket_id: BucketId,
+        ) -> Result<BucketAccess, MembershipError> {
+            Ok(BucketAccess {
+                members: self.0.clone(),
+                visibility: Visibility::Private,
+                read_block: Some(10),
+            })
+        }
+    }
+
+    /// A bucket the node has not seen yet, read at block 10.
+    struct NotKnownAtTenResolver;
+
+    #[async_trait::async_trait]
+    impl MembershipResolver for NotKnownAtTenResolver {
+        async fn fetch_access(&self, bucket_id: BucketId) -> Result<BucketAccess, MembershipError> {
+            Err(MembershipError::BlockNotKnown {
+                bucket_id,
+                read_block: 10,
+            })
+        }
+    }
+
+    fn context_at(number: u32) -> String {
+        crate::http_auth::build_context_header(number, &[1u8; 32])
+    }
+
+    async fn bob_writes_with_context(
+        auth: &Authenticator,
+        context: Option<&str>,
+    ) -> Result<(), AuthError> {
+        let bob = sr25519::Pair::from_string("//Bob", None).unwrap();
+        let header = make_auth_header(&bob, "PUT", 1, current_timestamp());
+        auth.require_role(Some(&header), context, "PUT", 1, RequiredRole::Writer)
+            .await
+    }
+
+    #[tokio::test]
+    async fn a_context_newer_than_the_read_block_turns_a_refusal_into_not_known() {
+        let auth = Authenticator::new(ReadAtTenResolver(Vec::new()));
+        assert!(matches!(
+            bob_writes_with_context(&auth, Some(&context_at(11))).await,
+            Err(AuthError::MembershipLookup(
+                MembershipError::BlockNotKnown {
+                    bucket_id: 1,
+                    read_block: 10
+                }
+            ))
+        ));
+        assert!(matches!(
+            bob_writes_with_context(&auth, Some(&context_at(10))).await,
+            Err(AuthError::InsufficientRole)
+        ));
+        assert!(matches!(
+            bob_writes_with_context(&auth, None).await,
+            Err(AuthError::InsufficientRole)
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_context_at_or_before_the_read_block_makes_an_unknown_bucket_a_refusal() {
+        let auth = Authenticator::new(NotKnownAtTenResolver);
+        assert!(matches!(
+            bob_writes_with_context(&auth, Some(&context_at(9))).await,
+            Err(AuthError::InsufficientRole)
+        ));
+        assert!(matches!(
+            bob_writes_with_context(&auth, Some(&context_at(11))).await,
+            Err(AuthError::MembershipLookup(
+                MembershipError::BlockNotKnown { .. }
+            ))
+        ));
+        assert!(matches!(
+            bob_writes_with_context(&auth, None).await,
+            Err(AuthError::MembershipLookup(
+                MembershipError::BlockNotKnown { .. }
+            ))
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_role_below_the_required_one_counts_as_absent_for_the_context() {
+        let bob = sr25519::Pair::from_string("//Bob", None).unwrap();
+        let auth = Authenticator::new(ReadAtTenResolver(vec![(
+            AccountId32::new(bob.public().0),
+            Role::Reader,
+        )
+            .into()]));
+        assert!(matches!(
+            bob_writes_with_context(&auth, Some(&context_at(11))).await,
+            Err(AuthError::MembershipLookup(
+                MembershipError::BlockNotKnown { .. }
+            ))
+        ));
+        assert!(matches!(
+            bob_writes_with_context(&auth, Some(&context_at(10))).await,
+            Err(AuthError::InsufficientRole)
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_context_never_widens_access_and_a_malformed_one_is_rejected() {
+        let bob = sr25519::Pair::from_string("//Bob", None).unwrap();
+        let auth = Authenticator::new(ReadAtTenResolver(vec![(
+            AccountId32::new(bob.public().0),
+            Role::Writer,
+        )
+            .into()]));
+        assert!(bob_writes_with_context(&auth, Some(&context_at(11)))
+            .await
+            .is_ok());
+        assert!(matches!(
+            bob_writes_with_context(&auth, Some("garbage")).await,
+            Err(AuthError::ContextBlockInvalid)
+        ));
+        let static_auth = authenticator(Vec::new());
+        assert!(matches!(
+            bob_writes_with_context(&static_auth, Some(&context_at(11))).await,
+            Err(AuthError::InsufficientRole)
+        ));
     }
 }

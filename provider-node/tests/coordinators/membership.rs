@@ -77,7 +77,7 @@ async fn authorized_read(auth: &Authenticator, keypair: &sr25519::Pair, bucket_i
     let header = build_auth_header(&keypair.public().0, "GET", bucket_id, timestamp, |msg| {
         keypair.sign(msg).0
     });
-    auth.require_role(Some(&header), "GET", bucket_id, RequiredRole::Reader)
+    auth.require_role(Some(&header), None, "GET", bucket_id, RequiredRole::Reader)
         .await
         .expect("the signer is an Admin of every bucket here");
 }

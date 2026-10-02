@@ -34,15 +34,28 @@ impl From<(AccountId32, Role)> for Member {
 pub struct BucketAccess {
     pub members: Vec<Member>,
     pub visibility: Visibility,
+    /// The block this was read at; `None` when it did not come from the chain.
+    pub read_block: Option<u32>,
 }
 
 impl BucketAccess {
-    /// A member-only bucket: the fail-safe shape for a bucket whose visibility
-    /// is not known (missing on chain, or a fixed test member set).
+    /// A member-only bucket with a fixed member set that was not read from
+    /// the chain (tests, static resolvers). A bucket missing on chain is
+    /// [`Self::absent`].
     pub fn private(members: Vec<Member>) -> Self {
         Self {
             members,
             visibility: Visibility::Private,
+            read_block: None,
+        }
+    }
+
+    /// A bucket that does not exist at `read_block`: memberless and member-only.
+    pub fn absent(read_block: u32) -> Self {
+        Self {
+            members: Vec::new(),
+            visibility: Visibility::Private,
+            read_block: Some(read_block),
         }
     }
 }

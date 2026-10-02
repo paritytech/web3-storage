@@ -16,7 +16,9 @@ mod test_support;
 pub mod verify;
 
 pub use error::{AuthError, MembershipError};
-pub use http_auth::{auth_message, build_auth_header};
+pub use http_auth::{
+    auth_message, build_auth_header, build_context_header, ContextBlock, CONTEXT_HEADER,
+};
 pub use membership::{
     BucketAccess, Invalidation, Member, MembershipInvalidations, MembershipResolver, RequiredRole,
     StaticMembershipResolver,

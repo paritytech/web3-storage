@@ -38,11 +38,17 @@ impl ChainMembershipResolver {
     }
 }
 
+/// What a block says about a bucket.
+enum Lookup {
+    Found(BucketAccess),
+    Absent { read_block: u32 },
+}
+
 async fn read_at_best(
     api: &OnlineClient<PolkadotConfig>,
     block: &BestBlock,
     bucket_id: BucketId,
-) -> Result<Option<BucketAccess>, MembershipError> {
+) -> Result<Lookup, MembershipError> {
     let at = api
         .at_block_hash_and_number(block.hash(), block.number())
         .await
@@ -53,7 +59,7 @@ async fn read_at_best(
 async fn read_at_finalized_head(
     api: &OnlineClient<PolkadotConfig>,
     bucket_id: BucketId,
-) -> Result<Option<BucketAccess>, MembershipError> {
+) -> Result<Lookup, MembershipError> {
     let at = api
         .at_current_block()
         .await
@@ -61,12 +67,10 @@ async fn read_at_finalized_head(
     read_membership(&at, bucket_id).await
 }
 
-/// `None` when the bucket does not exist at `at`; `BlockNotKnown` when it
+/// `Absent` when the bucket does not exist at `at`; `BlockNotKnown` when it
 /// does not exist but its id is one the chain allocates next.
-async fn read_membership(
-    at: &AtBlock,
-    bucket_id: BucketId,
-) -> Result<Option<BucketAccess>, MembershipError> {
+async fn read_membership(at: &AtBlock, bucket_id: BucketId) -> Result<Lookup, MembershipError> {
+    let read_block = at.block_number() as u32;
     let storage = storage_subxt::api::storage().storage_provider();
     let result = at
         .storage()
@@ -86,9 +90,12 @@ async fn read_membership(
                 reason: format!("NextBucketId: {e}"),
             })?;
         if bucket_id >= next_id {
-            return Err(MembershipError::BlockNotKnown { bucket_id });
+            return Err(MembershipError::BlockNotKnown {
+                bucket_id,
+                read_block,
+            });
         }
-        return Ok(None);
+        return Ok(Lookup::Absent { read_block });
     };
 
     let bucket = bucket_value.decode().map_err(|e| MembershipError::Decode {
@@ -107,9 +114,10 @@ async fn read_membership(
         tracing::debug!(bucket_id, count = members.len(), "auth: resolved members");
     }
 
-    Ok(Some(BucketAccess {
+    Ok(Lookup::Found(BucketAccess {
         members,
         visibility: bucket.visibility.into(),
+        read_block: Some(read_block),
     }))
 }
 
@@ -119,10 +127,10 @@ impl MembershipResolver for ChainMembershipResolver {
         let connection = self.connection()?;
         let api = &connection.api;
         let best_block = connection.best_block.borrow().clone();
-        let access = match best_block {
+        let lookup = match best_block {
             None => read_at_finalized_head(api, bucket_id).await?,
             Some(block) => match read_at_best(api, &block, bucket_id).await {
-                Ok(access) => access,
+                Ok(lookup) => lookup,
                 Err(MembershipError::Unavailable(reason)) => {
                     tracing::debug!(
                         bucket_id,
@@ -131,16 +139,25 @@ impl MembershipResolver for ChainMembershipResolver {
                     );
                     read_at_finalized_head(api, bucket_id).await?
                 }
-                Err(not_known @ MembershipError::BlockNotKnown { .. }) => {
-                    match read_at_finalized_head(api, bucket_id).await {
-                        Ok(Some(access)) => Some(access),
-                        _ => return Err(not_known),
+                Err(MembershipError::BlockNotKnown {
+                    bucket_id,
+                    read_block,
+                }) => match read_at_finalized_head(api, bucket_id).await {
+                    Ok(Lookup::Found(access)) => Lookup::Found(access),
+                    _ => {
+                        return Err(MembershipError::BlockNotKnown {
+                            bucket_id,
+                            read_block,
+                        });
                     }
-                }
+                },
                 Err(other) => return Err(other),
             },
         };
-        Ok(access.unwrap_or_else(|| BucketAccess::private(Vec::new())))
+        Ok(match lookup {
+            Lookup::Found(access) => access,
+            Lookup::Absent { read_block } => BucketAccess::absent(read_block),
+        })
     }
 }
 
@@ -224,6 +241,7 @@ mod tests {
     use provider_chain::mock_node::{header_json, mock_node, FINALIZED_HASH};
     use std::sync::Arc;
     use storage_primitives::Role;
+    use storage_primitives::Visibility;
     use storage_subxt::api::runtime_types::bounded_collections::bounded_vec::BoundedVec;
     use storage_subxt::api::runtime_types::pallet_storage_provider::pallet::Bucket;
     use storage_subxt::api::runtime_types::storage_primitives::Role as RuntimeRole;
@@ -486,32 +504,48 @@ mod tests {
         (text(0), text(1))
     }
 
-    fn admin_only() -> BucketAccess {
-        BucketAccess::private(vec![(AccountId32::new(ADMIN), Role::Admin).into()])
+    fn admin_only_at(read_block: u32) -> BucketAccess {
+        BucketAccess {
+            members: vec![(AccountId32::new(ADMIN), Role::Admin).into()],
+            visibility: Visibility::Private,
+            read_block: Some(read_block),
+        }
     }
 
     #[tokio::test]
     async fn reads_at_the_best_block_when_one_is_published() {
         let resolver = resolver(State::Absent, Some(State::Present), BUCKET + 1).await;
-        assert_eq!(resolver.fetch_access(BUCKET).await.unwrap(), admin_only());
+        assert_eq!(
+            resolver.fetch_access(BUCKET).await.unwrap(),
+            admin_only_at(43)
+        );
     }
 
     #[tokio::test]
     async fn reads_at_the_finalized_head_without_a_best_block() {
         let resolver = resolver(State::Present, None, BUCKET + 1).await;
-        assert_eq!(resolver.fetch_access(BUCKET).await.unwrap(), admin_only());
+        assert_eq!(
+            resolver.fetch_access(BUCKET).await.unwrap(),
+            admin_only_at(42)
+        );
     }
 
     #[tokio::test]
     async fn falls_back_to_the_finalized_head_when_the_best_block_is_unreadable() {
         let resolver = resolver(State::Present, Some(State::Unreadable), BUCKET + 1).await;
-        assert_eq!(resolver.fetch_access(BUCKET).await.unwrap(), admin_only());
+        assert_eq!(
+            resolver.fetch_access(BUCKET).await.unwrap(),
+            admin_only_at(42)
+        );
     }
 
     #[tokio::test]
     async fn a_bucket_absent_at_a_stale_best_block_is_served_from_the_finalized_head() {
         let resolver = resolver(State::Present, Some(State::Absent), BUCKET).await;
-        assert_eq!(resolver.fetch_access(BUCKET).await.unwrap(), admin_only());
+        assert_eq!(
+            resolver.fetch_access(BUCKET).await.unwrap(),
+            admin_only_at(42)
+        );
     }
 
     #[tokio::test]
@@ -520,7 +554,7 @@ mod tests {
         for bucket_id in [BUCKET, BUCKET + 1000] {
             let err = resolver.fetch_access(bucket_id).await.unwrap_err();
             assert!(
-                matches!(err, MembershipError::BlockNotKnown { bucket_id: id } if id == bucket_id)
+                matches!(err, MembershipError::BlockNotKnown { bucket_id: id, read_block: 43 } if id == bucket_id)
             );
         }
     }
@@ -529,6 +563,6 @@ mod tests {
     async fn an_absent_bucket_below_the_counter_is_a_miss() {
         let resolver = resolver(State::Absent, Some(State::Absent), BUCKET + 1).await;
         let access = resolver.fetch_access(BUCKET).await.unwrap();
-        assert_eq!(access, BucketAccess::private(Vec::new()));
+        assert_eq!(access, BucketAccess::absent(43));
     }
 }
