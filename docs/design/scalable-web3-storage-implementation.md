@@ -35,6 +35,10 @@ primaries (replicas stay challengeable by anyone).
 
 **Redundancy**: A bucket can have storage agreements with multiple providers. The `min_providers` setting controls how many providers must acknowledge a state before it can be checkpointed. This ensures minimum redundancy for critical data.
 
+<!-- DRIFT-020: decided in #423 (via #417): multi-primary stays the target and
+`add_primary_provider` is the join path. Not on `dev` yet; #446 implements it. -->
+**Implementation status**: on `dev` today every bucket has exactly one primary provider, fixed when `establish_storage_agreement` (renamed `create_bucket_with_primary` by #423) creates the bucket; until #446 lands no call adds another, so `min_providers` is always 1 and the late-signer path of `extend_checkpoint` is unreachable. Replicas are the redundancy mechanism in use. The `min_providers`, signature-bitfield and `extend_checkpoint` machinery below is written for multi-primary buckets.
+
 **Append-only mode**: When `frozen_start_seq` is set, the bucket becomes append-only from that point. The start_seq can never decrease below the frozen value, preventing deletion of historical data. This is irreversible and requires the current snapshot to meet `min_providers` threshold.
 
 ### Storage Model
@@ -234,6 +238,9 @@ pub trait Config: frame_system::Config<RuntimeEvent: From<Event<Self>>> {
 
     /// Timeout for challenge response (e.g., ~48 hours, in anchor blocks — see
     /// the anchor-clock note above).
+    // DRIFT-005: `Config::ChallengeDeposit` exists in code (reserved from the
+    // challenger in create_challenge) but is missing from this sketch.
+    // Proposal: keep code; add it to this sketch and the values table.
     #[pallet::constant]
     type ChallengeTimeout: Get<BlockNumberFor<Self>>;
 
@@ -261,6 +268,13 @@ pub trait Config: frame_system::Config<RuntimeEvent: From<Event<Self>>> {
 
     /// Caps the challenges sharing one deadline (anchor block) and the
     /// `on_initialize` sweep's per-block slash budget.
+    // DRIFT-006: `dev` additionally clamps the sweep with two pallet-internal
+    // constants absent from this doc: at most `MAX_SWEEP_SPAN = 32` deadline
+    // keys probed per block, and an effective slash budget of
+    // `min(MaxChallengesPerDeadline, MAX_SWEEP_SLASH_BUDGET = 100)` — so the
+    // runtime value 1_000 yields a real per-block budget of 100
+    // (crates/pallets/storage-provider/src/lib.rs).
+    // Proposal: keep code; document the clamps here.
     #[pallet::constant]
     type MaxChallengesPerDeadline: Get<u16>;
 
@@ -380,6 +394,9 @@ pub struct ProviderStats<T: Config> {
     /// Challenges from authorized challengers (member/agreement owner at
     /// challenge creation) that the provider responded to. Counted at
     /// resolution—cancelled challenges are not counted.
+    // DRIFT-022: no cancel_challenge call exists on `dev`; every challenge
+    // resolves as defended or slashed. See the marker in the challenge
+    // Timeline of scalable-web3-storage.md.
     pub challenges_received_authorized: u32,
     /// Same, for general-public challengers.
     pub challenges_received_public: u32,
@@ -763,6 +780,18 @@ The provider node signs with any of the four schemes (`--key-scheme`,
 default sr25519) and emits every signature as SCALE-encoded `MultiSignature`
 hex, so the scheme tag travels with the signature on every wire path.
 
+<!-- DRIFT-010: on `dev` this list is wrong in both directions: (a) a THIRD
+provider-signed payload exists — the AgreementTerms/ReplicaTerms redeemed by
+`create_bucket_with_primary` / `add_*_provider` (`establish_*_agreement` on
+`dev` until #446; the DRIFT-001 flow), signed as
+blake2_256(context | terms.encode()) with PRIMARY_TERM_CONTEXT /
+REPLICA_TERM_CONTEXT domain separation; (b) only CommitmentPayload carries a
+`version: u8` — the replica `roots` array is signed bare, with no version
+byte. Same stale "both payloads carry a version" claim at the Signed
+Commitment note in Data Structures.
+Proposal: realign this paragraph to list all three payloads; whether the other
+two should also gain a version byte is a separate protocol decision. -->
+
 Two on-chain signed payloads exist (all SCALE-encoded, all carry an explicit
 `version: u8` so the protocol can evolve without breaking existing signatures):
 
@@ -856,6 +885,11 @@ pub enum Event<T: Config> {
         commitment: Commitment,
         providers: Vec<T::AccountId>,
     },
+    // DRIFT-016: decided in #423 — emitted by `create_bucket_with_primary`
+    // and `add_primary_provider`. Still never emitted on `dev`: only
+    // `establish_storage_agreement` exists there and it does not emit it.
+    // #446 implements both calls and emits the event from each; resolved
+    // once it merges.
     /// Emitted by `create_bucket_with_primary` and `add_primary_provider`,
     /// together with `StorageAgreementEstablished`.
     ProviderAddedToBucket {
@@ -867,6 +901,11 @@ pub enum Event<T: Config> {
         provider: T::AccountId,
         reason: RemovalReason,
     },
+    // DRIFT-017: removed from the pallet in #403 because nothing emits it —
+    // `dev` reports an early end as AgreementEnded plus
+    // PrimaryProviderRemoved { reason: AdminTerminated }. Keep here and
+    // implement, or remove from design?
+    // Proposal: remove from design.
     PrimaryAgreementEndedEarly {
         bucket_id: BucketId,
         provider: T::AccountId,
@@ -906,28 +945,15 @@ pub enum Event<T: Config> {
     // Agreement events
     // ─────────────────────────────────────────────────────────────
     
-    AgreementRequested {
-        bucket_id: BucketId,
-        provider: T::AccountId,
-        requester: T::AccountId,
-        max_bytes: u64,
-        payment_locked: BalanceOf<T>,
-        duration: BlockNumberFor<T>,
-    },
+    // DRIFT-018: removed from the pallet in #403 because nothing emits it —
+    // leftover of the request/accept flow (DRIFT-001); `dev` reports agreement
+    // creation as StorageAgreementEstablished / ReplicaAgreementEstablished
+    // below. Keep here and implement, or remove from design?
+    // Proposal: remove from design.
     AgreementAccepted {
         bucket_id: BucketId,
         provider: T::AccountId,
         expires_at: BlockNumberFor<T>,
-    },
-    AgreementRejected {
-        bucket_id: BucketId,
-        provider: T::AccountId,
-        payment_returned: BalanceOf<T>,
-    },
-    AgreementRequestWithdrawn {
-        bucket_id: BucketId,
-        provider: T::AccountId,
-        payment_returned: BalanceOf<T>,
     },
     AgreementToppedUp {
         bucket_id: BucketId,
@@ -954,10 +980,33 @@ pub enum Event<T: Config> {
         payment_to_provider: BalanceOf<T>,
         burned: BalanceOf<T>,
     },
+    // DRIFT-019: removed from the pallet in #403 because nothing emits it —
+    // claim_expired_agreement settles through the same path as end_agreement
+    // and reports AgreementEnded. Keep here and implement, or remove from
+    // design?
+    // Proposal: remove from design.
     AgreementExpiredClaimed {
         bucket_id: BucketId,
         provider: T::AccountId,
         payment_to_provider: BalanceOf<T>,
+    },
+    /// Owner redeemed provider-signed terms; bucket created and agreement
+    /// opened atomically.
+    StorageAgreementEstablished {
+        bucket_id: BucketId,
+        provider: T::AccountId,
+        owner: T::AccountId,
+        terms: AgreementTermsOf<T>,
+        expires_at: BlockNumberFor<T>,
+    },
+    /// Owner redeemed provider-signed replica terms; replica agreement
+    /// opened against an existing bucket.
+    ReplicaAgreementEstablished {
+        bucket_id: BucketId,
+        provider: T::AccountId,
+        owner: T::AccountId,
+        terms: AgreementTermsOf<T>,
+        expires_at: BlockNumberFor<T>,
     },
 
     // ─────────────────────────────────────────────────────────────
@@ -986,12 +1035,15 @@ pub enum Event<T: Config> {
         challenger_cost: BalanceOf<T>,
         provider_cost: BalanceOf<T>,
     },
-    /// Provider failed to respond or provided invalid proof - slashed
+    /// Provider failed to respond or provided invalid proof - slashed.
+    /// `challenger_reward` is always zero under the no-reward challenge model;
+    /// `reason` distinguishes a timeout from a demonstrably-false response
+    /// (Timeout / InvalidProof / InvalidDeletionClaim / InvalidSupersededClaim).
     ChallengeSlashed {
         challenge_id: ChallengeId<BlockNumberFor<T>>,
         provider: T::AccountId,
         slashed_amount: BalanceOf<T>,
-        /// Timeout, or which response type failed verification (see `SlashReason`)
+        challenger_reward: BalanceOf<T>,
         reason: SlashReason,
     },
 
@@ -1049,6 +1101,11 @@ sp_api::decl_runtime_apis! {
         fn provider_challenges(provider: AccountId) -> Vec<ChallengeResponse>;
         fn challenger_challenges(challenger: AccountId) -> Vec<ChallengeResponse>;
         fn challenge_candidates(max_reputation: u8, limit: u32) -> Vec<ChallengeCandidate>;
+
+        // DRIFT-009: `dev` additionally exposes the two anchor-clock methods.
+        // Proposal: resolved (added below) — drop this marker.
+        fn current_anchor_block() -> BlockNumber;
+        fn anchor_block_time_millis() -> u64;
     }
 }
 ```
@@ -1207,6 +1264,12 @@ impl<T: Config> Pallet<T> {
     // Bucket management
     // ─────────────────────────────────────────────────────────────
 
+    // DRIFT-002: decided in #423 — bucket creation and provider assignment
+    // are separate calls (`create_bucket`, `create_bucket_with_primary`,
+    // `add_primary_provider`); `create_bucket_with_storage` is dropped from
+    // the design. On `dev` none of them exists yet: a bucket is created by
+    // `establish_storage_agreement` redeeming primary terms (#105). #446
+    // implements the four calls; resolved once it merges.
     /// Create a new bucket.
     /// 
     /// The caller becomes the bucket admin. The bucket starts empty with no
@@ -1306,6 +1369,14 @@ impl<T: Config> Pallet<T> {
     // ─────────────────────────────────────────────────────────────
     // Storage agreements (per bucket, per provider)
     // ─────────────────────────────────────────────────────────────
+    // DRIFT-001: request_agreement / accept_agreement / reject_agreement /
+    // withdraw_agreement_request / request_primary_agreement are superseded on
+    // `dev` by establish_storage_agreement / establish_replica_agreement, which
+    // redeem provider-signed AgreementTerms (#105). #395 removed the five
+    // calls from the design and documented the signed-terms flow in their
+    // place; #423 named the calls `create_bucket_with_primary` /
+    // `add_replica_provider`. Remaining drift: the call names on `dev`, until
+    // #446 merges.
 
     // Agreements are established by redeeming provider-signed AgreementTerms
     // (see the storage section) — there is no on-chain request/accept
@@ -1597,6 +1668,10 @@ impl<T: Config> Pallet<T> {
         origin: OriginFor<T>,
         bucket_id: BucketId,
         commitment: Commitment,
+        // DRIFT-014 (cosmetic): the `Signature` alias in these sketches is
+        // never defined; `dev` uses `sp_runtime::MultiSignature` everywhere
+        // (as the signature-type section above states).
+        // Proposal: replace `Signature` with `MultiSignature` in the sketches.
         signatures: BoundedVec<(T::AccountId, Signature), T::MaxPrimaryProviders>,
     ) -> DispatchResult;
 
@@ -1898,6 +1973,7 @@ The provider node exposes a JSON-over-HTTP API (axum) on, by default,
    commit, read, proofs, deletion. Mutating endpoints require auth.
 3. **Replica sync** — peaks, subtree, bulk node fetch, sync status. Used by
    replica providers; read-only.
+
 
 ### Authentication & RBAC
 
@@ -2412,6 +2488,12 @@ pub struct ChunkLocation {
 
 ### Signed Commitment
 
+<!-- DRIFT-010: "Both payloads" / "each carry a version" is stale — see the
+marker in the signature-type section: only CommitmentPayload exists here and
+carries a version byte; the replica roots array is signed without one, and
+the signed AgreementTerms/ReplicaTerms are a third payload.
+Proposal: realign this note together with the signature-type section. -->
+
 Both payloads live in `storage_primitives` so the pallet, provider node, and
 client SDK encode/decode identically. They each carry a `version: u8` for
 forward compatibility.
@@ -2504,6 +2586,15 @@ pub struct MmrProof {
     └─ Challenger made whole from the slash: deposit refunded, tx fees
        reimbursed—but no reward beyond actual costs (no profit motive
        for forcing slashes), regardless of tier
+       DRIFT-021: `dev` releases the challenger's deposit hold and moves the
+       whole slash to the Treasury (slash_provider_for_failed_challenge). No
+       tx fee is reimbursed, and nothing is paid "from the slash". The
+       Challenge struct comment above and the ChallengeSlashed event
+       (challenger_reward always 0) already describe the `dev` behaviour.
+       Same claim in scalable-web3-storage.md, Resolution list and the
+       paragraph after the cost-split table.
+       Proposal: keep code; reword to "deposit refunded in full, slash goes
+       to the Treasury, no reward".
     └─ Clear on-chain evidence of provider fault
 ```
 
