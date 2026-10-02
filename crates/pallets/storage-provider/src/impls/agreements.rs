@@ -241,8 +241,7 @@ impl<T: Config> Pallet<T> {
     /// Runs the shared quote checks for `kind` and `target` (terms, bucket,
     /// signature, provider state, capacity), consumes the quote's nonce in
     /// the provider's replay window and holds the payment (plus the sync
-    /// balance for a replica). Writes nothing else; a rejected quote creates
-    /// no bucket and no agreement.
+    /// balance for a replica). Writes nothing else.
     fn accept_quote(
         owner: &T::AccountId,
         provider: &T::AccountId,
@@ -263,25 +262,30 @@ impl<T: Config> Pallet<T> {
             );
         }
 
-        let role = match kind {
+        // `sync_balance` is held on top of the payment and released from
+        // `role` by `finalize_agreement`.
+        let (role, sync_balance) = match kind {
             QuoteKind::Primary => {
                 ensure!(
                     terms.replica_params.is_none(),
                     Error::<T>::UnexpectedReplicaTerms
                 );
-                ProviderRole::Primary
+                (ProviderRole::Primary, Zero::zero())
             }
             QuoteKind::Replica => {
                 let replica = terms
                     .replica_params
                     .as_ref()
                     .ok_or(Error::<T>::MissingReplicaTerms)?;
-                ProviderRole::Replica {
-                    sync_balance: replica.sync_balance,
-                    sync_price: replica.sync_price,
-                    min_sync_interval: replica.min_sync_interval,
-                    last_sync: None,
-                }
+                (
+                    ProviderRole::Replica {
+                        sync_balance: replica.sync_balance,
+                        sync_price: replica.sync_price,
+                        min_sync_interval: replica.min_sync_interval,
+                        last_sync: None,
+                    },
+                    replica.sync_balance,
+                )
             }
         };
 
@@ -313,11 +317,6 @@ impl<T: Config> Pallet<T> {
         // Pay at the price the provider signed for.
         let payment =
             Self::calculate_payment(terms.price_per_byte, terms.max_bytes, terms.duration)?;
-        // Read from `role`, the field `finalize_agreement` releases it from.
-        let sync_balance = match &role {
-            ProviderRole::Replica { sync_balance, .. } => *sync_balance,
-            ProviderRole::Primary => Zero::zero(),
-        };
         let total_hold = payment
             .checked_add(&sync_balance)
             .ok_or(Error::<T>::ArithmeticOverflow)?;
@@ -325,7 +324,6 @@ impl<T: Config> Pallet<T> {
 
         Ok(AcceptedQuote {
             anchor_block,
-            provider_info,
             new_committed,
             payment,
             role,
@@ -363,9 +361,8 @@ impl<T: Config> Pallet<T> {
         Ok(new_committed)
     }
 
-    /// Stores the agreement an accepted quote pays for and writes the
-    /// provider record back with its counters updated. Returns the
-    /// agreement's `expires_at`.
+    /// Stores the agreement an accepted quote pays for and updates the
+    /// provider's counters. Returns the agreement's `expires_at`.
     fn record_agreement(
         bucket_id: BucketId,
         owner: &T::AccountId,
@@ -375,21 +372,22 @@ impl<T: Config> Pallet<T> {
     ) -> BlockNumberFor<T> {
         let AcceptedQuote {
             anchor_block,
-            mut provider_info,
             new_committed,
             payment,
             role,
         } = accepted;
         let expires_at = anchor_block.saturating_add(terms.duration);
 
-        provider_info.committed_bytes = new_committed;
-        provider_info.stats.agreements_total =
-            provider_info.stats.agreements_total.saturating_add(1);
-        provider_info.stats.total_bytes_committed = provider_info
-            .stats
-            .total_bytes_committed
-            .saturating_add(terms.max_bytes);
-        Providers::<T>::insert(provider, provider_info);
+        Providers::<T>::mutate(provider, |maybe_provider| {
+            if let Some(p) = maybe_provider {
+                p.committed_bytes = new_committed;
+                p.stats.agreements_total = p.stats.agreements_total.saturating_add(1);
+                p.stats.total_bytes_committed = p
+                    .stats
+                    .total_bytes_committed
+                    .saturating_add(terms.max_bytes);
+            }
+        });
 
         StorageAgreements::<T>::insert(
             bucket_id,
@@ -452,7 +450,6 @@ impl QuoteKind {
 /// Output of `accept_quote`, input to `record_agreement`.
 struct AcceptedQuote<T: Config> {
     anchor_block: BlockNumberFor<T>,
-    provider_info: ProviderInfo<T>,
     new_committed: u64,
     payment: BalanceOf<T>,
     role: ProviderRole<BalanceOf<T>, BlockNumberFor<T>>,

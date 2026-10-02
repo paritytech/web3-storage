@@ -4,8 +4,7 @@
 //! assignment as separate operations.
 
 use super::*;
-use sp_core::H256;
-use storage_primitives::{BucketSnapshot, Commitment, EndAction, Visibility};
+use storage_primitives::{EndAction, Visibility};
 
 /// Signed primary terms for an existing bucket. Build the quote before
 /// `assert_noop!`: signing stamps the provider's key into storage.
@@ -111,8 +110,6 @@ fn add_primary_provider_rejects_non_admin() {
         register_provider(3, 200);
         let bucket_id = setup_agreement(2, 1, 50, 100);
 
-        // Provider 3 has no agreement on the bucket; `NotBucketAdmin` is the
-        // only applicable error.
         let quote = quote_for(3, 4, bucket_id);
         assert_noop!(
             add_primary(4, bucket_id, 3, quote),
@@ -285,23 +282,9 @@ fn bucket_outlives_its_last_agreement_and_takes_a_new_primary() {
 #[test]
 fn add_primary_provider_appends_without_disturbing_snapshot_bits() {
     new_test_ext().execute_with(|| {
-        register_provider(2, 200);
         register_provider(3, 200);
-        let bucket_id = setup_agreement(2, 1, 50, 100);
-
-        Buckets::<Test>::mutate(bucket_id, |maybe_bucket| {
-            if let Some(bucket) = maybe_bucket {
-                bucket.snapshot = Some(BucketSnapshot {
-                    commitment: Commitment {
-                        mmr_root: H256::repeat_byte(0xAB),
-                        start_seq: 0,
-                        leaf_count: 10,
-                    },
-                    checkpoint_block: 1,
-                    primary_signers: vec![0x01],
-                });
-            }
-        });
+        // Provider 2 at index 0 signed the snapshot.
+        let bucket_id = super::challenge::setup_with_snapshot(2, 1);
 
         setup_added_primary(3, 1, bucket_id, 50, 100);
 

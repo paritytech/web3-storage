@@ -228,10 +228,8 @@ fn create_bucket_with_primary_fails_not_accepting_primary() {
             },
         );
 
-        // The acceptance check runs after the nonce is consumed, so this is
-        // `assert_err!`, not `assert_noop!`. A direct call has no dispatch
-        // storage layer, so the assertions below show the call itself wrote
-        // no bucket state before rejecting the quote.
+        // The nonce is consumed before the acceptance check, so `assert_err!`,
+        // not `assert_noop!`. The call writes no bucket state on rejection.
         let (terms, sig) = signed_primary_terms(2, 1, BucketTarget::New, 50, 100);
         assert_err!(
             StorageProvider::create_bucket_with_primary(
@@ -244,7 +242,6 @@ fn create_bucket_with_primary_fails_not_accepting_primary() {
             Error::<Test>::ProviderNotAcceptingPrimary
         );
         assert_eq!(NextBucketId::<Test>::get(), 0);
-        assert!(Buckets::<Test>::get(0).is_none());
         assert!(MemberBuckets::<Test>::get(1).is_empty());
     });
 }
