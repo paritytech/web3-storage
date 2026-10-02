@@ -65,7 +65,7 @@ pub mod pallet {
     use storage_primitives::{
         BucketId, BucketSnapshot, ChallengeId, ChunkLocation, Commitment, CommitmentPayload,
         EndAction, MerkleProof, MmrProof, ProviderRole, RemovalReason, ReplayWindow,
-        ReplicaSyncRecord, Role, SlashReason, Visibility,
+        ReplicaSyncRecord, Role, Visibility,
     };
 
     /// Balance type of the configured currency.
@@ -113,54 +113,8 @@ pub mod pallet {
         ChallengeDeposit,
     }
 
-    /// Maximum deadline keys the slash sweep probes per block. Relay block
-    /// numbers can jump by more than one per parachain block, so the sweep
-    /// covers a range; this caps the probing and the remainder carries over via
-    /// [`LastSweptChallengeBlock`]. Slashing is bounded separately by
-    /// `MAX_SWEEP_SLASH_BUDGET`.
-    pub(crate) const MAX_SWEEP_SPAN: u32 = 32;
-
-    /// Maximum challenges the slash sweep slashes per block, across all deadline
-    /// keys it touches. Decoupled from [`Config::MaxChallengesPerDeadline`] (up
-    /// to 1000) because slashing that many in one block would consume the whole
-    /// block's PoV (~5 KB each). A fully loaded deadline instead drains over
-    /// several blocks via the [`LastSweptChallengeBlock`] carry-over. The
-    /// effective budget is `min(MaxChallengesPerDeadline, MAX_SWEEP_SLASH_BUDGET)`,
-    /// so runtimes with a smaller per-deadline cap (e.g. tests) are unaffected.
-    pub(crate) const MAX_SWEEP_SLASH_BUDGET: u32 = 100;
-
     #[pallet::hooks]
     impl<T: Config> Hooks<SystemBlockNumberFor<T>> for Pallet<T> {
-        /// Slash providers whose challenges expired unanswered.
-        ///
-        /// Deadlines are relay-chain blocks ([`Config::BlockNumberProvider`]),
-        /// which can jump by more than one per parachain block, so this drains a
-        /// *range* of deadline keys, tracking progress in
-        /// [`LastSweptChallengeBlock`] rather than probing the single key `n`.
-        ///
-        /// - **Which keys are final.** In `on_initialize` the validation-data
-        ///   inherent has not run, so [`Pallet::current_anchor_block`] is the relay
-        ///   parent `p` of the *previous* parachain block. A challenge with
-        ///   deadline `d` stays respondable while some block has relay parent
-        ///   `<= d`; every future block has relay parent `>= p`; so keys `< p`
-        ///   are unrespondable and draining them cannot race a valid response.
-        ///   Cost: a one-block lag — the slash lands the block after `p` passes
-        ///   `d`. Escape hatches are unaffected; they gate on the
-        ///   [`PendingChallenges`] counters, not on the sweep.
-        /// - **Budget.** `MAX_SWEEP_SPAN` caps keys probed per block;
-        ///   `MAX_SWEEP_SLASH_BUDGET` caps slashes per block so one maturing
-        ///   deadline cannot eat the block's PoV. On exhaustion the cursor parks
-        ///   just below the partly drained key; the rest carries over.
-        /// - **Why `on_initialize`.** Work done is returned as weight instead of
-        ///   pre-reserved, which `on_finalize` cannot do.
-        ///
-        /// The algorithm lives in `sweep_expired_challenges` (and its
-        /// `challenge_sweep_range` / `slash_expired_at` helpers) so the range
-        /// resolution and the per-key drain read as separate, testable steps.
-        fn on_initialize(_do_not_use_local_block_number: SystemBlockNumberFor<T>) -> Weight {
-            Self::sweep_expired_challenges()
-        }
-
         fn integrity_test() {
             // The re-register replay defense relies on RequestTimeout being strictly
             // shorter than DeregisterAnnouncementPeriod: a quote signed at block S
@@ -271,16 +225,11 @@ pub mod pallet {
         type DeregisterAnnouncementPeriod: Get<BlockNumberFor<Self>>;
 
         /// Maximum number of challenges that may share a single deadline
-        /// (relay chain block), and the per-block slash budget of the
-        /// `on_initialize` timeout sweep.
-        ///
-        /// Bounds the per-deadline challenge count at creation, and the sweep
-        /// never slashes more than this many challenges per block regardless
-        /// of how many deadline keys a gap matured at once — so the worst
-        /// case per block equals one fully-loaded deadline. Note that
-        /// consecutive parachain blocks can share a relay parent, so
-        /// challenges created in different parachain blocks may share a
-        /// deadline; the bound is this explicit cap, not block co-location.
+        /// (relay chain block). Bounds the per-deadline index allocator
+        /// (`NextChallengeIndex`). Consecutive parachain blocks can share a
+        /// relay parent, so challenges created in different parachain blocks
+        /// may share a deadline; the bound is this explicit cap, not block
+        /// co-location.
         #[pallet::constant]
         type MaxChallengesPerDeadline: Get<u16>;
 
@@ -365,25 +314,20 @@ pub mod pallet {
     >;
 
     /// Next stable challenge index to allocate for a given deadline block.
-    /// Monotonically increasing per deadline; never decremented when a
-    /// challenge is resolved, guaranteeing index stability for siblings.
+    /// Monotonically increasing per deadline and never decremented when a
+    /// challenge is resolved, so sibling ids stay valid. Removed by
+    /// `resolve_expired_challenge`; a deadline whose challenges were all
+    /// answered keeps its entry.
     #[pallet::storage]
     pub type NextChallengeIndex<T: Config> =
         StorageMap<_, Blake2_128Concat, BlockNumberFor<T>, u16, ValueQuery>;
 
-    /// Highest deadline key the `on_initialize` slash sweep has drained. Each
-    /// block it sweeps up to (but excluding) the previous block's relay parent.
-    /// `None` until the first block after genesis/upgrade anchors it. A cursor
-    /// over anchor-denominated deadline keys, hence [`BlockNumberFor`].
-    #[pallet::storage]
-    pub type LastSweptChallengeBlock<T: Config> = StorageValue<_, BlockNumberFor<T>, OptionQuery>;
-
     /// Number of unresolved challenges currently outstanding against a
     /// provider, summed across every bucket. Incremented in `create_challenge`
-    /// and decremented exactly once per resolution (defended/invalid-response
-    /// in `respond_to_challenge`, or timeout in the `on_initialize` sweep). Gates
-    /// `complete_deregister`: a provider cannot exit while still slashable for
-    /// a pending challenge.
+    /// and decremented exactly once per resolution (defended in
+    /// `respond_to_challenge`, or timed out in `resolve_expired_challenge`).
+    /// Gates `complete_deregister`: a provider cannot exit while still
+    /// slashable for a pending challenge.
     #[pallet::storage]
     pub type PendingChallenges<T: Config> =
         StorageMap<_, Blake2_128Concat, T::AccountId, u32, ValueQuery>;
@@ -1085,7 +1029,9 @@ pub mod pallet {
             /// challenger.
             provider_cost: BalanceOf<T>,
         },
-        /// A provider failed a challenge and lost stake.
+        /// A provider failed to respond before the deadline. Its whole stake
+        /// went to the Treasury and the challenger's deposit was refunded;
+        /// there is no reward.
         ChallengeSlashed {
             /// The challenge.
             challenge_id: ChallengeId<BlockNumberFor<T>>,
@@ -1093,12 +1039,6 @@ pub mod pallet {
             provider: T::AccountId,
             /// Stake taken from the provider.
             slashed_amount: BalanceOf<T>,
-            /// Portion of the slash awarded to the challenger, if any.
-            challenger_reward: BalanceOf<T>,
-            /// Whether the provider was slashed for failing to respond
-            /// (`Timeout`) or for submitting a demonstrably-false response
-            /// (`InvalidProof` etc).
-            reason: SlashReason,
         },
     }
 
@@ -1231,8 +1171,19 @@ pub mod pallet {
         ChallengeNotFound,
         /// The response deadline has passed.
         ChallengeExpired,
+        /// The deadline has not passed; the provider may still respond.
+        ChallengeNotExpired,
         /// Only the challenged provider may respond.
         NotChallengeProvider,
+        /// The chunk or MMR proof does not verify. The challenge stays open;
+        /// respond again before the deadline.
+        InvalidProof,
+        /// `new_start_seq` does not cover the challenged leaf, or the admin
+        /// signature does not verify. The challenge stays open.
+        InvalidDeletionClaim,
+        /// No canonical snapshot replaces the challenged root and covers the
+        /// challenged leaf. The challenge stays open.
+        InvalidSupersededClaim,
         /// The provider did not sign the bucket's current snapshot, so there
         /// is no on-chain commitment to challenge; use `challenge_offchain`
         /// with a signed commitment instead.
@@ -1242,11 +1193,10 @@ pub mod pallet {
         ProviderHasPendingChallenges,
         /// An agreement with an unresolved challenge against this
         /// `(bucket, provider)` cannot be torn down until the challenge
-        /// resolves (defended, slashed, or timed out).
+        /// resolves (defended or timed out).
         AgreementHasPendingChallenge,
         /// `MaxChallengesPerDeadline` challenges have already been allocated
-        /// for the deadline this challenge would land on. Caps the total the
-        /// `on_initialize` sweep must eventually drain for a single key.
+        /// for the deadline this challenge would land on.
         TooManyChallengesThisBlock,
 
         // Checkpoint errors
@@ -1373,8 +1323,10 @@ pub mod pallet {
         ///    slashable for any pending or freshly-created challenge.
         /// 2. `complete_deregister` — callable once `deregister_at` has
         ///    elapsed (by which point any challenge created up to the
-        ///    announcement block has already matured, because the period
-        ///    must be `> ChallengeTimeout`).
+        ///    announcement block has expired, because the period must be
+        ///    `> ChallengeTimeout`; an unanswered one still has to be
+        ///    resolved with `resolve_expired_challenge`, which the provider
+        ///    may call itself).
         ///
         /// The two-step flow closes the slashing race where a provider
         /// could withdraw stake between the end of their last agreement
@@ -1446,10 +1398,11 @@ pub mod pallet {
             );
             // A provider with unresolved challenges is still slashable; they
             // must not be able to exit and unreserve their stake before those
-            // challenges mature. The `DeregisterAnnouncementPeriod >
+            // challenges are resolved. The `DeregisterAnnouncementPeriod >
             // ChallengeTimeout` invariant (see `integrity_test`) guarantees any
-            // challenge created up to the announcement block resolves before
-            // the wait window elapses, so this only blocks genuinely-live ones.
+            // challenge created up to the announcement block has expired by
+            // now; an unanswered one is resolved with
+            // `resolve_expired_challenge`, which the provider may call itself.
             ensure!(
                 PendingChallenges::<T>::get(&who) == 0,
                 Error::<T>::ProviderHasPendingChallenges
@@ -2523,42 +2476,8 @@ pub mod pallet {
             target: ChunkLocation,
         ) -> DispatchResult {
             let who = ensure_signed(origin)?;
-
-            let bucket = Buckets::<T>::get(bucket_id).ok_or(Error::<T>::BucketNotFound)?;
-            let snapshot = bucket.snapshot.as_ref().ok_or(Error::<T>::NoSnapshot)?;
-
-            // Verify provider is in snapshot
-            let provider_idx = bucket
-                .primary_providers
-                .iter()
-                .position(|p| p == &provider)
-                .ok_or(Error::<T>::ProviderNotInSnapshot)?;
-
-            // Check if provider bit is set in the bitfield
-            let provider_signed = snapshot.has_provider_signed(provider_idx);
-            ensure!(provider_signed, Error::<T>::ProviderNotInSnapshot);
-
-            // Verify provider has an ACTIVE agreement for this bucket. As with
-            // `challenge_offchain`/`challenge_replica`, challengeability must
-            // track genuine obligation: a challenge can only open while the
-            // agreement is live (not into the settlement window), so an expired
-            // checkpoint can no longer be challenged.
-            let agreement = StorageAgreements::<T>::get(bucket_id, &provider)
-                .ok_or(Error::<T>::AgreementNotFound)?;
-            ensure!(
-                Self::current_anchor_block() < agreement.expires_at,
-                Error::<T>::AgreementExpired
-            );
-
-            Self::create_challenge(
-                who,
-                bucket_id,
-                &bucket,
-                provider,
-                &agreement.role,
-                snapshot.commitment,
-                target,
-            )
+            Self::do_challenge_checkpoint(who, bucket_id, provider, target)?;
+            Ok(())
         }
 
         /// Challenge off-chain commitment (requires provider signature).
@@ -2624,7 +2543,8 @@ pub mod pallet {
                 &agreement.role,
                 commitment,
                 target,
-            )
+            )?;
+            Ok(())
         }
 
         /// Challenge a replica based on their on-chain sync confirmation.
@@ -2674,7 +2594,8 @@ pub mod pallet {
                 &agreement.role,
                 commitment,
                 target,
-            )
+            )?;
+            Ok(())
         }
 
         /// Challenged provider only. Answer before the deadline with a chunk
@@ -2682,8 +2603,10 @@ pub mod pallet {
         /// that the challenged state has been superseded.
         ///
         /// A valid response settles the deposit between challenger and
-        /// provider; an invalid one slashes the provider on the spot. A
-        /// missing one is slashed by the deadline sweep.
+        /// provider. An invalid one is rejected (`InvalidProof`,
+        /// `InvalidDeletionClaim`, `InvalidSupersededClaim`): the fee is paid
+        /// and the challenge stays open until the deadline. An unanswered
+        /// challenge is slashed by `resolve_expired_challenge`.
         #[pallet::call_index(41)]
         #[pallet::weight(match response {
             ChallengeResponse::Proof { .. } => T::WeightInfo::respond_to_challenge_proof(),
@@ -2697,21 +2620,11 @@ pub mod pallet {
         ) -> DispatchResult {
             let who = ensure_signed(origin)?;
 
-            // Consume the challenge up front. With the stable-index DoubleMap
-            // a single `take` removes exactly this challenge and leaves its
-            // siblings (sharing the same deadline) untouched and addressable.
-            // Any `?`-bail below (wrong provider, expired, missing bucket)
-            // reverts the extrinsic, rolling the `take` back so the challenge
-            // remains pending; only the adjudicated `response_outcome` (which
-            // never short-circuits with `?`) commits the removal.
+            // Consume the challenge and its pending counters up front. Every
+            // error below rolls both back (the call runs in a storage layer),
+            // so a rejected response leaves the challenge pending.
             let challenge = Challenges::<T>::take(challenge_id.deadline, challenge_id.index)
                 .ok_or(Error::<T>::ChallengeNotFound)?;
-
-            // The `take` consumes this challenge, so resolve the pending
-            // counters now — this covers BOTH the defended path and the
-            // invalid-response slash path below. Any `?`-bail after this point
-            // reverts the whole extrinsic (including this decrement and the
-            // `take`), so the challenge and its counters stay in lockstep.
             Self::decrement_pending(challenge.bucket_id, &challenge.provider);
 
             ensure!(challenge.provider == who, Error::<T>::NotChallengeProvider);
@@ -2722,21 +2635,10 @@ pub mod pallet {
                 Error::<T>::ChallengeExpired
             );
 
-            // Verify response
             let bucket =
                 Buckets::<T>::get(challenge.bucket_id).ok_or(Error::<T>::BucketNotFound)?;
 
-            // Adjudicate the response. Returns:
-            //   `Ok(())`       — response defends the challenge
-            //   `Err(reason)`  — response is a demonstrable lie; slash the
-            //                    provider immediately (do NOT let them stall
-            //                    until the deadline timeout)
-            //
-            // Parameter-shape errors (unknown challenge, wrong provider, past
-            // the deadline, non-admin signer on `Deleted`) still bubble up as
-            // `DispatchError` — they represent caller mistakes, not adversarial
-            // responses.
-            let response_outcome: Result<(), SlashReason> = match &response {
+            match &response {
                 ChallengeResponse::Proof {
                     chunk_data,
                     mmr_proof,
@@ -2751,11 +2653,7 @@ pub mod pallet {
                     );
                     let mmr_ok =
                         storage_primitives::verify_mmr_proof(mmr_proof, &challenge.mmr_root);
-                    if chunk_ok && mmr_ok {
-                        Ok(())
-                    } else {
-                        Err(SlashReason::InvalidProof)
-                    }
+                    ensure!(chunk_ok && mmr_ok, Error::<T>::InvalidProof);
                 }
                 ChallengeResponse::Deleted {
                     new_mmr_root,
@@ -2768,69 +2666,43 @@ pub mod pallet {
                     let challenged_seq = challenge
                         .start_seq
                         .saturating_add(challenge.target.leaf_index);
-                    if challenged_seq >= *new_start_seq {
-                        // Provider claims data was purged before the
-                        // challenged leaf, but the new start_seq doesn't
-                        // actually cover it.
-                        Err(SlashReason::InvalidDeletionClaim)
-                    } else {
-                        let deletion_payload = CommitmentPayload::new(
-                            challenge.bucket_id,
-                            Commitment {
-                                mmr_root: *new_mmr_root,
-                                start_seq: *new_start_seq,
-                                leaf_count: 0, // not needed for deletion proof
-                            },
-                        );
-                        let encoded = deletion_payload.encode();
-                        if Self::verify_signature(admin_signature, &encoded, admin).is_ok() {
-                            Ok(())
-                        } else {
-                            Err(SlashReason::InvalidDeletionClaim)
-                        }
-                    }
+                    ensure!(
+                        challenged_seq < *new_start_seq,
+                        Error::<T>::InvalidDeletionClaim
+                    );
+                    let deletion_payload = CommitmentPayload::new(
+                        challenge.bucket_id,
+                        Commitment {
+                            mmr_root: *new_mmr_root,
+                            start_seq: *new_start_seq,
+                            leaf_count: 0, // not needed for deletion proof
+                        },
+                    );
+                    ensure!(
+                        Self::verify_signature(admin_signature, &deletion_payload.encode(), admin)
+                            .is_ok(),
+                        Error::<T>::InvalidDeletionClaim
+                    );
                 }
                 ChallengeResponse::Superseded => {
-                    // A `Superseded` defense only holds when the challenged
-                    // commitment was genuinely replaced by a newer canonical
-                    // snapshot. Without a snapshot to lean on the claim is
-                    // unsupported, so we slash.
-                    match bucket.snapshot.as_ref() {
-                        None => Err(SlashReason::InvalidSupersededClaim),
-                        Some(snapshot) => {
-                            let challenged_seq = challenge
-                                .start_seq
-                                .saturating_add(challenge.target.leaf_index);
-                            // (a) The challenged root must NOT be the current
-                            // canonical root — if it still is, the data is live
-                            // and the provider must answer with a `Proof`.
-                            // (b)+(c) The challenged seq must still sit inside
-                            // the canonical range; front-rolled/deleted data
-                            // has to go through the admin-signed `Deleted` path.
-                            if challenge.mmr_root != snapshot.commitment.mmr_root
-                                && snapshot.contains_seq(challenged_seq)
-                            {
-                                Ok(())
-                            } else {
-                                Err(SlashReason::InvalidSupersededClaim)
-                            }
-                        }
-                    }
+                    // Valid only when a newer canonical snapshot replaced the
+                    // challenged root and still covers the challenged seq. A
+                    // root equal to the canonical one means the data is live
+                    // and needs a `Proof`; a seq below `start_seq` needs the
+                    // admin-signed `Deleted` path.
+                    let snapshot = bucket
+                        .snapshot
+                        .as_ref()
+                        .ok_or(Error::<T>::InvalidSupersededClaim)?;
+                    let challenged_seq = challenge
+                        .start_seq
+                        .saturating_add(challenge.target.leaf_index);
+                    ensure!(
+                        challenge.mmr_root != snapshot.commitment.mmr_root
+                            && snapshot.contains_seq(challenged_seq),
+                        Error::<T>::InvalidSupersededClaim
+                    );
                 }
-            };
-
-            // The challenge was already removed by the `take` above; the owned
-            // `challenge` value feeds either the defended-path cost-split or
-            // the slash helper. The adjudication has concluded, so the
-            // removal now becomes the committed state transition.
-
-            if let Err(reason) = response_outcome {
-                // Invalid response → slash now. The extrinsic itself returns
-                // `Ok(())` because the slash *is* the valid state transition;
-                // the provider is the one paying the price, recorded via the
-                // `ChallengeSlashed { reason, .. }` event.
-                Self::slash_provider_for_failed_challenge(&challenge, challenge_id, reason);
-                return Ok(());
             }
 
             // Calculate response time (blocks since challenge was created)
@@ -2907,6 +2779,35 @@ pub mod pallet {
             });
 
             Ok(())
+        }
+
+        /// Slash a provider whose challenge expired without a response.
+        ///
+        /// Anyone may call this; it is free on success. Slashes the provider's
+        /// whole stake to the Treasury, refunds the challenger's deposit and
+        /// clears the pending-challenge counters that block the provider's
+        /// exits. A provider may call it against itself to unblock
+        /// `complete_deregister`.
+        ///
+        /// Errors: `ChallengeNotExpired` while the provider may still respond
+        /// (`anchor <= deadline`); `ChallengeNotFound` once resolved.
+        #[pallet::call_index(45)]
+        #[pallet::weight(T::WeightInfo::resolve_expired_challenge())]
+        pub fn resolve_expired_challenge(
+            origin: OriginFor<T>,
+            challenge_id: ChallengeId<BlockNumberFor<T>>,
+        ) -> DispatchResultWithPostInfo {
+            ensure_signed(origin)?;
+            ensure!(
+                Self::current_anchor_block() > challenge_id.deadline,
+                Error::<T>::ChallengeNotExpired
+            );
+            let challenge = Challenges::<T>::take(challenge_id.deadline, challenge_id.index)
+                .ok_or(Error::<T>::ChallengeNotFound)?;
+            NextChallengeIndex::<T>::remove(challenge_id.deadline);
+            Self::decrement_pending(challenge.bucket_id, &challenge.provider);
+            Self::slash_provider_for_failed_challenge(&challenge, challenge_id);
+            Ok(Pays::No.into())
         }
 
         // ─────────────────────────────────────────────────────────────────────

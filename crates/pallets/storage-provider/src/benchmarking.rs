@@ -5,10 +5,7 @@
 
 use super::{Pallet as StorageProvider, *};
 use frame_benchmarking::v2::*;
-use frame_support::{
-    pallet_prelude::*,
-    traits::{fungible::Mutate, Hooks},
-};
+use frame_support::{pallet_prelude::*, traits::fungible::Mutate};
 use frame_system::{Pallet as System, RawOrigin};
 use sp_core::H256;
 use sp_runtime::traits::{Bounded, SaturatedConversion};
@@ -1145,78 +1142,41 @@ mod benchmarks {
         );
     }
 
-    /// `on_initialize` slash sweep: drains and slashes every challenge expiring
-    /// at a single deadline key. Linear in the challenge count `c`; each entry
-    /// is drained, its pending counters decremented, and its provider slashed.
-    /// The upper bound is the effective per-block slash budget
-    /// `min(MaxChallengesPerDeadline, MAX_SWEEP_SLASH_BUDGET)` — the most the
-    /// sweep ever slashes for one key in a block — so the linear fit covers the
-    /// true worst case rather than extrapolating to it. The sweep applies this
-    /// per key, so a small fixed hook overhead is counted here and again in the
-    /// hook's base weight — conservative.
     #[benchmark]
-    fn on_initialize_slash_challenges(
-        c: Linear<
-            0,
-            {
-                let cap = T::MaxChallengesPerDeadline::get() as u32;
-                if cap < crate::pallet::MAX_SWEEP_SLASH_BUDGET {
-                    cap
-                } else {
-                    crate::pallet::MAX_SWEEP_SLASH_BUDGET
-                }
-            },
-        >,
-    ) {
+    fn resolve_expired_challenge() {
         let deadline: BlockNumberFor<T> = 200u32.into();
         let deposit: BalanceOf<T> = 100u32.into();
-        for i in 0..c {
-            // Distinct slashable provider (stake reserved) + challenger per
-            // challenge — the worst case (each touches a distinct `Providers`
-            // and pending-counter entry).
-            let provider = create_provider::<T>(i);
-            let challenger = funded_account::<T>("challenger", i);
-            // The slash releases the challenger's deposit, so hold it first.
-            let _ = StorageProvider::<T>::hold_challenge_deposit(&challenger, deposit);
-            let bucket_id: BucketId = i as u64;
-            let challenge = pallet::Challenge::<T> {
-                bucket_id,
-                provider: provider.clone(),
-                challenger,
-                mmr_root: H256::zero(),
-                start_seq: 0,
-                target: ChunkLocation {
-                    leaf_index: 0,
-                    chunk_index: 0,
-                },
-                deposit,
-                authorized: false,
-            };
-            Challenges::<T>::insert(deadline, i as u16, challenge);
-            PendingChallenges::<T>::insert(&provider, 1u32);
-            PendingChallengesByBucket::<T>::insert(bucket_id, &provider, 1u32);
-        }
-        NextChallengeIndex::<T>::insert(deadline, c as u16);
+        let provider = create_provider::<T>(0);
+        let challenger = funded_account::<T>("challenger", 0);
+        let _ = StorageProvider::<T>::hold_challenge_deposit(&challenger, deposit);
+        let bucket_id: BucketId = 0;
+        let challenge = pallet::Challenge::<T> {
+            bucket_id,
+            provider: provider.clone(),
+            challenger,
+            mmr_root: H256::zero(),
+            start_seq: 0,
+            target: ChunkLocation {
+                leaf_index: 0,
+                chunk_index: 0,
+            },
+            deposit,
+            authorized: false,
+        };
+        Challenges::<T>::insert(deadline, 0u16, challenge);
+        PendingChallenges::<T>::insert(&provider, 1u32);
+        PendingChallengesByBucket::<T>::insert(bucket_id, &provider, 1u32);
+        NextChallengeIndex::<T>::insert(deadline, 1u16);
+        let caller = funded_account::<T>("caller", 0);
+        set_block_number::<T>(deadline.saturating_add(1u32.into()));
 
-        // Drive the real sweep over exactly one key. Anchor the cursor one
-        // below `deadline`, then set the relay clock so the sweepable range
-        // (keys < previous relay parent) is exactly `{deadline}`:
-        // `sweepable = current_anchor_block() - 1 = deadline`, `end = deadline`.
-        LastSweptChallengeBlock::<T>::put(deadline.saturating_sub(1u32.into()));
-        let now = deadline.saturating_add(1u32.into());
-        set_block_number::<T>(now);
+        #[extrinsic_call]
+        resolve_expired_challenge(
+            RawOrigin::Signed(caller),
+            storage_primitives::ChallengeId { deadline, index: 0 },
+        );
 
-        #[block]
-        {
-            StorageProvider::<T>::on_initialize(now);
-        }
-
-        // Guard against the sweep silently no-op'ing (the bug this benchmark
-        // had while it still called the dropped `on_finalize`): every challenge
-        // at the deadline must have been drained. (At the worst-case component
-        // `c == MaxChallengesPerDeadline` the slash budget is exactly spent, so
-        // the cursor parks at `deadline - 1` and carries over — expected.)
-        assert_eq!(Challenges::<T>::iter_prefix(deadline).count(), 0);
+        assert!(Challenges::<T>::get(deadline, 0).is_none());
     }
 
     impl_benchmark_test_suite!(Pallet, crate::mock::new_test_ext(), crate::mock::Test);

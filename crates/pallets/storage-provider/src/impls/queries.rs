@@ -68,10 +68,6 @@ impl<T: Config> Pallet<T> {
     /// [`Config::BlockNumberProvider`] detail — callers (including off-chain
     /// consumers via the `current_anchor_block` runtime API) need not care.
     /// The relay chain in production, `System` in tests.
-    ///
-    /// During `on_initialize` this returns the *previous* block's anchor value
-    /// (the validation-data inherent has not run yet); everywhere else it is
-    /// the current block's.
     pub fn current_anchor_block() -> BlockNumberFor<T> {
         <T::BlockNumberProvider as sp_runtime::traits::BlockNumberProvider>::current_block_number()
     }
@@ -255,12 +251,15 @@ impl<T: Config> Pallet<T> {
             .collect()
     }
 
-    /// Query all challenges targeting a specific provider.
+    /// Challenges targeting a provider that it can still answer
+    /// (`deadline >= current_anchor_block`). Expired ones are omitted; they
+    /// wait for `resolve_expired_challenge`.
     pub fn query_provider_challenges(
         provider: &T::AccountId,
     ) -> Vec<crate::runtime_api::ChallengeResponse> {
+        let now = Self::current_anchor_block();
         Challenges::<T>::iter()
-            .filter(|(_, _, c)| &c.provider == provider)
+            .filter(|(deadline, _, c)| &c.provider == provider && *deadline >= now)
             .map(|(deadline, index, c)| challenge_to_response::<T>(deadline, index, c))
             .collect()
     }

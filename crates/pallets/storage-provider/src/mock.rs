@@ -177,14 +177,13 @@ pub fn new_test_ext_with_genesis_providers(
     t.into()
 }
 
-/// Run to a specific block number, calling both System and StorageProvider hooks.
+/// Run to a specific block number, calling the System hooks.
 pub fn run_to_block(n: u64) {
     while System::block_number() < n {
         let current = System::block_number();
         <System as Hooks<u64>>::on_finalize(current);
         System::set_block_number(current + 1);
         <System as Hooks<u64>>::on_initialize(current + 1);
-        <StorageProvider as Hooks<u64>>::on_initialize(current + 1);
     }
 }
 
