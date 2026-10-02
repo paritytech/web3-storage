@@ -41,15 +41,22 @@ export function h160ToSubstrate(addressBytes: Uint8Array): {
 export async function negotiatePrecompileTerms(
   providerUrl: string,
   owner: { address: string; publicKey: Uint8Array } | ChainSigner,
-  { maxBytes, duration, pricePerByte }: { maxBytes: bigint; duration: number; pricePerByte: bigint }
+  {
+    maxBytes,
+    duration,
+    pricePerByte,
+    bucketId: existingBucket,
+  }: { maxBytes: bigint; duration: number; pricePerByte: bigint; bucketId?: bigint }
 ) {
+  // `bucketId` set: a quote for an existing bucket (addPrimaryProvider);
+  // unset: a quote that creates its bucket (createBucketWithPrimary).
   const signed = await negotiateTerms(providerUrl, {
     owner: owner.address,
     max_bytes: BigInt(maxBytes),
     duration,
     price_per_byte: pricePerByte,
     replica_params: null,
-    bucket: null,
+    bucket: existingBucket ?? null,
   });
   const t = signed.terms;
   const rp = t.replica_params;

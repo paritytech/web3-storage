@@ -117,15 +117,6 @@ impl AdminClient {
         let SignedTerms { terms, signature } = signed_terms;
         let provider_account = SubstrateClient::parse_account(&provider)?;
 
-        tracing::info!(
-            "Creating bucket with primary {} for owner {} (max_bytes={}, duration={}, nonce={})",
-            provider,
-            self.admin_account(),
-            terms.max_bytes,
-            terms.duration,
-            terms.nonce,
-        );
-
         let tx = extrinsics::create_bucket_with_primary(
             provider_account,
             &terms,
@@ -136,9 +127,11 @@ impl AdminClient {
         let bucket_id = Self::created_bucket_id(&events)?;
 
         tracing::info!(
-            "Bucket {} created with primary provider {}",
+            "Bucket {} created with primary provider {} (max_bytes={}, duration={})",
             bucket_id,
             provider,
+            terms.max_bytes,
+            terms.duration,
         );
         Ok(bucket_id)
     }

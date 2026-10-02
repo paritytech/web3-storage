@@ -123,7 +123,7 @@ async function main() {
     /** Negotiate terms for a direct precompile call signed by `owner`. */
     const negotiateAbiTerms = (
       owner: ChainSigner,
-      req: { maxBytes: bigint; duration: number; pricePerByte: bigint }
+      req: { maxBytes: bigint; duration: number; pricePerByte: bigint; bucketId?: bigint }
     ) => negotiatePrecompileTerms(providerUrl, owner, req);
 
     // ====================================================================
@@ -356,12 +356,28 @@ async function main() {
       1,
       SolVisibility.Private,
     ]);
-    assertEvent(r.events, "StorageProvider", "BucketCreated", "createBucket");
+    const createdD = assertEvent(r.events, "StorageProvider", "BucketCreated", "createBucket");
+    const bucketD = createdD.bucket_id;
 
-    console.log(
-      "\n✅ 15 of 16 selectors exercised, every expected event observed" +
-        "\n   (addPrimaryProvider needs a second registered provider; not covered here)",
-    );
+    // 16. addPrimaryProvider --------------------------------------------
+    // The quote names bucketD, so the same provider can join the empty bucket.
+    console.log("\n[16] IWeb3Storage.addPrimaryProvider(bucketD, provider, terms[2KiB×100], sig)");
+    const signedForD = await negotiateAbiTerms(client, {
+      maxBytes: maxBytesA,
+      duration: durationA,
+      pricePerByte: PRICE_PER_BYTE,
+      bucketId: bucketD,
+    });
+    r = await callPrecompile(api, client, WEB3_STORAGE_ADDR, iWeb3, "addPrimaryProvider", [
+      bucketD,
+      toHex(providerBytes32),
+      signedForD.terms,
+      signedForD.signature,
+    ]);
+    assertEvent(r.events, "StorageProvider", "ProviderAddedToBucket", "addPrimaryProvider");
+    assertEvent(r.events, "StorageProvider", "StorageAgreementEstablished", "addPrimaryProvider");
+
+    console.log("\n✅ 16 of 16 selectors exercised, every expected event observed");
   } finally {
     papi.destroy();
   }
