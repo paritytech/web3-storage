@@ -129,6 +129,8 @@ export interface NegotiateRequest {
   max_bytes: bigint | number | string;
   duration: number;
   price_per_byte?: bigint | number | string;
+  /** The owner's next expected agreement nonce (read from chain). */
+  nonce: bigint | number | string;
   bucket_id?: bigint | number | string | null;
   replica_params?: ReplicaTermsWire | null;
 }
@@ -155,8 +157,9 @@ export interface SignedTerms {
 /**
  * POST /negotiate and return the provider-signed terms. bigint fields are
  * serialized as decimal strings (the provider's serde accepts string-or-number
- * for the u64/u128 fields). Single attempt by default: /negotiate allocates a
- * provider-side nonce, so retrying a transient 5xx would waste nonces.
+ * for the u64/u128 fields). The caller supplies `nonce`, so retrying a
+ * transient 5xx just re-asks the provider to sign the same nonce again —
+ * safe to retry with the default backoff.
  */
 export async function negotiateTerms(
   providerUrl: string,
@@ -171,7 +174,7 @@ export async function negotiateTerms(
       headers: { "content-type": "application/json" },
       body: JSON.stringify(request, (_k, v) => (typeof v === "bigint" ? v.toString() : v)),
     },
-    { retries: 1, ...opts },
+    opts,
   );
   if (!res.ok) {
     throw new HttpError(

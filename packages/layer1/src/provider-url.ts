@@ -13,6 +13,7 @@ import {
   type SignedTerms,
 } from "@web3-storage/core";
 import {
+  getAgreementNonce,
   parseMultiaddrToUrl,
   resolveProviderEndpoint,
   waitForPrimaryProvider,
@@ -255,11 +256,16 @@ export async function resolveCreationTerms(
     pricePerByte = info?.settings?.price_per_byte ?? 1n;
   }
 
+  // Always read at the best block: a finalized read can lag an owner's own
+  // just-redeemed agreement and hand back a stale, already-consumed nonce.
+  const nonce = await getAgreementNonce(api, opts.owner);
+
   const request: NegotiateRequest = {
     owner: opts.owner,
     max_bytes: opts.maxBytes,
     duration: opts.duration,
     price_per_byte: pricePerByte,
+    nonce,
     bucket_id: null,
     replica_params: null,
   };

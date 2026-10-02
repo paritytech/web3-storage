@@ -283,8 +283,8 @@ fn agreement_entry_points_reject_deregistering_provider() {
         )));
 
         // Every agreement-creating entry point now rejects with
-        // DeregisterAnnounced. The check runs after the nonce window
-        // advances, so assert the error only.
+        // DeregisterAnnounced. The check runs after the owner's nonce
+        // counter advances, so assert the error only.
         let (terms, sig) = signed_primary_terms(2, 1, 50, 100);
         assert_err!(
             StorageProvider::establish_storage_agreement(
@@ -624,8 +624,8 @@ fn establish_agreement_fails_when_capacity_exceeded() {
         );
 
         // Terms for 60 bytes exceed max_capacity of 50. The capacity
-        // check runs after the nonce window advances, so assert the
-        // error only.
+        // check runs after the owner's nonce counter advances, so assert
+        // the error only.
         let (terms, sig) = signed_primary_terms(2, 1, 60, 10);
         assert_err!(
             StorageProvider::establish_storage_agreement(

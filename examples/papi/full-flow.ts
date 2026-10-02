@@ -30,6 +30,7 @@ import {
   establishStorageAgreement,
   fetchChallengeProof,
   fetchCheckpointSignature,
+  getAgreementNonce,
   makeSigner,
   negotiateTerms,
   READ_OPTS,
@@ -74,11 +75,13 @@ async function setupAgreement(
     maxBytes,
     duration
   );
+  const nonce = await getAgreementNonce(api, client.address);
   const signed = await negotiateTerms(providerUrl, {
     owner: client.address,
     max_bytes: maxBytes,
     duration,
     price_per_byte: 1n,
+    nonce,
     replica_params: null,
     bucket_id: null,
   });

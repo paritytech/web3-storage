@@ -24,7 +24,7 @@
 use file_system_client::{FileSystemClient, Signer};
 use sp_runtime::AccountId32;
 use std::env;
-use storage_client::{NegotiateRequest, ProviderClient};
+use storage_client::{AdminClient, ClientConfig, NegotiateRequest, ProviderClient};
 use subxt_signer::sr25519::dev as dev_signer;
 
 const DEFAULT_CHAIN_WS: &str = "ws://127.0.0.1:2222";
@@ -49,14 +49,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // === STEP 1: Create the client ===
     println!("\n📡 Step 1: Connecting to blockchain and provider...");
 
-    let mut fs_client =
-        FileSystemClient::new(chain_ws, provider_url, Signer::from_seed("//Alice")?).await?;
+    let signer = Signer::from_seed("//Alice")?;
+    let mut fs_client = FileSystemClient::new(chain_ws, provider_url, signer.clone()).await?;
 
     let owner: AccountId32 = dev_signer::alice().public_key().0.into();
     let provider = ProviderClient::fetch_provider_id(provider_url).await?;
     println!("  Provider account (from /info): {provider}");
 
     println!("✅ Connected successfully!");
+
+    let mut admin = AdminClient::new(
+        ClientConfig {
+            chain_ws_url: chain_ws.to_string(),
+            ..Default::default()
+        },
+        signer,
+    )?;
+    admin.connect().await?;
+    let nonce = admin.agreement_nonce(&owner).await?;
 
     // === STEP 2: Negotiate signed terms with the provider ===
     println!("\n🤝 Step 2: Negotiating signed agreement terms...");
@@ -68,6 +78,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             max_bytes: 10_000_000_000, // 10 GB
             duration: 500,             // 500 blocks
             price_per_byte: 1,
+            nonce,
             replica_params: None,
             bucket_id: None,
         },

@@ -126,7 +126,7 @@ fn checked_bucket_stats(s3_bucket_id: u64) -> (u64, u64) {
 fn create_s3_bucket_works() {
     new_test_ext().execute_with(|| {
         let provider_pk = setup_provider();
-        let terms = primary_terms(1, 100, 500, 1);
+        let terms = primary_terms(1, 100, 500, 0);
         let sig = sign_terms(&provider_pk, &terms);
 
         assert_ok!(S3Registry::create_s3_bucket(
@@ -162,7 +162,7 @@ fn create_s3_bucket_surfaces_layer0_signature_errors() {
     // no custom NoProvidersAvailable / AgreementRequestFailed shim wraps it.
     new_test_ext().execute_with(|| {
         let (unregistered_pk, _) = generate_provider_public_key("//Ghost");
-        let terms = primary_terms(1, 100, 500, 1);
+        let terms = primary_terms(1, 100, 500, 0);
         let sig = sign_terms(&unregistered_pk, &terms);
         assert_noop!(
             S3Registry::create_s3_bucket(
@@ -182,7 +182,7 @@ fn create_s3_bucket_surfaces_layer0_signature_errors() {
 fn create_s3_bucket_fails_invalid_name() {
     new_test_ext().execute_with(|| {
         let provider_pk = setup_provider();
-        let terms = primary_terms(1, 100, 500, 1);
+        let terms = primary_terms(1, 100, 500, 0);
         let sig = sign_terms(&provider_pk, &terms);
 
         // Too short — the S3 layer's name validation runs before Layer 0
@@ -218,7 +218,7 @@ fn create_s3_bucket_fails_invalid_name() {
 fn create_s3_bucket_fails_duplicate_name() {
     new_test_ext().execute_with(|| {
         let provider_pk = setup_provider();
-        let terms = primary_terms(1, 100, 500, 1);
+        let terms = primary_terms(1, 100, 500, 0);
         let sig = sign_terms(&provider_pk, &terms);
         assert_ok!(S3Registry::create_s3_bucket(
             RuntimeOrigin::signed(1),
@@ -231,7 +231,7 @@ fn create_s3_bucket_fails_duplicate_name() {
 
         // Second attempt uses a fresh nonce so Layer 0 *would* accept it,
         // but the S3 layer rejects the duplicate bucket name first.
-        let terms2 = primary_terms(1, 100, 500, 2);
+        let terms2 = primary_terms(1, 100, 500, 1);
         let sig2 = sign_terms(&provider_pk, &terms2);
         assert_noop!(
             S3Registry::create_s3_bucket(
@@ -250,7 +250,7 @@ fn create_s3_bucket_fails_duplicate_name() {
 #[test]
 fn delete_s3_bucket_works() {
     new_test_ext().execute_with(|| {
-        let s3_bucket_id = setup_provider_and_s3_bucket(1, 1);
+        let s3_bucket_id = setup_provider_and_s3_bucket(1, 0);
         assert_ok!(S3Registry::delete_s3_bucket(
             RuntimeOrigin::signed(1),
             s3_bucket_id
@@ -262,7 +262,7 @@ fn delete_s3_bucket_works() {
 #[test]
 fn delete_s3_bucket_fails_not_owner() {
     new_test_ext().execute_with(|| {
-        let s3_bucket_id = setup_provider_and_s3_bucket(1, 1);
+        let s3_bucket_id = setup_provider_and_s3_bucket(1, 0);
         assert_noop!(
             S3Registry::delete_s3_bucket(RuntimeOrigin::signed(2), s3_bucket_id),
             Error::<Test>::NotBucketOwner
@@ -283,7 +283,7 @@ fn delete_s3_bucket_fails_not_found() {
 #[test]
 fn put_and_get_object_metadata_works() {
     new_test_ext().execute_with(|| {
-        let s3_bucket_id = setup_provider_and_s3_bucket(1, 1);
+        let s3_bucket_id = setup_provider_and_s3_bucket(1, 0);
         let cid = sp_core::H256::repeat_byte(0xAB);
         assert_ok!(S3Registry::put_object_metadata(
             RuntimeOrigin::signed(1),
@@ -308,7 +308,7 @@ fn put_and_get_object_metadata_works() {
 #[test]
 fn delete_object_metadata_works() {
     new_test_ext().execute_with(|| {
-        let s3_bucket_id = setup_provider_and_s3_bucket(1, 1);
+        let s3_bucket_id = setup_provider_and_s3_bucket(1, 0);
         let cid = sp_core::H256::repeat_byte(0xAB);
         assert_ok!(S3Registry::put_object_metadata(
             RuntimeOrigin::signed(1),
@@ -336,7 +336,7 @@ fn delete_object_metadata_works() {
 #[test]
 fn delete_nonempty_bucket_fails() {
     new_test_ext().execute_with(|| {
-        let s3_bucket_id = setup_provider_and_s3_bucket(1, 1);
+        let s3_bucket_id = setup_provider_and_s3_bucket(1, 0);
         let cid = sp_core::H256::repeat_byte(0xAB);
         assert_ok!(S3Registry::put_object_metadata(
             RuntimeOrigin::signed(1),
@@ -358,7 +358,7 @@ fn delete_nonempty_bucket_fails() {
 #[test]
 fn put_object_metadata_fails_on_total_size_overflow() {
     new_test_ext().execute_with(|| {
-        let s3_bucket_id = setup_provider_and_s3_bucket(1, 1);
+        let s3_bucket_id = setup_provider_and_s3_bucket(1, 0);
         let cid = sp_core::H256::repeat_byte(0xAB);
         assert_ok!(S3Registry::put_object_metadata(
             RuntimeOrigin::signed(1),
@@ -395,7 +395,7 @@ fn put_object_metadata_fails_on_total_size_overflow() {
 #[test]
 fn put_object_metadata_overwrite_at_max_size_works() {
     new_test_ext().execute_with(|| {
-        let s3_bucket_id = setup_provider_and_s3_bucket(1, 1);
+        let s3_bucket_id = setup_provider_and_s3_bucket(1, 0);
         let cid = sp_core::H256::repeat_byte(0xAB);
         assert_ok!(S3Registry::put_object_metadata(
             RuntimeOrigin::signed(1),
@@ -435,7 +435,7 @@ fn put_object_metadata_overwrite_at_max_size_works() {
 #[test]
 fn copy_object_metadata_fails_on_total_size_overflow() {
     new_test_ext().execute_with(|| {
-        let s3_bucket_id = setup_provider_and_s3_bucket(1, 1);
+        let s3_bucket_id = setup_provider_and_s3_bucket(1, 0);
         let cid = sp_core::H256::repeat_byte(0xAB);
         assert_ok!(S3Registry::put_object_metadata(
             RuntimeOrigin::signed(1),
@@ -476,7 +476,7 @@ fn copy_object_metadata_fails_on_total_size_overflow() {
 #[test]
 fn saturated_total_size_underflow_recipe_is_blocked() {
     new_test_ext().execute_with(|| {
-        let s3_bucket_id = setup_provider_and_s3_bucket(1, 1);
+        let s3_bucket_id = setup_provider_and_s3_bucket(1, 0);
 
         // Pre-fix recipe: clamp total_size at u64::MAX with a huge object,
         // sneak in a small one (silently saturated away), delete the huge
@@ -501,7 +501,7 @@ fn saturated_total_size_underflow_recipe_is_blocked() {
 #[test]
 fn overwrite_and_delete_accounting_is_exact() {
     new_test_ext().execute_with(|| {
-        let s3_bucket_id = setup_provider_and_s3_bucket(1, 1);
+        let s3_bucket_id = setup_provider_and_s3_bucket(1, 0);
 
         assert_ok!(put_sized_object(s3_bucket_id, b"a.bin", 1024));
         assert_eq!(checked_bucket_stats(s3_bucket_id), (1, 1024));
@@ -533,7 +533,7 @@ fn overwrite_and_delete_accounting_is_exact() {
 #[test]
 fn copy_overwrite_churn_accounting_is_exact() {
     new_test_ext().execute_with(|| {
-        let s3_bucket_id = setup_provider_and_s3_bucket(1, 1);
+        let s3_bucket_id = setup_provider_and_s3_bucket(1, 0);
 
         assert_ok!(put_sized_object(s3_bucket_id, b"src.bin", 300));
         assert_ok!(put_sized_object(s3_bucket_id, b"dst.bin", 700));
@@ -582,7 +582,7 @@ fn copy_overwrite_churn_accounting_is_exact() {
 #[test]
 fn delete_largest_first_accounting_is_exact() {
     new_test_ext().execute_with(|| {
-        let s3_bucket_id = setup_provider_and_s3_bucket(1, 1);
+        let s3_bucket_id = setup_provider_and_s3_bucket(1, 0);
 
         // Fill the bucket to exactly u64::MAX so every subsequent step runs
         // at the boundary where a clamped total would betray itself.

@@ -262,7 +262,7 @@ impl frame_system::Config for Runtime {
     type Version = Version;
     type PalletInfo = PalletInfo;
     type OnNewAccount = ();
-    type OnKilledAccount = ();
+    type OnKilledAccount = StorageProvider;
     type AccountData = pallet_balances::AccountData<Balance>;
     type SystemWeightInfo = weights::frame_system::WeightInfo<Runtime>;
     type ExtensionsWeightInfo = weights::frame_system_extensions::WeightInfo<Runtime>;

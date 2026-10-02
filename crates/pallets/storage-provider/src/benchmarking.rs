@@ -88,12 +88,12 @@ fn setup_bucket<T: Config>(admin: &T::AccountId) -> BucketId {
         .expect("create_bucket_internal succeeds")
 }
 
-/// Build primary [`AgreementTerms`] suitable for a benchmark agreement.
+/// Build primary [`AgreementTerms`] suitable for a benchmark agreement, at
+/// the owner's next expected nonce.
 fn build_primary_terms<T: Config>(
     owner: &T::AccountId,
     max_bytes: u64,
     duration: BlockNumberFor<T>,
-    nonce: u64,
 ) -> AgreementTermsOf<T> {
     AgreementTerms {
         owner: owner.clone(),
@@ -102,19 +102,19 @@ fn build_primary_terms<T: Config>(
         price_per_byte: 1u32.into(),
         valid_until: StorageProvider::<T>::current_anchor_block()
             .saturating_add(T::RequestTimeout::get()),
-        nonce,
+        nonce: AgreementNonces::<T>::get(owner),
         bucket_id: None,
         replica_params: None,
     }
 }
 
-/// Build replica [`AgreementTerms`] suitable for a benchmark agreement.
+/// Build replica [`AgreementTerms`] suitable for a benchmark agreement, at
+/// the owner's next expected nonce.
 fn build_replica_terms<T: Config>(
     owner: &T::AccountId,
     bucket_id: BucketId,
     max_bytes: u64,
     duration: BlockNumberFor<T>,
-    nonce: u64,
 ) -> AgreementTermsOf<T> {
     AgreementTerms {
         owner: owner.clone(),
@@ -123,7 +123,7 @@ fn build_replica_terms<T: Config>(
         price_per_byte: 1u32.into(),
         valid_until: StorageProvider::<T>::current_anchor_block()
             .saturating_add(T::RequestTimeout::get()),
-        nonce,
+        nonce: AgreementNonces::<T>::get(owner),
         bucket_id: Some(bucket_id),
         replica_params: Some(ReplicaTerms {
             sync_balance: funding::<T>() / 20u32.into(),
@@ -151,12 +151,7 @@ fn setup_primary_agreement<T: Config>(
     provider_index: u32,
 ) -> BucketId {
     let key = register_sr25519_key::<T>(provider, KEY_TYPE, provider_index);
-    let terms = build_primary_terms::<T>(
-        admin,
-        1_000_000u64,
-        100u32.into(),
-        provider_index as u64 + 1,
-    );
+    let terms = build_primary_terms::<T>(admin, 1_000_000u64, 100u32.into());
     let sig = sign_terms::<T>(&key, &terms);
     Pallet::<T>::establish_storage_agreement_internal(
         admin,
@@ -179,13 +174,7 @@ fn setup_replica_agreement<T: Config>(
     replica_index: u32,
 ) -> sp_core::sr25519::Public {
     let key = register_sr25519_key::<T>(replica, KEY_TYPE, replica_index);
-    let terms = build_replica_terms::<T>(
-        admin,
-        bucket_id,
-        1_000_000u64,
-        100u32.into(),
-        replica_index as u64 + 1,
-    );
+    let terms = build_replica_terms::<T>(admin, bucket_id, 1_000_000u64, 100u32.into());
     let sig = sign_terms::<T>(&key, &terms);
     Pallet::<T>::establish_replica_agreement_internal(admin, bucket_id, replica, terms, &sig)
         .expect("establish_replica_agreement_internal succeeds");
@@ -529,7 +518,7 @@ mod benchmarks {
         // Generate an sr25519 key for the provider and store it so
         // verify_terms_signature can resolve a valid signer.
         let key = register_sr25519_key::<T>(&provider, KEY_TYPE, 0);
-        let terms = build_primary_terms::<T>(&admin, 1_000_000u64, 100u32.into(), 1);
+        let terms = build_primary_terms::<T>(&admin, 1_000_000u64, 100u32.into());
         let signature = sign_terms::<T>(&key, &terms);
 
         #[extrinsic_call]
@@ -552,7 +541,7 @@ mod benchmarks {
 
         let replica = create_provider::<T>(1);
         let key = register_sr25519_key::<T>(&replica, KEY_TYPE, 1);
-        let terms = build_replica_terms::<T>(&admin, bucket_id, 1_000_000u64, 100u32.into(), 1);
+        let terms = build_replica_terms::<T>(&admin, bucket_id, 1_000_000u64, 100u32.into());
         let signature = sign_terms::<T>(&key, &terms);
 
         #[extrinsic_call]

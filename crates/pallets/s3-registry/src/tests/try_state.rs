@@ -9,7 +9,7 @@ use super::*;
 #[test]
 fn try_state_holds_and_detects_corruption() {
     new_test_ext().execute_with(|| {
-        let s3_bucket_id = setup_provider_and_s3_bucket(1, 1);
+        let s3_bucket_id = setup_provider_and_s3_bucket(1, 0);
         let cid = sp_core::H256::repeat_byte(0xAB);
         assert_ok!(S3Registry::put_object_metadata(
             RuntimeOrigin::signed(1),

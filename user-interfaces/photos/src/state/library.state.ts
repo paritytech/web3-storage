@@ -10,7 +10,7 @@ import { BehaviorSubject } from 'rxjs'
 import { bind } from '@react-rxjs/core'
 import type { InjectedPolkadotAccount } from 'polkadot-api/pjs-signer'
 import { fromHex, toHex, negotiateProviderTerms } from '@web3-storage/papi'
-import { h160ToSubstrate } from '@web3-storage/sdk'
+import { getAgreementNonce, h160ToSubstrate } from '@web3-storage/sdk'
 import { requireApi } from '@/lib/chain-client'
 import type { ResolvedContract } from '@/lib/photos-contract'
 import {
@@ -21,6 +21,7 @@ import {
   submitCreateLibrary,
   toContractTerms,
   type CreateLibraryError,
+  type SubmitCreateLibraryResult,
 } from '@/lib/photos-contract-write'
 import { listProviders, type PhotosProvider } from '@/lib/photos-providers'
 
@@ -59,6 +60,12 @@ const creation$ = new BehaviorSubject<CreationState>({ stage: 'idle' })
 // The last attempt's input, so a failed create can be retried without the panel
 // re-threading the form values.
 let lastInput: CreateLibraryInput | null = null
+
+// The contract's mapped account is shared by every library created through
+// it, so its agreement nonce is a serial queue: a concurrent creator can
+// claim the nonce this attempt negotiated before it lands on-chain. Re-read
+// and retry a bounded number of times rather than fail outright.
+const NONCE_MISMATCH_MAX_ATTEMPTS = 3
 
 export const [useProviders] = bind(providers$, [])
 export const [useProvidersLoading] = bind(providersLoading$, false)
@@ -145,40 +152,53 @@ export async function createLibrary(input: CreateLibraryInput): Promise<void> {
     const pricePerByte = info.price_per_byte
     const { value } = computePaymentAndValue(pricePerByte, sizeBytes, durationBlocks)
 
-    // The terms are bound to the *contract's* mapped account, not the user's.
+    // The terms are bound to the *contract's* mapped account, not the user's —
+    // every library created through this contract shares that one account, so
+    // its agreement nonce is a serial queue concurrent creators race against.
     const contractOwner = h160ToSubstrate(fromHex(contract.address))
     // Negotiate against the provider's *current* endpoint — its registered
     // multiaddr may have changed since the list loaded.
     const multiaddr = new TextDecoder().decode(info.multiaddr)
 
-    creation$.next({ stage: 'negotiating' })
-    const negotiated = await negotiateProviderTerms(
-      { account: contractOwner.address, multiaddr },
-      {
-        owner: contractOwner.address,
-        max_bytes: sizeBytes,
-        duration: durationBlocks,
-        price_per_byte: pricePerByte,
-        replica_params: null,
-        bucket_id: null,
-      },
-    )
-    if (!negotiated.ok) {
-      creation$.next({ stage: 'failed', error: { kind: 'negotiate', message: negotiated.error } })
-      return
+    let result: SubmitCreateLibraryResult | undefined
+    for (let attempt = 1; ; attempt++) {
+      creation$.next({ stage: 'negotiating' })
+      const nonce = await getAgreementNonce(api, contractOwner.address)
+      const negotiated = await negotiateProviderTerms(
+        { account: contractOwner.address, multiaddr },
+        {
+          owner: contractOwner.address,
+          max_bytes: sizeBytes,
+          duration: durationBlocks,
+          price_per_byte: pricePerByte,
+          nonce,
+          replica_params: null,
+          bucket_id: null,
+        },
+      )
+      if (!negotiated.ok) {
+        creation$.next({ stage: 'failed', error: { kind: 'negotiate', message: negotiated.error } })
+        return
+      }
+
+      const { terms, signature } = toContractTerms(contractOwner.publicKey, negotiated.signed)
+      const data = encodeCreateLibrary({
+        userAccount: toHex(signer.publicKey) as `0x${string}`,
+        name,
+        provider: providerAccountToBytes32(provider.account),
+        terms,
+        signature,
+      })
+
+      creation$.next({ stage: 'submitting' })
+      result = await submitCreateLibrary(api, signer, fromHex(contract.address), data, { value })
+      // Another creator through the same contract claimed this nonce first —
+      // re-read the current value and retry, the same shape as the tx-level
+      // stale-nonce retry in `photos-contract-write.ts`.
+      if (result.ok || result.error.kind !== 'terms-reused' || attempt >= NONCE_MISMATCH_MAX_ATTEMPTS) {
+        break
+      }
     }
-
-    const { terms, signature } = toContractTerms(contractOwner.publicKey, negotiated.signed)
-    const data = encodeCreateLibrary({
-      userAccount: toHex(signer.publicKey) as `0x${string}`,
-      name,
-      provider: providerAccountToBytes32(provider.account),
-      terms,
-      signature,
-    })
-
-    creation$.next({ stage: 'submitting' })
-    const result = await submitCreateLibrary(api, signer, fromHex(contract.address), data, { value })
     if (!result.ok) {
       creation$.next({ stage: 'failed', error: result.error })
       return

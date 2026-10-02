@@ -31,6 +31,9 @@ function fakeApi(opts: { entries?: ProviderEntry[]; byAddress?: Record<string, u
           getEntries: vi.fn(async () => opts.entries ?? []),
           getValue: vi.fn(async (addr: string) => opts.byAddress?.[addr]),
         },
+        AgreementNonces: {
+          getValue: vi.fn(async () => 0n),
+        },
       },
     },
   } as never;
@@ -61,6 +64,7 @@ describe("resolveCreationTerms", () => {
       owner: "5own",
       max_bytes: "1024",
       duration: 100,
+      nonce: "0",
     });
     expect(res.provider.address).toBe("5prov");
     expect(res.signedTerms).toEqual(SIGNED);

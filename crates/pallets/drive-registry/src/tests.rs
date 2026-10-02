@@ -95,7 +95,7 @@ fn create_drive_surfaces_layer0_signature_errors() {
     // in NoProvidersAvailable / BucketCreationFailed.
     new_test_ext().execute_with(|| {
         let (unregistered_pk, _) = generate_provider_public_key("//Ghost");
-        let terms = primary_terms(1, 100, 500, 1, 1000);
+        let terms = primary_terms(1, 100, 500, 0, 1000);
         let sig = sign_terms(&unregistered_pk, &terms);
         assert_noop!(
             DriveRegistry::create_drive(
@@ -115,7 +115,7 @@ fn create_drive_surfaces_layer0_signature_errors() {
 fn create_drive_name_too_long_fails() {
     new_test_ext().execute_with(|| {
         let (provider_pk, provider) = setup_provider();
-        let terms = primary_terms(1, 100, 500, 1, 100);
+        let terms = primary_terms(1, 100, 500, 0, 100);
         let sig = sign_terms(&provider_pk, &terms);
         let long_name = vec![b'a'; 257]; // MaxDriveNameLength = 256 in mock
 
@@ -147,7 +147,7 @@ fn delete_drive_not_found_fails() {
 fn delete_drive_not_owner_fails() {
     new_test_ext().execute_with(|| {
         let (provider_pk, provider) = setup_provider();
-        let terms = primary_terms(1, 100, 500, 1, 100);
+        let terms = primary_terms(1, 100, 500, 0, 100);
         let sig = sign_terms(&provider_pk, &terms);
         assert_ok!(DriveRegistry::create_drive(
             RuntimeOrigin::signed(1),
@@ -212,7 +212,7 @@ fn share_unshare_and_delete_fail_when_caller_is_not_bucket_admin() {
         advance_to_block_1();
 
         let (provider_pk, provider) = setup_provider();
-        let terms = primary_terms(1, 100, 500, 1, 100);
+        let terms = primary_terms(1, 100, 500, 0, 100);
         let sig = sign_terms(&provider_pk, &terms);
 
         assert_ok!(DriveRegistry::create_drive(
@@ -266,7 +266,7 @@ fn create_drive_works() {
         advance_to_block_1();
 
         let (provider_pk, provider) = setup_provider();
-        let terms = primary_terms(1, 100, 500, 1, 100);
+        let terms = primary_terms(1, 100, 500, 0, 100);
         let sig = sign_terms(&provider_pk, &terms);
 
         let alice = 1u64;
@@ -306,7 +306,7 @@ fn create_drive_works() {
 fn create_drive_with_name_works() {
     new_test_ext().execute_with(|| {
         let (provider_pk, provider) = setup_provider();
-        let terms = primary_terms(1, 100, 500, 1, 100);
+        let terms = primary_terms(1, 100, 500, 0, 100);
         let sig = sign_terms(&provider_pk, &terms);
 
         let alice = 1u64;
@@ -332,7 +332,7 @@ fn delete_drive_works() {
         advance_to_block_1();
 
         let (provider_pk, provider) = setup_provider();
-        let terms = primary_terms(1, 100, 500, 1, 0);
+        let terms = primary_terms(1, 100, 500, 0, 0);
         let sig = sign_terms(&provider_pk, &terms);
 
         let alice = 1u64;
@@ -377,7 +377,7 @@ fn share_drive_works() {
         advance_to_block_1();
 
         let (provider_pk, provider) = setup_provider();
-        let terms = primary_terms(1, 100, 500, 1, 100);
+        let terms = primary_terms(1, 100, 500, 0, 100);
         let sig = sign_terms(&provider_pk, &terms);
 
         let alice = 1u64;
@@ -416,7 +416,7 @@ fn unshare_drive_works() {
         advance_to_block_1();
 
         let (provider_pk, provider) = setup_provider();
-        let terms = primary_terms(1, 100, 500, 1, 100);
+        let terms = primary_terms(1, 100, 500, 0, 100);
         let sig = sign_terms(&provider_pk, &terms);
 
         let alice = 1u64;
@@ -461,7 +461,7 @@ fn share_drive_admin_can_share() {
         advance_to_block_1();
 
         let (provider_pk, provider) = setup_provider();
-        let terms = primary_terms(1, 100, 500, 1, 100);
+        let terms = primary_terms(1, 100, 500, 0, 100);
         let sig = sign_terms(&provider_pk, &terms);
 
         let alice = 1u64;
@@ -509,7 +509,7 @@ fn share_drive_admin_can_share() {
 fn list_user_drives_after_create() {
     new_test_ext().execute_with(|| {
         let (provider_pk, provider) = setup_provider();
-        let terms = primary_terms(1, 100, 500, 1, 100);
+        let terms = primary_terms(1, 100, 500, 0, 100);
         let sig = sign_terms(&provider_pk, &terms);
 
         let alice = 1u64;
@@ -532,7 +532,7 @@ fn list_user_drives_after_create() {
 fn delete_drive_removes_from_list() {
     new_test_ext().execute_with(|| {
         let (provider_pk, provider) = setup_provider();
-        let terms = primary_terms(1, 100, 500, 1, 100);
+        let terms = primary_terms(1, 100, 500, 0, 100);
         let sig = sign_terms(&provider_pk, &terms);
 
         let alice = 1u64;

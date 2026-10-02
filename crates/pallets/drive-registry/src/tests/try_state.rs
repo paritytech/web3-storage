@@ -12,7 +12,7 @@ fn try_state_holds_and_detects_corruption() {
         advance_to_block_1();
 
         let (provider_pk, provider) = setup_provider();
-        let terms = primary_terms(1, 100, 500, 1, 100);
+        let terms = primary_terms(1, 100, 500, 0, 100);
         let sig = sign_terms(&provider_pk, &terms);
 
         assert_ok!(DriveRegistry::create_drive(

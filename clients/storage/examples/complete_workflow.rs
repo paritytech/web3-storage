@@ -65,7 +65,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ..Default::default()
     };
 
-    // 1. Negotiate terms with the running provider node.
+    // 1. Read the owner's next expected agreement nonce from chain, then
+    //    negotiate terms with the running provider node.
+    let mut admin = AdminClient::new(chain_config.clone(), user_keypair.clone().into())?;
+    admin.connect().await?;
+    let nonce = admin.agreement_nonce(&user_account).await?;
+
     println!("Negotiating storage terms with provider...");
     let signed: SignedTerms = ProviderClient::negotiate_terms(
         provider_url,
@@ -74,18 +79,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             max_bytes: 1_000_000,
             duration: 100,
             price_per_byte: 1,
+            nonce,
             replica_params: None,
             bucket_id: None,
         },
     )
     .await?;
-    assert!(signed.terms.nonce > 0, "provider should allocate a nonce");
+    assert_eq!(
+        signed.terms.nonce, nonce,
+        "provider should sign the requested nonce"
+    );
     println!("  Terms signed (nonce={})", signed.terms.nonce);
 
     // 2. Redeem the signed terms on-chain to open a bucket + primary agreement.
     println!("Establishing storage agreement on-chain...");
-    let mut admin = AdminClient::new(chain_config.clone(), user_keypair.clone().into())?;
-    admin.connect().await?;
     let bucket_id = admin
         .establish_storage_agreement(provider_ss58, signed, storage_client::Visibility::Private)
         .await?;

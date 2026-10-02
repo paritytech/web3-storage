@@ -850,7 +850,7 @@ fn drive_lifecycle_e2e() {
 
         // 2. Owner redeems provider-signed terms to create the drive.
         let drive_id = pallet_drive_registry::NextDriveId::<Runtime>::get();
-        let terms = primary_terms(owner_id.clone(), 1_000_000, 500, 1);
+        let terms = primary_terms(owner_id.clone(), 1_000_000, 500, 0);
         let sig = sign_primary_terms(provider, &terms);
 
         assert_ok_ok(construct_and_apply_extrinsic(
@@ -946,7 +946,7 @@ fn drive_lifecycle_via_xcm_e2e() {
         let fee: Asset = (Location::parent(), UNIT).into();
 
         // 2. Provider signs terms for the derived sovereign + XCM dispatches.
-        let terms = primary_terms(derived.clone(), 1_000_000, 500, 1);
+        let terms = primary_terms(derived.clone(), 1_000_000, 500, 0);
         let sig = sign_primary_terms(provider, &terms);
         let create_drive_call =
             RuntimeCall::DriveRegistry(DriveRegistryCall::<Runtime>::create_drive {
@@ -1032,7 +1032,7 @@ fn s3_bucket_lifecycle_e2e() {
 
         // 2. Owner redeems provider-signed terms to create the S3 bucket.
         let s3_bucket_id = pallet_s3_registry::NextS3BucketId::<Runtime>::get();
-        let terms = primary_terms(user_id.clone(), 1_000_000, 500, 1);
+        let terms = primary_terms(user_id.clone(), 1_000_000, 500, 0);
         let sig = sign_primary_terms(provider, &terms);
         assert_ok_ok(construct_and_apply_extrinsic(
             Some(user.pair()),
@@ -1134,7 +1134,7 @@ fn s3_bucket_lifecycle_via_xcm_e2e() {
 
         // 2. Create the bucket: provider signs terms for `derived`, XCM
         //    dispatches the call from `alice_on_para`.
-        let terms = primary_terms(derived.clone(), 1_000_000, 500, 1);
+        let terms = primary_terms(derived.clone(), 1_000_000, 500, 0);
         let sig = sign_primary_terms(provider, &terms);
         let create_call = RuntimeCall::S3Registry(S3RegistryCall::<Runtime>::create_s3_bucket {
             name: b"sibling-bucket".to_vec(),

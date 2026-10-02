@@ -254,8 +254,7 @@ pub trait Config: frame_system::Config<RuntimeEvent: From<Event<Self>>> {
     /// Minimum number of blocks between announcing a deregistration and
     /// being allowed to complete it. Must be strictly `> ChallengeTimeout`
     /// so any challenge created up to the announcement block matures while
-    /// the provider is still slashable, and `> RequestTimeout` so a
-    /// pre-deregistration agreement quote expires before re-registration.
+    /// the provider is still slashable.
     #[pallet::constant]
     type DeregisterAnnouncementPeriod: Get<BlockNumberFor<Self>>;
 
@@ -607,8 +606,8 @@ pub struct AgreementTerms<AccountId, Balance, BlockNumber> {
     pub price_per_byte: Balance,
     /// Block number after which the quote is no longer redeemable.
     pub valid_until: BlockNumber,
-    /// Provider-chosen replay-protection nonce: a signed quote is redeemable
-    /// at most once.
+    /// Owner-chosen replay-protection nonce: must equal the owner's next
+    /// expected value, so a signed quote is redeemable at most once.
     pub nonce: u64,
     /// Bucket the quote is for (see `BucketTarget` below).
     pub bucket: BucketTarget,
@@ -640,6 +639,15 @@ pub struct ReplicaTerms<Balance, BlockNumber> {
     /// Price per sync locked at creation/last extension.
     pub sync_price: Balance,
 }
+
+/// Next expected `AgreementTerms.nonce` for this owner. Redemption
+/// requires an exact match and advances the counter by one, so a signed
+/// quote is redeemable at most once and in the order it was requested.
+/// The entry is removed when the account is reaped (see the
+/// `OnKilledAccount` impl for `Pallet`).
+#[pallet::storage]
+pub type AgreementNonces<T: Config> =
+    StorageMap<_, Blake2_128Concat, T::AccountId, u64, ValueQuery>;
 
 /// Pending challenges, keyed by (deadline anchor block, per-deadline index).
 /// At most `MaxChallengesPerDeadline` challenges share a deadline; expired
@@ -1326,8 +1334,8 @@ impl<T: Config> Pallet<T> {
     //   (`TermsExpired` / `TermsValidityTooLong`)
     // - the signature must verify against the provider's registered key over
     //   `blake2_256(context | SCALE(terms))` with the flavour's context
-    // - `terms.nonce` must not replay an already-redeemed quote
-    //   (`NonceAlreadyUsed` / `NonceTooOld`)
+    // - `terms.nonce` must equal the owner's next expected agreement nonce
+    //   (`NonceMismatch`)
     // - the provider must be active (registered, not deregistering), within
     //   its duration bounds, and the added `terms.max_bytes` must fit its
     //   declared capacity (`CapacityExceeded`) and stake

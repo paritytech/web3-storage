@@ -124,7 +124,7 @@ async function main() {
     const negotiateAbiTerms = (
       owner: ChainSigner,
       req: { maxBytes: bigint; duration: number; pricePerByte: bigint }
-    ) => negotiatePrecompileTerms(providerUrl, owner, req);
+    ) => negotiatePrecompileTerms(api, providerUrl, owner, req);
 
     // ====================================================================
     // Storage-provider precompile (0x…09010000)
