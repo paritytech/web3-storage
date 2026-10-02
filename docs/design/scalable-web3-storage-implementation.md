@@ -58,7 +58,7 @@ primaries (replicas stay challengeable by anyone).
 - Provider is liable for ALL signed commitments
 - Conflicting forks cannot be pruned
 
-Users who create conflicts without checkpointing waste their quota—providers must keep all signed data.
+Users who create conflicts without checkpointing waste their quota—providers must keep all signed data, including MMR leaf entries a pruned commitment still needs to be proven.
 
 **Content-addressed storage**: Everything (chunks and internal nodes) is addressed by hash. Internal nodes are data whose content is child hashes. Upload is bottom-up: children must exist before parent can be stored. If a root hash exists, the entire tree is guaranteed complete.
 
@@ -687,6 +687,9 @@ pub struct Challenge<T: Config> {
     pub mmr_root: H256,
     /// Start sequence of the commitment (needed to compute challenged_seq = start_seq + target.leaf_index)
     pub start_seq: u64,
+    /// Leaf count of the commitment (needed to verify target.leaf_index's
+    /// position in the MMR, not just that some leaf under mmr_root exists)
+    pub leaf_count: u64,
     /// Leaf + chunk being challenged (see `ChunkLocation`)
     pub target: ChunkLocation,
     /// Deposit locked by the challenger when the challenge was created.
@@ -2130,12 +2133,19 @@ for the checkpoint workflow, where the signature goes into the
 Get MMR Proof
 ─────────────
 GET /mmr_proof?bucket_id=0x...&leaf_index=5
+GET /mmr_proof?bucket_id=0x...&leaf_index=5&mmr_root=0x...&start_seq=0&leaf_count=42
 
 Response:
 {
   "leaf": { "data_root": "0x...", "data_size": 2097152, "total_size": 52428800 },
   "proof": { "peaks": [...], "siblings": [...] }
 }
+
+Note: `mmr_root`, `start_seq` and `leaf_count` are optional and must be given
+together. Without them, the proof is built against the bucket's current
+commitment. With them, the proof is built against that specific commitment —
+this is what a challenge response must use, since a later `/commit` changes
+the current commitment without invalidating an earlier signed one.
 
 Get Chunk Proof
 ───────────────
@@ -2472,6 +2482,8 @@ pub struct MmrProof {
 ```
 1. Challenger initiates challenge on-chain
    └─ Provides: signed commitment, leaf_index, chunk_index
+   └─ Rejected if leaf_index >= commitment.leaf_count — such a leaf cannot
+      exist in the committed MMR, so the challenge could never be answered
    └─ Locks a generously over-estimated deposit covering the provider's
       on-chain response cost (margin for fee fluctuations)
    └─ Tier determined by is_authorized(challenger, bucket):
@@ -2538,7 +2550,12 @@ fn verify_challenge_response(
             let chunk_ok = verify_merkle_proof(
                 chunk_hash, challenge.target.chunk_index, chunk_proof, &mmr_proof.leaf.data_root,
             );
-            let mmr_ok = verify_mmr_proof(mmr_proof, &challenge.mmr_root);
+            // Must prove the CHALLENGED leaf, not merely some leaf under the
+            // root — otherwise a provider holding only one leaf could defend
+            // any challenge against that root.
+            let mmr_ok = verify_mmr_proof_at(
+                mmr_proof, &challenge.mmr_root, challenge.target.leaf_index, challenge.leaf_count,
+            );
             if chunk_ok && mmr_ok { Ok(()) } else { Err(SlashReason::InvalidProof) }
         }
 

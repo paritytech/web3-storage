@@ -747,6 +747,8 @@ pub mod pallet {
         pub mmr_root: H256,
         /// Start sequence of the commitment.
         pub start_seq: u64,
+        /// Leaf count of the commitment. see more in `verify_mmr_proof_at`.
+        pub leaf_count: u64,
         /// Leaf + chunk being challenged.
         pub target: ChunkLocation,
         /// Deposit locked by challenger.
@@ -1248,6 +1250,10 @@ pub mod pallet {
         /// for the deadline this challenge would land on. Caps the total the
         /// `on_initialize` sweep must eventually drain for a single key.
         TooManyChallengesThisBlock,
+        /// The challenged leaf index does not exist in the commitment's MMR:
+        /// `target.leaf_index >= commitment.leaf_count`. Such a leaf cannot
+        /// be proven, so the challenge could never be answered.
+        LeafOutOfRange,
 
         // Checkpoint errors
         /// A provider signature does not verify against the commitment.
@@ -2749,8 +2755,15 @@ pub mod pallet {
                         chunk_proof,
                         &mmr_proof.leaf.data_root,
                     );
-                    let mmr_ok =
-                        storage_primitives::verify_mmr_proof(mmr_proof, &challenge.mmr_root);
+                    // Must prove the CHALLENGED leaf, not merely some leaf
+                    // under the root — otherwise a provider holding only one
+                    // leaf could defend any challenge against that root.
+                    let mmr_ok = storage_primitives::verify_mmr_proof_at(
+                        mmr_proof,
+                        &challenge.mmr_root,
+                        challenge.target.leaf_index,
+                        challenge.leaf_count,
+                    );
                     if chunk_ok && mmr_ok {
                         Ok(())
                     } else {
@@ -2983,15 +2996,8 @@ pub mod pallet {
                     );
                     *sync_balance = sync_balance.saturating_sub(*sync_price);
 
-                    // Capture sequence metadata for the matched root so a
-                    // future `challenge_replica` can target a specific leaf.
-                    // For the current snapshot (position_matched == 0) we
-                    // know start_seq + leaf_count exactly. Historical roots
-                    // don't carry sequence metadata in `historical_roots`, so
-                    // they default to 0 here — challenges targeting a leaf
-                    // beyond seq 0 in that case still work because
-                    // `challenge_replica` only uses `start_seq` as an offset
-                    // additive identity.
+                    // TODO: reject the sync when `leaf_count == 0`.
+                    // If there is no data sync, the replica should not be able to claim the fund.
                     let (start_seq, leaf_count) = if position_matched == 0 {
                         bucket
                             .snapshot

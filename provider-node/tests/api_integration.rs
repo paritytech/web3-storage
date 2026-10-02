@@ -926,6 +926,123 @@ common::backend_tests! {
     }
 }
 
+// A second commit moves the bucket's current root on; the proof for the
+// first (older) commitment, requested explicitly, must still verify against
+// that commitment's own root and leaf count.
+common::backend_tests! {
+    async fn test_mmr_proof_for_an_older_commitment(backend) {
+        let server = TestServer::new(backend).await;
+        let (_hash_a, commit_a) = upload_and_commit(&server, 1).await;
+        upload_and_commit(&server, 1).await;
+
+        let root_a = commit_a["mmr_root"].as_str().unwrap().to_string();
+        let start_seq_a = commit_a["start_seq"].as_u64().unwrap();
+        let leaf_count_a = commit_a["leaf_count"].as_u64().unwrap();
+
+        let resp = server
+            .client
+            .get(server.url(&format!(
+                "/mmr_proof?bucket_id=1&leaf_index=0&mmr_root={root_a}&start_seq={start_seq_a}&leaf_count={leaf_count_a}"
+            )))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let body: storage_provider_node::MmrProofResponse = resp.json().await.unwrap();
+        let peaks: Vec<H256> = body
+            .proof
+            .peaks
+            .iter()
+            .map(|h| H256::from_slice(&hex_decode(h).unwrap()))
+            .collect();
+        let siblings: Vec<H256> = body
+            .proof
+            .siblings
+            .iter()
+            .map(|h| H256::from_slice(&hex_decode(h).unwrap()))
+            .collect();
+        let proof = storage_primitives::MmrProof {
+            peaks,
+            leaf: storage_primitives::MmrLeaf {
+                data_root: H256::from_slice(&hex_decode(&body.leaf.data_root).unwrap()),
+                data_size: body.leaf.data_size,
+                total_size: body.leaf.total_size,
+            },
+            leaf_proof: storage_primitives::MerkleProof {
+                siblings,
+                path: body.proof.path,
+            },
+        };
+        let root_a_h256 = H256::from_slice(&hex_decode(&root_a).unwrap());
+        assert!(storage_primitives::verify_mmr_proof_at(
+            &proof,
+            &root_a_h256,
+            0,
+            leaf_count_a
+        ));
+    }
+}
+
+common::backend_tests! {
+    async fn test_mmr_proof_rejects_a_partial_commitment_query(backend) {
+        let server = TestServer::new(backend).await;
+        upload_and_commit(&server, 1).await;
+
+        // mmr_root given without start_seq or leaf_count.
+        let resp = server
+            .client
+            .get(server.url(
+                "/mmr_proof?bucket_id=1&leaf_index=0&mmr_root=0x0000000000000000000000000000000000000000000000000000000000000000",
+            ))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+}
+
+common::backend_tests! {
+    async fn test_mmr_proof_for_an_unrebuildable_commitment_errors(backend) {
+        let server = TestServer::new(backend).await;
+        upload_and_commit(&server, 1).await;
+
+        let bogus_root = format!("0x{}", "ab".repeat(32));
+        let resp = server
+            .client
+            .get(server.url(&format!(
+                "/mmr_proof?bucket_id=1&leaf_index=0&mmr_root={bogus_root}&start_seq=0&leaf_count=1"
+            )))
+            .send()
+            .await
+            .unwrap();
+
+        assert!(resp.status().is_client_error() || resp.status().is_server_error());
+        let body: Value = resp.json().await.unwrap();
+        assert!(body.get("proof").is_none(), "an error response must not carry a proof");
+    }
+}
+
+common::backend_tests! {
+    async fn test_mmr_proof_rejects_a_malformed_commitment_root(backend) {
+        let server = TestServer::new(backend).await;
+        upload_and_commit(&server, 1).await;
+
+        // All three commitment params given, but mmr_root decodes to 31
+        // bytes, not the 32 an H256 needs.
+        let short_root = format!("0x{}", "ab".repeat(31));
+        let resp = server
+            .client
+            .get(server.url(&format!(
+                "/mmr_proof?bucket_id=1&leaf_index=0&mmr_root={short_root}&start_seq=0&leaf_count=1"
+            )))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+}
+
 common::backend_tests! {
     async fn test_mmr_peaks_endpoint(backend) {
         let server = TestServer::new(backend).await;

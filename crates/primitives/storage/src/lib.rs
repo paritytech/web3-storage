@@ -322,7 +322,7 @@ pub struct Commitment {
     pub mmr_root: H256,
     /// Sequence number of the first leaf covered by this commitment.
     pub start_seq: u64,
-    /// Number of leaves covered by this commitment.
+    /// Number of leaves in the MMR whose root is `mmr_root`.
     pub leaf_count: u64,
 }
 
@@ -536,31 +536,73 @@ pub fn verify_merkle_proof(leaf_hash: H256, index: u64, proof: &MerkleProof, roo
     current == *root
 }
 
-/// Verify an MMR proof
-///
-/// This verifies that a leaf at the given index with the given hash
-/// is part of an MMR with the given root.
-pub fn verify_mmr_proof(proof: &MmrProof, root: &H256) -> bool {
-    // First verify the Merkle proof gets us to the data root
-    let leaf_hash = blake2_256(&proof.leaf.encode());
+// Bit index of a `u64`'s most significant bit
+// aka `u64::BITS - 1`
+const HIGHEST_BIT: u32 = 63;
 
-    // Hash up from leaf through the Merkle proof to reach a peak
+/// Verify an MMR proof for a specific leaf position.
+///
+/// Derives, from `leaf_count`, the peak and position of `leaf_index`, and
+/// checks the proof against that peak and position, rather than accepting a
+/// proof for any leaf under `root`.
+pub fn verify_mmr_proof_at(
+    proof: &MmrProof,
+    root: &H256,
+    leaf_index: u64,
+    leaf_count: u64,
+) -> bool {
+    if leaf_index >= leaf_count {
+        return false;
+    }
+    if proof.peaks.len() as u64 != leaf_count.count_ones() as u64 {
+        return false;
+    }
+    if proof.leaf_proof.siblings.len() != proof.leaf_proof.path.len() {
+        return false;
+    }
+
+    let mut remaining = leaf_count;
+    let mut leaf_offset = 0u64;
+    let mut peak_position = 0usize;
+    let (peak_height, local_leaf_index) = loop {
+        let height = HIGHEST_BIT - remaining.leading_zeros();
+        let subtree_leaves = 1u64 << height;
+        if leaf_index < leaf_offset + subtree_leaves {
+            break (height, leaf_index - leaf_offset);
+        }
+        leaf_offset += subtree_leaves;
+        remaining -= subtree_leaves;
+        peak_position += 1;
+    };
+
+    if proof.leaf_proof.siblings.len() as u32 != peak_height {
+        return false;
+    }
+
+    let leaf_hash = blake2_256(&proof.leaf.encode());
     let mut current = leaf_hash;
-    for (i, sibling) in proof.leaf_proof.siblings.iter().enumerate() {
-        let is_right = proof.leaf_proof.path.get(i).copied().unwrap_or(false);
-        current = if is_right {
+    for (level, (sibling, is_right)) in proof
+        .leaf_proof
+        .siblings
+        .iter()
+        .zip(proof.leaf_proof.path.iter())
+        .enumerate()
+    {
+        let expected_right = (local_leaf_index >> level) & 1 == 1;
+        if *is_right != expected_right {
+            return false;
+        }
+        current = if *is_right {
             hash_children(*sibling, current)
         } else {
             hash_children(current, *sibling)
         };
     }
 
-    // Current should be one of the peaks
-    if !proof.peaks.contains(&current) {
+    if current != proof.peaks[peak_position] {
         return false;
     }
 
-    // Verify that peaks bag to the root
     let bagged_root = proof
         .peaks
         .iter()

@@ -117,12 +117,10 @@ async function main() {
   tests.push({
     name: "5.4 Challenge a provider not in the snapshot",
     fn: async () => {
-      // challenge_checkpoint validates the *provider* against the snapshot at
-      // creation, but NOT the leaf_index: a beyond-canonical leaf is rejected
-      // later, when the provider answers with Superseded (see the
-      // respond_with_bogus_superseded_claim_slashes_immediately unit test). So
-      // the creation-time guard to exercise here is the provider
-      // check — Bob is not a primary provider of this bucket.
+      // challenge_checkpoint validates both the provider and the leaf_index
+      // against the snapshot at creation. Use an in-range leaf_index (0) so
+      // the only guard this exercises is the provider check — Bob is not a
+      // primary provider of this bucket.
       const tx = api.tx.StorageProvider.challenge_checkpoint({
         bucket_id: bucketId,
         provider: client.address, // not in the snapshot's primary_providers
