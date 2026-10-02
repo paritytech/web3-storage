@@ -527,6 +527,41 @@ impl SubxtChainClient {
         }
     }
 
+    /// Resolve each provider account (raw 32-byte keys) to its HTTP endpoint
+    /// via the on-chain `Providers` multiaddr. Accounts without a resolvable
+    /// registration are skipped.
+    async fn endpoints_for_accounts(
+        &self,
+        provider_bytes_list: Vec<Vec<u8>>,
+    ) -> Result<Vec<String>, ChainClientError> {
+        use subxt::ext::scale_value::At;
+
+        let mut endpoints = Vec::new();
+        for provider_bytes in provider_bytes_list {
+            let provider_addr =
+                subxt::dynamic::storage::<(Value,), Value>("StorageProvider", "Providers");
+
+            let at = self.at_current_block().await?;
+
+            if let Ok(Some(value)) = at
+                .storage()
+                .try_fetch(provider_addr, (Value::from_bytes(&provider_bytes),))
+                .await
+            {
+                if let Ok(decoded) = value.decode() {
+                    if let Some(field0) = decoded.at(0) {
+                        let bytes = Self::extract_byte_vec(field0);
+                        if !bytes.is_empty() {
+                            let multiaddr_str = String::from_utf8_lossy(&bytes);
+                            endpoints.push(Self::multiaddr_to_http_endpoint(&multiaddr_str));
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(endpoints)
+    }
     /// Parse a BucketSnapshot value from scale_value.
     fn parse_bucket_snapshot_value<T>(value: &subxt::ext::scale_value::Value<T>) -> BucketSnapshot {
         use subxt::ext::scale_value::{At, Composite, Primitive, ValueDef};
@@ -712,30 +747,38 @@ impl ReplicaSyncChainClient for SubxtChainClient {
             }
         }
 
-        // Look up each provider's multiaddr
-        let mut endpoints = Vec::new();
-        for provider_bytes in provider_bytes_list {
-            let provider_addr =
-                subxt::dynamic::storage::<(Value,), Value>("StorageProvider", "Providers");
+        self.endpoints_for_accounts(provider_bytes_list).await
+    }
 
-            if let Ok(Some(value)) = at
-                .storage()
-                .try_fetch(provider_addr, (Value::from_bytes(&provider_bytes),))
-                .await
-            {
-                if let Ok(decoded) = value.decode() {
-                    if let Some(field0) = decoded.at(0) {
-                        let bytes = Self::extract_byte_vec(field0);
-                        if !bytes.is_empty() {
-                            let multiaddr_str = String::from_utf8_lossy(&bytes);
-                            endpoints.push(Self::multiaddr_to_http_endpoint(&multiaddr_str));
-                        }
-                    }
-                }
-            }
-        }
+    async fn fetch_replica_endpoints(
+        &self,
+        bucket_id: BucketId,
+    ) -> Result<Vec<String>, ChainClientError> {
+        use storage_subxt::api::runtime_types::storage_primitives::ProviderRole;
 
-        Ok(endpoints)
+        let own_account = self.signer.public_key().0.to_vec();
+
+        let payload = storage_subxt::api::runtime_apis()
+            .storage_provider_api()
+            .bucket_agreements(bucket_id)
+            .unvalidated();
+
+        let agreements = self
+            .at_current_block()
+            .await?
+            .runtime_apis()
+            .call(payload)
+            .await
+            .map_err(|e| ChainClientError::query("bucket agreements", e))?;
+
+        let accounts: Vec<Vec<u8>> = agreements
+            .into_iter()
+            .filter(|agreement| matches!(agreement.role, ProviderRole::Replica { .. }))
+            .map(|agreement| agreement.provider)
+            .filter(|provider| provider != &own_account)
+            .collect();
+
+        self.endpoints_for_accounts(accounts).await
     }
 
     async fn submit_sync_confirmation(

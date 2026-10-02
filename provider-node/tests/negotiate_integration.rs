@@ -41,7 +41,9 @@ fn test_deps() -> (ProviderDeps, tempfile::TempDir) {
     let deps = ProviderDeps {
         storage,
         nonce_store,
-        auth: Arc::new(Authenticator::new(StaticMembershipResolver(vec![]))),
+        auth: Arc::new(Authenticator::new(StaticMembershipResolver::private(
+            vec![],
+        ))),
     };
     (deps, dir)
 }
