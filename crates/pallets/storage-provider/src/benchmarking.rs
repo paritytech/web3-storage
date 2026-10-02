@@ -1219,5 +1219,42 @@ mod benchmarks {
         assert_eq!(Challenges::<T>::iter_prefix(deadline).count(), 0);
     }
 
+    #[benchmark]
+    fn resolve_expired_challenge() {
+        let deadline: BlockNumberFor<T> = 200u32.into();
+        let deposit: BalanceOf<T> = 100u32.into();
+        let provider = create_provider::<T>(0);
+        let challenger = funded_account::<T>("challenger", 0);
+        let _ = StorageProvider::<T>::hold_challenge_deposit(&challenger, deposit);
+        let bucket_id: BucketId = 0;
+        let challenge = pallet::Challenge::<T> {
+            bucket_id,
+            provider: provider.clone(),
+            challenger,
+            mmr_root: H256::zero(),
+            start_seq: 0,
+            target: ChunkLocation {
+                leaf_index: 0,
+                chunk_index: 0,
+            },
+            deposit,
+            authorized: false,
+        };
+        Challenges::<T>::insert(deadline, 0u16, challenge);
+        PendingChallenges::<T>::insert(&provider, 1u32);
+        PendingChallengesByBucket::<T>::insert(bucket_id, &provider, 1u32);
+        NextChallengeIndex::<T>::insert(deadline, 1u16);
+        let caller = funded_account::<T>("caller", 0);
+        set_block_number::<T>(deadline.saturating_add(1u32.into()));
+
+        #[extrinsic_call]
+        resolve_expired_challenge(
+            RawOrigin::Signed(caller),
+            storage_primitives::ChallengeId { deadline, index: 0 },
+        );
+
+        assert!(Challenges::<T>::get(deadline, 0).is_none());
+    }
+
     impl_benchmark_test_suite!(Pallet, crate::mock::new_test_ext(), crate::mock::Test);
 }

@@ -665,8 +665,10 @@ fn respond_to_challenge_superseded_cost_split_block_96_plus() {
     });
 }
 
+/// Two challenges at one deadline are resolved one at a time; resolving the
+/// first leaves the second addressable at its own index.
 #[test]
-fn challenge_slashes_multiple_challenges_in_sweep() {
+fn two_challenges_same_deadline_resolve_independently() {
     new_test_ext().execute_with(|| {
         frame_system::Pallet::<Test>::set_block_number(1);
 
@@ -719,10 +721,23 @@ fn challenge_slashes_multiple_challenges_in_sweep() {
         assert!(Challenges::<Test>::get(101, 0).is_some());
         assert!(Challenges::<Test>::get(101, 1).is_some());
 
-        // Advance past deadline — the sweep at block 102 covers deadline 101
-        run_to_block(102);
+        System::set_block_number(102);
+        assert_ok!(StorageProvider::resolve_expired_challenge(
+            RuntimeOrigin::signed(4),
+            ChallengeId {
+                deadline: 101,
+                index: 0,
+            }
+        ));
+        assert!(Challenges::<Test>::get(101, 1).is_some());
+        assert_ok!(StorageProvider::resolve_expired_challenge(
+            RuntimeOrigin::signed(5),
+            ChallengeId {
+                deadline: 101,
+                index: 1,
+            }
+        ));
 
-        // Both providers should be slashed
         let provider2 = Providers::<Test>::get(2).unwrap();
         assert_eq!(provider2.stake, 0);
         assert_eq!(provider2.stats.challenges_failed, 1);
@@ -1147,7 +1162,7 @@ fn challenge_count_per_deadline_is_capped() {
 mod challenge_tests {
     use super::*;
     use codec::Encode;
-    use frame_support::{traits::Hooks, BoundedVec};
+    use frame_support::{dispatch::Pays, traits::Hooks, BoundedVec};
     use sp_core::{Pair, H256};
     use storage_primitives::{
         blake2_256, BucketSnapshot, ChallengeId, ChunkLocation, Commitment, EndAction, MerkleProof,
@@ -1556,6 +1571,27 @@ mod challenge_tests {
         });
     }
 
+    /// Without a canonical snapshot there is nothing a `Superseded` claim can
+    /// point at, so it is rejected and the challenge stays open.
+    #[test]
+    fn superseded_is_rejected_without_snapshot() {
+        new_test_ext().execute_with(|| {
+            let id = open_challenge();
+            Buckets::<Test>::mutate(0u64, |bucket| {
+                bucket.as_mut().unwrap().snapshot = None;
+            });
+            assert_noop!(
+                StorageProvider::respond_to_challenge(
+                    RuntimeOrigin::signed(2),
+                    id,
+                    ChallengeResponse::Superseded,
+                ),
+                Error::<Test>::InvalidSupersededClaim
+            );
+            assert_challenge_still_open();
+        });
+    }
+
     /// A rejected response is not final: the provider can still answer
     /// correctly before the deadline and defend the challenge.
     #[test]
@@ -1828,6 +1864,182 @@ mod challenge_tests {
                     },
                 ),
                 Error::<Test>::ChallengeExpired
+            );
+        });
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // resolve_expired_challenge — lazy timeout slashing
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// Challenge from account 3 against provider 2 at block 1: deadline 101,
+    /// index 0.
+    fn open_challenge() -> ChallengeId<u64> {
+        System::set_block_number(1);
+        let (mmr_root, _, _) = single_chunk_proof(b"chunk-0");
+        setup_primary_with_snapshot(mmr_root, 0, 1);
+        assert_ok!(StorageProvider::challenge_checkpoint(
+            RuntimeOrigin::signed(3),
+            0,
+            2,
+            ChunkLocation {
+                leaf_index: 0,
+                chunk_index: 0,
+            },
+        ));
+        ChallengeId {
+            deadline: 101,
+            index: 0,
+        }
+    }
+
+    /// Anyone may resolve an expired challenge; the call is free, the whole
+    /// stake moves to the Treasury, the challenger gets the deposit back and
+    /// the provider's pending counters drop so its exits unblock.
+    #[test]
+    fn resolve_expired_challenge_slashes_refunds_and_clears() {
+        new_test_ext().execute_with(|| {
+            let id = open_challenge();
+            let stake = Providers::<Test>::get(2).unwrap().stake;
+            let treasury_before = Balances::free_balance(999);
+            let issuance_before = Balances::total_issuance();
+            assert_eq!(held(HoldReason::ChallengeDeposit, 3), 100);
+
+            System::set_block_number(102);
+            let post =
+                StorageProvider::resolve_expired_challenge(RuntimeOrigin::signed(5), id).unwrap();
+            assert_eq!(post.pays_fee, Pays::No);
+
+            let provider = Providers::<Test>::get(2).unwrap();
+            assert_eq!(provider.stake, 0);
+            assert_eq!(provider.stats.challenges_failed, 1);
+            assert_eq!(Balances::free_balance(999), treasury_before + stake);
+            assert_eq!(Balances::total_issuance(), issuance_before);
+            assert_eq!(held(HoldReason::ChallengeDeposit, 3), 0);
+            assert_eq!(PendingChallenges::<Test>::get(2), 0);
+            assert_eq!(PendingChallengesByBucket::<Test>::get(0, 2), 0);
+            assert!(Challenges::<Test>::get(101, 0).is_none());
+            assert_eq!(NextChallengeIndex::<Test>::get(101), 0);
+            let expected = RuntimeEvent::StorageProvider(crate::Event::ChallengeSlashed {
+                challenge_id: id,
+                provider: 2,
+                slashed_amount: stake,
+            });
+            assert!(System::events().iter().any(|r| r.event == expected));
+        });
+    }
+
+    /// Until the deadline passes the provider may still respond, so resolving
+    /// is rejected — including at the deadline block itself.
+    #[test]
+    fn resolve_expired_challenge_fails_before_deadline() {
+        new_test_ext().execute_with(|| {
+            let id = open_challenge();
+            for anchor in [100u64, 101] {
+                System::set_block_number(anchor);
+                assert_noop!(
+                    StorageProvider::resolve_expired_challenge(RuntimeOrigin::signed(5), id),
+                    Error::<Test>::ChallengeNotExpired
+                );
+            }
+        });
+    }
+
+    /// A challenge resolves once; the second attempt pays a fee and fails.
+    #[test]
+    fn resolve_expired_challenge_fails_twice() {
+        new_test_ext().execute_with(|| {
+            let id = open_challenge();
+            System::set_block_number(102);
+            assert_ok!(StorageProvider::resolve_expired_challenge(
+                RuntimeOrigin::signed(5),
+                id
+            ));
+            assert_noop!(
+                StorageProvider::resolve_expired_challenge(RuntimeOrigin::signed(5), id),
+                Error::<Test>::ChallengeNotFound
+            );
+        });
+    }
+
+    /// Respond and resolve are mutually exclusive: whichever consumes the
+    /// challenge first leaves `ChallengeNotFound` for the other.
+    #[test]
+    fn respond_then_resolve_fails() {
+        new_test_ext().execute_with(|| {
+            System::set_block_number(1);
+            let chunk_data = b"chunk-0".to_vec();
+            let (mmr_root, mmr_proof, chunk_proof) = single_chunk_proof(&chunk_data);
+            setup_primary_with_snapshot(mmr_root, 0, 1);
+            assert_ok!(StorageProvider::challenge_checkpoint(
+                RuntimeOrigin::signed(3),
+                0,
+                2,
+                ChunkLocation {
+                    leaf_index: 0,
+                    chunk_index: 0,
+                },
+            ));
+            let id = ChallengeId {
+                deadline: 101u64,
+                index: 0u16,
+            };
+
+            System::set_block_number(101);
+            assert_ok!(StorageProvider::respond_to_challenge(
+                RuntimeOrigin::signed(2),
+                id,
+                ChallengeResponse::Proof {
+                    chunk_data: make_chunk_bv(&chunk_data),
+                    mmr_proof,
+                    chunk_proof,
+                },
+            ));
+            System::set_block_number(102);
+            assert_noop!(
+                StorageProvider::resolve_expired_challenge(RuntimeOrigin::signed(5), id),
+                Error::<Test>::ChallengeNotFound
+            );
+        });
+    }
+
+    #[test]
+    fn resolve_then_respond_fails() {
+        new_test_ext().execute_with(|| {
+            System::set_block_number(1);
+            let chunk_data = b"chunk-0".to_vec();
+            let (mmr_root, mmr_proof, chunk_proof) = single_chunk_proof(&chunk_data);
+            setup_primary_with_snapshot(mmr_root, 0, 1);
+            assert_ok!(StorageProvider::challenge_checkpoint(
+                RuntimeOrigin::signed(3),
+                0,
+                2,
+                ChunkLocation {
+                    leaf_index: 0,
+                    chunk_index: 0,
+                },
+            ));
+            let id = ChallengeId {
+                deadline: 101u64,
+                index: 0u16,
+            };
+
+            System::set_block_number(102);
+            assert_ok!(StorageProvider::resolve_expired_challenge(
+                RuntimeOrigin::signed(5),
+                id
+            ));
+            assert_noop!(
+                StorageProvider::respond_to_challenge(
+                    RuntimeOrigin::signed(2),
+                    id,
+                    ChallengeResponse::Proof {
+                        chunk_data: make_chunk_bv(&chunk_data),
+                        mmr_proof,
+                        chunk_proof,
+                    },
+                ),
+                Error::<Test>::ChallengeNotFound
             );
         });
     }

@@ -365,8 +365,10 @@ pub mod pallet {
     >;
 
     /// Next stable challenge index to allocate for a given deadline block.
-    /// Monotonically increasing per deadline; never decremented when a
-    /// challenge is resolved, guaranteeing index stability for siblings.
+    /// Monotonically increasing per deadline and never decremented when a
+    /// challenge is resolved, so sibling ids stay valid. Removed by
+    /// `resolve_expired_challenge`; a deadline whose challenges were all
+    /// answered keeps its entry.
     #[pallet::storage]
     pub type NextChallengeIndex<T: Config> =
         StorageMap<_, Blake2_128Concat, BlockNumberFor<T>, u16, ValueQuery>;
@@ -1227,6 +1229,8 @@ pub mod pallet {
         ChallengeNotFound,
         /// The response deadline has passed.
         ChallengeExpired,
+        /// The deadline has not passed; the provider may still respond.
+        ChallengeNotExpired,
         /// Only the challenged provider may respond.
         NotChallengeProvider,
         /// The chunk or MMR proof does not verify. The challenge stays open;
@@ -2689,7 +2693,8 @@ pub mod pallet {
         /// A valid response settles the deposit between challenger and
         /// provider. An invalid one is rejected (`InvalidProof`,
         /// `InvalidDeletionClaim`, `InvalidSupersededClaim`): the fee is paid
-        /// and the challenge stays open until the deadline.
+        /// and the challenge stays open until the deadline. An unanswered
+        /// challenge is slashed by `resolve_expired_challenge`.
         #[pallet::call_index(41)]
         #[pallet::weight(match response {
             ChallengeResponse::Proof { .. } => T::WeightInfo::respond_to_challenge_proof(),
@@ -2862,6 +2867,35 @@ pub mod pallet {
             });
 
             Ok(())
+        }
+
+        /// Slash a provider whose challenge expired without a response.
+        ///
+        /// Anyone may call this; it is free on success. Slashes the provider's
+        /// whole stake to the Treasury, refunds the challenger's deposit and
+        /// clears the pending-challenge counters that block the provider's
+        /// exits. A provider may call it against itself to unblock
+        /// `complete_deregister`.
+        ///
+        /// Errors: `ChallengeNotExpired` while the provider may still respond
+        /// (`anchor <= deadline`); `ChallengeNotFound` once resolved.
+        #[pallet::call_index(45)]
+        #[pallet::weight(T::WeightInfo::resolve_expired_challenge())]
+        pub fn resolve_expired_challenge(
+            origin: OriginFor<T>,
+            challenge_id: ChallengeId<BlockNumberFor<T>>,
+        ) -> DispatchResultWithPostInfo {
+            ensure_signed(origin)?;
+            ensure!(
+                Self::current_anchor_block() > challenge_id.deadline,
+                Error::<T>::ChallengeNotExpired
+            );
+            let challenge = Challenges::<T>::take(challenge_id.deadline, challenge_id.index)
+                .ok_or(Error::<T>::ChallengeNotFound)?;
+            NextChallengeIndex::<T>::remove(challenge_id.deadline);
+            Self::decrement_pending(challenge.bucket_id, &challenge.provider);
+            Self::slash_provider_for_failed_challenge(&challenge, challenge_id);
+            Ok(Pays::No.into())
         }
 
         // ─────────────────────────────────────────────────────────────────────
