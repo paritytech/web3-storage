@@ -34,6 +34,12 @@ RELAY_PORT := "9900"
 CHAIN_PORT := "2222"
 PROVIDER_PORT := "3333"
 
+# Provider node settings (override with: just PROVIDER_STORAGE_PATH=/tmp/p2 start-provider)
+PROVIDER_BACKEND := "rocksdb"
+PROVIDER_STORAGE_PATH := "./provider-data"
+PROVIDER_KEYFILE := ""
+PROVIDER_KEY_SCHEME := ""
+
 # Network URLs (constructed from ports)
 RELAY_WS := "ws://127.0.0.1:" + RELAY_PORT
 CHAIN_WS := "ws://127.0.0.1:" + CHAIN_PORT
@@ -185,12 +191,12 @@ start-e2e-chain RUNTIME="web3-storage-paseo": check
 
 # Start the storage provider node (without registering on-chain)
 # Examples:
-#   just start-provider                                            # default backend in ./provider-data, //Alice key, port 3333
-#   just start-provider BACKEND=rocksdb STORAGE_PATH=/tmp/rocks    # pick the engine and where it stores
-#   just start-provider PORT=3334 STORAGE_PATH=/tmp/p2             # second provider, separate data dir
-#   just start-provider KEYFILE=/path/to/seed                      # custom key from file
-#   just start-provider KEY_SCHEME=ed25519                         # non-sr25519 signing key
-start-provider BACKEND="rocksdb" PORT=PROVIDER_PORT STORAGE_PATH="./provider-data" KEYFILE="" KEY_SCHEME="": build-provider
+#   just start-provider                                                   # rocksdb in ./provider-data, //Alice key, port 3333
+#   just PROVIDER_STORAGE_PATH=/tmp/rocks start-provider                  # pick where it stores
+#   just PROVIDER_PORT=3334 PROVIDER_STORAGE_PATH=/tmp/p2 start-provider  # second provider, separate data dir
+#   just PROVIDER_KEYFILE=/path/to/seed start-provider                    # custom key from file
+#   just PROVIDER_KEY_SCHEME=ed25519 start-provider                       # non-sr25519 signing key
+start-provider BACKEND=PROVIDER_BACKEND PORT=PROVIDER_PORT STORAGE_PATH=PROVIDER_STORAGE_PATH KEYFILE=PROVIDER_KEYFILE KEY_SCHEME=PROVIDER_KEY_SCHEME: build-provider
     #!/usr/bin/env bash
     set -euo pipefail
     echo ""
@@ -220,12 +226,10 @@ start-provider BACKEND="rocksdb" PORT=PROVIDER_PORT STORAGE_PATH="./provider-dat
         --bind-addr "0.0.0.0:{{PORT}}" \
         --chain-rpc "{{ CHAIN_WS }}"
 
-# Register on-chain then start the provider node (original behavior)
-# Registration is a chain-only extrinsic, so it must run first: start-provider
+# Register on-chain, then start the provider node. Uses the same PROVIDER_*
+# variables as start-provider. Registration must come first: start-provider
 # runs in the foreground and never returns.
-register-then-start-provider BACKEND="rocksdb" PORT=PROVIDER_PORT STORAGE_PATH="./provider-data" KEYFILE="" KEY_SCHEME="":
-    just register-provider "{{KEYFILE}}" "{{KEY_SCHEME}}"
-    just start-provider BACKEND="{{BACKEND}}" PORT="{{PORT}}" STORAGE_PATH="{{STORAGE_PATH}}" KEYFILE="{{KEYFILE}}" KEY_SCHEME="{{KEY_SCHEME}}"
+register-then-start-provider: (register-provider PROVIDER_KEYFILE PROVIDER_KEY_SCHEME) start-provider
 
 # Register provider on-chain (idempotent). Requires a running chain.
 # Called automatically by register-then-start-provider, or run standalone.
