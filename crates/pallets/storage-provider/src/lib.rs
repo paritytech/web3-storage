@@ -1650,14 +1650,12 @@ pub mod pallet {
             Ok(())
         }
 
-        /// Redeem provider-signed primary terms: create a bucket and its first
-        /// primary agreement in one call.
+        /// Redeem provider-signed primary terms. Equivalent to
+        /// [`Pallet::create_bucket`] followed by
+        /// [`Pallet::add_primary_provider`], in one transaction.
         ///
         /// The provider signs a SCALE-encoded [`AgreementTermsOf<T>`] with
         /// `bucket: BucketTarget::New` off-chain; the owner submits it here.
-        ///
-        /// Equivalent to [`Pallet::create_bucket`] followed by
-        /// [`Pallet::add_primary_provider`], in one transaction.
         ///
         /// `visibility` sets the new bucket's read visibility (see
         /// [`Visibility`]); it is the owner's choice and not part of the
@@ -1679,9 +1677,9 @@ pub mod pallet {
         /// Admin only. Redeem provider-signed primary terms against an
         /// existing bucket, adding the provider to its primary set.
         ///
-        /// The quote must name `bucket: BucketTarget::Existing(bucket_id)`.
-        /// Works on a bucket whose earlier agreements have all ended and on a
-        /// frozen bucket.
+        /// The quote must name `bucket: BucketTarget::Existing(bucket_id)`
+        /// and the caller as `terms.owner`. Works on a bucket whose earlier
+        /// agreements have all ended and on a frozen bucket.
         ///
         /// The new provider has none of the bucket's data and is not in the
         /// current snapshot's signer bitfield.

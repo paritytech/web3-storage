@@ -88,11 +88,9 @@ impl<AccountId: Encode, Balance: Encode, BlockNumber: Encode>
 )]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum BucketTarget {
-    /// A bucket created when the quote is redeemed. Only
-    /// `create_bucket_with_primary` accepts it.
+    /// A bucket created when the quote is redeemed.
     New,
-    /// An existing bucket. Only `add_primary_provider` and
-    /// `add_replica_provider` accept it, and only for this bucket id.
+    /// An existing bucket. The redeeming call must target this bucket id.
     Existing(crate::BucketId),
 }
 

@@ -262,8 +262,8 @@ impl<T: Config> Pallet<T> {
             );
         }
 
-        // `sync_balance` is held on top of the payment and released from
-        // `role` by `finalize_agreement`.
+        // A replica's `sync_balance` is held with the payment;
+        // `finalize_agreement` releases it.
         let (role, sync_balance) = match kind {
             QuoteKind::Primary => {
                 ensure!(

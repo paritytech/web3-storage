@@ -123,7 +123,7 @@ async function main() {
     /** Negotiate terms for a direct precompile call signed by `owner`. */
     const negotiateAbiTerms = (
       owner: ChainSigner,
-      req: { maxBytes: bigint; duration: number; pricePerByte: bigint; bucketId?: bigint }
+      req: Parameters<typeof negotiatePrecompileTerms>[2]
     ) => negotiatePrecompileTerms(providerUrl, owner, req);
 
     // ====================================================================

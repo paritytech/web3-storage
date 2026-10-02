@@ -82,9 +82,7 @@ where
     })
 }
 
-/// The id the next bucket-creating call assigns. `NextBucketId` is
-/// incremented inside the extrinsic, so read it before dispatch to return
-/// the id of the bucket this call creates.
+/// `NextBucketId` before dispatch: the id the bucket-creating call assigns.
 fn pending_bucket_id<Runtime: pallet_storage_provider::Config>() -> BucketId {
     pallet_storage_provider::NextBucketId::<Runtime>::get()
 }

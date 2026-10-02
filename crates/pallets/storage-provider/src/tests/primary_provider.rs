@@ -4,6 +4,7 @@
 //! assignment as separate operations.
 
 use super::*;
+use frame_support::traits::Get;
 use storage_primitives::{EndAction, Visibility};
 
 /// Signed primary terms for an existing bucket. Build the quote before
@@ -35,16 +36,16 @@ fn add_primary(
 #[test]
 fn create_bucket_rejects_min_providers_above_the_cap() {
     new_test_ext().execute_with(|| {
-        // `MaxPrimaryProviders` is 5 in the mock.
+        let cap = <Test as Config>::MaxPrimaryProviders::get();
         assert_noop!(
-            StorageProvider::create_bucket(RuntimeOrigin::signed(1), 6, Visibility::Private),
+            StorageProvider::create_bucket(RuntimeOrigin::signed(1), cap + 1, Visibility::Private),
             Error::<Test>::InvalidMinProviders
         );
 
         // The cap itself is allowed.
         assert_ok!(StorageProvider::create_bucket(
             RuntimeOrigin::signed(1),
-            5,
+            cap,
             Visibility::Private
         ));
     });
@@ -57,7 +58,7 @@ fn add_primary_provider_works() {
         register_provider(2, 200);
         let bucket_id = create_bucket(1, 0);
 
-        assert_ok!(add_primary(1, bucket_id, 2, quote_for(2, 1, bucket_id)));
+        setup_added_primary(2, 1, bucket_id, 50, 100);
 
         let bucket = Buckets::<Test>::get(bucket_id).unwrap();
         assert_eq!(bucket.primary_providers.to_vec(), vec![2]);
@@ -216,16 +217,18 @@ fn add_primary_provider_rejects_duplicate_agreement() {
 fn add_primary_provider_rejects_full_primary_set() {
     new_test_ext().execute_with(|| {
         let bucket_id = create_bucket(1, 0);
-        // `MaxPrimaryProviders` is 5 in the mock.
-        for provider in 2..7u64 {
+        let cap: u32 = <Test as Config>::MaxPrimaryProviders::get();
+        let cap = u64::from(cap);
+        for provider in 2..2 + cap {
             register_provider(provider, 200);
             setup_added_primary(provider, 1, bucket_id, 50, 100);
         }
 
-        register_provider(7, 200);
-        let quote = quote_for(7, 1, bucket_id);
+        let extra = 2 + cap;
+        register_provider(extra, 200);
+        let quote = quote_for(extra, 1, bucket_id);
         assert_noop!(
-            add_primary(1, bucket_id, 7, quote),
+            add_primary(1, bucket_id, extra, quote),
             Error::<Test>::MaxPrimaryProvidersReached
         );
     });
