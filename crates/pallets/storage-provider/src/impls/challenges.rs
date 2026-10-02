@@ -193,8 +193,9 @@ impl<T: Config> Pallet<T> {
 
         // Bump the pending-challenge counters. These are decremented
         // exactly once per resolution (defended/invalid-response in
-        // `respond_to_challenge`, or timeout in the `on_initialize` sweep), so a
-        // fully-resolved provider/bucket returns to 0. They gate
+        // `respond_to_challenge`, withdrawn in `cancel_challenge`, or timeout
+        // in the `on_initialize` sweep), so a fully-resolved provider/bucket
+        // returns to 0. They gate
         // `complete_deregister` and agreement teardown so a provider can't
         // escape a live challenge.
         PendingChallenges::<T>::mutate(&provider, |n| *n = n.saturating_add(1));
@@ -265,12 +266,13 @@ impl<T: Config> Pallet<T> {
     }
 
     /// Decrement both pending-challenge counters for a resolved
-    /// `(bucket, provider)` challenge. Called from the two resolution
-    /// sites — `respond_to_challenge` (after the `take` consumes the
-    /// challenge, covering both the defended and invalid-response paths)
-    /// and the `on_initialize` sweep (per drained timed-out challenge) — never from
-    /// `slash_provider_for_failed_challenge`, which both sites share and
-    /// which would otherwise double-count. `saturating_sub` keeps the
+    /// `(bucket, provider)` challenge. Called from the three resolution
+    /// sites: `respond_to_challenge` (after the `take` consumes the
+    /// challenge, covering both the defended and invalid-response paths),
+    /// `cancel_challenge` (after its `take`), and the `on_initialize` sweep
+    /// (per drained timed-out challenge). Never called from
+    /// `slash_provider_for_failed_challenge`, which two of those sites share
+    /// and which would otherwise double-count. `saturating_sub` keeps the
     /// counters non-negative even if invariants are ever violated.
     pub(crate) fn decrement_pending(bucket_id: BucketId, provider: &T::AccountId) {
         PendingChallenges::<T>::mutate(provider, |n| *n = n.saturating_sub(1));

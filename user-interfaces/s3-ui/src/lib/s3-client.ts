@@ -174,6 +174,16 @@ export interface ChallengeSlashResult {
   blockHash: string;
 }
 
+export interface ChallengeCancelResult {
+  challengeId: { deadline: number; index: number };
+  bucketId: bigint;
+  provider: string;
+  challenger: string;
+  deposit: bigint;
+  blockNumber: number;
+  blockHash: string;
+}
+
 export interface QueryMatchingProvidersParams {
   query: {
     bytesNeeded: bigint;
@@ -531,6 +541,20 @@ export class S3Client {
     };
   }
 
+  /**
+   * Withdraw a challenge this account opened, before the provider responds
+   * and no later than the deadline. Finalized mode so the open-challenges
+   * refresh that follows does not return it.
+   */
+  async cancelChallenge(challengeId: { deadline: number; index: number }): Promise<void> {
+    const api = this.requireApi();
+    await submitTx(
+      api.tx.StorageProvider.cancel_challenge({ challenge_id: challengeId }),
+      this.requireOwner().signer,
+      { label: "cancel_challenge", mode: "finalized" },
+    );
+  }
+
   async getLeafChunkCount(bucketId: bigint, leafIndex: bigint): Promise<number> {
     const providerUrl = await this.getProviderUrl(bucketId);
     const params = new URLSearchParams({
@@ -588,6 +612,7 @@ export class S3Client {
     providerAddress: string,
     onDefended: (result: ChallengeDefenseResult) => void,
     onSlashed: (result: ChallengeSlashResult) => void,
+    onCancelled: (result: ChallengeCancelResult) => void,
   ): () => void {
     const api = this.requireApi();
     const sub = new Subscription();
@@ -626,6 +651,28 @@ export class S3Client {
               provider: p.provider,
               slashedAmount: p.slashed_amount,
               challengerReward: p.challenger_reward,
+              blockNumber: block.number,
+              blockHash: block.hash,
+            });
+          }
+        },
+        error: () => {},
+      }),
+    );
+
+    sub.add(
+      api.event.StorageProvider.ChallengeCancelled.watch().subscribe({
+        next: ({ block, events }) => {
+          for (const ev of events) {
+            const p = ev.payload;
+            if (p.challenge_id.deadline !== deadline) continue;
+            if (p.provider !== providerAddress) continue;
+            onCancelled({
+              challengeId: { deadline: p.challenge_id.deadline, index: p.challenge_id.index },
+              bucketId: BigInt(p.bucket_id),
+              provider: p.provider,
+              challenger: p.challenger,
+              deposit: p.deposit,
               blockNumber: block.number,
               blockHash: block.hash,
             });

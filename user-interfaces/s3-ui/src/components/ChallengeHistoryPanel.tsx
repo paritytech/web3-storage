@@ -15,25 +15,31 @@ interface ChallengeHistoryPanelProps {
 
 function HistoryEntry({ entry, explorerUrl }: { entry: ChallengeHistoryEntry; explorerUrl: (hash: string) => string }) {
   const isDefended = entry.status === "defended";
+  const isCancelled = entry.status === "cancelled";
+  const tone = isDefended
+    ? "text-emerald-700 dark:text-emerald-400"
+    : isCancelled
+      ? "text-muted-foreground"
+      : "text-red-700 dark:text-red-400";
 
   return (
     <div className={`rounded-lg border px-4 py-3 text-sm space-y-2 ${
-      isDefended ? "border-emerald-200 bg-emerald-500/5" : "border-red-200 bg-red-500/5"
+      isDefended
+        ? "border-emerald-200 bg-emerald-500/5"
+        : isCancelled
+          ? "border-border bg-muted/30"
+          : "border-red-200 bg-red-500/5"
     }`}>
       <div className="flex items-center justify-between">
-        <span className={`flex items-center gap-2 font-medium ${
-          isDefended ? "text-emerald-700 dark:text-emerald-400" : "text-red-700 dark:text-red-400"
-        }`}>
+        <span className={`flex items-center gap-2 font-medium ${tone}`}>
           {isDefended ? <CheckCircle2 className="h-4 w-4" /> : <XCircle className="h-4 w-4" />}
-          {isDefended ? "Defended" : "Slashed"}
+          {isDefended ? "Defended" : isCancelled ? "Cancelled" : "Slashed"}
         </span>
         <a
           href={explorerUrl(entry.blockHash)}
           target="_blank"
           rel="noopener noreferrer"
-          className={`text-xs hover:underline inline-flex items-center gap-0.5 ${
-            isDefended ? "text-emerald-700 dark:text-emerald-400" : "text-red-700 dark:text-red-400"
-          }`}
+          className={`text-xs hover:underline inline-flex items-center gap-0.5 ${tone}`}
         >
           Block #{entry.blockNumber}
           <ExternalLink className="h-3 w-3" />
@@ -65,7 +71,7 @@ function HistoryEntry({ entry, explorerUrl }: { entry: ChallengeHistoryEntry; ex
         </div>
       )}
 
-      {!isDefended && entry.slashDetails && (
+      {entry.status === "slashed" && entry.slashDetails && (
         <div className="grid grid-cols-2 gap-x-6 text-xs">
           <span className="text-muted-foreground">
             Slashed: <span className="text-foreground">{formatUnits(entry.slashDetails.slashedAmount)} tokens</span>

@@ -83,6 +83,7 @@ pub trait WeightInfo {
 	fn respond_to_challenge_proof() -> Weight;
 	fn respond_to_challenge_deleted() -> Weight;
 	fn respond_to_challenge_superseded() -> Weight;
+	fn cancel_challenge() -> Weight;
 	fn confirm_replica_sync() -> Weight;
 	fn top_up_replica_sync_balance() -> Weight;
 	fn on_initialize_slash_challenges(c: u32, ) -> Weight;
@@ -510,6 +511,18 @@ impl<T: frame_system::Config> WeightInfo for SubstrateWeight<T> {
 		Weight::from_parts(35_000_000, 6196)
 			.saturating_add(T::DbWeight::get().reads(5_u64))
 			.saturating_add(T::DbWeight::get().writes(4_u64))
+	}
+	/// Storage: `StorageProvider::Challenges` (r:1 w:1)
+	/// Storage: `StorageProvider::PendingChallenges` (r:1 w:1)
+	/// Storage: `StorageProvider::PendingChallengesByBucket` (r:1 w:1)
+	/// Storage: `Balances::Holds` (r:1 w:1)
+	/// Storage: `System::Account` (r:1 w:1)
+	fn cancel_challenge() -> Weight {
+		// Hand-written estimate until `/cmd bench` regenerates this file.
+		// TODO: needs re-benchmarking
+		Weight::from_parts(30_000_000, 6000)
+			.saturating_add(T::DbWeight::get().reads(5_u64))
+			.saturating_add(T::DbWeight::get().writes(5_u64))
 	}
 	/// Storage: `StorageProvider::Providers` (r:1 w:0)
 	/// Proof: `StorageProvider::Providers` (`max_values`: None, `max_size`: Some(364), added: 2839, mode: `MaxEncodedLen`)
@@ -978,6 +991,18 @@ impl WeightInfo for () {
 		Weight::from_parts(35_000_000, 6196)
 			.saturating_add(RocksDbWeight::get().reads(5_u64))
 			.saturating_add(RocksDbWeight::get().writes(4_u64))
+	}
+	/// Storage: `StorageProvider::Challenges` (r:1 w:1)
+	/// Storage: `StorageProvider::PendingChallenges` (r:1 w:1)
+	/// Storage: `StorageProvider::PendingChallengesByBucket` (r:1 w:1)
+	/// Storage: `Balances::Holds` (r:1 w:1)
+	/// Storage: `System::Account` (r:1 w:1)
+	fn cancel_challenge() -> Weight {
+		// Hand-written estimate until `/cmd bench` regenerates this file.
+		// TODO: needs re-benchmarking
+		Weight::from_parts(30_000_000, 6000)
+			.saturating_add(RocksDbWeight::get().reads(5_u64))
+			.saturating_add(RocksDbWeight::get().writes(5_u64))
 	}
 	/// Storage: `StorageProvider::Providers` (r:1 w:0)
 	/// Proof: `StorageProvider::Providers` (`max_values`: None, `max_size`: Some(364), added: 2839, mode: `MaxEncodedLen`)

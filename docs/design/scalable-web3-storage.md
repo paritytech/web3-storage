@@ -611,8 +611,9 @@ below):
    - Provider must respond with chunk data + Merkle proofs
    - The provider pays the response transaction fee from its own account—never
      from its stake (normal tx fee mechanism)
-   - Challenger can cancel anytime before the response (deposit returned, pays
-     only the cancel tx fee)
+   - Challenger can cancel anytime before the response and no later than the
+     deadline (deposit returned, pays only the cancel tx fee). Past the
+     deadline the outcome is settled by the sweep, even if it has not run yet
 
 3. Resolution
    - Valid proof: Challenge rejected. The provider's response fee is reimbursed
@@ -1251,7 +1252,7 @@ This is exactly why the general public gets no cost split—it closes the floodi
 
 2. **Only counterparties get the split**: A provider is made to bear a fraction of the cost only for its own members or agreement owners—accounts it *chose* to deal with (it accepted their agreement) or that the admin added.
 
-3. **Challenge cancellation**: Any challenger can cancel before the response, paying only the tx fee. If the provider serves off-chain after a challenge is initiated, the challenger cancels and the provider never even responds on-chain. Cancelled challenges leave no trace in the provider's stats (see next point).
+3. **Challenge cancellation**: Any challenger can cancel before the response and no later than the deadline, paying only the tx fee. If the provider serves off-chain after a challenge is initiated, the challenger cancels and the provider never even responds on-chain. Cancelled challenges leave no trace in the provider's stats (see next point). The deadline bound matters only when the sweep is behind: without it, a provider that missed its deadline could ask the challenger to cancel and escape a slash it already earned.
 
 4. **Reputation**: Challenge stats count only *responded-to* challenges (at resolution, never creation) and are split by tier—`challenges_received_authorized` vs `challenges_received_public`—so clients can weigh the two as they see fit. The challenges-*failed* count (the one that actually signals data loss) is unaffected, since the provider defends every one.
 

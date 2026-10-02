@@ -77,6 +77,8 @@ function ChallengesContent() {
         return <XCircle className="h-4 w-4 text-red-500" />
       case 'expired':
         return <Clock className="h-4 w-4 text-gray-500" />
+      case 'cancelled':
+        return <XCircle className="h-4 w-4 text-gray-500" />
       default:
         return null
     }
@@ -126,7 +128,7 @@ function ChallengesContent() {
       )}
 
       {/* Stats */}
-      <div className="grid gap-4 md:grid-cols-4">
+      <div className="grid gap-4 md:grid-cols-5">
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-gray-400">Pending</CardTitle>
@@ -164,6 +166,16 @@ function ChallengesContent() {
           <CardContent>
             <div className="text-2xl font-bold">
               {challenges.filter((c) => c.status === 'expired').length}
+            </div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium text-gray-400">Cancelled</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-gray-400">
+              {challenges.filter((c) => c.status === 'cancelled').length}
             </div>
           </CardContent>
         </Card>
@@ -292,6 +304,8 @@ function ChallengesContent() {
                           <span className="text-red-400 text-sm">Slashed</span>
                         ) : challenge.status === 'expired' ? (
                           <span className="text-gray-500 text-sm">Expired</span>
+                        ) : challenge.status === 'cancelled' ? (
+                          <span className="text-gray-500 text-sm">Cancelled by challenger</span>
                         ) : null}
                       </TableCell>
                     </TableRow>

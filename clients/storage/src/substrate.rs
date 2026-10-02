@@ -374,6 +374,13 @@ pub mod extrinsics {
             response,
         )
     }
+
+    /// Create a cancel_challenge extrinsic payload.
+    pub fn cancel_challenge(challenge_id: (u32, u16)) -> impl Payload {
+        api::tx()
+            .storage_provider()
+            .cancel_challenge(convert::challenge_id(challenge_id.0, challenge_id.1))
+    }
 }
 
 // Helper functions for common operations

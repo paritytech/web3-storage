@@ -381,9 +381,9 @@ pub mod pallet {
     /// Number of unresolved challenges currently outstanding against a
     /// provider, summed across every bucket. Incremented in `create_challenge`
     /// and decremented exactly once per resolution (defended/invalid-response
-    /// in `respond_to_challenge`, or timeout in the `on_initialize` sweep). Gates
-    /// `complete_deregister`: a provider cannot exit while still slashable for
-    /// a pending challenge.
+    /// in `respond_to_challenge`, withdrawn in `cancel_challenge`, or timeout
+    /// in the `on_initialize` sweep). Gates `complete_deregister`: a provider
+    /// cannot exit while still slashable for a pending challenge.
     #[pallet::storage]
     pub type PendingChallenges<T: Config> =
         StorageMap<_, Blake2_128Concat, T::AccountId, u32, ValueQuery>;
@@ -1100,6 +1100,21 @@ pub mod pallet {
             /// (`InvalidProof` etc).
             reason: SlashReason,
         },
+        /// The challenger withdrew the challenge before the provider
+        /// responded. The deposit went back to the challenger in full and
+        /// the provider's stats are untouched.
+        ChallengeCancelled {
+            /// The challenge.
+            challenge_id: ChallengeId<BlockNumberFor<T>>,
+            /// Bucket holding the challenged data.
+            bucket_id: BucketId,
+            /// The provider that was challenged.
+            provider: T::AccountId,
+            /// The account that opened the challenge.
+            challenger: T::AccountId,
+            /// Deposit released back to the challenger.
+            deposit: BalanceOf<T>,
+        },
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -1233,6 +1248,8 @@ pub mod pallet {
         ChallengeExpired,
         /// Only the challenged provider may respond.
         NotChallengeProvider,
+        /// Only the challenger who opened the challenge may cancel it.
+        NotChallengeChallenger,
         /// The provider did not sign the bucket's current snapshot, so there
         /// is no on-chain commitment to challenge; use `challenge_offchain`
         /// with a signed commitment instead.
@@ -2904,6 +2921,56 @@ pub mod pallet {
                 response_time_blocks: response_time,
                 challenger_cost,
                 provider_cost,
+            });
+
+            Ok(())
+        }
+
+        /// Challenger only. Withdraw a challenge before the provider has
+        /// responded: the challenge is removed and the deposit is released in
+        /// full. The provider's stats do not change.
+        ///
+        /// Only valid up to the deadline, like `respond_to_challenge`. Past
+        /// it the outcome is settled: the deadline sweep slashes the provider
+        /// and cancelling is rejected (`ChallengeExpired`).
+        #[pallet::call_index(44)]
+        #[pallet::weight(T::WeightInfo::cancel_challenge())]
+        pub fn cancel_challenge(
+            origin: OriginFor<T>,
+            challenge_id: ChallengeId<BlockNumberFor<T>>,
+        ) -> DispatchResult {
+            let who = ensure_signed(origin)?;
+
+            // Same shape as `respond_to_challenge`: `take` consumes exactly
+            // this challenge, and any `?`-bail below reverts it.
+            let challenge = Challenges::<T>::take(challenge_id.deadline, challenge_id.index)
+                .ok_or(Error::<T>::ChallengeNotFound)?;
+
+            ensure!(
+                challenge.challenger == who,
+                Error::<T>::NotChallengeChallenger
+            );
+
+            let anchor_block = Self::current_anchor_block();
+            ensure!(
+                anchor_block <= challenge_id.deadline,
+                Error::<T>::ChallengeExpired
+            );
+
+            // Cancellation is a resolution: decrement the pending counters
+            // exactly once, mirroring the increment in `create_challenge`.
+            Self::decrement_pending(challenge.bucket_id, &challenge.provider);
+
+            // Nobody posted a response, so there is no cost to split: the
+            // whole deposit goes back.
+            Self::release_challenge_deposit(&who, challenge.deposit);
+
+            Self::deposit_event(Event::ChallengeCancelled {
+                challenge_id,
+                bucket_id: challenge.bucket_id,
+                provider: challenge.provider,
+                challenger: who,
+                deposit: challenge.deposit,
             });
 
             Ok(())

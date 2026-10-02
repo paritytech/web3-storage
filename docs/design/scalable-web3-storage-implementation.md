@@ -704,9 +704,9 @@ pub struct Challenge<T: Config> {
 /// Number of unresolved challenges currently outstanding against a
 /// provider, summed across every bucket. Incremented in `create_challenge`
 /// and decremented exactly once per resolution (defended/invalid-response
-/// in `respond_to_challenge`, or timeout in the `on_initialize` sweep).
-/// Gates `complete_deregister`: a provider cannot exit while still
-/// slashable for a pending challenge.
+/// in `respond_to_challenge`, withdrawn in `cancel_challenge`, or timeout
+/// in the `on_initialize` sweep). Gates `complete_deregister`: a provider
+/// cannot exit while still slashable for a pending challenge.
 #[pallet::storage]
 pub type PendingChallenges<T: Config> =
     StorageMap<_, Blake2_128Concat, T::AccountId, u32, ValueQuery>;
@@ -993,6 +993,15 @@ pub enum Event<T: Config> {
         slashed_amount: BalanceOf<T>,
         /// Timeout, or which response type failed verification (see `SlashReason`)
         reason: SlashReason,
+    },
+    /// Challenger withdrew before any response. Deposit released in full,
+    /// provider stats untouched.
+    ChallengeCancelled {
+        challenge_id: ChallengeId<BlockNumberFor<T>>,
+        bucket_id: BucketId,
+        provider: T::AccountId,
+        challenger: T::AccountId,
+        deposit: BalanceOf<T>,
     },
 
 }
@@ -1824,6 +1833,17 @@ impl<T: Config> Pallet<T> {
         origin: OriginFor<T>,
         challenge_id: ChallengeId<BlockNumberFor<T>>,
         response: ChallengeResponse<T>,
+    ) -> DispatchResult;
+
+    /// Challenger only. Withdraw a challenge before the provider has
+    /// responded: the challenge is removed and the deposit released in full.
+    /// The provider's stats are untouched. Only valid up to the deadline,
+    /// like `respond_to_challenge`: past it the sweep slashes the provider
+    /// and cancelling is rejected (`ChallengeExpired`).
+    #[pallet::weight(...)]
+    pub fn cancel_challenge(
+        origin: OriginFor<T>,
+        challenge_id: ChallengeId<BlockNumberFor<T>>,
     ) -> DispatchResult;
 }
 

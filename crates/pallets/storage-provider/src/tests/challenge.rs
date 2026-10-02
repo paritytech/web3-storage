@@ -1145,6 +1145,229 @@ fn challenge_count_per_deadline_is_capped() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// cancel_challenge
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Open a checkpoint challenge from `challenger` against provider 2 on
+/// `bucket_id`. Every call in the same block gets deadline 101
+/// (block 1 + ChallengeTimeout 100) with the next free index.
+fn open_challenge(challenger: u64, bucket_id: u64) {
+    assert_ok!(StorageProvider::challenge_checkpoint(
+        RuntimeOrigin::signed(challenger),
+        bucket_id,
+        2,
+        ChunkLocation {
+            leaf_index: 0,
+            chunk_index: 0,
+        },
+    ));
+}
+
+#[test]
+fn cancel_challenge_refunds_deposit_and_resolves_counters() {
+    new_test_ext().execute_with(|| {
+        frame_system::Pallet::<Test>::set_block_number(1);
+        let bucket_id = setup_with_snapshot(2, 1);
+        let free_before = Balances::free_balance(3);
+
+        open_challenge(3, bucket_id);
+        let challenge_id = ChallengeId {
+            deadline: 101,
+            index: 0,
+        };
+        assert_eq!(held(HoldReason::ChallengeDeposit, 3), 100);
+        assert_eq!(PendingChallenges::<Test>::get(2), 1);
+        assert_eq!(PendingChallengesByBucket::<Test>::get(bucket_id, 2), 1);
+
+        run_to_block(5);
+        assert_ok!(StorageProvider::cancel_challenge(
+            RuntimeOrigin::signed(3),
+            challenge_id
+        ));
+
+        assert!(Challenges::<Test>::get(101, 0).is_none());
+        assert_eq!(held(HoldReason::ChallengeDeposit, 3), 0);
+        assert_eq!(Balances::free_balance(3), free_before);
+        assert_eq!(PendingChallenges::<Test>::get(2), 0);
+        assert_eq!(PendingChallengesByBucket::<Test>::get(bucket_id, 2), 0);
+
+        // Cancellation does not change the provider's stats.
+        let stats = Providers::<Test>::get(2).unwrap().stats;
+        assert_eq!(stats.challenges_received_authorized, 0);
+        assert_eq!(stats.challenges_received_public, 0);
+        assert_eq!(stats.challenges_failed, 0);
+
+        let expected_event = RuntimeEvent::StorageProvider(crate::Event::ChallengeCancelled {
+            challenge_id,
+            bucket_id,
+            provider: 2,
+            challenger: 3,
+            deposit: 100,
+        });
+        assert!(frame_system::Pallet::<Test>::events()
+            .iter()
+            .any(|r| r.event == expected_event));
+        assert_ok!(StorageProvider::do_try_state());
+    });
+}
+
+#[test]
+fn cancel_challenge_fails_not_challenger() {
+    new_test_ext().execute_with(|| {
+        frame_system::Pallet::<Test>::set_block_number(1);
+        let bucket_id = setup_with_snapshot(2, 1);
+        open_challenge(3, bucket_id);
+        let challenge_id = ChallengeId {
+            deadline: 101,
+            index: 0,
+        };
+
+        // Neither the challenged provider nor a stranger may cancel.
+        assert_noop!(
+            StorageProvider::cancel_challenge(RuntimeOrigin::signed(2), challenge_id),
+            Error::<Test>::NotChallengeChallenger
+        );
+        assert_noop!(
+            StorageProvider::cancel_challenge(RuntimeOrigin::signed(4), challenge_id),
+            Error::<Test>::NotChallengeChallenger
+        );
+        assert!(Challenges::<Test>::get(101, 0).is_some());
+    });
+}
+
+#[test]
+fn cancel_challenge_fails_unknown_id() {
+    new_test_ext().execute_with(|| {
+        frame_system::Pallet::<Test>::set_block_number(1);
+        assert_noop!(
+            StorageProvider::cancel_challenge(
+                RuntimeOrigin::signed(3),
+                ChallengeId {
+                    deadline: 101,
+                    index: 0,
+                }
+            ),
+            Error::<Test>::ChallengeNotFound
+        );
+    });
+}
+
+/// The deadline block itself is still inside the window, the same `<=`
+/// contract `respond_to_challenge` uses.
+#[test]
+fn cancel_challenge_works_at_deadline_block() {
+    new_test_ext().execute_with(|| {
+        frame_system::Pallet::<Test>::set_block_number(1);
+        let bucket_id = setup_with_snapshot(2, 1);
+        open_challenge(3, bucket_id);
+
+        frame_system::Pallet::<Test>::set_block_number(101);
+        assert_ok!(StorageProvider::cancel_challenge(
+            RuntimeOrigin::signed(3),
+            ChallengeId {
+                deadline: 101,
+                index: 0,
+            }
+        ));
+        assert!(Challenges::<Test>::get(101, 0).is_none());
+        assert_eq!(held(HoldReason::ChallengeDeposit, 3), 0);
+        assert_ok!(StorageProvider::do_try_state());
+    });
+}
+
+/// Past the deadline the outcome is settled by the sweep. Advance the clock
+/// without running hooks, which is the state a sweep backlog leaves the
+/// challenge in: still stored, but no longer cancellable.
+#[test]
+fn cancel_challenge_fails_after_deadline() {
+    new_test_ext().execute_with(|| {
+        frame_system::Pallet::<Test>::set_block_number(1);
+        let bucket_id = setup_with_snapshot(2, 1);
+        open_challenge(3, bucket_id);
+        let challenge_id = ChallengeId {
+            deadline: 101,
+            index: 0,
+        };
+
+        frame_system::Pallet::<Test>::set_block_number(102);
+        assert_noop!(
+            StorageProvider::cancel_challenge(RuntimeOrigin::signed(3), challenge_id),
+            Error::<Test>::ChallengeExpired
+        );
+        assert!(Challenges::<Test>::get(101, 0).is_some());
+        assert_eq!(held(HoldReason::ChallengeDeposit, 3), 100);
+    });
+}
+
+#[test]
+fn cancel_challenge_fails_after_response() {
+    new_test_ext().execute_with(|| {
+        frame_system::Pallet::<Test>::set_block_number(1);
+        let bucket_id = setup_with_snapshot(2, 1);
+        open_challenge(3, bucket_id);
+        let challenge_id = ChallengeId {
+            deadline: 101,
+            index: 0,
+        };
+
+        // A valid `Superseded` defense needs a newer canonical root.
+        run_to_block(2);
+        Buckets::<Test>::mutate(bucket_id, |maybe_bucket| {
+            let bucket = maybe_bucket.as_mut().unwrap();
+            bucket.snapshot = Some(BucketSnapshot {
+                commitment: Commitment {
+                    mmr_root: H256::repeat_byte(0xCD),
+                    start_seq: 0,
+                    leaf_count: 10,
+                },
+                checkpoint_block: 1,
+                primary_signers: vec![0x01],
+            });
+        });
+        assert_ok!(StorageProvider::respond_to_challenge(
+            RuntimeOrigin::signed(2),
+            challenge_id,
+            crate::ChallengeResponse::Superseded,
+        ));
+
+        assert_noop!(
+            StorageProvider::cancel_challenge(RuntimeOrigin::signed(3), challenge_id),
+            Error::<Test>::ChallengeNotFound
+        );
+    });
+}
+
+/// Two challengers, same provider, same deadline. Cancelling one leaves the
+/// other addressable, funded, and counted.
+#[test]
+fn cancel_challenge_leaves_sibling_untouched() {
+    new_test_ext().execute_with(|| {
+        frame_system::Pallet::<Test>::set_block_number(1);
+        let bucket_id = setup_with_snapshot(2, 1);
+        open_challenge(3, bucket_id);
+        open_challenge(4, bucket_id);
+        assert_eq!(PendingChallenges::<Test>::get(2), 2);
+
+        assert_ok!(StorageProvider::cancel_challenge(
+            RuntimeOrigin::signed(3),
+            ChallengeId {
+                deadline: 101,
+                index: 0,
+            }
+        ));
+
+        assert!(Challenges::<Test>::get(101, 0).is_none());
+        let sibling = Challenges::<Test>::get(101, 1).unwrap();
+        assert_eq!(sibling.challenger, 4);
+        assert_eq!(held(HoldReason::ChallengeDeposit, 3), 0);
+        assert_eq!(held(HoldReason::ChallengeDeposit, 4), 100);
+        assert_eq!(PendingChallenges::<Test>::get(2), 1);
+        assert_eq!(PendingChallengesByBucket::<Test>::get(bucket_id, 2), 1);
+        assert_ok!(StorageProvider::do_try_state());
+    });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // PR #125 challenge-overhaul tests.
 //
 // Kept in a nested module so they coexist with dev's top-level challenge tests

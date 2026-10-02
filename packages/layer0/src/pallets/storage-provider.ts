@@ -412,6 +412,19 @@ export async function respondToChallenge(
   );
 }
 
+export async function cancelChallenge(
+  api: ParachainApi,
+  challenger: ChainSigner,
+  challengeId: { deadline: number; index: number },
+  opts: SubmitOpts = {},
+) {
+  return submitTx(
+    api.tx.StorageProvider.cancel_challenge({ challenge_id: challengeId }),
+    challenger.signer,
+    { label: "cancel_challenge", ...opts },
+  );
+}
+
 export async function endAgreement(
   api: ParachainApi,
   client: ChainSigner,
