@@ -10,7 +10,9 @@ and the design disagree, update the site.
 | File | Content |
 | --- | --- |
 | `docs/site/index.html` | Landing page. Lists every page, and each card names the design sections it draws from |
-| `docs/site/NN-<name>.html` | One diagram per page, built by `scripts/build-docs-site.sh` from `docs/site/specs/NN-<name>.<type>.json` |
+| `docs/site/NN-<name>.html` | One diagram per page, built by `scripts/build-docs-site.sh` from `docs/site/specs/NN-<name>.<type>.json`. Contains only the diagram and its data |
+| `docs/site/assets/archify/` | CSS and scripts that are the same on every diagram page, written by `scripts/build-docs-site.sh` (see `scripts/split-docs-page.mjs`). Do not edit |
+| `docs/site/assets/diagram-page.css` | Hand-written style for the link to `index.html` on each diagram page |
 | `docs/site/dapp-guide.html` | Hand-written guide for dApp developers |
 | `docs/site/site.css` | Shared style for `index.html` and `dapp-guide.html` |
 | `.claude/skills/generate-docs/archify.lock` | The verified archify commit |
@@ -23,31 +25,35 @@ third-party tool. `.claude/skills/generate-docs/archify.lock` pins the commit
 that passed `scripts/verify-archify.sh` and a person reviewed. Install only
 that commit.
 
-1. **Check the pinned commit** before anything runs on your machine:
+The scripts use the archify directory that `scripts/archify-dir.sh` prints:
+`$ARCHIFY_DIR` if set, else `~/.claude/skills/archify` if it exists, else
+`~/.cache/archify`. Install into `~/.cache/archify`: a copy there is not a
+Claude Code skill, so no session runs its update flow, which contacts the
+archify release server. If you have a copy in `~/.claude/skills/archify`,
+move it to `~/.cache/archify`.
+
+1. **Check and install the pinned commit:**
 
    ```bash
-   scripts/verify-archify.sh
+   scripts/verify-archify.sh --install
    ```
 
-   It clones archify and flags known risk patterns: install hooks,
+   It checks out archify from a cached clone in `~/.cache/archify-repo.git`
+   (cloned on the first run; fetched again only when the cache does not
+   contain the pinned commit, or for a candidate commit) and flags known
+   risk patterns: install hooks,
    dependencies, symlinks, binaries, obfuscated blobs, package imports, and
-   network, process or dynamic-code use outside the reviewed files. Stop if
-   it fails. It searches for patterns only; it does not prove the code safe.
+   network, process or dynamic-code use outside the reviewed files. When all
+   checks pass and no copy exists, it copies the pinned commit to the
+   archify directory. Stop if it fails. It searches for patterns only; it
+   does not prove the code safe. CI runs the same checks on the pinned
+   commit. `scripts/build-docs-site.sh` runs this step when no copy exists.
 
-2. **Install the pinned commit.** Do not use `npx skills add
-   tt-a1i/archify`: it runs the `skills` npm package, which nobody verified,
-   and installs the latest upstream commit instead of the pinned one.
+   Do not use `npx skills add tt-a1i/archify`: it runs the `skills` npm
+   package, which nobody verified, and installs the latest upstream commit
+   instead of the pinned one.
 
-   ```bash
-   commit=$(sed -n 's/^commit=//p' .claude/skills/generate-docs/archify.lock)
-   src=$(mktemp -d)
-   git clone https://github.com/tt-a1i/archify.git "$src"
-   git -C "$src" checkout "$commit"
-   rm -rf ~/.claude/skills/archify && cp -r "$src/archify" ~/.claude/skills/archify
-   rm -rf "$src"
-   ```
-
-3. **Confirm the installed copy** is identical to the pinned commit:
+2. **Confirm an existing copy** is identical to the pinned commit:
 
    ```bash
    scripts/verify-archify.sh
@@ -55,6 +61,20 @@ that commit.
 
    Both this script and `scripts/build-docs-site.sh` compare git tree hashes
    (file content, modes and symlinks). The build fails with any other copy.
+   To replace a copy that differs, delete it and run step 1.
+
+### Check the age of the pinned commit
+
+`scripts/verify-archify.sh` prints the date of the pinned commit, and a
+`NOTE` when the commit is more than 30 days old. When it prints the note,
+propose an update to the latest upstream commit before you build the site:
+
+```bash
+git ls-remote "$(sed -n 's/^repo=//p' .claude/skills/generate-docs/archify.lock)" HEAD
+```
+
+Then follow "Update archify" with that commit. The user decides whether to
+update. If they decline, build with the pinned commit.
 
 ### Update archify
 
@@ -72,10 +92,12 @@ Do this for every new archify commit before it runs on any machine.
    user decides whether to update.
 4. After approval: update `commit`, `tree`, `version` and `verified` in
    `archify.lock`; add newly reviewed files to the allowlists in
-   `scripts/verify-archify.sh`; install the new commit (step 2 above); run
-   `scripts/verify-archify.sh` again.
-5. Rebuild every page with `scripts/build-docs-site.sh` and name the new
-   archify version in the PR description.
+   `scripts/verify-archify.sh`; delete the installed copy and run
+   `scripts/verify-archify.sh --install`.
+5. Rebuild every page with `scripts/build-docs-site.sh` (no page numbers:
+   a new archify commit changes the files in `docs/site/assets/archify/`,
+   and a build of some pages fails when they change). Name the new archify
+   version in the PR description.
 
 ### While using archify
 
@@ -86,10 +108,13 @@ Do this for every new archify commit before it runs on any machine.
   The build script rejects specs with `brand`.
 - Do not use `preview` or `--open`.
 
-Read archify's `SKILL.md` before editing a spec. Below, `ARCHIFY` means
-`node ~/.claude/skills/archify/bin/archify.mjs`.
+Read `SKILL.md` in the archify directory before editing a spec. Below,
+`ARCHIFY` means `node "$(scripts/archify-dir.sh)/bin/archify.mjs"`.
 
 ## Procedure
+
+Before step 1, run `scripts/verify-archify.sh`. If it prints a `NOTE`, see
+"Check the age of the pinned commit".
 
 1. **Find the design change.** Diff the design docs against the commit that
    last updated the site:
