@@ -11,7 +11,7 @@ use provider_replica::{
     ReplicaSyncCoordinatorConfig, SignedSyncRoots, SyncDuty, SyncResult, SyncRoots,
     SyncRootsSigner,
 };
-use provider_storage::StorageBackend;
+use provider_storage::{ChunkTreeNode, StorageBackend};
 use sp_core::H256;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -337,7 +337,7 @@ async fn test_already_synced() {
         .expect("bucket initialises");
     let data = b"test data".to_vec();
     let data_root = blake2_256(&data);
-    let _ = storage.store_node(1, data_root, data, None);
+    let _ = storage.store_node(1, data_root, ChunkTreeNode::Chunk(data));
     let (mmr_root, _, _) = storage.commit(1, vec![data_root]).unwrap();
 
     let duty = SyncDuty {
@@ -608,7 +608,9 @@ async fn test_duties_filter_already_synced() {
 
     let data = b"synced data".to_vec();
     let data_root = blake2_256(&data);
-    storage.store_node(1, data_root, data, None).unwrap();
+    storage
+        .store_node(1, data_root, ChunkTreeNode::Chunk(data))
+        .unwrap();
     let (mmr_root, _, _) = storage.commit(1, vec![data_root]).unwrap();
 
     let agreement = ReplicaAgreementInfo {
