@@ -68,10 +68,6 @@ impl<T: Config> Pallet<T> {
     /// [`Config::BlockNumberProvider`] detail — callers (including off-chain
     /// consumers via the `current_anchor_block` runtime API) need not care.
     /// The relay chain in production, `System` in tests.
-    ///
-    /// During `on_initialize` this returns the *previous* block's anchor value
-    /// (the validation-data inherent has not run yet); everywhere else it is
-    /// the current block's.
     pub fn current_anchor_block() -> BlockNumberFor<T> {
         <T::BlockNumberProvider as sp_runtime::traits::BlockNumberProvider>::current_block_number()
     }

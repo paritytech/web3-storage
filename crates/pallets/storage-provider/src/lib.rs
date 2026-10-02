@@ -113,54 +113,8 @@ pub mod pallet {
         ChallengeDeposit,
     }
 
-    /// Maximum deadline keys the slash sweep probes per block. Relay block
-    /// numbers can jump by more than one per parachain block, so the sweep
-    /// covers a range; this caps the probing and the remainder carries over via
-    /// [`LastSweptChallengeBlock`]. Slashing is bounded separately by
-    /// `MAX_SWEEP_SLASH_BUDGET`.
-    pub(crate) const MAX_SWEEP_SPAN: u32 = 32;
-
-    /// Maximum challenges the slash sweep slashes per block, across all deadline
-    /// keys it touches. Decoupled from [`Config::MaxChallengesPerDeadline`] (up
-    /// to 1000) because slashing that many in one block would consume the whole
-    /// block's PoV (~5 KB each). A fully loaded deadline instead drains over
-    /// several blocks via the [`LastSweptChallengeBlock`] carry-over. The
-    /// effective budget is `min(MaxChallengesPerDeadline, MAX_SWEEP_SLASH_BUDGET)`,
-    /// so runtimes with a smaller per-deadline cap (e.g. tests) are unaffected.
-    pub(crate) const MAX_SWEEP_SLASH_BUDGET: u32 = 100;
-
     #[pallet::hooks]
     impl<T: Config> Hooks<SystemBlockNumberFor<T>> for Pallet<T> {
-        /// Slash providers whose challenges expired unanswered.
-        ///
-        /// Deadlines are relay-chain blocks ([`Config::BlockNumberProvider`]),
-        /// which can jump by more than one per parachain block, so this drains a
-        /// *range* of deadline keys, tracking progress in
-        /// [`LastSweptChallengeBlock`] rather than probing the single key `n`.
-        ///
-        /// - **Which keys are final.** In `on_initialize` the validation-data
-        ///   inherent has not run, so [`Pallet::current_anchor_block`] is the relay
-        ///   parent `p` of the *previous* parachain block. A challenge with
-        ///   deadline `d` stays respondable while some block has relay parent
-        ///   `<= d`; every future block has relay parent `>= p`; so keys `< p`
-        ///   are unrespondable and draining them cannot race a valid response.
-        ///   Cost: a one-block lag — the slash lands the block after `p` passes
-        ///   `d`. Escape hatches are unaffected; they gate on the
-        ///   [`PendingChallenges`] counters, not on the sweep.
-        /// - **Budget.** `MAX_SWEEP_SPAN` caps keys probed per block;
-        ///   `MAX_SWEEP_SLASH_BUDGET` caps slashes per block so one maturing
-        ///   deadline cannot eat the block's PoV. On exhaustion the cursor parks
-        ///   just below the partly drained key; the rest carries over.
-        /// - **Why `on_initialize`.** Work done is returned as weight instead of
-        ///   pre-reserved, which `on_finalize` cannot do.
-        ///
-        /// The algorithm lives in `sweep_expired_challenges` (and its
-        /// `challenge_sweep_range` / `slash_expired_at` helpers) so the range
-        /// resolution and the per-key drain read as separate, testable steps.
-        fn on_initialize(_do_not_use_local_block_number: SystemBlockNumberFor<T>) -> Weight {
-            Self::sweep_expired_challenges()
-        }
-
         fn integrity_test() {
             // The re-register replay defense relies on RequestTimeout being strictly
             // shorter than DeregisterAnnouncementPeriod: a quote signed at block S
@@ -271,16 +225,11 @@ pub mod pallet {
         type DeregisterAnnouncementPeriod: Get<BlockNumberFor<Self>>;
 
         /// Maximum number of challenges that may share a single deadline
-        /// (relay chain block), and the per-block slash budget of the
-        /// `on_initialize` timeout sweep.
-        ///
-        /// Bounds the per-deadline challenge count at creation, and the sweep
-        /// never slashes more than this many challenges per block regardless
-        /// of how many deadline keys a gap matured at once — so the worst
-        /// case per block equals one fully-loaded deadline. Note that
-        /// consecutive parachain blocks can share a relay parent, so
-        /// challenges created in different parachain blocks may share a
-        /// deadline; the bound is this explicit cap, not block co-location.
+        /// (relay chain block). Bounds the per-deadline index allocator
+        /// (`NextChallengeIndex`). Consecutive parachain blocks can share a
+        /// relay parent, so challenges created in different parachain blocks
+        /// may share a deadline; the bound is this explicit cap, not block
+        /// co-location.
         #[pallet::constant]
         type MaxChallengesPerDeadline: Get<u16>;
 
@@ -373,19 +322,12 @@ pub mod pallet {
     pub type NextChallengeIndex<T: Config> =
         StorageMap<_, Blake2_128Concat, BlockNumberFor<T>, u16, ValueQuery>;
 
-    /// Highest deadline key the `on_initialize` slash sweep has drained. Each
-    /// block it sweeps up to (but excluding) the previous block's relay parent.
-    /// `None` until the first block after genesis/upgrade anchors it. A cursor
-    /// over anchor-denominated deadline keys, hence [`BlockNumberFor`].
-    #[pallet::storage]
-    pub type LastSweptChallengeBlock<T: Config> = StorageValue<_, BlockNumberFor<T>, OptionQuery>;
-
     /// Number of unresolved challenges currently outstanding against a
     /// provider, summed across every bucket. Incremented in `create_challenge`
-    /// and decremented exactly once per resolution (defended/invalid-response
-    /// in `respond_to_challenge`, or timeout in the `on_initialize` sweep). Gates
-    /// `complete_deregister`: a provider cannot exit while still slashable for
-    /// a pending challenge.
+    /// and decremented exactly once per resolution (defended in
+    /// `respond_to_challenge`, or timed out in `resolve_expired_challenge`).
+    /// Gates `complete_deregister`: a provider cannot exit while still
+    /// slashable for a pending challenge.
     #[pallet::storage]
     pub type PendingChallenges<T: Config> =
         StorageMap<_, Blake2_128Concat, T::AccountId, u32, ValueQuery>;
@@ -1254,8 +1196,7 @@ pub mod pallet {
         /// resolves (defended or timed out).
         AgreementHasPendingChallenge,
         /// `MaxChallengesPerDeadline` challenges have already been allocated
-        /// for the deadline this challenge would land on. Caps the total the
-        /// `on_initialize` sweep must eventually drain for a single key.
+        /// for the deadline this challenge would land on.
         TooManyChallengesThisBlock,
 
         // Checkpoint errors
@@ -1382,8 +1323,10 @@ pub mod pallet {
         ///    slashable for any pending or freshly-created challenge.
         /// 2. `complete_deregister` — callable once `deregister_at` has
         ///    elapsed (by which point any challenge created up to the
-        ///    announcement block has already matured, because the period
-        ///    must be `> ChallengeTimeout`).
+        ///    announcement block has expired, because the period must be
+        ///    `> ChallengeTimeout`; an unanswered one still has to be
+        ///    resolved with `resolve_expired_challenge`, which the provider
+        ///    may call itself).
         ///
         /// The two-step flow closes the slashing race where a provider
         /// could withdraw stake between the end of their last agreement
@@ -1455,10 +1398,11 @@ pub mod pallet {
             );
             // A provider with unresolved challenges is still slashable; they
             // must not be able to exit and unreserve their stake before those
-            // challenges mature. The `DeregisterAnnouncementPeriod >
+            // challenges are resolved. The `DeregisterAnnouncementPeriod >
             // ChallengeTimeout` invariant (see `integrity_test`) guarantees any
-            // challenge created up to the announcement block resolves before
-            // the wait window elapses, so this only blocks genuinely-live ones.
+            // challenge created up to the announcement block has expired by
+            // now; an unanswered one is resolved with
+            // `resolve_expired_challenge`, which the provider may call itself.
             ensure!(
                 PendingChallenges::<T>::get(&who) == 0,
                 Error::<T>::ProviderHasPendingChallenges
