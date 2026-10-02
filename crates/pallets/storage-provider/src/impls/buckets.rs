@@ -132,8 +132,7 @@ impl<T: Config> Pallet<T> {
     /// Parameters:
     /// - `admin`: Account that will be the bucket admin.
     /// - `min_providers`: Minimum number of primary providers required to
-    ///   sign each checkpoint. At most `MaxPrimaryProviders`
-    ///   (`InvalidMinProviders`).
+    ///   sign each checkpoint.
     /// - `initial_primary`: Optional provider to seed as the bucket's
     ///   first `primary_providers` entry. Used by
     ///   `create_bucket_with_primary_internal` to atomically create the

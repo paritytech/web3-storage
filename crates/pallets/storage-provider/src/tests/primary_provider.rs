@@ -8,7 +8,7 @@ use frame_support::traits::Get;
 use storage_primitives::{EndAction, Visibility};
 
 /// Signed primary terms for an existing bucket. Build the quote before
-/// `assert_noop!`: signing stamps the provider's key into storage.
+/// `assert_noop!`: `provider_signer` writes the provider's key into storage.
 fn quote_for(
     provider: u64,
     admin: u64,
@@ -217,8 +217,7 @@ fn add_primary_provider_rejects_duplicate_agreement() {
 fn add_primary_provider_rejects_full_primary_set() {
     new_test_ext().execute_with(|| {
         let bucket_id = create_bucket(1, 0);
-        let cap: u32 = <Test as Config>::MaxPrimaryProviders::get();
-        let cap = u64::from(cap);
+        let cap = u64::from(<<Test as Config>::MaxPrimaryProviders as Get<u32>>::get());
         for provider in 2..2 + cap {
             register_provider(provider, 200);
             setup_added_primary(provider, 1, bucket_id, 50, 100);

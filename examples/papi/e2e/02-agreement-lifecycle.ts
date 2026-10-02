@@ -235,7 +235,7 @@ async function main() {
   tests.push({
     name: "2.10 create_bucket then add_primary_provider",
     fn: async () => {
-      const { bucketId } = await createBucket(api, client, { minProviders: 1 });
+      const { bucketId } = await createBucket(api, client);
       const empty = (await api.query.StorageProvider.Buckets.getValue(bucketId, READ_OPTS))!;
       assert.strictEqual(
         empty.primary_providers.length,
@@ -266,8 +266,8 @@ async function main() {
   tests.push({
     name: "2.11 add_primary_provider rejects a quote for another bucket",
     fn: async () => {
-      const { bucketId } = await createBucket(api, client, { minProviders: 1 });
-      const { bucketId: other } = await createBucket(api, client, { minProviders: 1 });
+      const { bucketId } = await createBucket(api, client);
+      const { bucketId: other } = await createBucket(api, client);
 
       // Signed for `other`, submitted against `bucketId`.
       const signed = await negotiateSigned(api, PROVIDER_URL, client, provider, {

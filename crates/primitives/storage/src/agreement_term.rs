@@ -95,8 +95,6 @@ pub enum BucketTarget {
 }
 
 /// `None` → [`BucketTarget::New`], `Some(id)` → [`BucketTarget::Existing`].
-/// Used by the `/negotiate` request and the Solidity `hasBucketId` /
-/// `bucketId` pair.
 impl From<Option<crate::BucketId>> for BucketTarget {
     fn from(bucket_id: Option<crate::BucketId>) -> Self {
         bucket_id.map_or(Self::New, Self::Existing)

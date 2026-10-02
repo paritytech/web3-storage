@@ -136,7 +136,7 @@ export interface NegotiateRequest {
 /**
  * Bucket id a signed quote names, or `undefined` when it is for a bucket
  * created at redemption. Accepts any `SignedTerms` shape whose `terms.bucket`
- * is a {@link BucketTargetWire}; `@web3-storage/layer0` re-exports it.
+ * is a {@link BucketTargetWire}.
  */
 export function signedTermsBucketId(signed: {
   terms: { bucket: BucketTargetWire };
