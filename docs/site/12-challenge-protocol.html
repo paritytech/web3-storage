@@ -1,0 +1,683 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark" data-preset="classic">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="generator" content="archify 2.17.0-dev.1">
+  <title>Challenge Protocol Diagram</title>
+  <script src="assets/archify/theme.js?v=3152b732f000"></script>
+  <!-- Async font load: a blackholed network must not block first paint.
+       The body font stack falls back to system monospace until it lands. -->
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap"
+        rel="stylesheet" media="print" onload="this.media='all'">
+  <noscript>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  </noscript>
+  <script src="assets/archify/style.js?v=e5a5a6dc9177"></script>
+  <link rel="stylesheet" href="assets/diagram-page.css">
+</head>
+<body>
+  <!-- Toolbar: theme, live visual style, trace motion, presentation stage, and export.
+       Motion appears only for trace-enabled artifacts and has no shortcut;
+       Keyboard: T toggles theme, S cycles style, F toggles the stage, E opens export. -->
+  <div class="toolbar" role="toolbar" aria-label="Diagram actions">
+    <button id="btn-theme" type="button"
+            title="Toggle theme (T)"
+            aria-label="Toggle color theme"
+            aria-pressed="false">
+      <span id="theme-icon" class="toolbar-icon" aria-hidden="true"></span>
+      <span id="theme-label">Dark</span>
+    </button>
+    <div class="preset-wrap">
+      <button id="btn-preset" type="button"
+              title="Choose visual style (S cycles)"
+              aria-label="Choose visual style"
+              aria-haspopup="menu"
+              aria-expanded="false"
+              aria-controls="preset-menu"
+              aria-keyshortcuts="S">
+        <span class="preset-control-mark" aria-hidden="true"></span>
+        <span id="preset-label">Style</span>
+        <span class="toolbar-icon toolbar-chevron" aria-hidden="true"></span>
+      </button>
+      <div class="preset-menu" id="preset-menu" role="menu" aria-label="Visual style">
+        <div class="preset-menu-heading" role="presentation"><span>Visual identity</span><span>S cycles</span></div>
+        <button class="preset-option" data-preset-value="classic" type="button" role="menuitemradio" aria-checked="false" tabindex="-1">
+          <span class="preset-option-swatch classic" aria-hidden="true"></span>
+          <span class="preset-option-copy"><strong>Classic</strong><small>Stable technical default</small></span>
+          <span class="preset-option-check" aria-hidden="true"></span>
+        </button>
+        <button class="preset-option" data-preset-value="signal-flow" type="button" role="menuitemradio" aria-checked="false" tabindex="-1">
+          <span class="preset-option-swatch signal-flow" aria-hidden="true"></span>
+          <span class="preset-option-copy"><strong>Signal Flow</strong><small>Motion-forward presentation</small></span>
+          <span class="preset-option-check" aria-hidden="true"></span>
+        </button>
+        <button class="preset-option" data-preset-value="blueprint" type="button" role="menuitemradio" aria-checked="false" tabindex="-1">
+          <span class="preset-option-swatch blueprint" aria-hidden="true"></span>
+          <span class="preset-option-copy"><strong>Blueprint</strong><small>Engineering review</small></span>
+          <span class="preset-option-check" aria-hidden="true"></span>
+        </button>
+        <button class="preset-option" data-preset-value="editorial" type="button" role="menuitemradio" aria-checked="false" tabindex="-1">
+          <span class="preset-option-swatch editorial" aria-hidden="true"></span>
+          <span class="preset-option-copy"><strong>Editorial</strong><small>Publication and launch notes</small></span>
+          <span class="preset-option-check" aria-hidden="true"></span>
+        </button>
+      </div>
+    </div>
+    <button id="btn-motion" type="button" hidden
+            title="Pause motion"
+            aria-label="Pause motion"
+            aria-pressed="true">
+      <span class="motion-control-dot" aria-hidden="true"></span>
+      <span id="motion-label">Live</span>
+    </button>
+    <button id="btn-present" type="button"
+            title="Presentation stage (F)"
+            aria-label="Enter presentation stage"
+            aria-pressed="false">
+      <span id="present-icon" class="toolbar-icon" aria-hidden="true"></span>
+      <span id="present-label">Present</span>
+    </button>
+    <div class="export-wrap">
+      <button id="btn-export" type="button"
+              title="Export diagram (E)"
+              aria-label="Export diagram"
+              aria-haspopup="menu"
+              aria-expanded="false"
+              aria-controls="export-menu">
+        Export <span class="toolbar-icon toolbar-chevron" aria-hidden="true"></span>
+      </button>
+      <div class="export-menu" id="export-menu" role="menu" aria-label="Export">
+        <div class="export-menu-header" role="presentation">
+          <div><strong>Export diagram</strong><span>Portable, clean outputs</span></div>
+          <kbd>E</kbd>
+        </div>
+        <div class="export-menu-section" role="group" aria-label="Share">
+          <span class="export-menu-heading" aria-hidden="true">Share</span>
+          <button data-format="share-card" type="button" role="menuitem" tabindex="-1"><span class="export-item-copy"><strong>Share Card</strong><small class="hint">1200&times;630 PNG</small></span></button>
+          <button data-action="route-share-card" type="button" role="menuitem" tabindex="-1" hidden disabled><span class="export-item-copy"><strong>Route Share Card</strong><small class="hint">1200&times;630 PNG</small></span></button>
+          <button data-action="reach-share-card" type="button" role="menuitem" tabindex="-1" hidden disabled><span class="export-item-copy"><strong>Reach Share Card</strong><small class="hint">1200&times;630 PNG</small></span></button>
+          <button data-action="copy-share-card" type="button" role="menuitem" tabindex="-1"><span class="export-item-copy"><strong>Copy Share Card</strong><small class="hint">PNG to clipboard</small></span></button>
+          <button data-action="copy" type="button" role="menuitem" tabindex="-1"><span class="export-item-copy"><strong>Copy diagram</strong><small class="hint">PNG to clipboard</small></span></button>
+        </div>
+        <div class="export-menu-section" role="group" aria-label="Raster images">
+          <span class="export-menu-heading" aria-hidden="true">Image</span>
+          <button data-format="png" type="button" role="menuitem" tabindex="-1"><span class="export-item-copy"><strong>PNG</strong><small class="hint">Lossless image</small></span></button>
+          <button data-format="jpeg" type="button" role="menuitem" tabindex="-1"><span class="export-item-copy"><strong>JPEG</strong><small class="hint">Compact image</small></span></button>
+          <button data-format="webp" type="button" role="menuitem" tabindex="-1"><span class="export-item-copy"><strong>WebP</strong><small class="hint">Modern image</small></span></button>
+        </div>
+        <div class="export-menu-section" role="group" aria-label="Vector and motion">
+          <span class="export-menu-heading" aria-hidden="true">Vector &amp; motion</span>
+          <button data-format="svg" type="button" role="menuitem" tabindex="-1"><span class="export-item-copy"><strong>SVG</strong><small class="hint">Editable vector</small></span></button>
+          <button data-format="webm" type="button" role="menuitem" tabindex="-1"><span class="export-item-copy"><strong>WebM</strong><small class="hint">6s motion</small></span></button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="container">
+    <!-- Header -->
+    <div class="header">
+      <p class="site-crumb"><a href="index.html">&larr; Scalable Web3 Storage</a></p>
+      <div class="header-row"
+           data-preset-badge-signal-flow="SIGNAL FLOW"
+           data-preset-badge-blueprint="BLUEPRINT / REV 01"
+           data-preset-badge-editorial="EDITORIAL / FIELD NOTE">
+        <div class="pulse-dot"></div>
+        <h1>Challenge Protocol</h1>
+      </div>
+    </div>
+
+    <script id="archify-guided-views-data" type="application/json">[{"id":"happy-path","label":"Defended challenge","focus":["open","gate","window","respond","verify","defended"],"note":"A valid response before the deadline leaves the stake untouched. The deposit reimburses the response fee per tier."},{"id":"gate-view","label":"Who may challenge","focus":["open","gate","denied"],"note":"The chain rejects a self-challenge, and a private-bucket primary challenge from a non-member without a primary agreement."},{"id":"failure","label":"Slash","focus":["window","verify","sweep","slashed"],"note":"An invalid response or no response before ChallengeTimeout slashes the full stake."},{"id":"exit","label":"Cancel","focus":["open","window","cancelled"],"note":"The design doc allows cancel before the response. The implementation doc defines no cancel extrinsic yet."}]</script>
+
+    <script src="assets/archify/i18n.js?v=b331908a8a55"></script>
+    <div class="guided-views no-print" id="guided-views" hidden aria-label="Guided diagram views">
+      <button id="guided-view-prev" type="button" aria-label="Previous guided view" title="Previous guided view ([)">&#8592;</button>
+      <div class="guided-view-copy">
+        <div class="guided-view-meta">
+          <span>Guided views</span>
+          <span id="guided-view-count"></span>
+          <span class="guided-view-progress" aria-hidden="true"><span id="guided-view-progress-bar"></span></span>
+          <span class="guided-view-handoff" id="guided-view-handoff" hidden aria-hidden="true"></span>
+        </div>
+        <strong id="guided-view-label">Explore this system</strong>
+        <small id="guided-view-note" aria-live="polite" aria-atomic="true">Step through curated paths without changing the source diagram.</small>
+        <div class="guided-view-trail" id="guided-view-trail" hidden role="group" aria-label="Story trail"></div>
+        <div class="guided-story-caption" id="guided-story-caption" hidden aria-live="polite" aria-atomic="true">
+          <span class="guided-story-caption-index" id="guided-story-caption-index">Beat</span>
+          <strong id="guided-story-caption-route"></strong>
+          <small id="guided-story-caption-detail"></small>
+          <span class="guided-story-caption-next" id="guided-story-caption-next" hidden aria-hidden="true">
+            <small>Next</small>
+            <strong id="guided-story-caption-next-label"></strong>
+          </span>
+        </div>
+      </div>
+      <button id="guided-view-next" type="button" aria-label="Next guided view" title="Next guided view (])">&#8594;</button>
+      <div class="guided-view-actions">
+        <button class="guided-view-play" id="guided-view-play" type="button" aria-label="Play guided story" aria-pressed="false" title="Play guided story (P)">
+          <span id="guided-view-play-icon" aria-hidden="true">&#9654;</span>
+          <span id="guided-view-play-label">Play story</span>
+        </button>
+        <button class="guided-view-beat-link" id="guided-view-beat-link" type="button" aria-label="Select a Story Beat to copy its exact link" title="Select a Story Beat to copy its exact link" disabled>
+          <span aria-hidden="true">&#35;</span>
+          <span id="guided-view-beat-link-label">Copy moment</span>
+        </button>
+        <button class="guided-view-all" id="guided-view-all" type="button" aria-label="Show entire diagram">Show all</button>
+      </div>
+      <nav class="guided-view-index" id="guided-view-index" aria-label="Story chapters">
+        <ol class="guided-view-chapters" id="guided-view-chapters"></ol>
+      </nav>
+    </div>
+
+    <!-- Main Diagram -->
+    <div class="diagram-container" data-detail-level="read"
+         data-preset-badge-editorial-plate="WEB3 STORAGE / PLATE 04">
+      <svg viewBox="0 0 1013 660" role="img" lang="en" aria-labelledby="archify-diagram-title archify-diagram-description" data-preset="classic" data-quality-profile="showcase">
+        <title id="archify-diagram-title">Challenge Protocol</title>
+        <desc id="archify-diagram-description">A workflow diagram.</desc>
+        <!-- Definitions -->
+        <defs>
+          <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" class="m-default" />
+          </marker>
+          <marker id="arrowhead-emphasis" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" class="m-emphasis" />
+          </marker>
+          <marker id="arrowhead-security" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" class="m-security" />
+          </marker>
+          <marker id="arrowhead-dashed" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" class="m-dashed" />
+          </marker>
+          <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+            <path d="M 40 0 L 0 0 0 40" class="c-grid" stroke-width="0.5"/>
+          </pattern>
+        </defs>
+
+        <!-- Background Grid -->
+        <rect width="100%" height="100%" fill="url(#grid)" />
+
+        <!-- Swimlanes -->
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="lane" data-composition-frame-id="lane-0" x="40" y="52" width="957" height="106" rx="10" class="c-lane" stroke-width="1"/>
+        <text x="54" y="74" class="t-dim" font-size="10" font-weight="600">01 / Challenger</text>
+
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="lane" data-composition-frame-id="lane-1" x="40" y="178" width="957" height="106" rx="10" class="c-lane" stroke-width="1"/>
+        <text x="54" y="200" class="t-dim" font-size="10" font-weight="600">02 / Chain</text>
+
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="lane" data-composition-frame-id="lane-2" x="40" y="304" width="957" height="106" rx="10" class="c-lane" stroke-width="1"/>
+        <text x="54" y="326" class="t-dim" font-size="10" font-weight="600">03 / Provider</text>
+
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="lane" data-composition-frame-id="lane-3" x="40" y="430" width="957" height="106" rx="10" class="c-lane" stroke-width="1"/>
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="exception-lane" data-composition-frame-id="lane-3-exception" x="46" y="436" width="945" height="94" rx="8" class="c-security-group" stroke-width="1"/>
+        <text x="54" y="452" class="t-security" font-size="10" font-weight="600">EX / Rejections and Slash</text>
+
+        <!-- Phase headers -->
+        <line x1="72" y1="35" x2="284" y2="35" class="a-default" stroke-width="1.1"/>
+        <rect x="72" y="27" width="212" height="16" rx="4" class="c-mask"/>
+        <text x="178" y="39" class="t-muted" font-size="8" font-weight="600" text-anchor="middle">Open</text>
+        <line x1="446" y1="35" x2="658" y2="35" class="a-emphasis" stroke-width="1.1"/>
+        <rect x="446" y="27" width="212" height="16" rx="4" class="c-mask"/>
+        <text x="552" y="39" class="t-backend" font-size="8" font-weight="600" text-anchor="middle">Wait and answer</text>
+        <line x1="686" y1="35" x2="965" y2="35" class="a-security" stroke-width="1.1"/>
+        <rect x="686" y="27" width="279" height="16" rx="4" class="c-mask"/>
+        <text x="825.5" y="39" class="t-security" font-size="8" font-weight="600" text-anchor="middle">Judge</text>
+
+        <!-- Workflow groups -->
+
+
+        <!-- Edge paths -->
+        <path data-edge-from="gate" data-edge-to="window" data-edge-label="authorized or public" data-edge-key="0" data-edge-id="admitted" data-composition-points="308,246;422,246" d="M 308 246 L 422 246" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="window" data-edge-to="cancelled" data-edge-label="cancel before response" data-edge-key="1" data-edge-id="cancel" data-composition-points="492,212;492,154" d="M 492 212 L 492 154" class="a-dashed" stroke-width="1.4" marker-end="url(#arrowhead-dashed)"/>
+        <path data-edge-from="window" data-edge-to="sweep" data-edge-label="no response" data-edge-key="2" data-edge-id="expired" data-composition-points="492,280;492,552;612,552;612,524" d="M 492 280 L 492 552 L 612 552 L 612 524" class="a-security" stroke-width="1.4" marker-end="url(#arrowhead-security)"/>
+        <path data-edge-from="verify" data-edge-to="slashed" data-edge-label="invalid" data-edge-key="3" data-edge-id="invalid" data-composition-points="732,272;732,491;849,491" d="M 732 272 L 732 491 L 849 491" class="a-security" stroke-width="1.4" marker-end="url(#arrowhead-security)"/>
+        <path data-edge-from="respond" data-edge-to="verify" data-edge-key="4" data-edge-id="judge" data-composition-points="612,346;612,246;657,246" d="M 612 346 L 612 246 L 657 246" class="a-security" stroke-width="1.4" marker-end="url(#arrowhead-security)"/>
+        <path data-edge-from="window" data-edge-to="respond" data-edge-label="before deadline" data-edge-key="5" data-edge-id="must-answer" data-composition-points="492,280;492,426;612,426;612,398" d="M 492 280 L 492 426 L 612 426 L 612 398" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="gate" data-edge-to="denied" data-edge-label="not allowed" data-edge-key="6" data-edge-id="not-allowed" data-composition-points="168,246;20,246;20,498;163,498" d="M 168 246 L 20 246 L 20 498 L 163 498" class="a-security" stroke-width="1.4" marker-end="url(#arrowhead-security)"/>
+        <path data-edge-from="open" data-edge-to="gate" data-edge-key="7" data-edge-id="submit" data-composition-points="188,120;238,120;238,220" d="M 188 120 L 238 120 L 238 220" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <path data-edge-from="sweep" data-edge-to="slashed" data-edge-key="8" data-edge-id="timed-out" data-composition-points="612,524;612,540;919,540;919,524" d="M 612 524 L 612 540 L 919 540 L 919 524" class="a-security" stroke-width="1.4" marker-end="url(#arrowhead-security)"/>
+        <path data-edge-from="verify" data-edge-to="defended" data-edge-label="valid" data-edge-key="9" data-edge-id="valid" data-composition-points="807,246;849,246" d="M 807 246 L 849 246" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+
+        <!-- Nodes -->
+        <g id="node-open" data-node-id="open" data-node-label="Open Challenge" tabindex="0" role="button" aria-label="Focus Open Challenge, 3 modes, ChunkLocation, Challenger › Open" aria-pressed="false" data-node-kind="frontend" data-node-sublabel="3 modes, ChunkLocation" data-node-tag="ChallengeDeposit" data-node-context="Challenger › Open">
+          <title>Open Challenge · 3 modes, ChunkLocation · Challenger › Open · ChallengeDeposit</title>
+          <rect x="48" y="86" width="140" height="68" rx="6" class="c-mask"/>
+          <rect x="48" y="86" width="140" height="68" rx="6" class="c-frontend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="frontend" class="semantic-sigil s-frontend" transform="translate(54 92) scale(0.6875)">
+            <rect x="2" y="3" width="12" height="10" rx="2"/>
+            <path d="M2 6.5h12"/>
+            <circle cx="4.1" cy="4.8" r=".7" class="sigil-fill"/>
+            <circle cx="6.3" cy="4.8" r=".7" class="sigil-fill"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="118" y="107" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Open Challenge</text>
+          <text data-detail="context" x="118" y="124" class="t-muted" font-size="8" text-anchor="middle">3 modes, ChunkLocation</text>
+        <text data-detail="fine" x="118" y="142" class="t-frontend" font-size="7" text-anchor="middle">ChallengeDeposit</text>
+        </g>
+
+        <g id="node-cancelled" data-node-id="cancelled" data-node-label="Cancel" tabindex="0" role="button" aria-label="Focus Cancel, design doc only, Challenger › Wait and answer" aria-pressed="false" data-node-kind="messagebus" data-node-sublabel="design doc only" data-node-tag="no extrinsic" data-node-context="Challenger › Wait and answer">
+          <title>Cancel · design doc only · Challenger › Wait and answer · no extrinsic</title>
+          <rect x="422" y="86" width="140" height="68" rx="6" class="c-mask"/>
+          <rect x="422" y="86" width="140" height="68" rx="6" class="c-messagebus" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="messagebus" class="semantic-sigil s-messagebus" transform="translate(428 92) scale(0.6875)">
+            <path d="M2.5 4.5h11M2.5 8h11M2.5 11.5h11"/>
+            <circle cx="5" cy="4.5" r="1" class="sigil-fill"/>
+            <circle cx="10.5" cy="8" r="1" class="sigil-fill"/>
+            <circle cx="7" cy="11.5" r="1" class="sigil-fill"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="492" y="107" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Cancel</text>
+          <text data-detail="context" x="492" y="124" class="t-muted" font-size="8" text-anchor="middle">design doc only</text>
+        <text data-detail="fine" x="492" y="142" class="t-messagebus" font-size="7" text-anchor="middle">no extrinsic</text>
+        </g>
+
+        <g id="node-gate" data-node-id="gate" data-node-label="Authorization Gate" tabindex="0" role="button" aria-label="Focus Authorization Gate, tier fixed at creation, Chain › Open" aria-pressed="false" data-node-kind="security" data-node-sublabel="tier fixed at creation" data-node-context="Chain › Open">
+          <title>Authorization Gate · tier fixed at creation · Chain › Open</title>
+          <rect x="168" y="220" width="140" height="52" rx="6" class="c-mask"/>
+          <rect x="168" y="220" width="140" height="52" rx="6" class="c-security" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="security" class="semantic-sigil s-security" transform="translate(174 226) scale(0.6875)">
+            <path d="M8 2.2 13 4v3.5c0 3.1-1.8 5.4-5 6.5-3.2-1.1-5-3.4-5-6.5V4Z"/>
+            <path d="m5.8 8 1.5 1.5 3-3"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="238" y="241" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Authorization Gate</text>
+          <text data-detail="context" x="238" y="258" class="t-muted" font-size="8" text-anchor="middle">tier fixed at creation</text>
+        </g>
+
+        <g id="node-window" data-node-id="window" data-node-label="Challenge Window" tabindex="0" role="button" aria-label="Focus Challenge Window, ChallengeTimeout, 48h, Chain › Wait and answer" aria-pressed="false" data-node-kind="messagebus" data-node-sublabel="ChallengeTimeout, 48h" data-node-tag="ChallengeCreated" data-node-context="Chain › Wait and answer">
+          <title>Challenge Window · ChallengeTimeout, 48h · Chain › Wait and answer · ChallengeCreated</title>
+          <rect x="422" y="212" width="140" height="68" rx="6" class="c-mask"/>
+          <rect x="422" y="212" width="140" height="68" rx="6" class="c-messagebus" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="messagebus" class="semantic-sigil s-messagebus" transform="translate(428 218) scale(0.6875)">
+            <path d="M2.5 4.5h11M2.5 8h11M2.5 11.5h11"/>
+            <circle cx="5" cy="4.5" r="1" class="sigil-fill"/>
+            <circle cx="10.5" cy="8" r="1" class="sigil-fill"/>
+            <circle cx="7" cy="11.5" r="1" class="sigil-fill"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="492" y="233" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Challenge Window</text>
+          <text data-detail="context" x="492" y="250" class="t-muted" font-size="8" text-anchor="middle">ChallengeTimeout, 48h</text>
+        <text data-detail="fine" x="492" y="268" class="t-messagebus" font-size="7" text-anchor="middle">ChallengeCreated</text>
+        </g>
+
+        <g id="node-verify" data-node-id="verify" data-node-label="Verify Response" tabindex="0" role="button" aria-label="Focus Verify Response, verify_challenge_response, Chain › Judge" aria-pressed="false" data-node-kind="security" data-node-sublabel="verify_challenge_response" data-node-context="Chain › Judge">
+          <title>Verify Response · verify_challenge_response · Chain › Judge</title>
+          <rect x="657" y="220" width="150" height="52" rx="6" class="c-mask"/>
+          <rect x="657" y="220" width="150" height="52" rx="6" class="c-security" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="security" class="semantic-sigil s-security" transform="translate(663 226) scale(0.6875)">
+            <path d="M8 2.2 13 4v3.5c0 3.1-1.8 5.4-5 6.5-3.2-1.1-5-3.4-5-6.5V4Z"/>
+            <path d="m5.8 8 1.5 1.5 3-3"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="732" y="241" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Verify Response</text>
+          <text data-detail="context" x="732" y="258" class="t-muted" font-size="8" text-anchor="middle">verify_challenge_response</text>
+        </g>
+
+        <g id="node-defended" data-node-id="defended" data-node-label="ChallengeDefended" tabindex="0" role="button" aria-label="Focus ChallengeDefended, stake untouched, Chain › Judge" aria-pressed="false" data-node-kind="backend" data-node-sublabel="stake untouched" data-node-context="Chain › Judge">
+          <title>ChallengeDefended · stake untouched · Chain › Judge</title>
+          <rect x="849" y="220" width="140" height="52" rx="6" class="c-mask"/>
+          <rect x="849" y="220" width="140" height="52" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(855 226) scale(0.6875)">
+            <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="919" y="241" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">ChallengeDefended</text>
+          <text data-detail="context" x="919" y="258" class="t-muted" font-size="8" text-anchor="middle">stake untouched</text>
+        </g>
+
+        <g id="node-respond" data-node-id="respond" data-node-label="respond_to_challenge" tabindex="0" role="button" aria-label="Focus respond_to_challenge, Proof, Deleted, Superseded, Provider › Wait and answer" aria-pressed="false" data-node-kind="backend" data-node-sublabel="Proof, Deleted, Superseded" data-node-context="Provider › Wait and answer">
+          <title>respond_to_challenge · Proof, Deleted, Superseded · Provider › Wait and answer</title>
+          <rect x="537" y="346" width="150" height="52" rx="6" class="c-mask"/>
+          <rect x="537" y="346" width="150" height="52" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(543 352) scale(0.6875)">
+            <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="612" y="367" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">respond_to_challenge</text>
+          <text data-detail="context" x="612" y="384" class="t-muted" font-size="8" text-anchor="middle">Proof, Deleted, Superseded</text>
+        </g>
+
+        <g id="node-denied" data-node-id="denied" data-node-label="Call Rejected" tabindex="0" role="button" aria-label="Focus Call Rejected, SelfChallenge, Rejections and Slash › Open" aria-pressed="false" data-node-kind="security" data-node-sublabel="SelfChallenge" data-node-tag="NotAuthorizedForPrivateBucket" data-node-context="Rejections and Slash › Open">
+          <title>Call Rejected · SelfChallenge · Rejections and Slash › Open · NotAuthorizedForPrivateBucket</title>
+          <rect x="163" y="464" width="150" height="68" rx="6" class="c-mask"/>
+          <rect x="163" y="464" width="150" height="68" rx="6" class="c-security" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="security" class="semantic-sigil s-security" transform="translate(169 470) scale(0.6875)">
+            <path d="M8 2.2 13 4v3.5c0 3.1-1.8 5.4-5 6.5-3.2-1.1-5-3.4-5-6.5V4Z"/>
+            <path d="m5.8 8 1.5 1.5 3-3"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="238" y="485" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Call Rejected</text>
+          <text data-detail="context" x="238" y="502" class="t-muted" font-size="8" text-anchor="middle">SelfChallenge</text>
+        <text data-detail="fine" x="238" y="520" class="t-security" font-size="7" text-anchor="middle">NotAuthorizedForPrivateBucket</text>
+        </g>
+
+        <g id="node-sweep" data-node-id="sweep" data-node-label="on_initialize Sweep" tabindex="0" role="button" aria-label="Focus on_initialize Sweep, SlashReason::Timeout, Rejections and Slash › Wait and answer" aria-pressed="false" data-node-kind="messagebus" data-node-sublabel="SlashReason::Timeout" data-node-context="Rejections and Slash › Wait and answer">
+          <title>on_initialize Sweep · SlashReason::Timeout · Rejections and Slash › Wait and answer</title>
+          <rect x="537" y="472" width="150" height="52" rx="6" class="c-mask"/>
+          <rect x="537" y="472" width="150" height="52" rx="6" class="c-messagebus" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="messagebus" class="semantic-sigil s-messagebus" transform="translate(543 478) scale(0.6875)">
+            <path d="M2.5 4.5h11M2.5 8h11M2.5 11.5h11"/>
+            <circle cx="5" cy="4.5" r="1" class="sigil-fill"/>
+            <circle cx="10.5" cy="8" r="1" class="sigil-fill"/>
+            <circle cx="7" cy="11.5" r="1" class="sigil-fill"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="612" y="493" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">on_initialize Sweep</text>
+          <text data-detail="context" x="612" y="510" class="t-muted" font-size="8" text-anchor="middle">SlashReason::Timeout</text>
+        </g>
+
+        <g id="node-slashed" data-node-id="slashed" data-node-label="ChallengeSlashed" tabindex="0" role="button" aria-label="Focus ChallengeSlashed, full stake slashed, Rejections and Slash › Judge" aria-pressed="false" data-node-kind="security" data-node-sublabel="full stake slashed" data-node-context="Rejections and Slash › Judge">
+          <title>ChallengeSlashed · full stake slashed · Rejections and Slash › Judge</title>
+          <rect x="849" y="472" width="140" height="52" rx="6" class="c-mask"/>
+          <rect x="849" y="472" width="140" height="52" rx="6" class="c-security" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="security" class="semantic-sigil s-security" transform="translate(855 478) scale(0.6875)">
+            <path d="M8 2.2 13 4v3.5c0 3.1-1.8 5.4-5 6.5-3.2-1.1-5-3.4-5-6.5V4Z"/>
+            <path d="m5.8 8 1.5 1.5 3-3"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="919" y="493" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">ChallengeSlashed</text>
+          <text data-detail="context" x="919" y="510" class="t-muted" font-size="8" text-anchor="middle">full stake slashed</text>
+        </g>
+
+        <!-- Edge labels -->
+        <g data-detail="context" data-edge-from="gate" data-edge-to="window" data-edge-label="authorized or public" data-edge-key="0" data-edge-id="admitted">
+          <rect x="312" y="226" width="106" height="14" rx="3" class="c-mask"/>
+          <text x="365" y="236" class="t-muted" font-size="8" text-anchor="middle">authorized or public</text>
+        </g>
+        <g data-detail="context" data-edge-from="window" data-edge-to="cancelled" data-edge-label="cancel before response" data-edge-key="1" data-edge-id="cancel">
+          <rect x="434.2" y="192" width="115.6" height="14" rx="3" class="c-mask"/>
+          <text x="492" y="202" class="t-database" font-size="8" text-anchor="middle">cancel before response</text>
+        </g>
+        <g data-detail="context" data-edge-from="window" data-edge-to="sweep" data-edge-label="no response" data-edge-key="2" data-edge-id="expired">
+          <rect x="520.6" y="532" width="62.8" height="14" rx="3" class="c-mask"/>
+          <text x="552" y="542" class="t-security" font-size="8" text-anchor="middle">no response</text>
+        </g>
+        <g data-detail="context" data-edge-from="verify" data-edge-to="slashed" data-edge-label="invalid" data-edge-key="3" data-edge-id="invalid">
+          <rect x="768.7" y="471" width="43.6" height="14" rx="3" class="c-mask"/>
+          <text x="790.5" y="481" class="t-security" font-size="8" text-anchor="middle">invalid</text>
+        </g>
+
+        <g data-detail="context" data-edge-from="window" data-edge-to="respond" data-edge-label="before deadline" data-edge-key="5" data-edge-id="must-answer">
+          <rect x="511" y="406" width="82" height="14" rx="3" class="c-mask"/>
+          <text x="552" y="416" class="t-muted" font-size="8" text-anchor="middle">before deadline</text>
+        </g>
+        <g data-detail="context" data-edge-from="gate" data-edge-to="denied" data-edge-label="not allowed" data-edge-key="6" data-edge-id="not-allowed">
+          <rect x="62.6" y="226" width="62.8" height="14" rx="3" class="c-mask"/>
+          <text x="94" y="236" class="t-security" font-size="8" text-anchor="middle">not allowed</text>
+        </g>
+
+
+        <g data-detail="context" data-edge-from="verify" data-edge-to="defended" data-edge-label="valid" data-edge-key="9" data-edge-id="valid">
+          <rect x="811" y="226" width="34" height="14" rx="3" class="c-mask"/>
+          <text x="828" y="236" class="t-backend" font-size="8" text-anchor="middle">valid</text>
+        </g>
+
+        <!-- Legend -->
+        <g data-legend="" data-legend-bridge="">
+          <text x="20" y="560" class="t-primary" font-size="12" font-weight="650">Legend</text>
+          <g data-legend-semantic-kind="frontend" data-legend-kind="frontend" data-legend-label="User UI" data-legend-x="20" data-legend-baseline="580" data-legend-width="74">
+            <rect x="20" y="572" width="14" height="9" rx="2" class="c-frontend" stroke-width="1"/>
+            <text x="42" y="580" class="t-muted" font-size="7.5" font-weight="500">User UI</text>
+          </g>
+          <g data-legend-semantic-kind="backend" data-legend-kind="backend" data-legend-label="Agent logic" data-legend-x="101" data-legend-baseline="580" data-legend-width="91">
+            <rect x="101" y="572" width="14" height="9" rx="2" class="c-backend" stroke-width="1"/>
+            <text x="123" y="580" class="t-muted" font-size="7.5" font-weight="500">Agent logic</text>
+          </g>
+          <g data-legend-semantic-kind="security" data-legend-kind="security" data-legend-label="Policy" data-legend-x="199" data-legend-baseline="580" data-legend-width="70">
+            <rect x="199" y="572" width="14" height="9" rx="2" class="c-security" stroke-width="1"/>
+            <text x="221" y="580" class="t-muted" font-size="7.5" font-weight="500">Policy</text>
+          </g>
+          <g data-legend-semantic-kind="messagebus" data-legend-kind="messagebus" data-legend-label="Tool action" data-legend-x="276" data-legend-baseline="580" data-legend-width="91">
+            <rect x="276" y="572" width="14" height="9" rx="2" class="c-messagebus" stroke-width="1"/>
+            <text x="298" y="580" class="t-muted" font-size="7.5" font-weight="500">Tool action</text>
+          </g>
+        </g>
+      </svg>
+      <p class="intent-trace-status no-print" id="intent-trace-status" role="status" aria-live="polite" aria-atomic="true"></p>
+      <div class="share-chapter-cue no-print" id="share-chapter-cue" hidden role="status" aria-live="polite">
+        <div class="share-chapter-index">
+          <span class="share-chapter-state" id="share-chapter-state">Ready</span>
+          <span class="share-chapter-count" id="share-chapter-count">Chapter 01 / 01</span>
+        </div>
+        <div class="share-chapter-copy">
+          <strong id="share-chapter-label">Guided chapter</strong>
+          <small id="share-chapter-note"></small>
+        </div>
+        <span class="share-chapter-route" id="share-chapter-route"></span>
+        <span class="share-chapter-progress" aria-hidden="true"><span id="share-chapter-progress-bar"></span></span>
+      </div>
+      <div class="diagram-guide no-print" id="diagram-guide" hidden role="dialog" aria-modal="false" aria-labelledby="diagram-guide-title">
+        <div class="diagram-guide-head">
+          <span>
+            <span class="diagram-guide-eyebrow">Diagram guide</span>
+            <strong class="diagram-guide-title" id="diagram-guide-title">Explore this system</strong>
+          </span>
+          <button class="diagram-guide-close" id="diagram-guide-close" type="button" aria-label="Close diagram guide">&#215;</button>
+        </div>
+        <p class="diagram-guide-stats" id="diagram-guide-stats">Inspecting compiled semantics</p>
+        <div class="diagram-guide-actions" id="diagram-guide-actions" role="group" aria-label="Diagram exploration actions">
+          <button class="diagram-guide-action" type="button" data-guide-action="find" aria-label="Find any node">
+            <span class="diagram-guide-index" aria-hidden="true">01</span>
+            <span class="diagram-guide-action-copy"><strong>Find any node</strong><small>Search labels, responsibilities, kinds, and stable IDs.</small></span>
+            <kbd aria-hidden="true">/</kbd>
+          </button>
+          <button class="diagram-guide-action" type="button" data-guide-action="route" aria-label="Trace a directed route">
+            <span class="diagram-guide-index" aria-hidden="true">02</span>
+            <span class="diagram-guide-action-copy"><strong>Trace a route</strong><small>Ask how two semantic nodes connect in authored direction.</small></span>
+            <kbd aria-hidden="true">R</kbd>
+          </button>
+          <button class="diagram-guide-action" type="button" data-guide-action="map" aria-label="See the whole system">
+            <span class="diagram-guide-index" aria-hidden="true">03</span>
+            <span class="diagram-guide-action-copy"><strong>See the whole system</strong><small>Open Semantic Radar with a live viewport and stable nodes.</small></span>
+            <kbd aria-hidden="true">M</kbd>
+          </button>
+          <button class="diagram-guide-action" type="button" data-guide-action="lens" aria-label="Compare semantic kinds">
+            <span class="diagram-guide-index" aria-hidden="true">04</span>
+            <span class="diagram-guide-action-copy"><strong>Compare semantic kinds</strong><small>Count roles, reveal their traffic, and compare direct authored links.</small></span>
+            <kbd aria-hidden="true">L</kbd>
+          </button>
+          <button class="diagram-guide-action" type="button" data-guide-action="story" aria-label="Play the guided story">
+            <span class="diagram-guide-index" aria-hidden="true">05</span>
+            <span class="diagram-guide-action-copy"><strong>Play the guided story</strong><small id="diagram-guide-story-copy">Walk the authored chapters and real relationships.</small></span>
+            <kbd aria-hidden="true">P</kbd>
+          </button>
+          <button class="diagram-guide-action" type="button" data-guide-action="present" aria-label="Enter presentation stage">
+            <span class="diagram-guide-index" aria-hidden="true">06</span>
+            <span class="diagram-guide-action-copy"><strong>Enter Presentation Stage</strong><small>Give the live diagram the viewport without changing export.</small></span>
+            <kbd aria-hidden="true">F</kbd>
+          </button>
+        </div>
+        <div class="diagram-guide-shortcuts" aria-label="Additional keyboard shortcuts">
+          <span><kbd>E</kbd> Export</span><span><kbd>T</kbd> Theme</span><span><kbd>S</kbd> Style</span><span><kbd>0</kbd> Reset</span><span><kbd>+</kbd> Zoom in</span><span><kbd>-</kbd> Zoom out</span><span><kbd>Esc</kbd> Close</span>
+        </div>
+        <p class="diagram-guide-feedback" id="diagram-guide-feedback" aria-live="polite"></p>
+      </div>
+      <div class="node-finder no-print" id="node-finder" hidden role="dialog" aria-modal="false" aria-labelledby="node-finder-title">
+        <div class="node-finder-head">
+          <strong id="node-finder-title">Find a node</strong>
+          <button class="node-finder-close" id="node-finder-close" type="button" aria-label="Close node finder">&#215;</button>
+        </div>
+        <div class="node-finder-search">
+          <span aria-hidden="true">&#8981;</span>
+          <input class="node-finder-input" id="node-finder-input" type="search" autocomplete="off" spellcheck="false" placeholder="Search labels or IDs" aria-label="Search diagram nodes" aria-describedby="node-finder-status">
+          <kbd aria-hidden="true">/</kbd>
+        </div>
+        <div class="node-finder-results" id="node-finder-results" role="group" aria-label="Diagram nodes"></div>
+        <p class="node-finder-empty" id="node-finder-empty" hidden>No matching nodes</p>
+        <p class="node-finder-status" id="node-finder-status" aria-live="polite"></p>
+      </div>
+      <div class="focus-chip relationship-lens no-print" id="focus-chip" hidden role="region" aria-labelledby="relationship-lens-title">
+        <div class="relationship-lens-head">
+          <div class="relationship-lens-copy">
+            <span class="relationship-lens-eyebrow">Semantic passport</span>
+            <strong class="relationship-lens-title" id="relationship-lens-title"><span id="focus-label"></span></strong>
+            <span class="semantic-passport-detail" id="focus-detail" hidden></span>
+            <div class="semantic-passport-meta" id="focus-passport-meta" aria-label="Node metadata">
+              <span id="focus-kind" data-passport="kind"></span>
+              <span id="focus-context" data-passport="context" hidden></span>
+              <span id="focus-tag" data-passport="tag" hidden></span>
+              <span id="focus-brand" data-passport="brand" hidden></span>
+              <code id="focus-id" data-passport="id"></code>
+            </div>
+            <div class="semantic-passport-evidence" id="focus-evidence" hidden aria-label="Verified source evidence">
+              <div class="semantic-passport-evidence-head">
+                <span class="semantic-passport-evidence-status">Verified source</span>
+                <a class="semantic-passport-repository" id="focus-repository" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer"></a>
+              </div>
+              <div class="semantic-passport-evidence-links" id="focus-evidence-links"></div>
+            </div>
+            <span class="relationship-lens-summary" id="focus-summary" aria-live="polite"></span>
+            <div class="semantic-passport-reach" id="focus-reach" hidden>
+              <span class="semantic-passport-reach-label">Authored reach</span>
+              <div class="semantic-passport-reach-actions" role="group" aria-label="Trace authored reachability">
+                <button id="btn-reach-upstream" type="button" aria-label="Trace upstream authored reachability" aria-pressed="false">
+                  <span>Upstream</span><strong id="focus-reach-upstream-count">0</strong>
+                </button>
+                <button id="btn-reach-downstream" type="button" aria-label="Trace downstream authored reachability" aria-pressed="false">
+                  <span>Downstream</span><strong id="focus-reach-downstream-count">0</strong>
+                </button>
+              </div>
+              <small class="semantic-passport-reach-status" id="focus-reach-status" hidden aria-live="polite"></small>
+            </div>
+          </div>
+          <div class="relationship-lens-actions">
+            <button id="btn-focus-clear" type="button" aria-label="Close semantic passport" title="Close">&#215;</button>
+            <button id="btn-focus-copy" type="button" aria-label="Copy link to focused node">Copy link</button>
+            <button id="btn-focus-relations" type="button" aria-label="Show connected relationships" aria-expanded="false" aria-controls="relationship-lens-list">Relations</button>
+          </div>
+        </div>
+        <div class="relationship-lens-list" id="relationship-lens-list" aria-label="Connected relationships"></div>
+      </div>
+      <div class="route-probe no-print" id="route-probe" hidden role="region" aria-labelledby="route-probe-title" data-state="idle">
+        <div class="route-probe-head">
+          <span class="route-probe-copy">
+            <span class="route-probe-eyebrow">Route probe</span>
+            <strong class="route-probe-title" id="route-probe-title">Choose a start node</strong>
+          </span>
+          <span class="route-probe-actions">
+            <button class="route-probe-find" id="route-probe-find" type="button" aria-label="Find a route start" data-node-finder-trigger>Find start</button>
+            <button class="route-probe-copy-link" id="route-probe-copy" type="button" aria-label="Copy link to traced route" hidden>Copy link</button>
+            <button id="route-probe-clear" type="button" aria-label="Clear route probe">Clear</button>
+          </span>
+        </div>
+        <div class="route-probe-path" id="route-probe-path" aria-label="Traced route">
+          <span class="route-probe-placeholder">Pick two semantic nodes on the diagram</span>
+        </div>
+        <div class="route-journey-controls" id="route-journey-controls" hidden role="group" aria-label="Route journey controls" data-playing="false">
+          <button id="route-journey-prev" type="button" aria-label="Previous route position" title="Previous route position">&#8592;</button>
+          <button class="route-journey-play" id="route-journey-play" type="button" aria-label="Play route journey" aria-pressed="false" title="Play route journey">
+            <span id="route-journey-play-icon" aria-hidden="true">&#9654;</span>
+            <span id="route-journey-play-label">Journey</span>
+          </button>
+          <button id="route-journey-next" type="button" aria-label="Next route position" title="Next route position">&#8594;</button>
+          <button class="route-journey-overview" id="route-journey-overview" type="button" aria-label="Show complete route overview" title="Show complete route overview">Overview</button>
+        </div>
+        <small class="route-probe-status" id="route-probe-status" aria-live="polite">Choose the source, then the destination. Direction matters.</small>
+      </div>
+      <div class="semantic-lens no-print" id="semantic-lens" hidden role="dialog" aria-modal="false" aria-labelledby="semantic-lens-title">
+        <div class="semantic-lens-head">
+          <span>
+            <span class="semantic-lens-eyebrow">Semantic lens</span>
+            <strong class="semantic-lens-title" id="semantic-lens-title">Compare system roles</strong>
+          </span>
+          <button class="semantic-lens-close" id="semantic-lens-close" type="button" aria-label="Close semantic lens">&#215;</button>
+        </div>
+        <p class="semantic-lens-instruction">Choose up to two semantic kinds. One reveals its real traffic; two compare only direct authored relationships.</p>
+        <div class="semantic-lens-kinds" id="semantic-lens-kinds" role="group" aria-label="Semantic kinds"></div>
+        <p class="semantic-lens-status" id="semantic-lens-status" aria-live="polite">Choose a kind to inspect its nodes and touching relationships.</p>
+        <div class="semantic-lens-actions">
+          <button id="semantic-lens-copy" type="button" aria-label="Copy link to semantic lens" hidden>Copy link</button>
+          <button id="semantic-lens-clear" type="button" aria-label="Clear semantic lens">Clear</button>
+        </div>
+      </div>
+      <div class="overview-map no-print" id="overview-map" hidden role="region" aria-labelledby="overview-map-title">
+        <div class="overview-map-head">
+          <span class="overview-map-live" aria-hidden="true"></span>
+          <span class="overview-map-copy">
+            <strong id="overview-map-title">Semantic radar</strong>
+            <small id="overview-map-status" aria-live="polite">Building overview</small>
+          </span>
+          <button class="overview-map-expand" id="overview-map-expand" type="button" aria-label="Open full semantic radar">Open radar</button>
+          <button class="overview-map-close" id="overview-map-close" type="button" aria-label="Close semantic radar">&#215;</button>
+        </div>
+        <div class="overview-map-surface" id="overview-map-surface" tabindex="0" role="group" aria-label="Diagram overview. Click a node to focus it, or use arrow keys to pan."></div>
+        <div class="overview-map-hint" aria-hidden="true"><span>Click node</span><span>Drag to pan</span></div>
+      </div>
+      <p class="overview-map-feedback no-print" id="overview-map-feedback" role="status" aria-live="polite" hidden>Semantic radar needs more MAP space.</p>
+      <div class="diagram-nav no-print" role="toolbar" aria-label="Diagram view controls">
+        <button id="btn-route-probe" type="button" aria-label="Trace a directed route" aria-pressed="false" aria-controls="route-probe" title="Trace route (R)">PATH</button>
+        <button id="btn-overview-map" type="button" aria-label="Open semantic radar" aria-expanded="false" aria-controls="overview-map" title="Semantic radar (M)">MAP</button>
+        <button id="btn-semantic-lens" type="button" aria-label="Open semantic lens" aria-haspopup="dialog" aria-expanded="false" aria-pressed="false" aria-controls="semantic-lens" title="Semantic lens (L)">LENS</button>
+        <button id="btn-node-finder" type="button" aria-label="Find a node" aria-haspopup="dialog" aria-expanded="false" aria-controls="node-finder" title="Find a node (/)" data-node-finder-trigger><span class="diagram-nav-icon find" aria-hidden="true"></span></button>
+        <button id="btn-diagram-guide" type="button" aria-label="Open diagram guide" aria-haspopup="dialog" aria-expanded="false" aria-controls="diagram-guide" title="Diagram guide (?)"><span class="diagram-nav-icon guide" aria-hidden="true"></span></button>
+        <button data-view="out" type="button" aria-label="Zoom out" title="Zoom out (-)"><span class="diagram-nav-icon minus" aria-hidden="true"></span></button>
+        <button data-view="reset" type="button" aria-label="Reset diagram view" title="Reset view (0)"><span class="diagram-nav-detail" data-view-detail hidden>READ</span><span class="diagram-nav-percent" data-view-percent>100%</span></button>
+        <button data-view="in" type="button" aria-label="Zoom in" title="Zoom in (+)"><span class="diagram-nav-icon plus" aria-hidden="true"></span></button>
+      </div>
+    </div>
+
+    <!-- Info Cards -->
+    <div class="cards">
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot cyan"></div>
+          <h3>Three challenge modes</h3>
+        </div>
+        <ul>
+          <li>&bull; challenge_checkpoint: a provider in the current snapshot; for cold buckets</li>
+          <li>&bull; challenge_offchain: a provider-signed Commitment; for hot buckets</li>
+          <li>&bull; challenge_replica: the root the replica confirmed in last_sync</li>
+          <li>&bull; Use a challenge after off-chain requests fail</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot violet"></div>
+          <h3>Who may challenge</h3>
+        </div>
+        <ul>
+          <li>&bull; Any signed account except the challenged provider (SelfChallenge)</li>
+          <li>&bull; Private bucket, primary provider: member or primary-agreement owner only (NotAuthorizedForPrivateBucket)</li>
+          <li>&bull; The gate reads the provider&#39;s role from its current agreement; replicas are open to anyone</li>
+          <li>&bull; Tier: authorized (member or any agreement owner) or public, stored in Challenge.authorized at creation</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot amber"></div>
+          <h3>Authorized cost split, illustrative (challenger / provider)</h3>
+        </div>
+        <ul>
+          <li>&bull; Block 1: 90% / 10%</li>
+          <li>&bull; Blocks 2-5: 80% / 20%</li>
+          <li>&bull; Blocks 6-24: 70% / 30%</li>
+          <li>&bull; Blocks 25-95: 60% / 40%</li>
+          <li>&bull; Blocks 96+: 50% / 50%</li>
+          <li>&bull; Fixed rule: challenger pays at least 50%. Public challenger: 100% / 0%</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot rose"></div>
+          <h3>Responses and SlashReason</h3>
+        </div>
+        <ul>
+          <li>&bull; Proof: chunk in leaf, leaf in committed MMR; else InvalidProof</li>
+          <li>&bull; Deleted: admin-signed commitment with new_start_seq above the challenged leaf; else InvalidDeletionClaim</li>
+          <li>&bull; Superseded: a newer canonical snapshot covers the leaf; else InvalidSupersededClaim</li>
+          <li>&bull; No response before the deadline: Timeout</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot orange"></div>
+          <h3>After a slash</h3>
+        </div>
+        <ul>
+          <li>&bull; The provider loses its full stake, not a per-bucket share</li>
+          <li>&bull; The challenger gets the deposit and tx fees back, with no reward</li>
+          <li>&bull; Anyone can call remove_slashed; the owner gets the remaining agreement payment back</li>
+        </ul>
+      </div>
+    </div>
+
+  </div>
+
+  <script src="assets/archify/viewer.js?v=0b21e98276d8"></script>
+</body>
+</html>

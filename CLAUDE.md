@@ -31,6 +31,10 @@ Link, don't copy.
   what an error means and how to get past it, what an event reports. Keep
   each one short. Every public pallet item must carry one; the `missing_docs`
   CI gate that enforces this lands with #403.
+- **When a change edits `docs/design/`, update `docs/site/` in the same PR**
+  with the `/generate-docs` skill. The `Docs Site` CI check
+  (`scripts/check-docs-site.sh`) fails until `docs/site/design.sha256`
+  matches `docs/design/`.
 - **`docs/drafts/`** is unratified / WIP — don't treat it as authoritative or
   reason from it as if it were the spec.
 
@@ -44,6 +48,7 @@ Link, don't copy.
 | Extrinsics, errors, events, storage items (API reference) | rustdoc on `crates/pallets/*` (`cargo doc -p pallet-storage-provider --no-deps --open`); the same text is in the runtime metadata, so IDE hover on PAPI/subxt bindings and polkadot.js Apps show it |
 | Payment math | `Pallet::calculate_payment` in `crates/pallets/storage-provider/src/impls/agreements.rs` — the code is the formula |
 | Layer 1 file system (drives, manifests, commit strategies) | rustdoc on `crates/primitives/file-system` and `crates/pallets/drive-registry`; [`clients/file-system/README.md`](clients/file-system/README.md) |
+| Architecture diagrams and the dApp developer guide, derived from `docs/design/` | [`docs/site/`](docs/site/); update with the `/generate-docs` skill |
 | WIP designs: marketplace/discovery, checkpoint protocol, smart contracts, encryption | [`docs/drafts/`](docs/drafts/) — **not authoritative** |
 | Review criteria (Parity Standards) | the `/review` skill — authoritative; not restated here |
 | TypeScript SDK layering, tx semantics, PAPI patterns | [`packages/sdk/README.md`](packages/sdk/README.md) |

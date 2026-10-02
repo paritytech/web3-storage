@@ -1,0 +1,329 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "Challenge Protocol",
+    "quality_profile": "showcase",
+    "views": [
+      {
+        "id": "happy-path",
+        "label": "Defended challenge",
+        "focus": [
+          "open",
+          "gate",
+          "window",
+          "respond",
+          "verify",
+          "defended"
+        ],
+        "note": "A valid response before the deadline leaves the stake untouched. The deposit reimburses the response fee per tier."
+      },
+      {
+        "id": "gate-view",
+        "label": "Who may challenge",
+        "focus": [
+          "open",
+          "gate",
+          "denied"
+        ],
+        "note": "The chain rejects a self-challenge, and a private-bucket primary challenge from a non-member without a primary agreement."
+      },
+      {
+        "id": "failure",
+        "label": "Slash",
+        "focus": [
+          "window",
+          "verify",
+          "sweep",
+          "slashed"
+        ],
+        "note": "An invalid response or no response before ChallengeTimeout slashes the full stake."
+      },
+      {
+        "id": "exit",
+        "label": "Cancel",
+        "focus": [
+          "open",
+          "window",
+          "cancelled"
+        ],
+        "note": "The design doc allows cancel before the response. The implementation doc defines no cancel extrinsic yet."
+      }
+    ]
+  },
+  "lanes": [
+    {
+      "id": "challenger",
+      "label": "Challenger"
+    },
+    {
+      "id": "chain",
+      "label": "Chain"
+    },
+    {
+      "id": "provider",
+      "label": "Provider"
+    },
+    {
+      "id": "outcome",
+      "label": "Rejections and Slash",
+      "variant": "exception"
+    }
+  ],
+  "phases": [
+    {
+      "id": "open_phase",
+      "label": "Open",
+      "fromCol": 0,
+      "toCol": 1
+    },
+    {
+      "id": "wait_phase",
+      "label": "Wait and answer",
+      "fromCol": 2,
+      "toCol": 3,
+      "variant": "emphasis"
+    },
+    {
+      "id": "judge_phase",
+      "label": "Judge",
+      "fromCol": 4,
+      "toCol": 5,
+      "variant": "security"
+    }
+  ],
+  "mainPath": [
+    "open",
+    "gate",
+    "window",
+    "respond",
+    "verify",
+    "defended"
+  ],
+  "nodes": [
+    {
+      "id": "open",
+      "lane": "challenger",
+      "col": 0,
+      "type": "frontend",
+      "label": "Open Challenge",
+      "sublabel": "3 modes, ChunkLocation",
+      "tag": "ChallengeDeposit",
+      "width": 140
+    },
+    {
+      "id": "cancelled",
+      "lane": "challenger",
+      "col": 2,
+      "type": "messagebus",
+      "label": "Cancel",
+      "sublabel": "design doc only",
+      "tag": "no extrinsic",
+      "width": 140
+    },
+    {
+      "id": "gate",
+      "lane": "chain",
+      "col": 1,
+      "type": "security",
+      "label": "Authorization Gate",
+      "sublabel": "tier fixed at creation",
+      "width": 140
+    },
+    {
+      "id": "window",
+      "lane": "chain",
+      "col": 2,
+      "type": "messagebus",
+      "label": "Challenge Window",
+      "sublabel": "ChallengeTimeout, 48h",
+      "tag": "ChallengeCreated",
+      "width": 140
+    },
+    {
+      "id": "verify",
+      "lane": "chain",
+      "col": 4,
+      "type": "security",
+      "label": "Verify Response",
+      "sublabel": "verify_challenge_response",
+      "width": 150
+    },
+    {
+      "id": "defended",
+      "lane": "chain",
+      "col": 5,
+      "type": "backend",
+      "label": "ChallengeDefended",
+      "sublabel": "stake untouched",
+      "width": 140
+    },
+    {
+      "id": "respond",
+      "lane": "provider",
+      "col": 3,
+      "type": "backend",
+      "label": "respond_to_challenge",
+      "sublabel": "Proof, Deleted, Superseded",
+      "width": 150
+    },
+    {
+      "id": "denied",
+      "lane": "outcome",
+      "col": 1,
+      "type": "security",
+      "label": "Call Rejected",
+      "sublabel": "SelfChallenge",
+      "width": 150,
+      "tag": "NotAuthorizedForPrivateBucket"
+    },
+    {
+      "id": "sweep",
+      "lane": "outcome",
+      "col": 3,
+      "type": "messagebus",
+      "label": "on_initialize Sweep",
+      "sublabel": "SlashReason::Timeout",
+      "width": 150
+    },
+    {
+      "id": "slashed",
+      "lane": "outcome",
+      "col": 5,
+      "type": "security",
+      "label": "ChallengeSlashed",
+      "sublabel": "full stake slashed",
+      "width": 140
+    }
+  ],
+  "edges": [
+    {
+      "id": "submit",
+      "from": "open",
+      "to": "gate",
+      "role": "main",
+      "variant": "emphasis"
+    },
+    {
+      "id": "not-allowed",
+      "from": "gate",
+      "to": "denied",
+      "label": "not allowed",
+      "role": "error",
+      "variant": "security"
+    },
+    {
+      "id": "admitted",
+      "from": "gate",
+      "to": "window",
+      "label": "authorized or public",
+      "role": "main"
+    },
+    {
+      "id": "must-answer",
+      "from": "window",
+      "to": "respond",
+      "label": "before deadline",
+      "role": "main"
+    },
+    {
+      "id": "cancel",
+      "from": "window",
+      "to": "cancelled",
+      "label": "cancel before response",
+      "role": "branch",
+      "variant": "dashed"
+    },
+    {
+      "id": "expired",
+      "from": "window",
+      "to": "sweep",
+      "label": "no response",
+      "role": "error",
+      "variant": "security"
+    },
+    {
+      "id": "judge",
+      "from": "respond",
+      "to": "verify",
+      "role": "main",
+      "variant": "security"
+    },
+    {
+      "id": "valid",
+      "from": "verify",
+      "to": "defended",
+      "label": "valid",
+      "role": "main",
+      "variant": "emphasis"
+    },
+    {
+      "id": "invalid",
+      "from": "verify",
+      "to": "slashed",
+      "label": "invalid",
+      "role": "error",
+      "variant": "security"
+    },
+    {
+      "id": "timed-out",
+      "from": "sweep",
+      "to": "slashed",
+      "role": "error",
+      "variant": "security"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Three challenge modes",
+      "items": [
+        "challenge_checkpoint: a provider in the current snapshot; for cold buckets",
+        "challenge_offchain: a provider-signed Commitment; for hot buckets",
+        "challenge_replica: the root the replica confirmed in last_sync",
+        "Use a challenge after off-chain requests fail"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "Who may challenge",
+      "items": [
+        "Any signed account except the challenged provider (SelfChallenge)",
+        "Private bucket, primary provider: member or primary-agreement owner only (NotAuthorizedForPrivateBucket)",
+        "The gate reads the provider's role from its current agreement; replicas are open to anyone",
+        "Tier: authorized (member or any agreement owner) or public, stored in Challenge.authorized at creation"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Authorized cost split, illustrative (challenger / provider)",
+      "items": [
+        "Block 1: 90% / 10%",
+        "Blocks 2-5: 80% / 20%",
+        "Blocks 6-24: 70% / 30%",
+        "Blocks 25-95: 60% / 40%",
+        "Blocks 96+: 50% / 50%",
+        "Fixed rule: challenger pays at least 50%. Public challenger: 100% / 0%"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Responses and SlashReason",
+      "items": [
+        "Proof: chunk in leaf, leaf in committed MMR; else InvalidProof",
+        "Deleted: admin-signed commitment with new_start_seq above the challenged leaf; else InvalidDeletionClaim",
+        "Superseded: a newer canonical snapshot covers the leaf; else InvalidSupersededClaim",
+        "No response before the deadline: Timeout"
+      ]
+    },
+    {
+      "dot": "orange",
+      "title": "After a slash",
+      "items": [
+        "The provider loses its full stake, not a per-bucket share",
+        "The challenger gets the deposit and tx fees back, with no reward",
+        "Anyone can call remove_slashed; the owner gets the remaining agreement payment back"
+      ]
+    }
+  ]
+}

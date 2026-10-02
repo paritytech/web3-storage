@@ -1,0 +1,588 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark" data-preset="classic">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="generator" content="archify 2.17.0-dev.1">
+  <title>Provider Lifecycle Diagram</title>
+  <script src="assets/archify/theme.js?v=3152b732f000"></script>
+  <!-- Async font load: a blackholed network must not block first paint.
+       The body font stack falls back to system monospace until it lands. -->
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap"
+        rel="stylesheet" media="print" onload="this.media='all'">
+  <noscript>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  </noscript>
+  <script src="assets/archify/style.js?v=e5a5a6dc9177"></script>
+  <link rel="stylesheet" href="assets/diagram-page.css">
+</head>
+<body>
+  <!-- Toolbar: theme, live visual style, trace motion, presentation stage, and export.
+       Motion appears only for trace-enabled artifacts and has no shortcut;
+       Keyboard: T toggles theme, S cycles style, F toggles the stage, E opens export. -->
+  <div class="toolbar" role="toolbar" aria-label="Diagram actions">
+    <button id="btn-theme" type="button"
+            title="Toggle theme (T)"
+            aria-label="Toggle color theme"
+            aria-pressed="false">
+      <span id="theme-icon" class="toolbar-icon" aria-hidden="true"></span>
+      <span id="theme-label">Dark</span>
+    </button>
+    <div class="preset-wrap">
+      <button id="btn-preset" type="button"
+              title="Choose visual style (S cycles)"
+              aria-label="Choose visual style"
+              aria-haspopup="menu"
+              aria-expanded="false"
+              aria-controls="preset-menu"
+              aria-keyshortcuts="S">
+        <span class="preset-control-mark" aria-hidden="true"></span>
+        <span id="preset-label">Style</span>
+        <span class="toolbar-icon toolbar-chevron" aria-hidden="true"></span>
+      </button>
+      <div class="preset-menu" id="preset-menu" role="menu" aria-label="Visual style">
+        <div class="preset-menu-heading" role="presentation"><span>Visual identity</span><span>S cycles</span></div>
+        <button class="preset-option" data-preset-value="classic" type="button" role="menuitemradio" aria-checked="false" tabindex="-1">
+          <span class="preset-option-swatch classic" aria-hidden="true"></span>
+          <span class="preset-option-copy"><strong>Classic</strong><small>Stable technical default</small></span>
+          <span class="preset-option-check" aria-hidden="true"></span>
+        </button>
+        <button class="preset-option" data-preset-value="signal-flow" type="button" role="menuitemradio" aria-checked="false" tabindex="-1">
+          <span class="preset-option-swatch signal-flow" aria-hidden="true"></span>
+          <span class="preset-option-copy"><strong>Signal Flow</strong><small>Motion-forward presentation</small></span>
+          <span class="preset-option-check" aria-hidden="true"></span>
+        </button>
+        <button class="preset-option" data-preset-value="blueprint" type="button" role="menuitemradio" aria-checked="false" tabindex="-1">
+          <span class="preset-option-swatch blueprint" aria-hidden="true"></span>
+          <span class="preset-option-copy"><strong>Blueprint</strong><small>Engineering review</small></span>
+          <span class="preset-option-check" aria-hidden="true"></span>
+        </button>
+        <button class="preset-option" data-preset-value="editorial" type="button" role="menuitemradio" aria-checked="false" tabindex="-1">
+          <span class="preset-option-swatch editorial" aria-hidden="true"></span>
+          <span class="preset-option-copy"><strong>Editorial</strong><small>Publication and launch notes</small></span>
+          <span class="preset-option-check" aria-hidden="true"></span>
+        </button>
+      </div>
+    </div>
+    <button id="btn-motion" type="button" hidden
+            title="Pause motion"
+            aria-label="Pause motion"
+            aria-pressed="true">
+      <span class="motion-control-dot" aria-hidden="true"></span>
+      <span id="motion-label">Live</span>
+    </button>
+    <button id="btn-present" type="button"
+            title="Presentation stage (F)"
+            aria-label="Enter presentation stage"
+            aria-pressed="false">
+      <span id="present-icon" class="toolbar-icon" aria-hidden="true"></span>
+      <span id="present-label">Present</span>
+    </button>
+    <div class="export-wrap">
+      <button id="btn-export" type="button"
+              title="Export diagram (E)"
+              aria-label="Export diagram"
+              aria-haspopup="menu"
+              aria-expanded="false"
+              aria-controls="export-menu">
+        Export <span class="toolbar-icon toolbar-chevron" aria-hidden="true"></span>
+      </button>
+      <div class="export-menu" id="export-menu" role="menu" aria-label="Export">
+        <div class="export-menu-header" role="presentation">
+          <div><strong>Export diagram</strong><span>Portable, clean outputs</span></div>
+          <kbd>E</kbd>
+        </div>
+        <div class="export-menu-section" role="group" aria-label="Share">
+          <span class="export-menu-heading" aria-hidden="true">Share</span>
+          <button data-format="share-card" type="button" role="menuitem" tabindex="-1"><span class="export-item-copy"><strong>Share Card</strong><small class="hint">1200&times;630 PNG</small></span></button>
+          <button data-action="route-share-card" type="button" role="menuitem" tabindex="-1" hidden disabled><span class="export-item-copy"><strong>Route Share Card</strong><small class="hint">1200&times;630 PNG</small></span></button>
+          <button data-action="reach-share-card" type="button" role="menuitem" tabindex="-1" hidden disabled><span class="export-item-copy"><strong>Reach Share Card</strong><small class="hint">1200&times;630 PNG</small></span></button>
+          <button data-action="copy-share-card" type="button" role="menuitem" tabindex="-1"><span class="export-item-copy"><strong>Copy Share Card</strong><small class="hint">PNG to clipboard</small></span></button>
+          <button data-action="copy" type="button" role="menuitem" tabindex="-1"><span class="export-item-copy"><strong>Copy diagram</strong><small class="hint">PNG to clipboard</small></span></button>
+        </div>
+        <div class="export-menu-section" role="group" aria-label="Raster images">
+          <span class="export-menu-heading" aria-hidden="true">Image</span>
+          <button data-format="png" type="button" role="menuitem" tabindex="-1"><span class="export-item-copy"><strong>PNG</strong><small class="hint">Lossless image</small></span></button>
+          <button data-format="jpeg" type="button" role="menuitem" tabindex="-1"><span class="export-item-copy"><strong>JPEG</strong><small class="hint">Compact image</small></span></button>
+          <button data-format="webp" type="button" role="menuitem" tabindex="-1"><span class="export-item-copy"><strong>WebP</strong><small class="hint">Modern image</small></span></button>
+        </div>
+        <div class="export-menu-section" role="group" aria-label="Vector and motion">
+          <span class="export-menu-heading" aria-hidden="true">Vector &amp; motion</span>
+          <button data-format="svg" type="button" role="menuitem" tabindex="-1"><span class="export-item-copy"><strong>SVG</strong><small class="hint">Editable vector</small></span></button>
+          <button data-format="webm" type="button" role="menuitem" tabindex="-1"><span class="export-item-copy"><strong>WebM</strong><small class="hint">6s motion</small></span></button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="container">
+    <!-- Header -->
+    <div class="header">
+      <p class="site-crumb"><a href="index.html">&larr; Scalable Web3 Storage</a></p>
+      <div class="header-row"
+           data-preset-badge-signal-flow="SIGNAL FLOW"
+           data-preset-badge-blueprint="BLUEPRINT / REV 01"
+           data-preset-badge-editorial="EDITORIAL / FIELD NOTE">
+        <div class="pulse-dot"></div>
+        <h1>Provider Lifecycle</h1>
+      </div>
+    </div>
+
+    <script id="archify-guided-views-data" type="application/json">[{"id":"main-path","label":"Registration to exit","focus":["unregistered","registered","serving","idle","deregistered"],"note":"The ordered path from staking in to releasing the stake."},{"id":"two-step-exit","label":"Two-step exit","focus":["idle","announced","deregistered","slashed"],"note":"complete_deregister runs after DeregisterAnnouncementPeriod with PendingChallenges == 0; cancel_deregister returns to Idle."},{"id":"slash-path","label":"Slash path","focus":["serving","slashed","removed"],"note":"A failed challenge slashes the entire stake. Exit Announced stays slashable too."}]</script>
+
+    <script src="assets/archify/i18n.js?v=b331908a8a55"></script>
+    <div class="guided-views no-print" id="guided-views" hidden aria-label="Guided diagram views">
+      <button id="guided-view-prev" type="button" aria-label="Previous guided view" title="Previous guided view ([)">&#8592;</button>
+      <div class="guided-view-copy">
+        <div class="guided-view-meta">
+          <span>Guided views</span>
+          <span id="guided-view-count"></span>
+          <span class="guided-view-progress" aria-hidden="true"><span id="guided-view-progress-bar"></span></span>
+          <span class="guided-view-handoff" id="guided-view-handoff" hidden aria-hidden="true"></span>
+        </div>
+        <strong id="guided-view-label">Explore this system</strong>
+        <small id="guided-view-note" aria-live="polite" aria-atomic="true">Step through curated paths without changing the source diagram.</small>
+        <div class="guided-view-trail" id="guided-view-trail" hidden role="group" aria-label="Story trail"></div>
+        <div class="guided-story-caption" id="guided-story-caption" hidden aria-live="polite" aria-atomic="true">
+          <span class="guided-story-caption-index" id="guided-story-caption-index">Beat</span>
+          <strong id="guided-story-caption-route"></strong>
+          <small id="guided-story-caption-detail"></small>
+          <span class="guided-story-caption-next" id="guided-story-caption-next" hidden aria-hidden="true">
+            <small>Next</small>
+            <strong id="guided-story-caption-next-label"></strong>
+          </span>
+        </div>
+      </div>
+      <button id="guided-view-next" type="button" aria-label="Next guided view" title="Next guided view (])">&#8594;</button>
+      <div class="guided-view-actions">
+        <button class="guided-view-play" id="guided-view-play" type="button" aria-label="Play guided story" aria-pressed="false" title="Play guided story (P)">
+          <span id="guided-view-play-icon" aria-hidden="true">&#9654;</span>
+          <span id="guided-view-play-label">Play story</span>
+        </button>
+        <button class="guided-view-beat-link" id="guided-view-beat-link" type="button" aria-label="Select a Story Beat to copy its exact link" title="Select a Story Beat to copy its exact link" disabled>
+          <span aria-hidden="true">&#35;</span>
+          <span id="guided-view-beat-link-label">Copy moment</span>
+        </button>
+        <button class="guided-view-all" id="guided-view-all" type="button" aria-label="Show entire diagram">Show all</button>
+      </div>
+      <nav class="guided-view-index" id="guided-view-index" aria-label="Story chapters">
+        <ol class="guided-view-chapters" id="guided-view-chapters"></ol>
+      </nav>
+    </div>
+
+    <!-- Main Diagram -->
+    <div class="diagram-container" data-detail-level="read"
+         data-preset-badge-editorial-plate="WEB3 STORAGE / PLATE 04">
+      <svg viewBox="0 0 1000 580" role="img" lang="en" aria-labelledby="archify-diagram-title archify-diagram-description" data-preset="classic" data-quality-profile="showcase">
+        <title id="archify-diagram-title">Provider Lifecycle</title>
+        <desc id="archify-diagram-description">A lifecycle diagram.</desc>
+        <!-- Definitions -->
+        <defs>
+          <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" class="m-default" />
+          </marker>
+          <marker id="arrowhead-emphasis" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" class="m-emphasis" />
+          </marker>
+          <marker id="arrowhead-security" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" class="m-security" />
+          </marker>
+          <marker id="arrowhead-dashed" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" class="m-dashed" />
+          </marker>
+          <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+            <path d="M 40 0 L 0 0 0 40" class="c-grid" stroke-width="0.5"/>
+          </pattern>
+        </defs>
+
+        <!-- Background Grid -->
+        <rect width="100%" height="100%" fill="url(#grid)" />
+
+        <!-- Lifecycle bands -->
+        <path d="M 72 112 L 928 112" class="a-default" stroke-width="0.8" stroke-dasharray="3,8"/>
+        <text x="72" y="100" class="t-dim" font-size="10" font-weight="600">01 / Provider registration</text>
+        <path d="M 72 264 L 928 264" class="a-default" stroke-width="0.8" stroke-dasharray="3,8"/>
+        <text x="72" y="252" class="t-dim" font-size="10" font-weight="600">02 / Exit and slash</text>
+        <path d="M 72 436 L 928 436" class="a-default" stroke-width="0.8" stroke-dasharray="3,8"/>
+        <text x="72" y="424" class="t-dim" font-size="10" font-weight="600">03 / Exit and cleanup</text>
+
+        <!-- Primary lifecycle rail -->
+        <path d="M 154 157 L 594 157" class="a-emphasis" stroke-width="2.2" marker-end="url(#arrowhead-emphasis)"/>
+
+        <!-- Transition paths -->
+        <path data-edge-from="unregistered" data-edge-to="registered" data-edge-label="register_provider(stake)" data-edge-key="0" data-edge-id="register" data-composition-points="153,157;189,157" d="M 153 157 L 189 157" class="a-default" stroke-width="1.1" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="registered" data-edge-to="serving" data-edge-label="signed terms redeemed" data-edge-key="1" data-edge-id="first-agreement" data-composition-points="307,157;343,157" d="M 307 157 L 343 157" class="a-default" stroke-width="1.1" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="serving" data-edge-to="idle" data-edge-label="agreements ended" data-edge-key="2" data-edge-id="agreements-expire" data-composition-points="461,157;497,157" d="M 461 157 L 497 157" class="a-default" stroke-width="1.1" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="idle" data-edge-to="announced" data-edge-label="deregister_provider" data-edge-key="3" data-edge-id="announce" data-composition-points="556,188;556,278" d="M 556 188 L 556 278" class="a-default" stroke-width="1.1" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="announced" data-edge-to="deregistered" data-edge-label="complete_deregister" data-edge-key="4" data-edge-id="complete" data-composition-points="556,336;556,363;710,363;710,390" d="M 556 336 L 556 353 Q 556 363 566 363 L 700 363 Q 710 363 710 373 L 710 390" class="a-emphasis" stroke-width="2" marker-end="url(#arrowhead-emphasis)"/>
+        <path data-edge-from="announced" data-edge-to="idle" data-edge-label="cancel_deregister" data-edge-key="5" data-edge-id="cancel" data-composition-points="619,307;660,307;660,157;615,157" d="M 619 307 L 650 307 Q 660 307 660 297 L 660 167 Q 660 157 650 157 L 615 157" class="a-default" stroke-width="1.1" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="serving" data-edge-to="slashed" data-edge-label="no or invalid response" data-edge-key="6" data-edge-id="slash" data-composition-points="402,188;402,278" d="M 402 188 L 402 278" class="a-security" stroke-width="1.1" marker-end="url(#arrowhead-security)"/>
+        <path data-edge-from="slashed" data-edge-to="removed" data-edge-label="remove_slashed (anyone)" data-edge-key="7" data-edge-id="cleanup" data-composition-points="402,336;402,390" d="M 402 336 L 402 390" class="a-default" stroke-width="1.1" marker-end="url(#arrowhead)"/>
+
+        <!-- States -->
+        <g id="node-unregistered" data-node-id="unregistered" data-node-label="Unregistered" tabindex="0" role="button" aria-label="Focus Unregistered, no stake held, Provider registration" aria-pressed="false" data-node-kind="start" data-node-sublabel="no stake held" data-node-context="Provider registration">
+          <title>Unregistered · no stake held · Provider registration</title>
+          <rect x="35" y="126" width="118" height="62" rx="7" class="c-mask"/>
+          <rect x="35" y="126" width="118" height="62" rx="7" class="c-frontend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="start" class="semantic-sigil s-frontend" transform="translate(136 132) scale(0.6875)">
+            <circle cx="8" cy="8" r="5"/>
+            <path d="m7 5.4 3.6 2.6L7 10.6Z" class="sigil-fill"/>
+          </g>
+        <text data-detail="fine" x="45" y="140" class="t-frontend" font-size="7" font-weight="700">01</text>
+          <text data-node-label="" data-detail-anchor="" x="94" y="147" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">Unregistered</text>
+          <text data-detail="context" x="94" y="163" class="t-muted" font-size="7" text-anchor="middle">no stake held</text>
+        </g>
+
+        <g id="node-registered" data-node-id="registered" data-node-label="Registered" tabindex="0" role="button" aria-label="Focus Registered, stake held, Provider registration" aria-pressed="false" data-node-kind="active" data-node-sublabel="stake held" data-node-tag="accepting" data-node-context="Provider registration">
+          <title>Registered · stake held · Provider registration · accepting</title>
+          <rect x="189" y="126" width="118" height="62" rx="7" class="c-mask"/>
+          <rect x="189" y="126" width="118" height="62" rx="7" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="active" class="semantic-sigil s-backend" transform="translate(290 132) scale(0.6875)">
+            <path d="M2 8h3l1.5-3.5L9 12l1.6-4H14"/>
+          </g>
+        <text data-detail="fine" x="199" y="140" class="t-backend" font-size="7" font-weight="700">02</text>
+          <text data-node-label="" data-detail-anchor="" x="248" y="147" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">Registered</text>
+          <text data-detail="context" x="248" y="163" class="t-muted" font-size="7" text-anchor="middle">stake held</text>
+        <text data-detail="fine" x="248" y="177" class="t-backend" font-size="7" text-anchor="middle">accepting</text>
+        </g>
+
+        <g id="node-serving" data-node-id="serving" data-node-label="Serving" tabindex="0" role="button" aria-label="Focus Serving, committed_bytes &gt; 0, Provider registration" aria-pressed="false" data-node-kind="active" data-node-sublabel="committed_bytes &gt; 0" data-node-tag="slashable" data-node-context="Provider registration">
+          <title>Serving · committed_bytes &gt; 0 · Provider registration · slashable</title>
+          <rect x="343" y="126" width="118" height="62" rx="7" class="c-mask"/>
+          <rect x="343" y="126" width="118" height="62" rx="7" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="active" class="semantic-sigil s-backend" transform="translate(444 132) scale(0.6875)">
+            <path d="M2 8h3l1.5-3.5L9 12l1.6-4H14"/>
+          </g>
+        <text data-detail="fine" x="353" y="140" class="t-backend" font-size="7" font-weight="700">03</text>
+          <text data-node-label="" data-detail-anchor="" x="402" y="147" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">Serving</text>
+          <text data-detail="context" x="402" y="163" class="t-muted" font-size="7" text-anchor="middle">committed_bytes &gt; 0</text>
+        <text data-detail="fine" x="402" y="177" class="t-backend" font-size="7" text-anchor="middle">slashable</text>
+        </g>
+
+        <g id="node-idle" data-node-id="idle" data-node-label="Idle" tabindex="0" role="button" aria-label="Focus Idle, committed_bytes == 0, Provider registration" aria-pressed="false" data-node-kind="active" data-node-sublabel="committed_bytes == 0" data-node-context="Provider registration">
+          <title>Idle · committed_bytes == 0 · Provider registration</title>
+          <rect x="497" y="126" width="118" height="62" rx="7" class="c-mask"/>
+          <rect x="497" y="126" width="118" height="62" rx="7" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="active" class="semantic-sigil s-backend" transform="translate(598 132) scale(0.6875)">
+            <path d="M2 8h3l1.5-3.5L9 12l1.6-4H14"/>
+          </g>
+        <text data-detail="fine" x="507" y="140" class="t-backend" font-size="7" font-weight="700">04</text>
+          <text data-node-label="" data-detail-anchor="" x="556" y="147" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">Idle</text>
+          <text data-detail="context" x="556" y="163" class="t-muted" font-size="7" text-anchor="middle">committed_bytes == 0</text>
+        </g>
+
+        <g id="node-deregistered" data-node-id="deregistered" data-node-label="Deregistered" tabindex="0" role="button" aria-label="Focus Deregistered, stake released, Exit and cleanup" aria-pressed="false" data-node-kind="success" data-node-sublabel="stake released" data-node-context="Exit and cleanup">
+          <title>Deregistered · stake released · Exit and cleanup</title>
+          <rect x="651" y="390" width="118" height="58" rx="7" class="c-mask"/>
+          <rect x="651" y="390" width="118" height="58" rx="7" class="c-database" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="success" class="semantic-sigil s-database" transform="translate(752 396) scale(0.6875)">
+            <circle cx="8" cy="8" r="5.3"/>
+            <path d="m5.2 8 1.8 1.8 3.8-4"/>
+          </g>
+        <text data-detail="fine" x="661" y="404" class="t-database" font-size="7" font-weight="700">05</text>
+          <text data-node-label="" data-detail-anchor="" x="710" y="411" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">Deregistered</text>
+          <text data-detail="context" x="710" y="427" class="t-muted" font-size="7" text-anchor="middle">stake released</text>
+        </g>
+
+        <g id="node-announced" data-node-id="announced" data-node-label="Exit Announced" tabindex="0" role="button" aria-label="Focus Exit Announced, settings frozen, Exit and slash" aria-pressed="false" data-node-kind="waiting" data-node-sublabel="settings frozen" data-node-tag="still slashable" data-node-context="Exit and slash">
+          <title>Exit Announced · settings frozen · Exit and slash · still slashable</title>
+          <rect x="493" y="278" width="126" height="58" rx="7" class="c-mask"/>
+          <rect x="493" y="278" width="126" height="58" rx="7" class="c-cloud" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="waiting" class="semantic-sigil s-cloud" transform="translate(602 284) scale(0.6875)">
+            <path d="M4 2.5h8M4 13.5h8M5 3c0 2.8 2 3.2 3 5-1 1.8-3 2.2-3 5M11 3c0 2.8-2 3.2-3 5 1 1.8 3 2.2 3 5"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="556" y="299" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">Exit Announced</text>
+          <text data-detail="context" x="556" y="315" class="t-muted" font-size="7" text-anchor="middle">settings frozen</text>
+        <text data-detail="fine" x="556" y="325" class="t-cloud" font-size="7" text-anchor="middle">still slashable</text>
+        </g>
+
+        <g id="node-slashed" data-node-id="slashed" data-node-label="Slashed" tabindex="0" role="button" aria-label="Focus Slashed, entire stake slashed, Exit and slash" aria-pressed="false" data-node-kind="failure" data-node-sublabel="entire stake slashed" data-node-tag="ChallengeSlashed" data-node-context="Exit and slash">
+          <title>Slashed · entire stake slashed · Exit and slash · ChallengeSlashed</title>
+          <rect x="339" y="278" width="126" height="58" rx="7" class="c-mask"/>
+          <rect x="339" y="278" width="126" height="58" rx="7" class="c-security" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="failure" class="semantic-sigil s-security" transform="translate(448 284) scale(0.6875)">
+            <circle cx="8" cy="8" r="5.3"/>
+            <path d="m5.7 5.7 4.6 4.6m0-4.6-4.6 4.6"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="402" y="299" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">Slashed</text>
+          <text data-detail="context" x="402" y="315" class="t-muted" font-size="7" text-anchor="middle">entire stake slashed</text>
+        <text data-detail="fine" x="402" y="325" class="t-security" font-size="7" text-anchor="middle">ChallengeSlashed</text>
+        </g>
+
+        <g id="node-removed" data-node-id="removed" data-node-label="Removed from bucket" tabindex="0" role="button" aria-label="Focus Removed from bucket, payment to owner, Exit and cleanup" aria-pressed="false" data-node-kind="neutral" data-node-sublabel="payment to owner" data-node-context="Exit and cleanup">
+          <title>Removed from bucket · payment to owner · Exit and cleanup</title>
+          <rect x="343" y="390" width="118" height="58" rx="7" class="c-mask"/>
+          <rect x="343" y="390" width="118" height="58" rx="7" class="c-external" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="neutral" class="semantic-sigil s-external" transform="translate(444 396) scale(0.6875)">
+            <rect x="3" y="3" width="10" height="10" rx="2"/>
+            <circle cx="8" cy="8" r="1.2" class="sigil-fill"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="402" y="411" class="t-primary" font-size="9.6" font-weight="600" text-anchor="middle">Removed from bucket</text>
+          <text data-detail="context" x="402" y="427" class="t-muted" font-size="7" text-anchor="middle">payment to owner</text>
+        </g>
+
+        <!-- Transition labels -->
+        <g data-detail="context" data-edge-from="unregistered" data-edge-to="registered" data-edge-label="register_provider(stake)" data-edge-key="0" data-edge-id="register">
+          <rect x="106.19999999999999" y="111" width="129.60000000000002" height="16" rx="4" class="c-mask"/>
+          <text x="171" y="122" class="t-muted" font-size="8" text-anchor="middle">register_provider(stake)</text>
+        </g>
+        <g data-detail="context" data-edge-from="registered" data-edge-to="serving" data-edge-label="signed terms redeemed" data-edge-key="1" data-edge-id="first-agreement">
+          <rect x="267.55" y="111" width="114.9" height="16" rx="4" class="c-mask"/>
+          <text x="325" y="122" class="t-muted" font-size="8" text-anchor="middle">signed terms redeemed</text>
+        </g>
+        <g data-detail="context" data-edge-from="serving" data-edge-to="idle" data-edge-label="agreements ended" data-edge-key="2" data-edge-id="agreements-expire">
+          <rect x="433.8" y="111" width="90.4" height="16" rx="4" class="c-mask"/>
+          <text x="479" y="122" class="t-muted" font-size="8" text-anchor="middle">agreements ended</text>
+        </g>
+        <g data-detail="context" data-edge-from="idle" data-edge-to="announced" data-edge-label="deregister_provider" data-edge-key="3" data-edge-id="announce">
+          <rect x="425.45" y="229" width="105.10000000000001" height="16" rx="4" class="c-mask"/>
+          <text x="478" y="240" class="t-muted" font-size="8" text-anchor="middle">deregister_provider</text>
+        </g>
+        <g data-detail="context" data-edge-from="announced" data-edge-to="deregistered" data-edge-label="complete_deregister" data-edge-key="4" data-edge-id="complete">
+          <rect x="580.45" y="342" width="105.10000000000001" height="16" rx="4" class="c-mask"/>
+          <text x="633" y="353" class="t-backend" font-size="8" text-anchor="middle">complete_deregister</text>
+        </g>
+        <g data-detail="context" data-edge-from="announced" data-edge-to="idle" data-edge-label="cancel_deregister" data-edge-key="5" data-edge-id="cancel">
+          <rect x="612.35" y="211" width="95.30000000000001" height="16" rx="4" class="c-mask"/>
+          <text x="660" y="222" class="t-muted" font-size="8" text-anchor="middle">cancel_deregister</text>
+        </g>
+        <g data-detail="context" data-edge-from="serving" data-edge-to="slashed" data-edge-label="no or invalid response" data-edge-key="6" data-edge-id="slash">
+          <rect x="342.1" y="191" width="119.80000000000001" height="16" rx="4" class="c-mask"/>
+          <text x="402" y="202" class="t-security" font-size="8" text-anchor="middle">no or invalid response</text>
+        </g>
+        <g data-detail="context" data-edge-from="slashed" data-edge-to="removed" data-edge-label="remove_slashed (anyone)" data-edge-key="7" data-edge-id="cleanup">
+          <rect x="339.65" y="339" width="124.7" height="16" rx="4" class="c-mask"/>
+          <text x="402" y="350" class="t-muted" font-size="8" text-anchor="middle">remove_slashed (anyone)</text>
+        </g>
+
+        <!-- Legend -->
+
+      </svg>
+      <p class="intent-trace-status no-print" id="intent-trace-status" role="status" aria-live="polite" aria-atomic="true"></p>
+      <div class="share-chapter-cue no-print" id="share-chapter-cue" hidden role="status" aria-live="polite">
+        <div class="share-chapter-index">
+          <span class="share-chapter-state" id="share-chapter-state">Ready</span>
+          <span class="share-chapter-count" id="share-chapter-count">Chapter 01 / 01</span>
+        </div>
+        <div class="share-chapter-copy">
+          <strong id="share-chapter-label">Guided chapter</strong>
+          <small id="share-chapter-note"></small>
+        </div>
+        <span class="share-chapter-route" id="share-chapter-route"></span>
+        <span class="share-chapter-progress" aria-hidden="true"><span id="share-chapter-progress-bar"></span></span>
+      </div>
+      <div class="diagram-guide no-print" id="diagram-guide" hidden role="dialog" aria-modal="false" aria-labelledby="diagram-guide-title">
+        <div class="diagram-guide-head">
+          <span>
+            <span class="diagram-guide-eyebrow">Diagram guide</span>
+            <strong class="diagram-guide-title" id="diagram-guide-title">Explore this system</strong>
+          </span>
+          <button class="diagram-guide-close" id="diagram-guide-close" type="button" aria-label="Close diagram guide">&#215;</button>
+        </div>
+        <p class="diagram-guide-stats" id="diagram-guide-stats">Inspecting compiled semantics</p>
+        <div class="diagram-guide-actions" id="diagram-guide-actions" role="group" aria-label="Diagram exploration actions">
+          <button class="diagram-guide-action" type="button" data-guide-action="find" aria-label="Find any node">
+            <span class="diagram-guide-index" aria-hidden="true">01</span>
+            <span class="diagram-guide-action-copy"><strong>Find any node</strong><small>Search labels, responsibilities, kinds, and stable IDs.</small></span>
+            <kbd aria-hidden="true">/</kbd>
+          </button>
+          <button class="diagram-guide-action" type="button" data-guide-action="route" aria-label="Trace a directed route">
+            <span class="diagram-guide-index" aria-hidden="true">02</span>
+            <span class="diagram-guide-action-copy"><strong>Trace a route</strong><small>Ask how two semantic nodes connect in authored direction.</small></span>
+            <kbd aria-hidden="true">R</kbd>
+          </button>
+          <button class="diagram-guide-action" type="button" data-guide-action="map" aria-label="See the whole system">
+            <span class="diagram-guide-index" aria-hidden="true">03</span>
+            <span class="diagram-guide-action-copy"><strong>See the whole system</strong><small>Open Semantic Radar with a live viewport and stable nodes.</small></span>
+            <kbd aria-hidden="true">M</kbd>
+          </button>
+          <button class="diagram-guide-action" type="button" data-guide-action="lens" aria-label="Compare semantic kinds">
+            <span class="diagram-guide-index" aria-hidden="true">04</span>
+            <span class="diagram-guide-action-copy"><strong>Compare semantic kinds</strong><small>Count roles, reveal their traffic, and compare direct authored links.</small></span>
+            <kbd aria-hidden="true">L</kbd>
+          </button>
+          <button class="diagram-guide-action" type="button" data-guide-action="story" aria-label="Play the guided story">
+            <span class="diagram-guide-index" aria-hidden="true">05</span>
+            <span class="diagram-guide-action-copy"><strong>Play the guided story</strong><small id="diagram-guide-story-copy">Walk the authored chapters and real relationships.</small></span>
+            <kbd aria-hidden="true">P</kbd>
+          </button>
+          <button class="diagram-guide-action" type="button" data-guide-action="present" aria-label="Enter presentation stage">
+            <span class="diagram-guide-index" aria-hidden="true">06</span>
+            <span class="diagram-guide-action-copy"><strong>Enter Presentation Stage</strong><small>Give the live diagram the viewport without changing export.</small></span>
+            <kbd aria-hidden="true">F</kbd>
+          </button>
+        </div>
+        <div class="diagram-guide-shortcuts" aria-label="Additional keyboard shortcuts">
+          <span><kbd>E</kbd> Export</span><span><kbd>T</kbd> Theme</span><span><kbd>S</kbd> Style</span><span><kbd>0</kbd> Reset</span><span><kbd>+</kbd> Zoom in</span><span><kbd>-</kbd> Zoom out</span><span><kbd>Esc</kbd> Close</span>
+        </div>
+        <p class="diagram-guide-feedback" id="diagram-guide-feedback" aria-live="polite"></p>
+      </div>
+      <div class="node-finder no-print" id="node-finder" hidden role="dialog" aria-modal="false" aria-labelledby="node-finder-title">
+        <div class="node-finder-head">
+          <strong id="node-finder-title">Find a node</strong>
+          <button class="node-finder-close" id="node-finder-close" type="button" aria-label="Close node finder">&#215;</button>
+        </div>
+        <div class="node-finder-search">
+          <span aria-hidden="true">&#8981;</span>
+          <input class="node-finder-input" id="node-finder-input" type="search" autocomplete="off" spellcheck="false" placeholder="Search labels or IDs" aria-label="Search diagram nodes" aria-describedby="node-finder-status">
+          <kbd aria-hidden="true">/</kbd>
+        </div>
+        <div class="node-finder-results" id="node-finder-results" role="group" aria-label="Diagram nodes"></div>
+        <p class="node-finder-empty" id="node-finder-empty" hidden>No matching nodes</p>
+        <p class="node-finder-status" id="node-finder-status" aria-live="polite"></p>
+      </div>
+      <div class="focus-chip relationship-lens no-print" id="focus-chip" hidden role="region" aria-labelledby="relationship-lens-title">
+        <div class="relationship-lens-head">
+          <div class="relationship-lens-copy">
+            <span class="relationship-lens-eyebrow">Semantic passport</span>
+            <strong class="relationship-lens-title" id="relationship-lens-title"><span id="focus-label"></span></strong>
+            <span class="semantic-passport-detail" id="focus-detail" hidden></span>
+            <div class="semantic-passport-meta" id="focus-passport-meta" aria-label="Node metadata">
+              <span id="focus-kind" data-passport="kind"></span>
+              <span id="focus-context" data-passport="context" hidden></span>
+              <span id="focus-tag" data-passport="tag" hidden></span>
+              <span id="focus-brand" data-passport="brand" hidden></span>
+              <code id="focus-id" data-passport="id"></code>
+            </div>
+            <div class="semantic-passport-evidence" id="focus-evidence" hidden aria-label="Verified source evidence">
+              <div class="semantic-passport-evidence-head">
+                <span class="semantic-passport-evidence-status">Verified source</span>
+                <a class="semantic-passport-repository" id="focus-repository" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer"></a>
+              </div>
+              <div class="semantic-passport-evidence-links" id="focus-evidence-links"></div>
+            </div>
+            <span class="relationship-lens-summary" id="focus-summary" aria-live="polite"></span>
+            <div class="semantic-passport-reach" id="focus-reach" hidden>
+              <span class="semantic-passport-reach-label">Authored reach</span>
+              <div class="semantic-passport-reach-actions" role="group" aria-label="Trace authored reachability">
+                <button id="btn-reach-upstream" type="button" aria-label="Trace upstream authored reachability" aria-pressed="false">
+                  <span>Upstream</span><strong id="focus-reach-upstream-count">0</strong>
+                </button>
+                <button id="btn-reach-downstream" type="button" aria-label="Trace downstream authored reachability" aria-pressed="false">
+                  <span>Downstream</span><strong id="focus-reach-downstream-count">0</strong>
+                </button>
+              </div>
+              <small class="semantic-passport-reach-status" id="focus-reach-status" hidden aria-live="polite"></small>
+            </div>
+          </div>
+          <div class="relationship-lens-actions">
+            <button id="btn-focus-clear" type="button" aria-label="Close semantic passport" title="Close">&#215;</button>
+            <button id="btn-focus-copy" type="button" aria-label="Copy link to focused node">Copy link</button>
+            <button id="btn-focus-relations" type="button" aria-label="Show connected relationships" aria-expanded="false" aria-controls="relationship-lens-list">Relations</button>
+          </div>
+        </div>
+        <div class="relationship-lens-list" id="relationship-lens-list" aria-label="Connected relationships"></div>
+      </div>
+      <div class="route-probe no-print" id="route-probe" hidden role="region" aria-labelledby="route-probe-title" data-state="idle">
+        <div class="route-probe-head">
+          <span class="route-probe-copy">
+            <span class="route-probe-eyebrow">Route probe</span>
+            <strong class="route-probe-title" id="route-probe-title">Choose a start node</strong>
+          </span>
+          <span class="route-probe-actions">
+            <button class="route-probe-find" id="route-probe-find" type="button" aria-label="Find a route start" data-node-finder-trigger>Find start</button>
+            <button class="route-probe-copy-link" id="route-probe-copy" type="button" aria-label="Copy link to traced route" hidden>Copy link</button>
+            <button id="route-probe-clear" type="button" aria-label="Clear route probe">Clear</button>
+          </span>
+        </div>
+        <div class="route-probe-path" id="route-probe-path" aria-label="Traced route">
+          <span class="route-probe-placeholder">Pick two semantic nodes on the diagram</span>
+        </div>
+        <div class="route-journey-controls" id="route-journey-controls" hidden role="group" aria-label="Route journey controls" data-playing="false">
+          <button id="route-journey-prev" type="button" aria-label="Previous route position" title="Previous route position">&#8592;</button>
+          <button class="route-journey-play" id="route-journey-play" type="button" aria-label="Play route journey" aria-pressed="false" title="Play route journey">
+            <span id="route-journey-play-icon" aria-hidden="true">&#9654;</span>
+            <span id="route-journey-play-label">Journey</span>
+          </button>
+          <button id="route-journey-next" type="button" aria-label="Next route position" title="Next route position">&#8594;</button>
+          <button class="route-journey-overview" id="route-journey-overview" type="button" aria-label="Show complete route overview" title="Show complete route overview">Overview</button>
+        </div>
+        <small class="route-probe-status" id="route-probe-status" aria-live="polite">Choose the source, then the destination. Direction matters.</small>
+      </div>
+      <div class="semantic-lens no-print" id="semantic-lens" hidden role="dialog" aria-modal="false" aria-labelledby="semantic-lens-title">
+        <div class="semantic-lens-head">
+          <span>
+            <span class="semantic-lens-eyebrow">Semantic lens</span>
+            <strong class="semantic-lens-title" id="semantic-lens-title">Compare system roles</strong>
+          </span>
+          <button class="semantic-lens-close" id="semantic-lens-close" type="button" aria-label="Close semantic lens">&#215;</button>
+        </div>
+        <p class="semantic-lens-instruction">Choose up to two semantic kinds. One reveals its real traffic; two compare only direct authored relationships.</p>
+        <div class="semantic-lens-kinds" id="semantic-lens-kinds" role="group" aria-label="Semantic kinds"></div>
+        <p class="semantic-lens-status" id="semantic-lens-status" aria-live="polite">Choose a kind to inspect its nodes and touching relationships.</p>
+        <div class="semantic-lens-actions">
+          <button id="semantic-lens-copy" type="button" aria-label="Copy link to semantic lens" hidden>Copy link</button>
+          <button id="semantic-lens-clear" type="button" aria-label="Clear semantic lens">Clear</button>
+        </div>
+      </div>
+      <div class="overview-map no-print" id="overview-map" hidden role="region" aria-labelledby="overview-map-title">
+        <div class="overview-map-head">
+          <span class="overview-map-live" aria-hidden="true"></span>
+          <span class="overview-map-copy">
+            <strong id="overview-map-title">Semantic radar</strong>
+            <small id="overview-map-status" aria-live="polite">Building overview</small>
+          </span>
+          <button class="overview-map-expand" id="overview-map-expand" type="button" aria-label="Open full semantic radar">Open radar</button>
+          <button class="overview-map-close" id="overview-map-close" type="button" aria-label="Close semantic radar">&#215;</button>
+        </div>
+        <div class="overview-map-surface" id="overview-map-surface" tabindex="0" role="group" aria-label="Diagram overview. Click a node to focus it, or use arrow keys to pan."></div>
+        <div class="overview-map-hint" aria-hidden="true"><span>Click node</span><span>Drag to pan</span></div>
+      </div>
+      <p class="overview-map-feedback no-print" id="overview-map-feedback" role="status" aria-live="polite" hidden>Semantic radar needs more MAP space.</p>
+      <div class="diagram-nav no-print" role="toolbar" aria-label="Diagram view controls">
+        <button id="btn-route-probe" type="button" aria-label="Trace a directed route" aria-pressed="false" aria-controls="route-probe" title="Trace route (R)">PATH</button>
+        <button id="btn-overview-map" type="button" aria-label="Open semantic radar" aria-expanded="false" aria-controls="overview-map" title="Semantic radar (M)">MAP</button>
+        <button id="btn-semantic-lens" type="button" aria-label="Open semantic lens" aria-haspopup="dialog" aria-expanded="false" aria-pressed="false" aria-controls="semantic-lens" title="Semantic lens (L)">LENS</button>
+        <button id="btn-node-finder" type="button" aria-label="Find a node" aria-haspopup="dialog" aria-expanded="false" aria-controls="node-finder" title="Find a node (/)" data-node-finder-trigger><span class="diagram-nav-icon find" aria-hidden="true"></span></button>
+        <button id="btn-diagram-guide" type="button" aria-label="Open diagram guide" aria-haspopup="dialog" aria-expanded="false" aria-controls="diagram-guide" title="Diagram guide (?)"><span class="diagram-nav-icon guide" aria-hidden="true"></span></button>
+        <button data-view="out" type="button" aria-label="Zoom out" title="Zoom out (-)"><span class="diagram-nav-icon minus" aria-hidden="true"></span></button>
+        <button data-view="reset" type="button" aria-label="Reset diagram view" title="Reset view (0)"><span class="diagram-nav-detail" data-view-detail hidden>READ</span><span class="diagram-nav-percent" data-view-percent>100%</span></button>
+        <button data-view="in" type="button" aria-label="Zoom in" title="Zoom in (+)"><span class="diagram-nav-icon plus" aria-hidden="true"></span></button>
+      </div>
+    </div>
+
+    <!-- Info Cards -->
+    <div class="cards">
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot emerald"></div>
+          <h3>Entry and settings</h3>
+        </div>
+        <ul>
+          <li>&bull; stake &gt;= MinProviderStake</li>
+          <li>&bull; add_stake only increases stake</li>
+          <li>&bull; if max_capacity &gt; 0: stake &gt;= max_capacity * MinStakePerByte</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot amber"></div>
+          <h3>Two-step exit</h3>
+        </div>
+        <ul>
+          <li>&bull; Announce needs committed_bytes == 0</li>
+          <li>&bull; DeregisterAnnouncementPeriod &gt; ChallengeTimeout</li>
+          <li>&bull; Completion needs PendingChallenges == 0</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot rose"></div>
+          <h3>Slash path</h3>
+        </div>
+        <ul>
+          <li>&bull; A failed challenge slashes the entire stake</li>
+          <li>&bull; Exit Announced is still slashable</li>
+          <li>&bull; remove_slashed returns payment to owner</li>
+        </ul>
+      </div>
+    </div>
+
+  </div>
+
+  <script src="assets/archify/viewer.js?v=0b21e98276d8"></script>
+</body>
+</html>

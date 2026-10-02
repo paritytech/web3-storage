@@ -1,0 +1,686 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark" data-preset="classic">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="generator" content="archify 2.17.0-dev.1">
+  <title>Replica Sync Diagram</title>
+  <script src="assets/archify/theme.js?v=3152b732f000"></script>
+  <!-- Async font load: a blackholed network must not block first paint.
+       The body font stack falls back to system monospace until it lands. -->
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap"
+        rel="stylesheet" media="print" onload="this.media='all'">
+  <noscript>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  </noscript>
+  <script src="assets/archify/style.js?v=e5a5a6dc9177"></script>
+  <link rel="stylesheet" href="assets/diagram-page.css">
+</head>
+<body>
+  <!-- Toolbar: theme, live visual style, trace motion, presentation stage, and export.
+       Motion appears only for trace-enabled artifacts and has no shortcut;
+       Keyboard: T toggles theme, S cycles style, F toggles the stage, E opens export. -->
+  <div class="toolbar" role="toolbar" aria-label="Diagram actions">
+    <button id="btn-theme" type="button"
+            title="Toggle theme (T)"
+            aria-label="Toggle color theme"
+            aria-pressed="false">
+      <span id="theme-icon" class="toolbar-icon" aria-hidden="true"></span>
+      <span id="theme-label">Dark</span>
+    </button>
+    <div class="preset-wrap">
+      <button id="btn-preset" type="button"
+              title="Choose visual style (S cycles)"
+              aria-label="Choose visual style"
+              aria-haspopup="menu"
+              aria-expanded="false"
+              aria-controls="preset-menu"
+              aria-keyshortcuts="S">
+        <span class="preset-control-mark" aria-hidden="true"></span>
+        <span id="preset-label">Style</span>
+        <span class="toolbar-icon toolbar-chevron" aria-hidden="true"></span>
+      </button>
+      <div class="preset-menu" id="preset-menu" role="menu" aria-label="Visual style">
+        <div class="preset-menu-heading" role="presentation"><span>Visual identity</span><span>S cycles</span></div>
+        <button class="preset-option" data-preset-value="classic" type="button" role="menuitemradio" aria-checked="false" tabindex="-1">
+          <span class="preset-option-swatch classic" aria-hidden="true"></span>
+          <span class="preset-option-copy"><strong>Classic</strong><small>Stable technical default</small></span>
+          <span class="preset-option-check" aria-hidden="true"></span>
+        </button>
+        <button class="preset-option" data-preset-value="signal-flow" type="button" role="menuitemradio" aria-checked="false" tabindex="-1">
+          <span class="preset-option-swatch signal-flow" aria-hidden="true"></span>
+          <span class="preset-option-copy"><strong>Signal Flow</strong><small>Motion-forward presentation</small></span>
+          <span class="preset-option-check" aria-hidden="true"></span>
+        </button>
+        <button class="preset-option" data-preset-value="blueprint" type="button" role="menuitemradio" aria-checked="false" tabindex="-1">
+          <span class="preset-option-swatch blueprint" aria-hidden="true"></span>
+          <span class="preset-option-copy"><strong>Blueprint</strong><small>Engineering review</small></span>
+          <span class="preset-option-check" aria-hidden="true"></span>
+        </button>
+        <button class="preset-option" data-preset-value="editorial" type="button" role="menuitemradio" aria-checked="false" tabindex="-1">
+          <span class="preset-option-swatch editorial" aria-hidden="true"></span>
+          <span class="preset-option-copy"><strong>Editorial</strong><small>Publication and launch notes</small></span>
+          <span class="preset-option-check" aria-hidden="true"></span>
+        </button>
+      </div>
+    </div>
+    <button id="btn-motion" type="button" hidden
+            title="Pause motion"
+            aria-label="Pause motion"
+            aria-pressed="true">
+      <span class="motion-control-dot" aria-hidden="true"></span>
+      <span id="motion-label">Live</span>
+    </button>
+    <button id="btn-present" type="button"
+            title="Presentation stage (F)"
+            aria-label="Enter presentation stage"
+            aria-pressed="false">
+      <span id="present-icon" class="toolbar-icon" aria-hidden="true"></span>
+      <span id="present-label">Present</span>
+    </button>
+    <div class="export-wrap">
+      <button id="btn-export" type="button"
+              title="Export diagram (E)"
+              aria-label="Export diagram"
+              aria-haspopup="menu"
+              aria-expanded="false"
+              aria-controls="export-menu">
+        Export <span class="toolbar-icon toolbar-chevron" aria-hidden="true"></span>
+      </button>
+      <div class="export-menu" id="export-menu" role="menu" aria-label="Export">
+        <div class="export-menu-header" role="presentation">
+          <div><strong>Export diagram</strong><span>Portable, clean outputs</span></div>
+          <kbd>E</kbd>
+        </div>
+        <div class="export-menu-section" role="group" aria-label="Share">
+          <span class="export-menu-heading" aria-hidden="true">Share</span>
+          <button data-format="share-card" type="button" role="menuitem" tabindex="-1"><span class="export-item-copy"><strong>Share Card</strong><small class="hint">1200&times;630 PNG</small></span></button>
+          <button data-action="route-share-card" type="button" role="menuitem" tabindex="-1" hidden disabled><span class="export-item-copy"><strong>Route Share Card</strong><small class="hint">1200&times;630 PNG</small></span></button>
+          <button data-action="reach-share-card" type="button" role="menuitem" tabindex="-1" hidden disabled><span class="export-item-copy"><strong>Reach Share Card</strong><small class="hint">1200&times;630 PNG</small></span></button>
+          <button data-action="copy-share-card" type="button" role="menuitem" tabindex="-1"><span class="export-item-copy"><strong>Copy Share Card</strong><small class="hint">PNG to clipboard</small></span></button>
+          <button data-action="copy" type="button" role="menuitem" tabindex="-1"><span class="export-item-copy"><strong>Copy diagram</strong><small class="hint">PNG to clipboard</small></span></button>
+        </div>
+        <div class="export-menu-section" role="group" aria-label="Raster images">
+          <span class="export-menu-heading" aria-hidden="true">Image</span>
+          <button data-format="png" type="button" role="menuitem" tabindex="-1"><span class="export-item-copy"><strong>PNG</strong><small class="hint">Lossless image</small></span></button>
+          <button data-format="jpeg" type="button" role="menuitem" tabindex="-1"><span class="export-item-copy"><strong>JPEG</strong><small class="hint">Compact image</small></span></button>
+          <button data-format="webp" type="button" role="menuitem" tabindex="-1"><span class="export-item-copy"><strong>WebP</strong><small class="hint">Modern image</small></span></button>
+        </div>
+        <div class="export-menu-section" role="group" aria-label="Vector and motion">
+          <span class="export-menu-heading" aria-hidden="true">Vector &amp; motion</span>
+          <button data-format="svg" type="button" role="menuitem" tabindex="-1"><span class="export-item-copy"><strong>SVG</strong><small class="hint">Editable vector</small></span></button>
+          <button data-format="webm" type="button" role="menuitem" tabindex="-1"><span class="export-item-copy"><strong>WebM</strong><small class="hint">6s motion</small></span></button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="container">
+    <!-- Header -->
+    <div class="header">
+      <p class="site-crumb"><a href="index.html">&larr; Scalable Web3 Storage</a></p>
+      <div class="header-row"
+           data-preset-badge-signal-flow="SIGNAL FLOW"
+           data-preset-badge-blueprint="BLUEPRINT / REV 01"
+           data-preset-badge-editorial="EDITORIAL / FIELD NOTE">
+        <div class="pulse-dot"></div>
+        <h1>Replica Sync</h1>
+      </div>
+    </div>
+
+    <script id="archify-guided-views-data" type="application/json">[{"id":"happy-path","label":"Chain-first sync","focus":["snapshot","read_chain","fetch_peaks","verify","traverse","fetch_nodes","confirm","sync_check"],"note":"The replica reads the trusted root from the chain and verifies every fetched node against it."},{"id":"untrusted-sources","label":"Untrusted sources","focus":["peak_source","node_source","verify","mismatch"],"note":"Any data holder can serve. The replica rejects a source whose peaks do not hash to the chain root."},{"id":"payment","label":"Confirmation and payment","focus":["confirm","sync_check","sync_balance"],"note":"confirm_replica_sync pays sync_price from sync_balance when the root is new and min_sync_interval has passed."}]</script>
+
+    <script src="assets/archify/i18n.js?v=b331908a8a55"></script>
+    <div class="guided-views no-print" id="guided-views" hidden aria-label="Guided diagram views">
+      <button id="guided-view-prev" type="button" aria-label="Previous guided view" title="Previous guided view ([)">&#8592;</button>
+      <div class="guided-view-copy">
+        <div class="guided-view-meta">
+          <span>Guided views</span>
+          <span id="guided-view-count"></span>
+          <span class="guided-view-progress" aria-hidden="true"><span id="guided-view-progress-bar"></span></span>
+          <span class="guided-view-handoff" id="guided-view-handoff" hidden aria-hidden="true"></span>
+        </div>
+        <strong id="guided-view-label">Explore this system</strong>
+        <small id="guided-view-note" aria-live="polite" aria-atomic="true">Step through curated paths without changing the source diagram.</small>
+        <div class="guided-view-trail" id="guided-view-trail" hidden role="group" aria-label="Story trail"></div>
+        <div class="guided-story-caption" id="guided-story-caption" hidden aria-live="polite" aria-atomic="true">
+          <span class="guided-story-caption-index" id="guided-story-caption-index">Beat</span>
+          <strong id="guided-story-caption-route"></strong>
+          <small id="guided-story-caption-detail"></small>
+          <span class="guided-story-caption-next" id="guided-story-caption-next" hidden aria-hidden="true">
+            <small>Next</small>
+            <strong id="guided-story-caption-next-label"></strong>
+          </span>
+        </div>
+      </div>
+      <button id="guided-view-next" type="button" aria-label="Next guided view" title="Next guided view (])">&#8594;</button>
+      <div class="guided-view-actions">
+        <button class="guided-view-play" id="guided-view-play" type="button" aria-label="Play guided story" aria-pressed="false" title="Play guided story (P)">
+          <span id="guided-view-play-icon" aria-hidden="true">&#9654;</span>
+          <span id="guided-view-play-label">Play story</span>
+        </button>
+        <button class="guided-view-beat-link" id="guided-view-beat-link" type="button" aria-label="Select a Story Beat to copy its exact link" title="Select a Story Beat to copy its exact link" disabled>
+          <span aria-hidden="true">&#35;</span>
+          <span id="guided-view-beat-link-label">Copy moment</span>
+        </button>
+        <button class="guided-view-all" id="guided-view-all" type="button" aria-label="Show entire diagram">Show all</button>
+      </div>
+      <nav class="guided-view-index" id="guided-view-index" aria-label="Story chapters">
+        <ol class="guided-view-chapters" id="guided-view-chapters"></ol>
+      </nav>
+    </div>
+
+    <!-- Main Diagram -->
+    <div class="diagram-container" data-detail-level="read"
+         data-preset-badge-editorial-plate="WEB3 STORAGE / PLATE 04">
+      <svg viewBox="0 0 1230 660" role="img" lang="en" aria-labelledby="archify-diagram-title archify-diagram-description" data-preset="classic" data-quality-profile="showcase">
+        <title id="archify-diagram-title">Replica Sync</title>
+        <desc id="archify-diagram-description">A workflow diagram.</desc>
+        <!-- Definitions -->
+        <defs>
+          <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" class="m-default" />
+          </marker>
+          <marker id="arrowhead-emphasis" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" class="m-emphasis" />
+          </marker>
+          <marker id="arrowhead-security" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" class="m-security" />
+          </marker>
+          <marker id="arrowhead-dashed" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" class="m-dashed" />
+          </marker>
+          <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+            <path d="M 40 0 L 0 0 0 40" class="c-grid" stroke-width="0.5"/>
+          </pattern>
+        </defs>
+
+        <!-- Background Grid -->
+        <rect width="100%" height="100%" fill="url(#grid)" />
+
+        <!-- Swimlanes -->
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="lane" data-composition-frame-id="lane-0" x="40" y="52" width="1174" height="106" rx="10" class="c-lane" stroke-width="1"/>
+        <text x="54" y="74" class="t-dim" font-size="10" font-weight="600">01 / Chain</text>
+
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="lane" data-composition-frame-id="lane-1" x="40" y="178" width="1174" height="106" rx="10" class="c-lane" stroke-width="1"/>
+        <text x="54" y="200" class="t-dim" font-size="10" font-weight="600">02 / Replica Provider</text>
+
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="lane" data-composition-frame-id="lane-2" x="40" y="304" width="1174" height="106" rx="10" class="c-lane" stroke-width="1"/>
+        <text x="54" y="326" class="t-dim" font-size="10" font-weight="600">03 / Data Sources</text>
+
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="lane" data-composition-frame-id="lane-3" x="40" y="430" width="1174" height="106" rx="10" class="c-lane" stroke-width="1"/>
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="exception-lane" data-composition-frame-id="lane-3-exception" x="46" y="436" width="1162" height="94" rx="8" class="c-security-group" stroke-width="1"/>
+        <text x="54" y="452" class="t-security" font-size="10" font-weight="600">EX / Recovery</text>
+
+        <!-- Phase headers -->
+        <line x1="77" y1="35" x2="337" y2="35" class="a-default" stroke-width="1.1"/>
+        <rect x="77" y="27" width="260" height="16" rx="4" class="c-mask"/>
+        <text x="207" y="39" class="t-muted" font-size="8" font-weight="600" text-anchor="middle">Trusted root</text>
+        <line x1="412.99999999999994" y1="35" x2="720.5999999999999" y2="35" class="a-emphasis" stroke-width="1.1"/>
+        <rect x="412.99999999999994" y="27" width="307.6" height="16" rx="4" class="c-mask"/>
+        <text x="566.8" y="39" class="t-backend" font-size="8" font-weight="600" text-anchor="middle">Verify and walk</text>
+        <line x1="858.8" y1="35" x2="1176.3999999999999" y2="35" class="a-default" stroke-width="1.1"/>
+        <rect x="858.8" y="27" width="317.5999999999999" height="16" rx="4" class="c-mask"/>
+        <text x="1017.5999999999999" y="39" class="t-muted" font-size="8" font-weight="600" text-anchor="middle">Fetch and confirm</text>
+
+        <!-- Workflow groups -->
+
+
+        <!-- Edge paths -->
+        <path data-edge-from="fetch_peaks" data-edge-to="verify" data-edge-key="0" data-edge-id="check-peaks" data-composition-points="291,272;291,288;459,288;459,272" d="M 291 272 L 291 288 L 459 288 L 459 272" class="a-security" stroke-width="1.4" marker-end="url(#arrowhead-security)"/>
+        <path data-edge-from="sync_balance" data-edge-to="sync_check" data-edge-label="funds" data-edge-key="1" data-edge-id="fund" data-composition-points="974.8,120;1055.3999999999999,120" d="M 974.8 120 L 1055.3999999999999 120" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="node_source" data-edge-to="fetch_nodes" data-edge-label="nodes" data-edge-key="2" data-edge-id="nodes-served" data-composition-points="904.8,346;904.8,272" d="M 904.8 346 L 904.8 272" class="a-dashed" stroke-width="1.4" marker-end="url(#arrowhead-dashed)"/>
+        <path data-edge-from="verify" data-edge-to="mismatch" data-edge-label="hash mismatch" data-edge-key="3" data-edge-id="peaks-bad" data-composition-points="459,272;459,357;545,357;545,498;529,498" d="M 459 272 L 459 357 L 545 357 L 545 498 L 529 498" class="a-security" stroke-width="1.4" marker-end="url(#arrowhead-security)"/>
+        <path data-edge-from="verify" data-edge-to="traverse" data-edge-label="root matches" data-edge-key="4" data-edge-id="peaks-ok" data-composition-points="459,272;459,288;674.6,288;674.6,272" d="M 459 272 L 459 288 L 674.6 288 L 674.6 272" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <path data-edge-from="peak_source" data-edge-to="fetch_peaks" data-edge-label="peaks" data-edge-key="5" data-edge-id="peaks-served" data-composition-points="291,346;291,272" d="M 291 346 L 291 272" class="a-dashed" stroke-width="1.4" marker-end="url(#arrowhead-dashed)"/>
+        <path data-edge-from="mismatch" data-edge-to="fetch_peaks" data-edge-label="try another holder" data-edge-key="6" data-edge-id="retry-source" data-composition-points="459,524;459,552;377,552;377,246;361,246" d="M 459 524 L 459 552 L 377 552 L 377 246 L 361 246" class="a-dashed" stroke-width="1.4" marker-end="url(#arrowhead-dashed)"/>
+        <path data-edge-from="read_chain" data-edge-to="fetch_peaks" data-edge-key="7" data-edge-id="start-sync" data-composition-points="123,272;123,288;291,288;291,272" d="M 123 272 L 123 288 L 291 288 L 291 272" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="confirm" data-edge-to="sync_check" data-edge-key="8" data-edge-id="submit" data-composition-points="1130.3999999999999,220;1130.3999999999999,154" d="M 1130.3999999999999 220 L 1130.3999999999999 154" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="fetch_nodes" data-edge-to="confirm" data-edge-label="all verified" data-edge-key="9" data-edge-id="sync-done" data-composition-points="979.8,246;1055.3999999999999,246" d="M 979.8 246 L 1055.3999999999999 246" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <path data-edge-from="snapshot" data-edge-to="read_chain" data-edge-label="trusted root" data-edge-key="10" data-edge-id="trusted-root" data-composition-points="123,146;123,168;37,168;37,246;53,246" d="M 123 146 L 123 168 L 37 168 L 37 246 L 53 246" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <path data-edge-from="traverse" data-edge-to="fetch_nodes" data-edge-label="missing hashes" data-edge-key="11" data-edge-id="walk-down" data-composition-points="744.6,246;829.8,246" d="M 744.6 246 L 829.8 246" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
+
+        <!-- Nodes -->
+        <g id="node-snapshot" data-node-id="snapshot" data-node-label="Bucket State" tabindex="0" role="button" aria-label="Focus Bucket State, snapshot, historical_roots, Chain › Trusted root" aria-pressed="false" data-node-kind="database" data-node-sublabel="snapshot, historical_roots" data-node-context="Chain › Trusted root">
+          <title>Bucket State · snapshot, historical_roots · Chain › Trusted root</title>
+          <rect x="48" y="94" width="150" height="52" rx="6" class="c-mask"/>
+          <rect x="48" y="94" width="150" height="52" rx="6" class="c-database" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="database" class="semantic-sigil s-database" transform="translate(54 100) scale(0.6875)">
+            <ellipse cx="8" cy="4" rx="5" ry="2"/>
+            <path d="M3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8c0 1.1 2.2 2 5 2s5-.9 5-2"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="123" y="115" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Bucket State</text>
+          <text data-detail="context" x="123" y="132" class="t-muted" font-size="8" text-anchor="middle">snapshot, historical_roots</text>
+        </g>
+
+        <g id="node-sync_balance" data-node-id="sync_balance" data-node-label="sync_balance" tabindex="0" role="button" aria-label="Focus sync_balance, held on owner, Chain › Fetch and confirm" aria-pressed="false" data-node-kind="database" data-node-sublabel="held on owner" data-node-context="Chain › Fetch and confirm">
+          <title>sync_balance · held on owner · Chain › Fetch and confirm</title>
+          <rect x="834.8" y="94" width="140" height="52" rx="6" class="c-mask"/>
+          <rect x="834.8" y="94" width="140" height="52" rx="6" class="c-database" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="database" class="semantic-sigil s-database" transform="translate(840.8 100) scale(0.6875)">
+            <ellipse cx="8" cy="4" rx="5" ry="2"/>
+            <path d="M3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8c0 1.1 2.2 2 5 2s5-.9 5-2"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="904.8" y="115" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">sync_balance</text>
+          <text data-detail="context" x="904.8" y="132" class="t-muted" font-size="8" text-anchor="middle">held on owner</text>
+        </g>
+
+        <g id="node-sync_check" data-node-id="sync_check" data-node-label="Match and Pay" tabindex="0" role="button" aria-label="Focus Match and Pay, sync_price per sync, Chain › Fetch and confirm" aria-pressed="false" data-node-kind="security" data-node-sublabel="sync_price per sync" data-node-tag="ReplicaSynced" data-node-context="Chain › Fetch and confirm">
+          <title>Match and Pay · sync_price per sync · Chain › Fetch and confirm · ReplicaSynced</title>
+          <rect x="1055.3999999999999" y="86" width="150" height="68" rx="6" class="c-mask"/>
+          <rect x="1055.3999999999999" y="86" width="150" height="68" rx="6" class="c-security" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="security" class="semantic-sigil s-security" transform="translate(1061.3999999999999 92) scale(0.6875)">
+            <path d="M8 2.2 13 4v3.5c0 3.1-1.8 5.4-5 6.5-3.2-1.1-5-3.4-5-6.5V4Z"/>
+            <path d="m5.8 8 1.5 1.5 3-3"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="1130.3999999999999" y="107" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Match and Pay</text>
+          <text data-detail="context" x="1130.3999999999999" y="124" class="t-muted" font-size="8" text-anchor="middle">sync_price per sync</text>
+        <text data-detail="fine" x="1130.3999999999999" y="142" class="t-security" font-size="7" text-anchor="middle">ReplicaSynced</text>
+        </g>
+
+        <g id="node-read_chain" data-node-id="read_chain" data-node-label="Read Chain State" tabindex="0" role="button" aria-label="Focus Read Chain State, runtime API, Replica Provider › Trusted root" aria-pressed="false" data-node-kind="backend" data-node-sublabel="runtime API" data-node-context="Replica Provider › Trusted root">
+          <title>Read Chain State · runtime API · Replica Provider › Trusted root</title>
+          <rect x="53" y="220" width="140" height="52" rx="6" class="c-mask"/>
+          <rect x="53" y="220" width="140" height="52" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(59 226) scale(0.6875)">
+            <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="123" y="241" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Read Chain State</text>
+          <text data-detail="context" x="123" y="258" class="t-muted" font-size="8" text-anchor="middle">runtime API</text>
+        </g>
+
+        <g id="node-fetch_peaks" data-node-id="fetch_peaks" data-node-label="Fetch Peaks" tabindex="0" role="button" aria-label="Focus Fetch Peaks, GET /mmr_peaks, Replica Provider › Trusted root" aria-pressed="false" data-node-kind="backend" data-node-sublabel="GET /mmr_peaks" data-node-context="Replica Provider › Trusted root">
+          <title>Fetch Peaks · GET /mmr_peaks · Replica Provider › Trusted root</title>
+          <rect x="221" y="220" width="140" height="52" rx="6" class="c-mask"/>
+          <rect x="221" y="220" width="140" height="52" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(227 226) scale(0.6875)">
+            <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="291" y="241" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Fetch Peaks</text>
+          <text data-detail="context" x="291" y="258" class="t-muted" font-size="8" text-anchor="middle">GET /mmr_peaks</text>
+        </g>
+
+        <g id="node-verify" data-node-id="verify" data-node-label="Verify Peaks" tabindex="0" role="button" aria-label="Focus Verify Peaks, hash(peaks) == root, Replica Provider › Verify and walk" aria-pressed="false" data-node-kind="security" data-node-sublabel="hash(peaks) == root" data-node-context="Replica Provider › Verify and walk">
+          <title>Verify Peaks · hash(peaks) == root · Replica Provider › Verify and walk</title>
+          <rect x="389" y="220" width="140" height="52" rx="6" class="c-mask"/>
+          <rect x="389" y="220" width="140" height="52" rx="6" class="c-security" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="security" class="semantic-sigil s-security" transform="translate(395 226) scale(0.6875)">
+            <path d="M8 2.2 13 4v3.5c0 3.1-1.8 5.4-5 6.5-3.2-1.1-5-3.4-5-6.5V4Z"/>
+            <path d="m5.8 8 1.5 1.5 3-3"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="459" y="241" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Verify Peaks</text>
+          <text data-detail="context" x="459" y="258" class="t-muted" font-size="8" text-anchor="middle">hash(peaks) == root</text>
+        </g>
+
+        <g id="node-traverse" data-node-id="traverse" data-node-label="Top-Down Walk" tabindex="0" role="button" aria-label="Focus Top-Down Walk, GET /mmr_subtree, Replica Provider › Verify and walk" aria-pressed="false" data-node-kind="backend" data-node-sublabel="GET /mmr_subtree" data-node-context="Replica Provider › Verify and walk">
+          <title>Top-Down Walk · GET /mmr_subtree · Replica Provider › Verify and walk</title>
+          <rect x="604.6" y="220" width="140" height="52" rx="6" class="c-mask"/>
+          <rect x="604.6" y="220" width="140" height="52" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(610.6 226) scale(0.6875)">
+            <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="674.6" y="241" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Top-Down Walk</text>
+          <text data-detail="context" x="674.6" y="258" class="t-muted" font-size="8" text-anchor="middle">GET /mmr_subtree</text>
+        </g>
+
+        <g id="node-fetch_nodes" data-node-id="fetch_nodes" data-node-label="Fetch Missing Nodes" tabindex="0" role="button" aria-label="Focus Fetch Missing Nodes, POST /fetch_nodes, Replica Provider › Fetch and confirm" aria-pressed="false" data-node-kind="backend" data-node-sublabel="POST /fetch_nodes" data-node-context="Replica Provider › Fetch and confirm">
+          <title>Fetch Missing Nodes · POST /fetch_nodes · Replica Provider › Fetch and confirm</title>
+          <rect x="829.8" y="220" width="150" height="52" rx="6" class="c-mask"/>
+          <rect x="829.8" y="220" width="150" height="52" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(835.8 226) scale(0.6875)">
+            <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="904.8" y="241" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Fetch Missing Nodes</text>
+          <text data-detail="context" x="904.8" y="258" class="t-muted" font-size="8" text-anchor="middle">POST /fetch_nodes</text>
+        </g>
+
+        <g id="node-confirm" data-node-id="confirm" data-node-label="confirm_replica_sync" tabindex="0" role="button" aria-label="Focus confirm_replica_sync, roots[7] + signature, Replica Provider › Fetch and confirm" aria-pressed="false" data-node-kind="backend" data-node-sublabel="roots[7] + signature" data-node-context="Replica Provider › Fetch and confirm">
+          <title>confirm_replica_sync · roots[7] + signature · Replica Provider › Fetch and confirm</title>
+          <rect x="1055.3999999999999" y="220" width="150" height="52" rx="6" class="c-mask"/>
+          <rect x="1055.3999999999999" y="220" width="150" height="52" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(1061.3999999999999 226) scale(0.6875)">
+            <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="1130.3999999999999" y="241" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">confirm_replica_sync</text>
+          <text data-detail="context" x="1130.3999999999999" y="258" class="t-muted" font-size="8" text-anchor="middle">roots[7] + signature</text>
+        </g>
+
+        <g id="node-peak_source" data-node-id="peak_source" data-node-label="Any Data Holder" tabindex="0" role="button" aria-label="Focus Any Data Holder, replica or data holder, Data Sources › Trusted root" aria-pressed="false" data-node-kind="cloud" data-node-sublabel="replica or data holder" data-node-context="Data Sources › Trusted root">
+          <title>Any Data Holder · replica or data holder · Data Sources › Trusted root</title>
+          <rect x="216" y="346" width="150" height="52" rx="6" class="c-mask"/>
+          <rect x="216" y="346" width="150" height="52" rx="6" class="c-cloud" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="cloud" class="semantic-sigil s-cloud" transform="translate(222 352) scale(0.6875)">
+            <path d="M4.3 12.5h7.3a2.4 2.4 0 0 0 .2-4.8 4 4 0 0 0-7.5-1.3A3.1 3.1 0 0 0 4.3 12.5Z"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="291" y="367" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Any Data Holder</text>
+          <text data-detail="context" x="291" y="384" class="t-muted" font-size="8" text-anchor="middle">replica or data holder</text>
+        </g>
+
+        <g id="node-node_source" data-node-id="node_source" data-node-label="Node Source" tabindex="0" role="button" aria-label="Focus Node Source, any data holder, Data Sources › Fetch and confirm" aria-pressed="false" data-node-kind="cloud" data-node-sublabel="any data holder" data-node-context="Data Sources › Fetch and confirm">
+          <title>Node Source · any data holder · Data Sources › Fetch and confirm</title>
+          <rect x="834.8" y="346" width="140" height="52" rx="6" class="c-mask"/>
+          <rect x="834.8" y="346" width="140" height="52" rx="6" class="c-cloud" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="cloud" class="semantic-sigil s-cloud" transform="translate(840.8 352) scale(0.6875)">
+            <path d="M4.3 12.5h7.3a2.4 2.4 0 0 0 .2-4.8 4 4 0 0 0-7.5-1.3A3.1 3.1 0 0 0 4.3 12.5Z"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="904.8" y="367" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Node Source</text>
+          <text data-detail="context" x="904.8" y="384" class="t-muted" font-size="8" text-anchor="middle">any data holder</text>
+        </g>
+
+        <g id="node-mismatch" data-node-id="mismatch" data-node-label="Peak Mismatch" tabindex="0" role="button" aria-label="Focus Peak Mismatch, source rejected, Recovery › Verify and walk" aria-pressed="false" data-node-kind="security" data-node-sublabel="source rejected" data-node-context="Recovery › Verify and walk">
+          <title>Peak Mismatch · source rejected · Recovery › Verify and walk</title>
+          <rect x="389" y="472" width="140" height="52" rx="6" class="c-mask"/>
+          <rect x="389" y="472" width="140" height="52" rx="6" class="c-security" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="security" class="semantic-sigil s-security" transform="translate(395 478) scale(0.6875)">
+            <path d="M8 2.2 13 4v3.5c0 3.1-1.8 5.4-5 6.5-3.2-1.1-5-3.4-5-6.5V4Z"/>
+            <path d="m5.8 8 1.5 1.5 3-3"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="459" y="493" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Peak Mismatch</text>
+          <text data-detail="context" x="459" y="510" class="t-muted" font-size="8" text-anchor="middle">source rejected</text>
+        </g>
+
+        <!-- Edge labels -->
+
+        <g data-detail="context" data-edge-from="sync_balance" data-edge-to="sync_check" data-edge-label="funds" data-edge-key="1" data-edge-id="fund">
+          <rect x="998.0999999999999" y="100" width="34" height="14" rx="3" class="c-mask"/>
+          <text x="1015.0999999999999" y="110" class="t-muted" font-size="8" text-anchor="middle">funds</text>
+        </g>
+        <g data-detail="context" data-edge-from="node_source" data-edge-to="fetch_nodes" data-edge-label="nodes" data-edge-key="2" data-edge-id="nodes-served">
+          <rect x="887.8" y="326" width="34" height="14" rx="3" class="c-mask"/>
+          <text x="904.8" y="336" class="t-database" font-size="8" text-anchor="middle">nodes</text>
+        </g>
+        <g data-detail="context" data-edge-from="verify" data-edge-to="mismatch" data-edge-label="hash mismatch" data-edge-key="3" data-edge-id="peaks-bad">
+          <rect x="465.8" y="337" width="72.4" height="14" rx="3" class="c-mask"/>
+          <text x="502" y="347" class="t-security" font-size="8" text-anchor="middle">hash mismatch</text>
+        </g>
+        <g data-detail="context" data-edge-from="verify" data-edge-to="traverse" data-edge-label="root matches" data-edge-key="4" data-edge-id="peaks-ok">
+          <rect x="533" y="268" width="67.6" height="14" rx="3" class="c-mask"/>
+          <text x="566.8" y="278" class="t-backend" font-size="8" text-anchor="middle">root matches</text>
+        </g>
+        <g data-detail="context" data-edge-from="peak_source" data-edge-to="fetch_peaks" data-edge-label="peaks" data-edge-key="5" data-edge-id="peaks-served">
+          <rect x="274" y="326" width="34" height="14" rx="3" class="c-mask"/>
+          <text x="291" y="336" class="t-database" font-size="8" text-anchor="middle">peaks</text>
+        </g>
+        <g data-detail="context" data-edge-from="mismatch" data-edge-to="fetch_peaks" data-edge-label="try another holder" data-edge-key="6" data-edge-id="retry-source">
+          <rect x="369.8" y="532" width="96.39999999999999" height="14" rx="3" class="c-mask"/>
+          <text x="418" y="542" class="t-database" font-size="8" text-anchor="middle">try another holder</text>
+        </g>
+
+
+        <g data-detail="context" data-edge-from="fetch_nodes" data-edge-to="confirm" data-edge-label="all verified" data-edge-key="9" data-edge-id="sync-done">
+          <rect x="983.8" y="226" width="67.6" height="14" rx="3" class="c-mask"/>
+          <text x="1017.5999999999999" y="236" class="t-backend" font-size="8" text-anchor="middle">all verified</text>
+        </g>
+        <g data-detail="context" data-edge-from="snapshot" data-edge-to="read_chain" data-edge-label="trusted root" data-edge-key="10" data-edge-id="trusted-root">
+          <rect x="46.2" y="148" width="67.6" height="14" rx="3" class="c-mask"/>
+          <text x="80" y="158" class="t-backend" font-size="8" text-anchor="middle">trusted root</text>
+        </g>
+        <g data-detail="context" data-edge-from="traverse" data-edge-to="fetch_nodes" data-edge-label="missing hashes" data-edge-key="11" data-edge-id="walk-down">
+          <rect x="748.6" y="226" width="77.2" height="14" rx="3" class="c-mask"/>
+          <text x="787.2" y="236" class="t-muted" font-size="8" text-anchor="middle">missing hashes</text>
+        </g>
+
+        <!-- Legend -->
+        <g data-legend="" data-legend-bridge="">
+          <text x="20" y="560" class="t-primary" font-size="12" font-weight="650">Legend</text>
+          <g data-legend-semantic-kind="backend" data-legend-kind="backend" data-legend-label="Agent logic" data-legend-x="20" data-legend-baseline="580" data-legend-width="91">
+            <rect x="20" y="572" width="14" height="9" rx="2" class="c-backend" stroke-width="1"/>
+            <text x="42" y="580" class="t-muted" font-size="7.5" font-weight="500">Agent logic</text>
+          </g>
+          <g data-legend-semantic-kind="security" data-legend-kind="security" data-legend-label="Policy" data-legend-x="118" data-legend-baseline="580" data-legend-width="70">
+            <rect x="118" y="572" width="14" height="9" rx="2" class="c-security" stroke-width="1"/>
+            <text x="140" y="580" class="t-muted" font-size="7.5" font-weight="500">Policy</text>
+          </g>
+          <g data-legend-semantic-kind="database" data-legend-kind="database" data-legend-label="Context / trace" data-legend-x="195" data-legend-baseline="580" data-legend-width="109">
+            <rect x="195" y="572" width="14" height="9" rx="2" class="c-database" stroke-width="1"/>
+            <text x="217" y="580" class="t-muted" font-size="7.5" font-weight="500">Context / trace</text>
+          </g>
+          <g data-legend-semantic-kind="cloud" data-legend-kind="cloud" data-legend-label="Cloud service" data-legend-x="311" data-legend-baseline="580" data-legend-width="100">
+            <rect x="311" y="572" width="14" height="9" rx="2" class="c-cloud" stroke-width="1"/>
+            <text x="333" y="580" class="t-muted" font-size="7.5" font-weight="500">Cloud service</text>
+          </g>
+        </g>
+      </svg>
+      <p class="intent-trace-status no-print" id="intent-trace-status" role="status" aria-live="polite" aria-atomic="true"></p>
+      <div class="share-chapter-cue no-print" id="share-chapter-cue" hidden role="status" aria-live="polite">
+        <div class="share-chapter-index">
+          <span class="share-chapter-state" id="share-chapter-state">Ready</span>
+          <span class="share-chapter-count" id="share-chapter-count">Chapter 01 / 01</span>
+        </div>
+        <div class="share-chapter-copy">
+          <strong id="share-chapter-label">Guided chapter</strong>
+          <small id="share-chapter-note"></small>
+        </div>
+        <span class="share-chapter-route" id="share-chapter-route"></span>
+        <span class="share-chapter-progress" aria-hidden="true"><span id="share-chapter-progress-bar"></span></span>
+      </div>
+      <div class="diagram-guide no-print" id="diagram-guide" hidden role="dialog" aria-modal="false" aria-labelledby="diagram-guide-title">
+        <div class="diagram-guide-head">
+          <span>
+            <span class="diagram-guide-eyebrow">Diagram guide</span>
+            <strong class="diagram-guide-title" id="diagram-guide-title">Explore this system</strong>
+          </span>
+          <button class="diagram-guide-close" id="diagram-guide-close" type="button" aria-label="Close diagram guide">&#215;</button>
+        </div>
+        <p class="diagram-guide-stats" id="diagram-guide-stats">Inspecting compiled semantics</p>
+        <div class="diagram-guide-actions" id="diagram-guide-actions" role="group" aria-label="Diagram exploration actions">
+          <button class="diagram-guide-action" type="button" data-guide-action="find" aria-label="Find any node">
+            <span class="diagram-guide-index" aria-hidden="true">01</span>
+            <span class="diagram-guide-action-copy"><strong>Find any node</strong><small>Search labels, responsibilities, kinds, and stable IDs.</small></span>
+            <kbd aria-hidden="true">/</kbd>
+          </button>
+          <button class="diagram-guide-action" type="button" data-guide-action="route" aria-label="Trace a directed route">
+            <span class="diagram-guide-index" aria-hidden="true">02</span>
+            <span class="diagram-guide-action-copy"><strong>Trace a route</strong><small>Ask how two semantic nodes connect in authored direction.</small></span>
+            <kbd aria-hidden="true">R</kbd>
+          </button>
+          <button class="diagram-guide-action" type="button" data-guide-action="map" aria-label="See the whole system">
+            <span class="diagram-guide-index" aria-hidden="true">03</span>
+            <span class="diagram-guide-action-copy"><strong>See the whole system</strong><small>Open Semantic Radar with a live viewport and stable nodes.</small></span>
+            <kbd aria-hidden="true">M</kbd>
+          </button>
+          <button class="diagram-guide-action" type="button" data-guide-action="lens" aria-label="Compare semantic kinds">
+            <span class="diagram-guide-index" aria-hidden="true">04</span>
+            <span class="diagram-guide-action-copy"><strong>Compare semantic kinds</strong><small>Count roles, reveal their traffic, and compare direct authored links.</small></span>
+            <kbd aria-hidden="true">L</kbd>
+          </button>
+          <button class="diagram-guide-action" type="button" data-guide-action="story" aria-label="Play the guided story">
+            <span class="diagram-guide-index" aria-hidden="true">05</span>
+            <span class="diagram-guide-action-copy"><strong>Play the guided story</strong><small id="diagram-guide-story-copy">Walk the authored chapters and real relationships.</small></span>
+            <kbd aria-hidden="true">P</kbd>
+          </button>
+          <button class="diagram-guide-action" type="button" data-guide-action="present" aria-label="Enter presentation stage">
+            <span class="diagram-guide-index" aria-hidden="true">06</span>
+            <span class="diagram-guide-action-copy"><strong>Enter Presentation Stage</strong><small>Give the live diagram the viewport without changing export.</small></span>
+            <kbd aria-hidden="true">F</kbd>
+          </button>
+        </div>
+        <div class="diagram-guide-shortcuts" aria-label="Additional keyboard shortcuts">
+          <span><kbd>E</kbd> Export</span><span><kbd>T</kbd> Theme</span><span><kbd>S</kbd> Style</span><span><kbd>0</kbd> Reset</span><span><kbd>+</kbd> Zoom in</span><span><kbd>-</kbd> Zoom out</span><span><kbd>Esc</kbd> Close</span>
+        </div>
+        <p class="diagram-guide-feedback" id="diagram-guide-feedback" aria-live="polite"></p>
+      </div>
+      <div class="node-finder no-print" id="node-finder" hidden role="dialog" aria-modal="false" aria-labelledby="node-finder-title">
+        <div class="node-finder-head">
+          <strong id="node-finder-title">Find a node</strong>
+          <button class="node-finder-close" id="node-finder-close" type="button" aria-label="Close node finder">&#215;</button>
+        </div>
+        <div class="node-finder-search">
+          <span aria-hidden="true">&#8981;</span>
+          <input class="node-finder-input" id="node-finder-input" type="search" autocomplete="off" spellcheck="false" placeholder="Search labels or IDs" aria-label="Search diagram nodes" aria-describedby="node-finder-status">
+          <kbd aria-hidden="true">/</kbd>
+        </div>
+        <div class="node-finder-results" id="node-finder-results" role="group" aria-label="Diagram nodes"></div>
+        <p class="node-finder-empty" id="node-finder-empty" hidden>No matching nodes</p>
+        <p class="node-finder-status" id="node-finder-status" aria-live="polite"></p>
+      </div>
+      <div class="focus-chip relationship-lens no-print" id="focus-chip" hidden role="region" aria-labelledby="relationship-lens-title">
+        <div class="relationship-lens-head">
+          <div class="relationship-lens-copy">
+            <span class="relationship-lens-eyebrow">Semantic passport</span>
+            <strong class="relationship-lens-title" id="relationship-lens-title"><span id="focus-label"></span></strong>
+            <span class="semantic-passport-detail" id="focus-detail" hidden></span>
+            <div class="semantic-passport-meta" id="focus-passport-meta" aria-label="Node metadata">
+              <span id="focus-kind" data-passport="kind"></span>
+              <span id="focus-context" data-passport="context" hidden></span>
+              <span id="focus-tag" data-passport="tag" hidden></span>
+              <span id="focus-brand" data-passport="brand" hidden></span>
+              <code id="focus-id" data-passport="id"></code>
+            </div>
+            <div class="semantic-passport-evidence" id="focus-evidence" hidden aria-label="Verified source evidence">
+              <div class="semantic-passport-evidence-head">
+                <span class="semantic-passport-evidence-status">Verified source</span>
+                <a class="semantic-passport-repository" id="focus-repository" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer"></a>
+              </div>
+              <div class="semantic-passport-evidence-links" id="focus-evidence-links"></div>
+            </div>
+            <span class="relationship-lens-summary" id="focus-summary" aria-live="polite"></span>
+            <div class="semantic-passport-reach" id="focus-reach" hidden>
+              <span class="semantic-passport-reach-label">Authored reach</span>
+              <div class="semantic-passport-reach-actions" role="group" aria-label="Trace authored reachability">
+                <button id="btn-reach-upstream" type="button" aria-label="Trace upstream authored reachability" aria-pressed="false">
+                  <span>Upstream</span><strong id="focus-reach-upstream-count">0</strong>
+                </button>
+                <button id="btn-reach-downstream" type="button" aria-label="Trace downstream authored reachability" aria-pressed="false">
+                  <span>Downstream</span><strong id="focus-reach-downstream-count">0</strong>
+                </button>
+              </div>
+              <small class="semantic-passport-reach-status" id="focus-reach-status" hidden aria-live="polite"></small>
+            </div>
+          </div>
+          <div class="relationship-lens-actions">
+            <button id="btn-focus-clear" type="button" aria-label="Close semantic passport" title="Close">&#215;</button>
+            <button id="btn-focus-copy" type="button" aria-label="Copy link to focused node">Copy link</button>
+            <button id="btn-focus-relations" type="button" aria-label="Show connected relationships" aria-expanded="false" aria-controls="relationship-lens-list">Relations</button>
+          </div>
+        </div>
+        <div class="relationship-lens-list" id="relationship-lens-list" aria-label="Connected relationships"></div>
+      </div>
+      <div class="route-probe no-print" id="route-probe" hidden role="region" aria-labelledby="route-probe-title" data-state="idle">
+        <div class="route-probe-head">
+          <span class="route-probe-copy">
+            <span class="route-probe-eyebrow">Route probe</span>
+            <strong class="route-probe-title" id="route-probe-title">Choose a start node</strong>
+          </span>
+          <span class="route-probe-actions">
+            <button class="route-probe-find" id="route-probe-find" type="button" aria-label="Find a route start" data-node-finder-trigger>Find start</button>
+            <button class="route-probe-copy-link" id="route-probe-copy" type="button" aria-label="Copy link to traced route" hidden>Copy link</button>
+            <button id="route-probe-clear" type="button" aria-label="Clear route probe">Clear</button>
+          </span>
+        </div>
+        <div class="route-probe-path" id="route-probe-path" aria-label="Traced route">
+          <span class="route-probe-placeholder">Pick two semantic nodes on the diagram</span>
+        </div>
+        <div class="route-journey-controls" id="route-journey-controls" hidden role="group" aria-label="Route journey controls" data-playing="false">
+          <button id="route-journey-prev" type="button" aria-label="Previous route position" title="Previous route position">&#8592;</button>
+          <button class="route-journey-play" id="route-journey-play" type="button" aria-label="Play route journey" aria-pressed="false" title="Play route journey">
+            <span id="route-journey-play-icon" aria-hidden="true">&#9654;</span>
+            <span id="route-journey-play-label">Journey</span>
+          </button>
+          <button id="route-journey-next" type="button" aria-label="Next route position" title="Next route position">&#8594;</button>
+          <button class="route-journey-overview" id="route-journey-overview" type="button" aria-label="Show complete route overview" title="Show complete route overview">Overview</button>
+        </div>
+        <small class="route-probe-status" id="route-probe-status" aria-live="polite">Choose the source, then the destination. Direction matters.</small>
+      </div>
+      <div class="semantic-lens no-print" id="semantic-lens" hidden role="dialog" aria-modal="false" aria-labelledby="semantic-lens-title">
+        <div class="semantic-lens-head">
+          <span>
+            <span class="semantic-lens-eyebrow">Semantic lens</span>
+            <strong class="semantic-lens-title" id="semantic-lens-title">Compare system roles</strong>
+          </span>
+          <button class="semantic-lens-close" id="semantic-lens-close" type="button" aria-label="Close semantic lens">&#215;</button>
+        </div>
+        <p class="semantic-lens-instruction">Choose up to two semantic kinds. One reveals its real traffic; two compare only direct authored relationships.</p>
+        <div class="semantic-lens-kinds" id="semantic-lens-kinds" role="group" aria-label="Semantic kinds"></div>
+        <p class="semantic-lens-status" id="semantic-lens-status" aria-live="polite">Choose a kind to inspect its nodes and touching relationships.</p>
+        <div class="semantic-lens-actions">
+          <button id="semantic-lens-copy" type="button" aria-label="Copy link to semantic lens" hidden>Copy link</button>
+          <button id="semantic-lens-clear" type="button" aria-label="Clear semantic lens">Clear</button>
+        </div>
+      </div>
+      <div class="overview-map no-print" id="overview-map" hidden role="region" aria-labelledby="overview-map-title">
+        <div class="overview-map-head">
+          <span class="overview-map-live" aria-hidden="true"></span>
+          <span class="overview-map-copy">
+            <strong id="overview-map-title">Semantic radar</strong>
+            <small id="overview-map-status" aria-live="polite">Building overview</small>
+          </span>
+          <button class="overview-map-expand" id="overview-map-expand" type="button" aria-label="Open full semantic radar">Open radar</button>
+          <button class="overview-map-close" id="overview-map-close" type="button" aria-label="Close semantic radar">&#215;</button>
+        </div>
+        <div class="overview-map-surface" id="overview-map-surface" tabindex="0" role="group" aria-label="Diagram overview. Click a node to focus it, or use arrow keys to pan."></div>
+        <div class="overview-map-hint" aria-hidden="true"><span>Click node</span><span>Drag to pan</span></div>
+      </div>
+      <p class="overview-map-feedback no-print" id="overview-map-feedback" role="status" aria-live="polite" hidden>Semantic radar needs more MAP space.</p>
+      <div class="diagram-nav no-print" role="toolbar" aria-label="Diagram view controls">
+        <button id="btn-route-probe" type="button" aria-label="Trace a directed route" aria-pressed="false" aria-controls="route-probe" title="Trace route (R)">PATH</button>
+        <button id="btn-overview-map" type="button" aria-label="Open semantic radar" aria-expanded="false" aria-controls="overview-map" title="Semantic radar (M)">MAP</button>
+        <button id="btn-semantic-lens" type="button" aria-label="Open semantic lens" aria-haspopup="dialog" aria-expanded="false" aria-pressed="false" aria-controls="semantic-lens" title="Semantic lens (L)">LENS</button>
+        <button id="btn-node-finder" type="button" aria-label="Find a node" aria-haspopup="dialog" aria-expanded="false" aria-controls="node-finder" title="Find a node (/)" data-node-finder-trigger><span class="diagram-nav-icon find" aria-hidden="true"></span></button>
+        <button id="btn-diagram-guide" type="button" aria-label="Open diagram guide" aria-haspopup="dialog" aria-expanded="false" aria-controls="diagram-guide" title="Diagram guide (?)"><span class="diagram-nav-icon guide" aria-hidden="true"></span></button>
+        <button data-view="out" type="button" aria-label="Zoom out" title="Zoom out (-)"><span class="diagram-nav-icon minus" aria-hidden="true"></span></button>
+        <button data-view="reset" type="button" aria-label="Reset diagram view" title="Reset view (0)"><span class="diagram-nav-detail" data-view-detail hidden>READ</span><span class="diagram-nav-percent" data-view-percent>100%</span></button>
+        <button data-view="in" type="button" aria-label="Zoom in" title="Zoom in (+)"><span class="diagram-nav-icon plus" aria-hidden="true"></span></button>
+      </div>
+    </div>
+
+    <!-- Info Cards -->
+    <div class="cards">
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot cyan"></div>
+          <h3>Chain first</h3>
+        </div>
+        <ul>
+          <li>&bull; The replica reads the MMR root from the chain, not from a provider</li>
+          <li>&bull; It checks peaks against that root before the traversal starts</li>
+          <li>&bull; A source that serves wrong data fails the first hash check</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot emerald"></div>
+          <h3>Top-down walk</h3>
+        </div>
+        <ul>
+          <li>&bull; A matching hash skips the whole subtree</li>
+          <li>&bull; Unchanged subtrees are detected at their first node</li>
+          <li>&bull; Sync state is the set of missing nodes, so a sync can resume</li>
+          <li>&bull; POST /exists checks which nodes a provider has</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot amber"></div>
+          <h3>confirm_replica_sync</h3>
+        </div>
+        <ul>
+          <li>&bull; roots: current snapshot plus 6 historical_roots positions (primes 3, 7, 11, 23, 47, 113)</li>
+          <li>&bull; The first matching position is credited: position_matched 0 is current, 1-6 historical</li>
+          <li>&bull; Rejected unless the root differs from last_sync and min_sync_interval has passed</li>
+          <li>&bull; A confirmed root makes the replica challengeable by anyone</li>
+          <li>&bull; Anyone can fund syncs with top_up_replica_sync_balance</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot violet"></div>
+          <h3>Private buckets</h3>
+        </div>
+        <ul>
+          <li>&bull; Primaries serve reads only to members; provider accounts are not members</li>
+          <li>&bull; A replica syncs from other replicas or any data holder instead of the primaries</li>
+          <li>&bull; Replicas serve everyone, on public and private buckets</li>
+        </ul>
+      </div>
+    </div>
+
+  </div>
+
+  <script src="assets/archify/viewer.js?v=0b21e98276d8"></script>
+</body>
+</html>
