@@ -122,17 +122,14 @@ impl MembershipInvalidations for BlockEventInvalidations {
                 Ok(BlockEvent::BucketMembershipChanged { bucket_id }) if !all => {
                     buckets.push(bucket_id)
                 }
-                // The follower re-read chain state wholesale, or this task
-                // fell behind the fan-out — either way, events before this
-                // point were missed for good. Keep draining rather than
-                // returning here, so the backlog actually clears instead of
-                // leaving the feed permanently lagged.
+                // Events before this point were missed for good; keep draining
+                // so the backlog clears.
                 Ok(BlockEvent::Resubscribed { .. }) => all = true,
-                // A membership event's bucket id could not be attributed to
-                // a specific bucket (decode failure or a dropped block) - the
-                // same "trust nothing cached" reaction as Resubscribed, but
-                // it does not imply anything about the other event kinds.
-                Ok(BlockEvent::MembershipScopeUnknown { .. }) => all = true,
+                // A membership event with no bucket to attribute it to, or a
+                // best-chain fork switch: nothing cached can be trusted.
+                Ok(
+                    BlockEvent::MembershipScopeUnknown { .. } | BlockEvent::BestForkChanged { .. },
+                ) => all = true,
                 Ok(_) => {}
                 Err(TryRecvError::Lagged(_)) => all = true,
                 Err(TryRecvError::Empty) => break,
@@ -218,6 +215,16 @@ mod tests {
         for bucket_id in 0..5 {
             let _ = tx.send(BlockEvent::BucketMembershipChanged { bucket_id });
         }
+
+        let feed = BlockEventInvalidations::new(rx);
+        assert_eq!(feed.drain(), Invalidation::All);
+    }
+
+    #[test]
+    fn a_best_fork_change_invalidates_everything() {
+        let (tx, rx) = broadcast::channel(4);
+        let _ = tx.send(BlockEvent::BucketMembershipChanged { bucket_id: 1 });
+        let _ = tx.send(BlockEvent::BestForkChanged { at_block: 7 });
 
         let feed = BlockEventInvalidations::new(rx);
         assert_eq!(feed.drain(), Invalidation::All);
