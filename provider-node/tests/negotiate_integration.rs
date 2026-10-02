@@ -148,6 +148,14 @@ fn provider_info() -> ProviderInfo {
     }
 }
 
+fn replica_terms() -> ReplicaTerms<u128, u32> {
+    ReplicaTerms {
+        sync_balance: 1_000,
+        min_sync_interval: 10,
+        sync_price: 10,
+    }
+}
+
 fn primary_request() -> NegotiateRequest {
     NegotiateRequest {
         owner: AccountId32::new([7u8; 32]),
@@ -308,11 +316,7 @@ async fn negotiate_accepts_replica_when_sync_price_configured() {
 
     let mut req = primary_request();
     req.bucket = Some(42);
-    req.replica_params = Some(ReplicaTerms {
-        sync_balance: 1_000,
-        min_sync_interval: 10,
-        sync_price: 10,
-    });
+    req.replica_params = Some(replica_terms());
 
     let resp = server.negotiate(&req).await;
     assert_eq!(resp.status(), StatusCode::OK);
@@ -329,11 +333,7 @@ async fn negotiate_422_replica_quote_without_bucket() {
 
     // No call redeems a replica quote for a bucket that does not exist yet.
     let mut req = primary_request();
-    req.replica_params = Some(ReplicaTerms {
-        sync_balance: 1_000,
-        min_sync_interval: 10,
-        sync_price: 10,
-    });
+    req.replica_params = Some(replica_terms());
 
     let resp = server.negotiate(&req).await;
     assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
@@ -682,11 +682,7 @@ async fn negotiate_422_not_accepting_replicas() {
 
     let mut req = primary_request();
     req.bucket = Some(1);
-    req.replica_params = Some(ReplicaTerms {
-        sync_balance: 1_000,
-        min_sync_interval: 10,
-        sync_price: 10,
-    });
+    req.replica_params = Some(replica_terms());
 
     let resp = server.negotiate(&req).await;
     assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);

@@ -104,12 +104,12 @@ export async function signProviderRequest(
 }
 
 // ── Off-chain agreement-term negotiation ────────────────────────────────────
-// The off-chain half of the negotiate -> establish flow (#105). The bucket
+// The off-chain half of the negotiate -> redeem flow (#105). The bucket
 // owner POSTs a quote to the provider node's /negotiate endpoint; the provider
 // signs AgreementTerms and returns them as SignedTerms, which the owner then
 // redeems on-chain via create_bucket_with_primary, add_primary_provider,
 // add_replica_provider, create_drive or create_s3_bucket. Pure HTTP here —
-// the SCALE/Enum shaping of the response lives in layer0
+// the SCALE/Enum shaping of the response is in layer0
 // (buildSignedTermsArgs), so core stays chain-free.
 
 /** Replica-sync parameters carried by replica agreement terms. */

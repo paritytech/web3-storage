@@ -236,17 +236,19 @@ async function main() {
     name: "2.10 create_bucket then add_primary_provider",
     fn: async () => {
       const { bucketId } = await createBucket(api, client, { minProviders: 1 });
-      // The quote names this bucket, so it is redeemable only against it.
-      const [empty, signed] = await Promise.all([
-        api.query.StorageProvider.Buckets.getValue(bucketId, READ_OPTS),
-        negotiateSigned(api, PROVIDER_URL, client, provider, { maxBytes, duration, bucketId }),
-      ]);
+      const empty = (await api.query.StorageProvider.Buckets.getValue(bucketId, READ_OPTS))!;
       assert.strictEqual(
-        empty!.primary_providers.length,
+        empty.primary_providers.length,
         0,
         "create_bucket should leave the bucket without providers"
       );
 
+      // The quote names this bucket, so it is redeemable only against it.
+      const signed = await negotiateSigned(api, PROVIDER_URL, client, provider, {
+        maxBytes,
+        duration,
+        bucketId,
+      });
       await addPrimaryProvider(api, client, provider, signed);
 
       const [bucket, agreement] = await Promise.all([
