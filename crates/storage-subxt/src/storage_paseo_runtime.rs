@@ -17597,7 +17597,10 @@ pub mod api {
             )]
             #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-            #[doc = "A primary provider joined the bucket's provider set."]
+            #[doc = "A primary provider was added to the bucket's provider set, by"]
+            #[doc = "`create_bucket_with_primary`, `add_primary_provider`, or another"]
+            #[doc = "call that creates a bucket with a primary provider. Followed by"]
+            #[doc = "`StorageAgreementEstablished`."]
             pub struct ProviderAddedToBucket {
                 pub bucket_id: provider_added_to_bucket::BucketId,
                 pub provider: provider_added_to_bucket::Provider,
@@ -17892,8 +17895,9 @@ pub mod api {
             )]
             #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-            #[doc = "A primary agreement was opened, by `create_bucket_with_primary` or"]
-            #[doc = "`add_primary_provider`. Always follows `ProviderAddedToBucket`."]
+            #[doc = "A primary agreement was opened by `create_bucket_with_primary`,"]
+            #[doc = "`add_primary_provider`, or another call that creates a bucket"]
+            #[doc = "with a primary provider. Always follows `ProviderAddedToBucket`."]
             pub struct StorageAgreementEstablished {
                 pub bucket_id: storage_agreement_established::BucketId,
                 pub provider: storage_agreement_established::Provider,
@@ -26761,7 +26765,7 @@ pub mod api {
                     UnexpectedReplicaTerms,
                     #[codec(index = 67)]
                     #[doc = "The terms' `bucket` does not name the bucket the call targets:"]
-                    #[doc = "`New` is only redeemable by `create_bucket_with_primary`, and"]
+                    #[doc = "`New` is redeemable only by the calls that create a bucket, and"]
                     #[doc = "`Existing(id)` only against bucket `id`."]
                     TermsBucketMismatch,
                     #[codec(index = 68)]
@@ -26877,7 +26881,10 @@ pub mod api {
                         providers: ::subxt::alloc::vec::Vec<::subxt::utils::AccountId32>,
                     },
                     #[codec(index = 15)]
-                    #[doc = "A primary provider joined the bucket's provider set."]
+                    #[doc = "A primary provider was added to the bucket's provider set, by"]
+                    #[doc = "`create_bucket_with_primary`, `add_primary_provider`, or another"]
+                    #[doc = "call that creates a bucket with a primary provider. Followed by"]
+                    #[doc = "`StorageAgreementEstablished`."]
                     ProviderAddedToBucket {
                         bucket_id: ::core::primitive::u64,
                         provider: ::subxt::utils::AccountId32,
@@ -26949,8 +26956,9 @@ pub mod api {
                         burned: ::core::primitive::u128,
                     },
                     #[codec(index = 24)]
-                    #[doc = "A primary agreement was opened, by `create_bucket_with_primary` or"]
-                    #[doc = "`add_primary_provider`. Always follows `ProviderAddedToBucket`."]
+                    #[doc = "A primary agreement was opened by `create_bucket_with_primary`,"]
+                    #[doc = "`add_primary_provider`, or another call that creates a bucket"]
+                    #[doc = "with a primary provider. Always follows `ProviderAddedToBucket`."]
                     StorageAgreementEstablished {
                         bucket_id: ::core::primitive::u64,
                         provider: ::subxt::utils::AccountId32,
