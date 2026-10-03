@@ -13,6 +13,7 @@ SYNC_PATHS=(
   .github/workflows/set-image.yml
   .config/taplo.toml
   .config/zepter.yaml
+  .config/lychee.toml
   LICENSE-APACHE2
   LICENSE-GPL3
   licenserc.apache.toml
