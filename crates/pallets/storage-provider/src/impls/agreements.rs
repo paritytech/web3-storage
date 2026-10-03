@@ -153,7 +153,7 @@ impl<T: Config> Pallet<T> {
         )?;
         // min_providers = 1: the single primary signs every checkpoint.
         let bucket_id = Self::create_bucket_internal(owner, 1, Some(provider), visibility)?;
-        Self::record_primary_agreement(bucket_id, owner, provider, terms, accepted);
+        Self::insert_primary_agreement(bucket_id, owner, provider, terms, accepted);
         Ok(bucket_id)
     }
 
@@ -182,7 +182,7 @@ impl<T: Config> Pallet<T> {
             QuoteKind::Primary,
         )?;
         Buckets::<T>::insert(bucket_id, bucket);
-        Self::record_primary_agreement(bucket_id, admin, provider, terms, accepted);
+        Self::insert_primary_agreement(bucket_id, admin, provider, terms, accepted);
         Ok(())
     }
 
@@ -205,7 +205,7 @@ impl<T: Config> Pallet<T> {
             BucketTarget::Existing(bucket_id),
             QuoteKind::Replica,
         )?;
-        let expires_at = Self::record_agreement(bucket_id, owner, provider, &terms, accepted);
+        let expires_at = Self::insert_agreement(bucket_id, owner, provider, &terms, accepted);
 
         Self::deposit_event(Event::ReplicaAgreementEstablished {
             bucket_id,
@@ -363,7 +363,7 @@ impl<T: Config> Pallet<T> {
 
     /// Stores the agreement an accepted quote pays for and updates the
     /// provider's counters. Returns the agreement's `expires_at`.
-    fn record_agreement(
+    fn insert_agreement(
         bucket_id: BucketId,
         owner: &T::AccountId,
         provider: &T::AccountId,
@@ -406,16 +406,16 @@ impl<T: Config> Pallet<T> {
         expires_at
     }
 
-    /// [`Pallet::record_agreement`] plus the primary events,
+    /// [`Pallet::insert_agreement`] plus the primary events,
     /// `ProviderAddedToBucket` then `StorageAgreementEstablished`.
-    fn record_primary_agreement(
+    fn insert_primary_agreement(
         bucket_id: BucketId,
         owner: &T::AccountId,
         provider: &T::AccountId,
         terms: AgreementTermsOf<T>,
         accepted: AcceptedQuote<T>,
     ) {
-        let expires_at = Self::record_agreement(bucket_id, owner, provider, &terms, accepted);
+        let expires_at = Self::insert_agreement(bucket_id, owner, provider, &terms, accepted);
         Self::deposit_event(Event::ProviderAddedToBucket {
             bucket_id,
             provider: provider.clone(),
@@ -447,7 +447,7 @@ impl QuoteKind {
     }
 }
 
-/// Output of `accept_quote`, input to `record_agreement`.
+/// Output of `accept_quote`, input to `insert_agreement`.
 struct AcceptedQuote<T: Config> {
     anchor_block: BlockNumberFor<T>,
     new_committed: u64,
