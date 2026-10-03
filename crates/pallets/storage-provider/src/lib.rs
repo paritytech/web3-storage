@@ -926,7 +926,10 @@ pub mod pallet {
             /// Providers whose signatures back it.
             providers: Vec<T::AccountId>,
         },
-        /// A primary provider joined the bucket's provider set.
+        /// A primary provider was added to the bucket's provider set, by
+        /// `create_bucket_with_primary`, `add_primary_provider`, or another
+        /// call that creates a bucket with a primary provider. Followed by
+        /// `StorageAgreementEstablished`.
         ProviderAddedToBucket {
             /// The bucket.
             bucket_id: BucketId,
@@ -1029,8 +1032,9 @@ pub mod pallet {
             /// Escrow burned because the owner chose `EndAction::Burn`.
             burned: BalanceOf<T>,
         },
-        /// A primary agreement was opened, by `create_bucket_with_primary` or
-        /// `add_primary_provider`. Always follows `ProviderAddedToBucket`.
+        /// A primary agreement was opened by `create_bucket_with_primary`,
+        /// `add_primary_provider`, or another call that creates a bucket
+        /// with a primary provider. Always follows `ProviderAddedToBucket`.
         StorageAgreementEstablished {
             /// The bucket.
             bucket_id: BucketId,
@@ -1303,7 +1307,7 @@ pub mod pallet {
         /// redeem it with `add_replica_provider`.
         UnexpectedReplicaTerms,
         /// The terms' `bucket` does not name the bucket the call targets:
-        /// `New` is only redeemable by `create_bucket_with_primary`, and
+        /// `New` is redeemable only by the calls that create a bucket, and
         /// `Existing(id)` only against bucket `id`.
         TermsBucketMismatch,
         /// Storage agreement requested 0 byte
