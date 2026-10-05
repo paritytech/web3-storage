@@ -233,7 +233,7 @@ mod benchmarks {
             valid_until: pallet_storage_provider::Pallet::<T>::current_anchor_block()
                 .saturating_add(<T as pallet_storage_provider::Config>::RequestTimeout::get()),
             nonce: 1,
-            bucket_id: None,
+            bucket: storage_primitives::BucketTarget::New,
             replica_params: None,
         };
         let sig = sign_terms::<T>(&provider_pk, &terms);

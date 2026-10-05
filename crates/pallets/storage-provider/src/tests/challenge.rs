@@ -156,9 +156,7 @@ fn challenge_checkpoint_fails_provider_not_signed() {
         register_provider(3, 200);
         let bucket_id = setup_agreement(2, 1, 50, 200);
 
-        // Add second provider (no extrinsic grows a bucket's primary
-        // set, so the shape is synthesized directly)
-        add_primary_to_bucket(3, 1, bucket_id, 50);
+        setup_added_primary(3, 1, bucket_id, 50, 200);
 
         // Insert snapshot where only provider at index 0 (account 2) signed
         Buckets::<Test>::mutate(bucket_id, |maybe_bucket| {
@@ -687,9 +685,7 @@ fn two_challenges_same_deadline_resolve_independently() {
         register_provider(3, 200);
         let bucket_id = setup_agreement(2, 1, 50, 200);
 
-        // Add second provider to same bucket (establish_storage_agreement always
-        // creates a fresh single-primary bucket, so the shape is synthesized).
-        add_primary_to_bucket(3, 1, bucket_id, 50);
+        setup_added_primary(3, 1, bucket_id, 50, 200);
 
         // Insert snapshot where both providers signed
         Buckets::<Test>::mutate(bucket_id, |maybe_bucket| {
@@ -774,7 +770,7 @@ fn responding_to_sibling_preserves_other_challenge_index() {
         register_provider(2, 200);
         register_provider(3, 200);
         let bucket_id = setup_agreement(2, 1, 50, 200);
-        add_primary_to_bucket(3, 1, bucket_id, 50);
+        setup_added_primary(3, 1, bucket_id, 50, 200);
 
         // Snapshot signed by both providers (bits 0 and 1).
         Buckets::<Test>::mutate(bucket_id, |maybe_bucket| {
@@ -1018,8 +1014,8 @@ fn setup_three_primaries_snapshot() -> u64 {
     register_provider(3, 200);
     register_provider(4, 200);
     let bucket_id = setup_agreement(2, 1, 50, 200);
-    add_primary_to_bucket(3, 1, bucket_id, 50);
-    add_primary_to_bucket(4, 1, bucket_id, 50);
+    setup_added_primary(3, 1, bucket_id, 50, 200);
+    setup_added_primary(4, 1, bucket_id, 50, 200);
 
     Buckets::<Test>::mutate(bucket_id, |maybe_bucket| {
         let bucket = maybe_bucket.as_mut().expect("bucket exists");

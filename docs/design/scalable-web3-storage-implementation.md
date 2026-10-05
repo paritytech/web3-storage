@@ -848,8 +848,10 @@ pub enum Event<T: Config> {
         commitment: Commitment,
         providers: Vec<T::AccountId>,
     },
-    /// Emitted by `create_bucket_with_primary` and `add_primary_provider`,
-    /// together with `StorageAgreementEstablished`.
+    /// A primary provider was added to the bucket's provider set, by
+    /// `create_bucket_with_primary`, `add_primary_provider`, or another
+    /// call that creates a bucket with a primary provider. Followed by
+    /// `StorageAgreementEstablished`.
     ProviderAddedToBucket {
         bucket_id: BucketId,
         provider: T::AccountId,
@@ -950,6 +952,25 @@ pub enum Event<T: Config> {
         bucket_id: BucketId,
         provider: T::AccountId,
         payment_to_provider: BalanceOf<T>,
+    },
+    /// A primary agreement was opened by `create_bucket_with_primary`,
+    /// `add_primary_provider`, or another call that creates a bucket with a
+    /// primary provider. Always follows `ProviderAddedToBucket`.
+    StorageAgreementEstablished {
+        bucket_id: BucketId,
+        provider: T::AccountId,
+        owner: T::AccountId,
+        terms: AgreementTermsOf<T>,
+        expires_at: BlockNumberFor<T>,
+    },
+    /// Owner redeemed provider-signed replica terms; replica agreement
+    /// opened against an existing bucket.
+    ReplicaAgreementEstablished {
+        bucket_id: BucketId,
+        provider: T::AccountId,
+        owner: T::AccountId,
+        terms: AgreementTermsOf<T>,
+        expires_at: BlockNumberFor<T>,
     },
 
     // ─────────────────────────────────────────────────────────────

@@ -68,6 +68,30 @@ app supplies a listener. `submitTx` streams `created`/`in-pool`/`best`/
 `finalized` phases with a `final` flag; the default console listener prints
 only the final one.
 
+## Buckets and their providers
+
+Bucket creation and provider assignment are separate calls. A quote names the
+bucket it is for, so negotiate it against the bucket the redeeming call
+targets:
+
+| Wrapper | Negotiate with | Redeems |
+| --- | --- | --- |
+| `createBucket` | — | `create_bucket` |
+| `createBucketWithPrimary` | `bucket: null` | `create_bucket_with_primary` |
+| `addPrimaryProvider` | `bucket: <id>` | `add_primary_provider` (admin only) |
+| `addReplicaProvider` | `bucket: <id>` | `add_replica_provider` |
+
+`signedTermsBucketId(signed)` returns the bucket id a signed quote names;
+it returns `undefined` for a quote that creates its bucket.
+
+### Changing a bucket's primary provider
+
+The procedure is specified in the design doc, [Provider Lifecycle in
+Bucket](../../docs/design/scalable-web3-storage-implementation.md#provider-lifecycle-in-bucket).
+The wrappers for its steps are `addPrimaryProvider` (new provider joins),
+`checkpoint` (new provider signs the snapshot after the client uploaded the
+data to it) and `endAgreement` (old provider leaves).
+
 ## Download verification
 
 | Path | Verified? | Why |

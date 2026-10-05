@@ -1486,8 +1486,7 @@ pub mod api {
                         ],
                     )
                 }
-                #[doc = " Challenges targeting a provider that it can still answer; expired"]
-                #[doc = " ones are omitted."]
+                #[doc = " Get all challenges targeting a specific provider."]
                 pub fn provider_challenges(
                     &self,
                     provider: provider_challenges::Provider,
@@ -2089,9 +2088,10 @@ pub mod api {
                         "dry_run_call",
                         (origin, call, result_xcms_version),
                         [
-                            69u8, 38u8, 11u8, 89u8, 114u8, 199u8, 145u8, 89u8, 192u8, 249u8, 16u8,
-                            171u8, 40u8, 66u8, 16u8, 142u8, 202u8, 28u8, 216u8, 250u8, 44u8, 225u8,
-                            192u8, 134u8, 122u8, 4u8, 235u8, 220u8, 34u8, 193u8, 68u8, 34u8,
+                            229u8, 163u8, 130u8, 139u8, 75u8, 208u8, 35u8, 112u8, 253u8, 0u8,
+                            111u8, 31u8, 191u8, 153u8, 75u8, 62u8, 34u8, 157u8, 168u8, 68u8, 46u8,
+                            43u8, 72u8, 186u8, 91u8, 197u8, 252u8, 164u8, 173u8, 53u8, 252u8,
+                            193u8,
                         ],
                     )
                 }
@@ -2109,10 +2109,10 @@ pub mod api {
                         "dry_run_xcm",
                         (origin_location, xcm),
                         [
-                            245u8, 17u8, 78u8, 244u8, 85u8, 38u8, 40u8, 194u8, 95u8, 26u8, 203u8,
-                            138u8, 210u8, 117u8, 244u8, 167u8, 186u8, 131u8, 152u8, 183u8, 113u8,
-                            114u8, 1u8, 177u8, 89u8, 89u8, 110u8, 229u8, 216u8, 149u8, 248u8,
-                            157u8,
+                            204u8, 231u8, 253u8, 225u8, 175u8, 205u8, 34u8, 205u8, 31u8, 160u8,
+                            82u8, 57u8, 21u8, 116u8, 18u8, 177u8, 236u8, 246u8, 9u8, 209u8, 217u8,
+                            194u8, 58u8, 77u8, 167u8, 210u8, 145u8, 180u8, 179u8, 133u8, 24u8,
+                            242u8,
                         ],
                     )
                 }
@@ -3471,9 +3471,9 @@ pub mod api {
             .hash();
         runtime_metadata_hash
             == [
-                53u8, 6u8, 225u8, 55u8, 239u8, 12u8, 240u8, 97u8, 76u8, 74u8, 100u8, 133u8, 209u8,
-                72u8, 83u8, 158u8, 213u8, 1u8, 237u8, 225u8, 57u8, 9u8, 130u8, 120u8, 22u8, 191u8,
-                9u8, 188u8, 98u8, 147u8, 195u8, 199u8,
+                209u8, 215u8, 162u8, 100u8, 59u8, 193u8, 199u8, 159u8, 207u8, 86u8, 13u8, 155u8,
+                77u8, 199u8, 44u8, 76u8, 96u8, 95u8, 216u8, 91u8, 26u8, 150u8, 40u8, 41u8, 135u8,
+                209u8, 251u8, 114u8, 57u8, 24u8, 237u8, 247u8,
             ]
     }
     pub mod system {
@@ -4461,10 +4461,9 @@ pub mod api {
                         "System",
                         "Events",
                         [
-                            84u8, 86u8, 218u8, 133u8, 162u8, 178u8, 21u8, 110u8, 109u8, 143u8,
-                            184u8, 134u8, 67u8, 21u8, 134u8, 57u8, 221u8, 81u8, 174u8, 104u8,
-                            129u8, 232u8, 237u8, 241u8, 191u8, 219u8, 92u8, 192u8, 102u8, 165u8,
-                            75u8, 164u8,
+                            228u8, 18u8, 160u8, 235u8, 18u8, 106u8, 159u8, 31u8, 43u8, 84u8, 24u8,
+                            186u8, 67u8, 181u8, 243u8, 115u8, 196u8, 97u8, 181u8, 88u8, 197u8,
+                            254u8, 198u8, 92u8, 181u8, 38u8, 180u8, 18u8, 184u8, 3u8, 87u8, 70u8,
                         ],
                     )
                 }
@@ -8462,10 +8461,10 @@ pub mod api {
                                 call: ::subxt::alloc::boxed::Box::new(call),
                             },
                             [
-                                254u8, 233u8, 140u8, 95u8, 231u8, 194u8, 210u8, 229u8, 133u8,
-                                183u8, 109u8, 51u8, 115u8, 92u8, 196u8, 254u8, 78u8, 248u8, 55u8,
-                                123u8, 222u8, 236u8, 106u8, 224u8, 15u8, 90u8, 91u8, 118u8, 75u8,
-                                30u8, 70u8, 188u8,
+                                16u8, 189u8, 233u8, 58u8, 172u8, 80u8, 44u8, 139u8, 208u8, 69u8,
+                                156u8, 53u8, 147u8, 210u8, 240u8, 131u8, 112u8, 210u8, 121u8, 81u8,
+                                134u8, 102u8, 64u8, 72u8, 129u8, 101u8, 94u8, 51u8, 6u8, 7u8,
+                                125u8, 4u8,
                             ],
                         )
                     }
@@ -8488,10 +8487,10 @@ pub mod api {
                                 weight,
                             },
                             [
-                                48u8, 151u8, 35u8, 124u8, 52u8, 86u8, 46u8, 162u8, 170u8, 35u8,
-                                225u8, 127u8, 95u8, 136u8, 211u8, 195u8, 6u8, 170u8, 246u8, 228u8,
-                                44u8, 86u8, 176u8, 105u8, 91u8, 239u8, 169u8, 205u8, 143u8, 91u8,
-                                207u8, 126u8,
+                                218u8, 33u8, 32u8, 207u8, 151u8, 207u8, 214u8, 80u8, 235u8, 6u8,
+                                221u8, 241u8, 9u8, 161u8, 241u8, 46u8, 9u8, 137u8, 19u8, 96u8,
+                                116u8, 153u8, 136u8, 95u8, 192u8, 55u8, 239u8, 208u8, 194u8, 245u8,
+                                242u8, 254u8,
                             ],
                         )
                     }
@@ -8530,10 +8529,9 @@ pub mod api {
                                 call: ::subxt::alloc::boxed::Box::new(call),
                             },
                             [
-                                232u8, 96u8, 220u8, 34u8, 203u8, 8u8, 216u8, 85u8, 226u8, 233u8,
-                                13u8, 68u8, 41u8, 43u8, 189u8, 252u8, 217u8, 177u8, 168u8, 129u8,
-                                207u8, 136u8, 234u8, 169u8, 133u8, 153u8, 209u8, 149u8, 27u8,
-                                217u8, 96u8, 223u8,
+                                19u8, 211u8, 51u8, 203u8, 185u8, 21u8, 162u8, 29u8, 17u8, 68u8,
+                                56u8, 229u8, 89u8, 55u8, 148u8, 47u8, 27u8, 52u8, 32u8, 243u8, 6u8,
+                                45u8, 38u8, 52u8, 77u8, 228u8, 98u8, 12u8, 5u8, 133u8, 129u8, 68u8,
                             ],
                         )
                     }
@@ -11548,8 +11546,6 @@ pub mod api {
             #[doc = "- `assets`: The exact assets that were trapped. Use the version to specify what version"]
             #[doc = "was the latest when they were trapped."]
             #[doc = "- `beneficiary`: The location/account where the claimed assets will be deposited."]
-            #[doc = ""]
-            #[doc = "The weight of this call is linear in the number of assets claimed."]
             pub struct ClaimAssets {
                 pub assets: ::subxt::alloc::boxed::Box<claim_assets::Assets>,
                 pub beneficiary: ::subxt::alloc::boxed::Box<claim_assets::Beneficiary>,
@@ -12187,8 +12183,6 @@ pub mod api {
                     #[doc = "- `assets`: The exact assets that were trapped. Use the version to specify what version"]
                     #[doc = "was the latest when they were trapped."]
                     #[doc = "- `beneficiary`: The location/account where the claimed assets will be deposited."]
-                    #[doc = ""]
-                    #[doc = "The weight of this call is linear in the number of assets claimed."]
                     pub fn claim_assets(
                         &self,
                         assets: super::claim_assets::Assets,
@@ -14730,10 +14724,10 @@ pub mod api {
                             "batch",
                             super::Batch { calls },
                             [
-                                80u8, 107u8, 225u8, 75u8, 28u8, 182u8, 67u8, 167u8, 32u8, 187u8,
-                                211u8, 62u8, 101u8, 150u8, 157u8, 247u8, 96u8, 253u8, 46u8, 132u8,
-                                56u8, 106u8, 86u8, 232u8, 130u8, 37u8, 120u8, 11u8, 5u8, 150u8,
-                                115u8, 145u8,
+                                231u8, 147u8, 42u8, 29u8, 60u8, 250u8, 116u8, 145u8, 237u8, 5u8,
+                                194u8, 216u8, 125u8, 113u8, 238u8, 90u8, 74u8, 90u8, 33u8, 26u8,
+                                198u8, 142u8, 150u8, 71u8, 100u8, 192u8, 79u8, 49u8, 38u8, 188u8,
+                                69u8, 125u8,
                             ],
                         )
                     }
@@ -14764,10 +14758,10 @@ pub mod api {
                                 call: ::subxt::alloc::boxed::Box::new(call),
                             },
                             [
-                                94u8, 124u8, 217u8, 254u8, 64u8, 27u8, 163u8, 200u8, 177u8, 41u8,
-                                192u8, 42u8, 252u8, 201u8, 45u8, 42u8, 116u8, 113u8, 63u8, 132u8,
-                                162u8, 44u8, 25u8, 243u8, 75u8, 124u8, 204u8, 40u8, 11u8, 85u8,
-                                134u8, 53u8,
+                                145u8, 5u8, 218u8, 92u8, 172u8, 251u8, 103u8, 4u8, 46u8, 235u8,
+                                122u8, 168u8, 222u8, 130u8, 61u8, 169u8, 100u8, 105u8, 40u8, 176u8,
+                                46u8, 140u8, 18u8, 188u8, 245u8, 1u8, 52u8, 80u8, 204u8, 129u8,
+                                114u8, 221u8,
                             ],
                         )
                     }
@@ -14793,10 +14787,10 @@ pub mod api {
                             "batch_all",
                             super::BatchAll { calls },
                             [
-                                226u8, 91u8, 47u8, 219u8, 56u8, 100u8, 42u8, 244u8, 212u8, 89u8,
-                                93u8, 55u8, 100u8, 51u8, 133u8, 93u8, 0u8, 123u8, 142u8, 255u8,
-                                238u8, 81u8, 166u8, 164u8, 238u8, 223u8, 140u8, 14u8, 11u8, 43u8,
-                                58u8, 25u8,
+                                217u8, 172u8, 183u8, 132u8, 253u8, 59u8, 100u8, 115u8, 61u8, 147u8,
+                                224u8, 220u8, 67u8, 99u8, 60u8, 82u8, 154u8, 49u8, 220u8, 74u8,
+                                184u8, 120u8, 104u8, 196u8, 96u8, 195u8, 118u8, 94u8, 38u8, 249u8,
+                                77u8, 221u8,
                             ],
                         )
                     }
@@ -14820,10 +14814,10 @@ pub mod api {
                                 call: ::subxt::alloc::boxed::Box::new(call),
                             },
                             [
-                                163u8, 56u8, 93u8, 192u8, 9u8, 225u8, 182u8, 128u8, 57u8, 151u8,
-                                135u8, 186u8, 167u8, 133u8, 230u8, 214u8, 169u8, 77u8, 183u8, 23u8,
-                                77u8, 76u8, 24u8, 126u8, 74u8, 196u8, 239u8, 39u8, 185u8, 193u8,
-                                63u8, 66u8,
+                                170u8, 32u8, 184u8, 58u8, 189u8, 41u8, 107u8, 59u8, 145u8, 90u8,
+                                120u8, 199u8, 240u8, 25u8, 181u8, 194u8, 81u8, 245u8, 137u8, 213u8,
+                                171u8, 241u8, 95u8, 136u8, 93u8, 57u8, 180u8, 35u8, 37u8, 249u8,
+                                8u8, 26u8,
                             ],
                         )
                     }
@@ -14850,10 +14844,10 @@ pub mod api {
                             "force_batch",
                             super::ForceBatch { calls },
                             [
-                                178u8, 102u8, 216u8, 123u8, 186u8, 253u8, 50u8, 234u8, 173u8,
-                                183u8, 8u8, 201u8, 122u8, 102u8, 74u8, 201u8, 153u8, 150u8, 229u8,
-                                140u8, 245u8, 18u8, 233u8, 13u8, 77u8, 36u8, 129u8, 109u8, 74u8,
-                                47u8, 73u8, 224u8,
+                                193u8, 146u8, 235u8, 1u8, 65u8, 88u8, 132u8, 200u8, 221u8, 239u8,
+                                202u8, 201u8, 2u8, 30u8, 98u8, 61u8, 213u8, 104u8, 67u8, 109u8,
+                                79u8, 56u8, 174u8, 33u8, 140u8, 35u8, 232u8, 148u8, 190u8, 27u8,
+                                228u8, 156u8,
                             ],
                         )
                     }
@@ -14877,10 +14871,10 @@ pub mod api {
                                 weight,
                             },
                             [
-                                42u8, 9u8, 198u8, 92u8, 123u8, 36u8, 75u8, 136u8, 208u8, 37u8,
-                                29u8, 60u8, 144u8, 78u8, 127u8, 171u8, 86u8, 190u8, 9u8, 159u8,
-                                0u8, 71u8, 67u8, 255u8, 215u8, 233u8, 93u8, 120u8, 232u8, 210u8,
-                                122u8, 231u8,
+                                203u8, 160u8, 201u8, 215u8, 0u8, 242u8, 186u8, 20u8, 160u8, 49u8,
+                                193u8, 135u8, 75u8, 27u8, 167u8, 193u8, 16u8, 35u8, 245u8, 162u8,
+                                205u8, 161u8, 252u8, 5u8, 220u8, 175u8, 115u8, 195u8, 146u8, 216u8,
+                                76u8, 158u8,
                             ],
                         )
                     }
@@ -14920,10 +14914,10 @@ pub mod api {
                                 fallback: ::subxt::alloc::boxed::Box::new(fallback),
                             },
                             [
-                                20u8, 120u8, 72u8, 28u8, 16u8, 226u8, 52u8, 207u8, 218u8, 92u8,
-                                139u8, 190u8, 227u8, 151u8, 134u8, 103u8, 50u8, 129u8, 112u8, 93u8,
-                                218u8, 183u8, 25u8, 2u8, 248u8, 108u8, 180u8, 215u8, 59u8, 202u8,
-                                10u8, 139u8,
+                                226u8, 223u8, 202u8, 208u8, 109u8, 253u8, 18u8, 233u8, 70u8, 203u8,
+                                173u8, 90u8, 104u8, 195u8, 164u8, 232u8, 147u8, 216u8, 248u8, 24u8,
+                                246u8, 129u8, 4u8, 187u8, 109u8, 21u8, 146u8, 200u8, 118u8, 127u8,
+                                30u8, 126u8,
                             ],
                         )
                     }
@@ -14946,10 +14940,10 @@ pub mod api {
                                 call: ::subxt::alloc::boxed::Box::new(call),
                             },
                             [
-                                213u8, 63u8, 2u8, 105u8, 225u8, 52u8, 148u8, 78u8, 90u8, 63u8,
-                                140u8, 68u8, 119u8, 30u8, 150u8, 161u8, 253u8, 195u8, 141u8, 231u8,
-                                218u8, 95u8, 20u8, 212u8, 81u8, 63u8, 169u8, 15u8, 142u8, 138u8,
-                                229u8, 206u8,
+                                63u8, 122u8, 216u8, 40u8, 208u8, 212u8, 10u8, 245u8, 96u8, 245u8,
+                                48u8, 137u8, 125u8, 251u8, 39u8, 191u8, 150u8, 185u8, 96u8, 109u8,
+                                93u8, 77u8, 234u8, 251u8, 185u8, 170u8, 91u8, 209u8, 14u8, 229u8,
+                                64u8, 18u8,
                             ],
                         )
                     }
@@ -15282,10 +15276,8 @@ pub mod api {
             #[doc = "   slashable for any pending or freshly-created challenge."]
             #[doc = "2. `complete_deregister` — callable once `deregister_at` has"]
             #[doc = "   elapsed (by which point any challenge created up to the"]
-            #[doc = "   announcement block has expired, because the period must be"]
-            #[doc = "   `> ChallengeTimeout`; an unanswered one still has to be"]
-            #[doc = "   resolved with `resolve_expired_challenge`, which the provider"]
-            #[doc = "   may call itself)."]
+            #[doc = "   announcement block has already matured, because the period"]
+            #[doc = "   must be `> ChallengeTimeout`)."]
             #[doc = ""]
             #[doc = "The two-step flow closes the slashing race where a provider"]
             #[doc = "could withdraw stake between the end of their last agreement"]
@@ -15462,25 +15454,61 @@ pub mod api {
             )]
             #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-            #[doc = "Redeem provider-signed terms: create a bucket + primary agreement"]
-            #[doc = "in a single call."]
+            #[doc = "Create an empty bucket with the caller as its sole admin."]
             #[doc = ""]
-            #[doc = "The provider signs a SCALE-encoded [`AgreementTermsOf<T>`] off-chain;"]
-            #[doc = "the owner submits it here. The pallet verifies the signature,"]
-            #[doc = "rejects replays via the provider's sliding nonce window, then runs"]
-            #[doc = "the standard provider/capacity/stake checks and opens the"]
-            #[doc = "agreement."]
+            #[doc = "The bucket has no providers and no data. Add a primary with"]
+            #[doc = "[`Pallet::add_primary_provider`]."]
+            #[doc = ""]
+            #[doc = "Parameters:"]
+            #[doc = "- `min_providers`: primary-provider signatures each checkpoint"]
+            #[doc = "  needs. At most `MaxPrimaryProviders` (`InvalidMinProviders`)."]
+            #[doc = "  Changeable later with [`Pallet::set_min_providers`]."]
+            #[doc = "- `visibility`: who may read the bucket (see [`Visibility`])."]
+            pub struct CreateBucket {
+                pub min_providers: create_bucket::MinProviders,
+                pub visibility: create_bucket::Visibility,
+            }
+            pub mod create_bucket {
+                use super::runtime_types;
+                pub type MinProviders = ::core::primitive::u32;
+                pub type Visibility = runtime_types::storage_primitives::Visibility;
+            }
+            impl CreateBucket {
+                const PALLET_NAME: &'static str = "StorageProvider";
+                const CALL_NAME: &'static str = "create_bucket";
+            }
+            impl ::subxt::extrinsics::DecodeAsExtrinsic for CreateBucket {
+                fn is_extrinsic(pallet_name: &str, call_name: &str) -> bool {
+                    pallet_name == Self::PALLET_NAME && call_name == Self::CALL_NAME
+                }
+            }
+            #[derive(
+                :: subxt :: ext :: scale_decode :: DecodeAsType,
+                :: subxt :: ext :: scale_encode :: EncodeAsType,
+                Clone,
+                Debug,
+                Eq,
+                PartialEq,
+            )]
+            #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+            #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+            #[doc = "Redeem provider-signed primary terms. Equivalent to"]
+            #[doc = "[`Pallet::create_bucket`] followed by"]
+            #[doc = "[`Pallet::add_primary_provider`], in one transaction."]
+            #[doc = ""]
+            #[doc = "The provider signs a SCALE-encoded [`AgreementTermsOf<T>`] with"]
+            #[doc = "`bucket: BucketTarget::New` off-chain; the owner submits it here."]
             #[doc = ""]
             #[doc = "`visibility` sets the new bucket's read visibility (see"]
             #[doc = "[`Visibility`]); it is the owner's choice and not part of the"]
             #[doc = "provider-signed terms."]
-            pub struct EstablishStorageAgreement {
-                pub provider: establish_storage_agreement::Provider,
-                pub terms: establish_storage_agreement::Terms,
-                pub sig: establish_storage_agreement::Sig,
-                pub visibility: establish_storage_agreement::Visibility,
+            pub struct CreateBucketWithPrimary {
+                pub provider: create_bucket_with_primary::Provider,
+                pub terms: create_bucket_with_primary::Terms,
+                pub sig: create_bucket_with_primary::Sig,
+                pub visibility: create_bucket_with_primary::Visibility,
             }
-            pub mod establish_storage_agreement {
+            pub mod create_bucket_with_primary {
                 use super::runtime_types;
                 pub type Provider = ::subxt::utils::AccountId32;
                 pub type Terms = runtime_types::storage_primitives::agreement_term::AgreementTerms<
@@ -15491,11 +15519,56 @@ pub mod api {
                 pub type Sig = runtime_types::sp_runtime::MultiSignature;
                 pub type Visibility = runtime_types::storage_primitives::Visibility;
             }
-            impl EstablishStorageAgreement {
+            impl CreateBucketWithPrimary {
                 const PALLET_NAME: &'static str = "StorageProvider";
-                const CALL_NAME: &'static str = "establish_storage_agreement";
+                const CALL_NAME: &'static str = "create_bucket_with_primary";
             }
-            impl ::subxt::extrinsics::DecodeAsExtrinsic for EstablishStorageAgreement {
+            impl ::subxt::extrinsics::DecodeAsExtrinsic for CreateBucketWithPrimary {
+                fn is_extrinsic(pallet_name: &str, call_name: &str) -> bool {
+                    pallet_name == Self::PALLET_NAME && call_name == Self::CALL_NAME
+                }
+            }
+            #[derive(
+                :: subxt :: ext :: scale_decode :: DecodeAsType,
+                :: subxt :: ext :: scale_encode :: EncodeAsType,
+                Clone,
+                Debug,
+                Eq,
+                PartialEq,
+            )]
+            #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+            #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+            #[doc = "Admin only. Redeem provider-signed primary terms against an"]
+            #[doc = "existing bucket, adding the provider to its primary set."]
+            #[doc = ""]
+            #[doc = "The quote must name `bucket: BucketTarget::Existing(bucket_id)`"]
+            #[doc = "and the caller as `terms.owner`. Works on a bucket whose earlier"]
+            #[doc = "agreements have all ended and on a frozen bucket."]
+            #[doc = ""]
+            #[doc = "The new provider has none of the bucket's data and is not in the"]
+            #[doc = "current snapshot's signer bitfield."]
+            pub struct AddPrimaryProvider {
+                pub bucket_id: add_primary_provider::BucketId,
+                pub provider: add_primary_provider::Provider,
+                pub terms: add_primary_provider::Terms,
+                pub sig: add_primary_provider::Sig,
+            }
+            pub mod add_primary_provider {
+                use super::runtime_types;
+                pub type BucketId = ::core::primitive::u64;
+                pub type Provider = ::subxt::utils::AccountId32;
+                pub type Terms = runtime_types::storage_primitives::agreement_term::AgreementTerms<
+                    ::subxt::utils::AccountId32,
+                    ::core::primitive::u128,
+                    ::core::primitive::u32,
+                >;
+                pub type Sig = runtime_types::sp_runtime::MultiSignature;
+            }
+            impl AddPrimaryProvider {
+                const PALLET_NAME: &'static str = "StorageProvider";
+                const CALL_NAME: &'static str = "add_primary_provider";
+            }
+            impl ::subxt::extrinsics::DecodeAsExtrinsic for AddPrimaryProvider {
                 fn is_extrinsic(pallet_name: &str, call_name: &str) -> bool {
                     pallet_name == Self::PALLET_NAME && call_name == Self::CALL_NAME
                 }
@@ -15699,21 +15772,20 @@ pub mod api {
             )]
             #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-            #[doc = "Redeem provider-signed terms for a replica storage agreement."]
+            #[doc = "Redeem provider-signed replica terms against an existing bucket."]
+            #[doc = "Callable by whoever the provider quoted for, not only the bucket's"]
+            #[doc = "members."]
             #[doc = ""]
             #[doc = "The provider signs a SCALE-encoded [`AgreementTermsOf<T>`] with"]
-            #[doc = "`replica_params: Some(_)` off-chain; the owner submits it here."]
-            #[doc = "The pallet verifies the signature, rejects replays via the"]
-            #[doc = "provider's sliding nonce window, then runs the standard"]
-            #[doc = "provider/capacity/stake checks and opens the replica agreement on"]
-            #[doc = "an existing bucket."]
-            pub struct EstablishReplicaAgreement {
-                pub bucket_id: establish_replica_agreement::BucketId,
-                pub provider: establish_replica_agreement::Provider,
-                pub terms: establish_replica_agreement::Terms,
-                pub sig: establish_replica_agreement::Sig,
+            #[doc = "`bucket: BucketTarget::Existing(bucket_id)` and"]
+            #[doc = "`replica_params: Some(_)` off-chain; the caller submits it here."]
+            pub struct AddReplicaProvider {
+                pub bucket_id: add_replica_provider::BucketId,
+                pub provider: add_replica_provider::Provider,
+                pub terms: add_replica_provider::Terms,
+                pub sig: add_replica_provider::Sig,
             }
-            pub mod establish_replica_agreement {
+            pub mod add_replica_provider {
                 use super::runtime_types;
                 pub type BucketId = ::core::primitive::u64;
                 pub type Provider = ::subxt::utils::AccountId32;
@@ -15724,11 +15796,11 @@ pub mod api {
                 >;
                 pub type Sig = runtime_types::sp_runtime::MultiSignature;
             }
-            impl EstablishReplicaAgreement {
+            impl AddReplicaProvider {
                 const PALLET_NAME: &'static str = "StorageProvider";
-                const CALL_NAME: &'static str = "establish_replica_agreement";
+                const CALL_NAME: &'static str = "add_replica_provider";
             }
-            impl ::subxt::extrinsics::DecodeAsExtrinsic for EstablishReplicaAgreement {
+            impl ::subxt::extrinsics::DecodeAsExtrinsic for AddReplicaProvider {
                 fn is_extrinsic(pallet_name: &str, call_name: &str) -> bool {
                     pallet_name == Self::PALLET_NAME && call_name == Self::CALL_NAME
                 }
@@ -16125,10 +16197,8 @@ pub mod api {
             #[doc = "that the challenged state has been superseded."]
             #[doc = ""]
             #[doc = "A valid response settles the deposit between challenger and"]
-            #[doc = "provider. An invalid one is rejected (`InvalidProof`,"]
-            #[doc = "`InvalidDeletionClaim`, `InvalidSupersededClaim`): the fee is paid"]
-            #[doc = "and the challenge stays open until the deadline. An unanswered"]
-            #[doc = "challenge is slashed by `resolve_expired_challenge`."]
+            #[doc = "provider; an invalid one slashes the provider on the spot. A"]
+            #[doc = "missing one is slashed by the deadline sweep."]
             pub struct RespondToChallenge {
                 pub challenge_id: respond_to_challenge::ChallengeId,
                 pub response: respond_to_challenge::Response,
@@ -16145,43 +16215,6 @@ pub mod api {
                 const CALL_NAME: &'static str = "respond_to_challenge";
             }
             impl ::subxt::extrinsics::DecodeAsExtrinsic for RespondToChallenge {
-                fn is_extrinsic(pallet_name: &str, call_name: &str) -> bool {
-                    pallet_name == Self::PALLET_NAME && call_name == Self::CALL_NAME
-                }
-            }
-            #[derive(
-                :: subxt :: ext :: scale_decode :: DecodeAsType,
-                :: subxt :: ext :: scale_encode :: EncodeAsType,
-                Clone,
-                Debug,
-                Eq,
-                PartialEq,
-            )]
-            #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
-            #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-            #[doc = "Slash a provider whose challenge expired without a response."]
-            #[doc = ""]
-            #[doc = "Anyone may call this; it is free on success. Slashes the provider's"]
-            #[doc = "whole stake to the Treasury, refunds the challenger's deposit and"]
-            #[doc = "clears the pending-challenge counters that block the provider's"]
-            #[doc = "exits. A provider may call it against itself to unblock"]
-            #[doc = "`complete_deregister`."]
-            #[doc = ""]
-            #[doc = "Errors: `ChallengeNotExpired` while the provider may still respond"]
-            #[doc = "(`anchor <= deadline`); `ChallengeNotFound` once resolved."]
-            pub struct ResolveExpiredChallenge {
-                pub challenge_id: resolve_expired_challenge::ChallengeId,
-            }
-            pub mod resolve_expired_challenge {
-                use super::runtime_types;
-                pub type ChallengeId =
-                    runtime_types::storage_primitives::ChallengeId<::core::primitive::u32>;
-            }
-            impl ResolveExpiredChallenge {
-                const PALLET_NAME: &'static str = "StorageProvider";
-                const CALL_NAME: &'static str = "resolve_expired_challenge";
-            }
-            impl ::subxt::extrinsics::DecodeAsExtrinsic for ResolveExpiredChallenge {
                 fn is_extrinsic(pallet_name: &str, call_name: &str) -> bool {
                     pallet_name == Self::PALLET_NAME && call_name == Self::CALL_NAME
                 }
@@ -16314,10 +16347,8 @@ pub mod api {
                     #[doc = "   slashable for any pending or freshly-created challenge."]
                     #[doc = "2. `complete_deregister` — callable once `deregister_at` has"]
                     #[doc = "   elapsed (by which point any challenge created up to the"]
-                    #[doc = "   announcement block has expired, because the period must be"]
-                    #[doc = "   `> ChallengeTimeout`; an unanswered one still has to be"]
-                    #[doc = "   resolved with `resolve_expired_challenge`, which the provider"]
-                    #[doc = "   may call itself)."]
+                    #[doc = "   announcement block has already matured, because the period"]
+                    #[doc = "   must be `> ChallengeTimeout`)."]
                     #[doc = ""]
                     #[doc = "The two-step flow closes the slashing race where a provider"]
                     #[doc = "could withdraw stake between the end of their last agreement"]
@@ -16451,40 +16482,103 @@ pub mod api {
                             ],
                         )
                     }
-                    #[doc = "Redeem provider-signed terms: create a bucket + primary agreement"]
-                    #[doc = "in a single call."]
+                    #[doc = "Create an empty bucket with the caller as its sole admin."]
                     #[doc = ""]
-                    #[doc = "The provider signs a SCALE-encoded [`AgreementTermsOf<T>`] off-chain;"]
-                    #[doc = "the owner submits it here. The pallet verifies the signature,"]
-                    #[doc = "rejects replays via the provider's sliding nonce window, then runs"]
-                    #[doc = "the standard provider/capacity/stake checks and opens the"]
-                    #[doc = "agreement."]
+                    #[doc = "The bucket has no providers and no data. Add a primary with"]
+                    #[doc = "[`Pallet::add_primary_provider`]."]
+                    #[doc = ""]
+                    #[doc = "Parameters:"]
+                    #[doc = "- `min_providers`: primary-provider signatures each checkpoint"]
+                    #[doc = "  needs. At most `MaxPrimaryProviders` (`InvalidMinProviders`)."]
+                    #[doc = "  Changeable later with [`Pallet::set_min_providers`]."]
+                    #[doc = "- `visibility`: who may read the bucket (see [`Visibility`])."]
+                    pub fn create_bucket(
+                        &self,
+                        min_providers: super::create_bucket::MinProviders,
+                        visibility: super::create_bucket::Visibility,
+                    ) -> ::subxt::transactions::StaticPayload<super::CreateBucket>
+                    {
+                        ::subxt::transactions::StaticPayload::new_static(
+                            "StorageProvider",
+                            "create_bucket",
+                            super::CreateBucket {
+                                min_providers,
+                                visibility,
+                            },
+                            [
+                                129u8, 233u8, 85u8, 214u8, 7u8, 41u8, 20u8, 159u8, 131u8, 252u8,
+                                0u8, 20u8, 236u8, 231u8, 215u8, 225u8, 153u8, 76u8, 43u8, 97u8,
+                                2u8, 236u8, 57u8, 13u8, 243u8, 40u8, 123u8, 225u8, 221u8, 107u8,
+                                194u8, 193u8,
+                            ],
+                        )
+                    }
+                    #[doc = "Redeem provider-signed primary terms. Equivalent to"]
+                    #[doc = "[`Pallet::create_bucket`] followed by"]
+                    #[doc = "[`Pallet::add_primary_provider`], in one transaction."]
+                    #[doc = ""]
+                    #[doc = "The provider signs a SCALE-encoded [`AgreementTermsOf<T>`] with"]
+                    #[doc = "`bucket: BucketTarget::New` off-chain; the owner submits it here."]
                     #[doc = ""]
                     #[doc = "`visibility` sets the new bucket's read visibility (see"]
                     #[doc = "[`Visibility`]); it is the owner's choice and not part of the"]
                     #[doc = "provider-signed terms."]
-                    pub fn establish_storage_agreement(
+                    pub fn create_bucket_with_primary(
                         &self,
-                        provider: super::establish_storage_agreement::Provider,
-                        terms: super::establish_storage_agreement::Terms,
-                        sig: super::establish_storage_agreement::Sig,
-                        visibility: super::establish_storage_agreement::Visibility,
-                    ) -> ::subxt::transactions::StaticPayload<super::EstablishStorageAgreement>
+                        provider: super::create_bucket_with_primary::Provider,
+                        terms: super::create_bucket_with_primary::Terms,
+                        sig: super::create_bucket_with_primary::Sig,
+                        visibility: super::create_bucket_with_primary::Visibility,
+                    ) -> ::subxt::transactions::StaticPayload<super::CreateBucketWithPrimary>
                     {
                         ::subxt::transactions::StaticPayload::new_static(
                             "StorageProvider",
-                            "establish_storage_agreement",
-                            super::EstablishStorageAgreement {
+                            "create_bucket_with_primary",
+                            super::CreateBucketWithPrimary {
                                 provider,
                                 terms,
                                 sig,
                                 visibility,
                             },
                             [
-                                168u8, 160u8, 195u8, 240u8, 130u8, 10u8, 195u8, 210u8, 37u8, 64u8,
-                                131u8, 3u8, 245u8, 81u8, 141u8, 194u8, 146u8, 45u8, 114u8, 183u8,
-                                81u8, 2u8, 228u8, 216u8, 122u8, 95u8, 184u8, 225u8, 220u8, 114u8,
-                                40u8, 152u8,
+                                105u8, 206u8, 227u8, 51u8, 9u8, 130u8, 116u8, 207u8, 247u8, 218u8,
+                                154u8, 103u8, 57u8, 106u8, 18u8, 155u8, 122u8, 123u8, 50u8, 108u8,
+                                83u8, 67u8, 125u8, 226u8, 83u8, 112u8, 219u8, 18u8, 177u8, 137u8,
+                                171u8, 99u8,
+                            ],
+                        )
+                    }
+                    #[doc = "Admin only. Redeem provider-signed primary terms against an"]
+                    #[doc = "existing bucket, adding the provider to its primary set."]
+                    #[doc = ""]
+                    #[doc = "The quote must name `bucket: BucketTarget::Existing(bucket_id)`"]
+                    #[doc = "and the caller as `terms.owner`. Works on a bucket whose earlier"]
+                    #[doc = "agreements have all ended and on a frozen bucket."]
+                    #[doc = ""]
+                    #[doc = "The new provider has none of the bucket's data and is not in the"]
+                    #[doc = "current snapshot's signer bitfield."]
+                    pub fn add_primary_provider(
+                        &self,
+                        bucket_id: super::add_primary_provider::BucketId,
+                        provider: super::add_primary_provider::Provider,
+                        terms: super::add_primary_provider::Terms,
+                        sig: super::add_primary_provider::Sig,
+                    ) -> ::subxt::transactions::StaticPayload<super::AddPrimaryProvider>
+                    {
+                        ::subxt::transactions::StaticPayload::new_static(
+                            "StorageProvider",
+                            "add_primary_provider",
+                            super::AddPrimaryProvider {
+                                bucket_id,
+                                provider,
+                                terms,
+                                sig,
+                            },
+                            [
+                                194u8, 144u8, 106u8, 238u8, 20u8, 84u8, 232u8, 154u8, 204u8, 50u8,
+                                178u8, 251u8, 126u8, 199u8, 227u8, 115u8, 151u8, 66u8, 132u8,
+                                186u8, 157u8, 58u8, 173u8, 191u8, 107u8, 11u8, 56u8, 16u8, 110u8,
+                                242u8, 214u8, 164u8,
                             ],
                         )
                     }
@@ -16630,36 +16724,35 @@ pub mod api {
                             ],
                         )
                     }
-                    #[doc = "Redeem provider-signed terms for a replica storage agreement."]
+                    #[doc = "Redeem provider-signed replica terms against an existing bucket."]
+                    #[doc = "Callable by whoever the provider quoted for, not only the bucket's"]
+                    #[doc = "members."]
                     #[doc = ""]
                     #[doc = "The provider signs a SCALE-encoded [`AgreementTermsOf<T>`] with"]
-                    #[doc = "`replica_params: Some(_)` off-chain; the owner submits it here."]
-                    #[doc = "The pallet verifies the signature, rejects replays via the"]
-                    #[doc = "provider's sliding nonce window, then runs the standard"]
-                    #[doc = "provider/capacity/stake checks and opens the replica agreement on"]
-                    #[doc = "an existing bucket."]
-                    pub fn establish_replica_agreement(
+                    #[doc = "`bucket: BucketTarget::Existing(bucket_id)` and"]
+                    #[doc = "`replica_params: Some(_)` off-chain; the caller submits it here."]
+                    pub fn add_replica_provider(
                         &self,
-                        bucket_id: super::establish_replica_agreement::BucketId,
-                        provider: super::establish_replica_agreement::Provider,
-                        terms: super::establish_replica_agreement::Terms,
-                        sig: super::establish_replica_agreement::Sig,
-                    ) -> ::subxt::transactions::StaticPayload<super::EstablishReplicaAgreement>
+                        bucket_id: super::add_replica_provider::BucketId,
+                        provider: super::add_replica_provider::Provider,
+                        terms: super::add_replica_provider::Terms,
+                        sig: super::add_replica_provider::Sig,
+                    ) -> ::subxt::transactions::StaticPayload<super::AddReplicaProvider>
                     {
                         ::subxt::transactions::StaticPayload::new_static(
                             "StorageProvider",
-                            "establish_replica_agreement",
-                            super::EstablishReplicaAgreement {
+                            "add_replica_provider",
+                            super::AddReplicaProvider {
                                 bucket_id,
                                 provider,
                                 terms,
                                 sig,
                             },
                             [
-                                136u8, 47u8, 100u8, 90u8, 194u8, 237u8, 110u8, 161u8, 102u8, 30u8,
-                                206u8, 218u8, 148u8, 232u8, 191u8, 243u8, 211u8, 154u8, 108u8,
-                                98u8, 187u8, 136u8, 162u8, 72u8, 21u8, 57u8, 135u8, 221u8, 2u8,
-                                222u8, 100u8, 227u8,
+                                139u8, 0u8, 172u8, 204u8, 140u8, 229u8, 25u8, 11u8, 88u8, 249u8,
+                                88u8, 218u8, 236u8, 137u8, 126u8, 7u8, 237u8, 96u8, 0u8, 229u8,
+                                65u8, 42u8, 113u8, 1u8, 191u8, 87u8, 4u8, 79u8, 186u8, 73u8, 87u8,
+                                20u8,
                             ],
                         )
                     }
@@ -16965,10 +17058,8 @@ pub mod api {
                     #[doc = "that the challenged state has been superseded."]
                     #[doc = ""]
                     #[doc = "A valid response settles the deposit between challenger and"]
-                    #[doc = "provider. An invalid one is rejected (`InvalidProof`,"]
-                    #[doc = "`InvalidDeletionClaim`, `InvalidSupersededClaim`): the fee is paid"]
-                    #[doc = "and the challenge stays open until the deadline. An unanswered"]
-                    #[doc = "challenge is slashed by `resolve_expired_challenge`."]
+                    #[doc = "provider; an invalid one slashes the provider on the spot. A"]
+                    #[doc = "missing one is slashed by the deadline sweep."]
                     pub fn respond_to_challenge(
                         &self,
                         challenge_id: super::respond_to_challenge::ChallengeId,
@@ -16987,33 +17078,6 @@ pub mod api {
                                 150u8, 158u8, 20u8, 225u8, 56u8, 83u8, 233u8, 253u8, 173u8, 204u8,
                                 12u8, 88u8, 173u8, 113u8, 223u8, 117u8, 91u8, 23u8, 243u8, 25u8,
                                 136u8, 254u8,
-                            ],
-                        )
-                    }
-                    #[doc = "Slash a provider whose challenge expired without a response."]
-                    #[doc = ""]
-                    #[doc = "Anyone may call this; it is free on success. Slashes the provider's"]
-                    #[doc = "whole stake to the Treasury, refunds the challenger's deposit and"]
-                    #[doc = "clears the pending-challenge counters that block the provider's"]
-                    #[doc = "exits. A provider may call it against itself to unblock"]
-                    #[doc = "`complete_deregister`."]
-                    #[doc = ""]
-                    #[doc = "Errors: `ChallengeNotExpired` while the provider may still respond"]
-                    #[doc = "(`anchor <= deadline`); `ChallengeNotFound` once resolved."]
-                    pub fn resolve_expired_challenge(
-                        &self,
-                        challenge_id: super::resolve_expired_challenge::ChallengeId,
-                    ) -> ::subxt::transactions::StaticPayload<super::ResolveExpiredChallenge>
-                    {
-                        ::subxt::transactions::StaticPayload::new_static(
-                            "StorageProvider",
-                            "resolve_expired_challenge",
-                            super::ResolveExpiredChallenge { challenge_id },
-                            [
-                                21u8, 103u8, 137u8, 152u8, 245u8, 66u8, 27u8, 251u8, 146u8, 136u8,
-                                161u8, 248u8, 245u8, 216u8, 247u8, 51u8, 146u8, 46u8, 71u8, 240u8,
-                                251u8, 27u8, 59u8, 72u8, 204u8, 248u8, 220u8, 40u8, 245u8, 123u8,
-                                145u8, 105u8,
                             ],
                         )
                     }
@@ -17533,8 +17597,10 @@ pub mod api {
             )]
             #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-            #[doc = "A primary provider joined the bucket's provider set. Not emitted"]
-            #[doc = "yet: no call adds a primary to an existing bucket (#417)."]
+            #[doc = "A primary provider was added to the bucket's provider set, by"]
+            #[doc = "`create_bucket_with_primary`, `add_primary_provider`, or another"]
+            #[doc = "call that creates a bucket with a primary provider. Followed by"]
+            #[doc = "`StorageAgreementEstablished`."]
             pub struct ProviderAddedToBucket {
                 pub bucket_id: provider_added_to_bucket::BucketId,
                 pub provider: provider_added_to_bucket::Provider,
@@ -17829,8 +17895,9 @@ pub mod api {
             )]
             #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-            #[doc = "Owner redeemed provider-signed terms; bucket created and agreement"]
-            #[doc = "opened atomically."]
+            #[doc = "A primary agreement was opened by `create_bucket_with_primary`,"]
+            #[doc = "`add_primary_provider`, or another call that creates a bucket"]
+            #[doc = "with a primary provider. Always follows `ProviderAddedToBucket`."]
             pub struct StorageAgreementEstablished {
                 pub bucket_id: storage_agreement_established::BucketId,
                 pub provider: storage_agreement_established::Provider,
@@ -17983,13 +18050,13 @@ pub mod api {
             )]
             #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-            #[doc = "A provider failed to respond before the deadline. Its whole stake"]
-            #[doc = "went to the Treasury and the challenger's deposit was refunded;"]
-            #[doc = "there is no reward."]
+            #[doc = "A provider failed a challenge and lost stake."]
             pub struct ChallengeSlashed {
                 pub challenge_id: challenge_slashed::ChallengeId,
                 pub provider: challenge_slashed::Provider,
                 pub slashed_amount: challenge_slashed::SlashedAmount,
+                pub challenger_reward: challenge_slashed::ChallengerReward,
+                pub reason: challenge_slashed::Reason,
             }
             pub mod challenge_slashed {
                 use super::runtime_types;
@@ -17997,6 +18064,8 @@ pub mod api {
                     runtime_types::storage_primitives::ChallengeId<::core::primitive::u32>;
                 pub type Provider = ::subxt::utils::AccountId32;
                 pub type SlashedAmount = ::core::primitive::u128;
+                pub type ChallengerReward = ::core::primitive::u128;
+                pub type Reason = runtime_types::storage_primitives::SlashReason;
             }
             impl ChallengeSlashed {
                 const PALLET_NAME: &'static str = "StorageProvider";
@@ -18132,10 +18201,8 @@ pub mod api {
                     )
                 }
                 #[doc = " Next stable challenge index to allocate for a given deadline block."]
-                #[doc = " Monotonically increasing per deadline and never decremented when a"]
-                #[doc = " challenge is resolved, so sibling ids stay valid. Removed by"]
-                #[doc = " `resolve_expired_challenge`; a deadline whose challenges were all"]
-                #[doc = " answered keeps its entry."]
+                #[doc = " Monotonically increasing per deadline; never decremented when a"]
+                #[doc = " challenge is resolved, guaranteeing index stability for siblings."]
                 pub fn next_challenge_index(
                     &self,
                 ) -> ::subxt::storage::StaticAddress<
@@ -18154,12 +18221,33 @@ pub mod api {
                         ],
                     )
                 }
+                #[doc = " Highest deadline key the `on_initialize` slash sweep has drained. Each"]
+                #[doc = " block it sweeps up to (but excluding) the previous block's relay parent."]
+                #[doc = " `None` until the first block after genesis/upgrade anchors it. A cursor"]
+                #[doc = " over anchor-denominated deadline keys, hence [`BlockNumberFor`]."]
+                pub fn last_swept_challenge_block(
+                    &self,
+                ) -> ::subxt::storage::StaticAddress<
+                    (),
+                    last_swept_challenge_block::Output,
+                    ::subxt::utils::Yes,
+                > {
+                    ::subxt::storage::StaticAddress::new_static(
+                        "StorageProvider",
+                        "LastSweptChallengeBlock",
+                        [
+                            20u8, 172u8, 244u8, 64u8, 189u8, 63u8, 191u8, 154u8, 42u8, 244u8, 24u8,
+                            9u8, 20u8, 1u8, 79u8, 84u8, 41u8, 155u8, 22u8, 150u8, 31u8, 226u8,
+                            195u8, 120u8, 50u8, 109u8, 220u8, 241u8, 159u8, 54u8, 169u8, 146u8,
+                        ],
+                    )
+                }
                 #[doc = " Number of unresolved challenges currently outstanding against a"]
                 #[doc = " provider, summed across every bucket. Incremented in `create_challenge`"]
-                #[doc = " and decremented exactly once per resolution (defended in"]
-                #[doc = " `respond_to_challenge`, or timed out in `resolve_expired_challenge`)."]
-                #[doc = " Gates `complete_deregister`: a provider cannot exit while still"]
-                #[doc = " slashable for a pending challenge."]
+                #[doc = " and decremented exactly once per resolution (defended/invalid-response"]
+                #[doc = " in `respond_to_challenge`, or timeout in the `on_initialize` sweep). Gates"]
+                #[doc = " `complete_deregister`: a provider cannot exit while still slashable for"]
+                #[doc = " a pending challenge."]
                 pub fn pending_challenges(
                     &self,
                 ) -> ::subxt::storage::StaticAddress<
@@ -18285,6 +18373,14 @@ pub mod api {
                     pub type Param0 = ::core::primitive::u32;
                 }
                 pub type Output = ::core::primitive::u16;
+            }
+            pub mod last_swept_challenge_block {
+                use super::root_mod;
+                use super::runtime_types;
+                pub mod input {
+                    use super::runtime_types;
+                }
+                pub type Output = ::core::primitive::u32;
             }
             pub mod pending_challenges {
                 use super::root_mod;
@@ -18513,11 +18609,16 @@ pub mod api {
                     )
                 }
                 #[doc = " Maximum number of challenges that may share a single deadline"]
-                #[doc = " (relay chain block). Bounds the per-deadline index allocator"]
-                #[doc = " (`NextChallengeIndex`). Consecutive parachain blocks can share a"]
-                #[doc = " relay parent, so challenges created in different parachain blocks"]
-                #[doc = " may share a deadline; the bound is this explicit cap, not block"]
-                #[doc = " co-location."]
+                #[doc = " (relay chain block), and the per-block slash budget of the"]
+                #[doc = " `on_initialize` timeout sweep."]
+                #[doc = ""]
+                #[doc = " Bounds the per-deadline challenge count at creation, and the sweep"]
+                #[doc = " never slashes more than this many challenges per block regardless"]
+                #[doc = " of how many deadline keys a gap matured at once — so the worst"]
+                #[doc = " case per block equals one fully-loaded deadline. Note that"]
+                #[doc = " consecutive parachain blocks can share a relay parent, so"]
+                #[doc = " challenges created in different parachain blocks may share a"]
+                #[doc = " deadline; the bound is this explicit cap, not block co-location."]
                 pub fn max_challenges_per_deadline(
                     &self,
                 ) -> ::subxt::constants::StaticAddress<::core::primitive::u16> {
@@ -18575,7 +18676,7 @@ pub mod api {
             #[doc = "Create a new drive with automatic bucket creation"]
             #[doc = ""]
             #[doc = "Atomically opens the Layer 0 bucket + primary storage agreement"]
-            #[doc = "(via `establish_storage_agreement_internal`) and records the"]
+            #[doc = "(via `create_bucket_with_primary_internal`) and records the"]
             #[doc = "drive metadata on top. The caller obtains `terms` and `sig`"]
             #[doc = "off-chain from the provider; Layer 0 enforces signature, replay"]
             #[doc = "window, and capacity/stake/duration/price checks — those errors"]
@@ -18732,7 +18833,7 @@ pub mod api {
                     #[doc = "Create a new drive with automatic bucket creation"]
                     #[doc = ""]
                     #[doc = "Atomically opens the Layer 0 bucket + primary storage agreement"]
-                    #[doc = "(via `establish_storage_agreement_internal`) and records the"]
+                    #[doc = "(via `create_bucket_with_primary_internal`) and records the"]
                     #[doc = "drive metadata on top. The caller obtains `terms` and `sig`"]
                     #[doc = "off-chain from the provider; Layer 0 enforces signature, replay"]
                     #[doc = "window, and capacity/stake/duration/price checks — those errors"]
@@ -18765,10 +18866,10 @@ pub mod api {
                                 visibility,
                             },
                             [
-                                83u8, 141u8, 54u8, 236u8, 99u8, 41u8, 30u8, 203u8, 208u8, 158u8,
-                                250u8, 87u8, 243u8, 146u8, 151u8, 201u8, 238u8, 239u8, 255u8,
-                                115u8, 86u8, 144u8, 164u8, 114u8, 30u8, 118u8, 25u8, 129u8, 245u8,
-                                140u8, 80u8, 134u8,
+                                46u8, 216u8, 13u8, 172u8, 103u8, 110u8, 96u8, 21u8, 117u8, 164u8,
+                                141u8, 151u8, 128u8, 222u8, 47u8, 255u8, 226u8, 178u8, 223u8, 79u8,
+                                46u8, 254u8, 234u8, 86u8, 48u8, 20u8, 16u8, 152u8, 132u8, 18u8,
+                                207u8, 211u8,
                             ],
                         )
                     }
@@ -19365,10 +19466,10 @@ pub mod api {
                                 visibility,
                             },
                             [
-                                223u8, 55u8, 21u8, 163u8, 61u8, 151u8, 148u8, 196u8, 4u8, 188u8,
-                                200u8, 4u8, 31u8, 183u8, 218u8, 200u8, 87u8, 103u8, 127u8, 214u8,
-                                166u8, 86u8, 162u8, 108u8, 224u8, 211u8, 80u8, 48u8, 168u8, 178u8,
-                                33u8, 68u8,
+                                238u8, 158u8, 78u8, 112u8, 107u8, 108u8, 214u8, 25u8, 23u8, 232u8,
+                                209u8, 95u8, 173u8, 134u8, 10u8, 213u8, 138u8, 2u8, 209u8, 151u8,
+                                24u8, 66u8, 122u8, 128u8, 49u8, 135u8, 255u8, 43u8, 90u8, 28u8,
+                                101u8, 11u8,
                             ],
                         )
                     }
@@ -20696,10 +20797,10 @@ pub mod api {
                                 transaction_encoded,
                             },
                             [
-                                31u8, 212u8, 146u8, 163u8, 9u8, 92u8, 230u8, 234u8, 141u8, 150u8,
-                                148u8, 127u8, 234u8, 15u8, 3u8, 71u8, 25u8, 56u8, 63u8, 242u8,
-                                67u8, 93u8, 126u8, 97u8, 140u8, 73u8, 23u8, 7u8, 98u8, 28u8, 127u8,
-                                16u8,
+                                39u8, 81u8, 66u8, 138u8, 11u8, 7u8, 197u8, 90u8, 147u8, 82u8,
+                                147u8, 254u8, 255u8, 39u8, 22u8, 220u8, 41u8, 17u8, 206u8, 171u8,
+                                220u8, 64u8, 12u8, 76u8, 153u8, 114u8, 192u8, 85u8, 134u8, 253u8,
+                                150u8, 43u8,
                             ],
                         )
                     }
@@ -20867,10 +20968,10 @@ pub mod api {
                                 call: ::subxt::alloc::boxed::Box::new(call),
                             },
                             [
-                                249u8, 84u8, 100u8, 180u8, 103u8, 153u8, 74u8, 233u8, 193u8, 216u8,
-                                105u8, 157u8, 149u8, 144u8, 189u8, 14u8, 204u8, 230u8, 91u8, 140u8,
-                                118u8, 149u8, 243u8, 43u8, 172u8, 164u8, 95u8, 220u8, 98u8, 213u8,
-                                66u8, 191u8,
+                                189u8, 251u8, 234u8, 6u8, 247u8, 33u8, 121u8, 221u8, 243u8, 22u8,
+                                73u8, 83u8, 110u8, 14u8, 186u8, 5u8, 165u8, 62u8, 184u8, 11u8,
+                                153u8, 179u8, 48u8, 153u8, 150u8, 95u8, 135u8, 22u8, 215u8, 254u8,
+                                230u8, 145u8,
                             ],
                         )
                     }
@@ -21233,9 +21334,9 @@ pub mod api {
                         "Revive",
                         "EthBlockBuilderIR",
                         [
-                            255u8, 102u8, 200u8, 60u8, 104u8, 89u8, 1u8, 88u8, 155u8, 134u8, 170u8,
-                            239u8, 38u8, 12u8, 128u8, 95u8, 235u8, 92u8, 221u8, 79u8, 5u8, 29u8,
-                            246u8, 162u8, 111u8, 177u8, 28u8, 20u8, 67u8, 173u8, 187u8, 126u8,
+                            62u8, 22u8, 204u8, 180u8, 89u8, 208u8, 118u8, 104u8, 70u8, 79u8, 254u8,
+                            35u8, 81u8, 30u8, 181u8, 91u8, 139u8, 0u8, 140u8, 81u8, 45u8, 123u8,
+                            181u8, 158u8, 118u8, 82u8, 95u8, 24u8, 133u8, 117u8, 33u8, 133u8,
                         ],
                     )
                 }
@@ -23749,7 +23850,7 @@ pub mod api {
                     #[doc = "Create a new drive with automatic bucket creation"]
                     #[doc = ""]
                     #[doc = "Atomically opens the Layer 0 bucket + primary storage agreement"]
-                    #[doc = "(via `establish_storage_agreement_internal`) and records the"]
+                    #[doc = "(via `create_bucket_with_primary_internal`) and records the"]
                     #[doc = "drive metadata on top. The caller obtains `terms` and `sig`"]
                     #[doc = "off-chain from the provider; Layer 0 enforces signature, replay"]
                     #[doc = "window, and capacity/stake/duration/price checks — those errors"]
@@ -26018,10 +26119,8 @@ pub mod api {
                     #[doc = "   slashable for any pending or freshly-created challenge."]
                     #[doc = "2. `complete_deregister` — callable once `deregister_at` has"]
                     #[doc = "   elapsed (by which point any challenge created up to the"]
-                    #[doc = "   announcement block has expired, because the period must be"]
-                    #[doc = "   `> ChallengeTimeout`; an unanswered one still has to be"]
-                    #[doc = "   resolved with `resolve_expired_challenge`, which the provider"]
-                    #[doc = "   may call itself)."]
+                    #[doc = "   announcement block has already matured, because the period"]
+                    #[doc = "   must be `> ChallengeTimeout`)."]
                     #[doc = ""]
                     #[doc = "The two-step flow closes the slashing race where a provider"]
                     #[doc = "could withdraw stake between the end of their last agreement"]
@@ -26075,20 +26174,33 @@ pub mod api {
                         bucket_id: ::core::primitive::u64,
                         blocked: ::core::primitive::bool,
                     },
-                    #[codec(index = 17)]
-                    #[doc = "Redeem provider-signed terms: create a bucket + primary agreement"]
-                    #[doc = "in a single call."]
+                    #[codec(index = 10)]
+                    #[doc = "Create an empty bucket with the caller as its sole admin."]
                     #[doc = ""]
-                    #[doc = "The provider signs a SCALE-encoded [`AgreementTermsOf<T>`] off-chain;"]
-                    #[doc = "the owner submits it here. The pallet verifies the signature,"]
-                    #[doc = "rejects replays via the provider's sliding nonce window, then runs"]
-                    #[doc = "the standard provider/capacity/stake checks and opens the"]
-                    #[doc = "agreement."]
+                    #[doc = "The bucket has no providers and no data. Add a primary with"]
+                    #[doc = "[`Pallet::add_primary_provider`]."]
+                    #[doc = ""]
+                    #[doc = "Parameters:"]
+                    #[doc = "- `min_providers`: primary-provider signatures each checkpoint"]
+                    #[doc = "  needs. At most `MaxPrimaryProviders` (`InvalidMinProviders`)."]
+                    #[doc = "  Changeable later with [`Pallet::set_min_providers`]."]
+                    #[doc = "- `visibility`: who may read the bucket (see [`Visibility`])."]
+                    create_bucket {
+                        min_providers: ::core::primitive::u32,
+                        visibility: runtime_types::storage_primitives::Visibility,
+                    },
+                    #[codec(index = 17)]
+                    #[doc = "Redeem provider-signed primary terms. Equivalent to"]
+                    #[doc = "[`Pallet::create_bucket`] followed by"]
+                    #[doc = "[`Pallet::add_primary_provider`], in one transaction."]
+                    #[doc = ""]
+                    #[doc = "The provider signs a SCALE-encoded [`AgreementTermsOf<T>`] with"]
+                    #[doc = "`bucket: BucketTarget::New` off-chain; the owner submits it here."]
                     #[doc = ""]
                     #[doc = "`visibility` sets the new bucket's read visibility (see"]
                     #[doc = "[`Visibility`]); it is the owner's choice and not part of the"]
                     #[doc = "provider-signed terms."]
-                    establish_storage_agreement {
+                    create_bucket_with_primary {
                         provider: ::subxt::utils::AccountId32,
                         terms: runtime_types::storage_primitives::agreement_term::AgreementTerms<
                             ::subxt::utils::AccountId32,
@@ -26097,6 +26209,26 @@ pub mod api {
                         >,
                         sig: runtime_types::sp_runtime::MultiSignature,
                         visibility: runtime_types::storage_primitives::Visibility,
+                    },
+                    #[codec(index = 18)]
+                    #[doc = "Admin only. Redeem provider-signed primary terms against an"]
+                    #[doc = "existing bucket, adding the provider to its primary set."]
+                    #[doc = ""]
+                    #[doc = "The quote must name `bucket: BucketTarget::Existing(bucket_id)`"]
+                    #[doc = "and the caller as `terms.owner`. Works on a bucket whose earlier"]
+                    #[doc = "agreements have all ended and on a frozen bucket."]
+                    #[doc = ""]
+                    #[doc = "The new provider has none of the bucket's data and is not in the"]
+                    #[doc = "current snapshot's signer bitfield."]
+                    add_primary_provider {
+                        bucket_id: ::core::primitive::u64,
+                        provider: ::subxt::utils::AccountId32,
+                        terms: runtime_types::storage_primitives::agreement_term::AgreementTerms<
+                            ::subxt::utils::AccountId32,
+                            ::core::primitive::u128,
+                            ::core::primitive::u32,
+                        >,
+                        sig: runtime_types::sp_runtime::MultiSignature,
                     },
                     #[codec(index = 11)]
                     #[doc = "Admin only. Set how many primary-provider signatures a checkpoint"]
@@ -26148,15 +26280,14 @@ pub mod api {
                         provider: ::subxt::utils::AccountId32,
                     },
                     #[codec(index = 20)]
-                    #[doc = "Redeem provider-signed terms for a replica storage agreement."]
+                    #[doc = "Redeem provider-signed replica terms against an existing bucket."]
+                    #[doc = "Callable by whoever the provider quoted for, not only the bucket's"]
+                    #[doc = "members."]
                     #[doc = ""]
                     #[doc = "The provider signs a SCALE-encoded [`AgreementTermsOf<T>`] with"]
-                    #[doc = "`replica_params: Some(_)` off-chain; the owner submits it here."]
-                    #[doc = "The pallet verifies the signature, rejects replays via the"]
-                    #[doc = "provider's sliding nonce window, then runs the standard"]
-                    #[doc = "provider/capacity/stake checks and opens the replica agreement on"]
-                    #[doc = "an existing bucket."]
-                    establish_replica_agreement {
+                    #[doc = "`bucket: BucketTarget::Existing(bucket_id)` and"]
+                    #[doc = "`replica_params: Some(_)` off-chain; the caller submits it here."]
+                    add_replica_provider {
                         bucket_id: ::core::primitive::u64,
                         provider: ::subxt::utils::AccountId32,
                         terms: runtime_types::storage_primitives::agreement_term::AgreementTerms<
@@ -26305,29 +26436,12 @@ pub mod api {
                     #[doc = "that the challenged state has been superseded."]
                     #[doc = ""]
                     #[doc = "A valid response settles the deposit between challenger and"]
-                    #[doc = "provider. An invalid one is rejected (`InvalidProof`,"]
-                    #[doc = "`InvalidDeletionClaim`, `InvalidSupersededClaim`): the fee is paid"]
-                    #[doc = "and the challenge stays open until the deadline. An unanswered"]
-                    #[doc = "challenge is slashed by `resolve_expired_challenge`."]
+                    #[doc = "provider; an invalid one slashes the provider on the spot. A"]
+                    #[doc = "missing one is slashed by the deadline sweep."]
                     respond_to_challenge {
                         challenge_id:
                             runtime_types::storage_primitives::ChallengeId<::core::primitive::u32>,
                         response: runtime_types::pallet_storage_provider::pallet::ChallengeResponse,
-                    },
-                    #[codec(index = 45)]
-                    #[doc = "Slash a provider whose challenge expired without a response."]
-                    #[doc = ""]
-                    #[doc = "Anyone may call this; it is free on success. Slashes the provider's"]
-                    #[doc = "whole stake to the Treasury, refunds the challenger's deposit and"]
-                    #[doc = "clears the pending-challenge counters that block the provider's"]
-                    #[doc = "exits. A provider may call it against itself to unblock"]
-                    #[doc = "`complete_deregister`."]
-                    #[doc = ""]
-                    #[doc = "Errors: `ChallengeNotExpired` while the provider may still respond"]
-                    #[doc = "(`anchor <= deadline`); `ChallengeNotFound` once resolved."]
-                    resolve_expired_challenge {
-                        challenge_id:
-                            runtime_types::storage_primitives::ChallengeId<::core::primitive::u32>,
                     },
                     #[codec(index = 50)]
                     #[doc = "Replica provider only. Attest, with a signature over `roots`, that"]
@@ -26498,7 +26612,10 @@ pub mod api {
                     #[doc = "bucket's `min_providers`."]
                     MinProvidersNotMet,
                     #[codec(index = 26)]
-                    #[doc = "`min_providers` exceeds the bucket's primary provider count."]
+                    #[doc = "A `min_providers` value the bucket cannot satisfy: above"]
+                    #[doc = "`MaxPrimaryProviders` at creation, or above the bucket's current"]
+                    #[doc = "primary count in `set_min_providers`. Pass a smaller number, or"]
+                    #[doc = "add primaries first."]
                     InvalidMinProviders,
                     #[codec(index = 27)]
                     #[doc = "Only members and primary-agreement owners may challenge a primary"]
@@ -26572,95 +26689,86 @@ pub mod api {
                     #[doc = "The response deadline has passed."]
                     ChallengeExpired,
                     #[codec(index = 47)]
-                    #[doc = "The deadline has not passed; the provider may still respond."]
-                    ChallengeNotExpired,
-                    #[codec(index = 48)]
                     #[doc = "Only the challenged provider may respond."]
                     NotChallengeProvider,
-                    #[codec(index = 49)]
-                    #[doc = "The chunk or MMR proof does not verify. The challenge stays open;"]
-                    #[doc = "respond again before the deadline."]
-                    InvalidProof,
-                    #[codec(index = 50)]
-                    #[doc = "`new_start_seq` does not cover the challenged leaf, or the admin"]
-                    #[doc = "signature does not verify. The challenge stays open."]
-                    InvalidDeletionClaim,
-                    #[codec(index = 51)]
-                    #[doc = "No canonical snapshot replaces the challenged root and covers the"]
-                    #[doc = "challenged leaf. The challenge stays open."]
-                    InvalidSupersededClaim,
-                    #[codec(index = 52)]
+                    #[codec(index = 48)]
                     #[doc = "The provider did not sign the bucket's current snapshot, so there"]
                     #[doc = "is no on-chain commitment to challenge; use `challenge_offchain`"]
                     #[doc = "with a signed commitment instead."]
                     ProviderNotInSnapshot,
-                    #[codec(index = 53)]
+                    #[codec(index = 49)]
                     #[doc = "A provider with unresolved challenges (`PendingChallenges > 0`)"]
                     #[doc = "cannot complete deregistration — they are still slashable."]
                     ProviderHasPendingChallenges,
-                    #[codec(index = 54)]
+                    #[codec(index = 50)]
                     #[doc = "An agreement with an unresolved challenge against this"]
                     #[doc = "`(bucket, provider)` cannot be torn down until the challenge"]
-                    #[doc = "resolves (defended or timed out)."]
+                    #[doc = "resolves (defended, slashed, or timed out)."]
                     AgreementHasPendingChallenge,
-                    #[codec(index = 55)]
+                    #[codec(index = 51)]
                     #[doc = "`MaxChallengesPerDeadline` challenges have already been allocated"]
-                    #[doc = "for the deadline this challenge would land on."]
+                    #[doc = "for the deadline this challenge would land on. Caps the total the"]
+                    #[doc = "`on_initialize` sweep must eventually drain for a single key."]
                     TooManyChallengesThisBlock,
-                    #[codec(index = 56)]
+                    #[codec(index = 52)]
                     #[doc = "A provider signature does not verify against the commitment."]
                     InvalidSignature,
-                    #[codec(index = 57)]
+                    #[codec(index = 53)]
                     #[doc = "The bucket has no checkpoint yet."]
                     NoSnapshot,
-                    #[codec(index = 58)]
+                    #[codec(index = 54)]
                     #[doc = "A frozen bucket only accepts checkpoints that keep its"]
                     #[doc = "`frozen_start_seq`."]
                     SnapshotViolatesFrozen,
-                    #[codec(index = 59)]
+                    #[codec(index = 55)]
                     #[doc = "Fewer valid provider signatures than the bucket's `min_providers`."]
                     InsufficientSignatures,
-                    #[codec(index = 60)]
+                    #[codec(index = 56)]
                     #[doc = "A balance or counter computation overflowed."]
                     ArithmeticOverflow,
-                    #[codec(index = 61)]
+                    #[codec(index = 57)]
                     #[doc = "The public key is not 32 bytes (sr25519/ed25519) or 33 bytes"]
                     #[doc = "(compressed ecdsa), or does not match the signature's scheme."]
                     InvalidPublicKey,
-                    #[codec(index = 62)]
+                    #[codec(index = 58)]
                     #[doc = "Account is a member of too many buckets."]
                     TooManyBucketsForMember,
-                    #[codec(index = 63)]
+                    #[codec(index = 59)]
                     #[doc = "Provider signature over the SCALE-encoded terms is invalid."]
                     InvalidProviderSignature,
-                    #[codec(index = 64)]
+                    #[codec(index = 60)]
                     #[doc = "Signed terms have passed their `valid_until` block."]
                     TermsExpired,
-                    #[codec(index = 65)]
+                    #[codec(index = 61)]
                     #[doc = "Signed terms' `valid_until` extends beyond `now + RequestTimeout` —"]
                     #[doc = "the provider-signed validity window cap enforced on-chain."]
                     TermsValidityTooLong,
-                    #[codec(index = 66)]
+                    #[codec(index = 62)]
                     #[doc = "The terms' nonce has already been consumed inside the provider's"]
                     #[doc = "replay window."]
                     NonceAlreadyUsed,
-                    #[codec(index = 67)]
+                    #[codec(index = 63)]
                     #[doc = "The terms' nonce is older than the provider's replay window"]
                     #[doc = "(distance from `hsn` ≥ [`storage_primitives::REPLAY_WINDOW_BITS`])."]
                     NonceTooOld,
-                    #[codec(index = 68)]
+                    #[codec(index = 64)]
                     #[doc = "The terms' declared owner does not match the extrinsic origin."]
                     TermsOwnerMismatch,
-                    #[codec(index = 69)]
+                    #[codec(index = 65)]
                     #[doc = "Replica terms missing from a signed quote redeemed as a replica"]
                     #[doc = "agreement."]
                     MissingReplicaTerms,
-                    #[codec(index = 70)]
-                    #[doc = "The terms' bucket binding does not match the redeeming extrinsic:"]
-                    #[doc = "primary terms must carry no bucket, replica terms must name the"]
-                    #[doc = "targeted bucket."]
+                    #[codec(index = 66)]
+                    #[doc = "Replica terms present in a signed quote redeemed as a primary"]
+                    #[doc = "agreement. Negotiate the quote without `replica_params`, or"]
+                    #[doc = "redeem it with `add_replica_provider`."]
+                    UnexpectedReplicaTerms,
+                    #[codec(index = 67)]
+                    #[doc = "The terms' `bucket` does not name the bucket the call targets:"]
+                    #[doc = "`New` is redeemable only by the calls that create a bucket, and"]
+                    #[doc = "`Existing(id)` only against bucket `id`."]
                     TermsBucketMismatch,
-                    #[codec(index = 71)]
+                    #[codec(index = 68)]
                     #[doc = "Storage agreement requested 0 byte"]
                     InvalidMaxBytesRequest,
                 }
@@ -26773,8 +26881,10 @@ pub mod api {
                         providers: ::subxt::alloc::vec::Vec<::subxt::utils::AccountId32>,
                     },
                     #[codec(index = 15)]
-                    #[doc = "A primary provider joined the bucket's provider set. Not emitted"]
-                    #[doc = "yet: no call adds a primary to an existing bucket (#417)."]
+                    #[doc = "A primary provider was added to the bucket's provider set, by"]
+                    #[doc = "`create_bucket_with_primary`, `add_primary_provider`, or another"]
+                    #[doc = "call that creates a bucket with a primary provider. Followed by"]
+                    #[doc = "`StorageAgreementEstablished`."]
                     ProviderAddedToBucket {
                         bucket_id: ::core::primitive::u64,
                         provider: ::subxt::utils::AccountId32,
@@ -26846,8 +26956,9 @@ pub mod api {
                         burned: ::core::primitive::u128,
                     },
                     #[codec(index = 24)]
-                    #[doc = "Owner redeemed provider-signed terms; bucket created and agreement"]
-                    #[doc = "opened atomically."]
+                    #[doc = "A primary agreement was opened by `create_bucket_with_primary`,"]
+                    #[doc = "`add_primary_provider`, or another call that creates a bucket"]
+                    #[doc = "with a primary provider. Always follows `ProviderAddedToBucket`."]
                     StorageAgreementEstablished {
                         bucket_id: ::core::primitive::u64,
                         provider: ::subxt::utils::AccountId32,
@@ -26896,14 +27007,14 @@ pub mod api {
                         provider_cost: ::core::primitive::u128,
                     },
                     #[codec(index = 28)]
-                    #[doc = "A provider failed to respond before the deadline. Its whole stake"]
-                    #[doc = "went to the Treasury and the challenger's deposit was refunded;"]
-                    #[doc = "there is no reward."]
+                    #[doc = "A provider failed a challenge and lost stake."]
                     ChallengeSlashed {
                         challenge_id:
                             runtime_types::storage_primitives::ChallengeId<::core::primitive::u32>,
                         provider: ::subxt::utils::AccountId32,
                         slashed_amount: ::core::primitive::u128,
+                        challenger_reward: ::core::primitive::u128,
+                        reason: runtime_types::storage_primitives::SlashReason,
                     },
                 }
                 #[derive(
@@ -27856,7 +27967,7 @@ pub mod api {
                 #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
                 #[doc = "Contains a variant per dispatchable extrinsic that this pallet has."]
                 pub enum Call {
-                    # [codec (index = 0)] send { dest : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedLocation > , message : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedXcm > , } , # [codec (index = 1)] # [doc = "Teleport some assets from the local chain to some destination chain."] # [doc = ""] # [doc = "**This function is deprecated: Use `limited_teleport_assets` instead.**"] # [doc = ""] # [doc = "Fee payment on the destination side is made from the asset in the `assets` vector of"] # [doc = "index `fee_asset_item`. The weight limit for fees is not provided and thus is unlimited,"] # [doc = "with all fees taken as needed from the asset."] # [doc = ""] # [doc = "- `origin`: Must be capable of withdrawing the `assets` and executing XCM."] # [doc = "- `dest`: Destination context for the assets. Will typically be `[Parent,"] # [doc = "  Parachain(..)]` to send from parachain to parachain, or `[Parachain(..)]` to send from"] # [doc = "  relay to parachain."] # [doc = "- `beneficiary`: A beneficiary location for the assets in the context of `dest`. Will"] # [doc = "  generally be an `AccountId32` value."] # [doc = "- `assets`: The assets to be withdrawn. This should include the assets used to pay the"] # [doc = "  fee on the `dest` chain."] # [doc = "- `fee_asset_item`: The index into `assets` of the item which should be used to pay"] # [doc = "  fees."] teleport_assets { dest : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedLocation > , beneficiary : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedLocation > , assets : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedAssets > , fee_asset_item : :: core :: primitive :: u32 , } , # [codec (index = 2)] # [doc = "Transfer some assets from the local chain to the destination chain through their local,"] # [doc = "destination or remote reserve."] # [doc = ""] # [doc = "`assets` must have same reserve location and may not be teleportable to `dest`."] # [doc = " - `assets` have local reserve: transfer assets to sovereign account of destination"] # [doc = "   chain and forward a notification XCM to `dest` to mint and deposit reserve-based"] # [doc = "   assets to `beneficiary`."] # [doc = " - `assets` have destination reserve: burn local assets and forward a notification to"] # [doc = "   `dest` chain to withdraw the reserve assets from this chain's sovereign account and"] # [doc = "   deposit them to `beneficiary`."] # [doc = " - `assets` have remote reserve: burn local assets, forward XCM to reserve chain to move"] # [doc = "   reserves from this chain's SA to `dest` chain's SA, and forward another XCM to `dest`"] # [doc = "   to mint and deposit reserve-based assets to `beneficiary`."] # [doc = ""] # [doc = "**This function is deprecated: Use `limited_reserve_transfer_assets` instead.**"] # [doc = ""] # [doc = "Fee payment on the destination side is made from the asset in the `assets` vector of"] # [doc = "index `fee_asset_item`. The weight limit for fees is not provided and thus is unlimited,"] # [doc = "with all fees taken as needed from the asset."] # [doc = ""] # [doc = "- `origin`: Must be capable of withdrawing the `assets` and executing XCM."] # [doc = "- `dest`: Destination context for the assets. Will typically be `[Parent,"] # [doc = "  Parachain(..)]` to send from parachain to parachain, or `[Parachain(..)]` to send from"] # [doc = "  relay to parachain."] # [doc = "- `beneficiary`: A beneficiary location for the assets in the context of `dest`. Will"] # [doc = "  generally be an `AccountId32` value."] # [doc = "- `assets`: The assets to be withdrawn. This should include the assets used to pay the"] # [doc = "  fee on the `dest` (and possibly reserve) chains."] # [doc = "- `fee_asset_item`: The index into `assets` of the item which should be used to pay"] # [doc = "  fees."] reserve_transfer_assets { dest : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedLocation > , beneficiary : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedLocation > , assets : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedAssets > , fee_asset_item : :: core :: primitive :: u32 , } , # [codec (index = 3)] # [doc = "Execute an XCM message from a local, signed, origin."] # [doc = ""] # [doc = "An event is deposited indicating whether `msg` could be executed completely or only"] # [doc = "partially."] # [doc = ""] # [doc = "No more than `max_weight` will be used in its attempted execution. If this is less than"] # [doc = "the maximum amount of weight that the message could take to be executed, then no"] # [doc = "execution attempt will be made."] execute { message : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedXcm > , max_weight : runtime_types :: sp_weights :: weight_v2 :: Weight , } , # [codec (index = 4)] # [doc = "Extoll that a particular destination can be communicated with through a particular"] # [doc = "version of XCM."] # [doc = ""] # [doc = "- `origin`: Must be an origin specified by AdminOrigin."] # [doc = "- `location`: The destination that is being described."] # [doc = "- `xcm_version`: The latest version of XCM that `location` supports."] force_xcm_version { location : :: subxt :: alloc :: boxed :: Box < runtime_types :: staging_xcm :: v5 :: location :: Location > , version : :: core :: primitive :: u32 , } , # [codec (index = 5)] # [doc = "Set a safe XCM version (the version that XCM should be encoded with if the most recent"] # [doc = "version a destination can accept is unknown)."] # [doc = ""] # [doc = "- `origin`: Must be an origin specified by AdminOrigin."] # [doc = "- `maybe_xcm_version`: The default XCM encoding version, or `None` to disable."] force_default_xcm_version { maybe_xcm_version : :: core :: option :: Option < :: core :: primitive :: u32 > , } , # [codec (index = 6)] # [doc = "Ask a location to notify us regarding their XCM version and any changes to it."] # [doc = ""] # [doc = "- `origin`: Must be an origin specified by AdminOrigin."] # [doc = "- `location`: The location to which we should subscribe for XCM version notifications."] force_subscribe_version_notify { location : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedLocation > , } , # [codec (index = 7)] # [doc = "Require that a particular destination should no longer notify us regarding any XCM"] # [doc = "version changes."] # [doc = ""] # [doc = "- `origin`: Must be an origin specified by AdminOrigin."] # [doc = "- `location`: The location to which we are currently subscribed for XCM version"] # [doc = "  notifications which we no longer desire."] force_unsubscribe_version_notify { location : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedLocation > , } , # [codec (index = 8)] # [doc = "Transfer some assets from the local chain to the destination chain through their local,"] # [doc = "destination or remote reserve."] # [doc = ""] # [doc = "`assets` must have same reserve location and may not be teleportable to `dest`."] # [doc = " - `assets` have local reserve: transfer assets to sovereign account of destination"] # [doc = "   chain and forward a notification XCM to `dest` to mint and deposit reserve-based"] # [doc = "   assets to `beneficiary`."] # [doc = " - `assets` have destination reserve: burn local assets and forward a notification to"] # [doc = "   `dest` chain to withdraw the reserve assets from this chain's sovereign account and"] # [doc = "   deposit them to `beneficiary`."] # [doc = " - `assets` have remote reserve: burn local assets, forward XCM to reserve chain to move"] # [doc = "   reserves from this chain's SA to `dest` chain's SA, and forward another XCM to `dest`"] # [doc = "   to mint and deposit reserve-based assets to `beneficiary`."] # [doc = ""] # [doc = "Fee payment on the destination side is made from the asset in the `assets` vector of"] # [doc = "index `fee_asset_item`, up to enough to pay for `weight_limit` of weight. If more weight"] # [doc = "is needed than `weight_limit`, then the operation will fail and the sent assets may be"] # [doc = "at risk."] # [doc = ""] # [doc = "- `origin`: Must be capable of withdrawing the `assets` and executing XCM."] # [doc = "- `dest`: Destination context for the assets. Will typically be `[Parent,"] # [doc = "  Parachain(..)]` to send from parachain to parachain, or `[Parachain(..)]` to send from"] # [doc = "  relay to parachain."] # [doc = "- `beneficiary`: A beneficiary location for the assets in the context of `dest`. Will"] # [doc = "  generally be an `AccountId32` value."] # [doc = "- `assets`: The assets to be withdrawn. This should include the assets used to pay the"] # [doc = "  fee on the `dest` (and possibly reserve) chains."] # [doc = "- `fee_asset_item`: The index into `assets` of the item which should be used to pay"] # [doc = "  fees."] # [doc = "- `weight_limit`: The remote-side weight limit, if any, for the XCM fee purchase."] limited_reserve_transfer_assets { dest : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedLocation > , beneficiary : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedLocation > , assets : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedAssets > , fee_asset_item : :: core :: primitive :: u32 , weight_limit : runtime_types :: xcm :: v3 :: WeightLimit , } , # [codec (index = 9)] # [doc = "Teleport some assets from the local chain to some destination chain."] # [doc = ""] # [doc = "Fee payment on the destination side is made from the asset in the `assets` vector of"] # [doc = "index `fee_asset_item`, up to enough to pay for `weight_limit` of weight. If more weight"] # [doc = "is needed than `weight_limit`, then the operation will fail and the sent assets may be"] # [doc = "at risk."] # [doc = ""] # [doc = "- `origin`: Must be capable of withdrawing the `assets` and executing XCM."] # [doc = "- `dest`: Destination context for the assets. Will typically be `[Parent,"] # [doc = "  Parachain(..)]` to send from parachain to parachain, or `[Parachain(..)]` to send from"] # [doc = "  relay to parachain."] # [doc = "- `beneficiary`: A beneficiary location for the assets in the context of `dest`. Will"] # [doc = "  generally be an `AccountId32` value."] # [doc = "- `assets`: The assets to be withdrawn. This should include the assets used to pay the"] # [doc = "  fee on the `dest` chain."] # [doc = "- `fee_asset_item`: The index into `assets` of the item which should be used to pay"] # [doc = "  fees."] # [doc = "- `weight_limit`: The remote-side weight limit, if any, for the XCM fee purchase."] limited_teleport_assets { dest : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedLocation > , beneficiary : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedLocation > , assets : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedAssets > , fee_asset_item : :: core :: primitive :: u32 , weight_limit : runtime_types :: xcm :: v3 :: WeightLimit , } , # [codec (index = 10)] # [doc = "Set or unset the global suspension state of the XCM executor."] # [doc = ""] # [doc = "- `origin`: Must be an origin specified by AdminOrigin."] # [doc = "- `suspended`: `true` to suspend, `false` to resume."] force_suspension { suspended : :: core :: primitive :: bool , } , # [codec (index = 11)] # [doc = "Transfer some assets from the local chain to the destination chain through their local,"] # [doc = "destination or remote reserve, or through teleports."] # [doc = ""] # [doc = "Fee payment on the destination side is made from the asset in the `assets` vector of"] # [doc = "index `fee_asset_item` (hence referred to as `fees`), up to enough to pay for"] # [doc = "`weight_limit` of weight. If more weight is needed than `weight_limit`, then the"] # [doc = "operation will fail and the sent assets may be at risk."] # [doc = ""] # [doc = "`assets` (excluding `fees`) must have same reserve location or otherwise be teleportable"] # [doc = "to `dest`, no limitations imposed on `fees`."] # [doc = " - for local reserve: transfer assets to sovereign account of destination chain and"] # [doc = "   forward a notification XCM to `dest` to mint and deposit reserve-based assets to"] # [doc = "   `beneficiary`."] # [doc = " - for destination reserve: burn local assets and forward a notification to `dest` chain"] # [doc = "   to withdraw the reserve assets from this chain's sovereign account and deposit them"] # [doc = "   to `beneficiary`."] # [doc = " - for remote reserve: burn local assets, forward XCM to reserve chain to move reserves"] # [doc = "   from this chain's SA to `dest` chain's SA, and forward another XCM to `dest` to mint"] # [doc = "   and deposit reserve-based assets to `beneficiary`."] # [doc = " - for teleports: burn local assets and forward XCM to `dest` chain to mint/teleport"] # [doc = "   assets and deposit them to `beneficiary`."] # [doc = ""] # [doc = "- `origin`: Must be capable of withdrawing the `assets` and executing XCM."] # [doc = "- `dest`: Destination context for the assets. Will typically be `X2(Parent,"] # [doc = "  Parachain(..))` to send from parachain to parachain, or `X1(Parachain(..))` to send"] # [doc = "  from relay to parachain."] # [doc = "- `beneficiary`: A beneficiary location for the assets in the context of `dest`. Will"] # [doc = "  generally be an `AccountId32` value."] # [doc = "- `assets`: The assets to be withdrawn. This should include the assets used to pay the"] # [doc = "  fee on the `dest` (and possibly reserve) chains."] # [doc = "- `fee_asset_item`: The index into `assets` of the item which should be used to pay"] # [doc = "  fees."] # [doc = "- `weight_limit`: The remote-side weight limit, if any, for the XCM fee purchase."] transfer_assets { dest : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedLocation > , beneficiary : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedLocation > , assets : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedAssets > , fee_asset_item : :: core :: primitive :: u32 , weight_limit : runtime_types :: xcm :: v3 :: WeightLimit , } , # [codec (index = 12)] # [doc = "Claims assets trapped on this pallet because of leftover assets during XCM execution."] # [doc = ""] # [doc = "- `origin`: Anyone can call this extrinsic."] # [doc = "- `assets`: The exact assets that were trapped. Use the version to specify what version"] # [doc = "was the latest when they were trapped."] # [doc = "- `beneficiary`: The location/account where the claimed assets will be deposited."] # [doc = ""] # [doc = "The weight of this call is linear in the number of assets claimed."] claim_assets { assets : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedAssets > , beneficiary : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedLocation > , } , # [codec (index = 13)] # [doc = "Transfer assets from the local chain to the destination chain using explicit transfer"] # [doc = "types for assets and fees."] # [doc = ""] # [doc = "`assets` must have same reserve location or may be teleportable to `dest`. Caller must"] # [doc = "provide the `assets_transfer_type` to be used for `assets`:"] # [doc = " - `TransferType::LocalReserve`: transfer assets to sovereign account of destination"] # [doc = "   chain and forward a notification XCM to `dest` to mint and deposit reserve-based"] # [doc = "   assets to `beneficiary`."] # [doc = " - `TransferType::DestinationReserve`: burn local assets and forward a notification to"] # [doc = "   `dest` chain to withdraw the reserve assets from this chain's sovereign account and"] # [doc = "   deposit them to `beneficiary`."] # [doc = " - `TransferType::RemoteReserve(reserve)`: burn local assets, forward XCM to `reserve`"] # [doc = "   chain to move reserves from this chain's SA to `dest` chain's SA, and forward another"] # [doc = "   XCM to `dest` to mint and deposit reserve-based assets to `beneficiary`. Typically"] # [doc = "   the remote `reserve` is Asset Hub."] # [doc = " - `TransferType::Teleport`: burn local assets and forward XCM to `dest` chain to"] # [doc = "   mint/teleport assets and deposit them to `beneficiary`."] # [doc = ""] # [doc = "On the destination chain, as well as any intermediary hops, `BuyExecution` is used to"] # [doc = "buy execution using transferred `assets` identified by `remote_fees_id`."] # [doc = "Make sure enough of the specified `remote_fees_id` asset is included in the given list"] # [doc = "of `assets`. `remote_fees_id` should be enough to pay for `weight_limit`. If more weight"] # [doc = "is needed than `weight_limit`, then the operation will fail and the sent assets may be"] # [doc = "at risk."] # [doc = ""] # [doc = "`remote_fees_id` may use different transfer type than rest of `assets` and can be"] # [doc = "specified through `fees_transfer_type`."] # [doc = ""] # [doc = "The caller needs to specify what should happen to the transferred assets once they reach"] # [doc = "the `dest` chain. This is done through the `custom_xcm_on_dest` parameter, which"] # [doc = "contains the instructions to execute on `dest` as a final step."] # [doc = "  This is usually as simple as:"] # [doc = "  `Xcm(vec![DepositAsset { assets: Wild(AllCounted(assets.len())), beneficiary }])`,"] # [doc = "  but could be something more exotic like sending the `assets` even further."] # [doc = ""] # [doc = "- `origin`: Must be capable of withdrawing the `assets` and executing XCM."] # [doc = "- `dest`: Destination context for the assets. Will typically be `[Parent,"] # [doc = "  Parachain(..)]` to send from parachain to parachain, or `[Parachain(..)]` to send from"] # [doc = "  relay to parachain, or `(parents: 2, (GlobalConsensus(..), ..))` to send from"] # [doc = "  parachain across a bridge to another ecosystem destination."] # [doc = "- `assets`: The assets to be withdrawn. This should include the assets used to pay the"] # [doc = "  fee on the `dest` (and possibly reserve) chains."] # [doc = "- `assets_transfer_type`: The XCM `TransferType` used to transfer the `assets`."] # [doc = "- `remote_fees_id`: One of the included `assets` to be used to pay fees."] # [doc = "- `fees_transfer_type`: The XCM `TransferType` used to transfer the `fees` assets."] # [doc = "- `custom_xcm_on_dest`: The XCM to be executed on `dest` chain as the last step of the"] # [doc = "  transfer, which also determines what happens to the assets on the destination chain."] # [doc = "- `weight_limit`: The remote-side weight limit, if any, for the XCM fee purchase."] transfer_assets_using_type_and_then { dest : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedLocation > , assets : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedAssets > , assets_transfer_type : :: subxt :: alloc :: boxed :: Box < runtime_types :: staging_xcm_executor :: traits :: asset_transfer :: TransferType > , remote_fees_id : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedAssetId > , fees_transfer_type : :: subxt :: alloc :: boxed :: Box < runtime_types :: staging_xcm_executor :: traits :: asset_transfer :: TransferType > , custom_xcm_on_dest : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedXcm > , weight_limit : runtime_types :: xcm :: v3 :: WeightLimit , } , # [codec (index = 14)] # [doc = "Authorize another `aliaser` location to alias into the local `origin` making this call."] # [doc = "The `aliaser` is only authorized until the provided `expiry` block number."] # [doc = "The call can also be used for a previously authorized alias in order to update its"] # [doc = "`expiry` block number."] # [doc = ""] # [doc = "Usually useful to allow your local account to be aliased into from a remote location"] # [doc = "also under your control (like your account on another chain)."] # [doc = ""] # [doc = "WARNING: make sure the caller `origin` (you) trusts the `aliaser` location to act in"] # [doc = "their/your name. Once authorized using this call, the `aliaser` can freely impersonate"] # [doc = "`origin` in XCM programs executed on the local chain."] add_authorized_alias { aliaser : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedLocation > , expires : :: core :: option :: Option < :: core :: primitive :: u64 > , } , # [codec (index = 15)] # [doc = "Remove a previously authorized `aliaser` from the list of locations that can alias into"] # [doc = "the local `origin` making this call."] remove_authorized_alias { aliaser : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedLocation > , } , # [codec (index = 16)] # [doc = "Remove all previously authorized `aliaser`s that can alias into the local `origin`"] # [doc = "making this call."] remove_all_authorized_aliases , }
+                    # [codec (index = 0)] send { dest : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedLocation > , message : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedXcm > , } , # [codec (index = 1)] # [doc = "Teleport some assets from the local chain to some destination chain."] # [doc = ""] # [doc = "**This function is deprecated: Use `limited_teleport_assets` instead.**"] # [doc = ""] # [doc = "Fee payment on the destination side is made from the asset in the `assets` vector of"] # [doc = "index `fee_asset_item`. The weight limit for fees is not provided and thus is unlimited,"] # [doc = "with all fees taken as needed from the asset."] # [doc = ""] # [doc = "- `origin`: Must be capable of withdrawing the `assets` and executing XCM."] # [doc = "- `dest`: Destination context for the assets. Will typically be `[Parent,"] # [doc = "  Parachain(..)]` to send from parachain to parachain, or `[Parachain(..)]` to send from"] # [doc = "  relay to parachain."] # [doc = "- `beneficiary`: A beneficiary location for the assets in the context of `dest`. Will"] # [doc = "  generally be an `AccountId32` value."] # [doc = "- `assets`: The assets to be withdrawn. This should include the assets used to pay the"] # [doc = "  fee on the `dest` chain."] # [doc = "- `fee_asset_item`: The index into `assets` of the item which should be used to pay"] # [doc = "  fees."] teleport_assets { dest : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedLocation > , beneficiary : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedLocation > , assets : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedAssets > , fee_asset_item : :: core :: primitive :: u32 , } , # [codec (index = 2)] # [doc = "Transfer some assets from the local chain to the destination chain through their local,"] # [doc = "destination or remote reserve."] # [doc = ""] # [doc = "`assets` must have same reserve location and may not be teleportable to `dest`."] # [doc = " - `assets` have local reserve: transfer assets to sovereign account of destination"] # [doc = "   chain and forward a notification XCM to `dest` to mint and deposit reserve-based"] # [doc = "   assets to `beneficiary`."] # [doc = " - `assets` have destination reserve: burn local assets and forward a notification to"] # [doc = "   `dest` chain to withdraw the reserve assets from this chain's sovereign account and"] # [doc = "   deposit them to `beneficiary`."] # [doc = " - `assets` have remote reserve: burn local assets, forward XCM to reserve chain to move"] # [doc = "   reserves from this chain's SA to `dest` chain's SA, and forward another XCM to `dest`"] # [doc = "   to mint and deposit reserve-based assets to `beneficiary`."] # [doc = ""] # [doc = "**This function is deprecated: Use `limited_reserve_transfer_assets` instead.**"] # [doc = ""] # [doc = "Fee payment on the destination side is made from the asset in the `assets` vector of"] # [doc = "index `fee_asset_item`. The weight limit for fees is not provided and thus is unlimited,"] # [doc = "with all fees taken as needed from the asset."] # [doc = ""] # [doc = "- `origin`: Must be capable of withdrawing the `assets` and executing XCM."] # [doc = "- `dest`: Destination context for the assets. Will typically be `[Parent,"] # [doc = "  Parachain(..)]` to send from parachain to parachain, or `[Parachain(..)]` to send from"] # [doc = "  relay to parachain."] # [doc = "- `beneficiary`: A beneficiary location for the assets in the context of `dest`. Will"] # [doc = "  generally be an `AccountId32` value."] # [doc = "- `assets`: The assets to be withdrawn. This should include the assets used to pay the"] # [doc = "  fee on the `dest` (and possibly reserve) chains."] # [doc = "- `fee_asset_item`: The index into `assets` of the item which should be used to pay"] # [doc = "  fees."] reserve_transfer_assets { dest : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedLocation > , beneficiary : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedLocation > , assets : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedAssets > , fee_asset_item : :: core :: primitive :: u32 , } , # [codec (index = 3)] # [doc = "Execute an XCM message from a local, signed, origin."] # [doc = ""] # [doc = "An event is deposited indicating whether `msg` could be executed completely or only"] # [doc = "partially."] # [doc = ""] # [doc = "No more than `max_weight` will be used in its attempted execution. If this is less than"] # [doc = "the maximum amount of weight that the message could take to be executed, then no"] # [doc = "execution attempt will be made."] execute { message : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedXcm > , max_weight : runtime_types :: sp_weights :: weight_v2 :: Weight , } , # [codec (index = 4)] # [doc = "Extoll that a particular destination can be communicated with through a particular"] # [doc = "version of XCM."] # [doc = ""] # [doc = "- `origin`: Must be an origin specified by AdminOrigin."] # [doc = "- `location`: The destination that is being described."] # [doc = "- `xcm_version`: The latest version of XCM that `location` supports."] force_xcm_version { location : :: subxt :: alloc :: boxed :: Box < runtime_types :: staging_xcm :: v5 :: location :: Location > , version : :: core :: primitive :: u32 , } , # [codec (index = 5)] # [doc = "Set a safe XCM version (the version that XCM should be encoded with if the most recent"] # [doc = "version a destination can accept is unknown)."] # [doc = ""] # [doc = "- `origin`: Must be an origin specified by AdminOrigin."] # [doc = "- `maybe_xcm_version`: The default XCM encoding version, or `None` to disable."] force_default_xcm_version { maybe_xcm_version : :: core :: option :: Option < :: core :: primitive :: u32 > , } , # [codec (index = 6)] # [doc = "Ask a location to notify us regarding their XCM version and any changes to it."] # [doc = ""] # [doc = "- `origin`: Must be an origin specified by AdminOrigin."] # [doc = "- `location`: The location to which we should subscribe for XCM version notifications."] force_subscribe_version_notify { location : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedLocation > , } , # [codec (index = 7)] # [doc = "Require that a particular destination should no longer notify us regarding any XCM"] # [doc = "version changes."] # [doc = ""] # [doc = "- `origin`: Must be an origin specified by AdminOrigin."] # [doc = "- `location`: The location to which we are currently subscribed for XCM version"] # [doc = "  notifications which we no longer desire."] force_unsubscribe_version_notify { location : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedLocation > , } , # [codec (index = 8)] # [doc = "Transfer some assets from the local chain to the destination chain through their local,"] # [doc = "destination or remote reserve."] # [doc = ""] # [doc = "`assets` must have same reserve location and may not be teleportable to `dest`."] # [doc = " - `assets` have local reserve: transfer assets to sovereign account of destination"] # [doc = "   chain and forward a notification XCM to `dest` to mint and deposit reserve-based"] # [doc = "   assets to `beneficiary`."] # [doc = " - `assets` have destination reserve: burn local assets and forward a notification to"] # [doc = "   `dest` chain to withdraw the reserve assets from this chain's sovereign account and"] # [doc = "   deposit them to `beneficiary`."] # [doc = " - `assets` have remote reserve: burn local assets, forward XCM to reserve chain to move"] # [doc = "   reserves from this chain's SA to `dest` chain's SA, and forward another XCM to `dest`"] # [doc = "   to mint and deposit reserve-based assets to `beneficiary`."] # [doc = ""] # [doc = "Fee payment on the destination side is made from the asset in the `assets` vector of"] # [doc = "index `fee_asset_item`, up to enough to pay for `weight_limit` of weight. If more weight"] # [doc = "is needed than `weight_limit`, then the operation will fail and the sent assets may be"] # [doc = "at risk."] # [doc = ""] # [doc = "- `origin`: Must be capable of withdrawing the `assets` and executing XCM."] # [doc = "- `dest`: Destination context for the assets. Will typically be `[Parent,"] # [doc = "  Parachain(..)]` to send from parachain to parachain, or `[Parachain(..)]` to send from"] # [doc = "  relay to parachain."] # [doc = "- `beneficiary`: A beneficiary location for the assets in the context of `dest`. Will"] # [doc = "  generally be an `AccountId32` value."] # [doc = "- `assets`: The assets to be withdrawn. This should include the assets used to pay the"] # [doc = "  fee on the `dest` (and possibly reserve) chains."] # [doc = "- `fee_asset_item`: The index into `assets` of the item which should be used to pay"] # [doc = "  fees."] # [doc = "- `weight_limit`: The remote-side weight limit, if any, for the XCM fee purchase."] limited_reserve_transfer_assets { dest : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedLocation > , beneficiary : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedLocation > , assets : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedAssets > , fee_asset_item : :: core :: primitive :: u32 , weight_limit : runtime_types :: xcm :: v3 :: WeightLimit , } , # [codec (index = 9)] # [doc = "Teleport some assets from the local chain to some destination chain."] # [doc = ""] # [doc = "Fee payment on the destination side is made from the asset in the `assets` vector of"] # [doc = "index `fee_asset_item`, up to enough to pay for `weight_limit` of weight. If more weight"] # [doc = "is needed than `weight_limit`, then the operation will fail and the sent assets may be"] # [doc = "at risk."] # [doc = ""] # [doc = "- `origin`: Must be capable of withdrawing the `assets` and executing XCM."] # [doc = "- `dest`: Destination context for the assets. Will typically be `[Parent,"] # [doc = "  Parachain(..)]` to send from parachain to parachain, or `[Parachain(..)]` to send from"] # [doc = "  relay to parachain."] # [doc = "- `beneficiary`: A beneficiary location for the assets in the context of `dest`. Will"] # [doc = "  generally be an `AccountId32` value."] # [doc = "- `assets`: The assets to be withdrawn. This should include the assets used to pay the"] # [doc = "  fee on the `dest` chain."] # [doc = "- `fee_asset_item`: The index into `assets` of the item which should be used to pay"] # [doc = "  fees."] # [doc = "- `weight_limit`: The remote-side weight limit, if any, for the XCM fee purchase."] limited_teleport_assets { dest : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedLocation > , beneficiary : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedLocation > , assets : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedAssets > , fee_asset_item : :: core :: primitive :: u32 , weight_limit : runtime_types :: xcm :: v3 :: WeightLimit , } , # [codec (index = 10)] # [doc = "Set or unset the global suspension state of the XCM executor."] # [doc = ""] # [doc = "- `origin`: Must be an origin specified by AdminOrigin."] # [doc = "- `suspended`: `true` to suspend, `false` to resume."] force_suspension { suspended : :: core :: primitive :: bool , } , # [codec (index = 11)] # [doc = "Transfer some assets from the local chain to the destination chain through their local,"] # [doc = "destination or remote reserve, or through teleports."] # [doc = ""] # [doc = "Fee payment on the destination side is made from the asset in the `assets` vector of"] # [doc = "index `fee_asset_item` (hence referred to as `fees`), up to enough to pay for"] # [doc = "`weight_limit` of weight. If more weight is needed than `weight_limit`, then the"] # [doc = "operation will fail and the sent assets may be at risk."] # [doc = ""] # [doc = "`assets` (excluding `fees`) must have same reserve location or otherwise be teleportable"] # [doc = "to `dest`, no limitations imposed on `fees`."] # [doc = " - for local reserve: transfer assets to sovereign account of destination chain and"] # [doc = "   forward a notification XCM to `dest` to mint and deposit reserve-based assets to"] # [doc = "   `beneficiary`."] # [doc = " - for destination reserve: burn local assets and forward a notification to `dest` chain"] # [doc = "   to withdraw the reserve assets from this chain's sovereign account and deposit them"] # [doc = "   to `beneficiary`."] # [doc = " - for remote reserve: burn local assets, forward XCM to reserve chain to move reserves"] # [doc = "   from this chain's SA to `dest` chain's SA, and forward another XCM to `dest` to mint"] # [doc = "   and deposit reserve-based assets to `beneficiary`."] # [doc = " - for teleports: burn local assets and forward XCM to `dest` chain to mint/teleport"] # [doc = "   assets and deposit them to `beneficiary`."] # [doc = ""] # [doc = "- `origin`: Must be capable of withdrawing the `assets` and executing XCM."] # [doc = "- `dest`: Destination context for the assets. Will typically be `X2(Parent,"] # [doc = "  Parachain(..))` to send from parachain to parachain, or `X1(Parachain(..))` to send"] # [doc = "  from relay to parachain."] # [doc = "- `beneficiary`: A beneficiary location for the assets in the context of `dest`. Will"] # [doc = "  generally be an `AccountId32` value."] # [doc = "- `assets`: The assets to be withdrawn. This should include the assets used to pay the"] # [doc = "  fee on the `dest` (and possibly reserve) chains."] # [doc = "- `fee_asset_item`: The index into `assets` of the item which should be used to pay"] # [doc = "  fees."] # [doc = "- `weight_limit`: The remote-side weight limit, if any, for the XCM fee purchase."] transfer_assets { dest : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedLocation > , beneficiary : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedLocation > , assets : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedAssets > , fee_asset_item : :: core :: primitive :: u32 , weight_limit : runtime_types :: xcm :: v3 :: WeightLimit , } , # [codec (index = 12)] # [doc = "Claims assets trapped on this pallet because of leftover assets during XCM execution."] # [doc = ""] # [doc = "- `origin`: Anyone can call this extrinsic."] # [doc = "- `assets`: The exact assets that were trapped. Use the version to specify what version"] # [doc = "was the latest when they were trapped."] # [doc = "- `beneficiary`: The location/account where the claimed assets will be deposited."] claim_assets { assets : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedAssets > , beneficiary : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedLocation > , } , # [codec (index = 13)] # [doc = "Transfer assets from the local chain to the destination chain using explicit transfer"] # [doc = "types for assets and fees."] # [doc = ""] # [doc = "`assets` must have same reserve location or may be teleportable to `dest`. Caller must"] # [doc = "provide the `assets_transfer_type` to be used for `assets`:"] # [doc = " - `TransferType::LocalReserve`: transfer assets to sovereign account of destination"] # [doc = "   chain and forward a notification XCM to `dest` to mint and deposit reserve-based"] # [doc = "   assets to `beneficiary`."] # [doc = " - `TransferType::DestinationReserve`: burn local assets and forward a notification to"] # [doc = "   `dest` chain to withdraw the reserve assets from this chain's sovereign account and"] # [doc = "   deposit them to `beneficiary`."] # [doc = " - `TransferType::RemoteReserve(reserve)`: burn local assets, forward XCM to `reserve`"] # [doc = "   chain to move reserves from this chain's SA to `dest` chain's SA, and forward another"] # [doc = "   XCM to `dest` to mint and deposit reserve-based assets to `beneficiary`. Typically"] # [doc = "   the remote `reserve` is Asset Hub."] # [doc = " - `TransferType::Teleport`: burn local assets and forward XCM to `dest` chain to"] # [doc = "   mint/teleport assets and deposit them to `beneficiary`."] # [doc = ""] # [doc = "On the destination chain, as well as any intermediary hops, `BuyExecution` is used to"] # [doc = "buy execution using transferred `assets` identified by `remote_fees_id`."] # [doc = "Make sure enough of the specified `remote_fees_id` asset is included in the given list"] # [doc = "of `assets`. `remote_fees_id` should be enough to pay for `weight_limit`. If more weight"] # [doc = "is needed than `weight_limit`, then the operation will fail and the sent assets may be"] # [doc = "at risk."] # [doc = ""] # [doc = "`remote_fees_id` may use different transfer type than rest of `assets` and can be"] # [doc = "specified through `fees_transfer_type`."] # [doc = ""] # [doc = "The caller needs to specify what should happen to the transferred assets once they reach"] # [doc = "the `dest` chain. This is done through the `custom_xcm_on_dest` parameter, which"] # [doc = "contains the instructions to execute on `dest` as a final step."] # [doc = "  This is usually as simple as:"] # [doc = "  `Xcm(vec![DepositAsset { assets: Wild(AllCounted(assets.len())), beneficiary }])`,"] # [doc = "  but could be something more exotic like sending the `assets` even further."] # [doc = ""] # [doc = "- `origin`: Must be capable of withdrawing the `assets` and executing XCM."] # [doc = "- `dest`: Destination context for the assets. Will typically be `[Parent,"] # [doc = "  Parachain(..)]` to send from parachain to parachain, or `[Parachain(..)]` to send from"] # [doc = "  relay to parachain, or `(parents: 2, (GlobalConsensus(..), ..))` to send from"] # [doc = "  parachain across a bridge to another ecosystem destination."] # [doc = "- `assets`: The assets to be withdrawn. This should include the assets used to pay the"] # [doc = "  fee on the `dest` (and possibly reserve) chains."] # [doc = "- `assets_transfer_type`: The XCM `TransferType` used to transfer the `assets`."] # [doc = "- `remote_fees_id`: One of the included `assets` to be used to pay fees."] # [doc = "- `fees_transfer_type`: The XCM `TransferType` used to transfer the `fees` assets."] # [doc = "- `custom_xcm_on_dest`: The XCM to be executed on `dest` chain as the last step of the"] # [doc = "  transfer, which also determines what happens to the assets on the destination chain."] # [doc = "- `weight_limit`: The remote-side weight limit, if any, for the XCM fee purchase."] transfer_assets_using_type_and_then { dest : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedLocation > , assets : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedAssets > , assets_transfer_type : :: subxt :: alloc :: boxed :: Box < runtime_types :: staging_xcm_executor :: traits :: asset_transfer :: TransferType > , remote_fees_id : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedAssetId > , fees_transfer_type : :: subxt :: alloc :: boxed :: Box < runtime_types :: staging_xcm_executor :: traits :: asset_transfer :: TransferType > , custom_xcm_on_dest : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedXcm > , weight_limit : runtime_types :: xcm :: v3 :: WeightLimit , } , # [codec (index = 14)] # [doc = "Authorize another `aliaser` location to alias into the local `origin` making this call."] # [doc = "The `aliaser` is only authorized until the provided `expiry` block number."] # [doc = "The call can also be used for a previously authorized alias in order to update its"] # [doc = "`expiry` block number."] # [doc = ""] # [doc = "Usually useful to allow your local account to be aliased into from a remote location"] # [doc = "also under your control (like your account on another chain)."] # [doc = ""] # [doc = "WARNING: make sure the caller `origin` (you) trusts the `aliaser` location to act in"] # [doc = "their/your name. Once authorized using this call, the `aliaser` can freely impersonate"] # [doc = "`origin` in XCM programs executed on the local chain."] add_authorized_alias { aliaser : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedLocation > , expires : :: core :: option :: Option < :: core :: primitive :: u64 > , } , # [codec (index = 15)] # [doc = "Remove a previously authorized `aliaser` from the list of locations that can alias into"] # [doc = "the local `origin` making this call."] remove_authorized_alias { aliaser : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedLocation > , } , # [codec (index = 16)] # [doc = "Remove all previously authorized `aliaser`s that can alias into the local `origin`"] # [doc = "making this call."] remove_all_authorized_aliases , }
                 #[derive(
                     :: subxt :: ext :: scale_decode :: DecodeAsType,
                     :: subxt :: ext :: scale_encode :: EncodeAsType,
@@ -31456,10 +31567,26 @@ pub mod api {
                     pub price_per_byte: _1,
                     pub valid_until: _2,
                     pub nonce: ::core::primitive::u64,
-                    pub bucket_id: ::core::option::Option<::core::primitive::u64>,
+                    pub bucket: runtime_types::storage_primitives::agreement_term::BucketTarget,
                     pub replica_params: ::core::option::Option<
                         runtime_types::storage_primitives::agreement_term::ReplicaTerms<_1, _2>,
                     >,
+                }
+                #[derive(
+                    :: subxt :: ext :: scale_decode :: DecodeAsType,
+                    :: subxt :: ext :: scale_encode :: EncodeAsType,
+                    Clone,
+                    Debug,
+                    Eq,
+                    PartialEq,
+                )]
+                #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                pub enum BucketTarget {
+                    #[codec(index = 0)]
+                    New,
+                    #[codec(index = 1)]
+                    Existing(::core::primitive::u64),
                 }
                 #[derive(
                     :: subxt :: ext :: scale_decode :: DecodeAsType,
@@ -31684,6 +31811,26 @@ pub mod api {
                 Writer,
                 #[codec(index = 2)]
                 Reader,
+            }
+            #[derive(
+                :: subxt :: ext :: scale_decode :: DecodeAsType,
+                :: subxt :: ext :: scale_encode :: EncodeAsType,
+                Clone,
+                Debug,
+                Eq,
+                PartialEq,
+            )]
+            #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+            #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+            pub enum SlashReason {
+                #[codec(index = 0)]
+                Timeout,
+                #[codec(index = 1)]
+                InvalidProof,
+                #[codec(index = 2)]
+                InvalidDeletionClaim,
+                #[codec(index = 3)]
+                InvalidSupersededClaim,
             }
             #[derive(
                 :: subxt :: ext :: scale_decode :: DecodeAsType,

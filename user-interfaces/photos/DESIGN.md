@@ -57,7 +57,7 @@ Photos.sol (PolkaVM)            per user: { driveId, rootCid }
    │  CALL 0x…09020000 (drive-registry precompile)
    ▼
 pallet_drive_registry           drive owned by the contract account · user granted Writer
-   │  (folds in Layer 0: bucket + one primary via establish_storage_agreement_internal)
+   │  (folds in Layer 0: bucket + one primary via create_bucket_with_primary_internal)
    ▼
 provider node  /fs/{bucketId}/…    holds the photo blobs, thumbnails, and the directory tree
         (off-chain, browser ↔ provider; client-computed tree root anchored on-chain by the contract)
@@ -417,7 +417,7 @@ upload retry). Optional Solidity unit tests if a harness is added.
 ## Open questions / follow-ups
 
 - **Nested sub-albums** — deeper directory nesting (the same model, more levels).
-- **Multi-provider redundancy** — protocol **replicas** (`establish_replica_agreement`) for
+- **Multi-provider redundancy** — protocol **replicas** (`add_replica_provider`) for
   durability; native-only today, a future precompile/contract extension.
 - **Client-side encryption** — drive-ui already has a `crypto.ts`; encrypt blobs before `PUT` so
   the provider holds only ciphertext.

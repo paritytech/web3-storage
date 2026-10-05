@@ -185,6 +185,9 @@ impl<T: Config> Pallet<T> {
     }
 
     /// Query bucket providers.
+    ///
+    /// Returns every primary, including one just added by
+    /// `add_primary_provider` that has not received the bucket's data yet.
     pub fn query_bucket_providers(bucket_id: BucketId) -> Vec<T::AccountId> {
         Buckets::<T>::get(bucket_id)
             .map(|bucket| bucket.primary_providers.to_vec())
