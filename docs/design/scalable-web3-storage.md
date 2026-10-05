@@ -4,13 +4,14 @@
 | --- | --- |
 | **Authors** | eskimor |
 | **Status** | Draft |
-| **Version** | 2.4 |
+| **Version** | 2.5 |
 | **Related** | [Implementation Details](./scalable-web3-storage-implementation.md), [Proof-of-DOT Infrastructure Strategy](https://docs.google.com/document/d/1fNv75FCEBFkFoG__s_Xu10UZd0QsGIE9AKnrouzz-U8/) |
 
 ## Version History
 
 | Version | Changes |
 |---------|---------|
+| 2.5 | Stake, agreements and provider signatures reworked for virtual providers (stake changeable and snapshotted per agreement; no stake-per-byte rule; quotes carry no price or version, the client pins `expected_version`; per-owner quote nonce; one-step deregistration; owner-only extension; replacement agreements; provider refund; `ProviderSignatures` sets; `MaxPrimarySlots` counts physical signers; duplicate challenge responses dropped for free; `extend_challenge`; provider discovery off-chain; `create_bucket_with_storage`, provider-initiated checkpoints, `find_matching_providers`, `challenge_candidates` removed; typed runtime API responses). **Read**: "Provider Stake", "Storage Agreements" here; impl doc "Changeable Stake", "Stake vs. capacity", "Term Pinning", "Replacement agreements", "Provider Public Key & Signature Type", "Response transaction extension", "Runtime API", "Off-Chain: Provider Node API"; [Virtual Provider Extension](./001-virtual-provider-extension.md). |
 | 2.4 | Bucket creation and provider assignment are separate on-chain operations: `create_bucket`, `create_bucket_with_primary`, `add_primary_provider`, `add_replica_provider`. Provider-signed quotes name the bucket they are for. A bucket remains after its last agreement ends and can get new providers later; the client moves the data when a provider is added. **Read**: "Buckets: Stable Identity in a Fluid Provider Market"; "Two Classes of Providers"; "Provider Lifecycle in Bucket" in [Implementation Details](./scalable-web3-storage-implementation.md) for the four calls. |
 | 2.3 | Private buckets clarified (visibility flag, Reader role, primary challenges gated to members + primary-agreement owners, tier-split challenge stats). **Read**: new "Bucket Visibility & Access" section; "The Challenge Game". |
 | 2.2 | Challenge cost model reworked and clarified: a valid response never touches the provider's stake. The challenger's deposit covers the on-chain response cost; authorized challengers (bucket members + agreement owners) get a split where the provider bears a fraction (challenger's share floored at 50%, as leverage—not cheap recovery), while the general public pays in full (anti-DoS, since a provider can't serve everyone equally). Stake is slashed only on a missing/invalid response. |
@@ -376,8 +377,9 @@ A content hash names data but doesn't guarantee anyone stores it. A bucket makes
   snapshots at any point. Version N is always accessible even after version N+1 exists.
 
 - **Permissionless persistence**: A frozen bucket (append-only) can be funded by anyone—not just the owner. You care
-  about open-source documentation? Fund a replica. You care about historical records? Extend the agreements. Data
-  survives even if the original owner disappears.
+  about open-source documentation, or historical records? Fund a replica (permissionless), and the data survives even
+  if the original owner disappears. (Extending an existing *primary* agreement is owner-only — a third party keeps data
+  alive by adding its own replica, not by mutating someone else's agreement.)
 
 ### Two Classes of Providers
 
@@ -560,20 +562,34 @@ Every provider-bucket relationship is governed by a storage agreement:
 StorageAgreement
 ├── owner: AccountId        // can top up, transfer ownership
 ├── max_bytes: u64          // quota for this provider
-├── payment_locked: Balance // prepaid storage payment
-├── price_per_byte: Balance // locked at creation
+├── payment_locked: Balance // prepaid storage payment (price consumed at creation)
+├── stake: Balance          // provider stake snapshotted at creation/extension
+├── agreement_id: u64       // per-bucket id; commitments bind to it
 ├── expires_at: Block       // when agreement ends
 ├── role: Primary | Replica
 └── (replica only) sync_balance, sync_price, last_sync
 ```
 
+**The agreement fixes the terms it was struck under.** Payment is prepaid, so price needs no separate snapshot; the
+provider's stake *is* snapshotted, so a provider can change its stake for future deals without touching this one (see
+"Provider Stake"). Clients pin the provider's terms `version` when requesting, so they never receive an agreement on
+worse terms than they chose.
+
 **Binding commitment**: Neither party can exit early. Provider committed to store for the agreed duration. Client
-committed to pay for the agreed duration.
+committed to pay for the agreed duration. The one exception is a replacement: the owner may end an agreement early
+against a proven successor, settling it as an extension would (impl doc "Replacement agreements").
+
+**Refund**: a provider that finds it cannot serve an agreement adequately may give the remaining payment back to the
+owner at any time before settlement. The agreement runs on unpaid until expiry and the provider stays liable for
+everything it already committed to — a refund ends no obligation and avoids no slash. It replaces the burn: the provider
+loses the payment either way, but the client gets it back instead of paying extra to destroy it, and the provider's
+record shows `refunds` rather than `burns` — an admitted failure rather than a punished one. Nothing is left to exploit:
+a refund only gives money away.
 
 **Why binding?**
 - Providers need predictability to provision storage
 - Clients need assurance data won't be dropped mid-term
-- Price volatility is handled by locking price at creation/extension
+- Price volatility is handled by prepaying at creation/extension; stake volatility by snapshotting stake into the agreement
 - Third parties can rely on data staying available until agreement expiration (at least)
 
 ### Provider Stake
@@ -582,9 +598,9 @@ Providers register with a global stake that covers all their agreements:
 
 ```
 Provider
-├── stake: Balance          // total locked stake
-├── committed_bytes: u64    // sum of max_bytes across agreements
-├── stats: { agreements, extensions, burns,
+├── stake: Balance          // stake for NEW agreements (raiseable/lowerable)
+├── committed_bytes: u64    // sum of max_bytes across agreements (verifiable)
+├── stats: { agreements, extensions, burns, refunds,
 │            challenges_received_authorized,  // responded-to, from counterparties
 │            challenges_received_public,      // responded-to, from strangers
 │            challenges_failed }              // slashed — tier-independent
@@ -594,6 +610,15 @@ Provider
 **Full stake at risk**: A single failed challenge slashes the provider's *entire stake*, not just the stake for that
 bucket. This makes cheating economics absurd—deleting 1% of data to save $0.12/year risks losing thousands of dollars in
 stake.
+
+**Stake is changeable, agreements snapshot it.** A provider can raise stake any time and lower it without weakening
+existing agreements: each agreement records the stake in force when it was struck (as it already does for price), and the
+provider stays liable at each agreement's snapshot until that agreement ends. `stake` is just the figure applied to *new*
+agreements; a lowering only frees capital once the agreements made under the higher figure expire. (This is done with
+O(1) bookkeeping, not by scanning agreements — see the implementation doc's "Changeable Stake".)
+
+**Stake is not tied to capacity.** No stake-per-byte requirement is enforced, against either `committed_bytes` or the
+advertised `max_capacity`.
 
 ### The Challenge Game
 
@@ -1309,6 +1334,10 @@ Properties:
 - "Refund me or I burn" now costs the blackmailer extra each time.
 - A burn signals the client was so dissatisfied they paid extra to punish.
 - Makes burns rare but meaningful.
+
+With `refund_agreement` the demand has an on-chain form. That changes little: a threat carried out still costs the client
+the premium, and a provider that gives in records an `agreements_refunded` entry, which clients read as an admitted failure — so giving in is
+not free for the provider either. Vetting counterparties remains its defence.
 
 Default behavior matters: most clients will pay (the default action). Burning requires an active decision and extra cost. This filters for legitimate dissatisfaction.
 
