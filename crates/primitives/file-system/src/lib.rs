@@ -633,9 +633,10 @@ pub struct DriveInfo<
 // Utility functions
 // ============================================================================
 
-/// Compute blake2-256 CID for data
+/// Compute the CID of data: its Merkle leaf hash, which is the data root of a
+/// single-chunk blob.
 pub fn compute_cid(data: &[u8]) -> Cid {
-    sp_crypto_hashing::blake2_256(data).into()
+    storage_primitives::hash_leaf(data)
 }
 
 /// Convert CID to hex string (for protobuf storage)
