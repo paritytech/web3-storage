@@ -6,15 +6,18 @@
  * consumers can typecheck and use these directly.
  */
 
-import { blake2b256 } from "@polkadot-labs/hdkd-helpers";
 import {
   base64ToBytes,
   bytesToBase64,
+  CidMismatchError,
+  hashChildren,
+  hashLeaf,
+  hexToBytes,
   signProviderRequest,
   type ProviderRequestSigner,
 } from "@web3-storage/core";
 
-import { asHex, toHex, type ParachainApi } from "./address.js";
+import { asHex, bytesEq, toHex, type ParachainApi } from "./address.js";
 import type { ChainSigner } from "./signers.js";
 import { READ_OPTS } from "./tx.js";
 
@@ -117,7 +120,7 @@ export async function putChunk(
 ): Promise<PutChunkResult> {
   const sign = { signer: signer.signer, bucketId };
   const bytes = data instanceof Uint8Array ? data : new TextEncoder().encode(data);
-  const cid = blake2b256(bytes);
+  const cid = hashLeaf(bytes);
   const hash = toHex(cid);
   await providerFetch(providerUrl, "/node", {
     method: "PUT",
@@ -148,7 +151,7 @@ export async function uploadChunk(
 ): Promise<{ hash: string; data: Uint8Array; commit: any }> {
   const sign = { signer: signer.signer, bucketId };
   const bytes = data instanceof Uint8Array ? data : new TextEncoder().encode(data);
-  const hash = toHex(blake2b256(bytes));
+  const hash = toHex(hashLeaf(bytes));
   await providerFetch(providerUrl, "/node", {
     method: "PUT",
     body: {
@@ -167,6 +170,11 @@ export async function uploadChunk(
   return { hash, data: bytes, commit };
 }
 
+/**
+ * Download a node by hash and verify it: bytes without children must hash as
+ * a leaf, and a node with two children must hold exactly their concatenation
+ * and hash as a node over them. Throws {@link CidMismatchError} otherwise.
+ */
 export async function downloadChunk(
   providerUrl: string,
   chunkHashHex: string,
@@ -174,7 +182,31 @@ export async function downloadChunk(
   const downloaded = await providerFetch(providerUrl, "/node", {
     params: { hash: chunkHashHex },
   });
-  return base64ToBytes(downloaded.data);
+  const data = base64ToBytes(downloaded.data);
+  const actual = toHex(nodeHash(data, downloaded.children ?? null)).toLowerCase();
+  const expected = asHex(chunkHashHex).toLowerCase();
+  if (actual !== expected) throw new CidMismatchError(expected, actual);
+  return data;
+}
+
+/**
+ * Hash of a downloaded node. Bytes that do not form a valid node (not exactly
+ * two children, or data other than their concatenation) are hashed as a leaf,
+ * which never equals the hash of a node.
+ */
+function nodeHash(data: Uint8Array, children: string[] | null): Uint8Array {
+  if (children && children.length === 2) {
+    const [left, right] = children.map(hexToBytes);
+    if (bytesEq(data, concatBytes(left, right))) return hashChildren(left, right);
+  }
+  return hashLeaf(data);
+}
+
+function concatBytes(a: Uint8Array, b: Uint8Array): Uint8Array {
+  const out = new Uint8Array(a.length + b.length);
+  out.set(a);
+  out.set(b, a.length);
+  return out;
 }
 
 export async function fetchCheckpointSignature(
