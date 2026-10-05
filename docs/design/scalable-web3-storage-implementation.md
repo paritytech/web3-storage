@@ -1158,8 +1158,10 @@ pub enum Event<T: Config> {
         commitment: Commitment,
         providers: Vec<T::AccountId>,
     },
-    /// Emitted by `create_bucket_with_primary` and `add_primary_provider`,
-    /// together with `StorageAgreementEstablished`.
+    /// A primary provider was added to the bucket's provider set, by
+    /// `create_bucket_with_primary`, `add_primary_provider`, or another
+    /// call that creates a bucket with a primary provider. Followed by
+    /// `StorageAgreementEstablished`.
     ProviderAddedToBucket {
         bucket_id: BucketId,
         provider: T::AccountId,
@@ -1208,8 +1210,9 @@ pub enum Event<T: Config> {
     // Agreement events
     // ─────────────────────────────────────────────────────────────
     
-    /// Owner redeemed provider-signed primary terms; bucket created and
-    /// agreement opened atomically.
+    /// A primary agreement was opened by `create_bucket_with_primary`,
+    /// `add_primary_provider`, or another call that creates a bucket with a
+    /// primary provider. Always follows `ProviderAddedToBucket`.
     StorageAgreementEstablished {
         bucket_id: BucketId,
         agreement_id: u64,
