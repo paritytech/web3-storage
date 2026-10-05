@@ -177,7 +177,7 @@ pub const VERSION: RuntimeVersion = RuntimeVersion {
     spec_name: Cow::Borrowed("paseo-web3-storage-runtime"),
     impl_name: Cow::Borrowed("paseo-web3-storage-runtime"),
     authoring_version: 1,
-    spec_version: 4_009,
+    spec_version: 4_010,
     impl_version: 0,
     apis: RUNTIME_API_VERSIONS,
     // Bumped whenever call encoding changes, so offline signers and stale-metadata
