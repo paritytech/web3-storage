@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use sp_core::H256;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use storage_primitives::{blake2_256, hash_children, BucketId};
+use storage_primitives::{hash_children, hash_leaf, BucketId};
 
 /// Per-object metadata stored in the index.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -200,7 +200,7 @@ impl BucketIndex {
                 data.extend_from_slice(key.as_bytes());
                 data.extend_from_slice(meta.data_root.as_bytes());
                 data.extend_from_slice(&meta.size.encode());
-                blake2_256(&data)
+                hash_leaf(&data)
             })
             .collect();
 
@@ -588,6 +588,28 @@ mod tests {
         let root2 = idx.metadata_merkle_root();
         assert_eq!(root1, root2);
         assert_ne!(root1, H256::zero());
+    }
+
+    #[test]
+    fn test_metadata_merkle_root_matches_shared_vector() {
+        let leaf_a = "7234082e1dd0b5ec0acd71875d61c9f374af30c100bc4de7aa4eb3f15bbed686";
+        let leaf_b = "b3d5dedf654e9fc853bdc5daf79330c5a1eaf2b910f2a36c72ef8ea999ccf953";
+        let mut idx = BucketIndex::default();
+        for (key, root, size) in [("/a.jpg", leaf_a, 1), ("/b.jpg", leaf_b, 2)] {
+            idx.put(
+                key.to_string(),
+                ObjectMeta {
+                    data_root: root.parse().unwrap(),
+                    ..make_meta(size)
+                },
+            );
+        }
+        assert_eq!(
+            idx.metadata_merkle_root(),
+            "a179f8563e699338a92ca5e7836273a048160ed61ce8bd4eb9af12b5b275da94"
+                .parse::<H256>()
+                .unwrap()
+        );
     }
 
     #[test]

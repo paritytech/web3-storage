@@ -8,7 +8,7 @@
 //! `n.trailing_zeros()`.
 
 use sp_core::H256;
-use storage_primitives::hash_children;
+use storage_primitives::{bag_peaks, hash_children};
 
 /// A Merkle Mountain Range for storing bucket data.
 #[derive(Debug, Clone)]
@@ -39,16 +39,7 @@ impl Mmr {
             return H256::zero();
         }
 
-        peaks
-            .iter()
-            .rev()
-            .fold(None, |acc: Option<H256>, &peak| {
-                Some(match acc {
-                    None => peak,
-                    Some(right) => hash_children(peak, right),
-                })
-            })
-            .unwrap_or(H256::zero())
+        bag_peaks(&peaks)
     }
 
     /// Get the peaks of the MMR (left to right, highest to lowest height).
@@ -177,19 +168,7 @@ impl Mmr {
             return false;
         }
 
-        let bagged_root = proof
-            .peaks
-            .iter()
-            .rev()
-            .fold(None, |acc: Option<H256>, &peak| {
-                Some(match acc {
-                    None => peak,
-                    Some(right) => hash_children(peak, right),
-                })
-            })
-            .unwrap_or(H256::zero());
-
-        bagged_root == root
+        bag_peaks(&proof.peaks) == root
     }
 
     /// Determine which peak subtree a leaf belongs to.
@@ -244,7 +223,7 @@ pub struct MmrProof {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use storage_primitives::blake2_256;
+    use storage_primitives::{blake2_256, hash_leaf};
 
     #[test]
     fn test_mmr_basic() {
@@ -342,7 +321,7 @@ mod tests {
     fn test_proof_with_path_primitives_verify() {
         use codec::Encode;
 
-        // This test mirrors how the pallet verifies: push blake2_256(&leaf.encode())
+        // This test mirrors how the pallet verifies: push hash_leaf(&leaf.encode())
         // into MMR, then verify with storage_primitives::verify_mmr_proof
         let mut mmr = Mmr::new();
 
@@ -355,7 +334,7 @@ mod tests {
             .collect();
 
         for leaf in &mmr_leaves {
-            mmr.push(blake2_256(&leaf.encode()));
+            mmr.push(hash_leaf(&leaf.encode()));
         }
 
         let root = mmr.root();
