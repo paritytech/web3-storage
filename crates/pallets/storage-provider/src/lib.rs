@@ -2853,7 +2853,7 @@ pub mod pallet {
             origin: OriginFor<T>,
             challenge_id: ChallengeId<BlockNumberFor<T>>,
         ) -> DispatchResultWithPostInfo {
-            ensure_signed(origin)?;
+            ensure_signed_or_root(origin)?;
             ensure!(
                 Self::current_anchor_block() > challenge_id.deadline,
                 Error::<T>::ChallengeNotExpired
