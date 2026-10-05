@@ -43,7 +43,7 @@ impl ChallengeProofSource for StorageProofSource {
 mod tests {
     use super::*;
     use provider_storage::{temp_rocksdb, ChunkTreeNode};
-    use storage_primitives::blake2_256;
+    use storage_primitives::hash_leaf;
 
     /// Constructing this from a bare `Arc<dyn StorageBackend>`, with no
     /// `ProviderState` in sight, is the point of the newtype.
@@ -52,7 +52,7 @@ mod tests {
         storage.init_bucket(1, 1024 * 1024).unwrap();
 
         let chunk_data = b"proof-source-test-chunk".to_vec();
-        let chunk_hash = blake2_256(&chunk_data);
+        let chunk_hash = hash_leaf(&chunk_data);
         storage
             .store_node(1, chunk_hash, ChunkTreeNode::Chunk(chunk_data.clone()))
             .unwrap();
@@ -67,7 +67,7 @@ mod tests {
     fn get_mmr_proof_matches_the_backend() {
         let (storage, _nonce_store, _dir) = temp_rocksdb();
         storage.init_bucket(1, 1024 * 1024).unwrap();
-        let chunk_hash = blake2_256(b"mmr-proof-test-chunk");
+        let chunk_hash = hash_leaf(b"mmr-proof-test-chunk");
         storage
             .store_node(
                 1,

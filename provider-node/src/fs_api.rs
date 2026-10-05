@@ -24,7 +24,7 @@ use serde::{Deserialize, Serialize};
 use sp_core::H256;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
-use storage_primitives::{blake2_256, BucketId};
+use storage_primitives::{hash_leaf, BucketId};
 
 /// Query parameter for file path.
 #[derive(Debug, Deserialize)]
@@ -89,7 +89,7 @@ pub async fn fs_put_file(
     let chunk_hashes: Vec<H256> = chunks
         .iter()
         .map(|chunk| {
-            let hash = blake2_256(chunk);
+            let hash = hash_leaf(chunk);
             state
                 .storage
                 .store_node(bucket_id, hash, ChunkTreeNode::Chunk(chunk.to_vec()))?;
