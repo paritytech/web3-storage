@@ -13,7 +13,7 @@ import { buildSignedTermsArgs, type Visibility } from "./storage-provider.js";
 
 /**
  * Create a drive by redeeming provider-signed terms (#105). Layer 0's
- * establish_storage_agreement_internal opens the underlying bucket + primary
+ * create_bucket_with_primary_internal opens the underlying bucket + primary
  * agreement atomically inside create_drive, so `provider`/`signed` come from a
  * prior {@link negotiateTerms} against that provider's /negotiate endpoint.
  * `opts.visibility` sets the underlying bucket's read visibility (default

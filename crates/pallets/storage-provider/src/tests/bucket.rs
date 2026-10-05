@@ -12,6 +12,8 @@ fn create_bucket_works() {
         assert_eq!(bucket.members.len(), 1);
         assert_eq!(bucket.members[0].account, 1);
         assert_eq!(bucket.members[0].role, Role::Admin);
+        assert!(bucket.primary_providers.is_empty());
+        assert_eq!(bucket.visibility, storage_primitives::Visibility::Public);
         assert!(bucket.snapshot.is_none());
         assert!(bucket.frozen_start_seq.is_none());
 
