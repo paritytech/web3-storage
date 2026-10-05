@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Content-addressing verification. CIDs in this system are blake2b-256 over
- * the chunk bytes; a single-chunk blob's data_root equals its chunk hash
+ * Content-addressing verification. CIDs in this system are the Merkle leaf
+ * hash of the chunk bytes (`blake2b-256(0x00 ++ data)`); a single-chunk blob's
+ * data_root equals its chunk hash
  * (see the single-leaf case in crates/providers/storage/src/backend/mod.rs
  * `build_padded_merkle_tree`), so whole payloads up to
  * DEFAULT_CHUNK_SIZE can be verified directly against an on-chain CID.
@@ -31,9 +32,24 @@ export class CidMismatchError extends Error {
   }
 }
 
-/** blake2b-256 content id of `data`. */
+/** Prefix of a Merkle leaf preimage; internal nodes use a different prefix. */
+const LEAF_PREFIX = 0x00;
+
+/**
+ * Hash a Merkle leaf: `blake2b-256(0x00 ++ data)`. Mirrors `hash_leaf` in
+ * crates/primitives/storage/src/lib.rs. The prefix keeps the bytes of an
+ * internal node from hashing to the same value as a leaf.
+ */
+export function hashLeaf(data: Uint8Array): Uint8Array {
+  const preimage = new Uint8Array(1 + data.length);
+  preimage[0] = LEAF_PREFIX;
+  preimage.set(data, 1);
+  return blake2b256(preimage);
+}
+
+/** Content id of `data`: its Merkle leaf hash, which is the data_root of a single-chunk blob. */
 export function computeCid(data: Uint8Array): Uint8Array {
-  return blake2b256(data);
+  return hashLeaf(data);
 }
 
 /** Throw {@link CidMismatchError} unless `data` hashes to `expectedCid`. */

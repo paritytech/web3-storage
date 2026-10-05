@@ -7,12 +7,17 @@
 // Mirrors, byte for byte:
 //   - `crates/providers/storage/src/index/fs.rs`     → `metadata_merkle_root`
 //   - `crates/providers/storage/src/backend/mod.rs`  → `build_padded_merkle_tree`
-//   - `crates/primitives/storage/src/lib.rs`         → `blake2_256`, `hash_children`, `DEFAULT_CHUNK_SIZE`
+//   - `crates/primitives/storage/src/lib.rs`         → `blake2_256`, `hash_leaf`, `hash_children`, `DEFAULT_CHUNK_SIZE`
 //
 // This is the multi-chunk Merkle DAG walk that `verify.ts` documents as the
 // missing "Rust-client parity" piece. Pure functions, no I/O — browser-safe.
 
-import { computeCid, DEFAULT_CHUNK_SIZE } from "./verify.js";
+import { blake2b256 } from "@polkadot-labs/hdkd-helpers";
+
+import { computeCid, DEFAULT_CHUNK_SIZE, hashLeaf } from "./verify.js";
+
+/** Prefix of an internal node preimage; leaves use a different prefix. */
+const NODE_PREFIX = 0x01;
 
 /** One drive entry as it contributes to the metadata Merkle tree. */
 export interface MerkleEntry {
@@ -24,9 +29,9 @@ export interface MerkleEntry {
   size: bigint;
 }
 
-/** Hash an internal node: `blake2_256(left[32] ++ right[32])`. */
+/** Hash an internal node: `blake2_256(0x01 ++ left[32] ++ right[32])`. */
 export function hashChildren(left: Uint8Array, right: Uint8Array): Uint8Array {
-  return computeCid(concatBytes(left, right));
+  return blake2b256(concatBytes(Uint8Array.of(NODE_PREFIX), left, right));
 }
 
 /**
@@ -83,7 +88,7 @@ export function metadataMerkleRoot(entries: MerkleEntry[]): Uint8Array {
     .map((e) => ({ pathBytes: encoder.encode(e.path), dataRoot: e.dataRoot, size: e.size }))
     .sort((a, b) => compareBytes(a.pathBytes, b.pathBytes));
 
-  const leaves = prepared.map((e) => computeCid(concatBytes(e.pathBytes, e.dataRoot, u64le(e.size))));
+  const leaves = prepared.map((e) => hashLeaf(concatBytes(e.pathBytes, e.dataRoot, u64le(e.size))));
   return paddedMerkleRoot(leaves);
 }
 

@@ -10,10 +10,61 @@ import {
   u64le,
   type MerkleEntry,
 } from "./merkle.js";
-import { computeCid } from "./verify.js";
+import { computeCid, hashLeaf } from "./verify.js";
 import { toHex } from "./bytes.js";
 
 const ZERO32 = new Uint8Array(32);
+
+// Expected values come from an independent blake2b-256 computation over the
+// documented preimages; the Rust tests in crates/primitives/storage assert the
+// same leaf, node and root values.
+describe("golden vectors", () => {
+  const enc = new TextEncoder();
+  const leafA = hashLeaf(enc.encode("a"));
+  const leafB = hashLeaf(enc.encode("b"));
+  const leafC = hashLeaf(enc.encode("c"));
+
+  it("hashes a leaf with the 0x00 prefix", () => {
+    expect(toHex(hashLeaf(new Uint8Array(0)))).toBe(
+      "0x03170a2e7597b7b7e3d84c05391d139a62b157e78786d8c082f29dcf4c111314",
+    );
+    expect(toHex(hashLeaf(enc.encode("abc")))).toBe(
+      "0x4b44b5a5f9e6fafead231e4d609a8e88053a6053c087b68e24e31faf0fb8dfe7",
+    );
+    expect(toHex(computeCid(enc.encode("abc")))).toBe(toHex(hashLeaf(enc.encode("abc"))));
+    expect(toHex(hashLeaf(enc.encode("abc")))).not.toBe(toHex(blake2b256(enc.encode("abc"))));
+    expect(toHex(leafA)).toBe("0x7234082e1dd0b5ec0acd71875d61c9f374af30c100bc4de7aa4eb3f15bbed686");
+    expect(toHex(leafB)).toBe("0xb3d5dedf654e9fc853bdc5daf79330c5a1eaf2b910f2a36c72ef8ea999ccf953");
+    expect(toHex(leafC)).toBe("0x960259f5c0885e7b7967cc25158bc9069db1ca8222e7beffdfffe5dea0297966");
+  });
+
+  it("hashes an internal node with the 0x01 prefix", () => {
+    expect(toHex(hashChildren(leafA, leafB))).toBe(
+      "0xee616625a590167bc4b3dc703ab4f3f2ddecbee6b9d05fee9281f02046e6082e",
+    );
+  });
+
+  it("pads a 3-chunk root with an untagged zero leaf", () => {
+    expect(toHex(paddedMerkleRoot([leafA, leafB, leafC]))).toBe(
+      "0xa3dd32d607debce875c8dcfb1417d07c9bc4c5cccd0bacefd0a4a9473d958e37",
+    );
+  });
+
+  it("tags metadata leaves and nodes", () => {
+    const entries: MerkleEntry[] = [
+      { path: "/a.jpg", dataRoot: leafA, size: 1n },
+      { path: "/b.jpg", dataRoot: leafB, size: 2n },
+    ];
+    expect(toHex(metadataMerkleRoot(entries))).toBe(
+      "0xa179f8563e699338a92ca5e7836273a048160ed61ce8bd4eb9af12b5b275da94",
+    );
+  });
+
+  it("does not let node bytes verify as a leaf", () => {
+    const nodeBytes = concat(leafA, leafB);
+    expect(toHex(hashLeaf(nodeBytes))).not.toBe(toHex(hashChildren(leafA, leafB)));
+  });
+});
 
 describe("paddedMerkleRoot", () => {
   it("empty → 32 zero bytes", () => {
@@ -42,19 +93,19 @@ describe("paddedMerkleRoot", () => {
 
 describe("computeDataRoot", () => {
   it("empty file hashes a single empty chunk", () => {
-    expect(toHex(computeDataRoot(new Uint8Array(0)))).toBe(toHex(blake2b256(new Uint8Array(0))));
+    expect(toHex(computeDataRoot(new Uint8Array(0)))).toBe(toHex(hashLeaf(new Uint8Array(0))));
   });
 
   it("single sub-chunk file → its own chunk hash", () => {
     const bytes = new TextEncoder().encode("hello world");
-    expect(toHex(computeDataRoot(bytes))).toBe(toHex(blake2b256(bytes)));
+    expect(toHex(computeDataRoot(bytes))).toBe(toHex(hashLeaf(bytes)));
   });
 
   it("multi-chunk file folds chunk hashes via the padded tree", () => {
     const chunk = 256 * 1024;
     const bytes = new Uint8Array(chunk + 100).fill(7);
-    const h0 = blake2b256(bytes.subarray(0, chunk));
-    const h1 = blake2b256(bytes.subarray(chunk));
+    const h0 = hashLeaf(bytes.subarray(0, chunk));
+    const h1 = hashLeaf(bytes.subarray(chunk));
     expect(toHex(computeDataRoot(bytes))).toBe(toHex(hashChildren(h0, h1)));
   });
 });
@@ -67,7 +118,7 @@ describe("metadataMerkleRoot", () => {
   it("orders entries by UTF-8 path bytes regardless of input order", () => {
     const enc = new TextEncoder();
     const leafFor = (e: MerkleEntry) =>
-      blake2b256(concat(enc.encode(e.path), e.dataRoot, u64le(e.size)));
+      hashLeaf(concat(enc.encode(e.path), e.dataRoot, u64le(e.size)));
     const a: MerkleEntry = { path: "/a.jpg", dataRoot: ZERO32, size: 1n };
     const b: MerkleEntry = { path: "/b.jpg", dataRoot: ZERO32, size: 2n };
     const expected = toHex(paddedMerkleRoot([leafFor(a), leafFor(b)]));

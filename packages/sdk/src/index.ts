@@ -23,6 +23,7 @@ export {
   base64ToBytes,
   signProviderRequest,
   computeCid,
+  hashLeaf,
   verifyCid,
   CidMismatchError,
   DEFAULT_CHUNK_SIZE,
