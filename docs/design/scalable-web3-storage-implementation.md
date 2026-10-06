@@ -1957,7 +1957,6 @@ The provider node exposes a JSON-over-HTTP API (axum) on, by default,
 3. **Replica sync** — peaks, subtree, bulk node fetch, sync status. Used by
    replica providers; read-only.
 
-
 ### Authentication & RBAC
 
 Mutating Layer-0 endpoints (`PUT /node`, `POST /commit`, `POST /delete`) and

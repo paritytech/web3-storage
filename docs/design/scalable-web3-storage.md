@@ -616,8 +616,8 @@ below):
      only the cancel tx fee)
      DRIFT-022: no cancel_challenge call exists on `dev`. Once created, a
      challenge resolves only by respond_to_challenge or by
-     resolve_expired_challenge slashing the provider; the challenger cannot withdraw it and the deposit
-     stays held until then. Also referenced in the Resolution list below, in
+     resolve_expired_challenge slashing the provider; the challenger cannot
+     withdraw it and the deposit stays held until then. Also referenced in the Resolution list below, in
      point 3 of the cost-model rationale, and in the ProviderStats sketch in
      scalable-web3-storage-implementation.md ("cancelled challenges are not
      counted").
@@ -638,7 +638,7 @@ below):
      (free on success); provider's full stake slashed; challenger made whole
      from the slash (deposit and tx fees refunded—no reward beyond costs)
      DRIFT-021: on `dev` the deposit hold is released and the whole slash
-     goes to the Treasury; no tx fee is refunded. Details at Timeline 3c in
+     goes to the Treasury; no tx fee is refunded. Details at Timeline 3d in
      scalable-web3-storage-implementation.md.
 ```
 
