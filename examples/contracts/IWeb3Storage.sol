@@ -134,11 +134,16 @@ interface IWeb3Storage {
 
     // --- Challenges ---------------------------------------------------------
 
-    /// Challenge a provider's checkpoint at a specific leaf/chunk.
+    /// Challenge a provider's checkpoint at a specific leaf/chunk. Returns the
+    /// challenge id, needed to resolve it after the deadline.
     function challengeCheckpoint(
         uint64 bucketId,
         bytes32 provider,
         uint64 leafIndex,
         uint64 chunkIndex
-    ) external;
+    ) external returns (uint32 deadline, uint16 index);
+
+    /// Slash a provider whose challenge expired unanswered. Permissionless;
+    /// gas is charged even though the native call is free on success.
+    function resolveExpiredChallenge(uint32 deadline, uint16 index) external;
 }
