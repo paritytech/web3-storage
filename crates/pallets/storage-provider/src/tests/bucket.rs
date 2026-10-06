@@ -23,8 +23,9 @@ fn create_bucket_works() {
     });
 }
 
-/// The bucket record stays in state until someone removes it, so the creator
-/// pays a deposit for it; without one, buckets would be free to spam.
+/// The bucket record and the creator's own member entry stay in state until
+/// someone removes them, so the creator pays a deposit for each; without one,
+/// buckets would be free to spam.
 #[test]
 fn create_bucket_holds_a_storage_deposit_on_the_creator() {
     new_test_ext().execute_with(|| {
@@ -32,8 +33,99 @@ fn create_bucket_holds_a_storage_deposit_on_the_creator() {
 
         create_bucket(1, 0);
 
-        assert_eq!(held(HoldReason::StorageDeposit, 1), 10);
-        assert_eq!(Balances::free_balance(1), free_before - 10);
+        assert_eq!(held(HoldReason::StorageDeposit, 1), 20);
+        assert_eq!(Balances::free_balance(1), free_before - 20);
+    });
+}
+
+/// A member entry is a record the adding admin chose to create, so the admin
+/// pays for it: members must not be able to be charged by someone else's
+/// action, and a role change creates no new record.
+#[test]
+fn set_member_holds_the_deposit_on_the_adding_admin_not_the_member() {
+    new_test_ext().execute_with(|| {
+        let bucket_id = create_bucket(1, 0);
+        let admin_held = held(HoldReason::StorageDeposit, 1);
+
+        assert_ok!(StorageProvider::set_member(
+            RuntimeOrigin::signed(1),
+            bucket_id,
+            2,
+            Role::Writer
+        ));
+        assert_eq!(held(HoldReason::StorageDeposit, 1), admin_held + 10);
+        assert_eq!(held(HoldReason::StorageDeposit, 2), 0);
+
+        assert_ok!(StorageProvider::set_member(
+            RuntimeOrigin::signed(1),
+            bucket_id,
+            2,
+            Role::Reader
+        ));
+        assert_eq!(held(HoldReason::StorageDeposit, 1), admin_held + 10);
+
+        let member = Buckets::<Test>::get(bucket_id).unwrap().members[1].clone();
+        assert_eq!(member.account, 2);
+        assert_eq!(member.depositor, 1);
+    });
+}
+
+/// An admin that cannot fund the deposit cannot create the entry; the hold
+/// fails before any state is written.
+#[test]
+fn set_member_fails_without_funds_for_the_deposit() {
+    new_test_ext().execute_with(|| {
+        let bucket_id = create_bucket(1, 0);
+        assert_ok!(StorageProvider::set_member(
+            RuntimeOrigin::signed(1),
+            bucket_id,
+            9,
+            Role::Admin
+        ));
+        assert_ok!(Balances::force_set_balance(RuntimeOrigin::root(), 9, 5));
+
+        assert_noop!(
+            StorageProvider::set_member(RuntimeOrigin::signed(9), bucket_id, 7, Role::Reader),
+            sp_runtime::TokenError::FundsUnavailable
+        );
+    });
+}
+
+/// The refund goes to whoever paid, whatever admin performs the removal and
+/// whether the removed member is the depositor itself.
+#[test]
+fn removing_a_member_refunds_the_admin_who_added_them() {
+    new_test_ext().execute_with(|| {
+        let bucket_id = create_bucket(1, 0);
+        assert_ok!(StorageProvider::set_member(
+            RuntimeOrigin::signed(1),
+            bucket_id,
+            2,
+            Role::Writer
+        ));
+        assert_ok!(StorageProvider::set_member(
+            RuntimeOrigin::signed(1),
+            bucket_id,
+            3,
+            Role::Admin
+        ));
+        let depositor_held = held(HoldReason::StorageDeposit, 1);
+        let other_admin_free = Balances::free_balance(3);
+
+        assert_ok!(StorageProvider::remove_member(
+            RuntimeOrigin::signed(3),
+            bucket_id,
+            2
+        ));
+        assert_eq!(held(HoldReason::StorageDeposit, 1), depositor_held - 10);
+        assert_eq!(Balances::free_balance(3), other_admin_free);
+
+        assert_ok!(StorageProvider::remove_member(
+            RuntimeOrigin::signed(1),
+            bucket_id,
+            1
+        ));
+        assert_eq!(held(HoldReason::StorageDeposit, 1), depositor_held - 20);
     });
 }
 

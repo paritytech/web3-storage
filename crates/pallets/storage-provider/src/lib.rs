@@ -640,6 +640,13 @@ pub mod pallet {
         pub account: T::AccountId,
         /// Role the member holds in the bucket.
         pub role: Role,
+        /// The admin that added the member and paid `deposit`. Fixed for the
+        /// lifetime of the entry; role changes do not move it.
+        pub depositor: T::AccountId,
+        /// The storage deposit for this entry and its `MemberBuckets`
+        /// reverse-index entry, held on `depositor` and released when the
+        /// member is removed or the bucket is deleted.
+        pub deposit: TicketOf<T>,
     }
 
     /// Bucket container for data with membership and storage agreements.
@@ -1777,9 +1784,10 @@ pub mod pallet {
             })
         }
 
-        /// Admin only. Add a member or change their role. An admin may step
-        /// down themselves but cannot demote another admin, and the last
-        /// admin cannot step down.
+        /// Admin only. Add a member or change their role. Adding a member
+        /// holds a storage deposit on the caller; a role change holds nothing.
+        /// An admin may step down themselves but cannot demote another admin,
+        /// and the last admin cannot step down.
         #[pallet::call_index(13)]
         #[pallet::weight(T::WeightInfo::set_bucket_member())]
         pub fn set_member(
@@ -1789,56 +1797,11 @@ pub mod pallet {
             role: Role,
         ) -> DispatchResult {
             let who = ensure_signed(origin)?;
-
-            Buckets::<T>::try_mutate(bucket_id, |maybe_bucket| -> DispatchResult {
-                let bucket = maybe_bucket.as_mut().ok_or(Error::<T>::BucketNotFound)?;
-
-                Self::ensure_admin(&who, bucket)?;
-
-                let (target_idx, target_is_admin, admin_count) =
-                    Self::locate_member(bucket, &member);
-                if let Some(idx) = target_idx {
-                    if target_is_admin && role != Role::Admin {
-                        // Admins can only demote themselves, never another admin.
-                        ensure!(member == who, Error::<T>::CannotDemoteAdmin);
-                        // And even self-demotion must leave at least one admin.
-                        ensure!(admin_count > 1, Error::<T>::LastAdminCannotBeRemoved);
-                    }
-                    bucket.members[idx].role = role;
-                } else {
-                    // Add new member
-                    let new_member = Member {
-                        account: member.clone(),
-                        role,
-                    };
-                    bucket
-                        .members
-                        .try_push(new_member)
-                        .map_err(|_| Error::<T>::MaxMembersReached)?;
-
-                    // Update reverse index for new member
-                    MemberBuckets::<T>::try_mutate(&member, |buckets| {
-                        if !buckets.contains(&bucket_id) {
-                            buckets
-                                .try_push(bucket_id)
-                                .map_err(|_| Error::<T>::TooManyBucketsForMember)
-                        } else {
-                            Ok(())
-                        }
-                    })?;
-                }
-
-                Self::deposit_event(Event::MemberSet {
-                    bucket_id,
-                    member,
-                    role,
-                });
-
-                Ok(())
-            })
+            Self::set_member_internal(&who, bucket_id, member, role)
         }
 
-        /// Admin only. Remove a member. Same admin protections as
+        /// Admin only. Remove a member and release the entry's storage
+        /// deposit to the admin that added them. Same admin protections as
         /// `set_member`.
         #[pallet::call_index(14)]
         #[pallet::weight(T::WeightInfo::remove_bucket_member())]
@@ -1848,34 +1811,7 @@ pub mod pallet {
             member: T::AccountId,
         ) -> DispatchResult {
             let who = ensure_signed(origin)?;
-
-            Buckets::<T>::try_mutate(bucket_id, |maybe_bucket| -> DispatchResult {
-                let bucket = maybe_bucket.as_mut().ok_or(Error::<T>::BucketNotFound)?;
-
-                Self::ensure_admin(&who, bucket)?;
-
-                let (target_idx, target_is_admin, admin_count) =
-                    Self::locate_member(bucket, &member);
-                let member_idx = target_idx.ok_or(Error::<T>::MemberNotFound)?;
-
-                if target_is_admin {
-                    // Admins can only remove themselves, never another admin.
-                    ensure!(member == who, Error::<T>::CannotDemoteAdmin);
-                    // And even self-removal must leave at least one admin.
-                    ensure!(admin_count > 1, Error::<T>::LastAdminCannotBeRemoved);
-                }
-
-                bucket.members.remove(member_idx);
-
-                // Update reverse index: remove bucket from member's list
-                MemberBuckets::<T>::mutate(&member, |buckets| {
-                    buckets.retain(|id| *id != bucket_id);
-                });
-
-                Self::deposit_event(Event::MemberRemoved { bucket_id, member });
-
-                Ok(())
-            })
+            Self::remove_member_internal(&who, bucket_id, member)
         }
 
         /// Remove a slashed provider from a bucket (permissionless).

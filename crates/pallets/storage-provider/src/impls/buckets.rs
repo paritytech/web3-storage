@@ -117,14 +117,13 @@ impl<T: Config> Pallet<T> {
         Ok(total_refunded)
     }
 
-    /// Removes a bucket that has no agreements left: clears every member's
-    /// reverse-index entry, deletes the record and releases the bucket
-    /// deposit to its creator.
+    /// Removes a bucket that has no agreements left: releases every member
+    /// deposit to its depositor and clears the member's reverse-index entry,
+    /// deletes the record and releases the bucket deposit to its creator.
     pub(crate) fn remove_bucket_internal(bucket_id: BucketId, bucket: Bucket<T>) -> DispatchResult {
-        for member in &bucket.members {
-            MemberBuckets::<T>::mutate(&member.account, |buckets| {
-                buckets.retain(|id| *id != bucket_id);
-            });
+        for member in bucket.members {
+            member.deposit.drop(&member.depositor)?;
+            Self::remove_from_member_index(&member.account, bucket_id);
         }
 
         Buckets::<T>::remove(bucket_id);
@@ -167,6 +166,8 @@ impl<T: Config> Pallet<T> {
         let admin_member = Member {
             account: admin.clone(),
             role: Role::Admin,
+            depositor: admin.clone(),
+            deposit: T::StorageDeposit::new(admin, Self::member_footprint())?,
         };
 
         let mut members = BoundedVec::new();

@@ -59,8 +59,9 @@ fn genesis_bucket_holds_its_deposit_on_the_admin() {
     new_test_ext_with_genesis(vec![(1, 10_000)], vec![], vec![(1, 0)]).execute_with(|| {
         let bucket = Buckets::<Test>::get(0).expect("bucket created at genesis");
         assert_eq!(bucket.creator, 1);
-        assert_eq!(held(HoldReason::StorageDeposit, 1), 10);
-        assert_eq!(Balances::free_balance(1), 9_990);
+        assert_eq!(bucket.members[0].depositor, 1);
+        assert_eq!(held(HoldReason::StorageDeposit, 1), 20);
+        assert_eq!(Balances::free_balance(1), 9_980);
     });
 }
 
