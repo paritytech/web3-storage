@@ -19,7 +19,7 @@ pub use error::Error;
 pub use index::{
     FsEntryMeta, FsIndexManager, FsListEntry, ListResult, ObjectEntry, ObjectMeta, S3IndexManager,
 };
-pub use merkle::build_merkle_proof;
+pub use merkle::{build_merkle_proof, padded_merkle_root};
 pub use nonce::NonceStore;
 
 /// Names the scratch directories [`temp_rocksdb`] creates.

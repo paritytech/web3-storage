@@ -866,6 +866,112 @@ common::backend_tests! {
 // Chunk proof endpoint
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Upload a node (leaf when `children` is `None`) and return its hash.
+async fn put_node(server: &TestServer, data: Vec<u8>, children: Option<Vec<H256>>) -> H256 {
+    let hash = storage_primitives::blake2_256(&data);
+    let children = children.map(|c| {
+        c.iter()
+            .map(|h| format!("0x{}", hex_encode(h.as_bytes())))
+            .collect::<Vec<_>>()
+    });
+    let resp = server
+        .client
+        .put(server.url("/node"))
+        .json(&json!({
+            "bucket_id": 1,
+            "hash": format!("0x{}", hex_encode(hash.as_bytes())),
+            "data": BASE64.encode(&data),
+            "children": children,
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    hash
+}
+
+async fn put_parent(server: &TestServer, left: H256, right: H256) -> H256 {
+    let mut data = left.as_bytes().to_vec();
+    data.extend_from_slice(right.as_bytes());
+    put_node(server, data, Some(vec![left, right])).await
+}
+
+async fn post_commit(server: &TestServer, root: H256) -> reqwest::Response {
+    server
+        .client
+        .post(server.url("/commit"))
+        .json(&json!({
+            "bucket_id": 1,
+            "data_roots": [format!("0x{}", hex_encode(root.as_bytes()))],
+        }))
+        .send()
+        .await
+        .unwrap()
+}
+
+common::backend_tests! {
+    async fn test_commit_rejects_unbalanced_tree(backend) {
+        let server = TestServer::new(backend).await;
+        let [c0, c1, c2] = [b"chunk 0", b"chunk 1", b"chunk 2"]
+            .map(|d| storage_primitives::blake2_256(d));
+        for (hash, data) in [c0, c1, c2].iter().zip([b"chunk 0", b"chunk 1", b"chunk 2"]) {
+            assert_eq!(put_node(&server, data.to_vec(), None).await, *hash);
+        }
+        let left = put_parent(&server, c0, c1).await;
+        let root = put_parent(&server, left, c2).await;
+
+        let resp = post_commit(&server, root).await;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        let body: Value = resp.json().await.unwrap();
+        assert_eq!(body["error"], "non_canonical_tree");
+    }
+}
+
+common::backend_tests! {
+    async fn test_commit_padded_tree_chunk_proofs_verify(backend) {
+        let server = TestServer::new(backend).await;
+        let datas: [&[u8]; 3] = [b"chunk 0", b"chunk 1", b"chunk 2"];
+        let mut chunks = Vec::new();
+        for data in datas {
+            chunks.push(put_node(&server, data.to_vec(), None).await);
+        }
+        let left = put_parent(&server, chunks[0], chunks[1]).await;
+        let right = put_parent(&server, chunks[2], H256::zero()).await;
+        let root = put_parent(&server, left, right).await;
+
+        assert_eq!(post_commit(&server, root).await.status(), StatusCode::OK);
+
+        let root_hex = format!("0x{}", hex_encode(root.as_bytes()));
+        for (index, chunk) in chunks.iter().enumerate() {
+            let resp = server
+                .client
+                .get(server.url(&format!("/chunk_proof?data_root={root_hex}&chunk_index={index}")))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), StatusCode::OK);
+            let body: Value = resp.json().await.unwrap();
+            let siblings = body["proof"]["siblings"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|h| H256::from_slice(&hex_decode(h.as_str().unwrap()).unwrap()))
+                .collect();
+            let path = body["proof"]["path"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|b| b.as_bool().unwrap())
+                .collect();
+            let proof = storage_primitives::MerkleProof { siblings, path };
+            assert!(
+                storage_primitives::verify_merkle_proof(*chunk, index as u64, &proof, &root),
+                "chunk {index}"
+            );
+        }
+    }
+}
+
 common::backend_tests! {
     async fn test_chunk_proof_endpoint(backend) {
         let server = TestServer::new(backend).await;

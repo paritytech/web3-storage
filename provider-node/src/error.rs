@@ -190,6 +190,13 @@ impl IntoResponse for Error {
                         })),
                     },
                 ),
+                StorageError::NonCanonicalTree(root) => (
+                    StatusCode::BAD_REQUEST,
+                    ErrorResponse {
+                        error: "non_canonical_tree".to_string(),
+                        details: Some(serde_json::json!({ "data_root": root })),
+                    },
+                ),
                 e @ (StorageError::RocksDb(_) | StorageError::ColumnFamilyMissing(_)) => (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     ErrorResponse {
@@ -506,6 +513,12 @@ mod tests {
         assert_eq!(
             status_of(Error::from(provider_storage::Error::ChildrenMissing(
                 vec![]
+            ))),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            status_of(Error::from(provider_storage::Error::NonCanonicalTree(
+                "x".into()
             ))),
             StatusCode::BAD_REQUEST
         );

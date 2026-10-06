@@ -7,7 +7,7 @@
  *
  * Tests: client checkpoints, off-chain/on-chain challenges + defense.
  *
- * Usage: node e2e/05-checkpoint-and-challenges.js [chain_ws] [provider_url]
+ * Usage: node --import tsx e2e/05-checkpoint-and-challenges.ts [chain_ws] [provider_url]
  */
 
 import assert from "node:assert";
