@@ -1933,6 +1933,7 @@ chain's `Buckets` storage (`bucket.members`).
 
 ```
 Authorization: Web3Storage <pubkey_hex>:<signature_hex>:<unix_timestamp>
+X-Web3Storage-Context: <block_number>:<block_hash_hex>        # optional
 
 Signed message: "web3storage:<METHOD>:<bucket_id>:<unix_timestamp>"
 ```
@@ -1942,13 +1943,44 @@ Rules:
   the provider's clock — otherwise `401 TimestampExpired`.
 - Required role per endpoint: `Reader` for reads of access-controlled data,
   `Writer` for uploads/commits, `Admin` for delete and other destructive ops.
+- Membership is read at the provider's best block, not its finalized head.
+  The provider follows best blocks and reads `Buckets` there. A best block is
+  not final: a membership change on a fork that loses is honoured until the
+  provider sees the best fork change, which invalidates the whole cache. That
+  exposure is accepted for every role, `Admin` included. If the best-block
+  read fails (the embedded light client can serve state at an unfinalized
+  block only from peers that announced it), the provider reads at its
+  finalized head and applies the same rules there. A bucket absent at the
+  best block but present at the finalized head is served from the finalized
+  head: the best block is stale, not ahead.
 - Membership is cached: a chain event invalidates the affected bucket
   immediately; missing that, `--auth-cache-ttl` (default 30s) bounds the
   delay. If a refetch then fails, the cached set is served for up to
   `--auth-max-stale` (default 5 minutes) before the request is refused with
   `503 membership_unavailable`.
+- `X-Web3Storage-Context` is optional and unsigned: the block the client acted
+  on. The provider never reads at that block. It matters only when the bucket
+  or member is absent, or the member's role is below the required one, at the
+  block the provider read: a context block newer
+  than that block means the client's block has not reached the provider yet,
+  answered `503 block_not_known` with `Retry-After`; anything else is
+  `403 insufficient_role`. A malformed header is `400 context_block_invalid`.
+  Without the header, an absent bucket whose id is at or above
+  `NextBucketId` (an id the chain has not allocated, as far as the provider
+  knows) gets the `503`; any other absence is `403`. Forging
+  the header can only turn the forger's own `403` into a `503`.
 - A member whose `Role` the provider cannot decode is not authorized — the
   lookup fails rather than falling back to a lesser role.
+
+Client rule: a client that calls the provider after a transaction (bucket
+creation, membership or visibility change) does not wait for finality. It
+waits until the Aura slot that included the transaction has ended — read
+`Aura.CurrentSlot` at the inclusion block, then wait for a best block with a
+greater slot while the inclusion block stays on the best chain — and sends
+the inclusion block as `X-Web3Storage-Context`. On `503 block_not_known` it
+retries after `Retry-After` for up to two slots before surfacing the error.
+A slot is sized so every node has the block by its end; the retry covers the
+exceptions.
 
 ### Content-Addressed Storage
 
