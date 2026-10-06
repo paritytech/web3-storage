@@ -35,6 +35,13 @@ fn held(reason: HoldReason, who: u64) -> u64 {
     Balances::balance_on_hold(&reason.into(), &who)
 }
 
+/// An agreement deposit ticket held on `owner`, for tests that write
+/// agreements into storage directly.
+fn agreement_deposit(owner: u64) -> TicketOf<Test> {
+    use frame_support::traits::Consideration;
+    <Test as Config>::StorageDeposit::new(&owner, StorageProvider::agreement_footprint()).unwrap()
+}
+
 /// A provider that actually charges, so agreements escrow a non-zero amount.
 /// The default mock settings price at zero, which would make hold assertions
 /// trivially true.

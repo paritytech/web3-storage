@@ -83,6 +83,32 @@ fn create_bucket_with_primary_reserves_payment() {
     });
 }
 
+/// An agreement is a record the owner keeps in state; at a zero price nothing
+/// else would make it cost anything or give the owner a reason to settle it,
+/// so the deposit applies regardless of price and returns on settlement.
+#[test]
+fn agreement_record_holds_a_storage_deposit_even_at_zero_price() {
+    new_test_ext().execute_with(|| {
+        register_provider(2, 200);
+        let bucket_id = setup_agreement(2, 1, 50, 100);
+        let agreement = StorageAgreements::<Test>::get(bucket_id, 2).unwrap();
+        assert_eq!(agreement.payment_locked, 0);
+
+        // Bucket, founding member and agreement: one deposit each.
+        assert_eq!(held(HoldReason::StorageDeposit, 1), 30);
+
+        run_to_block(101);
+        assert_ok!(StorageProvider::end_agreement(
+            RuntimeOrigin::signed(1),
+            bucket_id,
+            2,
+            storage_primitives::EndAction::Pay,
+        ));
+
+        assert_eq!(held(HoldReason::StorageDeposit, 1), 20);
+    });
+}
+
 #[test]
 fn create_bucket_with_primary_fails_for_wrong_owner() {
     new_test_ext().execute_with(|| {

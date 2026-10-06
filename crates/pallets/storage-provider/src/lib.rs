@@ -703,6 +703,10 @@ pub mod pallet {
         pub role: ProviderRole<BalanceOf<T>, BlockNumberFor<T>>,
         /// Block when agreement became active.
         pub started_at: BlockNumberFor<T>,
+        /// The storage deposit for this record, held on `owner`. Moves with
+        /// the escrow when ownership is transferred and is released when the
+        /// agreement is removed.
+        pub deposit: TicketOf<T>,
     }
 
     impl<T: Config> StorageAgreement<T> {
@@ -1818,7 +1822,10 @@ pub mod pallet {
         ///
         /// Anyone can call this to clean up slashed providers.
         /// The provider must have zero stake (indicating they were slashed).
-        /// Returns payment to agreement owner and removes the provider from the bucket.
+        /// Returns the escrow and the agreement's storage deposit to the
+        /// agreement owner and removes the provider from the bucket. The
+        /// provider's own deposit is on its provider record and is released
+        /// by `complete_deregister`; slashing takes the stake only.
         #[pallet::call_index(15)]
         #[pallet::weight(T::WeightInfo::remove_slashed())]
         pub fn remove_slashed(
@@ -1836,8 +1843,7 @@ pub mod pallet {
                 Error::<T>::ProviderNotSlashed
             );
 
-            // Get and remove the agreement
-            let agreement = StorageAgreements::<T>::take(bucket_id, &provider)
+            let agreement = StorageAgreements::<T>::get(bucket_id, &provider)
                 .ok_or(Error::<T>::AgreementNotFound)?;
 
             // The provider failed their duty, so the whole escrow returns to
@@ -1873,6 +1879,8 @@ pub mod pallet {
                     reason: RemovalReason::Slashed,
                 });
             }
+
+            Self::remove_agreement(bucket_id, &provider, agreement)?;
 
             Self::deposit_event(Event::SlashedProviderRemoved {
                 bucket_id,
@@ -1968,7 +1976,7 @@ pub mod pallet {
             Self::finalize_agreement(
                 bucket_id,
                 &provider,
-                &agreement,
+                agreement,
                 action,
                 is_early_termination,
             )
@@ -2012,7 +2020,7 @@ pub mod pallet {
             );
 
             // Provider claims - treat as Pay
-            Self::finalize_agreement(bucket_id, &who, &agreement, EndAction::Pay, false)
+            Self::finalize_agreement(bucket_id, &who, agreement, EndAction::Pay, false)
         }
 
         /// Top up quota for an existing agreement (owner only).
@@ -2105,6 +2113,9 @@ pub mod pallet {
         /// balance — moves to `new_owner` and stays on hold; every later
         /// settlement and refund uses the new owner.
         ///
+        /// The agreement's storage deposit moves with the escrow: it is held
+        /// on the new owner and released from the caller.
+        ///
         /// Bucket membership does not move: the new owner cannot write to or
         /// administer the bucket, and the bucket admin keeps every admin
         /// power over the agreement, including early termination, which pays
@@ -2122,21 +2133,17 @@ pub mod pallet {
             let who = ensure_signed(origin)?;
             ensure!(new_owner != who, Error::<T>::TransferToSelf);
 
-            let escrow = StorageAgreements::<T>::try_mutate(
-                bucket_id,
-                &provider,
-                |maybe_agreement| -> Result<BalanceOf<T>, DispatchError> {
-                    let agreement = maybe_agreement
-                        .as_mut()
-                        .ok_or(Error::<T>::AgreementNotFound)?;
-                    ensure!(agreement.owner == who, Error::<T>::NotAgreementOwner);
+            let mut agreement = StorageAgreements::<T>::get(bucket_id, &provider)
+                .ok_or(Error::<T>::AgreementNotFound)?;
+            ensure!(agreement.owner == who, Error::<T>::NotAgreementOwner);
 
-                    let escrow = agreement.escrow();
-                    Self::transfer_payment_on_hold(&who, &new_owner, escrow)?;
-                    agreement.owner = new_owner.clone();
-                    Ok(escrow)
-                },
-            )?;
+            let escrow = agreement.escrow();
+            Self::transfer_payment_on_hold(&who, &new_owner, escrow)?;
+            let released = agreement.deposit;
+            agreement.deposit = T::StorageDeposit::new(&new_owner, Self::agreement_footprint())?;
+            released.drop(&who)?;
+            agreement.owner = new_owner.clone();
+            StorageAgreements::<T>::insert(bucket_id, &provider, agreement);
 
             Self::deposit_event(Event::AgreementOwnershipTransferred {
                 bucket_id,

@@ -194,6 +194,7 @@ fn add_synced_replica(bucket_id: u64, provider: u64, owner: u64) {
             price_per_byte: 0,
             expires_at: System::block_number() + 200,
             extensions_blocked: false,
+            deposit: agreement_deposit(owner),
             role: storage_primitives::ProviderRole::Replica {
                 sync_balance: 0,
                 sync_price: 0,

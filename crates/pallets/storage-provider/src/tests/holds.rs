@@ -240,6 +240,7 @@ fn ending_a_replica_agreement_releases_the_unspent_sync_balance() {
     new_test_ext().execute_with(|| {
         let (bucket_id, _fee) = setup_replica_escrow();
         let owner_free = Balances::free_balance(1);
+        let owner_deposits = held(HoldReason::StorageDeposit, 1);
 
         run_to_block(101);
         assert_ok!(StorageProvider::end_agreement(
@@ -254,9 +255,14 @@ fn ending_a_replica_agreement_releases_the_unspent_sync_balance() {
             0,
             "the unspent sync balance must not stay stranded on hold"
         );
-        // The provider earned the fee out of escrow; the sync balance came
-        // back to the owner.
-        assert_eq!(Balances::free_balance(1), owner_free + 100);
+        // The provider earned the fee out of escrow; the sync balance and the
+        // agreement's storage deposit came back to the owner.
+        let released_deposit = owner_deposits - held(HoldReason::StorageDeposit, 1);
+        assert_eq!(released_deposit, 10);
+        assert_eq!(
+            Balances::free_balance(1),
+            owner_free + 100 + released_deposit
+        );
         assert_ok!(StorageProvider::do_try_state());
     });
 }
@@ -266,6 +272,7 @@ fn remove_slashed_releases_the_replica_escrow_and_sync_balance() {
     new_test_ext().execute_with(|| {
         let (bucket_id, fee) = setup_replica_escrow();
         let owner_free = Balances::free_balance(1);
+        let owner_deposits = held(HoldReason::StorageDeposit, 1);
         slash_provider_stake(2);
 
         assert_ok!(StorageProvider::remove_slashed(
@@ -275,8 +282,14 @@ fn remove_slashed_releases_the_replica_escrow_and_sync_balance() {
         ));
 
         assert_eq!(held(HoldReason::AgreementPayment, 1), 0);
-        // The provider failed their duty: fee and sync balance both return.
-        assert_eq!(Balances::free_balance(1), owner_free + fee + 100);
+        // The provider failed their duty: fee, sync balance and the
+        // agreement's storage deposit all return.
+        let released_deposit = owner_deposits - held(HoldReason::StorageDeposit, 1);
+        assert_eq!(released_deposit, 10);
+        assert_eq!(
+            Balances::free_balance(1),
+            owner_free + fee + 100 + released_deposit
+        );
         assert_ok!(StorageProvider::do_try_state());
     });
 }

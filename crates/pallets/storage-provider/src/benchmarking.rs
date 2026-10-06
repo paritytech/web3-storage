@@ -5,7 +5,10 @@
 
 use super::{Pallet as StorageProvider, *};
 use frame_benchmarking::v2::*;
-use frame_support::{pallet_prelude::*, traits::fungible::Mutate};
+use frame_support::{
+    pallet_prelude::*,
+    traits::{fungible::Mutate, Consideration},
+};
 use frame_system::{Pallet as System, RawOrigin};
 use sp_core::H256;
 use sp_runtime::traits::{Bounded, SaturatedConversion};
@@ -235,6 +238,8 @@ fn add_primary_to_bucket<T: Config>(
         extensions_blocked: false,
         role: ProviderRole::Primary,
         started_at: anchor_block,
+        deposit: T::StorageDeposit::new(admin, StorageProvider::<T>::agreement_footprint())
+            .expect("benchmark admin cannot fund the agreement deposit"),
     };
     StorageAgreements::<T>::insert(bucket_id, provider, agreement);
 

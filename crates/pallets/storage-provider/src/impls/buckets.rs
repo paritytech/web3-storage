@@ -101,8 +101,7 @@ impl<T: Config> Pallet<T> {
                 }
             });
 
-            // Remove agreement
-            StorageAgreements::<T>::remove(bucket_id, &provider);
+            Self::remove_agreement(bucket_id, &provider, agreement)?;
 
             Self::deposit_event(Event::AgreementEnded {
                 bucket_id,
