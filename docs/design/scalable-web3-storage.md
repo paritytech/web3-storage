@@ -4,13 +4,14 @@
 | --- | --- |
 | **Authors** | eskimor |
 | **Status** | Draft |
-| **Version** | 2.5 |
+| **Version** | 2.6 |
 | **Related** | [Implementation Details](./scalable-web3-storage-implementation.md), [Proof-of-DOT Infrastructure Strategy](https://docs.google.com/document/d/1fNv75FCEBFkFoG__s_Xu10UZd0QsGIE9AKnrouzz-U8/) |
 
 ## Version History
 
 | Version | Changes |
 |---------|---------|
+| 2.6 | Storage deposits: provider registrations, buckets, member entries and agreements each hold a refundable deposit on whoever created the record, through a `Consideration` ticket stored in the record, released when the record is removed. `delete_bucket` removes an empty bucket and refunds its deposits. Pending-challenge counters and the member reverse index delete entries that reach zero. **Read**: `StorageDeposit` in Pallet Config, "Funds on Hold", `delete_bucket` in [Implementation Details](./scalable-web3-storage-implementation.md). |
 | 2.5 | Challenge resolution and slashing are lazy: an unanswered challenge is slashed by the permissionless `resolve_expired_challenge` call (no per-block sweep). A timeout is the only slash reason. **Read**: "The Challenge Game", Resolution; `resolve_expired_challenge` in [Implementation Details](./scalable-web3-storage-implementation.md). |
 | 2.4 | Bucket creation and provider assignment are separate on-chain operations: `create_bucket`, `create_bucket_with_primary`, `add_primary_provider`, `add_replica_provider`. Provider-signed quotes name the bucket they are for. A bucket remains after its last agreement ends and can get new providers later; the client moves the data when a provider is added. **Read**: "Buckets: Stable Identity in a Fluid Provider Market"; "Two Classes of Providers"; "Provider Lifecycle in Bucket" in [Implementation Details](./scalable-web3-storage-implementation.md) for the four calls. |
 | 2.3 | Private buckets clarified (visibility flag, Reader role, primary challenges gated to members + primary-agreement owners, tier-split challenge stats). **Read**: new "Bucket Visibility & Access" section; "The Challenge Game". |
