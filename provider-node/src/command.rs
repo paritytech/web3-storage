@@ -10,7 +10,7 @@ use crate::{
     create_router,
     membership::{BlockEventInvalidations, ChainMembershipResolver},
     subxt_client::SubxtChainClient,
-    ChainFollower, ChainStateCoordinatorHandle, ChallengeResponder, ChallengeResponderConfig,
+    ChainStateCoordinatorHandle, ChallengeResponder, ChallengeResponderConfig,
     ChallengeResponderHandle, ProviderDeps, ProviderState, ReplicaSyncCoordinator,
     ReplicaSyncCoordinatorConfig, ReplicaSyncCoordinatorHandle,
 };
@@ -193,7 +193,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
 /// retries with a backoff if the chain is unreachable, so `current_anchor_block`
 /// is populated as soon as the chain comes up.
 fn start_chain_state_coordinator(
-    follower: Arc<dyn ChainFollower>,
+    follower: Arc<dyn provider_coordinator::ChainFollower>,
     events_tx: BlockEventTx,
     state: Arc<ProviderState>,
 ) -> Option<ChainStateCoordinatorHandle> {

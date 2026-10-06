@@ -124,7 +124,7 @@ export default function NewBucketDialog({ open, onOpenChange }: NewBucketDialogP
         duration: parseInt(duration, 10),
         price_per_byte: BigInt(pricePerByte || "0"),
         replica_params: null,
-        bucket_id: null,
+        bucket: null,
       });
       if (!result.ok) {
         setNegotiateError(result.error);
