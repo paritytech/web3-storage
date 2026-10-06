@@ -73,6 +73,9 @@ pub enum Error {
     #[error("Provider is not accepting replica agreements")]
     NotAcceptingReplicas,
 
+    #[error("A replica quote requires an existing bucket: set `bucket`")]
+    ReplicaRequiresBucket,
+
     #[error("Proposed price_per_byte {proposed} is below the provider's listed price {listed}")]
     PriceBelowListed { proposed: u128, listed: u128 },
 
@@ -372,6 +375,13 @@ impl IntoResponse for Error {
                 StatusCode::UNPROCESSABLE_ENTITY,
                 ErrorResponse {
                     error: "not_accepting_replicas".to_string(),
+                    details: None,
+                },
+            ),
+            Error::ReplicaRequiresBucket => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                ErrorResponse {
+                    error: "replica_requires_bucket".to_string(),
                     details: None,
                 },
             ),

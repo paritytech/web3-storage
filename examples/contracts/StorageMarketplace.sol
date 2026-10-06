@@ -56,7 +56,7 @@ contract StorageMarketplace {
         require(!terms.hasBucketId, "primary terms must not be bucket-bound");
         // Private: the fail-safe default for wrappers that do not surface
         // the choice to their own callers.
-        bucketId = WEB3_STORAGE.establishStorageAgreement(
+        bucketId = WEB3_STORAGE.createBucketWithPrimary(
             provider,
             terms,
             signature,

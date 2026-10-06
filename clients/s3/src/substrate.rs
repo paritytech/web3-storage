@@ -124,7 +124,7 @@ impl SubstrateClient {
     ///
     /// `terms` + `sig` are the provider-signed agreement bundle returned by
     /// [`storage_client::ProviderClient::negotiate_terms`]. Layer 0 verifies
-    /// the signature inside `establish_storage_agreement_internal`; the
+    /// the signature inside `create_bucket_with_primary_internal`; the
     /// underlying bucket + primary agreement open atomically alongside the
     /// S3 bucket.
     pub async fn create_s3_bucket(
