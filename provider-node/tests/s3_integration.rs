@@ -5,10 +5,18 @@
 mod common;
 
 use axum::http::StatusCode;
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use serde_json::Value;
+use sp_core::H256;
 use storage_provider_node::ProviderState;
 
 use common::{StorageBackendKind, TestServer};
+
+/// Decodes a `0x`-prefixed (or bare) hex hash into an `H256`.
+fn h256_from_hex(s: &str) -> H256 {
+    let bytes = hex::decode(s.strip_prefix("0x").unwrap_or(s)).unwrap();
+    H256::from_slice(&bytes)
+}
 
 impl TestServer {
     async fn new(backend: StorageBackendKind) -> Self {
@@ -411,6 +419,100 @@ common::backend_tests! {
         let body: Value = proof_response.json().await.unwrap();
         assert!(body["leaf"]["data_root"].is_string());
         assert!(body["proof"]["peaks"].is_array());
+    }
+}
+
+common::backend_tests! {
+    async fn test_s3_chunk_proofs_verify_across_multiple_chunks(backend) {
+        let server = TestServer::new(backend).await;
+
+        // Two full chunks plus a partial one, so the object spans more than
+        // two chunks and the padded proof tree is not itself a power of two.
+        let chunk_size = storage_primitives::DEFAULT_CHUNK_SIZE as usize;
+        let data: Vec<u8> = (0..2 * chunk_size + 50_000)
+            .map(|i| (i * 37 + 11) as u8)
+            .collect();
+        let chunk_count = data.len().div_ceil(chunk_size);
+        assert!(chunk_count > 2, "test data must span more than two chunks");
+
+        let put_response = server
+            .client
+            .put(server.url("/s3/1/object?key=multi-chunk.bin"))
+            .body(data.clone())
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(put_response.status(), StatusCode::OK);
+        let put_body: Value = put_response.json().await.unwrap();
+        let leaf_index = put_body["leaf_index"].as_u64().unwrap();
+
+        // Resolve the data_root the object landed under.
+        let proof_response = server
+            .client
+            .get(server.url(&format!("/mmr_proof?bucket_id=1&leaf_index={leaf_index}")))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(proof_response.status(), StatusCode::OK);
+        let proof_body: Value = proof_response.json().await.unwrap();
+        let data_root_hex = proof_body["leaf"]["data_root"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let data_root = h256_from_hex(&data_root_hex);
+
+        for chunk_index in 0..chunk_count {
+            let resp = server
+                .client
+                .get(server.url(&format!(
+                    "/chunk_proof?data_root={data_root_hex}&chunk_index={chunk_index}"
+                )))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), StatusCode::OK);
+            let body: Value = resp.json().await.unwrap();
+
+            let expected_start = chunk_index * chunk_size;
+            let expected_end = (expected_start + chunk_size).min(data.len());
+            let expected_chunk = &data[expected_start..expected_end];
+
+            let chunk_data = BASE64
+                .decode(body["chunk_data"].as_str().unwrap())
+                .unwrap();
+            assert_eq!(
+                chunk_data.as_slice(),
+                expected_chunk,
+                "chunk {chunk_index} data does not match the uploaded slice"
+            );
+
+            let chunk_hash = h256_from_hex(body["chunk_hash"].as_str().unwrap());
+            assert_eq!(chunk_hash, storage_primitives::blake2_256(expected_chunk));
+
+            let siblings: Vec<H256> = body["proof"]["siblings"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|s| h256_from_hex(s.as_str().unwrap()))
+                .collect();
+            let path: Vec<bool> = body["proof"]["path"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|b| b.as_bool().unwrap())
+                .collect();
+
+            let proof = storage_primitives::MerkleProof { siblings, path };
+            assert!(
+                storage_primitives::verify_merkle_proof(
+                    chunk_hash,
+                    chunk_index as u64,
+                    &proof,
+                    &data_root
+                ),
+                "chunk {chunk_index} proof did not verify against the data root"
+            );
+        }
     }
 }
 

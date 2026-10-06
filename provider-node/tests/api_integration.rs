@@ -927,6 +927,26 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
+    async fn test_mmr_proof_leaf_index_out_of_range(backend) {
+        let server = TestServer::new(backend).await;
+        upload_and_commit(&server, 1).await; // stores a single leaf at index 0
+
+        let resp = server
+            .client
+            .get(server.url("/mmr_proof?bucket_id=1&leaf_index=1"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+
+        let body: Value = resp.json().await.unwrap();
+        assert_eq!(body["error"], "not_found");
+        assert_eq!(body["details"]["bucket_id"], 1);
+        assert_eq!(body["details"]["leaf_index"], 1);
+    }
+}
+
+common::backend_tests! {
     async fn test_mmr_peaks_endpoint(backend) {
         let server = TestServer::new(backend).await;
         upload_and_commit(&server, 1).await;

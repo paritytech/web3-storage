@@ -103,7 +103,7 @@ _download BIN URL SHA256="":
     echo "{{BIN}} downloaded to .bin/{{BIN}}"
 
 # Download all required binaries
-download-binaries: download-polkadot-sdk-binaries download-zombienet download-frame-omni-bencher
+download-binaries: download-polkadot-sdk-binaries download-zombienet download-frame-omni-bencher download-try-runtime
     @echo "All binaries downloaded to .bin/"
 
 # Download Polkadot SDK binaries (polkadot, omni-node, chain-spec-builder)
