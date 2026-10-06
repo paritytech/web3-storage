@@ -4,20 +4,24 @@
 // per-file data root, so a client can compute the on-chain integrity anchor
 // itself and verify a drive without trusting the provider.
 //
-// Mirrors, byte for byte:
-//   - `crates/providers/storage/src/index/fs.rs`     → `metadata_merkle_root`
-//   - `crates/providers/storage/src/backend/mod.rs`  → `build_padded_merkle_tree`
-//   - `crates/primitives/storage/src/lib.rs`         → `blake2_256`, `hash_leaf`, `hash_children`, `DEFAULT_CHUNK_SIZE`
-//
 // This is the multi-chunk Merkle DAG walk that `verify.ts` documents as the
 // missing "Rust-client parity" piece. Pure functions, no I/O — browser-safe.
 
 import { blake2b256 } from "@polkadot-labs/hdkd-helpers";
 
-import { computeCid, DEFAULT_CHUNK_SIZE, hashLeaf } from "./verify.js";
+import { concatBytes } from "./bytes.js";
+
+/** Mirror of DEFAULT_CHUNK_SIZE in crates/primitives/storage/src/lib.rs. */
+export const DEFAULT_CHUNK_SIZE = 256 * 1024;
 
 /** Prefix of an internal node preimage; leaves use a different prefix. */
 const NODE_PREFIX = 0x01;
+
+/** Prefix of a Merkle leaf preimage; internal nodes use a different prefix. */
+const LEAF_PREFIX = 0x00;
+
+/** Prefix of an MMR peak-bagging preimage. */
+const PEAK_PREFIX = 0x02;
 
 /** One drive entry as it contributes to the metadata Merkle tree. */
 export interface MerkleEntry {
@@ -32,6 +36,28 @@ export interface MerkleEntry {
 /** Hash an internal node: `blake2_256(0x01 ++ left[32] ++ right[32])`. */
 export function hashChildren(left: Uint8Array, right: Uint8Array): Uint8Array {
   return blake2b256(concatBytes(Uint8Array.of(NODE_PREFIX), left, right));
+}
+
+/**
+ * Hash a Merkle leaf: `blake2b-256(0x00 ++ data)`.
+ * The prefix keeps the bytes of an internal node
+ * from hashing to the same value as a leaf.
+ */
+export function hashLeaf(data: Uint8Array): Uint8Array {
+  const preimage = new Uint8Array(1 + data.length);
+  preimage[0] = LEAF_PREFIX;
+  preimage.set(data, 1);
+  return blake2b256(preimage);
+}
+
+/**
+ * Combine MMR peaks into the MMR root. Peaks fold from right to left with
+ * `blake2b-256(0x02 ++ peak ++ rest)`; one peak is the root itself and no
+ * peaks give 32 zero bytes.
+ */
+export function bagPeaks(peaks: Uint8Array[]): Uint8Array {
+  if (peaks.length === 0) return new Uint8Array(32);
+  return peaks.reduceRight((rest, peak) => blake2b256(concatBytes(Uint8Array.of(PEAK_PREFIX), peak, rest)));
 }
 
 /**
@@ -60,17 +86,17 @@ export function paddedMerkleRoot(leaves: Uint8Array[]): Uint8Array {
 }
 
 /**
- * A file's `data_root`: chunk the bytes at `DEFAULT_CHUNK_SIZE`, blake2-256 each
+ * A file's `data_root`: chunk the bytes at `DEFAULT_CHUNK_SIZE`, leaf-hash each
  * chunk, then `paddedMerkleRoot` over the chunk hashes. An empty file hashes a
  * single empty chunk; a single chunk yields its own hash. Mirrors `fs_put_file`.
  */
 export function computeDataRoot(bytes: Uint8Array): Uint8Array {
   const chunkHashes: Uint8Array[] = [];
   if (bytes.length === 0) {
-    chunkHashes.push(computeCid(new Uint8Array(0)));
+    chunkHashes.push(hashLeaf(new Uint8Array(0)));
   } else {
     for (let off = 0; off < bytes.length; off += DEFAULT_CHUNK_SIZE) {
-      chunkHashes.push(computeCid(bytes.subarray(off, Math.min(off + DEFAULT_CHUNK_SIZE, bytes.length))));
+      chunkHashes.push(hashLeaf(bytes.subarray(off, Math.min(off + DEFAULT_CHUNK_SIZE, bytes.length))));
     }
   }
   return paddedMerkleRoot(chunkHashes);
@@ -103,18 +129,6 @@ function nextPowerOfTwo(n: number): number {
   let p = 1;
   while (p < n) p <<= 1;
   return p;
-}
-
-function concatBytes(...arrays: Uint8Array[]): Uint8Array {
-  let total = 0;
-  for (const a of arrays) total += a.length;
-  const out = new Uint8Array(total);
-  let off = 0;
-  for (const a of arrays) {
-    out.set(a, off);
-    off += a.length;
-  }
-  return out;
 }
 
 /** Lexicographic comparison of two byte arrays (Rust `[u8]`/`str` ordering). */

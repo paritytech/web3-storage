@@ -31,6 +31,7 @@ export {
   metadataMerkleRoot,
   paddedMerkleRoot,
   hashChildren,
+  bagPeaks,
   u64le,
   type HttpFetchOpts,
   type MerkleEntry,

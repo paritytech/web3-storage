@@ -3,15 +3,17 @@
 import { describe, expect, it } from "vitest";
 import { blake2b256 } from "@polkadot-labs/hdkd-helpers";
 import {
+  bagPeaks,
   computeDataRoot,
   hashChildren,
+  hashLeaf,
   metadataMerkleRoot,
   paddedMerkleRoot,
   u64le,
   type MerkleEntry,
 } from "./merkle.js";
-import { computeCid, hashLeaf } from "./verify.js";
-import { toHex } from "./bytes.js";
+import { computeCid } from "./verify.js";
+import { concatBytes, toHex } from "./bytes.js";
 
 const ZERO32 = new Uint8Array(32);
 
@@ -61,8 +63,24 @@ describe("golden vectors", () => {
   });
 
   it("does not let node bytes verify as a leaf", () => {
-    const nodeBytes = concat(leafA, leafB);
+    const nodeBytes = concatBytes(leafA, leafB);
     expect(toHex(hashLeaf(nodeBytes))).not.toBe(toHex(hashChildren(leafA, leafB)));
+  });
+
+  it("bags MMR peaks right to left with the 0x02 prefix", () => {
+    const peaks = [1, 2, 3].map((b) => new Uint8Array(32).fill(b));
+    expect(toHex(bagPeaks(peaks.slice(0, 2)))).toBe(
+      "0x39ffd1718a7a2d0f61de8f7902cb47d9661392d004d5b91e835ccd3d475cd035",
+    );
+    expect(toHex(bagPeaks(peaks))).toBe(
+      "0xde6b5def5927714c7e957d45b39ba6b3cb1b24c08d3d72e038387f46268eb23f",
+    );
+  });
+
+  it("returns one peak as the root and zero for no peaks", () => {
+    const peak = new Uint8Array(32).fill(7);
+    expect(bagPeaks([peak])).toEqual(peak);
+    expect(bagPeaks([])).toEqual(ZERO32);
   });
 });
 
@@ -118,7 +136,7 @@ describe("metadataMerkleRoot", () => {
   it("orders entries by UTF-8 path bytes regardless of input order", () => {
     const enc = new TextEncoder();
     const leafFor = (e: MerkleEntry) =>
-      hashLeaf(concat(enc.encode(e.path), e.dataRoot, u64le(e.size)));
+      hashLeaf(concatBytes(enc.encode(e.path), e.dataRoot, u64le(e.size)));
     const a: MerkleEntry = { path: "/a.jpg", dataRoot: ZERO32, size: 1n };
     const b: MerkleEntry = { path: "/b.jpg", dataRoot: ZERO32, size: 2n };
     const expected = toHex(paddedMerkleRoot([leafFor(a), leafFor(b)]));
@@ -133,15 +151,3 @@ describe("u64le", () => {
     expect(toHex(u64le(256n))).toBe("0x0001000000000000");
   });
 });
-
-function concat(...arrays: Uint8Array[]): Uint8Array {
-  let total = 0;
-  for (const a of arrays) total += a.length;
-  const out = new Uint8Array(total);
-  let off = 0;
-  for (const a of arrays) {
-    out.set(a, off);
-    off += a.length;
-  }
-  return out;
-}

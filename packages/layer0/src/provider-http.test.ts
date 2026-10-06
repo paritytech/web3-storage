@@ -65,6 +65,12 @@ describe("downloadChunk", () => {
     );
   });
 
+  it("throws CidMismatchError when a node does not have exactly two children", async () => {
+    const left = hashLeaf(enc.encode("left"));
+    stubFetch(() => ({ data: bytesToBase64(left), children: [toHex(left)] }));
+    await expect(downloadChunk(PROVIDER, toHex(hashLeaf(left)))).rejects.toBeInstanceOf(CidMismatchError);
+  });
+
   it("does not accept a node's bytes served as a chunk", async () => {
     const left = hashLeaf(enc.encode("left"));
     const right = hashLeaf(enc.encode("right"));

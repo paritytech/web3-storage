@@ -12,12 +12,12 @@ import {
   CidMismatchError,
   hashChildren,
   hashLeaf,
-  hexToBytes,
+  nodeHash,
   signProviderRequest,
   type ProviderRequestSigner,
 } from "@web3-storage/core";
 
-import { asHex, bytesEq, toHex, type ParachainApi } from "./address.js";
+import { asHex, toHex, type ParachainApi } from "./address.js";
 import type { ChainSigner } from "./signers.js";
 import { READ_OPTS } from "./tx.js";
 
@@ -187,30 +187,12 @@ export async function downloadChunk(
     params: { hash: chunkHashHex },
   });
   const data = base64ToBytes(downloaded.data);
-  const actual = toHex(nodeHash(data, downloaded.children ?? null)).toLowerCase();
   const expected = asHex(chunkHashHex).toLowerCase();
+  const hash = nodeHash(data, downloaded.children ?? null);
+  if (!hash) throw new CidMismatchError(expected, "malformed internal node");
+  const actual = toHex(hash);
   if (actual !== expected) throw new CidMismatchError(expected, actual);
   return data;
-}
-
-/**
- * Hash of a downloaded node. Bytes that do not form a valid node (not exactly
- * two children, or data other than their concatenation) are hashed as a leaf,
- * which never equals the hash of a node.
- */
-function nodeHash(data: Uint8Array, children: string[] | null): Uint8Array {
-  if (children && children.length === 2) {
-    const [left, right] = children.map(hexToBytes);
-    if (bytesEq(data, concatBytes(left, right))) return hashChildren(left, right);
-  }
-  return hashLeaf(data);
-}
-
-function concatBytes(a: Uint8Array, b: Uint8Array): Uint8Array {
-  const out = new Uint8Array(a.length + b.length);
-  out.set(a);
-  out.set(b, a.length);
-  return out;
 }
 
 export async function fetchCheckpointSignature(

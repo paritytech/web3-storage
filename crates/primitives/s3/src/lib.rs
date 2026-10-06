@@ -131,7 +131,7 @@ pub struct MetadataEntry {
 /// Object metadata stored on-chain.
 #[derive(Clone, Encode, Decode, TypeInfo, MaxEncodedLen, Debug, PartialEq, Eq)]
 pub struct ObjectMetadata {
-    /// Content identifier (blake2-256 hash of data).
+    /// Content identifier (Merkle leaf hash of the data).
     pub cid: H256,
     /// Size of the object in bytes.
     pub size: u64,
