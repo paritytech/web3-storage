@@ -18174,7 +18174,7 @@ pub mod api {
                 }
                 #[doc = " Next expected `AgreementTerms.nonce` for this owner. Redemption"]
                 #[doc = " requires an exact match and advances the counter by one, so a signed"]
-                #[doc = " quote is redeemable at most once and in the order it was requested."]
+                #[doc = " quote is redeemable at most once."]
                 #[doc = " The entry is removed when the account is reaped (see the"]
                 #[doc = " `OnKilledAccount` impl for `Pallet`)."]
                 pub fn agreement_nonces(
@@ -26820,7 +26820,8 @@ pub mod api {
                     TermsValidityTooLong,
                     #[codec(index = 66)]
                     #[doc = "The terms' nonce does not match the owner's next expected"]
-                    #[doc = "[`AgreementNonces`] value."]
+                    #[doc = "[`AgreementNonces`] value. Read the current value and request a"]
+                    #[doc = "new quote with it."]
                     NonceMismatch,
                     #[codec(index = 67)]
                     #[doc = "The terms' declared owner does not match the extrinsic origin."]
