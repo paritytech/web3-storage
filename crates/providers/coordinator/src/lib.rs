@@ -1057,7 +1057,7 @@ mod tests {
         use super::*;
         use std::sync::atomic::Ordering;
         use subxt::backend::LegacyBackend;
-        use subxt::ext::scale_value::scale::encode_as_type;
+        use subxt::ext::scale_encode::EncodeAsType;
         use subxt_rpcs::client::mock_rpc_client::Json;
         use subxt_rpcs::client::{MockRpcClient, RpcClient};
 
@@ -1098,58 +1098,59 @@ mod tests {
                 .value_ty()
         }
 
-        /// SCALE-encode a dynamic value as the given runtime type.
-        fn encode_value(md: &subxt::Metadata, ty: u32, value: &Value) -> Vec<u8> {
+        /// SCALE-encode a value as the given runtime type.
+        fn encode_value<V: EncodeAsType>(md: &subxt::Metadata, ty: u32, value: &V) -> Vec<u8> {
             let mut out = Vec::new();
-            encode_as_type(value, ty, md.types(), &mut out).expect("value encodes as type");
+            value
+                .encode_as_type_to(ty, md.types(), &mut out)
+                .expect("value encodes as type");
             out
         }
 
-        /// A `Providers` storage value matching the full runtime `ProviderInfo`
-        /// shape: every runtime field must be present for `scale_value` to
-        /// encode it against the real type.
-        fn runtime_provider_info_value(
+        /// A `Providers` storage value built from the generated runtime type, so
+        /// a field added to `ProviderInfo` fails to compile here instead of
+        /// failing to encode at test time.
+        fn runtime_provider_info(
             replica_sync_price: Option<u128>,
             deregister_at: Option<u32>,
-        ) -> Value {
-            let opt = |val: Option<u128>| match val {
-                Some(v) => Value::unnamed_variant("Some", vec![Value::u128(v)]),
-                None => Value::unnamed_variant("None", Vec::<Value>::new()),
+        ) -> RuntimeProviderInfo {
+            use storage_subxt::api::runtime_types::{
+                bounded_collections::bounded_vec::BoundedVec,
+                frame_support::traits::tokens::fungible::HoldConsideration,
+                pallet_storage_provider::pallet::{
+                    ProviderSettings as RuntimeProviderSettings,
+                    ProviderStats as RuntimeProviderStats,
+                },
             };
-            Value::named_composite([
-                ("multiaddr", Value::from_bytes("/ip4/1.2.3.4/tcp/3333")),
-                ("public_key", Value::from_bytes([9u8; 32])),
-                ("stake", Value::u128(1_000)),
-                ("committed_bytes", Value::u128(500)),
-                (
-                    "settings",
-                    Value::named_composite([
-                        ("min_duration", Value::u128(10)),
-                        ("max_duration", Value::u128(100)),
-                        ("price_per_byte", Value::u128(5)),
-                        ("accepting_primary", Value::bool(true)),
-                        ("replica_sync_price", opt(replica_sync_price)),
-                        ("accepting_extensions", Value::bool(true)),
-                        ("max_capacity", Value::u128(10_000)),
-                    ]),
-                ),
-                (
-                    "stats",
-                    Value::named_composite([
-                        ("registered_at", Value::u128(1)),
-                        ("agreements_total", Value::u128(3)),
-                        ("agreements_extended", Value::u128(0)),
-                        ("agreements_not_extended", Value::u128(0)),
-                        ("agreements_burned", Value::u128(0)),
-                        ("total_bytes_committed", Value::u128(500)),
-                        ("challenges_received_authorized", Value::u128(2)),
-                        ("challenges_received_public", Value::u128(0)),
-                        ("challenges_failed", Value::u128(1)),
-                        ("lifetime_revenue", Value::u128(0)),
-                    ]),
-                ),
-                ("deregister_at", opt(deregister_at.map(u128::from))),
-            ])
+            RuntimeProviderInfo {
+                multiaddr: BoundedVec(b"/ip4/1.2.3.4/tcp/3333".to_vec()),
+                public_key: BoundedVec(vec![9u8; 32]),
+                stake: 1_000,
+                committed_bytes: 500,
+                settings: RuntimeProviderSettings {
+                    min_duration: 10,
+                    max_duration: 100,
+                    price_per_byte: 5,
+                    accepting_primary: true,
+                    replica_sync_price,
+                    accepting_extensions: true,
+                    max_capacity: 10_000,
+                },
+                stats: RuntimeProviderStats {
+                    registered_at: 1,
+                    agreements_total: 3,
+                    agreements_extended: 0,
+                    agreements_not_extended: 0,
+                    agreements_burned: 0,
+                    total_bytes_committed: 500,
+                    challenges_received_authorized: 2,
+                    challenges_received_public: 0,
+                    challenges_failed: 1,
+                    lifetime_revenue: 0,
+                },
+                deregister_at,
+                deposit: HoldConsideration(100),
+            }
         }
 
         /// Wrap a `StorageProvider` event value in an `EventRecord`.
@@ -1488,7 +1489,7 @@ mod tests {
         async fn provider_info_round_trips_through_runtime_types() {
             let md = metadata();
             let ty = storage_value_type(&md, PALLET_NAME, "Providers");
-            let encoded = encode_value(&md, ty, &runtime_provider_info_value(Some(7), Some(42)));
+            let encoded = encode_value(&md, ty, &runtime_provider_info(Some(7), Some(42)));
 
             let client = RealChainStateClient {
                 api: mock_api(vec![(
@@ -1524,7 +1525,7 @@ mod tests {
 
             let providers_ty = storage_value_type(&md, PALLET_NAME, "Providers");
             let provider_bytes =
-                encode_value(&md, providers_ty, &runtime_provider_info_value(None, None));
+                encode_value(&md, providers_ty, &runtime_provider_info(None, None));
             let events_bytes = encoded_events(&md, &account);
 
             let api = mock_api(vec![
@@ -1642,7 +1643,7 @@ mod tests {
 
             let providers_ty = storage_value_type(&md, PALLET_NAME, "Providers");
             let provider_bytes =
-                encode_value(&md, providers_ty, &runtime_provider_info_value(None, None));
+                encode_value(&md, providers_ty, &runtime_provider_info(None, None));
 
             let api = mock_api(vec![
                 (
@@ -1789,7 +1790,7 @@ mod tests {
 
             let providers_ty = storage_value_type(&md, PALLET_NAME, "Providers");
             let provider_bytes =
-                encode_value(&md, providers_ty, &runtime_provider_info_value(None, None));
+                encode_value(&md, providers_ty, &runtime_provider_info(None, None));
             let events_bytes = encoded_membership_events(&md, &account);
 
             let api = mock_api(vec![
