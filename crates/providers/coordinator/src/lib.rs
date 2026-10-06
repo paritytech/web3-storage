@@ -45,14 +45,19 @@ use tokio::task::JoinHandle;
 /// Why the coordinator's reconnect loop dropped a connection. The loop logs it
 /// and reconnects.
 #[derive(Debug, thiserror::Error)]
-pub enum Error {
+pub(crate) enum Error {
     /// A chain call failed.
     #[error(transparent)]
     ChainClient(#[from] ChainClientError),
 
     /// A step of the reconnect loop did not finish within its budget.
     #[error("{what} timed out after {secs}s")]
-    Timeout { what: &'static str, secs: u64 },
+    Timeout {
+        /// The step that timed out.
+        what: &'static str,
+        /// The budget, in seconds.
+        secs: u64,
+    },
 }
 
 /// Run `fut` under `budget`, mapping expiry to [`Error::Timeout`] naming `what`.
@@ -308,7 +313,7 @@ impl ChainStateCoordinator {
                     RECONNECT_DELAY.as_secs()
                 ),
                 Err(e) => tracing::warn!(
-                    "chain-state coordinator: connection lost ({e}); retrying in {}s",
+                    "chain-state coordinator: {e}; reconnecting in {}s",
                     RECONNECT_DELAY.as_secs()
                 ),
             }

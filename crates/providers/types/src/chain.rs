@@ -17,8 +17,9 @@ use std::fmt;
 /// stringly `ChallengeError::Chain`.
 #[derive(Debug, thiserror::Error)]
 pub enum ChainClientError {
-    /// A read against chain state (RPC call, storage fetch/iter, runtime API
-    /// call) failed.
+    /// A call to the chain failed: connecting, subscribing to blocks, or a
+    /// read against chain state (RPC call, storage fetch/iter, runtime API
+    /// call).
     #[error("Chain query failed ({what}): {reason}")]
     Query { what: &'static str, reason: String },
 

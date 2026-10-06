@@ -219,14 +219,17 @@ impl ChainStateChainClient for MockChainClient {
         _who: &AccountId32,
     ) -> Result<Option<ProviderInfo>, ChainClientError> {
         if self.info_err {
-            return Err(ChainClientError::query("provider info", "mock failure"));
+            return Err(ChainClientError::query("Providers", "mock failure"));
         }
         Ok(self.info.clone())
     }
 
     async fn fetch_replay_hsn(&self, _who: &AccountId32) -> Result<Option<u64>, ChainClientError> {
         if self.hsn_err {
-            return Err(ChainClientError::query("replay state", "mock failure"));
+            return Err(ChainClientError::query(
+                "ProviderReplayStates",
+                "mock failure",
+            ));
         }
         Ok(self.hsn)
     }

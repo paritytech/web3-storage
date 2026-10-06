@@ -145,7 +145,9 @@ impl ChainStateChainClient for SubxtChainStateClient {
                 subxt::error::ConstantError::PalletNameNotFound(_)
                 | subxt::error::ConstantError::ConstantNameNotFound { .. },
             ) => Ok(None),
-            Err(e) => Err(ChainClientError::query("RequestTimeout", e)),
+            // The constant comes from the local metadata copy, so every other
+            // failure is a metadata or decode mismatch.
+            Err(e) => Err(ChainClientError::decode("RequestTimeout", e)),
         }
     }
 }
