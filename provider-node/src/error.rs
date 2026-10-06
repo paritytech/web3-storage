@@ -305,13 +305,23 @@ impl IntoResponse for Error {
                     details: None,
                 },
             ),
+            Error::Auth(err @ AuthError::ContextBlockInvalid) => (
+                StatusCode::BAD_REQUEST,
+                ErrorResponse {
+                    error: "context_block_invalid".to_string(),
+                    details: Some(serde_json::json!({ "message": err.to_string() })),
+                },
+            ),
             Error::Auth(AuthError::MembershipLookup(MembershipError::BlockNotKnown {
                 bucket_id,
+                read_block,
             })) => (
                 StatusCode::SERVICE_UNAVAILABLE,
                 ErrorResponse {
                     error: "block_not_known".to_string(),
-                    details: Some(serde_json::json!({ "bucket_id": bucket_id })),
+                    details: Some(
+                        serde_json::json!({ "bucket_id": bucket_id, "read_block": read_block }),
+                    ),
                 },
             ),
             // Transient and worth retrying, unlike a decode failure.
@@ -518,7 +528,10 @@ mod tests {
     #[test]
     fn block_not_known_is_retryable() {
         let response = Error::from(AuthError::MembershipLookup(
-            MembershipError::BlockNotKnown { bucket_id: 7 },
+            MembershipError::BlockNotKnown {
+                bucket_id: 7,
+                read_block: 41,
+            },
         ))
         .into_response();
         assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
@@ -643,6 +656,10 @@ mod tests {
         assert_eq!(
             status_of(AuthError::InsufficientRole.into()),
             StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            status_of(AuthError::ContextBlockInvalid.into()),
+            StatusCode::BAD_REQUEST
         );
         // A chain blip is retryable; a decode failure is a bug. They must not
         // share a status code.

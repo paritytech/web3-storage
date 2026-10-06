@@ -40,6 +40,7 @@ impl MembershipResolver for PublicBucketResolver {
         Ok(BucketAccess {
             members: self.0.clone(),
             visibility: Visibility::Public,
+            read_block: None,
         })
     }
 }
@@ -130,6 +131,66 @@ async fn s3_writer_can_put_object() {
     let body: Value = resp.json().await.unwrap();
     assert!(body["etag"].is_string());
     assert!(body["data_root"].is_string());
+}
+
+/// Members as a chain-backed resolver reports them, read at block 10.
+struct ReadAtTenResolver(Vec<Member>);
+
+#[async_trait::async_trait]
+impl MembershipResolver for ReadAtTenResolver {
+    async fn fetch_access(&self, _bucket_id: BucketId) -> Result<BucketAccess, MembershipError> {
+        Ok(BucketAccess {
+            members: self.0.clone(),
+            visibility: Visibility::Private,
+            read_block: Some(10),
+        })
+    }
+}
+
+#[tokio::test]
+async fn a_context_block_newer_than_the_read_block_makes_a_refusal_retryable() {
+    let server = AuthTestServer::with_resolver(ReadAtTenResolver(Vec::new())).await;
+    let alice = sr25519::Pair::from_string("//Alice", None).unwrap();
+    let header = make_auth_header(&alice, "PUT", 1, current_timestamp());
+
+    for (context, status, error) in [
+        (
+            "11:0x1111111111111111111111111111111111111111111111111111111111111111",
+            StatusCode::SERVICE_UNAVAILABLE,
+            "block_not_known",
+        ),
+        (
+            "10:0x1111111111111111111111111111111111111111111111111111111111111111",
+            StatusCode::FORBIDDEN,
+            "insufficient_role",
+        ),
+        (
+            "11:nonsense",
+            StatusCode::BAD_REQUEST,
+            "context_block_invalid",
+        ),
+    ] {
+        let resp = server
+            .client
+            .put(server.url("/s3/1/object?key=hello.txt"))
+            .header("Authorization", &header)
+            .header(provider_auth::CONTEXT_HEADER, context)
+            .body(b"hello world".to_vec())
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), status, "context {context}");
+        if status == StatusCode::SERVICE_UNAVAILABLE {
+            assert_eq!(
+                resp.headers()
+                    .get("retry-after")
+                    .and_then(|v| v.to_str().ok()),
+                Some("2")
+            );
+        }
+        let body: Value = resp.json().await.unwrap();
+        assert_eq!(body["error"], error, "context {context}");
+    }
 }
 
 #[tokio::test]
