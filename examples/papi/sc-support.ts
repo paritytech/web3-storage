@@ -16,6 +16,7 @@ import { ss58Address } from "@polkadot-labs/hdkd-helpers";
 import {
   getAgreementNonce,
   negotiateTerms,
+  signedTermsBucketId,
   toHex,
   type ChainSigner,
   type ParachainApi,
@@ -48,9 +49,16 @@ export async function negotiatePrecompileTerms(
   api: ParachainApi,
   providerUrl: string,
   owner: { address: string; publicKey: Uint8Array } | ChainSigner,
-  { maxBytes, duration, pricePerByte }: { maxBytes: bigint; duration: number; pricePerByte: bigint }
+  {
+    maxBytes,
+    duration,
+    pricePerByte,
+    bucketId: existingBucket,
+  }: { maxBytes: bigint; duration: number; pricePerByte: bigint; bucketId?: bigint }
 ) {
   const nonce = await getAgreementNonce(api, owner.address);
+  // `bucketId` set: a quote for an existing bucket (addPrimaryProvider);
+  // unset: a quote that creates its bucket (createBucketWithPrimary).
   const signed = await negotiateTerms(providerUrl, {
     owner: owner.address,
     max_bytes: BigInt(maxBytes),
@@ -58,11 +66,11 @@ export async function negotiatePrecompileTerms(
     price_per_byte: pricePerByte,
     nonce,
     replica_params: null,
-    bucket_id: null,
+    bucket: existingBucket ?? null,
   });
   const t = signed.terms;
   const rp = t.replica_params;
-  const bucket = t.bucket_id;
+  const bucketId = signedTermsBucketId(signed);
   return {
     terms: {
       owner: toHex(owner.publicKey),
@@ -77,8 +85,8 @@ export async function negotiatePrecompileTerms(
         minSyncInterval: Number(rp?.min_sync_interval ?? 0),
         syncPrice: 0n,
       },
-      hasBucketId: bucket != null,
-      bucketId: BigInt(bucket ?? 0),
+      hasBucketId: bucketId != null,
+      bucketId: bucketId ?? 0n,
     },
     signature: signed.signature.startsWith("0x")
       ? signed.signature

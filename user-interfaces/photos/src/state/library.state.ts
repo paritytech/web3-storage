@@ -173,7 +173,7 @@ export async function createLibrary(input: CreateLibraryInput): Promise<void> {
           price_per_byte: pricePerByte,
           nonce,
           replica_params: null,
-          bucket_id: null,
+          bucket: null,
         },
       )
       if (!negotiated.ok) {

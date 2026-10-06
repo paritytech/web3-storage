@@ -16,7 +16,7 @@ fn setup_provider_with_replicas(provider: u64, stake: u64) {
 }
 
 #[test]
-fn establish_replica_agreement_works() {
+fn add_replica_provider_works() {
     new_test_ext().execute_with(|| {
         setup_provider_with_replicas(2, 200);
         let bucket_id = create_bucket(1, 0);
@@ -47,7 +47,7 @@ fn establish_replica_agreement_works() {
 }
 
 #[test]
-fn establish_replica_agreement_fails_no_replica_sync_price() {
+fn add_replica_provider_fails_no_replica_sync_price() {
     new_test_ext().execute_with(|| {
         // Provider without replica_sync_price
         register_provider(2, 200);
@@ -69,7 +69,7 @@ fn establish_replica_agreement_fails_no_replica_sync_price() {
             },
         );
         assert_err!(
-            StorageProvider::establish_replica_agreement(
+            StorageProvider::add_replica_provider(
                 RuntimeOrigin::signed(1),
                 bucket_id,
                 2,
@@ -82,7 +82,7 @@ fn establish_replica_agreement_fails_no_replica_sync_price() {
 }
 
 #[test]
-fn establish_replica_agreement_fails_deregister_announced() {
+fn add_replica_provider_fails_deregister_announced() {
     new_test_ext().execute_with(|| {
         setup_provider_with_replicas(2, 200);
         let bucket_id = create_bucket(1, 0);
@@ -105,7 +105,7 @@ fn establish_replica_agreement_fails_deregister_announced() {
             },
         );
         assert_err!(
-            StorageProvider::establish_replica_agreement(
+            StorageProvider::add_replica_provider(
                 RuntimeOrigin::signed(1),
                 bucket_id,
                 2,
@@ -118,7 +118,7 @@ fn establish_replica_agreement_fails_deregister_announced() {
 }
 
 #[test]
-fn establish_replica_agreement_fails_duplicate() {
+fn add_replica_provider_fails_duplicate() {
     new_test_ext().execute_with(|| {
         setup_provider_with_replicas(2, 200);
         let bucket_id = create_bucket(1, 0);
@@ -151,7 +151,7 @@ fn establish_replica_agreement_fails_duplicate() {
             },
         );
         assert_noop!(
-            StorageProvider::establish_replica_agreement(
+            StorageProvider::add_replica_provider(
                 RuntimeOrigin::signed(1),
                 bucket_id,
                 2,
@@ -164,7 +164,7 @@ fn establish_replica_agreement_fails_duplicate() {
 }
 
 #[test]
-fn establish_replica_agreement_fails_bucket_not_found() {
+fn add_replica_provider_fails_bucket_not_found() {
     new_test_ext().execute_with(|| {
         setup_provider_with_replicas(2, 200);
 
@@ -181,20 +181,14 @@ fn establish_replica_agreement_fails_bucket_not_found() {
             },
         );
         assert_noop!(
-            StorageProvider::establish_replica_agreement(
-                RuntimeOrigin::signed(1),
-                999,
-                2,
-                terms,
-                sig
-            ),
+            StorageProvider::add_replica_provider(RuntimeOrigin::signed(1), 999, 2, terms, sig),
             Error::<Test>::BucketNotFound
         );
     });
 }
 
 #[test]
-fn establish_replica_agreement_fails_terms_bucket_mismatch() {
+fn add_replica_provider_fails_terms_bucket_mismatch() {
     new_test_ext().execute_with(|| {
         setup_provider_with_replicas(2, 200);
         let bucket_id = create_bucket(1, 0);
@@ -214,7 +208,7 @@ fn establish_replica_agreement_fails_terms_bucket_mismatch() {
             },
         );
         assert_noop!(
-            StorageProvider::establish_replica_agreement(
+            StorageProvider::add_replica_provider(
                 RuntimeOrigin::signed(1),
                 bucket_id,
                 2,
@@ -227,19 +221,18 @@ fn establish_replica_agreement_fails_terms_bucket_mismatch() {
 }
 
 #[test]
-fn establish_replica_agreement_fails_missing_replica_terms() {
+fn add_replica_provider_fails_missing_replica_terms() {
     new_test_ext().execute_with(|| {
         setup_provider_with_replicas(2, 200);
         let bucket_id = create_bucket(1, 0);
 
         // Bucket-bound terms without replica params.
         let pair = provider_signer(2);
-        let mut terms = primary_terms(1, 50, 100, 0);
-        terms.bucket_id = Some(bucket_id);
+        let terms = primary_terms(1, BucketTarget::Existing(bucket_id), 50, 100, 0);
         let sig = sign_terms(&pair, &terms);
 
         assert_noop!(
-            StorageProvider::establish_replica_agreement(
+            StorageProvider::add_replica_provider(
                 RuntimeOrigin::signed(1),
                 bucket_id,
                 2,

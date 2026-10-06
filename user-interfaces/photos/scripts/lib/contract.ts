@@ -13,6 +13,7 @@ import {
   asHex,
   getAgreementNonce,
   negotiateTerms,
+  signedTermsBucketId,
   type ChainSigner,
   type MappedAccount,
   type ParachainApi,
@@ -58,11 +59,11 @@ export async function negotiatePrecompileTerms(
     price_per_byte: pricePerByte,
     nonce,
     replica_params: null,
-    bucket_id: null,
+    bucket: null,
   });
   const t = signed.terms;
   const rp = t.replica_params;
-  const bucket = t.bucket_id;
+  const bucketId = signedTermsBucketId(signed);
   return {
     terms: {
       owner: asHex(owner.publicKey),
@@ -77,8 +78,8 @@ export async function negotiatePrecompileTerms(
         minSyncInterval: Number(rp?.min_sync_interval ?? 0),
         syncPrice: BigInt(rp?.sync_price ?? 0),
       },
-      hasBucketId: bucket != null,
-      bucketId: BigInt(bucket ?? 0),
+      hasBucketId: bucketId != null,
+      bucketId: bucketId ?? 0n,
     },
     signature: asHex(signed.signature),
   };

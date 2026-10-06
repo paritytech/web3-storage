@@ -81,7 +81,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             price_per_byte: 1,
             nonce,
             replica_params: None,
-            bucket_id: None,
+            bucket: None,
         },
     )
     .await?;
@@ -94,7 +94,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 2. Redeem the signed terms on-chain to open a bucket + primary agreement.
     println!("Establishing storage agreement on-chain...");
     let bucket_id = admin
-        .establish_storage_agreement(provider_ss58, signed, storage_client::Visibility::Private)
+        .create_bucket_with_primary(provider_ss58, signed, storage_client::Visibility::Private)
         .await?;
     println!("  Bucket #{bucket_id} created");
 

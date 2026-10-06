@@ -104,10 +104,20 @@ export interface SignedTerms {
     valid_until: number;
     nonce: number | bigint;
     replica_params: unknown | null;
-    bucket_id: bigint | null;
+    bucket: BucketTargetWire;
   };
   signature: string;
 }
+
+/**
+ * Bucket a signed quote is for — serde's encoding of the runtime's
+ * `BucketTarget`: `"New"` for a bucket created at redemption,
+ * `{ Existing: <bucket id> }` for one that already exists.
+ *
+ * `@web3-storage/core` declares the same type; neither package depends on
+ * the other, so the two declarations must match.
+ */
+export type BucketTargetWire = "New" | { Existing: bigint | number | string };
 
 /** Body of a `POST /negotiate` request to a provider node. */
 export interface NegotiateRequest {
@@ -118,7 +128,25 @@ export interface NegotiateRequest {
   /** The owner's next expected agreement nonce (read from chain). */
   nonce: number | bigint;
   replica_params: unknown | null;
-  bucket_id?: bigint | null;
+  /**
+   * Bucket the quote is for: an existing bucket id, or null/omitted for a
+   * bucket created when the quote is redeemed.
+   */
+  bucket?: bigint | null;
+}
+
+/**
+ * Bucket id a signed quote names, or `undefined` when it is for a bucket
+ * created at redemption. Accepts any `SignedTerms` shape whose `terms.bucket`
+ * is a {@link BucketTargetWire}.
+ */
+export function signedTermsBucketId(signed: {
+  terms: { bucket: BucketTargetWire };
+}): bigint | undefined {
+  const bucket = signed.terms.bucket;
+  return typeof bucket === "object" && bucket !== null && "Existing" in bucket
+    ? BigInt(bucket.Existing)
+    : undefined;
 }
 
 /**

@@ -110,7 +110,7 @@ fn make_primary_terms<T: Config>(owner: &T::AccountId) -> AgreementTermsOf<T> {
         valid_until: pallet_storage_provider::Pallet::<T>::current_anchor_block()
             .saturating_add(<T as pallet_storage_provider::Config>::RequestTimeout::get()),
         nonce: pallet_storage_provider::AgreementNonces::<T>::get(owner),
-        bucket_id: None,
+        bucket: storage_primitives::BucketTarget::New,
         replica_params: None,
     }
 }

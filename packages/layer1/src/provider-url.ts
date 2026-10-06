@@ -266,7 +266,7 @@ export async function resolveCreationTerms(
     duration: opts.duration,
     price_per_byte: pricePerByte,
     nonce,
-    bucket_id: null,
+    bucket: null,
     replica_params: null,
   };
   const signedTerms = await negotiateTerms(choice.url, request, opts.fetchOpts);

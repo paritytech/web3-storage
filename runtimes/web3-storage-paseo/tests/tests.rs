@@ -52,7 +52,6 @@ fn advance_block() {
     frame_system::BlockSize::<Runtime>::kill();
 
     <System as Hooks<_>>::on_initialize(next);
-    <StorageProvider as Hooks<_>>::on_initialize(next);
 }
 
 fn construct_extrinsic(
@@ -170,7 +169,7 @@ fn primary_terms(
         valid_until: pallet_storage_provider::Pallet::<Runtime>::current_anchor_block()
             + <Runtime as pallet_storage_provider::Config>::RequestTimeout::get(),
         nonce,
-        bucket_id: None,
+        bucket: storage_primitives::BucketTarget::New,
         replica_params: None,
     }
 }

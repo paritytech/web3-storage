@@ -138,7 +138,7 @@ export default function NewDriveDialog({ open, onOpenChange }: NewDriveDialogPro
         price_per_byte: BigInt(pricePerByte || "0"),
         nonce,
         replica_params: null,
-        bucket_id: null,
+        bucket: null,
       });
       if (!result.ok) {
         setNegotiateError(result.error);

@@ -14,9 +14,15 @@ import {
   refreshOpenChallenges,
   useAnchorBlock,
 } from "@/state";
-import { useActiveChallenge, useChallengeStatus, useChallengeHistory } from "@/state/challenge.state";
+import {
+  useActiveChallenge,
+  useChallengeStatus,
+  useChallengeHistory,
+  resolveExpiredChallenge,
+} from "@/state/challenge.state";
 import { truncateHash } from "@web3-storage/format";
 import { getS3Client } from "@/state";
+import type { OpenChallenge } from "@/lib/s3-client";
 import ChallengeDialog from "./ChallengeDialog";
 import ChallengeOutcomeDialog from "./ChallengeOutcomeDialog";
 
@@ -42,6 +48,21 @@ export default function CheckpointPanel({ onShowHistory }: CheckpointPanelProps)
 
   const bucketId = selectedBucket?.layer0BucketId ?? null;
   const challengeBusy = challengeStatus !== "idle";
+  const [resolving, setResolving] = useState<string | null>(null);
+  const [resolveError, setResolveError] = useState<string | null>(null);
+
+  const handleResolve = async (c: OpenChallenge) => {
+    if (bucketId === null) return;
+    setResolving(`${c.deadline}-${c.index}`);
+    setResolveError(null);
+    try {
+      await resolveExpiredChallenge({ deadline: c.deadline, index: c.index }, bucketId);
+    } catch (err) {
+      setResolveError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setResolving(null);
+    }
+  };
 
   const history = bucketId !== null
     ? allHistory.filter((e) => e.bucketId === bucketId.toString())
@@ -128,22 +149,27 @@ export default function CheckpointPanel({ onShowHistory }: CheckpointPanelProps)
             <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
               Open Challenges ({openChallenges.length})
             </p>
+            {resolveError && (
+              <p className="text-xs text-red-600 dark:text-red-400">{resolveError}</p>
+            )}
             <div className="space-y-1.5">
               {openChallenges.map((c) => {
+                const rowKey = `${c.deadline}-${c.index}`;
                 const blocksLeft = anchorBlock ? c.deadline - anchorBlock : null;
-                const isExpired = blocksLeft !== null && blocksLeft <= 0;
+                // The provider may still respond while anchor <= deadline.
+                const isExpired = blocksLeft !== null && blocksLeft < 0;
                 const isWatching =
                   activeChallenge?.status === "submitted" &&
                   activeChallenge.challengeId.deadline === c.deadline &&
                   activeChallenge.challengeId.index === c.index;
                 return (
                   <div
-                    key={`${c.deadline}-${c.index}`}
+                    key={rowKey}
                     className={`rounded-md border px-3 py-2 text-xs space-y-1 ${
-                      isWatching
-                        ? "border-blue-200 bg-blue-500/5"
-                        : isExpired
-                          ? "border-red-200 bg-red-500/5"
+                      isExpired
+                        ? "border-red-200 bg-red-500/5"
+                        : isWatching
+                          ? "border-blue-200 bg-blue-500/5"
                           : "border-orange-200 bg-orange-500/5"
                     }`}
                   >
@@ -152,13 +178,24 @@ export default function CheckpointPanel({ onShowHistory }: CheckpointPanelProps)
                         <Swords className="h-3 w-3" />
                         Leaf {c.leafIndex.toString()}, Chunk {c.chunkIndex.toString()}
                       </span>
-                      {isWatching ? (
+                      {isExpired ? (
+                        <span className="flex items-center gap-2">
+                          <span className="text-red-600 dark:text-red-400 font-medium">Expired</span>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-6 px-2 text-xs"
+                            onClick={() => handleResolve(c)}
+                            disabled={resolving !== null}
+                          >
+                            {resolving === rowKey ? "Resolving..." : "Resolve"}
+                          </Button>
+                        </span>
+                      ) : isWatching ? (
                         <span className="flex items-center gap-1 text-blue-600 dark:text-blue-400">
                           <Loader2 className="h-3 w-3 animate-spin" />
                           Watching...
                         </span>
-                      ) : isExpired ? (
-                        <span className="text-red-600 dark:text-red-400 font-medium">Expired</span>
                       ) : blocksLeft !== null ? (
                         <span className="text-orange-600 dark:text-orange-400">
                           {blocksLeft} blocks left

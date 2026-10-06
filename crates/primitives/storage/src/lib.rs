@@ -197,38 +197,6 @@ pub enum RemovalReason {
 // Challenge Types
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Why a provider was slashed via the challenge mechanism.
-///
-/// Emitted in `ChallengeSlashed` so observers can distinguish a provider that
-/// went silent (Timeout) from one that submitted a demonstrably-false response
-/// (InvalidProof, InvalidDeletionClaim, InvalidSupersededClaim).
-#[derive(
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Encode,
-    Decode,
-    DecodeWithMemTracking,
-    TypeInfo,
-    MaxEncodedLen,
-    Debug,
-)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub enum SlashReason {
-    /// Provider failed to respond before the challenge deadline.
-    Timeout,
-    /// Provider submitted a `Proof` response whose chunk-Merkle or MMR proof
-    /// did not verify.
-    InvalidProof,
-    /// Provider submitted a `Deleted` response with a signature or
-    /// `new_start_seq` that does not stand up against on-chain state.
-    InvalidDeletionClaim,
-    /// Provider claimed `Superseded` but the bucket's canonical snapshot
-    /// does not actually cover the challenged sequence.
-    InvalidSupersededClaim,
-}
-
 /// Challenge identifier combining deadline and index.
 #[derive(
     Clone,
@@ -577,6 +545,18 @@ pub fn verify_mmr_proof(proof: &MmrProof, root: &H256) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `BucketTarget` replaced `Option<BucketId>` in `AgreementTerms` without
+    /// changing the SCALE encoding, so quotes signed before the change still
+    /// verify and `transaction_version` did not change.
+    #[test]
+    fn bucket_target_encodes_like_option_bucket_id() {
+        assert_eq!(BucketTarget::New.encode(), None::<BucketId>.encode());
+        assert_eq!(
+            BucketTarget::Existing(5).encode(),
+            Some(5 as BucketId).encode()
+        );
+    }
 
     #[test]
     fn test_commitment_payload_range() {

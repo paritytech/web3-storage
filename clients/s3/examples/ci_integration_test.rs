@@ -76,7 +76,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             duration: 500,            // 500 blocks
             price_per_byte: 1,
             nonce,
-            bucket_id: None,
+            bucket: None,
             replica_params: None,
         },
     )
