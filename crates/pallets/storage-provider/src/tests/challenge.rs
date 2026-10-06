@@ -1152,8 +1152,8 @@ mod challenge_tests {
     use frame_support::{traits::Hooks, BoundedVec};
     use sp_core::{Pair, H256};
     use storage_primitives::{
-        blake2_256, BucketSnapshot, ChallengeId, ChunkLocation, Commitment, EndAction, MerkleProof,
-        MmrLeaf, MmrProof, ProviderRole, ReplicaSyncRecord,
+        blake2_256, hash_children, BucketSnapshot, ChallengeId, ChunkLocation, Commitment,
+        EndAction, MerkleProof, MmrLeaf, MmrProof, ProviderRole, ReplicaSyncRecord,
     };
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -1512,6 +1512,206 @@ mod challenge_tests {
             ));
             let provider = Providers::<Test>::get(2).unwrap();
             assert_eq!(provider.stake, 0);
+        });
+    }
+
+    const THREE_CHUNKS: [&[u8]; 3] = [b"chunk-0", b"chunk-1", b"chunk-2"];
+
+    /// Leaf hashes of the zero-padded data tree for `THREE_CHUNKS`:
+    /// `[h0, h1, h2, 0]`, with root `H(H(h0, h1), H(h2, 0))`.
+    fn three_chunk_leaves() -> [H256; 4] {
+        [
+            blake2_256(THREE_CHUNKS[0]),
+            blake2_256(THREE_CHUNKS[1]),
+            blake2_256(THREE_CHUNKS[2]),
+            H256::zero(),
+        ]
+    }
+
+    /// Merkle proof for `slot` of the four-slot tree from `three_chunk_leaves`.
+    fn three_chunk_slot_proof(slot: usize) -> MerkleProof {
+        let leaves = three_chunk_leaves();
+        let pair = slot / 2;
+        let other_pair = hash_children(leaves[(pair ^ 1) * 2], leaves[(pair ^ 1) * 2 + 1]);
+        MerkleProof {
+            siblings: vec![leaves[slot ^ 1], other_pair],
+            path: vec![slot % 2 == 1, pair % 2 == 1],
+        }
+    }
+
+    /// Challenge `chunk_index` of a single-leaf MMR whose leaf holds the
+    /// three-chunk tree, then respond with `chunk_data` and `chunk_proof`.
+    fn challenge_three_chunk_tree_and_respond(
+        chunk_index: u64,
+        chunk_data: &[u8],
+        chunk_proof: MerkleProof,
+    ) {
+        let leaves = three_chunk_leaves();
+        let data_root = hash_children(
+            hash_children(leaves[0], leaves[1]),
+            hash_children(leaves[2], leaves[3]),
+        );
+        let leaf = MmrLeaf {
+            data_root,
+            data_size: 21,
+            total_size: 21,
+        };
+        let mmr_root = blake2_256(&leaf.encode());
+        let mmr_proof = MmrProof {
+            peaks: vec![mmr_root],
+            leaf,
+            leaf_proof: MerkleProof {
+                siblings: vec![],
+                path: vec![],
+            },
+        };
+        setup_primary_with_snapshot(mmr_root, 0, 1);
+        assert_ok!(StorageProvider::challenge_checkpoint(
+            RuntimeOrigin::signed(3),
+            0,
+            2,
+            ChunkLocation {
+                leaf_index: 0,
+                chunk_index,
+            },
+        ));
+        assert_ok!(StorageProvider::respond_to_challenge(
+            RuntimeOrigin::signed(2),
+            ChallengeId {
+                deadline: 101u64,
+                index: 0u16,
+            },
+            ChallengeResponse::Proof {
+                chunk_data: make_chunk_bv(chunk_data),
+                mmr_proof,
+                chunk_proof,
+            },
+        ));
+        assert!(Challenges::<Test>::get(101, 0).is_none());
+    }
+
+    fn challenge_defended() -> bool {
+        System::events().iter().any(|r| {
+            matches!(
+                r.event,
+                RuntimeEvent::StorageProvider(crate::Event::ChallengeDefended { .. })
+            )
+        })
+    }
+
+    fn slashed_for_invalid_proof() -> bool {
+        System::events().iter().any(|r| {
+            matches!(
+                r.event,
+                RuntimeEvent::StorageProvider(crate::Event::ChallengeSlashed {
+                    reason: storage_primitives::SlashReason::InvalidProof,
+                    ..
+                })
+            )
+        })
+    }
+
+    #[test]
+    fn respond_with_real_chunks_on_three_chunk_tree_defends_challenge() {
+        for (slot, chunk) in THREE_CHUNKS.iter().enumerate() {
+            new_test_ext().execute_with(|| {
+                System::set_block_number(1);
+                challenge_three_chunk_tree_and_respond(
+                    slot as u64,
+                    chunk,
+                    three_chunk_slot_proof(slot),
+                );
+                assert!(challenge_defended());
+                assert_eq!(Providers::<Test>::get(2).unwrap().stake, 200);
+            });
+        }
+    }
+
+    /// Slot 3 of a three-chunk tree is a zero padding leaf. Empty
+    /// `chunk_data` with the zero-leaf path proves it.
+    #[test]
+    fn respond_with_empty_data_on_padding_slot_defends_challenge() {
+        new_test_ext().execute_with(|| {
+            System::set_block_number(1);
+            challenge_three_chunk_tree_and_respond(3, &[], three_chunk_slot_proof(3));
+            assert!(challenge_defended());
+            assert_eq!(Providers::<Test>::get(2).unwrap().stake, 200);
+        });
+    }
+
+    /// `verify_merkle_proof` currently uses only the low bits of the index, so
+    /// index 7 of a four-slot tree is slot 3, which the zero-leaf path proves.
+    /// A fix for #480 that binds the index to the tree depth changes this.
+    #[test]
+    fn respond_with_empty_data_past_padded_size_defends_challenge() {
+        new_test_ext().execute_with(|| {
+            System::set_block_number(1);
+            challenge_three_chunk_tree_and_respond(7, &[], three_chunk_slot_proof(3));
+            assert!(challenge_defended());
+            assert_eq!(Providers::<Test>::get(2).unwrap().stake, 200);
+        });
+    }
+
+    /// The zero-leaf path only accepts empty `chunk_data`.
+    #[test]
+    fn respond_with_non_empty_data_on_padding_slot_slashes_immediately() {
+        new_test_ext().execute_with(|| {
+            System::set_block_number(1);
+            challenge_three_chunk_tree_and_respond(3, b"x", three_chunk_slot_proof(3));
+            assert!(slashed_for_invalid_proof());
+            assert_eq!(Providers::<Test>::get(2).unwrap().stake, 0);
+        });
+    }
+
+    /// A provider without the chunk cannot defend a real slot with empty
+    /// `chunk_data`: the slot's leaf is the chunk hash, not zero.
+    #[test]
+    fn respond_with_empty_data_on_real_slot_slashes_immediately() {
+        for slot in 0..3 {
+            new_test_ext().execute_with(|| {
+                System::set_block_number(1);
+                challenge_three_chunk_tree_and_respond(
+                    slot as u64,
+                    &[],
+                    three_chunk_slot_proof(slot),
+                );
+                assert!(slashed_for_invalid_proof());
+                assert_eq!(Providers::<Test>::get(2).unwrap().stake, 0);
+            });
+        }
+    }
+
+    /// A real empty chunk has leaf `blake2_256([])`, not zero. The zero-leaf
+    /// branch must not replace the normal check for empty `chunk_data`.
+    #[test]
+    fn respond_with_real_empty_chunk_defends_challenge() {
+        new_test_ext().execute_with(|| {
+            System::set_block_number(1);
+            let (mmr_root, mmr_proof, chunk_proof) = single_chunk_proof(&[]);
+            setup_primary_with_snapshot(mmr_root, 0, 1);
+            assert_ok!(StorageProvider::challenge_checkpoint(
+                RuntimeOrigin::signed(3),
+                0,
+                2,
+                ChunkLocation {
+                    leaf_index: 0,
+                    chunk_index: 0,
+                },
+            ));
+            assert_ok!(StorageProvider::respond_to_challenge(
+                RuntimeOrigin::signed(2),
+                ChallengeId {
+                    deadline: 101u64,
+                    index: 0u16,
+                },
+                ChallengeResponse::Proof {
+                    chunk_data: make_chunk_bv(&[]),
+                    mmr_proof,
+                    chunk_proof,
+                },
+            ));
+            assert!(challenge_defended());
+            assert_eq!(Providers::<Test>::get(2).unwrap().stake, 200);
         });
     }
 

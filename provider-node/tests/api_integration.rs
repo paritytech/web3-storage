@@ -973,6 +973,53 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
+    async fn test_chunk_proof_padding_slot_and_past_padded_size(backend) {
+        let server = TestServer::new(backend).await;
+        let datas: [&[u8]; 3] = [b"chunk 0", b"chunk 1", b"chunk 2"];
+        let mut chunks = Vec::new();
+        for data in datas {
+            chunks.push(put_node(&server, data.to_vec(), None).await);
+        }
+        let left = put_parent(&server, chunks[0], chunks[1]).await;
+        let right = put_parent(&server, chunks[2], H256::zero()).await;
+        let root = put_parent(&server, left, right).await;
+        assert_eq!(post_commit(&server, root).await.status(), StatusCode::OK);
+
+        let root_hex = format!("0x{}", hex_encode(root.as_bytes()));
+        // Index 3 is the padding slot; index 7 maps to it past the padded size.
+        for index in [3, 7] {
+            let resp = server
+                .client
+                .get(server.url(&format!("/chunk_proof?data_root={root_hex}&chunk_index={index}")))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), StatusCode::OK, "index {index}");
+            let body: Value = resp.json().await.unwrap();
+            assert_eq!(body["chunk_data"], "", "index {index}");
+            assert_eq!(body["chunk_hash"], format!("0x{}", "00".repeat(32)), "index {index}");
+            let siblings = body["proof"]["siblings"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|h| H256::from_slice(&hex_decode(h.as_str().unwrap()).unwrap()))
+                .collect();
+            let path = body["proof"]["path"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|b| b.as_bool().unwrap())
+                .collect();
+            let proof = storage_primitives::MerkleProof { siblings, path };
+            assert!(
+                storage_primitives::verify_merkle_proof(H256::zero(), index, &proof, &root),
+                "index {index}"
+            );
+        }
+    }
+}
+
+common::backend_tests! {
     async fn test_chunk_proof_endpoint(backend) {
         let server = TestServer::new(backend).await;
         let (hash_hex, _body) = upload_and_commit(&server, 1).await;

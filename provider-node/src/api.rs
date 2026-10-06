@@ -571,8 +571,13 @@ async fn get_chunk_proof(
 
     let (chunk_data, proof) = state
         .storage
-        .get_chunk_at_index(data_root, query.chunk_index)?;
-    let chunk_hash = storage_primitives::blake2_256(&chunk_data);
+        .get_challenge_proof(data_root, query.chunk_index)?;
+    // Empty bytes mean a padding slot, whose leaf hash is zero.
+    let chunk_hash = if chunk_data.is_empty() {
+        H256::zero()
+    } else {
+        storage_primitives::blake2_256(&chunk_data)
+    };
 
     Ok(Json(ChunkProofResponse {
         chunk_hash: format!("0x{}", hex::encode(chunk_hash.as_bytes())),
