@@ -9,10 +9,13 @@
 
 import type { TxCreator } from "polkadot-api/tx-creator";
 import {
+  bytesEq,
   connect,
   createBucketWithPrimary,
   formatDispatchError,
+  hashChildren,
   negotiateTerms,
+  putChunk,
   READ_OPTS,
   waitForBlockProduction,
   waitForChainReady,
@@ -23,6 +26,7 @@ import {
   type SignedTerms,
   type SubmittableTx,
 } from "@web3-storage/sdk";
+import assert from "node:assert";
 
 // ── Test runner primitives ──────────────────────────────────────────────────
 
@@ -261,4 +265,19 @@ export async function negotiateAndEstablish(
     finalized ? { mode: "finalized" } : {},
   );
   return { bucketId, signed };
+}
+
+export async function putInternal(
+  providerUrl: string,
+  bucketId: bigint,
+  signer: ChainSigner,
+  left: Uint8Array,
+  right: Uint8Array,
+): Promise<Uint8Array> {
+  const data = new Uint8Array(64);
+  data.set(left, 0);
+  data.set(right, 32);
+  const { cid } = await putChunk(providerUrl, bucketId, data, signer, [left, right]);
+  assert.ok(bytesEq(cid, hashChildren(left, right)), "internal node hash must equal H(left, right)");
+  return cid;
 }

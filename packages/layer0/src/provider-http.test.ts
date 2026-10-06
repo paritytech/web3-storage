@@ -91,6 +91,19 @@ describe("chunk uploads", () => {
     expect(body.children).toBeNull();
   });
 
+  it("putChunk with children sends the node hash and the child hashes", async () => {
+    const fetchMock = stubFetch(() => ({}));
+    const left = hashLeaf(enc.encode("left"));
+    const right = hashLeaf(enc.encode("right"));
+    const data = new Uint8Array([...left, ...right]);
+    const result = await putChunk(PROVIDER, 1n, data, signer, [left, right]);
+    const expected = toHex(hashChildren(left, right));
+    expect(result.hash).toBe(expected);
+    const body = JSON.parse(fetchMock.mock.calls[0][1]?.body as string);
+    expect(body.hash).toBe(expected);
+    expect(body.children).toEqual([toHex(left), toHex(right)]);
+  });
+
   it("uploadChunk sends the leaf hash and commits it as the data root", async () => {
     const fetchMock = stubFetch(() => ({}));
     const result = await uploadChunk(PROVIDER, 1n, "payload", signer);

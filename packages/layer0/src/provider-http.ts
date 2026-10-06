@@ -111,16 +111,20 @@ export interface PutChunkResult {
  *
  * `signer` authenticates the `PUT /node` request; it must hold a Writer/Admin
  * role on `bucketId` (the provider always enforces this).
+ * 
+ * `children` to store an internal node instead of a leaf chunk. The
+ * provider requires every child to exist already.
  */
 export async function putChunk(
   providerUrl: string,
   bucketId: bigint | number,
   data: Uint8Array | string,
   signer: ChainSigner,
+  children: [Uint8Array, Uint8Array] | null = null,
 ): Promise<PutChunkResult> {
   const sign = { signer: signer.signer, bucketId };
   const bytes = data instanceof Uint8Array ? data : new TextEncoder().encode(data);
-  const cid = hashLeaf(bytes);
+  const cid = children ? hashChildren(children[0], children[1]) : hashLeaf(bytes);
   const hash = toHex(cid);
   await providerFetch(providerUrl, "/node", {
     method: "PUT",
@@ -128,7 +132,7 @@ export async function putChunk(
       bucket_id: Number(bucketId),
       hash,
       data: bytesToBase64(bytes),
-      children: null,
+      children: children ? children.map((c) => toHex(c)) : null,
     },
     sign,
   });
