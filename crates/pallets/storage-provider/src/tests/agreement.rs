@@ -319,50 +319,17 @@ fn create_bucket_with_primary_fails_when_terms_validity_too_long() {
 }
 
 #[test]
-fn re_register_does_not_reset_owner_nonce() {
-    // Regression: the owner's agreement nonce has no tie to provider
-    // lifetime. A quote reusing an already-consumed nonce is rejected on
-    // NonceMismatch even when it is freshly signed and not expired, proving
-    // the nonce — not quote expiry — is what blocks the replay.
+fn fresh_quote_with_consumed_nonce_is_rejected() {
+    // A newly signed, unexpired quote still fails when its nonce is already
+    // consumed: the nonce, not quote expiry, blocks the replay.
     new_test_ext().execute_with(|| {
         register_provider(2, 200);
-
-        // Consume nonce 0 for owner 1.
-        let (terms, sig) = signed_primary_terms(2, 1, BucketTarget::New, 50, 100);
-        assert_ok!(StorageProvider::create_bucket_with_primary(
-            RuntimeOrigin::signed(1),
-            2,
-            terms,
-            sig,
-            storage_primitives::Visibility::Public
-        ));
+        setup_agreement(2, 1, 50, 100);
         assert_eq!(AgreementNonces::<Test>::get(1), 1);
 
-        // Free the provider to exit, then run the full announce/wait/complete
-        // deregistration cycle and re-register under the same account.
-        assert_ok!(StorageProvider::end_agreement(
-            RuntimeOrigin::signed(1),
-            0,
-            2,
-            storage_primitives::EndAction::Pay,
-        ));
-        assert_ok!(StorageProvider::deregister_provider(RuntimeOrigin::signed(
-            2
-        )));
-        run_to_block(150);
-        assert_ok!(StorageProvider::complete_deregister(RuntimeOrigin::signed(
-            2
-        )));
-        register_provider(2, 200);
-
-        // A freshly-timed, correctly-signed quote reusing the stale nonce (0)
-        // is still rejected: deregistering and re-registering the provider
-        // does not roll the owner's nonce back.
-        let pair = provider_signer(2);
         let mut replay = primary_terms(1, BucketTarget::New, 50, 100, 0);
         replay.nonce = 0;
-        let replay_sig = sign_terms(&pair, &replay);
-
+        let replay_sig = sign_terms(&provider_signer(2), &replay);
         assert_noop!(
             StorageProvider::create_bucket_with_primary(
                 RuntimeOrigin::signed(1),
@@ -373,6 +340,45 @@ fn re_register_does_not_reset_owner_nonce() {
             ),
             Error::<Test>::NonceMismatch
         );
+    });
+}
+
+#[test]
+fn future_nonce_is_rejected() {
+    // The nonce must equal the next expected value; skipping ahead fails.
+    new_test_ext().execute_with(|| {
+        register_provider(2, 200);
+
+        let mut terms = primary_terms(1, BucketTarget::New, 50, 100, 0);
+        terms.nonce = AgreementNonces::<Test>::get(1) + 1;
+        let sig = sign_terms(&provider_signer(2), &terms);
+        assert_noop!(
+            StorageProvider::create_bucket_with_primary(
+                RuntimeOrigin::signed(1),
+                2,
+                terms,
+                sig,
+                storage_primitives::Visibility::Public
+            ),
+            Error::<Test>::NonceMismatch
+        );
+    });
+}
+
+#[test]
+fn owner_nonces_are_independent() {
+    new_test_ext().execute_with(|| {
+        register_provider(2, 200);
+        setup_agreement(2, 1, 50, 100);
+        setup_agreement(2, 1, 50, 100);
+
+        // Owner 3 still starts at 0.
+        let (terms, _) = signed_primary_terms(2, 3, BucketTarget::New, 50, 100);
+        assert_eq!(terms.nonce, 0);
+        setup_agreement(2, 3, 50, 100);
+
+        assert_eq!(AgreementNonces::<Test>::get(1), 2);
+        assert_eq!(AgreementNonces::<Test>::get(3), 1);
     });
 }
 
@@ -414,39 +420,6 @@ fn early_terminated_agreement_nonce_not_reusable() {
             ),
             Error::<Test>::NonceMismatch
         );
-    });
-}
-
-/// Move an account's whole free balance to account 9 so that `frame_system`
-/// reaps it.
-fn reap(who: u64) {
-    assert_ok!(Balances::transfer_allow_death(
-        RuntimeOrigin::signed(who),
-        9,
-        Balances::free_balance(who)
-    ));
-    assert!(!System::account_exists(&who));
-}
-
-/// Fund an account again after it was reaped.
-fn refund(who: u64) {
-    assert_ok!(Balances::transfer_allow_death(
-        RuntimeOrigin::signed(9),
-        who,
-        1_000
-    ));
-}
-
-#[test]
-fn reaping_the_owner_removes_its_agreement_nonce() {
-    new_test_ext().execute_with(|| {
-        register_provider(2, 200);
-        setup_agreement(2, 1, 50, 100);
-        assert_eq!(AgreementNonces::<Test>::get(1), 1);
-
-        reap(1);
-
-        assert!(!AgreementNonces::<Test>::contains_key(1));
     });
 }
 

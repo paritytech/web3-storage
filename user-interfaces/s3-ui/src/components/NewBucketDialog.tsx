@@ -124,7 +124,15 @@ export default function NewBucketDialog({ open, onOpenChange }: NewBucketDialogP
         return;
       }
 
-      const nonce = await getAgreementNonce(api, owner);
+      let nonce: bigint;
+      try {
+        nonce = await getAgreementNonce(api, owner);
+      } catch (e) {
+        setNegotiateError(
+          `Failed to read agreement nonce: ${e instanceof Error ? e.message : String(e)}`,
+        );
+        return;
+      }
       const result = await negotiateProviderTerms(provider, {
         owner,
         max_bytes: BigInt(capacity),

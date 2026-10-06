@@ -380,6 +380,30 @@ fn last_created_bucket_id() -> u64 {
     crate::NextBucketId::<Test>::get() - 1
 }
 
+/// Helper: move an account's whole free balance to account 9 so that
+/// `frame_system` reaps it.
+#[allow(dead_code)]
+pub fn reap(who: u64) {
+    use frame_support::assert_ok;
+    assert_ok!(Balances::transfer_allow_death(
+        RuntimeOrigin::signed(who),
+        9,
+        Balances::free_balance(who)
+    ));
+    assert!(!System::account_exists(&who));
+}
+
+/// Helper: fund an account again after it was reaped.
+#[allow(dead_code)]
+pub fn refund(who: u64) {
+    use frame_support::assert_ok;
+    assert_ok!(Balances::transfer_allow_death(
+        RuntimeOrigin::signed(9),
+        who,
+        1_000
+    ));
+}
+
 /// Helper: redeem signed primary terms, creating the bucket together with
 /// its Primary agreement. Returns bucket_id.
 pub fn setup_agreement(provider: u64, client: u64, max_bytes: u64, duration: u64) -> u64 {

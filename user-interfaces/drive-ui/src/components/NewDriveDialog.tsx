@@ -129,8 +129,17 @@ export default function NewDriveDialog({ open, onOpenChange }: NewDriveDialogPro
         return;
       }
 
+      let nonce: bigint;
+      try {
+        nonce = await getAgreementNonce(api, owner);
+      } catch (e) {
+        setNegotiateError(
+          `Failed to read agreement nonce: ${e instanceof Error ? e.message : String(e)}`,
+        );
+        return;
+      }
+
       // Failure here means re-negotiate from scratch on retry.
-      const nonce = await getAgreementNonce(api, owner);
       const result = await negotiateProviderTerms(provider, {
         owner,
         max_bytes: BigInt(capacity),

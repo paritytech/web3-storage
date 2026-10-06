@@ -268,8 +268,8 @@ impl ProviderClient {
 
     /// Negotiate provider-signed agreement terms over HTTP.
     ///
-    /// Owner posts the proposed shape; the provider node allocates nonce + validity window from
-    /// its own state, signs, returns a [`SignedTerms`](crate::agreement::SignedTerms) ready for
+    /// Owner posts the proposed shape and its next agreement nonce; the provider node sets the
+    /// validity window, signs, and returns a [`SignedTerms`](crate::agreement::SignedTerms) ready for
     /// [`AdminClient::create_bucket_with_primary`](crate::admin::AdminClient::create_bucket_with_primary).
     pub async fn negotiate_terms(
         provider_url: &str,

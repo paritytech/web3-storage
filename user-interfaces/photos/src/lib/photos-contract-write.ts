@@ -206,7 +206,7 @@ async function createAndSubmitWithRetry<T>(
 export type CreateLibraryErrorKind =
   | 'payment-exceeds-max'
   | 'terms-expired'
-  | 'terms-reused'
+  | 'nonce-mismatch'
   | 'bad-signature'
   | 'already-exists'
   | 'capacity'
@@ -257,8 +257,9 @@ export function classifyDispatchError(dispatchError: unknown): CreateLibraryErro
   }
   if (raw.includes('NonceMismatch')) {
     return {
-      kind: 'terms-reused',
-      message: 'The signed terms nonce was claimed by another transaction through this contract. Try again.',
+      kind: 'nonce-mismatch',
+      message:
+        "The signed terms' nonce no longer matches the owner's agreement nonce, usually because another transaction through this contract used it first. Try again.",
     }
   }
   if (raw.includes('InvalidSignature') || raw.includes('BadSignature')) {

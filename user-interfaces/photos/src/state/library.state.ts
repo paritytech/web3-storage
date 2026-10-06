@@ -195,7 +195,7 @@ export async function createLibrary(input: CreateLibraryInput): Promise<void> {
       // Another creator through the same contract claimed this nonce first —
       // re-read the current value and retry, the same shape as the tx-level
       // stale-nonce retry in `photos-contract-write.ts`.
-      if (result.ok || result.error.kind !== 'terms-reused' || attempt >= NONCE_MISMATCH_MAX_ATTEMPTS) {
+      if (result.ok || result.error.kind !== 'nonce-mismatch' || attempt >= NONCE_MISMATCH_MAX_ATTEMPTS) {
         break
       }
     }

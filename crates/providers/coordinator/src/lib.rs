@@ -266,28 +266,17 @@ impl ChainStateCoordinator {
                 let _ = self.events_tx.send(event);
             }
 
-            self.process_provider_events(chain, &contents.lifecycle, block.number)
-                .await;
+            refresh_if_relevant_event(
+                chain,
+                &self.chain_state,
+                &self.provider_account,
+                &contents.lifecycle,
+                block.number,
+            )
+            .await;
         }
 
         Ok(())
-    }
-
-    /// Refresh state if any of `parsed` names this provider.
-    async fn process_provider_events(
-        &self,
-        chain: &dyn ChainStateChainClient,
-        parsed: &[AccountId32],
-        block_number: u32,
-    ) {
-        refresh_if_relevant_event(
-            chain,
-            &self.chain_state,
-            &self.provider_account,
-            parsed,
-            block_number,
-        )
-        .await;
     }
 }
 

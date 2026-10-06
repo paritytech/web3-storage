@@ -272,9 +272,8 @@ async fn negotiate_pins_listed_price_when_client_overpays() {
 
 #[tokio::test]
 async fn negotiate_signs_the_requested_nonce() {
-    // The provider no longer allocates nonces itself — it signs whichever
-    // one the owner asks for, since the pallet checks it against the
-    // owner's own on-chain counter.
+    // The provider signs the nonce the owner requests; the pallet checks it
+    // against the owner's on-chain counter.
     let server = TestServer::ready(provider_info()).await;
 
     let mut first_req = primary_request();

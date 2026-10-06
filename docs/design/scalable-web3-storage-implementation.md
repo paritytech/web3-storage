@@ -642,7 +642,7 @@ pub struct ReplicaTerms<Balance, BlockNumber> {
 
 /// Next expected `AgreementTerms.nonce` for this owner. Redemption
 /// requires an exact match and advances the counter by one, so a signed
-/// quote is redeemable at most once and in the order it was requested.
+/// quote is redeemable at most once.
 /// The entry is removed when the account is reaped (see the
 /// `OnKilledAccount` impl for `Pallet`).
 #[pallet::storage]

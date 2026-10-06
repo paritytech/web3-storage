@@ -80,11 +80,7 @@ fn try_state_detects_agreement_nonce_of_missing_account() {
         assert_ok!(StorageProvider::do_try_state());
 
         // Reaping the owner removes the entry, so the invariant still holds.
-        assert_ok!(Balances::transfer_allow_death(
-            RuntimeOrigin::signed(1),
-            9,
-            Balances::free_balance(1)
-        ));
+        reap(1);
         assert!(!AgreementNonces::<Test>::contains_key(1));
         assert_ok!(StorageProvider::do_try_state());
 

@@ -280,7 +280,7 @@ pub mod pallet {
 
     /// Next expected `AgreementTerms.nonce` for this owner. Redemption
     /// requires an exact match and advances the counter by one, so a signed
-    /// quote is redeemable at most once and in the order it was requested.
+    /// quote is redeemable at most once.
     /// The entry is removed when the account is reaped (see the
     /// `OnKilledAccount` impl for `Pallet`).
     #[pallet::storage]
@@ -1251,7 +1251,8 @@ pub mod pallet {
         /// the provider-signed validity window cap enforced on-chain.
         TermsValidityTooLong,
         /// The terms' nonce does not match the owner's next expected
-        /// [`AgreementNonces`] value.
+        /// [`AgreementNonces`] value. Read the current value and request a
+        /// new quote with it.
         NonceMismatch,
         /// The terms' declared owner does not match the extrinsic origin.
         TermsOwnerMismatch,
