@@ -29,8 +29,8 @@
 use async_trait::async_trait;
 use provider_coordinator::{
     is_relevant_provider_event, refresh_if_relevant_event, refresh_provider_state, sync_constants,
-    ChainFollower, ChainSession, ChainState, ChainStateChainClient, ChainStateCoordinator, Error,
-    NonceCounter, PalletConstants, ProviderLifecycleEvent,
+    ChainConnection, ChainFollower, ChainState, ChainStateChainClient, ChainStateCoordinator,
+    Error, NonceCounter, PalletConstants, ProviderLifecycleEvent,
 };
 use provider_storage::{temp_rocksdb, NonceStore};
 use provider_types::{ProviderInfo, ProviderSettings, ProviderStats};
@@ -50,13 +50,12 @@ fn counter_for(cs: &ChainState) -> Arc<NonceCounter> {
     Arc::new(NonceCounter::with_store(1, cs.nonce_store.clone()))
 }
 
-/// [`ChainFollower`] whose `connect()` always fails - exercises the same
-/// reconnect loop an unreachable chain does, without a real connection.
+/// [`ChainFollower`] whose `connect()` always fails, like an unreachable chain.
 struct AlwaysFailFollower;
 
 #[async_trait]
 impl ChainFollower for AlwaysFailFollower {
-    async fn connect(&self) -> Result<Box<dyn ChainSession>, Error> {
+    async fn connect(&self) -> Result<ChainConnection, Error> {
         Err(Error::Internal("mock connect failure".to_string()))
     }
 }

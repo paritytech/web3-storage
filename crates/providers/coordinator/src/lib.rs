@@ -22,11 +22,12 @@
 //! [`BlockEvent::BucketMembershipChanged`], so the membership cache can drop
 //! stale authorization on its own rather than being told to.
 
-pub mod chain_client;
-pub mod follower;
+pub mod chain;
 
-pub use chain_client::ChainStateChainClient;
-pub use follower::{BlockUpdate, ChainFollower, ChainSession, FinalizedBlock, FinalizedBlocks};
+pub use chain::{
+    BlockUpdate, ChainConnection, ChainFollower, ChainStateChainClient, FinalizedBlock,
+    FinalizedBlocks,
+};
 
 use parking_lot::RwLock;
 use provider_chain::{BlockEvent, BlockEventTx};
@@ -251,9 +252,8 @@ impl ProviderLifecycleEvent {
 /// Start with [`ChainStateCoordinator::start`]; keep the returned
 /// [`ChainStateCoordinatorHandle`] alive for the duration of the server.
 pub struct ChainStateCoordinator {
-    /// Builds and (re)connects the underlying chain connection. Also
-    /// responsible for publishing each new connection to the node's other
-    /// chain consumers, once its block stream is confirmed up.
+    /// Opens the chain connection and publishes it to the node's other chain
+    /// consumers.
     follower: Arc<dyn ChainFollower>,
     provider_account: AccountId32,
     chain_state: Arc<ChainState>,
@@ -312,26 +312,28 @@ impl ChainStateCoordinator {
     /// stream until it ends or stalls. Returns `Err` if connecting or bootstrapping
     /// fails; `Ok(())` if the stream terminates — either way the caller reconnects.
     async fn connect_and_follow(&self) -> Result<(), Error> {
-        /// Budget for building a cold connection. On the light transport,
-        /// `connect` awaits smoldot's peer discovery and warp sync with no
-        /// timeout of its own, so a wedged light client would otherwise hang
+        /// Budget for building a cold connection and subscribing to its
+        /// finalized blocks. On the light transport, `connect` awaits smoldot's
+        /// peer discovery and warp sync with no timeout of its own, so a wedged light client would otherwise hang
         /// here forever — with the previous (dead) handle still published to
         /// consumers — and the reconnect loop could never rebuild it. Generous
         /// because killing a slow warp sync throws its progress away.
         const CONNECT_TIMEOUT: Duration = Duration::from_secs(300);
 
-        let session = with_timeout("Connecting to the chain", CONNECT_TIMEOUT, async {
-            self.follower.connect().await
-        })
+        let connection = with_timeout(
+            "Connecting to the chain",
+            CONNECT_TIMEOUT,
+            self.follower.connect(),
+        )
         .await?;
-        self.follow(session).await
+        self.follow(connection).await
     }
 
     /// Bootstrap state from the connection and follow its finalized blocks
     /// until the stream ends or stalls. Split from
     /// [`Self::connect_and_follow`] so tests can drive the full pipeline over
     /// a mock connection.
-    async fn follow(&self, session: Box<dyn ChainSession>) -> Result<(), Error> {
+    async fn follow(&self, connection: ChainConnection) -> Result<(), Error> {
         /// How long without a finalized block before the connection is treated
         /// as dead and rebuilt. Finality can pause briefly (session boundaries,
         /// backend resubscriptions), so this is several times the block time;
@@ -339,26 +341,26 @@ impl ChainStateCoordinator {
         /// The connection is already warp-synced by `connect`, so the first
         /// block gets the same budget as every other.
         const STALL_TIMEOUT: Duration = Duration::from_secs(60);
-        /// Budget for subscribing and the bootstrap reads below: ordinary RPC
-        /// round-trips on an already-synced connection, but on the light
-        /// client they have no timeout of their own and a wedged backend
-        /// would otherwise hang the reconnect loop forever.
+        /// Budget for the bootstrap reads below: ordinary RPC round-trips on
+        /// an already-synced connection, but on the light client they have no
+        /// timeout of their own and a wedged backend would otherwise hang the
+        /// reconnect loop forever.
         const BOOTSTRAP_TIMEOUT: Duration = Duration::from_secs(60);
 
-        let (mut blocks, chain) = with_timeout("Chain bootstrap", BOOTSTRAP_TIMEOUT, async {
-            let (blocks, chain) = session.subscribe().await?;
+        let ChainConnection { mut blocks, client } = connection;
+        let chain = client.as_ref();
+        tracing::info!("chain-state coordinator: connected; following finalized blocks");
 
-            tracing::info!("chain-state coordinator: connected; following finalized blocks");
-
+        with_timeout("Chain bootstrap", BOOTSTRAP_TIMEOUT, async {
             // Fetch pallet constants once per connection (they only change on runtime upgrade).
-            sync_constants(chain.as_ref(), &self.chain_state).await;
+            sync_constants(chain, &self.chain_state).await;
 
             // Bootstrap from any existing on-chain state so a restarted node that was
             // already registered picks up its provider_info and nonce counter immediately
             // rather than waiting for the next relevant event.
-            refresh_provider_state(chain.as_ref(), &self.chain_state, &self.provider_account).await;
+            refresh_provider_state(chain, &self.chain_state, &self.provider_account).await;
 
-            Ok::<_, Error>((blocks, chain))
+            Ok(())
         })
         .await?;
 
@@ -391,8 +393,7 @@ impl ChainStateCoordinator {
                 }
             };
 
-            // A failed anchor read keeps the previous value rather than
-            // resetting it - see `FinalizedBlock::anchor_block`.
+            // A failed anchor read keeps the previous value.
             if let Some(anchor_block) = block.anchor_block {
                 self.chain_state
                     .current_anchor_block
@@ -405,7 +406,7 @@ impl ChainStateCoordinator {
                 let _ = self.events_tx.send(event);
             }
 
-            self.process_provider_events(chain.as_ref(), &block.lifecycle, block.number)
+            self.process_provider_events(chain, &block.lifecycle, block.number)
                 .await;
         }
 
@@ -778,11 +779,10 @@ mod tests {
 
     // ── mock chain follower ────────────────────────────────────────────────
     //
-    // These drive [`ChainStateCoordinator`] end to end without a chain: a mock
+    // These drive [`ChainStateCoordinator`] without a chain: a mock
     // [`ChainStateChainClient`] answers the bootstrap reads, and a mock
-    // [`FinalizedBlocks`] hands `follow` a canned sequence of already-decoded
-    // updates. Decoding itself (subxt bindings, SCALE) is provider-node's
-    // concern now, so nothing here touches it.
+    // [`FinalizedBlocks`] yields already-decoded blocks. provider-node tests
+    // the subxt decoding.
 
     /// [`ChainStateChainClient`] returning fixed answers.
     struct MockChainClient {
@@ -829,30 +829,20 @@ mod tests {
         }
     }
 
-    /// [`ChainSession`] handing back a canned chain client and block stream.
-    struct MockSession {
-        chain: Arc<dyn ChainStateChainClient>,
-        blocks: MockFinalizedBlocks,
-    }
-
-    #[async_trait]
-    impl ChainSession for MockSession {
-        async fn subscribe(
-            self: Box<Self>,
-        ) -> Result<(Box<dyn FinalizedBlocks>, Arc<dyn ChainStateChainClient>), Error> {
-            let MockSession { chain, blocks } = *self;
-            Ok((Box::new(blocks), chain))
+    fn mock_connection(client: MockChainClient, blocks: MockFinalizedBlocks) -> ChainConnection {
+        ChainConnection {
+            blocks: Box::new(blocks),
+            client: Box::new(client),
         }
     }
 
-    /// [`ChainFollower`] whose `connect()` must never be called - for tests
-    /// that drive [`ChainStateCoordinator::follow`] directly with an
-    /// already-built session.
+    /// [`ChainFollower`] for tests that call [`ChainStateCoordinator::follow`]
+    /// directly; `connect()` must not run.
     struct NeverConnectFollower;
 
     #[async_trait]
     impl ChainFollower for NeverConnectFollower {
-        async fn connect(&self) -> Result<Box<dyn ChainSession>, Error> {
+        async fn connect(&self) -> Result<ChainConnection, Error> {
             unreachable!("connect() must not be called when driving follow() directly")
         }
     }
@@ -864,7 +854,7 @@ mod tests {
 
     #[async_trait]
     impl ChainFollower for AlwaysFailFollower {
-        async fn connect(&self) -> Result<Box<dyn ChainSession>, Error> {
+        async fn connect(&self) -> Result<ChainConnection, Error> {
             self.attempts.fetch_add(1, Ordering::SeqCst);
             Err(Error::Internal("mock connect failure".to_string()))
         }
@@ -883,12 +873,12 @@ mod tests {
         let account = provider_account();
         let info = sample_provider_info();
 
-        let chain: Arc<dyn ChainStateChainClient> = Arc::new(MockChainClient {
+        let chain = MockChainClient {
             provider_info: Some(info.clone()),
             // No replay state yet: exercises the un-bootstrapped nonce path.
             replay_hsn: None,
             request_timeout: Some(100),
-        });
+        };
         let blocks = MockFinalizedBlocks::new(vec![BlockUpdate::Block(FinalizedBlock {
             number: 42,
             anchor_block: Some(4242),
@@ -902,7 +892,7 @@ mod tests {
                 provider: account.clone(),
             }],
         })]);
-        let session: Box<dyn ChainSession> = Box::new(MockSession { chain, blocks });
+        let connection = mock_connection(chain, blocks);
 
         let (chain_state, _dir) = test_chain_state();
         let chain_state = Arc::new(chain_state);
@@ -914,7 +904,7 @@ mod tests {
         );
 
         coordinator
-            .follow(session)
+            .follow(connection)
             .await
             .expect("follow runs to stream end");
 
@@ -951,11 +941,11 @@ mod tests {
 
     #[tokio::test]
     async fn follow_broadcasts_membership_changes() {
-        let chain: Arc<dyn ChainStateChainClient> = Arc::new(MockChainClient {
+        let chain = MockChainClient {
             provider_info: Some(sample_provider_info()),
             replay_hsn: None,
             request_timeout: Some(100),
-        });
+        };
         // Duplicates included: invalidation is idempotent, and the fan-out
         // does not deduplicate.
         let blocks = MockFinalizedBlocks::new(vec![BlockUpdate::Block(FinalizedBlock {
@@ -969,7 +959,7 @@ mod tests {
             ],
             lifecycle: vec![],
         })]);
-        let session: Box<dyn ChainSession> = Box::new(MockSession { chain, blocks });
+        let connection = mock_connection(chain, blocks);
 
         let (chain_state, _dir) = test_chain_state();
         let (events_tx, mut events_rx) = tokio::sync::broadcast::channel(16);
@@ -980,7 +970,7 @@ mod tests {
         );
 
         coordinator
-            .follow(session)
+            .follow(connection)
             .await
             .expect("follow runs to stream end");
 
@@ -995,11 +985,11 @@ mod tests {
 
     #[tokio::test]
     async fn follow_continues_past_an_unreadable_block() {
-        let chain: Arc<dyn ChainStateChainClient> = Arc::new(MockChainClient {
+        let chain = MockChainClient {
             provider_info: None,
             replay_hsn: None,
             request_timeout: None,
-        });
+        };
         let blocks = MockFinalizedBlocks::new(vec![
             BlockUpdate::Unreadable { number: 10 },
             BlockUpdate::Block(FinalizedBlock {
@@ -1009,7 +999,7 @@ mod tests {
                 lifecycle: vec![],
             }),
         ]);
-        let session: Box<dyn ChainSession> = Box::new(MockSession { chain, blocks });
+        let connection = mock_connection(chain, blocks);
 
         let (chain_state, _dir) = test_chain_state();
         let chain_state = Arc::new(chain_state);
@@ -1021,7 +1011,7 @@ mod tests {
         );
 
         coordinator
-            .follow(session)
+            .follow(connection)
             .await
             .expect("follow runs past the unreadable block to stream end");
 
@@ -1042,11 +1032,11 @@ mod tests {
 
     #[tokio::test]
     async fn follow_keeps_the_previous_anchor_block_when_a_read_fails() {
-        let chain: Arc<dyn ChainStateChainClient> = Arc::new(MockChainClient {
+        let chain = MockChainClient {
             provider_info: None,
             replay_hsn: None,
             request_timeout: None,
-        });
+        };
         let blocks = MockFinalizedBlocks::new(vec![
             BlockUpdate::Block(FinalizedBlock {
                 number: 1,
@@ -1062,7 +1052,7 @@ mod tests {
                 lifecycle: vec![],
             }),
         ]);
-        let session: Box<dyn ChainSession> = Box::new(MockSession { chain, blocks });
+        let connection = mock_connection(chain, blocks);
 
         let (chain_state, _dir) = test_chain_state();
         let chain_state = Arc::new(chain_state);
@@ -1074,7 +1064,7 @@ mod tests {
         );
 
         coordinator
-            .follow(session)
+            .follow(connection)
             .await
             .expect("follow runs to stream end");
 

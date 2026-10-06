@@ -1,24 +1,19 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
-//! Subxt-backed [`ChainFollower`]/[`ChainSession`]/[`FinalizedBlocks`] for the
-//! chain-state coordinator, plus the [`ChainStateChainClient`] reads it drives
-//! through them.
+//! Subxt implementation of the chain-state coordinator's chain interface
+//! ([`ChainFollower`], [`FinalizedBlocks`], [`ChainStateChainClient`]).
 //!
-//! [`SubxtChainFollower`] owns the node's single chain connection: the
-//! transport, and the watch sender every other chain consumer reads the
-//! connection from. It publishes each new connection only after its block
-//! stream is confirmed up (see [`SubxtChainSession::subscribe`]), so
-//! consumers never observe a handle whose backend failed immediately.
+//! [`SubxtChainFollower`] owns the node's chain connection and publishes each
+//! new connection to the other chain consumers through a watch channel.
 
 use provider_chain::chain_connection::{self, ChainHandle, ChainTransport};
 use provider_chain::decode_block_events;
 use provider_coordinator::{
-    BlockUpdate, ChainFollower, ChainSession, ChainStateChainClient, Error, FinalizedBlock,
+    BlockUpdate, ChainConnection, ChainFollower, ChainStateChainClient, Error, FinalizedBlock,
     FinalizedBlocks, ProviderLifecycleEvent,
 };
 use provider_types::{ProviderInfo, ProviderSettings, ProviderStats};
 use sp_runtime::AccountId32;
-use std::sync::Arc;
 use storage_subxt::api::runtime_types::pallet_storage_provider::pallet::ProviderInfo as RuntimeProviderInfo;
 use subxt::{OnlineClient, PolkadotConfig};
 use tokio::sync::watch;
@@ -247,9 +242,8 @@ fn lifecycle_event(
 
 // ── chain follower ───────────────────────────────────────────────────────────
 
-/// [`ChainFollower`] over a subxt connection: builds a fresh client for
-/// `transport`, and publishes it through `chain_tx` once
-/// [`SubxtChainSession::subscribe`] confirms its block stream is up.
+/// [`ChainFollower`] over a subxt connection to `transport`. Publishes each
+/// new connection through `chain_tx`.
 pub(crate) struct SubxtChainFollower {
     transport: ChainTransport,
     chain_tx: watch::Sender<Option<ChainHandle>>,
@@ -269,28 +263,10 @@ impl SubxtChainFollower {
 
 #[async_trait::async_trait]
 impl ChainFollower for SubxtChainFollower {
-    async fn connect(&self) -> Result<Box<dyn ChainSession>, Error> {
+    async fn connect(&self) -> Result<ChainConnection, Error> {
         let handle = chain_connection::connect(&self.transport)
             .await
             .map_err(|e| Error::Internal(e.to_string()))?;
-        Ok(Box::new(SubxtChainSession {
-            handle,
-            chain_tx: self.chain_tx.clone(),
-        }))
-    }
-}
-
-struct SubxtChainSession {
-    handle: ChainHandle,
-    chain_tx: watch::Sender<Option<ChainHandle>>,
-}
-
-#[async_trait::async_trait]
-impl ChainSession for SubxtChainSession {
-    async fn subscribe(
-        self: Box<Self>,
-    ) -> Result<(Box<dyn FinalizedBlocks>, Arc<dyn ChainStateChainClient>), Error> {
-        let SubxtChainSession { handle, chain_tx } = *self;
         let api = handle.api.clone();
         let blocks = api
             .stream_blocks()
@@ -299,11 +275,12 @@ impl ChainSession for SubxtChainSession {
 
         // Publish the new connection only after the block stream is up, so
         // consumers never observe a handle whose backend failed immediately.
-        chain_tx.send_replace(Some(handle));
+        self.chain_tx.send_replace(Some(handle));
 
-        let chain: Arc<dyn ChainStateChainClient> = Arc::new(SubxtChainStateClient { api });
-        let blocks: Box<dyn FinalizedBlocks> = Box::new(SubxtFinalizedBlocks { blocks });
-        Ok((blocks, chain))
+        Ok(ChainConnection {
+            blocks: Box::new(SubxtFinalizedBlocks { blocks }),
+            client: Box::new(SubxtChainStateClient { api }),
+        })
     }
 }
 
@@ -373,20 +350,16 @@ impl FinalizedBlocks for SubxtFinalizedBlocks {
 
 // ── tests ─────────────────────────────────────────────────────────────────────
 //
-// These drive the real subxt decode paths - the generated `storage-subxt`
-// bindings, `parse_provider_lifecycle_events`, `decode_block_events` - through
-// a real `OnlineClient` (legacy backend) backed by canned RPC responses, using
-// the repo's tracked runtime metadata snapshot. Storage values and events are
-// encoded with `scale_value` against the actual runtime types, so a runtime
-// upgrade that renames or reshapes a field these read is caught here, not
-// just by whichever coordinator happens to call them.
-//
-// The coordinator's own loop/state logic is tested separately, against a mock
-// `ChainFollower`, in `provider-coordinator`'s own test suite.
+// These run the subxt decode paths through a real `OnlineClient` over canned
+// RPC responses and the tracked runtime metadata snapshot, with values encoded
+// against the actual runtime types. A runtime upgrade that renames or reshapes
+// a field these read fails here. `provider-coordinator` tests its own loop
+// against a mock `ChainFollower`.
 #[cfg(test)]
 mod tests {
     use super::*;
     use provider_chain::BlockEvent;
+    use std::sync::Arc;
     use subxt::backend::LegacyBackend;
     use subxt::ext::scale_value::scale::encode_as_type;
     use subxt::ext::scale_value::Value;
