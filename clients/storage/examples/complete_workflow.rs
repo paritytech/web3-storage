@@ -75,7 +75,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             duration: 100,
             price_per_byte: 1,
             replica_params: None,
-            bucket_id: None,
+            bucket: None,
         },
     )
     .await?;
@@ -87,7 +87,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut admin = AdminClient::new(chain_config.clone(), user_keypair.clone().into())?;
     admin.connect().await?;
     let bucket_id = admin
-        .establish_storage_agreement(provider_ss58, signed, storage_client::Visibility::Private)
+        .create_bucket_with_primary(provider_ss58, signed, storage_client::Visibility::Private)
         .await?;
     println!("  Bucket #{bucket_id} created");
 
