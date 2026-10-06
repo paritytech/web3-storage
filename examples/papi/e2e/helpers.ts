@@ -12,7 +12,7 @@ import type { TxCreator } from "polkadot-api/tx-creator";
 import {
   bytesEq,
   connect,
-  establishStorageAgreement,
+  createBucketWithPrimary,
   formatDispatchError,
   hashChildren,
   negotiateTerms,
@@ -208,7 +208,7 @@ export async function getFree(api: ParachainApi, who: ChainSigner): Promise<bigi
 export interface NegotiateOpts {
   maxBytes: bigint;
   duration: number;
-  /** Set for replica agreements against an existing bucket. */
+  /** Set for a quote against an existing bucket. */
   bucketId?: bigint | null;
   replicaParams?: { sync_balance: bigint; min_sync_interval: number } | null;
   /** Defaults to the provider's current on-chain price_per_byte. */
@@ -236,13 +236,13 @@ export async function negotiateSigned(
     max_bytes: maxBytes,
     duration,
     price_per_byte: price,
-    bucket_id: bucketId,
+    bucket: bucketId,
     replica_params: replicaParams,
   });
 }
 
 /**
- * Negotiate signed terms and redeem them via establish_storage_agreement.
+ * Negotiate signed terms and redeem them via create_bucket_with_primary.
  * Returns the new bucket id plus the signed terms (handy for replica flows).
  */
 export async function negotiateAndEstablish(
@@ -257,7 +257,7 @@ export async function negotiateAndEstablish(
   finalized = false,
 ): Promise<{ bucketId: bigint; signed: SignedTerms }> {
   const signed = await negotiateSigned(api, providerUrl, owner, provider, opts);
-  const { bucketId } = await establishStorageAgreement(
+  const { bucketId } = await createBucketWithPrimary(
     api,
     owner,
     provider,
