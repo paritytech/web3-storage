@@ -10,10 +10,10 @@ use crate::subxt_client::{fetch_current_anchor_block, subxt_account};
 use provider_chain::chain_connection::{self, ChainHandle, ChainTransport};
 use provider_chain::decode_block_events;
 use provider_coordinator::{
-    BlockContents, ChainConnection, ChainFollower, ChainStateChainClient, Error, FinalizedBlock,
+    BlockContents, ChainConnection, ChainFollower, ChainStateChainClient, FinalizedBlock,
     FinalizedBlocks, ProviderLifecycleEvent,
 };
-use provider_types::{ProviderInfo, ProviderSettings, ProviderStats};
+use provider_types::{ChainClientError, ProviderInfo, ProviderSettings, ProviderStats};
 use sp_runtime::AccountId32;
 use storage_subxt::api::runtime_types::pallet_storage_provider::pallet::ProviderInfo as RuntimeProviderInfo;
 use subxt::{OnlineClient, PolkadotConfig};
@@ -70,7 +70,10 @@ struct SubxtChainStateClient {
 
 #[async_trait::async_trait]
 impl ChainStateChainClient for SubxtChainStateClient {
-    async fn get_provider_info(&self, who: &AccountId32) -> Result<Option<ProviderInfo>, Error> {
+    async fn get_provider_info(
+        &self,
+        who: &AccountId32,
+    ) -> Result<Option<ProviderInfo>, ChainClientError> {
         // `unvalidated`: see the `storage-subxt` crate docs.
         let addr = storage_subxt::api::storage()
             .storage_provider()
@@ -80,22 +83,22 @@ impl ChainStateChainClient for SubxtChainStateClient {
             .api
             .at_current_block()
             .await
-            .map_err(|e| Error::Internal(format!("Failed to get storage: {e}")))?;
+            .map_err(|e| ChainClientError::query("current block", e))?;
         let Some(value) = at
             .storage()
             .try_fetch(addr, (subxt_account(who),))
             .await
-            .map_err(|e| Error::Internal(format!("Failed to fetch Providers: {e}")))?
+            .map_err(|e| ChainClientError::query("Providers", e))?
         else {
             return Ok(None);
         };
         let info = value
             .decode()
-            .map_err(|e| Error::Internal(format!("Failed to decode Providers: {e}")))?;
+            .map_err(|e| ChainClientError::decode("Providers", e))?;
         Ok(Some(provider_info_from_runtime(info)))
     }
 
-    async fn fetch_replay_hsn(&self, who: &AccountId32) -> Result<Option<u64>, Error> {
+    async fn fetch_replay_hsn(&self, who: &AccountId32) -> Result<Option<u64>, ChainClientError> {
         // `unvalidated`: see the `storage-subxt` crate docs.
         let addr = storage_subxt::api::storage()
             .storage_provider()
@@ -105,27 +108,27 @@ impl ChainStateChainClient for SubxtChainStateClient {
             .api
             .at_current_block()
             .await
-            .map_err(|e| Error::Internal(format!("Failed to get storage: {e}")))?;
+            .map_err(|e| ChainClientError::query("current block", e))?;
         let Some(value) = at
             .storage()
             .try_fetch(addr, (subxt_account(who),))
             .await
-            .map_err(|e| Error::Internal(format!("Failed to fetch ProviderReplayStates: {e}")))?
+            .map_err(|e| ChainClientError::query("ProviderReplayStates", e))?
         else {
             return Ok(None);
         };
         let window = value
             .decode()
-            .map_err(|e| Error::Internal(format!("Failed to decode ProviderReplayStates: {e}")))?;
+            .map_err(|e| ChainClientError::decode("ProviderReplayStates", e))?;
         Ok(Some(window.hsn))
     }
 
-    async fn fetch_request_timeout(&self) -> Result<Option<u32>, Error> {
+    async fn fetch_request_timeout(&self) -> Result<Option<u32>, ChainClientError> {
         let at = self
             .api
             .at_current_block()
             .await
-            .map_err(|e| Error::Internal(format!("Failed to get current block: {e}")))?;
+            .map_err(|e| ChainClientError::query("current block", e))?;
 
         // `unvalidated`: see the `storage-subxt` crate docs.
         match at.constants().entry(
@@ -142,9 +145,7 @@ impl ChainStateChainClient for SubxtChainStateClient {
                 subxt::error::ConstantError::PalletNameNotFound(_)
                 | subxt::error::ConstantError::ConstantNameNotFound { .. },
             ) => Ok(None),
-            Err(e) => Err(Error::Internal(format!(
-                "Failed to read RequestTimeout: {e}"
-            ))),
+            Err(e) => Err(ChainClientError::query("RequestTimeout", e)),
         }
     }
 }
@@ -232,15 +233,15 @@ impl SubxtChainFollower {
 
 #[async_trait::async_trait]
 impl ChainFollower for SubxtChainFollower {
-    async fn connect(&self) -> Result<ChainConnection, Error> {
+    async fn connect(&self) -> Result<ChainConnection, ChainClientError> {
         let handle = chain_connection::connect(&self.transport)
             .await
-            .map_err(|e| Error::Internal(e.to_string()))?;
+            .map_err(|e| ChainClientError::query("chain connection", e))?;
         let api = handle.api.clone();
         let blocks = api
             .stream_blocks()
             .await
-            .map_err(|e| Error::Internal(format!("Failed to subscribe to blocks: {e}")))?;
+            .map_err(|e| ChainClientError::query("finalized block subscription", e))?;
 
         // Publish the new connection only after the block stream is up, so
         // consumers never observe a handle whose backend failed immediately.
@@ -727,9 +728,14 @@ mod tests {
             .get_provider_info(&provider_account())
             .await
             .expect_err("malformed Providers bytes must not decode");
-        let Error::Internal(msg) = &err;
         assert!(
-            msg.contains("decode Providers"),
+            matches!(
+                err,
+                ChainClientError::Decode {
+                    what: "Providers",
+                    ..
+                }
+            ),
             "unexpected error: {err:?}"
         );
     }
@@ -751,9 +757,14 @@ mod tests {
             .fetch_replay_hsn(&provider_account())
             .await
             .expect_err("malformed ProviderReplayStates bytes must not decode");
-        let Error::Internal(msg) = &err;
         assert!(
-            msg.contains("decode ProviderReplayStates"),
+            matches!(
+                err,
+                ChainClientError::Decode {
+                    what: "ProviderReplayStates",
+                    ..
+                }
+            ),
             "unexpected error: {err:?}"
         );
     }

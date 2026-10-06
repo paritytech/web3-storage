@@ -103,9 +103,6 @@ pub enum Error {
     #[error(transparent)]
     Chain(#[from] provider_chain::Error),
 
-    #[error(transparent)]
-    Coordinator(#[from] provider_coordinator::Error),
-
     /// The node cannot sign with its registered key. Each reason keeps the
     /// response code it had when these were three separate variants.
     #[error(transparent)]
@@ -139,7 +136,6 @@ struct ErrorResponse {
 impl IntoResponse for Error {
     fn into_response(self) -> Response {
         use provider_chain::Error as ChainError;
-        use provider_coordinator::Error as CoordinatorError;
         use provider_storage::Error as StorageError;
         let (status, error_response) = match &self {
             // Exhaustive on purpose — no wildcard — so a new storage variant
@@ -450,15 +446,6 @@ impl IntoResponse for Error {
                     },
                 ),
             },
-            // Destructured rather than stringified: the inner message is already
-            // the full text, so `to_string()` would prefix it a second time.
-            Error::Coordinator(CoordinatorError::Internal(msg)) => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                ErrorResponse {
-                    error: "internal_error".to_string(),
-                    details: Some(serde_json::json!({ "message": msg })),
-                },
-            ),
             Error::ProviderDeregistering => (
                 StatusCode::SERVICE_UNAVAILABLE,
                 ErrorResponse {
@@ -639,10 +626,6 @@ mod tests {
         );
         assert_eq!(
             status_of(provider_chain::Error::Internal("boom".into()).into()),
-            StatusCode::INTERNAL_SERVER_ERROR
-        );
-        assert_eq!(
-            status_of(provider_coordinator::Error::Internal("boom".into()).into()),
             StatusCode::INTERNAL_SERVER_ERROR
         );
     }

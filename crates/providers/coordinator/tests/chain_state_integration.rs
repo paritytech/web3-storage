@@ -30,10 +30,10 @@ use async_trait::async_trait;
 use provider_coordinator::{
     is_relevant_provider_event, refresh_if_relevant_event, refresh_provider_state, sync_constants,
     ChainConnection, ChainFollower, ChainState, ChainStateChainClient, ChainStateCoordinator,
-    Error, NonceCounter, PalletConstants, ProviderLifecycleEvent,
+    NonceCounter, PalletConstants, ProviderLifecycleEvent,
 };
 use provider_storage::{temp_rocksdb, NonceStore};
-use provider_types::{ProviderInfo, ProviderSettings, ProviderStats};
+use provider_types::{ChainClientError, ProviderInfo, ProviderSettings, ProviderStats};
 use sp_runtime::AccountId32;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -55,8 +55,11 @@ struct AlwaysFailFollower;
 
 #[async_trait]
 impl ChainFollower for AlwaysFailFollower {
-    async fn connect(&self) -> Result<ChainConnection, Error> {
-        Err(Error::Internal("mock connect failure".to_string()))
+    async fn connect(&self) -> Result<ChainConnection, ChainClientError> {
+        Err(ChainClientError::query(
+            "chain connection",
+            "mock connect failure",
+        ))
     }
 }
 
@@ -197,7 +200,7 @@ async fn coordinator_releases_shared_state_after_stop() {
 
 /// Canned [`ChainStateChainClient`] for driving the synchronisation logic
 /// without a chain. Each read is either `Ok(value)` or, when its `*_err` flag is
-/// set, an `Error` — so every branch of `sync_constants` /
+/// set, a [`ChainClientError`] — so every branch of `sync_constants` /
 /// `refresh_provider_state` is reachable.
 #[derive(Default)]
 struct MockChainClient {
@@ -211,23 +214,26 @@ struct MockChainClient {
 
 #[async_trait]
 impl ChainStateChainClient for MockChainClient {
-    async fn get_provider_info(&self, _who: &AccountId32) -> Result<Option<ProviderInfo>, Error> {
+    async fn get_provider_info(
+        &self,
+        _who: &AccountId32,
+    ) -> Result<Option<ProviderInfo>, ChainClientError> {
         if self.info_err {
-            return Err(Error::Internal("mock get_provider_info failure".into()));
+            return Err(ChainClientError::query("provider info", "mock failure"));
         }
         Ok(self.info.clone())
     }
 
-    async fn fetch_replay_hsn(&self, _who: &AccountId32) -> Result<Option<u64>, Error> {
+    async fn fetch_replay_hsn(&self, _who: &AccountId32) -> Result<Option<u64>, ChainClientError> {
         if self.hsn_err {
-            return Err(Error::Internal("mock fetch_replay_hsn failure".into()));
+            return Err(ChainClientError::query("replay state", "mock failure"));
         }
         Ok(self.hsn)
     }
 
-    async fn fetch_request_timeout(&self) -> Result<Option<u32>, Error> {
+    async fn fetch_request_timeout(&self) -> Result<Option<u32>, ChainClientError> {
         if self.request_timeout_err {
-            return Err(Error::Internal("mock fetch_request_timeout failure".into()));
+            return Err(ChainClientError::query("RequestTimeout", "mock failure"));
         }
         Ok(self.request_timeout)
     }

@@ -7,15 +7,14 @@ use std::fmt;
 
 /// Why a call against the chain failed.
 ///
-/// The error type of `ReplicaSyncChainClient` and of the node's own chain
-/// calls, so a failure keeps the same shape whether it crosses a
-/// provider-crate trait or stays inside the node. Implementations map their
-/// transport errors into these variants; naming no transport type keeps this
-/// usable from crates that do not compile subxt.
+/// The error type of `ReplicaSyncChainClient`, `ChainStateChainClient`,
+/// `ChainFollower` and the node's own chain calls, so a failure keeps the same
+/// shape whether it crosses a provider-crate trait or stays inside the node.
+/// Implementations map their transport errors into these variants; naming no
+/// transport type keeps this usable from crates that do not compile subxt.
 ///
-/// Two chain-client traits do not use it yet and still report their own
-/// stringly errors: `ChallengeChainClient` reports `ChallengeError::Chain`,
-/// and `ChainStateChainClient` reports `provider_coordinator::Error::Internal`.
+/// `ChallengeChainClient` does not use it yet and still reports its own
+/// stringly `ChallengeError::Chain`.
 #[derive(Debug, thiserror::Error)]
 pub enum ChainClientError {
     /// A read against chain state (RPC call, storage fetch/iter, runtime API

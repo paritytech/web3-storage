@@ -3,10 +3,10 @@
 //! The chain interface the coordinator drives. It names no transport, so the
 //! node supplies the subxt implementation and tests supply mocks.
 
-use crate::{Error, ProviderLifecycleEvent};
+use crate::ProviderLifecycleEvent;
 use async_trait::async_trait;
 use provider_chain::BlockEvent;
-use provider_types::ProviderInfo;
+use provider_types::{ChainClientError, ProviderInfo};
 use sp_runtime::AccountId32;
 
 /// Opens chain connections for the coordinator's reconnect loop.
@@ -15,7 +15,7 @@ pub trait ChainFollower: Send + Sync {
     /// Connect, subscribe to finalized blocks, and publish the new connection
     /// to the node's other chain consumers. Implementations must not publish
     /// before the subscription succeeds.
-    async fn connect(&self) -> Result<ChainConnection, Error>;
+    async fn connect(&self) -> Result<ChainConnection, ChainClientError>;
 }
 
 /// A connected chain: the finalized-block stream and a reads client on the
@@ -31,15 +31,18 @@ pub struct ChainConnection {
 #[async_trait]
 pub trait ChainStateChainClient: Send + Sync {
     /// Full on-chain `ProviderInfo`, or `None` if the provider is not registered.
-    async fn get_provider_info(&self, who: &AccountId32) -> Result<Option<ProviderInfo>, Error>;
+    async fn get_provider_info(
+        &self,
+        who: &AccountId32,
+    ) -> Result<Option<ProviderInfo>, ChainClientError>;
 
     /// Provider's replay-window head sequence (`hsn`), or `None` if no replay
     /// state exists yet (the provider has never signed any terms).
-    async fn fetch_replay_hsn(&self, who: &AccountId32) -> Result<Option<u64>, Error>;
+    async fn fetch_replay_hsn(&self, who: &AccountId32) -> Result<Option<u64>, ChainClientError>;
 
     /// `StorageProvider::RequestTimeout` runtime constant, or `None` if absent
     /// from the node's metadata.
-    async fn fetch_request_timeout(&self) -> Result<Option<u32>, Error>;
+    async fn fetch_request_timeout(&self) -> Result<Option<u32>, ChainClientError>;
 }
 
 /// A stream of finalized blocks.

@@ -32,7 +32,7 @@ pub use chain::{
 use parking_lot::RwLock;
 use provider_chain::{BlockEvent, BlockEventTx};
 use provider_storage::NonceStore;
-use provider_types::ProviderInfo;
+use provider_types::{ChainClientError, ProviderInfo};
 use sp_runtime::AccountId32;
 use std::future::Future;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
@@ -42,30 +42,36 @@ use tokio::task::JoinHandle;
 
 // ── Error ─────────────────────────────────────────────────────────────────────
 
-/// Errors surfaced by the chain-state coordinator.
+/// Why the coordinator's reconnect loop dropped a connection. The loop logs it
+/// and reconnects.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    #[error("Internal error: {0}")]
-    Internal(String),
+    /// A chain call failed.
+    #[error(transparent)]
+    ChainClient(#[from] ChainClientError),
+
+    /// A step of the reconnect loop did not finish within its budget.
+    #[error("{what} timed out after {secs}s")]
+    Timeout { what: &'static str, secs: u64 },
 }
 
-/// Run `fut` under `budget`, mapping expiry to an [`Error`] naming `what`.
+/// Run `fut` under `budget`, mapping expiry to [`Error::Timeout`] naming `what`.
 ///
 /// Every wait in the reconnect loop goes through this: an operation that can
 /// hang forever (e.g. a wedged smoldot backend with no timeout of its own)
 /// must turn into an `Err` so the loop can rebuild the connection instead of
 /// hanging with a stale handle still published.
 async fn with_timeout<T>(
-    what: &str,
+    what: &'static str,
     budget: Duration,
     fut: impl Future<Output = Result<T, Error>>,
 ) -> Result<T, Error> {
     match tokio::time::timeout(budget, fut).await {
         Ok(result) => result,
-        Err(_) => Err(Error::Internal(format!(
-            "{what} timed out after {}s",
-            budget.as_secs()
-        ))),
+        Err(_) => Err(Error::Timeout {
+            what,
+            secs: budget.as_secs(),
+        }),
     }
 }
 
@@ -323,11 +329,9 @@ impl ChainStateCoordinator {
         /// slow warp sync throws its progress away.
         const CONNECT_TIMEOUT: Duration = Duration::from_secs(300);
 
-        let connection = with_timeout(
-            "Connecting to the chain",
-            CONNECT_TIMEOUT,
-            self.follower.connect(),
-        )
+        let connection = with_timeout("Connecting to the chain", CONNECT_TIMEOUT, async {
+            Ok(self.follower.connect().await?)
+        })
         .await?;
         self.follow(connection).await
     }
@@ -766,7 +770,7 @@ mod tests {
         assert_eq!(ok, 7);
 
         let err = with_timeout("op", Duration::from_secs(1), async {
-            Err::<(), _>(Error::Internal("inner failure".to_string()))
+            Err::<(), _>(ChainClientError::query("op", "inner failure").into())
         })
         .await
         .expect_err("inner error passes through");
@@ -796,15 +800,18 @@ mod tests {
         async fn get_provider_info(
             &self,
             _who: &AccountId32,
-        ) -> Result<Option<ProviderInfo>, Error> {
+        ) -> Result<Option<ProviderInfo>, ChainClientError> {
             Ok(self.provider_info.clone())
         }
 
-        async fn fetch_replay_hsn(&self, _who: &AccountId32) -> Result<Option<u64>, Error> {
+        async fn fetch_replay_hsn(
+            &self,
+            _who: &AccountId32,
+        ) -> Result<Option<u64>, ChainClientError> {
             Ok(self.replay_hsn)
         }
 
-        async fn fetch_request_timeout(&self) -> Result<Option<u32>, Error> {
+        async fn fetch_request_timeout(&self) -> Result<Option<u32>, ChainClientError> {
             Ok(self.request_timeout)
         }
     }
@@ -822,7 +829,7 @@ mod tests {
 
     #[async_trait]
     impl ChainFollower for NeverConnectFollower {
-        async fn connect(&self) -> Result<ChainConnection, Error> {
+        async fn connect(&self) -> Result<ChainConnection, ChainClientError> {
             unreachable!("connect() must not be called when driving follow() directly")
         }
     }
@@ -834,9 +841,12 @@ mod tests {
 
     #[async_trait]
     impl ChainFollower for AlwaysFailFollower {
-        async fn connect(&self) -> Result<ChainConnection, Error> {
+        async fn connect(&self) -> Result<ChainConnection, ChainClientError> {
             self.attempts.fetch_add(1, Ordering::SeqCst);
-            Err(Error::Internal("mock connect failure".to_string()))
+            Err(ChainClientError::query(
+                "chain connection",
+                "mock connect failure",
+            ))
         }
     }
 
