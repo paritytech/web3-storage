@@ -46,40 +46,23 @@ pub trait ChainStateChainClient: Send + Sync {
 #[async_trait]
 pub trait FinalizedBlocks: Send {
     /// Next finalized block, or `None` when the stream ends or fails.
-    async fn next(&mut self) -> Option<BlockUpdate>;
+    async fn next(&mut self) -> Option<FinalizedBlock>;
 }
 
 /// One finalized block, as the coordinator receives it.
-pub enum BlockUpdate {
-    /// The block was read.
-    Block(FinalizedBlock),
-    /// The block's handle or events could not be read.
-    Unreadable {
-        /// Block number.
-        number: u32,
-        /// The pallet's anchor block at this block, or `None` if it was not
-        /// read or the read failed.
-        anchor_block: Option<u32>,
-    },
-}
-
-impl BlockUpdate {
-    /// The pallet's anchor block at this block, or `None` if it was not read
-    /// or the read failed.
-    pub fn anchor_block(&self) -> Option<u32> {
-        match self {
-            Self::Block(block) => block.anchor_block,
-            Self::Unreadable { anchor_block, .. } => *anchor_block,
-        }
-    }
-}
-
-/// A finalized block with its events already decoded.
 pub struct FinalizedBlock {
     /// Block number.
     pub number: u32,
-    /// The pallet's anchor block at this block, or `None` if the read failed.
+    /// The pallet's anchor block at this block, or `None` if it was not read
+    /// or the read failed.
     pub anchor_block: Option<u32>,
+    /// The block's decoded events, or `None` if the block's handle or events
+    /// could not be read.
+    pub contents: Option<BlockContents>,
+}
+
+/// The decoded events of one finalized block.
+pub struct BlockContents {
     /// Events to forward to the other coordinators.
     pub events: Vec<BlockEvent>,
     /// `StorageProvider` provider-lifecycle events.

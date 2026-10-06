@@ -25,7 +25,7 @@
 mod chain;
 
 pub use chain::{
-    BlockUpdate, ChainConnection, ChainFollower, ChainStateChainClient, FinalizedBlock,
+    BlockContents, ChainConnection, ChainFollower, ChainStateChainClient, FinalizedBlock,
     FinalizedBlocks,
 };
 
@@ -377,8 +377,8 @@ impl ChainStateCoordinator {
         });
 
         loop {
-            let update = match tokio::time::timeout(STALL_TIMEOUT, blocks.next()).await {
-                Ok(Some(update)) => update,
+            let block = match tokio::time::timeout(STALL_TIMEOUT, blocks.next()).await {
+                Ok(Some(block)) => block,
                 Ok(None) => break,
                 Err(_) => {
                     tracing::warn!(
@@ -389,27 +389,24 @@ impl ChainStateCoordinator {
                 }
             };
             // A failed anchor read keeps the previous value.
-            if let Some(anchor_block) = update.anchor_block() {
+            if let Some(anchor_block) = block.anchor_block {
                 self.chain_state
                     .current_anchor_block
                     .store(anchor_block, std::sync::atomic::Ordering::Relaxed);
             }
 
-            let block = match update {
-                BlockUpdate::Block(block) => block,
-                BlockUpdate::Unreadable { number, .. } => {
-                    escalate_block_read_failure(&self.events_tx, number);
-                    continue;
-                }
+            let Some(contents) = block.contents else {
+                escalate_block_read_failure(&self.events_tx, block.number);
+                continue;
             };
 
             // Fan out the coordinator-relevant events. Send failures just mean
             // no coordinator is subscribed.
-            for event in block.events {
+            for event in contents.events {
                 let _ = self.events_tx.send(event);
             }
 
-            self.process_provider_events(chain, &block.lifecycle, block.number)
+            self.process_provider_events(chain, &contents.lifecycle, block.number)
                 .await;
         }
 
@@ -620,7 +617,6 @@ mod tests {
     use async_trait::async_trait;
     use provider_storage::temp_rocksdb;
     use provider_types::{ProviderSettings, ProviderStats};
-    use std::collections::VecDeque;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     /// Chain state over a throwaway backend's nonce store.
@@ -783,11 +779,12 @@ mod tests {
     // ── mock chain follower ────────────────────────────────────────────────
     //
     // These drive [`ChainStateCoordinator`] without a chain: a mock
-    // [`ChainStateChainClient`] answers the bootstrap reads, and a mock
-    // [`FinalizedBlocks`] yields already-decoded blocks. provider-node tests
-    // the subxt decoding.
+    // [`ChainStateChainClient`] answers the bootstrap reads, and a plain
+    // iterator yields already-decoded blocks. provider-node tests the subxt
+    // decoding.
 
     /// [`ChainStateChainClient`] returning fixed answers.
+    #[derive(Default)]
     struct MockChainClient {
         provider_info: Option<ProviderInfo>,
         replay_hsn: Option<u64>,
@@ -812,30 +809,10 @@ mod tests {
         }
     }
 
-    /// [`FinalizedBlocks`] yielding a fixed queue of updates, then ending.
-    struct MockFinalizedBlocks {
-        updates: VecDeque<BlockUpdate>,
-    }
-
-    impl MockFinalizedBlocks {
-        fn new(updates: Vec<BlockUpdate>) -> Self {
-            Self {
-                updates: updates.into(),
-            }
-        }
-    }
-
     #[async_trait]
-    impl FinalizedBlocks for MockFinalizedBlocks {
-        async fn next(&mut self) -> Option<BlockUpdate> {
-            self.updates.pop_front()
-        }
-    }
-
-    fn mock_connection(client: MockChainClient, blocks: MockFinalizedBlocks) -> ChainConnection {
-        ChainConnection {
-            blocks: Box::new(blocks),
-            client: Box::new(client),
+    impl FinalizedBlocks for std::vec::IntoIter<FinalizedBlock> {
+        async fn next(&mut self) -> Option<FinalizedBlock> {
+            Iterator::next(self)
         }
     }
 
@@ -863,53 +840,76 @@ mod tests {
         }
     }
 
-    fn coordinator_over(
-        follower: Arc<dyn ChainFollower>,
-        chain_state: Arc<ChainState>,
-        events_tx: BlockEventTx,
-    ) -> ChainStateCoordinator {
-        ChainStateCoordinator::new(follower, provider_account(), chain_state, events_tx)
+    /// A readable block with the given anchor block and events.
+    fn block(
+        number: u32,
+        anchor_block: Option<u32>,
+        events: Vec<BlockEvent>,
+        lifecycle: Vec<ProviderLifecycleEvent>,
+    ) -> FinalizedBlock {
+        FinalizedBlock {
+            number,
+            anchor_block,
+            contents: Some(BlockContents { events, lifecycle }),
+        }
+    }
+
+    /// Run [`ChainStateCoordinator::follow`] over `blocks` until the stream
+    /// ends. Returns the resulting chain state and every event broadcast.
+    async fn run_follow(
+        client: MockChainClient,
+        blocks: Vec<FinalizedBlock>,
+    ) -> (Arc<ChainState>, Vec<BlockEvent>, tempfile::TempDir) {
+        let (chain_state, dir) = test_chain_state();
+        let chain_state = Arc::new(chain_state);
+        let (events_tx, mut events_rx) = tokio::sync::broadcast::channel(64);
+        let coordinator = ChainStateCoordinator::new(
+            Arc::new(NeverConnectFollower),
+            provider_account(),
+            chain_state.clone(),
+            events_tx,
+        );
+
+        coordinator
+            .follow(ChainConnection {
+                blocks: Box::new(blocks.into_iter()),
+                client: Box::new(client),
+            })
+            .await
+            .expect("follow runs to stream end");
+
+        let mut events = Vec::new();
+        while let Ok(event) = events_rx.try_recv() {
+            events.push(event);
+        }
+        (chain_state, events, dir)
     }
 
     #[tokio::test]
     async fn follow_processes_finalized_blocks_and_provider_events() {
         let account = provider_account();
         let info = sample_provider_info();
-
-        let chain = MockChainClient {
+        let client = MockChainClient {
             provider_info: Some(info.clone()),
             // No replay state yet: exercises the un-bootstrapped nonce path.
             replay_hsn: None,
             request_timeout: Some(100),
         };
-        let blocks = MockFinalizedBlocks::new(vec![BlockUpdate::Block(FinalizedBlock {
-            number: 42,
-            anchor_block: Some(4242),
-            events: vec![BlockEvent::ChallengeCreated {
+        let blocks = vec![block(
+            42,
+            Some(4242),
+            vec![BlockEvent::ChallengeCreated {
                 deadline: 777,
                 index: 3,
                 bucket_id: 9,
                 provider: account.clone(),
             }],
-            lifecycle: vec![ProviderLifecycleEvent::Updated {
+            vec![ProviderLifecycleEvent::Updated {
                 provider: account.clone(),
             }],
-        })]);
-        let connection = mock_connection(chain, blocks);
+        )];
 
-        let (chain_state, _dir) = test_chain_state();
-        let chain_state = Arc::new(chain_state);
-        let (events_tx, mut events_rx) = tokio::sync::broadcast::channel(16);
-        let coordinator = coordinator_over(
-            Arc::new(NeverConnectFollower),
-            chain_state.clone(),
-            events_tx,
-        );
-
-        coordinator
-            .follow(connection)
-            .await
-            .expect("follow runs to stream end");
+        let (chain_state, events, _dir) = run_follow(client, blocks).await;
 
         assert_eq!(
             chain_state.current_anchor_block.load(Ordering::Relaxed),
@@ -921,191 +921,102 @@ mod tests {
         assert!(chain_state.constants.read().is_some());
         assert!(chain_state.nonce_counter.read().is_some());
 
-        let mut saw_resubscribed = false;
-        let mut saw_challenge = false;
-        while let Ok(event) = events_rx.try_recv() {
-            match event {
-                BlockEvent::Resubscribed { .. } => saw_resubscribed = true,
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, BlockEvent::Resubscribed { .. })),
+            "follow should broadcast Resubscribed"
+        );
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
                 BlockEvent::ChallengeCreated {
                     deadline: 777,
                     index: 3,
                     bucket_id: 9,
-                    ref provider,
-                } if *provider == account => saw_challenge = true,
-                _ => {}
-            }
-        }
-        assert!(saw_resubscribed, "follow should broadcast Resubscribed");
-        assert!(
-            saw_challenge,
+                    provider,
+                } if *provider == account
+            )),
             "follow should forward the block's decoded events"
         );
     }
 
     #[tokio::test]
     async fn follow_broadcasts_membership_changes() {
-        let chain = MockChainClient {
-            provider_info: Some(sample_provider_info()),
-            replay_hsn: None,
-            request_timeout: Some(100),
-        };
         // Duplicates included: invalidation is idempotent, and the fan-out
         // does not deduplicate.
-        let blocks = MockFinalizedBlocks::new(vec![BlockUpdate::Block(FinalizedBlock {
-            number: 1,
-            anchor_block: Some(1),
-            events: vec![
-                BlockEvent::BucketMembershipChanged { bucket_id: 9 },
-                BlockEvent::BucketMembershipChanged { bucket_id: 7 },
-                BlockEvent::BucketMembershipChanged { bucket_id: 7 },
-                BlockEvent::BucketMembershipChanged { bucket_id: 8 },
-            ],
-            lifecycle: vec![],
-        })]);
-        let connection = mock_connection(chain, blocks);
+        let blocks = vec![block(
+            1,
+            Some(1),
+            [9, 7, 7, 8]
+                .map(|bucket_id| BlockEvent::BucketMembershipChanged { bucket_id })
+                .to_vec(),
+            vec![],
+        )];
 
-        let (chain_state, _dir) = test_chain_state();
-        let (events_tx, mut events_rx) = tokio::sync::broadcast::channel(16);
-        let coordinator = coordinator_over(
-            Arc::new(NeverConnectFollower),
-            Arc::new(chain_state),
-            events_tx,
-        );
+        let (_chain_state, events, _dir) = run_follow(MockChainClient::default(), blocks).await;
 
-        coordinator
-            .follow(connection)
-            .await
-            .expect("follow runs to stream end");
-
-        let mut changed_buckets = Vec::new();
-        while let Ok(event) = events_rx.try_recv() {
-            if let BlockEvent::BucketMembershipChanged { bucket_id } = event {
-                changed_buckets.push(bucket_id);
-            }
-        }
+        let changed_buckets: Vec<_> = events
+            .into_iter()
+            .filter_map(|event| match event {
+                BlockEvent::BucketMembershipChanged { bucket_id } => Some(bucket_id),
+                _ => None,
+            })
+            .collect();
         assert_eq!(changed_buckets, vec![9, 7, 7, 8]);
     }
 
+    /// An unreadable block escalates instead of being dropped, its anchor
+    /// block is still stored, and the blocks behind it are still processed.
     #[tokio::test]
     async fn follow_continues_past_an_unreadable_block() {
-        let chain = MockChainClient {
-            provider_info: None,
-            replay_hsn: None,
-            request_timeout: None,
+        let account = provider_account();
+        let challenge = BlockEvent::ChallengeCreated {
+            deadline: 777,
+            index: 3,
+            bucket_id: 9,
+            provider: account.clone(),
         };
-        let blocks = MockFinalizedBlocks::new(vec![
-            BlockUpdate::Unreadable {
+        let blocks = vec![
+            // Unreadable, but the anchor read succeeded.
+            FinalizedBlock {
                 number: 10,
-                anchor_block: None,
+                anchor_block: Some(200),
+                contents: None,
             },
-            BlockUpdate::Block(FinalizedBlock {
-                number: 11,
-                anchor_block: Some(11),
-                events: vec![],
-                lifecycle: vec![],
-            }),
-        ]);
-        let connection = mock_connection(chain, blocks);
+            // No anchor, so the 200 above remains.
+            block(11, None, vec![challenge], vec![]),
+        ];
 
-        let (chain_state, _dir) = test_chain_state();
-        let chain_state = Arc::new(chain_state);
-        let (events_tx, mut events_rx) = tokio::sync::broadcast::channel(16);
-        let coordinator = coordinator_over(
-            Arc::new(NeverConnectFollower),
-            chain_state.clone(),
-            events_tx,
-        );
-
-        coordinator
-            .follow(connection)
-            .await
-            .expect("follow runs past the unreadable block to stream end");
-
-        // The unreadable block escalates instead of being silently dropped;
-        // the block behind it still gets processed.
-        assert_eq!(chain_state.current_anchor_block.load(Ordering::Relaxed), 11);
-        let mut saw_scope_unknown = false;
-        while let Ok(event) = events_rx.try_recv() {
-            if let BlockEvent::MembershipScopeUnknown { at_block: 10 } = event {
-                saw_scope_unknown = true;
-            }
-        }
-        assert!(
-            saw_scope_unknown,
-            "an unreadable block must escalate MembershipScopeUnknown"
-        );
-    }
-
-    #[tokio::test]
-    async fn follow_stores_the_anchor_block_of_an_unreadable_block() {
-        let chain = MockChainClient {
-            provider_info: None,
-            replay_hsn: None,
-            request_timeout: None,
-        };
-        let blocks = MockFinalizedBlocks::new(vec![BlockUpdate::Unreadable {
-            number: 10,
-            anchor_block: Some(100),
-        }]);
-        let connection = mock_connection(chain, blocks);
-
-        let (chain_state, _dir) = test_chain_state();
-        let chain_state = Arc::new(chain_state);
-        let (events_tx, _events_rx) = tokio::sync::broadcast::channel(16);
-        let coordinator = coordinator_over(
-            Arc::new(NeverConnectFollower),
-            chain_state.clone(),
-            events_tx,
-        );
-
-        coordinator
-            .follow(connection)
-            .await
-            .expect("follow runs to stream end");
+        let (chain_state, events, _dir) = run_follow(MockChainClient::default(), blocks).await;
 
         assert_eq!(
             chain_state.current_anchor_block.load(Ordering::Relaxed),
-            100
+            200
+        );
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, BlockEvent::MembershipScopeUnknown { at_block: 10 })),
+            "an unreadable block must escalate MembershipScopeUnknown"
+        );
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                BlockEvent::ChallengeCreated { provider, .. } if *provider == account
+            )),
+            "the block after an unreadable one must still be processed"
         );
     }
 
     #[tokio::test]
     async fn follow_keeps_the_previous_anchor_block_when_a_read_fails() {
-        let chain = MockChainClient {
-            provider_info: None,
-            replay_hsn: None,
-            request_timeout: None,
-        };
-        let blocks = MockFinalizedBlocks::new(vec![
-            BlockUpdate::Block(FinalizedBlock {
-                number: 1,
-                anchor_block: Some(100),
-                events: vec![],
-                lifecycle: vec![],
-            }),
-            BlockUpdate::Block(FinalizedBlock {
-                number: 2,
-                // A failed anchor read on this block must not reset the value.
-                anchor_block: None,
-                events: vec![],
-                lifecycle: vec![],
-            }),
-        ]);
-        let connection = mock_connection(chain, blocks);
+        let blocks = vec![
+            block(1, Some(100), vec![], vec![]),
+            block(2, None, vec![], vec![]),
+        ];
 
-        let (chain_state, _dir) = test_chain_state();
-        let chain_state = Arc::new(chain_state);
-        let (events_tx, _events_rx) = tokio::sync::broadcast::channel(16);
-        let coordinator = coordinator_over(
-            Arc::new(NeverConnectFollower),
-            chain_state.clone(),
-            events_tx,
-        );
-
-        coordinator
-            .follow(connection)
-            .await
-            .expect("follow runs to stream end");
+        let (chain_state, _events, _dir) = run_follow(MockChainClient::default(), blocks).await;
 
         assert_eq!(
             chain_state.current_anchor_block.load(Ordering::Relaxed),
@@ -1122,8 +1033,9 @@ mod tests {
             attempts: attempts.clone(),
         });
         let (chain_state, _dir) = test_chain_state();
-        let coordinator = coordinator_over(
+        let coordinator = ChainStateCoordinator::new(
             follower,
+            provider_account(),
             Arc::new(chain_state),
             tokio::sync::broadcast::channel(16).0,
         );

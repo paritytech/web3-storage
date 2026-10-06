@@ -6,10 +6,11 @@
 //! [`SubxtChainFollower`] owns the node's chain connection and publishes each
 //! new connection to the other chain consumers through a watch channel.
 
+use crate::subxt_client::{fetch_current_anchor_block, subxt_account};
 use provider_chain::chain_connection::{self, ChainHandle, ChainTransport};
 use provider_chain::decode_block_events;
 use provider_coordinator::{
-    BlockUpdate, ChainConnection, ChainFollower, ChainStateChainClient, Error, FinalizedBlock,
+    BlockContents, ChainConnection, ChainFollower, ChainStateChainClient, Error, FinalizedBlock,
     FinalizedBlocks, ProviderLifecycleEvent,
 };
 use provider_types::{ProviderInfo, ProviderSettings, ProviderStats};
@@ -17,32 +18,6 @@ use sp_runtime::AccountId32;
 use storage_subxt::api::runtime_types::pallet_storage_provider::pallet::ProviderInfo as RuntimeProviderInfo;
 use subxt::{OnlineClient, PolkadotConfig};
 use tokio::sync::watch;
-
-// ── anchor block ──────────────────────────────────────────────────────────────
-
-/// Query the pallet's `StorageProviderApi::current_anchor_block` runtime API —
-/// the block every on-chain duration (timeouts, expiries, `valid_until`, nonce
-/// age) is measured against. Reading it through the runtime API keeps the
-/// provider agnostic to whether the anchor is a relay, parachain, or other
-/// block number: the pallet decides via its `BlockNumberProvider`, and the
-/// provider no longer reaches into a specific storage item.
-pub(crate) async fn fetch_current_anchor_block<C>(
-    at: &subxt::client::ClientAtBlock<PolkadotConfig, C>,
-) -> Result<u32, Error>
-where
-    C: subxt::client::OnlineClientAtBlockT<PolkadotConfig>,
-{
-    // `unvalidated`: see the `storage-subxt` crate docs.
-    at.runtime_apis()
-        .call(
-            storage_subxt::api::runtime_apis()
-                .storage_provider_api()
-                .current_anchor_block()
-                .unvalidated(),
-        )
-        .await
-        .map_err(|e| Error::Internal(format!("current_anchor_block runtime API call failed: {e}")))
-}
 
 /// Convert the runtime's `ProviderInfo` into the node's view of it.
 ///
@@ -91,12 +66,6 @@ fn provider_info_from_runtime(info: RuntimeProviderInfo) -> ProviderInfo {
 /// subxt connection (shared with the block subscription).
 struct SubxtChainStateClient {
     api: OnlineClient<PolkadotConfig>,
-}
-
-/// Convert an account from the `sp_runtime` representation the node uses into
-/// the `subxt` one the generated bindings expect. Same 32 bytes either way.
-fn subxt_account(who: &AccountId32) -> subxt::utils::AccountId32 {
-    subxt::utils::AccountId32(*<AccountId32 as AsRef<[u8; 32]>>::as_ref(who))
 }
 
 #[async_trait::async_trait]
@@ -290,7 +259,7 @@ struct SubxtFinalizedBlocks {
 
 #[async_trait::async_trait]
 impl FinalizedBlocks for SubxtFinalizedBlocks {
-    async fn next(&mut self) -> Option<BlockUpdate> {
+    async fn next(&mut self) -> Option<FinalizedBlock> {
         let block = match self.blocks.next().await {
             Some(Ok(block)) => block,
             Some(Err(e)) => {
@@ -310,9 +279,10 @@ impl FinalizedBlocks for SubxtFinalizedBlocks {
                 tracing::warn!(
                     "chain-state coordinator: failed to get block handle for {number}: {e}"
                 );
-                return Some(BlockUpdate::Unreadable {
+                return Some(FinalizedBlock {
                     number,
                     anchor_block: None,
+                    contents: None,
                 });
             }
         };
@@ -332,25 +302,24 @@ impl FinalizedBlocks for SubxtFinalizedBlocks {
             }
         };
 
-        let events = match at.events().fetch().await {
-            Ok(events) => events,
+        let contents = match at.events().fetch().await {
+            Ok(events) => Some(BlockContents {
+                events: decode_block_events(&events, number),
+                lifecycle: parse_provider_lifecycle_events(&events),
+            }),
             Err(e) => {
                 tracing::warn!(
                     "chain-state coordinator: failed to fetch events for block {number}: {e}"
                 );
-                return Some(BlockUpdate::Unreadable {
-                    number,
-                    anchor_block,
-                });
+                None
             }
         };
 
-        Some(BlockUpdate::Block(FinalizedBlock {
+        Some(FinalizedBlock {
             number,
             anchor_block,
-            events: decode_block_events(&events, number),
-            lifecycle: parse_provider_lifecycle_events(&events),
-        }))
+            contents,
+        })
     }
 }
 
@@ -824,8 +793,9 @@ mod tests {
 
     /// A block carrying two different lifecycle events - one that only
     /// updates the provider, one that confirms deregistration - must decode
-    /// each into the right [`ProviderLifecycleEvent`] variant, matched
-    /// against its own generated event type.
+    /// each into the right [`ProviderLifecycleEvent`] variant. The
+    /// coordinator resets the nonce watermark only on `Deregistered`
+    /// (`provider_coordinator::refresh_if_relevant_event`).
     #[tokio::test]
     async fn lifecycle_events_decode_to_their_matching_variant() {
         let md = metadata();
@@ -925,42 +895,6 @@ mod tests {
         assert!(membership_changed_bucket_ids(&events).is_empty());
     }
 
-    /// An on-chain `ProviderDeregistered` must decode to the confirmed
-    /// variant, not the generic `Updated` one - the coordinator gates
-    /// clearing the nonce watermark strictly on `Deregistered`
-    /// (`provider_coordinator::refresh_if_relevant_event`).
-    #[tokio::test]
-    async fn lifecycle_event_decodes_a_confirmed_deregistration() {
-        let md = metadata();
-        let account = provider_account();
-
-        let deregistered = event_record(Value::named_variant(
-            "ProviderDeregistered",
-            [
-                (
-                    "provider",
-                    Value::from_bytes(<AccountId32 as AsRef<[u8]>>::as_ref(&account)),
-                ),
-                ("stake_returned", Value::u128(1_000)),
-            ],
-        ));
-        let events_ty = storage_value_type(&md, "System", "Events");
-        let events_bytes = encode_value(&md, events_ty, &Value::unnamed_composite([deregistered]));
-
-        let api = mock_api(vec![(
-            key_prefix("System", "Events"),
-            format!("0x{}", hex::encode(events_bytes)),
-        )])
-        .await;
-        let at = api.at_current_block().await.expect("block handle");
-        let events = at.events().fetch().await.expect("events fetch");
-
-        assert_eq!(
-            parse_provider_lifecycle_events(&events),
-            vec![ProviderLifecycleEvent::Deregistered { provider: account }]
-        );
-    }
-
     /// End-to-end through [`SubxtFinalizedBlocks::next`]: the anchor block
     /// must come from the `StorageProviderApi::current_anchor_block` runtime
     /// API (`4242` in this mock), never the mocked header number (`42`), and
@@ -970,37 +904,23 @@ mod tests {
         let md = metadata();
         let account = provider_account();
 
-        let providers_ty = storage_value_type(&md, PALLET_NAME, "Providers");
-        let provider_bytes =
-            encode_value(&md, providers_ty, &runtime_provider_info_value(None, None));
         let events_bytes = encoded_events(&md, &account);
 
-        let api = mock_api(vec![
-            (
-                key_prefix("System", "Events"),
-                format!("0x{}", hex::encode(events_bytes)),
-            ),
-            (
-                key_prefix(PALLET_NAME, "Providers"),
-                format!("0x{}", hex::encode(provider_bytes)),
-            ),
-        ])
+        let api = mock_api(vec![(
+            key_prefix("System", "Events"),
+            format!("0x{}", hex::encode(events_bytes)),
+        )])
         .await;
 
         let mut blocks = SubxtFinalizedBlocks {
             blocks: api.stream_blocks().await.expect("subscribe to blocks"),
         };
 
-        let update = blocks
+        let block = blocks
             .next()
             .await
             .expect("the mock serves exactly one finalized block");
-        let block = match update {
-            BlockUpdate::Block(block) => block,
-            BlockUpdate::Unreadable { number, .. } => {
-                panic!("block {number} should have decoded")
-            }
-        };
+        let contents = block.contents.expect("block should have decoded");
 
         assert_eq!(
             block.anchor_block,
@@ -1008,13 +928,13 @@ mod tests {
             "anchor must come from the runtime API, not the header number (42)"
         );
         assert_eq!(
-            block.lifecycle,
+            contents.lifecycle,
             vec![ProviderLifecycleEvent::Updated {
                 provider: account.clone()
             }]
         );
         assert!(matches!(
-            block.events.as_slice(),
+            contents.events.as_slice(),
             [BlockEvent::ChallengeCreated {
                 deadline: 777,
                 index: 3,

@@ -36,8 +36,8 @@ pub use provider_challenge::{
 pub use provider_coordinator as chain_state_coordinator;
 pub use provider_coordinator::{
     is_relevant_provider_event, refresh_if_relevant_event, refresh_provider_state, sync_constants,
-    ChainFollower, ChainState, ChainStateChainClient, ChainStateCoordinator,
-    ChainStateCoordinatorHandle, NonceCounter, PalletConstants, ProviderLifecycleEvent,
+    ChainState, ChainStateChainClient, ChainStateCoordinator, ChainStateCoordinatorHandle,
+    NonceCounter, PalletConstants, ProviderLifecycleEvent,
 };
 pub use provider_replica::{
     ReplicaSync, ReplicaSyncChainClient, ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig,
