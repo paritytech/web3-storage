@@ -6,7 +6,8 @@
 
 use crate::{pallet::Member, *};
 use frame_support::{pallet_prelude::*, traits::Footprint};
-use storage_primitives::BucketId;
+use sp_core::H256;
+use storage_primitives::{BucketId, Visibility};
 
 impl<T: Config> Pallet<T> {
     /// A provider record.
@@ -25,5 +26,26 @@ impl<T: Config> Pallet<T> {
     /// An agreement record.
     pub fn agreement_footprint() -> Footprint {
         Footprint::from_mel::<StorageAgreement<T>>()
+    }
+
+    /// A bucket record as `create_bucket` writes it: one member, no primary
+    /// providers, no snapshot. A primary slot seeded at creation is paid for
+    /// by the agreement deposit.
+    pub fn bucket_footprint() -> Footprint {
+        let one_member = 1 + Member::<T>::max_encoded_len();
+        let no_frozen_start_seq = 1;
+        let empty_primary_providers = 1;
+        let no_snapshot = 1;
+        let size = one_member
+            + Visibility::max_encoded_len()
+            + no_frozen_start_seq
+            + u32::max_encoded_len()
+            + empty_primary_providers
+            + no_snapshot
+            + <[(u32, H256); 6]>::max_encoded_len()
+            + u32::max_encoded_len()
+            + T::AccountId::max_encoded_len()
+            + TicketOf::<T>::max_encoded_len();
+        Footprint::from_parts(1, size)
     }
 }

@@ -27,7 +27,7 @@ fn genesis_provider(account: u64, stake: u64) -> GenesisProvider<Test> {
 
 #[test]
 fn genesis_provider_is_registered_with_settings_and_reserved_stake() {
-    new_test_ext_with_genesis_providers(vec![(1, 10_000)], vec![genesis_provider(1, 200)])
+    new_test_ext_with_genesis(vec![(1, 10_000)], vec![genesis_provider(1, 200)], vec![])
         .execute_with(|| {
             let provider = Providers::<Test>::get(1).expect("provider registered at genesis");
             assert_eq!(provider.multiaddr.to_vec(), b"/ip4/127.0.0.1/tcp/3333");
@@ -51,11 +51,24 @@ fn genesis_provider_is_registered_with_settings_and_reserved_stake() {
         });
 }
 
+/// Genesis buckets are ordinary records: their admin pays the deposit the
+/// same way a runtime caller would, so the hold ledger matches state from
+/// block 0 on.
+#[test]
+fn genesis_bucket_holds_its_deposit_on_the_admin() {
+    new_test_ext_with_genesis(vec![(1, 10_000)], vec![], vec![(1, 0)]).execute_with(|| {
+        let bucket = Buckets::<Test>::get(0).expect("bucket created at genesis");
+        assert_eq!(bucket.creator, 1);
+        assert_eq!(held(HoldReason::StorageDeposit, 1), 10);
+        assert_eq!(Balances::free_balance(1), 9_990);
+    });
+}
+
 #[test]
 fn register_provider_after_genesis_fails_with_already_registered() {
     // The PreviewNet wipe scenario: the default provider comes back
     // pre-registered, so a manual re-registration must fail.
-    new_test_ext_with_genesis_providers(vec![(1, 10_000)], vec![genesis_provider(1, 200)])
+    new_test_ext_with_genesis(vec![(1, 10_000)], vec![genesis_provider(1, 200)], vec![])
         .execute_with(|| {
             assert_noop!(
                 StorageProvider::register_provider(
@@ -73,13 +86,13 @@ fn register_provider_after_genesis_fails_with_already_registered() {
 #[should_panic(expected = "genesis provider registration should not fail")]
 fn genesis_provider_below_min_stake_panics() {
     // MinProviderStake is 100 in the mock.
-    let _ = new_test_ext_with_genesis_providers(vec![(1, 10_000)], vec![genesis_provider(1, 50)]);
+    let _ = new_test_ext_with_genesis(vec![(1, 10_000)], vec![genesis_provider(1, 50)], vec![]);
 }
 
 #[test]
 #[should_panic(expected = "genesis provider registration should not fail")]
 fn genesis_provider_unfunded_account_panics() {
-    let _ = new_test_ext_with_genesis_providers(vec![], vec![genesis_provider(1, 200)]);
+    let _ = new_test_ext_with_genesis(vec![], vec![genesis_provider(1, 200)], vec![]);
 }
 
 #[test]
@@ -88,7 +101,7 @@ fn genesis_provider_invalid_durations_panic() {
     let mut provider = genesis_provider(1, 200);
     provider.settings.min_duration = 100;
     provider.settings.max_duration = 10;
-    let _ = new_test_ext_with_genesis_providers(vec![(1, 10_000)], vec![provider]);
+    let _ = new_test_ext_with_genesis(vec![(1, 10_000)], vec![provider], vec![]);
 }
 
 #[test]
@@ -97,7 +110,7 @@ fn genesis_provider_capacity_unbacked_by_stake_panics() {
     // MinStakePerByte is 1 in the mock: capacity 1000 needs stake >= 1000.
     let mut provider = genesis_provider(1, 200);
     provider.settings.max_capacity = 1_000;
-    let _ = new_test_ext_with_genesis_providers(vec![(1, 10_000)], vec![provider]);
+    let _ = new_test_ext_with_genesis(vec![(1, 10_000)], vec![provider], vec![]);
 }
 
 #[test]

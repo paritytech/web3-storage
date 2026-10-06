@@ -16,9 +16,78 @@ fn create_bucket_works() {
         assert_eq!(bucket.visibility, storage_primitives::Visibility::Public);
         assert!(bucket.snapshot.is_none());
         assert!(bucket.frozen_start_seq.is_none());
+        assert_eq!(bucket.creator, 1);
 
         // Check bucket ID incremented
         assert_eq!(NextBucketId::<Test>::get(), 1);
+    });
+}
+
+/// The bucket record stays in state until someone removes it, so the creator
+/// pays a deposit for it; without one, buckets would be free to spam.
+#[test]
+fn create_bucket_holds_a_storage_deposit_on_the_creator() {
+    new_test_ext().execute_with(|| {
+        let free_before = Balances::free_balance(1);
+
+        create_bucket(1, 0);
+
+        assert_eq!(held(HoldReason::StorageDeposit, 1), 10);
+        assert_eq!(Balances::free_balance(1), free_before - 10);
+    });
+}
+
+/// The deposit is what makes a bucket cost something, so an account that
+/// cannot fund it must not get the record.
+#[test]
+fn create_bucket_fails_without_funds_for_the_deposit() {
+    new_test_ext().execute_with(|| {
+        assert_ok!(Balances::force_set_balance(RuntimeOrigin::root(), 9, 5));
+
+        assert_noop!(
+            StorageProvider::create_bucket(
+                RuntimeOrigin::signed(9),
+                0,
+                storage_primitives::Visibility::Public
+            ),
+            sp_runtime::TokenError::FundsUnavailable
+        );
+    });
+}
+
+/// The deposit belongs to whoever created the bucket, not to whoever removes
+/// it: a later admin must not be able to pocket the creator's funds.
+#[test]
+fn removing_a_bucket_refunds_the_creator_not_the_admin_who_removes_it() {
+    new_test_ext().execute_with(|| {
+        let creator_free = Balances::free_balance(1);
+        let admin_free = Balances::free_balance(3);
+        let bucket_id = create_bucket(1, 0);
+        assert_ok!(StorageProvider::set_member(
+            RuntimeOrigin::signed(1),
+            bucket_id,
+            3,
+            Role::Admin
+        ));
+        assert_ok!(StorageProvider::set_member(
+            RuntimeOrigin::signed(1),
+            bucket_id,
+            1,
+            Role::Reader
+        ));
+        assert_ok!(StorageProvider::remove_member(
+            RuntimeOrigin::signed(3),
+            bucket_id,
+            1
+        ));
+
+        assert_ok!(StorageProvider::cleanup_bucket_internal(bucket_id, &3));
+
+        assert_eq!(held(HoldReason::StorageDeposit, 1), 0);
+        assert_eq!(held(HoldReason::StorageDeposit, 3), 0);
+        assert_eq!(Balances::free_balance(1), creator_free);
+        assert_eq!(Balances::free_balance(3), admin_free);
+        assert!(Buckets::<Test>::get(bucket_id).is_none());
     });
 }
 

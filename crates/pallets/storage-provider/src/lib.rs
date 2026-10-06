@@ -664,6 +664,12 @@ pub mod pallet {
         pub historical_roots: [(u32, H256); 6],
         /// Total snapshots created for this bucket.
         pub total_snapshots: u32,
+        /// The account that created the bucket and paid `deposit`. Fixed at
+        /// creation; it gets the deposit back when the bucket is removed even
+        /// if it is no longer an admin or a member by then.
+        pub creator: T::AccountId,
+        /// The storage deposit for the bucket record, held on `creator`.
+        pub deposit: TicketOf<T>,
     }
 
     /// Storage agreement between bucket and provider.

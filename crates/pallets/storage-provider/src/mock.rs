@@ -167,9 +167,10 @@ pub fn new_test_ext_with_balances(balances: Vec<(u64, u64)>) -> sp_io::TestExter
 }
 
 /// Build test externalities with custom balances and genesis providers.
-pub fn new_test_ext_with_genesis_providers(
+pub fn new_test_ext_with_genesis(
     balances: Vec<(u64, u64)>,
     providers: Vec<crate::GenesisProvider<Test>>,
+    buckets: Vec<(u64, u32)>,
 ) -> sp_io::TestExternalities {
     let mut t = frame_system::GenesisConfig::<Test>::default()
         .build_storage()
@@ -182,12 +183,9 @@ pub fn new_test_ext_with_genesis_providers(
     .assimilate_storage(&mut t)
     .unwrap();
 
-    pallet_storage_provider::GenesisConfig::<Test> {
-        buckets: vec![],
-        providers,
-    }
-    .assimilate_storage(&mut t)
-    .unwrap();
+    pallet_storage_provider::GenesisConfig::<Test> { buckets, providers }
+        .assimilate_storage(&mut t)
+        .unwrap();
 
     t.into()
 }

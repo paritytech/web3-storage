@@ -74,7 +74,10 @@ fn create_bucket_with_primary_reserves_payment() {
             storage_primitives::Visibility::Public
         ));
 
-        assert_eq!(Balances::free_balance(1), balance_before - 1000);
+        assert_eq!(
+            Balances::free_balance(1),
+            balance_before - 1000 - held(HoldReason::StorageDeposit, 1)
+        );
         let agreement = StorageAgreements::<Test>::get(0, 2).unwrap();
         assert_eq!(agreement.payment_locked, 1000);
     });
