@@ -926,7 +926,7 @@ impl ChallengeChainClient for SubxtChainClient {
     /// Backs the event-driven path: a `ChallengeCreated` event carries the
     /// challenge id but not the proof parameters, so the responder fetches
     /// the full `Challenge` value here. Returns `None` when the entry is
-    /// missing (already responded / reaped) or targets another provider.
+    /// missing (already responded / resolved) or targets another provider.
     async fn fetch_challenge(
         &self,
         deadline: u32,

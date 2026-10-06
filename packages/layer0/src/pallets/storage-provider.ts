@@ -483,6 +483,24 @@ export async function respondToChallenge(
   );
 }
 
+/**
+ * Slash the provider of a challenge that expired without a response. Anyone
+ * may call it; the challenger's deposit is refunded and the call is free on
+ * success.
+ */
+export async function resolveExpiredChallenge(
+  api: ParachainApi,
+  signer: ChainSigner,
+  challengeId: { deadline: number; index: number },
+  opts: SubmitOpts = {},
+) {
+  return submitTx(
+    api.tx.StorageProvider.resolve_expired_challenge({ challenge_id: challengeId }),
+    signer.signer,
+    { label: "resolve_expired_challenge", ...opts },
+  );
+}
+
 export async function endAgreement(
   api: ParachainApi,
   client: ChainSigner,
