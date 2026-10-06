@@ -70,6 +70,31 @@ describe("resolveCreationTerms", () => {
     expect(res.signedTerms).toEqual(SIGNED);
   });
 
+  it("reads an address-only provider's entry once for both its URL and price", async () => {
+    const { calls, fetchImpl } = jsonFetch();
+    const api = fakeApi({
+      byAddress: {
+        "5prov": {
+          settings: { accepting_primary: true, price_per_byte: 7n },
+          multiaddr: utf8("/ip4/127.0.0.1/tcp/3333"),
+        },
+      },
+    });
+    await resolveCreationTerms(api, {
+      owner: "5own",
+      maxBytes: 1024n,
+      duration: 100,
+      provider: { address: "5prov" },
+      fetchOpts: { fetchImpl: fetchImpl as never },
+    });
+    expect(calls[0].url).toBe("http://127.0.0.1:3333/negotiate");
+    expect(JSON.parse(String(calls[0].init!.body))).toMatchObject({ price_per_byte: "7" });
+    expect(
+      (api as { query: { StorageProvider: { Providers: { getValue: { mock: { calls: unknown[] } } } } } })
+        .query.StorageProvider.Providers.getValue.mock.calls,
+    ).toHaveLength(1);
+  });
+
   it("uses pre-negotiated signedTerms without an HTTP round-trip", async () => {
     const { calls, fetchImpl } = jsonFetch();
     const res = await resolveCreationTerms(fakeApi(), {

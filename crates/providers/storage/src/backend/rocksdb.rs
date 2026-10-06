@@ -20,8 +20,9 @@ use storage_primitives::{blake2_256, BucketId, MmrLeaf};
 const CF_NODES: &str = "nodes";
 const CF_BUCKETS: &str = "buckets";
 const CF_ROOT_TO_BUCKET: &str = "root_to_bucket";
-/// No longer written; still opened so existing databases, which have it, open.
-const CF_METADATA: &str = "metadata";
+/// Held the provider-allocated agreement nonce before nonces moved on chain
+/// (per-owner `AgreementNonces`). Dropped when an existing database is opened.
+const LEGACY_CF_METADATA: &str = "metadata";
 
 /// Disk-based storage backend using RocksDB.
 pub struct DiskStorage {
@@ -31,14 +32,26 @@ pub struct DiskStorage {
 impl DiskStorage {
     /// Create a new disk storage instance.
     pub fn new(path: impl AsRef<Path>) -> Result<Self, Error> {
+        let path = path.as_ref();
         let mut opts = Options::default();
         opts.create_if_missing(true);
         opts.create_missing_column_families(true);
 
-        // Define column families
-        let cf_names = vec![CF_NODES, CF_BUCKETS, CF_ROOT_TO_BUCKET, CF_METADATA];
+        // RocksDB only opens a database with every column family it has, so
+        // the legacy one is opened (then dropped) when present. A missing
+        // database lists nothing.
+        let has_legacy = DB::list_cf(&opts, path)
+            .map(|names| names.iter().any(|name| name == LEGACY_CF_METADATA))
+            .unwrap_or(false);
+        let mut cf_names = vec![CF_NODES, CF_BUCKETS, CF_ROOT_TO_BUCKET];
+        if has_legacy {
+            cf_names.push(LEGACY_CF_METADATA);
+        }
 
-        let db = DB::open_cf(&opts, path, &cf_names)?;
+        let mut db = DB::open_cf(&opts, path, &cf_names)?;
+        if has_legacy {
+            db.drop_cf(LEGACY_CF_METADATA)?;
+        }
 
         Ok(Self { db: Arc::new(db) })
     }
@@ -512,8 +525,8 @@ mod tests {
     fn on_disk_bytes() {
         // Raw keys and values as written through the public API.
         assert_eq!(
-            [CF_NODES, CF_BUCKETS, CF_ROOT_TO_BUCKET, CF_METADATA],
-            ["nodes", "buckets", "root_to_bucket", "metadata"],
+            [CF_NODES, CF_BUCKETS, CF_ROOT_TO_BUCKET],
+            ["nodes", "buckets", "root_to_bucket"],
             "column-family names locate every record on disk",
         );
 
@@ -547,16 +560,40 @@ mod tests {
         let cf = storage.db.cf_handle(CF_NODES).unwrap();
         let raw = storage.db.get_cf(&cf, hash.as_bytes()).unwrap().unwrap();
         assert_eq!(hex::encode(&raw), "14010203040500");
+    }
 
-        let cf = storage.db.cf_handle(CF_METADATA).unwrap();
-        assert!(
-            storage
-                .db
-                .iterator_cf(&cf, rocksdb::IteratorMode::Start)
-                .next()
-                .is_none(),
-            "metadata column family must be empty"
-        );
+    /// A database written before nonces moved on chain still opens, keeps
+    /// its records, and loses the legacy `metadata` column family.
+    #[test]
+    fn opening_drops_legacy_metadata_column_family() {
+        let dir = TempDir::new().unwrap();
+        {
+            let mut opts = Options::default();
+            opts.create_if_missing(true);
+            opts.create_missing_column_families(true);
+            let db = DB::open_cf(
+                &opts,
+                dir.path(),
+                [CF_NODES, CF_BUCKETS, CF_ROOT_TO_BUCKET, LEGACY_CF_METADATA],
+            )
+            .unwrap();
+            let cf = db.cf_handle(LEGACY_CF_METADATA).unwrap();
+            db.put_cf(&cf, b"nonce_counter", 7u64.to_le_bytes())
+                .unwrap();
+            let cf = db.cf_handle(CF_BUCKETS).unwrap();
+            db.put_cf(&cf, 1u64.to_le_bytes(), BucketState::new(1_000).encode())
+                .unwrap();
+        }
+
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        assert!(storage.db.cf_handle(LEGACY_CF_METADATA).is_none());
+        assert!(storage.get_bucket(1).is_some());
+        drop(storage);
+
+        let names = DB::list_cf(&Options::default(), dir.path()).unwrap();
+        assert!(!names.iter().any(|name| name == LEGACY_CF_METADATA));
+        // Reopening a migrated database is a no-op.
+        DiskStorage::new(dir.path()).unwrap();
     }
 
     #[test]

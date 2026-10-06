@@ -264,26 +264,10 @@ impl ChainStateChainClient for RealChainStateClient {
 
 // ── provider lifecycle events ─────────────────────────────────────────────────
 
-/// Minimal decoded view of a `StorageProvider` provider-lifecycle event.
-///
-/// The coordinator re-fetches the full provider state on any relevant event,
-/// so only the affected provider account needs decoding.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ProviderLifecycleEvent {
-    /// The provider account the event concerns.
-    pub provider: AccountId32,
-}
-
-impl ProviderLifecycleEvent {
-    /// The provider account the event concerns.
-    pub fn provider(&self) -> &AccountId32 {
-        &self.provider
-    }
-}
-
-/// Names of the `StorageProvider` events that affect [`ProviderLifecycleEvent`].
-/// Every one of these carries a named `provider` field decodable as
-/// [`LifecycleProvider`].
+/// Names of the `StorageProvider` provider-lifecycle events: settings,
+/// multiaddr and (de)registration, all of which change state `/negotiate`
+/// depends on. Every one of these carries a named `provider` field decodable
+/// as [`LifecycleProvider`].
 const LIFECYCLE_EVENT_NAMES: &[&str] = &[
     "ProviderDeregistered",
     "ProviderRegistered",
@@ -306,10 +290,12 @@ struct LifecycleProvider {
     provider: subxt::utils::AccountId32,
 }
 
-/// Decode a finalized block's events down to the provider-lifecycle events.
+/// Decode a finalized block's events down to the provider accounts of its
+/// provider-lifecycle events. The coordinator re-fetches the full provider
+/// state on any event for its own account, so only the account is decoded.
 fn parse_provider_lifecycle_events(
     events: &subxt::events::Events<PolkadotConfig>,
-) -> Vec<ProviderLifecycleEvent> {
+) -> Vec<AccountId32> {
     events
         .iter()
         .filter_map(|event| event.ok())
@@ -318,8 +304,7 @@ fn parse_provider_lifecycle_events(
             if !LIFECYCLE_EVENT_NAMES.contains(&event.event_name()) {
                 return None;
             }
-            let provider = decode_provider(&event)?;
-            Some(ProviderLifecycleEvent { provider })
+            decode_provider(&event)
         })
         .collect()
 }
@@ -563,11 +548,11 @@ impl ChainStateCoordinator {
         Ok(())
     }
 
-    /// Refresh state if any of `parsed` is a relevant provider event.
+    /// Refresh state if any of `parsed` names this provider.
     async fn process_provider_events(
         &self,
         chain: &dyn ChainStateChainClient,
-        parsed: &[ProviderLifecycleEvent],
+        parsed: &[AccountId32],
         block_number: u32,
     ) {
         refresh_if_relevant_event(
@@ -623,39 +608,24 @@ pub async fn refresh_provider_state(
     }
 }
 
-/// Refresh provider state iff at least one of `events` is relevant to
-/// `provider_account`. Collapsing multiple events in one block to a single
-/// refresh is correct: [`refresh_provider_state`] always reads the latest chain
-/// state, so no intermediate event is "missed".
+/// Refresh provider state iff `provider_account` is among the providers of a
+/// block's lifecycle events (see [`parse_provider_lifecycle_events`]).
+/// Collapsing multiple events in one block to a single refresh is correct:
+/// [`refresh_provider_state`] always reads the latest chain state, so no
+/// intermediate event is "missed".
 pub async fn refresh_if_relevant_event(
     chain: &dyn ChainStateChainClient,
     chain_state: &ChainState,
     provider_account: &AccountId32,
-    events: &[ProviderLifecycleEvent],
+    event_providers: &[AccountId32],
     block_number: u32,
 ) {
-    let relevant = events
-        .iter()
-        .any(|e| is_relevant_provider_event(e, provider_account));
-
-    if relevant {
+    if event_providers.contains(provider_account) {
         tracing::debug!(
             "chain-state coordinator: provider event in block {block_number}, refreshing state"
         );
         refresh_provider_state(chain, chain_state, provider_account).await;
     }
-}
-
-/// Whether `event` is a provider lifecycle event for `provider_account` — i.e. one
-/// that should trigger a [`refresh_provider_state`]. Settings, multiaddr, and the
-/// (de)registration events all change state `/negotiate` depends on; everything
-/// else (checkpoints, challenges, agreements, other providers) is filtered out
-/// at parse time already.
-pub fn is_relevant_provider_event(
-    event: &ProviderLifecycleEvent,
-    provider_account: &AccountId32,
-) -> bool {
-    event.provider() == provider_account
 }
 
 // ── ChainStateCoordinatorHandle ───────────────────────────────────────────────
@@ -763,18 +733,6 @@ mod tests {
             request_timeout: 100,
         });
         assert_eq!(cs.constants.read().as_ref().unwrap().request_timeout, 100);
-    }
-
-    #[test]
-    fn lifecycle_event_relevance_matches_on_provider() {
-        let me = AccountId32::new([1u8; 32]);
-        let other = AccountId32::new([2u8; 32]);
-        let mine = ProviderLifecycleEvent {
-            provider: me.clone(),
-        };
-        let theirs = ProviderLifecycleEvent { provider: other };
-        assert!(is_relevant_provider_event(&mine, &me));
-        assert!(!is_relevant_provider_event(&theirs, &me));
     }
 
     // ── real subxt client over a mock RPC connection ──────────────────────
@@ -1357,12 +1315,7 @@ mod tests {
 
             assert_eq!(
                 parse_provider_lifecycle_events(&events),
-                vec![
-                    ProviderLifecycleEvent {
-                        provider: account.clone()
-                    },
-                    ProviderLifecycleEvent { provider: account },
-                ]
+                vec![account.clone(), account]
             );
         }
 

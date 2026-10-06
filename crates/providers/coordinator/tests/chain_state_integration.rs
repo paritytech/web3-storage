@@ -12,9 +12,8 @@
 //!    not-registered, and each chain-error path — and we assert the resulting
 //!    [`ChainState`].
 //!
-//! 2. **Event relevance.** [`is_relevant_provider_event`] decides which block
-//!    events trigger a refresh; tested across the provider lifecycle variants
-//!    and wrong-account events.
+//! 2. **Event relevance.** [`refresh_if_relevant_event`] refreshes only when a
+//!    block's lifecycle events name the provider's own account.
 //!
 //! 3. **Resilience.** [`ChainStateCoordinator::start`] drives a reconnect loop.
 //!    Pointed at an unreachable chain it must stay up, never panic, leave
@@ -29,9 +28,8 @@
 use async_trait::async_trait;
 use provider_chain::chain_connection::{ChainHandle, ChainTransport};
 use provider_coordinator::{
-    is_relevant_provider_event, refresh_if_relevant_event, refresh_provider_state, sync_constants,
-    ChainState, ChainStateChainClient, ChainStateCoordinator, Error, PalletConstants,
-    ProviderLifecycleEvent,
+    refresh_if_relevant_event, refresh_provider_state, sync_constants, ChainState,
+    ChainStateChainClient, ChainStateCoordinator, Error, PalletConstants,
 };
 use provider_types::{ProviderInfo, ProviderSettings, ProviderStats};
 use sp_runtime::AccountId32;
@@ -294,43 +292,7 @@ async fn refresh_leaves_existing_state_untouched_on_get_info_error() {
     assert!(cs.provider_info.read().is_some());
 }
 
-// ── is_relevant_provider_event ────────────────────────────────────────────────
-
-/// All provider-lifecycle events for the coordinator's own account trigger a refresh.
-#[test]
-fn lifecycle_events_for_self_are_relevant() {
-    let me = provider_account();
-    let events = [
-        ProviderLifecycleEvent {
-            provider: me.clone(),
-        },
-        ProviderLifecycleEvent {
-            provider: me.clone(),
-        },
-    ];
-
-    for event in &events {
-        assert!(
-            is_relevant_provider_event(event, &me),
-            "{event:?} should be relevant for the provider's own account"
-        );
-    }
-}
-
-#[test]
-fn lifecycle_event_for_other_provider_is_irrelevant() {
-    let event = ProviderLifecycleEvent {
-        provider: provider_account_2(),
-    };
-    // Same event shape, different account → not ours, ignore it.
-    assert!(!is_relevant_provider_event(&event, &provider_account()));
-}
-
 // ── refresh_if_relevant_event (block-event dispatch) ──────────────────────────
-
-fn registered_event(provider: AccountId32) -> ProviderLifecycleEvent {
-    ProviderLifecycleEvent { provider }
-}
 
 #[tokio::test]
 async fn relevant_block_event_triggers_a_refresh() {
@@ -341,8 +303,8 @@ async fn relevant_block_event_triggers_a_refresh() {
         ..Default::default()
     };
     let events = [
-        registered_event(provider_account_2()), // someone else — ignored
-        registered_event(provider_account()),   // us — triggers the refresh
+        provider_account_2(), // someone else — ignored
+        provider_account(),   // us — triggers the refresh
     ];
 
     refresh_if_relevant_event(&chain, &cs, &provider_account(), &events, 1).await;
@@ -359,12 +321,7 @@ async fn irrelevant_block_events_do_not_refresh() {
         info: Some(sample_provider_info()),
         ..Default::default()
     };
-    let events = [
-        registered_event(provider_account_2()),
-        ProviderLifecycleEvent {
-            provider: provider_account_2(),
-        },
-    ];
+    let events = [provider_account_2()];
 
     refresh_if_relevant_event(&chain, &cs, &provider_account(), &events, 1).await;
 

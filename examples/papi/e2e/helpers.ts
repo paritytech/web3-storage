@@ -223,13 +223,13 @@ export async function negotiateSigned(
   provider: ChainSigner,
   { maxBytes, duration, bucketId = null, replicaParams = null, pricePerByte = null }: NegotiateOpts,
 ): Promise<SignedTerms> {
-  const noncePromise = getAgreementNonce(api, owner.address);
-  let price = pricePerByte;
-  if (price == null) {
-    const info = await api.query.StorageProvider.Providers.getValue(provider.address, READ_OPTS);
-    price = info?.settings?.price_per_byte ?? 1n;
-  }
-  const nonce = await noncePromise;
+  const [nonce, price] = await Promise.all([
+    getAgreementNonce(api, owner.address),
+    pricePerByte ??
+      api.query.StorageProvider.Providers.getValue(provider.address, READ_OPTS).then(
+        (info) => info?.settings?.price_per_byte ?? 1n,
+      ),
+  ]);
   return negotiateTerms(providerUrl, {
     owner: owner.address,
     max_bytes: maxBytes,
