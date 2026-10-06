@@ -11,12 +11,14 @@ fn provider_stake_is_held_under_its_own_reason() {
         register_provider(2, 200);
 
         assert_eq!(held(HoldReason::ProviderStake, 2), 200);
-        // Tagged, so it is not confusable with the other two claims.
+        // Tagged, so it is not confusable with the other claims.
         assert_eq!(held(HoldReason::AgreementPayment, 2), 0);
         assert_eq!(held(HoldReason::ChallengeDeposit, 2), 0);
-        // …and it still shows up in the aggregate reserved figure, so nothing
-        // that reads `reserved_balance` (explorers, other pallets) regresses.
-        assert_eq!(Balances::reserved_balance(2), 200);
+        assert_eq!(held(HoldReason::StorageDeposit, 2), 10);
+        // …and the claims still add up to the aggregate reserved figure, so
+        // nothing that reads `reserved_balance` (explorers, other pallets)
+        // regresses.
+        assert_eq!(Balances::reserved_balance(2), 210);
     });
 }
 
@@ -39,7 +41,7 @@ fn the_three_claims_coexist_on_one_account() {
         );
         assert_eq!(
             Balances::reserved_balance(2),
-            200 + agreement.payment_locked
+            200 + agreement.payment_locked + held(HoldReason::StorageDeposit, 2)
         );
     });
 }

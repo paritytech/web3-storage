@@ -45,8 +45,9 @@ fn genesis_provider_is_registered_with_settings_and_reserved_stake() {
             assert!(provider.settings.accepting_extensions);
             assert_eq!(provider.settings.max_capacity, 100);
 
-            assert_eq!(Balances::reserved_balance(1), 200);
-            assert_eq!(Balances::free_balance(1), 9_800);
+            // Stake plus the storage deposit for the provider record.
+            assert_eq!(Balances::reserved_balance(1), 210);
+            assert_eq!(Balances::free_balance(1), 9_790);
         });
 }
 

@@ -397,8 +397,8 @@ pub mod pallet {
     )]
     #[serde(bound(serialize = "", deserialize = ""), rename_all = "camelCase")]
     pub struct GenesisProvider<T: Config> {
-        /// Provider account; must be endowed with at least `stake` plus the
-        /// existential deposit by the balances genesis.
+        /// Provider account; must be endowed with at least `stake`, the
+        /// storage deposit and the existential deposit by the balances genesis.
         pub account: T::AccountId,
         /// Multiaddr for connecting to this provider, hex-encoded in JSON
         /// ("0x..."); must fit `T::MaxMultiaddrLength`.
@@ -487,6 +487,10 @@ pub mod pallet {
         /// provider is still on-chain and still slashable for any pending
         /// challenge — they only get their stake back after the window.
         pub deregister_at: Option<BlockNumberFor<T>>,
+        /// Storage deposit for this record: held on the provider at
+        /// registration, separate from the stake, released by
+        /// `complete_deregister`.
+        pub deposit: TicketOf<T>,
     }
 
     /// Provider settings controlling pricing and availability.
@@ -1443,6 +1447,7 @@ pub mod pallet {
                 Error::<T>::ProviderHasPendingChallenges
             );
 
+            provider.deposit.drop(&who)?;
             Self::release_stake(&who, provider.stake)?;
             Providers::<T>::remove(&who);
             ProviderReplayStates::<T>::remove(&who);

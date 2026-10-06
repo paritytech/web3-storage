@@ -2,6 +2,7 @@
 
 use crate::*;
 use frame_support::pallet_prelude::*;
+use frame_support::traits::Consideration;
 use sp_runtime::traits::CheckedMul;
 use storage_primitives::ReplayWindow;
 
@@ -100,6 +101,7 @@ impl<T: Config> Pallet<T> {
                 ..Default::default()
             },
             deregister_at: None,
+            deposit: T::StorageDeposit::new(who, Self::provider_footprint())?,
         };
 
         Providers::<T>::insert(who, provider_info);
