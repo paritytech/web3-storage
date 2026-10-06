@@ -310,7 +310,10 @@ impl FinalizedBlocks for SubxtFinalizedBlocks {
                 tracing::warn!(
                     "chain-state coordinator: failed to get block handle for {number}: {e}"
                 );
-                return Some(BlockUpdate::Unreadable { number });
+                return Some(BlockUpdate::Unreadable {
+                    number,
+                    anchor_block: None,
+                });
             }
         };
 
@@ -335,7 +338,10 @@ impl FinalizedBlocks for SubxtFinalizedBlocks {
                 tracing::warn!(
                     "chain-state coordinator: failed to fetch events for block {number}: {e}"
                 );
-                return Some(BlockUpdate::Unreadable { number });
+                return Some(BlockUpdate::Unreadable {
+                    number,
+                    anchor_block,
+                });
             }
         };
 
@@ -991,7 +997,7 @@ mod tests {
             .expect("the mock serves exactly one finalized block");
         let block = match update {
             BlockUpdate::Block(block) => block,
-            BlockUpdate::Unreadable { number } => {
+            BlockUpdate::Unreadable { number, .. } => {
                 panic!("block {number} should have decoded")
             }
         };

@@ -17,9 +17,9 @@
 //!    and wrong-account events.
 //!
 //! 3. **Resilience.** [`ChainStateCoordinator::start`] drives a reconnect loop.
-//!    Pointed at an unreachable chain it must stay up, never panic, leave
-//!    [`ChainState`] at its defaults (so `/negotiate` keeps returning 503), and
-//!    shut down cleanly when stopped.
+//!    With a [`ChainFollower`] whose `connect()` always fails, it must stay
+//!    up, never panic, leave [`ChainState`] at its defaults (so `/negotiate`
+//!    keeps returning 503), and shut down cleanly when stopped.
 //!
 //! Membership invalidation is covered separately, in
 //! `tests/coordinators/membership.rs`: the coordinator only broadcasts

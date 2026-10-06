@@ -22,7 +22,7 @@
 //! [`BlockEvent::BucketMembershipChanged`], so the membership cache can drop
 //! stale authorization on its own rather than being told to.
 
-pub mod chain;
+mod chain;
 
 pub use chain::{
     BlockUpdate, ChainConnection, ChainFollower, ChainStateChainClient, FinalizedBlock,
@@ -262,6 +262,8 @@ pub struct ChainStateCoordinator {
 }
 
 impl ChainStateCoordinator {
+    /// Coordinator for `provider_account` that writes `chain_state` and sends
+    /// decoded block events on `events_tx`. Call [`Self::start`] to run it.
     pub fn new(
         follower: Arc<dyn ChainFollower>,
         provider_account: AccountId32,
@@ -313,11 +315,12 @@ impl ChainStateCoordinator {
     /// fails; `Ok(())` if the stream terminates — either way the caller reconnects.
     async fn connect_and_follow(&self) -> Result<(), Error> {
         /// Budget for building a cold connection and subscribing to its
-        /// finalized blocks. On the light transport, `connect` awaits smoldot's
-        /// peer discovery and warp sync with no timeout of its own, so a wedged light client would otherwise hang
-        /// here forever — with the previous (dead) handle still published to
-        /// consumers — and the reconnect loop could never rebuild it. Generous
-        /// because killing a slow warp sync throws its progress away.
+        /// finalized blocks. On the light transport, `connect` awaits
+        /// smoldot's peer discovery and warp sync with no timeout of its own,
+        /// so a wedged light client would otherwise hang here forever — with
+        /// the previous (dead) handle still published to consumers — and the
+        /// reconnect loop could never rebuild it. Generous because killing a
+        /// slow warp sync throws its progress away.
         const CONNECT_TIMEOUT: Duration = Duration::from_secs(300);
 
         let connection = with_timeout(
@@ -385,20 +388,20 @@ impl ChainStateCoordinator {
                     break;
                 }
             };
-            let block = match update {
-                BlockUpdate::Block(block) => block,
-                BlockUpdate::Unreadable { number } => {
-                    escalate_block_read_failure(&self.events_tx, number);
-                    continue;
-                }
-            };
-
             // A failed anchor read keeps the previous value.
-            if let Some(anchor_block) = block.anchor_block {
+            if let Some(anchor_block) = update.anchor_block() {
                 self.chain_state
                     .current_anchor_block
                     .store(anchor_block, std::sync::atomic::Ordering::Relaxed);
             }
+
+            let block = match update {
+                BlockUpdate::Block(block) => block,
+                BlockUpdate::Unreadable { number, .. } => {
+                    escalate_block_read_failure(&self.events_tx, number);
+                    continue;
+                }
+            };
 
             // Fan out the coordinator-relevant events. Send failures just mean
             // no coordinator is subscribed.
@@ -991,7 +994,10 @@ mod tests {
             request_timeout: None,
         };
         let blocks = MockFinalizedBlocks::new(vec![
-            BlockUpdate::Unreadable { number: 10 },
+            BlockUpdate::Unreadable {
+                number: 10,
+                anchor_block: None,
+            },
             BlockUpdate::Block(FinalizedBlock {
                 number: 11,
                 anchor_block: Some(11),
@@ -1027,6 +1033,39 @@ mod tests {
         assert!(
             saw_scope_unknown,
             "an unreadable block must escalate MembershipScopeUnknown"
+        );
+    }
+
+    #[tokio::test]
+    async fn follow_stores_the_anchor_block_of_an_unreadable_block() {
+        let chain = MockChainClient {
+            provider_info: None,
+            replay_hsn: None,
+            request_timeout: None,
+        };
+        let blocks = MockFinalizedBlocks::new(vec![BlockUpdate::Unreadable {
+            number: 10,
+            anchor_block: Some(100),
+        }]);
+        let connection = mock_connection(chain, blocks);
+
+        let (chain_state, _dir) = test_chain_state();
+        let chain_state = Arc::new(chain_state);
+        let (events_tx, _events_rx) = tokio::sync::broadcast::channel(16);
+        let coordinator = coordinator_over(
+            Arc::new(NeverConnectFollower),
+            chain_state.clone(),
+            events_tx,
+        );
+
+        coordinator
+            .follow(connection)
+            .await
+            .expect("follow runs to stream end");
+
+        assert_eq!(
+            chain_state.current_anchor_block.load(Ordering::Relaxed),
+            100
         );
     }
 

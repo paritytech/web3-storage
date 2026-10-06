@@ -54,11 +54,29 @@ pub enum BlockUpdate {
     /// The block was read.
     Block(FinalizedBlock),
     /// The block's handle or events could not be read.
-    Unreadable { number: u32 },
+    Unreadable {
+        /// Block number.
+        number: u32,
+        /// The pallet's anchor block at this block, or `None` if it was not
+        /// read or the read failed.
+        anchor_block: Option<u32>,
+    },
+}
+
+impl BlockUpdate {
+    /// The pallet's anchor block at this block, or `None` if it was not read
+    /// or the read failed.
+    pub fn anchor_block(&self) -> Option<u32> {
+        match self {
+            Self::Block(block) => block.anchor_block,
+            Self::Unreadable { anchor_block, .. } => *anchor_block,
+        }
+    }
 }
 
 /// A finalized block with its events already decoded.
 pub struct FinalizedBlock {
+    /// Block number.
     pub number: u32,
     /// The pallet's anchor block at this block, or `None` if the read failed.
     pub anchor_block: Option<u32>,
