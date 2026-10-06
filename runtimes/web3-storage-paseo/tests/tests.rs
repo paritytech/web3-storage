@@ -49,7 +49,6 @@ fn advance_block() {
     frame_system::BlockSize::<Runtime>::kill();
 
     <System as Hooks<_>>::on_initialize(next);
-    <StorageProvider as Hooks<_>>::on_initialize(next);
 }
 
 fn construct_extrinsic(
