@@ -71,12 +71,12 @@ async fn test_find_challenge_targets() {
     for t in &targets {
         assert!(!t.provider.is_empty(), "provider field should not be empty");
         assert!(
-            (0.0..=1.0).contains(&t.success_probability),
-            "success_probability out of [0,1] range"
+            (0.0..=1.0).contains(&t.failure_probability),
+            "failure_probability out of [0,1] range"
         );
         println!(
-            "  provider={} bucket={} expected_value={}",
-            t.provider, t.bucket_id, t.expected_value
+            "  provider={} bucket={} stake={} failure_probability={}",
+            t.provider, t.bucket_id, t.stake, t.failure_probability
         );
     }
 }
@@ -151,10 +151,10 @@ async fn test_analyze_provider() {
     );
 }
 
-/// `check_and_claim_reward` always returns `None` — rewards are auto-distributed
-/// by `on_finalize`; there is no manual claim extrinsic.
+/// A challenge id that was never created is reported as settled: nothing is
+/// stored under it, so there is nothing left to answer or resolve.
 #[tokio::test]
-async fn test_check_and_claim_reward_returns_none() {
+async fn test_unknown_challenge_is_settled() {
     use storage_client::challenger::ChallengeId;
 
     let _guard = chain_guard().await;
@@ -162,7 +162,7 @@ async fn test_check_and_claim_reward_returns_none() {
     let challenger = match alice_challenger().await {
         Some(c) => c,
         None => {
-            eprintln!("Chain not reachable — skipping test_check_and_claim_reward_returns_none");
+            eprintln!("Chain not reachable — skipping test_unknown_challenge_is_settled");
             return;
         }
     };
@@ -172,13 +172,13 @@ async fn test_check_and_claim_reward_returns_none() {
         index: 0,
     };
 
-    let reward = challenger
-        .check_and_claim_reward(fake_id)
+    let settled = challenger
+        .is_challenge_settled(fake_id)
         .await
-        .expect("check_and_claim_reward should not error");
+        .expect("is_challenge_settled should not error");
 
     assert!(
-        reward.is_none(),
-        "reward should be None (rewards are auto-distributed by on_finalize)"
+        settled,
+        "an unknown challenge id has nothing left to settle"
     );
 }
