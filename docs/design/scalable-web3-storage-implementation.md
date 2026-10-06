@@ -2579,7 +2579,7 @@ pub struct MmrProof {
        whole slash to the Treasury (slash_provider_for_failed_challenge). No
        tx fee is reimbursed, and nothing is paid "from the slash". The
        Challenge struct comment above and the ChallengeSlashed event
-       (challenger_reward always 0) already describe the `dev` behaviour.
+       already describe the `dev` behaviour.
        Same claim in scalable-web3-storage.md, Resolution list and the
        paragraph after the cost-split table.
        Proposal: keep code; reword to "deposit refunded in full, slash goes

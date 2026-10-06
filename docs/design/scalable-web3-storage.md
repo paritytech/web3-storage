@@ -615,8 +615,8 @@ below):
    - Challenger can cancel anytime before the response (deposit returned, pays
      only the cancel tx fee)
      DRIFT-022: no cancel_challenge call exists on `dev`. Once created, a
-     challenge resolves only by respond_to_challenge or by the deadline sweep
-     slashing the provider; the challenger cannot withdraw it and the deposit
+     challenge resolves only by respond_to_challenge or by
+     resolve_expired_challenge slashing the provider; the challenger cannot withdraw it and the deposit
      stays held until then. Also referenced in the Resolution list below, in
      point 3 of the cost-model rationale, and in the ProviderStats sketch in
      scalable-web3-storage-implementation.md ("cancelled challenges are not
