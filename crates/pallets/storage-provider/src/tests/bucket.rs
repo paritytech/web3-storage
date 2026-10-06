@@ -183,6 +183,101 @@ fn removing_a_bucket_refunds_the_creator_not_the_admin_who_removes_it() {
     });
 }
 
+/// Deleting a bucket is how its deposits come back: the record and every
+/// member entry are removed together, and each deposit returns to whoever
+/// paid it, whichever admin performs the deletion.
+#[test]
+fn delete_bucket_refunds_the_creator_and_every_member_depositor() {
+    new_test_ext().execute_with(|| {
+        System::set_block_number(1);
+        let creator_free = Balances::free_balance(1);
+        let bucket_id = create_bucket(1, 0);
+        assert_ok!(StorageProvider::set_member(
+            RuntimeOrigin::signed(1),
+            bucket_id,
+            3,
+            Role::Admin
+        ));
+        let other_admin_free = Balances::free_balance(3);
+        assert_ok!(StorageProvider::set_member(
+            RuntimeOrigin::signed(3),
+            bucket_id,
+            2,
+            Role::Reader
+        ));
+        assert_eq!(held(HoldReason::StorageDeposit, 1), 30);
+        assert_eq!(held(HoldReason::StorageDeposit, 3), 10);
+
+        assert_ok!(StorageProvider::delete_bucket(
+            RuntimeOrigin::signed(3),
+            bucket_id
+        ));
+
+        assert!(Buckets::<Test>::get(bucket_id).is_none());
+        assert_eq!(held(HoldReason::StorageDeposit, 1), 0);
+        assert_eq!(held(HoldReason::StorageDeposit, 3), 0);
+        assert_eq!(Balances::free_balance(1), creator_free);
+        assert_eq!(Balances::free_balance(3), other_admin_free);
+        for account in [1, 2, 3] {
+            assert!(!MemberBuckets::<Test>::contains_key(account));
+        }
+        System::assert_last_event(Event::<Test>::BucketDeleted { bucket_id }.into());
+        assert_ok!(StorageProvider::do_try_state());
+    });
+}
+
+/// Deleting is an admin power like the other bucket mutations; a writer must
+/// not be able to erase the bucket and trigger the refunds.
+#[test]
+fn delete_bucket_requires_an_admin() {
+    new_test_ext().execute_with(|| {
+        let bucket_id = create_bucket(1, 0);
+        assert_ok!(StorageProvider::set_member(
+            RuntimeOrigin::signed(1),
+            bucket_id,
+            2,
+            Role::Writer
+        ));
+
+        assert_noop!(
+            StorageProvider::delete_bucket(RuntimeOrigin::signed(2), bucket_id),
+            Error::<Test>::NotBucketAdmin
+        );
+        assert_noop!(
+            StorageProvider::delete_bucket(RuntimeOrigin::signed(1), 99),
+            Error::<Test>::BucketNotFound
+        );
+    });
+}
+
+/// An agreement holds the owner's escrow and the provider's obligations;
+/// deleting the bucket under it would strand both, so settlement comes first.
+#[test]
+fn delete_bucket_rejects_a_bucket_with_an_agreement() {
+    new_test_ext().execute_with(|| {
+        register_provider(2, 200);
+        let bucket_id = setup_agreement(2, 1, 50, 100);
+
+        assert_noop!(
+            StorageProvider::delete_bucket(RuntimeOrigin::signed(1), bucket_id),
+            Error::<Test>::BucketNotEmpty
+        );
+
+        run_to_block(101);
+        assert_ok!(StorageProvider::end_agreement(
+            RuntimeOrigin::signed(1),
+            bucket_id,
+            2,
+            storage_primitives::EndAction::Pay,
+        ));
+        assert_ok!(StorageProvider::delete_bucket(
+            RuntimeOrigin::signed(1),
+            bucket_id
+        ));
+        assert_eq!(held(HoldReason::StorageDeposit, 1), 0);
+    });
+}
+
 #[test]
 fn create_multiple_buckets_increments_id() {
     new_test_ext().execute_with(|| {

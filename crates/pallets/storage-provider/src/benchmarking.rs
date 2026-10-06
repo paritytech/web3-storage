@@ -531,6 +531,29 @@ mod benchmarks {
         create_bucket(RawOrigin::Signed(admin), 1, Visibility::Private);
     }
 
+    /// Worst case: a bucket with `MaxMembers` members, each with a deposit
+    /// to release and a reverse-index entry to clear.
+    #[benchmark]
+    fn delete_bucket(m: Linear<1, { T::MaxMembers::get() }>) {
+        let admin = funded_account::<T>("admin", 0);
+        let bucket_id = setup_bucket::<T>(&admin);
+        for i in 1..m {
+            let member = funded_account::<T>("member", i);
+            Pallet::<T>::set_member_internal(
+                &admin,
+                bucket_id,
+                member,
+                storage_primitives::Role::Reader,
+            )
+            .expect("benchmark admin cannot add a member");
+        }
+
+        #[extrinsic_call]
+        delete_bucket(RawOrigin::Signed(admin), bucket_id);
+
+        assert!(Buckets::<T>::get(bucket_id).is_none());
+    }
+
     /// Worst case: full signature verification + replay-window mutation +
     /// bucket creation + agreement insertion.
     #[benchmark]

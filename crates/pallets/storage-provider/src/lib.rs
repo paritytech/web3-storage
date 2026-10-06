@@ -876,7 +876,8 @@ pub mod pallet {
             /// Start sequence of the snapshot the bucket was frozen at.
             frozen_start_seq: u64,
         },
-        /// A bucket and its agreements were torn down.
+        /// A bucket was removed, by `delete_bucket` or together with its
+        /// agreements when its drive was deleted.
         BucketDeleted {
             /// The removed bucket.
             bucket_id: BucketId,
@@ -1310,6 +1311,9 @@ pub mod pallet {
         /// Resolve it with `respond_to_challenge` or
         /// `resolve_expired_challenge`, then retry.
         BucketHasPendingChallenge,
+        /// The bucket still has a storage agreement. End or claim every
+        /// agreement before deleting the bucket.
+        BucketNotEmpty,
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -1654,6 +1658,35 @@ pub mod pallet {
             let who = ensure_signed(origin)?;
             Self::create_bucket_internal(&who, min_providers, None, visibility)?;
             Ok(())
+        }
+
+        /// Admin only. Delete a bucket that has no agreements and no open
+        /// challenges. Releases the bucket's storage deposit to its creator
+        /// and every member deposit to the admin that added the member, and
+        /// removes the bucket from each member's reverse index.
+        ///
+        /// Errors: `BucketNotEmpty` while an agreement exists (end it
+        /// first); `BucketHasPendingChallenge` while a challenge against a
+        /// provider on the bucket is open.
+        #[pallet::call_index(19)]
+        #[pallet::weight(T::WeightInfo::delete_bucket(T::MaxMembers::get()))]
+        pub fn delete_bucket(
+            origin: OriginFor<T>,
+            bucket_id: BucketId,
+        ) -> DispatchResultWithPostInfo {
+            let who = ensure_signed(origin)?;
+            let bucket = Buckets::<T>::get(bucket_id).ok_or(Error::<T>::BucketNotFound)?;
+            Self::ensure_admin(&who, &bucket)?;
+            ensure!(
+                StorageAgreements::<T>::iter_key_prefix(bucket_id)
+                    .next()
+                    .is_none(),
+                Error::<T>::BucketNotEmpty
+            );
+            Self::ensure_no_pending_challenge(bucket_id)?;
+            let member_count = bucket.members.len() as u32;
+            Self::remove_bucket_internal(bucket_id, bucket)?;
+            Ok(Some(T::WeightInfo::delete_bucket(member_count)).into())
         }
 
         /// Redeem provider-signed primary terms. Equivalent to

@@ -280,6 +280,22 @@ impl<T: frame_system::Config> pallet_storage_provider::WeightInfo for WeightInfo
 			.saturating_add(T::DbWeight::get().reads(2))
 			.saturating_add(T::DbWeight::get().writes(3))
 	}
+	// TODO: needs re-benchmarking
+	/// Storage: `StorageProvider::Buckets` (r:1 w:1)
+	/// Storage: `StorageProvider::StorageAgreements` (r:1 w:0)
+	/// Storage: `StorageProvider::PendingChallengesByBucket` (r:1 w:0)
+	/// Storage: `StorageProvider::MemberBuckets` (r:1 w:1) per member
+	/// Storage: `Balances::Holds` (r:1 w:1) per member and for the creator
+	/// The range of component `m` is `[1, 100]`.
+	fn delete_bucket(m: u32, ) -> Weight {
+		Weight::from_parts(30_000_000, 0)
+			.saturating_add(Weight::from_parts(0, 11515))
+			.saturating_add(Weight::from_parts(10_000_000, 0).saturating_mul(m.into()))
+			.saturating_add(T::DbWeight::get().reads(4))
+			.saturating_add(T::DbWeight::get().reads((2_u64).saturating_mul(m.into())))
+			.saturating_add(T::DbWeight::get().writes(2))
+			.saturating_add(T::DbWeight::get().writes((2_u64).saturating_mul(m.into())))
+	}
 	/// Storage: `ParachainSystem::ValidationData` (r:1 w:0)
 	/// Proof: `ParachainSystem::ValidationData` (`max_values`: Some(1), `max_size`: None, mode: `Measured`)
 	/// Storage: `ParachainSystem::LastRelayChainBlockNumber` (r:1 w:0)

@@ -2521,6 +2521,10 @@ mod challenge_tests {
                 StorageProvider::cleanup_bucket_internal(0, &1),
                 Error::<Test>::BucketHasPendingChallenge
             );
+            assert_noop!(
+                StorageProvider::delete_bucket(RuntimeOrigin::signed(1), 0),
+                Error::<Test>::BucketHasPendingChallenge
+            );
 
             System::set_block_number(102);
             assert_ok!(StorageProvider::resolve_expired_challenge(
@@ -2528,7 +2532,7 @@ mod challenge_tests {
                 id
             ));
             assert!(!PendingChallengesByBucket::<Test>::contains_key(0, 2));
-            assert_ok!(StorageProvider::cleanup_bucket_internal(0, &1));
+            assert_ok!(StorageProvider::delete_bucket(RuntimeOrigin::signed(1), 0));
         });
     }
 
