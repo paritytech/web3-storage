@@ -64,6 +64,8 @@ pub struct BlockContents {
     /// Events to forward to the other coordinators.
     pub events: Vec<BlockEvent>,
     /// Provider accounts of the block's `StorageProvider` provider-lifecycle
-    /// events (registration, settings, multiaddr, deregistration).
+    /// events: `ProviderRegistered`, `ProviderSettingsUpdated`,
+    /// `ProviderMultiaddrUpdated`, `DeregisterAnnounced`,
+    /// `DeregisterCancelled` and `ProviderDeregistered`.
     pub lifecycle: Vec<AccountId32>,
 }
