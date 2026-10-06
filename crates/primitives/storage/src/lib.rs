@@ -611,6 +611,18 @@ pub fn verify_mmr_proof(proof: &MmrProof, root: &H256) -> bool {
 mod tests {
     use super::*;
 
+    /// `BucketTarget` replaced `Option<BucketId>` in `AgreementTerms` without
+    /// changing the SCALE encoding, so quotes signed before the change still
+    /// verify and `transaction_version` did not change.
+    #[test]
+    fn bucket_target_encodes_like_option_bucket_id() {
+        assert_eq!(BucketTarget::New.encode(), None::<BucketId>.encode());
+        assert_eq!(
+            BucketTarget::Existing(5).encode(),
+            Some(5 as BucketId).encode()
+        );
+    }
+
     #[test]
     fn test_commitment_payload_range() {
         let payload = CommitmentPayload::new(

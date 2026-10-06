@@ -187,7 +187,8 @@ pub const VERSION: RuntimeVersion = RuntimeVersion {
     // * 3 for dropping the commitment nonce: `checkpoint` and `challenge_offchain` each lost
     //   a `nonce` argument, and `respond_to_challenge`'s `ChallengeResponse::Deleted` variant
     //   lost its `nonce` field (#339);
-    // * 4 for the `visibility` argument appended to `establish_storage_agreement`,
+    // * 4 for the `visibility` argument appended to `establish_storage_agreement`
+    //   (now `create_bucket_with_primary`),
     //   `create_drive` and `create_s3_bucket` (#330).
     transaction_version: 4,
     system_version: 1,
