@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Chain-state coordinator: keeps the provider node's view of the runtime in
-//! sync via a finalized-block subscription.
+//! sync via a finalized-block subscription, and publishes the connection's
+//! best block on its [`ChainHandle`] from a second subscription.
 //!
 //! [`ChainState`] is the single source of truth for all on-chain state the
 //! provider node needs at runtime:
@@ -542,7 +543,7 @@ impl ChainStateCoordinator {
 
     /// Spawn the coordinator and return immediately.
     ///
-    /// The spawned task connects to the chain, follows finalized blocks, and
+    /// The spawned task connects to the chain, follows finalized and best blocks, and
     /// reconnects automatically: a chain that is unreachable at startup or that
     /// drops the connection later is retried with a fixed backoff instead of
     /// taking the coordinator down. Runs until the returned handle is dropped or
@@ -552,7 +553,7 @@ impl ChainStateCoordinator {
         ChainStateCoordinatorHandle { task }
     }
 
-    /// Reconnect loop: (re)connect and follow finalized blocks forever, sleeping
+    /// Reconnect loop: (re)connect and follow the chain forever, sleeping
     /// [`RECONNECT_DELAY`] between attempts so an unreachable chain doesn't spin.
     async fn run(self) {
         const RECONNECT_DELAY: Duration = Duration::from_secs(5);
@@ -572,8 +573,8 @@ impl ChainStateCoordinator {
         }
     }
 
-    /// Connect to the chain, bootstrap initial state, then drive the finalized-block
-    /// stream until it ends or stalls. Returns `Err` if connecting or bootstrapping
+    /// Connect to the chain, bootstrap initial state, then drive the block streams
+    /// until the finalized one ends or stalls. Returns `Err` if connecting or bootstrapping
     /// fails; `Ok(())` if the stream terminates — either way the caller reconnects.
     async fn connect_and_follow(&self) -> Result<(), Error> {
         /// Budget for building a cold connection. On the light transport,
@@ -593,7 +594,7 @@ impl ChainStateCoordinator {
         self.follow(handle).await
     }
 
-    /// Bootstrap state from the connection and follow its finalized blocks
+    /// Bootstrap state from the connection and follow its finalized and best blocks
     /// until the stream ends or stalls. Split from
     /// [`Self::connect_and_follow`] so tests can drive the full pipeline over
     /// a mock RPC connection.
@@ -611,31 +612,39 @@ impl ChainStateCoordinator {
         /// would otherwise hang the reconnect loop forever.
         const BOOTSTRAP_TIMEOUT: Duration = Duration::from_secs(60);
 
-        let (mut blocks, chain) = with_timeout("Chain bootstrap", BOOTSTRAP_TIMEOUT, async {
-            let api = handle.api.clone();
-            let blocks = api
-                .stream_blocks()
-                .await
-                .map_err(|e| Error::Internal(format!("Failed to subscribe to blocks: {e}")))?;
+        let (best_tx, best_rx) = watch::channel(None);
+        let handle = handle.with_best_block(best_rx);
+        let (mut blocks, mut best, chain) =
+            with_timeout("Chain bootstrap", BOOTSTRAP_TIMEOUT, async {
+                let api = handle.api.clone();
+                let blocks = api
+                    .stream_blocks()
+                    .await
+                    .map_err(|e| Error::Internal(format!("Failed to subscribe to blocks: {e}")))?;
+                let best_blocks = api.stream_best_blocks().await.map_err(|e| {
+                    Error::Internal(format!("Failed to subscribe to best blocks: {e}"))
+                })?;
 
-            // Publish the new connection only after the block stream is up, so
-            // consumers never observe a handle whose backend failed immediately.
-            self.chain_tx.send_replace(Some(handle));
-            let chain = RealChainStateClient { api };
+                // Publish the new connection only after the block stream is up, so
+                // consumers never observe a handle whose backend failed immediately.
+                self.chain_tx.send_replace(Some(handle));
+                let chain = RealChainStateClient { api };
 
-            tracing::info!("chain-state coordinator: connected; following finalized blocks");
+                tracing::info!(
+                    "chain-state coordinator: connected; following finalized and best blocks"
+                );
 
-            // Fetch pallet constants once per connection (they only change on runtime upgrade).
-            sync_constants(&chain, &self.chain_state).await;
+                // Fetch pallet constants once per connection (they only change on runtime upgrade).
+                sync_constants(&chain, &self.chain_state).await;
 
-            // Bootstrap from any existing on-chain state so a restarted node that was
-            // already registered picks up its provider_info and nonce counter immediately
-            // rather than waiting for the next relevant event.
-            refresh_provider_state(&chain, &self.chain_state, &self.provider_account).await;
+                // Bootstrap from any existing on-chain state so a restarted node that was
+                // already registered picks up its provider_info and nonce counter immediately
+                // rather than waiting for the next relevant event.
+                refresh_provider_state(&chain, &self.chain_state, &self.provider_account).await;
 
-            Ok::<_, Error>((blocks, chain))
-        })
-        .await?;
+                Ok::<_, Error>((blocks, best_blocks, chain))
+            })
+            .await?;
 
         // Tell coordinators to reconcile: events emitted while the stream was
         // down were missed for good, so they re-scan chain state instead.
@@ -646,11 +655,38 @@ impl ChainStateCoordinator {
                 .load(std::sync::atomic::Ordering::Relaxed),
         });
 
+        let mut best_live = true;
+        let mut previous_best_hash = None;
+        let stall = tokio::time::sleep(STALL_TIMEOUT);
+        tokio::pin!(stall);
+
         loop {
-            let next = match tokio::time::timeout(STALL_TIMEOUT, blocks.next()).await {
-                Ok(Some(next)) => next,
-                Ok(None) => break,
-                Err(_) => {
+            let next = tokio::select! {
+                next = blocks.next() => match next {
+                    Some(next) => next,
+                    None => break,
+                },
+                next_best = best.next(), if best_live => {
+                    match next_best {
+                        Some(Ok(block)) => {
+                            self.publish_best_block(&best_tx, block, &mut previous_best_hash)
+                                .await
+                        }
+                        Some(Err(e)) => {
+                            tracing::warn!(
+                                "chain-state coordinator: best-block subscription error: {e}"
+                            );
+                            best_live = false;
+                            best_tx.send_replace(None);
+                        }
+                        None => {
+                            best_live = false;
+                            best_tx.send_replace(None);
+                        }
+                    }
+                    continue;
+                }
+                _ = &mut stall => {
                     tracing::warn!(
                         "chain-state coordinator: no finalized block for {}s; rebuilding connection",
                         STALL_TIMEOUT.as_secs()
@@ -658,6 +694,9 @@ impl ChainStateCoordinator {
                     break;
                 }
             };
+            stall
+                .as_mut()
+                .reset(tokio::time::Instant::now() + STALL_TIMEOUT);
             let block = match next {
                 Ok(block) => block,
                 Err(e) => {
@@ -719,7 +758,50 @@ impl ChainStateCoordinator {
                 .await;
         }
 
+        best_tx.send_replace(None);
         Ok(())
+    }
+
+    async fn publish_best_block(
+        &self,
+        best_tx: &watch::Sender<Option<chain_connection::BestBlock>>,
+        block: chain_connection::BestBlock,
+        previous_best_hash: &mut Option<subxt::utils::H256>,
+    ) {
+        let block_number = block.number() as u32;
+        let fork_changed =
+            previous_best_hash.is_some_and(|previous| block.header().parent_hash != previous);
+        *previous_best_hash = Some(block.hash());
+        best_tx.send_replace(Some(block.clone()));
+        if fork_changed {
+            let _ = self.events_tx.send(BlockEvent::BestForkChanged {
+                at_block: block_number,
+            });
+        }
+
+        let events = match block.at().await {
+            Ok(at) => at.events().fetch().await.map_err(|e| e.to_string()),
+            Err(e) => Err(e.to_string()),
+        };
+        match events {
+            Ok(events) => {
+                for event in decode_block_events(&events, block_number) {
+                    if matches!(
+                        event,
+                        BlockEvent::BucketMembershipChanged { .. }
+                            | BlockEvent::MembershipScopeUnknown { .. }
+                    ) {
+                        let _ = self.events_tx.send(event);
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "chain-state coordinator: failed to fetch events for best block {block_number}: {e}"
+                );
+                escalate_block_read_failure(&self.events_tx, block_number);
+            }
+        }
     }
 
     /// Refresh state if any of `parsed` is a relevant provider event.
@@ -1271,8 +1353,12 @@ mod tests {
         }
 
         fn header_json(number: u32) -> serde_json::Value {
+            header_json_with_parent(number, GENESIS_HASH)
+        }
+
+        fn header_json_with_parent(number: u32, parent_hash: &str) -> serde_json::Value {
             serde_json::json!({
-                "parentHash": GENESIS_HASH,
+                "parentHash": parent_hash,
                 "number": format!("{number:#x}"),
                 "stateRoot": GENESIS_HASH,
                 "extrinsicsRoot": GENESIS_HASH,
@@ -1299,6 +1385,13 @@ mod tests {
         /// hex value served for reads under it; unmapped keys read as absent.
         async fn mock_api(
             storage: Vec<(String, String)>,
+        ) -> subxt::OnlineClient<subxt::PolkadotConfig> {
+            mock_api_with_best_heads(storage, Vec::new()).await
+        }
+
+        async fn mock_api_with_best_heads(
+            storage: Vec<(String, String)>,
+            best_heads: Vec<serde_json::Value>,
         ) -> subxt::OnlineClient<subxt::PolkadotConfig> {
             let metadata_hex = format!("0x{}", hex::encode(METADATA));
             let mock = MockRpcClient::builder()
@@ -1374,6 +1467,10 @@ mod tests {
                 })
                 .subscription_handler("chain_subscribeFinalizedHeads", |_params, _unsub| async {
                     vec![Json(header_json(42))]
+                })
+                .subscription_handler("chain_subscribeNewHeads", move |_params, _unsub| {
+                    let best_heads = best_heads.clone();
+                    async move { best_heads.into_iter().map(Json).collect::<Vec<_>>() }
                 })
                 .subscription_handler("state_subscribeRuntimeVersion", |_params, _unsub| async {
                     vec![Json(runtime_version_json())]
@@ -1833,6 +1930,78 @@ mod tests {
             // included (invalidation is idempotent), the provider-lifecycle event
             // in the same block contributes nothing.
             assert_eq!(changed_buckets, vec![9, 7, 7, 8]);
+        }
+
+        /// Drives `publish_best_block` directly: `ChainStateCoordinator::follow`
+        /// returns when the finalized stream ends, and its `tokio::select!` may
+        /// take that arm before the best heads are consumed.
+        #[tokio::test]
+        async fn best_blocks_are_published_and_a_parent_mismatch_reports_a_fork_change() {
+            use codec::Encode;
+            use subxt::config::substrate::{DynamicHasher256, SubstrateHeader};
+            use subxt::config::Hasher as _;
+
+            let md = metadata();
+            let account = provider_account();
+            let events_bytes = encoded_membership_events(&md, &account);
+
+            let head_42: SubstrateHeader<subxt::utils::H256> =
+                serde_json::from_value(header_json(42)).expect("header json decodes");
+            let hash_42 = format!("{:?}", DynamicHasher256::new(&md).hash(&head_42.encode()));
+            let api = mock_api_with_best_heads(
+                vec![(
+                    key_prefix("System", "Events"),
+                    format!("0x{}", hex::encode(events_bytes)),
+                )],
+                vec![
+                    header_json(42),
+                    header_json_with_parent(43, &hash_42),
+                    header_json(44),
+                ],
+            )
+            .await;
+
+            let (chain_state, _dir) = test_chain_state();
+            let chain_state = Arc::new(chain_state);
+            let (chain_tx, _chain_rx) = tokio::sync::watch::channel(None);
+            let (events_tx, mut events_rx) = tokio::sync::broadcast::channel(16);
+            let coordinator = ChainStateCoordinator::new(
+                ChainTransport::Rpc {
+                    url: "ws://unused.invalid".to_string(),
+                },
+                account,
+                chain_state.clone(),
+                chain_tx,
+                events_tx,
+            );
+
+            let (best_tx, best_rx) = tokio::sync::watch::channel(None);
+            let mut best_blocks = api.stream_best_blocks().await.expect("best-block stream");
+            let mut previous_best_hash = None;
+            while let Some(block) = best_blocks.next().await {
+                coordinator
+                    .publish_best_block(
+                        &best_tx,
+                        block.expect("best block"),
+                        &mut previous_best_hash,
+                    )
+                    .await;
+            }
+
+            let published = best_rx.borrow().as_ref().map(|block| block.number());
+            assert_eq!(published, Some(44));
+
+            let mut fork_changes = Vec::new();
+            let mut membership_changes = 0;
+            while let Ok(event) = events_rx.try_recv() {
+                match event {
+                    BlockEvent::BestForkChanged { at_block } => fork_changes.push(at_block),
+                    BlockEvent::BucketMembershipChanged { .. } => membership_changes += 1,
+                    _ => {}
+                }
+            }
+            assert_eq!(fork_changes, vec![44]);
+            assert_eq!(membership_changes, 3 * 4);
         }
 
         #[tokio::test(start_paused = true)]
