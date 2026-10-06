@@ -131,7 +131,7 @@ async function main() {
               result.events as never,
             )) {
               slashedAmount += ev.payload.slashed_amount;
-              console.log(`          ChallengeSlashed reason=${ev.payload.reason.type}`);
+              console.log(`          ChallengeSlashed amount=${ev.payload.slashed_amount}`);
             }
           } catch (err) {
             console.log(`          respond_to_challenge rejected: ${(err as Error).message}`);
