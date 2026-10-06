@@ -10,6 +10,7 @@
 //! - Syncing data between providers (for replicas)
 
 pub mod api;
+pub(crate) mod chain_follower;
 pub mod challenge_proofs;
 pub mod cli;
 pub mod command;
@@ -105,7 +106,7 @@ impl ProviderState {
             fs_index: FsIndexManager::new(),
             auth,
             cors_allowed_origins: None,
-            chain_state: Arc::new(ChainState::new()),
+            chain_state: Arc::new(ChainState::default()),
         }
     }
 

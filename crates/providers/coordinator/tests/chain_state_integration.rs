@@ -16,9 +16,9 @@
 //!    block's lifecycle events name the provider's own account.
 //!
 //! 3. **Resilience.** [`ChainStateCoordinator::start`] drives a reconnect loop.
-//!    Pointed at an unreachable chain it must stay up, never panic, leave
-//!    [`ChainState`] at its defaults (so `/negotiate` keeps returning 503), and
-//!    shut down cleanly when stopped.
+//!    With a [`ChainFollower`] whose `connect()` always fails, it must stay
+//!    up, never panic, leave [`ChainState`] at its defaults (so `/negotiate`
+//!    keeps returning 503), and shut down cleanly when stopped.
 //!
 //! Membership invalidation is covered separately, in
 //! `tests/coordinators/membership.rs`: the coordinator only broadcasts
@@ -26,35 +26,40 @@
 //! membership cache pulls from that feed itself.
 
 use async_trait::async_trait;
-use provider_chain::chain_connection::{ChainHandle, ChainTransport};
 use provider_coordinator::{
-    refresh_if_relevant_event, refresh_provider_state, sync_constants, ChainState,
-    ChainStateChainClient, ChainStateCoordinator, Error, PalletConstants,
+    refresh_if_relevant_event, refresh_provider_state, sync_constants, ChainConnection,
+    ChainFollower, ChainState, ChainStateChainClient, ChainStateCoordinator, PalletConstants,
 };
-use provider_types::{ProviderInfo, ProviderSettings, ProviderStats};
+use provider_types::{ChainClientError, ProviderInfo, ProviderSettings, ProviderStats};
 use sp_runtime::AccountId32;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
 
-/// Coordinator against the unreachable chain, with freshly-made (and
-/// immediately caller-dropped) channel counterparts: `send` failures are
+/// [`ChainFollower`] whose `connect()` always fails, like an unreachable chain.
+struct AlwaysFailFollower;
+
+#[async_trait]
+impl ChainFollower for AlwaysFailFollower {
+    async fn connect(&self) -> Result<ChainConnection, ChainClientError> {
+        Err(ChainClientError::query(
+            "chain connection",
+            "mock connect failure",
+        ))
+    }
+}
+
+/// Coordinator whose connect attempts always fail, with a freshly-made (and
+/// immediately caller-dropped) event channel counterpart: `send` failures are
 /// ignored by the coordinator, so this exercises the same loop as production.
 fn unreachable_coordinator(chain_state: Arc<ChainState>) -> ChainStateCoordinator {
     ChainStateCoordinator::new(
-        ChainTransport::Rpc {
-            url: UNREACHABLE_CHAIN.to_string(),
-        },
+        Arc::new(AlwaysFailFollower),
         provider_account(),
         chain_state,
-        tokio::sync::watch::channel::<Option<ChainHandle>>(None).0,
         tokio::sync::broadcast::channel(16).0,
     )
 }
-
-/// A WS URL that refuses immediately: port 1 on loopback is never listening, so
-/// every connect attempt fails fast and the coordinator loops on the error arm.
-const UNREACHABLE_CHAIN: &str = "ws://127.0.0.1:1";
 
 /// `[1u8; 32]` provider account — the coordinator only uses it to identify
 /// relevant events, which never fire here since the chain is unreachable.
@@ -90,7 +95,7 @@ fn sample_provider_info() -> ProviderInfo {
 
 #[tokio::test]
 async fn coordinator_leaves_state_at_defaults_while_chain_unreachable() {
-    let chain_state = Arc::new(ChainState::new());
+    let chain_state = Arc::new(ChainState::default());
     let coordinator = unreachable_coordinator(chain_state.clone());
     let handle = coordinator.start();
 
@@ -109,7 +114,7 @@ async fn coordinator_leaves_state_at_defaults_while_chain_unreachable() {
 
 #[tokio::test]
 async fn coordinator_shares_chain_state_with_caller() {
-    let chain_state = Arc::new(ChainState::new());
+    let chain_state = Arc::new(ChainState::default());
     let before = Arc::strong_count(&chain_state);
 
     let coordinator = unreachable_coordinator(chain_state.clone());
@@ -128,7 +133,7 @@ async fn coordinator_shares_chain_state_with_caller() {
 
 #[tokio::test]
 async fn coordinator_stop_is_prompt() {
-    let chain_state = Arc::new(ChainState::new());
+    let chain_state = Arc::new(ChainState::default());
     let handle = unreachable_coordinator(chain_state).start();
 
     // Stopping aborts the loop even while it is mid-backoff; it must not block
@@ -140,7 +145,7 @@ async fn coordinator_stop_is_prompt() {
 
 #[tokio::test]
 async fn coordinator_keeps_retrying_without_panicking() {
-    let chain_state = Arc::new(ChainState::new());
+    let chain_state = Arc::new(ChainState::default());
     let handle = unreachable_coordinator(chain_state.clone()).start();
 
     // Across several connect/backoff cycles the loop stays alive and never
@@ -156,7 +161,7 @@ async fn coordinator_keeps_retrying_without_panicking() {
 
 #[tokio::test]
 async fn coordinator_releases_shared_state_after_stop() {
-    let chain_state = Arc::new(ChainState::new());
+    let chain_state = Arc::new(ChainState::default());
     let handle = unreachable_coordinator(chain_state.clone()).start();
 
     // `stop()` aborts the task and awaits its teardown, dropping the coordinator
@@ -175,7 +180,7 @@ async fn coordinator_releases_shared_state_after_stop() {
 
 /// Canned [`ChainStateChainClient`] for driving the synchronisation logic
 /// without a chain. Each read is either `Ok(value)` or, when its `*_err` flag is
-/// set, an `Error` — so every branch of `sync_constants` /
+/// set, a [`ChainClientError`] — so every branch of `sync_constants` /
 /// `refresh_provider_state` is reachable.
 #[derive(Default)]
 struct MockChainClient {
@@ -187,16 +192,19 @@ struct MockChainClient {
 
 #[async_trait]
 impl ChainStateChainClient for MockChainClient {
-    async fn get_provider_info(&self, _who: &AccountId32) -> Result<Option<ProviderInfo>, Error> {
+    async fn get_provider_info(
+        &self,
+        _who: &AccountId32,
+    ) -> Result<Option<ProviderInfo>, ChainClientError> {
         if self.info_err {
-            return Err(Error::Internal("mock get_provider_info failure".into()));
+            return Err(ChainClientError::query("Providers", "mock failure"));
         }
         Ok(self.info.clone())
     }
 
-    async fn fetch_request_timeout(&self) -> Result<Option<u32>, Error> {
+    async fn fetch_request_timeout(&self) -> Result<Option<u32>, ChainClientError> {
         if self.request_timeout_err {
-            return Err(Error::Internal("mock fetch_request_timeout failure".into()));
+            return Err(ChainClientError::query("RequestTimeout", "mock failure"));
         }
         Ok(self.request_timeout)
     }
@@ -210,7 +218,7 @@ fn provider_account_2() -> AccountId32 {
 
 #[tokio::test]
 async fn sync_constants_publishes_request_timeout() {
-    let cs = ChainState::new();
+    let cs = ChainState::default();
     let chain = MockChainClient {
         request_timeout: Some(200),
         ..Default::default()
@@ -223,7 +231,7 @@ async fn sync_constants_publishes_request_timeout() {
 
 #[tokio::test]
 async fn sync_constants_leaves_none_when_constant_absent() {
-    let cs = ChainState::new();
+    let cs = ChainState::default();
     // request_timeout None → constant absent from metadata.
     sync_constants(&MockChainClient::default(), &cs).await;
     assert!(cs.constants.read().is_none());
@@ -231,7 +239,7 @@ async fn sync_constants_leaves_none_when_constant_absent() {
 
 #[tokio::test]
 async fn sync_constants_leaves_none_on_chain_error() {
-    let cs = ChainState::new();
+    let cs = ChainState::default();
     let chain = MockChainClient {
         request_timeout_err: true,
         ..Default::default()
@@ -244,7 +252,7 @@ async fn sync_constants_leaves_none_on_chain_error() {
 
 #[tokio::test]
 async fn refresh_publishes_info_when_registered() {
-    let cs = ChainState::new();
+    let cs = ChainState::default();
     let chain = MockChainClient {
         info: Some(sample_provider_info()),
         ..Default::default()
@@ -260,7 +268,7 @@ async fn refresh_clears_info_when_not_registered() {
     // Pre-seed a ready state, then refresh against a chain that reports the
     // provider is not (or no longer) registered — info is dropped so
     // `/negotiate` reports `provider_info_unavailable`.
-    let cs = ChainState::new();
+    let cs = ChainState::default();
     cs.current_anchor_block.store(100, Ordering::Relaxed);
     *cs.constants.write() = Some(PalletConstants {
         request_timeout: 200,
@@ -280,7 +288,7 @@ async fn refresh_clears_info_when_not_registered() {
 async fn refresh_leaves_existing_state_untouched_on_get_info_error() {
     // A transient chain error on `get_provider_info` must not clobber a
     // previously-published good state.
-    let cs = ChainState::new();
+    let cs = ChainState::default();
     *cs.provider_info.write() = Some(sample_provider_info());
 
     let chain = MockChainClient {
@@ -297,7 +305,7 @@ async fn refresh_leaves_existing_state_untouched_on_get_info_error() {
 #[tokio::test]
 async fn relevant_block_event_triggers_a_refresh() {
     // A block carrying a lifecycle event for our account refreshes state from chain.
-    let cs = ChainState::new();
+    let cs = ChainState::default();
     let chain = MockChainClient {
         info: Some(sample_provider_info()),
         ..Default::default()
@@ -316,7 +324,7 @@ async fn relevant_block_event_triggers_a_refresh() {
 async fn irrelevant_block_events_do_not_refresh() {
     // Only other-provider / non-lifecycle events → no refresh, so a chain that
     // *would* return info is never consulted and state stays at defaults.
-    let cs = ChainState::new();
+    let cs = ChainState::default();
     let chain = MockChainClient {
         info: Some(sample_provider_info()),
         ..Default::default()
@@ -330,7 +338,7 @@ async fn irrelevant_block_events_do_not_refresh() {
 
 #[tokio::test]
 async fn empty_block_does_not_refresh() {
-    let cs = ChainState::new();
+    let cs = ChainState::default();
     let chain = MockChainClient {
         info: Some(sample_provider_info()),
         ..Default::default()
