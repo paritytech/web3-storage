@@ -83,6 +83,7 @@ mod auto_matching;
 mod bucket;
 mod challenge;
 mod checkpoint;
+mod deposits;
 mod end_agreement;
 mod error_paths;
 mod extend_topup;

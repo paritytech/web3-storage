@@ -51,7 +51,10 @@ pub mod pallet {
     use alloc::vec::Vec;
     use frame_support::{
         pallet_prelude::*,
-        traits::fungible::{BalancedHold, Inspect, Mutate, MutateHold},
+        traits::{
+            fungible::{BalancedHold, Inspect, Mutate, MutateHold},
+            Consideration, Footprint,
+        },
         CloneNoBound, DebugNoBound, DefaultNoBound, EqNoBound, PartialEqNoBound,
     };
     /// The parachain block height. Re-exported so dependent pallets get the
@@ -71,6 +74,10 @@ pub mod pallet {
     /// Balance type of the configured currency.
     pub type BalanceOf<T> =
         <<T as Config>::Currency as Inspect<<T as frame_system::Config>::AccountId>>::Balance;
+
+    /// A storage-deposit ticket ([`Config::StorageDeposit`]); stored in the
+    /// record it pays for and dropped when the record is removed.
+    pub type TicketOf<T> = <T as Config>::StorageDeposit;
 
     /// The anchor clock ([`Config::BlockNumberProvider`], relay chain in
     /// production) that every duration, deadline and expiry in this pallet is
@@ -117,6 +124,9 @@ pub mod pallet {
         /// A challenger's anti-spam deposit, refunded on resolution minus the
         /// provider's response-cost share.
         ChallengeDeposit,
+        /// A deposit for a record a user created, held on the depositor until
+        /// the record is removed.
+        StorageDeposit,
     }
 
     #[pallet::hooks]
@@ -221,6 +231,15 @@ pub mod pallet {
         /// Maximum number of buckets a single account can be a member of.
         #[pallet::constant]
         type MaxBucketsPerMember: Get<u32>;
+
+        /// Storage deposit for records a user creates, priced from the
+        /// record's size (`Footprint`). The runtime sets it to a
+        /// `HoldConsideration` under `HoldReason::StorageDeposit`: creating the
+        /// ticket puts the deposit on hold on the depositor's balance, and
+        /// dropping it when the record is removed releases the hold. The
+        /// ticket must encode as the held balance, as `HoldConsideration`'s
+        /// does: `try_state` reads it that way to check holds against records.
+        type StorageDeposit: Consideration<Self::AccountId, Footprint>;
 
         /// Minimum number of relay chain blocks between announcing a
         /// deregistration and being allowed to complete it. Must be
