@@ -642,9 +642,8 @@ pub struct ReplicaTerms<Balance, BlockNumber> {
 
 /// Next expected `AgreementTerms.nonce` for this owner. Redemption
 /// requires an exact match and advances the counter by one, so a signed
-/// quote is redeemable at most once.
-/// The entry is removed when the account is reaped (see the
-/// `OnKilledAccount` impl for `Pallet`).
+/// quote is redeemable at most once. See "Agreement Nonces" below for the
+/// entry's lifetime and the one-quote-at-a-time rule.
 #[pallet::storage]
 pub type AgreementNonces<T: Config> =
     StorageMap<_, Blake2_128Concat, T::AccountId, u64, ValueQuery>;
@@ -735,6 +734,20 @@ pub type MemberBuckets<T: Config> = StorageMap<
     ValueQuery,
 >;
 ```
+
+### Agreement Nonces
+
+The client reads `AgreementNonces[owner]` from chain and sends it in
+`POST /negotiate`; the provider signs it unchanged and keeps no nonce state.
+
+- **Lifetime.** The pallet's `OnKilledAccount` impl removes the entry when the
+  account is reaped, so runtimes must set
+  `frame_system::Config::OnKilledAccount = StorageProvider`. A reaped owner
+  restarts at nonce 0.
+- **One quote at a time.** Only one quote per nonce can be redeemed. Others
+  fail with `NonceMismatch`; the client reads the nonce again and requests a
+  new quote. Users acting through one shared owner account, such as a
+  contract, share one counter.
 
 ### Provider Public Key & Signature Type
 
