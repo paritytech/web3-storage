@@ -95,6 +95,10 @@ interface IWeb3Storage {
     /// Freeze a bucket — append-only, irreversible.
     function freezeBucket(uint64 bucketId) external;
 
+    /// Delete a bucket with no agreements and no open challenges (admin
+    /// only); releases its storage deposits.
+    function deleteBucket(uint64 bucketId) external;
+
     /// Set bucket read visibility (admin only).
     /// Always reversible on-chain, but publicizing cannot recall data
     /// already disclosed.
