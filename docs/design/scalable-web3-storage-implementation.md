@@ -643,8 +643,8 @@ pub struct ReplicaTerms<Balance, BlockNumber> {
 /// Next expected `AgreementTerms.nonce` for this owner. Redemption
 /// requires an exact match and advances the counter by one, so a signed
 /// quote is redeemable at most once and in the order it was requested.
-/// The entry is removed when the account is reaped (see the
-/// `OnKilledAccount` impl for `Pallet`).
+/// The entry is removed in `OnKilledAccount` when `frame_system` reaps
+/// the owner, so an owner holds at most one redeemable quote at a time.
 #[pallet::storage]
 pub type AgreementNonces<T: Config> =
     StorageMap<_, Blake2_128Concat, T::AccountId, u64, ValueQuery>;
@@ -2088,11 +2088,15 @@ Request:
   "max_bytes": "1073741824",
   "duration": 201600,
   "price_per_byte": "1000",
+  "nonce": "0",
   "replica_params": null | { "sync_balance": 5000000000, "min_sync_interval": 0, "sync_price": 1000000 }
 }
 
 `bucket` is the bucket id the quote is for, or `null` for a bucket created at
-redemption; the node maps it to `BucketTarget`.
+redemption; the node maps it to `BucketTarget`. `nonce` is the owner's
+current `AgreementNonces` value, which the client reads from chain at the best
+block (finalized can lag behind a just-redeemed quote); the node signs it
+as-is.
 
 Response (200 OK): the signed `AgreementTerms` plus the provider's signature,
 to pass to `create_bucket_with_primary` (`bucket: null`),

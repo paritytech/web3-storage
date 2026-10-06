@@ -137,11 +137,7 @@ pub struct ChainState {
 impl ChainState {
     /// Fresh, unpopulated chain state.
     pub fn new() -> Self {
-        Self {
-            current_anchor_block: AtomicU32::new(0),
-            constants: RwLock::new(None),
-            provider_info: RwLock::new(None),
-        }
+        Self::default()
     }
 }
 
@@ -271,37 +267,30 @@ impl ChainStateChainClient for RealChainStateClient {
 /// Minimal decoded view of a `StorageProvider` provider-lifecycle event.
 ///
 /// The coordinator re-fetches the full provider state on any relevant event,
-/// so only the affected provider account — and whether the event is a
-/// confirmed deregistration — needs decoding.
+/// so only the affected provider account needs decoding.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ProviderLifecycleEvent {
-    /// `ProviderRegistered`, `ProviderSettingsUpdated`,
-    /// `ProviderMultiaddrUpdated`, `DeregisterAnnounced`, or
-    /// `DeregisterCancelled`.
-    Updated { provider: AccountId32 },
-    /// Confirmed `ProviderDeregistered`.
-    Deregistered { provider: AccountId32 },
+pub struct ProviderLifecycleEvent {
+    /// The provider account the event concerns.
+    pub provider: AccountId32,
 }
 
 impl ProviderLifecycleEvent {
     /// The provider account the event concerns.
     pub fn provider(&self) -> &AccountId32 {
-        match self {
-            Self::Updated { provider } | Self::Deregistered { provider } => provider,
-        }
+        &self.provider
     }
 }
 
-/// Names of the `StorageProvider` events that affect [`ProviderLifecycleEvent`],
-/// paired with whether the event confirms a deregistration. Every one of these
-/// carries a named `provider` field decodable as [`LifecycleProvider`].
-const LIFECYCLE_EVENT_NAMES: &[(&str, bool)] = &[
-    ("ProviderDeregistered", true),
-    ("ProviderRegistered", false),
-    ("ProviderSettingsUpdated", false),
-    ("ProviderMultiaddrUpdated", false),
-    ("DeregisterAnnounced", false),
-    ("DeregisterCancelled", false),
+/// Names of the `StorageProvider` events that affect [`ProviderLifecycleEvent`].
+/// Every one of these carries a named `provider` field decodable as
+/// [`LifecycleProvider`].
+const LIFECYCLE_EVENT_NAMES: &[&str] = &[
+    "ProviderDeregistered",
+    "ProviderRegistered",
+    "ProviderSettingsUpdated",
+    "ProviderMultiaddrUpdated",
+    "DeregisterAnnounced",
+    "DeregisterCancelled",
 ];
 
 /// The only field the coordinator reads out of a provider-lifecycle event.
@@ -326,16 +315,11 @@ fn parse_provider_lifecycle_events(
         .filter_map(|event| event.ok())
         .filter(|event| event.pallet_name() == PALLET_NAME)
         .filter_map(|event| {
-            let deregistered = LIFECYCLE_EVENT_NAMES
-                .iter()
-                .find(|(name, _)| *name == event.event_name())
-                .map(|(_, deregistered)| *deregistered)?;
+            if !LIFECYCLE_EVENT_NAMES.contains(&event.event_name()) {
+                return None;
+            }
             let provider = decode_provider(&event)?;
-            Some(if deregistered {
-                ProviderLifecycleEvent::Deregistered { provider }
-            } else {
-                ProviderLifecycleEvent::Updated { provider }
-            })
+            Some(ProviderLifecycleEvent { provider })
         })
         .collect()
 }
@@ -785,10 +769,10 @@ mod tests {
     fn lifecycle_event_relevance_matches_on_provider() {
         let me = AccountId32::new([1u8; 32]);
         let other = AccountId32::new([2u8; 32]);
-        let mine = ProviderLifecycleEvent::Updated {
+        let mine = ProviderLifecycleEvent {
             provider: me.clone(),
         };
-        let theirs = ProviderLifecycleEvent::Deregistered { provider: other };
+        let theirs = ProviderLifecycleEvent { provider: other };
         assert!(is_relevant_provider_event(&mine, &me));
         assert!(!is_relevant_provider_event(&theirs, &me));
     }
@@ -1374,10 +1358,10 @@ mod tests {
             assert_eq!(
                 parse_provider_lifecycle_events(&events),
                 vec![
-                    ProviderLifecycleEvent::Updated {
+                    ProviderLifecycleEvent {
                         provider: account.clone()
                     },
-                    ProviderLifecycleEvent::Deregistered { provider: account },
+                    ProviderLifecycleEvent { provider: account },
                 ]
             );
         }

@@ -294,11 +294,11 @@ impl<T: Config> Pallet<T> {
         // makes a signed quote redeemable at most once.
         let provider_info = Providers::<T>::get(provider).ok_or(Error::<T>::ProviderNotFound)?;
         Self::verify_terms_signature(&provider_info, terms, sig, kind.context())?;
-        ensure!(
-            terms.nonce == AgreementNonces::<T>::get(owner),
-            Error::<T>::NonceMismatch
-        );
-        AgreementNonces::<T>::mutate(owner, |n| *n = n.saturating_add(1));
+        AgreementNonces::<T>::try_mutate(owner, |next| -> DispatchResult {
+            ensure!(terms.nonce == *next, Error::<T>::NonceMismatch);
+            *next = next.saturating_add(1);
+            Ok(())
+        })?;
 
         Self::ensure_provider_active(&provider_info)?;
         match kind {

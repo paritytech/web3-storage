@@ -284,7 +284,6 @@ pub mod pallet {
     /// The entry is removed when the account is reaped (see the
     /// `OnKilledAccount` impl for `Pallet`).
     #[pallet::storage]
-    #[pallet::getter(fn agreement_nonces)]
     pub type AgreementNonces<T: Config> =
         StorageMap<_, Blake2_128Concat, T::AccountId, u64, ValueQuery>;
 

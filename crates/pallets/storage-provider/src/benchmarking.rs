@@ -514,8 +514,8 @@ mod benchmarks {
         create_bucket(RawOrigin::Signed(admin), 1, Visibility::Private);
     }
 
-    /// Worst case: full signature verification + replay-window mutation +
-    /// bucket creation + agreement insertion.
+    /// Worst case: full signature verification + owner-nonce check and
+    /// increment + bucket creation + agreement insertion.
     #[benchmark]
     fn create_bucket_with_primary() {
         let admin = funded_account::<T>("admin", 0);
@@ -538,8 +538,8 @@ mod benchmarks {
         );
     }
 
-    /// Worst case: full signature verification + replay-window mutation +
-    /// agreement insertion + push onto a primary set one below
+    /// Worst case: full signature verification + owner-nonce check and
+    /// increment + agreement insertion + push onto a primary set one below
     /// `MaxPrimaryProviders`.
     #[benchmark]
     fn add_primary_provider() {
@@ -575,8 +575,8 @@ mod benchmarks {
         );
     }
 
-    /// Worst case: replica signature verification + replay-window
-    /// mutation + agreement insertion on top of an existing bucket.
+    /// Worst case: replica signature verification + owner-nonce check
+    /// and increment + agreement insertion on top of an existing bucket.
     #[benchmark]
     fn add_replica_provider() {
         let admin = funded_account::<T>("admin", 0);

@@ -441,14 +441,7 @@ fn refund(who: u64) {
 fn reaping_the_owner_removes_its_agreement_nonce() {
     new_test_ext().execute_with(|| {
         register_provider(2, 200);
-        let (terms, sig) = signed_primary_terms(2, 1, BucketTarget::New, 50, 100);
-        assert_ok!(StorageProvider::create_bucket_with_primary(
-            RuntimeOrigin::signed(1),
-            2,
-            terms,
-            sig,
-            storage_primitives::Visibility::Public
-        ));
+        setup_agreement(2, 1, 50, 100);
         assert_eq!(AgreementNonces::<Test>::get(1), 1);
 
         reap(1);
@@ -461,14 +454,7 @@ fn reaping_the_owner_removes_its_agreement_nonce() {
 fn owner_with_a_paid_agreement_keeps_its_agreement_nonce() {
     new_test_ext().execute_with(|| {
         priced_provider(2, 200);
-        let (terms, sig) = signed_primary_terms(2, 1, BucketTarget::New, 50, 100);
-        assert_ok!(StorageProvider::create_bucket_with_primary(
-            RuntimeOrigin::signed(1),
-            2,
-            terms,
-            sig,
-            storage_primitives::Visibility::Public
-        ));
+        setup_agreement(2, 1, 50, 100);
         assert!(held(HoldReason::AgreementPayment, 1) > 0);
 
         // The hold keeps the account alive, so it cannot be reaped.
@@ -485,14 +471,7 @@ fn owner_with_a_paid_agreement_keeps_its_agreement_nonce() {
 fn reaped_owner_restarts_at_nonce_zero() {
     new_test_ext().execute_with(|| {
         register_provider(2, 200);
-        let (terms, sig) = signed_primary_terms(2, 1, BucketTarget::New, 50, 100);
-        assert_ok!(StorageProvider::create_bucket_with_primary(
-            RuntimeOrigin::signed(1),
-            2,
-            terms,
-            sig,
-            storage_primitives::Visibility::Public
-        ));
+        setup_agreement(2, 1, 50, 100);
 
         reap(1);
         refund(1);

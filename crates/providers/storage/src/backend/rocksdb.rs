@@ -20,6 +20,7 @@ use storage_primitives::{blake2_256, BucketId, MmrLeaf};
 const CF_NODES: &str = "nodes";
 const CF_BUCKETS: &str = "buckets";
 const CF_ROOT_TO_BUCKET: &str = "root_to_bucket";
+/// No longer written; still opened so existing databases, which have it, open.
 const CF_METADATA: &str = "metadata";
 
 /// Disk-based storage backend using RocksDB.

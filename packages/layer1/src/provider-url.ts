@@ -245,6 +245,9 @@ export async function resolveCreationTerms(
     });
   }
 
+  // Independent of the price read below, so start it first.
+  const noncePromise = getAgreementNonce(api, opts.owner);
+
   // /negotiate requires price_per_byte and validates it against the provider's
   // listed price; default to the provider's current on-chain setting.
   let pricePerByte = opts.pricePerByte;
@@ -256,9 +259,7 @@ export async function resolveCreationTerms(
     pricePerByte = info?.settings?.price_per_byte ?? 1n;
   }
 
-  // Always read at the best block: a finalized read can lag an owner's own
-  // just-redeemed agreement and hand back a stale, already-consumed nonce.
-  const nonce = await getAgreementNonce(api, opts.owner);
+  const nonce = await noncePromise;
 
   const request: NegotiateRequest = {
     owner: opts.owner,

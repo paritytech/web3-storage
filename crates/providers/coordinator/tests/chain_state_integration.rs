@@ -301,10 +301,10 @@ async fn refresh_leaves_existing_state_untouched_on_get_info_error() {
 fn lifecycle_events_for_self_are_relevant() {
     let me = provider_account();
     let events = [
-        ProviderLifecycleEvent::Updated {
+        ProviderLifecycleEvent {
             provider: me.clone(),
         },
-        ProviderLifecycleEvent::Deregistered {
+        ProviderLifecycleEvent {
             provider: me.clone(),
         },
     ];
@@ -319,7 +319,7 @@ fn lifecycle_events_for_self_are_relevant() {
 
 #[test]
 fn lifecycle_event_for_other_provider_is_irrelevant() {
-    let event = ProviderLifecycleEvent::Updated {
+    let event = ProviderLifecycleEvent {
         provider: provider_account_2(),
     };
     // Same event shape, different account → not ours, ignore it.
@@ -329,7 +329,7 @@ fn lifecycle_event_for_other_provider_is_irrelevant() {
 // ── refresh_if_relevant_event (block-event dispatch) ──────────────────────────
 
 fn registered_event(provider: AccountId32) -> ProviderLifecycleEvent {
-    ProviderLifecycleEvent::Updated { provider }
+    ProviderLifecycleEvent { provider }
 }
 
 #[tokio::test]
@@ -361,7 +361,7 @@ async fn irrelevant_block_events_do_not_refresh() {
     };
     let events = [
         registered_event(provider_account_2()),
-        ProviderLifecycleEvent::Deregistered {
+        ProviderLifecycleEvent {
             provider: provider_account_2(),
         },
     ];
