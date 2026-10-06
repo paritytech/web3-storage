@@ -28,16 +28,7 @@ impl<T: Config> Pallet<T> {
         // End all agreements for this bucket (pay providers fairly)
         let agreements: Vec<_> = StorageAgreements::<T>::iter_prefix(bucket_id).collect();
 
-        // Refuse to delete the bucket while any of its agreements has a
-        // pending challenge — otherwise tearing down here would let the
-        // provider escape a live slashable challenge. Checked before any
-        // state mutation/payout so the whole call is a no-op on failure.
-        for (provider, _) in &agreements {
-            ensure!(
-                PendingChallengesByBucket::<T>::get(bucket_id, provider) == 0,
-                Error::<T>::AgreementHasPendingChallenge
-            );
-        }
+        Self::ensure_no_pending_challenge(bucket_id)?;
 
         for (provider, agreement) in agreements {
             // Calculate prorated refund based on remaining time

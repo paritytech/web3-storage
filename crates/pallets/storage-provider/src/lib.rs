@@ -352,7 +352,8 @@ pub mod pallet {
     /// and decremented exactly once per resolution (defended in
     /// `respond_to_challenge`, or timed out in `resolve_expired_challenge`).
     /// Gates `complete_deregister`: a provider cannot exit while still
-    /// slashable for a pending challenge.
+    /// slashable for a pending challenge. An entry exists only while the
+    /// count is positive.
     #[pallet::storage]
     pub type PendingChallenges<T: Config> =
         StorageMap<_, Blake2_128Concat, T::AccountId, u32, ValueQuery>;
@@ -360,7 +361,10 @@ pub mod pallet {
     /// Number of unresolved challenges outstanding against a specific
     /// `(bucket, provider)` pair. Maintained in lockstep with
     /// [`PendingChallenges`] and gates that bucket's agreement teardown
-    /// (`end_agreement`, `claim_expired_agreement`, `cleanup_bucket_internal`).
+    /// (`end_agreement`, `claim_expired_agreement`) and bucket removal
+    /// (`cleanup_bucket_internal`). An entry exists only while the count is
+    /// positive, so a bucket with no entry under its prefix has no open
+    /// challenge.
     #[pallet::storage]
     pub type PendingChallengesByBucket<T: Config> = StorageDoubleMap<
         _,
@@ -1302,6 +1306,10 @@ pub mod pallet {
         TermsBucketMismatch,
         /// Storage agreement requested 0 byte
         InvalidMaxBytesRequest,
+        /// A challenge against a provider on this bucket is still open.
+        /// Resolve it with `respond_to_challenge` or
+        /// `resolve_expired_challenge`, then retry.
+        BucketHasPendingChallenge,
     }
 
     // ─────────────────────────────────────────────────────────────────────────
