@@ -199,7 +199,7 @@ pub mod pallet {
         /// Create a new drive with automatic bucket creation
         ///
         /// Atomically opens the Layer 0 bucket + primary storage agreement
-        /// (via `establish_storage_agreement_internal`) and records the
+        /// (via `create_bucket_with_primary_internal`) and records the
         /// drive metadata on top. The caller obtains `terms` and `sig`
         /// off-chain from the provider; Layer 0 enforces signature, replay
         /// window, and capacity/stake/duration/price checks — those errors
@@ -247,7 +247,7 @@ pub mod pallet {
             // Layer 0 errors (bad signature, replay, capacity, price, …)
             // surface directly via `?`.
             let bucket_id =
-                pallet_storage_provider::Pallet::<T>::establish_storage_agreement_internal(
+                pallet_storage_provider::Pallet::<T>::create_bucket_with_primary_internal(
                     &who, &provider, terms, &sig, visibility,
                 )?;
 

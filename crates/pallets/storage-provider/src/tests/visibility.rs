@@ -323,8 +323,15 @@ fn timeout_slash_counts_failed_not_received() {
             CHUNK
         ));
 
-        // Let the challenge time out (deadline 101) and get swept.
-        run_to_block(103);
+        // Let the challenge time out (deadline 101) and resolve it.
+        System::set_block_number(103);
+        assert_ok!(StorageProvider::resolve_expired_challenge(
+            RuntimeOrigin::signed(3),
+            storage_primitives::ChallengeId {
+                deadline: 101,
+                index: 0,
+            }
+        ));
 
         let stats = Providers::<Test>::get(2).unwrap().stats;
         assert_eq!(stats.challenges_failed, 1);

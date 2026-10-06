@@ -260,7 +260,7 @@ export async function resolveCreationTerms(
     max_bytes: opts.maxBytes,
     duration: opts.duration,
     price_per_byte: pricePerByte,
-    bucket_id: null,
+    bucket: null,
     replica_params: null,
   };
   const signedTerms = await negotiateTerms(choice.url, request, opts.fetchOpts);

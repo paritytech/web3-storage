@@ -212,16 +212,16 @@ fn verify_signature_rejects_ecdsa_eth_cross_tagging() {
 
 // ─────────────────────────────────────────────────────────────────────────
 // Terms path (blake2(context ‖ SCALE(terms))) — end-to-end through
-// establish_storage_agreement per scheme
+// create_bucket_with_primary per scheme
 // ─────────────────────────────────────────────────────────────────────────
 
 fn establish_with<P: sp_core::Pair>(wrap: impl Fn(P::Signature) -> MultiSignature) {
     new_test_ext().execute_with(|| {
         let pair: P = provider_with_key();
-        let terms = primary_terms(1, 100, 100, 0);
+        let terms = primary_terms(1, BucketTarget::New, 100, 100, 0);
         let hash = sp_io::hashing::blake2_256(&terms.signing_payload());
         let sig = wrap(pair.sign(&hash));
-        assert_ok!(StorageProvider::establish_storage_agreement(
+        assert_ok!(StorageProvider::create_bucket_with_primary(
             RuntimeOrigin::signed(1),
             2,
             terms,
@@ -253,11 +253,11 @@ fn terms_redemption_rejects_scheme_key_mismatch() {
         // Registered key is sr25519 (32B); quote signed with ecdsa (33B key).
         let _sr: sr25519::Pair = provider_with_key();
         let ecdsa_pair = ecdsa::Pair::from_seed(&[7u8; 32]);
-        let terms = primary_terms(1, 100, 100, 0);
+        let terms = primary_terms(1, BucketTarget::New, 100, 100, 0);
         let hash = sp_io::hashing::blake2_256(&terms.signing_payload());
         let sig = MultiSignature::Ecdsa(ecdsa_pair.sign(&hash));
         assert_noop!(
-            StorageProvider::establish_storage_agreement(
+            StorageProvider::create_bucket_with_primary(
                 RuntimeOrigin::signed(1),
                 2,
                 terms,
