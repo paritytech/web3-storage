@@ -123,8 +123,8 @@ async function main() {
     /** Negotiate terms for a direct precompile call signed by `owner`. */
     const negotiateAbiTerms = (
       owner: ChainSigner,
-      req: Parameters<typeof negotiatePrecompileTerms>[2]
-    ) => negotiatePrecompileTerms(providerUrl, owner, req);
+      req: Parameters<typeof negotiatePrecompileTerms>[3]
+    ) => negotiatePrecompileTerms(api, providerUrl, owner, req);
 
     // ====================================================================
     // Storage-provider precompile (0x…09010000)

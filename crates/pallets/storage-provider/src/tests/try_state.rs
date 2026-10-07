@@ -131,3 +131,25 @@ fn try_state_detects_leftover_empty_entries() {
         assert!(StorageProvider::do_try_state().is_err());
     });
 }
+/// An `AgreementNonces` entry is legitimate while its owner exists, and is
+/// gone once the owner is reaped. An entry left behind for a missing account
+/// (a runtime without the `OnKilledAccount` hook) is caught.
+#[test]
+fn try_state_detects_agreement_nonce_of_missing_account() {
+    new_test_ext().execute_with(|| {
+        register_provider(2, 200);
+        let bucket_id = setup_agreement(2, 1, 100, 100);
+        assert_eq!(AgreementNonces::<Test>::get(1), 1);
+        assert_ok!(StorageProvider::do_try_state());
+
+        // Reaping the owner removes the entry, so the invariant still holds.
+        release_owner_records(1, bucket_id, 2);
+        reap(1);
+        assert!(!AgreementNonces::<Test>::contains_key(1));
+        assert_ok!(StorageProvider::do_try_state());
+
+        // An entry for an account that does not exist is caught.
+        AgreementNonces::<Test>::insert(1, 1);
+        assert!(StorageProvider::do_try_state().is_err());
+    });
+}

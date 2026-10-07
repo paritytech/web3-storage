@@ -4,7 +4,6 @@ use crate::*;
 use frame_support::pallet_prelude::*;
 use frame_support::traits::Consideration;
 use sp_runtime::traits::CheckedMul;
-use storage_primitives::ReplayWindow;
 
 impl<T: Config> Pallet<T> {
     /// Reject any path that would create a new commitment for a
@@ -105,7 +104,6 @@ impl<T: Config> Pallet<T> {
         };
 
         Providers::<T>::insert(who, provider_info);
-        ProviderReplayStates::<T>::insert(who, ReplayWindow::default());
 
         Self::deposit_event(Event::ProviderRegistered {
             provider: who.clone(),

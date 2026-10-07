@@ -67,8 +67,8 @@ pub mod pallet {
     use sp_runtime::TryRuntimeError;
     use storage_primitives::{
         BucketId, BucketSnapshot, ChallengeId, ChunkLocation, Commitment, CommitmentPayload,
-        EndAction, MerkleProof, MmrProof, ProviderRole, RemovalReason, ReplayWindow,
-        ReplicaSyncRecord, Role, Visibility,
+        EndAction, MerkleProof, MmrProof, ProviderRole, RemovalReason, ReplicaSyncRecord, Role,
+        Visibility,
     };
 
     /// Balance type of the configured currency.
@@ -93,8 +93,8 @@ pub mod pallet {
     ///
     /// Every call that redeems a quote (`create_bucket_with_primary`,
     /// `add_primary_provider`, `add_replica_provider`) verifies the provider's
-    /// signature, rejects replays via the provider's sliding nonce window,
-    /// then runs the provider/capacity/stake checks and holds the payment
+    /// signature, checks and advances the owner's agreement nonce, then
+    /// runs the provider/capacity/stake checks and holds the payment
     /// before it writes the agreement.
     pub type AgreementTermsOf<T> = storage_primitives::AgreementTerms<
         <T as frame_system::Config>::AccountId,
@@ -132,23 +132,14 @@ pub mod pallet {
     #[pallet::hooks]
     impl<T: Config> Hooks<SystemBlockNumberFor<T>> for Pallet<T> {
         fn integrity_test() {
-            // The re-register replay defense relies on RequestTimeout being strictly
-            // shorter than DeregisterAnnouncementPeriod: a quote signed at block S
-            // expires at S+RequestTimeout, which is before the provider can complete
-            // deregistration and re-register (requiring DeregisterAnnouncementPeriod
-            // more blocks), so an old quote cannot be replayed against the new
-            // incarnation.
-            // At the same time, the deregistration announcement window must be
-            // strictly longer than the challenge response timeout, so any
-            // challenge created up to the announcement block matures (and the
-            // provider stays slashable) strictly before the provider can
-            // complete deregistration.
+            // The deregistration announcement window must be strictly longer
+            // than the challenge response timeout, so any challenge created up
+            // to the announcement block matures (and the provider stays
+            // slashable) strictly before the provider can complete
+            // deregistration.
             assert!(
-                T::RequestTimeout::get() < T::DeregisterAnnouncementPeriod::get()
-                    && T::DeregisterAnnouncementPeriod::get() > T::ChallengeTimeout::get(),
-                "RequestTimeout must be less than DeregisterAnnouncementPeriod \
-                to close the re-register replay window, and \
-                DeregisterAnnouncementPeriod must be > ChallengeTimeout so a \
+                T::DeregisterAnnouncementPeriod::get() > T::ChallengeTimeout::get(),
+                "DeregisterAnnouncementPeriod must be > ChallengeTimeout so a \
                 challenge created at the announcement block matures while the \
                 provider is still slashable"
             );
@@ -162,6 +153,22 @@ pub mod pallet {
         #[cfg(feature = "try-runtime")]
         fn try_state(_block: SystemBlockNumberFor<T>) -> Result<(), TryRuntimeError> {
             Self::do_try_state()
+        }
+    }
+
+    /// Gives [`AgreementNonces`] the same lifetime `frame_system` gives the
+    /// account: the entry exists until the account is reaped, and the
+    /// existential deposit pays for it. Runtimes set
+    /// `frame_system::Config::OnKilledAccount` to this pallet.
+    ///
+    /// A quote redeemed before the reap becomes redeemable again only while it is
+    /// still valid, which is at most `RequestTimeout` after its redemption. Only
+    /// the owner can redeem it, and it pays the price the provider signed. A held
+    /// payment keeps the owner alive, so a reap inside that window needs an owner
+    /// with no paid agreement.
+    impl<T: Config> frame_support::traits::OnKilledAccount<T::AccountId> for Pallet<T> {
+        fn on_killed_account(who: &T::AccountId) {
+            AgreementNonces::<T>::remove(who);
         }
     }
 
@@ -290,12 +297,14 @@ pub mod pallet {
     #[pallet::getter(fn providers)]
     pub type Providers<T: Config> = StorageMap<_, Blake2_128Concat, T::AccountId, ProviderInfo<T>>;
 
-    /// Per-provider sliding replay window over signed agreement-term nonces.
-    /// See [`storage_primitives::ReplayWindow`] for the bit layout
+    /// Next expected `AgreementTerms.nonce` for this owner. Redemption
+    /// requires an exact match and advances the counter by one, so a signed
+    /// quote is redeemable at most once.
+    /// The entry is removed when the account is reaped (see the
+    /// `OnKilledAccount` impl for `Pallet`).
     #[pallet::storage]
-    #[pallet::getter(fn provider_replay_states)]
-    pub type ProviderReplayStates<T: Config> =
-        StorageMap<_, Blake2_128Concat, T::AccountId, ReplayWindow, ValueQuery>;
+    pub type AgreementNonces<T: Config> =
+        StorageMap<_, Blake2_128Concat, T::AccountId, u64, ValueQuery>;
 
     /// Monotonically increasing bucket ID counter.
     #[pallet::storage]
@@ -1286,12 +1295,10 @@ pub mod pallet {
         /// Signed terms' `valid_until` extends beyond `now + RequestTimeout` —
         /// the provider-signed validity window cap enforced on-chain.
         TermsValidityTooLong,
-        /// The terms' nonce has already been consumed inside the provider's
-        /// replay window.
-        NonceAlreadyUsed,
-        /// The terms' nonce is older than the provider's replay window
-        /// (distance from `hsn` ≥ [`storage_primitives::REPLAY_WINDOW_BITS`]).
-        NonceTooOld,
+        /// The terms' nonce does not match the owner's next expected
+        /// [`AgreementNonces`] value. Read the current value and request a
+        /// new quote with it.
+        NonceMismatch,
         /// The terms' declared owner does not match the extrinsic origin.
         TermsOwnerMismatch,
         /// Replica terms missing from a signed quote redeemed as a replica
@@ -1479,7 +1486,6 @@ pub mod pallet {
             provider.deposit.drop(&who)?;
             Self::release_stake(&who, provider.stake)?;
             Providers::<T>::remove(&who);
-            ProviderReplayStates::<T>::remove(&who);
 
             Self::deposit_event(Event::ProviderDeregistered {
                 provider: who,

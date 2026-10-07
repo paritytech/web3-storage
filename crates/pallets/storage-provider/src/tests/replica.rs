@@ -55,8 +55,9 @@ fn add_replica_provider_fails_no_replica_sync_price() {
         register_provider(2, 200);
         let bucket_id = create_bucket(1, 0);
 
-        // The sync-price check runs after the nonce window advances, so
-        // storage is mutated even on failure — assert the error only.
+        // The sync-price check runs after the owner's nonce counter
+        // advances, so storage is mutated even on failure — assert the
+        // error only.
         let (terms, sig) = signed_replica_terms(
             2,
             1,

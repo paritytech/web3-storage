@@ -4,7 +4,7 @@ use crate::*;
 use frame_support::{pallet_prelude::*, traits::Consideration};
 use sp_runtime::traits::{CheckedAdd, CheckedMul, SaturatedConversion, Saturating, Zero};
 use storage_primitives::{
-    BucketId, BucketTarget, EndAction, ProviderRole, RemovalReason, ReplayError, Visibility,
+    BucketId, BucketTarget, EndAction, ProviderRole, RemovalReason, Visibility,
 };
 
 impl<T: Config> Pallet<T> {
@@ -237,9 +237,9 @@ impl<T: Config> Pallet<T> {
     }
 
     /// Runs the shared quote checks for `kind` and `target` (terms, bucket,
-    /// signature, provider state, capacity), consumes the quote's nonce in
-    /// the provider's replay window and holds the payment (plus the sync
-    /// balance for a replica). Writes nothing else.
+    /// signature, provider state, capacity), advances the owner's agreement
+    /// nonce and holds the payment (plus the sync balance for a replica).
+    /// Writes nothing else.
     fn accept_quote(
         owner: &T::AccountId,
         provider: &T::AccountId,
@@ -288,14 +288,13 @@ impl<T: Config> Pallet<T> {
         };
 
         // Signature over `blake2_256(context | SCALE(terms))`, then the nonce:
-        // a signed quote is redeemable at most once.
+        // it must match the owner's next expected value, and advancing it
+        // makes a signed quote redeemable at most once.
         let provider_info = Providers::<T>::get(provider).ok_or(Error::<T>::ProviderNotFound)?;
         Self::verify_terms_signature(&provider_info, terms, sig, kind.context())?;
-        ProviderReplayStates::<T>::try_mutate(provider, |window| -> DispatchResult {
-            window.try_accept(terms.nonce).map_err(|e| match e {
-                ReplayError::AlreadyUsed => Error::<T>::NonceAlreadyUsed,
-                ReplayError::TooOld => Error::<T>::NonceTooOld,
-            })?;
+        AgreementNonces::<T>::try_mutate(owner, |next| -> DispatchResult {
+            ensure!(terms.nonce == *next, Error::<T>::NonceMismatch);
+            *next = next.saturating_add(1);
             Ok(())
         })?;
 

@@ -35,6 +35,22 @@ fn held(reason: HoldReason, who: u64) -> u64 {
     Balances::balance_on_hold(&reason.into(), &who)
 }
 
+/// An account with storage deposits on hold cannot be reaped: end the
+/// owner's primary agreement and delete the bucket first, which releases
+/// every deposit the owner holds for that bucket.
+fn release_owner_records(owner: u64, bucket_id: u64, provider: u64) {
+    assert_ok!(StorageProvider::end_agreement(
+        RuntimeOrigin::signed(owner),
+        bucket_id,
+        provider,
+        storage_primitives::EndAction::Pay,
+    ));
+    assert_ok!(StorageProvider::delete_bucket(
+        RuntimeOrigin::signed(owner),
+        bucket_id
+    ));
+}
+
 /// An agreement deposit ticket held on `owner`, for tests that write
 /// agreements into storage directly.
 fn agreement_deposit(owner: u64) -> TicketOf<Test> {

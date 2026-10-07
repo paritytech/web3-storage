@@ -5,12 +5,12 @@
  *
  * Accounts: //Alice (provider w/ node), //Dave (client)
  *
- * The provider node reads its own on-chain registration (settings + replay
- * window) in a background reconciler rather than once at startup. These tests
- * prove that, end to end:
+ * The provider node reads its own on-chain registration (settings) in a
+ * background reconciler rather than once at startup. These tests prove
+ * that, end to end:
  *
  *   11.1 `/info` exposes a readiness object and reports the running provider
- *        as signing-configured, registered, and nonce-counter-ready.
+ *        as signing-configured and registered.
  *   11.2 A change to the provider's on-chain settings is picked up *without*
  *        restarting the node — a quote reflects the new listed price after a
  *        reconcile tick.
@@ -110,11 +110,6 @@ async function main() {
         info.readiness.provider_info_loaded,
         true,
         "Alice is registered, so the reconciler must have loaded provider_info",
-      );
-      assert.strictEqual(
-        info.readiness.nonce_counter_ready,
-        true,
-        "the nonce counter must be bootstrapped from the replay window",
       );
     },
   });

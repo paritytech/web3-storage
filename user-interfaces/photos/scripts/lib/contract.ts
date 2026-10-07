@@ -11,10 +11,12 @@
 
 import {
   asHex,
+  getAgreementNonce,
   negotiateTerms,
   signedTermsBucketId,
   type ChainSigner,
   type MappedAccount,
+  type ParachainApi,
 } from "@web3-storage/sdk";
 
 /** Mirror of `IDriveRegistry.PrimitiveAgreementTerms` for viem ABI encoding. */
@@ -24,6 +26,7 @@ export interface PrimitiveAgreementTerms {
   duration: number;
   pricePerByte: bigint;
   validUntil: number;
+  /** Owner-chosen replay-protection nonce: must equal the owner's next expected on-chain value. */
   nonce: bigint;
   hasBucketId: boolean;
   bucketId: bigint;
@@ -43,15 +46,18 @@ export interface SignedTerms {
  * account (`h160ToSubstrate(deployed.addressBytes)`).
  */
 export async function negotiatePrecompileTerms(
+  api: ParachainApi,
   providerUrl: string,
   owner: MappedAccount | ChainSigner,
   { maxBytes, duration, pricePerByte }: { maxBytes: bigint; duration: number; pricePerByte: bigint },
 ): Promise<SignedTerms> {
+  const nonce = await getAgreementNonce(api, owner.address);
   const signed = await negotiateTerms(providerUrl, {
     owner: owner.address,
     max_bytes: BigInt(maxBytes),
     duration,
     price_per_byte: pricePerByte,
+    nonce,
     replica_params: null,
     bucket: null,
   });
