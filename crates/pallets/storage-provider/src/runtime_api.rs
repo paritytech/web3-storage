@@ -284,7 +284,8 @@ sp_api::decl_runtime_apis! {
         /// Get all challenges for a specific bucket.
         fn bucket_challenges(bucket_id: BucketId) -> Vec<ChallengeResponse>;
 
-        /// Get all challenges targeting a specific provider.
+        /// Challenges targeting a provider that it can still answer; expired
+        /// ones are omitted.
         fn provider_challenges(provider: AccountId) -> Vec<ChallengeResponse>;
 
         /// Get all challenges created by a specific challenger.

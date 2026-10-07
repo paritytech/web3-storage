@@ -8,21 +8,17 @@
 pub mod rocksdb;
 pub mod types;
 
-pub use rocksdb::{DiskNonceStore, DiskStorage};
+pub use rocksdb::DiskStorage;
 pub use types::{BucketState, StoredNode};
 
 use crate::error::Error;
 use crate::merkle::build_merkle_proof;
-use crate::nonce::NonceStore;
 use serde::{Deserialize, Serialize};
 use sp_core::H256;
 use std::fmt;
 use std::path::PathBuf;
 use std::sync::Arc;
 use storage_primitives::{hash_children, BucketId};
-
-/// A built backend: the storage, and the nonce store matching its persistence.
-pub type OpenedBackend = (Arc<dyn StorageBackend>, Arc<dyn NonceStore>);
 
 /// Which backend to build, and what that backend needs.
 ///
@@ -35,15 +31,10 @@ pub enum StorageBackendSpec {
 }
 
 impl StorageBackendSpec {
-    /// Build the backend and the nonce store matching its persistence, so the
-    /// provider's extrinsic nonce survives a restart with its data.
-    pub fn build(&self) -> Result<OpenedBackend, Error> {
+    /// Build the backend.
+    pub fn build(&self) -> Result<Arc<dyn StorageBackend>, Error> {
         match self {
-            Self::RocksDb { path } => {
-                let disk = DiskStorage::new(path)?;
-                let nonce_store = disk.nonce_store();
-                Ok((Arc::new(disk), nonce_store))
-            }
+            Self::RocksDb { path } => Ok(Arc::new(DiskStorage::new(path)?)),
         }
     }
 }
@@ -284,28 +275,4 @@ pub fn build_padded_merkle_tree(
     }
 
     current_level[0]
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use tempfile::TempDir;
-
-    #[test]
-    fn rocksdb_pairs_with_a_nonce_store_that_survives_reopen() {
-        let dir = TempDir::new().unwrap();
-        let spec = StorageBackendSpec::RocksDb {
-            path: dir.path().to_path_buf(),
-        };
-
-        // Scoped so both halves drop and RocksDB releases the directory lock.
-        {
-            let (_storage, nonce_store) = spec.build().expect("RocksDB opens");
-            nonce_store.persist(7);
-        }
-
-        let (_storage, nonce_store) = spec.build().expect("RocksDB reopens");
-        assert_eq!(nonce_store.load(), Some(7));
-        assert!(spec.to_string().starts_with("RocksDB at "));
-    }
 }

@@ -140,7 +140,7 @@ pub trait ChallengeChainClient: Send + Sync {
     async fn poll_challenges(&self) -> Result<Vec<DetectedChallenge>, ChallengeError>;
 
     /// Point-read a single challenge by id, `None` if it is gone (already
-    /// responded / reaped) or targets another provider. Backs the
+    /// responded / resolved) or targets another provider. Backs the
     /// event-driven path, where `ChallengeCreated` carries the id but not
     /// the proof parameters.
     async fn fetch_challenge(
@@ -340,9 +340,10 @@ impl ChallengeResponder {
                 // While paused, stop consuming so events stay queued instead of
                 // being dropped. Replaying them on resume is safe: each one is
                 // point-read against live chain state, so anything already
-                // resolved is a no-op. A pause longer than the channel's
-                // capacity surfaces as `Lagged` below, which reconciles with a
-                // full scan.
+                // resolved is a no-op; an expired, unresolved one costs one
+                // rejected response (`ChallengeExpired`). A pause longer than
+                // the channel's capacity surfaces as `Lagged` below, which
+                // reconciles with a full scan.
                 event = events_rx.recv(), if events_open && !paused => {
                     if matches!(event, Err(broadcast::error::RecvError::Closed)) {
                         events_open = false;

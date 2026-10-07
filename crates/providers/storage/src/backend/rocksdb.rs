@@ -9,20 +9,17 @@
 
 use super::{BucketInfo, BucketState, BucketStats, BucketSummary, StorageBackend, StoredNode};
 use crate::error::Error;
-use crate::nonce::NonceStore;
 use codec::{DecodeAll, Encode};
 use rocksdb::{Options, DB};
 use sp_core::H256;
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use storage_primitives::{blake2_256, BucketId, Commitment, MmrLeaf};
 
 /// Column families for organizing data
 const CF_NODES: &str = "nodes";
 const CF_BUCKETS: &str = "buckets";
 const CF_ROOT_TO_BUCKET: &str = "root_to_bucket";
-/// Small metadata values (e.g. the nonce counter highest sequence nonce).
-const CF_METADATA: &str = "metadata";
 /// Per-bucket `Vec<MmrLeaf>` that `delete_before` has pruned from `CF_BUCKETS`.
 /// Entry `i` is always the leaf at absolute sequence `i` - pruning only ever
 /// removes a prefix, so this stays a contiguous, gap-free run from sequence 0.
@@ -30,8 +27,9 @@ const CF_METADATA: &str = "metadata";
 /// covers has been pruned from the live bucket state.
 const CF_PRUNED_LEAVES: &str = "pruned_leaves";
 
-/// RocksDB key for the persisted nonce counter highest sequence nonce.
-const KEY_NONCE: &[u8] = b"nonce_counter";
+/// Held the provider-allocated agreement nonce before nonces moved on chain
+/// (per-owner `AgreementNonces`). Dropped when an existing database is opened.
+const LEGACY_CF_METADATA: &str = "metadata";
 
 /// Disk-based storage backend using RocksDB.
 pub struct DiskStorage {
@@ -41,20 +39,26 @@ pub struct DiskStorage {
 impl DiskStorage {
     /// Create a new disk storage instance.
     pub fn new(path: impl AsRef<Path>) -> Result<Self, Error> {
+        let path = path.as_ref();
         let mut opts = Options::default();
         opts.create_if_missing(true);
         opts.create_missing_column_families(true);
 
-        // Define column families
-        let cf_names = vec![
-            CF_NODES,
-            CF_BUCKETS,
-            CF_ROOT_TO_BUCKET,
-            CF_METADATA,
-            CF_PRUNED_LEAVES,
-        ];
+        // RocksDB only opens a database with every column family it has, so
+        // the legacy one is opened (then dropped) when present. A missing
+        // database lists nothing.
+        let has_legacy = DB::list_cf(&opts, path)
+            .map(|names| names.iter().any(|name| name == LEGACY_CF_METADATA))
+            .unwrap_or(false);
+        let mut cf_names = vec![CF_NODES, CF_BUCKETS, CF_ROOT_TO_BUCKET, CF_PRUNED_LEAVES];
+        if has_legacy {
+            cf_names.push(LEGACY_CF_METADATA);
+        }
 
-        let db = DB::open_cf(&opts, path, &cf_names)?;
+        let mut db = DB::open_cf(&opts, path, &cf_names)?;
+        if has_legacy {
+            db.drop_cf(LEGACY_CF_METADATA)?;
+        }
 
         Ok(Self { db: Arc::new(db) })
     }
@@ -517,15 +521,6 @@ impl DiskStorage {
 
         Ok((mmr.root(), mmr.peaks()))
     }
-
-    /// Return a nonce store backed by this DB's metadata column family.
-    ///
-    /// The returned [`DiskNonceStore`] shares the open [`DB`] handle so there
-    /// is no second DB to manage. Pass it to the negotiation nonce counter so
-    /// the replay watermark survives restarts.
-    pub fn nonce_store(&self) -> Arc<dyn NonceStore> {
-        Arc::new(DiskNonceStore::new(self.db.clone()))
-    }
 }
 
 impl StorageBackend for DiskStorage {
@@ -614,103 +609,6 @@ impl StorageBackend for DiskStorage {
     }
 }
 
-// ─── NonceStore ───────────────────────────────────────────────────────────────
-
-/// Monotonic nonce-counter persistence
-///
-/// Holds a shared reference to the open DB handle (same instance as
-/// [`DiskStorage`]). All writes are monotonic: a call with a value lower than
-/// the currently-persisted highest sequence nonce is silently ignored.
-///
-/// # Durability guarantee
-///
-/// Writes use default `WriteOptions` (`sync = false`): RocksDB appends to the
-/// in-memory WAL but does **not** fsync to disk. This guarantees that the
-/// highest sequence nonce survives a **clean process restart** (OS flushes the page
-/// cache on normal shutdown). It does **not** guarantee survival of a
-/// power-loss or kernel panic. In the latter case the last persisted nonce
-/// may be lost; the counter falls back to `max(chain_hsn + 1, 1)` as it did
-/// before this persistence layer was added, which is still safe — the chain's
-/// replay window rejects any duplicate redemption.
-pub struct DiskNonceStore {
-    db: Arc<DB>,
-    /// Monotonicity guard: always holds the highest value written so far,
-    /// so concurrent `persist` calls can cheaply skip stale lower writes.
-    watermark: Mutex<u64>,
-}
-
-impl DiskNonceStore {
-    pub fn new(db: Arc<DB>) -> Self {
-        // Initialize the in-memory watermark from the DB so we're consistent
-        // from the first call to persist() even if load() is never called.
-        let initial = Self::read_from_db(&db).unwrap_or(0);
-        Self {
-            db,
-            watermark: Mutex::new(initial),
-        }
-    }
-
-    fn read_from_db(db: &DB) -> Option<u64> {
-        let cf = db.cf_handle(CF_METADATA)?;
-        let bytes = db.get_cf(&cf, KEY_NONCE).ok()??;
-        bytes.try_into().ok().map(u64::from_le_bytes)
-    }
-}
-
-impl NonceStore for DiskNonceStore {
-    fn load(&self) -> Option<u64> {
-        Self::read_from_db(&self.db)
-    }
-
-    fn persist(&self, value: u64) {
-        let mut wm = match self.watermark.lock() {
-            Ok(g) => g,
-            Err(e) => {
-                tracing::warn!("nonce persist: watermark lock poisoned: {e}");
-                return;
-            }
-        };
-        if value <= *wm {
-            return; // monotonic: ignore stale / lower values
-        }
-        let cf = match self.db.cf_handle(CF_METADATA) {
-            Some(cf) => cf,
-            None => {
-                tracing::warn!("nonce persist: metadata CF not found");
-                return;
-            }
-        };
-        if let Err(e) = self.db.put_cf(&cf, KEY_NONCE, value.to_le_bytes()) {
-            tracing::error!("nonce persist: RocksDB write failed: {e}");
-            return;
-        }
-        *wm = value;
-    }
-
-    fn reset(&self) {
-        let mut wm = match self.watermark.lock() {
-            Ok(g) => g,
-            Err(e) => {
-                tracing::warn!("nonce reset: watermark lock poisoned: {e}");
-                return;
-            }
-        };
-        let cf = match self.db.cf_handle(CF_METADATA) {
-            Some(cf) => cf,
-            None => {
-                tracing::warn!("nonce reset: metadata CF not found");
-                return;
-            }
-        };
-        if let Err(e) = self.db.delete_cf(&cf, KEY_NONCE) {
-            tracing::error!("nonce reset: RocksDB delete failed: {e}");
-            return;
-        }
-        *wm = 0;
-        tracing::info!("nonce reset: persisted highest sequence nonce cleared on deregister");
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -726,23 +624,10 @@ mod tests {
     fn on_disk_bytes() {
         // Raw keys and values as written through the public API.
         assert_eq!(
-            [
-                CF_NODES,
-                CF_BUCKETS,
-                CF_ROOT_TO_BUCKET,
-                CF_METADATA,
-                CF_PRUNED_LEAVES,
-            ],
-            [
-                "nodes",
-                "buckets",
-                "root_to_bucket",
-                "metadata",
-                "pruned_leaves",
-            ],
+            [CF_NODES, CF_BUCKETS, CF_ROOT_TO_BUCKET, CF_PRUNED_LEAVES],
+            ["nodes", "buckets", "root_to_bucket", "pruned_leaves"],
             "column-family names locate every record on disk",
         );
-        assert_eq!(KEY_NONCE, b"nonce_counter");
 
         let dir = TempDir::new().unwrap();
         let storage = DiskStorage::new(dir.path()).unwrap();
@@ -803,96 +688,40 @@ mod tests {
         let mut expected = vec![0x04u8]; // compact length 1
         expected.extend_from_slice(&pruned_leaf.encode());
         assert_eq!(raw, expected);
-
-        // CF_METADATA / KEY_NONCE: raw u64 little-endian (not SCALE).
-        storage.nonce_store().persist(42);
-        let cf = storage.db.cf_handle(CF_METADATA).unwrap();
-        let raw = storage.db.get_cf(&cf, KEY_NONCE).unwrap().unwrap();
-        assert_eq!(hex::encode(&raw), "2a00000000000000");
     }
 
+    /// A database written before nonces moved on chain still opens, keeps
+    /// its records, and loses the legacy `metadata` column family.
     #[test]
-    fn nonce_store_persist_and_load_round_trip() {
+    fn opening_drops_legacy_metadata_column_family() {
         let dir = TempDir::new().unwrap();
-        // Persist a value, then drop the storage handle (closing RocksDB).
         {
-            let storage = DiskStorage::new(dir.path()).unwrap();
-            let store = storage.nonce_store();
-            assert!(store.load().is_none(), "fresh DB has no persisted nonce");
-            store.persist(42);
-            assert_eq!(store.load(), Some(42));
+            let mut opts = Options::default();
+            opts.create_if_missing(true);
+            opts.create_missing_column_families(true);
+            let db = DB::open_cf(
+                &opts,
+                dir.path(),
+                [CF_NODES, CF_BUCKETS, CF_ROOT_TO_BUCKET, LEGACY_CF_METADATA],
+            )
+            .unwrap();
+            let cf = db.cf_handle(LEGACY_CF_METADATA).unwrap();
+            db.put_cf(&cf, b"nonce_counter", 7u64.to_le_bytes())
+                .unwrap();
+            let cf = db.cf_handle(CF_BUCKETS).unwrap();
+            db.put_cf(&cf, 1u64.to_le_bytes(), BucketState::new(1_000).encode())
+                .unwrap();
         }
-        // Reopen: value must survive the DB close/reopen cycle.
-        {
-            let storage = DiskStorage::new(dir.path()).unwrap();
-            let store = storage.nonce_store();
-            assert_eq!(
-                store.load(),
-                Some(42),
-                "persisted value must survive DB reopen"
-            );
-        }
-    }
 
-    #[test]
-    fn nonce_store_persist_is_monotonic() {
-        let dir = TempDir::new().unwrap();
         let storage = DiskStorage::new(dir.path()).unwrap();
-        let store = storage.nonce_store();
-        store.persist(50);
-        assert_eq!(store.load(), Some(50));
-        // A lower value must not regress the stored highest sequence nonce.
-        store.persist(10);
-        assert_eq!(
-            store.load(),
-            Some(50),
-            "lower value must not regress the persisted mark"
-        );
-        // A higher value must advance it.
-        store.persist(51);
-        assert_eq!(store.load(), Some(51));
-    }
+        assert!(storage.db.cf_handle(LEGACY_CF_METADATA).is_none());
+        assert!(storage.get_bucket(1).is_some());
+        drop(storage);
 
-    #[test]
-    fn nonce_store_reset_clears_persisted_value() {
-        let dir = TempDir::new().unwrap();
-        let storage = DiskStorage::new(dir.path()).unwrap();
-        let store = storage.nonce_store();
-        store.persist(100);
-        assert_eq!(store.load(), Some(100));
-
-        // Reset: value must be gone from the DB.
-        store.reset();
-        assert!(
-            store.load().is_none(),
-            "reset must clear the persisted mark"
-        );
-
-        // Persist at a low value must now succeed (watermark was zeroed by reset).
-        store.persist(2);
-        assert_eq!(store.load(), Some(2));
-    }
-
-    #[test]
-    fn nonce_store_reset_clears_across_reopen() {
-        let dir = TempDir::new().unwrap();
-        {
-            let storage = DiskStorage::new(dir.path()).unwrap();
-            let store = storage.nonce_store();
-            store.persist(50);
-            store.reset();
-            // Immediately after reset, load is None.
-            assert!(store.load().is_none());
-        }
-        // After reopen, the reset must have been flushed to disk (key deleted).
-        {
-            let storage = DiskStorage::new(dir.path()).unwrap();
-            let store = storage.nonce_store();
-            assert!(
-                store.load().is_none(),
-                "reset must persist across DB reopen"
-            );
-        }
+        let names = DB::list_cf(&Options::default(), dir.path()).unwrap();
+        assert!(!names.iter().any(|name| name == LEGACY_CF_METADATA));
+        // Reopening a migrated database is a no-op.
+        DiskStorage::new(dir.path()).unwrap();
     }
 
     #[test]

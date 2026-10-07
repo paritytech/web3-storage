@@ -539,7 +539,7 @@ fn two_commit_bucket() -> (
     DetectedChallenge,
     TempDir,
 ) {
-    let (storage, nonce_store, dir) = temp_rocksdb();
+    let (storage, dir) = temp_rocksdb();
     storage
         .init_bucket(1, 1024 * 1024)
         .expect("bucket initialises");
@@ -586,7 +586,7 @@ fn two_commit_bucket() -> (
     };
 
     let state = Arc::new(ProviderState::with_provider_id(
-        test_deps(Arc::clone(&storage), nonce_store),
+        test_deps(Arc::clone(&storage)),
         ALICE_SS58.to_string(),
     ));
 

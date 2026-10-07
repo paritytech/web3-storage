@@ -10,7 +10,7 @@
 import { ss58Decode } from '@polkadot-labs/hdkd-helpers'
 import { decodeEventLog } from 'viem'
 import type { TxCreator } from 'polkadot-api/tx-creator'
-import { toHex, type ParachainApi, type SignedTerms } from '@web3-storage/papi'
+import { signedTermsBucketId, toHex, type ParachainApi, type SignedTerms } from '@web3-storage/papi'
 // Reuse the SDK's ABI encoder and the shared gas/storage defaults so the browser
 // path can't drift from the headless flow (`scripts/*`) that already imports them.
 import { DEFAULT_GAS_LIMIT, DEFAULT_STORAGE_DEPOSIT_LIMIT, encodeCall } from '@web3-storage/sdk/revive'
@@ -27,6 +27,7 @@ export interface PrimitiveAgreementTerms {
   duration: number
   pricePerByte: bigint
   validUntil: number
+  /** Owner-chosen replay-protection nonce: must equal the owner's next expected on-chain value. */
   nonce: bigint
   hasBucketId: boolean
   bucketId: bigint
@@ -74,7 +75,7 @@ export function toContractTerms(
     min_sync_interval?: number
     sync_price?: number | bigint
   } | null
-  const bucket = t.bucket_id
+  const bucketId = signedTermsBucketId(signed)
   return {
     terms: {
       owner: toHex(ownerPublicKey) as `0x${string}`,
@@ -89,8 +90,8 @@ export function toContractTerms(
         minSyncInterval: Number(rp?.min_sync_interval ?? 0),
         syncPrice: BigInt(rp?.sync_price ?? 0),
       },
-      hasBucketId: bucket != null,
-      bucketId: BigInt(bucket ?? 0),
+      hasBucketId: bucketId != null,
+      bucketId: bucketId ?? 0n,
     },
     signature: (signed.signature.startsWith('0x')
       ? signed.signature
@@ -205,7 +206,7 @@ async function createAndSubmitWithRetry<T>(
 export type CreateLibraryErrorKind =
   | 'payment-exceeds-max'
   | 'terms-expired'
-  | 'terms-reused'
+  | 'nonce-mismatch'
   | 'bad-signature'
   | 'already-exists'
   | 'capacity'
@@ -254,10 +255,11 @@ export function classifyDispatchError(dispatchError: unknown): CreateLibraryErro
       message: 'The provider-signed terms expired before the transaction landed. Try again to re-negotiate.',
     }
   }
-  if (raw.includes('NonceAlreadyUsed')) {
+  if (raw.includes('NonceMismatch')) {
     return {
-      kind: 'terms-reused',
-      message: 'The signed terms were already used. Try again to re-negotiate fresh terms.',
+      kind: 'nonce-mismatch',
+      message:
+        "The signed terms' nonce no longer matches the owner's agreement nonce, usually because another transaction through this contract used it first. Try again.",
     }
   }
   if (raw.includes('InvalidSignature') || raw.includes('BadSignature')) {

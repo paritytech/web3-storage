@@ -178,13 +178,14 @@ impl FileSystemClient {
     /// # Returns
     ///
     /// The newly created drive ID. Bucket creation and the primary agreement
-    /// open atomically inside Layer 0's `establish_storage_agreement_internal`.
+    /// open atomically inside Layer 0's `create_bucket_with_primary_internal`.
     ///
     /// # Example
     ///
     /// ```ignore
     /// use storage_client::{NegotiateRequest, ProviderClient};
     ///
+    /// let nonce = admin_client.agreement_nonce(&owner_account).await?;
     /// let signed = ProviderClient::negotiate_terms(
     ///     "http://127.0.0.1:3333",
     ///     &NegotiateRequest {
@@ -192,6 +193,7 @@ impl FileSystemClient {
     ///         max_bytes: 10_000_000_000,
     ///         duration: 500,
     ///         price_per_byte: 1,
+    ///         nonce,
     ///         replica_params: None,
     ///     },
     /// ).await?;

@@ -46,11 +46,12 @@ interface IDriveRegistry {
         uint128 pricePerByte;
         /// Block number after which the quote is no longer redeemable.
         uint32 validUntil;
-        /// Provider-chosen replay-protection nonce.
+        /// Owner-chosen replay-protection nonce: must equal the owner's next
+        /// expected on-chain value.
         uint64 nonce;
-        /// `true` if the quote is bound to an existing bucket (`Some(_)` on
-        /// the Rust side) — required for replica terms; primary terms leave
-        /// this false.
+        /// `true` if the quote names an existing bucket
+        /// (`BucketTarget::Existing` on the Rust side); `false` for a bucket
+        /// created at redemption (`BucketTarget::New`).
         bool hasBucketId;
         /// Target bucket id; only read when `hasBucketId` is true.
         uint64 bucketId;

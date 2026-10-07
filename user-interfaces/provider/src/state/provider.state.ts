@@ -554,12 +554,31 @@ export async function respondToChallenge(
     onProgress,
   )
 
-  // Step 3: Update local state
-  const key = challengeKey(challenge)
-  const existing = challenges$.getValue()
+  setChallengeStatus(challenge, 'responded')
+}
+
+/**
+ * Resolve an expired challenge against this provider: slashes the stake and
+ * clears the pending counter that blocks deregistration.
+ */
+export async function resolveExpiredChallenge(
+  challenge: Challenge,
+  signer: import('polkadot-api/pjs-signer').InjectedPolkadotAccount,
+  onProgress?: (status: import('@/lib/chain-client').TxStatus) => void,
+): Promise<void> {
+  const { submitResolveExpiredChallenge } = await import('@/lib/chain-client')
+  await submitResolveExpiredChallenge(
+    { deadline: challenge.deadline, index: challenge.id },
+    signer,
+    onProgress,
+  )
+  setChallengeStatus(challenge, 'slashed')
+}
+
+function setChallengeStatus(challenge: Challenge, status: Challenge['status']): void {
   const merged = new Map<string, Challenge>()
-  for (const c of existing) merged.set(challengeKey(c), c)
-  merged.set(key, { ...challenge, status: 'responded' })
+  for (const c of challenges$.getValue()) merged.set(challengeKey(c), c)
+  merged.set(challengeKey(challenge), { ...challenge, status })
   challenges$.next(Array.from(merged.values()).sort((a, b) => b.deadline - a.deadline))
 }
 
