@@ -77,7 +77,9 @@ impl RequiredRole {
 /// standing on it. Kept as separate fields — [`BucketAccess`] is bucket state,
 /// `serves_as_replica` is the node's relationship to the bucket — but cached as one
 /// value because both resolve from the same chain read-through and expire and
-/// invalidate together.
+/// invalidate together. `access.visibility` always equals the chain's, so
+/// `Private` together with `serves_as_replica: true` is a valid entry: the
+/// replica of a private bucket, which the design has serve everyone.
 #[derive(Debug, Clone)]
 pub(crate) struct CachedMembership {
     pub(crate) access: BucketAccess,
