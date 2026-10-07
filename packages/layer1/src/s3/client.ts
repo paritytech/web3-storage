@@ -1,41 +1,33 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * S3Client — S3Registry buckets/object-metadata (chain) + the provider
- * node's /s3 object HTTP surface. Chain ops delegate to the layer-0 pallet
+ * S3Client — S3 buckets (plain Layer 0 buckets) + the provider node's /s3
+ * object HTTP surface. The chain stores no bucket name and no object
+ * metadata: a bucket is identified by its id, and the provider's index
+ * maps object keys to content. Chain ops delegate to the layer-0 pallet
  * wrappers (silent, no auto-retry, finalized submission + finalized reads by
  * default — UI-grade; tests/examples opt into in-block/best via
  * readOpts/submitMode); HTTP ops go through core's retrying fetch and are
  * signed with the signer's raw keypair, which the provider always requires.
  *
  * Bytes are opaque here: client-side encryption (when used) wraps/unwraps
- * app-side, so CID verification covers exactly what the provider stores.
+ * app-side. Downloads by key are unverified until the key -> content
+ * mapping is committed (#410).
  */
 
+import { httpFetch } from "@web3-storage/core";
 import {
-  computeCid,
-  CidMismatchError,
-  DEFAULT_CHUNK_SIZE,
-  httpFetch,
-  toHex,
-} from "@web3-storage/core";
-import {
-  asHex,
-  createS3Bucket as createS3BucketTx,
-  deleteObjectMetadata as deleteObjectMetadataTx,
-  deleteS3Bucket as deleteS3BucketTx,
-  putObjectMetadata as putObjectMetadataTx,
+  createBucketWithPrimary as createBucketWithPrimaryTx,
   type WaitOpts,
 } from "@web3-storage/layer0";
 
 import { Layer1Client, type Layer1ClientOptions } from "../base-client.js";
-import { resolveBucketProviders, resolveCreationTerms } from "../provider-url.js";
+import { getBucketInfos, listMemberBuckets } from "../bucket-info.js";
+import { resolveCreationTerms } from "../provider-url.js";
 import type {
   BucketInfo,
-  BucketRef,
   CreateBucketOptions,
   GetObjectResponse,
-  ObjectMetadata,
   ObjectSummary,
   PutObjectOptions,
   PutObjectResult,
@@ -43,21 +35,8 @@ import type {
 
 export type S3ClientOptions = Layer1ClientOptions;
 
-const utf8 = (s: string) => new TextEncoder().encode(s);
-
 export class S3Client extends Layer1Client {
-  // ── Validation (S3 conventions, lifted from the original SDK stub) ──────
-
-  validateBucketName(name: string): void {
-    if (name.length < 3 || name.length > 63) {
-      throw new Error("Bucket name must be 3-63 characters");
-    }
-    if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(name)) {
-      throw new Error(
-        "Bucket name must be lowercase alphanumeric with optional inner hyphens",
-      );
-    }
-  }
+  // ── Validation ──────────────────────────────────────────────────────────
 
   validateObjectKey(key: string): void {
     if (key.length < 1 || key.length > 1024) {
@@ -68,14 +47,12 @@ export class S3Client extends Layer1Client {
   // ── Bucket chain ops ────────────────────────────────────────────────────
 
   /**
-   * Create an S3 bucket via the negotiate -> establish flow: pick a provider
-   * (explicit `opts.provider` or auto-discovered), POST /negotiate for signed
-   * terms (unless `opts.signedTerms` is supplied), then redeem them in
-   * create_s3_bucket — which opens the underlying Layer 0 bucket + agreement
-   * atomically.
+   * Create an S3 bucket: a Layer 0 bucket with one primary agreement. Picks
+   * a provider (explicit `opts.provider` or auto-discovered), POSTs
+   * /negotiate for signed terms (unless `opts.signedTerms` is supplied),
+   * then redeems them in `create_bucket_with_primary`.
    */
-  async createBucket(name: string, opts: CreateBucketOptions): Promise<BucketInfo> {
-    this.validateBucketName(name);
+  async createBucket(opts: CreateBucketOptions): Promise<{ bucketId: bigint; provider: string }> {
     const signer = this.requireSigner();
     const { provider, signedTerms } = await resolveCreationTerms(this.api, {
       owner: signer.address,
@@ -87,179 +64,60 @@ export class S3Client extends Layer1Client {
       readOpts: this.readOpts,
       fetchOpts: this.fetchOpts,
     });
-    const { s3BucketId, layer0BucketId } = await createS3BucketTx(
-      this.api,
-      signer,
-      name,
-      provider,
-      signedTerms,
-      { ...this.submitOpts(), visibility: opts.visibility },
-    );
-    return {
-      s3BucketId,
-      layer0BucketId,
-      name,
-      owner: signer.address,
-      createdAt: 0,
-      objectCount: 0n,
-      providerInfo: [{ account: provider.address, multiaddr: "", url: null }],
-    };
-  }
-
-  async headBucket(name: string): Promise<BucketInfo | null> {
-    const bucketId = await this.api.query.S3Registry.BucketNameToId.getValue(
-      utf8(name),
-      this.readOpts,
-    );
-    if (bucketId === undefined) return null;
-    const bucket = await this.api.query.S3Registry.S3Buckets.getValue(bucketId, this.readOpts);
-    if (!bucket) return null;
-    const [providerInfo] = await resolveBucketProviders(
-      this.api,
-      [bucket.layer0_bucket_id],
-      this.readOpts,
-    );
-    return {
-      s3BucketId: bucketId,
-      layer0BucketId: bucket.layer0_bucket_id,
-      name: new TextDecoder().decode(bucket.name),
-      owner: bucket.owner,
-      createdAt: Number(bucket.created_at),
-      objectCount: bucket.object_count,
-      providerInfo: providerInfo ?? [],
-    };
-  }
-
-  async listBuckets(owner?: string): Promise<BucketInfo[]> {
-    const who = owner ?? this.requireSigner().address;
-    const ids = await this.api.query.S3Registry.UserBuckets.getValue(who, this.readOpts);
-    if (!ids || ids.length === 0) return [];
-
-    // Batch the bucket lookups into one query instead of N round-trips.
-    const bucketValues = await this.api.query.S3Registry.S3Buckets.getValues(
-      ids.map((id) => [id] as const),
-      this.readOpts,
-    );
-
-    const buckets: BucketInfo[] = [];
-    const layer0BucketIds: bigint[] = [];
-    bucketValues.forEach((bucket, i) => {
-      if (!bucket) return;
-      buckets.push({
-        s3BucketId: ids[i]!,
-        layer0BucketId: bucket.layer0_bucket_id,
-        name: new TextDecoder().decode(bucket.name),
-        owner: bucket.owner,
-        createdAt: Number(bucket.created_at),
-        objectCount: bucket.object_count,
-        providerInfo: [],
-      });
-      layer0BucketIds.push(bucket.layer0_bucket_id);
+    const { bucketId } = await createBucketWithPrimaryTx(this.api, signer, provider, signedTerms, {
+      ...this.submitOpts(),
+      visibility: opts.visibility,
     });
-
-    // `providersByBucket[i]` aligns with `buckets[i]` (both built skipping nulls).
-    const providersByBucket = await resolveBucketProviders(
-      this.api,
-      layer0BucketIds,
-      this.readOpts,
-    );
-    buckets.forEach((bucket, i) => {
-      bucket.providerInfo = providersByBucket[i] ?? [];
-    });
-
-    return buckets;
+    return { bucketId, provider: provider.address };
   }
 
-  async deleteBucket(s3BucketId: bigint): Promise<void> {
-    await deleteS3BucketTx(this.api, this.requireSigner(), s3BucketId, this.submitOpts());
+  async headBucket(bucketId: bigint): Promise<BucketInfo | null> {
+    const [info] = await getBucketInfos(this.api, [bucketId], this.readOpts);
+    return info ?? null;
   }
 
-  // ── Object metadata chain ops ───────────────────────────────────────────
-
-  async getObjectMetadata(s3BucketId: bigint, key: string): Promise<ObjectMetadata | null> {
-    const stored = await this.api.query.S3Registry.Objects.getValue(
-      s3BucketId,
-      utf8(key),
-      this.readOpts,
-    );
-    if (!stored) return null;
-    const userMetadata: Record<string, string> = {};
-    const dec = new TextDecoder();
-    for (const entry of stored.user_metadata ?? []) {
-      userMetadata[dec.decode(entry.key)] = dec.decode(entry.value);
-    }
-    return {
-      key,
-      cid: asHex(stored.cid),
-      size: stored.size,
-      contentType: stored.content_type ? dec.decode(stored.content_type) : undefined,
-      userMetadata,
-    };
-  }
-
-  async putObjectMetadata(
-    s3BucketId: bigint,
-    key: string,
-    obj: { cid: Uint8Array; size: bigint },
-    contentType = "application/octet-stream",
-    userMetadata: Array<[string, string]> = [],
-  ): Promise<void> {
-    this.validateObjectKey(key);
-    await putObjectMetadataTx(
-      this.api,
-      this.requireSigner(),
-      s3BucketId,
-      key,
-      obj,
-      contentType,
-      userMetadata,
-      this.submitOpts(),
-    );
-  }
-
-  async deleteObjectMetadata(s3BucketId: bigint, key: string): Promise<void> {
-    await deleteObjectMetadataTx(
-      this.api,
-      this.requireSigner(),
-      s3BucketId,
-      key,
-      this.submitOpts(),
-    );
+  /**
+   * Every bucket `account` (default: the signer) is a member of, owned or
+   * shared. The chain does not record which buckets hold S3 objects, so
+   * this lists all of them.
+   */
+  async listBuckets(account?: string): Promise<BucketInfo[]> {
+    return listMemberBuckets(this.api, account ?? this.requireSigner().address, this.readOpts);
   }
 
   // ── Provider resolution ─────────────────────────────────────────────────
 
-  getProviderUrl(layer0BucketId: bigint): Promise<string> {
-    return this.providers.get(layer0BucketId);
+  getProviderUrl(bucketId: bigint): Promise<string> {
+    return this.providers.get(bucketId);
   }
 
-  invalidateProviderUrl(layer0BucketId?: bigint): void {
-    this.providers.invalidate(layer0BucketId);
+  invalidateProviderUrl(bucketId?: bigint): void {
+    this.providers.invalidate(bucketId);
   }
 
-  waitForProvider(layer0BucketId: bigint, opts?: WaitOpts): Promise<string> {
-    return this.providers.waitForProvider(layer0BucketId, opts);
+  waitForProvider(bucketId: bigint, opts?: WaitOpts): Promise<string> {
+    return this.providers.waitForProvider(bucketId, opts);
   }
 
   // ── Object HTTP ops ─────────────────────────────────────────────────────
 
   async putObject(
-    bucket: BucketRef,
+    bucketId: bigint,
     key: string,
     data: Uint8Array,
     options: PutObjectOptions = {},
   ): Promise<PutObjectResult> {
     this.validateObjectKey(key);
-    const providerUrl = await this.getProviderUrl(bucket.layer0BucketId);
+    const providerUrl = await this.getProviderUrl(bucketId);
     const headers: Record<string, string> = {
       "Content-Type": options.contentType || "application/octet-stream",
-      ...(await this.authHeaders("PUT", bucket.layer0BucketId)),
+      ...(await this.authHeaders("PUT", bucketId)),
     };
     for (const [k, v] of Object.entries(options.metadata ?? {})) {
       headers[`x-amz-meta-${k}`] = v;
     }
     const response = await httpFetch(
-      `${providerUrl}/s3/${bucket.layer0BucketId}/object?key=${encodeURIComponent(key)}`,
+      `${providerUrl}/s3/${bucketId}/object?key=${encodeURIComponent(key)}`,
       { method: "PUT", headers, body: data as BodyInit, signal: options.signal },
       this.fetchOpts,
     );
@@ -270,45 +128,35 @@ export class S3Client extends Layer1Client {
     return { cid: body.data_root ?? body.etag, size: data.length };
   }
 
+  /**
+   * Download an object by key. UNVERIFIED: the key -> content mapping comes
+   * from the provider's index, which nothing on chain commits to (#410).
+   */
   async getObject(
-    bucket: BucketRef,
+    bucketId: bigint,
     key: string,
-    opts: { signal?: AbortSignal; verify?: boolean } = {},
+    opts: { signal?: AbortSignal } = {},
   ): Promise<GetObjectResponse> {
-    const providerUrl = await this.getProviderUrl(bucket.layer0BucketId);
+    const providerUrl = await this.getProviderUrl(bucketId);
     const response = await httpFetch(
-      `${providerUrl}/s3/${bucket.layer0BucketId}/object?key=${encodeURIComponent(key)}`,
-      { signal: opts.signal, headers: await this.authHeaders("GET", bucket.layer0BucketId) },
+      `${providerUrl}/s3/${bucketId}/object?key=${encodeURIComponent(key)}`,
+      { signal: opts.signal, headers: await this.authHeaders("GET", bucketId) },
       this.fetchOpts,
     );
     if (!response.ok) {
       throw new Error(`Download failed: ${response.status} ${await response.text().catch(() => "")}`);
     }
-    const data = new Uint8Array(await response.arrayBuffer());
-
-    if (opts.verify === false || bucket.s3BucketId === undefined) {
-      return { data, verified: false };
-    }
-
-    const meta = await this.getObjectMetadata(bucket.s3BucketId, key).catch(() => null);
-    if (!meta) return { data, verified: false };
-    const actual = toHex(computeCid(data)).toLowerCase();
-    if (actual === meta.cid.toLowerCase()) return { data, verified: true };
-    if (data.length <= DEFAULT_CHUNK_SIZE) {
-      // Single chunk: data_root == chunk hash, so a mismatch is proof of
-      // corrupted/substituted bytes — hard fail.
-      throw new CidMismatchError(meta.cid, actual);
-    }
-    // Multi-chunk: the on-chain cid is a Merkle root a flat hash can't
-    // reproduce; DAG-walk verification is tracked separately.
-    return { data, verified: false };
+    return {
+      data: new Uint8Array(await response.arrayBuffer()),
+      contentType: response.headers.get("content-type") || "application/octet-stream",
+    };
   }
 
-  async deleteObject(bucket: BucketRef, key: string): Promise<void> {
-    const providerUrl = await this.getProviderUrl(bucket.layer0BucketId);
+  async deleteObject(bucketId: bigint, key: string): Promise<void> {
+    const providerUrl = await this.getProviderUrl(bucketId);
     const response = await httpFetch(
-      `${providerUrl}/s3/${bucket.layer0BucketId}/object?key=${encodeURIComponent(key)}`,
-      { method: "DELETE", headers: await this.authHeaders("DELETE", bucket.layer0BucketId) },
+      `${providerUrl}/s3/${bucketId}/object?key=${encodeURIComponent(key)}`,
+      { method: "DELETE", headers: await this.authHeaders("DELETE", bucketId) },
       this.fetchOpts,
     );
     if (!response.ok) {
@@ -316,13 +164,13 @@ export class S3Client extends Layer1Client {
     }
   }
 
-  async listObjects(bucket: BucketRef, prefix?: string): Promise<ObjectSummary[]> {
-    const providerUrl = await this.getProviderUrl(bucket.layer0BucketId);
+  async listObjects(bucketId: bigint, prefix?: string): Promise<ObjectSummary[]> {
+    const providerUrl = await this.getProviderUrl(bucketId);
     const params = new URLSearchParams();
     if (prefix) params.set("prefix", prefix);
     const response = await httpFetch(
-      `${providerUrl}/s3/${bucket.layer0BucketId}/objects?${params.toString()}`,
-      { headers: await this.authHeaders("GET", bucket.layer0BucketId) },
+      `${providerUrl}/s3/${bucketId}/objects?${params.toString()}`,
+      { headers: await this.authHeaders("GET", bucketId) },
       this.fetchOpts,
     );
     if (!response.ok) throw new Error(`List objects failed: ${response.status}`);

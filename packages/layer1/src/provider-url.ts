@@ -37,24 +37,19 @@ export interface PrimaryProviderInfo {
 }
 
 /**
- * Resolve the primary-provider info for each given layer-0 bucket id, batching
- * every storage read into a single query per pallet map (no per-bucket /
- * per-provider round-trips). Returns an array aligned with `bucketIds` — each
- * entry is that bucket's primary providers (possibly empty).
+ * Resolve the primary-provider info for each given layer-0 bucket record,
+ * reading every provider in one batched query. Returns an array aligned
+ * with `buckets`; each entry is that bucket's primary providers (possibly
+ * empty).
  */
 export async function resolveBucketProviders(
   api: ParachainApi,
-  bucketIds: bigint[],
+  buckets: ({ primary_providers: string[] } | undefined)[],
   readOpts: { at: "best" | "finalized" } = { at: "finalized" },
 ): Promise<PrimaryProviderInfo[][]> {
-  if (bucketIds.length === 0) return [];
-  const bucketInfo = await api.query.StorageProvider.Buckets.getValues(
-    bucketIds.map((id) => [id] as const),
-    readOpts,
-  );
-
+  if (buckets.length === 0) return [];
   const providerAccounts = [
-    ...new Set(bucketInfo.flatMap((info) => info?.primary_providers ?? [])),
+    ...new Set(buckets.flatMap((info) => info?.primary_providers ?? [])),
   ];
   const providerRecords = await api.query.StorageProvider.Providers.getValues(
     providerAccounts.map((account) => [account] as const),
@@ -69,7 +64,7 @@ export async function resolveBucketProviders(
     providerMap.set(account, { account, multiaddr, url: parseMultiaddrToUrl(multiaddr) });
   });
 
-  return bucketInfo.map((info) =>
+  return buckets.map((info) =>
     (info?.primary_providers ?? [])
       .map((account) => providerMap.get(account))
       .filter((p): p is PrimaryProviderInfo => p != null),
@@ -202,10 +197,10 @@ export interface ResolveCreationTermsOpts {
 }
 
 /**
- * The negotiate half of the negotiate -> establish flow for bucket/drive
+ * The negotiate half of the negotiate -> establish flow for bucket
  * creation: pick a provider (explicit or discovered), POST /negotiate, and
- * return the provider account + provider-signed terms ready for the establish_*
- * / create_drive / create_s3_bucket extrinsics. Pass `signedTerms` to skip the
+ * return the provider account + provider-signed terms ready for
+ * `create_bucket_with_primary`. Pass `signedTerms` to skip the
  * HTTP round-trip entirely (the caller pre-negotiated).
  */
 export async function resolveCreationTerms(
