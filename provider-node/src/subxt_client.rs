@@ -752,7 +752,7 @@ impl ReplicaSyncChainClient for SubxtChainClient {
     ) -> Result<Vec<String>, ChainClientError> {
         use storage_subxt::api::runtime_types::storage_primitives::ProviderRole;
 
-        let own_account = self.signer.public_key().0.to_vec();
+        let provider_account = self.signer.public_key().0.to_vec();
 
         let payload = storage_subxt::api::runtime_apis()
             .storage_provider_api()
@@ -771,7 +771,7 @@ impl ReplicaSyncChainClient for SubxtChainClient {
             .into_iter()
             .filter(|agreement| matches!(agreement.role, ProviderRole::Replica { .. }))
             .map(|agreement| agreement.provider)
-            .filter(|provider| provider != &own_account)
+            .filter(|provider| provider != &provider_account)
             .collect();
 
         self.endpoints_for_accounts(accounts).await

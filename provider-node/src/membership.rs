@@ -23,14 +23,14 @@ pub struct ChainMembershipResolver {
     /// This node's provider account, for resolving whether it holds the
     /// bucket as a replica (replicas serve reads to everyone). `None` (no
     /// identity configured) makes every bucket resolve as not replica-held.
-    own_account: Option<AccountId32>,
+    provider_account: Option<AccountId32>,
 }
 
 impl ChainMembershipResolver {
-    pub fn new(chain_rx: ChainWatch, own_account: Option<AccountId32>) -> Self {
+    pub fn new(chain_rx: ChainWatch, provider_account: Option<AccountId32>) -> Self {
         Self {
             chain_rx,
-            own_account,
+            provider_account,
         }
     }
 
@@ -97,7 +97,7 @@ impl MembershipResolver for ChainMembershipResolver {
     /// the entry is invalidated or falls out of the TTL, the same freshness
     /// bound the member set lives under.
     async fn fetch_serves_as_replica(&self, bucket_id: BucketId) -> Result<bool, MembershipError> {
-        let Some(own) = &self.own_account else {
+        let Some(own) = &self.provider_account else {
             return Ok(false);
         };
         let api = self.api()?;

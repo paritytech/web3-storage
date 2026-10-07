@@ -130,8 +130,8 @@ fn verify_signature(
 pub struct Authenticator {
     membership: MembershipCache,
     max_skew: Duration,
-    /// The node's own provider account — see [`Self::with_self_account`].
-    self_account: Option<AccountId32>,
+    /// The node's own provider account — see [`Self::with_provider_account`].
+    provider_account: Option<AccountId32>,
 }
 
 /// Default clock-skew tolerance. Matches `--auth-max-skew`'s default.
@@ -145,7 +145,7 @@ impl Authenticator {
         Self {
             membership: MembershipCache::new(resolver),
             max_skew: DEFAULT_MAX_SKEW,
-            self_account: None,
+            provider_account: None,
         }
     }
 
@@ -154,8 +154,8 @@ impl Authenticator {
     /// provider accounts are never bucket members, so the provider's own
     /// tooling (e.g. the dashboard fetching challenge proofs) has no other
     /// identity to authenticate with. Writer/Admin checks are unaffected.
-    pub fn with_self_account(mut self, account: AccountId32) -> Self {
-        self.self_account = Some(account);
+    pub fn with_provider_account(mut self, account: AccountId32) -> Self {
+        self.provider_account = Some(account);
         self
     }
 
@@ -202,7 +202,7 @@ impl Authenticator {
     /// Writer/Admin request) needs a valid signed `Authorization` header whose
     /// account holds `required` for the bucket — or is the node's own provider
     /// account, which passes any Reader check (see
-    /// [`Self::with_self_account`]). A bucket whose visibility cannot be
+    /// [`Self::with_provider_account`]). A bucket whose visibility cannot be
     /// established gates like `Private`.
     pub async fn require_role(
         &self,
@@ -227,7 +227,7 @@ impl Authenticator {
 
         // Checked before the membership lookup result is consulted, so
         // operator reads keep working through a chain outage.
-        if required == RequiredRole::Reader && self.self_account.as_ref() == Some(&account) {
+        if required == RequiredRole::Reader && self.provider_account.as_ref() == Some(&account) {
             return Ok(());
         }
 
@@ -398,13 +398,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn self_account_reads_any_bucket_but_cannot_write() {
+    async fn provider_account_reads_any_bucket_but_cannot_write() {
         // The node's own provider account is never a bucket member, yet its
         // tooling must fetch challenge proofs — Reader passes, Writer doesn't.
         let provider = sr25519::Pair::from_string("//Provider", None).unwrap();
         let provider_account = AccountId32::new(provider.public().0);
         let auth = Authenticator::new(StaticMembershipResolver::private(vec![]))
-            .with_self_account(provider_account);
+            .with_provider_account(provider_account);
 
         let header = make_auth_header(&provider, "GET", 1, current_timestamp());
         let read = auth
@@ -420,7 +420,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn self_account_reads_survive_a_chain_outage() {
+    async fn provider_account_reads_survive_a_chain_outage() {
         // FlakyResolver fails from the second lookup on; with zero ttl and
         // max_stale the membership entry is unusable — the operator's own
         // reads must still pass, since they never consult membership.
@@ -433,7 +433,7 @@ mod tests {
         })
         .with_ttl(Duration::ZERO)
         .with_max_stale(Duration::ZERO)
-        .with_self_account(provider_account);
+        .with_provider_account(provider_account);
 
         for _ in 0..2 {
             let header = make_auth_header(&provider, "GET", 1, current_timestamp());

@@ -68,7 +68,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // membership resolver (is this node a replica for the bucket?) and the
     // authenticator's operator self-auth; both degrade gracefully to None.
     let seed = cli.key.load_seed()?;
-    let own_account = match &seed {
+    let provider_account = match &seed {
         Some(seed) => Some(sp_core::crypto::AccountId32::new(
             sp_core::sr25519::Pair::from_string(seed, None)
                 .map_err(|e| format!("Failed to create keypair: {e:?}"))?
@@ -86,7 +86,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // through the shared watch connection. Subscribed here rather than after
     // the chain-state coordinator starts, so the cache cannot miss the
     // bootstrap `Resubscribed` the coordinator broadcasts on first connect.
-    let resolver = ChainMembershipResolver::new(chain_rx.clone(), own_account.clone());
+    let resolver = ChainMembershipResolver::new(chain_rx.clone(), provider_account.clone());
     // Incoherent, not unsafe - warn rather than clamp an explicit choice.
     if cli.auth.auth_max_stale <= cli.auth.auth_cache_ttl {
         tracing::warn!(
@@ -102,8 +102,8 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         .with_max_stale(Duration::from_secs(cli.auth.auth_max_stale))
         .with_max_entries(cli.auth.auth_cache_max_entries)
         .with_invalidations(BlockEventInvalidations::new(events_tx.subscribe()));
-    if let Some(account) = own_account.clone() {
-        authenticator = authenticator.with_self_account(account);
+    if let Some(account) = provider_account.clone() {
+        authenticator = authenticator.with_provider_account(account);
     }
     let auth = Arc::new(authenticator);
     tracing::info!(

@@ -68,11 +68,14 @@ impl AuthTestServer {
 
     /// Same, but the authenticator knows the node's own provider account
     /// (operator self-auth).
-    async fn with_resolver_and_self(
+    async fn with_resolver_and_provider_account(
         resolver: impl MembershipResolver + 'static,
-        self_account: AccountId32,
+        provider_account: AccountId32,
     ) -> Self {
-        Self::with_authenticator(Authenticator::new(resolver).with_self_account(self_account)).await
+        Self::with_authenticator(
+            Authenticator::new(resolver).with_provider_account(provider_account),
+        )
+        .await
     }
 
     async fn with_authenticator(authenticator: Authenticator) -> Self {
@@ -418,7 +421,7 @@ async fn fs_reader_blocked_from_mkdir() {
 }
 
 #[tokio::test]
-async fn fs_unknown_account_returns_forbidden() {
+async fn fs_unknprovider_account_returns_forbidden() {
     // Server only knows Alice as Admin; Bob is not a member at all
     let server = AuthTestServer::with_role(Role::Admin).await;
     let bob = sr25519::Pair::from_string("//Bob", None).unwrap();
@@ -700,7 +703,7 @@ async fn commit_reader_blocked() {
 
 /// A validly-signed request from an account that is not a member of the bucket
 /// must be rejected on the L0 write path — a correct signature only proves
-/// identity, not authorization. (The FS path has `fs_unknown_account_*`; this
+/// identity, not authorization. (The FS path has `fs_unknprovider_account_*`; this
 /// closes the same gap for `/node`.)
 #[tokio::test]
 async fn node_non_member_returns_forbidden() {
@@ -880,12 +883,12 @@ async fn hash_keyed_reads_stay_open_on_private_bucket() {
 /// a member of — the challenged provider's tooling (dashboard) fetches
 /// `/mmr_proof` this way, since provider accounts are never members.
 #[tokio::test]
-async fn self_account_reads_private_bucket_proofs() {
+async fn provider_account_reads_private_bucket_proofs() {
     // Membership: Bob (Admin) only. The server's identity is //Alice (the
     // harness seeds ProviderState with it), and the authenticator is told so.
     let bob = sr25519::Pair::from_string("//Bob", None).unwrap();
     let alice = sr25519::Pair::from_string("//Alice", None).unwrap();
-    let server = AuthTestServer::with_resolver_and_self(
+    let server = AuthTestServer::with_resolver_and_provider_account(
         StaticMembershipResolver::private(vec![
             (AccountId32::new(bob.public().0), Role::Admin).into()
         ]),
