@@ -23,13 +23,12 @@ use std::time::Duration;
 use storage_primitives::BucketId;
 use storage_subxt::api::runtime_types::bounded_collections::bounded_vec::BoundedVec;
 use storage_subxt::api::runtime_types::pallet_storage_provider::pallet::ChallengeResponse as RuntimeChallengeResponse;
+use storage_subxt::api::runtime_types::sp_runtime::MultiSignature as RuntimeMultiSignature;
 use storage_subxt::api::runtime_types::storage_primitives::{
     ChallengeId as RuntimeChallengeId, MerkleProof as RuntimeMerkleProof,
     MmrLeaf as RuntimeMmrLeaf, MmrProof as RuntimeMmrProof,
 };
-use subxt::dynamic::Value;
 use subxt::error::{DispatchError, TransactionEventsError, TransactionFinalizedSuccessError};
-use subxt::ext::scale_value::value;
 
 /// `StorageProvider` error variants that mean "this action already happened"
 /// — a retry after a dropped transaction watch may race an earlier attempt
@@ -61,18 +60,6 @@ enum Attempt {
     Retryable(ChainClientError),
     /// The chain rejected the call itself; resubmitting would fail identically.
     Rejected(ChainClientError),
-}
-
-/// Encode a `MultiSignature` as the dynamic variant value the runtime's
-/// `MultiSignature` type expects, preserving the scheme tag.
-pub(crate) fn multi_signature_value(signature: &sp_runtime::MultiSignature) -> Value {
-    use sp_runtime::MultiSignature as MS;
-    match signature {
-        MS::Ed25519(s) => value!(Ed25519(Value::from_bytes(s.0))),
-        MS::Sr25519(s) => value!(Sr25519(Value::from_bytes(s.0))),
-        MS::Ecdsa(s) => value!(Ecdsa(Value::from_bytes(s.0))),
-        MS::Eth(s) => value!(Eth(Value::from_bytes(s.0))),
-    }
 }
 
 /// Production implementation that talks to the chain via subxt.
@@ -358,42 +345,6 @@ impl SubxtChainClient {
         format!("/ip4/{host}/tcp/{port}")
     }
 
-    /// Extract the raw bytes of a decoded byte-sequence storage field
-    /// (e.g. a `Vec<u8>` / `BoundedVec<u8>`).
-    ///
-    /// subxt's dynamic decoder represents such a field either as a flat
-    /// sequence of byte primitives, or — for `BoundedVec` and similar newtype
-    /// wrappers — as a single-element composite whose inner value holds the
-    /// real sequence. We handle both, recursing through the wrapper layer. This
-    /// mirrors the decoder behind the typed `storage_client` read path, so the
-    /// shared connection here decodes a multiaddr exactly as that path would.
-    fn extract_byte_vec<T>(val: &subxt::ext::scale_value::Value<T>) -> Vec<u8> {
-        use subxt::ext::scale_value::{Composite, Primitive, ValueDef};
-        match &val.value {
-            ValueDef::Composite(Composite::Unnamed(items)) => {
-                // Direct sequence of byte primitives.
-                let bytes: Vec<u8> = items
-                    .iter()
-                    .filter_map(|item| match &item.value {
-                        ValueDef::Primitive(Primitive::U128(n)) => Some(*n as u8),
-                        _ => None,
-                    })
-                    .collect();
-                if !items.is_empty() && bytes.len() == items.len() {
-                    return bytes;
-                }
-                // BoundedVec wrapper: a single inner field holds the sequence.
-                if items.len() == 1 {
-                    return Self::extract_byte_vec(&items[0]);
-                }
-                Vec::new()
-            }
-            // Some subxt versions encode a single byte as a bare primitive.
-            ValueDef::Primitive(Primitive::U128(n)) => vec![*n as u8],
-            _ => Vec::new(),
-        }
-    }
-
     /// Ensure the provider's on-chain multiaddr matches the address it
     /// advertises.
     ///
@@ -408,8 +359,6 @@ impl SubxtChainClient {
         bind_addr: &str,
         public_multiaddr: Option<&str>,
     ) {
-        use subxt::dynamic::At;
-
         let expected_multiaddr = match public_multiaddr {
             Some(addr) => addr.to_string(),
             None => Self::bind_addr_to_multiaddr(bind_addr),
@@ -426,8 +375,11 @@ impl SubxtChainClient {
             };
         let our_bytes: [u8; 32] = our_account.into();
 
-        let storage_query =
-            subxt::dynamic::storage::<(Value,), Value>("StorageProvider", "Providers");
+        // `unvalidated`: see the `storage-subxt` crate docs.
+        let storage_query = storage_subxt::api::storage()
+            .storage_provider()
+            .providers()
+            .unvalidated();
 
         let api = match self.api() {
             Ok(api) => api,
@@ -445,7 +397,7 @@ impl SubxtChainClient {
         };
         let result = at
             .storage()
-            .try_fetch(storage_query, (Value::from_bytes(our_bytes),))
+            .try_fetch(storage_query, (subxt::utils::AccountId32(our_bytes),))
             .await;
 
         let provider_value = match result {
@@ -460,39 +412,16 @@ impl SubxtChainClient {
             }
         };
 
-        // Extract the current multiaddr from the encoded provider storage entry.
-        let current = {
-            let decoded = match provider_value.decode() {
-                Ok(v) => v,
-                Err(e) => {
-                    tracing::warn!("Could not decode provider value: {}, skipping sync", e);
-                    return;
-                }
-            };
-
-            let multiaddr_val = match decoded.at("multiaddr") {
-                Some(v) => v,
-                None => {
-                    tracing::warn!("No multiaddr field in provider info, skipping sync");
-                    return;
-                }
-            };
-
-            let bytes = Self::extract_byte_vec(multiaddr_val);
-            if bytes.is_empty() {
-                // Couldn't decode the stored multiaddr. Skip rather than treat
-                // it as a mismatch — otherwise we'd submit a needless
-                // update_provider_multiaddr transaction on every startup.
-                tracing::warn!(
-                    "Could not decode on-chain multiaddr (value: {:?}); skipping sync",
-                    multiaddr_val
-                );
+        let provider = match provider_value.decode() {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!("Could not decode provider value: {}, skipping sync", e);
                 return;
             }
-            String::from_utf8_lossy(&bytes).to_string()
         };
+        let current = String::from_utf8_lossy(&provider.multiaddr.0).to_string();
 
-        if current == expected_multiaddr {
+        if !needs_multiaddr_update(&provider, &expected_multiaddr) {
             tracing::info!(
                 "On-chain multiaddr matches advertised address: {}",
                 expected_multiaddr
@@ -506,12 +435,9 @@ impl SubxtChainClient {
             expected_multiaddr
         );
 
-        let multiaddr_bytes = expected_multiaddr.as_bytes().to_vec();
-        let tx = subxt::dynamic::tx(
-            "StorageProvider",
-            "update_provider_multiaddr",
-            vec![Value::from_bytes(multiaddr_bytes)],
-        );
+        let tx = storage_subxt::api::tx()
+            .storage_provider()
+            .update_provider_multiaddr(BoundedVec(expected_multiaddr.as_bytes().to_vec()));
 
         match self
             .submit_and_finalize(&tx, "update_provider_multiaddr")
@@ -519,50 +445,6 @@ impl SubxtChainClient {
         {
             Ok(_) => tracing::info!("Multiaddr updated on-chain to: {}", expected_multiaddr),
             Err(e) => tracing::error!("Multiaddr update tx failed: {}", e),
-        }
-    }
-
-    /// Parse a BucketSnapshot value from scale_value.
-    fn parse_bucket_snapshot_value<T>(value: &subxt::ext::scale_value::Value<T>) -> BucketSnapshot {
-        use subxt::ext::scale_value::{At, Composite, Primitive, ValueDef};
-
-        let mmr_root = if let Some(field0) = value.at(0) {
-            if let ValueDef::Composite(Composite::Unnamed(bytes_vec)) = &field0.value {
-                let bytes: Vec<u8> = bytes_vec
-                    .iter()
-                    .filter_map(|v| {
-                        if let ValueDef::Primitive(Primitive::U128(n)) = &v.value {
-                            Some(*n as u8)
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
-                if bytes.len() == 32 {
-                    H256::from_slice(&bytes)
-                } else {
-                    H256::zero()
-                }
-            } else {
-                H256::zero()
-            }
-        } else {
-            H256::zero()
-        };
-
-        let leaf_count = if let Some(field2) = value.at(2) {
-            if let ValueDef::Primitive(Primitive::U128(n)) = &field2.value {
-                *n as u64
-            } else {
-                0
-            }
-        } else {
-            0
-        };
-
-        BucketSnapshot {
-            mmr_root,
-            leaf_count,
         }
     }
 }
@@ -616,118 +498,64 @@ impl ReplicaSyncChainClient for SubxtChainClient {
         &self,
         bucket_id: BucketId,
     ) -> Result<BucketSnapshot, ChainClientError> {
-        use subxt::ext::scale_value::ValueDef;
+        // `unvalidated`: see the `storage-subxt` crate docs.
+        let storage_address = storage_subxt::api::storage()
+            .storage_provider()
+            .buckets()
+            .unvalidated();
 
-        let storage_address =
-            subxt::dynamic::storage::<(Value,), Value>("StorageProvider", "Buckets");
-
-        let at = self.at_current_block().await?;
-
-        match at
+        let bucket = self
+            .at_current_block()
+            .await?
             .storage()
-            .try_fetch(storage_address, (Value::u128(bucket_id as u128),))
+            .try_fetch(storage_address, (bucket_id,))
             .await
-        {
-            Ok(Some(value)) => {
-                use subxt::ext::scale_value::At;
-                let decoded = value
-                    .decode()
-                    .map_err(|e| ChainClientError::decode("bucket", e))?;
+            .map_err(|e| ChainClientError::query("bucket", e))?
+            .map(|value| value.decode())
+            .transpose()
+            .map_err(|e| ChainClientError::decode("bucket", e))?;
 
-                if let Some(snapshot_opt) = decoded.at(4) {
-                    if let ValueDef::Variant(variant) = &snapshot_opt.value {
-                        if variant.name == "Some" {
-                            if let Some(snapshot_val) = variant.values.values().next() {
-                                return Ok(Self::parse_bucket_snapshot_value(snapshot_val));
-                            }
-                        }
-                    }
-                }
-
-                Ok(BucketSnapshot {
-                    mmr_root: H256::zero(),
-                    leaf_count: 0,
-                })
-            }
-            _ => Ok(BucketSnapshot {
-                mmr_root: H256::zero(),
-                leaf_count: 0,
-            }),
-        }
+        Ok(bucket_snapshot(bucket))
     }
 
     async fn fetch_primary_endpoints(
         &self,
         bucket_id: BucketId,
     ) -> Result<Vec<String>, ChainClientError> {
-        use subxt::ext::scale_value::{At, Composite, Primitive, ValueDef};
-
-        let storage_address =
-            subxt::dynamic::storage::<(Value,), Value>("StorageProvider", "Buckets");
-
+        // `unvalidated`: see the `storage-subxt` crate docs.
+        let buckets = storage_subxt::api::storage()
+            .storage_provider()
+            .buckets()
+            .unvalidated();
         let at = self.at_current_block().await?;
 
-        let bucket_value = match at
+        let bucket = at
             .storage()
-            .try_fetch(storage_address, (Value::u128(bucket_id as u128),))
+            .try_fetch(buckets, (bucket_id,))
             .await
-        {
-            Ok(Some(v)) => v,
-            _ => return Ok(vec![]),
-        };
-
-        let decoded = bucket_value
-            .decode()
+            .map_err(|e| ChainClientError::query("bucket", e))?
+            .map(|value| value.decode())
+            .transpose()
             .map_err(|e| ChainClientError::decode("bucket", e))?;
 
-        let mut provider_bytes_list = Vec::new();
-
-        // primary_providers is at index 3
-        if let Some(field3) = decoded.at(3) {
-            if let ValueDef::Composite(Composite::Unnamed(providers_vec)) = &field3.value {
-                for provider_value in providers_vec {
-                    if let ValueDef::Composite(Composite::Unnamed(account_bytes)) =
-                        &provider_value.value
-                    {
-                        let bytes: Vec<u8> = account_bytes
-                            .iter()
-                            .filter_map(|v| {
-                                if let ValueDef::Primitive(Primitive::U128(n)) = &v.value {
-                                    Some(*n as u8)
-                                } else {
-                                    None
-                                }
-                            })
-                            .collect();
-                        if bytes.len() == 32 {
-                            provider_bytes_list.push(bytes);
-                        }
-                    }
-                }
-            }
-        }
-
-        // Look up each provider's multiaddr
         let mut endpoints = Vec::new();
-        for provider_bytes in provider_bytes_list {
-            let provider_addr =
-                subxt::dynamic::storage::<(Value,), Value>("StorageProvider", "Providers");
-
-            if let Ok(Some(value)) = at
+        for primary in primary_providers(bucket) {
+            let providers = storage_subxt::api::storage()
+                .storage_provider()
+                .providers()
+                .unvalidated();
+            let Some(value) = at
                 .storage()
-                .try_fetch(provider_addr, (Value::from_bytes(&provider_bytes),))
+                .try_fetch(providers, (primary,))
                 .await
-            {
-                if let Ok(decoded) = value.decode() {
-                    if let Some(field0) = decoded.at(0) {
-                        let bytes = Self::extract_byte_vec(field0);
-                        if !bytes.is_empty() {
-                            let multiaddr_str = String::from_utf8_lossy(&bytes);
-                            endpoints.push(Self::multiaddr_to_http_endpoint(&multiaddr_str));
-                        }
-                    }
-                }
-            }
+                .map_err(|e| ChainClientError::query("provider", e))?
+            else {
+                continue;
+            };
+            let provider = value
+                .decode()
+                .map_err(|e| ChainClientError::decode("provider", e))?;
+            endpoints.extend(provider_endpoint(&provider));
         }
 
         Ok(endpoints)
@@ -738,24 +566,13 @@ impl ReplicaSyncChainClient for SubxtChainClient {
         bucket_id: BucketId,
         attestation: SignedSyncRoots,
     ) -> Result<(u8, u128), ChainClientError> {
-        let roots_value: Vec<Value> = attestation
-            .roots
-            .iter()
-            .map(|root| match root {
-                Some(root) => value!(Some(Value::from_bytes(root.as_bytes()))),
-                None => value!(None()),
-            })
-            .collect();
-
-        let tx = subxt::dynamic::tx(
-            "StorageProvider",
-            "confirm_replica_sync",
-            vec![
-                Value::u128(bucket_id as u128),
-                Value::unnamed_composite(roots_value),
-                multi_signature_value(&attestation.signature),
-            ],
-        );
+        let tx = storage_subxt::api::tx()
+            .storage_provider()
+            .confirm_replica_sync(
+                bucket_id,
+                attestation.roots.map(|root| root.map(to_runtime_hash)),
+                to_runtime_signature(&attestation.signature),
+            );
 
         tracing::info!(
             "Submitting confirm_replica_sync for bucket {} with roots {:?}",
@@ -813,6 +630,18 @@ fn to_runtime_hash(hash: H256) -> subxt::utils::H256 {
     subxt::utils::H256(hash.0)
 }
 
+/// Convert a `MultiSignature` into the generated type, preserving the scheme
+/// tag the pallet verifies against the registered key.
+fn to_runtime_signature(signature: &sp_runtime::MultiSignature) -> RuntimeMultiSignature {
+    use sp_runtime::MultiSignature as MS;
+    match signature {
+        MS::Ed25519(s) => RuntimeMultiSignature::Ed25519(s.0),
+        MS::Sr25519(s) => RuntimeMultiSignature::Sr25519(s.0),
+        MS::Ecdsa(s) => RuntimeMultiSignature::Ecdsa(s.0),
+        MS::Eth(s) => RuntimeMultiSignature::Eth(s.0),
+    }
+}
+
 fn to_runtime_merkle_proof(proof: storage_primitives::MerkleProof) -> RuntimeMerkleProof {
     RuntimeMerkleProof {
         siblings: proof.siblings.into_iter().map(to_runtime_hash).collect(),
@@ -842,6 +671,50 @@ fn detected_challenge(
         chunk_index: challenge.target.chunk_index,
         challenger: sp_core::crypto::AccountId32::from(challenge.challenger.0).to_ss58check(),
     })
+}
+
+/// The generated `Bucket` value held in `StorageProvider::Buckets`.
+type OnChainBucket = storage_subxt::api::runtime_types::pallet_storage_provider::pallet::Bucket;
+
+/// Latest checkpoint of a bucket, or the zero snapshot when the bucket does
+/// not exist or has not been checkpointed yet.
+fn bucket_snapshot(bucket: Option<OnChainBucket>) -> BucketSnapshot {
+    match bucket.and_then(|bucket| bucket.snapshot) {
+        Some(snapshot) => BucketSnapshot {
+            mmr_root: H256::from(snapshot.commitment.mmr_root.0),
+            leaf_count: snapshot.commitment.leaf_count,
+        },
+        None => BucketSnapshot {
+            mmr_root: H256::zero(),
+            leaf_count: 0,
+        },
+    }
+}
+
+/// The generated `ProviderInfo` value held in `StorageProvider::Providers`.
+type OnChainProviderInfo =
+    storage_subxt::api::runtime_types::pallet_storage_provider::pallet::ProviderInfo;
+
+/// Accounts of the bucket's primary providers; empty when the bucket does not
+/// exist.
+fn primary_providers(bucket: Option<OnChainBucket>) -> Vec<subxt::utils::AccountId32> {
+    bucket.map_or_else(Vec::new, |bucket| bucket.primary_providers.0)
+}
+
+/// Whether the provider's on-chain multiaddr differs from `expected`. An empty
+/// on-chain multiaddr counts as different.
+fn needs_multiaddr_update(provider: &OnChainProviderInfo, expected: &str) -> bool {
+    provider.multiaddr.0 != expected.as_bytes()
+}
+
+/// HTTP endpoint a provider serves from, or `None` when it has no multiaddr.
+fn provider_endpoint(provider: &OnChainProviderInfo) -> Option<String> {
+    if provider.multiaddr.0.is_empty() {
+        return None;
+    }
+    Some(SubxtChainClient::multiaddr_to_http_endpoint(
+        &String::from_utf8_lossy(&provider.multiaddr.0),
+    ))
 }
 
 /// One agreement as returned by the `provider_agreements` runtime API.
@@ -1128,6 +1001,162 @@ mod tests {
         assert_eq!(detected.bucket_id, 42);
         assert_eq!(detected.leaf_index, 7);
         assert_eq!(detected.chunk_index, 5);
+    }
+
+    /// Build an on-chain `Bucket` with the given checkpoint snapshot.
+    fn on_chain_bucket(snapshot: Option<(subxt::utils::H256, u64, u64)>) -> OnChainBucket {
+        use storage_subxt::api::runtime_types::storage_primitives::{
+            BucketSnapshot, Commitment, Visibility,
+        };
+
+        OnChainBucket {
+            members: BoundedVec(vec![]),
+            visibility: Visibility::Public,
+            frozen_start_seq: None,
+            min_providers: 3,
+            primary_providers: BoundedVec(vec![subxt::utils::AccountId32([1u8; 32])]),
+            snapshot: snapshot.map(|(mmr_root, start_seq, leaf_count)| BucketSnapshot {
+                commitment: Commitment {
+                    mmr_root,
+                    start_seq,
+                    leaf_count,
+                },
+                checkpoint_block: 480,
+                primary_signers: vec![],
+            }),
+            historical_roots: [(0, subxt::utils::H256([0u8; 32])); 6],
+            total_snapshots: 1,
+        }
+    }
+
+    /// Build an on-chain `ProviderInfo` advertising `multiaddr`.
+    fn on_chain_provider(multiaddr: &str) -> OnChainProviderInfo {
+        use storage_subxt::api::runtime_types::pallet_storage_provider::pallet::{
+            ProviderSettings, ProviderStats,
+        };
+
+        OnChainProviderInfo {
+            multiaddr: BoundedVec(multiaddr.as_bytes().to_vec()),
+            public_key: BoundedVec(vec![]),
+            stake: 0,
+            committed_bytes: 0,
+            settings: ProviderSettings {
+                min_duration: 0,
+                max_duration: 0,
+                price_per_byte: 0,
+                accepting_primary: true,
+                replica_sync_price: None,
+                accepting_extensions: true,
+                max_capacity: 0,
+            },
+            stats: ProviderStats {
+                registered_at: 0,
+                agreements_total: 0,
+                agreements_extended: 0,
+                agreements_not_extended: 0,
+                agreements_burned: 0,
+                total_bytes_committed: 0,
+                challenges_received_authorized: 0,
+                challenges_received_public: 0,
+                challenges_failed: 0,
+                lifetime_revenue: 0,
+            },
+            deregister_at: None,
+        }
+    }
+
+    #[test]
+    fn signature_conversion_keeps_scheme_and_bytes() {
+        use sp_runtime::MultiSignature as MS;
+
+        assert!(matches!(
+            to_runtime_signature(&MS::Ed25519(sp_core::ed25519::Signature::from_raw([1u8; 64]))),
+            RuntimeMultiSignature::Ed25519(bytes) if bytes == [1u8; 64]
+        ));
+        assert!(matches!(
+            to_runtime_signature(&MS::Sr25519(sp_core::sr25519::Signature::from_raw([2u8; 64]))),
+            RuntimeMultiSignature::Sr25519(bytes) if bytes == [2u8; 64]
+        ));
+        assert!(matches!(
+            to_runtime_signature(&MS::Ecdsa(sp_core::ecdsa::Signature::from_raw([3u8; 65]))),
+            RuntimeMultiSignature::Ecdsa(bytes) if bytes == [3u8; 65]
+        ));
+        assert!(matches!(
+            to_runtime_signature(&MS::Eth(sp_core::ecdsa::KeccakSignature::from_raw([4u8; 65]))),
+            RuntimeMultiSignature::Eth(bytes) if bytes == [4u8; 65]
+        ));
+    }
+
+    #[test]
+    fn primary_providers_come_from_the_primary_provider_list() {
+        // `min_providers` is 3 and `on_chain_bucket` lists one primary, so a
+        // mapping that read the wrong field would not return this account.
+        let bucket = on_chain_bucket(None);
+
+        assert_eq!(
+            primary_providers(Some(bucket)),
+            vec![subxt::utils::AccountId32([1u8; 32])]
+        );
+    }
+
+    #[test]
+    fn missing_bucket_has_no_primary_providers() {
+        assert!(primary_providers(None).is_empty());
+    }
+
+    #[test]
+    fn multiaddr_update_needed_only_when_on_chain_value_differs() {
+        let expected = "/ip4/127.0.0.1/tcp/3333";
+
+        assert!(!needs_multiaddr_update(
+            &on_chain_provider(expected),
+            expected
+        ));
+        assert!(needs_multiaddr_update(
+            &on_chain_provider("/ip4/127.0.0.1/tcp/4444"),
+            expected
+        ));
+        assert!(needs_multiaddr_update(&on_chain_provider(""), expected));
+    }
+
+    #[test]
+    fn provider_endpoint_is_the_http_form_of_its_multiaddr() {
+        assert_eq!(
+            provider_endpoint(&on_chain_provider("/ip4/10.0.0.7/tcp/4444")),
+            Some("http://10.0.0.7:4444".to_string())
+        );
+    }
+
+    #[test]
+    fn provider_without_multiaddr_has_no_endpoint() {
+        assert_eq!(provider_endpoint(&on_chain_provider("")), None);
+    }
+
+    #[test]
+    fn bucket_snapshot_reads_the_checkpoint_commitment() {
+        // `start_seq` and `leaf_count` differ, so a swapped mapping is caught.
+        let bucket = on_chain_bucket(Some((subxt::utils::H256([3u8; 32]), 77, 9)));
+
+        let snapshot = bucket_snapshot(Some(bucket));
+
+        assert_eq!(snapshot.mmr_root, H256::from([3u8; 32]));
+        assert_eq!(snapshot.leaf_count, 9);
+    }
+
+    #[test]
+    fn bucket_without_checkpoint_has_zero_snapshot() {
+        let snapshot = bucket_snapshot(Some(on_chain_bucket(None)));
+
+        assert_eq!(snapshot.mmr_root, H256::zero());
+        assert_eq!(snapshot.leaf_count, 0);
+    }
+
+    #[test]
+    fn missing_bucket_has_zero_snapshot() {
+        let snapshot = bucket_snapshot(None);
+
+        assert_eq!(snapshot.mmr_root, H256::zero());
+        assert_eq!(snapshot.leaf_count, 0);
     }
 
     /// Build an agreement response carrying `role`.
