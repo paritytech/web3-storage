@@ -373,8 +373,6 @@ impl SubxtChainClient {
                     return;
                 }
             };
-        let our_bytes: [u8; 32] = our_account.into();
-
         // `unvalidated`: see the `storage-subxt` crate docs.
         let storage_query = storage_subxt::api::storage()
             .storage_provider()
@@ -397,7 +395,7 @@ impl SubxtChainClient {
         };
         let result = at
             .storage()
-            .try_fetch(storage_query, (subxt::utils::AccountId32(our_bytes),))
+            .try_fetch(storage_query, (subxt_account(&our_account),))
             .await;
 
         let provider_value = match result {
