@@ -29,6 +29,8 @@ The exact pinned versions live in `.github/env` and are installed identically in
 |-------------------------|----------------------------------------------------------|
 | `IWeb3Storage.sol`      | Vendored ABI of the precompile (kept in sync with `crates/pallets/storage-provider/precompiles/src/interface/IWeb3Storage.sol`). |
 | `StorageMarketplace.sol`| Marketplace contract: `buyStorage` / `endMyAgreement`.    |
+| `SharedTeamDrive.sol`   | Contract-owned drive bucket; admin invites/kicks members.  |
+| `TokenGatedDrive.sol`   | Contract-owned private bucket; token holders are `Reader` members. |
 | `build.sh`              | One-shot compile script.                                 |
 
 ## License

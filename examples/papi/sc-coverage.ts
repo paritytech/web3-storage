@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Precompile-coverage e2e — exercises every selector on both precompiles by
- * making direct `Revive.call(<precompile-address>, <calldata>)` substrate
+ * Precompile-coverage e2e — exercises every selector on the storage-provider
+ * precompile by making direct `Revive.call(<precompile-address>, <calldata>)` substrate
  * transactions. No marketplace contract in between; just the bare precompile
  * surface and its on-chain effect.
  *
@@ -61,7 +61,6 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const CONTRACT_JSON = resolve(HERE, "../contracts/build/combined.json");
 
 const WEB3_STORAGE_ADDR = hexToBytes("0x0000000000000000000000000000000009010000");
-const DRIVE_REGISTRY_ADDR = hexToBytes("0x0000000000000000000000000000000009020000");
 
 /** Send raw calldata to a precompile address as a signed substrate tx. */
 async function callPrecompile(api: ParachainApi, signer: ChainSigner, addr: Uint8Array | string, abi: any, fnName: string, args: unknown[], opts = {}) {
@@ -97,11 +96,10 @@ async function main() {
 
     const provider = makeSigner(providerSeed);
     const client = makeSigner(clientSeed); // //Bob
-    const member = makeSigner("//Charlie"); // 3rd party for membership/share tests
+    const member = makeSigner("//Charlie"); // 3rd party for membership tests
 
     const combined = JSON.parse(await readFile(CONTRACT_JSON, "utf8"));
     const iWeb3 = combined.contracts["IWeb3Storage.sol:IWeb3Storage"].abi;
-    const iDrive = combined.contracts["IDriveRegistry.sol:IDriveRegistry"].abi;
 
     // -------- Setup --------------------------------------------------------
     // Silence any other dev-key providers (Charlie/Ferdie may have been
@@ -302,56 +300,8 @@ async function main() {
     ]);
     assertEvent(r.events, "StorageProvider", "BucketVisibilityChanged", "setBucketVisibility");
 
-    // ====================================================================
-    // Drive-registry precompile (0x…09020000)
-    // ====================================================================
-
-    // 11. createDrive -----------------------------------------------------
-    console.log("\n[11] IDriveRegistry.createDrive(\"cov\", provider, terms[1MiB×50], sig)");
-    const signedD = await negotiateAbiTerms(client, {
-      maxBytes: 1n << 20n,
-      duration: 50,
-      pricePerByte: PRICE_PER_BYTE,
-    });
-    const nextDriveBefore = await api.query.DriveRegistry.NextDriveId.getValue();
-    r = await callPrecompile(api, client, DRIVE_REGISTRY_ADDR, iDrive, "createDrive", [
-      "cov",
-      toHex(providerBytes32),
-      signedD.terms,
-      signedD.signature,
-      SolVisibility.Private,
-    ]);
-    const driveEvt = assertEvent(r.events, "DriveRegistry", "DriveCreated", "createDrive");
-    const driveId = driveEvt.drive_id;
-    assert.strictEqual(driveId, nextDriveBefore);
-    console.log("  driveId =", driveId.toString());
-
-    // 12. shareDrive ------------------------------------------------------
-    console.log("\n[12] IDriveRegistry.shareDrive(driveId, Charlie, Reader)");
-    r = await callPrecompile(api, client, DRIVE_REGISTRY_ADDR, iDrive, "shareDrive", [
-      driveId,
-      toHex(memberBytes32),
-      SolRole.Reader,
-    ]);
-    assertEvent(r.events, "DriveRegistry", "DriveShared", "shareDrive");
-
-    // 13. unshareDrive ----------------------------------------------------
-    console.log("\n[13] IDriveRegistry.unshareDrive(driveId, Charlie)");
-    r = await callPrecompile(api, client, DRIVE_REGISTRY_ADDR, iDrive, "unshareDrive", [
-      driveId,
-      toHex(memberBytes32),
-    ]);
-    assertEvent(r.events, "DriveRegistry", "DriveUnshared", "unshareDrive");
-
-    // 14. deleteDrive -----------------------------------------------------
-    console.log("\n[14] IDriveRegistry.deleteDrive(driveId)");
-    r = await callPrecompile(api, client, DRIVE_REGISTRY_ADDR, iDrive, "deleteDrive", [
-      driveId,
-    ]);
-    assertEvent(r.events, "DriveRegistry", "DriveDeleted", "deleteDrive");
-
-    // 15. createBucket ----------------------------------------------------
-    console.log("\n[15] IWeb3Storage.createBucket(minProviders=1, Private)");
+    // 11. createBucket ----------------------------------------------------
+    console.log("\n[11] IWeb3Storage.createBucket(minProviders=1, Private)");
     r = await callPrecompile(api, client, WEB3_STORAGE_ADDR, iWeb3, "createBucket", [
       1,
       SolVisibility.Private,
@@ -359,9 +309,9 @@ async function main() {
     const createdD = assertEvent(r.events, "StorageProvider", "BucketCreated", "createBucket");
     const bucketD = createdD.bucket_id;
 
-    // 16. addPrimaryProvider --------------------------------------------
+    // 12. addPrimaryProvider --------------------------------------------
     // The quote names bucketD, so the same provider can join the empty bucket.
-    console.log("\n[16] IWeb3Storage.addPrimaryProvider(bucketD, provider, terms[2KiB×100], sig)");
+    console.log("\n[12] IWeb3Storage.addPrimaryProvider(bucketD, provider, terms[2KiB×100], sig)");
     const signedForD = await negotiateAbiTerms(client, {
       maxBytes: maxBytesA,
       duration: durationA,
@@ -377,7 +327,7 @@ async function main() {
     assertEvent(r.events, "StorageProvider", "ProviderAddedToBucket", "addPrimaryProvider");
     assertEvent(r.events, "StorageProvider", "StorageAgreementEstablished", "addPrimaryProvider");
 
-    console.log("\n✅ 16 of 16 selectors exercised, every expected event observed");
+    console.log("\n✅ 12 of 12 selectors exercised, every expected event observed");
   } finally {
     papi.destroy();
   }
