@@ -2,7 +2,7 @@
 
 //! Adapts [`StorageBackend`] to [`ChallengeProofSource`], so the challenge
 //! responder can be given proof access without depending on the rest of
-//! [`ProviderState`](crate::ProviderState).
+//! `provider_http::ProviderState`.
 
 use provider_challenge::{ChallengeError, ChallengeProofSource};
 use provider_storage::StorageBackend;
