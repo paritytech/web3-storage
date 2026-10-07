@@ -12,7 +12,7 @@ use sp_runtime::{
     traits::{BlakeTwo256, IdentityLookup},
     BuildStorage,
 };
-use std::sync::atomic::{AtomicU64, Ordering};
+use storage_primitives::BucketTarget;
 
 type Block = frame_system::mocking::MockBlock<Test>;
 
@@ -44,7 +44,7 @@ impl frame_system::Config for Test {
     type PalletInfo = PalletInfo;
     type AccountData = pallet_balances::AccountData<u64>;
     type OnNewAccount = ();
-    type OnKilledAccount = ();
+    type OnKilledAccount = StorageProvider;
     type SystemWeightInfo = ();
     type SS58Prefix = ();
     type OnSetCode = ();
@@ -91,9 +91,9 @@ impl pallet_storage_provider::Config for Test {
     type SettlementTimeout = ConstU64<50>;
     type RequestTimeout = ConstU64<50>;
     type MaxBucketsPerMember = ConstU32<100>;
-    // Must be > ChallengeTimeout (100) AND > RequestTimeout (50) per the
-    // pallet's `integrity_test`. 100 + 50 grace; small enough that tests can
-    // advance past the period quickly.
+    // Must be > ChallengeTimeout (100) per the pallet's `integrity_test`.
+    // 150 gives headroom beyond that; small enough that tests can advance
+    // past the period quickly.
     type DeregisterAnnouncementPeriod = ConstU64<150>;
     // Small cap so the cap-enforcement test can hit it without creating
     // thousands of challenges.
@@ -177,14 +177,13 @@ pub fn new_test_ext_with_genesis_providers(
     t.into()
 }
 
-/// Run to a specific block number, calling both System and StorageProvider hooks.
+/// Run to a specific block number, calling the System hooks.
 pub fn run_to_block(n: u64) {
     while System::block_number() < n {
         let current = System::block_number();
         <System as Hooks<u64>>::on_finalize(current);
         System::set_block_number(current + 1);
         <System as Hooks<u64>>::on_initialize(current + 1);
-        <StorageProvider as Hooks<u64>>::on_initialize(current + 1);
     }
 }
 
@@ -217,16 +216,6 @@ pub fn register_provider_with_settings(
         RuntimeOrigin::signed(who),
         settings
     ));
-}
-
-/// Monotonic nonce for signed terms. The replay window only requires
-/// per-provider uniqueness, so a process-wide counter satisfies it across
-/// all tests.
-static TERMS_NONCE: AtomicU64 = AtomicU64::new(1);
-
-#[allow(dead_code)]
-pub fn next_terms_nonce() -> u64 {
-    TERMS_NONCE.fetch_add(1, Ordering::Relaxed)
 }
 
 /// Helper: deterministic keypair of any scheme for `provider`, stamped into
@@ -286,11 +275,12 @@ pub fn sign_sync_roots(
 }
 
 /// Helper: primary terms
-/// + with a fresh nonce
+/// + at the owner's next expected nonce
 /// + valid for the current RequestTimeout window.
 #[allow(dead_code)]
 pub fn primary_terms(
     owner: u64,
+    bucket: BucketTarget,
     max_bytes: u64,
     duration: u64,
     price_per_byte: u64,
@@ -302,8 +292,8 @@ pub fn primary_terms(
         price_per_byte,
         valid_until: frame_system::Pallet::<Test>::block_number()
             .saturating_add(<Test as pallet_storage_provider::Config>::RequestTimeout::get()),
-        nonce: next_terms_nonce(),
-        bucket_id: None,
+        nonce: crate::AgreementNonces::<Test>::get(owner),
+        bucket,
         replica_params: None,
     }
 }
@@ -326,8 +316,8 @@ pub fn replica_terms(
         price_per_byte,
         valid_until: frame_system::Pallet::<Test>::block_number()
             .saturating_add(<Test as pallet_storage_provider::Config>::RequestTimeout::get()),
-        nonce: next_terms_nonce(),
-        bucket_id: Some(bucket_id),
+        nonce: crate::AgreementNonces::<Test>::get(owner),
+        bucket: BucketTarget::Existing(bucket_id),
         replica_params: Some(params),
     }
 }
@@ -337,6 +327,7 @@ pub fn replica_terms(
 pub fn signed_primary_terms(
     provider: u64,
     owner: u64,
+    bucket: BucketTarget,
     max_bytes: u64,
     duration: u64,
 ) -> (crate::AgreementTermsOf<Test>, sp_runtime::MultiSignature) {
@@ -344,7 +335,7 @@ pub fn signed_primary_terms(
     let price = crate::Providers::<Test>::get(provider)
         .map(|p| p.settings.price_per_byte)
         .unwrap_or(0);
-    let terms = primary_terms(owner, max_bytes, duration, price);
+    let terms = primary_terms(owner, bucket, max_bytes, duration, price);
     let sig = sign_terms(&pair, &terms);
     (terms, sig)
 }
@@ -375,21 +366,51 @@ pub fn signed_replica_terms(
 /// create their buckets explicitly.
 #[allow(dead_code)]
 pub fn create_bucket(admin: u64, min_providers: u32) -> u64 {
-    StorageProvider::create_bucket_internal(
-        &admin,
+    use frame_support::assert_ok;
+    assert_ok!(StorageProvider::create_bucket(
+        RuntimeOrigin::signed(admin),
         min_providers,
-        None,
         storage_primitives::Visibility::Public,
-    )
-    .expect("create_bucket_internal succeeds")
+    ));
+    last_created_bucket_id()
+}
+
+/// Id of the bucket the previous call created.
+fn last_created_bucket_id() -> u64 {
+    crate::NextBucketId::<Test>::get() - 1
+}
+
+/// Helper: move an account's whole free balance to account 9 so that
+/// `frame_system` reaps it.
+#[allow(dead_code)]
+pub fn reap(who: u64) {
+    use frame_support::assert_ok;
+    assert_ok!(Balances::transfer_allow_death(
+        RuntimeOrigin::signed(who),
+        9,
+        Balances::free_balance(who)
+    ));
+    assert!(!System::account_exists(&who));
+}
+
+/// Helper: fund an account again after it was reaped.
+#[allow(dead_code)]
+pub fn refund(who: u64) {
+    use frame_support::assert_ok;
+    assert_ok!(Balances::transfer_allow_death(
+        RuntimeOrigin::signed(9),
+        who,
+        1_000
+    ));
 }
 
 /// Helper: redeem signed primary terms, creating the bucket together with
 /// its Primary agreement. Returns bucket_id.
 pub fn setup_agreement(provider: u64, client: u64, max_bytes: u64, duration: u64) -> u64 {
     use frame_support::assert_ok;
-    let (terms, sig) = signed_primary_terms(provider, client, max_bytes, duration);
-    assert_ok!(StorageProvider::establish_storage_agreement(
+    let (terms, sig) =
+        signed_primary_terms(provider, client, BucketTarget::New, max_bytes, duration);
+    assert_ok!(StorageProvider::create_bucket_with_primary(
         RuntimeOrigin::signed(client),
         provider,
         terms,
@@ -398,7 +419,7 @@ pub fn setup_agreement(provider: u64, client: u64, max_bytes: u64, duration: u64
         // suite was written under; Private-bucket tests opt in explicitly.
         storage_primitives::Visibility::Public,
     ));
-    crate::NextBucketId::<Test>::get() - 1
+    last_created_bucket_id()
 }
 
 /// Helper: redeem signed replica terms against an existing bucket.
@@ -414,7 +435,7 @@ pub fn setup_replica_agreement(
     use frame_support::assert_ok;
     let (terms, sig) =
         signed_replica_terms(provider, client, bucket_id, max_bytes, duration, params);
-    assert_ok!(StorageProvider::establish_replica_agreement(
+    assert_ok!(StorageProvider::add_replica_provider(
         RuntimeOrigin::signed(client),
         bucket_id,
         provider,
@@ -423,35 +444,28 @@ pub fn setup_replica_agreement(
     ));
 }
 
-/// Helper: register `provider` as an additional primary on an existing
-/// bucket via direct storage. `establish_storage_agreement` always creates
-/// a fresh single-primary bucket, so multi-primary shapes are synthesized.
+/// Helper: redeem signed primary terms against an existing bucket.
 #[allow(dead_code)]
-pub fn add_primary_to_bucket(provider: u64, owner: u64, bucket_id: u64, max_bytes: u64) {
-    let anchor_block = System::block_number();
-    crate::Buckets::<Test>::mutate(bucket_id, |maybe_bucket| {
-        if let Some(bucket) = maybe_bucket {
-            let _ = bucket.primary_providers.try_push(provider);
-        }
-    });
-    crate::StorageAgreements::<Test>::insert(
+pub fn setup_added_primary(
+    provider: u64,
+    admin: u64,
+    bucket_id: u64,
+    max_bytes: u64,
+    duration: u64,
+) {
+    use frame_support::assert_ok;
+    let (terms, sig) = signed_primary_terms(
+        provider,
+        admin,
+        BucketTarget::Existing(bucket_id),
+        max_bytes,
+        duration,
+    );
+    assert_ok!(StorageProvider::add_primary_provider(
+        RuntimeOrigin::signed(admin),
         bucket_id,
         provider,
-        crate::StorageAgreement::<Test> {
-            owner,
-            max_bytes,
-            payment_locked: 0,
-            price_per_byte: 0,
-            expires_at: anchor_block + 200,
-            extensions_blocked: false,
-            role: storage_primitives::ProviderRole::Primary,
-            started_at: anchor_block,
-        },
-    );
-    crate::Providers::<Test>::mutate(provider, |maybe_p| {
-        if let Some(p) = maybe_p {
-            p.committed_bytes += max_bytes;
-            p.stats.agreements_total += 1;
-        }
-    });
+        terms,
+        sig
+    ));
 }

@@ -27,9 +27,10 @@ import {
   downloadChunk,
   endAgreement,
   ensureProviderRegistered,
-  establishStorageAgreement,
+  createBucketWithPrimary,
   fetchChallengeProof,
   fetchCheckpointSignature,
+  getAgreementNonce,
   makeSigner,
   negotiateTerms,
   READ_OPTS,
@@ -56,7 +57,7 @@ const {
 /**
  * Negotiate provider-signed terms over HTTP, then redeem them on-chain.
  * The bucket + primary agreement are opened atomically inside
- * `establish_storage_agreement` — no separate create_bucket step.
+ * `create_bucket_with_primary` — bucket and agreement in one call.
  */
 async function setupAgreement(
   api: ParachainApi,
@@ -74,23 +75,25 @@ async function setupAgreement(
     maxBytes,
     duration
   );
+  const nonce = await getAgreementNonce(api, client.address);
   const signed = await negotiateTerms(providerUrl, {
     owner: client.address,
     max_bytes: maxBytes,
     duration,
     price_per_byte: 1n,
+    nonce,
     replica_params: null,
-    bucket_id: null,
+    bucket: null,
   });
   console.log(
     "  Provider signed terms: nonce=%s, valid_until=%s",
     signed.terms.nonce,
     signed.terms.valid_until
   );
-  console.log("  Redeeming on-chain via establish_storage_agreement...");
+  console.log("  Redeeming on-chain via create_bucket_with_primary...");
   // Finalize: the immediate upload reads bucket membership from the provider's
   // finalized view, so an in-block establish would race it.
-  const { bucketId } = await establishStorageAgreement(api, client, provider, signed, {
+  const { bucketId } = await createBucketWithPrimary(api, client, provider, signed, {
     mode: "finalized",
   });
   console.log("  Bucket %s opened with primary agreement", bucketId);

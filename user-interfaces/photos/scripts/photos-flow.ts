@@ -5,7 +5,7 @@
 //   M2 — mkdir album → PUT photo + thumbnail → compute the metadata Merkle root
 //        client-side → setRoot → re-list, recompute from scratch, and assert it
 //        equals both the on-chain anchor and the provider's index_root; plus a
-//        tamper check. Mirrors `examples/papi/sc-team-drive.js`.
+//        tamper check. Mirrors `examples/papi/sc-team-drive.ts`.
 //   M3 — edit the photo copy-on-write: re-PUT edited bytes to the *same* path
 //        (a new content-addressed blob; the pre-edit blob lingers) → recompute
 //        + setRoot → download back and byte-compare → assert the anchor moved,
@@ -123,7 +123,7 @@ async function main() {
     // 2) Negotiate primary terms with the *contract's* mapped account as owner.
     console.log("\n[2/3] Negotiating terms + createLibrary{value}…");
     const contractAccount = h160ToSubstrate(deployed.addressBytes);
-    const signed = await negotiatePrecompileTerms(providerUrl, contractAccount, {
+    const signed = await negotiatePrecompileTerms(api, providerUrl, contractAccount, {
       maxBytes: MAX_BYTES,
       duration: DURATION,
       pricePerByte,

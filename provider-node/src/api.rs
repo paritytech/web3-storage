@@ -91,7 +91,9 @@ pub fn create_router(state: Arc<ProviderState>) -> Router {
         .route("/mmr_peaks", get(get_mmr_peaks))
         .route("/mmr_subtree", get(get_mmr_subtree))
         .route("/fetch_nodes", post(fetch_nodes))
-        // Off-chain term negotiation (signed AgreementTerms for `establish_storage_agreement`)
+        // Off-chain term negotiation: signed AgreementTerms the caller redeems
+        // on-chain (create_bucket_with_primary / add_primary_provider /
+        // add_replica_provider).
         .route(
             "/negotiate",
             post(negotiate_terms).layer(from_fn_with_state(
@@ -188,12 +190,6 @@ async fn info(State(state): State<Arc<ProviderState>>) -> Json<InfoResponse> {
         provider_id: state.provider_id.clone(),
         readiness: ProviderReadiness {
             signing_configured: state.keypair.is_some(),
-            nonce_counter_ready: state
-                .chain_state
-                .nonce_counter
-                .read()
-                .as_ref()
-                .is_some_and(|c| c.is_bootstrapped()),
             provider_info_loaded: provider_registration_info.is_some(),
             deregistering: provider_registration_info
                 .as_ref()
@@ -760,8 +756,6 @@ async fn get_historical_roots(
 ///   provider-info refresh once the keys agree. Not specific to this endpoint:
 ///   the guard sits in [`ProviderState::sign`], so `/commit`, `/commitment`,
 ///   `/checkpoint-signature` and deletion proofs return it too.
-/// - `nonce_counter_unavailable` — counter not yet aligned with the chain's replay
-///   window.
 /// - `provider_deregistering` — provider has announced deregistration and no longer
 ///   signs new terms.
 async fn negotiate_terms(
@@ -810,29 +804,14 @@ async fn negotiate_terms(
 
     negotiate::validate_request(&req, &info)?;
 
-    // Guard on both presence and bootstrap status: during the transient window
-    // where the chain has a provider entry but no replay state yet, the
-    // coordinator publishes a Some counter that has not yet been aligned with
-    // the on-chain replay head. Signing with it would issue nonces not derived
-    // from chain state, so we reject until is_bootstrapped() is true.
-    let nonce_counter = state
-        .chain_state
-        .nonce_counter
-        .read()
-        .clone()
-        .ok_or(Error::NonceCounterUnavailable)?;
-    if !nonce_counter.is_bootstrapped() {
-        return Err(Error::NonceCounterUnavailable);
-    }
-
     let terms: AgreementTermsOf = AgreementTerms {
         owner: req.owner,
         max_bytes: req.max_bytes,
         duration: req.duration,
         price_per_byte: info.settings.price_per_byte,
         valid_until: anchor_block.saturating_add(request_timeout),
-        nonce: nonce_counter.next(),
-        bucket_id: req.bucket_id,
+        nonce: req.nonce,
+        bucket: req.bucket.into(),
         replica_params: req.replica_params,
     };
     Ok(Json(keypair.sign_terms(terms)))

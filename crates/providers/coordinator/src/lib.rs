@@ -9,11 +9,9 @@
 //!   clock all on-chain durations use), read via its runtime API.
 //! - [`ChainState::constants`] — pallet constants fetched once on connect.
 //! - [`ChainState::provider_info`] — full provider registration info.
-//! - [`ChainState::nonce_counter`] — nonce counter bootstrapped from the
-//!   chain's replay window. `None` until the provider is registered.
 //!
-//! [`ChainStateCoordinator`] is the **only writer** for all four fields.  It
-//! drives a finalized-block subscription on its own subxt connection in a
+//! [`ChainStateCoordinator`] is the **only writer** for all three fields.  It
+//! drives a finalized-block subscription on its own chain connection in a
 //! reconnect loop; on every relevant provider event it re-fetches the full
 //! `ProviderInfo` so `committed_bytes`, `stake`, and all settings stay
 //! current — no field-patching, no partial updates, no second writer.
@@ -22,94 +20,60 @@
 //! [`BlockEvent::BucketMembershipChanged`], so the membership cache can drop
 //! stale authorization on its own rather than being told to.
 
-use async_trait::async_trait;
+mod chain;
+
+pub use chain::{
+    BlockContents, ChainConnection, ChainFollower, ChainStateChainClient, FinalizedBlock,
+    FinalizedBlocks,
+};
+
 use parking_lot::RwLock;
-use provider_chain::chain_connection::{self, ChainHandle, ChainTransport};
-use provider_chain::{decode_block_events, BlockEvent, BlockEventTx};
-use provider_storage::NonceStore;
-use provider_types::{ProviderInfo, ProviderSettings, ProviderStats};
+use provider_chain::{BlockEvent, BlockEventTx};
+use provider_types::{ChainClientError, ProviderInfo};
 use sp_runtime::AccountId32;
 use std::future::Future;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::AtomicU32;
 use std::sync::Arc;
 use std::time::Duration;
-use storage_subxt::api::runtime_types::pallet_storage_provider::pallet::ProviderInfo as RuntimeProviderInfo;
-use subxt::{OnlineClient, PolkadotConfig};
-use tokio::sync::watch;
 use tokio::task::JoinHandle;
-
-/// Pallet whose storage, constants, and events the coordinator follows.
-const PALLET_NAME: &str = "StorageProvider";
 
 // ── Error ─────────────────────────────────────────────────────────────────────
 
-/// Errors surfaced by the chain-state coordinator.
+/// Why the coordinator's reconnect loop dropped a connection. The loop logs it
+/// and reconnects.
 #[derive(Debug, thiserror::Error)]
-pub enum Error {
-    #[error("Internal error: {0}")]
-    Internal(String),
-
+pub(crate) enum Error {
+    /// A chain call failed.
     #[error(transparent)]
-    Chain(#[from] provider_chain::Error),
+    ChainClient(#[from] ChainClientError),
+
+    /// A step of the reconnect loop did not finish within its budget.
+    #[error("{what} timed out after {secs}s")]
+    Timeout {
+        /// The step that timed out.
+        what: &'static str,
+        /// The budget, in seconds.
+        secs: u64,
+    },
 }
 
-/// Run `fut` under `budget`, mapping expiry to an [`Error`] naming `what`.
+/// Run `fut` under `budget`, mapping expiry to [`Error::Timeout`] naming `what`.
 ///
 /// Every wait in the reconnect loop goes through this: an operation that can
 /// hang forever (e.g. a wedged smoldot backend with no timeout of its own)
 /// must turn into an `Err` so the loop can rebuild the connection instead of
 /// hanging with a stale handle still published.
 async fn with_timeout<T>(
-    what: &str,
+    what: &'static str,
     budget: Duration,
     fut: impl Future<Output = Result<T, Error>>,
 ) -> Result<T, Error> {
     match tokio::time::timeout(budget, fut).await {
         Ok(result) => result,
-        Err(_) => Err(Error::Internal(format!(
-            "{what} timed out after {}s",
-            budget.as_secs()
-        ))),
-    }
-}
-
-/// Convert the runtime's `ProviderInfo` into the node's view of it.
-///
-/// Mirrors the runtime struct field for field (see
-/// [`provider_types::ProviderInfo`]), resolving the runtime's bounded byte
-/// vectors into the node's `String`/`Vec<u8>`.
-///
-/// A free function rather than a `From` impl: both types are foreign to this
-/// crate (`RuntimeProviderInfo` comes from `storage-subxt`'s generated
-/// bindings, `ProviderInfo` from `provider-types`), so the orphan rule rules
-/// out the trait impl here.
-fn provider_info_from_runtime(info: RuntimeProviderInfo) -> ProviderInfo {
-    ProviderInfo {
-        multiaddr: String::from_utf8_lossy(&info.multiaddr.0).into_owned(),
-        public_key: info.public_key.0,
-        stake: info.stake,
-        committed_bytes: info.committed_bytes,
-        settings: ProviderSettings {
-            min_duration: info.settings.min_duration,
-            max_duration: info.settings.max_duration,
-            price_per_byte: info.settings.price_per_byte,
-            accepting_primary: info.settings.accepting_primary,
-            replica_sync_price: info.settings.replica_sync_price,
-            accepting_extensions: info.settings.accepting_extensions,
-            max_capacity: info.settings.max_capacity,
-        },
-        stats: ProviderStats {
-            registered_at: info.stats.registered_at,
-            agreements_total: info.stats.agreements_total,
-            agreements_extended: info.stats.agreements_extended,
-            agreements_not_extended: info.stats.agreements_not_extended,
-            agreements_burned: info.stats.agreements_burned,
-            total_bytes_committed: info.stats.total_bytes_committed,
-            challenges_received_authorized: info.stats.challenges_received_authorized,
-            challenges_received_public: info.stats.challenges_received_public,
-            challenges_failed: info.stats.challenges_failed,
-        },
-        deregister_at: info.deregister_at,
+        Err(_) => Err(Error::Timeout {
+            what,
+            secs: budget.as_secs(),
+        }),
     }
 }
 
@@ -119,9 +83,10 @@ fn provider_info_from_runtime(info: RuntimeProviderInfo) -> ProviderInfo {
 ///
 /// Held behind `Arc` inside the provider node's `ProviderState` so the coordinator can hold
 /// its own handle without a back-reference to the whole node state.
+#[derive(Default)]
 pub struct ChainState {
     /// The pallet's anchor block — the clock all on-chain durations (timeouts,
-    /// `valid_until`, nonce age) are measured against — read via the
+    /// `valid_until`) are measured against — read via the
     /// `StorageProviderApi::current_anchor_block` runtime API at the latest
     /// finalized block. Whether that anchor is a relay, parachain, or other
     /// block number is the pallet's concern, not the provider's. `0` means not
@@ -134,375 +99,12 @@ pub struct ChainState {
     /// re-fetched (full) on every relevant provider event so `committed_bytes`,
     /// `stake`, and all settings stay current.
     pub provider_info: RwLock<Option<ProviderInfo>>,
-    /// Nonce counter bootstrapped from the chain's replay window. `None` until
-    /// the provider is registered and the replay state is available.
-    /// `/negotiate` returns 503 while `None`.
-    pub nonce_counter: RwLock<Option<Arc<NonceCounter>>>,
-    /// Persistence backing for the nonce counter, so the coordinator can seed
-    /// a restarted counter above the last issued nonce.
-    pub nonce_store: Arc<dyn NonceStore>,
-}
-
-impl ChainState {
-    /// Fresh chain state whose nonce counter persists through `store`.
-    pub fn with_nonce_store(store: Arc<dyn NonceStore>) -> Self {
-        Self {
-            current_anchor_block: AtomicU32::new(0),
-            constants: RwLock::new(None),
-            provider_info: RwLock::new(None),
-            nonce_counter: RwLock::new(None),
-            nonce_store: store,
-        }
-    }
 }
 
 /// Pallet constants that only change across runtime upgrades.
 pub struct PalletConstants {
     /// Chain-enforced validity window (in blocks) for provider-signed terms.
     pub request_timeout: u32,
-}
-
-// ── NonceCounter ──────────────────────────────────────────────────────────────
-
-/// Monotonic nonce counter for provider-signed terms.
-///
-/// Nonces are atomically allocated via [`Self::next`]. The chain-state
-/// coordinator aligns the counter with the chain's `ProviderReplayState.hsn + 1`
-/// (`hsn` = highest sequence nonce, the top of the chain's replay window) on
-/// connect and on every relevant provider event, so the counter resumes at
-/// `max(persisted_local, hsn + 1)`:
-///
-/// * **Local persistence** (disk mode): each allocation is persisted before
-///   returning, so a **clean process restart** does not reissue nonces that were
-///   signed but not yet redeemed. Power-loss/kernel-panic may lose the last write
-///   (the RocksDB WAL - write-ahead log - is not fsynced per allocation); in that
-///   case the counter falls back to `chain_hsn + 1`, which is still safe - the
-///   chain's replay window rejects any duplicate redemption.
-/// * **Chain alignment**: `bootstrap_from_hsn` advances the counter past any
-///   nonce the chain has already accepted, covering redemptions that happened
-///   while the node was down or while we weren't watching.
-///
-/// Gap-skipping is fine: unused nonces just expire from the replay window
-/// without effect. The on-chain replay window is authoritative and rejects
-/// any out-of-range reuse, so a missed nonce can never lead to a double
-/// redemption.
-///
-/// Until the first successful [`Self::bootstrap_from_hsn`] the counter has not
-/// been reconciled with the chain, so `/negotiate` must not sign with it; query
-/// [`Self::is_bootstrapped`] to gate that.
-pub struct NonceCounter {
-    counter: AtomicU64,
-    /// Set once the counter has been aligned with the chain's replay window.
-    bootstrapped: AtomicBool,
-    store: Arc<dyn NonceStore>,
-}
-
-impl std::fmt::Debug for NonceCounter {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("NonceCounter")
-            .field("counter", &self.counter)
-            .field("bootstrapped", &self.bootstrapped)
-            .finish()
-    }
-}
-
-impl NonceCounter {
-    /// Create a counter starting at `start` backed by `store` for persistence.
-    ///
-    /// Seed `start` from `store.load().unwrap_or(1)` (the persisted high-water
-    /// mark), then call `bootstrap_from_hsn` to advance past the chain's replay
-    /// head. The counter is *not* considered bootstrapped until then.
-    pub fn with_store(start: u64, store: Arc<dyn NonceStore>) -> Self {
-        Self {
-            counter: AtomicU64::new(start),
-            bootstrapped: AtomicBool::new(false),
-            store,
-        }
-    }
-
-    /// Whether the counter has been reconciled with the chain's replay window
-    /// at least once. `/negotiate` gates on this so it never signs a nonce
-    /// that was not derived from on-chain state.
-    pub fn is_bootstrapped(&self) -> bool {
-        self.bootstrapped.load(Ordering::SeqCst)
-    }
-
-    /// Advance the counter to at least `hsn + 1` and mark it bootstrapped.
-    /// Idempotent — only advances forward.
-    pub fn bootstrap_from_hsn(&self, hsn: u64) {
-        self.bootstrapped.store(true, Ordering::SeqCst);
-        let target = hsn.saturating_add(1);
-        // Standard CAS loop — bump only if our target is higher than
-        // whatever is already there.
-        let mut current = self.counter.load(Ordering::SeqCst);
-        while current < target {
-            match self.counter.compare_exchange_weak(
-                current,
-                target,
-                Ordering::SeqCst,
-                Ordering::SeqCst,
-            ) {
-                Ok(_) => break,
-                Err(observed) => current = observed,
-            }
-        }
-    }
-
-    /// Allocate the next nonce. Atomic: concurrent callers each get a distinct
-    /// value.
-    ///
-    /// The value *after* the increment (`nonce + 1`) is persisted as the new
-    /// high-water mark before the nonce is returned. This means the persisted
-    /// value always equals the next nonce that *will* be issued, so a counter
-    /// seeded with `store.load().unwrap_or(1)` on restart correctly resumes
-    /// above every nonce that was signed.
-    pub fn next(&self) -> u64 {
-        let nonce = self.counter.fetch_add(1, Ordering::SeqCst);
-        self.store.persist(nonce.saturating_add(1));
-        nonce
-    }
-}
-
-// ── anchor block ──────────────────────────────────────────────────────────────
-
-/// Query the pallet's `StorageProviderApi::current_anchor_block` runtime API —
-/// the block every on-chain duration (timeouts, expiries, `valid_until`, nonce
-/// age) is measured against. Reading it through the runtime API keeps the
-/// provider agnostic to whether the anchor is a relay, parachain, or other
-/// block number: the pallet decides via its `BlockNumberProvider`, and the
-/// provider no longer reaches into a specific storage item.
-///
-/// Kept here (rather than in `storage-client`) so the provider node stays
-/// dependency-light (see #275).
-pub async fn fetch_current_anchor_block<C>(
-    at: &subxt::client::ClientAtBlock<subxt::PolkadotConfig, C>,
-) -> Result<u32, Error>
-where
-    C: subxt::client::OnlineClientAtBlockT<subxt::PolkadotConfig>,
-{
-    // `unvalidated`: see the `storage-subxt` crate docs.
-    at.runtime_apis()
-        .call(
-            storage_subxt::api::runtime_apis()
-                .storage_provider_api()
-                .current_anchor_block()
-                .unvalidated(),
-        )
-        .await
-        .map_err(|e| Error::Internal(format!("current_anchor_block runtime API call failed: {e}")))
-}
-
-// ── chain reads ───────────────────────────────────────────────────────────────
-
-/// The chain reads the coordinator needs to keep [`ChainState`] in sync.
-///
-/// Abstracted behind a trait — exactly like the other coordinators'
-/// `*ChainClient` traits — so the [`sync_constants`] / [`refresh_provider_state`]
-/// logic can be driven by a mock in tests without a live chain.
-#[async_trait]
-pub trait ChainStateChainClient: Send + Sync {
-    /// Full on-chain `ProviderInfo`, or `None` if the provider is not registered.
-    async fn get_provider_info(&self, who: &AccountId32) -> Result<Option<ProviderInfo>, Error>;
-
-    /// Provider's replay-window head sequence (`hsn`), or `None` if no replay
-    /// state exists yet (the provider has never signed any terms).
-    async fn fetch_replay_hsn(&self, who: &AccountId32) -> Result<Option<u64>, Error>;
-
-    /// `StorageProvider::RequestTimeout` runtime constant, or `None` if absent
-    /// from the node's metadata.
-    async fn fetch_request_timeout(&self) -> Result<Option<u32>, Error>;
-}
-
-/// Production [`ChainStateChainClient`] running typed storage queries — through
-/// the generated `storage-subxt` bindings — on the coordinator's own subxt
-/// connection (shared with the block subscription).
-struct RealChainStateClient {
-    api: OnlineClient<PolkadotConfig>,
-}
-
-/// Convert an account from the `sp_runtime` representation the node uses into
-/// the `subxt` one the generated bindings expect. Same 32 bytes either way.
-fn subxt_account(who: &AccountId32) -> subxt::utils::AccountId32 {
-    subxt::utils::AccountId32(*<AccountId32 as AsRef<[u8; 32]>>::as_ref(who))
-}
-
-#[async_trait]
-impl ChainStateChainClient for RealChainStateClient {
-    async fn get_provider_info(&self, who: &AccountId32) -> Result<Option<ProviderInfo>, Error> {
-        // `unvalidated`: see the `storage-subxt` crate docs.
-        let addr = storage_subxt::api::storage()
-            .storage_provider()
-            .providers()
-            .unvalidated();
-        let at = self
-            .api
-            .at_current_block()
-            .await
-            .map_err(|e| Error::Internal(format!("Failed to get storage: {e}")))?;
-        let Some(value) = at
-            .storage()
-            .try_fetch(addr, (subxt_account(who),))
-            .await
-            .map_err(|e| Error::Internal(format!("Failed to fetch Providers: {e}")))?
-        else {
-            return Ok(None);
-        };
-        let info = value
-            .decode()
-            .map_err(|e| Error::Internal(format!("Failed to decode Providers: {e}")))?;
-        Ok(Some(provider_info_from_runtime(info)))
-    }
-
-    async fn fetch_replay_hsn(&self, who: &AccountId32) -> Result<Option<u64>, Error> {
-        // `unvalidated`: see the `storage-subxt` crate docs.
-        let addr = storage_subxt::api::storage()
-            .storage_provider()
-            .provider_replay_states()
-            .unvalidated();
-        let at = self
-            .api
-            .at_current_block()
-            .await
-            .map_err(|e| Error::Internal(format!("Failed to get storage: {e}")))?;
-        let Some(value) = at
-            .storage()
-            .try_fetch(addr, (subxt_account(who),))
-            .await
-            .map_err(|e| Error::Internal(format!("Failed to fetch ProviderReplayStates: {e}")))?
-        else {
-            return Ok(None);
-        };
-        let window = value
-            .decode()
-            .map_err(|e| Error::Internal(format!("Failed to decode ProviderReplayStates: {e}")))?;
-        Ok(Some(window.hsn))
-    }
-
-    async fn fetch_request_timeout(&self) -> Result<Option<u32>, Error> {
-        let at = self
-            .api
-            .at_current_block()
-            .await
-            .map_err(|e| Error::Internal(format!("Failed to get current block: {e}")))?;
-
-        // `unvalidated`: see the `storage-subxt` crate docs.
-        match at.constants().entry(
-            storage_subxt::api::constants()
-                .storage_provider()
-                .request_timeout()
-                .unvalidated(),
-        ) {
-            Ok(timeout) => Ok(Some(timeout)),
-            // A runtime without the constant is a different thing from a failed
-            // read: the caller logs it as a metadata gap and leaves the pallet
-            // constants unset, rather than treating it as a chain error.
-            Err(
-                subxt::error::ConstantError::PalletNameNotFound(_)
-                | subxt::error::ConstantError::ConstantNameNotFound { .. },
-            ) => Ok(None),
-            Err(e) => Err(Error::Internal(format!(
-                "Failed to read RequestTimeout: {e}"
-            ))),
-        }
-    }
-}
-
-// ── provider lifecycle events ─────────────────────────────────────────────────
-
-/// Minimal decoded view of a `StorageProvider` provider-lifecycle event.
-///
-/// The coordinator re-fetches the full provider state on any relevant event,
-/// so only the affected provider account — and whether the event is a
-/// confirmed deregistration — needs decoding.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ProviderLifecycleEvent {
-    /// `ProviderRegistered`, `ProviderSettingsUpdated`,
-    /// `ProviderMultiaddrUpdated`, `DeregisterAnnounced`, or
-    /// `DeregisterCancelled`.
-    Updated { provider: AccountId32 },
-    /// Confirmed `ProviderDeregistered`.
-    Deregistered { provider: AccountId32 },
-}
-
-impl ProviderLifecycleEvent {
-    /// The provider account the event concerns.
-    pub fn provider(&self) -> &AccountId32 {
-        match self {
-            Self::Updated { provider } | Self::Deregistered { provider } => provider,
-        }
-    }
-}
-
-/// Names of the `StorageProvider` events that affect [`ProviderLifecycleEvent`],
-/// paired with whether the event confirms a deregistration. Every one of these
-/// carries a named `provider` field decodable as [`LifecycleProvider`].
-const LIFECYCLE_EVENT_NAMES: &[(&str, bool)] = &[
-    ("ProviderDeregistered", true),
-    ("ProviderRegistered", false),
-    ("ProviderSettingsUpdated", false),
-    ("ProviderMultiaddrUpdated", false),
-    ("DeregisterAnnounced", false),
-    ("DeregisterCancelled", false),
-];
-
-/// The only field the coordinator reads out of a provider-lifecycle event.
-///
-/// Decoding just this field, rather than the whole generated event struct,
-/// keeps the coordinator working across runtime changes that reshape fields it
-/// never reads. `ProviderSettingsUpdated` in particular carries the full
-/// `ProviderSettings`, so decoding it whole would break on any change to that
-/// struct.
-#[derive(subxt::ext::scale_decode::DecodeAsType)]
-#[decode_as_type(crate_path = "::subxt::ext::scale_decode")]
-struct LifecycleProvider {
-    provider: subxt::utils::AccountId32,
-}
-
-/// Decode a finalized block's events down to the provider-lifecycle events.
-fn parse_provider_lifecycle_events(
-    events: &subxt::events::Events<PolkadotConfig>,
-) -> Vec<ProviderLifecycleEvent> {
-    events
-        .iter()
-        .filter_map(|event| event.ok())
-        .filter(|event| event.pallet_name() == PALLET_NAME)
-        .filter_map(|event| {
-            let deregistered = LIFECYCLE_EVENT_NAMES
-                .iter()
-                .find(|(name, _)| *name == event.event_name())
-                .map(|(_, deregistered)| *deregistered)?;
-            let provider = decode_provider(&event)?;
-            Some(if deregistered {
-                ProviderLifecycleEvent::Deregistered { provider }
-            } else {
-                ProviderLifecycleEvent::Updated { provider }
-            })
-        })
-        .collect()
-}
-
-/// Decode the `provider` field out of a `StorageProvider` lifecycle event.
-///
-/// A shape mismatch (a runtime whose event fields drifted from the bindings)
-/// is logged and skipped. For most of these events that is recoverable: the
-/// next relevant event still triggers a fresh `refresh_provider_state`. A
-/// missed `ProviderDeregistered` is the exception - a deregistered provider
-/// emits nothing further, so only the next reconnect's bootstrap refresh
-/// corrects it. The persisted nonce watermark is unaffected either way: its
-/// reset is gated on a successfully decoded `Deregistered` in
-/// [`refresh_if_relevant_event`], so a missed decode simply leaves it as-is.
-fn decode_provider(event: &subxt::events::Event<'_, PolkadotConfig>) -> Option<AccountId32> {
-    match event.decode_fields_unchecked_as::<LifecycleProvider>() {
-        Ok(LifecycleProvider { provider }) => Some(AccountId32::new(provider.0)),
-        Err(e) => {
-            tracing::warn!(
-                "chain-state coordinator: failed to decode {}::{} against the static bindings: {e}",
-                event.pallet_name(),
-                event.event_name(),
-            );
-            None
-        }
-    }
 }
 
 // ── ChainStateCoordinator ─────────────────────────────────────────────────────
@@ -512,30 +114,28 @@ fn decode_provider(event: &subxt::events::Event<'_, PolkadotConfig>) -> Option<A
 /// Start with [`ChainStateCoordinator::start`]; keep the returned
 /// [`ChainStateCoordinatorHandle`] alive for the duration of the server.
 pub struct ChainStateCoordinator {
-    transport: ChainTransport,
+    /// Opens the chain connection and publishes it to the node's other chain
+    /// consumers.
+    follower: Arc<dyn ChainFollower>,
     provider_account: AccountId32,
     chain_state: Arc<ChainState>,
-    /// Publishes the live connection to every chain consumer. This coordinator
-    /// is the only writer: it rebuilds the connection on stream loss or stall
-    /// and everyone else picks up the new handle from the watch channel.
-    chain_tx: watch::Sender<Option<ChainHandle>>,
     /// Fan-out of decoded per-block events to the background coordinators.
     events_tx: BlockEventTx,
 }
 
 impl ChainStateCoordinator {
+    /// Coordinator for `provider_account` that writes `chain_state` and sends
+    /// decoded block events on `events_tx`. Call [`Self::start`] to run it.
     pub fn new(
-        transport: ChainTransport,
+        follower: Arc<dyn ChainFollower>,
         provider_account: AccountId32,
         chain_state: Arc<ChainState>,
-        chain_tx: watch::Sender<Option<ChainHandle>>,
         events_tx: BlockEventTx,
     ) -> Self {
         Self {
-            transport,
+            follower,
             provider_account,
             chain_state,
-            chain_tx,
             events_tx,
         }
     }
@@ -564,7 +164,7 @@ impl ChainStateCoordinator {
                     RECONNECT_DELAY.as_secs()
                 ),
                 Err(e) => tracing::warn!(
-                    "chain-state coordinator: connection lost ({e}); retrying in {}s",
+                    "chain-state coordinator: {e}; reconnecting in {}s",
                     RECONNECT_DELAY.as_secs()
                 ),
             }
@@ -576,28 +176,27 @@ impl ChainStateCoordinator {
     /// stream until it ends or stalls. Returns `Err` if connecting or bootstrapping
     /// fails; `Ok(())` if the stream terminates — either way the caller reconnects.
     async fn connect_and_follow(&self) -> Result<(), Error> {
-        /// Budget for building a cold connection. On the light transport,
-        /// `connect` awaits smoldot's peer discovery and warp sync with no
-        /// timeout of its own, so a wedged light client would otherwise hang
-        /// here forever — with the previous (dead) handle still published to
-        /// consumers — and the reconnect loop could never rebuild it. Generous
-        /// because killing a slow warp sync throws its progress away.
+        /// Budget for building a cold connection and subscribing to its
+        /// finalized blocks. On the light transport, `connect` awaits
+        /// smoldot's peer discovery and warp sync with no timeout of its own,
+        /// so a wedged light client would otherwise hang here forever — with
+        /// the previous (dead) handle still published to consumers — and the
+        /// reconnect loop could never rebuild it. Generous because killing a
+        /// slow warp sync throws its progress away.
         const CONNECT_TIMEOUT: Duration = Duration::from_secs(300);
 
-        let handle = with_timeout("Connecting to the chain", CONNECT_TIMEOUT, async {
-            chain_connection::connect(&self.transport)
-                .await
-                .map_err(Error::from)
+        let connection = with_timeout("Connecting to the chain", CONNECT_TIMEOUT, async {
+            Ok(self.follower.connect().await?)
         })
         .await?;
-        self.follow(handle).await
+        self.follow(connection).await
     }
 
     /// Bootstrap state from the connection and follow its finalized blocks
     /// until the stream ends or stalls. Split from
     /// [`Self::connect_and_follow`] so tests can drive the full pipeline over
-    /// a mock RPC connection.
-    async fn follow(&self, handle: ChainHandle) -> Result<(), Error> {
+    /// a mock connection.
+    async fn follow(&self, connection: ChainConnection) -> Result<(), Error> {
         /// How long without a finalized block before the connection is treated
         /// as dead and rebuilt. Finality can pause briefly (session boundaries,
         /// backend resubscriptions), so this is several times the block time;
@@ -605,35 +204,26 @@ impl ChainStateCoordinator {
         /// The connection is already warp-synced by `connect`, so the first
         /// block gets the same budget as every other.
         const STALL_TIMEOUT: Duration = Duration::from_secs(60);
-        /// Budget for subscribing and the bootstrap reads below: ordinary RPC
-        /// round-trips on an already-synced connection, but on the light
-        /// client they have no timeout of their own and a wedged backend
-        /// would otherwise hang the reconnect loop forever.
+        /// Budget for the bootstrap reads below: ordinary RPC round-trips on
+        /// an already-synced connection, but on the light client they have no
+        /// timeout of their own and a wedged backend would otherwise hang the
+        /// reconnect loop forever.
         const BOOTSTRAP_TIMEOUT: Duration = Duration::from_secs(60);
 
-        let (mut blocks, chain) = with_timeout("Chain bootstrap", BOOTSTRAP_TIMEOUT, async {
-            let api = handle.api.clone();
-            let blocks = api
-                .stream_blocks()
-                .await
-                .map_err(|e| Error::Internal(format!("Failed to subscribe to blocks: {e}")))?;
+        let ChainConnection { mut blocks, client } = connection;
+        let chain = client.as_ref();
+        tracing::info!("chain-state coordinator: connected; following finalized blocks");
 
-            // Publish the new connection only after the block stream is up, so
-            // consumers never observe a handle whose backend failed immediately.
-            self.chain_tx.send_replace(Some(handle));
-            let chain = RealChainStateClient { api };
-
-            tracing::info!("chain-state coordinator: connected; following finalized blocks");
-
+        with_timeout("Chain bootstrap", BOOTSTRAP_TIMEOUT, async {
             // Fetch pallet constants once per connection (they only change on runtime upgrade).
-            sync_constants(&chain, &self.chain_state).await;
+            sync_constants(chain, &self.chain_state).await;
 
             // Bootstrap from any existing on-chain state so a restarted node that was
-            // already registered picks up its provider_info and nonce counter immediately
-            // rather than waiting for the next relevant event.
-            refresh_provider_state(&chain, &self.chain_state, &self.provider_account).await;
+            // already registered picks up its provider_info immediately rather than
+            // waiting for the next relevant event.
+            refresh_provider_state(chain, &self.chain_state, &self.provider_account).await;
 
-            Ok::<_, Error>((blocks, chain))
+            Ok(())
         })
         .await?;
 
@@ -647,8 +237,8 @@ impl ChainStateCoordinator {
         });
 
         loop {
-            let next = match tokio::time::timeout(STALL_TIMEOUT, blocks.next()).await {
-                Ok(Some(next)) => next,
+            let block = match tokio::time::timeout(STALL_TIMEOUT, blocks.next()).await {
+                Ok(Some(block)) => block,
                 Ok(None) => break,
                 Err(_) => {
                     tracing::warn!(
@@ -658,85 +248,35 @@ impl ChainStateCoordinator {
                     break;
                 }
             };
-            let block = match next {
-                Ok(block) => block,
-                Err(e) => {
-                    tracing::warn!("chain-state coordinator: block subscription error: {e}");
-                    break;
-                }
-            };
-            let block_number = block.number() as u32;
-
-            tracing::debug!("Finalized block: {}", block_number);
-
-            // One block-scoped handle drives both reads below.
-            let at = match block.at().await {
-                Ok(at) => at,
-                Err(e) => {
-                    tracing::warn!(
-                        "chain-state coordinator: failed to get block handle for {block_number}: {e}"
-                    );
-                    escalate_block_read_failure(&self.events_tx, block_number);
-                    continue;
-                }
-            };
-
-            // Track the pallet's anchor block (the clock all on-chain durations
-            // are measured against) at this finalized block, via its runtime
-            // API — so the provider never needs to know which block notion the
-            // pallet uses.
-            match fetch_current_anchor_block(&at).await {
-                Ok(anchor_block) => {
-                    self.chain_state
-                        .current_anchor_block
-                        .store(anchor_block, std::sync::atomic::Ordering::Relaxed);
-                }
-                Err(e) => tracing::warn!(
-                    "chain-state coordinator: failed to fetch anchor block for block \
-                     {block_number}: {e}; keeping previous value"
-                ),
+            // A failed anchor read keeps the previous value.
+            if let Some(anchor_block) = block.anchor_block {
+                self.chain_state
+                    .current_anchor_block
+                    .store(anchor_block, std::sync::atomic::Ordering::Relaxed);
             }
 
-            let events = match at.events().fetch().await {
-                Ok(events) => events,
-                Err(e) => {
-                    tracing::warn!(
-                        "chain-state coordinator: failed to fetch events for block {block_number}: {e}"
-                    );
-                    escalate_block_read_failure(&self.events_tx, block_number);
-                    continue;
-                }
+            let Some(contents) = block.contents else {
+                escalate_block_read_failure(&self.events_tx, block.number);
+                continue;
             };
 
             // Fan out the coordinator-relevant events. Send failures just mean
             // no coordinator is subscribed.
-            for event in decode_block_events(&events, block_number) {
+            for event in contents.events {
                 let _ = self.events_tx.send(event);
             }
 
-            let parsed = parse_provider_lifecycle_events(&events);
-            self.process_provider_events(&chain, &parsed, block_number)
-                .await;
+            refresh_if_relevant_event(
+                chain,
+                &self.chain_state,
+                &self.provider_account,
+                &contents.lifecycle,
+                block.number,
+            )
+            .await;
         }
 
         Ok(())
-    }
-
-    /// Refresh state if any of `parsed` is a relevant provider event.
-    async fn process_provider_events(
-        &self,
-        chain: &dyn ChainStateChainClient,
-        parsed: &[ProviderLifecycleEvent],
-        block_number: u32,
-    ) {
-        refresh_if_relevant_event(
-            chain,
-            &self.chain_state,
-            &self.provider_account,
-            parsed,
-            block_number,
-        )
-        .await;
     }
 }
 
@@ -762,17 +302,6 @@ pub async fn sync_constants(chain: &dyn ChainStateChainClient, chain_state: &Cha
 
 /// Re-fetch `ProviderInfo` from chain and update `chain_state`.
 ///
-/// **Nonce-counter lifecycle** (bootstrap-once / preserve / drop):
-/// - While registered, the counter is bootstrapped at most once. If the counter
-///   is already `Some` and bootstrapped, it is left completely untouched (and
-///   `fetch_replay_hsn` is not called) so that in-flight nonces are never
-///   reissued. If it is `None` or not yet bootstrapped, the replay head is
-///   fetched and a new counter is created.
-/// - `provider_info` is always refreshed when the provider is registered,
-///   regardless of whether the hsn fetch errors (counter left as-is).
-/// - When the provider is not (or no longer) registered, both `provider_info`
-///   and `nonce_counter` are cleared.
-///
 /// Called both on the initial connect (restart recovery) and on every relevant
 /// provider event.
 pub async fn refresh_provider_state(
@@ -782,111 +311,35 @@ pub async fn refresh_provider_state(
 ) {
     match chain.get_provider_info(provider_account).await {
         Ok(Some(info)) => {
-            // Check bootstrap status before taking any write lock.
-            let needs_bootstrap = chain_state
-                .nonce_counter
-                .read()
-                .as_ref()
-                .is_none_or(|c| !c.is_bootstrapped());
-
-            if needs_bootstrap {
-                match chain.fetch_replay_hsn(provider_account).await {
-                    Ok(hsn) => {
-                        // Seed from the locally-persisted high-water mark so a
-                        // restart resumes at max(persisted, hsn+1) rather than
-                        // resetting to hsn+1 (which would reissue un-redeemed nonces).
-                        let start = chain_state.nonce_store.load().unwrap_or(1);
-                        tracing::debug!(
-                            "chain-state coordinator: loaded nonce counter start from {}",
-                            start
-                        );
-                        let counter = Arc::new(NonceCounter::with_store(
-                            start,
-                            chain_state.nonce_store.clone(),
-                        ));
-                        if let Some(hsn) = hsn {
-                            counter.bootstrap_from_hsn(hsn);
-                            tracing::info!("chain-state coordinator: provider state synced");
-                        }
-                        // Registered but no replay state yet — transient view;
-                        // a later refresh will call bootstrap_from_hsn.
-                        *chain_state.nonce_counter.write() = Some(counter);
-                    }
-                    Err(e) => {
-                        tracing::debug!("chain-state coordinator: failed to fetch replay hsn: {e}");
-                        // Leave the counter as-is; info is still published below.
-                    }
-                }
-            }
-
             *chain_state.provider_info.write() = Some(info);
         }
         // Provider is not (or no longer) registered on chain.
         Ok(None) => {
             *chain_state.provider_info.write() = None;
-            *chain_state.nonce_counter.write() = None;
             tracing::debug!("chain-state coordinator: provider not registered on chain");
         }
         Err(e) => tracing::warn!("chain-state coordinator: failed to fetch provider info: {e}"),
     }
 }
 
-/// Refresh provider state iff at least one of `events` is relevant to
-/// `provider_account`. Collapsing multiple events in one block to a single
-/// refresh is correct: [`refresh_provider_state`] always reads the latest chain
-/// state, so no intermediate event is "missed".
+/// Refresh provider state iff `provider_account` is among the providers of a
+/// block's lifecycle events ([`BlockContents::lifecycle`]). Collapsing
+/// multiple events in one block to a single refresh is correct:
+/// [`refresh_provider_state`] always reads the latest chain state, so no
+/// intermediate event is "missed".
 pub async fn refresh_if_relevant_event(
     chain: &dyn ChainStateChainClient,
     chain_state: &ChainState,
     provider_account: &AccountId32,
-    events: &[ProviderLifecycleEvent],
+    event_providers: &[AccountId32],
     block_number: u32,
 ) {
-    let relevant = events
-        .iter()
-        .any(|e| is_relevant_provider_event(e, provider_account));
-
-    if relevant {
+    if event_providers.contains(provider_account) {
         tracing::debug!(
             "chain-state coordinator: provider event in block {block_number}, refreshing state"
         );
         refresh_provider_state(chain, chain_state, provider_account).await;
     }
-
-    // On a confirmed deregistration, clear the persisted nonce high-water mark so
-    // a later re-registration restarts the sequence from the chain's fresh replay
-    // head (hsn + 1) rather than the stale watermark.
-    //
-    // The reset is deliberate, not cosmetic, and is safe: every quote signed
-    // before deregistration has `valid_until <= sign_block + RequestTimeout`, and
-    // RequestTimeout < DeregisterAnnouncementPeriod, so all such quotes have
-    // already expired by the time `complete_deregister` is callable. No
-    // pre-deregister nonce can be replayed against the new incarnation, so the
-    // counter need not be held above the old watermark. (Keeping it would also be
-    // safe but would needlessly inflate nonces across a re-registration.)
-    //
-    // Gate strictly on a confirmed `ProviderDeregistered` event, not on a generic
-    // `Ok(None)` from `refresh_provider_state` (which also fires on
-    // reconnect/bootstrap and non-finalized reads). This preserves the watermark
-    // as a backstop on every path that is not a real deregistration.
-    let deregistered = events.iter().any(|e| {
-        matches!(e, ProviderLifecycleEvent::Deregistered { provider } if provider == provider_account)
-    });
-    if deregistered {
-        chain_state.nonce_store.reset();
-    }
-}
-
-/// Whether `event` is a provider lifecycle event for `provider_account` — i.e. one
-/// that should trigger a [`refresh_provider_state`]. Settings, multiaddr, and the
-/// (de)registration events all change state `/negotiate` depends on; everything
-/// else (checkpoints, challenges, agreements, other providers) is filtered out
-/// at parse time already.
-pub fn is_relevant_provider_event(
-    event: &ProviderLifecycleEvent,
-    provider_account: &AccountId32,
-) -> bool {
-    event.provider() == provider_account
 }
 
 // ── ChainStateCoordinatorHandle ───────────────────────────────────────────────
@@ -923,14 +376,12 @@ fn escalate_block_read_failure(events_tx: &BlockEventTx, block_number: u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use provider_storage::temp_rocksdb;
-    use std::sync::atomic::Ordering;
-    use subxt::ext::scale_value::Value;
+    use async_trait::async_trait;
+    use provider_types::{ProviderSettings, ProviderStats};
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
-    /// Chain state over a throwaway backend's nonce store.
-    fn test_chain_state() -> (ChainState, tempfile::TempDir) {
-        let (_storage, nonce_store, dir) = temp_rocksdb();
-        (ChainState::with_nonce_store(nonce_store), dir)
+    fn provider_account() -> AccountId32 {
+        AccountId32::new([7u8; 32])
     }
 
     #[test]
@@ -969,23 +420,22 @@ mod tests {
 
     #[test]
     fn chain_state_defaults_to_unknown() {
-        let (cs, _dir) = test_chain_state();
+        let cs = ChainState::default();
         assert_eq!(cs.current_anchor_block.load(Ordering::Relaxed), 0);
         assert!(cs.constants.read().is_none());
         assert!(cs.provider_info.read().is_none());
-        assert!(cs.nonce_counter.read().is_none());
     }
 
     #[test]
     fn chain_state_current_anchor_block_round_trips() {
-        let (cs, _dir) = test_chain_state();
+        let cs = ChainState::default();
         cs.current_anchor_block.store(42, Ordering::Relaxed);
         assert_eq!(cs.current_anchor_block.load(Ordering::Relaxed), 42);
     }
 
     #[test]
     fn chain_state_provider_info_round_trips() {
-        let (cs, _dir) = test_chain_state();
+        let cs = ChainState::default();
         *cs.provider_info.write() = Some(sample_provider_info());
         let guard = cs.provider_info.read();
         let info = guard.as_ref().unwrap();
@@ -995,37 +445,8 @@ mod tests {
     }
 
     #[test]
-    fn chain_state_nonce_counter_round_trips() {
-        let (cs, _dir) = test_chain_state();
-        assert!(cs.nonce_counter.read().is_none());
-        let counter = Arc::new(NonceCounter::with_store(1, cs.nonce_store.clone()));
-        counter.bootstrap_from_hsn(5);
-        *cs.nonce_counter.write() = Some(counter);
-        assert!(cs.nonce_counter.read().is_some());
-    }
-
-    /// The hand-written `Debug` impl exists because `NonceCounter` holds an
-    /// `Arc<dyn NonceStore>`, which is not `Debug`; it must still show the two
-    /// fields that matter when a counter is logged.
-    #[test]
-    fn nonce_counter_debug_shows_counter_and_bootstrap_state() {
-        let (cs, _dir) = test_chain_state();
-        let counter = NonceCounter::with_store(7, cs.nonce_store.clone());
-
-        let before = format!("{counter:?}");
-        assert!(before.starts_with("NonceCounter"));
-        assert!(before.contains('7'), "current value missing: {before}");
-        assert!(before.contains("false"), "should not be bootstrapped");
-
-        counter.bootstrap_from_hsn(41);
-        let after = format!("{counter:?}");
-        assert!(after.contains("42"), "counter should be hsn + 1: {after}");
-        assert!(after.contains("true"), "should be bootstrapped: {after}");
-    }
-
-    #[test]
     fn chain_state_constants_round_trips() {
-        let (cs, _dir) = test_chain_state();
+        let cs = ChainState::default();
         assert!(cs.constants.read().is_none());
         *cs.constants.write() = Some(PalletConstants {
             request_timeout: 100,
@@ -1033,867 +454,311 @@ mod tests {
         assert_eq!(cs.constants.read().as_ref().unwrap().request_timeout, 100);
     }
 
-    #[test]
-    fn lifecycle_event_relevance_matches_on_provider() {
-        let me = AccountId32::new([1u8; 32]);
-        let other = AccountId32::new([2u8; 32]);
-        let mine = ProviderLifecycleEvent::Updated {
-            provider: me.clone(),
-        };
-        let theirs = ProviderLifecycleEvent::Deregistered { provider: other };
-        assert!(is_relevant_provider_event(&mine, &me));
-        assert!(!is_relevant_provider_event(&theirs, &me));
+    #[tokio::test(start_paused = true)]
+    async fn with_timeout_expiry_maps_to_error() {
+        // Paused time auto-advances past the budget instantly.
+        let err = with_timeout(
+            "Chain bootstrap",
+            Duration::from_secs(5),
+            std::future::pending::<Result<(), Error>>(),
+        )
+        .await
+        .expect_err("a never-ready future must hit the budget");
+        assert!(
+            err.to_string()
+                .contains("Chain bootstrap timed out after 5s"),
+            "unexpected error: {err}"
+        );
     }
 
-    // ── real subxt client over a mock RPC connection ──────────────────────
+    #[tokio::test]
+    async fn with_timeout_passes_results_through() {
+        let ok = with_timeout("op", Duration::from_secs(1), async { Ok::<_, Error>(7) })
+            .await
+            .expect("value passes through");
+        assert_eq!(ok, 7);
+
+        let err = with_timeout("op", Duration::from_secs(1), async {
+            Err::<(), _>(ChainClientError::query("op", "inner failure").into())
+        })
+        .await
+        .expect_err("inner error passes through");
+        assert!(
+            err.to_string().contains("inner failure"),
+            "unexpected error: {err}"
+        );
+    }
+
+    // ── mock chain follower ────────────────────────────────────────────────
     //
-    // These tests drive [`RealChainStateClient`] and [`ChainStateCoordinator::follow`]
-    // through a real `OnlineClient` (legacy backend) backed by canned RPC
-    // responses, using the repo's tracked runtime metadata snapshot. Storage
-    // values and events are encoded with `scale_value` against the actual
-    // runtime types, so these exercise the same static decode paths - the
-    // generated `storage-subxt` bindings - as a live chain, without one.
-    mod real_client {
-        use super::*;
-        use std::sync::atomic::Ordering;
-        use subxt::backend::LegacyBackend;
-        use subxt::ext::scale_value::scale::encode_as_type;
-        use subxt_rpcs::client::mock_rpc_client::Json;
-        use subxt_rpcs::client::{MockRpcClient, RpcClient};
+    // These drive [`ChainStateCoordinator`] without a chain: a mock
+    // [`ChainStateChainClient`] answers the bootstrap reads, and a plain
+    // iterator yields already-decoded blocks. provider-node tests the subxt
+    // decoding.
 
-        /// Tracked runtime metadata snapshot (shared with the PAPI codegen).
-        const METADATA: &[u8] = include_bytes!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../../packages/papi/.papi/metadata/parachain.scale"
-        ));
-        const BLOCK_HASH: &str =
-            "0x2222222222222222222222222222222222222222222222222222222222222222";
-        const GENESIS_HASH: &str =
-            "0x1111111111111111111111111111111111111111111111111111111111111111";
+    /// [`ChainStateChainClient`] returning fixed answers.
+    #[derive(Default)]
+    struct MockChainClient {
+        provider_info: Option<ProviderInfo>,
+        request_timeout: Option<u32>,
+    }
 
-        fn metadata() -> subxt::Metadata {
-            use codec::Decode;
-            subxt::Metadata::decode(&mut &METADATA[..]).expect("tracked metadata decodes")
+    #[async_trait]
+    impl ChainStateChainClient for MockChainClient {
+        async fn get_provider_info(
+            &self,
+            _who: &AccountId32,
+        ) -> Result<Option<ProviderInfo>, ChainClientError> {
+            Ok(self.provider_info.clone())
         }
 
-        fn provider_account() -> AccountId32 {
-            AccountId32::new([7u8; 32])
+        async fn fetch_request_timeout(&self) -> Result<Option<u32>, ChainClientError> {
+            Ok(self.request_timeout)
         }
+    }
 
-        /// `0x`-prefixed twox128(pallet) ++ twox128(entry) storage-key prefix.
-        fn key_prefix(pallet: &str, entry: &str) -> String {
-            let mut key = sp_crypto_hashing::twox_128(pallet.as_bytes()).to_vec();
-            key.extend(sp_crypto_hashing::twox_128(entry.as_bytes()));
-            format!("0x{}", hex::encode(key))
+    #[async_trait]
+    impl FinalizedBlocks for std::vec::IntoIter<FinalizedBlock> {
+        async fn next(&mut self) -> Option<FinalizedBlock> {
+            Iterator::next(self)
         }
+    }
 
-        /// Look up the value type of a storage entry in the runtime metadata.
-        fn storage_value_type(md: &subxt::Metadata, pallet: &str, entry: &str) -> u32 {
-            md.pallet_by_name(pallet)
-                .expect("pallet in metadata")
-                .storage()
-                .expect("pallet has storage")
-                .entry_by_name(entry)
-                .expect("entry in metadata")
-                .value_ty()
+    /// [`ChainFollower`] for tests that call [`ChainStateCoordinator::follow`]
+    /// directly; `connect()` must not run.
+    struct NeverConnectFollower;
+
+    #[async_trait]
+    impl ChainFollower for NeverConnectFollower {
+        async fn connect(&self) -> Result<ChainConnection, ChainClientError> {
+            unreachable!("connect() must not be called when driving follow() directly")
         }
+    }
 
-        /// SCALE-encode a dynamic value as the given runtime type.
-        fn encode_value(md: &subxt::Metadata, ty: u32, value: &Value) -> Vec<u8> {
-            let mut out = Vec::new();
-            encode_as_type(value, ty, md.types(), &mut out).expect("value encodes as type");
-            out
+    /// [`ChainFollower`] whose `connect()` always fails, counting attempts.
+    struct AlwaysFailFollower {
+        attempts: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl ChainFollower for AlwaysFailFollower {
+        async fn connect(&self) -> Result<ChainConnection, ChainClientError> {
+            self.attempts.fetch_add(1, Ordering::SeqCst);
+            Err(ChainClientError::query(
+                "chain connection",
+                "mock connect failure",
+            ))
         }
+    }
 
-        /// A `Providers` storage value matching the full runtime `ProviderInfo`
-        /// shape: every runtime field must be present for `scale_value` to
-        /// encode it against the real type.
-        fn runtime_provider_info_value(
-            replica_sync_price: Option<u128>,
-            deregister_at: Option<u32>,
-        ) -> Value {
-            let opt = |val: Option<u128>| match val {
-                Some(v) => Value::unnamed_variant("Some", vec![Value::u128(v)]),
-                None => Value::unnamed_variant("None", Vec::<Value>::new()),
-            };
-            Value::named_composite([
-                ("multiaddr", Value::from_bytes("/ip4/1.2.3.4/tcp/3333")),
-                ("public_key", Value::from_bytes([9u8; 32])),
-                ("stake", Value::u128(1_000)),
-                ("committed_bytes", Value::u128(500)),
-                (
-                    "settings",
-                    Value::named_composite([
-                        ("min_duration", Value::u128(10)),
-                        ("max_duration", Value::u128(100)),
-                        ("price_per_byte", Value::u128(5)),
-                        ("accepting_primary", Value::bool(true)),
-                        ("replica_sync_price", opt(replica_sync_price)),
-                        ("accepting_extensions", Value::bool(true)),
-                        ("max_capacity", Value::u128(10_000)),
-                    ]),
-                ),
-                (
-                    "stats",
-                    Value::named_composite([
-                        ("registered_at", Value::u128(1)),
-                        ("agreements_total", Value::u128(3)),
-                        ("agreements_extended", Value::u128(0)),
-                        ("agreements_not_extended", Value::u128(0)),
-                        ("agreements_burned", Value::u128(0)),
-                        ("total_bytes_committed", Value::u128(500)),
-                        ("challenges_received_authorized", Value::u128(2)),
-                        ("challenges_received_public", Value::u128(0)),
-                        ("challenges_failed", Value::u128(1)),
-                        ("lifetime_revenue", Value::u128(0)),
-                    ]),
-                ),
-                ("deregister_at", opt(deregister_at.map(u128::from))),
-            ])
+    /// A readable block with the given anchor block and events.
+    fn block(
+        number: u32,
+        anchor_block: Option<u32>,
+        events: Vec<BlockEvent>,
+        lifecycle: Vec<AccountId32>,
+    ) -> FinalizedBlock {
+        FinalizedBlock {
+            number,
+            anchor_block,
+            contents: Some(BlockContents { events, lifecycle }),
         }
+    }
 
-        /// Wrap a `StorageProvider` event value in an `EventRecord`.
-        fn event_record(event: Value) -> Value {
-            Value::named_composite([
-                ("phase", Value::unnamed_variant("Initialization", vec![])),
-                (
-                    "event",
-                    Value::unnamed_variant("StorageProvider", vec![event]),
-                ),
-                ("topics", Value::unnamed_composite(Vec::<Value>::new())),
-            ])
-        }
+    /// Run [`ChainStateCoordinator::follow`] over `blocks` until the stream
+    /// ends. Returns the resulting chain state and every event broadcast.
+    async fn run_follow(
+        client: MockChainClient,
+        blocks: Vec<FinalizedBlock>,
+    ) -> (Arc<ChainState>, Vec<BlockEvent>) {
+        let chain_state = Arc::new(ChainState::default());
+        let (events_tx, mut events_rx) = tokio::sync::broadcast::channel(64);
+        let coordinator = ChainStateCoordinator::new(
+            Arc::new(NeverConnectFollower),
+            provider_account(),
+            chain_state.clone(),
+            events_tx,
+        );
 
-        /// `System::Events` bytes holding a `ProviderRegistered` (exercising
-        /// the lifecycle decoding) and a `ChallengeCreated` (exercising the
-        /// fan-out decoding) for `provider`, encoded against the real runtime
-        /// types.
-        fn encoded_events(md: &subxt::Metadata, provider: &AccountId32) -> Vec<u8> {
-            let provider_bytes = <AccountId32 as AsRef<[u8]>>::as_ref(provider);
-            let registered = event_record(Value::named_variant(
-                "ProviderRegistered",
-                [
-                    ("provider", Value::from_bytes(provider_bytes)),
-                    ("stake", Value::u128(1_000)),
-                ],
-            ));
-            let challenge_created = event_record(Value::named_variant(
-                "ChallengeCreated",
-                [
-                    (
-                        "challenge_id",
-                        Value::named_composite([
-                            ("deadline", Value::u128(777)),
-                            ("index", Value::u128(3)),
-                        ]),
-                    ),
-                    ("bucket_id", Value::u128(9)),
-                    ("provider", Value::from_bytes(provider_bytes)),
-                    ("challenger", Value::from_bytes([8u8; 32])),
-                    ("respond_by", Value::u128(777)),
-                ],
-            ));
-            let ty = storage_value_type(md, "System", "Events");
-            encode_value(
-                md,
-                ty,
-                &Value::unnamed_composite([registered, challenge_created]),
-            )
-        }
-
-        /// `System::Events` bytes holding one of each membership-changing event
-        /// (buckets 7, 7, 8, and 9) plus a `ProviderRegistered` that carries no
-        /// bucket at all, encoded against the real runtime types.
-        fn encoded_membership_events(md: &subxt::Metadata, provider: &AccountId32) -> Vec<u8> {
-            let member = Value::from_bytes([3u8; 32]);
-            let bucket_created = event_record(Value::named_variant(
-                "BucketCreated",
-                [
-                    ("bucket_id", Value::u128(9)),
-                    ("admin", Value::from_bytes([4u8; 32])),
-                ],
-            ));
-            let member_set = event_record(Value::named_variant(
-                "MemberSet",
-                [
-                    ("bucket_id", Value::u128(7)),
-                    ("member", member.clone()),
-                    (
-                        "role",
-                        Value::unnamed_variant("Writer", Vec::<Value>::new()),
-                    ),
-                ],
-            ));
-            let member_removed = event_record(Value::named_variant(
-                "MemberRemoved",
-                [("bucket_id", Value::u128(7)), ("member", member)],
-            ));
-            let bucket_deleted = event_record(Value::named_variant(
-                "BucketDeleted",
-                [("bucket_id", Value::u128(8))],
-            ));
-            let registered = event_record(Value::named_variant(
-                "ProviderRegistered",
-                [
-                    (
-                        "provider",
-                        Value::from_bytes(<AccountId32 as AsRef<[u8]>>::as_ref(provider)),
-                    ),
-                    ("stake", Value::u128(1_000)),
-                ],
-            ));
-            let ty = storage_value_type(md, "System", "Events");
-            encode_value(
-                md,
-                ty,
-                &Value::unnamed_composite([
-                    bucket_created,
-                    member_set,
-                    member_removed,
-                    bucket_deleted,
-                    registered,
-                ]),
-            )
-        }
-
-        /// The `BucketMembershipChanged` bucket ids [`decode_block_events`]
-        /// produces from `events`, in encounter order.
-        fn membership_changed_bucket_ids(
-            events: &subxt::events::Events<PolkadotConfig>,
-        ) -> Vec<u64> {
-            decode_block_events(events, 0)
-                .into_iter()
-                .filter_map(|event| match event {
-                    BlockEvent::BucketMembershipChanged { bucket_id } => Some(bucket_id),
-                    _ => None,
-                })
-                .collect()
-        }
-
-        fn header_json(number: u32) -> serde_json::Value {
-            serde_json::json!({
-                "parentHash": GENESIS_HASH,
-                "number": format!("{number:#x}"),
-                "stateRoot": GENESIS_HASH,
-                "extrinsicsRoot": GENESIS_HASH,
-                "digest": { "logs": [] }
-            })
-        }
-
-        fn runtime_version_json() -> serde_json::Value {
-            serde_json::json!({
-                "specName": "test",
-                "implName": "test",
-                "authoringVersion": 1,
-                "specVersion": 1,
-                "implVersion": 1,
-                "apis": [],
-                "transactionVersion": 1,
-                "stateVersion": 1
-            })
-        }
-
-        /// Build a real `OnlineClient` over a mock RPC connection.
-        ///
-        /// `storage` maps a storage-key prefix (see [`key_prefix`]) to the
-        /// hex value served for reads under it; unmapped keys read as absent.
-        async fn mock_api(
-            storage: Vec<(String, String)>,
-        ) -> subxt::OnlineClient<subxt::PolkadotConfig> {
-            let metadata_hex = format!("0x{}", hex::encode(METADATA));
-            let mock = MockRpcClient::builder()
-                .method_handler("state_getMetadata", move |_params| {
-                    let metadata_hex = metadata_hex.clone();
-                    async move { Json(metadata_hex) }
-                })
-                .method_handler("state_call", move |params| async move {
-                    use codec::Encode;
-                    let raw = params.map(|p| p.get().to_string()).unwrap_or_default();
-                    let function: String = serde_json::from_str::<Vec<serde_json::Value>>(&raw)
-                        .ok()
-                        .and_then(|p| p.first().and_then(|f| f.as_str().map(str::to_string)))
-                        .unwrap_or_default();
-                    let response = match function.as_str() {
-                        // The runtime metadata version(s) this "node" serves:
-                        // exactly the tracked snapshot's version.
-                        "Metadata_metadata_versions" => vec![u32::from(METADATA[4])].encode(),
-                        "Metadata_metadata_at_version" => Some(METADATA.to_vec()).encode(),
-                        "Metadata_metadata" => METADATA.to_vec().encode(),
-                        // Anchor block the coordinator reads per finalized block.
-                        // Deliberately distinct from the mocked header number
-                        // (42) so the assertion below fails if the coordinator
-                        // ever regresses to storing the parachain height.
-                        "StorageProviderApi_current_anchor_block" => 4242u32.encode(),
-                        // sp_version::RuntimeVersion, field by field.
-                        "Core_version" => (
-                            "test".to_string(),           // spec_name
-                            "test".to_string(),           // impl_name
-                            1u32,                         // authoring_version
-                            1u32,                         // spec_version
-                            1u32,                         // impl_version
-                            Vec::<([u8; 8], u32)>::new(), // apis
-                            1u32,                         // transaction_version
-                            1u8,                          // system_version
-                        )
-                            .encode(),
-                        other => panic!("mock RPC: unhandled state_call {other}"),
-                    };
-                    Json(format!("0x{}", hex::encode(response)))
-                })
-                .method_handler("chain_getBlockHash", |_params| async {
-                    Json(GENESIS_HASH.to_string())
-                })
-                .method_handler("chain_getFinalizedHead", |_params| async {
-                    Json(BLOCK_HASH.to_string())
-                })
-                .method_handler("chain_getHeader", |_params| async { Json(header_json(42)) })
-                .method_handler("state_getRuntimeVersion", |_params| async {
-                    Json(runtime_version_json())
-                })
-                .method_handler("state_getStorage", move |params| {
-                    let storage = storage.clone();
-                    async move {
-                        let key: String = params
-                            .map(|p| {
-                                let (key, _rest): (String, serde_json::Value) =
-                                    serde_json::from_str(p.get())
-                                        .or_else(|_| {
-                                            serde_json::from_str::<(String,)>(p.get())
-                                                .map(|(k,)| (k, serde_json::Value::Null))
-                                        })
-                                        .expect("storage params decode");
-                                key
-                            })
-                            .unwrap_or_default();
-                        let value = storage
-                            .iter()
-                            .find(|(prefix, _)| key.starts_with(prefix.as_str()))
-                            .map(|(_, value)| value.clone());
-                        Json(value)
-                    }
-                })
-                .subscription_handler("chain_subscribeFinalizedHeads", |_params, _unsub| async {
-                    vec![Json(header_json(42))]
-                })
-                .subscription_handler("state_subscribeRuntimeVersion", |_params, _unsub| async {
-                    vec![Json(runtime_version_json())]
-                })
-                .method_fallback(|name, _params| async move {
-                    panic!("mock RPC: unhandled method {name}");
-                    #[allow(unreachable_code)]
-                    Json(serde_json::Value::Null)
-                })
-                .subscription_fallback(|name, _params, _unsub| async move {
-                    panic!("mock RPC: unhandled subscription {name}");
-                    #[allow(unreachable_code)]
-                    Vec::<Json<serde_json::Value>>::new()
-                })
-                .build();
-
-            let backend = LegacyBackend::builder().build(RpcClient::new(mock));
-            subxt::OnlineClient::<subxt::PolkadotConfig>::from_backend(Arc::new(backend))
-                .await
-                .expect("client over mock RPC")
-        }
-
-        #[tokio::test]
-        async fn request_timeout_constant_reads_from_real_metadata() {
-            let md = metadata();
-            let client = RealChainStateClient {
-                api: mock_api(vec![]).await,
-            };
-
-            let timeout = client
-                .fetch_request_timeout()
-                .await
-                .expect("constant fetch succeeds")
-                .expect("RequestTimeout present in metadata");
-
-            // Self-consistency: the dynamic lookup must agree with the raw
-            // constant bytes in the same metadata.
-            let expected = {
-                use codec::Decode;
-                let constant = md
-                    .pallet_by_name(PALLET_NAME)
-                    .expect("pallet in metadata")
-                    .constant_by_name("RequestTimeout")
-                    .expect("constant in metadata");
-                u32::decode(&mut constant.value()).expect("u32 constant")
-            };
-            assert_eq!(timeout, expected);
-        }
-
-        #[tokio::test]
-        async fn provider_info_absent_reads_as_none() {
-            let client = RealChainStateClient {
-                api: mock_api(vec![]).await,
-            };
-            let info = client
-                .get_provider_info(&provider_account())
-                .await
-                .expect("storage fetch succeeds");
-            assert!(info.is_none());
-        }
-
-        /// A `Providers` entry whose bytes don't match the runtime type must
-        /// error, not decode to a half-populated `ProviderInfo`. The dynamic
-        /// decoder this replaced silently defaulted `multiaddr`,
-        /// `replica_sync_price`, `deregister_at` and the two stats counters on
-        /// a field miss, which let a runtime mismatch degrade quietly.
-        #[tokio::test]
-        async fn provider_info_decode_failure_is_an_error() {
-            let client = RealChainStateClient {
-                api: mock_api(vec![(key_prefix(PALLET_NAME, "Providers"), "0x00".into())]).await,
-            };
-            let err = client
-                .get_provider_info(&provider_account())
-                .await
-                .expect_err("malformed Providers bytes must not decode");
-            let Error::Internal(msg) = &err else {
-                panic!("unexpected error: {err:?}")
-            };
-            assert!(
-                msg.contains("decode Providers"),
-                "unexpected error: {err:?}"
-            );
-        }
-
-        /// Same for the replay window: a present-but-undecodable entry is an
-        /// error, not `Ok(None)`. Collapsing it to `None` would look identical
-        /// to "provider has never signed", which seeds the nonce counter
-        /// differently.
-        #[tokio::test]
-        async fn replay_hsn_decode_failure_is_an_error() {
-            let client = RealChainStateClient {
-                api: mock_api(vec![(
-                    key_prefix(PALLET_NAME, "ProviderReplayStates"),
-                    "0x00".into(),
-                )])
-                .await,
-            };
-            let err = client
-                .fetch_replay_hsn(&provider_account())
-                .await
-                .expect_err("malformed ProviderReplayStates bytes must not decode");
-            let Error::Internal(msg) = &err else {
-                panic!("unexpected error: {err:?}")
-            };
-            assert!(
-                msg.contains("decode ProviderReplayStates"),
-                "unexpected error: {err:?}"
-            );
-        }
-
-        #[tokio::test]
-        async fn provider_info_round_trips_through_runtime_types() {
-            let md = metadata();
-            let ty = storage_value_type(&md, PALLET_NAME, "Providers");
-            let encoded = encode_value(&md, ty, &runtime_provider_info_value(Some(7), Some(42)));
-
-            let client = RealChainStateClient {
-                api: mock_api(vec![(
-                    key_prefix(PALLET_NAME, "Providers"),
-                    format!("0x{}", hex::encode(encoded)),
-                )])
-                .await,
-            };
-
-            let info = client
-                .get_provider_info(&provider_account())
-                .await
-                .expect("storage fetch succeeds")
-                .expect("provider info decodes");
-            assert_eq!(info.multiaddr, "/ip4/1.2.3.4/tcp/3333");
-            assert_eq!(info.stake, 1_000);
-            assert_eq!(info.settings.max_capacity, 10_000);
-            assert_eq!(info.settings.replica_sync_price, Some(7));
-            // Every `stats` counter is carried across, not just the two the
-            // node reads today - a dropped field here is a silent zero.
-            assert_eq!(info.stats.registered_at, 1);
-            assert_eq!(info.stats.agreements_total, 3);
-            assert_eq!(info.stats.total_bytes_committed, 500);
-            assert_eq!(info.stats.challenges_received_authorized, 2);
-            assert_eq!(info.stats.challenges_failed, 1);
-            assert_eq!(info.deregister_at, Some(42));
-        }
-
-        #[tokio::test]
-        async fn follow_processes_finalized_blocks_and_provider_events() {
-            let md = metadata();
-            let account = provider_account();
-
-            let providers_ty = storage_value_type(&md, PALLET_NAME, "Providers");
-            let provider_bytes =
-                encode_value(&md, providers_ty, &runtime_provider_info_value(None, None));
-            let events_bytes = encoded_events(&md, &account);
-
-            let api = mock_api(vec![
-                (
-                    key_prefix("System", "Events"),
-                    format!("0x{}", hex::encode(events_bytes)),
-                ),
-                (
-                    key_prefix(PALLET_NAME, "Providers"),
-                    format!("0x{}", hex::encode(provider_bytes)),
-                ),
-                // ProviderReplayStates intentionally unmapped: reads as absent,
-                // covering the no-replay-state nonce bootstrap path.
-            ])
-            .await;
-
-            let (state, _dir) = test_chain_state();
-            let chain_state = Arc::new(state);
-            let (chain_tx, chain_rx) = tokio::sync::watch::channel(None);
-            let (events_tx, mut events_rx) = tokio::sync::broadcast::channel(16);
-            let coordinator = ChainStateCoordinator::new(
-                ChainTransport::Rpc {
-                    url: "ws://unused.invalid".to_string(),
-                },
-                account,
-                chain_state.clone(),
-                chain_tx,
-                events_tx,
-            );
-
-            // The finalized stream serves exactly one block then ends, so
-            // `follow` bootstraps, processes the block (decoding the
-            // ProviderRegistered event and refreshing state), and returns.
-            coordinator
-                .follow(ChainHandle::from_api(api))
-                .await
-                .expect("follow runs to stream end");
-
-            // 4242 comes from the mocked runtime API, NOT the header number
-            // (42) — proving the anchor is sourced from the runtime API rather
-            // than the parachain height.
-            assert_eq!(
-                chain_state.current_anchor_block.load(Ordering::Relaxed),
-                4242
-            );
-            let info = chain_state.provider_info.read();
-            let info = info.as_ref().expect("provider info synced from chain");
-            assert_eq!(info.stake, 1_000);
-            assert!(chain_state.constants.read().is_some());
-            assert!(chain_state.nonce_counter.read().is_some());
-
-            // The connection was published and the block fanned out, including
-            // the statically-decoded ChallengeCreated from the block's events.
-            assert!(chain_rx.borrow().is_some());
-            let mut saw_resubscribed = false;
-            let mut saw_challenge = false;
-            while let Ok(event) = events_rx.try_recv() {
-                match event {
-                    BlockEvent::Resubscribed { .. } => saw_resubscribed = true,
-                    BlockEvent::ChallengeCreated {
-                        deadline: 777,
-                        index: 3,
-                        bucket_id: 9,
-                        ref provider,
-                    } if *provider == provider_account() => saw_challenge = true,
-                    _ => {}
-                }
-            }
-            assert!(saw_resubscribed, "follow should broadcast Resubscribed");
-            assert!(
-                saw_challenge,
-                "follow should statically decode and broadcast ChallengeCreated"
-            );
-        }
-
-        /// `NonceStore` that only records whether [`NonceStore::reset`] fired.
-        #[derive(Default)]
-        struct ResetSpy(AtomicBool);
-
-        impl NonceStore for ResetSpy {
-            fn load(&self) -> Option<u64> {
-                None
-            }
-            fn persist(&self, _value: u64) {}
-            fn reset(&self) {
-                self.0.store(true, Ordering::SeqCst);
-            }
-        }
-
-        /// An on-chain `ProviderDeregistered` must reach `nonce_store.reset()`.
-        ///
-        /// The integration suite covers the same gate, but starting from an
-        /// already-built [`ProviderLifecycleEvent`]. This is the only test that
-        /// runs the whole path — SCALE-encoded runtime event → static decode →
-        /// `Deregistered` → watermark cleared — so it is what proves the
-        /// `ProviderDeregistered` arm is wired to the right variant.
-        #[tokio::test]
-        async fn deregistration_event_clears_the_nonce_watermark() {
-            let md = metadata();
-            let account = provider_account();
-
-            let deregistered = event_record(Value::named_variant(
-                "ProviderDeregistered",
-                [
-                    (
-                        "provider",
-                        Value::from_bytes(<AccountId32 as AsRef<[u8]>>::as_ref(&account)),
-                    ),
-                    ("stake_returned", Value::u128(1_000)),
-                ],
-            ));
-            let events_ty = storage_value_type(&md, "System", "Events");
-            let events_bytes =
-                encode_value(&md, events_ty, &Value::unnamed_composite([deregistered]));
-
-            let providers_ty = storage_value_type(&md, PALLET_NAME, "Providers");
-            let provider_bytes =
-                encode_value(&md, providers_ty, &runtime_provider_info_value(None, None));
-
-            let api = mock_api(vec![
-                (
-                    key_prefix("System", "Events"),
-                    format!("0x{}", hex::encode(events_bytes)),
-                ),
-                (
-                    key_prefix(PALLET_NAME, "Providers"),
-                    format!("0x{}", hex::encode(provider_bytes)),
-                ),
-            ])
-            .await;
-
-            let store = Arc::new(ResetSpy::default());
-            let chain_state = Arc::new(ChainState::with_nonce_store(store.clone()));
-            let coordinator = ChainStateCoordinator::new(
-                ChainTransport::Rpc {
-                    url: "ws://unused.invalid".to_string(),
-                },
-                account,
-                chain_state,
-                tokio::sync::watch::channel(None).0,
-                tokio::sync::broadcast::channel(16).0,
-            );
-
-            coordinator
-                .follow(ChainHandle::from_api(api))
-                .await
-                .expect("follow runs to stream end");
-
-            assert!(
-                store.0.load(Ordering::SeqCst),
-                "a confirmed ProviderDeregistered must reset the persisted nonce watermark"
-            );
-        }
-
-        /// Decoding only the `provider` field must keep working even when the
-        /// rest of an event's fields change shape - proving the fix for
-        /// decoding whole event structs, which would have broken here since
-        /// `ProviderSettingsUpdated` carries the full `ProviderSettings`.
-        #[tokio::test]
-        async fn lifecycle_events_decode_despite_unrelated_field_changes() {
-            let md = metadata();
-            let account = provider_account();
-            let account_bytes = <AccountId32 as AsRef<[u8]>>::as_ref(&account);
-
-            let settings_updated = event_record(Value::named_variant(
-                "ProviderSettingsUpdated",
-                [
-                    ("provider", Value::from_bytes(account_bytes)),
-                    (
-                        "settings",
-                        Value::named_composite([
-                            ("min_duration", Value::u128(10)),
-                            ("max_duration", Value::u128(100)),
-                            ("price_per_byte", Value::u128(5)),
-                            ("accepting_primary", Value::bool(true)),
-                            (
-                                "replica_sync_price",
-                                Value::unnamed_variant("None", Vec::<Value>::new()),
-                            ),
-                            ("accepting_extensions", Value::bool(true)),
-                            ("max_capacity", Value::u128(10_000)),
-                        ]),
-                    ),
-                ],
-            ));
-            let deregistered = event_record(Value::named_variant(
-                "ProviderDeregistered",
-                [
-                    ("provider", Value::from_bytes(account_bytes)),
-                    ("stake_returned", Value::u128(1_000)),
-                ],
-            ));
-            let events_ty = storage_value_type(&md, "System", "Events");
-            let events_bytes = encode_value(
-                &md,
-                events_ty,
-                &Value::unnamed_composite([settings_updated, deregistered]),
-            );
-
-            let api = mock_api(vec![(
-                key_prefix("System", "Events"),
-                format!("0x{}", hex::encode(events_bytes)),
-            )])
-            .await;
-            let at = api.at_current_block().await.expect("block handle");
-            let events = at.events().fetch().await.expect("events fetch");
-
-            assert_eq!(
-                parse_provider_lifecycle_events(&events),
-                vec![
-                    ProviderLifecycleEvent::Updated {
-                        provider: account.clone()
-                    },
-                    ProviderLifecycleEvent::Deregistered { provider: account },
-                ]
-            );
-        }
-
-        #[tokio::test]
-        async fn membership_changes_decode_to_their_bucket_ids() {
-            let md = metadata();
-            let api = mock_api(vec![(
-                key_prefix("System", "Events"),
-                format!(
-                    "0x{}",
-                    hex::encode(encoded_membership_events(&md, &provider_account()))
-                ),
-            )])
-            .await;
-
-            let at = api.at_current_block().await.expect("block handle");
-            let events = at.events().fetch().await.expect("events fetch");
-
-            // Every membership-changing event contributes its bucket, duplicates
-            // included (invalidation is idempotent); the provider-lifecycle event
-            // carries no bucket and must be skipped.
-            assert_eq!(membership_changed_bucket_ids(&events), vec![9, 7, 7, 8]);
-        }
-
-        #[tokio::test]
-        async fn blocks_without_membership_changes_decode_to_nothing() {
-            let md = metadata();
-            let api = mock_api(vec![(
-                key_prefix("System", "Events"),
-                format!(
-                    "0x{}",
-                    hex::encode(encoded_events(&md, &provider_account()))
-                ),
-            )])
-            .await;
-
-            let at = api.at_current_block().await.expect("block handle");
-            let events = at.events().fetch().await.expect("events fetch");
-
-            assert!(membership_changed_bucket_ids(&events).is_empty());
-        }
-
-        #[tokio::test]
-        async fn follow_broadcasts_membership_changes() {
-            let md = metadata();
-            let account = provider_account();
-
-            let providers_ty = storage_value_type(&md, PALLET_NAME, "Providers");
-            let provider_bytes =
-                encode_value(&md, providers_ty, &runtime_provider_info_value(None, None));
-            let events_bytes = encoded_membership_events(&md, &account);
-
-            let api = mock_api(vec![
-                (
-                    key_prefix("System", "Events"),
-                    format!("0x{}", hex::encode(events_bytes)),
-                ),
-                (
-                    key_prefix(PALLET_NAME, "Providers"),
-                    format!("0x{}", hex::encode(provider_bytes)),
-                ),
-            ])
-            .await;
-
-            let (chain_state, _dir) = test_chain_state();
-            let chain_state = Arc::new(chain_state);
-            let (chain_tx, _chain_rx) = tokio::sync::watch::channel(None);
-            let (events_tx, mut events_rx) = tokio::sync::broadcast::channel(16);
-            let coordinator = ChainStateCoordinator::new(
-                ChainTransport::Rpc {
-                    url: "ws://unused.invalid".to_string(),
-                },
-                account,
-                chain_state,
-                chain_tx,
-                events_tx,
-            );
-
-            coordinator
-                .follow(ChainHandle::from_api(api))
-                .await
-                .expect("follow runs to stream end");
-
-            let mut changed_buckets = Vec::new();
-            while let Ok(event) = events_rx.try_recv() {
-                if let BlockEvent::BucketMembershipChanged { bucket_id } = event {
-                    changed_buckets.push(bucket_id);
-                }
-            }
-            // Matches `membership_changes_decode_to_their_bucket_ids`: duplicates
-            // included (invalidation is idempotent), the provider-lifecycle event
-            // in the same block contributes nothing.
-            assert_eq!(changed_buckets, vec![9, 7, 7, 8]);
-        }
-
-        #[tokio::test(start_paused = true)]
-        async fn with_timeout_expiry_maps_to_error() {
-            // Paused time auto-advances past the budget instantly.
-            let err = with_timeout(
-                "Chain bootstrap",
-                Duration::from_secs(5),
-                std::future::pending::<Result<(), Error>>(),
-            )
-            .await
-            .expect_err("a never-ready future must hit the budget");
-            assert!(
-                err.to_string()
-                    .contains("Chain bootstrap timed out after 5s"),
-                "unexpected error: {err}"
-            );
-        }
-
-        #[tokio::test]
-        async fn with_timeout_passes_results_through() {
-            let ok = with_timeout("op", Duration::from_secs(1), async { Ok::<_, Error>(7) })
-                .await
-                .expect("value passes through");
-            assert_eq!(ok, 7);
-
-            let err = with_timeout("op", Duration::from_secs(1), async {
-                Err::<(), _>(Error::Internal("inner failure".to_string()))
+        coordinator
+            .follow(ChainConnection {
+                blocks: Box::new(blocks.into_iter()),
+                client: Box::new(client),
             })
             .await
-            .expect_err("inner error passes through");
-            assert!(
-                err.to_string().contains("inner failure"),
-                "unexpected error: {err}"
-            );
+            .expect("follow runs to stream end");
+
+        let mut events = Vec::new();
+        while let Ok(event) = events_rx.try_recv() {
+            events.push(event);
+        }
+        (chain_state, events)
+    }
+
+    #[tokio::test]
+    async fn follow_processes_finalized_blocks_and_provider_events() {
+        let account = provider_account();
+        let info = sample_provider_info();
+        let client = MockChainClient {
+            provider_info: Some(info.clone()),
+            request_timeout: Some(100),
+        };
+        let blocks = vec![block(
+            42,
+            Some(4242),
+            vec![BlockEvent::ChallengeCreated {
+                deadline: 777,
+                index: 3,
+                bucket_id: 9,
+                provider: account.clone(),
+            }],
+            vec![account.clone()],
+        )];
+
+        let (chain_state, events) = run_follow(client, blocks).await;
+
+        assert_eq!(
+            chain_state.current_anchor_block.load(Ordering::Relaxed),
+            4242
+        );
+        let stored = chain_state.provider_info.read();
+        let stored = stored.as_ref().expect("provider info synced from chain");
+        assert_eq!(stored.stake, info.stake);
+        assert!(chain_state.constants.read().is_some());
+
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, BlockEvent::Resubscribed { .. })),
+            "follow should broadcast Resubscribed"
+        );
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                BlockEvent::ChallengeCreated {
+                    deadline: 777,
+                    index: 3,
+                    bucket_id: 9,
+                    provider,
+                } if *provider == account
+            )),
+            "follow should forward the block's decoded events"
+        );
+    }
+
+    #[tokio::test]
+    async fn follow_broadcasts_membership_changes() {
+        // Duplicates included: invalidation is idempotent, and the fan-out
+        // does not deduplicate.
+        let blocks = vec![block(
+            1,
+            Some(1),
+            [9, 7, 7, 8]
+                .map(|bucket_id| BlockEvent::BucketMembershipChanged { bucket_id })
+                .to_vec(),
+            vec![],
+        )];
+
+        let (_chain_state, events) = run_follow(MockChainClient::default(), blocks).await;
+
+        let changed_buckets: Vec<_> = events
+            .into_iter()
+            .filter_map(|event| match event {
+                BlockEvent::BucketMembershipChanged { bucket_id } => Some(bucket_id),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(changed_buckets, vec![9, 7, 7, 8]);
+    }
+
+    /// An unreadable block escalates instead of being dropped, its anchor
+    /// block is still stored, and the blocks behind it are still processed.
+    #[tokio::test]
+    async fn follow_continues_past_an_unreadable_block() {
+        let account = provider_account();
+        let challenge = BlockEvent::ChallengeCreated {
+            deadline: 777,
+            index: 3,
+            bucket_id: 9,
+            provider: account.clone(),
+        };
+        let blocks = vec![
+            // Unreadable, but the anchor read succeeded.
+            FinalizedBlock {
+                number: 10,
+                anchor_block: Some(200),
+                contents: None,
+            },
+            // No anchor, so the 200 above remains.
+            block(11, None, vec![challenge], vec![]),
+        ];
+
+        let (chain_state, events) = run_follow(MockChainClient::default(), blocks).await;
+
+        assert_eq!(
+            chain_state.current_anchor_block.load(Ordering::Relaxed),
+            200
+        );
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, BlockEvent::MembershipScopeUnknown { at_block: 10 })),
+            "an unreadable block must escalate MembershipScopeUnknown"
+        );
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                BlockEvent::ChallengeCreated { provider, .. } if *provider == account
+            )),
+            "the block after an unreadable one must still be processed"
+        );
+    }
+
+    #[tokio::test]
+    async fn follow_keeps_the_previous_anchor_block_when_a_read_fails() {
+        let blocks = vec![
+            block(1, Some(100), vec![], vec![]),
+            block(2, None, vec![], vec![]),
+        ];
+
+        let (chain_state, _events) = run_follow(MockChainClient::default(), blocks).await;
+
+        assert_eq!(
+            chain_state.current_anchor_block.load(Ordering::Relaxed),
+            100
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn run_retries_after_a_failed_connect() {
+        const RECONNECT_DELAY: Duration = Duration::from_secs(5);
+
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let follower: Arc<dyn ChainFollower> = Arc::new(AlwaysFailFollower {
+            attempts: attempts.clone(),
+        });
+        let chain_state = ChainState::default();
+        let coordinator = ChainStateCoordinator::new(
+            follower,
+            provider_account(),
+            Arc::new(chain_state),
+            tokio::sync::broadcast::channel(16).0,
+        );
+        let handle = coordinator.start();
+
+        // Drive the paused clock through several reconnect cycles: each
+        // failed `connect()` is followed by a `RECONNECT_DELAY` sleep before
+        // `run()` tries again.
+        for _ in 0..3 {
+            tokio::time::advance(RECONNECT_DELAY).await;
         }
 
-        #[tokio::test]
-        async fn connect_and_follow_surfaces_connect_errors() {
-            // Port 1 on loopback refuses immediately, so this exercises the
-            // budgeted connect path without waiting out any timeout.
-            let (chain_tx, _chain_rx) = tokio::sync::watch::channel(None);
-            let (events_tx, _events_rx) = tokio::sync::broadcast::channel(16);
-            let (chain_state, _dir) = test_chain_state();
-            let coordinator = ChainStateCoordinator::new(
-                ChainTransport::Rpc {
-                    url: "ws://127.0.0.1:1".to_string(),
-                },
-                provider_account(),
-                Arc::new(chain_state),
-                chain_tx,
-                events_tx,
-            );
-            let err = coordinator
-                .connect_and_follow()
-                .await
-                .expect_err("connect to a closed port must fail");
-            assert!(
-                err.to_string().contains("Failed to connect to chain"),
-                "unexpected error: {err}"
-            );
-        }
+        assert!(
+            attempts.load(Ordering::SeqCst) >= 2,
+            "run() must retry connect() after a failure, got {} attempts",
+            attempts.load(Ordering::SeqCst)
+        );
+
+        handle.stop().await;
     }
 }

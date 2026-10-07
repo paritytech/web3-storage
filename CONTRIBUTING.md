@@ -55,6 +55,47 @@ cargo clippy --all-targets --all-features --workspace -- -D warnings
 See [CLAUDE.md](./CLAUDE.md) for additional code review guidelines and project
 conventions.
 
+## PR Bot Commands
+
+Comment `/cmd <command>` on a pull request to run it against the PR branch.
+The bot commits any resulting changes back to the branch and posts the result
+as a PR comment. Only members of the `paritytech` GitHub organization can run
+commands. `/cmd --help` and `/cmd <command> --help` list the full flags.
+
+- `/cmd fmt` runs `cargo +nightly fmt` and
+  `taplo format --config .config/taplo.toml`, then commits the result.
+- `/cmd bench` regenerates the runtime weight files
+  (`<runtime path>/src/weights/`) with `frame-omni-bencher`, for the runtimes
+  in `scripts/runtimes-matrix.json` (`web3-storage-paseo`,
+  `storage-parachain-runtime`). It does not touch the pallet crates'
+  `crates/pallets/*/src/weights.rs` — regenerate those by hand with
+  `frame-omni-bencher`.
+
+Common flags for every command:
+
+| Flag | Meaning |
+|---|---|
+| `--quiet` | Don't post the start/end PR comments (reactions still show). Check the [Actions tab](https://github.com/paritytech/web3-storage/actions/workflows/cmd.yml) for status. |
+| `--clean` | Delete earlier `/cmd` comments and bot replies on the PR before running. |
+| `--continue-on-fail` | Don't stop at the first failure; commit/report the ones that succeeded. |
+
+`bench`-only flags:
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--runtime` | all runtimes | `web3-storage-paseo` and/or `storage-parachain-runtime`, space separated. |
+| `--pallet` | all pallets | Pallet names, space separated. A runtime is skipped unless it contains every listed pallet. |
+| `--steps` | `50` | Samples across the variable components. |
+| `--repeat` | `20` | Repetitions of each benchmark. |
+| `--profile` | `production` | Cargo profile for the runtime build. |
+
+Examples:
+
+```sh
+/cmd fmt --quiet
+/cmd bench --runtime web3-storage-paseo --pallet pallet_storage_provider
+```
+
 ## Licensing
 
 This repository is dual-licensed. The license that applies depends on the crate:

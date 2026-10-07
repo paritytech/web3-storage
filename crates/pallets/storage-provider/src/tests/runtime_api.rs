@@ -107,7 +107,7 @@ fn query_bucket_agreements_returns_data() {
         register_provider(2, 200);
         register_provider(4, 200);
         let bucket_id = setup_agreement(2, 1, 50, 200);
-        add_primary_to_bucket(4, 1, bucket_id, 30);
+        setup_added_primary(4, 1, bucket_id, 30, 200);
 
         let agreements = StorageProvider::query_bucket_agreements(bucket_id);
         assert_eq!(agreements.len(), 2);
@@ -304,7 +304,7 @@ fn query_challenges_at_returns_data() {
         register_provider(2, 200);
         register_provider(4, 200);
         let bucket_id = setup_agreement(2, 1, 50, 200);
-        add_primary_to_bucket(4, 1, bucket_id, 50);
+        setup_added_primary(4, 1, bucket_id, 50, 200);
 
         // Insert snapshot signed by both primaries (bits 0 and 1).
         Buckets::<Test>::mutate(bucket_id, |maybe_bucket| {
@@ -404,7 +404,7 @@ fn setup_two_challenges() -> u64 {
     register_provider(2, 200);
     register_provider(4, 200);
     let bucket_id = setup_agreement(2, 1, 50, 200);
-    add_primary_to_bucket(4, 1, bucket_id, 50);
+    setup_added_primary(4, 1, bucket_id, 50, 200);
 
     Buckets::<Test>::mutate(bucket_id, |maybe_bucket| {
         if let Some(bucket) = maybe_bucket {
@@ -475,6 +475,24 @@ fn query_provider_challenges_returns_data() {
         assert_eq!(challenges[0].bucket_id, bucket_id);
         assert_eq!(challenges[0].provider, 2u64.encode());
         assert_eq!(challenges[0].challenger, 3u64.encode());
+    });
+}
+
+/// The provider responder acts on this list, so an expired challenge (which
+/// `respond_to_challenge` rejects) must drop out of it the block after its
+/// deadline.
+#[test]
+fn query_provider_challenges_omits_expired() {
+    new_test_ext().execute_with(|| {
+        setup_two_challenges();
+        let deadline = u64::from(StorageProvider::query_provider_challenges(&2)[0].deadline);
+
+        System::set_block_number(deadline);
+        assert_eq!(StorageProvider::query_provider_challenges(&2).len(), 1);
+
+        System::set_block_number(deadline + 1);
+        assert!(StorageProvider::query_provider_challenges(&2).is_empty());
+        assert_eq!(StorageProvider::query_challenger_challenges(&3).len(), 1);
     });
 }
 
