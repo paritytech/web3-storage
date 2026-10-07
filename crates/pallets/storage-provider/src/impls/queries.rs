@@ -63,7 +63,7 @@ fn agreement_to_response<T: Config>(
 
 impl<T: Config> Pallet<T> {
     /// The anchor block: the clock every pallet duration (timeouts, expiries,
-    /// `valid_until`, nonce age) is measured against. Whether that is a relay
+    /// `valid_until`) is measured against. Whether that is a relay
     /// chain block, parachain block, or something else is a
     /// [`Config::BlockNumberProvider`] detail — callers (including off-chain
     /// consumers via the `current_anchor_block` runtime API) need not care.
