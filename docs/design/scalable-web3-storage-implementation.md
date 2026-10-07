@@ -1939,7 +1939,7 @@ The provider node exposes a JSON-over-HTTP API (axum) on, by default,
 ### Authentication & RBAC
 
 Mutating Layer-0 endpoints (`PUT /node`, `POST /commit`, `POST /delete`) and
-every **bucket-bound read** — Layer-1 (`/fs/*`, `/s3/*`) and Layer-0
+every **bucket-bound read** — Layer-0
 (`GET /commitment`, `GET /checkpoint-signature`, `GET /mmr_proof`,
 `GET /mmr_peaks`, `POST /exists`, `GET /replica/historical_roots`,
 `GET /replica/sync_status`) — require an `Authorization` header at Reader
