@@ -15,13 +15,14 @@ import {
   canRetryCreation,
   createDrive,
   dismissCreation,
+  getApi,
   getSignerAddress,
   retryCreation,
   useCreations,
   type CreationStatus,
 } from "@/state";
 import { type AvailableProvider, type Visibility } from "@/lib/drive-client";
-import { negotiateProviderTerms } from "@web3-storage/sdk";
+import { getAgreementNonce, negotiateProviderTerms } from "@web3-storage/sdk";
 import { formatBytes } from "@web3-storage/format";
 import ProviderPickerPanel from "./ProviderPickerPanel";
 
@@ -122,6 +123,21 @@ export default function NewDriveDialog({ open, onOpenChange }: NewDriveDialogPro
         setNegotiateError("Signer not set");
         return;
       }
+      const api = getApi();
+      if (!api) {
+        setNegotiateError("Not connected to chain");
+        return;
+      }
+
+      let nonce: bigint;
+      try {
+        nonce = await getAgreementNonce(api, owner);
+      } catch (e) {
+        setNegotiateError(
+          `Failed to read agreement nonce: ${e instanceof Error ? e.message : String(e)}`,
+        );
+        return;
+      }
 
       // Failure here means re-negotiate from scratch on retry.
       const result = await negotiateProviderTerms(provider, {
@@ -129,6 +145,7 @@ export default function NewDriveDialog({ open, onOpenChange }: NewDriveDialogPro
         max_bytes: BigInt(capacity),
         duration: parseInt(duration, 10),
         price_per_byte: BigInt(pricePerByte || "0"),
+        nonce,
         replica_params: null,
         bucket: null,
       });

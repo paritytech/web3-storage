@@ -631,7 +631,7 @@ async fn test_non_power_of_two_upload_matches_padded_root_and_verifies() {
         "test data must produce a non-power-of-two chunk count"
     );
 
-    let (scratch_storage, _nonce_store, _dir) = temp_rocksdb();
+    let (scratch_storage, _dir) = temp_rocksdb();
     scratch_storage.init_bucket(1, u64::MAX).unwrap();
     let expected_root = build_padded_merkle_tree(&*scratch_storage, 1, &leaf_hashes);
     assert_eq!(data_root, expected_root);

@@ -13,6 +13,7 @@ import {
   type SignedTerms,
 } from "@web3-storage/core";
 import {
+  getAgreementNonce,
   parseMultiaddrToUrl,
   resolveProviderEndpoint,
   waitForPrimaryProvider,
@@ -221,6 +222,8 @@ export async function resolveCreationTerms(
   }
 
   let choice: { address: string; url: string };
+  // The provider's listed price, when the provider entry was already read.
+  let listedPrice: bigint | undefined;
   if (opts.provider?.address) {
     const url = opts.provider.url ?? opts.urlOverride;
     if (url) {
@@ -236,6 +239,7 @@ export async function resolveCreationTerms(
         throw new Error(`provider ${opts.provider.address} has no resolvable HTTP endpoint`);
       }
       choice = { address: opts.provider.address, url: resolved };
+      listedPrice = info?.settings?.price_per_byte;
     }
   } else {
     choice = await discoverAcceptingProvider(api, {
@@ -245,21 +249,24 @@ export async function resolveCreationTerms(
   }
 
   // /negotiate requires price_per_byte and validates it against the provider's
-  // listed price; default to the provider's current on-chain setting.
-  let pricePerByte = opts.pricePerByte;
-  if (pricePerByte == null) {
-    const info = await api.query.StorageProvider.Providers.getValue(
-      choice.address,
-      opts.readOpts ?? { at: "finalized" },
-    );
-    pricePerByte = info?.settings?.price_per_byte ?? 1n;
-  }
+  // listed price; default to the provider's current on-chain setting. The
+  // nonce read is independent, so both run together.
+  const [nonce, pricePerByte] = await Promise.all([
+    getAgreementNonce(api, opts.owner),
+    opts.pricePerByte ??
+      listedPrice ??
+      api.query.StorageProvider.Providers.getValue(
+        choice.address,
+        opts.readOpts ?? { at: "finalized" },
+      ).then((info) => info?.settings?.price_per_byte ?? 1n),
+  ]);
 
   const request: NegotiateRequest = {
     owner: opts.owner,
     max_bytes: opts.maxBytes,
     duration: opts.duration,
     price_per_byte: pricePerByte,
+    nonce,
     bucket: null,
     replica_params: null,
   };

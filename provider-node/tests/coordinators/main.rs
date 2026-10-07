@@ -27,22 +27,18 @@ pub fn alice_account() -> AccountId32 {
 
 /// Standard test dependencies around the given backend: an empty static
 /// membership set.
-pub fn test_deps(
-    storage: Arc<dyn StorageBackend>,
-    nonce_store: Arc<dyn provider_storage::NonceStore>,
-) -> ProviderDeps {
+pub fn test_deps(storage: Arc<dyn StorageBackend>) -> ProviderDeps {
     ProviderDeps {
         storage,
-        nonce_store,
         auth: Arc::new(Authenticator::new(StaticMembershipResolver(vec![]))),
     }
 }
 
 /// Create a standard test `ProviderState` for coordinator tests.
 pub fn test_state() -> (Arc<ProviderState>, TempDir) {
-    let (storage, nonce_store, dir) = temp_rocksdb();
+    let (storage, dir) = temp_rocksdb();
     let state = Arc::new(ProviderState::with_provider_id(
-        test_deps(storage, nonce_store),
+        test_deps(storage),
         ALICE_SS58.to_string(),
     ));
     (state, dir)
@@ -70,7 +66,7 @@ where
 /// Create a provider state with a bucket containing a single committed chunk,
 /// and return the state along with a matching challenge.
 pub fn test_state_with_data() -> (Arc<ProviderState>, DetectedChallenge, TempDir) {
-    let (storage, nonce_store, dir) = temp_rocksdb();
+    let (storage, dir) = temp_rocksdb();
     storage
         .init_bucket(1, 1024 * 1024)
         .expect("bucket initialises");
@@ -99,7 +95,7 @@ pub fn test_state_with_data() -> (Arc<ProviderState>, DetectedChallenge, TempDir
     };
 
     let state = Arc::new(ProviderState::with_provider_id(
-        test_deps(storage, nonce_store),
+        test_deps(storage),
         ALICE_SS58.to_string(),
     ));
     (state, challenge, dir)
