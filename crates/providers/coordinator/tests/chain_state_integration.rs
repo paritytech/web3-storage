@@ -9,17 +9,16 @@
 //!
 //! 1. **State synchronisation.** [`sync_constants`] and [`refresh_provider_state`]
 //!    are driven through [`MockChainClient`] across every branch — registered,
-//!    not-registered, with/without replay state, and each chain-error path — and
-//!    we assert the resulting [`ChainState`].
+//!    not-registered, and each chain-error path — and we assert the resulting
+//!    [`ChainState`].
 //!
-//! 2. **Event relevance.** [`is_relevant_provider_event`] decides which block
-//!    events trigger a refresh; tested across the provider lifecycle variants
-//!    and wrong-account events.
+//! 2. **Event relevance.** [`refresh_if_relevant_event`] refreshes only when a
+//!    block's lifecycle events name the provider's own account.
 //!
 //! 3. **Resilience.** [`ChainStateCoordinator::start`] drives a reconnect loop.
-//!    Pointed at an unreachable chain it must stay up, never panic, leave
-//!    [`ChainState`] at its defaults (so `/negotiate` keeps returning 503), and
-//!    shut down cleanly when stopped.
+//!    With a [`ChainFollower`] whose `connect()` always fails, it must stay
+//!    up, never panic, leave [`ChainState`] at its defaults (so `/negotiate`
+//!    keeps returning 503), and shut down cleanly when stopped.
 //!
 //! Membership invalidation is covered separately, in
 //! `tests/coordinators/membership.rs`: the coordinator only broadcasts
@@ -28,36 +27,25 @@
 
 use async_trait::async_trait;
 use provider_coordinator::{
-    is_relevant_provider_event, refresh_if_relevant_event, refresh_provider_state, sync_constants,
-    ChainFollower, ChainSession, ChainState, ChainStateChainClient, ChainStateCoordinator, Error,
-    NonceCounter, PalletConstants, ProviderLifecycleEvent,
+    refresh_if_relevant_event, refresh_provider_state, sync_constants, ChainConnection,
+    ChainFollower, ChainState, ChainStateChainClient, ChainStateCoordinator, PalletConstants,
 };
-use provider_storage::{temp_rocksdb, NonceStore};
-use provider_types::{ProviderInfo, ProviderSettings, ProviderStats};
+use provider_types::{ChainClientError, ProviderInfo, ProviderSettings, ProviderStats};
 use sp_runtime::AccountId32;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
 
-/// Chain state over a throwaway backend's nonce store.
-fn test_chain_state() -> (ChainState, tempfile::TempDir) {
-    let (_storage, nonce_store, dir) = temp_rocksdb();
-    (ChainState::with_nonce_store(nonce_store), dir)
-}
-
-/// Counter over that state's own store, as the coordinator builds it.
-fn counter_for(cs: &ChainState) -> Arc<NonceCounter> {
-    Arc::new(NonceCounter::with_store(1, cs.nonce_store.clone()))
-}
-
-/// [`ChainFollower`] whose `connect()` always fails - exercises the same
-/// reconnect loop an unreachable chain does, without a real connection.
+/// [`ChainFollower`] whose `connect()` always fails, like an unreachable chain.
 struct AlwaysFailFollower;
 
 #[async_trait]
 impl ChainFollower for AlwaysFailFollower {
-    async fn connect(&self) -> Result<Box<dyn ChainSession>, Error> {
-        Err(Error::Internal("mock connect failure".to_string()))
+    async fn connect(&self) -> Result<ChainConnection, ChainClientError> {
+        Err(ChainClientError::query(
+            "chain connection",
+            "mock connect failure",
+        ))
     }
 }
 
@@ -107,8 +95,7 @@ fn sample_provider_info() -> ProviderInfo {
 
 #[tokio::test]
 async fn coordinator_leaves_state_at_defaults_while_chain_unreachable() {
-    let (state, _dir) = test_chain_state();
-    let chain_state = Arc::new(state);
+    let chain_state = Arc::new(ChainState::default());
     let coordinator = unreachable_coordinator(chain_state.clone());
     let handle = coordinator.start();
 
@@ -120,7 +107,6 @@ async fn coordinator_leaves_state_at_defaults_while_chain_unreachable() {
     assert_eq!(chain_state.current_anchor_block.load(Ordering::Relaxed), 0);
     assert!(chain_state.constants.read().is_none());
     assert!(chain_state.provider_info.read().is_none());
-    assert!(chain_state.nonce_counter.read().is_none());
 
     // And it shuts down cleanly rather than hanging.
     handle.stop().await;
@@ -128,8 +114,7 @@ async fn coordinator_leaves_state_at_defaults_while_chain_unreachable() {
 
 #[tokio::test]
 async fn coordinator_shares_chain_state_with_caller() {
-    let (state, _dir) = test_chain_state();
-    let chain_state = Arc::new(state);
+    let chain_state = Arc::new(ChainState::default());
     let before = Arc::strong_count(&chain_state);
 
     let coordinator = unreachable_coordinator(chain_state.clone());
@@ -148,8 +133,7 @@ async fn coordinator_shares_chain_state_with_caller() {
 
 #[tokio::test]
 async fn coordinator_stop_is_prompt() {
-    let (state, _dir) = test_chain_state();
-    let chain_state = Arc::new(state);
+    let chain_state = Arc::new(ChainState::default());
     let handle = unreachable_coordinator(chain_state).start();
 
     // Stopping aborts the loop even while it is mid-backoff; it must not block
@@ -161,8 +145,7 @@ async fn coordinator_stop_is_prompt() {
 
 #[tokio::test]
 async fn coordinator_keeps_retrying_without_panicking() {
-    let (state, _dir) = test_chain_state();
-    let chain_state = Arc::new(state);
+    let chain_state = Arc::new(ChainState::default());
     let handle = unreachable_coordinator(chain_state.clone()).start();
 
     // Across several connect/backoff cycles the loop stays alive and never
@@ -178,8 +161,7 @@ async fn coordinator_keeps_retrying_without_panicking() {
 
 #[tokio::test]
 async fn coordinator_releases_shared_state_after_stop() {
-    let (state, _dir) = test_chain_state();
-    let chain_state = Arc::new(state);
+    let chain_state = Arc::new(ChainState::default());
     let handle = unreachable_coordinator(chain_state.clone()).start();
 
     // `stop()` aborts the task and awaits its teardown, dropping the coordinator
@@ -198,37 +180,31 @@ async fn coordinator_releases_shared_state_after_stop() {
 
 /// Canned [`ChainStateChainClient`] for driving the synchronisation logic
 /// without a chain. Each read is either `Ok(value)` or, when its `*_err` flag is
-/// set, an `Error` — so every branch of `sync_constants` /
+/// set, a [`ChainClientError`] — so every branch of `sync_constants` /
 /// `refresh_provider_state` is reachable.
 #[derive(Default)]
 struct MockChainClient {
     info: Option<ProviderInfo>,
     info_err: bool,
-    hsn: Option<u64>,
-    hsn_err: bool,
     request_timeout: Option<u32>,
     request_timeout_err: bool,
 }
 
 #[async_trait]
 impl ChainStateChainClient for MockChainClient {
-    async fn get_provider_info(&self, _who: &AccountId32) -> Result<Option<ProviderInfo>, Error> {
+    async fn get_provider_info(
+        &self,
+        _who: &AccountId32,
+    ) -> Result<Option<ProviderInfo>, ChainClientError> {
         if self.info_err {
-            return Err(Error::Internal("mock get_provider_info failure".into()));
+            return Err(ChainClientError::query("Providers", "mock failure"));
         }
         Ok(self.info.clone())
     }
 
-    async fn fetch_replay_hsn(&self, _who: &AccountId32) -> Result<Option<u64>, Error> {
-        if self.hsn_err {
-            return Err(Error::Internal("mock fetch_replay_hsn failure".into()));
-        }
-        Ok(self.hsn)
-    }
-
-    async fn fetch_request_timeout(&self) -> Result<Option<u32>, Error> {
+    async fn fetch_request_timeout(&self) -> Result<Option<u32>, ChainClientError> {
         if self.request_timeout_err {
-            return Err(Error::Internal("mock fetch_request_timeout failure".into()));
+            return Err(ChainClientError::query("RequestTimeout", "mock failure"));
         }
         Ok(self.request_timeout)
     }
@@ -242,7 +218,7 @@ fn provider_account_2() -> AccountId32 {
 
 #[tokio::test]
 async fn sync_constants_publishes_request_timeout() {
-    let (cs, _dir) = test_chain_state();
+    let cs = ChainState::default();
     let chain = MockChainClient {
         request_timeout: Some(200),
         ..Default::default()
@@ -255,7 +231,7 @@ async fn sync_constants_publishes_request_timeout() {
 
 #[tokio::test]
 async fn sync_constants_leaves_none_when_constant_absent() {
-    let (cs, _dir) = test_chain_state();
+    let cs = ChainState::default();
     // request_timeout None → constant absent from metadata.
     sync_constants(&MockChainClient::default(), &cs).await;
     assert!(cs.constants.read().is_none());
@@ -263,7 +239,7 @@ async fn sync_constants_leaves_none_when_constant_absent() {
 
 #[tokio::test]
 async fn sync_constants_leaves_none_on_chain_error() {
-    let (cs, _dir) = test_chain_state();
+    let cs = ChainState::default();
     let chain = MockChainClient {
         request_timeout_err: true,
         ..Default::default()
@@ -275,70 +251,34 @@ async fn sync_constants_leaves_none_on_chain_error() {
 // ── refresh_provider_state ────────────────────────────────────────────────────
 
 #[tokio::test]
-async fn refresh_publishes_info_and_bootstrapped_counter() {
-    let (cs, _dir) = test_chain_state();
+async fn refresh_publishes_info_when_registered() {
+    let cs = ChainState::default();
     let chain = MockChainClient {
         info: Some(sample_provider_info()),
-        hsn: Some(7),
-        ..Default::default()
-    };
-
-    refresh_provider_state(&chain, &cs, &provider_account()).await;
-
-    // Info is published…
-    assert!(cs.provider_info.read().is_some());
-    // …and the counter is bootstrapped from hsn 7, so it resumes at hsn + 1.
-    let guard = cs.nonce_counter.read();
-    let counter = guard.as_ref().expect("counter published");
-    assert!(counter.is_bootstrapped());
-    assert_eq!(counter.next(), 8);
-}
-
-#[tokio::test]
-async fn refresh_publishes_unbootstrapped_counter_when_no_replay_state() {
-    // Registered but the replay window isn't readable yet (`hsn` None): the
-    // coordinator still publishes a counter alongside the info, but it must not
-    // report bootstrapped — `/negotiate` keeps returning 503 until a later refresh.
-    let (cs, _dir) = test_chain_state();
-    let chain = MockChainClient {
-        info: Some(sample_provider_info()),
-        hsn: None,
         ..Default::default()
     };
 
     refresh_provider_state(&chain, &cs, &provider_account()).await;
 
     assert!(cs.provider_info.read().is_some());
-    assert!(
-        !cs.nonce_counter
-            .read()
-            .as_ref()
-            .expect("counter published")
-            .is_bootstrapped(),
-        "counter must not report bootstrapped before the replay window is read"
-    );
 }
 
 #[tokio::test]
-async fn refresh_clears_info_and_counter_when_not_registered() {
+async fn refresh_clears_info_when_not_registered() {
     // Pre-seed a ready state, then refresh against a chain that reports the
-    // provider is not (or no longer) registered — both fields are dropped so
+    // provider is not (or no longer) registered — info is dropped so
     // `/negotiate` reports `provider_info_unavailable`.
-    let (cs, _dir) = test_chain_state();
+    let cs = ChainState::default();
     cs.current_anchor_block.store(100, Ordering::Relaxed);
     *cs.constants.write() = Some(PalletConstants {
         request_timeout: 200,
     });
-    let counter = counter_for(&cs);
-    counter.bootstrap_from_hsn(0);
-    *cs.nonce_counter.write() = Some(counter);
     *cs.provider_info.write() = Some(sample_provider_info());
 
     // info None → ProviderDeregistered / never-registered branch.
     refresh_provider_state(&MockChainClient::default(), &cs, &provider_account()).await;
 
     assert!(cs.provider_info.read().is_none());
-    assert!(cs.nonce_counter.read().is_none());
     // Per-connection constants and the block height are not tied to registration.
     assert_eq!(cs.current_anchor_block.load(Ordering::Relaxed), 100);
     assert_eq!(cs.constants.read().as_ref().unwrap().request_timeout, 200);
@@ -348,11 +288,8 @@ async fn refresh_clears_info_and_counter_when_not_registered() {
 async fn refresh_leaves_existing_state_untouched_on_get_info_error() {
     // A transient chain error on `get_provider_info` must not clobber a
     // previously-published good state.
-    let (cs, _dir) = test_chain_state();
+    let cs = ChainState::default();
     *cs.provider_info.write() = Some(sample_provider_info());
-    let counter = counter_for(&cs);
-    counter.bootstrap_from_hsn(3);
-    *cs.nonce_counter.write() = Some(counter);
 
     let chain = MockChainClient {
         info_err: true,
@@ -361,280 +298,53 @@ async fn refresh_leaves_existing_state_untouched_on_get_info_error() {
     refresh_provider_state(&chain, &cs, &provider_account()).await;
 
     assert!(cs.provider_info.read().is_some());
-    assert!(cs.nonce_counter.read().is_some());
-}
-
-#[tokio::test]
-async fn refresh_publishes_info_but_leaves_counter_when_replay_fetch_errors() {
-    // Provider is registered, but reading the replay window fails: info is still
-    // published (settings/multiaddr remain fresh) but the counter is left as-is
-    // (None here) so /negotiate stays correctly gated by is_bootstrapped().
-    let (cs, _dir) = test_chain_state();
-    let chain = MockChainClient {
-        info: Some(sample_provider_info()),
-        hsn_err: true,
-        ..Default::default()
-    };
-
-    refresh_provider_state(&chain, &cs, &provider_account()).await;
-
-    assert!(cs.provider_info.read().is_some());
-    assert!(cs.nonce_counter.read().is_none());
-}
-
-#[tokio::test]
-async fn refresh_preserves_bootstrapped_counter_on_later_event() {
-    // A live, bootstrapped counter is never recreated on subsequent refreshes —
-    // recreating would reset to hsn+1 and reissue nonces for in-flight quotes.
-    let (cs, _dir) = test_chain_state();
-    let counter = counter_for(&cs);
-    counter.bootstrap_from_hsn(10); // counter now at 11
-    counter.next(); // 11 -> 12
-    counter.next(); // 12 -> 13 (two nonces issued beyond hsn+1)
-    *cs.nonce_counter.write() = Some(counter);
-    *cs.provider_info.write() = Some(sample_provider_info());
-
-    // Chain reports hsn=0 — if we recreated the counter it would reset to 1.
-    let chain = MockChainClient {
-        info: Some(sample_provider_info()),
-        hsn: Some(0),
-        ..Default::default()
-    };
-    refresh_provider_state(&chain, &cs, &provider_account()).await;
-
-    // Info was refreshed, but the counter is the original object at 13, not reset.
-    assert!(cs.provider_info.read().is_some());
-    let guard = cs.nonce_counter.read();
-    let c = guard.as_ref().expect("counter still present");
-    assert!(c.is_bootstrapped());
-    assert_eq!(c.next(), 13, "counter must not have been reset");
-}
-
-#[tokio::test]
-async fn refresh_completes_pending_bootstrap_when_replay_state_appears() {
-    // After the transient window where hsn was None, a later refresh with a real
-    // hsn must bootstrap the existing counter rather than leave it unbootstrapped.
-    let (cs, _dir) = test_chain_state();
-    let counter = counter_for(&cs);
-    // Un-bootstrapped (simulates the hsn=None transient window).
-    *cs.nonce_counter.write() = Some(counter);
-    *cs.provider_info.write() = Some(sample_provider_info());
-
-    let chain = MockChainClient {
-        info: Some(sample_provider_info()),
-        hsn: Some(5),
-        ..Default::default()
-    };
-    refresh_provider_state(&chain, &cs, &provider_account()).await;
-
-    let guard = cs.nonce_counter.read();
-    let c = guard.as_ref().expect("counter present");
-    assert!(c.is_bootstrapped(), "counter must now be bootstrapped");
-    assert_eq!(c.next(), 6, "counter resumes at hsn+1");
-}
-
-// ── is_relevant_provider_event ────────────────────────────────────────────────
-
-/// All provider-lifecycle events for the coordinator's own account trigger a refresh.
-#[test]
-fn lifecycle_events_for_self_are_relevant() {
-    let me = provider_account();
-    let events = [
-        ProviderLifecycleEvent::Updated {
-            provider: me.clone(),
-        },
-        ProviderLifecycleEvent::Deregistered {
-            provider: me.clone(),
-        },
-    ];
-
-    for event in &events {
-        assert!(
-            is_relevant_provider_event(event, &me),
-            "{event:?} should be relevant for the provider's own account"
-        );
-    }
-}
-
-#[test]
-fn lifecycle_event_for_other_provider_is_irrelevant() {
-    let event = ProviderLifecycleEvent::Updated {
-        provider: provider_account_2(),
-    };
-    // Same event shape, different account → not ours, ignore it.
-    assert!(!is_relevant_provider_event(&event, &provider_account()));
 }
 
 // ── refresh_if_relevant_event (block-event dispatch) ──────────────────────────
 
-fn registered_event(provider: AccountId32) -> ProviderLifecycleEvent {
-    ProviderLifecycleEvent::Updated { provider }
-}
-
 #[tokio::test]
 async fn relevant_block_event_triggers_a_refresh() {
     // A block carrying a lifecycle event for our account refreshes state from chain.
-    let (cs, _dir) = test_chain_state();
+    let cs = ChainState::default();
     let chain = MockChainClient {
         info: Some(sample_provider_info()),
-        hsn: Some(0),
         ..Default::default()
     };
     let events = [
-        registered_event(provider_account_2()), // someone else — ignored
-        registered_event(provider_account()),   // us — triggers the refresh
+        provider_account_2(), // someone else — ignored
+        provider_account(),   // us — triggers the refresh
     ];
 
     refresh_if_relevant_event(&chain, &cs, &provider_account(), &events, 1).await;
 
     assert!(cs.provider_info.read().is_some());
-    assert!(cs.nonce_counter.read().is_some());
 }
 
 #[tokio::test]
 async fn irrelevant_block_events_do_not_refresh() {
     // Only other-provider / non-lifecycle events → no refresh, so a chain that
     // *would* return info is never consulted and state stays at defaults.
-    let (cs, _dir) = test_chain_state();
+    let cs = ChainState::default();
     let chain = MockChainClient {
         info: Some(sample_provider_info()),
-        hsn: Some(0),
         ..Default::default()
     };
-    let events = [
-        registered_event(provider_account_2()),
-        ProviderLifecycleEvent::Deregistered {
-            provider: provider_account_2(),
-        },
-    ];
+    let events = [provider_account_2()];
 
     refresh_if_relevant_event(&chain, &cs, &provider_account(), &events, 1).await;
 
     assert!(cs.provider_info.read().is_none());
-    assert!(cs.nonce_counter.read().is_none());
 }
 
 #[tokio::test]
 async fn empty_block_does_not_refresh() {
-    let (cs, _dir) = test_chain_state();
+    let cs = ChainState::default();
     let chain = MockChainClient {
         info: Some(sample_provider_info()),
-        hsn: Some(0),
         ..Default::default()
     };
 
     refresh_if_relevant_event(&chain, &cs, &provider_account(), &[], 1).await;
 
     assert!(cs.provider_info.read().is_none());
-}
-
-// ─── Nonce counter persistence (nonce_store seeding) ──────────────────────────
-
-/// A minimal in-memory NonceStore for testing: holds the persisted value in a
-/// Mutex so we can inspect it without touching disk.
-struct RecordingNonceStore(std::sync::Mutex<Option<u64>>);
-
-impl RecordingNonceStore {
-    fn new(initial: Option<u64>) -> Self {
-        Self(std::sync::Mutex::new(initial))
-    }
-}
-
-impl NonceStore for RecordingNonceStore {
-    fn load(&self) -> Option<u64> {
-        *self.0.lock().unwrap()
-    }
-
-    fn persist(&self, value: u64) {
-        let mut guard = self.0.lock().unwrap();
-        if guard.is_none_or(|prev| value > prev) {
-            *guard = Some(value);
-        }
-    }
-
-    fn reset(&self) {
-        *self.0.lock().unwrap() = None;
-    }
-}
-
-#[tokio::test]
-async fn refresh_seeds_counter_from_persisted_value_above_chain_hsn() {
-    // When the persisted nonce high-water is higher than the chain's hsn+1,
-    // the counter must resume above the persisted value — not reset to hsn+1.
-    // This prevents reissuing nonces that were signed but not yet redeemed.
-
-    // Simulate: last issued nonce was 20 (watermark = 21 = "next to issue").
-    let store = std::sync::Arc::new(RecordingNonceStore::new(Some(21)));
-    // In production, command.rs installs the store before the coordinator starts.
-    // Since nonce_store is pub, set it directly.
-    let cs = ChainState::with_nonce_store(store);
-
-    // Chain reports hsn=5 → floor = 6. Persisted watermark = 21 wins.
-    let chain = MockChainClient {
-        info: Some(sample_provider_info()),
-        hsn: Some(5),
-        ..Default::default()
-    };
-    refresh_provider_state(&chain, &cs, &provider_account()).await;
-
-    let guard = cs.nonce_counter.read();
-    let counter = guard.as_ref().expect("counter created");
-    assert!(counter.is_bootstrapped());
-    // bootstrap_from_hsn(5) sets floor=6; counter was seeded at 21 which is
-    // higher, so next() must be ≥ 21.
-    assert!(
-        counter.next() >= 21,
-        "counter must resume at the persisted watermark, not at hsn+1"
-    );
-}
-
-#[tokio::test]
-async fn deregister_event_resets_persisted_nonce_store() {
-    // The reset is gated on a confirmed ProviderDeregistered event, not on the
-    // generic Ok(None) absence. This ensures reconnect/bootstrap paths (which
-    // also see Ok(None) when not registered) never wipe a watermark that is
-    // still needed.
-    let store = std::sync::Arc::new(RecordingNonceStore::new(Some(99)));
-    let cs = ChainState::with_nonce_store(store.clone());
-
-    let deregister_event = ProviderLifecycleEvent::Deregistered {
-        provider: provider_account(),
-    };
-    // Chain reports provider not registered (after the event).
-    let chain = MockChainClient::default(); // info=None
-    refresh_if_relevant_event(&chain, &cs, &provider_account(), &[deregister_event], 1).await;
-
-    assert!(
-        cs.provider_info.read().is_none(),
-        "provider_info must be cleared"
-    );
-    assert!(
-        cs.nonce_counter.read().is_none(),
-        "nonce_counter must be cleared"
-    );
-    assert!(
-        store.load().is_none(),
-        "persisted nonce store must be reset on confirmed deregister event"
-    );
-}
-
-#[tokio::test]
-async fn ok_none_without_deregister_event_preserves_nonce_watermark() {
-    // A generic Ok(None) — e.g. on reconnect/bootstrap where the provider
-    // is not registered — must NOT reset the persisted watermark, so the
-    // durable backstop is not destroyed by transient/reconnect observations.
-    let store = std::sync::Arc::new(RecordingNonceStore::new(Some(99)));
-    let cs = ChainState::with_nonce_store(store.clone());
-
-    // Directly call refresh_provider_state with Ok(None) — no deregister event.
-    refresh_provider_state(&MockChainClient::default(), &cs, &provider_account()).await;
-
-    assert!(cs.provider_info.read().is_none(), "provider_info cleared");
-    assert!(cs.nonce_counter.read().is_none(), "nonce_counter cleared");
-    // Watermark must be PRESERVED — this is the core regression fix.
-    assert_eq!(
-        store.load(),
-        Some(99),
-        "watermark must not be wiped on generic Ok(None) — only on a confirmed ProviderDeregistered event"
-    );
 }

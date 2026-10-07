@@ -4,7 +4,7 @@
 pub mod agreements;
 /// Bucket creation and teardown.
 pub mod buckets;
-/// Challenge creation, the deadline sweep, and slashing.
+/// Challenge creation, resolution and slashing.
 pub mod challenges;
 /// Snapshot root history used by checkpoints and replica sync.
 pub mod checkpoints;

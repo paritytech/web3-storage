@@ -22,7 +22,7 @@ pub use types::*;
 
 use codec::Encode;
 use provider_replica::{SyncRoots, SyncRootsSigner};
-use provider_storage::{FsIndexManager, NonceStore, S3IndexManager, StorageBackend};
+use provider_storage::{FsIndexManager, S3IndexManager, StorageBackend};
 use provider_types::{KeyScheme, ProviderKeypair, SigningRefused};
 use sp_core::crypto::Ss58Codec;
 use sp_core::{sr25519, Pair};
@@ -33,8 +33,6 @@ use std::sync::Arc;
 pub struct ProviderDeps {
     /// Local storage backend.
     pub storage: Arc<dyn StorageBackend>,
-    /// Persistence backing for the nonce counter.
-    pub nonce_store: Arc<dyn NonceStore>,
     /// Verifies signed requests and enforces bucket roles.
     pub auth: Arc<provider_auth::Authenticator>,
 }
@@ -60,8 +58,8 @@ pub struct ProviderState {
     /// permissive policy; `Some(list)` restricts to exactly those origins.
     pub cors_allowed_origins: Option<Vec<String>>,
     /// Live chain state kept in sync by the chain-state coordinator — the single
-    /// writer for `current_anchor_block`, `constants`, `provider_info`, and
-    /// `nonce_counter`. `/negotiate` gates on all four before signing.
+    /// writer for `current_anchor_block`, `constants`, and `provider_info`.
+    /// `/negotiate` gates on all three before signing.
     pub chain_state: Arc<ChainState>,
 }
 
@@ -73,11 +71,7 @@ impl ProviderState {
         provider_id: String,
         keypair: Option<ProviderKeypair>,
     ) -> Self {
-        let ProviderDeps {
-            storage,
-            nonce_store,
-            auth,
-        } = deps;
+        let ProviderDeps { storage, auth } = deps;
         Self {
             storage,
             provider_id,
@@ -88,7 +82,7 @@ impl ProviderState {
             fs_index: FsIndexManager::new(),
             auth,
             cors_allowed_origins: None,
-            chain_state: Arc::new(ChainState::with_nonce_store(nonce_store)),
+            chain_state: Arc::new(ChainState::default()),
         }
     }
 
@@ -208,10 +202,9 @@ mod tests {
     /// Deps over a throwaway backend. Keep the returned guard bound for as
     /// long as the state is used.
     fn test_deps() -> (ProviderDeps, tempfile::TempDir) {
-        let (storage, nonce_store, dir) = temp_rocksdb();
+        let (storage, dir) = temp_rocksdb();
         let deps = ProviderDeps {
             storage,
-            nonce_store,
             auth: Arc::new(Authenticator::new(provider_auth::StaticMembershipResolver(
                 vec![],
             ))),

@@ -11,6 +11,9 @@
 import { Enum } from "polkadot-api";
 
 import type { SignedTerms } from "@web3-storage/core";
+import { signedTermsBucketId } from "@web3-storage/papi";
+
+export { signedTermsBucketId };
 
 import { asHex, hexToBytes, type ParachainApi } from "../address.js";
 import { getProviderNodeInfo } from "../provider-http.js";
@@ -94,10 +97,10 @@ export async function ensureProviderRegistered(
     opts,
   );
 
-  // The provider node keeps its chain state (signing key, nonce counter,
-  // registered settings) live from finalized blocks and rejects /negotiate
-  // with 503 ChainStateNotReady until it has synced. Wait for it to catch up
-  // to this registration + price so the very next negotiate succeeds.
+  // The provider node keeps its chain state (signing key, registered
+  // settings) live from finalized blocks and rejects /negotiate with 503
+  // ChainStateNotReady until it has synced. Wait for it to catch up to this
+  // registration + price so the very next negotiate succeeds.
   const MAX_ATTEMPTS = 20; // 20 × 3s = 60s
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     const { readiness, provider_registration_info } = await getProviderNodeInfo(providerUrl);
@@ -105,7 +108,7 @@ export async function ensureProviderRegistered(
       readiness.provider_info_loaded &&
       provider_registration_info != null &&
       BigInt(provider_registration_info.settings.price_per_byte) === pricePerByte;
-    if (readiness.signing_configured && readiness.nonce_counter_ready && priceSynced) return;
+    if (readiness.signing_configured && priceSynced) return;
     await new Promise((resolve) => setTimeout(resolve, 3000));
   }
   throw new Error(
@@ -151,14 +154,25 @@ export function decodeMultiSignature(sigHex: string) {
 }
 
 /**
+ * Read `owner`'s next expected agreement nonce — the value to pass as
+ * `NegotiateRequest.nonce` when requesting a quote. Reads at the best block:
+ * a finalized read can lag an owner's own just-redeemed agreement and hand
+ * back a stale (already-consumed) nonce.
+ */
+export async function getAgreementNonce(api: ParachainApi, owner: string): Promise<bigint> {
+  return api.query.StorageProvider.AgreementNonces.getValue(owner, READ_OPTS);
+}
+
+/**
  * Shape a provider's SignedTerms into the `{ provider, terms, sig }` argument
- * the establish_* extrinsics (and create_drive / create_s3_bucket) expect.
+ * the quote-redeeming extrinsics (and create_drive / create_s3_bucket) expect.
  */
 export function buildSignedTermsArgs(
   provider: ChainSigner | { address: string },
   signed: SignedTerms,
 ) {
   const sig = decodeMultiSignature(signed.signature);
+  const bucketId = signedTermsBucketId(signed);
   const t = signed.terms;
   const terms = {
     owner: t.owner,
@@ -167,7 +181,8 @@ export function buildSignedTermsArgs(
     price_per_byte: BigInt(t.price_per_byte),
     valid_until: t.valid_until,
     nonce: BigInt(t.nonce),
-    bucket_id: t.bucket_id != null ? BigInt(t.bucket_id) : undefined,
+    bucket:
+      bucketId != null ? Enum("Existing" as never, bucketId) : Enum("New" as never),
     replica_params: t.replica_params
       ? {
           sync_balance: BigInt(t.replica_params.sync_balance),
@@ -189,13 +204,40 @@ export function buildSignedTermsArgs(
 export type Visibility = "Public" | "Private";
 
 /**
- * Redeem provider-signed terms via `establish_storage_agreement`: opens the
- * bucket and its primary agreement atomically. Replaces the old create_bucket
- * + request_agreement + accept_agreement dance (#105). `signed` comes from
- * {@link negotiateTerms} against the provider's /negotiate endpoint.
- * `opts.visibility` sets the new bucket's read visibility (default Private).
+ * Create an empty bucket with `client` as its sole admin. Add a primary with
+ * {@link addPrimaryProvider}. `opts.minProviders` is how many
+ * primary-provider signatures each checkpoint needs (default 1);
+ * `opts.visibility` sets the bucket's read visibility (default Private).
  */
-export async function establishStorageAgreement(
+export async function createBucket(
+  api: ParachainApi,
+  client: ChainSigner,
+  opts: SubmitOpts & { minProviders?: number; visibility?: Visibility } = {},
+) {
+  const result = await submitTx(
+    api.tx.StorageProvider.create_bucket({
+      min_providers: opts.minProviders ?? 1,
+      visibility: Enum(opts.visibility ?? "Private"),
+    }),
+    client.signer,
+    { label: "create_bucket", ...opts },
+  );
+  const created = requireOneEvent(
+    result.events,
+    api.event.StorageProvider.BucketCreated,
+    "BucketCreated",
+  );
+  return { bucketId: created.bucket_id };
+}
+
+/**
+ * Redeem provider-signed primary terms via `create_bucket_with_primary`:
+ * creates the bucket and its first primary agreement in one transaction.
+ * `signed` comes from {@link negotiateTerms} with no bucket, so the terms
+ * name `BucketTarget::New`. `opts.visibility` sets the new bucket's read
+ * visibility (default Private).
+ */
+export async function createBucketWithPrimary(
   api: ParachainApi,
   client: ChainSigner,
   provider: ChainSigner | { address: string },
@@ -203,12 +245,12 @@ export async function establishStorageAgreement(
   opts: SubmitOpts & { visibility?: Visibility } = {},
 ) {
   const result = await submitTx(
-    api.tx.StorageProvider.establish_storage_agreement({
+    api.tx.StorageProvider.create_bucket_with_primary({
       ...buildSignedTermsArgs(provider, signed),
       visibility: Enum(opts.visibility ?? "Private"),
     }),
     client.signer,
-    { label: "establish_storage_agreement", ...opts },
+    { label: "create_bucket_with_primary", ...opts },
   );
   const created = requireOneEvent(
     result.events,
@@ -228,34 +270,73 @@ export async function establishStorageAgreement(
 }
 
 /**
- * Redeem provider-signed replica terms via `establish_replica_agreement`:
- * attaches a replica agreement to the bucket named in the signed terms
- * (`signed.terms.bucket_id`), using the same off-chain quote flow.
+ * Redeem provider-signed primary terms via `add_primary_provider`: adds a
+ * primary to the existing bucket the terms name. Admin only. The new primary
+ * has none of the bucket's data.
  */
-export async function establishReplicaAgreement(
+export async function addPrimaryProvider(
+  api: ParachainApi,
+  admin: ChainSigner,
+  provider: ChainSigner | { address: string },
+  signed: SignedTerms,
+  opts: SubmitOpts = {},
+) {
+  const bucketId = requireQuotedBucketId(signed, "add_primary_provider");
+  const result = await submitTx(
+    api.tx.StorageProvider.add_primary_provider({
+      bucket_id: bucketId,
+      ...buildSignedTermsArgs(provider, signed),
+    }),
+    admin.signer,
+    { label: "add_primary_provider", ...opts },
+  );
+  const established = requireOneEvent(
+    result.events,
+    api.event.StorageProvider.StorageAgreementEstablished,
+    "StorageAgreementEstablished",
+  );
+  return {
+    bucketId,
+    provider: provider.address,
+    expiresAt: established.expires_at,
+  };
+}
+
+/**
+ * Redeem provider-signed replica terms via `add_replica_provider`: attaches a
+ * replica agreement to the bucket the signed terms name, using the same
+ * off-chain quote flow.
+ */
+export async function addReplicaProvider(
   api: ParachainApi,
   client: ChainSigner,
   provider: ChainSigner | { address: string },
   signed: SignedTerms,
   opts: SubmitOpts = {},
 ) {
-  const args = buildSignedTermsArgs(provider, signed);
-  if (args.terms.bucket_id == null) {
-    throw new Error("replica agreement terms must carry a bucket_id");
-  }
+  const bucketId = requireQuotedBucketId(signed, "add_replica_provider");
   const result = await submitTx(
-    api.tx.StorageProvider.establish_replica_agreement({
-      bucket_id: args.terms.bucket_id,
-      ...args,
+    api.tx.StorageProvider.add_replica_provider({
+      bucket_id: bucketId,
+      ...buildSignedTermsArgs(provider, signed),
     }),
     client.signer,
-    { label: "establish_replica_agreement", ...opts },
+    { label: "add_replica_provider", ...opts },
   );
   return requireOneEvent(
     result.events,
     api.event.StorageProvider.ReplicaAgreementEstablished,
     "ReplicaAgreementEstablished",
   );
+}
+
+/** The bucket id a quote names, for calls that only accept an existing one. */
+function requireQuotedBucketId(signed: SignedTerms, call: string): bigint {
+  const bucketId = signedTermsBucketId(signed);
+  if (bucketId == null) {
+    throw new Error(`${call} needs terms naming an existing bucket, got BucketTarget::New`);
+  }
+  return bucketId;
 }
 
 export async function setMember(
@@ -409,6 +490,24 @@ export async function respondToChallenge(
     }),
     provider.signer,
     { label: "respond_to_challenge", ...opts },
+  );
+}
+
+/**
+ * Slash the provider of a challenge that expired without a response. Anyone
+ * may call it; the challenger's deposit is refunded and the call is free on
+ * success.
+ */
+export async function resolveExpiredChallenge(
+  api: ParachainApi,
+  signer: ChainSigner,
+  challengeId: { deadline: number; index: number },
+  opts: SubmitOpts = {},
+) {
+  return submitTx(
+    api.tx.StorageProvider.resolve_expired_challenge({ challenge_id: challengeId }),
+    signer.signer,
+    { label: "resolve_expired_challenge", ...opts },
   );
 }
 

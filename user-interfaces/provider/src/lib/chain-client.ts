@@ -703,6 +703,22 @@ export async function submitRespondToChallenge(
   return submit(tx, signer, 'Challenge response', onProgress)
 }
 
+/**
+ * Build and submit a `resolve_expired_challenge` extrinsic. Permissionless; a
+ * provider calls it on its own expired challenge to take the slash and
+ * unblock deregistration.
+ */
+export async function submitResolveExpiredChallenge(
+  challengeId: { deadline: number; index: number },
+  signer: InjectedPolkadotAccount,
+  onProgress?: TxProgressCallback,
+): Promise<TxFinalizedPayload> {
+  const a = requireApi()
+  onProgress?.({ type: 'signing', message: 'Signing resolution...' })
+  const tx = a.tx.StorageProvider.resolve_expired_challenge({ challenge_id: challengeId })
+  return submit(tx, signer, 'Resolve expired challenge', onProgress)
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Subscriptions
 // ─────────────────────────────────────────────────────────────────────────────

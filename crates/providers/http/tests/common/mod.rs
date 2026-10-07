@@ -69,10 +69,9 @@ impl TestServer {
                 path: dir.path().to_path_buf(),
             },
         };
-        let (storage, nonce_store) = backend.build().expect("backend opens");
+        let storage = backend.build().expect("backend opens");
         let deps = ProviderDeps {
             storage,
-            nonce_store,
             auth: Arc::new(Authenticator::new(StaticMembershipResolver(vec![(
                 test_member_account(),
                 Role::Admin,

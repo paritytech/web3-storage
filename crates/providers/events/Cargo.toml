@@ -11,4 +11,3 @@ description = "Per-block chain event types shared by the provider node's coordin
 sp-runtime = { workspace = true, features = ["std"] }
 storage-primitives = { workspace = true, features = ["std"] }
 tokio = { workspace = true }
-tracing = { workspace = true, features = ["std"] }

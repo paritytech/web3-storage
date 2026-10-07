@@ -19,12 +19,15 @@ use thiserror::Error;
 /// Error connecting to the chain or building a connection's chain spec.
 #[derive(Error, Debug)]
 pub enum Error {
+    /// A connect attempt failed (500)
     #[error("Failed to connect to chain: {0}")]
     Connection(#[from] subxt::error::OnlineClientError),
 
+    /// No connection published yet, retryable (503)
     #[error("Chain connection not established yet")]
     NotConnected,
 
+    /// Spec fetch/build failure
     #[error("Internal error: {0}")]
     Internal(String),
 }

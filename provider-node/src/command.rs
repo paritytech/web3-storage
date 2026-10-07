@@ -9,7 +9,7 @@ use crate::{
     cli::{Cli, DEFAULT_PROVIDER_ID},
     membership::{BlockEventInvalidations, ChainMembershipResolver},
     subxt_client::SubxtChainClient,
-    ChainFollower, ChainStateCoordinatorHandle, ChallengeResponder, ChallengeResponderConfig,
+    ChainStateCoordinatorHandle, ChallengeResponder, ChallengeResponderConfig,
     ChallengeResponderHandle, ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig,
     ReplicaSyncCoordinatorHandle, StorageProofSource,
 };
@@ -59,7 +59,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     let backend = cli.storage.spec();
     tracing::info!("Storage backend: {backend}");
-    let (storage, nonce_store) = backend.build()?;
+    let storage = backend.build()?;
 
     // Membership-based auth over the chain's bucket member sets, resolved
     // through the shared watch connection. Subscribed here rather than after
@@ -91,11 +91,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         cli.auth.auth_cache_max_entries
     );
 
-    let deps = ProviderDeps {
-        storage,
-        nonce_store,
-        auth,
-    };
+    let deps = ProviderDeps { storage, auth };
 
     // Resolve provider identity
     let seed = cli.key.load_seed()?;
@@ -194,7 +190,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
 /// retries with a backoff if the chain is unreachable, so `current_anchor_block`
 /// is populated as soon as the chain comes up.
 fn start_chain_state_coordinator(
-    follower: Arc<dyn ChainFollower>,
+    follower: Arc<dyn provider_coordinator::ChainFollower>,
     events_tx: BlockEventTx,
     state: Arc<ProviderState>,
 ) -> Option<ChainStateCoordinatorHandle> {

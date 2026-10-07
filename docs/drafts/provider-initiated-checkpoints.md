@@ -2870,7 +2870,7 @@ import {
   connect,
   currentRelayBlock,
   ensureProviderRegistered,
-  establishStorageAgreement,
+  createBucketWithPrimary,
   makeSigner,
   negotiateTerms,
   READ_OPTS,
@@ -2924,9 +2924,9 @@ async function main() {
       duration: 200,
       price_per_byte: 1n,
       replica_params: null,
-      bucket_id: null,
+      bucket: null,
     });
-    const { bucketId } = await establishStorageAgreement(api, client, provider, signed);
+    const { bucketId } = await createBucketWithPrimary(api, client, provider, signed);
     console.log("  Bucket + agreement opened: id=%s", bucketId);
 
     const bucket = (await api.query.StorageProvider.Buckets.getValue(
@@ -2935,7 +2935,7 @@ async function main() {
     ))!;
     assert.ok(
       bucket.primary_providers.some((p: string) => sameAddress(p, provider.address)),
-      "Provider should be primary after establish_storage_agreement"
+      "Provider should be primary after create_bucket_with_primary"
     );
 
     console.log("\n=== Step 2: configure_checkpoint_window (tight) ===");

@@ -173,11 +173,11 @@ pub async fn chain_setup() -> Option<ChainSetup> {
         valid_until: u32::MAX,
         nonce,
         replica_params: None,
-        bucket_id: None,
+        bucket: storage_primitives::BucketTarget::New,
     };
     let signed_terms = sign_terms(&alice_keypair, terms);
     let bucket_id = admin
-        .establish_storage_agreement(
+        .create_bucket_with_primary(
             alice_ss58.clone(),
             signed_terms,
             // Public: the shared harness backs suites written under the open
@@ -263,11 +263,10 @@ pub async fn start_test_provider() -> String {
     // The spawned server lives for the whole test binary, so its database
     // outlives any guard this could hand back: keep the directory. It is left
     // behind under the temp dir, named `provider_storage::TEMP_DIR_PREFIX*`.
-    let (storage, nonce_store, dir) = temp_rocksdb();
+    let (storage, dir) = temp_rocksdb();
     let _ = dir.keep();
     let deps = ProviderDeps {
         storage,
-        nonce_store,
         auth: Arc::new(Authenticator::new(StaticMembershipResolver(vec![(
             dev_account("alice"),
             Role::Admin,

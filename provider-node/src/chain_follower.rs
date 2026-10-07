@@ -1,53 +1,23 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
-//! Subxt-backed [`ChainFollower`]/[`ChainSession`]/[`FinalizedBlocks`] for the
-//! chain-state coordinator, plus the [`ChainStateChainClient`] reads it drives
-//! through them.
+//! Subxt implementation of the chain-state coordinator's chain interface
+//! ([`ChainFollower`], [`FinalizedBlocks`], [`ChainStateChainClient`]).
 //!
-//! [`SubxtChainFollower`] owns the node's single chain connection: the
-//! transport, and the watch sender every other chain consumer reads the
-//! connection from. It publishes each new connection only after its block
-//! stream is confirmed up (see [`SubxtChainSession::subscribe`]), so
-//! consumers never observe a handle whose backend failed immediately.
+//! [`SubxtChainFollower`] owns the node's chain connection and publishes each
+//! new connection to the other chain consumers through a watch channel.
 
 use crate::chain_connection::{self, ChainHandle, ChainTransport};
 use crate::event_decoding::decode_block_events;
+use crate::subxt_client::{fetch_current_anchor_block, subxt_account};
 use provider_coordinator::{
-    BlockUpdate, ChainFollower, ChainSession, ChainStateChainClient, Error, FinalizedBlock,
-    FinalizedBlocks, ProviderLifecycleEvent,
+    BlockContents, ChainConnection, ChainFollower, ChainStateChainClient, FinalizedBlock,
+    FinalizedBlocks,
 };
-use provider_types::{ProviderInfo, ProviderSettings, ProviderStats};
+use provider_types::{ChainClientError, ProviderInfo, ProviderSettings, ProviderStats};
 use sp_runtime::AccountId32;
-use std::sync::Arc;
 use storage_subxt::api::runtime_types::pallet_storage_provider::pallet::ProviderInfo as RuntimeProviderInfo;
 use subxt::{OnlineClient, PolkadotConfig};
 use tokio::sync::watch;
-
-// ── anchor block ──────────────────────────────────────────────────────────────
-
-/// Query the pallet's `StorageProviderApi::current_anchor_block` runtime API —
-/// the block every on-chain duration (timeouts, expiries, `valid_until`, nonce
-/// age) is measured against. Reading it through the runtime API keeps the
-/// provider agnostic to whether the anchor is a relay, parachain, or other
-/// block number: the pallet decides via its `BlockNumberProvider`, and the
-/// provider no longer reaches into a specific storage item.
-pub(crate) async fn fetch_current_anchor_block<C>(
-    at: &subxt::client::ClientAtBlock<PolkadotConfig, C>,
-) -> Result<u32, Error>
-where
-    C: subxt::client::OnlineClientAtBlockT<PolkadotConfig>,
-{
-    // `unvalidated`: see the `storage-subxt` crate docs.
-    at.runtime_apis()
-        .call(
-            storage_subxt::api::runtime_apis()
-                .storage_provider_api()
-                .current_anchor_block()
-                .unvalidated(),
-        )
-        .await
-        .map_err(|e| Error::Internal(format!("current_anchor_block runtime API call failed: {e}")))
-}
 
 /// Convert the runtime's `ProviderInfo` into the node's view of it.
 ///
@@ -98,15 +68,12 @@ struct SubxtChainStateClient {
     api: OnlineClient<PolkadotConfig>,
 }
 
-/// Convert an account from the `sp_runtime` representation the node uses into
-/// the `subxt` one the generated bindings expect. Same 32 bytes either way.
-fn subxt_account(who: &AccountId32) -> subxt::utils::AccountId32 {
-    subxt::utils::AccountId32(*<AccountId32 as AsRef<[u8; 32]>>::as_ref(who))
-}
-
 #[async_trait::async_trait]
 impl ChainStateChainClient for SubxtChainStateClient {
-    async fn get_provider_info(&self, who: &AccountId32) -> Result<Option<ProviderInfo>, Error> {
+    async fn get_provider_info(
+        &self,
+        who: &AccountId32,
+    ) -> Result<Option<ProviderInfo>, ChainClientError> {
         // `unvalidated`: see the `storage-subxt` crate docs.
         let addr = storage_subxt::api::storage()
             .storage_provider()
@@ -116,52 +83,27 @@ impl ChainStateChainClient for SubxtChainStateClient {
             .api
             .at_current_block()
             .await
-            .map_err(|e| Error::Internal(format!("Failed to get storage: {e}")))?;
+            .map_err(|e| ChainClientError::query("current block", e))?;
         let Some(value) = at
             .storage()
             .try_fetch(addr, (subxt_account(who),))
             .await
-            .map_err(|e| Error::Internal(format!("Failed to fetch Providers: {e}")))?
+            .map_err(|e| ChainClientError::query("Providers", e))?
         else {
             return Ok(None);
         };
         let info = value
             .decode()
-            .map_err(|e| Error::Internal(format!("Failed to decode Providers: {e}")))?;
+            .map_err(|e| ChainClientError::decode("Providers", e))?;
         Ok(Some(provider_info_from_runtime(info)))
     }
 
-    async fn fetch_replay_hsn(&self, who: &AccountId32) -> Result<Option<u64>, Error> {
-        // `unvalidated`: see the `storage-subxt` crate docs.
-        let addr = storage_subxt::api::storage()
-            .storage_provider()
-            .provider_replay_states()
-            .unvalidated();
+    async fn fetch_request_timeout(&self) -> Result<Option<u32>, ChainClientError> {
         let at = self
             .api
             .at_current_block()
             .await
-            .map_err(|e| Error::Internal(format!("Failed to get storage: {e}")))?;
-        let Some(value) = at
-            .storage()
-            .try_fetch(addr, (subxt_account(who),))
-            .await
-            .map_err(|e| Error::Internal(format!("Failed to fetch ProviderReplayStates: {e}")))?
-        else {
-            return Ok(None);
-        };
-        let window = value
-            .decode()
-            .map_err(|e| Error::Internal(format!("Failed to decode ProviderReplayStates: {e}")))?;
-        Ok(Some(window.hsn))
-    }
-
-    async fn fetch_request_timeout(&self) -> Result<Option<u32>, Error> {
-        let at = self
-            .api
-            .at_current_block()
-            .await
-            .map_err(|e| Error::Internal(format!("Failed to get current block: {e}")))?;
+            .map_err(|e| ChainClientError::query("current block", e))?;
 
         // `unvalidated`: see the `storage-subxt` crate docs.
         match at.constants().entry(
@@ -178,20 +120,20 @@ impl ChainStateChainClient for SubxtChainStateClient {
                 subxt::error::ConstantError::PalletNameNotFound(_)
                 | subxt::error::ConstantError::ConstantNameNotFound { .. },
             ) => Ok(None),
-            Err(e) => Err(Error::Internal(format!(
-                "Failed to read RequestTimeout: {e}"
-            ))),
+            // The constant comes from the local metadata copy, so every other
+            // failure is a metadata or decode mismatch.
+            Err(e) => Err(ChainClientError::decode("RequestTimeout", e)),
         }
     }
 }
 
 // ── provider lifecycle events ─────────────────────────────────────────────────
 
-/// Decode a finalized block's events down to the provider-lifecycle events, via
-/// the generated `storage-subxt` event types.
+/// Decode a finalized block's events down to the provider accounts of its
+/// provider-lifecycle events, via the generated `storage-subxt` event types.
 fn parse_provider_lifecycle_events(
     events: &subxt::events::Events<PolkadotConfig>,
-) -> Vec<ProviderLifecycleEvent> {
+) -> Vec<AccountId32> {
     events
         .iter()
         .filter_map(|event| event.ok())
@@ -199,70 +141,48 @@ fn parse_provider_lifecycle_events(
         .collect()
 }
 
-/// Match `event` against the `StorageProvider` events that affect
-/// [`ProviderLifecycleEvent`] and decode it against whichever one it is.
+/// The provider account of `event` if it is a provider-lifecycle event, or
+/// `None` if it is not one.
 ///
-/// A shape mismatch (a runtime whose event fields drifted from the bindings)
-/// is logged and skipped. For most of these events that is recoverable: the
-/// next relevant event still triggers a fresh `refresh_provider_state`. A
-/// missed `ProviderDeregistered` is the exception - a deregistered provider
-/// emits nothing further, so only the next reconnect's bootstrap refresh
-/// corrects it. The persisted nonce watermark is unaffected either way: its
-/// reset is gated on a successfully decoded `Deregistered` in
-/// `refresh_if_relevant_event`, so a missed decode simply leaves it as-is.
-fn lifecycle_event(
-    event: &subxt::events::Event<'_, PolkadotConfig>,
-) -> Option<ProviderLifecycleEvent> {
-    use storage_subxt::api::storage_provider::events::{
-        DeregisterAnnounced, DeregisterCancelled, ProviderDeregistered, ProviderMultiaddrUpdated,
-        ProviderRegistered, ProviderSettingsUpdated,
-    };
+/// A decode failure (event fields that differ from the bindings) is logged and
+/// skipped. The next relevant event triggers a new `refresh_provider_state`,
+/// except after `ProviderDeregistered`: then only the bootstrap refresh on
+/// reconnect corrects the state.
+fn lifecycle_event(event: &subxt::events::Event<'_, PolkadotConfig>) -> Option<AccountId32> {
+    use storage_subxt::api::{storage_provider::Event as StorageProviderEvent, Event};
 
-    macro_rules! try_decode {
-        ($ty:ty, $deregistered:expr) => {
-            if let Some(result) = event.decode_fields_as::<$ty>() {
-                return match result {
-                    Ok(decoded) => Some(provider_lifecycle_event($deregistered, decoded.provider)),
-                    Err(e) => {
-                        tracing::warn!(
-                            "chain-state coordinator: failed to decode {}::{} against the \
-                             static bindings: {e}",
-                            event.pallet_name(),
-                            event.event_name(),
-                        );
-                        None
-                    }
-                };
-            }
-        };
+    if event.pallet_name() != "StorageProvider" {
+        return None;
     }
-
-    try_decode!(ProviderDeregistered, true);
-    try_decode!(ProviderRegistered, false);
-    try_decode!(ProviderSettingsUpdated, false);
-    try_decode!(ProviderMultiaddrUpdated, false);
-    try_decode!(DeregisterAnnounced, false);
-    try_decode!(DeregisterCancelled, false);
-    None
-}
-
-fn provider_lifecycle_event(
-    deregistered: bool,
-    provider: subxt::utils::AccountId32,
-) -> ProviderLifecycleEvent {
-    let provider = AccountId32::new(provider.0);
-    if deregistered {
-        ProviderLifecycleEvent::Deregistered { provider }
-    } else {
-        ProviderLifecycleEvent::Updated { provider }
+    let decoded = match event.decode_as::<Event>() {
+        Ok(Event::StorageProvider(decoded)) => decoded,
+        Ok(_) => return None,
+        Err(e) => {
+            tracing::warn!(
+                "chain-state coordinator: failed to decode {}::{} against the static bindings: {e}",
+                event.pallet_name(),
+                event.event_name(),
+            );
+            return None;
+        }
+    };
+    match decoded {
+        StorageProviderEvent::ProviderDeregistered { provider, .. }
+        | StorageProviderEvent::ProviderRegistered { provider, .. }
+        | StorageProviderEvent::ProviderSettingsUpdated { provider, .. }
+        | StorageProviderEvent::ProviderMultiaddrUpdated { provider, .. }
+        | StorageProviderEvent::DeregisterAnnounced { provider, .. }
+        | StorageProviderEvent::DeregisterCancelled { provider } => {
+            Some(AccountId32::new(provider.0))
+        }
+        _ => None,
     }
 }
 
 // ── chain follower ───────────────────────────────────────────────────────────
 
-/// [`ChainFollower`] over a subxt connection: builds a fresh client for
-/// `transport`, and publishes it through `chain_tx` once
-/// [`SubxtChainSession::subscribe`] confirms its block stream is up.
+/// [`ChainFollower`] over a subxt connection to `transport`. Publishes each
+/// new connection through `chain_tx`.
 pub(crate) struct SubxtChainFollower {
     transport: ChainTransport,
     chain_tx: watch::Sender<Option<ChainHandle>>,
@@ -282,41 +202,24 @@ impl SubxtChainFollower {
 
 #[async_trait::async_trait]
 impl ChainFollower for SubxtChainFollower {
-    async fn connect(&self) -> Result<Box<dyn ChainSession>, Error> {
+    async fn connect(&self) -> Result<ChainConnection, ChainClientError> {
         let handle = chain_connection::connect(&self.transport)
             .await
-            .map_err(|e| Error::Internal(e.to_string()))?;
-        Ok(Box::new(SubxtChainSession {
-            handle,
-            chain_tx: self.chain_tx.clone(),
-        }))
-    }
-}
-
-struct SubxtChainSession {
-    handle: ChainHandle,
-    chain_tx: watch::Sender<Option<ChainHandle>>,
-}
-
-#[async_trait::async_trait]
-impl ChainSession for SubxtChainSession {
-    async fn subscribe(
-        self: Box<Self>,
-    ) -> Result<(Box<dyn FinalizedBlocks>, Arc<dyn ChainStateChainClient>), Error> {
-        let SubxtChainSession { handle, chain_tx } = *self;
+            .map_err(|e| ChainClientError::query("chain connection", e))?;
         let api = handle.api.clone();
         let blocks = api
             .stream_blocks()
             .await
-            .map_err(|e| Error::Internal(format!("Failed to subscribe to blocks: {e}")))?;
+            .map_err(|e| ChainClientError::query("finalized block subscription", e))?;
 
         // Publish the new connection only after the block stream is up, so
         // consumers never observe a handle whose backend failed immediately.
-        chain_tx.send_replace(Some(handle));
+        self.chain_tx.send_replace(Some(handle));
 
-        let chain: Arc<dyn ChainStateChainClient> = Arc::new(SubxtChainStateClient { api });
-        let blocks: Box<dyn FinalizedBlocks> = Box::new(SubxtFinalizedBlocks { blocks });
-        Ok((blocks, chain))
+        Ok(ChainConnection {
+            blocks: Box::new(SubxtFinalizedBlocks { blocks }),
+            client: Box::new(SubxtChainStateClient { api }),
+        })
     }
 }
 
@@ -326,7 +229,7 @@ struct SubxtFinalizedBlocks {
 
 #[async_trait::async_trait]
 impl FinalizedBlocks for SubxtFinalizedBlocks {
-    async fn next(&mut self) -> Option<BlockUpdate> {
+    async fn next(&mut self) -> Option<FinalizedBlock> {
         let block = match self.blocks.next().await {
             Some(Ok(block)) => block,
             Some(Err(e)) => {
@@ -346,7 +249,11 @@ impl FinalizedBlocks for SubxtFinalizedBlocks {
                 tracing::warn!(
                     "chain-state coordinator: failed to get block handle for {number}: {e}"
                 );
-                return Some(BlockUpdate::Unreadable { number });
+                return Some(FinalizedBlock {
+                    number,
+                    anchor_block: None,
+                    contents: None,
+                });
             }
         };
 
@@ -365,41 +272,39 @@ impl FinalizedBlocks for SubxtFinalizedBlocks {
             }
         };
 
-        let events = match at.events().fetch().await {
-            Ok(events) => events,
+        let contents = match at.events().fetch().await {
+            Ok(events) => Some(BlockContents {
+                events: decode_block_events(&events, number),
+                lifecycle: parse_provider_lifecycle_events(&events),
+            }),
             Err(e) => {
                 tracing::warn!(
                     "chain-state coordinator: failed to fetch events for block {number}: {e}"
                 );
-                return Some(BlockUpdate::Unreadable { number });
+                None
             }
         };
 
-        Some(BlockUpdate::Block(FinalizedBlock {
+        Some(FinalizedBlock {
             number,
             anchor_block,
-            events: decode_block_events(&events, number),
-            lifecycle: parse_provider_lifecycle_events(&events),
-        }))
+            contents,
+        })
     }
 }
 
 // ── tests ─────────────────────────────────────────────────────────────────────
 //
-// These drive the real subxt decode paths - the generated `storage-subxt`
-// bindings, `parse_provider_lifecycle_events`, `decode_block_events` - through
-// a real `OnlineClient` (legacy backend) backed by canned RPC responses, using
-// the repo's tracked runtime metadata snapshot. Storage values and events are
-// encoded with `scale_value` against the actual runtime types, so a runtime
-// upgrade that renames or reshapes a field these read is caught here, not
-// just by whichever coordinator happens to call them.
-//
-// The coordinator's own loop/state logic is tested separately, against a mock
-// `ChainFollower`, in `provider-coordinator`'s own test suite.
+// These run the subxt decode paths through a real `OnlineClient` over canned
+// RPC responses and the tracked runtime metadata snapshot, with values encoded
+// against the actual runtime types. A runtime upgrade that renames or reshapes
+// a field these read fails here. `provider-coordinator` tests its own loop
+// against a mock `ChainFollower`.
 #[cfg(test)]
 mod tests {
     use super::*;
     use provider_events::BlockEvent;
+    use std::sync::Arc;
     use subxt::backend::LegacyBackend;
     use subxt::ext::scale_value::scale::encode_as_type;
     use subxt::ext::scale_value::Value;
@@ -792,33 +697,14 @@ mod tests {
             .get_provider_info(&provider_account())
             .await
             .expect_err("malformed Providers bytes must not decode");
-        let Error::Internal(msg) = &err;
         assert!(
-            msg.contains("decode Providers"),
-            "unexpected error: {err:?}"
-        );
-    }
-
-    /// Same for the replay window: a present-but-undecodable entry is an
-    /// error, not `Ok(None)`. Collapsing it to `None` would look identical to
-    /// "provider has never signed", which seeds the nonce counter
-    /// differently.
-    #[tokio::test]
-    async fn replay_hsn_decode_failure_is_an_error() {
-        let client = SubxtChainStateClient {
-            api: mock_api(vec![(
-                key_prefix(PALLET_NAME, "ProviderReplayStates"),
-                "0x00".into(),
-            )])
-            .await,
-        };
-        let err = client
-            .fetch_replay_hsn(&provider_account())
-            .await
-            .expect_err("malformed ProviderReplayStates bytes must not decode");
-        let Error::Internal(msg) = &err;
-        assert!(
-            msg.contains("decode ProviderReplayStates"),
+            matches!(
+                err,
+                ChainClientError::Decode {
+                    what: "Providers",
+                    ..
+                }
+            ),
             "unexpected error: {err:?}"
         );
     }
@@ -856,12 +742,10 @@ mod tests {
         assert_eq!(info.deregister_at, Some(42));
     }
 
-    /// A block carrying two different lifecycle events - one that only
-    /// updates the provider, one that confirms deregistration - must decode
-    /// each into the right [`ProviderLifecycleEvent`] variant, matched
-    /// against its own generated event type.
+    /// A block carrying two different lifecycle events - a settings update
+    /// and a deregistration - decodes to the provider account of each.
     #[tokio::test]
-    async fn lifecycle_events_decode_to_their_matching_variant() {
+    async fn lifecycle_events_decode_to_their_provider_accounts() {
         let md = metadata();
         let account = provider_account();
         let account_bytes = <AccountId32 as AsRef<[u8]>>::as_ref(&account);
@@ -911,12 +795,7 @@ mod tests {
 
         assert_eq!(
             parse_provider_lifecycle_events(&events),
-            vec![
-                ProviderLifecycleEvent::Updated {
-                    provider: account.clone()
-                },
-                ProviderLifecycleEvent::Deregistered { provider: account },
-            ]
+            vec![account.clone(), account]
         );
     }
 
@@ -959,42 +838,6 @@ mod tests {
         assert!(membership_changed_bucket_ids(&events).is_empty());
     }
 
-    /// An on-chain `ProviderDeregistered` must decode to the confirmed
-    /// variant, not the generic `Updated` one - the coordinator gates
-    /// clearing the nonce watermark strictly on `Deregistered`
-    /// (`provider_coordinator::refresh_if_relevant_event`).
-    #[tokio::test]
-    async fn lifecycle_event_decodes_a_confirmed_deregistration() {
-        let md = metadata();
-        let account = provider_account();
-
-        let deregistered = event_record(Value::named_variant(
-            "ProviderDeregistered",
-            [
-                (
-                    "provider",
-                    Value::from_bytes(<AccountId32 as AsRef<[u8]>>::as_ref(&account)),
-                ),
-                ("stake_returned", Value::u128(1_000)),
-            ],
-        ));
-        let events_ty = storage_value_type(&md, "System", "Events");
-        let events_bytes = encode_value(&md, events_ty, &Value::unnamed_composite([deregistered]));
-
-        let api = mock_api(vec![(
-            key_prefix("System", "Events"),
-            format!("0x{}", hex::encode(events_bytes)),
-        )])
-        .await;
-        let at = api.at_current_block().await.expect("block handle");
-        let events = at.events().fetch().await.expect("events fetch");
-
-        assert_eq!(
-            parse_provider_lifecycle_events(&events),
-            vec![ProviderLifecycleEvent::Deregistered { provider: account }]
-        );
-    }
-
     /// End-to-end through [`SubxtFinalizedBlocks::next`]: the anchor block
     /// must come from the `StorageProviderApi::current_anchor_block` runtime
     /// API (`4242` in this mock), never the mocked header number (`42`), and
@@ -1004,51 +847,32 @@ mod tests {
         let md = metadata();
         let account = provider_account();
 
-        let providers_ty = storage_value_type(&md, PALLET_NAME, "Providers");
-        let provider_bytes =
-            encode_value(&md, providers_ty, &runtime_provider_info_value(None, None));
         let events_bytes = encoded_events(&md, &account);
 
-        let api = mock_api(vec![
-            (
-                key_prefix("System", "Events"),
-                format!("0x{}", hex::encode(events_bytes)),
-            ),
-            (
-                key_prefix(PALLET_NAME, "Providers"),
-                format!("0x{}", hex::encode(provider_bytes)),
-            ),
-        ])
+        let api = mock_api(vec![(
+            key_prefix("System", "Events"),
+            format!("0x{}", hex::encode(events_bytes)),
+        )])
         .await;
 
         let mut blocks = SubxtFinalizedBlocks {
             blocks: api.stream_blocks().await.expect("subscribe to blocks"),
         };
 
-        let update = blocks
+        let block = blocks
             .next()
             .await
             .expect("the mock serves exactly one finalized block");
-        let block = match update {
-            BlockUpdate::Block(block) => block,
-            BlockUpdate::Unreadable { number } => {
-                panic!("block {number} should have decoded")
-            }
-        };
+        let contents = block.contents.expect("block should have decoded");
 
         assert_eq!(
             block.anchor_block,
             Some(4242),
             "anchor must come from the runtime API, not the header number (42)"
         );
-        assert_eq!(
-            block.lifecycle,
-            vec![ProviderLifecycleEvent::Updated {
-                provider: account.clone()
-            }]
-        );
+        assert_eq!(contents.lifecycle, vec![account.clone()]);
         assert!(matches!(
-            block.events.as_slice(),
+            contents.events.as_slice(),
             [BlockEvent::ChallengeCreated {
                 deadline: 777,
                 index: 3,

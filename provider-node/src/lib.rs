@@ -28,9 +28,8 @@ pub use provider_challenge::{
 /// the old module path working for existing consumers.
 pub use provider_coordinator as chain_state_coordinator;
 pub use provider_coordinator::{
-    is_relevant_provider_event, refresh_if_relevant_event, refresh_provider_state, sync_constants,
-    ChainFollower, ChainState, ChainStateChainClient, ChainStateCoordinator,
-    ChainStateCoordinatorHandle, NonceCounter, PalletConstants, ProviderLifecycleEvent,
+    refresh_if_relevant_event, refresh_provider_state, sync_constants, ChainState,
+    ChainStateChainClient, ChainStateCoordinator, ChainStateCoordinatorHandle, PalletConstants,
 };
 pub use provider_replica::{
     ReplicaSync, ReplicaSyncChainClient, ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig,
