@@ -63,7 +63,9 @@ function CreationStatusCard({
           )}
         </div>
         <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium truncate">{item.name}</p>
+          <p className="text-sm font-medium truncate">
+            {item.bucketId !== undefined ? `Bucket #${item.bucketId}` : "New bucket"}
+          </p>
           <p className="text-xs text-muted-foreground mt-0.5">
             {item.stage === "submitting" && "Submitting on-chain..."}
             {item.stage === "ready" && "Bucket is ready to use"}
@@ -99,7 +101,6 @@ function CreationStatusCard({
 export default function NewBucketDialog({ open, onOpenChange }: NewBucketDialogProps) {
   const creations = useCreations();
 
-  const [name, setName] = useState("");
   const [capacity, setCapacity] = useState("10485760");
   const [duration, setDuration] = useState("10000");
   const [pricePerByte, setPricePerByte] = useState("0");
@@ -131,15 +132,13 @@ export default function NewBucketDialog({ open, onOpenChange }: NewBucketDialogP
         return;
       }
 
-      const bucket = await createBucket({
-        name: name || "Untitled Bucket",
+      const bucketId = await createBucket({
         provider,
         url: result.url,
         signed: result.signed,
         visibility,
       });
-      if (bucket) {
-        setName("");
+      if (bucketId !== null) {
         onOpenChange(false);
       }
     } finally {
@@ -157,16 +156,6 @@ export default function NewBucketDialog({ open, onOpenChange }: NewBucketDialogP
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
-          <div className="space-y-2">
-            <label className="text-sm font-medium">Bucket Name</label>
-            <Input
-              data-testid="new-bucket-name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="my-bucket"
-            />
-          </div>
-
           <div className="grid gap-3 sm:grid-cols-3">
             <div className="space-y-1">
               <label className="text-xs font-medium">Capacity (bytes)</label>
@@ -245,9 +234,9 @@ export default function NewBucketDialog({ open, onOpenChange }: NewBucketDialogP
                   item={item}
                   onDismiss={dismissCreation}
                   onRetry={
-                    canRetryCreation(item.id) && name.trim()
+                    canRetryCreation(item.id)
                       ? (id) => {
-                          void retryCreation(id, name.trim());
+                          void retryCreation(id);
                         }
                       : undefined
                   }
