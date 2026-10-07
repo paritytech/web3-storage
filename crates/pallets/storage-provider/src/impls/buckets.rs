@@ -3,7 +3,7 @@
 use crate::Member;
 use crate::*;
 use alloc::vec::Vec;
-use frame_support::pallet_prelude::*;
+use frame_support::{pallet_prelude::*, traits::Consideration};
 use sp_core::H256;
 use sp_runtime::traits::{SaturatedConversion, Saturating, Zero};
 use storage_primitives::{BucketId, ProviderRole, Role, Visibility};
@@ -28,16 +28,7 @@ impl<T: Config> Pallet<T> {
         // End all agreements for this bucket (pay providers fairly)
         let agreements: Vec<_> = StorageAgreements::<T>::iter_prefix(bucket_id).collect();
 
-        // Refuse to delete the bucket while any of its agreements has a
-        // pending challenge — otherwise tearing down here would let the
-        // provider escape a live slashable challenge. Checked before any
-        // state mutation/payout so the whole call is a no-op on failure.
-        for (provider, _) in &agreements {
-            ensure!(
-                PendingChallengesByBucket::<T>::get(bucket_id, provider) == 0,
-                Error::<T>::AgreementHasPendingChallenge
-            );
-        }
+        Self::ensure_no_pending_challenge(bucket_id)?;
 
         for (provider, agreement) in agreements {
             // Calculate prorated refund based on remaining time
@@ -101,8 +92,7 @@ impl<T: Config> Pallet<T> {
                 }
             });
 
-            // Remove agreement
-            StorageAgreements::<T>::remove(bucket_id, &provider);
+            Self::remove_agreement(bucket_id, &provider, agreement)?;
 
             Self::deposit_event(Event::AgreementEnded {
                 bucket_id,
@@ -112,19 +102,26 @@ impl<T: Config> Pallet<T> {
             });
         }
 
-        // Clean up reverse index for all members
-        for member in &bucket.members {
-            MemberBuckets::<T>::mutate(&member.account, |buckets| {
-                buckets.retain(|id| *id != bucket_id);
-            });
+        Self::remove_bucket_internal(bucket_id, bucket)?;
+
+        Ok(total_refunded)
+    }
+
+    /// Removes a bucket that has no agreements left: releases every member
+    /// deposit to its depositor and clears the member's reverse-index entry,
+    /// deletes the record and releases the bucket deposit to its creator.
+    pub(crate) fn remove_bucket_internal(bucket_id: BucketId, bucket: Bucket<T>) -> DispatchResult {
+        for member in bucket.members {
+            member.deposit.drop(&member.depositor)?;
+            Self::remove_from_member_index(&member.account, bucket_id);
         }
 
-        // Remove the bucket itself
         Buckets::<T>::remove(bucket_id);
+        bucket.deposit.drop(&bucket.creator)?;
 
         Self::deposit_event(Event::BucketDeleted { bucket_id });
 
-        Ok(total_refunded)
+        Ok(())
     }
 
     /// Creates a bucket with `admin` as its sole admin.
@@ -159,6 +156,8 @@ impl<T: Config> Pallet<T> {
         let admin_member = Member {
             account: admin.clone(),
             role: Role::Admin,
+            depositor: admin.clone(),
+            deposit: T::StorageDeposit::new(admin, Self::member_footprint())?,
         };
 
         let mut members = BoundedVec::new();
@@ -182,6 +181,8 @@ impl<T: Config> Pallet<T> {
             historical_roots: [(0, H256::zero()); 6],
             total_snapshots: 0,
             visibility,
+            creator: admin.clone(),
+            deposit: T::StorageDeposit::new(admin, Self::bucket_footprint())?,
         };
 
         Buckets::<T>::insert(bucket_id, bucket);

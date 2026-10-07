@@ -22,7 +22,67 @@ impl<T: Config> Pallet<T> {
         Self::check_committed_bytes()?;
         Self::check_buckets_and_membership()?;
         Self::check_holds_back_bookkeeping()?;
+        Self::check_storage_deposits()?;
+        Self::check_no_empty_index_entries()?;
         Self::check_agreement_nonce_owners_exist()?;
+        Ok(())
+    }
+
+    /// For every account, the storage-deposit tickets stored in its provider
+    /// record, the buckets it created, the member entries it paid for and
+    /// the agreements it owns add up to its `StorageDeposit` hold; an
+    /// account with no tickets holds nothing. A ticket is read as the held
+    /// amount, which is what a `HoldConsideration` ticket encodes.
+    fn check_storage_deposits() -> Result<(), TryRuntimeError> {
+        let mut deposit_by_account: BTreeMap<T::AccountId, BalanceOf<T>> = BTreeMap::new();
+        let mut add = |who: &T::AccountId, ticket: &TicketOf<T>| -> Result<(), TryRuntimeError> {
+            let amount = BalanceOf::<T>::decode(&mut &ticket.encode()[..])
+                .map_err(|_| {
+                    "storage-deposit ticket does not decode as a balance; Config::StorageDeposit must encode the held amount"
+                })?;
+            let total = deposit_by_account.entry(who.clone()).or_default();
+            *total = total.saturating_add(amount);
+            Ok(())
+        };
+        for (provider, info) in Providers::<T>::iter() {
+            add(&provider, &info.deposit)?;
+        }
+        for (_bucket_id, bucket) in Buckets::<T>::iter() {
+            add(&bucket.creator, &bucket.deposit)?;
+            for member in bucket.members.iter() {
+                add(&member.depositor, &member.deposit)?;
+            }
+        }
+        for (_bucket_id, _provider, agreement) in StorageAgreements::<T>::iter() {
+            add(&agreement.owner, &agreement.deposit)?;
+        }
+        for who in frame_system::Account::<T>::iter_keys() {
+            let expected = deposit_by_account.get(&who).copied().unwrap_or_default();
+            let held = T::Currency::balance_on_hold(&HoldReason::StorageDeposit.into(), &who);
+            ensure!(
+                held == expected,
+                "StorageDeposit hold does not equal the sum of the account's tickets in Providers, Buckets (creator and members) and StorageAgreements"
+            );
+        }
+        Ok(())
+    }
+
+    /// Pending-challenge counters and reverse-index vectors are deleted when
+    /// they reach zero or empty. A leftover entry is state nobody paid for,
+    /// and a stale pending entry would block its bucket's deletion.
+    fn check_no_empty_index_entries() -> Result<(), TryRuntimeError> {
+        ensure!(
+            PendingChallenges::<T>::iter_values().all(|count| count > 0),
+            "PendingChallenges entry with a zero count"
+        );
+        ensure!(
+            PendingChallengesByBucket::<T>::iter_values().all(|count| count > 0),
+            "PendingChallengesByBucket entry with a zero count"
+        );
+        ensure!(
+            MemberBuckets::<T>::iter_values().all(|buckets| !buckets.is_empty()),
+            "MemberBuckets entry with no buckets"
+        );
         Ok(())
     }
 

@@ -208,6 +208,11 @@ async function main() {
     ]);
     assertEvent(r.events, "StorageProvider", "AgreementEnded", "endAgreementPay");
 
+    // 6a. deleteBucket: bucketA has no agreement left and Charlie was removed
+    console.log("\n[6a] IWeb3Storage.deleteBucket(bucketA)");
+    r = await callPrecompile(api, client, WEB3_STORAGE_ADDR, iWeb3, "deleteBucket", [bucketA]);
+    assertEvent(r.events, "StorageProvider", "BucketDeleted", "deleteBucket");
+
     // 7. createBucketWithPrimary (large — for endAgreementBurn) --------
     // Burn-percent transfers send to the treasury account; the transfer uses
     // `KeepAlive`, so the burned amount must be ≥ ExistentialDeposit (1
@@ -386,7 +391,7 @@ async function main() {
     assertEvent(r.events, "StorageProvider", "ProviderAddedToBucket", "addPrimaryProvider");
     assertEvent(r.events, "StorageProvider", "StorageAgreementEstablished", "addPrimaryProvider");
 
-    console.log("\n✅ 16 of 16 selectors exercised, every expected event observed");
+    console.log("\n✅ 17 of 17 selectors exercised, every expected event observed");
   } finally {
     papi.destroy();
   }

@@ -184,11 +184,16 @@ mod tests {
     /// Pins the generated-type -> primitives conversion for every role.
     #[test]
     fn member_roles_converts_accounts_and_roles() {
-        use storage_subxt::api::runtime_types::storage_primitives::Role as RuntimeRole;
+        use storage_subxt::api::runtime_types::{
+            frame_support::traits::tokens::fungible::HoldConsideration,
+            storage_primitives::Role as RuntimeRole,
+        };
 
         let member = |byte: u8, role: RuntimeRole| RuntimeMember {
             account: subxt::utils::AccountId32([byte; 32]),
             role,
+            depositor: subxt::utils::AccountId32([byte; 32]),
+            deposit: HoldConsideration(0),
         };
 
         let expected: Vec<Member> = vec![

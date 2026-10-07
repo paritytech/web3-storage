@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::*;
-use frame_support::pallet_prelude::*;
+use frame_support::{pallet_prelude::*, traits::Consideration};
 use sp_runtime::traits::{CheckedAdd, CheckedMul, SaturatedConversion, Saturating, Zero};
 use storage_primitives::{
     BucketId, BucketTarget, EndAction, ProviderRole, RemovalReason, Visibility,
@@ -43,7 +43,7 @@ impl<T: Config> Pallet<T> {
     pub(crate) fn finalize_agreement(
         bucket_id: BucketId,
         provider: &T::AccountId,
-        agreement: &StorageAgreement<T>,
+        agreement: StorageAgreement<T>,
         action: EndAction,
         is_early: bool,
     ) -> DispatchResult {
@@ -119,8 +119,7 @@ impl<T: Config> Pallet<T> {
             });
         }
 
-        // Remove agreement
-        StorageAgreements::<T>::remove(bucket_id, provider);
+        Self::remove_agreement(bucket_id, provider, agreement)?;
 
         Self::deposit_event(Event::AgreementEnded {
             bucket_id,
@@ -153,7 +152,7 @@ impl<T: Config> Pallet<T> {
         )?;
         // min_providers = 1: the single primary signs every checkpoint.
         let bucket_id = Self::create_bucket_internal(owner, 1, Some(provider), visibility)?;
-        Self::insert_primary_agreement(bucket_id, owner, provider, terms, accepted);
+        Self::insert_primary_agreement(bucket_id, owner, provider, terms, accepted)?;
         Ok(bucket_id)
     }
 
@@ -182,8 +181,7 @@ impl<T: Config> Pallet<T> {
             QuoteKind::Primary,
         )?;
         Buckets::<T>::insert(bucket_id, bucket);
-        Self::insert_primary_agreement(bucket_id, admin, provider, terms, accepted);
-        Ok(())
+        Self::insert_primary_agreement(bucket_id, admin, provider, terms, accepted)
     }
 
     /// Opens a replica agreement on an existing bucket. Anyone the provider
@@ -205,7 +203,7 @@ impl<T: Config> Pallet<T> {
             BucketTarget::Existing(bucket_id),
             QuoteKind::Replica,
         )?;
-        let expires_at = Self::insert_agreement(bucket_id, owner, provider, &terms, accepted);
+        let expires_at = Self::insert_agreement(bucket_id, owner, provider, &terms, accepted)?;
 
         Self::deposit_event(Event::ReplicaAgreementEstablished {
             bucket_id,
@@ -360,15 +358,27 @@ impl<T: Config> Pallet<T> {
         Ok(new_committed)
     }
 
-    /// Stores the agreement an accepted quote pays for and updates the
-    /// provider's counters. Returns the agreement's `expires_at`.
+    /// Deletes the agreement record and releases its storage deposit to the
+    /// owner. Every removal path goes through here.
+    pub(crate) fn remove_agreement(
+        bucket_id: BucketId,
+        provider: &T::AccountId,
+        agreement: StorageAgreement<T>,
+    ) -> DispatchResult {
+        StorageAgreements::<T>::remove(bucket_id, provider);
+        agreement.deposit.drop(&agreement.owner)
+    }
+
+    /// Stores the agreement an accepted quote pays for, holds its storage
+    /// deposit on `owner` and updates the provider's counters. Returns the
+    /// agreement's `expires_at`.
     fn insert_agreement(
         bucket_id: BucketId,
         owner: &T::AccountId,
         provider: &T::AccountId,
         terms: &AgreementTermsOf<T>,
         accepted: AcceptedQuote<T>,
-    ) -> BlockNumberFor<T> {
+    ) -> Result<BlockNumberFor<T>, DispatchError> {
         let AcceptedQuote {
             anchor_block,
             new_committed,
@@ -400,9 +410,10 @@ impl<T: Config> Pallet<T> {
                 extensions_blocked: false,
                 role,
                 started_at: anchor_block,
+                deposit: T::StorageDeposit::new(owner, Self::agreement_footprint())?,
             },
         );
-        expires_at
+        Ok(expires_at)
     }
 
     /// [`Pallet::insert_agreement`] plus the primary events,
@@ -413,8 +424,8 @@ impl<T: Config> Pallet<T> {
         provider: &T::AccountId,
         terms: AgreementTermsOf<T>,
         accepted: AcceptedQuote<T>,
-    ) {
-        let expires_at = Self::insert_agreement(bucket_id, owner, provider, &terms, accepted);
+    ) -> DispatchResult {
+        let expires_at = Self::insert_agreement(bucket_id, owner, provider, &terms, accepted)?;
         Self::deposit_event(Event::ProviderAddedToBucket {
             bucket_id,
             provider: provider.clone(),
@@ -426,6 +437,7 @@ impl<T: Config> Pallet<T> {
             terms,
             expires_at,
         });
+        Ok(())
     }
 }
 

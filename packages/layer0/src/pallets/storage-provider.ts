@@ -721,6 +721,28 @@ export async function freezeBucket(
   );
 }
 
+/**
+ * Delete a bucket that has no agreements and no open challenges (admin only).
+ * Releases the bucket's and every member's storage deposit to whoever paid it.
+ */
+export async function deleteBucket(
+  api: ParachainApi,
+  admin: ChainSigner,
+  bucketId: bigint,
+  opts: SubmitOpts = {},
+) {
+  const result = await submitTx(
+    api.tx.StorageProvider.delete_bucket({ bucket_id: bucketId }),
+    admin.signer,
+    { label: "delete_bucket", ...opts },
+  );
+  return requireOneEvent(
+    result.events,
+    api.event.StorageProvider.BucketDeleted,
+    "BucketDeleted",
+  );
+}
+
 /** Read a bucket's visibility; throws when the bucket does not exist. */
 export async function getBucketVisibility(
   api: ParachainApi,
