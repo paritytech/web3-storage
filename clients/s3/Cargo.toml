@@ -9,8 +9,9 @@ description = "S3-compatible client SDK for web3-storage"
 
 [dependencies]
 # Internal
-s3-primitives = { workspace = true, features = ["std"] }
+provider-auth = { workspace = true }
 storage-client = { workspace = true }
+storage-primitives = { workspace = true, features = ["std"] }
 storage-subxt = { workspace = true }
 
 # Substrate primitives
@@ -27,6 +28,8 @@ subxt = { workspace = true }
 
 # Utilities
 hex = { workspace = true, features = ["std"] }
+serde = { workspace = true, features = ["std"] }
+serde_json = { workspace = true, features = ["std"] }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
