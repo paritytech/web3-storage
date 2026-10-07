@@ -19,7 +19,7 @@ use provider_chain::{
     chain_connection::{self, ChainHandle},
     BlockEvent, BlockEventRx, BlockEventTx, EVENT_CHANNEL_CAPACITY,
 };
-use sp_core::{crypto::Ss58Codec, Pair};
+use sp_core::crypto::Ss58Codec;
 use std::net::SocketAddr;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -63,24 +63,22 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!("Storage backend: {backend}");
     let storage = backend.build()?;
 
-    // The node's own provider account: the sr25519 submission account when a
-    // seed is configured, else whatever --provider-id parses to. Feeds the
-    // membership resolver (is this node a replica for the bucket?) and the
-    // authenticator's operator self-auth; both degrade gracefully to None.
+    // The provider identity, resolved once: the sr25519 submission account
+    // derived from the seed (whatever the signing scheme), else --provider-id.
+    // Parsed back to an account for the membership resolver (is this node a
+    // replica for the bucket?) and the authenticator's operator self-auth;
+    // both stay off when the id is not an SS58 account (the placeholder
+    // default).
     let seed = cli.key.load_seed()?;
-    let provider_account = match &seed {
-        Some(seed) => Some(sp_core::crypto::AccountId32::new(
-            sp_core::sr25519::Pair::from_string(seed, None)
-                .map_err(|e| format!("Failed to create keypair: {e:?}"))?
-                .public()
-                .0,
-        )),
+    let provider_id = match &seed {
+        Some(seed) => ProviderState::provider_id_from_seed(seed)?,
         None => cli
             .key
             .provider_id
-            .as_deref()
-            .and_then(|id| sp_core::crypto::AccountId32::from_ss58check(id).ok()),
+            .clone()
+            .unwrap_or_else(|| DEFAULT_PROVIDER_ID.to_string()),
     };
+    let provider_account = sp_core::crypto::AccountId32::from_ss58check(&provider_id).ok();
 
     // Membership-based auth over the chain's bucket member sets, resolved
     // through the shared watch connection. Subscribed here rather than after
@@ -128,16 +126,10 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
             state
         }
         None => {
-            let provider_id = cli
-                .key
-                .provider_id
-                .clone()
-                .unwrap_or_else(|| DEFAULT_PROVIDER_ID.to_string());
             tracing::warn!(
                 "No --keyfile set, using --provider-id without signing: {}",
                 provider_id
             );
-
             ProviderState::with_provider_id(deps, provider_id)
         }
     }

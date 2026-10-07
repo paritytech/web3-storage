@@ -21,8 +21,9 @@ use tokio::sync::broadcast::error::TryRecvError;
 pub struct ChainMembershipResolver {
     chain_rx: ChainWatch,
     /// This node's provider account, for resolving whether it holds the
-    /// bucket as a replica (replicas serve reads to everyone). `None` (no
-    /// identity configured) makes every bucket resolve as not replica-held.
+    /// bucket as a replica (replicas serve reads to everyone). `None` (the
+    /// configured provider id is not an account) makes every bucket resolve
+    /// as not replica-held.
     provider_account: Option<AccountId32>,
 }
 
