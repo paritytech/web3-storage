@@ -3,21 +3,21 @@
 /**
  * Smart-contract end-to-end demo for the `TokenGatedDrive` example dApp.
  *
- * The contract owns an S3 bucket on-chain via the s3-registry precompile
- * and mints a transferable NFT-shaped token per object stored in it.
+ * The contract owns a private Layer 0 bucket via the storage-provider
+ * precompile and mints a transferable token per object key. A token holder
+ * is a `Reader` member of the bucket.
  * Flow:
- *   1. Provider setup + account mapping for Alice/Bob/Charlie.
+ *   1. Provider setup + account mapping for Bob/Charlie/Dave.
  *   2. Deploy `TokenGatedDrive.sol`.
- *   3. Publisher (`//Alice`) initializes the bucket with `msg.value`
- *      covering the agreement reserve.
- *   4. Publisher mints a token to Bob's H160.
- *   5. Bob transfers the token to Charlie.
- *   6. Charlie burns the token.
- *   7. Publisher shuts down the contract (bucket deleted).
+ *   3. Publisher (`//Bob`) initializes the bucket with `msg.value` covering
+ *      the agreement reserve; Bob's account becomes a `Writer`.
+ *   4. Publisher mints a token to Charlie: Charlie becomes a `Reader`.
+ *   5. Charlie transfers the token to Dave: membership moves to Dave.
+ *   6. Dave burns the token: Dave loses membership.
  *
- * Asserts S3-registry pallet events (`S3BucketCreated`, `ObjectPut`,
- * `ObjectDeleted`, `S3BucketDeleted`) and contract events
- * (`Initialized`, `Minted`, `Transfer` ×2, `Burned`, `Shutdown`).
+ * Asserts storage-provider pallet events (`BucketCreated`, `MemberSet`,
+ * `MemberRemoved`), contract events (`Initialized`, `Minted`, `Transfer`,
+ * `Burned`) and the final bucket member list.
  *
  * Usage: node sc-token-gated.js [chain_ws] [provider_url] [provider_seed] [client_seed]
  */
@@ -34,6 +34,7 @@ import {
   makeSigner,
   READ_OPTS,
   requireOneEvent,
+  sameAddress,
   toHex,
   waitForBlockProduction,
   waitForChainReady,
@@ -45,7 +46,6 @@ import {
   deployContract,
   encodeCall,
   ensureAccountMapped,
-  substrateToH160,
 } from "@web3-storage/sdk/revive";
 import { h160ToSubstrate, negotiatePrecompileTerms } from "./sc-support.js";
 import {
@@ -79,9 +79,8 @@ async function main() {
     // same key, surfacing as `Invalid::Stale` on the mempool side.
     const provider = makeSigner(providerSeed); // //Alice — storage provider only
     const publisher = makeSigner(clientSeed); // //Bob — deploys + publishes
-    const recipient = makeSigner("//Charlie"); // final token holder
-    const publisherH160 = substrateToH160(publisher.publicKey);
-    const recipientH160 = substrateToH160(recipient.publicKey);
+    const firstHolder = makeSigner("//Charlie");
+    const secondHolder = makeSigner("//Dave");
 
     console.log("\n[setup] provider + Revive account mapping…");
     const PRICE_PER_BYTE = 1n;
@@ -92,7 +91,8 @@ async function main() {
     await ensureSoleAcceptingProvider(api, provider);
     await ensureAccountMapped(api, provider);
     await ensureAccountMapped(api, publisher);
-    await ensureAccountMapped(api, recipient);
+    await ensureAccountMapped(api, firstHolder);
+    await ensureAccountMapped(api, secondHolder);
 
     const combined = JSON.parse(await readFile(CONTRACT_JSON, "utf8"));
     const entry = combined.contracts?.[CONTRACT_KEY];
@@ -106,19 +106,21 @@ async function main() {
     console.log("  bytecode:", bytecode.length, "bytes");
 
     // 1) Deploy (signed by Bob — he becomes publisher in `initialize`).
-    console.log("\n[1/6] Deploying TokenGatedDrive…");
+    console.log("\n[1/5] Deploying TokenGatedDrive…");
     const deployed = await deployContract(api, publisher, bytecode);
     console.log("  contract:", deployed.address);
+    const contractEvent = (events: Parameters<typeof decodeContractEmitted>[0], name: string) => {
+      const log = decodeContractEmitted(events, api, deployed.addressBytes, abi).find(
+        (l) => l.eventName === name
+      );
+      assert.ok(log, `${name} event missing`);
+      return log.args as any;
+    };
 
-    // 2) initialize{value: 5 UNIT}('cov-bucket-N', …) — terms negotiated with
-    // the contract's substrate-mapped account as owner; msg.value funds that
-    // account's payment reserve.
-    // Bucket name: 3-63 chars, lowercase alphanumeric + hyphens. Append the
-    // block number so the name is unique across reruns on the same chain
-    // (`pallet_s3_registry` enforces global name uniqueness).
-    const blockHead = await api.query.System.Number.getValue(READ_OPTS);
-    const bucketName = `cov-bucket-${Number(blockHead)}`;
-    console.log(`\n[2/6] initialize{value: 5 UNIT}('${bucketName}', provider, terms[1MiB×50], sig)`);
+    // 2) initialize{value: 5 UNIT} — terms negotiated with the contract's
+    // substrate-mapped account as owner; msg.value funds that account's
+    // payment reserve. Bob's account becomes a Writer so it can upload.
+    console.log("\n[2/5] initialize{value: 5 UNIT}(Bob, provider, terms[1MiB×50], sig)");
     const contractAccount = h160ToSubstrate(deployed.addressBytes);
     const signed = await negotiatePrecompileTerms(providerUrl, contractAccount, {
       maxBytes: 1n << 20n,
@@ -126,7 +128,7 @@ async function main() {
       pricePerByte: PRICE_PER_BYTE,
     });
     const initData = encodeCall(abi, "initialize", [
-      bucketName,
+      toHex(publisher.publicKey),
       toHex(provider.publicKey),
       signed.terms,
       signed.signature,
@@ -136,76 +138,61 @@ async function main() {
     });
     const bucketCreated = requireOneEvent(
       r.events,
-      api.event.S3Registry.S3BucketCreated,
-      "S3Registry.S3BucketCreated"
+      api.event.StorageProvider.BucketCreated,
+      "StorageProvider.BucketCreated"
     );
-    const s3BucketId = bucketCreated.s3_bucket_id;
-    console.log("  s3BucketId =", s3BucketId.toString());
+    const bucketId = bucketCreated.bucket_id;
+    console.log("  bucketId =", bucketId.toString());
+    requireOneEvent(r.events, api.event.StorageProvider.MemberSet, "StorageProvider.MemberSet");
+    contractEvent(r.events, "Initialized");
 
-    // 3) Publisher mints a token to themselves first, then transfers to
-    // Charlie. Minting to a different recipient would skip the `transfer`
-    // path; keeping mint→self lets us exercise both functions on the same
-    // token.
-    console.log("\n[3/6] (publisher) mint(self, 'files/hello.txt', …)");
-    const objectCid =
-      "0x1122334455667788990011223344556677889900112233445566778899001122";
-    const mintData = encodeCall(abi, "mint", [
-      publisherH160,
-      "files/hello.txt",
-      objectCid,
-      42n,
-      "text/plain",
-    ]);
+    // 3) Publisher mints a token to Charlie, who becomes a Reader.
+    console.log("\n[3/5] (publisher) mint(Charlie, 'files/hello.txt')");
+    const mintData = encodeCall(abi, "mint", [toHex(firstHolder.publicKey), "files/hello.txt"]);
     r = await callContract(api, publisher, deployed.addressBytes, mintData);
-    requireOneEvent(
-      r.events,
-      api.event.S3Registry.ObjectPut,
-      "S3Registry.ObjectPut"
-    );
-    let logs = decodeContractEmitted(r.events, api, deployed.addressBytes, abi);
-    const minted = logs.find((l) => l.eventName === "Minted");
-    assert.ok(minted, "Minted event missing");
-    const tokenId = (minted.args as any).tokenId;
+    requireOneEvent(r.events, api.event.StorageProvider.MemberSet, "StorageProvider.MemberSet");
+    const tokenId = contractEvent(r.events, "Minted").tokenId;
     console.log("  tokenId =", tokenId.toString());
 
-    // 4) Publisher transfers the token to Charlie.
-    console.log("\n[4/6] (publisher) transfer(Charlie, tokenId)");
-    const transferData = encodeCall(abi, "transfer", [recipientH160, tokenId]);
-    r = await callContract(api, publisher, deployed.addressBytes, transferData);
-    logs = decodeContractEmitted(r.events, api, deployed.addressBytes, abi);
-    assert.ok(
-      logs.some(
-        (l) =>
-          l.eventName === "Transfer" &&
-          (l.args as any).from.toLowerCase() === publisherH160.toLowerCase() &&
-          (l.args as any).to.toLowerCase() === recipientH160.toLowerCase()
-      ),
-      "Transfer(publisher → Charlie) event missing"
+    // 4) Charlie transfers the token to Dave; membership moves with it.
+    console.log("\n[4/5] (Charlie) transfer(Dave, tokenId)");
+    const transferData = encodeCall(abi, "transfer", [toHex(secondHolder.publicKey), tokenId]);
+    r = await callContract(api, firstHolder, deployed.addressBytes, transferData);
+    requireOneEvent(
+      r.events,
+      api.event.StorageProvider.MemberRemoved,
+      "StorageProvider.MemberRemoved"
     );
+    requireOneEvent(r.events, api.event.StorageProvider.MemberSet, "StorageProvider.MemberSet");
+    const transfer = contractEvent(r.events, "Transfer");
+    assert.strictEqual(String(transfer.from).toLowerCase(), toHex(firstHolder.publicKey).toLowerCase());
+    assert.strictEqual(String(transfer.to).toLowerCase(), toHex(secondHolder.publicKey).toLowerCase());
 
-    // 5) Charlie burns the token — also deletes the S3 object metadata.
-    console.log("\n[5/6] (Charlie) burn(tokenId)");
+    // 5) Dave burns the token and loses membership.
+    console.log("\n[5/5] (Dave) burn(tokenId)");
     const burnData = encodeCall(abi, "burn", [tokenId]);
-    r = await callContract(api, recipient, deployed.addressBytes, burnData);
+    r = await callContract(api, secondHolder, deployed.addressBytes, burnData);
     requireOneEvent(
       r.events,
-      api.event.S3Registry.ObjectDeleted,
-      "S3Registry.ObjectDeleted"
+      api.event.StorageProvider.MemberRemoved,
+      "StorageProvider.MemberRemoved"
     );
-    logs = decodeContractEmitted(r.events, api, deployed.addressBytes, abi);
-    assert.ok(
-      logs.some((l) => l.eventName === "Burned"),
-      "Burned event missing"
-    );
+    contractEvent(r.events, "Burned");
 
-    // 6) Publisher shuts down — bucket must be empty (it is, after burn).
-    console.log("\n[6/6] (publisher) shutdown()");
-    const shutdownData = encodeCall(abi, "shutdown", []);
-    r = await callContract(api, publisher, deployed.addressBytes, shutdownData);
-    requireOneEvent(
-      r.events,
-      api.event.S3Registry.S3BucketDeleted,
-      "S3Registry.S3BucketDeleted"
+    // Remaining members: the contract (Admin) and Bob (Writer).
+    const bucket = (await api.query.StorageProvider.Buckets.getValue(bucketId, READ_OPTS))!;
+    const roles = bucket.members.map((m: { account: string; role: { type: string } }) => ({
+      account: m.account,
+      role: m.role.type,
+    }));
+    assert.strictEqual(roles.length, 2, `expected 2 members, got ${JSON.stringify(roles)}`);
+    assert.ok(
+      roles.some((m) => sameAddress(m.account, contractAccount.address) && m.role === "Admin"),
+      "contract should be Admin"
+    );
+    assert.ok(
+      roles.some((m) => sameAddress(m.account, publisher.address) && m.role === "Writer"),
+      "publisher should be Writer"
     );
 
     console.log("\n✅ TokenGatedDrive flow completed");

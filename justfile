@@ -298,7 +298,7 @@ subxt-codegen URL=CHAIN_WS OUTPUT="crates/storage-subxt/src/storage_paseo_runtim
 demo PROVIDER_URL=PROVIDER_URL PROVIDER_SEED="//Alice" CLIENT_SEED="//Bob": papi-setup
     node --import tsx examples/papi/full-flow.ts "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}" "{{ PROVIDER_SEED }}" "{{ CLIENT_SEED }}"
 
-# Compile the example marketplace contract to PolkaVM bytecode + ABI.
+# Compile the example contracts to PolkaVM bytecode + ABI.
 # Requires: solc and resolc on PATH (see examples/contracts/README.md).
 build-contracts:
     bash examples/contracts/build.sh
@@ -310,14 +310,14 @@ sc-demo PROVIDER_URL=PROVIDER_URL PROVIDER_SEED="//Alice" CLIENT_SEED="//Bob": p
     node --import tsx examples/papi/sc-flow.ts "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}" "{{ PROVIDER_SEED }}" "{{ CLIENT_SEED }}"
 
 # Smart-contract precompile-coverage e2e: directly invokes every selector on
-# all three precompiles (storage-provider + drive-registry + s3-registry) and
-# asserts pallet events/storage updated. No intermediate contract.
+# the storage-provider precompile and asserts pallet events/storage updated.
+# No intermediate contract.
 # Requires: chain + provider running, contracts built (`just build-contracts`).
 sc-coverage PROVIDER_URL=PROVIDER_URL PROVIDER_SEED="//Alice" CLIENT_SEED="//Bob": papi-setup
     node --import tsx examples/papi/sc-coverage.ts "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}" "{{ PROVIDER_SEED }}" "{{ CLIENT_SEED }}"
 
 # Smart-contract team-drive demo: deploys SharedTeamDrive, exercises
-# createTeam → invite → kick → disband through the drive-registry precompile.
+# createTeam → invite → kick through the storage-provider precompile.
 sc-team-drive PROVIDER_URL=PROVIDER_URL PROVIDER_SEED="//Alice" CLIENT_SEED="//Bob": papi-setup
     node --import tsx examples/papi/sc-team-drive.ts "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}" "{{ PROVIDER_SEED }}" "{{ CLIENT_SEED }}"
 
@@ -325,9 +325,9 @@ sc-team-drive PROVIDER_URL=PROVIDER_URL PROVIDER_SEED="//Alice" CLIENT_SEED="//B
 # e.g. `just photos build`, `just photos deploy`, `just photos flow`.
 mod photos 'user-interfaces/photos/photos.just'
 
-# Smart-contract token-gated demo: deploys TokenGatedDrive, mints an
-# NFT-shaped access token per S3 object through the s3-registry precompile,
-# transfers + burns + shuts down.
+# Smart-contract token-gated demo: deploys TokenGatedDrive, mints an access
+# token whose holder becomes a bucket Reader through the storage-provider
+# precompile, then transfers and burns it.
 sc-token-gated PROVIDER_URL=PROVIDER_URL PROVIDER_SEED="//Alice" CLIENT_SEED="//Bob": papi-setup
     node --import tsx examples/papi/sc-token-gated.ts "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}" "{{ PROVIDER_SEED }}" "{{ CLIENT_SEED }}"
 
