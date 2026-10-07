@@ -33,7 +33,7 @@ export default function ChallengeDialog({ open, onOpenChange, providers }: Chall
   const [chunkCount, setChunkCount] = useState<number | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  const bucketId = selectedBucket?.layer0BucketId ?? null;
+  const bucketId = selectedBucket?.bucketId ?? null;
   const leafCount = info?.leafCount ?? 0n;
   const maxLeaf = leafCount > 0n ? leafCount - 1n : 0n;
 
