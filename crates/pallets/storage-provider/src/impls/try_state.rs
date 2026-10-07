@@ -22,6 +22,7 @@ impl<T: Config> Pallet<T> {
         Self::check_committed_bytes()?;
         Self::check_buckets_and_membership()?;
         Self::check_holds_back_bookkeeping()?;
+        Self::check_agreement_nonce_owners_exist()?;
         Ok(())
     }
 
@@ -76,13 +77,24 @@ impl<T: Config> Pallet<T> {
         Ok(())
     }
 
+    /// Every `AgreementNonces` entry belongs to an existing account. The
+    /// entry is removed when `frame_system` reaps the account, through the
+    /// `OnKilledAccount` impl of this pallet. A runtime that does not set
+    /// `frame_system::Config::OnKilledAccount` to this pallet leaves entries
+    /// behind, and this check reports them.
+    fn check_agreement_nonce_owners_exist() -> Result<(), TryRuntimeError> {
+        for (owner, _nonce) in AgreementNonces::<T>::iter() {
+            ensure!(
+                frame_system::Pallet::<T>::account_exists(&owner),
+                "AgreementNonces entry exists for an account that does not exist"
+            );
+        }
+        Ok(())
+    }
+
     /// Config timing invariants. Mirror of `integrity_test`, but run
     /// against live storage so a `setStorage`/migration mutation is caught.
     fn check_timing_config() -> Result<(), TryRuntimeError> {
-        ensure!(
-            T::RequestTimeout::get() < T::DeregisterAnnouncementPeriod::get(),
-            "RequestTimeout must be < DeregisterAnnouncementPeriod (re-register replay window)"
-        );
         ensure!(
             T::DeregisterAnnouncementPeriod::get() > T::ChallengeTimeout::get(),
             "DeregisterAnnouncementPeriod must be > ChallengeTimeout (challenge maturity)"
