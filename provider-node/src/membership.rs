@@ -8,7 +8,7 @@ use provider_auth::{
 };
 use provider_chain::chain_connection::{self, ChainWatch};
 use provider_chain::{BlockEvent, BlockEventRx};
-use sp_core::crypto::AccountId32;
+use sp_core::crypto::{AccountId32, Ss58Codec};
 use std::sync::atomic::{AtomicBool, Ordering};
 use storage_primitives::BucketId;
 use storage_subxt::api::runtime_types::pallet_storage_provider::pallet::Member as RuntimeMember;
@@ -20,19 +20,24 @@ use tokio::sync::broadcast::error::TryRecvError;
 /// follow reconnects instead of pinning their own socket.
 pub struct ChainMembershipResolver {
     chain_rx: ChainWatch,
-    /// This node's provider account, for resolving whether it holds the
-    /// bucket as a replica (replicas serve reads to everyone). `None` (the
-    /// configured provider id is not an account) makes every bucket resolve
-    /// as not replica-held.
+    /// `provider_id` parsed to an account, for resolving whether this node
+    /// holds the bucket as a replica (replicas serve reads to everyone). A
+    /// provider id that is not an SS58 account (the chainless dev
+    /// placeholder) makes every bucket resolve as not replica-held.
     provider_account: Option<AccountId32>,
 }
 
 impl ChainMembershipResolver {
-    pub fn new(chain_rx: ChainWatch, provider_account: Option<AccountId32>) -> Self {
+    pub fn new(chain_rx: ChainWatch, provider_id: &str) -> Self {
         Self {
             chain_rx,
-            provider_account,
+            provider_account: AccountId32::from_ss58check(provider_id).ok(),
         }
+    }
+
+    /// This node's account, when `provider_id` was one.
+    pub fn provider_account(&self) -> Option<&AccountId32> {
+        self.provider_account.as_ref()
     }
 
     /// Resolved per lookup so reconnects are picked up.
@@ -227,7 +232,7 @@ mod tests {
         // Before the chain-state coordinator publishes a connection, auth
         // lookups must surface a retryable error rather than panic or hang.
         let (_tx, rx) = tokio::sync::watch::channel(None);
-        let resolver = ChainMembershipResolver::new(rx, None);
+        let resolver = ChainMembershipResolver::new(rx, "not-an-account");
         let err = resolver
             .fetch_access(1)
             .await

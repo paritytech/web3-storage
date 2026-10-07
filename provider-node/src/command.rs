@@ -19,7 +19,6 @@ use provider_chain::{
     chain_connection::{self, ChainHandle},
     BlockEvent, BlockEventRx, BlockEventTx, EVENT_CHANNEL_CAPACITY,
 };
-use sp_core::crypto::Ss58Codec;
 use std::net::SocketAddr;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -65,10 +64,6 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // The provider identity, resolved once: the sr25519 submission account
     // derived from the seed (whatever the signing scheme), else --provider-id.
-    // Parsed back to an account for the membership resolver (is this node a
-    // replica for the bucket?) and the authenticator's operator self-auth;
-    // both stay off when the id is not an SS58 account (the placeholder
-    // default).
     let seed = cli.key.load_seed()?;
     let provider_id = match &seed {
         Some(seed) => ProviderState::provider_id_from_seed(seed)?,
@@ -78,13 +73,16 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
             .clone()
             .unwrap_or_else(|| DEFAULT_PROVIDER_ID.to_string()),
     };
-    let provider_account = sp_core::crypto::AccountId32::from_ss58check(&provider_id).ok();
 
     // Membership-based auth over the chain's bucket member sets, resolved
     // through the shared watch connection. Subscribed here rather than after
     // the chain-state coordinator starts, so the cache cannot miss the
     // bootstrap `Resubscribed` the coordinator broadcasts on first connect.
-    let resolver = ChainMembershipResolver::new(chain_rx.clone(), provider_account.clone());
+    // The resolver parses the provider id into the node's account (replica
+    // lookups); the authenticator reuses it for operator self-auth. Both stay
+    // off when the id is not an SS58 account (the placeholder default).
+    let resolver = ChainMembershipResolver::new(chain_rx.clone(), &provider_id);
+    let provider_account = resolver.provider_account().cloned();
     // Incoherent, not unsafe - warn rather than clamp an explicit choice.
     if cli.auth.auth_max_stale <= cli.auth.auth_cache_ttl {
         tracing::warn!(
@@ -100,7 +98,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         .with_max_stale(Duration::from_secs(cli.auth.auth_max_stale))
         .with_max_entries(cli.auth.auth_cache_max_entries)
         .with_invalidations(BlockEventInvalidations::new(events_tx.subscribe()));
-    if let Some(account) = provider_account.clone() {
+    if let Some(account) = provider_account {
         authenticator = authenticator.with_provider_account(account);
     }
     let auth = Arc::new(authenticator);
