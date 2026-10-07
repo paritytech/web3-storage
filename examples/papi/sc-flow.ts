@@ -133,7 +133,7 @@ async function main() {
     //    account so the precompile can reserve the agreement payment.
     console.log("\n[4/6] buyStorage{value: 5 UNIT}(provider, terms[1KiB×50], sig)…");
     const contractAccount = h160ToSubstrate(deployed.addressBytes);
-    const signed = await negotiatePrecompileTerms(PROVIDER_URL, contractAccount, {
+    const signed = await negotiatePrecompileTerms(api, PROVIDER_URL, contractAccount, {
       maxBytes: MAX_BYTES,
       duration: DURATION,
       pricePerByte: PRICE_PER_BYTE,

@@ -5,10 +5,7 @@
 
 use super::{Pallet as StorageProvider, *};
 use frame_benchmarking::v2::*;
-use frame_support::{
-    pallet_prelude::*,
-    traits::{fungible::Mutate, Hooks},
-};
+use frame_support::{pallet_prelude::*, traits::fungible::Mutate};
 use frame_system::{Pallet as System, RawOrigin};
 use sp_core::H256;
 use sp_runtime::traits::{Bounded, SaturatedConversion};
@@ -89,13 +86,13 @@ fn setup_bucket<T: Config>(admin: &T::AccountId) -> BucketId {
         .expect("create_bucket_internal succeeds")
 }
 
-/// Build primary [`AgreementTerms`] suitable for a benchmark agreement.
+/// Build primary [`AgreementTerms`] suitable for a benchmark agreement, at
+/// the owner's next expected nonce.
 fn build_primary_terms<T: Config>(
     owner: &T::AccountId,
     bucket: BucketTarget,
     max_bytes: u64,
     duration: BlockNumberFor<T>,
-    nonce: u64,
 ) -> AgreementTermsOf<T> {
     AgreementTerms {
         owner: owner.clone(),
@@ -104,19 +101,19 @@ fn build_primary_terms<T: Config>(
         price_per_byte: 1u32.into(),
         valid_until: StorageProvider::<T>::current_anchor_block()
             .saturating_add(T::RequestTimeout::get()),
-        nonce,
+        nonce: AgreementNonces::<T>::get(owner),
         bucket,
         replica_params: None,
     }
 }
 
-/// Build replica [`AgreementTerms`] suitable for a benchmark agreement.
+/// Build replica [`AgreementTerms`] suitable for a benchmark agreement, at
+/// the owner's next expected nonce.
 fn build_replica_terms<T: Config>(
     owner: &T::AccountId,
     bucket_id: BucketId,
     max_bytes: u64,
     duration: BlockNumberFor<T>,
-    nonce: u64,
 ) -> AgreementTermsOf<T> {
     AgreementTerms {
         owner: owner.clone(),
@@ -125,7 +122,7 @@ fn build_replica_terms<T: Config>(
         price_per_byte: 1u32.into(),
         valid_until: StorageProvider::<T>::current_anchor_block()
             .saturating_add(T::RequestTimeout::get()),
-        nonce,
+        nonce: AgreementNonces::<T>::get(owner),
         bucket: BucketTarget::Existing(bucket_id),
         replica_params: Some(ReplicaTerms {
             sync_balance: funding::<T>() / 20u32.into(),
@@ -153,13 +150,7 @@ fn setup_primary_agreement<T: Config>(
     provider_index: u32,
 ) -> BucketId {
     let key = register_sr25519_key::<T>(provider, KEY_TYPE, provider_index);
-    let terms = build_primary_terms::<T>(
-        admin,
-        BucketTarget::New,
-        1_000_000u64,
-        100u32.into(),
-        provider_index as u64 + 1,
-    );
+    let terms = build_primary_terms::<T>(admin, BucketTarget::New, 1_000_000u64, 100u32.into());
     let sig = sign_terms::<T>(&key, &terms);
     Pallet::<T>::create_bucket_with_primary_internal(
         admin,
@@ -182,13 +173,7 @@ fn setup_replica_agreement<T: Config>(
     replica_index: u32,
 ) -> sp_core::sr25519::Public {
     let key = register_sr25519_key::<T>(replica, KEY_TYPE, replica_index);
-    let terms = build_replica_terms::<T>(
-        admin,
-        bucket_id,
-        1_000_000u64,
-        100u32.into(),
-        replica_index as u64 + 1,
-    );
+    let terms = build_replica_terms::<T>(admin, bucket_id, 1_000_000u64, 100u32.into());
     let sig = sign_terms::<T>(&key, &terms);
     Pallet::<T>::add_replica_provider_internal(admin, bucket_id, replica, terms, &sig)
         .expect("add_replica_provider_internal succeeds");
@@ -529,8 +514,8 @@ mod benchmarks {
         create_bucket(RawOrigin::Signed(admin), 1, Visibility::Private);
     }
 
-    /// Worst case: full signature verification + replay-window mutation +
-    /// bucket creation + agreement insertion.
+    /// Worst case: full signature verification + owner-nonce check and
+    /// increment + bucket creation + agreement insertion.
     #[benchmark]
     fn create_bucket_with_primary() {
         let admin = funded_account::<T>("admin", 0);
@@ -540,7 +525,7 @@ mod benchmarks {
         // verify_terms_signature can resolve a valid signer.
         let key = register_sr25519_key::<T>(&provider, KEY_TYPE, 0);
         let terms =
-            build_primary_terms::<T>(&admin, BucketTarget::New, 1_000_000u64, 100u32.into(), 1);
+            build_primary_terms::<T>(&admin, BucketTarget::New, 1_000_000u64, 100u32.into());
         let signature = sign_terms::<T>(&key, &terms);
 
         #[extrinsic_call]
@@ -553,8 +538,8 @@ mod benchmarks {
         );
     }
 
-    /// Worst case: full signature verification + replay-window mutation +
-    /// agreement insertion + push onto a primary set one below
+    /// Worst case: full signature verification + owner-nonce check and
+    /// increment + agreement insertion + push onto a primary set one below
     /// `MaxPrimaryProviders`.
     #[benchmark]
     fn add_primary_provider() {
@@ -577,7 +562,6 @@ mod benchmarks {
             BucketTarget::Existing(bucket_id),
             1_000_000u64,
             100u32.into(),
-            1,
         );
         let signature = sign_terms::<T>(&key, &terms);
 
@@ -591,8 +575,8 @@ mod benchmarks {
         );
     }
 
-    /// Worst case: replica signature verification + replay-window
-    /// mutation + agreement insertion on top of an existing bucket.
+    /// Worst case: replica signature verification + owner-nonce check
+    /// and increment + agreement insertion on top of an existing bucket.
     #[benchmark]
     fn add_replica_provider() {
         let admin = funded_account::<T>("admin", 0);
@@ -601,7 +585,7 @@ mod benchmarks {
 
         let replica = create_provider::<T>(1);
         let key = register_sr25519_key::<T>(&replica, KEY_TYPE, 1);
-        let terms = build_replica_terms::<T>(&admin, bucket_id, 1_000_000u64, 100u32.into(), 1);
+        let terms = build_replica_terms::<T>(&admin, bucket_id, 1_000_000u64, 100u32.into());
         let signature = sign_terms::<T>(&key, &terms);
 
         #[extrinsic_call]
@@ -1194,78 +1178,41 @@ mod benchmarks {
         );
     }
 
-    /// `on_initialize` slash sweep: drains and slashes every challenge expiring
-    /// at a single deadline key. Linear in the challenge count `c`; each entry
-    /// is drained, its pending counters decremented, and its provider slashed.
-    /// The upper bound is the effective per-block slash budget
-    /// `min(MaxChallengesPerDeadline, MAX_SWEEP_SLASH_BUDGET)` — the most the
-    /// sweep ever slashes for one key in a block — so the linear fit covers the
-    /// true worst case rather than extrapolating to it. The sweep applies this
-    /// per key, so a small fixed hook overhead is counted here and again in the
-    /// hook's base weight — conservative.
     #[benchmark]
-    fn on_initialize_slash_challenges(
-        c: Linear<
-            0,
-            {
-                let cap = T::MaxChallengesPerDeadline::get() as u32;
-                if cap < crate::pallet::MAX_SWEEP_SLASH_BUDGET {
-                    cap
-                } else {
-                    crate::pallet::MAX_SWEEP_SLASH_BUDGET
-                }
-            },
-        >,
-    ) {
+    fn resolve_expired_challenge() {
         let deadline: BlockNumberFor<T> = 200u32.into();
         let deposit: BalanceOf<T> = 100u32.into();
-        for i in 0..c {
-            // Distinct slashable provider (stake reserved) + challenger per
-            // challenge — the worst case (each touches a distinct `Providers`
-            // and pending-counter entry).
-            let provider = create_provider::<T>(i);
-            let challenger = funded_account::<T>("challenger", i);
-            // The slash releases the challenger's deposit, so hold it first.
-            let _ = StorageProvider::<T>::hold_challenge_deposit(&challenger, deposit);
-            let bucket_id: BucketId = i as u64;
-            let challenge = pallet::Challenge::<T> {
-                bucket_id,
-                provider: provider.clone(),
-                challenger,
-                mmr_root: H256::zero(),
-                start_seq: 0,
-                target: ChunkLocation {
-                    leaf_index: 0,
-                    chunk_index: 0,
-                },
-                deposit,
-                authorized: false,
-            };
-            Challenges::<T>::insert(deadline, i as u16, challenge);
-            PendingChallenges::<T>::insert(&provider, 1u32);
-            PendingChallengesByBucket::<T>::insert(bucket_id, &provider, 1u32);
-        }
-        NextChallengeIndex::<T>::insert(deadline, c as u16);
+        let provider = create_provider::<T>(0);
+        let challenger = funded_account::<T>("challenger", 0);
+        let _ = StorageProvider::<T>::hold_challenge_deposit(&challenger, deposit);
+        let bucket_id: BucketId = 0;
+        let challenge = pallet::Challenge::<T> {
+            bucket_id,
+            provider: provider.clone(),
+            challenger,
+            mmr_root: H256::zero(),
+            start_seq: 0,
+            target: ChunkLocation {
+                leaf_index: 0,
+                chunk_index: 0,
+            },
+            deposit,
+            authorized: false,
+        };
+        Challenges::<T>::insert(deadline, 0u16, challenge);
+        PendingChallenges::<T>::insert(&provider, 1u32);
+        PendingChallengesByBucket::<T>::insert(bucket_id, &provider, 1u32);
+        NextChallengeIndex::<T>::insert(deadline, 1u16);
+        let caller = funded_account::<T>("caller", 0);
+        set_block_number::<T>(deadline.saturating_add(1u32.into()));
 
-        // Drive the real sweep over exactly one key. Anchor the cursor one
-        // below `deadline`, then set the relay clock so the sweepable range
-        // (keys < previous relay parent) is exactly `{deadline}`:
-        // `sweepable = current_anchor_block() - 1 = deadline`, `end = deadline`.
-        LastSweptChallengeBlock::<T>::put(deadline.saturating_sub(1u32.into()));
-        let now = deadline.saturating_add(1u32.into());
-        set_block_number::<T>(now);
+        #[extrinsic_call]
+        resolve_expired_challenge(
+            RawOrigin::Signed(caller),
+            storage_primitives::ChallengeId { deadline, index: 0 },
+        );
 
-        #[block]
-        {
-            StorageProvider::<T>::on_initialize(now);
-        }
-
-        // Guard against the sweep silently no-op'ing (the bug this benchmark
-        // had while it still called the dropped `on_finalize`): every challenge
-        // at the deadline must have been drained. (At the worst-case component
-        // `c == MaxChallengesPerDeadline` the slash budget is exactly spent, so
-        // the cursor parks at `deadline - 1` and carries over — expected.)
-        assert_eq!(Challenges::<T>::iter_prefix(deadline).count(), 0);
+        assert!(Challenges::<T>::get(deadline, 0).is_none());
     }
 
     impl_benchmark_test_suite!(Pallet, crate::mock::new_test_ext(), crate::mock::Test);

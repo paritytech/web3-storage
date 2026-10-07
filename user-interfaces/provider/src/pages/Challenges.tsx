@@ -18,8 +18,10 @@ import {
   useChallenges,
   usePendingChallenges,
   respondToChallenge,
+  resolveExpiredChallenge,
 } from '@/state/provider.state'
 import { challengeKey } from '@/state/challengeKey'
+import type { TxStatus } from '@/lib/chain-client'
 import { useSelectedAccount } from '@/state/wallet.state'
 import { RequireProvider } from '@/components/RequireProvider'
 import { formatAddress, formatBlockNumber } from '@web3-storage/format'
@@ -42,14 +44,20 @@ function ChallengesContent() {
   const [respondingTo, setRespondingTo] = useState<{ key: string; step: string } | null>(null)
   const [respondError, setRespondError] = useState<{ key: string; message: string } | null>(null)
 
-  const handleRespond = async (challenge: typeof challenges[number]) => {
+  type RowChallenge = typeof challenges[number]
+
+  const runRowAction = async (
+    challenge: RowChallenge,
+    firstStep: string,
+    action: (onProgress: (status: TxStatus) => void) => Promise<void>,
+  ) => {
     if (!selectedAccount) return
 
     const key = challengeKey(challenge)
     setRespondError(null)
-    setRespondingTo({ key, step: 'Fetching proof...' })
+    setRespondingTo({ key, step: firstStep })
     try {
-      await respondToChallenge(challenge, selectedAccount, (status) => {
+      await action((status) => {
         if (status.type === 'signing') {
           setRespondingTo({ key, step: status.message.includes('Fetching') ? 'Fetching proof...' : 'Signing...' })
         } else if (status.type === 'broadcast') {
@@ -60,12 +68,20 @@ function ChallengesContent() {
       })
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error)
-      console.error('Failed to respond to challenge:', error)
+      console.error('Challenge action failed:', error)
       setRespondError({ key, message: msg })
     } finally {
       setRespondingTo(null)
     }
   }
+
+  const handleRespond = (challenge: RowChallenge) =>
+    runRowAction(challenge, 'Fetching proof...', (onProgress) =>
+      respondToChallenge(challenge, selectedAccount!, onProgress))
+
+  const handleResolve = (challenge: RowChallenge) =>
+    runRowAction(challenge, 'Signing...', (onProgress) =>
+      resolveExpiredChallenge(challenge, selectedAccount!, onProgress))
 
   const getStatusIcon = (status: string) => {
     switch (status) {
@@ -259,16 +275,22 @@ function ChallengesContent() {
                         <div className="flex items-center gap-2">
                           {getStatusIcon(challenge.status)}
                           <Badge variant={getStatusVariant(challenge.status)}>
-                            {challenge.status.charAt(0).toUpperCase() + challenge.status.slice(1)}
+                            {challenge.status === 'expired'
+                              ? 'Expired, unresolved'
+                              : challenge.status.charAt(0).toUpperCase() + challenge.status.slice(1)}
                           </Badge>
                         </div>
                       </TableCell>
                       <TableCell>
-                        {challenge.status === 'pending' ? (
+                        {challenge.status === 'pending' || challenge.status === 'expired' ? (
                           <div className="space-y-1">
                             <Button
                               size="sm"
-                              onClick={() => handleRespond(challenge)}
+                              onClick={() =>
+                                challenge.status === 'pending'
+                                  ? handleRespond(challenge)
+                                  : handleResolve(challenge)
+                              }
                               disabled={respondingTo !== null}
                             >
                               {respondingTo?.key === rowKey ? (
@@ -276,10 +298,17 @@ function ChallengesContent() {
                                   <Spinner size="sm" className="mr-2" />
                                   {respondingTo.step}
                                 </>
-                              ) : (
+                              ) : challenge.status === 'pending' ? (
                                 'Respond'
+                              ) : (
+                                'Resolve'
                               )}
                             </Button>
+                            {challenge.status === 'expired' && (
+                              <p className="text-xs text-gray-500 max-w-[200px]">
+                                Slashes your stake; unblocks deregistration.
+                              </p>
+                            )}
                             {respondError?.key === rowKey && respondingTo === null && (
                               <p className="text-xs text-red-400 max-w-[200px] truncate" title={respondError.message}>
                                 {respondError.message}
@@ -290,8 +319,6 @@ function ChallengesContent() {
                           <span className="text-green-400 text-sm">Defended</span>
                         ) : challenge.status === 'slashed' ? (
                           <span className="text-red-400 text-sm">Slashed</span>
-                        ) : challenge.status === 'expired' ? (
-                          <span className="text-gray-500 text-sm">Expired</span>
                         ) : null}
                       </TableCell>
                     </TableRow>

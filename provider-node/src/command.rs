@@ -3,6 +3,7 @@
 //! Node startup and runtime orchestration.
 
 use crate::{
+    chain_follower::SubxtChainFollower,
     chain_state_coordinator::ChainStateCoordinator,
     cli::{Cli, DEFAULT_PROVIDER_ID},
     create_router,
@@ -15,7 +16,7 @@ use crate::{
 use clap::Parser;
 use provider_auth::Authenticator;
 use provider_chain::{
-    chain_connection::{self, ChainHandle, ChainTransport},
+    chain_connection::{self, ChainHandle},
     BlockEvent, BlockEventRx, BlockEventTx, EVENT_CHANNEL_CAPACITY,
 };
 use sp_core::{crypto::Ss58Codec, Pair};
@@ -60,7 +61,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     let backend = cli.storage.spec();
     tracing::info!("Storage backend: {backend}");
-    let (storage, nonce_store) = backend.build()?;
+    let storage = backend.build()?;
 
     // The node's own provider account: the sr25519 submission account when a
     // seed is configured, else whatever --provider-id parses to. Feeds the
@@ -113,11 +114,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         cli.auth.auth_cache_max_entries
     );
 
-    let deps = ProviderDeps {
-        storage,
-        nonce_store,
-        auth,
-    };
+    let deps = ProviderDeps { storage, auth };
 
     // Resolve provider identity
     let state = match &seed {
@@ -169,8 +166,8 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let challenge_events = events_tx.subscribe();
 
     // Start optional background services (failures are non-fatal)
-    let _chain_state_handle =
-        start_chain_state_coordinator(transport, chain_tx, events_tx, state.clone());
+    let follower = Arc::new(SubxtChainFollower::new(transport, chain_tx));
+    let _chain_state_handle = start_chain_state_coordinator(follower, events_tx, state.clone());
     let _replica_sync_handle =
         start_replica_sync_coordinator(&cli, chain_client.as_ref(), replica_events, state.clone())
             .await;
@@ -215,8 +212,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
 /// retries with a backoff if the chain is unreachable, so `current_anchor_block`
 /// is populated as soon as the chain comes up.
 fn start_chain_state_coordinator(
-    transport: ChainTransport,
-    chain_tx: watch::Sender<Option<ChainHandle>>,
+    follower: Arc<dyn provider_coordinator::ChainFollower>,
     events_tx: BlockEventTx,
     state: Arc<ProviderState>,
 ) -> Option<ChainStateCoordinatorHandle> {
@@ -232,10 +228,9 @@ fn start_chain_state_coordinator(
     };
 
     let coordinator = ChainStateCoordinator::new(
-        transport,
+        follower,
         provider_account,
         state.chain_state.clone(),
-        chain_tx,
         events_tx,
     );
 

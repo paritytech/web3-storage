@@ -68,34 +68,24 @@ fn try_state_detects_member_index_gap() {
     });
 }
 
-/// P1.5: a challenge still pending at a deadline the sweep cursor claims to have
-/// passed is caught — it means the challenge was stranded unslashed.
+/// An `AgreementNonces` entry is legitimate while its owner exists, and is
+/// gone once the owner is reaped. An entry left behind for a missing account
+/// (a runtime without the `OnKilledAccount` hook) is caught.
 #[test]
-fn try_state_detects_challenge_below_sweep_cursor() {
+fn try_state_detects_agreement_nonce_of_missing_account() {
     new_test_ext().execute_with(|| {
+        register_provider(2, 200);
+        setup_agreement(2, 1, 100, 100);
+        assert_eq!(AgreementNonces::<Test>::get(1), 1);
         assert_ok!(StorageProvider::do_try_state());
 
-        let deadline = 100u64;
-        Challenges::<Test>::insert(
-            deadline,
-            0u16,
-            Challenge::<Test> {
-                bucket_id: 0,
-                provider: 2,
-                challenger: 1,
-                mmr_root: sp_core::H256::zero(),
-                start_seq: 0,
-                target: storage_primitives::ChunkLocation {
-                    leaf_index: 0,
-                    chunk_index: 0,
-                },
-                deposit: 0,
-                authorized: false,
-            },
-        );
-        // Cursor claims everything up to `deadline` is swept, yet a challenge is
-        // still pending there.
-        LastSweptChallengeBlock::<Test>::put(deadline);
+        // Reaping the owner removes the entry, so the invariant still holds.
+        reap(1);
+        assert!(!AgreementNonces::<Test>::contains_key(1));
+        assert_ok!(StorageProvider::do_try_state());
+
+        // An entry for an account that does not exist is caught.
+        AgreementNonces::<Test>::insert(1, 1);
         assert!(StorageProvider::do_try_state().is_err());
     });
 }

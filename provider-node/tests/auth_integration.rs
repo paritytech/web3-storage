@@ -77,10 +77,9 @@ impl AuthTestServer {
 
     async fn with_authenticator(authenticator: Authenticator) -> Self {
         // The 300s skew keeps the default the `*_expired_timestamp` tests assume.
-        let (storage, nonce_store, dir) = temp_rocksdb();
+        let (storage, dir) = temp_rocksdb();
         let deps = ProviderDeps {
             storage,
-            nonce_store,
             auth: Arc::new(authenticator),
         };
         let state = ProviderState::with_seed(deps, "//Alice").expect("//Alice is valid");

@@ -23,6 +23,7 @@ import {
   removeMember as removeMemberTx,
   requireOneEvent,
   signProviderRequest,
+  resolveExpiredChallenge as resolveExpiredChallengeTx,
   getBucketVisibility as getBucketVisibilityQuery,
   setBucketVisibility as setBucketVisibilityTx,
   setMember as setMemberTx,
@@ -170,7 +171,6 @@ export interface ChallengeSlashResult {
   challengeId: { deadline: number; index: number };
   provider: string;
   slashedAmount: bigint;
-  challengerReward: bigint;
   blockNumber: number;
   blockHash: string;
 }
@@ -550,12 +550,38 @@ export class S3Client {
     return dataSize === 0 ? 1 : Math.ceil(dataSize / chunkSize);
   }
 
-  async isChallengeActive(deadline: number): Promise<boolean> {
+  /** Slash the provider of a challenge that expired unanswered; anyone may call it. */
+  async resolveExpiredChallenge(
+    challengeId: { deadline: number; index: number },
+  ): Promise<ChallengeSlashResult> {
     const api = this.requireApi();
-    // Challenges is a StorageDoubleMap keyed by (deadline, index); an active
-    // deadline has at least one entry under its prefix.
-    const entries = await api.query.StorageProvider.Challenges.getEntries(deadline);
-    return entries.length > 0;
+    const result = await resolveExpiredChallengeTx(api, this.requireOwner(), challengeId, {
+      mode: "finalized",
+    });
+    if (result.type !== "finalized") {
+      throw new Error("resolve_expired_challenge did not finalize");
+    }
+    const slashed = requireOneEvent(
+      result.events,
+      api.event.StorageProvider.ChallengeSlashed,
+      "ChallengeSlashed",
+    );
+    return {
+      challengeId: { deadline: slashed.challenge_id.deadline, index: slashed.challenge_id.index },
+      provider: slashed.provider,
+      slashedAmount: slashed.slashed_amount,
+      blockNumber: result.block.number,
+      blockHash: result.block.hash,
+    };
+  }
+
+  async isChallengeActive(challengeId: { deadline: number; index: number }): Promise<boolean> {
+    const api = this.requireApi();
+    const entry = await api.query.StorageProvider.Challenges.getValue(
+      challengeId.deadline,
+      challengeId.index,
+    );
+    return entry !== undefined;
   }
 
   async getOpenChallenges(bucketId: bigint): Promise<OpenChallenge[]> {
@@ -628,7 +654,6 @@ export class S3Client {
               challengeId: { deadline: p.challenge_id.deadline, index: p.challenge_id.index },
               provider: p.provider,
               slashedAmount: p.slashed_amount,
-              challengerReward: p.challenger_reward,
               blockNumber: block.number,
               blockHash: block.hash,
             });
