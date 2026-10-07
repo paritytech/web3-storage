@@ -4,8 +4,9 @@
  * Drive State - file system orchestration over a DriveClient.
  *
  * Owns the DriveClient instance, syncing it with chain.state.ts (api) and
- * wallet.state.ts (signer). Holds drives/entries/selection state. Subscribes
- * to DriveRegistry events for real-time updates.
+ * wallet.state.ts (signer). Holds drives/entries/selection state. A drive is
+ * a Layer 0 bucket, identified by its bucket id. Subscribes to StorageProvider
+ * bucket and member events for real-time updates.
  */
 
 import { BehaviorSubject, combineLatest, distinctUntilChanged, Subscription } from "rxjs";
@@ -20,6 +21,7 @@ import {
   type SignedTerms,
   type Visibility,
 } from "@/lib/drive-client";
+import { isSameAddress } from "@web3-storage/sdk";
 import { api$$, getApi } from "@/state/chain.state";
 import { signer$$, keypair$$, signerAddress$$, getSignerAddress, refreshBalance } from "@/state/wallet.state";
 
@@ -31,7 +33,6 @@ export type CreationStage = "submitting" | "ready" | "failed";
 
 export interface CreationStatus {
   id: string;
-  name: string;
   stage: CreationStage;
   elapsedMs: number;
   error?: string;
@@ -39,11 +40,8 @@ export interface CreationStatus {
 }
 
 export interface CreateDriveInput {
-  name?: string;
   /** The provider the user picked. */
   provider: AvailableProvider;
-  /** Provider HTTP endpoint (parsed from its multiaddr). */
-  url: string;
   /** Terms already negotiated with the provider (`POST /negotiate`). */
   signed: SignedTerms;
   /** Read visibility of the underlying Layer 0 bucket (default Private). */
@@ -57,7 +55,9 @@ export type ViewMode = "list" | "grid";
 // ─────────────────────────────────────────────────────────────────────────────
 
 const STORAGE_VIEW_MODE = "drive-ui-view-mode";
-const STORAGE_SELECTED_DRIVE = "drive-ui-selected-drive";
+// Holds a bucket id. Renamed from "drive-ui-selected-drive" (which held a
+// drive-registry id) so old saved values are ignored.
+const STORAGE_SELECTED_BUCKET = "drive-ui-selected-bucket";
 const STORAGE_CURRENT_PATH = "drive-ui-current-path";
 
 function readViewMode(): ViewMode {
@@ -65,8 +65,8 @@ function readViewMode(): ViewMode {
   return v === "grid" ? "grid" : "list";
 }
 
-function readSelectedDriveId(): bigint | null {
-  const v = localStorage.getItem(STORAGE_SELECTED_DRIVE);
+function readSelectedBucketId(): bigint | null {
+  const v = localStorage.getItem(STORAGE_SELECTED_BUCKET);
   if (!v) return null;
   try {
     return BigInt(v);
@@ -115,14 +115,14 @@ const creations$ = new BehaviorSubject<CreationStatus[]>([]);
 const eventTick$ = new BehaviorSubject<number>(0);
 
 let uploadAbortController: AbortController | null = null;
-let pendingSelectedDriveId: bigint | null = readSelectedDriveId();
+let pendingSelectedBucketId: bigint | null = readSelectedBucketId();
 
-// Persist viewMode + currentPath + selected drive id
+// Persist viewMode + currentPath + selected bucket id
 viewMode$.subscribe((mode) => localStorage.setItem(STORAGE_VIEW_MODE, mode));
 currentPath$.subscribe((path) => localStorage.setItem(STORAGE_CURRENT_PATH, path));
 selectedDrive$.subscribe((d) => {
-  if (d) localStorage.setItem(STORAGE_SELECTED_DRIVE, d.driveId.toString());
-  else localStorage.removeItem(STORAGE_SELECTED_DRIVE);
+  if (d) localStorage.setItem(STORAGE_SELECTED_BUCKET, d.bucketId.toString());
+  else localStorage.removeItem(STORAGE_SELECTED_BUCKET);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -153,20 +153,19 @@ export async function refreshDrives(): Promise<void> {
     // Reconcile selected drive with refreshed list
     const sel = selectedDrive$.getValue();
     if (sel) {
-      const updated = list.find((d) => d.driveId === sel.driveId) ?? null;
-      if (updated && updated.name !== sel.name) {
-        selectedDrive$.next(updated);
-      } else if (!updated) {
+      // Keep the selected object while the bucket stays in the list; replacing
+      // it would re-run effects keyed on the selection (checkpoint refresh).
+      if (!list.some((d) => d.bucketId === sel.bucketId)) {
         selectedDrive$.next(null);
         entries$.next([]);
       }
-    } else if (pendingSelectedDriveId !== null) {
+    } else if (pendingSelectedBucketId !== null) {
       // Hydrate selection from localStorage on first successful refresh
-      const persisted = list.find((d) => d.driveId === pendingSelectedDriveId);
+      const persisted = list.find((d) => d.bucketId === pendingSelectedBucketId);
       if (persisted) {
         selectedDrive$.next(persisted);
       }
-      pendingSelectedDriveId = null;
+      pendingSelectedBucketId = null;
     }
 
     error$.next(null);
@@ -315,7 +314,6 @@ export function dismissCreation(id: string): void {
 
 interface RetryCtx {
   provider: AvailableProvider;
-  url: string;
   signed: SignedTerms;
   visibility?: Visibility;
 }
@@ -325,20 +323,16 @@ export function canRetryCreation(id: string): boolean {
   return retryCtx.has(id);
 }
 
-async function runChainSubmit(id: string, ctx: RetryCtx): Promise<DriveInfo | null> {
+/** Returns the new bucket id, or null when the submit failed. */
+async function runChainSubmit(id: string, ctx: RetryCtx): Promise<bigint | null> {
   updateCreation(id, { stage: "submitting", error: undefined });
+  let bucketId: bigint;
   try {
-    // Name lives on the creation record (keyed by id), not the retry context.
-    // Empty string is treated as "no name" by submitCreateDrive.
-    const name = creations$.getValue().find((c) => c.id === id)?.name || undefined;
-    const drive = await client.submitCreateDrive(name, ctx.provider.account, ctx.url, ctx.signed, ctx.visibility);
-    updateCreation(id, { stage: "ready", bucketId: drive.bucketId });
-    retryCtx.delete(id);
-    await refreshDrives();
-    const refreshed = drives$.getValue().find((d) => d.driveId === drive.driveId) ?? drive;
-    await selectDrive(refreshed);
-    await refreshBalance();
-    return refreshed;
+    ({ bucketId } = await client.submitCreateDrive(
+      ctx.provider.account,
+      ctx.signed,
+      ctx.visibility,
+    ));
   } catch (err) {
     updateCreation(id, {
       stage: "failed",
@@ -346,16 +340,29 @@ async function runChainSubmit(id: string, ctx: RetryCtx): Promise<DriveInfo | nu
     });
     return null;
   }
+  // The bucket exists from here on: a failed read below must not mark the
+  // creation failed or offer a retry that would create a second bucket.
+  retryCtx.delete(id);
+  updateCreation(id, { stage: "ready", bucketId });
+  try {
+    await refreshDrives();
+    const created =
+      drives$.getValue().find((d) => d.bucketId === bucketId) ?? (await client.getDrive(bucketId));
+    if (created) await selectDrive(created);
+    await refreshBalance();
+  } catch {
+    // The list refresh after an event or a reload shows the bucket.
+  }
+  return bucketId;
 }
 
-export async function createDrive(input: CreateDriveInput): Promise<DriveInfo | null> {
+export async function createDrive(input: CreateDriveInput): Promise<bigint | null> {
   if (!client.hasApi() || !client.hasSigner()) return null;
 
   const id = crypto.randomUUID();
   creations$.next([
     ...creations$.getValue(),
-    // Store the raw name; the "Untitled Drive" fallback is applied at render.
-    { id, name: input.name ?? "", stage: "submitting", elapsedMs: 0 },
+    { id, stage: "submitting", elapsedMs: 0 },
   ]);
 
   // Terms are negotiated by the caller; this only does the chain submit.
@@ -363,7 +370,6 @@ export async function createDrive(input: CreateDriveInput): Promise<DriveInfo | 
   // to the CreationStatus.
   const ctx: RetryCtx = {
     provider: input.provider,
-    url: input.url,
     signed: input.signed,
     visibility: input.visibility,
   };
@@ -375,15 +381,9 @@ export async function createDrive(input: CreateDriveInput): Promise<DriveInfo | 
  * Retry a failed on-chain submit using the cached signed terms. No-op if
  * the creation expired or never negotiated successfully.
  */
-export async function retryCreation(
-  id: string,
-  name?: string,
-): Promise<DriveInfo | null> {
+export async function retryCreation(id: string): Promise<bigint | null> {
   const ctx = retryCtx.get(id);
   if (!ctx) return null;
-  // Let the caller override the name on retry (e.g. from the current input).
-  // runChainSubmit reads the name back off the creation record.
-  if (name !== undefined) updateCreation(id, { name });
   return runChainSubmit(id, ctx);
 }
 
@@ -398,18 +398,6 @@ export async function queryMatchingProviders(query: QueryMatchingProvidersParams
     return client.queryMatchingProviders(query, limit);
 }
 
-
-export async function deleteDrive(driveId: bigint): Promise<void> {
-  if (!client.hasApi() || !client.hasSigner()) return;
-  await client.deleteDrive(driveId);
-  if (selectedDrive$.getValue()?.driveId === driveId) {
-    selectedDrive$.next(null);
-    entries$.next([]);
-    currentPath$.next("/");
-  }
-  await refreshDrives();
-  await refreshBalance();
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Members
@@ -441,11 +429,11 @@ export async function setBucketVisibility(bucketId: bigint, visibility: Visibili
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Real-time DriveRegistry event subscription
+// Real-time StorageProvider event subscription
 //
 // Subscribed once when the api becomes available; refreshes drives whenever
-// a DriveCreated / DriveDeleted event fires that affects the current signer
-// (or any drive currently being tracked).
+// a bucket or membership event fires that affects the current signer or a
+// bucket in the current list.
 // ─────────────────────────────────────────────────────────────────────────────
 
 let eventSub: Subscription | null = null;
@@ -456,29 +444,47 @@ function subscribeToDriveEvents(): void {
   const api = getApi();
   if (!api) return;
 
-  // React to events that involve the current signer's drives or any drive
-  // we're already tracking — otherwise ignore (e.g. another user's drive on
-  // a shared chain). Coalesce bursts of events into a single refresh via
-  // queueMicrotask so back-to-back events in one block don't trigger
-  // multiple list reads.
-  const handle = (driveId: bigint, owner: string): void => {
+  // React to events that name the current signer or a bucket already in the
+  // list; ignore the rest (other users' buckets on a shared chain). Events
+  // delivered in one `next` call share one list read via queueMicrotask.
+  let refreshQueued = false;
+  const handle = (bucketId: bigint, account?: string): void => {
     const ownAddr = getSignerAddress();
-    const tracked = new Set(drives$.getValue().map((d) => d.driveId));
-    if (owner !== ownAddr && !tracked.has(driveId)) return;
+    const tracked = drives$.getValue().some((d) => d.bucketId === bucketId);
+    const ownAccount = account !== undefined && ownAddr !== null && isSameAddress(account, ownAddr);
+    if (!tracked && !ownAccount) return;
     eventTick$.next(eventTick$.getValue() + 1);
-    queueMicrotask(() => refreshDrives().catch(() => {}));
+    if (refreshQueued) return;
+    refreshQueued = true;
+    queueMicrotask(() => {
+      refreshQueued = false;
+      refreshDrives().catch(() => {});
+    });
   };
 
+  const events = api.event.StorageProvider;
   eventSub = new Subscription();
   eventSub.add(
-    api.event.DriveRegistry.DriveCreated.watch().subscribe({
-      next: ({ events }) => events.forEach(({ payload }) => handle(payload.drive_id, payload.owner)),
+    events.BucketCreated.watch().subscribe({
+      next: ({ events }) => events.forEach(({ payload }) => handle(payload.bucket_id, payload.admin)),
       error: () => {},
     }),
   );
   eventSub.add(
-    api.event.DriveRegistry.DriveDeleted.watch().subscribe({
-      next: ({ events }) => events.forEach(({ payload }) => handle(payload.drive_id, payload.owner)),
+    events.MemberSet.watch().subscribe({
+      next: ({ events }) => events.forEach(({ payload }) => handle(payload.bucket_id, payload.member)),
+      error: () => {},
+    }),
+  );
+  eventSub.add(
+    events.MemberRemoved.watch().subscribe({
+      next: ({ events }) => events.forEach(({ payload }) => handle(payload.bucket_id, payload.member)),
+      error: () => {},
+    }),
+  );
+  eventSub.add(
+    events.BucketDeleted.watch().subscribe({
+      next: ({ events }) => events.forEach(({ payload }) => handle(payload.bucket_id)),
       error: () => {},
     }),
   );
@@ -511,7 +517,7 @@ combineLatest([api$$, signerAddress$$])
   });
 
 combineLatest([selectedDrive$, currentPath$])
-  .pipe(distinctUntilChanged((a, b) => a[0]?.driveId === b[0]?.driveId && a[1] === b[1]))
+  .pipe(distinctUntilChanged((a, b) => a[0]?.bucketId === b[0]?.bucketId && a[1] === b[1]))
   .subscribe(([drive]) => {
     if (drive && client.hasApi()) {
       refreshDirectory().catch(() => { /* swallow; error$ surfaces it */ });
