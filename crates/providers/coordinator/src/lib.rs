@@ -9,10 +9,8 @@
 //!   clock all on-chain durations use), read via its runtime API.
 //! - [`ChainState::constants`] — pallet constants fetched once on connect.
 //! - [`ChainState::provider_info`] — full provider registration info.
-//! - [`ChainState::nonce_counter`] — nonce counter bootstrapped from the
-//!   chain's replay window. `None` until the provider is registered.
 //!
-//! [`ChainStateCoordinator`] is the **only writer** for all four fields.  It
+//! [`ChainStateCoordinator`] is the **only writer** for all three fields.  It
 //! drives a finalized-block subscription on its own chain connection in a
 //! reconnect loop; on every relevant provider event it re-fetches the full
 //! `ProviderInfo` so `committed_bytes`, `stake`, and all settings stay
@@ -31,11 +29,10 @@ pub use chain::{
 
 use parking_lot::RwLock;
 use provider_events::{BlockEvent, BlockEventTx};
-use provider_storage::NonceStore;
 use provider_types::{ChainClientError, ProviderInfo};
 use sp_runtime::AccountId32;
 use std::future::Future;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::AtomicU32;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::task::JoinHandle;
@@ -86,9 +83,10 @@ async fn with_timeout<T>(
 ///
 /// Held behind `Arc` inside the provider node's `ProviderState` so the coordinator can hold
 /// its own handle without a back-reference to the whole node state.
+#[derive(Default)]
 pub struct ChainState {
     /// The pallet's anchor block — the clock all on-chain durations (timeouts,
-    /// `valid_until`, nonce age) are measured against — read via the
+    /// `valid_until`) are measured against — read via the
     /// `StorageProviderApi::current_anchor_block` runtime API at the latest
     /// finalized block. Whether that anchor is a relay, parachain, or other
     /// block number is the pallet's concern, not the provider's. `0` means not
@@ -101,159 +99,12 @@ pub struct ChainState {
     /// re-fetched (full) on every relevant provider event so `committed_bytes`,
     /// `stake`, and all settings stay current.
     pub provider_info: RwLock<Option<ProviderInfo>>,
-    /// Nonce counter bootstrapped from the chain's replay window. `None` until
-    /// the provider is registered and the replay state is available.
-    /// `/negotiate` returns 503 while `None`.
-    pub nonce_counter: RwLock<Option<Arc<NonceCounter>>>,
-    /// Persistence backing for the nonce counter, so the coordinator can seed
-    /// a restarted counter above the last issued nonce.
-    pub nonce_store: Arc<dyn NonceStore>,
-}
-
-impl ChainState {
-    /// Fresh chain state whose nonce counter persists through `store`.
-    pub fn with_nonce_store(store: Arc<dyn NonceStore>) -> Self {
-        Self {
-            current_anchor_block: AtomicU32::new(0),
-            constants: RwLock::new(None),
-            provider_info: RwLock::new(None),
-            nonce_counter: RwLock::new(None),
-            nonce_store: store,
-        }
-    }
 }
 
 /// Pallet constants that only change across runtime upgrades.
 pub struct PalletConstants {
     /// Chain-enforced validity window (in blocks) for provider-signed terms.
     pub request_timeout: u32,
-}
-
-// ── NonceCounter ──────────────────────────────────────────────────────────────
-
-/// Monotonic nonce counter for provider-signed terms.
-///
-/// Nonces are atomically allocated via [`Self::next`]. The chain-state
-/// coordinator aligns the counter with the chain's `ProviderReplayState.hsn + 1`
-/// (`hsn` = highest sequence nonce, the top of the chain's replay window) on
-/// connect and on every relevant provider event, so the counter resumes at
-/// `max(persisted_local, hsn + 1)`:
-///
-/// * **Local persistence** (disk mode): each allocation is persisted before
-///   returning, so a **clean process restart** does not reissue nonces that were
-///   signed but not yet redeemed. Power-loss/kernel-panic may lose the last write
-///   (the RocksDB WAL - write-ahead log - is not fsynced per allocation); in that
-///   case the counter falls back to `chain_hsn + 1`, which is still safe - the
-///   chain's replay window rejects any duplicate redemption.
-/// * **Chain alignment**: `bootstrap_from_hsn` advances the counter past any
-///   nonce the chain has already accepted, covering redemptions that happened
-///   while the node was down or while we weren't watching.
-///
-/// Gap-skipping is fine: unused nonces just expire from the replay window
-/// without effect. The on-chain replay window is authoritative and rejects
-/// any out-of-range reuse, so a missed nonce can never lead to a double
-/// redemption.
-///
-/// Until the first successful [`Self::bootstrap_from_hsn`] the counter has not
-/// been reconciled with the chain, so `/negotiate` must not sign with it; query
-/// [`Self::is_bootstrapped`] to gate that.
-pub struct NonceCounter {
-    counter: AtomicU64,
-    /// Set once the counter has been aligned with the chain's replay window.
-    bootstrapped: AtomicBool,
-    store: Arc<dyn NonceStore>,
-}
-
-impl std::fmt::Debug for NonceCounter {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("NonceCounter")
-            .field("counter", &self.counter)
-            .field("bootstrapped", &self.bootstrapped)
-            .finish()
-    }
-}
-
-impl NonceCounter {
-    /// Create a counter starting at `start` backed by `store` for persistence.
-    ///
-    /// Seed `start` from `store.load().unwrap_or(1)` (the persisted high-water
-    /// mark), then call `bootstrap_from_hsn` to advance past the chain's replay
-    /// head. The counter is *not* considered bootstrapped until then.
-    pub fn with_store(start: u64, store: Arc<dyn NonceStore>) -> Self {
-        Self {
-            counter: AtomicU64::new(start),
-            bootstrapped: AtomicBool::new(false),
-            store,
-        }
-    }
-
-    /// Whether the counter has been reconciled with the chain's replay window
-    /// at least once. `/negotiate` gates on this so it never signs a nonce
-    /// that was not derived from on-chain state.
-    pub fn is_bootstrapped(&self) -> bool {
-        self.bootstrapped.load(Ordering::SeqCst)
-    }
-
-    /// Advance the counter to at least `hsn + 1` and mark it bootstrapped.
-    /// Idempotent — only advances forward.
-    pub fn bootstrap_from_hsn(&self, hsn: u64) {
-        self.bootstrapped.store(true, Ordering::SeqCst);
-        let target = hsn.saturating_add(1);
-        // Standard CAS loop — bump only if our target is higher than
-        // whatever is already there.
-        let mut current = self.counter.load(Ordering::SeqCst);
-        while current < target {
-            match self.counter.compare_exchange_weak(
-                current,
-                target,
-                Ordering::SeqCst,
-                Ordering::SeqCst,
-            ) {
-                Ok(_) => break,
-                Err(observed) => current = observed,
-            }
-        }
-    }
-
-    /// Allocate the next nonce. Atomic: concurrent callers each get a distinct
-    /// value.
-    ///
-    /// The value *after* the increment (`nonce + 1`) is persisted as the new
-    /// high-water mark before the nonce is returned. This means the persisted
-    /// value always equals the next nonce that *will* be issued, so a counter
-    /// seeded with `store.load().unwrap_or(1)` on restart correctly resumes
-    /// above every nonce that was signed.
-    pub fn next(&self) -> u64 {
-        let nonce = self.counter.fetch_add(1, Ordering::SeqCst);
-        self.store.persist(nonce.saturating_add(1));
-        nonce
-    }
-}
-
-// ── provider lifecycle events ─────────────────────────────────────────────────
-
-/// Minimal decoded view of a `StorageProvider` provider-lifecycle event.
-///
-/// The coordinator re-fetches the full provider state on any relevant event,
-/// so only the affected provider account — and whether the event is a
-/// confirmed deregistration — needs decoding.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ProviderLifecycleEvent {
-    /// `ProviderRegistered`, `ProviderSettingsUpdated`,
-    /// `ProviderMultiaddrUpdated`, `DeregisterAnnounced`, or
-    /// `DeregisterCancelled`.
-    Updated { provider: AccountId32 },
-    /// Confirmed `ProviderDeregistered`.
-    Deregistered { provider: AccountId32 },
-}
-
-impl ProviderLifecycleEvent {
-    /// The provider account the event concerns.
-    pub fn provider(&self) -> &AccountId32 {
-        match self {
-            Self::Updated { provider } | Self::Deregistered { provider } => provider,
-        }
-    }
 }
 
 // ── ChainStateCoordinator ─────────────────────────────────────────────────────
@@ -368,8 +219,8 @@ impl ChainStateCoordinator {
             sync_constants(chain, &self.chain_state).await;
 
             // Bootstrap from any existing on-chain state so a restarted node that was
-            // already registered picks up its provider_info and nonce counter immediately
-            // rather than waiting for the next relevant event.
+            // already registered picks up its provider_info immediately rather than
+            // waiting for the next relevant event.
             refresh_provider_state(chain, &self.chain_state, &self.provider_account).await;
 
             Ok(())
@@ -415,28 +266,17 @@ impl ChainStateCoordinator {
                 let _ = self.events_tx.send(event);
             }
 
-            self.process_provider_events(chain, &contents.lifecycle, block.number)
-                .await;
+            refresh_if_relevant_event(
+                chain,
+                &self.chain_state,
+                &self.provider_account,
+                &contents.lifecycle,
+                block.number,
+            )
+            .await;
         }
 
         Ok(())
-    }
-
-    /// Refresh state if any of `parsed` is a relevant provider event.
-    async fn process_provider_events(
-        &self,
-        chain: &dyn ChainStateChainClient,
-        parsed: &[ProviderLifecycleEvent],
-        block_number: u32,
-    ) {
-        refresh_if_relevant_event(
-            chain,
-            &self.chain_state,
-            &self.provider_account,
-            parsed,
-            block_number,
-        )
-        .await;
     }
 }
 
@@ -462,17 +302,6 @@ pub async fn sync_constants(chain: &dyn ChainStateChainClient, chain_state: &Cha
 
 /// Re-fetch `ProviderInfo` from chain and update `chain_state`.
 ///
-/// **Nonce-counter lifecycle** (bootstrap-once / preserve / drop):
-/// - While registered, the counter is bootstrapped at most once. If the counter
-///   is already `Some` and bootstrapped, it is left completely untouched (and
-///   `fetch_replay_hsn` is not called) so that in-flight nonces are never
-///   reissued. If it is `None` or not yet bootstrapped, the replay head is
-///   fetched and a new counter is created.
-/// - `provider_info` is always refreshed when the provider is registered,
-///   regardless of whether the hsn fetch errors (counter left as-is).
-/// - When the provider is not (or no longer) registered, both `provider_info`
-///   and `nonce_counter` are cleared.
-///
 /// Called both on the initial connect (restart recovery) and on every relevant
 /// provider event.
 pub async fn refresh_provider_state(
@@ -482,111 +311,35 @@ pub async fn refresh_provider_state(
 ) {
     match chain.get_provider_info(provider_account).await {
         Ok(Some(info)) => {
-            // Check bootstrap status before taking any write lock.
-            let needs_bootstrap = chain_state
-                .nonce_counter
-                .read()
-                .as_ref()
-                .is_none_or(|c| !c.is_bootstrapped());
-
-            if needs_bootstrap {
-                match chain.fetch_replay_hsn(provider_account).await {
-                    Ok(hsn) => {
-                        // Seed from the locally-persisted high-water mark so a
-                        // restart resumes at max(persisted, hsn+1) rather than
-                        // resetting to hsn+1 (which would reissue un-redeemed nonces).
-                        let start = chain_state.nonce_store.load().unwrap_or(1);
-                        tracing::debug!(
-                            "chain-state coordinator: loaded nonce counter start from {}",
-                            start
-                        );
-                        let counter = Arc::new(NonceCounter::with_store(
-                            start,
-                            chain_state.nonce_store.clone(),
-                        ));
-                        if let Some(hsn) = hsn {
-                            counter.bootstrap_from_hsn(hsn);
-                            tracing::info!("chain-state coordinator: provider state synced");
-                        }
-                        // Registered but no replay state yet — transient view;
-                        // a later refresh will call bootstrap_from_hsn.
-                        *chain_state.nonce_counter.write() = Some(counter);
-                    }
-                    Err(e) => {
-                        tracing::debug!("chain-state coordinator: failed to fetch replay hsn: {e}");
-                        // Leave the counter as-is; info is still published below.
-                    }
-                }
-            }
-
             *chain_state.provider_info.write() = Some(info);
         }
         // Provider is not (or no longer) registered on chain.
         Ok(None) => {
             *chain_state.provider_info.write() = None;
-            *chain_state.nonce_counter.write() = None;
             tracing::debug!("chain-state coordinator: provider not registered on chain");
         }
         Err(e) => tracing::warn!("chain-state coordinator: failed to fetch provider info: {e}"),
     }
 }
 
-/// Refresh provider state iff at least one of `events` is relevant to
-/// `provider_account`. Collapsing multiple events in one block to a single
-/// refresh is correct: [`refresh_provider_state`] always reads the latest chain
-/// state, so no intermediate event is "missed".
+/// Refresh provider state iff `provider_account` is among the providers of a
+/// block's lifecycle events ([`BlockContents::lifecycle`]). Collapsing
+/// multiple events in one block to a single refresh is correct:
+/// [`refresh_provider_state`] always reads the latest chain state, so no
+/// intermediate event is "missed".
 pub async fn refresh_if_relevant_event(
     chain: &dyn ChainStateChainClient,
     chain_state: &ChainState,
     provider_account: &AccountId32,
-    events: &[ProviderLifecycleEvent],
+    event_providers: &[AccountId32],
     block_number: u32,
 ) {
-    let relevant = events
-        .iter()
-        .any(|e| is_relevant_provider_event(e, provider_account));
-
-    if relevant {
+    if event_providers.contains(provider_account) {
         tracing::debug!(
             "chain-state coordinator: provider event in block {block_number}, refreshing state"
         );
         refresh_provider_state(chain, chain_state, provider_account).await;
     }
-
-    // On a confirmed deregistration, clear the persisted nonce high-water mark so
-    // a later re-registration restarts the sequence from the chain's fresh replay
-    // head (hsn + 1) rather than the stale watermark.
-    //
-    // The reset is deliberate, not cosmetic, and is safe: every quote signed
-    // before deregistration has `valid_until <= sign_block + RequestTimeout`, and
-    // RequestTimeout < DeregisterAnnouncementPeriod, so all such quotes have
-    // already expired by the time `complete_deregister` is callable. No
-    // pre-deregister nonce can be replayed against the new incarnation, so the
-    // counter need not be held above the old watermark. (Keeping it would also be
-    // safe but would needlessly inflate nonces across a re-registration.)
-    //
-    // Gate strictly on a confirmed `ProviderDeregistered` event, not on a generic
-    // `Ok(None)` from `refresh_provider_state` (which also fires on
-    // reconnect/bootstrap and non-finalized reads). This preserves the watermark
-    // as a backstop on every path that is not a real deregistration.
-    let deregistered = events.iter().any(|e| {
-        matches!(e, ProviderLifecycleEvent::Deregistered { provider } if provider == provider_account)
-    });
-    if deregistered {
-        chain_state.nonce_store.reset();
-    }
-}
-
-/// Whether `event` is a provider lifecycle event for `provider_account` — i.e. one
-/// that should trigger a [`refresh_provider_state`]. Settings, multiaddr, and the
-/// (de)registration events all change state `/negotiate` depends on; everything
-/// else (checkpoints, challenges, agreements, other providers) is filtered out
-/// at parse time already.
-pub fn is_relevant_provider_event(
-    event: &ProviderLifecycleEvent,
-    provider_account: &AccountId32,
-) -> bool {
-    event.provider() == provider_account
 }
 
 // ── ChainStateCoordinatorHandle ───────────────────────────────────────────────
@@ -624,15 +377,8 @@ fn escalate_block_read_failure(events_tx: &BlockEventTx, block_number: u32) {
 mod tests {
     use super::*;
     use async_trait::async_trait;
-    use provider_storage::temp_rocksdb;
     use provider_types::{ProviderSettings, ProviderStats};
     use std::sync::atomic::{AtomicUsize, Ordering};
-
-    /// Chain state over a throwaway backend's nonce store.
-    fn test_chain_state() -> (ChainState, tempfile::TempDir) {
-        let (_storage, nonce_store, dir) = temp_rocksdb();
-        (ChainState::with_nonce_store(nonce_store), dir)
-    }
 
     fn provider_account() -> AccountId32 {
         AccountId32::new([7u8; 32])
@@ -674,23 +420,22 @@ mod tests {
 
     #[test]
     fn chain_state_defaults_to_unknown() {
-        let (cs, _dir) = test_chain_state();
+        let cs = ChainState::default();
         assert_eq!(cs.current_anchor_block.load(Ordering::Relaxed), 0);
         assert!(cs.constants.read().is_none());
         assert!(cs.provider_info.read().is_none());
-        assert!(cs.nonce_counter.read().is_none());
     }
 
     #[test]
     fn chain_state_current_anchor_block_round_trips() {
-        let (cs, _dir) = test_chain_state();
+        let cs = ChainState::default();
         cs.current_anchor_block.store(42, Ordering::Relaxed);
         assert_eq!(cs.current_anchor_block.load(Ordering::Relaxed), 42);
     }
 
     #[test]
     fn chain_state_provider_info_round_trips() {
-        let (cs, _dir) = test_chain_state();
+        let cs = ChainState::default();
         *cs.provider_info.write() = Some(sample_provider_info());
         let guard = cs.provider_info.read();
         let info = guard.as_ref().unwrap();
@@ -700,54 +445,13 @@ mod tests {
     }
 
     #[test]
-    fn chain_state_nonce_counter_round_trips() {
-        let (cs, _dir) = test_chain_state();
-        assert!(cs.nonce_counter.read().is_none());
-        let counter = Arc::new(NonceCounter::with_store(1, cs.nonce_store.clone()));
-        counter.bootstrap_from_hsn(5);
-        *cs.nonce_counter.write() = Some(counter);
-        assert!(cs.nonce_counter.read().is_some());
-    }
-
-    /// The hand-written `Debug` impl exists because `NonceCounter` holds an
-    /// `Arc<dyn NonceStore>`, which is not `Debug`; it must still show the two
-    /// fields that matter when a counter is logged.
-    #[test]
-    fn nonce_counter_debug_shows_counter_and_bootstrap_state() {
-        let (cs, _dir) = test_chain_state();
-        let counter = NonceCounter::with_store(7, cs.nonce_store.clone());
-
-        let before = format!("{counter:?}");
-        assert!(before.starts_with("NonceCounter"));
-        assert!(before.contains('7'), "current value missing: {before}");
-        assert!(before.contains("false"), "should not be bootstrapped");
-
-        counter.bootstrap_from_hsn(41);
-        let after = format!("{counter:?}");
-        assert!(after.contains("42"), "counter should be hsn + 1: {after}");
-        assert!(after.contains("true"), "should be bootstrapped: {after}");
-    }
-
-    #[test]
     fn chain_state_constants_round_trips() {
-        let (cs, _dir) = test_chain_state();
+        let cs = ChainState::default();
         assert!(cs.constants.read().is_none());
         *cs.constants.write() = Some(PalletConstants {
             request_timeout: 100,
         });
         assert_eq!(cs.constants.read().as_ref().unwrap().request_timeout, 100);
-    }
-
-    #[test]
-    fn lifecycle_event_relevance_matches_on_provider() {
-        let me = AccountId32::new([1u8; 32]);
-        let other = AccountId32::new([2u8; 32]);
-        let mine = ProviderLifecycleEvent::Updated {
-            provider: me.clone(),
-        };
-        let theirs = ProviderLifecycleEvent::Deregistered { provider: other };
-        assert!(is_relevant_provider_event(&mine, &me));
-        assert!(!is_relevant_provider_event(&theirs, &me));
     }
 
     #[tokio::test(start_paused = true)]
@@ -796,7 +500,6 @@ mod tests {
     #[derive(Default)]
     struct MockChainClient {
         provider_info: Option<ProviderInfo>,
-        replay_hsn: Option<u64>,
         request_timeout: Option<u32>,
     }
 
@@ -807,13 +510,6 @@ mod tests {
             _who: &AccountId32,
         ) -> Result<Option<ProviderInfo>, ChainClientError> {
             Ok(self.provider_info.clone())
-        }
-
-        async fn fetch_replay_hsn(
-            &self,
-            _who: &AccountId32,
-        ) -> Result<Option<u64>, ChainClientError> {
-            Ok(self.replay_hsn)
         }
 
         async fn fetch_request_timeout(&self) -> Result<Option<u32>, ChainClientError> {
@@ -860,7 +556,7 @@ mod tests {
         number: u32,
         anchor_block: Option<u32>,
         events: Vec<BlockEvent>,
-        lifecycle: Vec<ProviderLifecycleEvent>,
+        lifecycle: Vec<AccountId32>,
     ) -> FinalizedBlock {
         FinalizedBlock {
             number,
@@ -874,9 +570,8 @@ mod tests {
     async fn run_follow(
         client: MockChainClient,
         blocks: Vec<FinalizedBlock>,
-    ) -> (Arc<ChainState>, Vec<BlockEvent>, tempfile::TempDir) {
-        let (chain_state, dir) = test_chain_state();
-        let chain_state = Arc::new(chain_state);
+    ) -> (Arc<ChainState>, Vec<BlockEvent>) {
+        let chain_state = Arc::new(ChainState::default());
         let (events_tx, mut events_rx) = tokio::sync::broadcast::channel(64);
         let coordinator = ChainStateCoordinator::new(
             Arc::new(NeverConnectFollower),
@@ -897,7 +592,7 @@ mod tests {
         while let Ok(event) = events_rx.try_recv() {
             events.push(event);
         }
-        (chain_state, events, dir)
+        (chain_state, events)
     }
 
     #[tokio::test]
@@ -906,8 +601,6 @@ mod tests {
         let info = sample_provider_info();
         let client = MockChainClient {
             provider_info: Some(info.clone()),
-            // No replay state yet: exercises the un-bootstrapped nonce path.
-            replay_hsn: None,
             request_timeout: Some(100),
         };
         let blocks = vec![block(
@@ -919,12 +612,10 @@ mod tests {
                 bucket_id: 9,
                 provider: account.clone(),
             }],
-            vec![ProviderLifecycleEvent::Updated {
-                provider: account.clone(),
-            }],
+            vec![account.clone()],
         )];
 
-        let (chain_state, events, _dir) = run_follow(client, blocks).await;
+        let (chain_state, events) = run_follow(client, blocks).await;
 
         assert_eq!(
             chain_state.current_anchor_block.load(Ordering::Relaxed),
@@ -934,7 +625,6 @@ mod tests {
         let stored = stored.as_ref().expect("provider info synced from chain");
         assert_eq!(stored.stake, info.stake);
         assert!(chain_state.constants.read().is_some());
-        assert!(chain_state.nonce_counter.read().is_some());
 
         assert!(
             events
@@ -969,7 +659,7 @@ mod tests {
             vec![],
         )];
 
-        let (_chain_state, events, _dir) = run_follow(MockChainClient::default(), blocks).await;
+        let (_chain_state, events) = run_follow(MockChainClient::default(), blocks).await;
 
         let changed_buckets: Vec<_> = events
             .into_iter()
@@ -1003,7 +693,7 @@ mod tests {
             block(11, None, vec![challenge], vec![]),
         ];
 
-        let (chain_state, events, _dir) = run_follow(MockChainClient::default(), blocks).await;
+        let (chain_state, events) = run_follow(MockChainClient::default(), blocks).await;
 
         assert_eq!(
             chain_state.current_anchor_block.load(Ordering::Relaxed),
@@ -1031,7 +721,7 @@ mod tests {
             block(2, None, vec![], vec![]),
         ];
 
-        let (chain_state, _events, _dir) = run_follow(MockChainClient::default(), blocks).await;
+        let (chain_state, _events) = run_follow(MockChainClient::default(), blocks).await;
 
         assert_eq!(
             chain_state.current_anchor_block.load(Ordering::Relaxed),
@@ -1047,7 +737,7 @@ mod tests {
         let follower: Arc<dyn ChainFollower> = Arc::new(AlwaysFailFollower {
             attempts: attempts.clone(),
         });
-        let (chain_state, _dir) = test_chain_state();
+        let chain_state = ChainState::default();
         let coordinator = ChainStateCoordinator::new(
             follower,
             provider_account(),

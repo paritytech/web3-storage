@@ -242,33 +242,6 @@ impl ProviderClient {
     // Term Negotiation (off-chain)
     // ═════════════════════════════════════════════════════════════════════════
 
-    /// Read a provider's on-chain `ProviderReplayState.hsn`. Returns
-    /// `Ok(None)` if the provider has no replay state yet (never signed
-    /// any terms).
-    pub async fn fetch_replay_hsn(
-        chain_ws_url: &str,
-        provider: &AccountId32,
-    ) -> ClientResult<Option<u64>> {
-        let chain = SubstrateClient::connect(chain_ws_url).await?;
-        let at = chain.at_current_block().await?;
-        let value = at
-            .storage()
-            .try_fetch(
-                api::storage().storage_provider().provider_replay_states(),
-                (convert::to_subxt_account(provider),),
-            )
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to fetch replay state: {e}")))?;
-
-        let Some(value) = value else {
-            return Ok(None);
-        };
-        let window = value
-            .decode()
-            .map_err(|e| ClientError::Chain(format!("Failed to decode replay state: {e}")))?;
-        Ok(Some(window.hsn))
-    }
-
     /// Read the chain's `StorageProvider::RequestTimeout` runtime constant —
     /// the validity window (in blocks) applied to provider-signed terms.
     ///
@@ -295,8 +268,8 @@ impl ProviderClient {
 
     /// Negotiate provider-signed agreement terms over HTTP.
     ///
-    /// Owner posts the proposed shape; the provider node allocates nonce + validity window from
-    /// its own state, signs, returns a [`SignedTerms`](crate::agreement::SignedTerms) ready for
+    /// Owner posts the proposed shape and its next agreement nonce; the provider node sets the
+    /// validity window, signs, and returns a [`SignedTerms`](crate::agreement::SignedTerms) ready for
     /// [`AdminClient::create_bucket_with_primary`](crate::admin::AdminClient::create_bucket_with_primary).
     pub async fn negotiate_terms(
         provider_url: &str,

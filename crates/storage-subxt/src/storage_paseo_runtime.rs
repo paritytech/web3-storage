@@ -3470,9 +3470,9 @@ pub mod api {
             .hash();
         runtime_metadata_hash
             == [
-                194u8, 114u8, 5u8, 168u8, 233u8, 15u8, 35u8, 38u8, 179u8, 196u8, 149u8, 253u8,
-                36u8, 203u8, 60u8, 126u8, 117u8, 42u8, 206u8, 16u8, 80u8, 29u8, 99u8, 164u8, 14u8,
-                242u8, 76u8, 113u8, 46u8, 17u8, 186u8, 51u8,
+                210u8, 204u8, 23u8, 173u8, 164u8, 85u8, 168u8, 226u8, 100u8, 49u8, 221u8, 43u8,
+                115u8, 6u8, 230u8, 67u8, 81u8, 163u8, 139u8, 171u8, 27u8, 114u8, 229u8, 251u8,
+                173u8, 213u8, 28u8, 133u8, 107u8, 37u8, 51u8, 150u8,
             ]
     }
     pub mod system {
@@ -18172,22 +18172,26 @@ pub mod api {
                         ],
                     )
                 }
-                #[doc = " Per-provider sliding replay window over signed agreement-term nonces."]
-                #[doc = " See [`storage_primitives::ReplayWindow`] for the bit layout"]
-                pub fn provider_replay_states(
+                #[doc = " Next expected `AgreementTerms.nonce` for this owner. Redemption"]
+                #[doc = " requires an exact match and advances the counter by one, so a signed"]
+                #[doc = " quote is redeemable at most once."]
+                #[doc = " The entry is removed when the account is reaped (see the"]
+                #[doc = " `OnKilledAccount` impl for `Pallet`)."]
+                pub fn agreement_nonces(
                     &self,
                 ) -> ::subxt::storage::StaticAddress<
-                    (provider_replay_states::input::Param0,),
-                    provider_replay_states::Output,
+                    (agreement_nonces::input::Param0,),
+                    agreement_nonces::Output,
                     ::subxt::utils::Maybe,
                 > {
                     ::subxt::storage::StaticAddress::new_static(
                         "StorageProvider",
-                        "ProviderReplayStates",
+                        "AgreementNonces",
                         [
-                            44u8, 41u8, 174u8, 48u8, 206u8, 158u8, 63u8, 193u8, 100u8, 170u8, 1u8,
-                            174u8, 59u8, 51u8, 84u8, 255u8, 125u8, 66u8, 215u8, 232u8, 136u8, 24u8,
-                            84u8, 192u8, 120u8, 120u8, 16u8, 102u8, 117u8, 16u8, 224u8, 183u8,
+                            172u8, 248u8, 160u8, 155u8, 187u8, 78u8, 109u8, 224u8, 197u8, 106u8,
+                            249u8, 157u8, 246u8, 69u8, 53u8, 222u8, 255u8, 117u8, 117u8, 149u8,
+                            120u8, 251u8, 96u8, 8u8, 253u8, 184u8, 177u8, 205u8, 232u8, 120u8,
+                            117u8, 136u8,
                         ],
                     )
                 }
@@ -18370,15 +18374,14 @@ pub mod api {
                 }
                 pub type Output = runtime_types::pallet_storage_provider::pallet::ProviderInfo;
             }
-            pub mod provider_replay_states {
+            pub mod agreement_nonces {
                 use super::root_mod;
                 use super::runtime_types;
                 pub mod input {
                     use super::runtime_types;
                     pub type Param0 = ::subxt::utils::AccountId32;
                 }
-                pub type Output =
-                    runtime_types::storage_primitives::provider_replay_state::ReplayWindow;
+                pub type Output = ::core::primitive::u64;
             }
             pub mod next_bucket_id {
                 use super::root_mod;
@@ -26816,31 +26819,28 @@ pub mod api {
                     #[doc = "the provider-signed validity window cap enforced on-chain."]
                     TermsValidityTooLong,
                     #[codec(index = 66)]
-                    #[doc = "The terms' nonce has already been consumed inside the provider's"]
-                    #[doc = "replay window."]
-                    NonceAlreadyUsed,
+                    #[doc = "The terms' nonce does not match the owner's next expected"]
+                    #[doc = "[`AgreementNonces`] value. Read the current value and request a"]
+                    #[doc = "new quote with it."]
+                    NonceMismatch,
                     #[codec(index = 67)]
-                    #[doc = "The terms' nonce is older than the provider's replay window"]
-                    #[doc = "(distance from `hsn` ≥ [`storage_primitives::REPLAY_WINDOW_BITS`])."]
-                    NonceTooOld,
-                    #[codec(index = 68)]
                     #[doc = "The terms' declared owner does not match the extrinsic origin."]
                     TermsOwnerMismatch,
-                    #[codec(index = 69)]
+                    #[codec(index = 68)]
                     #[doc = "Replica terms missing from a signed quote redeemed as a replica"]
                     #[doc = "agreement."]
                     MissingReplicaTerms,
-                    #[codec(index = 70)]
+                    #[codec(index = 69)]
                     #[doc = "Replica terms present in a signed quote redeemed as a primary"]
                     #[doc = "agreement. Negotiate the quote without `replica_params`, or"]
                     #[doc = "redeem it with `add_replica_provider`."]
                     UnexpectedReplicaTerms,
-                    #[codec(index = 71)]
+                    #[codec(index = 70)]
                     #[doc = "The terms' `bucket` does not name the bucket the call targets:"]
                     #[doc = "`New` is redeemable only by the calls that create a bucket, and"]
                     #[doc = "`Existing(id)` only against bucket `id`."]
                     TermsBucketMismatch,
-                    #[codec(index = 72)]
+                    #[codec(index = 71)]
                     #[doc = "Storage agreement requested 0 byte"]
                     InvalidMaxBytesRequest,
                 }
@@ -31674,23 +31674,6 @@ pub mod api {
                     pub sync_balance: _0,
                     pub min_sync_interval: _1,
                     pub sync_price: _0,
-                }
-            }
-            pub mod provider_replay_state {
-                use super::runtime_types;
-                #[derive(
-                    :: subxt :: ext :: scale_decode :: DecodeAsType,
-                    :: subxt :: ext :: scale_encode :: EncodeAsType,
-                    Clone,
-                    Debug,
-                    Eq,
-                    PartialEq,
-                )]
-                #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
-                #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-                pub struct ReplayWindow {
-                    pub hsn: ::core::primitive::u64,
-                    pub bitmap: [::core::primitive::u8; 128usize],
                 }
             }
             #[derive(

@@ -3,7 +3,6 @@
 //! The chain interface the coordinator drives. It names no transport, so the
 //! node supplies the subxt implementation and tests supply mocks.
 
-use crate::ProviderLifecycleEvent;
 use async_trait::async_trait;
 use provider_events::BlockEvent;
 use provider_types::{ChainClientError, ProviderInfo};
@@ -36,10 +35,6 @@ pub trait ChainStateChainClient: Send + Sync {
         who: &AccountId32,
     ) -> Result<Option<ProviderInfo>, ChainClientError>;
 
-    /// Provider's replay-window head sequence (`hsn`), or `None` if no replay
-    /// state exists yet (the provider has never signed any terms).
-    async fn fetch_replay_hsn(&self, who: &AccountId32) -> Result<Option<u64>, ChainClientError>;
-
     /// `StorageProvider::RequestTimeout` runtime constant, or `None` if absent
     /// from the node's metadata.
     async fn fetch_request_timeout(&self) -> Result<Option<u32>, ChainClientError>;
@@ -68,6 +63,9 @@ pub struct FinalizedBlock {
 pub struct BlockContents {
     /// Events to forward to the other coordinators.
     pub events: Vec<BlockEvent>,
-    /// `StorageProvider` provider-lifecycle events.
-    pub lifecycle: Vec<ProviderLifecycleEvent>,
+    /// Provider accounts of the block's `StorageProvider` provider-lifecycle
+    /// events: `ProviderRegistered`, `ProviderSettingsUpdated`,
+    /// `ProviderMultiaddrUpdated`, `DeregisterAnnounced`,
+    /// `DeregisterCancelled` and `ProviderDeregistered`.
+    pub lifecycle: Vec<AccountId32>,
 }

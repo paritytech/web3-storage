@@ -780,8 +780,8 @@ impl ReplicaSyncChainClient for SubxtChainClient {
 type OnChainChallenge = storage_subxt::api::storage_provider::storage::challenges::Output;
 
 /// Query the pallet's `StorageProviderApi::current_anchor_block` runtime API —
-/// the block every on-chain duration (timeouts, expiries, `valid_until`, nonce
-/// age) is measured against. Reading it through the runtime API keeps the
+/// the block every on-chain duration (timeouts, expiries, `valid_until`) is
+/// measured against. Reading it through the runtime API keeps the
 /// provider agnostic to whether the anchor is a relay, parachain, or other
 /// block number: the pallet decides via its `BlockNumberProvider`.
 pub(crate) async fn fetch_current_anchor_block<C>(
