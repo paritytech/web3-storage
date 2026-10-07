@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 //! `pallet_revive` configuration: PolkaVM-based smart contracts with EVM
-//! compatibility, exposing the storage-provider and drive-registry pallets to
-//! Solidity contracts via custom precompiles.
+//! compatibility, exposing the storage-provider pallet to Solidity contracts
+//! via a custom precompile.
 
 use frame_support::{
     parameter_types,
@@ -39,11 +39,7 @@ impl pallet_revive::Config for Runtime {
     type DepositPerChildTrieItem = DepositPerChildTrieItem;
     type DepositPerByte = DepositPerByte;
     type WeightInfo = pallet_revive::weights::SubstrateWeight<Self>;
-    type Precompiles = (
-        pallet_storage_provider_precompile::StorageProviderPrecompile<Self>,
-        pallet_drive_registry_precompile::DriveRegistryPrecompile<Self>,
-        pallet_s3_registry_precompile::S3RegistryPrecompile<Self>,
-    );
+    type Precompiles = (pallet_storage_provider_precompile::StorageProviderPrecompile<Self>,);
     type AddressMapper = pallet_revive::AccountId32Mapper<Self>;
     type RuntimeMemory = ConstU32<{ 128 * 1024 * 1024 }>;
     type PVFMemory = ConstU32<{ 512 * 1024 * 1024 }>;

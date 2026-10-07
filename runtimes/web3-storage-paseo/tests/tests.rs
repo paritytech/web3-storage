@@ -5,8 +5,6 @@
 use frame_support::{
     assert_ok, dispatch::GetDispatchInfo, pallet_prelude::Hooks, traits::Currency,
 };
-use pallet_drive_registry::Call as DriveRegistryCall;
-use pallet_s3_registry::Call as S3RegistryCall;
 use pallet_storage_provider::Call as StorageProviderCall;
 use parachains_common::{AccountId, AuraId, Hash as PcHash, Signature as PcSignature};
 use parachains_runtimes_test_utils::{ExtBuilder, RuntimeHelper};
@@ -16,8 +14,8 @@ use sp_runtime::{transaction_validity, ApplyExtrinsicResult, BuildStorage};
 use storage_paseo_runtime::{
     paseo_constants::currency::UNIT, xcm_config::LocationToAccountId, AllPalletsWithoutSystem,
     Balance, Balances, Block, BlockNumber, Runtime, RuntimeCall, RuntimeEvent,
-    RuntimeGenesisConfig, RuntimeOrigin, S3Registry, SessionKeys, StorageProvider, System,
-    TxExtension, UncheckedExtrinsic, WeightToFee,
+    RuntimeGenesisConfig, RuntimeOrigin, SessionKeys, StorageProvider, System, TxExtension,
+    UncheckedExtrinsic, WeightToFee,
 };
 use storage_primitives::AgreementTerms;
 use xcm::latest::prelude::*;
@@ -804,7 +802,7 @@ fn should_fail_xcm_unpaid_execution_from_unauthorized_origin() {
 }
 
 // ===============================
-// Tests for the Drive registry pallet.
+// Tests for the bucket lifecycle.
 // ===============================
 
 /// Register `account` as a provider and configure it to accept primary
@@ -828,12 +826,11 @@ fn register_accepting_provider_for(account: Sr25519Keyring, stake: Balance) {
     ));
 }
 
-/// End-to-end drive lifecycle: provider setup → signed-terms create_drive →
-/// share with a member → unshare → delete drive. Walks the complete
-/// happy-path surface exposed by `pallet-drive-registry` so a single test
-/// can spot regressions across the whole flow.
+/// End-to-end bucket lifecycle: provider setup → signed-terms
+/// `create_bucket_with_primary` → add a member → remove the member. Drives
+/// and S3 buckets are plain buckets, so this is the flow both clients use.
 #[test]
-fn drive_lifecycle_e2e() {
+fn bucket_lifecycle_e2e() {
     new_test_ext().execute_with(|| {
         advance_block();
 
@@ -846,90 +843,95 @@ fn drive_lifecycle_e2e() {
         register_accepting_provider_for(provider, default_stake());
         let _ = Balances::deposit_creating(&owner_id, 10 * UNIT);
 
-        // 2. Owner redeems provider-signed terms to create the drive.
-        let drive_id = pallet_drive_registry::NextDriveId::<Runtime>::get();
+        // 2. Owner redeems provider-signed terms to create the bucket.
+        let bucket_id = pallet_storage_provider::NextBucketId::<Runtime>::get();
         let terms = primary_terms(owner_id.clone(), 1_000_000, 500);
         let sig = sign_primary_terms(provider, &terms);
 
         assert_ok_ok(construct_and_apply_extrinsic(
             Some(owner.pair()),
-            RuntimeCall::DriveRegistry(DriveRegistryCall::<Runtime>::create_drive {
-                name: Some(b"My Drive".to_vec()),
-                provider: provider.to_account_id(),
-                terms,
-                sig,
-                visibility: storage_primitives::Visibility::Private,
-            }),
+            RuntimeCall::StorageProvider(
+                StorageProviderCall::<Runtime>::create_bucket_with_primary {
+                    provider: provider.to_account_id(),
+                    terms,
+                    sig,
+                    visibility: storage_primitives::Visibility::Private,
+                },
+            ),
         ));
-
-        let drive =
-            pallet_drive_registry::Drives::<Runtime>::get(drive_id).expect("drive must be stored");
-        assert_eq!(drive.owner, owner_id);
-        assert_eq!(drive.max_capacity, 1_000_000);
-        assert!(pallet_drive_registry::UserDrives::<Runtime>::get(&owner_id).contains(&drive_id));
-        assert_eq!(
-            pallet_drive_registry::NextDriveId::<Runtime>::get(),
-            drive_id + 1
+        System::assert_has_event(RuntimeEvent::StorageProvider(
+            pallet_storage_provider::Event::BucketCreated {
+                bucket_id,
+                admin: owner_id.clone(),
+            },
+        ));
+        let agreement = pallet_storage_provider::StorageAgreements::<Runtime>::get(
+            bucket_id,
+            provider.to_account_id(),
+        )
+        .expect("primary agreement must be stored");
+        assert_eq!(agreement.max_bytes, 1_000_000);
+        assert!(
+            pallet_storage_provider::MemberBuckets::<Runtime>::get(&owner_id).contains(&bucket_id)
         );
 
-        // 3. Share with Charlie as Reader, then revoke.
+        // 3. Add Charlie as Reader, then remove him.
         assert_ok_ok(construct_and_apply_extrinsic(
             Some(owner.pair()),
-            RuntimeCall::DriveRegistry(DriveRegistryCall::<Runtime>::share_drive {
-                drive_id,
+            RuntimeCall::StorageProvider(StorageProviderCall::<Runtime>::set_member {
+                bucket_id,
                 member: member_id.clone(),
                 role: storage_primitives::Role::Reader,
             }),
         ));
-        System::assert_has_event(RuntimeEvent::DriveRegistry(
-            pallet_drive_registry::Event::DriveShared {
-                drive_id,
+        System::assert_has_event(RuntimeEvent::StorageProvider(
+            pallet_storage_provider::Event::MemberSet {
+                bucket_id,
                 member: member_id.clone(),
                 role: storage_primitives::Role::Reader,
             },
         ));
+        assert!(
+            pallet_storage_provider::MemberBuckets::<Runtime>::get(&member_id).contains(&bucket_id)
+        );
 
         assert_ok_ok(construct_and_apply_extrinsic(
             Some(owner.pair()),
-            RuntimeCall::DriveRegistry(DriveRegistryCall::<Runtime>::unshare_drive {
-                drive_id,
+            RuntimeCall::StorageProvider(StorageProviderCall::<Runtime>::remove_member {
+                bucket_id,
                 member: member_id.clone(),
             }),
         ));
-        System::assert_has_event(RuntimeEvent::DriveRegistry(
-            pallet_drive_registry::Event::DriveUnshared {
-                drive_id,
-                member: member_id,
+        System::assert_has_event(RuntimeEvent::StorageProvider(
+            pallet_storage_provider::Event::MemberRemoved {
+                bucket_id,
+                member: member_id.clone(),
             },
         ));
-
-        // 4. Delete the drive.
-        assert_ok_ok(construct_and_apply_extrinsic(
-            Some(owner.pair()),
-            RuntimeCall::DriveRegistry(DriveRegistryCall::<Runtime>::delete_drive { drive_id }),
-        ));
-        assert!(pallet_drive_registry::Drives::<Runtime>::get(drive_id).is_none());
-        assert!(!pallet_drive_registry::UserDrives::<Runtime>::get(&owner_id).contains(&drive_id));
+        assert!(
+            !pallet_storage_provider::MemberBuckets::<Runtime>::get(&member_id)
+                .contains(&bucket_id)
+        );
     });
 }
 
 // ===============================
-// Tests for the Drive registry pallet via XCM.
+// Tests for the bucket lifecycle via XCM.
 // ===============================
 
-/// End-to-end drive lifecycle dispatched via XCM from a sibling parachain:
+/// End-to-end bucket lifecycle dispatched via XCM from a sibling parachain:
 /// the call's `Signed` origin is the *derived sovereign* of the
 /// `(Parachain(N), AccountId32(Alice))` location, so the provider must sign
 /// terms with `terms.owner = derived` (not Alice's keyring account).
 #[test]
-fn drive_lifecycle_via_xcm_e2e() {
+fn bucket_lifecycle_via_xcm_e2e() {
     let alice_on_para = alice_on_sibling_parachain(4_000);
     let provider = Sr25519Keyring::Bob;
     let member_id: AccountId = Sr25519Keyring::Charlie.to_account_id();
 
     xcm_test_ext().execute_with(|| {
         // The dispatch origin is the sovereign `AccountId` derived from
-        // Alice-on-para; that's who the drive will belong to.
+        // Alice-on-para; that account becomes the bucket admin.
         let derived: AccountId =
             LocationToAccountHelper::<AccountId, LocationToAccountId>::convert_location(
                 alice_on_para.clone().into(),
@@ -940,207 +942,20 @@ fn drive_lifecycle_via_xcm_e2e() {
         register_accepting_provider_for(provider, default_stake());
         let _ = Balances::deposit_creating(&derived, 10 * UNIT);
 
-        let drive_id = pallet_drive_registry::NextDriveId::<Runtime>::get();
+        let bucket_id = pallet_storage_provider::NextBucketId::<Runtime>::get();
         let fee: Asset = (Location::parent(), UNIT).into();
 
         // 2. Provider signs terms for the derived sovereign + XCM dispatches.
         let terms = primary_terms(derived.clone(), 1_000_000, 500);
         let sig = sign_primary_terms(provider, &terms);
-        let create_drive_call =
-            RuntimeCall::DriveRegistry(DriveRegistryCall::<Runtime>::create_drive {
-                name: Some(b"Sibling Drive".to_vec()),
+        let create_call = RuntimeCall::StorageProvider(
+            StorageProviderCall::<Runtime>::create_bucket_with_primary {
                 provider: provider.to_account_id(),
                 terms,
                 sig,
                 visibility: storage_primitives::Visibility::Private,
-            });
-
-        assert_ok!(
-            RuntimeHelper::<Runtime, AllPalletsWithoutSystem>::execute_as_origin(
-                (alice_on_para.clone(), OriginKind::SovereignAccount),
-                create_drive_call,
-                Some(fee.clone()),
-            )
-            .ensure_complete()
-        );
-
-        let drive =
-            pallet_drive_registry::Drives::<Runtime>::get(drive_id).expect("drive must be stored");
-        assert_eq!(drive.owner, derived);
-        assert_eq!(drive.max_capacity, 1_000_000);
-        assert!(pallet_drive_registry::UserDrives::<Runtime>::get(&derived).contains(&drive_id));
-
-        // 3. Share with Charlie via XCM from the same origin.
-        let share_call = RuntimeCall::DriveRegistry(DriveRegistryCall::<Runtime>::share_drive {
-            drive_id,
-            member: member_id.clone(),
-            role: storage_primitives::Role::Reader,
-        });
-        assert_ok!(
-            RuntimeHelper::<Runtime, AllPalletsWithoutSystem>::execute_as_origin(
-                (alice_on_para.clone(), OriginKind::SovereignAccount),
-                share_call,
-                Some(fee.clone()),
-            )
-            .ensure_complete()
-        );
-        System::assert_has_event(RuntimeEvent::DriveRegistry(
-            pallet_drive_registry::Event::DriveShared {
-                drive_id,
-                member: member_id.clone(),
-                role: storage_primitives::Role::Reader,
             },
-        ));
-
-        // 4. Delete the drive via XCM.
-        let delete_call =
-            RuntimeCall::DriveRegistry(DriveRegistryCall::<Runtime>::delete_drive { drive_id });
-        assert_ok!(
-            RuntimeHelper::<Runtime, AllPalletsWithoutSystem>::execute_as_origin(
-                (alice_on_para, OriginKind::SovereignAccount),
-                delete_call,
-                Some(fee),
-            )
-            .ensure_complete()
         );
-        assert!(pallet_drive_registry::Drives::<Runtime>::get(drive_id).is_none());
-    });
-}
-
-// ===============================
-// Tests for the S3 registry pallet.
-// ===============================
-
-/// End-to-end S3 bucket lifecycle: provider setup → signed-terms
-/// `create_s3_bucket` → put object metadata → delete object → delete bucket.
-/// Combines the full happy-path object-store surface so a regression in any
-/// step is caught by a single test.
-#[test]
-fn s3_bucket_lifecycle_e2e() {
-    new_test_ext().execute_with(|| {
-        advance_block();
-
-        let provider = Sr25519Keyring::Bob;
-        let user = Sr25519Keyring::Alice;
-        let user_id: AccountId = user.to_account_id();
-
-        // 1. Provider setup.
-        register_accepting_provider_for(provider, default_stake());
-        let _ = Balances::deposit_creating(&user_id, 10 * UNIT);
-
-        // 2. Owner redeems provider-signed terms to create the S3 bucket.
-        let s3_bucket_id = pallet_s3_registry::NextS3BucketId::<Runtime>::get();
-        let terms = primary_terms(user_id.clone(), 1_000_000, 500);
-        let sig = sign_primary_terms(provider, &terms);
-        assert_ok_ok(construct_and_apply_extrinsic(
-            Some(user.pair()),
-            RuntimeCall::S3Registry(S3RegistryCall::<Runtime>::create_s3_bucket {
-                name: b"my-bucket".to_vec(),
-                provider: provider.to_account_id(),
-                terms,
-                sig,
-                visibility: storage_primitives::Visibility::Private,
-            }),
-        ));
-
-        let bucket = pallet_s3_registry::S3Buckets::<Runtime>::get(s3_bucket_id)
-            .expect("bucket must be stored");
-        assert_eq!(bucket.owner, user_id);
-        assert_eq!(bucket.name.as_slice(), b"my-bucket");
-        assert_eq!(bucket.object_count, 0);
-        assert!(pallet_s3_registry::UserBuckets::<Runtime>::get(&user_id).contains(&s3_bucket_id));
-        System::assert_has_event(RuntimeEvent::S3Registry(
-            pallet_s3_registry::Event::S3BucketCreated {
-                s3_bucket_id,
-                name: b"my-bucket".to_vec(),
-                layer0_bucket_id: bucket.layer0_bucket_id,
-                owner: user_id.clone(),
-            },
-        ));
-
-        // 3. Put an object, verify metadata + bucket stats updated.
-        let cid = sp_core::H256::repeat_byte(0xAB);
-        assert_ok_ok(construct_and_apply_extrinsic(
-            Some(user.pair()),
-            RuntimeCall::S3Registry(S3RegistryCall::<Runtime>::put_object_metadata {
-                s3_bucket_id,
-                key: b"photos/cat.jpg".to_vec(),
-                cid,
-                size: 1024,
-                content_type: b"image/jpeg".to_vec(),
-                user_metadata: vec![],
-            }),
-        ));
-        let bucket = pallet_s3_registry::S3Buckets::<Runtime>::get(s3_bucket_id).unwrap();
-        assert_eq!(bucket.object_count, 1);
-        assert_eq!(bucket.total_size, 1024);
-        let obj =
-            S3Registry::get_object(s3_bucket_id, b"photos/cat.jpg").expect("object must be stored");
-        assert_eq!(obj.cid, cid);
-        assert_eq!(obj.size, 1024);
-
-        // 4. Delete the object — bucket goes back to empty.
-        assert_ok_ok(construct_and_apply_extrinsic(
-            Some(user.pair()),
-            RuntimeCall::S3Registry(S3RegistryCall::<Runtime>::delete_object_metadata {
-                s3_bucket_id,
-                key: b"photos/cat.jpg".to_vec(),
-            }),
-        ));
-        let bucket = pallet_s3_registry::S3Buckets::<Runtime>::get(s3_bucket_id).unwrap();
-        assert_eq!(bucket.object_count, 0);
-        assert_eq!(bucket.total_size, 0);
-        assert!(S3Registry::get_object(s3_bucket_id, b"photos/cat.jpg").is_none());
-
-        // 5. Delete the empty bucket.
-        assert_ok_ok(construct_and_apply_extrinsic(
-            Some(user.pair()),
-            RuntimeCall::S3Registry(S3RegistryCall::<Runtime>::delete_s3_bucket { s3_bucket_id }),
-        ));
-        assert!(pallet_s3_registry::S3Buckets::<Runtime>::get(s3_bucket_id).is_none());
-        assert!(!pallet_s3_registry::UserBuckets::<Runtime>::get(&user_id).contains(&s3_bucket_id));
-    });
-}
-
-// ===============================
-// Tests for the S3 registry pallet via XCM.
-// ===============================
-
-/// End-to-end S3 bucket lifecycle dispatched via XCM from a sibling
-/// parachain: each call's `Signed` origin is the *derived sovereign* of
-/// `(Parachain(N), AccountId32(Alice))`, so the provider must sign terms
-/// with `terms.owner = derived` (not Alice's keyring account).
-#[test]
-fn s3_bucket_lifecycle_via_xcm_e2e() {
-    let alice_on_para = alice_on_sibling_parachain(5_000);
-    let provider = Sr25519Keyring::Bob;
-
-    xcm_test_ext().execute_with(|| {
-        // Derive the sovereign account that XCM dispatch will use as `Signed`.
-        let derived: AccountId =
-            LocationToAccountHelper::<AccountId, LocationToAccountId>::convert_location(
-                alice_on_para.clone().into(),
-            )
-            .expect("Alice-on-para must convert to an account");
-
-        // 1. Provider setup + fund the derived account for fees and storage.
-        register_accepting_provider_for(provider, default_stake());
-        let _ = Balances::deposit_creating(&derived, 10 * UNIT);
-
-        let s3_bucket_id = pallet_s3_registry::NextS3BucketId::<Runtime>::get();
-        let fee: Asset = (Location::parent(), UNIT).into();
-
-        // 2. Create the bucket: provider signs terms for `derived`, XCM
-        //    dispatches the call from `alice_on_para`.
-        let terms = primary_terms(derived.clone(), 1_000_000, 500);
-        let sig = sign_primary_terms(provider, &terms);
-        let create_call = RuntimeCall::S3Registry(S3RegistryCall::<Runtime>::create_s3_bucket {
-            name: b"sibling-bucket".to_vec(),
-            provider: provider.to_account_id(),
-            terms,
-            sig,
-            visibility: storage_primitives::Visibility::Private,
-        });
         assert_ok!(
             RuntimeHelper::<Runtime, AllPalletsWithoutSystem>::execute_as_origin(
                 (alice_on_para.clone(), OriginKind::SovereignAccount),
@@ -1149,66 +964,54 @@ fn s3_bucket_lifecycle_via_xcm_e2e() {
             )
             .ensure_complete()
         );
+        System::assert_has_event(RuntimeEvent::StorageProvider(
+            pallet_storage_provider::Event::BucketCreated {
+                bucket_id,
+                admin: derived.clone(),
+            },
+        ));
 
-        let bucket = pallet_s3_registry::S3Buckets::<Runtime>::get(s3_bucket_id)
-            .expect("bucket must be stored");
-        assert_eq!(bucket.owner, derived);
-        assert_eq!(bucket.name.as_slice(), b"sibling-bucket");
-        assert!(pallet_s3_registry::UserBuckets::<Runtime>::get(&derived).contains(&s3_bucket_id));
-
-        // 3. Put an object via XCM.
-        let cid = sp_core::H256::repeat_byte(0xAB);
-        let put_call = RuntimeCall::S3Registry(S3RegistryCall::<Runtime>::put_object_metadata {
-            s3_bucket_id,
-            key: b"photos/cat.jpg".to_vec(),
-            cid,
-            size: 1024,
-            content_type: b"image/jpeg".to_vec(),
-            user_metadata: vec![],
-        });
-        assert_ok!(
-            RuntimeHelper::<Runtime, AllPalletsWithoutSystem>::execute_as_origin(
-                (alice_on_para.clone(), OriginKind::SovereignAccount),
-                put_call,
-                Some(fee.clone()),
-            )
-            .ensure_complete()
-        );
-        assert_eq!(
-            S3Registry::get_object(s3_bucket_id, b"photos/cat.jpg")
-                .unwrap()
-                .cid,
-            cid
-        );
-
-        // 4. Delete the object via XCM.
-        let delete_obj_call =
-            RuntimeCall::S3Registry(S3RegistryCall::<Runtime>::delete_object_metadata {
-                s3_bucket_id,
-                key: b"photos/cat.jpg".to_vec(),
+        // 3. Add Charlie via XCM from the same origin.
+        let set_member_call =
+            RuntimeCall::StorageProvider(StorageProviderCall::<Runtime>::set_member {
+                bucket_id,
+                member: member_id.clone(),
+                role: storage_primitives::Role::Reader,
             });
         assert_ok!(
             RuntimeHelper::<Runtime, AllPalletsWithoutSystem>::execute_as_origin(
                 (alice_on_para.clone(), OriginKind::SovereignAccount),
-                delete_obj_call,
+                set_member_call,
                 Some(fee.clone()),
             )
             .ensure_complete()
         );
-        assert!(S3Registry::get_object(s3_bucket_id, b"photos/cat.jpg").is_none());
+        System::assert_has_event(RuntimeEvent::StorageProvider(
+            pallet_storage_provider::Event::MemberSet {
+                bucket_id,
+                member: member_id.clone(),
+                role: storage_primitives::Role::Reader,
+            },
+        ));
 
-        // 5. Delete the empty bucket via XCM.
-        let delete_bucket_call =
-            RuntimeCall::S3Registry(S3RegistryCall::<Runtime>::delete_s3_bucket { s3_bucket_id });
+        // 4. Remove Charlie via XCM.
+        let remove_member_call =
+            RuntimeCall::StorageProvider(StorageProviderCall::<Runtime>::remove_member {
+                bucket_id,
+                member: member_id.clone(),
+            });
         assert_ok!(
             RuntimeHelper::<Runtime, AllPalletsWithoutSystem>::execute_as_origin(
                 (alice_on_para, OriginKind::SovereignAccount),
-                delete_bucket_call,
+                remove_member_call,
                 Some(fee),
             )
             .ensure_complete()
         );
-        assert!(pallet_s3_registry::S3Buckets::<Runtime>::get(s3_bucket_id).is_none());
+        assert!(
+            !pallet_storage_provider::MemberBuckets::<Runtime>::get(&member_id)
+                .contains(&bucket_id)
+        );
     });
 }
 
