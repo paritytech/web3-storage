@@ -175,23 +175,36 @@ export async function downloadChunk(
   return base64ToBytes(downloaded.data);
 }
 
+/**
+ * `signer` authenticates the request — `GET /checkpoint-signature` is
+ * Reader-gated on private buckets (anonymous works only while the bucket is
+ * public), so pass the member fetching the signature.
+ */
 export async function fetchCheckpointSignature(
   providerUrl: string,
   bucketId: bigint | number,
+  signer?: ChainSigner,
 ): Promise<any> {
   return providerFetch(providerUrl, "/checkpoint-signature", {
     params: { bucket_id: bucketId },
+    sign: signer ? { signer: signer.signer, bucketId } : undefined,
   });
 }
 
 /**
  * Build the proof payload for `respond_to_challenge` by reading the challenge
  * from chain state and fetching MMR + chunk proofs from the provider node.
+ *
+ * `signer` authenticates the `GET /mmr_proof` step, which is Reader-gated on
+ * private buckets — a bucket member works, and so does the provider's own
+ * account (the node grants its own account every Reader check).
+ * `GET /chunk_proof` is hash-keyed (a capability read) and stays unsigned.
  */
 export async function fetchChallengeProof(
   api: ParachainApi,
   providerUrl: string,
   challengeId: { deadline: number; index: number },
+  signer?: ChainSigner,
 ): Promise<any> {
   // Best block: a finalized read would lag the just-created challenge.
   // Challenges is a StorageDoubleMap keyed by (deadline, index), so the single
@@ -214,6 +227,7 @@ export async function fetchChallengeProof(
       bucket_id: challenge.bucket_id,
       leaf_index: challenge.target.leaf_index,
     },
+    sign: signer ? { signer: signer.signer, bucketId: challenge.bucket_id } : undefined,
   });
   const chunk = await providerFetch(providerUrl, "/chunk_proof", {
     params: {

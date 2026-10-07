@@ -366,6 +366,37 @@ async function main() {
     },
   });
 
+  // ── Layer-0 read gates ────────────────────────────────────────────────────
+
+  tests.push({
+    name: "12.14 L0 bucket-bound reads are Reader-gated",
+    fn: async () => {
+      // Unsigned: refused on the (private) bucket.
+      assert.strictEqual(await statusOf("GET", `/commitment?bucket_id=${bucketId}`), 401);
+      assert.strictEqual(await statusOf("GET", `/mmr_peaks?bucket_id=${bucketId}`), 401);
+      // A Reader member passes the same gates.
+      assert.strictEqual(
+        await signedStatus(reader, "GET", `/commitment?bucket_id=${bucketId}`, bucketId),
+        200,
+      );
+      assert.strictEqual(
+        await signedStatus(reader, "GET", `/mmr_peaks?bucket_id=${bucketId}`, bucketId),
+        200,
+      );
+    },
+  });
+
+  tests.push({
+    name: "12.15 Hash-keyed L0 reads stay open (capability reads)",
+    fn: async () => {
+      // The chunk workflow 12.3 stored is fetchable by hash with no signature
+      // — possession of the hash is the capability; the enumeration surfaces
+      // that would reveal it are gated (12.14).
+      const { hash } = await putChunk(PROVIDER_URL, bucketId, "capability read probe", writer);
+      assert.strictEqual(await statusOf("GET", `/node?hash=${hash}`), 200);
+    },
+  });
+
   await runSuite("12 — Provider HTTP Auth", tests, { api, papi });
   papi.destroy();
 }

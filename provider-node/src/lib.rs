@@ -136,12 +136,19 @@ impl ProviderState {
         seed: &str,
         scheme: KeyScheme,
     ) -> Result<Self, String> {
-        let account = sr25519::Pair::from_string(seed, None)
-            .map_err(|e| format!("Failed to create keypair: {e:?}"))?;
-        let provider_id = account.public().to_ss58check();
+        let provider_id = Self::provider_id_from_seed(seed)?;
         let keypair = ProviderKeypair::from_seed(seed, scheme)?;
 
         Ok(Self::from_parts(deps, provider_id, Some(keypair)))
+    }
+
+    /// The provider id for `seed`: its sr25519 account, SS58-encoded. This is
+    /// the extrinsic-submission account the provider is keyed by on-chain,
+    /// whatever signing scheme the node runs with.
+    pub fn provider_id_from_seed(seed: &str) -> Result<String, String> {
+        let account = sr25519::Pair::from_string(seed, None)
+            .map_err(|e| format!("Failed to create keypair: {e:?}"))?;
+        Ok(account.public().to_ss58check())
     }
 
     /// Restrict the browser origins allowed via CORS. `None` (the default) keeps
@@ -235,9 +242,9 @@ mod tests {
         let (storage, dir) = temp_rocksdb();
         let deps = ProviderDeps {
             storage,
-            auth: Arc::new(Authenticator::new(provider_auth::StaticMembershipResolver(
-                vec![],
-            ))),
+            auth: Arc::new(Authenticator::new(
+                provider_auth::StaticMembershipResolver::private(vec![]),
+            )),
         };
         (deps, dir)
     }

@@ -4,13 +4,14 @@
 | --- | --- |
 | **Authors** | eskimor |
 | **Status** | Draft |
-| **Version** | 2.5 |
+| **Version** | 2.6 |
 | **Related** | [Implementation Details](./scalable-web3-storage-implementation.md), [Proof-of-DOT Infrastructure Strategy](https://docs.google.com/document/d/1fNv75FCEBFkFoG__s_Xu10UZd0QsGIE9AKnrouzz-U8/) |
 
 ## Version History
 
 | Version | Changes |
 |---------|---------|
+| 2.6 | Layer-0 read access spelled out: bucket-bound reads gate at Reader on primaries; hash-keyed lookups (`/node`, `/read`, `/chunk_proof`, `/fetch_nodes`) are **capability reads** — possession of the hash grants the bytes, with the enumeration surfaces gated; operator self-read allowance. **Read**: "Read access at Layer 0" under Bucket Visibility & Access. |
 | 2.5 | Challenge resolution and slashing are lazy: an unanswered challenge is slashed by the permissionless `resolve_expired_challenge` call (no per-block sweep). A timeout is the only slash reason. **Read**: "The Challenge Game", Resolution; `resolve_expired_challenge` in [Implementation Details](./scalable-web3-storage-implementation.md). |
 | 2.4 | Bucket creation and provider assignment are separate on-chain operations: `create_bucket`, `create_bucket_with_primary`, `add_primary_provider`, `add_replica_provider`. Provider-signed quotes name the bucket they are for. A bucket remains after its last agreement ends and can get new providers later; the client moves the data when a provider is added. **Read**: "Buckets: Stable Identity in a Fluid Provider Market"; "Two Classes of Providers"; "Provider Lifecycle in Bucket" in [Implementation Details](./scalable-web3-storage-implementation.md) for the four calls. |
 | 2.3 | Private buckets clarified (visibility flag, Reader role, primary challenges gated to members + primary-agreement owners, tier-split challenge stats). **Read**: new "Bucket Visibility & Access" section; "The Challenge Game". |
@@ -436,6 +437,35 @@ publicly, forever. Strangers cannot trigger that—private-bucket primary
 challenges are restricted to members and primary-agreement owners (see
 [The Challenge Game](#the-challenge-game))—but a member challenging leaks the
 chunk by choice. Encryption makes the leak worthless.
+
+#### Read access at Layer 0
+
+The visibility rule — "primaries serve reads only to members" — names the
+surfaces it can bind to. A primary's **bucket-bound reads** — the MMR shape (`/mmr_peaks`), commitments and checkpoint signatures,
+per-leaf proofs, existence probes, per-bucket listings — take a bucket id and
+gate at Reader: members only when `private`, anyone when `public`. The
+**hash-keyed lookups** (`GET /node`, `GET /read`, `GET /chunk_proof`,
+`POST /fetch_nodes`) carry no bucket at all: the store is one
+content-addressed namespace, deduplicated across buckets, so a node can belong
+to several buckets at once and "which bucket is asking" has no well-defined
+answer. These are **capability reads** — possession of a blake2-256 hash *is*
+the read capability, the way possession of an unguessable URL is.
+
+Hashes of private content are unguessable, and every surface that would
+*reveal* them — walking the MMR from its peaks, listing a node's buckets — is
+gated. The accepted limits: anyone a hash was ever shared with keeps byte
+access for as long as the data is hosted (revocation means re-encrypting),
+and an on-chain challenge response publishes a chunk plus its sibling hashes,
+opening that subtree. Binding hash-keyed reads to buckets would mean per-node
+ownership indexes over a deduplicated store; take that on only if capability
+semantics prove too weak in practice.
+
+Two serving allowances follow from roles, not membership: a **replica** serves
+every read to everyone (the rule above — visibility binds primaries only), and
+a provider's **own account** passes any Reader check on its own node — the
+operator already has the disk, and provider accounts are never members, so its
+tooling (fetching its own proofs to answer a challenge) has no other identity.
+Neither grants writes.
 
 **Freeloading is hardened a bit for private buckets.** Provider
 accounts are not members, so on a private bucket a freeloader's only honest

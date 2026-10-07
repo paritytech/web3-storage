@@ -189,7 +189,7 @@ async function main() {
       leafIndex: upload.commit.leaf_indices[0],
       providerSignature: upload.commit.provider_signature,
     });
-    const proof = await fetchChallengeProof(api, PROVIDER_URL, offchainId);
+    const proof = await fetchChallengeProof(api, PROVIDER_URL, offchainId, provider);
     await respondToChallenge(api, provider, offchainId, proof);
     console.log("  ChallengeDefended ✓");
 
