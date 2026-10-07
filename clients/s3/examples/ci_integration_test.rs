@@ -7,17 +7,18 @@
 //!
 //! It tests the full S3 workflow:
 //! 1. Negotiate signed agreement terms with the provider
-//! 2. Create an S3 bucket (atomically opens Layer 0 bucket + primary agreement)
+//! 2. Create an S3 bucket (a Layer 0 bucket with one primary agreement)
 //! 3. Upload objects with metadata
 //! 4. Download and verify objects
-//! 5. Copy objects
-//! 6. Delete objects and bucket
+//! 5. List objects
+//! 6. Read object metadata
+//! 7. Delete objects
 //!
 //! Object operations go directly through the provider's S3 HTTP API.
 //!
 //! Usage: cargo run --example ci_integration_test [chain_ws] [provider_url]
 
-use s3_client::{PutObjectOptions, S3Client, Signer};
+use s3_client::{ListObjectsParams, PutObjectOptions, S3Client, Signer};
 use sp_runtime::AccountId32;
 use std::collections::HashMap;
 use std::env;
@@ -60,7 +61,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let signed = ProviderClient::negotiate_terms(
         provider_url,
         &NegotiateRequest {
-            owner,
+            owner: owner.clone(),
             max_bytes: 1_000_000_000, // 1 GB
             duration: 500,            // 500 blocks
             price_per_byte: 1,
@@ -77,24 +78,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Step 3: Create an S3 bucket
     println!();
     println!("Step 3: Creating S3 bucket...");
-    let bucket_name = format!(
-        "ci-test-{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)?
-            .as_secs()
-    );
-    let bucket = client
+    let bucket_id = client
         .create_bucket(
-            &bucket_name,
             provider,
             signed.terms,
             signed.signature,
-            storage_client::Visibility::Private,
+            s3_client::Visibility::Private,
         )
         .await?;
-    println!("  Bucket created: {bucket_name}");
-    println!("  S3 Bucket ID: {}", bucket.s3_bucket_id);
-    println!("  Layer 0 Bucket ID: {}", bucket.layer0_bucket_id);
+    println!("  Bucket created: {bucket_id}");
+
+    let bucket = client.head_bucket(bucket_id).await?;
+    assert!(
+        bucket.members.iter().any(|m| m.account == owner),
+        "Signer must be a member of the new bucket"
+    );
+    let listed = client.list_buckets(None).await?;
+    assert!(
+        listed.iter().any(|b| b.bucket_id == bucket_id),
+        "New bucket must be in the signer's bucket list"
+    );
 
     // Step 4: Upload objects
     println!();
@@ -102,10 +105,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let content_1 = b"Hello from S3 CI integration test!";
     let mut metadata_1 = HashMap::new();
-    metadata_1.insert("x-test-key".to_string(), "test-value".to_string());
+    metadata_1.insert("test-key".to_string(), "test-value".to_string());
     let put_result_1 = client
         .put_object(
-            &bucket_name,
+            bucket_id,
             "hello.txt",
             content_1,
             PutObjectOptions {
@@ -122,7 +125,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let content_2 = b"This is a binary-like payload for testing.";
     let put_result_2 = client
         .put_object(
-            &bucket_name,
+            bucket_id,
             "data/payload.bin",
             content_2,
             PutObjectOptions {
@@ -140,7 +143,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!();
     println!("Step 5: Downloading and verifying objects...");
 
-    let get_result_1 = client.get_object(&bucket_name, "hello.txt").await?;
+    let get_result_1 = client.get_object(bucket_id, "hello.txt").await?;
     println!(
         "  Downloaded hello.txt ({} bytes, content_type={})",
         get_result_1.size, get_result_1.content_type
@@ -150,9 +153,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         content_1,
         "Content mismatch for hello.txt"
     );
+    assert_eq!(get_result_1.content_type, "text/plain");
+    assert_eq!(
+        get_result_1.metadata.get("test-key").map(String::as_str),
+        Some("test-value"),
+        "User metadata mismatch for hello.txt"
+    );
     println!("    Content verified!");
 
-    let get_result_2 = client.get_object(&bucket_name, "data/payload.bin").await?;
+    let get_result_2 = client.get_object(bucket_id, "data/payload.bin").await?;
     println!(
         "  Downloaded data/payload.bin ({} bytes, content_type={})",
         get_result_2.size, get_result_2.content_type
@@ -164,63 +173,53 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     println!("    Content verified!");
 
-    // Step 6: Copy object
+    // Step 6: List objects
     println!();
-    println!("Step 6: Copying object...");
-    let copy_result = client
-        .copy_object(&bucket_name, "hello.txt", &bucket_name, "hello-copy.txt")
+    println!("Step 6: Listing objects...");
+    let listing = client
+        .list_objects_v2(bucket_id, ListObjectsParams::default())
         .await?;
-    println!(
-        "  Copied hello.txt -> hello-copy.txt (etag={})",
-        copy_result.etag
-    );
-
-    let copied = client.get_object(&bucket_name, "hello-copy.txt").await?;
-    assert_eq!(
-        copied.data.as_slice(),
-        content_1,
-        "Content mismatch for copied object"
-    );
-    println!("    Copy content verified!");
+    let keys: Vec<&str> = listing.contents.iter().map(|o| o.key.as_str()).collect();
+    println!("  Keys: {keys:?}");
+    assert_eq!(keys, vec!["data/payload.bin", "hello.txt"]);
 
     // Step 7: Head object
     println!();
     println!("Step 7: Checking object metadata...");
-    let head = client.get_object(&bucket_name, "hello.txt").await?;
+    let head = client.head_object(bucket_id, "hello.txt").await?;
     println!("  hello.txt metadata:");
     println!("    Content-Type: {}", head.content_type);
     println!("    Size: {}", head.size);
     println!("    ETag: {}", head.etag);
+    assert_eq!(head.size, content_1.len() as u64);
+    assert_eq!(head.cid, put_result_1.cid);
 
-    // Step 8: Delete objects and bucket
+    // Step 8: Delete objects
     println!();
-    println!("Step 8: Cleaning up...");
+    println!("Step 8: Deleting objects...");
 
-    client.delete_object(&bucket_name, "hello.txt").await?;
+    client.delete_object(bucket_id, "hello.txt").await?;
     println!("  Deleted hello.txt");
 
-    client
-        .delete_object(&bucket_name, "data/payload.bin")
-        .await?;
+    client.delete_object(bucket_id, "data/payload.bin").await?;
     println!("  Deleted data/payload.bin");
 
-    client.delete_object(&bucket_name, "hello-copy.txt").await?;
-    println!("  Deleted hello-copy.txt");
-
-    client.delete_bucket(&bucket_name).await?;
-    println!("  Deleted bucket: {bucket_name}");
+    let listing = client
+        .list_objects_v2(bucket_id, ListObjectsParams::default())
+        .await?;
+    assert!(listing.contents.is_empty(), "Bucket index must be empty");
 
     // Summary
     println!();
     println!("=== PASSED: All S3 tests completed successfully! ===");
     println!();
     println!("Summary:");
-    println!("  - Created S3 bucket ({bucket_name})");
+    println!("  - Created S3 bucket ({bucket_id})");
     println!("  - Uploaded 2 objects via provider HTTP API");
     println!("  - Downloaded and verified 2 objects");
-    println!("  - Copied and verified 1 object");
+    println!("  - Listed objects");
     println!("  - Checked object metadata via HEAD");
-    println!("  - Cleaned up all objects and bucket");
+    println!("  - Deleted all objects");
 
     Ok(())
 }

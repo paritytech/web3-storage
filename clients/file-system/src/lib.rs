@@ -7,34 +7,35 @@
 //!
 //! # Features
 //!
-//! - Drive management (create, list, delete)
-//! - File operations (upload, download, delete)
+//! A drive is a Layer 0 bucket of `pallet-storage-provider`, identified by
+//! its bucket id. The chain stores no drive name and no drive record. Sharing a
+//! drive means adding the account as a bucket member.
+//!
+//! - Drive creation (`create_bucket_with_primary`) and membership
+//! - File operations (upload, download)
 //! - Directory operations (create, list, traverse)
 //! - DAG navigation and CID resolution
-//! - Automatic root CID updates on changes
+//! - Checkpoints of the drive's bucket
 //!
 //! # Example
 //!
 //! ```ignore
-//! use file_system_client::{FileSystemClient, DriveId};
+//! use file_system_client::{FileSystemClient, Signer};
 //!
-//! // Create client
-//! let fs_client = FileSystemClient::new(
+//! let mut fs_client = FileSystemClient::new(
 //!     "ws://127.0.0.1:2222",
-//!     "http://provider.example.com",
+//!     "http://127.0.0.1:3333",
+//!     Signer::from_seed("//Alice")?,
 //! ).await?;
 //!
-//! // Create a new drive
-//! let drive_id = fs_client.create_drive(bucket_id, "My Drive").await?;
+//! // `signed` comes from `ProviderClient::negotiate_terms`.
+//! let bucket_id = fs_client
+//!     .create_drive(provider, signed.terms, signed.signature, Visibility::Private)
+//!     .await?;
 //!
-//! // Upload a file
-//! fs_client.upload_file(drive_id, "/documents/report.pdf", file_bytes).await?;
-//!
-//! // List directory
-//! let entries = fs_client.list_directory(drive_id, "/documents").await?;
-//!
-//! // Download a file
-//! let bytes = fs_client.download_file(drive_id, "/documents/report.pdf").await?;
+//! fs_client.upload_file(bucket_id, "/documents/report.pdf", &file_bytes).await?;
+//! let entries = fs_client.list_directory(bucket_id, "/documents").await?;
+//! let bytes = fs_client.download_file(bucket_id, "/documents/report.pdf").await?;
 //! ```
 
 mod substrate;
@@ -49,12 +50,12 @@ use storage_client::{
     BatchedCheckpointConfig, BatchedInterval, CheckpointCallback, CheckpointLoopHandle,
     CheckpointManager, ClientConfig, StorageUserClient,
 };
-use storage_subxt::api::drive_registry::events::DriveCreated;
+use storage_subxt::api::storage_provider::events::BucketCreated;
 use thiserror::Error;
 use tokio::sync::Mutex;
 
-pub use file_system_primitives::DriveId;
 pub use storage_client::{CheckpointConfig, CheckpointResult, Signer};
+pub use storage_primitives::{BucketId, Role};
 pub use substrate::SubstrateClient;
 
 /// File system client errors
@@ -79,8 +80,10 @@ pub enum FsClientError {
     #[error("Not a file: {0}")]
     NotAFile(String),
 
-    #[error("Drive not found: {0}")]
-    DriveNotFound(DriveId),
+    /// This client has no root CID for the drive: it did not create the
+    /// drive. The root CID exists only in this client's memory.
+    #[error("Drive not found: bucket {0}")]
+    DriveNotFound(BucketId),
 
     #[error("Network error: {0}")]
     Network(#[from] reqwest::Error),
@@ -115,12 +118,10 @@ pub struct FileSystemClient {
     storage_client: StorageUserClient,
     /// Substrate blockchain client
     substrate_client: SubstrateClient,
-    /// In-memory cache of drive root CIDs (drive_id -> root_cid)
-    root_cache: HashMap<DriveId, Cid>,
+    /// In-memory cache of drive root CIDs (bucket_id -> root_cid)
+    root_cache: HashMap<BucketId, Cid>,
     /// Background checkpoint loop handle (if automatic checkpointing is enabled)
     checkpoint_handle: Option<Arc<Mutex<CheckpointLoopHandle>>>,
-    /// Mapping of drive_id to bucket_id for automatic checkpointing
-    drive_bucket_map: HashMap<DriveId, u64>,
 }
 
 impl FileSystemClient {
@@ -154,31 +155,22 @@ impl FileSystemClient {
             substrate_client,
             root_cache: HashMap::new(),
             checkpoint_handle: None,
-            drive_bucket_map: HashMap::new(),
         })
     }
 
-    /// Create a new drive (USER-FACING API)
+    /// Create a drive: a Layer 0 bucket with one primary agreement, plus an
+    /// empty root directory uploaded to the provider.
     ///
-    /// This is the primary way for users to create drives. The system automatically:
-    /// - Creates a bucket in Layer 0
-    /// - Requests storage agreements with providers
-    /// - Sets up the drive infrastructure
+    /// Submits `StorageProvider::create_bucket_with_primary`, which creates the
+    /// bucket and opens the primary agreement in one call. The signer becomes
+    /// the bucket admin.
     ///
-    /// Users don't need to understand buckets, agreements, or providers - they just
-    /// specify their storage requirements and get a drive!
-    ///
-    /// # Arguments
-    ///
-    /// * `name` - Optional human-readable name for the drive
     /// * `provider` - Provider account that signed `terms`
     /// * `terms` - Provider-signed agreement terms (from `ProviderClient::negotiate_terms`)
     /// * `sig` - Provider signature over the SCALE-encoded terms
+    /// * `visibility` - Bucket read visibility
     ///
-    /// # Returns
-    ///
-    /// The newly created drive ID. Bucket creation and the primary agreement
-    /// open atomically inside Layer 0's `create_bucket_with_primary_internal`.
+    /// Returns the bucket id. Use it as the drive id in every other call.
     ///
     /// # Example
     ///
@@ -193,11 +185,11 @@ impl FileSystemClient {
     ///         duration: 500,
     ///         price_per_byte: 1,
     ///         replica_params: None,
+    ///         bucket: None,
     ///     },
     /// ).await?;
     ///
-    /// let drive_id = fs_client.create_drive(
-    ///     Some("My Documents"),
+    /// let bucket_id = fs_client.create_drive(
     ///     provider_account,
     ///     signed.terms,
     ///     signed.signature,
@@ -206,23 +198,17 @@ impl FileSystemClient {
     /// ```
     pub async fn create_drive(
         &mut self,
-        name: Option<&str>,
         provider: AccountId32,
         terms: storage_client::AgreementTermsOf,
         sig: sp_runtime::MultiSignature,
         visibility: storage_client::Visibility,
-    ) -> Result<DriveId> {
-        let drive_id = self
-            .create_drive_on_chain(name, provider, &terms, &sig, visibility)
+    ) -> Result<BucketId> {
+        let bucket_id = self
+            .create_bucket_on_chain(provider, &terms, &sig, visibility)
             .await?;
 
-        // Get the bucket_id for this drive, and remember it: the mapping is
-        // immutable, and every later file operation needs it.
-        let bucket_id = self.query_drive_bucket_id(drive_id).await?;
-        self.drive_bucket_map.insert(drive_id, bucket_id);
-
         // Create an empty root directory and upload it to the provider
-        let root_dir = DirectoryNode::new_empty(drive_id);
+        let root_dir = DirectoryNode::new_empty(bucket_id);
         let root_dir_bytes = root_dir.to_scale_bytes();
         let root_cid = self.upload_blob(bucket_id, &root_dir_bytes).await?;
 
@@ -232,26 +218,47 @@ impl FileSystemClient {
         Self::ensure_cid_matches(compute_cid(&root_dir_bytes), root_cid)?;
 
         // Cache the root CID (now managed off-chain only)
-        tracing::debug!("create_drive: caching root_cid={root_cid:?} for drive {drive_id}");
-        self.root_cache.insert(drive_id, root_cid);
+        tracing::debug!("create_drive: caching root_cid={root_cid:?} for bucket {bucket_id}");
+        self.root_cache.insert(bucket_id, root_cid);
 
-        Ok(drive_id)
+        Ok(bucket_id)
+    }
+
+    /// Add `member` to the drive's bucket with `role`, or change its role.
+    ///
+    /// Submits `StorageProvider::set_member`. Only a bucket admin may call it.
+    pub async fn add_member(
+        &self,
+        bucket_id: BucketId,
+        member: AccountId32,
+        role: Role,
+    ) -> Result<()> {
+        let call = storage_client::substrate::extrinsics::set_member(bucket_id, member, role);
+        self.substrate_client.submit(&call).await?;
+        Ok(())
+    }
+
+    /// Remove `member` from the drive's bucket.
+    ///
+    /// Submits `StorageProvider::remove_member`. Only a bucket admin may call it.
+    pub async fn remove_member(&self, bucket_id: BucketId, member: AccountId32) -> Result<()> {
+        let call = storage_client::substrate::extrinsics::remove_bucket_member(bucket_id, member);
+        self.substrate_client.submit(&call).await?;
+        Ok(())
     }
 
     /// Upload a file to the file system
     ///
     /// # Arguments
     ///
-    /// * `drive_id` - Target drive
+    /// * `bucket_id` - Target drive
     /// * `path` - File path (e.g., "/documents/report.pdf")
     /// * `data` - File contents
-    /// * `bucket_id` - Bucket to store file chunks
     pub async fn upload_file(
         &mut self,
-        drive_id: DriveId,
+        bucket_id: BucketId,
         path: &str,
         data: &[u8],
-        bucket_id: u64,
     ) -> Result<()> {
         // Validate and parse path
         let (parent_path, file_name) = Self::split_path(path)?;
@@ -259,7 +266,7 @@ impl FileSystemClient {
         // Split file into chunks (256 KiB chunks)
         const CHUNK_SIZE: usize = 256 * 1024;
         let mut manifest = FileManifest {
-            drive_id,
+            drive_id: bucket_id,
             mime_type: BoundedVec::try_from(Self::guess_mime_type(file_name).into_bytes())
                 .map_err(|_| FsClientError::BoundedOverflow)?,
             total_size: data.len() as u64,
@@ -282,18 +289,17 @@ impl FileSystemClient {
 
         // Update parent directory
         self.add_entry_to_directory(
-            drive_id,
+            bucket_id,
             parent_path,
             file_name,
             file_cid,
             data.len() as u64,
             EntryType::File,
-            bucket_id,
         )
         .await?;
 
         // Mark drive as dirty for automatic checkpointing
-        self.mark_drive_dirty(drive_id).await?;
+        self.mark_drive_dirty(bucket_id).await?;
 
         Ok(())
     }
@@ -303,9 +309,9 @@ impl FileSystemClient {
     /// # Returns
     ///
     /// The file contents as bytes
-    pub async fn download_file(&mut self, drive_id: DriveId, path: &str) -> Result<Vec<u8>> {
+    pub async fn download_file(&mut self, bucket_id: BucketId, path: &str) -> Result<Vec<u8>> {
         // Navigate to file
-        let file_cid = self.resolve_path(drive_id, path).await?;
+        let file_cid = self.resolve_path(bucket_id, path).await?;
 
         // Fetch FileManifest
         let manifest_bytes = self.fetch_blob(file_cid).await?;
@@ -335,11 +341,11 @@ impl FileSystemClient {
     /// Vector of directory entries
     pub async fn list_directory(
         &mut self,
-        drive_id: DriveId,
+        bucket_id: BucketId,
         path: &str,
     ) -> Result<Vec<DirectoryEntry>> {
         // Navigate to directory
-        let dir_cid = self.resolve_path(drive_id, path).await?;
+        let dir_cid = self.resolve_path(bucket_id, path).await?;
 
         // Fetch DirectoryNode
         let dir_bytes = self.fetch_blob(dir_cid).await?;
@@ -350,46 +356,40 @@ impl FileSystemClient {
     }
 
     /// Create a directory
-    pub async fn create_directory(
-        &mut self,
-        drive_id: DriveId,
-        path: &str,
-        bucket_id: u64,
-    ) -> Result<()> {
+    pub async fn create_directory(&mut self, bucket_id: BucketId, path: &str) -> Result<()> {
         let (parent_path, dir_name) = Self::split_path(path)?;
 
         // Create empty directory and upload it
-        let new_dir = DirectoryNode::new_empty(drive_id);
+        let new_dir = DirectoryNode::new_empty(bucket_id);
         let new_dir_bytes = new_dir.to_scale_bytes();
         let new_dir_cid = self.upload_blob(bucket_id, &new_dir_bytes).await?;
 
         // Add to parent directory
         self.add_entry_to_directory(
-            drive_id,
+            bucket_id,
             parent_path,
             dir_name,
             new_dir_cid,
             0,
             EntryType::Directory,
-            bucket_id,
         )
         .await?;
 
         // Mark drive as dirty for automatic checkpointing
-        self.mark_drive_dirty(drive_id).await?;
+        self.mark_drive_dirty(bucket_id).await?;
 
         Ok(())
     }
 
     /// Get the root CID of a drive (managed off-chain via provider)
-    pub async fn get_root_cid(&mut self, drive_id: DriveId) -> Result<Cid> {
+    pub async fn get_root_cid(&mut self, bucket_id: BucketId) -> Result<Cid> {
         // Root CID is now managed off-chain only (cached in-memory)
-        if let Some(cid) = self.root_cache.get(&drive_id) {
-            tracing::debug!("get_root_cid: cache hit for drive {drive_id}, cid={cid:?}");
+        if let Some(cid) = self.root_cache.get(&bucket_id) {
+            tracing::debug!("get_root_cid: cache hit for bucket {bucket_id}, cid={cid:?}");
             return Ok(*cid);
         }
 
-        Err(FsClientError::DriveNotFound(drive_id))
+        Err(FsClientError::DriveNotFound(bucket_id))
     }
 
     // ============ Checkpoint Methods ============
@@ -404,7 +404,7 @@ impl FileSystemClient {
     ///
     /// # Arguments
     ///
-    /// * `drive_id` - The drive to checkpoint
+    /// * `bucket_id` - The drive to checkpoint
     /// * `provider_endpoints` - HTTP endpoints of providers to collect commitments from
     ///
     /// # Returns
@@ -416,7 +416,7 @@ impl FileSystemClient {
     /// ```ignore
     /// // Single provider setup (development/testing)
     /// let result = fs_client.submit_checkpoint(
-    ///     drive_id,
+    ///     bucket_id,
     ///     vec!["http://127.0.0.1:3333".to_string()],
     /// ).await;
     ///
@@ -435,12 +435,9 @@ impl FileSystemClient {
     /// ```
     pub async fn submit_checkpoint(
         &self,
-        drive_id: DriveId,
+        bucket_id: BucketId,
         provider_endpoints: Vec<String>,
     ) -> Result<CheckpointResult> {
-        // Get the bucket_id for this drive
-        let bucket_id = self.query_drive_bucket_id(drive_id).await?;
-
         // Get chain endpoint from our substrate client
         let chain_endpoint = self.substrate_client.endpoint();
 
@@ -464,11 +461,10 @@ impl FileSystemClient {
     /// Use this when you need to customize timeouts, retry behavior, or consensus thresholds.
     pub async fn submit_checkpoint_with_config(
         &self,
-        drive_id: DriveId,
+        bucket_id: BucketId,
         provider_endpoints: Vec<String>,
         config: CheckpointConfig,
     ) -> Result<CheckpointResult> {
-        let bucket_id = self.query_drive_bucket_id(drive_id).await?;
         let chain_endpoint = self.substrate_client.endpoint();
 
         let manager = CheckpointManager::new(chain_endpoint, config)
@@ -482,14 +478,6 @@ impl FileSystemClient {
         Ok(manager.submit_checkpoint(bucket_id).await)
     }
 
-    /// Get the bucket ID for a drive.
-    ///
-    /// This is useful when you need to interact directly with Layer 0 operations
-    /// for a specific drive.
-    pub async fn get_bucket_id(&self, drive_id: DriveId) -> Result<u64> {
-        self.query_drive_bucket_id(drive_id).await
-    }
-
     // ============ Automatic Checkpoint Methods ============
 
     /// Enable automatic batched checkpoints for a drive.
@@ -500,7 +488,7 @@ impl FileSystemClient {
     ///
     /// # Arguments
     ///
-    /// * `drive_id` - The drive to enable automatic checkpoints for
+    /// * `bucket_id` - The drive to enable automatic checkpoints for
     /// * `provider_endpoints` - HTTP endpoints of storage providers
     /// * `interval_blocks` - Number of blocks between checkpoints (default: 100)
     /// * `callback` - Optional callback invoked after each checkpoint attempt
@@ -510,7 +498,7 @@ impl FileSystemClient {
     /// ```ignore
     /// // Enable automatic checkpoints every 100 blocks
     /// fs_client.enable_auto_checkpoints(
-    ///     drive_id,
+    ///     bucket_id,
     ///     vec!["http://127.0.0.1:3333".to_string()],
     ///     Some(100),
     ///     Some(Arc::new(|bucket_id, result| {
@@ -522,24 +510,20 @@ impl FileSystemClient {
     /// ).await?;
     ///
     /// // Now file operations will automatically mark the drive as dirty
-    /// fs_client.upload_file(drive_id, "/file.txt", data, bucket_id).await?;
+    /// fs_client.upload_file(bucket_id, "/file.txt", data).await?;
     ///
     /// // Disable when done
     /// fs_client.disable_auto_checkpoints().await?;
     /// ```
     pub async fn enable_auto_checkpoints(
         &mut self,
-        drive_id: DriveId,
+        bucket_id: BucketId,
         provider_endpoints: Vec<String>,
         interval_blocks: Option<u32>,
         callback: Option<CheckpointCallback>,
     ) -> Result<()> {
         // Stop existing checkpoint loop if any
         self.disable_auto_checkpoints().await?;
-
-        // Get the bucket_id for this drive
-        let bucket_id = self.query_drive_bucket_id(drive_id).await?;
-        self.drive_bucket_map.insert(drive_id, bucket_id);
 
         // Get chain endpoint
         let chain_endpoint = self.substrate_client.endpoint();
@@ -614,15 +598,13 @@ impl FileSystemClient {
     ///
     /// This is called automatically by file operations when auto-checkpoints
     /// are enabled, but can also be called manually if needed.
-    async fn mark_drive_dirty(&self, drive_id: DriveId) -> Result<()> {
+    async fn mark_drive_dirty(&self, bucket_id: BucketId) -> Result<()> {
         if let Some(handle) = &self.checkpoint_handle {
-            if let Some(&bucket_id) = self.drive_bucket_map.get(&drive_id) {
-                let guard = handle.lock().await;
-                guard
-                    .mark_dirty(bucket_id)
-                    .await
-                    .map_err(|e| FsClientError::StorageClient(e.to_string()))?;
-            }
+            let guard = handle.lock().await;
+            guard
+                .mark_dirty(bucket_id)
+                .await
+                .map_err(|e| FsClientError::StorageClient(e.to_string()))?;
         }
         Ok(())
     }
@@ -630,8 +612,8 @@ impl FileSystemClient {
     // ============ Internal Helper Methods ============
 
     /// Resolve a path to a CID by traversing the DAG
-    async fn resolve_path(&mut self, drive_id: DriveId, path: &str) -> Result<Cid> {
-        let mut current_cid = self.get_root_cid(drive_id).await?;
+    async fn resolve_path(&mut self, bucket_id: BucketId, path: &str) -> Result<Cid> {
+        let mut current_cid = self.get_root_cid(bucket_id).await?;
 
         // Handle root path
         if path == "/" {
@@ -659,19 +641,17 @@ impl FileSystemClient {
     }
 
     /// Add an entry to a directory and update the DAG up to root
-    #[allow(clippy::too_many_arguments)]
     async fn add_entry_to_directory(
         &mut self,
-        drive_id: DriveId,
+        bucket_id: BucketId,
         parent_path: &str,
         name: &str,
         cid: Cid,
         size: u64,
         entry_type: EntryType,
-        bucket_id: u64,
     ) -> Result<()> {
         // Fetch parent directory
-        let parent_cid = self.resolve_path(drive_id, parent_path).await?;
+        let parent_cid = self.resolve_path(bucket_id, parent_path).await?;
         let parent_bytes = self.fetch_blob(parent_cid).await?;
         let mut parent_node = DirectoryNode::from_scale_bytes(&parent_bytes)
             .map_err(|e| FsClientError::Serialization(format!("Invalid directory: {e:?}")))?;
@@ -700,11 +680,11 @@ impl FileSystemClient {
 
         // Update ancestors up to root
         let new_root_cid = self
-            .update_ancestors(drive_id, parent_path, new_parent_cid, bucket_id)
+            .update_ancestors(bucket_id, parent_path, new_parent_cid)
             .await?;
 
         // Update cache (root CID is now managed off-chain only)
-        self.root_cache.insert(drive_id, new_root_cid);
+        self.root_cache.insert(bucket_id, new_root_cid);
 
         Ok(())
     }
@@ -712,10 +692,9 @@ impl FileSystemClient {
     /// Update all ancestor directories up to root after a change
     async fn update_ancestors(
         &mut self,
-        drive_id: DriveId,
+        bucket_id: BucketId,
         path: &str,
         new_child_cid: Cid,
-        bucket_id: u64,
     ) -> Result<Cid> {
         if path == "/" {
             // We've reached root, return the new CID
@@ -738,7 +717,7 @@ impl FileSystemClient {
         };
 
         // Fetch parent
-        let parent_cid = self.resolve_path(drive_id, parent_path).await?;
+        let parent_cid = self.resolve_path(bucket_id, parent_path).await?;
         let parent_bytes = self.fetch_blob(parent_cid).await?;
         let mut parent_node = DirectoryNode::from_scale_bytes(&parent_bytes)
             .map_err(|e| FsClientError::Serialization(format!("Invalid directory: {e:?}")))?;
@@ -754,11 +733,11 @@ impl FileSystemClient {
         let new_parent_cid = self.upload_blob(bucket_id, &new_parent_bytes).await?;
 
         // Recurse to grandparent (box the future to avoid infinite size)
-        Box::pin(self.update_ancestors(drive_id, parent_path, new_parent_cid, bucket_id)).await
+        Box::pin(self.update_ancestors(bucket_id, parent_path, new_parent_cid)).await
     }
 
     /// Upload a blob to Layer 0 storage and return the data root
-    async fn upload_blob(&self, bucket_id: u64, data: &[u8]) -> Result<Cid> {
+    async fn upload_blob(&self, bucket_id: BucketId, data: &[u8]) -> Result<Cid> {
         use storage_client::ChunkingStrategy;
 
         // Upload data using default chunking strategy
@@ -866,103 +845,31 @@ impl FileSystemClient {
 
     // ============ Chain Interaction ============
 
-    async fn create_drive_on_chain(
+    /// Submit `create_bucket_with_primary` and return the new bucket id from
+    /// the `BucketCreated` event.
+    async fn create_bucket_on_chain(
         &self,
-        name: Option<&str>,
         provider: AccountId32,
         terms: &storage_client::AgreementTermsOf,
         sig: &sp_runtime::MultiSignature,
         visibility: storage_client::Visibility,
-    ) -> Result<DriveId> {
-        let name_bytes = name.map(|n| n.as_bytes().to_vec());
-
-        // Build the extrinsic
-        let call =
-            substrate::extrinsics::create_drive(name_bytes, provider, terms, sig, visibility);
-
-        // Sign and submit
-        let signer = self.substrate_client.signer();
-        let events = self
-            .substrate_client
-            .api()
-            .at_current_block()
-            .await
-            .map_err(|e| FsClientError::Blockchain(format!("Failed to submit tx: {e}")))?
-            .transactions()
-            .sign_and_submit_then_watch_default(&call, signer)
-            .await
-            .map_err(|e| FsClientError::Blockchain(format!("Failed to submit tx: {e}")))?
-            .wait_for_finalized_success()
-            .await
-            .map_err(|e| {
-                tracing::error!("create_drive extrinsic failed: {e}");
-                FsClientError::Blockchain(format!("Extrinsic reverted: {e}"))
-            })?;
+    ) -> Result<BucketId> {
+        let call = storage_client::substrate::extrinsics::create_bucket_with_primary(
+            provider, terms, sig, visibility,
+        );
+        let events = self.substrate_client.submit(&call).await.inspect_err(|e| {
+            tracing::error!("create_bucket_with_primary failed: {e}");
+        })?;
 
         let created = events
-            .find_first::<DriveCreated>()
+            .find_first::<BucketCreated>()
             .ok_or(FsClientError::EventNotFound)?
             .map_err(|e| {
-                FsClientError::Blockchain(format!("Failed to decode DriveCreated event: {e}"))
+                FsClientError::Blockchain(format!("Failed to decode BucketCreated event: {e}"))
             })?;
 
-        tracing::info!(
-            "Drive {} created (bucket {})",
-            created.drive_id,
-            created.bucket_id
-        );
-        Ok(created.drive_id)
-    }
-
-    /// Query bucket_id for a drive from on-chain storage
-    async fn query_drive_bucket_id(&self, drive_id: DriveId) -> Result<u64> {
-        // A drive's bucket never changes, so a known mapping is always valid.
-        if let Some(&bucket_id) = self.drive_bucket_map.get(&drive_id) {
-            return Ok(bucket_id);
-        }
-
-        let at = self
-            .substrate_client
-            .api()
-            .at_current_block()
-            .await
-            .map_err(|e| FsClientError::Blockchain(format!("Storage query failed: {e}")))?;
-
-        let drive = substrate::storage::drive_info(&at, drive_id)
-            .await?
-            .ok_or(FsClientError::DriveNotFound(drive_id))?;
-
-        Ok(drive.bucket_id)
-    }
-
-    /// Delete a drive on-chain, releasing its storage agreements.
-    ///
-    /// The drive's data becomes unreachable through this client afterwards.
-    pub async fn delete_drive(&mut self, drive_id: DriveId) -> Result<()> {
-        let call = substrate::extrinsics::delete_drive(drive_id);
-        let signer = self.substrate_client.signer();
-
-        self.substrate_client
-            .api()
-            .at_current_block()
-            .await
-            .map_err(|e| FsClientError::Blockchain(format!("Failed to submit tx: {e}")))?
-            .transactions()
-            .sign_and_submit_then_watch_default(&call, signer)
-            .await
-            .map_err(|e| FsClientError::Blockchain(format!("Failed to submit tx: {e}")))?
-            .wait_for_finalized_success()
-            .await
-            .map_err(|e| {
-                tracing::error!("delete_drive extrinsic failed: {e}");
-                FsClientError::Blockchain(format!("Extrinsic reverted: {e}"))
-            })?;
-
-        self.root_cache.remove(&drive_id);
-        self.drive_bucket_map.remove(&drive_id);
-
-        tracing::info!("Drive {drive_id} deleted");
-        Ok(())
+        tracing::info!("Drive created (bucket {})", created.bucket_id);
+        Ok(created.bucket_id)
     }
 }
 
