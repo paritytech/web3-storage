@@ -231,14 +231,6 @@ jobs:
         run: |
           cargo test -p pallet-storage-provider --features runtime-benchmarks
 
-      - name: Run test pallet-s3-registry
-        run: |
-          cargo test -p pallet-s3-registry --features runtime-benchmarks
-
-      - name: Run test pallet-drive-registry
-        run: |
-          cargo test -p pallet-drive-registry --features runtime-benchmarks
-
   coverage:
     name: Rust coverage
     runs-on: parity-large

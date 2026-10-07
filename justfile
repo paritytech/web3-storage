@@ -414,12 +414,11 @@ e2e-single NUM PROVIDER_URL=PROVIDER_URL: papi-setup
 # File System (Layer 1)
 # ============================================================
 
-# Test all file system components (primitives + pallet + client)
+# Test all file system components (primitives + client)
 fs-test-all:
     #!/usr/bin/env bash
     set -euo pipefail
     cargo test -p file-system-primitives
-    cargo test -p pallet-drive-registry
     cargo test -p file-system-client
 
 # File system integration test (used by CI; assumes chain + provider already running)
@@ -430,12 +429,8 @@ fs-demo-ci:
 # S3-Compatible Interface (Layer 1)
 # ============================================================
 
-# Test all S3 components (primitives + pallet + client)
+# Test the S3 client
 s3-test-all:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    cargo test -p s3-primitives
-    cargo test -p pallet-s3-registry
     cargo test -p s3-client
 
 # S3 integration test (used by CI; assumes chain + provider already running)

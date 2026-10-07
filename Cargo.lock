@@ -5680,41 +5680,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "pallet-drive-registry"
-version = "0.1.0"
-dependencies = [
- "file-system-primitives",
- "frame-benchmarking",
- "frame-support",
- "frame-system",
- "pallet-balances",
- "pallet-storage-provider",
- "parity-scale-codec",
- "scale-info",
- "sp-core",
- "sp-io",
- "sp-keystore",
- "sp-runtime",
- "storage-primitives",
-]
-
-[[package]]
-name = "pallet-drive-registry-precompile"
-version = "0.1.0"
-dependencies = [
- "frame-support",
- "frame-system",
- "pallet-drive-registry",
- "pallet-revive",
- "pallet-storage-provider",
- "parity-scale-codec",
- "sp-core",
- "sp-runtime",
- "storage-primitives",
- "tracing",
-]
-
-[[package]]
 name = "pallet-election-provider-multi-phase"
 version = "49.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5921,42 +5886,6 @@ dependencies = [
  "parity-scale-codec",
  "polkavm-derive 0.30.0",
  "scale-info",
-]
-
-[[package]]
-name = "pallet-s3-registry"
-version = "0.1.0"
-dependencies = [
- "frame-benchmarking",
- "frame-support",
- "frame-system",
- "pallet-balances",
- "pallet-storage-provider",
- "pallet-timestamp",
- "parity-scale-codec",
- "s3-primitives",
- "scale-info",
- "sp-core",
- "sp-io",
- "sp-keystore",
- "sp-runtime",
- "storage-primitives",
-]
-
-[[package]]
-name = "pallet-s3-registry-precompile"
-version = "0.1.0"
-dependencies = [
- "frame-support",
- "frame-system",
- "pallet-revive",
- "pallet-s3-registry",
- "pallet-storage-provider",
- "parity-scale-codec",
- "sp-core",
- "sp-runtime",
- "storage-primitives",
- "tracing",
 ]
 
 [[package]]
@@ -8171,18 +8100,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "s3-primitives"
-version = "0.1.0"
-dependencies = [
- "hex",
- "parity-scale-codec",
- "scale-info",
- "sp-core",
- "sp-crypto-hashing",
- "sp-runtime",
-]
-
-[[package]]
 name = "safe_arch"
 version = "0.7.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10015,12 +9932,8 @@ dependencies = [
  "pallet-authorship",
  "pallet-balances",
  "pallet-collator-selection",
- "pallet-drive-registry",
- "pallet-drive-registry-precompile",
  "pallet-message-queue",
  "pallet-revive",
- "pallet-s3-registry",
- "pallet-s3-registry-precompile",
  "pallet-session",
  "pallet-storage-provider",
  "pallet-storage-provider-precompile",
@@ -10085,12 +9998,8 @@ dependencies = [
  "pallet-authorship",
  "pallet-balances",
  "pallet-collator-selection",
- "pallet-drive-registry",
- "pallet-drive-registry-precompile",
  "pallet-message-queue",
  "pallet-revive",
- "pallet-s3-registry",
- "pallet-s3-registry-precompile",
  "pallet-session",
  "pallet-storage-provider",
  "pallet-storage-provider-precompile",

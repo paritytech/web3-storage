@@ -155,7 +155,7 @@ export function decodeMultiSignature(sigHex: string) {
 
 /**
  * Shape a provider's SignedTerms into the `{ provider, terms, sig }` argument
- * the quote-redeeming extrinsics (and create_drive / create_s3_bucket) expect.
+ * the quote-redeeming extrinsics expect.
  */
 export function buildSignedTermsArgs(
   provider: ChainSigner | { address: string },

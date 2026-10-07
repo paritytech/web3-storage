@@ -6,7 +6,13 @@
 //! Each entry is gated on an on-chain storage version, so the tuple is safe to
 //! leave in place across releases.
 
-use crate::Runtime;
+use crate::{RocksDbWeight, Runtime};
+use frame_support::{migrations::RemovePallet, parameter_types};
+
+parameter_types! {
+    pub const DriveRegistryPalletName: &'static str = "DriveRegistry";
+    pub const S3RegistryPalletName: &'static str = "S3Registry";
+}
 
 /// Storage migrations run on runtime upgrade, in order.
 pub type Migrations = (
@@ -15,4 +21,10 @@ pub type Migrations = (
     // applied.
     cumulus_pallet_parachain_system::migration::Migration<Runtime>,
     cumulus_pallet_xcmp_queue::migration::v7::MigrateV6ToV7<Runtime>,
+    // `pallet-drive-registry` and `pallet-s3-registry` were removed (#475).
+    // Clears all their storage in one block. Not gated on a version: once the
+    // prefixes are empty it only costs one read per prefix, and the entries
+    // can be dropped after the upgrade is deployed.
+    RemovePallet<DriveRegistryPalletName, RocksDbWeight>,
+    RemovePallet<S3RegistryPalletName, RocksDbWeight>,
 );

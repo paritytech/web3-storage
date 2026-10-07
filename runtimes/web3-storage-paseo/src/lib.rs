@@ -177,7 +177,7 @@ pub const VERSION: RuntimeVersion = RuntimeVersion {
     spec_name: Cow::Borrowed("paseo-web3-storage-runtime"),
     impl_name: Cow::Borrowed("paseo-web3-storage-runtime"),
     authoring_version: 1,
-    spec_version: 4_009,
+    spec_version: 4_010,
     impl_version: 0,
     apis: RUNTIME_API_VERSIONS,
     // Bumped whenever call encoding changes, so offline signers and stale-metadata
@@ -189,8 +189,9 @@ pub const VERSION: RuntimeVersion = RuntimeVersion {
     //   lost its `nonce` field (#339);
     // * 4 for the `visibility` argument appended to `establish_storage_agreement`
     //   (now `create_bucket_with_primary`),
-    //   `create_drive` and `create_s3_bucket` (#330).
-    transaction_version: 4,
+    //   `create_drive` and `create_s3_bucket` (#330);
+    // * 5 for removing `DriveRegistry` and `S3Registry` with all their calls (#475).
+    transaction_version: 5,
     system_version: 1,
 };
 
@@ -570,14 +571,6 @@ mod runtime {
     #[runtime::pallet_index(50)]
     pub type StorageProvider = pallet_storage_provider;
 
-    // Drive Registry (Layer 1: File System)
-    #[runtime::pallet_index(51)]
-    pub type DriveRegistry = pallet_drive_registry;
-
-    // S3 Registry (Layer 1: S3-Compatible Interface)
-    #[runtime::pallet_index(52)]
-    pub type S3Registry = pallet_s3_registry;
-
     // Smart contracts (PolkaVM + EVM-compatible)
     #[runtime::pallet_index(60)]
     pub type Revive = pallet_revive;
@@ -601,8 +594,6 @@ mod benches {
         [pallet_session, SessionBench::<Runtime>]
         [pallet_sudo, Sudo]
         [pallet_storage_provider, StorageProvider]
-        [pallet_drive_registry, DriveRegistry]
-        [pallet_s3_registry, S3Registry]
         [pallet_revive, Revive]
         [pallet_utility, Utility]
         [cumulus_pallet_xcmp_queue, XcmpQueue]
