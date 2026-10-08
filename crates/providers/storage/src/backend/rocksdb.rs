@@ -14,7 +14,7 @@ use rocksdb::{Options, DB};
 use sp_core::H256;
 use std::path::Path;
 use std::sync::Arc;
-use storage_primitives::{blake2_256, BucketId, MmrLeaf};
+use storage_primitives::{hash_leaf, BucketId, MmrLeaf};
 
 /// Column families for organizing data
 const CF_NODES: &str = "nodes";
@@ -33,10 +33,14 @@ const KEY_FORMAT_VERSION: &[u8] = b"format_version";
 /// Current on-disk format version.
 ///
 /// Bump this whenever a change alters what `ChunkTreeNode` or `BucketState`
-/// encode to, so this build fails loudly on an incompatible database instead
-/// of silently misreading its bytes.
+/// encode to, or how a node hash or a stored root is computed, so this build
+/// fails loudly on an incompatible database instead of silently misreading
+/// its bytes.
 /// See <https://github.com/paritytech/web3-storage/issues/375>.
-const FORMAT_VERSION: u32 = 1;
+///
+/// Version 2 hashes leaves, nodes and MMR peaks with different prefixes;
+/// version 1 databases hold untagged node keys and roots.
+const FORMAT_VERSION: u32 = 2;
 
 /// Disk-based storage backend using RocksDB.
 pub struct DiskStorage {
@@ -389,7 +393,7 @@ impl DiskStorage {
 
         // Rebuild MMR from existing leaves
         for leaf in &bucket.leaves {
-            mmr.push(blake2_256(&leaf.encode()));
+            mmr.push(hash_leaf(&leaf.encode()));
         }
 
         // Add new leaves
@@ -411,7 +415,7 @@ impl DiskStorage {
                 data_size,
                 total_size,
             };
-            let leaf_hash = blake2_256(&leaf.encode());
+            let leaf_hash = hash_leaf(&leaf.encode());
             mmr.push(leaf_hash);
             bucket.leaves.push(leaf);
         }
@@ -443,7 +447,7 @@ impl DiskStorage {
             // Recalculate MMR
             let mut mmr = crate::mmr::Mmr::new();
             for leaf in &bucket.leaves {
-                mmr.push(blake2_256(&leaf.encode()));
+                mmr.push(hash_leaf(&leaf.encode()));
             }
             bucket.mmr_root = mmr.root();
 
@@ -472,7 +476,7 @@ impl DiskStorage {
         // Build MMR and generate proof
         let mut mmr = crate::mmr::Mmr::new();
         for l in &bucket.leaves {
-            mmr.push(blake2_256(&l.encode()));
+            mmr.push(hash_leaf(&l.encode()));
         }
 
         let (siblings, path, peaks) = mmr
@@ -494,7 +498,7 @@ impl DiskStorage {
 
         let mut mmr = crate::mmr::Mmr::new();
         for leaf in &bucket.leaves {
-            mmr.push(blake2_256(&leaf.encode()));
+            mmr.push(hash_leaf(&leaf.encode()));
         }
 
         Ok((mmr.root(), mmr.peaks()))
@@ -620,9 +624,9 @@ mod tests {
              e803000000000000"
         );
 
-        // CF_NODES: key = blake2_256(data), value = SCALE(ChunkTreeNode).
+        // CF_NODES: key = hash_leaf(data), value = SCALE(ChunkTreeNode).
         let data = vec![1u8, 2, 3, 4, 5];
-        let chunk_hash = blake2_256(&data);
+        let chunk_hash = hash_leaf(&data);
         storage
             .store_node(bucket_id, chunk_hash, ChunkTreeNode::Chunk(data))
             .unwrap();
@@ -637,7 +641,7 @@ mod tests {
 
         // CF_NODES: an internal node's value is exactly 64 B - variant tag
         // plus the two child hashes, no stored preimage.
-        let other_hash = blake2_256(&[9u8]);
+        let other_hash = hash_leaf(&[9u8]);
         storage
             .store_node(bucket_id, other_hash, ChunkTreeNode::Chunk(vec![9]))
             .unwrap();
@@ -782,7 +786,7 @@ mod tests {
         storage.init_bucket(bucket_id, 1_000).unwrap();
 
         let chunk_data = vec![7u8, 8, 9];
-        let chunk_hash = blake2_256(&chunk_data);
+        let chunk_hash = hash_leaf(&chunk_data);
         storage
             .store_node(
                 bucket_id,
@@ -796,12 +800,12 @@ mod tests {
         );
 
         let left_data = vec![1u8];
-        let left = blake2_256(&left_data);
+        let left = hash_leaf(&left_data);
         storage
             .store_node(bucket_id, left, ChunkTreeNode::Chunk(left_data))
             .unwrap();
         let right_data = vec![2u8];
-        let right = blake2_256(&right_data);
+        let right = hash_leaf(&right_data);
         storage
             .store_node(bucket_id, right, ChunkTreeNode::Chunk(right_data))
             .unwrap();
@@ -844,12 +848,12 @@ mod tests {
         DiskStorage::new(dir.path()).expect("reopening this build's own database must succeed");
     }
 
-    #[test]
-    fn opening_a_database_with_a_different_format_version_fails() {
+    /// Create a database, then overwrite its recorded format version directly,
+    /// bypassing `DiskStorage::new`, and try to open it again.
+    fn open_with_recorded_version(version: u32) -> Result<DiskStorage, Error> {
         let dir = TempDir::new().unwrap();
         DiskStorage::new(dir.path()).unwrap();
 
-        // Corrupt the recorded version directly, bypassing DiskStorage::new.
         let mut opts = Options::default();
         opts.create_if_missing(true);
         opts.create_missing_column_families(true);
@@ -860,17 +864,68 @@ mod tests {
         )
         .unwrap();
         let cf = db.cf_handle(CF_METADATA).unwrap();
-        db.put_cf(&cf, KEY_FORMAT_VERSION, 9999u32.to_le_bytes())
+        db.put_cf(&cf, KEY_FORMAT_VERSION, version.to_le_bytes())
             .unwrap();
         drop(db);
 
-        match DiskStorage::new(dir.path()) {
+        DiskStorage::new(dir.path())
+    }
+
+    #[test]
+    fn opening_a_database_with_a_different_format_version_fails() {
+        match open_with_recorded_version(9999) {
             Err(Error::IncompatibleFormat(_)) => {}
             other => panic!(
                 "expected an incompatible-format error, got {}",
                 other.is_ok()
             ),
         }
+    }
+
+    #[test]
+    fn opening_a_database_written_with_untagged_hashes_fails() {
+        match open_with_recorded_version(1) {
+            Err(Error::IncompatibleFormat(_)) => {}
+            other => panic!(
+                "expected an incompatible-format error, got {}",
+                other.is_ok()
+            ),
+        }
+    }
+
+    /// Roots built by the provider equal the values the primitives and the
+    /// TypeScript package assert for the same chunks.
+    #[test]
+    fn provider_roots_match_the_shared_hash_vectors() {
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        storage.init_bucket(1, 1_000_000).unwrap();
+
+        let mut leaves = Vec::new();
+        for chunk in [b"a", b"b", b"c"] {
+            let hash = hash_leaf(chunk);
+            storage
+                .store_node(1, hash, ChunkTreeNode::Chunk(chunk.to_vec()))
+                .unwrap();
+            leaves.push(hash);
+        }
+
+        let data_root = crate::backend::build_padded_merkle_tree(&storage, 1, &leaves);
+        assert_eq!(
+            data_root,
+            "a3dd32d607debce875c8dcfb1417d07c9bc4c5cccd0bacefd0a4a9473d958e37"
+                .parse::<H256>()
+                .unwrap()
+        );
+
+        let (mmr_root, _, leaf_indices) = storage.commit(1, vec![data_root]).unwrap();
+        assert_eq!(leaf_indices, vec![0]);
+        assert_eq!(
+            mmr_root,
+            "51ab33e2c8d5544527ceef10834d1ba24fe867abcf8766ce8f88ee56edd0f1d5"
+                .parse::<H256>()
+                .unwrap()
+        );
     }
 
     #[test]

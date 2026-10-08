@@ -13,7 +13,7 @@ use provider_storage::{build_padded_merkle_tree, temp_rocksdb, ChunkTreeNode, St
 use sp_runtime::AccountId32;
 use std::str::FromStr;
 use std::sync::Arc;
-use storage_primitives::blake2_256;
+use storage_primitives::hash_leaf;
 use storage_provider_node::{DetectedChallenge, ProviderDeps, ProviderState};
 use tempfile::TempDir;
 
@@ -72,7 +72,7 @@ pub fn test_state_with_data() -> (Arc<ProviderState>, DetectedChallenge, TempDir
         .expect("bucket initialises");
 
     let chunk_data = b"test-chunk-data-for-challenge";
-    let chunk_hash = blake2_256(chunk_data);
+    let chunk_hash = hash_leaf(chunk_data);
     storage
         .store_node(1, chunk_hash, ChunkTreeNode::Chunk(chunk_data.to_vec()))
         .unwrap();

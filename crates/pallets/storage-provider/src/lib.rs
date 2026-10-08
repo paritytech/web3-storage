@@ -2706,7 +2706,7 @@ pub mod pallet {
                     mmr_proof,
                     chunk_proof,
                 } => {
-                    let chunk_hash = storage_primitives::blake2_256(chunk_data);
+                    let chunk_hash = storage_primitives::hash_leaf(chunk_data);
                     let chunk_ok = storage_primitives::verify_merkle_proof(
                         chunk_hash,
                         challenge.target.chunk_index,

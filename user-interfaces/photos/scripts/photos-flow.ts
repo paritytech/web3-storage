@@ -89,8 +89,9 @@ async function main() {
 
   const { abi, bin } = await loadArtifact();
   const { papi, api } = connect(chainWs);
-  // No signer → no auth headers (dev provider runs /fs auth disabled); providerUrl
-  // pinned so every /fs op hits this run's provider without a chain lookup.
+  // providerUrl pinned so every /fs op hits this run's provider without a chain
+  // lookup. The provider authenticates /fs writes, so the user's signer is set
+  // once it exists below.
   const fs = new FileSystemClient({ api, providerUrl });
   try {
     await waitForChainReady(api);
@@ -98,6 +99,7 @@ async function main() {
 
     const provider = makeSigner(providerSeed);
     const user = makeSigner(clientSeed);
+    fs.setSigner(user);
 
     // Precondition: provider registered + accepting. Read its locked price.
     const info: any = await api.query.StorageProvider.Providers.getValue(provider.address, READ_OPTS);

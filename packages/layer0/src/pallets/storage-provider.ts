@@ -414,6 +414,7 @@ export async function challengeOffchain(
     leafCount: number | string;
     leafIndex: number | string;
     providerSignature: string;
+    chunkIndex?: bigint;
   },
   opts: SubmitOpts = {},
 ) {
@@ -434,7 +435,7 @@ export async function challengeOffchain(
       // `target` is the leaf+chunk being challenged within that commitment.
       target: {
         leaf_index: BigInt(upload.leafIndex),
-        chunk_index: 0n,
+        chunk_index: upload.chunkIndex ?? 0n,
       },
       provider_signature: decodeMultiSignature(upload.providerSignature),
     }),

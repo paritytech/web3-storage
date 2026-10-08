@@ -3336,8 +3336,8 @@ dependencies = [
  "scale-info",
  "serde",
  "sp-core",
- "sp-crypto-hashing",
  "sp-runtime",
+ "storage-primitives",
  "thiserror 2.0.18",
 ]
 
@@ -8166,8 +8166,8 @@ dependencies = [
  "parity-scale-codec",
  "scale-info",
  "sp-core",
- "sp-crypto-hashing",
  "sp-runtime",
+ "storage-primitives",
 ]
 
 [[package]]

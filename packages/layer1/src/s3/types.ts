@@ -48,7 +48,7 @@ export interface CreateBucketOptions {
 
 export interface ObjectMetadata {
   key: string;
-  /** 0x-hex blake2b-256 data_root. */
+  /** 0x-hex Merkle leaf hash (data root) of the object. */
   cid: string;
   size: bigint;
   contentType?: string;

@@ -295,6 +295,29 @@ async fn test_read_node_verified_passes_for_valid_hash() {
 }
 
 #[tokio::test]
+async fn test_read_node_verified_checks_an_internal_node_by_its_children() {
+    let url = start_test_provider().await;
+    let client = make_client(url);
+
+    let chunk_size = 1024usize;
+    let data: Vec<u8> = (0..chunk_size * 2).map(|i| (i % 251) as u8).collect();
+    let data_root = client
+        .upload(1, &data, ChunkingStrategy::Fixed(chunk_size))
+        .await
+        .unwrap();
+
+    // The root of a two-chunk file is an internal node; its data is the
+    // concatenation of its two child hashes.
+    let (_, children) = client.read_node(&data_root).await.unwrap();
+    let children = children.expect("a two-chunk root is an internal node");
+    let node_data = client.read_node_verified(&data_root).await.unwrap();
+    assert_eq!(
+        node_data,
+        [children[0].as_bytes(), children[1].as_bytes()].concat()
+    );
+}
+
+#[tokio::test]
 async fn test_read_node_fails_for_unknown_hash() {
     let url = start_test_provider().await;
     let client = make_client(url);
@@ -623,7 +646,7 @@ async fn test_non_power_of_two_upload_matches_padded_root_and_verifies() {
     // the same leaves.
     let leaf_hashes: Vec<H256> = data
         .chunks(chunk_size)
-        .map(storage_primitives::blake2_256)
+        .map(storage_primitives::hash_leaf)
         .collect();
     assert_eq!(
         leaf_hashes.len(),

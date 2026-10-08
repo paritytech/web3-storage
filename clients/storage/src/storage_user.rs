@@ -16,7 +16,7 @@ use crate::Signer;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use provider_auth::build_auth_header;
 use sp_core::H256;
-use storage_primitives::{blake2_256, BucketId};
+use storage_primitives::{hash_children, hash_leaf, BucketId};
 
 /// Client for storage users (end users who store/retrieve data).
 pub struct StorageUserClient {
@@ -122,7 +122,7 @@ impl StorageUserClient {
         let chunks = Self::chunk_data(upload_data, strategy);
 
         // Upload chunks (leaves)
-        let chunk_hashes: Vec<H256> = chunks.iter().map(|chunk| blake2_256(chunk)).collect();
+        let chunk_hashes: Vec<H256> = chunks.iter().map(|chunk| hash_leaf(chunk)).collect();
 
         for (chunk, hash) in chunks.iter().zip(chunk_hashes.iter()) {
             self.upload_node(provider_url, bucket_id, *hash, chunk.clone(), None)
@@ -224,7 +224,7 @@ impl StorageUserClient {
 
             // Verify chunk hash
             let expected_hash = BaseClient::hex_decode(&chunk.hash)?;
-            let actual_hash = blake2_256(&chunk_data);
+            let actual_hash = hash_leaf(&chunk_data);
             if actual_hash.as_bytes() != expected_hash.as_slice() {
                 return Err(ClientError::VerificationFailed);
             }
@@ -317,12 +317,24 @@ impl StorageUserClient {
 
     /// Read a node and verify its hash matches.
     ///
+    /// A chunk (no children) hashes as a leaf. An internal node must have
+    /// exactly two children whose concatenation is its data, and hashes as a
+    /// node over them.
+    ///
     /// Returns the data if hash verification passes.
     pub async fn read_node_verified(&self, hash: &H256) -> ClientResult<Vec<u8>> {
-        let (data, _children) = self.read_node(hash).await?;
+        let (data, children) = self.read_node(hash).await?;
 
-        // Verify the hash
-        let computed_hash = blake2_256(&data);
+        let computed_hash = match children.as_deref() {
+            None => hash_leaf(&data),
+            Some([left, right]) => {
+                if data != [left.as_bytes(), right.as_bytes()].concat() {
+                    return Err(ClientError::VerificationFailed);
+                }
+                hash_children(*left, *right)
+            }
+            Some(_) => return Err(ClientError::VerificationFailed),
+        };
         if &computed_hash != hash {
             return Err(ClientError::VerificationFailed);
         }

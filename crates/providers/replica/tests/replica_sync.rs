@@ -16,7 +16,7 @@ use sp_core::H256;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use storage_primitives::{blake2_256, BucketId};
+use storage_primitives::{hash_leaf, BucketId};
 
 /// Full Alice SS58 address (substrate prefix 42).
 const ALICE_SS58: &str = "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY";
@@ -336,7 +336,7 @@ async fn test_already_synced() {
         .init_bucket(1, u64::MAX)
         .expect("bucket initialises");
     let data = b"test data".to_vec();
-    let data_root = blake2_256(&data);
+    let data_root = hash_leaf(&data);
     let _ = storage.store_node(1, data_root, ChunkTreeNode::Chunk(data));
     let (mmr_root, _, _) = storage.commit(1, vec![data_root]).unwrap();
 
@@ -607,7 +607,7 @@ async fn test_duties_filter_already_synced() {
         .expect("bucket initialises");
 
     let data = b"synced data".to_vec();
-    let data_root = blake2_256(&data);
+    let data_root = hash_leaf(&data);
     storage
         .store_node(1, data_root, ChunkTreeNode::Chunk(data))
         .unwrap();

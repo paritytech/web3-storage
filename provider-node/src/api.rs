@@ -453,7 +453,7 @@ async fn read_chunks(
                 chunks.push(ChunkWithProof {
                     hash: format!(
                         "0x{}",
-                        hex::encode(storage_primitives::blake2_256(&data).as_bytes())
+                        hex::encode(storage_primitives::hash_leaf(&data).as_bytes())
                     ),
                     data: BASE64.encode(&data),
                     proof: proof
@@ -590,7 +590,7 @@ async fn get_chunk_proof(
     let (chunk_data, proof) = state
         .storage
         .get_chunk_at_index(data_root, query.chunk_index)?;
-    let chunk_hash = storage_primitives::blake2_256(&chunk_data);
+    let chunk_hash = storage_primitives::hash_leaf(&chunk_data);
 
     Ok(Json(ChunkProofResponse {
         chunk_hash: format!("0x{}", hex::encode(chunk_hash.as_bytes())),

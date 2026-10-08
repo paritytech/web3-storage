@@ -60,7 +60,7 @@ primaries (replicas stay challengeable by anyone).
 
 Users who create conflicts without checkpointing waste their quota—providers must keep all signed data.
 
-**Content-addressed storage**: Everything (chunks and internal nodes) is addressed by hash. Internal nodes are data whose content is child hashes. Upload is bottom-up: children must exist before parent can be stored. If a root hash exists, the entire tree is guaranteed complete.
+**Content-addressed storage**: Everything (chunks and internal nodes) is addressed by hash. Internal nodes are data whose content is their two child hashes, and leaves and nodes are hashed with different prefixes (`0x00` for a chunk, `0x01` for a node), so a node's bytes never verify as a chunk. Upload is bottom-up: children must exist before parent can be stored. If a root hash exists, the entire tree is guaranteed complete.
 
 ### Provider Lifecycle in Bucket
 
@@ -2327,7 +2327,7 @@ Response:
 }
 
 Note: Replica already knows the trusted mmr_root from the chain. It fetches
-peaks from a provider and verifies: hash(peaks) == trusted_root. If verification
+peaks from a provider and verifies: bag_peaks(peaks) == trusted_root (peak bagging uses the `0x02` prefix). If verification
 fails, try another provider. Once verified, use peaks to start top-down traversal.
 
 Get MMR Subtree
@@ -2382,14 +2382,15 @@ requests when syncing many nodes.
 1. Query chain for bucket's current snapshot (mmr_root, start_seq, leaf_count)
    Also note historical_roots for fallback positions
 2. Fetch mmr_peaks from any provider
-3. Verify: hash(peaks) == trusted mmr_root from chain
+3. Verify: bag_peaks(peaks) == trusted mmr_root from chain (bagging uses the `0x02` prefix)
    If mismatch, try another provider
 4. Compare verified peaks with locally stored peaks
 5. For each differing peak:
    a. Fetch subtree level by level (breadth-first)
    b. At each level, check which nodes exist locally
    c. Fetch missing nodes from any available provider
-   d. Verify fetched nodes: hash(data) == expected_hash
+   d. Verify fetched nodes against expected_hash: `children: null` is a chunk, hashed with `0x00`;
+      a node with two children is hashed with `0x01` over its children and rejected if that does not match
    e. Continue to children of newly fetched nodes
 6. Once all nodes fetched and verified:
    a. Build signature over roots array matching on-chain historical_roots
@@ -2496,8 +2497,8 @@ pub struct MerkleProof {
 pub struct MmrProof {
     /// Peaks of the MMR
     pub peaks: Vec<H256>,
-    /// The leaf being proven. Verification hashes `leaf.encode()` as the
-    /// proof's starting point, so the leaf content is part of the proof.
+    /// The leaf being proven. Verification hashes `0x00 ++ leaf.encode()` as
+    /// the proof's starting point, so the leaf content is part of the proof.
     pub leaf: MmrLeaf,
     /// Proof from leaf to peak
     pub leaf_proof: MerkleProof,
@@ -2579,7 +2580,7 @@ fn verify_challenge_response(
     match response {
         ChallengeResponse::Proof { chunk_data, mmr_proof, chunk_proof } => {
             // The chunk must sit in the leaf and the leaf in the committed MMR.
-            let chunk_hash = blake2_256(chunk_data);
+            let chunk_hash = hash_leaf(chunk_data); // blake2_256(0x00 ++ chunk_data)
             let chunk_ok = verify_merkle_proof(
                 chunk_hash, challenge.target.chunk_index, chunk_proof, &mmr_proof.leaf.data_root,
             );

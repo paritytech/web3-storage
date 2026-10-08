@@ -102,7 +102,7 @@ common::backend_tests! {
 
         // Create test data
         let data = b"Hello, World!";
-        let hash = storage_primitives::blake2_256(data);
+        let hash = storage_primitives::hash_leaf(data);
         let hash_hex = format!("0x{}", hex_encode(hash.as_bytes()));
 
         // Upload node
@@ -148,7 +148,7 @@ common::backend_tests! {
 
         // Upload a node first
         let data = b"Test data for exists check";
-        let hash = storage_primitives::blake2_256(data);
+        let hash = storage_primitives::hash_leaf(data);
         let hash_hex = format!("0x{}", hex_encode(hash.as_bytes()));
 
         server
@@ -197,7 +197,7 @@ common::backend_tests! {
 
         // Upload a data root (leaf chunk)
         let data = b"Chunk data for commit test";
-        let hash = storage_primitives::blake2_256(data);
+        let hash = storage_primitives::hash_leaf(data);
         let hash_hex = format!("0x{}", hex_encode(hash.as_bytes()));
 
         server
@@ -255,7 +255,7 @@ common::backend_tests! {
 
         // Upload to bucket 1 to create it
         let data = b"Data for bucket 1";
-        let hash = storage_primitives::blake2_256(data);
+        let hash = storage_primitives::hash_leaf(data);
         let hash_hex = format!("0x{}", hex_encode(hash.as_bytes()));
 
         server
@@ -313,6 +313,60 @@ common::backend_tests! {
     }
 }
 
+// Chunks and internal nodes are hashed with different prefixes, so a hash
+// computed without the prefix for the node's kind is never accepted.
+common::backend_tests! {
+    async fn test_upload_rejects_untagged_chunk_and_node_hashes(backend) {
+        let server = TestServer::new(backend).await;
+
+        let data = b"untagged chunk";
+        let response = server
+            .client
+            .put(server.url("/node"))
+            .json(&json!({
+                "bucket_id": 1,
+                "hash": format!(
+                    "0x{}",
+                    hex_encode(storage_primitives::blake2_256(data).as_bytes())
+                ),
+                "data": BASE64.encode(data),
+                "children": null
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body: Value = response.json().await.unwrap();
+        assert_eq!(body["error"], "invalid_hash");
+
+        let left = storage_primitives::hash_leaf(b"left");
+        let right = storage_primitives::hash_leaf(b"right");
+        let mut node_data = left.as_bytes().to_vec();
+        node_data.extend_from_slice(right.as_bytes());
+        let response = server
+            .client
+            .put(server.url("/node"))
+            .json(&json!({
+                "bucket_id": 1,
+                "hash": format!(
+                    "0x{}",
+                    hex_encode(storage_primitives::blake2_256(&node_data).as_bytes())
+                ),
+                "data": BASE64.encode(&node_data),
+                "children": [
+                    format!("0x{}", hex_encode(left.as_bytes())),
+                    format!("0x{}", hex_encode(right.as_bytes())),
+                ]
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body: Value = response.json().await.unwrap();
+        assert_eq!(body["error"], "invalid_hash");
+    }
+}
+
 common::backend_tests! {
     async fn test_upload_internal_node_with_missing_children_fails(backend) {
         let server = TestServer::new(backend).await;
@@ -325,7 +379,10 @@ common::backend_tests! {
         node_data.extend_from_slice(&hex_decode(child1).unwrap());
         node_data.extend_from_slice(&hex_decode(child2).unwrap());
 
-        let hash = storage_primitives::blake2_256(&node_data);
+        let hash = storage_primitives::hash_children(
+            sp_core::H256::from_slice(&hex_decode(child1).unwrap()),
+            sp_core::H256::from_slice(&hex_decode(child2).unwrap()),
+        );
         let hash_hex = format!("0x{}", hex_encode(hash.as_bytes()));
 
         let response = server
@@ -353,7 +410,7 @@ common::backend_tests! {
         let server = TestServer::new(backend).await;
 
         let child = b"lonely-child";
-        let child_hash = storage_primitives::blake2_256(child);
+        let child_hash = storage_primitives::hash_leaf(child);
         let child_hex = format!("0x{}", hex_encode(child_hash.as_bytes()));
 
         server
@@ -369,6 +426,7 @@ common::backend_tests! {
             .await
             .unwrap();
 
+        // The hash cannot be derived: a single child is not a representable node.
         let hash = storage_primitives::blake2_256(child_hash.as_bytes());
         let response = server
             .client
@@ -392,6 +450,14 @@ common::backend_tests! {
     }
 }
 
+/// The hash of an internal node from its data (`left ++ right`).
+fn rehash_node(data: &[u8]) -> sp_core::H256 {
+    storage_primitives::hash_children(
+        sp_core::H256::from_slice(&data[..32]),
+        sp_core::H256::from_slice(&data[32..]),
+    )
+}
+
 // An internal node's data is derived from its children rather than kept on
 // disk, so both download paths have to rebuild it - a client that rehashes what
 // it downloaded must land back on the hash it asked for.
@@ -402,7 +468,7 @@ common::backend_tests! {
         let mut child_hexes = Vec::new();
         let mut node_data = Vec::new();
         for chunk in [b"left-chunk".as_slice(), b"right-chunk".as_slice()] {
-            let chunk_hash = storage_primitives::blake2_256(chunk);
+            let chunk_hash = storage_primitives::hash_leaf(chunk);
             child_hexes.push(format!("0x{}", hex_encode(chunk_hash.as_bytes())));
             node_data.extend_from_slice(chunk_hash.as_bytes());
 
@@ -420,7 +486,10 @@ common::backend_tests! {
                 .unwrap();
         }
 
-        let hash = storage_primitives::blake2_256(&node_data);
+        let hash = storage_primitives::hash_children(
+            storage_primitives::hash_leaf(b"left-chunk"),
+            storage_primitives::hash_leaf(b"right-chunk"),
+        );
         let hash_hex = format!("0x{}", hex_encode(hash.as_bytes()));
 
         let response = server
@@ -449,7 +518,7 @@ common::backend_tests! {
         let body: Value = response.json().await.unwrap();
         let downloaded = BASE64.decode(body["data"].as_str().unwrap()).unwrap();
         assert_eq!(downloaded, node_data);
-        assert_eq!(storage_primitives::blake2_256(&downloaded), hash);
+        assert_eq!(rehash_node(&downloaded), hash);
         assert_eq!(body["children"], json!(child_hexes));
 
         // /fetch_nodes must rebuild the same bytes.
@@ -468,7 +537,7 @@ common::backend_tests! {
         let body: Value = response.json().await.unwrap();
         let node = &body["nodes"].as_array().unwrap()[0];
         let fetched = BASE64.decode(node["data"].as_str().unwrap()).unwrap();
-        assert_eq!(storage_primitives::blake2_256(&fetched), hash);
+        assert_eq!(rehash_node(&fetched), hash);
         assert_eq!(node["children"], json!(child_hexes));
     }
 }
@@ -482,7 +551,7 @@ common::backend_tests! {
         let mut chunk_hashes = Vec::new();
 
         for chunk in &chunks {
-            let hash = storage_primitives::blake2_256(chunk);
+            let hash = storage_primitives::hash_leaf(chunk);
             let hash_hex = format!("0x{}", hex_encode(hash.as_bytes()));
             chunk_hashes.push(hash_hex.clone());
 
@@ -547,7 +616,7 @@ common::backend_tests! {
 /// the parsed commit-response body.
 async fn upload_and_commit(server: &TestServer, bucket_id: u64) -> (String, Value) {
     let data = b"chunk-for-signature-tests";
-    let hash = storage_primitives::blake2_256(data);
+    let hash = storage_primitives::hash_leaf(data);
     let hash_hex = format!("0x{}", hex_encode(hash.as_bytes()));
 
     let resp = server
@@ -770,7 +839,7 @@ common::backend_tests! {
         let server = TestServer::new_unsigned(backend).await;
 
         let data = b"chunk-without-key";
-        let hash = storage_primitives::blake2_256(data);
+        let hash = storage_primitives::hash_leaf(data);
         let hash_hex = format!("0x{}", hex_encode(hash.as_bytes()));
 
         server
@@ -810,7 +879,7 @@ common::backend_tests! {
         // unsigned server returns 503 but still mutates storage, which is enough
         // to make /commitment reach state.sign(...).
         let data = b"chunk-for-commitment-503";
-        let hash = storage_primitives::blake2_256(data);
+        let hash = storage_primitives::hash_leaf(data);
         let hash_hex = format!("0x{}", hex_encode(hash.as_bytes()));
         server
             .client
@@ -856,7 +925,7 @@ common::backend_tests! {
         // sign() and returns 503, but still mutates storage, which is enough
         // to make /commitment reach state.sign(...) too.
         let data = b"chunk-for-commitment-unregistered";
-        let hash = storage_primitives::blake2_256(data);
+        let hash = storage_primitives::hash_leaf(data);
         let hash_hex = format!("0x{}", hex_encode(hash.as_bytes()));
         server
             .client
@@ -896,7 +965,7 @@ common::backend_tests! {
 
         // Seed and commit so the delete handler can reach its sign() call.
         let data = b"chunk-for-delete-503";
-        let hash = storage_primitives::blake2_256(data);
+        let hash = storage_primitives::hash_leaf(data);
         let hash_hex = format!("0x{}", hex_encode(hash.as_bytes()));
         server
             .client
@@ -1116,7 +1185,7 @@ common::backend_tests! {
         let server = TestServer::new(backend).await;
 
         let data = b"fetch-nodes-test-data";
-        let hash = storage_primitives::blake2_256(data);
+        let hash = storage_primitives::hash_leaf(data);
         let hash_hex = format!("0x{}", hex_encode(hash.as_bytes()));
 
         server
@@ -1239,11 +1308,11 @@ common::backend_tests! {
 
         // Commit two data roots
         let data1 = b"chunk-for-delete-1";
-        let hash1 = storage_primitives::blake2_256(data1);
+        let hash1 = storage_primitives::hash_leaf(data1);
         let hash1_hex = format!("0x{}", hex_encode(hash1.as_bytes()));
 
         let data2 = b"chunk-for-delete-2";
-        let hash2 = storage_primitives::blake2_256(data2);
+        let hash2 = storage_primitives::hash_leaf(data2);
         let hash2_hex = format!("0x{}", hex_encode(hash2.as_bytes()));
 
         for (hash_hex, data) in [(&hash1_hex, &data1[..]), (&hash2_hex, &data2[..])] {
@@ -1384,7 +1453,7 @@ common::backend_tests! {
         let server = TestServer::new(backend).await;
 
         let data = b"child test data";
-        let hash = storage_primitives::blake2_256(data);
+        let hash = storage_primitives::hash_leaf(data);
         let hash_hex = format!("0x{}", hex_encode(hash.as_bytes()));
 
         let resp = server
@@ -1433,7 +1502,7 @@ common::backend_tests! {
 
         // Upload a valid node first (upload doesn't need signing)
         let data = b"commit-no-key";
-        let hash = storage_primitives::blake2_256(data);
+        let hash = storage_primitives::hash_leaf(data);
         let hash_hex = format!("0x{}", hex_encode(hash.as_bytes()));
 
         server
