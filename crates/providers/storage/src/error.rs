@@ -18,6 +18,11 @@ pub enum Error {
     #[error("Quota exceeded: used {used}, max {max}")]
     QuotaExceeded { used: u64, max: u64 },
 
+    /// A leaf above the size a challenge response can contain. The provider
+    /// cannot prove it on-chain, so it rejects it at store and at commit.
+    #[error("Chunk too large: {size} bytes, max {max}")]
+    ChunkTooLarge { size: u64, max: u32 },
+
     #[error("Bucket not found: {0}")]
     BucketNotFound(u64),
 

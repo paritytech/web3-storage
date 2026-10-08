@@ -26,6 +26,12 @@ pub type BucketId = u64;
 /// Default chunk size: 256 KiB
 pub const DEFAULT_CHUNK_SIZE: u32 = 256 * 1024;
 
+/// Largest leaf, in bytes, that a challenge response can contain.
+///
+/// The runtime uses it as `MaxChunkSize`. A provider must not store or sign a
+/// leaf above it, because that leaf cannot be proven on-chain.
+pub const MAX_CHUNK_SIZE: u32 = 256 * 1024;
+
 /// Prime numbers used for historical root bucketing.
 /// These provide logarithmic time coverage for replica sync validation.
 pub const HISTORICAL_ROOT_PRIMES: [u32; 6] = [3, 7, 11, 23, 47, 113];

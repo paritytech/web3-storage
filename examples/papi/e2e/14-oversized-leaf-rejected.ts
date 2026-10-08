@@ -1,34 +1,34 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * E2E Workflow 14 - A leaf larger than MaxChunkSize cannot be proven
+ * E2E Workflow 14 - A leaf larger than MaxChunkSize is rejected
  *
  * Accounts: //Alice (provider), //Bob (bucket owner), //Charlie (outsider)
  *
- * `PUT /node` stores a leaf of any size up to the 256 MB body limit, and
- * `POST /commit` signs the MMR root over it. The SDK's `uploadChunk` sends the
- * whole payload as one leaf. A `Proof` response carries the chunk in a
- * `BoundedVec<u8, MaxChunkSize>` (256 KiB), so a leaf of 256 KiB + 1 byte has
- * no valid response. Any account can challenge it on a public bucket. At the
- * deadline `resolve_expired_challenge` slashes the provider's whole stake
- * (`crates/pallets/storage-provider/src/impls/challenges.rs`,
- * `slash_provider_for_failed_challenge`). The test stops before the deadline.
+ * A `Proof` response carries the chunk in a `BoundedVec<u8, MaxChunkSize>`
+ * (256 KiB), so a leaf of 256 KiB + 1 byte has no valid response. A provider
+ * that signed such a leaf would lose its whole stake to any challenger at the
+ * deadline (`slash_provider_for_failed_challenge`). The provider rejects the
+ * leaf at `PUT /node`, so it never signs a commitment over it.
  *
  * 14.1 Control: a 256 KiB leaf is challenged and defended.
- * 14.2 A 256 KiB + 1 byte leaf is stored and signed by the provider.
- * 14.3 The provider cannot answer a challenge on it: the chain rejects the
- *      response that carries the real bytes.
+ * 14.2 `PUT /node` of a 256 KiB + 1 byte leaf is rejected, and the provider
+ *      has no root to commit.
+ * 14.3 The SDK's `uploadChunk` throws before it sends the oversized leaf.
  *
- * Usage: node --import tsx e2e/14-oversized-leaf-unprovable.ts [chain_ws] [provider_url]
+ * Usage: node --import tsx e2e/14-oversized-leaf-rejected.ts [chain_ws] [provider_url]
  */
 
 import assert from "node:assert";
 import {
+  bytesToBase64,
   challengeOffchain,
   createBucketWithPrimary,
   ensureProviderRegistered,
   fetchChallengeProof,
+  hashLeaf,
   makeSigner,
+  MAX_CHUNK_SIZE,
   providerFetch,
   respondToChallenge,
   uploadChunk,
@@ -39,8 +39,9 @@ import { negotiateSigned, runSuite, setupChain } from "./helpers.js";
 const CHAIN_WS = process.argv[2] || "ws://127.0.0.1:2222";
 const PROVIDER_URL = process.argv[3] || "http://127.0.0.1:3333";
 
-/** `MaxChunkSize` in both runtimes (`runtimes/*\/src/storage.rs`). */
-const MAX_CHUNK_SIZE = 256 * 1024;
+function toHex(bytes: Uint8Array): string {
+  return `0x${Buffer.from(bytes).toString("hex")}`;
+}
 
 async function main() {
   const provider = makeSigner("//Alice");
@@ -124,8 +125,6 @@ async function main() {
       return { challengeId, payload };
     }
 
-    let oversized: Awaited<ReturnType<typeof uploadAndChallenge>> | undefined;
-
     const tests: Array<{ name: string; fn: () => Promise<void> }> = [
       {
         name: "14.1 Control: a 256 KiB leaf is challenged and defended",
@@ -165,67 +164,58 @@ async function main() {
         },
       },
       {
-        name: "14.2 A 256 KiB + 1 byte leaf is stored and signed by the provider",
+        name: "14.2 PUT /node of a 256 KiB + 1 byte leaf is rejected",
         fn: async () => {
-          oversized = await uploadAndChallenge(MAX_CHUNK_SIZE + 1);
-          // The provider serves the same bytes back as chunk 0 of the leaf.
-          const proof: any = await providerFetch(PROVIDER_URL, "/chunk_proof", {
-            params: {
-              data_root: (
-                await fetchChallengeProof(
-                  api,
-                  PROVIDER_URL,
-                  oversized.challengeId,
-                )
-              ).mmr_proof.leaf.data_root,
-              chunk_index: 0,
+          const payload = new Uint8Array(MAX_CHUNK_SIZE + 1).fill(7);
+          const hash = toHex(hashLeaf(payload));
+          const sign = { signer: owner.signer, bucketId };
+          // `providerFetch` throws `<path>: <status> <body>` on a non-2xx reply.
+          await assert.rejects(
+            providerFetch(PROVIDER_URL, "/node", {
+              method: "PUT",
+              body: {
+                bucket_id: Number(bucketId),
+                hash,
+                data: bytesToBase64(payload),
+                children: null,
+              },
+              sign,
+            }),
+            (err: Error) => {
+              console.log(`          PUT ${err.message.slice(0, 160)}`);
+              return /^\/node: 400 .*chunk_too_large/.test(err.message);
             },
-          });
-          const served = Buffer.from(proof.chunk_data, "base64");
-          console.log(
-            `          GET /chunk_proof: chunk_data=${served.length} B, siblings=${proof.proof.siblings.length}`,
           );
-          assert.strictEqual(served.length, MAX_CHUNK_SIZE + 1);
+
+          // The leaf was not stored, so there is no root to commit and sign.
+          await assert.rejects(
+            providerFetch(PROVIDER_URL, "/commit", {
+              method: "POST",
+              body: { bucket_id: Number(bucketId), data_roots: [hash] },
+              sign,
+            }),
+            (err: Error) => /^\/commit: 404 .*root_not_found/.test(err.message),
+          );
         },
       },
       {
-        name: "14.3 The chain rejects the response that carries the real bytes",
+        name: "14.3 uploadChunk throws before it sends an oversized leaf",
         fn: async () => {
-          assert.ok(oversized, "14.2 must run first");
-          const real = await fetchChallengeProof(
-            api,
-            PROVIDER_URL,
-            oversized.challengeId,
-          );
-          let accepted = false;
-          try {
-            await respondToChallenge(
-              api,
-              provider,
-              oversized.challengeId,
-              real,
-            );
-            accepted = true;
-          } catch (err) {
-            console.log(
-              `          respond_to_challenge rejected: ${(err as Error).message.slice(0, 200)}`,
-            );
-          }
-          assert.strictEqual(
-            accepted,
-            false,
-            "the chain accepted a chunk above MaxChunkSize",
-          );
-          assert.ok(
-            await challengeExists(oversized.challengeId),
-            "the challenge must stay open",
+          await assert.rejects(
+            uploadChunk(
+              PROVIDER_URL,
+              bucketId,
+              new Uint8Array(MAX_CHUNK_SIZE + 1),
+              owner,
+            ),
+            RangeError,
           );
         },
       },
     ];
 
     await runSuite(
-      "14 - A leaf larger than MaxChunkSize cannot be proven",
+      "14 - A leaf larger than MaxChunkSize is rejected",
       tests,
       {
         api,
