@@ -123,7 +123,7 @@ async function main() {
     // 2) Negotiate primary terms with the *contract's* mapped account as owner.
     console.log("\n[2/3] Negotiating terms + createLibrary{value}…");
     const contractAccount = h160ToSubstrate(deployed.addressBytes);
-    const signed = await negotiatePrecompileTerms(providerUrl, contractAccount, {
+    const signed = await negotiatePrecompileTerms(api, providerUrl, contractAccount, {
       maxBytes: MAX_BYTES,
       duration: DURATION,
       pricePerByte,
