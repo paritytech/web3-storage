@@ -13,6 +13,7 @@ import {
   connect,
   createBucketWithPrimary,
   formatDispatchError,
+  getAgreementNonce,
   hashChildren,
   negotiateTerms,
   putChunk,
@@ -226,16 +227,19 @@ export async function negotiateSigned(
   provider: ChainSigner,
   { maxBytes, duration, bucketId = null, replicaParams = null, pricePerByte = null }: NegotiateOpts,
 ): Promise<SignedTerms> {
-  let price = pricePerByte;
-  if (price == null) {
-    const info = await api.query.StorageProvider.Providers.getValue(provider.address, READ_OPTS);
-    price = info?.settings?.price_per_byte ?? 1n;
-  }
+  const [nonce, price] = await Promise.all([
+    getAgreementNonce(api, owner.address),
+    pricePerByte ??
+      api.query.StorageProvider.Providers.getValue(provider.address, READ_OPTS).then(
+        (info) => info?.settings?.price_per_byte ?? 1n,
+      ),
+  ]);
   return negotiateTerms(providerUrl, {
     owner: owner.address,
     max_bytes: maxBytes,
     duration,
     price_per_byte: price,
+    nonce,
     bucket: bucketId,
     replica_params: replicaParams,
   });

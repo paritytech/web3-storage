@@ -120,7 +120,7 @@ async function main() {
     const bucketName = `cov-bucket-${Number(blockHead)}`;
     console.log(`\n[2/6] initialize{value: 5 UNIT}('${bucketName}', provider, terms[1MiB×50], sig)`);
     const contractAccount = h160ToSubstrate(deployed.addressBytes);
-    const signed = await negotiatePrecompileTerms(providerUrl, contractAccount, {
+    const signed = await negotiatePrecompileTerms(api, providerUrl, contractAccount, {
       maxBytes: 1n << 20n,
       duration: 50,
       pricePerByte: PRICE_PER_BYTE,
