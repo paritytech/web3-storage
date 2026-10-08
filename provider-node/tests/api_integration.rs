@@ -450,6 +450,35 @@ common::backend_tests! {
     }
 }
 
+common::backend_tests! {
+    async fn test_upload_node_rejects_leaf_above_max_chunk_size(backend) {
+        let server = TestServer::new(backend).await;
+        let max = storage_primitives::MAX_CHUNK_SIZE as usize;
+
+        let put = |data: Vec<u8>| {
+            let hash = storage_primitives::hash_leaf(&data);
+            let request = server.client.put(server.url("/node")).json(&json!({
+                "bucket_id": 1,
+                "hash": format!("0x{}", hex_encode(hash.as_bytes())),
+                "data": BASE64.encode(&data),
+                "children": null,
+            }));
+            async move { request.send().await.unwrap() }
+        };
+
+        let response = put(vec![7u8; max]).await;
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let response = put(vec![7u8; max + 1]).await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+        let body: Value = response.json().await.unwrap();
+        assert_eq!(body["error"], "chunk_too_large");
+        assert_eq!(body["details"]["size"], max + 1);
+        assert_eq!(body["details"]["max"], max);
+    }
+}
+
 /// The hash of an internal node from its data (`left ++ right`).
 fn rehash_node(data: &[u8]) -> sp_core::H256 {
     storage_primitives::hash_children(

@@ -16,7 +16,7 @@ use crate::Signer;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use provider_auth::build_auth_header;
 use sp_core::H256;
-use storage_primitives::{hash_children, hash_leaf, BucketId};
+use storage_primitives::{hash_children, hash_leaf, BucketId, MAX_CHUNK_SIZE};
 
 /// Client for storage users (end users who store/retrieve data).
 pub struct StorageUserClient {
@@ -90,6 +90,9 @@ impl StorageUserClient {
     /// 3. Upload all nodes to the provider
     /// 4. Return the data root hash
     ///
+    /// Returns [`ClientError::Config`] before any request if a
+    /// [`ChunkingStrategy::Fixed`] size is 0 or above `MAX_CHUNK_SIZE`.
+    ///
     /// # Example
     /// ```no_run
     /// # use storage_client::{ClientConfig, Signer, StorageUserClient};
@@ -107,6 +110,16 @@ impl StorageUserClient {
         data: &[u8],
         strategy: ChunkingStrategy,
     ) -> ClientResult<H256> {
+        // A chunk size of 0 makes `chunks()` panic, and a leaf above
+        // `MAX_CHUNK_SIZE` can never be proven on-chain.
+        if let ChunkingStrategy::Fixed(chunk_size) = strategy {
+            if chunk_size == 0 || chunk_size > MAX_CHUNK_SIZE as usize {
+                return Err(ClientError::Config(format!(
+                    "chunk size must be between 1 and {MAX_CHUNK_SIZE} bytes, got {chunk_size}"
+                )));
+            }
+        }
+
         let provider_url = self.base.get_provider_url()?;
 
         // Encrypt data before chunking if encryption is enabled

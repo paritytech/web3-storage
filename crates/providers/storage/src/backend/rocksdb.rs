@@ -14,7 +14,7 @@ use rocksdb::{Options, DB};
 use sp_core::H256;
 use std::path::Path;
 use std::sync::Arc;
-use storage_primitives::{hash_leaf, BucketId, MmrLeaf};
+use storage_primitives::{hash_leaf, BucketId, MmrLeaf, MAX_CHUNK_SIZE};
 
 /// Column families for organizing data
 const CF_NODES: &str = "nodes";
@@ -248,6 +248,16 @@ impl DiskStorage {
         expected_hash: H256,
         node: ChunkTreeNode,
     ) -> Result<(), Error> {
+        // Checked first so an oversized leaf is not hashed.
+        if let ChunkTreeNode::Chunk(data) = &node {
+            if data.len() > MAX_CHUNK_SIZE as usize {
+                return Err(Error::ChunkTooLarge {
+                    size: data.len() as u64,
+                    max: MAX_CHUNK_SIZE,
+                });
+            }
+        }
+
         // Verify hash: derived from the children for an internal node, so a
         // node whose children don't match its claimed identity is rejected
         // here rather than trusted.
@@ -402,7 +412,7 @@ impl DiskStorage {
             leaf_indices.push(start_index + i as u64);
 
             // Calculate data size by traversing the stored node tree
-            let data_size = self.calculate_tree_size(*data_root);
+            let data_size = self.calculate_tree_size(*data_root)?;
             let total_size = bucket
                 .leaves
                 .last()
@@ -725,6 +735,68 @@ mod tests {
             )
             .unwrap_err();
         assert!(matches!(err, Error::InvalidHash { .. }));
+    }
+
+    #[test]
+    fn store_node_accepts_a_leaf_of_max_chunk_size() {
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        let bucket_id: BucketId = 1;
+        storage.init_bucket(bucket_id, u64::MAX).unwrap();
+
+        let data = vec![7u8; MAX_CHUNK_SIZE as usize];
+        let hash = hash_leaf(&data);
+        storage
+            .store_node(bucket_id, hash, ChunkTreeNode::Chunk(data))
+            .unwrap();
+        assert!(storage.get_node(&hash).is_some());
+    }
+
+    #[test]
+    fn store_node_rejects_a_leaf_above_max_chunk_size() {
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        let bucket_id: BucketId = 1;
+        storage.init_bucket(bucket_id, u64::MAX).unwrap();
+
+        let data = vec![7u8; MAX_CHUNK_SIZE as usize + 1];
+        let hash = hash_leaf(&data);
+        let err = storage
+            .store_node(bucket_id, hash, ChunkTreeNode::Chunk(data))
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            Error::ChunkTooLarge { size, max }
+                if size == MAX_CHUNK_SIZE as u64 + 1 && max == MAX_CHUNK_SIZE
+        ));
+        assert!(storage.get_node(&hash).is_none());
+        assert_eq!(storage.get_bucket(bucket_id).unwrap().used_bytes, 0);
+    }
+
+    #[test]
+    fn commit_rejects_a_root_containing_a_leaf_above_max_chunk_size() {
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        let bucket_id: BucketId = 1;
+        storage.init_bucket(bucket_id, u64::MAX).unwrap();
+
+        // Written past `store_node`, as a database from before the size check
+        // can contain it.
+        let node = ChunkTreeNode::Chunk(vec![7u8; MAX_CHUNK_SIZE as usize + 1]);
+        let hash = node.hash();
+        let cf = storage.db.cf_handle(CF_NODES).unwrap();
+        storage
+            .db
+            .put_cf(&cf, hash.as_bytes(), node.encode())
+            .unwrap();
+
+        let before = storage.get_bucket(bucket_id).unwrap();
+        let err = storage.commit(bucket_id, vec![hash]).unwrap_err();
+        assert!(matches!(err, Error::ChunkTooLarge { .. }));
+
+        let after = storage.get_bucket(bucket_id).unwrap();
+        assert_eq!(after.leaves.len(), before.leaves.len());
+        assert_eq!(after.mmr_root, before.mmr_root);
     }
 
     #[test]

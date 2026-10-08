@@ -12,6 +12,7 @@ import {
   CidMismatchError,
   hashChildren,
   hashLeaf,
+  MAX_CHUNK_SIZE,
   nodeHash,
   signProviderRequest,
   type ProviderRequestSigner,
@@ -103,6 +104,18 @@ export interface PutChunkResult {
 }
 
 /**
+ * Throw before sending a leaf the provider rejects: a leaf above
+ * `MAX_CHUNK_SIZE` cannot be proven on-chain.
+ */
+function assertLeafFits(bytes: Uint8Array): void {
+  if (bytes.length > MAX_CHUNK_SIZE) {
+    throw new RangeError(
+      `chunk is ${bytes.length} bytes, above the ${MAX_CHUNK_SIZE} byte maximum; split it into smaller chunks`,
+    );
+  }
+}
+
+/**
  * PUT a single chunk to the provider without requesting an MMR commitment.
  * Suitable for S3-style object uploads where the Layer 1 metadata records
  * the CID itself and no Layer 0 checkpoint follows immediately.
@@ -112,6 +125,8 @@ export interface PutChunkResult {
  * 
  * `children` to store an internal node instead of a leaf chunk. The
  * provider requires every child to exist already.
+ *
+ * Throws `RangeError` for a leaf above `MAX_CHUNK_SIZE`, before any request.
  */
 export async function putChunk(
   providerUrl: string,
@@ -122,6 +137,7 @@ export async function putChunk(
 ): Promise<PutChunkResult> {
   const sign = { signer: signer.signer, bucketId };
   const bytes = data instanceof Uint8Array ? data : new TextEncoder().encode(data);
+  if (!children) assertLeafFits(bytes);
   const cid = children ? hashChildren(children[0], children[1]) : hashLeaf(bytes);
   const hash = toHex(cid);
   await providerFetch(providerUrl, "/node", {
@@ -144,6 +160,8 @@ export async function putChunk(
  *
  * `signer` authenticates the `PUT /node` and `POST /commit` requests; it must
  * hold a Writer/Admin role on `bucketId` (the provider always enforces this).
+ *
+ * Throws `RangeError` for a leaf above `MAX_CHUNK_SIZE`, before any request.
  */
 export async function uploadChunk(
   providerUrl: string,
@@ -153,6 +171,7 @@ export async function uploadChunk(
 ): Promise<{ hash: string; data: Uint8Array; commit: any }> {
   const sign = { signer: signer.signer, bucketId };
   const bytes = data instanceof Uint8Array ? data : new TextEncoder().encode(data);
+  assertLeafFits(bytes);
   const hash = toHex(hashLeaf(bytes));
   await providerFetch(providerUrl, "/node", {
     method: "PUT",

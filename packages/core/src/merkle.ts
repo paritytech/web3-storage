@@ -14,6 +14,12 @@ import { concatBytes } from "./bytes.js";
 /** Mirror of DEFAULT_CHUNK_SIZE in crates/primitives/storage/src/lib.rs. */
 export const DEFAULT_CHUNK_SIZE = 256 * 1024;
 
+/**
+ * Mirror of MAX_CHUNK_SIZE in crates/primitives/storage/src/lib.rs: the largest
+ * leaf a challenge response can contain. A provider cannot prove a bigger leaf.
+ */
+export const MAX_CHUNK_SIZE = 256 * 1024;
+
 /** Prefix of an internal node preimage; leaves use a different prefix. */
 const NODE_PREFIX = 0x01;
 
