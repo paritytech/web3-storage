@@ -27,7 +27,7 @@ pub use provider_negotiation::{AgreementTermsOf, NegotiateRequest, SignedTerms};
 /// The chain treats the resulting signature as provider consent, so the
 /// node must refuse to sign terms it wouldn't accept: without this check a
 /// client could propose `price_per_byte = 0`, an out-of-range duration, or
-/// more bytes than the provider has capacity for, and the extrinsic would
+/// fewer bytes than the provider's minimum, more bytes than the provider has capacity for, and the extrinsic would
 /// bind the provider to it.
 pub fn validate_request(req: &NegotiateRequest, info: &ProviderInfo) -> Result<(), Error> {
     match &req.replica_params {
@@ -64,6 +64,13 @@ pub fn validate_request(req: &NegotiateRequest, info: &ProviderInfo) -> Result<(
         });
     }
 
+    if req.max_bytes < info.settings.min_bytes {
+        return Err(Error::MaxBytesBelowMinimum {
+            requested: req.max_bytes,
+            min_bytes: info.settings.min_bytes,
+        });
+    }
+
     // `max_capacity == 0` means unlimited.
     if info.settings.max_capacity > 0
         && info.committed_bytes.saturating_add(req.max_bytes) > info.settings.max_capacity
@@ -76,4 +83,66 @@ pub fn validate_request(req: &NegotiateRequest, info: &ProviderInfo) -> Result<(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use provider_types::{ProviderSettings, ProviderStats};
+    use sp_runtime::AccountId32;
+
+    fn info(min_bytes: u64) -> ProviderInfo {
+        ProviderInfo {
+            multiaddr: "/ip4/127.0.0.1/tcp/3333".to_string(),
+            public_key: vec![0; 32],
+            stake: 1_000_000,
+            committed_bytes: 0,
+            settings: ProviderSettings {
+                min_duration: 10,
+                max_duration: 100,
+                price_per_byte: 5,
+                accepting_primary: true,
+                replica_sync_price: None,
+                accepting_extensions: true,
+                max_capacity: 0,
+                min_bytes,
+            },
+            stats: ProviderStats::default(),
+            deregister_at: None,
+        }
+    }
+
+    fn request(max_bytes: u64) -> NegotiateRequest {
+        NegotiateRequest {
+            owner: AccountId32::new([7u8; 32]),
+            max_bytes,
+            duration: 50,
+            price_per_byte: 5,
+            nonce: 0,
+            bucket: None,
+            replica_params: None,
+        }
+    }
+
+    #[test]
+    fn rejects_max_bytes_below_min_bytes() {
+        let err = validate_request(&request(99), &info(100)).unwrap_err();
+        assert!(matches!(
+            err,
+            Error::MaxBytesBelowMinimum {
+                requested: 99,
+                min_bytes: 100
+            }
+        ));
+    }
+
+    #[test]
+    fn accepts_max_bytes_equal_to_min_bytes() {
+        assert!(validate_request(&request(100), &info(100)).is_ok());
+    }
+
+    #[test]
+    fn accepts_any_nonzero_max_bytes_when_min_bytes_is_zero() {
+        assert!(validate_request(&request(1), &info(0)).is_ok());
+    }
 }

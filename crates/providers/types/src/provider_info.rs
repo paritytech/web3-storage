@@ -49,6 +49,8 @@ pub struct ProviderSettings {
     pub accepting_extensions: bool,
     /// Maximum storage capacity in bytes. `0` = unlimited.
     pub max_capacity: u64,
+    /// Minimum `max_bytes` per agreement. `0` = no minimum.
+    pub min_bytes: u64,
 }
 
 /// On-chain statistics for evaluating provider quality.

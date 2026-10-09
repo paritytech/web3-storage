@@ -117,6 +117,7 @@ pub fn publish_matching_registration(state: &ProviderState) {
                 replica_sync_price: None,
                 accepting_extensions: true,
                 max_capacity: 0,
+                min_bytes: 0,
             },
             stats: Default::default(),
             deregister_at: None,
