@@ -5,7 +5,7 @@
 //! This test is designed to run in CI after the infrastructure is set up.
 //! It tests the full file system workflow:
 //! 1. Negotiate signed agreement terms with the provider
-//! 2. Create a drive (atomically opens bucket + primary agreement)
+//! 2. Create a drive (a Layer 0 bucket with one primary agreement)
 //! 3. Create directories
 //! 4. Upload files
 //! 5. List directories
@@ -15,7 +15,7 @@
 //!
 //! Run via justfile (recommended): just fs-demo-ci
 
-use file_system_client::{FileSystemClient, Signer};
+use file_system_client::{FileSystemClient, Role, Signer};
 use file_system_primitives::DirectoryEntry;
 use sp_runtime::AccountId32;
 use std::env;
@@ -24,11 +24,11 @@ use subxt_signer::sr25519::dev as dev_signer;
 
 async fn list_and_verify(
     fs_client: &mut FileSystemClient,
-    drive_id: u64,
+    bucket_id: u64,
     path: &str,
     expected_count: usize,
 ) -> Result<Vec<DirectoryEntry>, Box<dyn std::error::Error>> {
-    let entries = fs_client.list_directory(drive_id, path).await?;
+    let entries = fs_client.list_directory(bucket_id, path).await?;
     println!("  {path} entries: {}", entries.len());
     for entry in &entries {
         let kind = if entry.is_directory() { "DIR " } else { "FILE" };
@@ -109,30 +109,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Step 3: Create a drive
     println!();
     println!("Step 3: Creating drive...");
-    let drive_id = fs_client
+    let bucket_id = fs_client
         .create_drive(
-            Some("CI Test Drive"),
             provider,
             signed.terms,
             signed.signature,
             storage_client::Visibility::Private,
         )
         .await?;
-    println!("  Drive created: ID = {drive_id}");
-
-    let bucket_id = fs_client.get_bucket_id(drive_id).await?;
-    println!("  Associated bucket: ID = {bucket_id}");
+    println!("  Drive created: bucket {bucket_id}");
 
     // Step 4: Create directories
     println!();
     println!("Step 4: Creating directories...");
-    fs_client
-        .create_directory(drive_id, "/test-dir", bucket_id)
-        .await?;
+    fs_client.create_directory(bucket_id, "/test-dir").await?;
     println!("  Created /test-dir");
 
     fs_client
-        .create_directory(drive_id, "/test-dir/subdir", bucket_id)
+        .create_directory(bucket_id, "/test-dir/subdir")
         .await?;
     println!("  Created /test-dir/subdir");
 
@@ -142,7 +136,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let test_content_1 = b"Hello from CI integration test!";
     fs_client
-        .upload_file(drive_id, "/test-dir/hello.txt", test_content_1, bucket_id)
+        .upload_file(bucket_id, "/test-dir/hello.txt", test_content_1)
         .await?;
     println!(
         "  Uploaded /test-dir/hello.txt ({} bytes)",
@@ -151,12 +145,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let test_content_2 = b"This is a nested file in the subdirectory.";
     fs_client
-        .upload_file(
-            drive_id,
-            "/test-dir/subdir/nested.txt",
-            test_content_2,
-            bucket_id,
-        )
+        .upload_file(bucket_id, "/test-dir/subdir/nested.txt", test_content_2)
         .await?;
     println!(
         "  Uploaded /test-dir/subdir/nested.txt ({} bytes)",
@@ -167,7 +156,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!();
     println!("Step 6: Listing directories...");
 
-    let root_entries = list_and_verify(&mut fs_client, drive_id, "/", 1).await?;
+    let root_entries = list_and_verify(&mut fs_client, bucket_id, "/", 1).await?;
     assert!(
         root_entries[0].is_directory(),
         "Expected test-dir to be a directory"
@@ -178,15 +167,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "Expected entry named 'test-dir'"
     );
 
-    list_and_verify(&mut fs_client, drive_id, "/test-dir", 2).await?;
-    list_and_verify(&mut fs_client, drive_id, "/test-dir/subdir", 1).await?;
+    list_and_verify(&mut fs_client, bucket_id, "/test-dir", 2).await?;
+    list_and_verify(&mut fs_client, bucket_id, "/test-dir/subdir", 1).await?;
 
     // Step 7: Download and verify files
     println!();
     println!("Step 7: Downloading and verifying files...");
 
     let downloaded_1 = fs_client
-        .download_file(drive_id, "/test-dir/hello.txt")
+        .download_file(bucket_id, "/test-dir/hello.txt")
         .await?;
     println!(
         "  Downloaded /test-dir/hello.txt ({} bytes)",
@@ -200,7 +189,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("    Content verified!");
 
     let downloaded_2 = fs_client
-        .download_file(drive_id, "/test-dir/subdir/nested.txt")
+        .download_file(bucket_id, "/test-dir/subdir/nested.txt")
         .await?;
     println!(
         "  Downloaded /test-dir/subdir/nested.txt ({} bytes)",
@@ -213,12 +202,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     println!("    Content verified!");
 
+    // Step 8: Share the drive with Bob, then revoke access
+    println!();
+    println!("Step 8: Adding and removing a member...");
+    let bob: AccountId32 = dev_signer::bob().public_key().0.into();
+    fs_client
+        .add_member(bucket_id, bob.clone(), Role::Writer)
+        .await?;
+    println!("  Added Bob as writer");
+    fs_client.remove_member(bucket_id, bob).await?;
+    println!("  Removed Bob");
+
     // Summary
     println!();
     println!("=== PASSED: All tests completed successfully! ===");
     println!();
     println!("Summary:");
-    println!("  - Created drive (ID: {drive_id})");
+    println!("  - Created drive (bucket {bucket_id})");
     println!("  - Created 2 directories");
     println!("  - Uploaded 2 files");
     println!("  - Listed 3 directories");
