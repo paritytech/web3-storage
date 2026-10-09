@@ -129,7 +129,7 @@
       </div>
     </div>
 
-    <script id="archify-guided-views-data" type="application/json">[{"id":"setup","label":"Bucket setup","focus":["client","primaries","pallet","bucket"],"note":"create_bucket makes an empty bucket; a primary joins when the admin redeems its signed quote from POST /negotiate."},{"id":"write-path","label":"Write path","focus":["client","primaries","pallet","bucket"],"note":"The client uploads and commits to primaries off-chain, then submits their signatures in a checkpoint."},{"id":"redundancy","label":"Read redundancy","focus":["funder","client","primaries","replica","pallet"],"note":"Any account adds a replica with add_replica_provider; the replica syncs and calls confirm_replica_sync to get paid."},{"id":"enforcement","label":"Enforcement","focus":["funder","pallet","stake","primaries","replica"],"note":"A challenge requires an on-chain response; a missing or invalid response slashes the full stake."}]</script>
+    <script id="archify-guided-views-data" type="application/json">[{"id":"setup","label":"Bucket setup","focus":["client","primaries","pallet","bucket"],"note":"create_bucket makes an empty bucket; a primary joins when the admin redeems its signed quote from POST /negotiate."},{"id":"write-path","label":"Write path","focus":["client","primaries","pallet","bucket"],"note":"The client uploads and commits to primaries off-chain, then submits their signatures in a checkpoint."},{"id":"redundancy","label":"Read redundancy","focus":["funder","client","primaries","replica","pallet"],"note":"Any account adds a replica with add_replica_provider; the replica syncs and calls confirm_replica_sync to get paid."},{"id":"enforcement","label":"Enforcement","focus":["funder","pallet","stake","primaries","replica"],"note":"A challenge requires an on-chain response; no response by the deadline slashes the full stake."}]</script>
 
     <script src="assets/archify/i18n.js?v=b331908a8a55"></script>
     <div class="guided-views no-print" id="guided-views" hidden aria-label="Guided diagram views">
@@ -598,7 +598,7 @@
           <h3>Enforcement</h3>
         </div>
         <ul>
-          <li>&bull; A failed challenge slashes the entire stake</li>
+          <li>&bull; An unanswered challenge slashes the entire stake</li>
           <li>&bull; Private bucket: members and primary-agreement owners challenge primaries</li>
           <li>&bull; Counterparty challenges cost the provider part of the response fee</li>
         </ul>

@@ -129,7 +129,7 @@
       </div>
     </div>
 
-    <script id="archify-guided-views-data" type="application/json">[{"id":"evidence","label":"Evidence","focus":["challenger","provider","pallet"],"note":"A provider signature from POST /commit or GET /commitment, or the on-chain snapshot for a cold bucket."},{"id":"create","label":"Create","focus":["challenger","pallet","sweep","holds"],"note":"The pallet checks the caller, holds ChallengeDeposit and stores the challenge under its deadline."},{"id":"defend","label":"Defend","focus":["provider","pallet","holds"],"note":"A valid response before the deadline leaves the stake untouched. The deposit reimburses the response fee."},{"id":"timeout","label":"Timeout and slash","focus":["challenger","pallet","sweep","holds"],"note":"The on_initialize sweep slashes the full stake of a provider that did not respond before the deadline."}]</script>
+    <script id="archify-guided-views-data" type="application/json">[{"id":"evidence","label":"Evidence","focus":["challenger","provider","pallet"],"note":"A provider signature from POST /commit or GET /commitment, or the on-chain snapshot for a cold bucket."},{"id":"create","label":"Create","focus":["challenger","pallet","challenges","holds"],"note":"The pallet checks the caller, holds ChallengeDeposit and stores the challenge under its deadline."},{"id":"defend","label":"Defend","focus":["provider","pallet","holds"],"note":"A valid response before the deadline leaves the stake untouched. The deposit reimburses the response fee."},{"id":"timeout","label":"Timeout and slash","focus":["challenger","pallet","challenges","holds"],"note":"After the deadline anyone calls resolve_expired_challenge; it slashes the full stake of a provider that did not respond."}]</script>
 
     <script src="assets/archify/i18n.js?v=b331908a8a55"></script>
     <div class="guided-views no-print" id="guided-views" hidden aria-label="Guided diagram views">
@@ -174,7 +174,7 @@
     <!-- Main Diagram -->
     <div class="diagram-container" data-detail-level="read"
          data-preset-badge-editorial-plate="WEB3 STORAGE / PLATE 04">
-      <svg viewBox="0 0 1380 730" role="img" lang="en" aria-labelledby="archify-diagram-title archify-diagram-description" data-preset="classic" data-quality-profile="showcase">
+      <svg viewBox="0 0 1380 762" role="img" lang="en" aria-labelledby="archify-diagram-title archify-diagram-description" data-preset="classic" data-quality-profile="showcase">
         <title id="archify-diagram-title">Challenge, Response and Slash</title>
         <desc id="archify-diagram-description">A sequence diagram.</desc>
         <!-- Definitions -->
@@ -206,14 +206,14 @@
 
         <rect data-graph-role="structural-frame" data-composition-frame-kind="segment" data-composition-frame-id="2" x="48" y="418" width="1284" height="96" rx="10" class="c-lane" stroke-width="1"/>
 
-        <rect data-graph-role="structural-frame" data-composition-frame-kind="segment" data-composition-frame-id="3" x="48" y="526" width="1284" height="130" rx="10" class="c-lane" stroke-width="1"/>
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="segment" data-composition-frame-id="3" x="48" y="526" width="1284" height="162" rx="10" class="c-lane" stroke-width="1"/>
 
         <!-- Lifelines -->
-        <path d="M 157 142 L 157 665" class="a-default" stroke-width="0.8" stroke-dasharray="3,7"/>
-        <path d="M 429 142 L 429 665" class="a-default" stroke-width="0.8" stroke-dasharray="3,7"/>
-        <path d="M 701 142 L 701 665" class="a-default" stroke-width="0.8" stroke-dasharray="3,7"/>
-        <path d="M 973 142 L 973 665" class="a-default" stroke-width="0.8" stroke-dasharray="3,7"/>
-        <path d="M 1245 142 L 1245 665" class="a-default" stroke-width="0.8" stroke-dasharray="3,7"/>
+        <path d="M 157 142 L 157 697" class="a-default" stroke-width="0.8" stroke-dasharray="3,7"/>
+        <path d="M 429 142 L 429 697" class="a-default" stroke-width="0.8" stroke-dasharray="3,7"/>
+        <path d="M 701 142 L 701 697" class="a-default" stroke-width="0.8" stroke-dasharray="3,7"/>
+        <path d="M 973 142 L 973 697" class="a-default" stroke-width="0.8" stroke-dasharray="3,7"/>
+        <path d="M 1245 142 L 1245 697" class="a-default" stroke-width="0.8" stroke-dasharray="3,7"/>
 
         <!-- Activations -->
         <rect x="424" y="181" width="10" height="42" rx="3" class="c-mask"/>
@@ -222,10 +222,10 @@
         <rect x="696" y="293" width="10" height="106" rx="3" class="c-backend" stroke-width="1"/>
         <rect x="696" y="433" width="10" height="74" rx="3" class="c-mask"/>
         <rect x="696" y="433" width="10" height="74" rx="3" class="c-backend" stroke-width="1"/>
-        <rect x="968" y="541" width="10" height="42" rx="3" class="c-mask"/>
-        <rect x="968" y="541" width="10" height="42" rx="3" class="c-messagebus" stroke-width="1"/>
-        <rect x="696" y="605" width="10" height="42" rx="3" class="c-mask"/>
-        <rect x="696" y="605" width="10" height="42" rx="3" class="c-backend" stroke-width="1"/>
+        <rect x="696" y="541" width="10" height="74" rx="3" class="c-mask"/>
+        <rect x="696" y="541" width="10" height="74" rx="3" class="c-backend" stroke-width="1"/>
+        <rect x="696" y="637" width="10" height="42" rx="3" class="c-mask"/>
+        <rect x="696" y="637" width="10" height="42" rx="3" class="c-backend" stroke-width="1"/>
 
         <!-- Messages -->
         <g data-edge-from="challenger" data-edge-to="provider" data-edge-label="POST /commit (data_roots) or GET /commitment" data-edge-key="0" data-edge-id="commit">
@@ -269,11 +269,11 @@
         </g>
         </g>
 
-        <g data-edge-from="pallet" data-edge-to="sweep" data-edge-label="Challenges[deadline]" data-edge-key="5" data-edge-id="store">
-          <path data-composition-edge-from="pallet" data-composition-edge-to="sweep" data-composition-edge-id="store" data-composition-points="708,362;966,362" d="M 708 362 L 966 362" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
+        <g data-edge-from="pallet" data-edge-to="challenges" data-edge-label="Challenges[deadline, index]" data-edge-key="5" data-edge-id="store">
+          <path data-composition-edge-from="pallet" data-composition-edge-to="challenges" data-composition-edge-id="store" data-composition-points="708,362;966,362" d="M 708 362 L 966 362" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
         <g data-detail="context">
-          <rect x="779" y="342" width="116" height="16" rx="3" class="c-mask"/>
-          <text x="837" y="352" class="t-backend" font-size="9" text-anchor="middle">Challenges[deadline]</text>
+          <rect x="760.8" y="342" width="152.4" height="16" rx="3" class="c-mask"/>
+          <text x="837" y="352" class="t-backend" font-size="9" text-anchor="middle">Challenges[deadline, index]</text>
         </g>
         <text data-detail="fine" x="720" y="380" class="t-dim" font-size="7">deadline = now + ChallengeTimeout (48h, anchor blocks)</text>
         </g>
@@ -313,37 +313,46 @@
         <text data-detail="fine" x="448" y="520" class="t-dim" font-size="7">response_time_blocks, challenger_cost, provider_cost</text>
         </g>
 
-        <g data-edge-from="sweep" data-edge-to="holds" data-edge-label="deadline passed: slash full ProviderStake, release ChallengeDeposit" data-edge-key="10" data-edge-id="slash">
-          <path data-composition-edge-from="sweep" data-composition-edge-to="holds" data-composition-edge-id="slash" data-composition-points="980,546;1238,546" d="M 980 546 L 1238 546" class="a-security" stroke-width="1.4" marker-end="url(#arrowhead-security)"/>
+        <g data-edge-from="challenger" data-edge-to="pallet" data-edge-label="resolve_expired_challenge(challenge_id)" data-edge-key="10" data-edge-id="resolve">
+          <path data-composition-edge-from="challenger" data-composition-edge-to="pallet" data-composition-edge-id="resolve" data-composition-points="164,546;694,546" d="M 164 546 L 694 546" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
         <g data-detail="context">
-          <rect x="928.8" y="526" width="360.40000000000003" height="16" rx="3" class="c-mask"/>
-          <text x="1109" y="536" class="t-security" font-size="9" text-anchor="middle">deadline passed: slash full ProviderStake, release ChallengeDeposit</text>
+          <rect x="321.6" y="526" width="214.8" height="16" rx="3" class="c-mask"/>
+          <text x="429" y="536" class="t-backend" font-size="9" text-anchor="middle">resolve_expired_challenge(challenge_id)</text>
         </g>
-        <text data-detail="fine" x="992" y="564" class="t-dim" font-size="7">challenger made whole, no reward</text>
+        <text data-detail="fine" x="176" y="564" class="t-dim" font-size="7">anyone may call, free on success; ChallengeNotExpired while anchor &lt;= deadline</text>
         </g>
 
-        <g data-edge-from="sweep" data-edge-to="provider" data-edge-label="ChallengeSlashed { reason: Timeout }" data-edge-key="11" data-edge-id="slashed">
-          <path data-composition-edge-from="sweep" data-composition-edge-to="provider" data-composition-edge-id="slashed" data-composition-points="966,578;436,578" d="M 966 578 L 436 578" class="a-default" stroke-width="1.4" stroke-dasharray="3,5" marker-end="url(#arrowhead)"/>
+        <g data-edge-from="pallet" data-edge-to="holds" data-edge-label="slash full ProviderStake to the Treasury, release ChallengeDeposit" data-edge-key="11" data-edge-id="slash">
+          <path data-composition-edge-from="pallet" data-composition-edge-to="holds" data-composition-edge-id="slash" data-composition-points="708,578;1238,578" d="M 708 578 L 1238 578" class="a-security" stroke-width="1.4" marker-end="url(#arrowhead-security)"/>
         <g data-detail="context">
-          <rect x="601.4" y="558" width="199.20000000000002" height="16" rx="3" class="c-mask"/>
-          <text x="701" y="568" class="t-muted" font-size="9" text-anchor="middle">ChallengeSlashed { reason: Timeout }</text>
+          <rect x="795.4" y="558" width="355.2" height="16" rx="3" class="c-mask"/>
+          <text x="973" y="568" class="t-security" font-size="9" text-anchor="middle">slash full ProviderStake to the Treasury, release ChallengeDeposit</text>
+        </g>
+        <text data-detail="fine" x="720" y="596" class="t-dim" font-size="7">challenger made whole, no reward</text>
+        </g>
+
+        <g data-edge-from="pallet" data-edge-to="provider" data-edge-label="ChallengeSlashed { slashed_amount }" data-edge-key="12" data-edge-id="slashed">
+          <path data-composition-edge-from="pallet" data-composition-edge-to="provider" data-composition-edge-id="slashed" data-composition-points="694,610;436,610" d="M 694 610 L 436 610" class="a-default" stroke-width="1.4" stroke-dasharray="3,5" marker-end="url(#arrowhead)"/>
+        <g data-detail="context">
+          <rect x="468" y="590" width="194" height="16" rx="3" class="c-mask"/>
+          <text x="565" y="600" class="t-muted" font-size="9" text-anchor="middle">ChallengeSlashed { slashed_amount }</text>
         </g>
         </g>
 
-        <g data-edge-from="challenger" data-edge-to="pallet" data-edge-label="remove_slashed(bucket_id, provider)" data-edge-key="12" data-edge-id="remove">
-          <path data-composition-edge-from="challenger" data-composition-edge-to="pallet" data-composition-edge-id="remove" data-composition-points="164,610;694,610" d="M 164 610 L 694 610" class="a-dashed" stroke-width="1.4" marker-end="url(#arrowhead-dashed)"/>
+        <g data-edge-from="challenger" data-edge-to="pallet" data-edge-label="remove_slashed(bucket_id, provider)" data-edge-key="13" data-edge-id="remove">
+          <path data-composition-edge-from="challenger" data-composition-edge-to="pallet" data-composition-edge-id="remove" data-composition-points="164,642;694,642" d="M 164 642 L 694 642" class="a-dashed" stroke-width="1.4" marker-end="url(#arrowhead-dashed)"/>
         <g data-detail="context">
-          <rect x="332" y="590" width="194" height="16" rx="3" class="c-mask"/>
-          <text x="429" y="600" class="t-messagebus" font-size="9" text-anchor="middle">remove_slashed(bucket_id, provider)</text>
+          <rect x="332" y="622" width="194" height="16" rx="3" class="c-mask"/>
+          <text x="429" y="632" class="t-messagebus" font-size="9" text-anchor="middle">remove_slashed(bucket_id, provider)</text>
         </g>
-        <text data-detail="fine" x="176" y="628" class="t-dim" font-size="7">anyone may call</text>
+        <text data-detail="fine" x="176" y="660" class="t-dim" font-size="7">anyone may call</text>
         </g>
 
-        <g data-edge-from="pallet" data-edge-to="holds" data-edge-label="remaining AgreementPayment to owner" data-edge-key="13" data-edge-id="payment">
-          <path data-composition-edge-from="pallet" data-composition-edge-to="holds" data-composition-edge-id="payment" data-composition-points="708,642;1238,642" d="M 708 642 L 1238 642" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
+        <g data-edge-from="pallet" data-edge-to="holds" data-edge-label="remaining AgreementPayment to owner" data-edge-key="14" data-edge-id="payment">
+          <path data-composition-edge-from="pallet" data-composition-edge-to="holds" data-composition-edge-id="payment" data-composition-points="708,674;1238,674" d="M 708 674 L 1238 674" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
         <g data-detail="context">
-          <rect x="876" y="622" width="194" height="16" rx="3" class="c-mask"/>
-          <text x="973" y="632" class="t-backend" font-size="9" text-anchor="middle">remaining AgreementPayment to owner</text>
+          <rect x="876" y="654" width="194" height="16" rx="3" class="c-mask"/>
+          <text x="973" y="664" class="t-backend" font-size="9" text-anchor="middle">remaining AgreementPayment to owner</text>
         </g>
         </g>
 
@@ -361,8 +370,8 @@
           <text x="62" y="409" class="t-dim" font-size="9" font-weight="600">Defend: respond before the deadline</text>
         </g>
         <g data-graph-role="segment-label" data-segment-id="3">
-          <rect x="56" y="504" width="237.6" height="18" rx="3" class="c-mask"/>
-          <text x="62" y="517" class="t-dim" font-size="9" font-weight="600">Timeout: on_initialize slashes, then remove</text>
+          <rect x="56" y="504" width="300" height="18" rx="3" class="c-mask"/>
+          <text x="62" y="517" class="t-dim" font-size="9" font-weight="600">Timeout: resolve_expired_challenge slashes, then remove</text>
         </g>
 
         <!-- Participants -->
@@ -397,17 +406,15 @@
           <text data-node-label="" x="701" y="94" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Storage Pallet</text>
         </g>
 
-        <g id="node-sweep" data-node-id="sweep" data-node-label="on_initialize Sweep" tabindex="0" role="button" aria-label="Focus on_initialize Sweep, Sequence participant" aria-pressed="false" data-node-kind="messagebus" data-node-context="Sequence participant">
-          <title>on_initialize Sweep · Sequence participant</title>
+        <g id="node-challenges" data-node-id="challenges" data-node-label="Challenges" tabindex="0" role="button" aria-label="Focus Challenges, Sequence participant" aria-pressed="false" data-node-kind="database" data-node-context="Sequence participant">
+          <title>Challenges · Sequence participant</title>
           <rect x="878" y="72" width="190" height="54" rx="6" class="c-mask"/>
-          <rect x="878" y="72" width="190" height="54" rx="6" class="c-messagebus" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="messagebus" class="semantic-sigil s-messagebus" transform="translate(884 78) scale(0.6875)">
-            <path d="M2.5 4.5h11M2.5 8h11M2.5 11.5h11"/>
-            <circle cx="5" cy="4.5" r="1" class="sigil-fill"/>
-            <circle cx="10.5" cy="8" r="1" class="sigil-fill"/>
-            <circle cx="7" cy="11.5" r="1" class="sigil-fill"/>
+          <rect x="878" y="72" width="190" height="54" rx="6" class="c-database" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="database" class="semantic-sigil s-database" transform="translate(884 78) scale(0.6875)">
+            <ellipse cx="8" cy="4" rx="5" ry="2"/>
+            <path d="M3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8c0 1.1 2.2 2 5 2s5-.9 5-2"/>
           </g>
-          <text data-node-label="" x="973" y="94" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">on_initialize Sweep</text>
+          <text data-node-label="" x="973" y="94" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Challenges</text>
         </g>
 
         <g id="node-holds" data-node-id="holds" data-node-label="Holds" tabindex="0" role="button" aria-label="Focus Holds, Sequence participant" aria-pressed="false" data-node-kind="database" data-node-context="Sequence participant">
@@ -423,26 +430,26 @@
 
         <!-- Legend -->
         <g data-legend="">
-          <text x="40" y="656" class="t-primary" font-size="12" font-weight="650">Legend</text>
-          <g data-legend-semantic-kind="emphasis" data-legend-x="40" data-legend-baseline="676" data-legend-width="78">
-            <path d="M 40 673 L 74 673" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
-            <text x="83" y="676" class="t-muted" font-size="10" font-weight="500">request</text>
+          <text x="40" y="688" class="t-primary" font-size="12" font-weight="650">Legend</text>
+          <g data-legend-semantic-kind="emphasis" data-legend-x="40" data-legend-baseline="708" data-legend-width="78">
+            <path d="M 40 705 L 74 705" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+            <text x="83" y="708" class="t-muted" font-size="10" font-weight="500">request</text>
           </g>
-          <g data-legend-semantic-kind="return" data-legend-x="140" data-legend-baseline="676" data-legend-width="73">
-            <path d="M 140 673 L 174 673" class="a-default" stroke-width="1.4" stroke-dasharray="3,5" marker-end="url(#arrowhead)"/>
-            <text x="183" y="676" class="t-muted" font-size="10" font-weight="500">return</text>
+          <g data-legend-semantic-kind="return" data-legend-x="140" data-legend-baseline="708" data-legend-width="73">
+            <path d="M 140 705 L 174 705" class="a-default" stroke-width="1.4" stroke-dasharray="3,5" marker-end="url(#arrowhead)"/>
+            <text x="183" y="708" class="t-muted" font-size="10" font-weight="500">return</text>
           </g>
-          <g data-legend-semantic-kind="security" data-legend-x="235" data-legend-baseline="676" data-legend-width="108">
-            <path d="M 235 673 L 269 673" class="a-security" stroke-width="1.4" marker-end="url(#arrowhead-security)"/>
-            <text x="278" y="676" class="t-muted" font-size="10" font-weight="500">hold or slash</text>
+          <g data-legend-semantic-kind="security" data-legend-x="235" data-legend-baseline="708" data-legend-width="108">
+            <path d="M 235 705 L 269 705" class="a-security" stroke-width="1.4" marker-end="url(#arrowhead-security)"/>
+            <text x="278" y="708" class="t-muted" font-size="10" font-weight="500">hold or slash</text>
           </g>
-          <g data-legend-semantic-kind="dashed" data-legend-x="365" data-legend-baseline="676" data-legend-width="108">
-            <path d="M 365 673 L 399 673" class="a-dashed" stroke-width="1.4" marker-end="url(#arrowhead-dashed)"/>
-            <text x="408" y="676" class="t-muted" font-size="10" font-weight="500">optional step</text>
+          <g data-legend-semantic-kind="dashed" data-legend-x="365" data-legend-baseline="708" data-legend-width="108">
+            <path d="M 365 705 L 399 705" class="a-dashed" stroke-width="1.4" marker-end="url(#arrowhead-dashed)"/>
+            <text x="408" y="708" class="t-muted" font-size="10" font-weight="500">optional step</text>
           </g>
-          <g data-legend-semantic-kind="default" data-legend-x="495" data-legend-baseline="676" data-legend-width="118">
-            <path d="M 495 673 L 529 673" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
-            <text x="538" y="676" class="t-muted" font-size="10" font-weight="500">default message</text>
+          <g data-legend-semantic-kind="default" data-legend-x="495" data-legend-baseline="708" data-legend-width="118">
+            <path d="M 495 705 L 529 705" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
+            <text x="538" y="708" class="t-muted" font-size="10" font-weight="500">default message</text>
           </g>
         </g>
       </svg>
@@ -649,9 +656,9 @@
           <h3>Invalid response</h3>
         </div>
         <ul>
-          <li>&bull; Slashed at once with a SlashReason</li>
-          <li>&bull; InvalidProof, InvalidDeletionClaim, InvalidSupersededClaim</li>
-          <li>&bull; Malformed call: dispatch error, provider may resend</li>
+          <li>&bull; Rejected with InvalidProof, InvalidDeletionClaim or InvalidSupersededClaim; the provider pays the tx fee</li>
+          <li>&bull; The challenge stays open; the provider may answer again before the deadline</li>
+          <li>&bull; Only a timeout slashes: resolve_expired_challenge after the deadline</li>
         </ul>
       </div>
 
@@ -661,7 +668,7 @@
           <h3>PendingChallenges</h3>
         </div>
         <ul>
-          <li>&bull; Gates complete_deregister</li>
+          <li>&bull; Gates complete_deregister; the provider may call resolve_expired_challenge itself</li>
           <li>&bull; PendingChallengesByBucket gates end_agreement, claim_expired_agreement</li>
           <li>&bull; Each resolution decrements both once</li>
         </ul>

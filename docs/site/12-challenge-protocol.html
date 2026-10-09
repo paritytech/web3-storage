@@ -129,7 +129,7 @@
       </div>
     </div>
 
-    <script id="archify-guided-views-data" type="application/json">[{"id":"happy-path","label":"Defended challenge","focus":["open","gate","window","respond","verify","defended"],"note":"A valid response before the deadline leaves the stake untouched. The deposit reimburses the response fee per tier."},{"id":"gate-view","label":"Who may challenge","focus":["open","gate","denied"],"note":"The chain rejects a self-challenge, and a private-bucket primary challenge from a non-member without a primary agreement."},{"id":"failure","label":"Slash","focus":["window","verify","sweep","slashed"],"note":"An invalid response or no response before ChallengeTimeout slashes the full stake."},{"id":"exit","label":"Cancel","focus":["open","window","cancelled"],"note":"The design doc allows cancel before the response. The implementation doc defines no cancel extrinsic yet."}]</script>
+    <script id="archify-guided-views-data" type="application/json">[{"id":"happy-path","label":"Defended challenge","focus":["open","gate","window","respond","verify","defended"],"note":"A valid response before the deadline leaves the stake untouched. The deposit reimburses the response fee per tier."},{"id":"gate-view","label":"Who may challenge","focus":["open","gate","denied"],"note":"The chain rejects a self-challenge, and a private-bucket primary challenge from a non-member without a primary agreement."},{"id":"failure","label":"Slash","focus":["window","verify","rejected","expire","slashed"],"note":"Invalid responses are rejected; the challenge stays open. After the deadline, resolve_expired_challenge (anyone) slashes the full stake."},{"id":"exit","label":"Cancel","focus":["open","window","cancelled"],"note":"The design doc allows cancel before the response. The implementation doc defines no cancel extrinsic yet."}]</script>
 
     <script src="assets/archify/i18n.js?v=b331908a8a55"></script>
     <div class="guided-views no-print" id="guided-views" hidden aria-label="Guided diagram views">
@@ -174,7 +174,7 @@
     <!-- Main Diagram -->
     <div class="diagram-container" data-detail-level="read"
          data-preset-badge-editorial-plate="WEB3 STORAGE / PLATE 04">
-      <svg viewBox="0 0 1013 660" role="img" lang="en" aria-labelledby="archify-diagram-title archify-diagram-description" data-preset="classic" data-quality-profile="showcase">
+      <svg viewBox="0 0 1051 660" role="img" lang="en" aria-labelledby="archify-diagram-title archify-diagram-description" data-preset="classic" data-quality-profile="showcase">
         <title id="archify-diagram-title">Challenge Protocol</title>
         <desc id="archify-diagram-description">A workflow diagram.</desc>
         <!-- Definitions -->
@@ -200,17 +200,17 @@
         <rect width="100%" height="100%" fill="url(#grid)" />
 
         <!-- Swimlanes -->
-        <rect data-graph-role="structural-frame" data-composition-frame-kind="lane" data-composition-frame-id="lane-0" x="40" y="52" width="957" height="106" rx="10" class="c-lane" stroke-width="1"/>
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="lane" data-composition-frame-id="lane-0" x="40" y="52" width="995" height="106" rx="10" class="c-lane" stroke-width="1"/>
         <text x="54" y="74" class="t-dim" font-size="10" font-weight="600">01 / Challenger</text>
 
-        <rect data-graph-role="structural-frame" data-composition-frame-kind="lane" data-composition-frame-id="lane-1" x="40" y="178" width="957" height="106" rx="10" class="c-lane" stroke-width="1"/>
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="lane" data-composition-frame-id="lane-1" x="40" y="178" width="995" height="106" rx="10" class="c-lane" stroke-width="1"/>
         <text x="54" y="200" class="t-dim" font-size="10" font-weight="600">02 / Chain</text>
 
-        <rect data-graph-role="structural-frame" data-composition-frame-kind="lane" data-composition-frame-id="lane-2" x="40" y="304" width="957" height="106" rx="10" class="c-lane" stroke-width="1"/>
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="lane" data-composition-frame-id="lane-2" x="40" y="304" width="995" height="106" rx="10" class="c-lane" stroke-width="1"/>
         <text x="54" y="326" class="t-dim" font-size="10" font-weight="600">03 / Provider</text>
 
-        <rect data-graph-role="structural-frame" data-composition-frame-kind="lane" data-composition-frame-id="lane-3" x="40" y="430" width="957" height="106" rx="10" class="c-lane" stroke-width="1"/>
-        <rect data-graph-role="structural-frame" data-composition-frame-kind="exception-lane" data-composition-frame-id="lane-3-exception" x="46" y="436" width="945" height="94" rx="8" class="c-security-group" stroke-width="1"/>
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="lane" data-composition-frame-id="lane-3" x="40" y="430" width="995" height="106" rx="10" class="c-lane" stroke-width="1"/>
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="exception-lane" data-composition-frame-id="lane-3-exception" x="46" y="436" width="983" height="94" rx="8" class="c-security-group" stroke-width="1"/>
         <text x="54" y="452" class="t-security" font-size="10" font-weight="600">EX / Rejections and Slash</text>
 
         <!-- Phase headers -->
@@ -220,9 +220,9 @@
         <line x1="446" y1="35" x2="658" y2="35" class="a-emphasis" stroke-width="1.1"/>
         <rect x="446" y="27" width="212" height="16" rx="4" class="c-mask"/>
         <text x="552" y="39" class="t-backend" font-size="8" font-weight="600" text-anchor="middle">Wait and answer</text>
-        <line x1="686" y1="35" x2="965" y2="35" class="a-security" stroke-width="1.1"/>
-        <rect x="686" y="27" width="279" height="16" rx="4" class="c-mask"/>
-        <text x="825.5" y="39" class="t-security" font-size="8" font-weight="600" text-anchor="middle">Judge</text>
+        <line x1="724" y1="35" x2="1003" y2="35" class="a-security" stroke-width="1.1"/>
+        <rect x="724" y="27" width="279" height="16" rx="4" class="c-mask"/>
+        <text x="863.5" y="39" class="t-security" font-size="8" font-weight="600" text-anchor="middle">Judge</text>
 
         <!-- Workflow groups -->
 
@@ -230,14 +230,14 @@
         <!-- Edge paths -->
         <path data-edge-from="gate" data-edge-to="window" data-edge-label="authorized or public" data-edge-key="0" data-edge-id="admitted" data-composition-points="308,246;422,246" d="M 308 246 L 422 246" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
         <path data-edge-from="window" data-edge-to="cancelled" data-edge-label="cancel before response" data-edge-key="1" data-edge-id="cancel" data-composition-points="492,212;492,154" d="M 492 212 L 492 154" class="a-dashed" stroke-width="1.4" marker-end="url(#arrowhead-dashed)"/>
-        <path data-edge-from="window" data-edge-to="sweep" data-edge-label="no response" data-edge-key="2" data-edge-id="expired" data-composition-points="492,280;492,552;612,552;612,524" d="M 492 280 L 492 552 L 612 552 L 612 524" class="a-security" stroke-width="1.4" marker-end="url(#arrowhead-security)"/>
-        <path data-edge-from="verify" data-edge-to="slashed" data-edge-label="invalid" data-edge-key="3" data-edge-id="invalid" data-composition-points="732,272;732,491;849,491" d="M 732 272 L 732 491 L 849 491" class="a-security" stroke-width="1.4" marker-end="url(#arrowhead-security)"/>
-        <path data-edge-from="respond" data-edge-to="verify" data-edge-key="4" data-edge-id="judge" data-composition-points="612,346;612,246;657,246" d="M 612 346 L 612 246 L 657 246" class="a-security" stroke-width="1.4" marker-end="url(#arrowhead-security)"/>
+        <path data-edge-from="window" data-edge-to="expire" data-edge-label="no response by the deadline" data-edge-key="2" data-edge-id="expired" data-composition-points="492,280;492,552;612,552;612,532" d="M 492 280 L 492 552 L 612 552 L 612 532" class="a-security" stroke-width="1.4" marker-end="url(#arrowhead-security)"/>
+        <path data-edge-from="verify" data-edge-to="rejected" data-edge-label="invalid" data-edge-key="3" data-edge-id="invalid" data-composition-points="770,272;770,294;861,294;861,372;845,372" d="M 770 272 L 770 294 L 861 294 L 861 372 L 845 372" class="a-security" stroke-width="1.4" marker-end="url(#arrowhead-security)"/>
+        <path data-edge-from="respond" data-edge-to="verify" data-edge-key="4" data-edge-id="judge" data-composition-points="612,346;612,246;695,246" d="M 612 346 L 612 246 L 695 246" class="a-security" stroke-width="1.4" marker-end="url(#arrowhead-security)"/>
         <path data-edge-from="window" data-edge-to="respond" data-edge-label="before deadline" data-edge-key="5" data-edge-id="must-answer" data-composition-points="492,280;492,426;612,426;612,398" d="M 492 280 L 492 426 L 612 426 L 612 398" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
         <path data-edge-from="gate" data-edge-to="denied" data-edge-label="not allowed" data-edge-key="6" data-edge-id="not-allowed" data-composition-points="168,246;20,246;20,498;163,498" d="M 168 246 L 20 246 L 20 498 L 163 498" class="a-security" stroke-width="1.4" marker-end="url(#arrowhead-security)"/>
         <path data-edge-from="open" data-edge-to="gate" data-edge-key="7" data-edge-id="submit" data-composition-points="188,120;238,120;238,220" d="M 188 120 L 238 120 L 238 220" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
-        <path data-edge-from="sweep" data-edge-to="slashed" data-edge-key="8" data-edge-id="timed-out" data-composition-points="612,524;612,540;919,540;919,524" d="M 612 524 L 612 540 L 919 540 L 919 524" class="a-security" stroke-width="1.4" marker-end="url(#arrowhead-security)"/>
-        <path data-edge-from="verify" data-edge-to="defended" data-edge-label="valid" data-edge-key="9" data-edge-id="valid" data-composition-points="807,246;849,246" d="M 807 246 L 849 246" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <path data-edge-from="expire" data-edge-to="slashed" data-edge-key="8" data-edge-id="timed-out" data-composition-points="697,498;887,498" d="M 697 498 L 887 498" class="a-security" stroke-width="1.4" marker-end="url(#arrowhead-security)"/>
+        <path data-edge-from="verify" data-edge-to="defended" data-edge-label="valid" data-edge-key="9" data-edge-id="valid" data-composition-points="845,246;887,246" d="M 845 246 L 887 246" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
 
         <!-- Nodes -->
         <g id="node-open" data-node-id="open" data-node-label="Open Challenge" tabindex="0" role="button" aria-label="Focus Open Challenge, 3 modes, ChunkLocation, Challenger › Open" aria-pressed="false" data-node-kind="frontend" data-node-sublabel="3 modes, ChunkLocation" data-node-tag="ChallengeDeposit" data-node-context="Challenger › Open">
@@ -299,25 +299,25 @@
 
         <g id="node-verify" data-node-id="verify" data-node-label="Verify Response" tabindex="0" role="button" aria-label="Focus Verify Response, verify_challenge_response, Chain › Judge" aria-pressed="false" data-node-kind="security" data-node-sublabel="verify_challenge_response" data-node-context="Chain › Judge">
           <title>Verify Response · verify_challenge_response · Chain › Judge</title>
-          <rect x="657" y="220" width="150" height="52" rx="6" class="c-mask"/>
-          <rect x="657" y="220" width="150" height="52" rx="6" class="c-security" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="security" class="semantic-sigil s-security" transform="translate(663 226) scale(0.6875)">
+          <rect x="695" y="220" width="150" height="52" rx="6" class="c-mask"/>
+          <rect x="695" y="220" width="150" height="52" rx="6" class="c-security" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="security" class="semantic-sigil s-security" transform="translate(701 226) scale(0.6875)">
             <path d="M8 2.2 13 4v3.5c0 3.1-1.8 5.4-5 6.5-3.2-1.1-5-3.4-5-6.5V4Z"/>
             <path d="m5.8 8 1.5 1.5 3-3"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="732" y="241" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Verify Response</text>
-          <text data-detail="context" x="732" y="258" class="t-muted" font-size="8" text-anchor="middle">verify_challenge_response</text>
+          <text data-node-label="" data-detail-anchor="" x="770" y="241" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Verify Response</text>
+          <text data-detail="context" x="770" y="258" class="t-muted" font-size="8" text-anchor="middle">verify_challenge_response</text>
         </g>
 
         <g id="node-defended" data-node-id="defended" data-node-label="ChallengeDefended" tabindex="0" role="button" aria-label="Focus ChallengeDefended, stake untouched, Chain › Judge" aria-pressed="false" data-node-kind="backend" data-node-sublabel="stake untouched" data-node-context="Chain › Judge">
           <title>ChallengeDefended · stake untouched · Chain › Judge</title>
-          <rect x="849" y="220" width="140" height="52" rx="6" class="c-mask"/>
-          <rect x="849" y="220" width="140" height="52" rx="6" class="c-backend" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(855 226) scale(0.6875)">
+          <rect x="887" y="220" width="140" height="52" rx="6" class="c-mask"/>
+          <rect x="887" y="220" width="140" height="52" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(893 226) scale(0.6875)">
             <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="919" y="241" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">ChallengeDefended</text>
-          <text data-detail="context" x="919" y="258" class="t-muted" font-size="8" text-anchor="middle">stake untouched</text>
+          <text data-node-label="" data-detail-anchor="" x="957" y="241" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">ChallengeDefended</text>
+          <text data-detail="context" x="957" y="258" class="t-muted" font-size="8" text-anchor="middle">stake untouched</text>
         </g>
 
         <g id="node-respond" data-node-id="respond" data-node-label="respond_to_challenge" tabindex="0" role="button" aria-label="Focus respond_to_challenge, Proof, Deleted, Superseded, Provider › Wait and answer" aria-pressed="false" data-node-kind="backend" data-node-sublabel="Proof, Deleted, Superseded" data-node-context="Provider › Wait and answer">
@@ -329,6 +329,19 @@
           </g>
           <text data-node-label="" data-detail-anchor="" x="612" y="367" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">respond_to_challenge</text>
           <text data-detail="context" x="612" y="384" class="t-muted" font-size="8" text-anchor="middle">Proof, Deleted, Superseded</text>
+        </g>
+
+        <g id="node-rejected" data-node-id="rejected" data-node-label="Response Rejected" tabindex="0" role="button" aria-label="Focus Response Rejected, challenge stays open, Provider › Judge" aria-pressed="false" data-node-kind="security" data-node-sublabel="challenge stays open" data-node-tag="provider pays the tx fee" data-node-context="Provider › Judge">
+          <title>Response Rejected · challenge stays open · Provider › Judge · provider pays the tx fee</title>
+          <rect x="695" y="338" width="150" height="68" rx="6" class="c-mask"/>
+          <rect x="695" y="338" width="150" height="68" rx="6" class="c-security" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="security" class="semantic-sigil s-security" transform="translate(701 344) scale(0.6875)">
+            <path d="M8 2.2 13 4v3.5c0 3.1-1.8 5.4-5 6.5-3.2-1.1-5-3.4-5-6.5V4Z"/>
+            <path d="m5.8 8 1.5 1.5 3-3"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="770" y="359" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Response Rejected</text>
+          <text data-detail="context" x="770" y="376" class="t-muted" font-size="8" text-anchor="middle">challenge stays open</text>
+        <text data-detail="fine" x="770" y="394" class="t-security" font-size="7" text-anchor="middle">provider pays the tx fee</text>
         </g>
 
         <g id="node-denied" data-node-id="denied" data-node-label="Call Rejected" tabindex="0" role="button" aria-label="Focus Call Rejected, SelfChallenge, Rejections and Slash › Open" aria-pressed="false" data-node-kind="security" data-node-sublabel="SelfChallenge" data-node-tag="NotAuthorizedForPrivateBucket" data-node-context="Rejections and Slash › Open">
@@ -344,30 +357,28 @@
         <text data-detail="fine" x="238" y="520" class="t-security" font-size="7" text-anchor="middle">NotAuthorizedForPrivateBucket</text>
         </g>
 
-        <g id="node-sweep" data-node-id="sweep" data-node-label="on_initialize Sweep" tabindex="0" role="button" aria-label="Focus on_initialize Sweep, SlashReason::Timeout, Rejections and Slash › Wait and answer" aria-pressed="false" data-node-kind="messagebus" data-node-sublabel="SlashReason::Timeout" data-node-context="Rejections and Slash › Wait and answer">
-          <title>on_initialize Sweep · SlashReason::Timeout · Rejections and Slash › Wait and answer</title>
-          <rect x="537" y="472" width="150" height="52" rx="6" class="c-mask"/>
-          <rect x="537" y="472" width="150" height="52" rx="6" class="c-messagebus" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="messagebus" class="semantic-sigil s-messagebus" transform="translate(543 478) scale(0.6875)">
-            <path d="M2.5 4.5h11M2.5 8h11M2.5 11.5h11"/>
-            <circle cx="5" cy="4.5" r="1" class="sigil-fill"/>
-            <circle cx="10.5" cy="8" r="1" class="sigil-fill"/>
-            <circle cx="7" cy="11.5" r="1" class="sigil-fill"/>
+        <g id="node-expire" data-node-id="expire" data-node-label="resolve_expired_challenge" tabindex="0" role="button" aria-label="Focus resolve_expired_challenge, anyone, after the deadline, Rejections and Slash › Wait and answer" aria-pressed="false" data-node-kind="backend" data-node-sublabel="anyone, after the deadline" data-node-tag="free on success" data-node-context="Rejections and Slash › Wait and answer">
+          <title>resolve_expired_challenge · anyone, after the deadline · Rejections and Slash › Wait and answer · free on success</title>
+          <rect x="527" y="464" width="170" height="68" rx="6" class="c-mask"/>
+          <rect x="527" y="464" width="170" height="68" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(533 470) scale(0.6875)">
+            <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="612" y="493" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">on_initialize Sweep</text>
-          <text data-detail="context" x="612" y="510" class="t-muted" font-size="8" text-anchor="middle">SlashReason::Timeout</text>
+          <text data-node-label="" data-detail-anchor="" x="612" y="485" class="t-primary" font-size="10.8" font-weight="600" text-anchor="middle">resolve_expired_challenge</text>
+          <text data-detail="context" x="612" y="502" class="t-muted" font-size="8" text-anchor="middle">anyone, after the deadline</text>
+        <text data-detail="fine" x="612" y="520" class="t-backend" font-size="7" text-anchor="middle">free on success</text>
         </g>
 
         <g id="node-slashed" data-node-id="slashed" data-node-label="ChallengeSlashed" tabindex="0" role="button" aria-label="Focus ChallengeSlashed, full stake slashed, Rejections and Slash › Judge" aria-pressed="false" data-node-kind="security" data-node-sublabel="full stake slashed" data-node-context="Rejections and Slash › Judge">
           <title>ChallengeSlashed · full stake slashed · Rejections and Slash › Judge</title>
-          <rect x="849" y="472" width="140" height="52" rx="6" class="c-mask"/>
-          <rect x="849" y="472" width="140" height="52" rx="6" class="c-security" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="security" class="semantic-sigil s-security" transform="translate(855 478) scale(0.6875)">
+          <rect x="887" y="472" width="140" height="52" rx="6" class="c-mask"/>
+          <rect x="887" y="472" width="140" height="52" rx="6" class="c-security" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="security" class="semantic-sigil s-security" transform="translate(893 478) scale(0.6875)">
             <path d="M8 2.2 13 4v3.5c0 3.1-1.8 5.4-5 6.5-3.2-1.1-5-3.4-5-6.5V4Z"/>
             <path d="m5.8 8 1.5 1.5 3-3"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="919" y="493" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">ChallengeSlashed</text>
-          <text data-detail="context" x="919" y="510" class="t-muted" font-size="8" text-anchor="middle">full stake slashed</text>
+          <text data-node-label="" data-detail-anchor="" x="957" y="493" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">ChallengeSlashed</text>
+          <text data-detail="context" x="957" y="510" class="t-muted" font-size="8" text-anchor="middle">full stake slashed</text>
         </g>
 
         <!-- Edge labels -->
@@ -379,13 +390,13 @@
           <rect x="434.2" y="192" width="115.6" height="14" rx="3" class="c-mask"/>
           <text x="492" y="202" class="t-database" font-size="8" text-anchor="middle">cancel before response</text>
         </g>
-        <g data-detail="context" data-edge-from="window" data-edge-to="sweep" data-edge-label="no response" data-edge-key="2" data-edge-id="expired">
-          <rect x="520.6" y="532" width="62.8" height="14" rx="3" class="c-mask"/>
-          <text x="552" y="542" class="t-security" font-size="8" text-anchor="middle">no response</text>
+        <g data-detail="context" data-edge-from="window" data-edge-to="expire" data-edge-label="no response by the deadline" data-edge-key="2" data-edge-id="expired">
+          <rect x="482.2" y="532" width="139.6" height="14" rx="3" class="c-mask"/>
+          <text x="552" y="542" class="t-security" font-size="8" text-anchor="middle">no response by the deadline</text>
         </g>
-        <g data-detail="context" data-edge-from="verify" data-edge-to="slashed" data-edge-label="invalid" data-edge-key="3" data-edge-id="invalid">
-          <rect x="768.7" y="471" width="43.6" height="14" rx="3" class="c-mask"/>
-          <text x="790.5" y="481" class="t-security" font-size="8" text-anchor="middle">invalid</text>
+        <g data-detail="context" data-edge-from="verify" data-edge-to="rejected" data-edge-label="invalid" data-edge-key="3" data-edge-id="invalid">
+          <rect x="793.7" y="274" width="43.6" height="14" rx="3" class="c-mask"/>
+          <text x="815.5" y="284" class="t-security" font-size="8" text-anchor="middle">invalid</text>
         </g>
 
         <g data-detail="context" data-edge-from="window" data-edge-to="respond" data-edge-label="before deadline" data-edge-key="5" data-edge-id="must-answer">
@@ -399,8 +410,8 @@
 
 
         <g data-detail="context" data-edge-from="verify" data-edge-to="defended" data-edge-label="valid" data-edge-key="9" data-edge-id="valid">
-          <rect x="811" y="226" width="34" height="14" rx="3" class="c-mask"/>
-          <text x="828" y="236" class="t-backend" font-size="8" text-anchor="middle">valid</text>
+          <rect x="849" y="226" width="34" height="14" rx="3" class="c-mask"/>
+          <text x="866" y="236" class="t-backend" font-size="8" text-anchor="middle">valid</text>
         </g>
 
         <!-- Legend -->
@@ -653,13 +664,14 @@
       <div class="card">
         <div class="card-header">
           <div class="card-dot rose"></div>
-          <h3>Responses and SlashReason</h3>
+          <h3>Responses and rejections</h3>
         </div>
         <ul>
           <li>&bull; Proof: chunk in leaf, leaf in committed MMR; else InvalidProof</li>
           <li>&bull; Deleted: admin-signed commitment with new_start_seq above the challenged leaf; else InvalidDeletionClaim</li>
           <li>&bull; Superseded: a newer canonical snapshot covers the leaf; else InvalidSupersededClaim</li>
-          <li>&bull; No response before the deadline: Timeout</li>
+          <li>&bull; A rejected response costs the provider its tx fee; the challenge stays open until the deadline</li>
+          <li>&bull; No response by the deadline: anyone calls resolve_expired_challenge (free on success); only a timeout slashes</li>
         </ul>
       </div>
 

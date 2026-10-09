@@ -620,7 +620,7 @@
         <ul>
           <li>&bull; chunk_proof (MerkleProof): the chunk is in the leaf&#39;s data_root</li>
           <li>&bull; mmr_proof (MmrProof): peaks, leaf and leaf_proof to the mmr_root</li>
-          <li>&bull; If either check fails, the provider is slashed with InvalidProof</li>
+          <li>&bull; If either check fails, the response is rejected with InvalidProof and the challenge stays open</li>
         </ul>
       </div>
     </div>

@@ -326,8 +326,8 @@
         <text data-detail="context" x="840" y="554" class="t-muted" font-size="9" text-anchor="middle">AccountId → BucketIds</text>
         </g>
 
-        <g id="node-challenges" data-node-id="challenges" data-node-label="Challenges" tabindex="0" role="button" aria-label="Focus Challenges, deadline × index → Challenge, Challenges" aria-pressed="false" data-node-kind="database" data-node-sublabel="deadline × index → Challenge" data-node-tag="NextChallengeIndex, LastSweptChallengeBlock" data-node-context="Challenges">
-          <title>Challenges · deadline × index → Challenge · Challenges · NextChallengeIndex, LastSweptChallengeBlock</title>
+        <g id="node-challenges" data-node-id="challenges" data-node-label="Challenges" tabindex="0" role="button" aria-label="Focus Challenges, deadline × index → Challenge, Challenges" aria-pressed="false" data-node-kind="database" data-node-sublabel="deadline × index → Challenge" data-node-tag="NextChallengeIndex" data-node-context="Challenges">
+          <title>Challenges · deadline × index → Challenge · Challenges · NextChallengeIndex</title>
           <rect x="1030" y="120" width="170" height="100" rx="6" class="c-mask"/>
           <rect x="1030" y="120" width="170" height="100" rx="6" class="c-database" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="database" class="semantic-sigil s-database" transform="translate(1036 126) scale(0.6875)">
@@ -336,7 +336,7 @@
           </g>
           <text data-node-label="" data-detail-anchor="" x="1115" y="168" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Challenges</text>
         <text data-detail="context" x="1115" y="184" class="t-muted" font-size="9" text-anchor="middle">deadline × index → Challenge</text>
-        <text data-detail="fine" x="1115" y="212" class="t-database" font-size="6.2" text-anchor="middle">NextChallengeIndex, LastSweptChallengeBlock</text>
+        <text data-detail="fine" x="1115" y="212" class="t-database" font-size="7" text-anchor="middle">NextChallengeIndex</text>
         </g>
 
         <g id="node-anchor" data-node-id="anchor" data-node-label="Anchor clock" tabindex="0" role="button" aria-label="Focus Anchor clock, BlockNumberProvider, Architecture component" aria-pressed="false" data-node-kind="external" data-node-sublabel="BlockNumberProvider" data-node-tag="relay chain in production" data-node-context="Architecture component">
@@ -620,6 +620,7 @@
           <li>&bull; ProviderInfo also has multiaddr, public_key, stats</li>
           <li>&bull; role: Primary, or Replica { sync_balance, sync_price, min_sync_interval, last_sync }</li>
           <li>&bull; PendingChallengesByBucket also gates claim_expired_agreement</li>
+          <li>&bull; AgreementNonces: AccountId → next expected terms.nonce; redemption advances it (NonceMismatch)</li>
         </ul>
       </div>
 
@@ -643,7 +644,7 @@
         <ul>
           <li>&bull; Challenge includes bucket_id, provider, challenger, mmr_root, start_seq, target, deposit, authorized</li>
           <li>&bull; Hold: deposit as ChallengeDeposit</li>
-          <li>&bull; on_initialize sweep slashes providers with expired challenges</li>
+          <li>&bull; resolve_expired_challenge (anyone, free on success) slashes a provider whose challenge expired</li>
         </ul>
       </div>
     </div>

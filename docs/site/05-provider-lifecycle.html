@@ -129,7 +129,7 @@
       </div>
     </div>
 
-    <script id="archify-guided-views-data" type="application/json">[{"id":"main-path","label":"Registration to exit","focus":["unregistered","registered","serving","idle","deregistered"],"note":"The ordered path from staking in to releasing the stake."},{"id":"two-step-exit","label":"Two-step exit","focus":["idle","announced","deregistered","slashed"],"note":"complete_deregister runs after DeregisterAnnouncementPeriod with PendingChallenges == 0; cancel_deregister returns to Idle."},{"id":"slash-path","label":"Slash path","focus":["serving","slashed","removed"],"note":"A failed challenge slashes the entire stake. Exit Announced stays slashable too."}]</script>
+    <script id="archify-guided-views-data" type="application/json">[{"id":"main-path","label":"Registration to exit","focus":["unregistered","registered","serving","idle","deregistered"],"note":"The ordered path from staking in to releasing the stake."},{"id":"two-step-exit","label":"Two-step exit","focus":["idle","announced","deregistered","slashed"],"note":"complete_deregister runs after DeregisterAnnouncementPeriod with PendingChallenges == 0; cancel_deregister returns to Idle."},{"id":"slash-path","label":"Slash path","focus":["serving","slashed","removed"],"note":"An unanswered challenge slashes the entire stake. Exit Announced stays slashable too."}]</script>
 
     <script src="assets/archify/i18n.js?v=b331908a8a55"></script>
     <div class="guided-views no-print" id="guided-views" hidden aria-label="Guided diagram views">
@@ -217,7 +217,7 @@
         <path data-edge-from="idle" data-edge-to="announced" data-edge-label="deregister_provider" data-edge-key="3" data-edge-id="announce" data-composition-points="556,188;556,278" d="M 556 188 L 556 278" class="a-default" stroke-width="1.1" marker-end="url(#arrowhead)"/>
         <path data-edge-from="announced" data-edge-to="deregistered" data-edge-label="complete_deregister" data-edge-key="4" data-edge-id="complete" data-composition-points="556,336;556,363;710,363;710,390" d="M 556 336 L 556 353 Q 556 363 566 363 L 700 363 Q 710 363 710 373 L 710 390" class="a-emphasis" stroke-width="2" marker-end="url(#arrowhead-emphasis)"/>
         <path data-edge-from="announced" data-edge-to="idle" data-edge-label="cancel_deregister" data-edge-key="5" data-edge-id="cancel" data-composition-points="619,307;660,307;660,157;615,157" d="M 619 307 L 650 307 Q 660 307 660 297 L 660 167 Q 660 157 650 157 L 615 157" class="a-default" stroke-width="1.1" marker-end="url(#arrowhead)"/>
-        <path data-edge-from="serving" data-edge-to="slashed" data-edge-label="no or invalid response" data-edge-key="6" data-edge-id="slash" data-composition-points="402,188;402,278" d="M 402 188 L 402 278" class="a-security" stroke-width="1.1" marker-end="url(#arrowhead-security)"/>
+        <path data-edge-from="serving" data-edge-to="slashed" data-edge-label="no response by the deadline" data-edge-key="6" data-edge-id="slash" data-composition-points="402,188;402,278" d="M 402 188 L 402 278" class="a-security" stroke-width="1.1" marker-end="url(#arrowhead-security)"/>
         <path data-edge-from="slashed" data-edge-to="removed" data-edge-label="remove_slashed (anyone)" data-edge-key="7" data-edge-id="cleanup" data-composition-points="402,336;402,390" d="M 402 336 L 402 390" class="a-default" stroke-width="1.1" marker-end="url(#arrowhead)"/>
 
         <!-- States -->
@@ -347,9 +347,9 @@
           <rect x="612.35" y="211" width="95.30000000000001" height="16" rx="4" class="c-mask"/>
           <text x="660" y="222" class="t-muted" font-size="8" text-anchor="middle">cancel_deregister</text>
         </g>
-        <g data-detail="context" data-edge-from="serving" data-edge-to="slashed" data-edge-label="no or invalid response" data-edge-key="6" data-edge-id="slash">
-          <rect x="342.1" y="191" width="119.80000000000001" height="16" rx="4" class="c-mask"/>
-          <text x="402" y="202" class="t-security" font-size="8" text-anchor="middle">no or invalid response</text>
+        <g data-detail="context" data-edge-from="serving" data-edge-to="slashed" data-edge-label="no response by the deadline" data-edge-key="6" data-edge-id="slash">
+          <rect x="329.85" y="191" width="144.3" height="16" rx="4" class="c-mask"/>
+          <text x="402" y="202" class="t-security" font-size="8" text-anchor="middle">no response by the deadline</text>
         </g>
         <g data-detail="context" data-edge-from="slashed" data-edge-to="removed" data-edge-label="remove_slashed (anyone)" data-edge-key="7" data-edge-id="cleanup">
           <rect x="339.65" y="339" width="124.7" height="16" rx="4" class="c-mask"/>
@@ -564,7 +564,7 @@
         <ul>
           <li>&bull; Announce needs committed_bytes == 0</li>
           <li>&bull; DeregisterAnnouncementPeriod &gt; ChallengeTimeout</li>
-          <li>&bull; Completion needs PendingChallenges == 0</li>
+          <li>&bull; Completion needs PendingChallenges == 0; the provider may call resolve_expired_challenge itself</li>
         </ul>
       </div>
 
@@ -574,7 +574,7 @@
           <h3>Slash path</h3>
         </div>
         <ul>
-          <li>&bull; A failed challenge slashes the entire stake</li>
+          <li>&bull; An unanswered challenge slashes the entire stake</li>
           <li>&bull; Exit Announced is still slashable</li>
           <li>&bull; remove_slashed returns payment to owner</li>
         </ul>
