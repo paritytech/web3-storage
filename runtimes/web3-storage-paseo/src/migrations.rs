@@ -7,8 +7,8 @@
 //! `RemovePallet` entries are not gated; remove them once the upgrade that
 //! adds them is deployed.
 
-use crate::{RocksDbWeight, Runtime};
-use frame_support::{migrations::RemovePallet, parameter_types};
+use crate::Runtime;
+use frame_support::parameter_types;
 
 parameter_types! {
     pub const DriveRegistryPalletName: &'static str = "DriveRegistry";
