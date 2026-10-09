@@ -1,12 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Storage engine for provider nodes: content-addressed blob storage with MMR
-//! commitments, plus the drive/S3 metadata indexes served over it. No HTTP or
-//! chain dependencies.
+//! commitments. No HTTP or chain dependencies.
 //!
 pub mod backend;
 pub mod error;
-pub mod index;
 pub mod mmr;
 
 pub use backend::{
@@ -14,9 +12,6 @@ pub use backend::{
     StorageBackend, StorageBackendSpec, StoredNode,
 };
 pub use error::Error;
-pub use index::{
-    FsEntryMeta, FsIndexManager, FsListEntry, ListResult, ObjectEntry, ObjectMeta, S3IndexManager,
-};
 
 /// Names the scratch directories [`temp_rocksdb`] creates.
 #[cfg(any(test, feature = "test-helpers"))]

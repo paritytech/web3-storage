@@ -15,10 +15,8 @@ pub mod challenge_proofs;
 pub mod cli;
 pub mod command;
 pub mod error;
-pub mod fs_api;
 pub mod membership;
 pub mod negotiate;
-pub mod s3_api;
 pub(crate) mod subxt_client;
 pub mod types;
 
@@ -46,7 +44,7 @@ pub use provider_replica::{
 pub use types::*;
 
 use codec::Encode;
-use provider_storage::{FsIndexManager, S3IndexManager, StorageBackend};
+use provider_storage::StorageBackend;
 use provider_types::{KeyScheme, ProviderKeypair, SigningRefused};
 use sp_core::crypto::Ss58Codec;
 use sp_core::{sr25519, Pair};
@@ -72,10 +70,6 @@ pub struct ProviderState {
     /// `keypair`'s raw public key, derived once at construction — it is
     /// compared against the registered on-chain key on every signed request.
     signing_public_key: Option<Vec<u8>>,
-    /// S3-compatible object index
-    pub s3_index: S3IndexManager,
-    /// File system drive index
-    pub fs_index: FsIndexManager,
     /// Verifies signed requests and enforces bucket roles.
     pub auth: Arc<provider_auth::Authenticator>,
     /// Browser origins allowed via CORS. `None` (the default) keeps the
@@ -102,8 +96,6 @@ impl ProviderState {
             // Derived once: the guard below runs on every signed request.
             signing_public_key: keypair.as_ref().map(ProviderKeypair::public_key_bytes),
             keypair,
-            s3_index: S3IndexManager::new(),
-            fs_index: FsIndexManager::new(),
             auth,
             cors_allowed_origins: None,
             chain_state: Arc::new(ChainState::default()),
