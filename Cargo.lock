@@ -8153,7 +8153,6 @@ version = "0.1.0"
 dependencies = [
  "futures",
  "hex",
- "provider-auth",
  "reqwest",
  "serde",
  "serde_json",

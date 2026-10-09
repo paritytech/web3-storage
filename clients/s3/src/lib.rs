@@ -63,9 +63,6 @@ pub enum S3ClientError {
 
     #[error("HTTP error: {0}")]
     HttpError(#[from] reqwest::Error),
-
-    #[error("Internal error: {0}")]
-    InternalError(String),
 }
 
 /// Result type for S3 client operations.
@@ -430,20 +427,10 @@ impl S3Client {
         bucket_id: BucketId,
         key: &str,
     ) -> Result<Response> {
-        let keypair = self.signer.keypair();
-        let timestamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_err(|e| S3ClientError::InternalError(format!("System clock error: {e}")))?
-            .as_secs();
-        let auth = provider_auth::build_auth_header(
-            &keypair.public_key().0,
-            method,
-            bucket_id,
-            timestamp,
-            |msg| keypair.sign(msg).0,
-        );
-
-        let response = req.header("Authorization", auth).send().await?;
+        let response = req
+            .header("Authorization", self.signer.auth_header(method, bucket_id))
+            .send()
+            .await?;
         match response.status() {
             status if status.is_success() => Ok(response),
             StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => Err(S3ClientError::AccessDenied),
