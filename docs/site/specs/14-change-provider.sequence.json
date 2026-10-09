@@ -39,7 +39,7 @@
     { "from": 580, "to": 770, "label": "Checkpoint, then end the old agreement" }
   ],
   "messages": [
-    { "id": "negotiate", "from": "admin", "to": "new", "y": 185, "label": "POST /negotiate (bucket = bucket_id)", "variant": "default" },
+    { "id": "negotiate", "from": "admin", "to": "new", "y": 185, "label": "POST /negotiate (bucket = bucket_id, nonce)", "variant": "default" },
     { "id": "terms", "from": "new", "to": "admin", "y": 222, "label": "AgreementTerms, BucketTarget::Existing + signature", "variant": "return" },
     { "id": "add", "from": "admin", "to": "pallet", "y": 262, "label": "add_primary_provider(bucket_id, provider, terms, sig)", "variant": "emphasis" },
     { "id": "added", "from": "pallet", "to": "admin", "y": 302, "label": "ProviderAddedToBucket, StorageAgreementEstablished", "variant": "return" },

@@ -6,7 +6,7 @@
     "quality_profile": "showcase",
     "viewBox": [
       1380,
-      730
+      762
     ],
     "column_fit": "spread",
     "legend": {
@@ -36,7 +36,7 @@
         "focus": [
           "challenger",
           "pallet",
-          "sweep",
+          "challenges",
           "holds"
         ],
         "note": "The pallet checks the caller, holds ChallengeDeposit and stores the challenge under its deadline."
@@ -57,10 +57,10 @@
         "focus": [
           "challenger",
           "pallet",
-          "sweep",
+          "challenges",
           "holds"
         ],
-        "note": "The on_initialize sweep slashes the full stake of a provider that did not respond before the deadline."
+        "note": "After the deadline anyone calls resolve_expired_challenge; it slashes the full stake of a provider that did not respond."
       }
     ]
   },
@@ -81,9 +81,9 @@
       "label": "Storage Pallet"
     },
     {
-      "id": "sweep",
-      "type": "messagebus",
-      "label": "on_initialize Sweep"
+      "id": "challenges",
+      "type": "database",
+      "label": "Challenges"
     },
     {
       "id": "holds",
@@ -109,8 +109,8 @@
     },
     {
       "from": 526,
-      "to": 656,
-      "label": "Timeout: on_initialize slashes, then remove"
+      "to": 688,
+      "label": "Timeout: resolve_expired_challenge slashes, then remove"
     }
   ],
   "messages": [
@@ -158,9 +158,9 @@
     {
       "id": "store",
       "from": "pallet",
-      "to": "sweep",
+      "to": "challenges",
       "y": 362,
-      "label": "Challenges[deadline]",
+      "label": "Challenges[deadline, index]",
       "variant": "default",
       "note": "deadline = now + ChallengeTimeout (48h, anchor blocks)"
     },
@@ -200,27 +200,36 @@
       "note": "response_time_blocks, challenger_cost, provider_cost"
     },
     {
-      "id": "slash",
-      "from": "sweep",
-      "to": "holds",
+      "id": "resolve",
+      "from": "challenger",
+      "to": "pallet",
       "y": 546,
-      "label": "deadline passed: slash full ProviderStake, release ChallengeDeposit",
+      "label": "resolve_expired_challenge(challenge_id)",
+      "variant": "emphasis",
+      "note": "anyone may call, free on success; ChallengeNotExpired while anchor <= deadline"
+    },
+    {
+      "id": "slash",
+      "from": "pallet",
+      "to": "holds",
+      "y": 578,
+      "label": "slash full ProviderStake to the Treasury, release ChallengeDeposit",
       "variant": "security",
       "note": "challenger made whole, no reward"
     },
     {
       "id": "slashed",
-      "from": "sweep",
+      "from": "pallet",
       "to": "provider",
-      "y": 578,
-      "label": "ChallengeSlashed { reason: Timeout }",
+      "y": 610,
+      "label": "ChallengeSlashed { slashed_amount }",
       "variant": "return"
     },
     {
       "id": "remove",
       "from": "challenger",
       "to": "pallet",
-      "y": 610,
+      "y": 642,
       "label": "remove_slashed(bucket_id, provider)",
       "variant": "dashed",
       "note": "anyone may call"
@@ -229,7 +238,7 @@
       "id": "payment",
       "from": "pallet",
       "to": "holds",
-      "y": 642,
+      "y": 674,
       "label": "remaining AgreementPayment to owner",
       "variant": "default"
     }
@@ -254,15 +263,15 @@
       "type": "backend"
     },
     {
-      "participant": "sweep",
+      "participant": "pallet",
       "from": 541,
-      "to": 583,
-      "type": "messagebus"
+      "to": 615,
+      "type": "backend"
     },
     {
       "participant": "pallet",
-      "from": 605,
-      "to": 647,
+      "from": 637,
+      "to": 679,
       "type": "backend"
     }
   ],
@@ -280,16 +289,16 @@
       "dot": "rose",
       "title": "Invalid response",
       "items": [
-        "Slashed at once with a SlashReason",
-        "InvalidProof, InvalidDeletionClaim, InvalidSupersededClaim",
-        "Malformed call: dispatch error, provider may resend"
+        "Rejected with InvalidProof, InvalidDeletionClaim or InvalidSupersededClaim; the provider pays the tx fee",
+        "The challenge stays open; the provider may answer again before the deadline",
+        "Only a timeout slashes: resolve_expired_challenge after the deadline"
       ]
     },
     {
       "dot": "amber",
       "title": "PendingChallenges",
       "items": [
-        "Gates complete_deregister",
+        "Gates complete_deregister; the provider may call resolve_expired_challenge itself",
         "PendingChallengesByBucket gates end_agreement, claim_expired_agreement",
         "Each resolution decrements both once"
       ]

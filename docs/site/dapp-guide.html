@@ -15,7 +15,7 @@
   <p class="lede">
     How an application stores, reads and verifies data. Your client uploads data to providers over HTTP and
     submits transactions to the storage pallet only for setup, checkpoints and disputes.
-    Names on this page follow design v2.4. Check the runtime metadata of the chain you connect to for the
+    Names on this page follow design v2.5. Check the runtime metadata of the chain you connect to for the
     exact call signatures.
   </p>
 </header>
@@ -41,7 +41,7 @@
 <ul>
   <li><strong>After commit</strong>: the provider returns a signature over the new bucket state (MMR root) that includes your data. With this signature you can challenge the provider on-chain (<code>challenge_offchain</code>). You get this guarantee without a transaction.</li>
   <li><strong>After checkpoint</strong>: the MMR root is on-chain. Anyone can challenge the providers that signed it (on a private bucket: members and primary-agreement owners), and the commitment remains in chain history if you lose the signature.</li>
-  <li><strong>Stake</strong>: a provider that fails to answer a challenge in time, or answers with an invalid proof, loses its entire stake, which covers all of its agreements.</li>
+  <li><strong>Stake</strong>: a provider that does not answer a challenge by the deadline loses its entire stake, which covers all of its agreements. An invalid answer is rejected and the challenge stays open.</li>
   <li><strong>Duration</strong>: agreements bind both sides until expiry. The provider cannot leave early. You cannot cancel and reclaim the payment.</li>
 </ul>
 <p class="muted">The chain does not check that providers serve reads fast. Your client checks that, and punishes a slow provider with a burn at settlement, a challenge, or by not extending the agreement.</p>
@@ -86,8 +86,8 @@ bucket://42/fs/my_website/logo.png    mutable: path in the latest snapshot</code
   </li>
   <li>
     <h3>Get a signed quote</h3>
-    <p>Call <code>POST /negotiate</code> on the provider with the owner account, <code>bucket</code> (<code>null</code> for a new bucket, or the bucket id), <code>max_bytes</code>, <code>duration</code>, <code>price_per_byte</code>, and <code>replica_params</code> for a replica. The provider returns signed <code>AgreementTerms</code>.</p>
-    <p>The quote is for one owner and one bucket target. You can redeem it once, until <code>valid_until</code>. At redemption the chain requires <code>valid_until</code> to be at most <code>RequestTimeout</code> (6 hours) after the current anchor block.</p>
+    <p>Call <code>POST /negotiate</code> on the provider with the owner account, <code>bucket</code> (<code>null</code> for a new bucket, or the bucket id), <code>max_bytes</code>, <code>duration</code>, <code>price_per_byte</code>, <code>nonce</code> (your current <code>AgreementNonces</code> value, read from chain at the best block), and <code>replica_params</code> for a replica. The provider returns signed <code>AgreementTerms</code>.</p>
+    <p>The quote is for one owner and one bucket target. You can redeem it once, until <code>valid_until</code>. Only one quote per nonce can be redeemed: on <code>NonceMismatch</code>, read the nonce again and request a new quote. At redemption the chain requires <code>valid_until</code> to be at most <code>RequestTimeout</code> (6 hours) after the current anchor block.</p>
   </li>
   <li>
     <h3>Create the bucket</h3>
@@ -123,7 +123,7 @@ bucket://42/fs/my_website/logo.png    mutable: path in the latest snapshot</code
       <li><code>challenge_checkpoint</code>: against the on-chain snapshot. Use it on buckets with infrequent writes. It fails if a new checkpoint no longer lists the provider.</li>
       <li><code>challenge_replica</code>: against the root a replica confirmed on-chain.</li>
     </ul>
-    <p>You lock a deposit that covers the provider's response cost. The provider has <code>ChallengeTimeout</code> (48 hours) to respond. See <a href="#costs">Costs</a> for who pays.</p>
+    <p>You lock a deposit that covers the provider's response cost. The provider has <code>ChallengeTimeout</code> (48 hours) to respond. If it does not, anyone can call <code>resolve_expired_challenge</code> (free on success) to slash it. An invalid response is rejected and the challenge stays open. See <a href="#costs">Costs</a> for who pays.</p>
     <p class="see">Diagrams: <a href="12-challenge-protocol.html">12 Challenge protocol</a>, <a href="13-challenge-sequence.html">13 Challenge, response and slash</a></p>
   </li>
   <li>
@@ -171,7 +171,8 @@ bucket://42/fs/my_website/logo.png    mutable: path in the latest snapshot</code
     <tr><td>Replica sync</td><td>Agreement owner (anyone can top up)</td><td><code>sync_price</code> per accepted sync confirmation, drawn from <code>sync_balance</code></td></tr>
     <tr><td>Challenge response, public challenger</td><td>Challenger: 100%</td><td>The deposit reimburses the provider's response fee in full</td></tr>
     <tr><td>Challenge response, member or agreement owner</td><td>Challenger: at least 50%. Provider: the rest</td><td>A slower response makes the provider pay a larger share. The design gives example tiers from 90% / 10% to 50% / 50%</td></tr>
-    <tr><td>Failed challenge response</td><td>Provider</td><td>The provider loses its full stake. The challenger gets the deposit and fees back, with no reward</td></tr>
+    <tr><td>Invalid challenge response</td><td>Provider</td><td>The response is rejected and the provider pays its transaction fee; the challenge stays open</td></tr>
+    <tr><td>No response by the deadline</td><td>Provider</td><td>The provider loses its full stake. The challenger gets the deposit and fees back, with no reward</td></tr>
     <tr><td>Burn</td><td>Agreement owner</td><td>The locked payment plus a premium from the owner's free balance. Without the premium funds, the burn fails</td></tr>
   </tbody>
 </table>

@@ -40,7 +40,7 @@
           "slashed",
           "removed"
         ],
-        "note": "A failed challenge slashes the entire stake. Exit Announced stays slashable too."
+        "note": "An unanswered challenge slashes the entire stake. Exit Announced stays slashable too."
       }
     ],
     "legend": {
@@ -195,7 +195,7 @@
       "id": "slash",
       "from": "serving",
       "to": "slashed",
-      "label": "no or invalid response",
+      "label": "no response by the deadline",
       "variant": "security",
       "fromSide": "bottom",
       "toSide": "top",
@@ -227,14 +227,14 @@
       "items": [
         "Announce needs committed_bytes == 0",
         "DeregisterAnnouncementPeriod > ChallengeTimeout",
-        "Completion needs PendingChallenges == 0"
+        "Completion needs PendingChallenges == 0; the provider may call resolve_expired_challenge itself"
       ]
     },
     {
       "dot": "rose",
       "title": "Slash path",
       "items": [
-        "A failed challenge slashes the entire stake",
+        "An unanswered challenge slashes the entire stake",
         "Exit Announced is still slashable",
         "remove_slashed returns payment to owner"
       ]

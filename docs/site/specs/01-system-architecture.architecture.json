@@ -53,7 +53,7 @@
           "primaries",
           "replica"
         ],
-        "note": "A challenge requires an on-chain response; a missing or invalid response slashes the full stake."
+        "note": "A challenge requires an on-chain response; no response by the deadline slashes the full stake."
       }
     ]
   },
@@ -326,7 +326,7 @@
       "dot": "rose",
       "title": "Enforcement",
       "items": [
-        "A failed challenge slashes the entire stake",
+        "An unanswered challenge slashes the entire stake",
         "Private bucket: members and primary-agreement owners challenge primaries",
         "Counterparty challenges cost the provider part of the response fee"
       ]

@@ -14,7 +14,7 @@
           "treasury",
           "challenger_out"
         ],
-        "note": "A failed challenge slashes the full stake to the Treasury; the challenger is made whole from the slash."
+        "note": "An unanswered challenge slashes the full stake to the Treasury; the challenger is made whole from the slash."
       },
       {
         "id": "agreement",
@@ -249,7 +249,7 @@
       "from": "stake",
       "to": "treasury",
       "label": "slash: full stake",
-      "classification": "failed challenge",
+      "classification": "unanswered challenge",
       "variant": "security",
       "fromSide": "top",
       "toSide": "top",
@@ -382,9 +382,9 @@
       "dot": "rose",
       "title": "Stake and challenges",
       "items": [
-        "Failed challenge: full stake slashed to the Treasury",
+        "Unanswered challenge: resolve_expired_challenge slashes the full stake to the Treasury",
         "Challenger made whole from the slash, no reward",
-        "Valid response: stake untouched",
+        "Any response leaves the stake untouched; an invalid one is rejected",
         "complete_deregister releases the stake"
       ]
     },

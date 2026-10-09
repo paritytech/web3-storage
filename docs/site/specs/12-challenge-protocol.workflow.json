@@ -34,10 +34,11 @@
         "focus": [
           "window",
           "verify",
-          "sweep",
+          "rejected",
+          "expire",
           "slashed"
         ],
-        "note": "An invalid response or no response before ChallengeTimeout slashes the full stake."
+        "note": "Invalid responses are rejected; the challenge stays open. After the deadline, resolve_expired_challenge (anyone) slashes the full stake."
       },
       {
         "id": "exit",
@@ -178,12 +179,23 @@
       "tag": "NotAuthorizedForPrivateBucket"
     },
     {
-      "id": "sweep",
+      "id": "expire",
       "lane": "outcome",
       "col": 3,
-      "type": "messagebus",
-      "label": "on_initialize Sweep",
-      "sublabel": "SlashReason::Timeout",
+      "type": "backend",
+      "label": "resolve_expired_challenge",
+      "sublabel": "anyone, after the deadline",
+      "tag": "free on success",
+      "width": 170
+    },
+    {
+      "id": "rejected",
+      "lane": "provider",
+      "col": 4,
+      "type": "security",
+      "label": "Response Rejected",
+      "sublabel": "challenge stays open",
+      "tag": "provider pays the tx fee",
       "width": 150
     },
     {
@@ -237,8 +249,8 @@
     {
       "id": "expired",
       "from": "window",
-      "to": "sweep",
-      "label": "no response",
+      "to": "expire",
+      "label": "no response by the deadline",
       "role": "error",
       "variant": "security"
     },
@@ -260,14 +272,14 @@
     {
       "id": "invalid",
       "from": "verify",
-      "to": "slashed",
+      "to": "rejected",
       "label": "invalid",
       "role": "error",
       "variant": "security"
     },
     {
       "id": "timed-out",
-      "from": "sweep",
+      "from": "expire",
       "to": "slashed",
       "role": "error",
       "variant": "security"
@@ -308,12 +320,13 @@
     },
     {
       "dot": "rose",
-      "title": "Responses and SlashReason",
+      "title": "Responses and rejections",
       "items": [
         "Proof: chunk in leaf, leaf in committed MMR; else InvalidProof",
         "Deleted: admin-signed commitment with new_start_seq above the challenged leaf; else InvalidDeletionClaim",
         "Superseded: a newer canonical snapshot covers the leaf; else InvalidSupersededClaim",
-        "No response before the deadline: Timeout"
+        "A rejected response costs the provider its tx fee; the challenge stays open until the deadline",
+        "No response by the deadline: anyone calls resolve_expired_challenge (free on success); only a timeout slashes"
       ]
     },
     {

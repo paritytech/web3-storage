@@ -14,7 +14,7 @@
   <p class="lede">
     Storage providers lock stake and store bucket data off-chain. Clients read and write directly with providers,
     and use the chain for setup, checkpoints and disputes. Every page here is derived from the design documents
-    <a href="https://github.com/paritytech/web3-storage/blob/dev/docs/design/scalable-web3-storage.md">scalable-web3-storage.md</a> (v2.4) and
+    <a href="https://github.com/paritytech/web3-storage/blob/dev/docs/design/scalable-web3-storage.md">scalable-web3-storage.md</a> (v2.5) and
     <a href="https://github.com/paritytech/web3-storage/blob/dev/docs/design/scalable-web3-storage-implementation.md">scalable-web3-storage-implementation.md</a>.
     Where a page and the design disagree, the design is correct.
   </p>
@@ -45,7 +45,7 @@
   <a class="card" href="02-onchain-state.html">
     <div class="head"><span class="num">02</span><span class="kind">architecture</span></div>
     <h3>On-chain state</h3>
-    <p>The storage pallet's storage items (providers, buckets, agreements, challenges, pending-challenge counters) and how they reference each other.</p>
+    <p>The storage pallet's storage items (providers, buckets, agreements, agreement nonces, challenges, pending-challenge counters) and how they reference each other.</p>
     <span class="src">Implementation: Storage Items; Pallet Config; Funds on Hold; Runtime API</span>
   </a>
   <a class="card" href="03-funds-flow.html">
@@ -78,7 +78,7 @@
     <div class="head"><span class="num">06</span><span class="kind">sequence</span></div>
     <h3>Bucket creation and provider assignment</h3>
     <p><code>create_bucket</code>, <code>create_bucket_with_primary</code>, <code>add_primary_provider</code> and <code>add_replica_provider</code>: the provider signs a quote for a bucket off-chain, the client redeems it in one call.</p>
-    <span class="src">Implementation: Provider Lifecycle in Bucket; Extrinsics (storage agreements); POST /negotiate</span>
+    <span class="src">Implementation: Provider Lifecycle in Bucket; Agreement Nonces; Extrinsics (storage agreements); POST /negotiate</span>
   </a>
   <a class="card" href="07-bucket-lifecycle.html">
     <div class="head"><span class="num">07</span><span class="kind">lifecycle</span></div>
@@ -131,7 +131,7 @@
   <a class="card" href="13-challenge-sequence.html">
     <div class="head"><span class="num">13</span><span class="kind">sequence</span></div>
     <h3>Challenge, response and slash</h3>
-    <p>The same protocol in time order: the evidence a client keeps, challenge creation, the provider's response, and the sweep that slashes a provider that did not respond.</p>
+    <p>The same protocol in time order: the evidence a client keeps, challenge creation, the provider's response, and the <code>resolve_expired_challenge</code> call that slashes a provider that did not respond.</p>
     <span class="src">Design: The Challenge Game. Implementation: Challenge Protocol; Extrinsics (challenges); Commit</span>
   </a>
 </div>

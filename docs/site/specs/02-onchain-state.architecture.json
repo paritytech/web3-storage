@@ -167,7 +167,7 @@
       "type": "database",
       "label": "Challenges",
       "sublabel": "deadline \u00d7 index \u2192 Challenge",
-      "tag": "NextChallengeIndex, LastSweptChallengeBlock",
+      "tag": "NextChallengeIndex",
       "pos": [
         1030,
         120
@@ -341,7 +341,8 @@
       "items": [
         "ProviderInfo also has multiaddr, public_key, stats",
         "role: Primary, or Replica { sync_balance, sync_price, min_sync_interval, last_sync }",
-        "PendingChallengesByBucket also gates claim_expired_agreement"
+        "PendingChallengesByBucket also gates claim_expired_agreement",
+        "AgreementNonces: AccountId → next expected terms.nonce; redemption advances it (NonceMismatch)"
       ]
     },
     {
@@ -359,7 +360,7 @@
       "items": [
         "Challenge includes bucket_id, provider, challenger, mmr_root, start_seq, target, deposit, authorized",
         "Hold: deposit as ChallengeDeposit",
-        "on_initialize sweep slashes providers with expired challenges"
+        "resolve_expired_challenge (anyone, free on success) slashes a provider whose challenge expired"
       ]
     }
   ]
