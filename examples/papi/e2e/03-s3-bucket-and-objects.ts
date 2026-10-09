@@ -7,7 +7,8 @@
  *
  * Tests: S3 object CRUD on a plain Layer 0 bucket through `S3Client`, member
  * writes, and failure cases. The chain stores no bucket name and no object
- * metadata: the provider's S3 index maps keys to content.
+ * metadata: the client keeps the key -> content tree in the bucket itself and
+ * uses the provider's Layer 0 routes only.
  *
  * Usage: node e2e/03-s3-bucket-and-objects.js [chain_ws] [provider_url]
  */
@@ -137,6 +138,10 @@ async function main() {
       });
       const got = await ownerS3.getObject(bucketId, "meta.txt");
       assert.strictEqual(dec(got.data), "data with metadata");
+      assert.deepStrictEqual(got.metadata, { author: "e2e-test", version: "1" }, "user metadata should round-trip");
+      const head = await ownerS3.headObject(bucketId, "meta.txt");
+      assert.strictEqual(head.size, "data with metadata".length, "head size");
+      assert.strictEqual(head.etag, got.etag, "head and get should report the same etag");
     },
   });
 
@@ -146,14 +151,17 @@ async function main() {
       await ownerS3.putObject(bucketId, "docs/readme.md", enc("# readme"));
       const all = await ownerS3.listObjects(bucketId);
       for (const key of ["test.txt", "meta.txt", "docs/readme.md"]) {
-        assert.ok(all.some((o) => o.key === key), `listObjects should include ${key}`);
+        assert.ok(all.objects.some((o) => o.key === key), `listObjects should include ${key}`);
       }
-      const docs = await ownerS3.listObjects(bucketId, "docs/");
+      const docs = await ownerS3.listObjects(bucketId, { prefix: "docs/" });
       assert.deepStrictEqual(
-        docs.map((o) => o.key),
+        docs.objects.map((o) => o.key),
         ["docs/readme.md"],
         "prefix listing should return only docs/ keys"
       );
+      const top = await ownerS3.listObjects(bucketId, { delimiter: "/" });
+      assert.deepStrictEqual(top.commonPrefixes, ["docs/"], "delimiter listing should group docs/ keys");
+      assert.ok(!top.objects.some((o) => o.key.includes("/")), "delimiter listing should not return nested keys");
     },
   });
 
@@ -162,9 +170,9 @@ async function main() {
     fn: async () => {
       await ownerS3.deleteObject(bucketId, "meta.txt");
       const after = await ownerS3.listObjects(bucketId);
-      assert.ok(!after.some((o) => o.key === "meta.txt"), "deleted key should not be listed");
-      assert.ok(after.some((o) => o.key === "test.txt"), "other keys should remain");
-      await assert.rejects(ownerS3.getObject(bucketId, "meta.txt"), "deleted key should not be readable");
+      assert.ok(!after.objects.some((o) => o.key === "meta.txt"), "deleted key should not be listed");
+      assert.ok(after.objects.some((o) => o.key === "test.txt"), "other keys should remain");
+      await assert.rejects(ownerS3.getObject(bucketId, "meta.txt"), /NoSuchKey/, "deleted key should not be readable");
     },
   });
 
@@ -193,7 +201,7 @@ async function main() {
     fn: async () => {
       await assert.rejects(
         ownerS3.getObject(bucketId, "does-not-exist.txt"),
-        /Download failed/,
+        /NoSuchKey/,
         "missing key should fail"
       );
     },
@@ -237,7 +245,7 @@ async function main() {
       await ownerS3.putObject(bucketId, "file.txt", enc("version 2 updated"));
       const got = await ownerS3.getObject(bucketId, "file.txt");
       assert.strictEqual(dec(got.data), "version 2 updated", "get should return the last write");
-      const listed = (await ownerS3.listObjects(bucketId)).filter((o) => o.key === "file.txt");
+      const listed = (await ownerS3.listObjects(bucketId)).objects.filter((o) => o.key === "file.txt");
       assert.strictEqual(listed.length, 1, "the key should be listed once");
       assert.strictEqual(listed[0]!.size, "version 2 updated".length, "size should reflect the last write");
     },

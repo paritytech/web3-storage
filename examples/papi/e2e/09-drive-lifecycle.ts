@@ -7,7 +7,9 @@
  *
  * Tests: a drive on a plain Layer 0 bucket through `FileSystemClient`: create,
  * file and directory ops, add/change/remove members, and failure cases. The
- * chain stores no drive name or drive record: a drive is its bucket id.
+ * chain stores no drive name or drive record: a drive is its bucket id. The
+ * client keeps the directory tree in the bucket and uses the provider's
+ * Layer 0 routes only.
  *
  * Usage: node e2e/09-drive-lifecycle.js [chain_ws] [provider_url]
  */
@@ -145,6 +147,7 @@ async function main() {
         contentType: "text/plain",
       });
       assert.strictEqual(up.size, "hello drive".length);
+      assert.strictEqual(await ownerFs.getRootCid(bucketId), up.rootCid, "the drive root should be the upload's new root");
       assert.strictEqual(dec(await ownerFs.downloadFile(bucketId, "/hello.txt")), "hello drive");
       const withType = await ownerFs.downloadFileWithType(bucketId, "/hello.txt");
       assert.ok(withType.contentType.startsWith("text/plain"), `content type: ${withType.contentType}`);
@@ -212,10 +215,16 @@ async function main() {
         !memberDrives.some((d) => d.bucketId === bucketId),
         "listDrives for the removed member should not include the drive"
       );
+      // Check writes, not reads: the client reads over Layer 0, where reads
+      // are unauthenticated (anyone who knows a CID can read the blob,
+      // #383/#396), so a removed member can still read. This differs from
+      // "Bucket Visibility & Access" in docs/design/scalable-web3-storage.md
+      // (private buckets serve reads only to members). Confidential files
+      // need client-side encryption.
       await eventuallyRejects(
-        () => memberFs.downloadFile(bucketId, "/hello.txt"),
-        /Download failed: 403/,
-        "removed member read of a Private drive"
+        () => memberFs.uploadFile(bucketId, "/removed-write.txt", enc("nope")),
+        /Upload failed: 403/,
+        "removed member upload"
       );
     },
   });
