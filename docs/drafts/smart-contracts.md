@@ -46,7 +46,8 @@ Both use `HAS_CONTRACT_INFO = false` (no storage deposits or contract metadata; 
 | `extendAgreement(uint64 bucketId, bytes32 provider, uint32 additionalDuration, uint128 maxPayment)`                 | `extend_agreement`                                  |
 | `endAgreementPay(uint64 bucketId, bytes32 provider)`                                                                | `end_agreement` (action: `Pay`)                     |
 | `endAgreementBurn(uint64 bucketId, bytes32 provider, uint8 burnPercent)`                                            | `end_agreement` (action: `Burn { burn_percent }`)   |
-| `challengeCheckpoint(uint64 bucketId, bytes32 provider, uint64 leafIndex, uint64 chunkIndex)`                       | `challenge_checkpoint`                              |
+| `challengeCheckpoint(uint64 bucketId, bytes32 provider, uint64 leafIndex, uint64 chunkIndex) → (uint32 deadline, uint16 index)` | `challenge_checkpoint`                 |
+| `resolveExpiredChallenge(uint32 deadline, uint16 index)`                                                            | `resolve_expired_challenge` (permissionless; gas is charged even though the native call is free) |
 
 ### `IDriveRegistry` (drive-registry, `0x…09020000`)
 

@@ -174,7 +174,7 @@ pub const VERSION: RuntimeVersion = RuntimeVersion {
     spec_name: Cow::Borrowed("web3-storage-parachain"),
     impl_name: Cow::Borrowed("web3-storage-parachain"),
     authoring_version: 1,
-    spec_version: 4_009,
+    spec_version: 4_010,
     impl_version: 0,
     apis: RUNTIME_API_VERSIONS,
     // Bumped whenever call encoding changes, so offline signers and stale-metadata
@@ -259,7 +259,7 @@ impl frame_system::Config for Runtime {
     type Version = Version;
     type PalletInfo = PalletInfo;
     type OnNewAccount = ();
-    type OnKilledAccount = ();
+    type OnKilledAccount = StorageProvider;
     type AccountData = pallet_balances::AccountData<Balance>;
     type SystemWeightInfo = weights::frame_system::WeightInfo<Runtime>;
     type ExtensionsWeightInfo = weights::frame_system_extensions::WeightInfo<Runtime>;

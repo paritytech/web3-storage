@@ -16,10 +16,8 @@ use scale_info::TypeInfo;
 use sp_core::H256;
 
 pub mod agreement_term;
-pub mod provider_replay_state;
 
 pub use agreement_term::*;
-pub use provider_replay_state::*;
 
 /// Bucket ID is a stable, unique identifier (not an index into a collection).
 /// Using u64 ensures IDs never get reused even if buckets are deleted.
@@ -198,38 +196,6 @@ pub enum RemovalReason {
 // ─────────────────────────────────────────────────────────────────────────────
 // Challenge Types
 // ─────────────────────────────────────────────────────────────────────────────
-
-/// Why a provider was slashed via the challenge mechanism.
-///
-/// Emitted in `ChallengeSlashed` so observers can distinguish a provider that
-/// went silent (Timeout) from one that submitted a demonstrably-false response
-/// (InvalidProof, InvalidDeletionClaim, InvalidSupersededClaim).
-#[derive(
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Encode,
-    Decode,
-    DecodeWithMemTracking,
-    TypeInfo,
-    MaxEncodedLen,
-    Debug,
-)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub enum SlashReason {
-    /// Provider failed to respond before the challenge deadline.
-    Timeout,
-    /// Provider submitted a `Proof` response whose chunk-Merkle or MMR proof
-    /// did not verify.
-    InvalidProof,
-    /// Provider submitted a `Deleted` response with a signature or
-    /// `new_start_seq` that does not stand up against on-chain state.
-    InvalidDeletionClaim,
-    /// Provider claimed `Superseded` but the bucket's canonical snapshot
-    /// does not actually cover the challenged sequence.
-    InvalidSupersededClaim,
-}
 
 /// Challenge identifier combining deadline and index.
 #[derive(
