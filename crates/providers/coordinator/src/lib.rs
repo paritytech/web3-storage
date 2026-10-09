@@ -28,7 +28,7 @@ pub use chain::{
 };
 
 use parking_lot::RwLock;
-use provider_chain::{BlockEvent, BlockEventTx};
+use provider_events::{BlockEvent, BlockEventTx};
 use provider_types::{ChainClientError, ProviderInfo};
 use sp_runtime::AccountId32;
 use std::future::Future;

@@ -98,7 +98,7 @@ pub enum Error {
     ChainStateNotReady,
 
     #[error(transparent)]
-    Chain(#[from] provider_chain::Error),
+    Chain(#[from] crate::chain_connection::Error),
 
     /// The node cannot sign with its registered key. Each reason keeps the
     /// response code it had when these were three separate variants.
@@ -132,7 +132,7 @@ struct ErrorResponse {
 
 impl IntoResponse for Error {
     fn into_response(self) -> Response {
-        use provider_chain::Error as ChainError;
+        use crate::chain_connection::Error as ChainError;
         use provider_storage::Error as StorageError;
         let (status, error_response) = match &self {
             // Exhaustive on purpose — no wildcard — so a new storage variant
@@ -603,11 +603,11 @@ mod tests {
         // A connection that was never established is retryable; a failed
         // connect attempt is a bug. They must not share a status code.
         assert_eq!(
-            status_of(provider_chain::Error::NotConnected.into()),
+            status_of(crate::chain_connection::Error::NotConnected.into()),
             StatusCode::SERVICE_UNAVAILABLE
         );
         assert_eq!(
-            status_of(provider_chain::Error::Internal("boom".into()).into()),
+            status_of(crate::chain_connection::Error::Internal("boom".into()).into()),
             StatusCode::INTERNAL_SERVER_ERROR
         );
     }

@@ -24,7 +24,6 @@ COV_PACKAGES=(
 	pallet-drive-registry
 	pallet-s3-registry
 	storage-provider-node
-	provider-chain
 	provider-coordinator
 	provider-negotiation
 	provider-auth
@@ -42,6 +41,7 @@ COV_SKIP_PACKAGES=(
 	storage-primitives # pure types; enters reports only via dep graph (see COV_IGNORE)
 	file-system-primitives # pure types; enters reports only via dep graph (see COV_IGNORE)
 	s3-primitives # pure types; enters reports only via dep graph (see COV_IGNORE)
+	provider-events # pure types; no tests of its own
 	storage-parachain-runtime # exercised out of process (zombienet e2e)
 	storage-paseo-runtime # exercised out of process (zombienet e2e)
 	pallet-storage-provider-precompile # exercised out of process (`just sc-demo`)

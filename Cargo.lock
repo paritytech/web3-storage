@@ -7195,28 +7195,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "provider-chain"
-version = "0.1.0"
-dependencies = [
- "hex",
- "serde_json",
- "sp-runtime",
- "storage-primitives",
- "storage-subxt",
- "subxt",
- "subxt-rpcs",
- "tempfile",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
-]
-
-[[package]]
 name = "provider-challenge"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "provider-chain",
+ "provider-events",
  "sp-core",
  "sp-runtime",
  "storage-primitives",
@@ -7231,12 +7214,21 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "parking_lot",
- "provider-chain",
+ "provider-events",
  "provider-types",
  "sp-runtime",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "provider-events"
+version = "0.1.0"
+dependencies = [
+ "sp-runtime",
+ "storage-primitives",
+ "tokio",
 ]
 
 [[package]]
@@ -7263,7 +7255,7 @@ dependencies = [
  "base64",
  "hex",
  "parity-scale-codec",
- "provider-chain",
+ "provider-events",
  "provider-storage",
  "provider-types",
  "reqwest",
@@ -10164,9 +10156,9 @@ dependencies = [
  "parity-scale-codec",
  "parking_lot",
  "provider-auth",
- "provider-chain",
  "provider-challenge",
  "provider-coordinator",
+ "provider-events",
  "provider-negotiation",
  "provider-replica",
  "provider-storage",
