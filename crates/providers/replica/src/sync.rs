@@ -11,7 +11,7 @@
 
 use crate::Error;
 use base64::Engine;
-use provider_storage::StorageBackend;
+use provider_storage::{ChunkTreeNode, StorageBackend};
 use reqwest::Client;
 use sp_core::H256;
 use std::sync::Arc;
@@ -164,16 +164,23 @@ impl ReplicaSync {
                 })
                 .transpose()?;
 
-            // Store locally
-            self.storage
-                .store_node(bucket_id, root_hash, data, children.clone())?;
+            // A node that declares children is an internal node, and the peer
+            // must have declared exactly two of them.
+            let node = match children.clone() {
+                Some(children) => ChunkTreeNode::internal(children)?,
+                None => ChunkTreeNode::Chunk(data),
+            };
 
-            // Recursively fetch children
+            // Fetch children before storing the parent: store_node rejects an
+            // internal node whose non-zero children aren't already present.
             if let Some(child_hashes) = children {
                 for child in child_hashes {
                     self.fetch_subtree(bucket_id, child, primary_url).await?;
                 }
             }
+
+            // Store locally
+            self.storage.store_node(bucket_id, root_hash, node)?;
 
             Ok(())
         })
