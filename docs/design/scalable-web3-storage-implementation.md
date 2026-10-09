@@ -145,6 +145,8 @@ it stay valid.
 
 **Snapshot liability**: Providers remain liable for snapshots they signed until those snapshots are superseded by a new checkpoint that doesn't include them, or until the bucket's canonical depth grows past the data they signed for.
 
+A checkpoint voids any prior existing *shorter* off-chain commitments. Primaries are no longer liable for them, including primaries that did not sign the checkpoint: the client decides how many signatures to collect before it submits the checkpoint.
+
 ### Multi-Provider Coordination (Primary Providers)
 
 Primary providers don't sync with each other. Clients are responsible for uploading to each primary provider they want to store their data.
@@ -698,6 +700,11 @@ pub struct Challenge<T: Config> {
     /// membership/agreement changes between creation and response cannot alter
     /// the fee split applied in `respond_to_challenge`.
     pub authorized: bool,
+    /// Whether the challenged provider held a replica agreement at challenge
+    /// creation. Set in `create_challenge` from the provider's agreement
+    /// role and snapshotted like `authorized`. A replica cannot defend with
+    /// `Superseded`.
+    pub replica: bool,
 }
 
 /// Number of unresolved challenges currently outstanding against a
@@ -1673,6 +1680,8 @@ impl<T: Config> Pallet<T> {
     // - Uses the replica's on-chain sync confirmation (last_synced_root)
     // - No signature needed - chain already has their commitment
     // - Replicas are liable for roots they've confirmed synced to
+    // - `Superseded` is not a defense: there is no call to re-challenge a
+    //   replica on the newer snapshot, so it would end the replica's liability
     //
     // For hot buckets, challenge_checkpoint may fail due to race conditions,
     // but this is acceptable: active writers have signatures and can use
@@ -1849,10 +1858,10 @@ impl<T: Config> Pallet<T> {
     /// 
     /// Must provide the challenged chunk with Merkle proofs, or prove the data
     /// was legitimately deleted (newer commitment with higher start_seq), or
-    /// show the challenged state has been superseded by canonical. An invalid
-    /// response is rejected (`InvalidProof`, `InvalidDeletionClaim`,
-    /// `InvalidSupersededClaim`) and the challenge stays open until the
-    /// deadline.
+    /// show the challenged state has been superseded by canonical (primary
+    /// providers only). An invalid response is rejected (`InvalidProof`,
+    /// `InvalidDeletionClaim`, `InvalidSupersededClaim`) and the challenge
+    /// stays open until the deadline.
     /// 
     /// Parameters:
     /// - `challenge_id`: The challenge to respond to (deadline + index)
@@ -1913,6 +1922,9 @@ pub enum ChallengeResponse<T: Config> {
         admin_signature: Signature,
     },
     /// Challenged state has been superseded by a larger canonical checkpoint.
+    /// Primary providers only. It covers MMR forks, and a replica has none: it
+    /// only syncs to snapshots, which are canonical, so it can always answer
+    /// with `Proof` (or `Deleted`).
     /// Valid when: canonical.mmr_root != challenged mmr_root AND
     /// canonical.start_seq <= challenged_seq < canonical.start_seq + canonical.leaf_count
     /// (The leaf exists in canonical - challenger should challenge the snapshot instead)
@@ -2629,6 +2641,11 @@ fn verify_challenge_response(
             // Provider IS liable when the challenged root is still canonical (the
             // data is live, only a Proof defends it) or when challenged_seq lies
             // beyond canonical_end (they signed something canonical never covered).
+            //
+            // Replicas: never valid (see `ChallengeResponse::Superseded`).
+            if challenge.replica {
+                return Err(Error::InvalidSupersededClaim);
+            }
             let Some(snapshot) = bucket.snapshot.as_ref() else {
                 // Nothing canonical to lean on: the claim is unsupported.
                 return Err(Error::InvalidSupersededClaim);
