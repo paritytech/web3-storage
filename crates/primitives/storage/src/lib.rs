@@ -16,8 +16,10 @@ use scale_info::TypeInfo;
 use sp_core::H256;
 
 pub mod agreement_term;
+pub mod merkle;
 
 pub use agreement_term::*;
+pub use merkle::*;
 
 /// Bucket ID is a stable, unique identifier (not an index into a collection).
 /// Using u64 ensures IDs never get reused even if buckets are deleted.

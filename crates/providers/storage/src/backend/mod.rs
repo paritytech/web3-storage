@@ -12,13 +12,12 @@ pub use rocksdb::DiskStorage;
 pub use types::{BucketState, StoredNode};
 
 use crate::error::Error;
-use crate::merkle::build_merkle_proof;
 use serde::{Deserialize, Serialize};
 use sp_core::H256;
 use std::fmt;
 use std::path::PathBuf;
 use std::sync::Arc;
-use storage_primitives::{hash_children, BucketId};
+use storage_primitives::BucketId;
 
 /// Which backend to build, and what that backend needs.
 ///
@@ -183,7 +182,8 @@ pub trait StorageBackend: Send + Sync {
             .ok_or_else(|| Error::NodeNotFound(format!("chunk_data_{chunk_index}")))?
             .data;
 
-        let proof = build_merkle_proof(&chunk_hashes, chunk_index as usize);
+        let proof = storage_primitives::padded_merkle_proof(&chunk_hashes, chunk_index as usize)
+            .ok_or_else(|| Error::NodeNotFound(format!("chunk_{chunk_index}")))?;
 
         Ok((chunk_data, proof))
     }
@@ -226,35 +226,20 @@ pub trait StorageBackend: Send + Sync {
 
 /// Build a balanced Merkle tree from leaf hashes, storing intermediate nodes in storage.
 ///
-/// Pads to the next power of 2 with `H256::zero()`. Returns the tree root hash.
+/// The tree shape is `storage_primitives::padded_merkle_tree`. Returns the tree root hash.
 pub fn build_padded_merkle_tree(
     storage: &dyn StorageBackend,
     bucket_id: BucketId,
     leaves: &[H256],
 ) -> H256 {
-    if leaves.is_empty() {
-        return H256::zero();
+    let (root, nodes) = storage_primitives::padded_merkle_tree(leaves);
+    for node in nodes {
+        let _ = storage.store_node(
+            bucket_id,
+            node.hash,
+            node.data().to_vec(),
+            Some(vec![node.left, node.right]),
+        );
     }
-    if leaves.len() == 1 {
-        return leaves[0];
-    }
-
-    let padded_len = leaves.len().next_power_of_two();
-    let mut current_level = leaves.to_vec();
-    current_level.resize(padded_len, H256::zero());
-
-    while current_level.len() > 1 {
-        let mut next_level = Vec::new();
-        for pair in current_level.chunks(2) {
-            let parent = hash_children(pair[0], pair[1]);
-            let mut node_data = Vec::new();
-            node_data.extend_from_slice(pair[0].as_bytes());
-            node_data.extend_from_slice(pair[1].as_bytes());
-            let _ = storage.store_node(bucket_id, parent, node_data, Some(vec![pair[0], pair[1]]));
-            next_level.push(parent);
-        }
-        current_level = next_level;
-    }
-
-    current_level[0]
+    root
 }
