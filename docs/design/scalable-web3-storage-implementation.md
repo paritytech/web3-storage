@@ -860,8 +860,11 @@ fn locked_stake(p: &ProviderInfo) -> Balance {
 
 Maintenance is O(1) per event, no scan:
 
-- **create agreement** (expiry `E`): `cur_until = max(cur_until, E)`. (New agreements
-  always use the current `stake`, so their snapshot is `provider.stake`.)
+- **create agreement** (expiry `E`) or **create a replacement** (successor
+  expiry `E`): `cur_until = max(cur_until, E)`. Both snapshot the current `stake`, and
+  the snapshot is locked from creation. A successor that lapses does not lower
+  `cur_until`; the figure may then exceed the latest live expiry by up to
+  `additional_duration`, which the overshoot rule below already accepts.
 - **raise stake:** set `stake`; nothing else. Old agreements are now *below* the
   new figure, so `locked_stake` already covers them.
 - **lower stake** to `X` (`set_stake`): allowed **only if `higher_stake_lock` has
@@ -899,8 +902,11 @@ pending successor in the agreement record (`StorageAgreement.pending_replacement
 a fresh `agreement_id`, the provider's stake — for a virtual provider also its
 `VirtualSnapshot` (current member set and `per_provider_stake`) — its expiry
 `old.expires_at + additional_duration`, and the payment for
-`additional_duration` at the current price, held. `additional_duration` may be
-0 (a pure provider-set swap, the virtual-provider case). It needs no new quote
+`additional_duration` at the current price, held. Creation bumps `cur_until` to
+the successor's expiry ("Changeable Stake"): a later `set_stake` lowering locks
+the old figure until the successor ends, not only until the old agreement does.
+`additional_duration` may be 0 (a pure provider-set swap, the virtual-provider
+case). It needs no new quote
 and is gated exactly like `extend_agreement`, zero duration included: rejected
 if `expected_version` changed, if the provider is not accepting extensions
 (globally, or `extensions_blocked` on this agreement), if a nonzero
@@ -914,8 +920,9 @@ term), and there is no cancel: the successor's provider may already have
 synced and signed, so the owner is bound once created. It ends by activation or
 with the old agreement. For a virtual
 provider the in-place member-set check of `extend_agreement` does not apply.
-Pending means not live: no liability, commitments naming it are not valid, no
-checkpoint slots. The old agreement runs on unchanged.
+Pending means not live for data: no challenges, commitments naming it are not
+valid, no checkpoint slots. Its stake snapshot is bound from creation. The old
+agreement runs on unchanged.
 
 ```rust
 pub struct PendingReplacement<T: Config> {
@@ -939,8 +946,8 @@ never `extend_checkpoint`: a checkpoint is the owner attesting the latest
 state, off-chain commitments included, and that is what the new set must have
 proven before it takes over; signatures over an old snapshot prove nothing
 about the data since. Activation therefore needs the owner. The record becomes the
-new agreement with the fixed `expires_at` (bumping `cur_until` as any agreement
-creation does). The old one settles as `extend_agreement` step 1 does: elapsed
+new agreement with the fixed `expires_at`; `cur_until` was bumped at creation.
+The old one settles as `extend_agreement` step 1 does: elapsed
 period paid to the old provider (a virtual's snapshotted members, equal split),
 unelapsed remainder moved into the successor's escrow next to the payment for
 `additional_duration`. The successor serves the rest of the old stretch at the
@@ -950,7 +957,8 @@ Activation requires
 the old agreement to be live; if it expires first, the pending successor never
 activated: the old agreement settles as usual (its provider served the whole
 term), the successor's payment is released to the owner (nobody served the
-added stretch, nobody was liable for it), and `ReplacementExpired` is emitted.
+added stretch and nobody was challengeable for it), and `ReplacementExpired`
+is emitted.
 Any sync work the successor's provider did is unpaid — the graceful failure
 when the new set does not sign — or when the owner never submits the
 checkpoint. An owner can make a set sync for nothing; the provider's defence is
@@ -958,9 +966,9 @@ checkpoint. An owner can make a set sync for nothing; the provider's defence is
 too. Activation by checkpoint is what makes the
 handover safe: the new set becomes liable, and paid, only once it has signed
 the tip, so the client never pays for a guarantee it does not hold and there is
-no block in which nobody is liable. For a virtual provider, activation also raises the `until` of any snapshotted member that has
-since left (virtual-provider extension, "Changing a live agreement's member
-set").
+no block in which nobody is liable. For a virtual provider, activation writes
+nothing to the members' `ProviderVirtuals` entries (virtual-provider extension,
+"Changing a live agreement's member set").
 
 Owner-only because activation spends the owner's escrow. A third party keeping a
 frozen bucket alive funds its own replica instead (design doc "Permissionless
@@ -1804,8 +1812,10 @@ impl<T: Config> Pallet<T> {
     /// may be 0: a pure provider-set swap.
     /// Blocks `extend_agreement` and `top_up_agreement` on this agreement
     /// until activated or settled; cannot be cancelled. Locks the payment for
-    /// `additional_duration` at the current price. Fails if one is already
-    /// pending. The successor activates only while this agreement is live;
+    /// `additional_duration` at the current price. Bumps the provider's
+    /// `cur_until` to the successor's expiry ("Changeable Stake"). Fails if
+    /// one is already pending. The successor activates only while this
+    /// agreement is live;
     /// otherwise it lapses when this agreement settles and its payment is
     /// released to the owner.
     pub fn create_replacement(
