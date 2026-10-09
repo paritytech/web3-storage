@@ -195,10 +195,28 @@ pub trait StorageBackend: Send + Sync {
         new_start_seq: u64,
     ) -> Result<(H256, u64, u64), Error>;
 
-    /// Get MMR proof for a leaf.
+    /// Get MMR proof for a leaf, against the bucket's current commitment.
     fn get_mmr_proof(
         &self,
         bucket_id: BucketId,
+        leaf_index: u64,
+    ) -> Result<storage_primitives::MmrProof, Error>;
+
+    /// Get MMR proof for a leaf against a specific commitment, not
+    /// necessarily the bucket's current one.
+    ///
+    /// Rebuilds the MMR over the leaves with sequence numbers
+    /// `commitment.start_seq .. commitment.start_seq + commitment.leaf_count`
+    /// and checks the rebuilt root against `commitment.mmr_root`
+    /// ([`Error::CommitmentMismatch`] if it doesn't match), so a challenge
+    /// against an earlier signed commitment can still be answered after the
+    /// bucket has moved on to a newer one. `leaf_index` is relative to the
+    /// commitment's own range (0-based), the same convention `get_mmr_proof`
+    /// uses relative to the bucket's current range.
+    fn get_mmr_proof_for(
+        &self,
+        bucket_id: BucketId,
+        commitment: storage_primitives::Commitment,
         leaf_index: u64,
     ) -> Result<storage_primitives::MmrProof, Error>;
 

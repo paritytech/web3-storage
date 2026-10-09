@@ -63,6 +63,13 @@ impl<T: Config> Pallet<T> {
     ) -> Result<ChallengeId<BlockNumberFor<T>>, DispatchError> {
         ensure!(challenger != provider, Error::<T>::SelfChallenge);
 
+        // The challenged leaf must exist in the commitment's MMR, or the
+        // challenge could never be answered.
+        ensure!(
+            target.leaf_index < commitment.leaf_count,
+            Error::<T>::LeafOutOfRange
+        );
+
         // Private-bucket gate: the public has no legitimate reliance on data
         // it cannot read, and must not be able to force private bytes
         // on-chain via the response. Keyed on the challenged provider's role
@@ -99,6 +106,7 @@ impl<T: Config> Pallet<T> {
             challenger: challenger.clone(),
             mmr_root: commitment.mmr_root,
             start_seq: commitment.start_seq,
+            leaf_count: commitment.leaf_count,
             target,
             deposit,
             authorized,

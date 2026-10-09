@@ -251,6 +251,7 @@ fn insert_challenge<T: Config>(
         challenger: challenger.clone(),
         mmr_root,
         start_seq: 0,
+        leaf_count: 1,
         target: ChunkLocation {
             leaf_index: 0,
             chunk_index: 0,
@@ -886,7 +887,7 @@ mod benchmarks {
         let commitment = Commitment {
             mmr_root,
             start_seq: 0,
-            leaf_count: 0,
+            leaf_count: 1,
         };
         let payload = storage_primitives::CommitmentPayload::new(bucket_id, commitment);
         let encoded = codec::Encode::encode(&payload);
@@ -1192,6 +1193,7 @@ mod benchmarks {
             challenger,
             mmr_root: H256::zero(),
             start_seq: 0,
+            leaf_count: 1,
             target: ChunkLocation {
                 leaf_index: 0,
                 chunk_index: 0,

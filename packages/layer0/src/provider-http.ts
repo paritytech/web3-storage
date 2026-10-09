@@ -209,10 +209,16 @@ export async function fetchChallengeProof(
         challengeId.index,
     );
 
+  // Pass the challenged commitment so the provider proves against it, not
+  // whatever the bucket's current commitment happens to be — a later commit
+  // or delete_before must not invalidate an earlier signed commitment.
   const mmr = await providerFetch(providerUrl, "/mmr_proof", {
     params: {
       bucket_id: challenge.bucket_id,
       leaf_index: challenge.target.leaf_index,
+      mmr_root: asHex(challenge.mmr_root),
+      start_seq: challenge.start_seq,
+      leaf_count: challenge.leaf_count,
     },
   });
   const chunk = await providerFetch(providerUrl, "/chunk_proof", {
