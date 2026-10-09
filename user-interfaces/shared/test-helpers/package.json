@@ -12,13 +12,13 @@
   "scripts": {},
   "dependencies": {
     "@polkadot-api/descriptors": "workspace:*",
-    "@polkadot-api/substrate-bindings": "^0.21.1",
-    "@polkadot-labs/hdkd-helpers": "^0.0.31",
+    "@polkadot-api/substrate-bindings": "^0.21.2",
+    "@polkadot-labs/hdkd-helpers": "^0.0.34",
     "@web3-storage/sdk": "workspace:*",
-    "polkadot-api": "^3.1.0"
+    "polkadot-api": "^3.2.0"
   },
   "devDependencies": {
-    "@types/node": "^26.0.1"
+    "@types/node": "^26.6.4"
   },
   "peerDependencies": {
     "@playwright/test": "^1.60.0"
