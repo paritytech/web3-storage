@@ -9,6 +9,8 @@ description = "S3-compatible client SDK for web3-storage"
 
 [dependencies]
 # Internal
+file-system-client = { workspace = true }
+file-system-primitives = { workspace = true, features = ["std"] }
 storage-client = { workspace = true }
 storage-primitives = { workspace = true, features = ["std"] }
 storage-subxt = { workspace = true }
@@ -17,9 +19,8 @@ storage-subxt = { workspace = true }
 sp-core = { workspace = true, features = ["std"] }
 sp-runtime = { workspace = true, features = ["std"] }
 
-# Async/HTTP
+# Async
 futures = { workspace = true }
-reqwest = { workspace = true }
 tokio = { workspace = true }
 
 # Subxt for chain interaction
@@ -27,15 +28,21 @@ subxt = { workspace = true }
 
 # Utilities
 hex = { workspace = true, features = ["std"] }
-serde = { workspace = true, features = ["std"] }
-serde_json = { workspace = true, features = ["std"] }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 
 [dev-dependencies]
+async-trait = { workspace = true }
+axum = { workspace = true }
+base64 = { workspace = true }
+provider-auth = { workspace = true }
+provider-storage = { workspace = true, features = ["test-helpers"] }
+provider-types = { workspace = true }
+serde_json = { workspace = true, features = ["std"] }
+storage-provider-node = { workspace = true }
 subxt-signer = { workspace = true }
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 
 [[example]]
 name = "basic_usage"
