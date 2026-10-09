@@ -10,7 +10,8 @@ use storage_primitives::{BucketId, ProviderRole, Role, Visibility};
 
 impl<T: Config> Pallet<T> {
     /// Internal function to cleanup a bucket and all its agreements.
-    /// No call reaches it since `pallet-drive-registry` was removed (#475).
+    /// TODO: No call reaches it since `pallet-drive-registry` was removed (#475).
+    /// TODO: revisit in remove bucket PRs, if still needed, if not let's remove
     ///
     /// Returns the total amount refunded to the owner.
     pub fn cleanup_bucket_internal(
