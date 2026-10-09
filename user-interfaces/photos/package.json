@@ -2,7 +2,7 @@
   "name": "@web3-storage/photos",
   "version": "0.1.0",
   "license": "GPL-3.0-only",
-  "description": "Photos — decentralized photo storage dApp (Layer 1 drive registry + custom Photos contract)",
+  "description": "Photos — decentralized photo storage dApp (Layer 0 bucket + custom Photos contract)",
   "type": "module",
   "scripts": {
     "dev": "vite",
