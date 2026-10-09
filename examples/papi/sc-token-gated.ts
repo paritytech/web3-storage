@@ -122,7 +122,7 @@ async function main() {
     // payment reserve. Bob's account becomes a Writer so it can upload.
     console.log("\n[2/5] initialize{value: 5 UNIT}(Bob, provider, terms[1MiB×50], sig)");
     const contractAccount = h160ToSubstrate(deployed.addressBytes);
-    const signed = await negotiatePrecompileTerms(providerUrl, contractAccount, {
+    const signed = await negotiatePrecompileTerms(api, providerUrl, contractAccount, {
       maxBytes: 1n << 20n,
       duration: 50,
       pricePerByte: PRICE_PER_BYTE,

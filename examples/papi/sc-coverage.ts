@@ -121,8 +121,8 @@ async function main() {
     /** Negotiate terms for a direct precompile call signed by `owner`. */
     const negotiateAbiTerms = (
       owner: ChainSigner,
-      req: Parameters<typeof negotiatePrecompileTerms>[2]
-    ) => negotiatePrecompileTerms(providerUrl, owner, req);
+      req: Parameters<typeof negotiatePrecompileTerms>[3]
+    ) => negotiatePrecompileTerms(api, providerUrl, owner, req);
 
     // ====================================================================
     // Storage-provider precompile (0x…09010000)
@@ -283,6 +283,15 @@ async function main() {
       0n,
     ]);
     const challenge = assertEvent(r.events, "StorageProvider", "ChallengeCreated", "challengeCheckpoint");
+
+    console.log("\n[9b] IWeb3Storage.resolveExpiredChallenge(deadline, index) before the deadline reverts");
+    await assert.rejects(
+      callPrecompile(api, client, WEB3_STORAGE_ADDR, iWeb3, "resolveExpiredChallenge", [
+        challenge.challenge_id.deadline,
+        challenge.challenge_id.index,
+      ]),
+      /ContractReverted/,
+    );
 
     console.log("    [substrate] respondToChallenge");
     const proof = await fetchChallengeProof(api, providerUrl, challenge.challenge_id);

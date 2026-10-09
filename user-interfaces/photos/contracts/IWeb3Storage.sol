@@ -47,7 +47,8 @@ interface IWeb3Storage {
         uint128 pricePerByte;
         /// Block number after which the quote is no longer redeemable.
         uint32 validUntil;
-        /// Provider-chosen replay-protection nonce.
+        /// Owner-chosen replay-protection nonce: must equal the owner's next
+        /// expected on-chain value.
         uint64 nonce;
         /// `true` if the quote names an existing bucket
         /// (`BucketTarget::Existing` on the Rust side); `false` for a bucket
@@ -137,11 +138,16 @@ interface IWeb3Storage {
 
     // --- Challenges ---------------------------------------------------------
 
-    /// Challenge a provider's checkpoint at a specific leaf/chunk.
+    /// Challenge a provider's checkpoint at a specific leaf/chunk. Returns the
+    /// challenge id, needed to resolve it after the deadline.
     function challengeCheckpoint(
         uint64 bucketId,
         bytes32 provider,
         uint64 leafIndex,
         uint64 chunkIndex
-    ) external;
+    ) external returns (uint32 deadline, uint16 index);
+
+    /// Slash a provider whose challenge expired unanswered. Permissionless;
+    /// gas is charged even though the native call is free on success.
+    function resolveExpiredChallenge(uint32 deadline, uint16 index) external;
 }

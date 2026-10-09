@@ -38,6 +38,10 @@ export const [useConnectionStatus] = bind(connectionStatus$, "disconnected");
 export const [useBlockNumber] = bind(blockNumber$, 0);
 /** Use this (never `useBlockNumber`) for pallet-clock comparisons. */
 export const [useAnchorBlock] = bind(anchorBlock$, 0);
+/** Anchor block for non-React code; components use `useAnchorBlock`. */
+export function getAnchorBlock(): number {
+  return anchorBlock$.getValue();
+}
 export const [useEndpoint] = bind(endpoint$, initialNetwork.config.parachainWs);
 export const [useConnectionError] = bind(connectionError$, undefined);
 export const [useIsConnected] = bind(
