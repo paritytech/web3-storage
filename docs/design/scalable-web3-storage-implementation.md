@@ -69,7 +69,7 @@ Four calls cover them:
 
 | Call | Who | Effect |
 | --- | --- | --- |
-| `create_bucket` | anyone | Empty bucket, caller is sole admin |
+| `create_bucket` | anyone | Empty bucket, caller is sole admin and pays its storage deposit |
 | `create_bucket_with_primary` | the quoted account (`terms.owner`) | `create_bucket` + `add_primary_provider` in one atomic call |
 | `add_primary_provider` | bucket admin | Primary agreement on an existing bucket |
 | `add_replica_provider` | the quoted account (`terms.owner`) | Replica agreement on an existing bucket |
@@ -251,6 +251,13 @@ pub trait Config: frame_system::Config<RuntimeEvent: From<Event<Self>>> {
     #[pallet::constant]
     type MaxBucketsPerMember: Get<u32>;
 
+    /// Storage deposit for records a user creates, priced from the record's
+    /// encoded size (`Footprint`). The runtime sets it to a
+    /// `HoldConsideration` under `HoldReason::StorageDeposit`: creating the
+    /// ticket puts the deposit on hold on the depositor's balance, and
+    /// dropping it when the record is removed releases the hold.
+    type StorageDeposit: Consideration<Self::AccountId, Footprint>;
+
     /// Minimum number of blocks between announcing a deregistration and
     /// being allowed to complete it. Must be strictly `> ChallengeTimeout`
     /// so any challenge created up to the announcement block matures while
@@ -294,6 +301,7 @@ parachain `HOURS`:
 | `SettlementTimeout` | `24 * RC_HOURS` |
 | `RequestTimeout` | `6 * RC_HOURS` |
 | `MaxBucketsPerMember` | `1_000` |
+| `StorageDeposit` | `HoldConsideration<AccountId, Balances, StorageDepositReason, LinearStoragePrice<StorageDepositBase, StorageDepositPerByte, Balance>>` with base `UNIT / 10` and `MICROUNIT` per byte, the rates the contracts pallet (`revive.rs`) charges per regular storage item and per byte |
 | `DeregisterAnnouncementPeriod` | `54 * RC_HOURS` (48h challenge window + 6h grace) |
 | `MaxChallengesPerDeadline` | `1_000` |
 | `AnchorBlockTimeMillis` | `6_000` |
@@ -316,6 +324,9 @@ pub enum HoldReason {
     /// A challenger's anti-spam deposit, refunded on resolution minus the
     /// provider's response-cost share.
     ChallengeDeposit,
+    /// A deposit for a record a user created, held on the depositor until
+    /// the record is removed.
+    StorageDeposit,
 }
 ```
 
@@ -511,6 +522,27 @@ pub struct Bucket<T: Config> {
     pub historical_roots: [(u32, H256); 6],
     /// Total snapshots created for this bucket (for statistics)
     pub total_snapshots: u32,
+    /// The account that created the bucket and paid its storage deposit.
+    /// Set at creation and never changed. A bucket has no single owner
+    /// (`Role::Admin` can be held by several members at once), so the
+    /// creator is tracked separately from admin control, the same way
+    /// `StorageAgreement.owner` is separate from which provider is
+    /// assigned. The creator gets the deposit back when the bucket is
+    /// removed, even if it is no longer an admin or member by then.
+    /// Buckets created at genesis use their admin.
+    pub creator: T::AccountId,
+    /// The `T::StorageDeposit` ticket for the deposit held on `creator`.
+    /// Released when `delete_bucket` removes the bucket.
+    ///
+    /// The footprint is the same for every bucket: one item, sized to the
+    /// state `create_bucket` adds. That is the encoded size of a new
+    /// `Bucket` (one member, no providers, no snapshot, including these
+    /// fields), plus its `Buckets` key and the creator's `MemberBuckets`
+    /// entry. The pallet computes it from those types, so it follows any
+    /// change to `Bucket`; today it is 342 bytes (310 + 24 + 8). This
+    /// deposit does not cover records added later, such as members and
+    /// agreements.
+    pub deposit: T::StorageDeposit,
 }
 
 pub struct BucketSnapshot<BlockNumber> {
@@ -714,6 +746,10 @@ pub type PendingChallenges<T: Config> =
 /// `(bucket, provider)` pair. Maintained in lockstep with
 /// `PendingChallenges` and gates that bucket's agreement teardown
 /// (`end_agreement`, `claim_expired_agreement`, `cleanup_bucket_internal`).
+/// The entry is removed when its count reaches 0, so a bucket has an entry
+/// only while a challenge on it is open, and `delete_bucket` checks it with
+/// one `contains_prefix(bucket_id)` read. `decrement_pending` removes the
+/// entry at 0; a migration removes the 0 entries existing chains contain.
 #[pallet::storage]
 pub type PendingChallengesByBucket<T: Config> = StorageDoubleMap<
     _,
@@ -1244,8 +1280,11 @@ impl<T: Config> Pallet<T> {
 
     /// Create a new bucket.
     /// 
-    /// The caller becomes the bucket admin. The bucket starts empty with no
-    /// providers or data.
+    /// The caller becomes the bucket admin and its `creator`: a
+    /// `T::StorageDeposit` ticket for the fixed bucket footprint (see
+    /// `Bucket.deposit`) is created on the caller and held until the
+    /// bucket is removed. The bucket starts empty with no providers or
+    /// data.
     /// 
     /// Parameters:
     /// - `min_providers`: Minimum primary provider signatures required for checkpoints
@@ -1257,6 +1296,29 @@ impl<T: Config> Pallet<T> {
         origin: OriginFor<T>,
         min_providers: u32,
         visibility: Visibility,
+    ) -> DispatchResult;
+
+    /// Delete an empty bucket and release its storage deposit (admin only).
+    ///
+    /// Requires:
+    /// - zero storage agreements on the bucket (`BucketNotEmpty`);
+    /// - zero pending challenges on it: no entry under the bucket in
+    ///   `PendingChallengesByBucket` (`BucketHasPendingChallenge`). Zero
+    ///   agreements alone is not enough: `remove_slashed` removes a slashed
+    ///   provider's agreement without checking for pending challenges, so
+    ///   another challenge against that provider can still be open, and
+    ///   answering it reads the bucket.
+    ///
+    /// Removes the bucket from every current member's `MemberBuckets`
+    /// reverse index (bounded by `MaxMembers`), then the bucket itself,
+    /// and drops the deposit ticket, which releases it to `Bucket.creator`,
+    /// even if the creator is no longer an admin. The caller may be a
+    /// different admin. While the creator is an admin, the refund gives it
+    /// a reason to delete a bucket nobody uses. Emits `BucketDeleted`.
+    #[pallet::weight(...)]
+    pub fn delete_bucket(
+        origin: OriginFor<T>,
+        bucket_id: BucketId,
     ) -> DispatchResult;
 
     /// Set minimum providers required for checkpoint (admin only).
