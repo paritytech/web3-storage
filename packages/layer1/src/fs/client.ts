@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * FileSystemClient — drives (DriveRegistry) + the provider node's /fs HTTP
- * surface. Chain ops delegate to the layer-0 pallet wrappers (silent, no
+ * FileSystemClient — drives (plain Layer 0 buckets) + the provider node's
+ * /fs HTTP surface. The chain stores no drive name or drive record; a drive
+ * is identified by its bucket id. Chain ops delegate to the layer-0 pallet wrappers (silent, no
  * auto-retry, finalized submission + finalized reads by default — UI-grade,
  * reorg-safe; tests/examples opt into in-block/best via readOpts/submitMode);
  * HTTP ops go through core's retrying fetch and are signed with the signer's
@@ -17,18 +18,16 @@
 
 import { httpFetch } from "@web3-storage/core";
 import {
-  createDrive as createDriveTx,
-  deleteDrive as deleteDriveTx,
+  createBucketWithPrimary as createBucketWithPrimaryTx,
   downloadChunk,
   removeMember as removeMemberTx,
   setMember as setMemberTx,
-  shareDrive as shareDriveTx,
-  unshareDrive as unshareDriveTx,
   type WaitOpts,
 } from "@web3-storage/layer0";
 
 import { Layer1Client, type Layer1ClientOptions } from "../base-client.js";
-import { resolveBucketProviders, resolveCreationTerms } from "../provider-url.js";
+import { getBucketInfos, listMemberBuckets } from "../bucket-info.js";
+import { resolveCreationTerms } from "../provider-url.js";
 import type {
   BucketMember,
   CreateDriveOptions,
@@ -43,27 +42,16 @@ import type {
 
 export type FileSystemClientOptions = Layer1ClientOptions;
 
-function decodeName(name: Uint8Array | string | undefined | null): string | null {
-  if (name == null) return null;
-  if (typeof name === "string") return name;
-  try {
-    return new TextDecoder().decode(name);
-  } catch {
-    return null;
-  }
-}
-
 export class FileSystemClient extends Layer1Client {
   // ── Drive chain ops ─────────────────────────────────────────────────────
 
   /**
-   * Create a drive via the negotiate -> establish flow: pick a provider
-   * (explicit `options.provider` or auto-discovered), POST /negotiate for
-   * signed terms (unless `options.signedTerms` is supplied), then redeem them
-   * in create_drive — which opens the underlying bucket + agreement atomically.
+   * Create a drive: a Layer 0 bucket with one primary agreement. Picks a
+   * provider (explicit `options.provider` or auto-discovered), POSTs
+   * /negotiate for signed terms (unless `options.signedTerms` is supplied),
+   * then redeems them in `create_bucket_with_primary`.
    */
   async createDrive(options: CreateDriveOptions): Promise<{
-    driveId: bigint;
     bucketId: bigint;
     provider: string;
   }> {
@@ -78,94 +66,25 @@ export class FileSystemClient extends Layer1Client {
       readOpts: this.readOpts,
       fetchOpts: this.fetchOpts,
     });
-    return createDriveTx(this.api, signer, options.name ?? "", provider, signedTerms, {
+    const { bucketId } = await createBucketWithPrimaryTx(this.api, signer, provider, signedTerms, {
       ...this.submitOpts(),
       visibility: options.visibility,
     });
+    return { bucketId, provider: provider.address };
   }
 
-  async getDrive(driveId: bigint): Promise<DriveInfo | null> {
-    const drive = await this.api.query.DriveRegistry.Drives.getValue(driveId, this.readOpts);
-    if (!drive) return null;
-    const [providerInfo] = await resolveBucketProviders(
-      this.api,
-      [drive.bucket_id],
-      this.readOpts,
-    );
-    return {
-      driveId,
-      bucketId: drive.bucket_id,
-      owner: drive.owner,
-      name: decodeName(drive.name),
-      maxCapacity: drive.max_capacity,
-      createdAt: drive.created_at,
-      storagePeriod: drive.storage_period,
-      expiresAt: drive.expires_at,
-      providerInfo: providerInfo ?? [],
-    };
+  async getDrive(bucketId: bigint): Promise<DriveInfo | null> {
+    const [info] = await getBucketInfos(this.api, [bucketId], this.readOpts);
+    return info ?? null;
   }
 
-  async listDrives(owner?: string): Promise<DriveInfo[]> {
-    const who = owner ?? this.requireSigner().address;
-    const driveIds = await this.api.query.DriveRegistry.UserDrives.getValue(who, this.readOpts);
-    if (!driveIds || driveIds.length === 0) return [];
-
-    // Batch all drive lookups into one storage query instead of N round-trips.
-    const driveValues = await this.api.query.DriveRegistry.Drives.getValues(
-      driveIds.map((id) => [id] as const),
-      this.readOpts,
-    );
-
-    const drives: DriveInfo[] = [];
-    const bucketIds: bigint[] = [];
-    driveValues.forEach((drive, i) => {
-      if (!drive) return;
-      drives.push({
-        driveId: driveIds[i]!,
-        bucketId: drive.bucket_id,
-        owner: drive.owner,
-        name: decodeName(drive.name),
-        maxCapacity: drive.max_capacity,
-        createdAt: drive.created_at,
-        storagePeriod: drive.storage_period,
-        expiresAt: drive.expires_at,
-        providerInfo: [],
-      });
-      bucketIds.push(drive.bucket_id);
-    });
-
-    // `providersByBucket[i]` aligns with `drives[i]` (both built skipping nulls).
-    const providersByBucket = await resolveBucketProviders(this.api, bucketIds, this.readOpts);
-    drives.forEach((drive, i) => {
-      drive.providerInfo = providersByBucket[i] ?? [];
-    });
-
-    return drives;
-  }
-
-  async deleteDrive(driveId: bigint): Promise<void> {
-    await deleteDriveTx(this.api, this.requireSigner(), driveId, this.submitOpts());
-  }
-
-  async shareDrive(driveId: bigint, member: string, role: MemberRole): Promise<void> {
-    await shareDriveTx(
-      this.api,
-      this.requireSigner(),
-      driveId,
-      { address: member },
-      role,
-      this.submitOpts(),
-    );
-  }
-
-  async unshareDrive(driveId: bigint, member: string): Promise<void> {
-    await unshareDriveTx(
-      this.api,
-      this.requireSigner(),
-      driveId,
-      { address: member },
-      this.submitOpts(),
-    );
+  /**
+   * Every bucket `account` (default: the signer) is a member of, owned or
+   * shared. The chain does not record which buckets hold a file system, so
+   * this lists all of them.
+   */
+  async listDrives(account?: string): Promise<DriveInfo[]> {
+    return listMemberBuckets(this.api, account ?? this.requireSigner().address, this.readOpts);
   }
 
   async addMember(bucketId: bigint, account: string, role: MemberRole): Promise<void> {
@@ -190,14 +109,9 @@ export class FileSystemClient extends Layer1Client {
   }
 
   async getBucketMembers(bucketId: bigint): Promise<BucketMember[]> {
-    const bucket = await this.api.query.StorageProvider.Buckets.getValue(bucketId, this.readOpts);
-    if (!bucket) throw new Error(`Bucket ${bucketId} not found`);
-    return (bucket.members ?? []).map((m: { account: string; role: { type?: string } | string }) => {
-      const roleType = typeof m.role === "string" ? m.role : (m.role?.type ?? "Reader");
-      const role: MemberRole =
-        roleType === "Admin" || roleType === "Writer" ? roleType : "Reader";
-      return { account: m.account, role };
-    });
+    const info = await this.getDrive(bucketId);
+    if (!info) throw new Error(`Bucket ${bucketId} not found`);
+    return info.members;
   }
 
   // ── Provider resolution ─────────────────────────────────────────────────

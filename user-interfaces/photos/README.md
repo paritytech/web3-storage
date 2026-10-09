@@ -1,8 +1,8 @@
 # Photos — decentralized photo storage dApp
 
-Layer 1 (drive-registry) dApp. A custom `Photos.sol` contract creates and owns a **drive** per user via
-the drive-registry precompile (`0x…0902`), grants the user a Writer role, and anchors the album-tree root
-CID on-chain. Design: [`DESIGN.md`](./DESIGN.md).
+A custom `Photos.sol` contract creates one Layer 0 **bucket** per user through the storage-provider
+precompile `IWeb3Storage` (`0x…09010000`), is that bucket's admin, grants the user a Writer role, and
+anchors the album-tree root CID on-chain. Design: [`DESIGN.md`](./DESIGN.md).
 
 > Status: **M7** — contract + headless flow through `createLibrary`, albums, blobs, and the
 > client-computed metadata-root anchor (`setRoot`), **plus a fully interactive UI** (React 19 +
@@ -16,7 +16,7 @@ CID on-chain. Design: [`DESIGN.md`](./DESIGN.md).
 ## Layout
 
 ```
-contracts/        Photos.sol + vendored IDriveRegistry.sol; build.sh → src/contract/Photos.json
+contracts/        Photos.sol + vendored IWeb3Storage.sol; build.sh → src/contract/Photos.json
 scripts/lib/      TS helpers — PAPI deploy/call, /negotiate, libraryOf read + setRoot (photos.ts),
                   provider /fs ops (fs-client.ts), byte-exact metadata/data root (merkle.ts)
 scripts/          deploy-contract.ts, photos-flow.ts (run via tsx)
@@ -59,17 +59,17 @@ The UI needs the deployed contract address: it's read from `localStorage['photos
 `just photos flow`) and paste the printed `0x…` into the in-app field (saved to localStorage).
 
 It reads `libraryOf` unsigned for state detection. **State A** ("no library") runs the create flow
-(map account → negotiate terms → `createLibrary{value}`). **State B** ("drive #N") browses the
+(map account → negotiate terms → `createLibrary{value}`). **State B** ("Bucket #N") browses the
 library: the album bar lists/creates folders, **Upload** generates a downscaled JPEG thumbnail per
 photo (canvas, longest edge ~320px) and PUTs the full photo plus the thumbnail, the grid renders
 from thumbnails (kilobytes per cell), and clicking a photo opens it full-resolution in a lightbox.
-Every mutation recomputes the drive's metadata Merkle root client-side (`@web3-storage/core`'s `merkle.ts`) and
+Every mutation recomputes the bucket's metadata Merkle root client-side (`@web3-storage/core`'s `merkle.ts`) and
 anchors it on-chain via `setRoot`, so the on-chain anchor shown in the header updates live. `/fs`
 requests are unsigned (dev providers run `/fs` auth disabled; signed requests are M8).
 
-`photos-flow` asserts the contract owns the drive, the user holds a Writer role on the underlying bucket,
-and `libraryOf(user)` reports the new drive. It then drives the provider's `/fs` API (mkdir an album,
-PUT a multi-MB photo + a thumbnail), computes the drive's metadata Merkle root **client-side**
+`photos-flow` asserts the contract account is the bucket admin, the user holds a Writer role on the
+bucket, and `libraryOf(user)` reports the new bucket. It then drives the provider's `/fs` API (mkdir an album,
+PUT a multi-MB photo + a thumbnail), computes the bucket's metadata Merkle root **client-side**
 (`merkle.ts`, a byte-exact port of `crates/providers/storage/src/index/fs.rs`), anchors it via `setRoot`, and
 verifies the locally recomputed root equals both the on-chain anchor and the provider's `index_root`
 (plus a tamper check) — proving the control plane and the integrity anchor before any UI exists.

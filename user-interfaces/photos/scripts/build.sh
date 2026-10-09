@@ -29,7 +29,7 @@ cd "$CONTRACTS_DIR"
 # Pass the interface explicitly so its ABI is available too; `Photos.sol:Photos`
 # is the entry the extractor pulls out.
 resolc --combined-json abi,bin -O3 --overwrite -o "$BUILD_DIR" \
-    Photos.sol IDriveRegistry.sol
+    Photos.sol IWeb3Storage.sol
 
 node "$SCRIPT_DIR/extract.mjs" "$BUILD_DIR/combined.json" "Photos.sol:Photos" "$OUT"
 echo "Wrote $OUT"

@@ -30,18 +30,8 @@ const MAX_BACKFILL: u64 = 256;
 /// The `pallet-storage-provider` pallet (Layer 0 raw storage).
 pub const STORAGE_PROVIDER_PALLET: &str = "StorageProvider";
 
-/// The `pallet-drive-registry` pallet (Layer 1 file system).
-pub const DRIVE_REGISTRY_PALLET: &str = "DriveRegistry";
-
-/// The `pallet-s3-registry` pallet (Layer 1 S3).
-pub const S3_REGISTRY_PALLET: &str = "S3Registry";
-
-/// The three storage pallets of this chain.
-pub const STORAGE_PALLETS: [&str; 3] = [
-    STORAGE_PROVIDER_PALLET,
-    DRIVE_REGISTRY_PALLET,
-    S3_REGISTRY_PALLET,
-];
+/// The storage pallets this crate indexes.
+pub const STORAGE_PALLETS: [&str; 1] = [STORAGE_PROVIDER_PALLET];
 
 /// A decoded runtime event together with the block it was emitted in.
 #[derive(Clone, Debug)]
@@ -98,20 +88,7 @@ impl EventFilter {
         Self::pallet(STORAGE_PROVIDER_PALLET)
     }
 
-    /// Match only events from the [`DriveRegistry`](DRIVE_REGISTRY_PALLET)
-    /// pallet (Layer 1 file system).
-    pub fn drive_registry() -> Self {
-        Self::pallet(DRIVE_REGISTRY_PALLET)
-    }
-
-    /// Match only events from the [`S3Registry`](S3_REGISTRY_PALLET)
-    /// pallet (Layer 1 S3).
-    pub fn s3_registry() -> Self {
-        Self::pallet(S3_REGISTRY_PALLET)
-    }
-
-    /// Match only events from the three storage pallets
-    /// (`StorageProvider`, `DriveRegistry`, `S3Registry`).
+    /// Match only events from the [`STORAGE_PALLETS`].
     pub fn storage_pallets() -> Self {
         Self {
             pallets: Some(STORAGE_PALLETS.into_iter().collect()),
@@ -407,33 +384,17 @@ mod tests {
     fn pallet_gate_selects_only_named_pallets() {
         let filter = EventFilter::pallet("StorageProvider");
         assert!(filter.matches_pallet("StorageProvider"));
-        assert!(!filter.matches_pallet("DriveRegistry"));
         assert!(!filter.matches_pallet("Balances"));
 
-        let filter = filter.with_pallet("DriveRegistry");
-        assert!(filter.matches_pallet("DriveRegistry"));
-        assert!(!filter.matches_pallet("Balances"));
+        let filter = filter.with_pallet("Balances");
+        assert!(filter.matches_pallet("Balances"));
+        assert!(!filter.matches_pallet("System"));
     }
 
     #[test]
-    fn per_pallet_constructors_select_only_their_pallet() {
-        let cases = [
-            (EventFilter::storage_provider(), "StorageProvider"),
-            (EventFilter::drive_registry(), "DriveRegistry"),
-            (EventFilter::s3_registry(), "S3Registry"),
-        ];
-        for (filter, own_pallet) in cases {
-            assert!(filter.matches_pallet(own_pallet));
-            for other in STORAGE_PALLETS.into_iter().filter(|p| *p != own_pallet) {
-                assert!(!filter.matches_pallet(other));
-            }
-            assert!(!filter.matches_pallet("Balances"));
-        }
-    }
-
-    #[test]
-    fn storage_pallets_selects_the_three() {
+    fn storage_pallets_selects_only_storage_provider() {
         let filter = EventFilter::storage_pallets();
+        assert!(filter.matches_pallet("StorageProvider"));
         for pallet in STORAGE_PALLETS {
             assert!(filter.matches_pallet(pallet));
         }
