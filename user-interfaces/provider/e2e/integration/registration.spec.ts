@@ -19,10 +19,10 @@ import { Eve, Ferdie, getApi } from "@web3-storage/test-helpers";
 test.describe.configure({ mode: "serial" });
 test.setTimeout(180_000);
 
-async function switchToFerdie(page: import("@playwright/test").Page) {
+async function switchToAccount(page: import("@playwright/test").Page, name: string) {
   await page.getByTestId("provider-account-button").click();
-  await page.getByTestId("provider-account-select-Ferdie (Dev)").click();
-  await expect(page.getByTestId("provider-account-name")).toContainText("Ferdie", {
+  await page.getByTestId(`provider-account-select-${name} (Dev)`).click();
+  await expect(page.getByTestId("provider-account-name")).toContainText(name, {
     timeout: 30_000,
   });
 }
@@ -34,7 +34,7 @@ test("fresh registration with Ferdie via wizard", async ({ localPage }) => {
     "Ferdie is already registered on chain (likely from a prior wizard run); the runtime's two-step deregister can't fully remove the entry within a 48h test window. Restart the chain to re-run.",
   );
 
-  await switchToFerdie(localPage);
+  await switchToAccount(localPage, "Ferdie");
   await localPage.getByTestId("nav-registration").click();
 
   // Step 1: connect (already connected; the wizard auto-advances).
@@ -48,6 +48,7 @@ test("fresh registration with Ferdie via wizard", async ({ localPage }) => {
   await expect(localPage.getByTestId("registration-multiaddr-input")).toBeVisible();
   await localPage.getByTestId("registration-multiaddr-input").fill("/ip4/127.0.0.1/tcp/3334");
   await localPage.getByTestId("registration-priceperbyte-input").fill("1");
+  await localPage.getByTestId("registration-minbytes-input").fill("2048");
   await localPage.getByTestId("registration-settings-continue").click();
 
   // Step 4: confirm + submit.
@@ -70,6 +71,39 @@ test("fresh registration with Ferdie via wizard", async ({ localPage }) => {
 
   const onchain = await getApi().query.StorageProvider.Providers.getValue(Ferdie.address);
   expect(onchain).toBeTruthy();
+  expect(onchain!.settings.min_bytes).toBe(2048n);
+});
+
+test("wizard blocks min_bytes above a limited max_capacity", async ({ localPage }) => {
+  // Dave is never registered by globalSetup or the other specs, so the wizard
+  // shows. Nothing is submitted.
+  await switchToAccount(localPage, "Dave");
+  await localPage.getByTestId("nav-registration").click();
+  await expect(localPage.getByTestId("registration-stake-input")).toBeVisible({
+    timeout: 30_000,
+  });
+  await localPage.getByTestId("registration-stake-continue").click();
+
+  const minBytes = localPage.getByTestId("registration-minbytes-input");
+  const error = localPage.getByTestId("registration-minbytes-error");
+  const continueButton = localPage.getByTestId("registration-settings-continue");
+
+  await expect(minBytes).toHaveValue("0");
+  await expect(localPage.getByText("0 = no minimum")).toBeVisible();
+  await expect(error).toBeHidden();
+
+  await localPage.getByTestId("registration-maxcapacity-input").fill("1000");
+  await minBytes.fill("1001");
+  await expect(error).toBeVisible();
+  await expect(continueButton).toBeDisabled();
+
+  await minBytes.fill("1000");
+  await expect(error).toBeHidden();
+  await expect(continueButton).toBeEnabled();
+
+  await continueButton.click();
+  await expect(localPage.getByText("Min Agreement Size")).toBeVisible();
+  await expect(localPage.getByText("1000 B", { exact: true }).last()).toBeVisible();
 });
 
 test("settings update post-registration: pricePerByte round-trips", async ({
@@ -111,4 +145,38 @@ test("settings update post-registration: replica_sync_price round-trips", async 
     ({ value }) => value?.settings?.replica_sync_price?.toString() === newPrice,
     { timeoutMs: 60_000, description: `Eve's replica_sync_price to become ${newPrice}` },
   );
+});
+
+test("settings update post-registration: min_bytes round-trips", async ({ localPage }) => {
+  await localPage.getByTestId("nav-registration").click();
+
+  await expect(localPage.getByTestId("settings-minbytes-input")).toBeVisible({
+    timeout: 30_000,
+  });
+  const newMinBytes = "4096";
+  await localPage.getByTestId("settings-minbytes-input").fill(newMinBytes);
+  await localPage.getByTestId("settings-update").click();
+
+  await firstMatch(
+    getApi().query.StorageProvider.Providers.watchValue(Eve.address, READ_OPTS),
+    ({ value }) => value?.settings?.min_bytes?.toString() === newMinBytes,
+    { timeoutMs: 60_000, description: `Eve's min_bytes to become ${newMinBytes}` },
+  );
+});
+
+test("settings form blocks min_bytes above a limited max_capacity", async ({ localPage }) => {
+  await localPage.getByTestId("nav-registration").click();
+
+  await expect(localPage.getByTestId("settings-minbytes-input")).toBeVisible({
+    timeout: 30_000,
+  });
+  await localPage.getByTestId("settings-maxcapacity-input").fill("1000");
+  await localPage.getByTestId("settings-minbytes-input").fill("1001");
+
+  await expect(localPage.getByTestId("settings-minbytes-error")).toBeVisible();
+  await expect(localPage.getByTestId("settings-update")).toBeDisabled();
+
+  await localPage.getByTestId("settings-minbytes-input").fill("1000");
+  await expect(localPage.getByTestId("settings-minbytes-error")).toBeHidden();
+  await expect(localPage.getByTestId("settings-update")).toBeEnabled();
 });

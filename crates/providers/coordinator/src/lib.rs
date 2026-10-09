@@ -408,6 +408,7 @@ mod tests {
                 replica_sync_price: None,
                 accepting_extensions: true,
                 max_capacity: 10_000,
+                min_bytes: 0,
             },
             stats: ProviderStats {
                 agreements_total: 3,

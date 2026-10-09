@@ -26,6 +26,7 @@ import {
   makeSigner,
   READ_OPTS,
   sameAddress,
+  updateProviderSettings,
   waitForRelayBlock,
 } from "@web3-storage/sdk";
 import {
@@ -229,6 +230,46 @@ async function main() {
   });
 
   tests.push({
+    name: "2.9b min_bytes: provider refuses and chain rejects bytes below the minimum",
+    fn: async () => {
+      const stored = (await api.query.StorageProvider.Providers.getValue(
+        provider.address,
+        READ_OPTS,
+      ))!;
+      const original = {
+        min_duration: stored.settings.min_duration,
+        max_duration: stored.settings.max_duration,
+        price_per_byte: stored.settings.price_per_byte,
+        accepting_primary: stored.settings.accepting_primary,
+        replica_sync_price: stored.settings.replica_sync_price ?? undefined,
+        accepting_extensions: stored.settings.accepting_extensions,
+        max_capacity: stored.settings.max_capacity,
+        min_bytes: stored.settings.min_bytes,
+      };
+      // Signed while the provider has no minimum, redeemed after it raises one.
+      const earlier = await negotiateSigned(api, PROVIDER_URL, client, provider, {
+        maxBytes,
+        duration,
+      });
+      await updateProviderSettings(api, provider, { ...original, min_bytes: maxBytes + 1n });
+      try {
+        await assertNegotiateRejects(
+          () => negotiateSigned(api, PROVIDER_URL, client, provider, { maxBytes, duration }),
+          "max_bytes_below_minimum",
+          "2.9b"
+        );
+        const tx = api.tx.StorageProvider.create_bucket_with_primary({
+          ...buildSignedTermsArgs(provider, earlier),
+          visibility: Enum("Private"),
+        });
+        await submitTxExpectFailure(tx, client.signer, "MaxBytesBelowMinimum", "2.9b");
+      } finally {
+        await updateProviderSettings(api, provider, original);
+      }
+    },
+  });
+
+  tests.push({
     name: "2.10 create_bucket then add_primary_provider",
     fn: async () => {
       const { bucketId } = await createBucket(api, client);
@@ -285,8 +326,9 @@ async function main() {
 
 /**
  * Assert that a `/negotiate` call rejects with the expected error code. The
- * `negotiateTerms` helper throws `"/negotiate failed: <status> <body>"` on a
- * non-2xx response, and the body carries the machine-readable error string.
+ * `negotiateTerms` helper throws an `HttpError` on a non-2xx response; its
+ * `code` is the node's machine-readable error string, and the message is
+ * readable text (or the raw body when the node sent no JSON error).
  */
 async function assertNegotiateRejects(
   fn: () => Promise<unknown>,
@@ -296,8 +338,8 @@ async function assertNegotiateRejects(
   try {
     await fn();
   } catch (err) {
-    const message = (err as Error).message;
-    if (message && message.includes(expectedError)) return;
+    const { message, code } = err as Error & { code?: string };
+    if (code === expectedError) return;
     throw new Error(
       `${label}: expected /negotiate to reject with "${expectedError}", got "${message}"`
     );

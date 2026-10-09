@@ -74,6 +74,7 @@ fn create_provider<T: Config>(index: u32) -> T::AccountId {
             replica_sync_price: Some(1000u32.into()),
             accepting_extensions: true,
             max_capacity: 1_000_000_000,
+            min_bytes: 0,
         },
     );
 
@@ -359,6 +360,7 @@ mod benchmarks {
             replica_sync_price: Some(5000u32.into()),
             accepting_extensions: true,
             max_capacity: 1_000_000_000,
+            min_bytes: 1_000,
         };
 
         #[extrinsic_call]

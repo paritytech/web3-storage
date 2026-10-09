@@ -43,6 +43,7 @@ fn previewnet_genesis_provider() -> GenesisProvider<Runtime> {
             replica_sync_price: None,
             accepting_extensions: true,
             max_capacity: 1_099_511_627,
+            min_bytes: 0,
         },
     }
 }

@@ -700,3 +700,43 @@ fn confirm_replica_sync_after_interval_with_new_root() {
         }
     });
 }
+
+#[test]
+fn add_replica_provider_fails_when_below_min_bytes() {
+    new_test_ext().execute_with(|| {
+        register_provider_with_settings(
+            2,
+            200,
+            ProviderSettings {
+                accepting_primary: true,
+                replica_sync_price: Some(10),
+                min_bytes: 51,
+                ..Default::default()
+            },
+        );
+        let bucket_id = create_bucket(1, 0);
+
+        let (terms, sig) = signed_replica_terms(
+            2,
+            1,
+            bucket_id,
+            50,
+            100,
+            ReplicaTerms {
+                sync_balance: 100,
+                min_sync_interval: 10,
+                sync_price: 10,
+            },
+        );
+        assert_err!(
+            StorageProvider::add_replica_provider(
+                RuntimeOrigin::signed(1),
+                bucket_id,
+                2,
+                terms,
+                sig
+            ),
+            Error::<Test>::MaxBytesBelowMinimum
+        );
+    });
+}

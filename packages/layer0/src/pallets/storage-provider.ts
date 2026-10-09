@@ -93,6 +93,7 @@ export async function ensureProviderRegistered(
       replica_sync_price: undefined,
       accepting_extensions: true,
       max_capacity: 0n,
+      min_bytes: 0n,
     },
     opts,
   );

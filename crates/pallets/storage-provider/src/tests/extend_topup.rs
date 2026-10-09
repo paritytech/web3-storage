@@ -175,6 +175,45 @@ fn extend_agreement_fails_no_agreement() {
 }
 
 #[test]
+fn top_up_and_extend_ignore_min_bytes_raised_after_agreement() {
+    new_test_ext().execute_with(|| {
+        register_provider(2, 200);
+        let bucket_id = setup_agreement(2, 1, 50, 100);
+
+        // The provider raises its minimum above the live agreement's size.
+        assert_ok!(StorageProvider::update_provider_settings(
+            RuntimeOrigin::signed(2),
+            ProviderSettings {
+                accepting_primary: true,
+                min_bytes: 100,
+                ..Default::default()
+            }
+        ));
+
+        assert_ok!(StorageProvider::top_up_agreement(
+            RuntimeOrigin::signed(1),
+            bucket_id,
+            2,
+            20,
+            10000
+        ));
+        assert_ok!(StorageProvider::extend_agreement(
+            RuntimeOrigin::signed(1),
+            bucket_id,
+            2,
+            50,
+            10000
+        ));
+        assert_eq!(
+            StorageAgreements::<Test>::get(bucket_id, 2)
+                .unwrap()
+                .max_bytes,
+            70
+        );
+    });
+}
+
+#[test]
 fn top_up_agreement_works() {
     new_test_ext().execute_with(|| {
         register_provider(2, 200);

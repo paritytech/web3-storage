@@ -59,6 +59,14 @@ impl<T: Config> Pallet<T> {
                 }
             }
 
+            // Check minimum agreement size
+            if score > 0 && requirements.bytes_needed < info.settings.min_bytes {
+                score = score.saturating_sub(50);
+                if partial_reason.is_none() {
+                    partial_reason = Some(PartialMatchReason::BelowMinBytes);
+                }
+            }
+
             // Check price
             if score > 0 && price > requirements.max_price_per_byte {
                 score = score.saturating_sub(30);
@@ -99,6 +107,7 @@ impl<T: Config> Pallet<T> {
                     .map(|p| p.saturated_into::<u128>()),
                 accepting_extensions: info.settings.accepting_extensions,
                 max_capacity,
+                min_bytes: info.settings.min_bytes,
                 available_capacity,
                 deregister_at: info.deregister_at.map(|b| b.saturated_into::<u32>()),
                 stats: crate::runtime_api::ProviderStatsInfo::from(&info.stats),
@@ -146,6 +155,11 @@ impl<T: Config> Pallet<T> {
                     }
                 }
 
+                // Check minimum agreement size
+                if bytes_needed < info.settings.min_bytes {
+                    return false;
+                }
+
                 // Check stake (can they back the additional bytes?)
                 let new_committed = info.committed_bytes.saturating_add(bytes_needed);
                 let bytes_as_balance: BalanceOf<T> = new_committed.saturated_into();
@@ -183,6 +197,7 @@ impl<T: Config> Pallet<T> {
                             .map(|p| p.saturated_into::<u128>()),
                         accepting_extensions: info.settings.accepting_extensions,
                         max_capacity,
+                        min_bytes: info.settings.min_bytes,
                         available_capacity,
                         deregister_at: info.deregister_at.map(|b| b.saturated_into::<u32>()),
                         stats: crate::runtime_api::ProviderStatsInfo::from(&info.stats),

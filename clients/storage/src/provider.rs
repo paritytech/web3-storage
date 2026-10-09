@@ -163,6 +163,7 @@ impl ProviderClient {
             settings.replica_sync_price,
             settings.accepting_extensions,
             settings.max_capacity,
+            settings.min_bytes,
         );
 
         chain
@@ -284,10 +285,19 @@ impl ProviderClient {
             .map_err(ClientError::Http)?;
 
         if !response.status().is_success() {
-            return Err(ClientError::Chain(format!(
-                "provider node rejected /negotiate with status {}",
-                response.status()
-            )));
+            let status = response.status().as_u16();
+            let body = response.json::<serde_json::Value>().await.ok();
+            let code = body
+                .as_ref()
+                .and_then(|b| b.get("error"))
+                .and_then(|c| c.as_str())
+                .map(str::to_owned);
+            let details = body.and_then(|mut b| b.get_mut("details").map(serde_json::Value::take));
+            return Err(ClientError::NegotiateRejected {
+                status,
+                code,
+                details,
+            });
         }
 
         response
@@ -558,6 +568,8 @@ pub struct ProviderSettings {
     pub accepting_extensions: bool,
     /// Maximum storage capacity in bytes. 0 = unlimited.
     pub max_capacity: u64,
+    /// Minimum `max_bytes` per agreement. 0 = no minimum.
+    pub min_bytes: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -613,4 +625,85 @@ pub struct CapacityInfo {
     /// `update_provider_settings` sets a non-zero one. It exposes no
     /// required-stake figure, so none is reported here.
     pub stake: u128,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::agreement::NegotiateRequest;
+    use axum::{http::StatusCode, routing::post, Router};
+    use serde_json::json;
+
+    async fn serve(status: StatusCode, body: &'static str) -> String {
+        let app = Router::new().route(
+            "/negotiate",
+            post(move || async move {
+                (
+                    status,
+                    [("content-type", "application/json")],
+                    body.to_string(),
+                )
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        url
+    }
+
+    fn request() -> NegotiateRequest {
+        NegotiateRequest {
+            owner: AccountId32::new([7u8; 32]),
+            max_bytes: 99,
+            duration: 50,
+            price_per_byte: 5,
+            nonce: 0,
+            bucket: None,
+            replica_params: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn negotiate_reports_status_code_and_details() {
+        let url = serve(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            r#"{"error":"max_bytes_below_minimum","details":{"requested":99,"min_bytes":100}}"#,
+        )
+        .await;
+        let err = ProviderClient::negotiate_terms(&url, &request())
+            .await
+            .unwrap_err();
+        match &err {
+            ClientError::NegotiateRejected {
+                status,
+                code,
+                details,
+            } => {
+                assert_eq!(*status, 422);
+                assert_eq!(code.as_deref(), Some("max_bytes_below_minimum"));
+                assert_eq!(
+                    details.as_ref().unwrap(),
+                    &json!({"requested": 99, "min_bytes": 100})
+                );
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+        assert!(err.to_string().contains("max_bytes_below_minimum"));
+    }
+
+    #[tokio::test]
+    async fn negotiate_keeps_status_for_a_non_json_body() {
+        let url = serve(StatusCode::BAD_GATEWAY, "Bad Gateway").await;
+        let err = ProviderClient::negotiate_terms(&url, &request())
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            ClientError::NegotiateRejected {
+                status: 502,
+                code: None,
+                details: None
+            }
+        ));
+    }
 }

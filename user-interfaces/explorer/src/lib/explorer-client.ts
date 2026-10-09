@@ -33,6 +33,8 @@ export interface ProviderSettings {
   acceptingExtensions: boolean
   /** 0 = unlimited */
   maxCapacity: bigint
+  /** Smallest agreement size accepted; 0 = no minimum */
+  minBytes: bigint
 }
 
 export interface ProviderStats {
@@ -182,6 +184,7 @@ async function fetchProviders(opts: ReadOptions): Promise<ProviderRow[]> {
           replicaSyncPrice: info.replica_sync_price ?? undefined,
           acceptingExtensions: info.accepting_extensions,
           maxCapacity: BigInt(info.max_capacity),
+          minBytes: BigInt(info.min_bytes),
         },
         stats: {
           registeredAt: info.stats.registered_at,
