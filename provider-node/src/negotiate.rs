@@ -57,11 +57,7 @@ pub fn validate_request(req: &NegotiateRequest, info: &ProviderInfo) -> Result<(
     }
 
     if req.max_bytes == 0 {
-        return Err(Error::CapacityExceeded {
-            requested: req.max_bytes,
-            committed: info.committed_bytes,
-            max_capacity: info.settings.max_capacity,
-        });
+        return Err(Error::InvalidMaxBytesRequest);
     }
 
     if req.max_bytes < info.settings.min_bytes {
@@ -134,6 +130,12 @@ mod tests {
                 min_bytes: 100
             }
         ));
+    }
+
+    #[test]
+    fn rejects_zero_max_bytes() {
+        let err = validate_request(&request(0), &info(0)).unwrap_err();
+        assert!(matches!(err, Error::InvalidMaxBytesRequest));
     }
 
     #[test]

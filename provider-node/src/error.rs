@@ -108,7 +108,7 @@ pub enum Error {
     #[error(transparent)]
     Signing(#[from] provider_types::SigningRefused),
 
-    #[error("Storage agreement requested 0 byte")]
+    #[error("Storage agreement requested 0 bytes")]
     InvalidMaxBytesRequest,
 
     #[error("Too many requests")]

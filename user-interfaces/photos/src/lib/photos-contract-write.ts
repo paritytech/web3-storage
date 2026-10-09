@@ -210,6 +210,7 @@ export type CreateLibraryErrorKind =
   | 'bad-signature'
   | 'already-exists'
   | 'capacity'
+  | 'min-size'
   | 'reverted'
   | 'negotiate'
   | 'unknown'
@@ -248,6 +249,16 @@ export function classifyDispatchError(dispatchError: unknown): CreateLibraryErro
       message:
         'The payment was rejected as too low for these terms. Lower the size/duration or pick a cheaper provider, then try again.',
     }
+  }
+  if (raw.includes('MaxBytesBelowMinimum')) {
+    return {
+      kind: 'min-size',
+      message:
+        "The library size is below the provider's minimum agreement size. Increase the size or pick another provider.",
+    }
+  }
+  if (raw.includes('InvalidMaxBytesRequest')) {
+    return { kind: 'min-size', message: 'The library size is 0 bytes. Enter a size above 0.' }
   }
   if (raw.includes('TermsExpired') || raw.includes('AgreementExpired')) {
     return {

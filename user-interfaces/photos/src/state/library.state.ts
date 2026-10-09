@@ -23,7 +23,7 @@ import {
   type CreateLibraryError,
   type SubmitCreateLibraryResult,
 } from '@/lib/photos-contract-write'
-import { listProviders, type PhotosProvider } from '@/lib/photos-providers'
+import { belowMinimumReason, listProviders, type PhotosProvider } from '@/lib/photos-providers'
 
 export type CreationStage =
   | 'idle'
@@ -146,6 +146,14 @@ export async function createLibrary(input: CreateLibraryInput): Promise<void> {
           kind: 'capacity',
           message: `Provider no longer has room for ${sizeBytes} bytes (free: ${availableCapacity}). Pick another provider or reduce the size.`,
         },
+      })
+      return
+    }
+    const belowMinimum = belowMinimumReason(info.min_bytes, sizeBytes)
+    if (belowMinimum) {
+      creation$.next({
+        stage: 'failed',
+        error: { kind: 'min-size', message: `${belowMinimum}. Increase the size or pick another provider.` },
       })
       return
     }

@@ -605,7 +605,7 @@ async fn negotiate_422_zero_bytes() {
     let resp = server.negotiate(&req).await;
     assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
     let body: Value = resp.json().await.unwrap();
-    assert_eq!(body["error"], "capacity_exceeded");
+    assert_eq!(body["error"], "invalid_max_bytes_request");
 }
 
 #[tokio::test]

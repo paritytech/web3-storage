@@ -12,11 +12,65 @@ const HTTP_RETRY_BASE_MS = 250;
 
 export class HttpError extends Error {
   readonly status: number;
-  constructor(status: number, message: string) {
+  /** Provider-node error code (e.g. `max_bytes_below_minimum`), when the body is a JSON error. */
+  readonly code?: string;
+  /** Provider-node error details, when the body is a JSON error that has them. */
+  readonly details?: Record<string, unknown>;
+  constructor(status: number, message: string, code?: string, details?: Record<string, unknown>) {
     super(message);
     this.name = "HttpError";
     this.status = status;
+    this.code = code;
+    this.details = details;
   }
+}
+
+/** Provider-node error body: `{ error: <code>, details?: {...} }`. */
+function parseErrorBody(body: string): { code?: string; details?: Record<string, unknown> } {
+  try {
+    const parsed: unknown = JSON.parse(body);
+    if (typeof parsed !== "object" || parsed === null) return {};
+    const { error, details } = parsed as { error?: unknown; details?: unknown };
+    return {
+      code: typeof error === "string" ? error : undefined,
+      details: typeof details === "object" && details !== null ? (details as Record<string, unknown>) : undefined,
+    };
+  } catch {
+    return {};
+  }
+}
+
+function formatBytes(value: unknown): string {
+  return `${String(value)} bytes`;
+}
+
+/**
+ * User-facing text for a provider-node error. Known codes get a readable
+ * sentence; unknown codes fall back to the code itself.
+ */
+export function describeProviderError(
+  code: string,
+  details?: Record<string, unknown>,
+): string {
+  switch (code) {
+    case "max_bytes_below_minimum":
+      return `Requested size ${formatBytes(details?.requested)} is below this provider's minimum of ${formatBytes(details?.min_bytes)}. Choose a larger size or another provider.`;
+    case "invalid_max_bytes_request":
+      return "Requested size is 0 bytes. Enter a size above 0.";
+    default:
+      return code;
+  }
+}
+
+/**
+ * Build an {@link HttpError} from a failed response body. A JSON provider-node
+ * error yields a message from {@link describeProviderError}; any other body
+ * keeps the raw text and leaves `code` and `details` undefined.
+ */
+export function httpErrorFromBody(status: number, body: string, prefix: string): HttpError {
+  const { code, details } = parseErrorBody(body);
+  const message = code ? describeProviderError(code, details) : `${prefix}: ${status} ${body}`;
+  return new HttpError(status, message, code, details);
 }
 
 function sleep(ms: number): Promise<void> {
@@ -193,10 +247,7 @@ export async function negotiateTerms(
     opts,
   );
   if (!res.ok) {
-    throw new HttpError(
-      res.status,
-      `/negotiate failed: ${res.status} ${await res.text().catch(() => "")}`,
-    );
+    throw httpErrorFromBody(res.status, await res.text().catch(() => ""), "/negotiate failed");
   }
   return (await res.json()) as SignedTerms;
 }

@@ -326,8 +326,9 @@ async function main() {
 
 /**
  * Assert that a `/negotiate` call rejects with the expected error code. The
- * `negotiateTerms` helper throws `"/negotiate failed: <status> <body>"` on a
- * non-2xx response, and the body carries the machine-readable error string.
+ * `negotiateTerms` helper throws an `HttpError` on a non-2xx response; its
+ * `code` is the node's machine-readable error string, and the message is
+ * readable text (or the raw body when the node sent no JSON error).
  */
 async function assertNegotiateRejects(
   fn: () => Promise<unknown>,
@@ -337,8 +338,8 @@ async function assertNegotiateRejects(
   try {
     await fn();
   } catch (err) {
-    const message = (err as Error).message;
-    if (message && message.includes(expectedError)) return;
+    const { message, code } = err as Error & { code?: string };
+    if (code === expectedError) return;
     throw new Error(
       `${label}: expected /negotiate to reject with "${expectedError}", got "${message}"`
     );

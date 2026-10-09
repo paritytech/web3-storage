@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { RefreshCw, Server } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { AvailableProvider, MatchingProviders } from "@/lib/drive-client";
-import { formatBytes, formatUnits, truncateHash } from "@web3-storage/format";
+import { formatBytes, formatUnits, providerDisabledReason, truncateHash } from "@web3-storage/format";
 import { queryMatchingProviders } from "@/state/drive.state";
 interface ProviderPickerPanelProps {
   onSelect: (provider: AvailableProvider) => void;
@@ -33,10 +33,6 @@ export default function ProviderPickerPanel({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    loadProviders();
-  }, []);
-
   const loadProviders = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -55,6 +51,11 @@ export default function ProviderPickerPanel({
     }
   }, [requiredCapacity, requiredDuration, requiredPricePerByte]);
 
+  // Re-score when the requirements change so the Match column follows the form.
+  useEffect(() => {
+    loadProviders();
+  }, [loadProviders]);
+
   const humanizeReason = (reason: string): string => {
     switch (reason) {
       case "PriceTooHigh":
@@ -72,16 +73,8 @@ export default function ProviderPickerPanel({
     }
   };
 
-  const getDisabledReason = (p: AvailableProvider): string | null => {
-    if (!p.acceptingPrimary) return "Not accepting";
-    // `undefined` free capacity means unlimited — skip the capacity check.
-    if (p.availableCapacity !== undefined && p.availableCapacity < requiredCapacity)
-      return "Capacity full";
-    if (requiredDuration < p.minDuration) return "Duration too short";
-    if (p.maxDuration > 0 && requiredDuration > p.maxDuration)
-      return "Duration too long";
-    return null;
-  };
+  const getDisabledReason = (p: AvailableProvider): string | null =>
+    providerDisabledReason(p, requiredCapacity, requiredDuration);
 
   return (
     <div className="space-y-2" data-testid="provider-picker">
@@ -126,7 +119,7 @@ export default function ProviderPickerPanel({
                 <th className="px-3 py-2 text-left text-xs font-medium">Price/byte</th>
                 <th className="px-3 py-2 text-left text-xs font-medium">Duration</th>
                 <th className="px-3 py-2 text-left text-xs font-medium">Reputation</th>
-                <th className="px-3 py-2 text-right text-xs font-medium w-24">Action</th>
+                <th className="px-3 py-2 text-right text-xs font-medium w-40">Action</th>
               </tr>
             </thead>
             <tbody>

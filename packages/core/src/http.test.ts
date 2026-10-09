@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { httpFetch, HttpError, signProviderRequest } from "./http.js";
+import { describeProviderError, httpErrorFromBody, httpFetch, HttpError, negotiateTerms, signProviderRequest } from "./http.js";
 import { hexToBytes } from "./bytes.js";
 
 afterEach(() => vi.useRealTimers());
@@ -72,5 +72,46 @@ describe("signProviderRequest", () => {
     expect(auth).toMatch(/^Web3Storage 0x[0-9a-f]{64}:0x[0-9a-f]{128}:\d+$/);
     const ts = auth.split(":").pop()!;
     expect(new TextDecoder().decode(seen[0])).toBe(`web3storage:PUT:42:${ts}`);
+  });
+});
+
+describe("provider error bodies", () => {
+  it("parses code and details from a JSON 422", () => {
+    const body = JSON.stringify({
+      error: "max_bytes_below_minimum",
+      details: { requested: 99, min_bytes: 100 },
+    });
+    const err = httpErrorFromBody(422, body, "/negotiate failed");
+    expect(err.status).toBe(422);
+    expect(err.code).toBe("max_bytes_below_minimum");
+    expect(err.details).toEqual({ requested: 99, min_bytes: 100 });
+    expect(err.message).not.toContain("{");
+  });
+
+  it("keeps the status and raw text for a non-JSON body", () => {
+    const err = httpErrorFromBody(502, "Bad Gateway", "/negotiate failed");
+    expect(err.status).toBe(502);
+    expect(err.code).toBeUndefined();
+    expect(err.details).toBeUndefined();
+    expect(err.message).toBe("/negotiate failed: 502 Bad Gateway");
+  });
+
+  it("names the requested size and the minimum", () => {
+    const msg = describeProviderError("max_bytes_below_minimum", { requested: 99, min_bytes: 100 });
+    expect(msg).toContain("99 bytes");
+    expect(msg).toContain("100 bytes");
+  });
+
+  it("describes a zero-byte request", () => {
+    expect(describeProviderError("invalid_max_bytes_request")).toContain("0 bytes");
+  });
+
+  it("negotiateTerms throws an HttpError with the reason", async () => {
+    const body = JSON.stringify({ error: "invalid_max_bytes_request" });
+    const fetchImpl = vi.fn(async () => new Response(body, { status: 422 }));
+    const err = await negotiateTerms("http://x", {} as never, { fetchImpl }).catch((e) => e);
+    expect(err).toBeInstanceOf(HttpError);
+    expect((err as HttpError).code).toBe("invalid_max_bytes_request");
+    expect((err as HttpError).message).toContain("0 bytes");
   });
 });

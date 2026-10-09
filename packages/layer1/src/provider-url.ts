@@ -156,29 +156,46 @@ export interface ProviderChoice {
 }
 
 /**
- * Pick an on-chain provider that is accepting primary agreements and exposes a
- * resolvable HTTP endpoint. `urlOverride` (a dev/test provider URL) wins over
- * the registered multiaddr — the local dev provider registers as the accepting
- * provider, and all UIs/examples point at one URL. Throws when none qualifies.
+ * Pick an on-chain provider that would accept a primary agreement for
+ * `maxBytes` over `duration` and exposes a resolvable HTTP endpoint. A
+ * provider is skipped when it is not accepting primary agreements, is
+ * deregistering, requires a larger minimum size, lacks free capacity, or lists
+ * a duration range that excludes `duration`. `urlOverride` (a dev/test
+ * provider URL) wins over the registered multiaddr — the local dev provider
+ * registers as the accepting provider, and all UIs/examples point at one URL.
+ * Throws when none qualifies.
  */
 export async function discoverAcceptingProvider(
   api: ParachainApi,
   {
+    maxBytes,
+    duration,
     readOpts = { at: "finalized" },
     urlOverride,
-  }: { readOpts?: { at: "best" | "finalized" }; urlOverride?: string } = {},
+  }: {
+    maxBytes: bigint;
+    duration: number;
+    readOpts?: { at: "best" | "finalized" };
+    urlOverride?: string;
+  },
 ): Promise<{ address: string; url: string }> {
   const entries = await api.query.StorageProvider.Providers.getEntries(readOpts);
   for (const entry of entries) {
     const address = entry.keyArgs[0];
     const provider = entry.value;
     if (!provider?.settings?.accepting_primary) continue;
+    if (provider.deregister_at !== undefined) continue;
+    const { min_bytes, max_capacity, min_duration, max_duration } = provider.settings;
+    if (maxBytes < min_bytes) continue;
+    // `max_capacity == 0` means unlimited.
+    if (max_capacity > 0n && provider.committed_bytes + maxBytes > max_capacity) continue;
+    if (duration < min_duration || duration > max_duration) continue;
     const url =
       urlOverride ?? parseMultiaddrToUrl(new TextDecoder().decode(provider.multiaddr));
     if (url) return { address, url };
   }
   throw new Error(
-    "no provider is accepting primary agreements (register one, or pass an explicit provider)",
+    `no provider accepts a primary agreement of ${maxBytes} bytes for ${duration} blocks (register one, or pass an explicit provider)`,
   );
 }
 
@@ -243,6 +260,8 @@ export async function resolveCreationTerms(
     }
   } else {
     choice = await discoverAcceptingProvider(api, {
+      maxBytes: opts.maxBytes,
+      duration: opts.duration,
       readOpts: opts.readOpts,
       urlOverride: opts.urlOverride,
     });

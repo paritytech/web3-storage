@@ -68,6 +68,13 @@ pub struct MatchedProvider {
     pub partial_reason: Option<PartialMatchReason>,
 }
 
+impl MatchedProvider {
+    /// True when the provider meets every requirement (score 100, no partial reason).
+    fn is_full_match(&self) -> bool {
+        self.match_score == 100 && self.partial_reason.is_none()
+    }
+}
+
 /// Provider information for discovery.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ProviderInfo {
@@ -294,13 +301,16 @@ impl DiscoveryClient {
 
     /// Find the best provider for the given requirements.
     ///
-    /// Returns the highest-scoring provider, or None if no providers match.
+    /// Returns the highest-scoring provider, or None if no provider fully
+    /// matches the requirements. A partial match (price, capacity, duration,
+    /// minimum size or availability) would be rejected when negotiating, so it
+    /// is never returned.
     pub async fn find_best_provider(
         &self,
         requirements: StorageRequirements,
     ) -> ClientResult<Option<MatchedProvider>> {
         let providers = self.find_providers(requirements, 1).await?;
-        Ok(providers.into_iter().next())
+        Ok(providers.into_iter().find(MatchedProvider::is_full_match))
     }
 
     /// Get providers with sufficient capacity for the given bytes (paginated).
@@ -513,5 +523,54 @@ impl DiscoveryClient {
                 )
             })
             .collect())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn matched(match_score: u8, partial_reason: Option<PartialMatchReason>) -> MatchedProvider {
+        MatchedProvider {
+            account: "5prov".to_string(),
+            info: ProviderInfo {
+                multiaddr: "/ip4/127.0.0.1/tcp/3333".to_string(),
+                public_key: vec![0; 32],
+                stake: 0,
+                committed_bytes: 0,
+                max_capacity: 0,
+                min_bytes: 4096,
+                available_capacity: None,
+                min_duration: 10,
+                max_duration: 100,
+                price_per_byte: 1,
+                accepting_primary: true,
+                replica_sync_price: None,
+                accepting_extensions: true,
+                agreements_total: 0,
+                agreements_extended: 0,
+                challenges_received_authorized: 0,
+                challenges_received_public: 0,
+                challenges_failed: 0,
+                lifetime_revenue: 0,
+                deregister_at: None,
+                reputation: 100,
+            },
+            match_score,
+            available_capacity: None,
+            partial_reason,
+        }
+    }
+
+    #[test]
+    fn full_match_has_score_100_and_no_reason() {
+        assert!(matched(100, None).is_full_match());
+    }
+
+    #[test]
+    fn partial_matches_are_not_full_matches() {
+        assert!(!matched(50, Some(PartialMatchReason::BelowMinBytes)).is_full_match());
+        assert!(!matched(100, Some(PartialMatchReason::PriceTooHigh)).is_full_match());
+        assert!(!matched(50, None).is_full_match());
     }
 }
