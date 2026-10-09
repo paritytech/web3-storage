@@ -1106,6 +1106,34 @@ mod benchmarks {
         respond_to_challenge(RawOrigin::Signed(provider), challenge_id, response);
     }
 
+    /// Challenger withdraws before any response: one `take`, both pending
+    /// counters down, deposit released.
+    #[benchmark]
+    fn cancel_challenge() {
+        let admin = funded_account::<T>("admin", 0);
+        let provider = create_provider::<T>(0);
+        let bucket_id = setup_primary_agreement::<T>(&admin, &provider, 0);
+
+        // `insert_challenge` writes the challenge with `deposit: 100` but
+        // holds nothing and bumps no counters; set both up so the release
+        // and decrement paths do real work.
+        StorageProvider::<T>::hold_challenge_deposit(&admin, 100u32.into()).unwrap();
+        let challenge_id = insert_challenge::<T>(bucket_id, &provider, &admin, H256::zero());
+        PendingChallenges::<T>::insert(&provider, 1);
+        PendingChallengesByBucket::<T>::insert(bucket_id, &provider, 1);
+
+        #[extrinsic_call]
+        cancel_challenge(RawOrigin::Signed(admin.clone()), challenge_id);
+
+        assert!(Challenges::<T>::get(challenge_id.deadline, challenge_id.index).is_none());
+        assert_eq!(PendingChallenges::<T>::get(&provider), 0);
+        assert_eq!(PendingChallengesByBucket::<T>::get(bucket_id, &provider), 0);
+        let still_held = <T::Currency as frame_support::traits::fungible::InspectHold<
+            T::AccountId,
+        >>::balance_on_hold(&HoldReason::ChallengeDeposit.into(), &admin);
+        assert_eq!(still_held, 0u32.into());
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
     // Replica Sync
     // ─────────────────────────────────────────────────────────────────────────

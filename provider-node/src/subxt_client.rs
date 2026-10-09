@@ -38,8 +38,11 @@ use subxt::ext::scale_value::value;
 /// failed. Matched against the pallet + error-variant names resolved from
 /// runtime metadata (see [`SubxtChainClient::is_already_done`]).
 const ALREADY_DONE_ERRORS: [&str; 2] = [
-    "ChallengeNotFound", // respond_to_challenge: challenge was taken on defense
-    "SyncTooFrequent",   // confirm_replica_sync: a sync already confirmed
+    // respond_to_challenge: the challenge is already gone (defended,
+    // resolved by `resolve_expired_challenge`, or cancelled by the
+    // challenger).
+    "ChallengeNotFound",
+    "SyncTooFrequent", // confirm_replica_sync: a sync already confirmed
 ];
 
 /// Upper bound on one submit-and-watch pass. Generous next to normal

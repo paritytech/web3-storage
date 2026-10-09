@@ -125,8 +125,9 @@ impl<T: Config> Pallet<T> {
 
         // Bump the pending-challenge counters. These are decremented
         // exactly once per resolution (defended in `respond_to_challenge`,
-        // or timed out in `resolve_expired_challenge`), so a
-        // fully-resolved provider/bucket returns to 0. They gate
+        // withdrawn in `cancel_challenge`, or timed out in
+        // `resolve_expired_challenge`), so a fully-resolved provider/bucket
+        // returns to 0. They gate
         // `complete_deregister` and agreement teardown so a provider can't
         // escape a live challenge.
         PendingChallenges::<T>::mutate(&provider, |n| *n = n.saturating_add(1));
@@ -182,10 +183,10 @@ impl<T: Config> Pallet<T> {
     }
 
     /// Decrement both pending-challenge counters for a resolved
-    /// `(bucket, provider)` challenge. Called from the two resolution
-    /// sites — `respond_to_challenge` and `resolve_expired_challenge`, after
-    /// the `take` consumes the challenge — never from
-    /// `slash_provider_for_failed_challenge`.
+    /// `(bucket, provider)` challenge. Called from the three resolution
+    /// sites, after the `take` consumes the challenge: `respond_to_challenge`,
+    /// `cancel_challenge` and `resolve_expired_challenge`. Never called from
+    /// `slash_provider_for_failed_challenge`, which would double-count.
     /// `saturating_sub` keeps the counters non-negative even if invariants
     /// are ever violated.
     pub(crate) fn decrement_pending(bucket_id: BucketId, provider: &T::AccountId) {

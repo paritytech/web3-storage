@@ -724,6 +724,20 @@ impl<T: frame_system::Config> pallet_storage_provider::WeightInfo for WeightInfo
 			.saturating_add(T::DbWeight::get().reads(11))
 			.saturating_add(T::DbWeight::get().writes(6))
 	}
+	/// Storage: `StorageProvider::Challenges` (r:1 w:1)
+	/// Storage: `ParachainSystem::LastRelayChainBlockNumber` (r:1 w:0)
+	/// Storage: `StorageProvider::PendingChallenges` (r:1 w:1)
+	/// Storage: `StorageProvider::PendingChallengesByBucket` (r:1 w:1)
+	/// Storage: `Balances::Holds` (r:1 w:1)
+	/// Storage: `System::Account` (r:1 w:1)
+	fn cancel_challenge() -> Weight {
+		// Hand-written estimate until `/cmd bench` regenerates this file.
+		// TODO: needs re-benchmarking
+		Weight::from_parts(40_000_000, 0)
+			.saturating_add(Weight::from_parts(0, 6196))
+			.saturating_add(T::DbWeight::get().reads(6))
+			.saturating_add(T::DbWeight::get().writes(5))
+	}
 	/// Storage: `StorageProvider::Providers` (r:1 w:1)
 	/// Proof: `StorageProvider::Providers` (`max_values`: None, `max_size`: Some(380), added: 2855, mode: `MaxEncodedLen`)
 	/// Storage: `StorageProvider::Buckets` (r:1 w:0)

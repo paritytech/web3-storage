@@ -703,9 +703,9 @@ pub struct Challenge<T: Config> {
 /// Number of unresolved challenges currently outstanding against a
 /// provider, summed across every bucket. Incremented in `create_challenge`
 /// and decremented exactly once per resolution (defended in
-/// `respond_to_challenge`, or timed out in `resolve_expired_challenge`).
-/// Gates `complete_deregister`: a provider cannot exit while still
-/// slashable for a pending challenge.
+/// `respond_to_challenge`, withdrawn in `cancel_challenge`, or timed out in
+/// `resolve_expired_challenge`). Gates `complete_deregister`: a provider
+/// cannot exit while still slashable for a pending challenge.
 #[pallet::storage]
 pub type PendingChallenges<T: Config> =
     StorageMap<_, Blake2_128Concat, T::AccountId, u32, ValueQuery>;
@@ -1026,6 +1026,15 @@ pub enum Event<T: Config> {
         challenge_id: ChallengeId<BlockNumberFor<T>>,
         provider: T::AccountId,
         slashed_amount: BalanceOf<T>,
+    },
+    /// Challenger withdrew before any response. Deposit released in full,
+    /// provider stats untouched.
+    ChallengeCancelled {
+        challenge_id: ChallengeId<BlockNumberFor<T>>,
+        bucket_id: BucketId,
+        provider: T::AccountId,
+        challenger: T::AccountId,
+        deposit: BalanceOf<T>,
     },
 
 }
@@ -1862,6 +1871,18 @@ impl<T: Config> Pallet<T> {
         origin: OriginFor<T>,
         challenge_id: ChallengeId<BlockNumberFor<T>>,
         response: ChallengeResponse<T>,
+    ) -> DispatchResult;
+
+    /// Challenger only. Withdraw a challenge before the provider has
+    /// responded: the challenge is removed and the deposit released in full.
+    /// The provider's stats are untouched. Only valid up to the deadline,
+    /// like `respond_to_challenge`: past it the provider can be slashed with
+    /// `resolve_expired_challenge` and cancelling is rejected
+    /// (`ChallengeExpired`).
+    #[pallet::weight(...)]
+    pub fn cancel_challenge(
+        origin: OriginFor<T>,
+        challenge_id: ChallengeId<BlockNumberFor<T>>,
     ) -> DispatchResult;
 
     /// Slash a provider whose challenge expired without a response.
