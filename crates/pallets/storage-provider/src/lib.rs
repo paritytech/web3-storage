@@ -212,6 +212,8 @@ pub mod pallet {
         /// is slashed. Sets the floor on challenge spam economics — too low
         /// and griefing is free; too high and legitimate challenges become
         /// unaffordable.
+        // DRIFT-005: this config item is missing from the design doc's Config
+        // sketch. Proposal: keep; add it to the design's sketch and values table.
         #[pallet::constant]
         type ChallengeDeposit: Get<BalanceOf<Self>>;
 
