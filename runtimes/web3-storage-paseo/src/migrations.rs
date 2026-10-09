@@ -22,10 +22,4 @@ pub type Migrations = (
     // applied.
     cumulus_pallet_parachain_system::migration::Migration<Runtime>,
     cumulus_pallet_xcmp_queue::migration::v7::MigrateV6ToV7<Runtime>,
-    // `pallet-drive-registry` and `pallet-s3-registry` were removed (#475).
-    // Clears all their storage in one block. Not gated on a version: once the
-    // prefixes are empty it only costs one read per prefix, and the entries
-    // can be dropped after the upgrade is deployed.
-    RemovePallet<DriveRegistryPalletName, RocksDbWeight>,
-    RemovePallet<S3RegistryPalletName, RocksDbWeight>,
 );
