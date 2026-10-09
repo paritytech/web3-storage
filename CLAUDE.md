@@ -43,7 +43,7 @@ Link, don't copy.
 | Runtime parameter values (stakes, timeouts, decimals) | `runtimes/web3-storage-local/src/storage.rs` — the code is the value; the design doc has the rationale |
 | Extrinsics, errors, events, storage items (API reference) | rustdoc on `crates/pallets/*` (`cargo doc -p pallet-storage-provider --no-deps --open`); the same text is in the runtime metadata, so IDE hover on PAPI/subxt bindings and polkadot.js Apps show it |
 | Payment math | `Pallet::calculate_payment` in `crates/pallets/storage-provider/src/impls/agreements.rs` — the code is the formula |
-| Layer 1 file system (drives, manifests, commit strategies) | rustdoc on `crates/primitives/file-system` and `crates/pallets/drive-registry`; [`clients/file-system/README.md`](clients/file-system/README.md) |
+| Layer 1 file system (drives, manifests, commit strategies) | rustdoc on `crates/primitives/file-system`; [`clients/file-system/README.md`](clients/file-system/README.md) |
 | WIP designs: marketplace/discovery, checkpoint protocol, smart contracts, encryption | [`docs/drafts/`](docs/drafts/) — **not authoritative** |
 | Review criteria (Parity Standards) | the `/review` skill — authoritative; not restated here |
 | TypeScript SDK layering, tx semantics, PAPI patterns | [`packages/sdk/README.md`](packages/sdk/README.md) |

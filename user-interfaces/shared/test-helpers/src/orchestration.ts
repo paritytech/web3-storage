@@ -19,8 +19,8 @@ import {
 const KNOWN_DEV_SEEDS = Object.values(devSigners).map((s) => s.seed);
 
 /**
- * Make `keep` the only provider that will be picked by auto-matching
- * extrinsics (`create_s3_bucket`, `create_drive`).
+ * Make `keep` the only provider that the SDK clients pick when they
+ * discover a provider for `create_bucket_with_primary`.
  *
  * The Layer 1 paths select via `query_available_providers[0]`, which iterates
  * `Providers` in storage-hash order — non-deterministic across AccountIds.

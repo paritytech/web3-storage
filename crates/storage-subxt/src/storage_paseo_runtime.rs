@@ -14,7 +14,7 @@ pub mod api {
     mod root_mod {
         pub use super::*;
     }
-    pub static PALLETS: [&str; 22usize] = [
+    pub static PALLETS: [&str; 20usize] = [
         "System",
         "ParachainSystem",
         "Timestamp",
@@ -34,8 +34,6 @@ pub mod api {
         "Utility",
         "WeightReclaim",
         "StorageProvider",
-        "DriveRegistry",
-        "S3Registry",
         "Revive",
     ];
     pub static RUNTIME_APIS: [&str; 22usize] = [
@@ -2089,9 +2087,10 @@ pub mod api {
                         "dry_run_call",
                         (origin, call, result_xcms_version),
                         [
-                            247u8, 37u8, 36u8, 166u8, 85u8, 78u8, 53u8, 144u8, 124u8, 225u8, 145u8,
-                            134u8, 89u8, 125u8, 83u8, 29u8, 145u8, 213u8, 143u8, 8u8, 102u8, 192u8,
-                            239u8, 8u8, 3u8, 207u8, 111u8, 211u8, 55u8, 68u8, 45u8, 234u8,
+                            150u8, 37u8, 49u8, 100u8, 147u8, 73u8, 50u8, 105u8, 167u8, 62u8, 54u8,
+                            232u8, 219u8, 136u8, 163u8, 126u8, 53u8, 116u8, 224u8, 9u8, 203u8,
+                            53u8, 199u8, 207u8, 245u8, 200u8, 191u8, 21u8, 31u8, 52u8, 245u8,
+                            180u8,
                         ],
                     )
                 }
@@ -2109,9 +2108,9 @@ pub mod api {
                         "dry_run_xcm",
                         (origin_location, xcm),
                         [
-                            23u8, 125u8, 20u8, 151u8, 192u8, 191u8, 173u8, 233u8, 208u8, 21u8, 9u8,
-                            99u8, 242u8, 85u8, 62u8, 14u8, 160u8, 0u8, 156u8, 154u8, 171u8, 9u8,
-                            226u8, 56u8, 47u8, 111u8, 224u8, 187u8, 170u8, 124u8, 50u8, 230u8,
+                            107u8, 37u8, 85u8, 117u8, 125u8, 29u8, 5u8, 190u8, 93u8, 17u8, 160u8,
+                            240u8, 180u8, 188u8, 107u8, 129u8, 95u8, 35u8, 130u8, 170u8, 108u8,
+                            163u8, 164u8, 139u8, 84u8, 34u8, 95u8, 19u8, 8u8, 113u8, 124u8, 23u8,
                         ],
                     )
                 }
@@ -3335,12 +3334,6 @@ pub mod api {
         pub fn storage_provider(&self) -> storage_provider::constants::ConstantsApi {
             storage_provider::constants::ConstantsApi
         }
-        pub fn drive_registry(&self) -> drive_registry::constants::ConstantsApi {
-            drive_registry::constants::ConstantsApi
-        }
-        pub fn s3_registry(&self) -> s3_registry::constants::ConstantsApi {
-            s3_registry::constants::ConstantsApi
-        }
         pub fn revive(&self) -> revive::constants::ConstantsApi {
             revive::constants::ConstantsApi
         }
@@ -3395,12 +3388,6 @@ pub mod api {
         pub fn storage_provider(&self) -> storage_provider::storage::StorageApi {
             storage_provider::storage::StorageApi
         }
-        pub fn drive_registry(&self) -> drive_registry::storage::StorageApi {
-            drive_registry::storage::StorageApi
-        }
-        pub fn s3_registry(&self) -> s3_registry::storage::StorageApi {
-            s3_registry::storage::StorageApi
-        }
         pub fn revive(&self) -> revive::storage::StorageApi {
             revive::storage::StorageApi
         }
@@ -3449,12 +3436,6 @@ pub mod api {
         pub fn storage_provider(&self) -> storage_provider::calls::api::TransactionApi {
             storage_provider::calls::api::TransactionApi
         }
-        pub fn drive_registry(&self) -> drive_registry::calls::api::TransactionApi {
-            drive_registry::calls::api::TransactionApi
-        }
-        pub fn s3_registry(&self) -> s3_registry::calls::api::TransactionApi {
-            s3_registry::calls::api::TransactionApi
-        }
         pub fn revive(&self) -> revive::calls::api::TransactionApi {
             revive::calls::api::TransactionApi
         }
@@ -3470,9 +3451,9 @@ pub mod api {
             .hash();
         runtime_metadata_hash
             == [
-                210u8, 204u8, 23u8, 173u8, 164u8, 85u8, 168u8, 226u8, 100u8, 49u8, 221u8, 43u8,
-                115u8, 6u8, 230u8, 67u8, 81u8, 163u8, 139u8, 171u8, 27u8, 114u8, 229u8, 251u8,
-                173u8, 213u8, 28u8, 133u8, 107u8, 37u8, 51u8, 150u8,
+                12u8, 105u8, 129u8, 244u8, 16u8, 66u8, 100u8, 175u8, 221u8, 150u8, 241u8, 128u8,
+                62u8, 183u8, 251u8, 64u8, 93u8, 177u8, 160u8, 255u8, 28u8, 55u8, 63u8, 0u8, 185u8,
+                36u8, 142u8, 58u8, 78u8, 228u8, 63u8, 254u8,
             ]
     }
     pub mod system {
@@ -4460,10 +4441,9 @@ pub mod api {
                         "System",
                         "Events",
                         [
-                            238u8, 118u8, 125u8, 18u8, 11u8, 249u8, 100u8, 68u8, 141u8, 121u8,
-                            160u8, 64u8, 219u8, 138u8, 233u8, 215u8, 64u8, 33u8, 128u8, 179u8,
-                            115u8, 65u8, 229u8, 13u8, 77u8, 173u8, 62u8, 126u8, 78u8, 49u8, 92u8,
-                            100u8,
+                            133u8, 152u8, 55u8, 137u8, 60u8, 37u8, 248u8, 72u8, 190u8, 34u8, 142u8,
+                            24u8, 54u8, 99u8, 49u8, 231u8, 21u8, 199u8, 68u8, 185u8, 162u8, 77u8,
+                            232u8, 133u8, 150u8, 51u8, 196u8, 89u8, 116u8, 20u8, 9u8, 107u8,
                         ],
                     )
                 }
@@ -8461,10 +8441,10 @@ pub mod api {
                                 call: ::subxt::alloc::boxed::Box::new(call),
                             },
                             [
-                                209u8, 117u8, 147u8, 162u8, 132u8, 249u8, 73u8, 179u8, 153u8,
-                                157u8, 68u8, 147u8, 120u8, 114u8, 163u8, 100u8, 234u8, 224u8,
-                                148u8, 29u8, 44u8, 56u8, 218u8, 106u8, 188u8, 205u8, 103u8, 66u8,
-                                187u8, 95u8, 51u8, 169u8,
+                                248u8, 73u8, 237u8, 2u8, 190u8, 36u8, 74u8, 114u8, 3u8, 62u8,
+                                121u8, 102u8, 139u8, 66u8, 72u8, 149u8, 58u8, 144u8, 242u8, 229u8,
+                                99u8, 195u8, 44u8, 56u8, 232u8, 36u8, 198u8, 234u8, 226u8, 108u8,
+                                120u8, 60u8,
                             ],
                         )
                     }
@@ -8487,10 +8467,10 @@ pub mod api {
                                 weight,
                             },
                             [
-                                158u8, 118u8, 32u8, 218u8, 13u8, 60u8, 6u8, 198u8, 64u8, 189u8,
-                                219u8, 225u8, 138u8, 54u8, 197u8, 2u8, 23u8, 117u8, 120u8, 160u8,
-                                142u8, 76u8, 67u8, 152u8, 63u8, 2u8, 185u8, 240u8, 145u8, 158u8,
-                                150u8, 46u8,
+                                197u8, 169u8, 177u8, 173u8, 107u8, 102u8, 235u8, 50u8, 85u8, 52u8,
+                                31u8, 212u8, 83u8, 146u8, 134u8, 33u8, 87u8, 56u8, 164u8, 245u8,
+                                232u8, 207u8, 12u8, 142u8, 191u8, 181u8, 17u8, 241u8, 148u8, 139u8,
+                                57u8, 233u8,
                             ],
                         )
                     }
@@ -8529,10 +8509,10 @@ pub mod api {
                                 call: ::subxt::alloc::boxed::Box::new(call),
                             },
                             [
-                                48u8, 167u8, 77u8, 41u8, 118u8, 50u8, 98u8, 149u8, 83u8, 223u8,
-                                34u8, 235u8, 147u8, 208u8, 38u8, 187u8, 168u8, 17u8, 201u8, 134u8,
-                                26u8, 192u8, 194u8, 253u8, 23u8, 114u8, 116u8, 111u8, 57u8, 193u8,
-                                91u8, 102u8,
+                                115u8, 169u8, 193u8, 26u8, 239u8, 104u8, 202u8, 181u8, 37u8, 117u8,
+                                231u8, 52u8, 55u8, 7u8, 154u8, 96u8, 70u8, 121u8, 130u8, 188u8,
+                                51u8, 38u8, 227u8, 165u8, 180u8, 124u8, 119u8, 233u8, 55u8, 201u8,
+                                158u8, 147u8,
                             ],
                         )
                     }
@@ -14725,10 +14705,10 @@ pub mod api {
                             "batch",
                             super::Batch { calls },
                             [
-                                39u8, 19u8, 183u8, 231u8, 217u8, 148u8, 32u8, 93u8, 130u8, 60u8,
-                                128u8, 115u8, 157u8, 193u8, 158u8, 58u8, 189u8, 42u8, 26u8, 105u8,
-                                6u8, 15u8, 112u8, 93u8, 95u8, 0u8, 27u8, 201u8, 203u8, 192u8,
-                                178u8, 248u8,
+                                217u8, 236u8, 236u8, 97u8, 59u8, 129u8, 183u8, 16u8, 53u8, 80u8,
+                                11u8, 179u8, 60u8, 78u8, 218u8, 32u8, 120u8, 100u8, 90u8, 55u8,
+                                193u8, 101u8, 61u8, 221u8, 98u8, 78u8, 183u8, 135u8, 155u8, 38u8,
+                                37u8, 129u8,
                             ],
                         )
                     }
@@ -14759,10 +14739,10 @@ pub mod api {
                                 call: ::subxt::alloc::boxed::Box::new(call),
                             },
                             [
-                                226u8, 219u8, 247u8, 89u8, 140u8, 235u8, 85u8, 228u8, 232u8, 83u8,
-                                52u8, 139u8, 160u8, 52u8, 98u8, 215u8, 205u8, 203u8, 58u8, 146u8,
-                                187u8, 162u8, 5u8, 121u8, 141u8, 55u8, 21u8, 182u8, 144u8, 76u8,
-                                29u8, 124u8,
+                                45u8, 185u8, 133u8, 51u8, 158u8, 157u8, 233u8, 180u8, 161u8, 14u8,
+                                95u8, 95u8, 16u8, 69u8, 246u8, 24u8, 51u8, 243u8, 61u8, 244u8,
+                                238u8, 75u8, 245u8, 93u8, 3u8, 255u8, 199u8, 103u8, 187u8, 177u8,
+                                229u8, 52u8,
                             ],
                         )
                     }
@@ -14788,10 +14768,10 @@ pub mod api {
                             "batch_all",
                             super::BatchAll { calls },
                             [
-                                44u8, 15u8, 69u8, 132u8, 215u8, 135u8, 131u8, 127u8, 124u8, 32u8,
-                                193u8, 58u8, 159u8, 168u8, 161u8, 26u8, 88u8, 203u8, 181u8, 220u8,
-                                208u8, 124u8, 242u8, 23u8, 10u8, 148u8, 216u8, 229u8, 102u8, 132u8,
-                                155u8, 49u8,
+                                227u8, 209u8, 79u8, 45u8, 236u8, 122u8, 143u8, 134u8, 177u8, 33u8,
+                                94u8, 200u8, 34u8, 142u8, 98u8, 201u8, 73u8, 41u8, 100u8, 177u8,
+                                3u8, 254u8, 100u8, 146u8, 200u8, 18u8, 96u8, 121u8, 119u8, 23u8,
+                                39u8, 88u8,
                             ],
                         )
                     }
@@ -14815,10 +14795,10 @@ pub mod api {
                                 call: ::subxt::alloc::boxed::Box::new(call),
                             },
                             [
-                                125u8, 46u8, 45u8, 193u8, 242u8, 98u8, 115u8, 144u8, 172u8, 89u8,
-                                183u8, 252u8, 62u8, 78u8, 191u8, 157u8, 40u8, 140u8, 39u8, 83u8,
-                                242u8, 252u8, 234u8, 32u8, 187u8, 179u8, 185u8, 235u8, 58u8, 143u8,
-                                75u8, 28u8,
+                                212u8, 234u8, 184u8, 119u8, 7u8, 107u8, 62u8, 9u8, 0u8, 77u8,
+                                193u8, 244u8, 30u8, 109u8, 163u8, 227u8, 199u8, 226u8, 232u8,
+                                111u8, 86u8, 211u8, 89u8, 163u8, 66u8, 239u8, 242u8, 120u8, 70u8,
+                                72u8, 171u8, 220u8,
                             ],
                         )
                     }
@@ -14845,10 +14825,10 @@ pub mod api {
                             "force_batch",
                             super::ForceBatch { calls },
                             [
-                                233u8, 187u8, 174u8, 29u8, 106u8, 78u8, 7u8, 61u8, 160u8, 118u8,
-                                197u8, 10u8, 167u8, 101u8, 110u8, 23u8, 97u8, 123u8, 136u8, 202u8,
-                                219u8, 32u8, 128u8, 212u8, 206u8, 156u8, 255u8, 78u8, 151u8, 9u8,
-                                88u8, 21u8,
+                                41u8, 29u8, 5u8, 8u8, 190u8, 49u8, 133u8, 36u8, 41u8, 162u8, 232u8,
+                                149u8, 30u8, 22u8, 1u8, 26u8, 118u8, 232u8, 101u8, 135u8, 10u8,
+                                221u8, 57u8, 22u8, 15u8, 204u8, 135u8, 198u8, 67u8, 135u8, 96u8,
+                                18u8,
                             ],
                         )
                     }
@@ -14872,10 +14852,10 @@ pub mod api {
                                 weight,
                             },
                             [
-                                47u8, 37u8, 22u8, 37u8, 5u8, 97u8, 217u8, 106u8, 211u8, 56u8,
-                                159u8, 55u8, 70u8, 160u8, 225u8, 102u8, 50u8, 60u8, 30u8, 144u8,
-                                24u8, 51u8, 99u8, 83u8, 140u8, 115u8, 110u8, 189u8, 97u8, 45u8,
-                                240u8, 246u8,
+                                219u8, 72u8, 81u8, 73u8, 190u8, 213u8, 160u8, 8u8, 55u8, 187u8,
+                                74u8, 237u8, 115u8, 52u8, 254u8, 11u8, 73u8, 92u8, 86u8, 150u8,
+                                46u8, 141u8, 127u8, 138u8, 115u8, 150u8, 25u8, 43u8, 255u8, 96u8,
+                                105u8, 197u8,
                             ],
                         )
                     }
@@ -14915,10 +14895,10 @@ pub mod api {
                                 fallback: ::subxt::alloc::boxed::Box::new(fallback),
                             },
                             [
-                                227u8, 225u8, 67u8, 115u8, 110u8, 136u8, 177u8, 127u8, 71u8, 213u8,
-                                139u8, 32u8, 136u8, 5u8, 210u8, 136u8, 103u8, 202u8, 86u8, 60u8,
-                                10u8, 214u8, 77u8, 39u8, 225u8, 62u8, 72u8, 251u8, 98u8, 139u8,
-                                109u8, 131u8,
+                                97u8, 214u8, 84u8, 28u8, 172u8, 203u8, 197u8, 64u8, 148u8, 126u8,
+                                197u8, 96u8, 242u8, 22u8, 148u8, 118u8, 133u8, 57u8, 195u8, 242u8,
+                                77u8, 178u8, 6u8, 63u8, 18u8, 60u8, 96u8, 237u8, 130u8, 60u8,
+                                175u8, 139u8,
                             ],
                         )
                     }
@@ -14941,10 +14921,10 @@ pub mod api {
                                 call: ::subxt::alloc::boxed::Box::new(call),
                             },
                             [
-                                122u8, 170u8, 107u8, 48u8, 155u8, 210u8, 253u8, 94u8, 21u8, 243u8,
-                                166u8, 195u8, 61u8, 105u8, 231u8, 113u8, 194u8, 160u8, 213u8,
-                                255u8, 149u8, 88u8, 213u8, 241u8, 223u8, 198u8, 149u8, 185u8,
-                                156u8, 60u8, 251u8, 179u8,
+                                186u8, 22u8, 82u8, 32u8, 169u8, 146u8, 181u8, 155u8, 21u8, 88u8,
+                                120u8, 57u8, 15u8, 60u8, 244u8, 60u8, 74u8, 15u8, 58u8, 203u8,
+                                157u8, 201u8, 39u8, 44u8, 107u8, 76u8, 134u8, 30u8, 254u8, 240u8,
+                                84u8, 78u8,
                             ],
                         )
                     }
@@ -18695,1274 +18675,6 @@ pub mod api {
             }
         }
     }
-    pub mod drive_registry {
-        use super::root_mod;
-        use super::runtime_types;
-        #[doc = "Errors"]
-        pub type Error = runtime_types::pallet_drive_registry::pallet::Error;
-        #[doc = "Contains a variant per dispatchable extrinsic that this pallet has."]
-        pub type Call = runtime_types::pallet_drive_registry::pallet::Call;
-        pub mod calls {
-            use super::root_mod;
-            use super::runtime_types;
-            #[derive(
-                :: subxt :: ext :: scale_decode :: DecodeAsType,
-                :: subxt :: ext :: scale_encode :: EncodeAsType,
-                Clone,
-                Debug,
-                Eq,
-                PartialEq,
-            )]
-            #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
-            #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-            #[doc = "Create a new drive with automatic bucket creation"]
-            #[doc = ""]
-            #[doc = "Atomically opens the Layer 0 bucket + primary storage agreement"]
-            #[doc = "(via `create_bucket_with_primary_internal`) and records the"]
-            #[doc = "drive metadata on top. The caller obtains `terms` and `sig`"]
-            #[doc = "off-chain from the provider; Layer 0 enforces signature, replay"]
-            #[doc = "window, and capacity/stake/duration/price checks — those errors"]
-            #[doc = "surface directly so the caller can react to them."]
-            #[doc = ""]
-            #[doc = ""]
-            #[doc = "Parameters:"]
-            #[doc = "- `name`: Optional human-readable name for the drive"]
-            #[doc = "- `provider`: Provider account that signed the terms."]
-            #[doc = "- `terms`: Provider-signed agreement terms."]
-            #[doc = "- `sig`: Provider signature over the SCALE-encoded terms."]
-            #[doc = "- `visibility`: Read visibility of the underlying Layer 0 bucket."]
-            pub struct CreateDrive {
-                pub name: create_drive::Name,
-                pub provider: create_drive::Provider,
-                pub terms: create_drive::Terms,
-                pub sig: create_drive::Sig,
-                pub visibility: create_drive::Visibility,
-            }
-            pub mod create_drive {
-                use super::runtime_types;
-                pub type Name =
-                    ::core::option::Option<::subxt::alloc::vec::Vec<::core::primitive::u8>>;
-                pub type Provider = ::subxt::utils::AccountId32;
-                pub type Terms = runtime_types::storage_primitives::agreement_term::AgreementTerms<
-                    ::subxt::utils::AccountId32,
-                    ::core::primitive::u128,
-                    ::core::primitive::u32,
-                >;
-                pub type Sig = runtime_types::sp_runtime::MultiSignature;
-                pub type Visibility = runtime_types::storage_primitives::Visibility;
-            }
-            impl CreateDrive {
-                const PALLET_NAME: &'static str = "DriveRegistry";
-                const CALL_NAME: &'static str = "create_drive";
-            }
-            impl ::subxt::extrinsics::DecodeAsExtrinsic for CreateDrive {
-                fn is_extrinsic(pallet_name: &str, call_name: &str) -> bool {
-                    pallet_name == Self::PALLET_NAME && call_name == Self::CALL_NAME
-                }
-            }
-            #[derive(
-                :: subxt :: ext :: scale_decode :: DecodeAsType,
-                :: subxt :: ext :: scale_encode :: EncodeAsType,
-                Clone,
-                Debug,
-                Eq,
-                PartialEq,
-            )]
-            #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
-            #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-            #[doc = "Delete a drive completely"]
-            #[doc = ""]
-            #[doc = "Ends all storage agreements with prorated refunds, pays providers for"]
-            #[doc = "time served, removes the bucket from Layer 0, and removes the drive."]
-            #[doc = ""]
-            #[doc = "Parameters:"]
-            #[doc = "- `drive_id`: The drive to delete"]
-            pub struct DeleteDrive {
-                pub drive_id: delete_drive::DriveId,
-            }
-            pub mod delete_drive {
-                use super::runtime_types;
-                pub type DriveId = ::core::primitive::u64;
-            }
-            impl DeleteDrive {
-                const PALLET_NAME: &'static str = "DriveRegistry";
-                const CALL_NAME: &'static str = "delete_drive";
-            }
-            impl ::subxt::extrinsics::DecodeAsExtrinsic for DeleteDrive {
-                fn is_extrinsic(pallet_name: &str, call_name: &str) -> bool {
-                    pallet_name == Self::PALLET_NAME && call_name == Self::CALL_NAME
-                }
-            }
-            #[derive(
-                :: subxt :: ext :: scale_decode :: DecodeAsType,
-                :: subxt :: ext :: scale_encode :: EncodeAsType,
-                Clone,
-                Debug,
-                Eq,
-                PartialEq,
-            )]
-            #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
-            #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-            #[doc = "Share a drive with another account by adding them as a member of"]
-            #[doc = "the underlying Layer 0 bucket."]
-            #[doc = ""]
-            #[doc = "The caller must be an admin of the underlying bucket; the drive owner"]
-            #[doc = "is one unless they stepped down. Layer 0 errors surface unchanged."]
-            #[doc = ""]
-            #[doc = "Parameters:"]
-            #[doc = "- `drive_id`: The drive to share"]
-            #[doc = "- `member`: Account to add"]
-            #[doc = "- `role`: Role to assign (Admin, Writer, or Reader)"]
-            pub struct ShareDrive {
-                pub drive_id: share_drive::DriveId,
-                pub member: share_drive::Member,
-                pub role: share_drive::Role,
-            }
-            pub mod share_drive {
-                use super::runtime_types;
-                pub type DriveId = ::core::primitive::u64;
-                pub type Member = ::subxt::utils::AccountId32;
-                pub type Role = runtime_types::storage_primitives::Role;
-            }
-            impl ShareDrive {
-                const PALLET_NAME: &'static str = "DriveRegistry";
-                const CALL_NAME: &'static str = "share_drive";
-            }
-            impl ::subxt::extrinsics::DecodeAsExtrinsic for ShareDrive {
-                fn is_extrinsic(pallet_name: &str, call_name: &str) -> bool {
-                    pallet_name == Self::PALLET_NAME && call_name == Self::CALL_NAME
-                }
-            }
-            #[derive(
-                :: subxt :: ext :: scale_decode :: DecodeAsType,
-                :: subxt :: ext :: scale_encode :: EncodeAsType,
-                Clone,
-                Debug,
-                Eq,
-                PartialEq,
-            )]
-            #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
-            #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-            #[doc = "Remove a member's access to a shared drive."]
-            #[doc = ""]
-            #[doc = "The caller must be an admin of the underlying bucket. Layer 0 errors"]
-            #[doc = "surface unchanged."]
-            #[doc = ""]
-            #[doc = "Parameters:"]
-            #[doc = "- `drive_id`: The drive to unshare"]
-            #[doc = "- `member`: Account to remove"]
-            pub struct UnshareDrive {
-                pub drive_id: unshare_drive::DriveId,
-                pub member: unshare_drive::Member,
-            }
-            pub mod unshare_drive {
-                use super::runtime_types;
-                pub type DriveId = ::core::primitive::u64;
-                pub type Member = ::subxt::utils::AccountId32;
-            }
-            impl UnshareDrive {
-                const PALLET_NAME: &'static str = "DriveRegistry";
-                const CALL_NAME: &'static str = "unshare_drive";
-            }
-            impl ::subxt::extrinsics::DecodeAsExtrinsic for UnshareDrive {
-                fn is_extrinsic(pallet_name: &str, call_name: &str) -> bool {
-                    pallet_name == Self::PALLET_NAME && call_name == Self::CALL_NAME
-                }
-            }
-            pub mod api {
-                pub struct TransactionApi;
-                impl TransactionApi {
-                    #[doc = "Create a new drive with automatic bucket creation"]
-                    #[doc = ""]
-                    #[doc = "Atomically opens the Layer 0 bucket + primary storage agreement"]
-                    #[doc = "(via `create_bucket_with_primary_internal`) and records the"]
-                    #[doc = "drive metadata on top. The caller obtains `terms` and `sig`"]
-                    #[doc = "off-chain from the provider; Layer 0 enforces signature, replay"]
-                    #[doc = "window, and capacity/stake/duration/price checks — those errors"]
-                    #[doc = "surface directly so the caller can react to them."]
-                    #[doc = ""]
-                    #[doc = ""]
-                    #[doc = "Parameters:"]
-                    #[doc = "- `name`: Optional human-readable name for the drive"]
-                    #[doc = "- `provider`: Provider account that signed the terms."]
-                    #[doc = "- `terms`: Provider-signed agreement terms."]
-                    #[doc = "- `sig`: Provider signature over the SCALE-encoded terms."]
-                    #[doc = "- `visibility`: Read visibility of the underlying Layer 0 bucket."]
-                    pub fn create_drive(
-                        &self,
-                        name: super::create_drive::Name,
-                        provider: super::create_drive::Provider,
-                        terms: super::create_drive::Terms,
-                        sig: super::create_drive::Sig,
-                        visibility: super::create_drive::Visibility,
-                    ) -> ::subxt::transactions::StaticPayload<super::CreateDrive>
-                    {
-                        ::subxt::transactions::StaticPayload::new_static(
-                            "DriveRegistry",
-                            "create_drive",
-                            super::CreateDrive {
-                                name,
-                                provider,
-                                terms,
-                                sig,
-                                visibility,
-                            },
-                            [
-                                46u8, 216u8, 13u8, 172u8, 103u8, 110u8, 96u8, 21u8, 117u8, 164u8,
-                                141u8, 151u8, 128u8, 222u8, 47u8, 255u8, 226u8, 178u8, 223u8, 79u8,
-                                46u8, 254u8, 234u8, 86u8, 48u8, 20u8, 16u8, 152u8, 132u8, 18u8,
-                                207u8, 211u8,
-                            ],
-                        )
-                    }
-                    #[doc = "Delete a drive completely"]
-                    #[doc = ""]
-                    #[doc = "Ends all storage agreements with prorated refunds, pays providers for"]
-                    #[doc = "time served, removes the bucket from Layer 0, and removes the drive."]
-                    #[doc = ""]
-                    #[doc = "Parameters:"]
-                    #[doc = "- `drive_id`: The drive to delete"]
-                    pub fn delete_drive(
-                        &self,
-                        drive_id: super::delete_drive::DriveId,
-                    ) -> ::subxt::transactions::StaticPayload<super::DeleteDrive>
-                    {
-                        ::subxt::transactions::StaticPayload::new_static(
-                            "DriveRegistry",
-                            "delete_drive",
-                            super::DeleteDrive { drive_id },
-                            [
-                                231u8, 185u8, 99u8, 63u8, 40u8, 79u8, 201u8, 61u8, 57u8, 83u8,
-                                119u8, 252u8, 147u8, 18u8, 6u8, 106u8, 35u8, 27u8, 201u8, 107u8,
-                                66u8, 48u8, 245u8, 16u8, 42u8, 109u8, 116u8, 189u8, 0u8, 251u8,
-                                1u8, 201u8,
-                            ],
-                        )
-                    }
-                    #[doc = "Share a drive with another account by adding them as a member of"]
-                    #[doc = "the underlying Layer 0 bucket."]
-                    #[doc = ""]
-                    #[doc = "The caller must be an admin of the underlying bucket; the drive owner"]
-                    #[doc = "is one unless they stepped down. Layer 0 errors surface unchanged."]
-                    #[doc = ""]
-                    #[doc = "Parameters:"]
-                    #[doc = "- `drive_id`: The drive to share"]
-                    #[doc = "- `member`: Account to add"]
-                    #[doc = "- `role`: Role to assign (Admin, Writer, or Reader)"]
-                    pub fn share_drive(
-                        &self,
-                        drive_id: super::share_drive::DriveId,
-                        member: super::share_drive::Member,
-                        role: super::share_drive::Role,
-                    ) -> ::subxt::transactions::StaticPayload<super::ShareDrive>
-                    {
-                        ::subxt::transactions::StaticPayload::new_static(
-                            "DriveRegistry",
-                            "share_drive",
-                            super::ShareDrive {
-                                drive_id,
-                                member,
-                                role,
-                            },
-                            [
-                                38u8, 24u8, 97u8, 20u8, 172u8, 114u8, 5u8, 151u8, 176u8, 238u8,
-                                6u8, 30u8, 57u8, 213u8, 239u8, 23u8, 12u8, 247u8, 171u8, 140u8,
-                                252u8, 215u8, 49u8, 44u8, 86u8, 80u8, 242u8, 201u8, 85u8, 25u8,
-                                140u8, 254u8,
-                            ],
-                        )
-                    }
-                    #[doc = "Remove a member's access to a shared drive."]
-                    #[doc = ""]
-                    #[doc = "The caller must be an admin of the underlying bucket. Layer 0 errors"]
-                    #[doc = "surface unchanged."]
-                    #[doc = ""]
-                    #[doc = "Parameters:"]
-                    #[doc = "- `drive_id`: The drive to unshare"]
-                    #[doc = "- `member`: Account to remove"]
-                    pub fn unshare_drive(
-                        &self,
-                        drive_id: super::unshare_drive::DriveId,
-                        member: super::unshare_drive::Member,
-                    ) -> ::subxt::transactions::StaticPayload<super::UnshareDrive>
-                    {
-                        ::subxt::transactions::StaticPayload::new_static(
-                            "DriveRegistry",
-                            "unshare_drive",
-                            super::UnshareDrive { drive_id, member },
-                            [
-                                9u8, 192u8, 13u8, 152u8, 223u8, 72u8, 95u8, 170u8, 107u8, 122u8,
-                                196u8, 96u8, 225u8, 163u8, 190u8, 196u8, 218u8, 36u8, 189u8, 132u8,
-                                132u8, 151u8, 76u8, 231u8, 4u8, 228u8, 38u8, 185u8, 67u8, 85u8,
-                                147u8, 147u8,
-                            ],
-                        )
-                    }
-                }
-            }
-        }
-        #[doc = "Events"]
-        pub type Event = runtime_types::pallet_drive_registry::pallet::Event;
-        pub mod events {
-            use super::runtime_types;
-            #[derive(
-                :: subxt :: ext :: scale_decode :: DecodeAsType,
-                :: subxt :: ext :: scale_encode :: EncodeAsType,
-                Clone,
-                Debug,
-                Eq,
-                PartialEq,
-            )]
-            #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
-            #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-            #[doc = "A new drive was created"]
-            pub struct DriveCreated {
-                pub drive_id: drive_created::DriveId,
-                pub owner: drive_created::Owner,
-                pub bucket_id: drive_created::BucketId,
-            }
-            pub mod drive_created {
-                use super::runtime_types;
-                pub type DriveId = ::core::primitive::u64;
-                pub type Owner = ::subxt::utils::AccountId32;
-                pub type BucketId = ::core::primitive::u64;
-            }
-            impl DriveCreated {
-                const PALLET_NAME: &'static str = "DriveRegistry";
-                const EVENT_NAME: &'static str = "DriveCreated";
-            }
-            impl ::subxt::events::DecodeAsEvent for DriveCreated {
-                fn is_event(pallet_name: &str, event_name: &str) -> bool {
-                    pallet_name == Self::PALLET_NAME && event_name == Self::EVENT_NAME
-                }
-            }
-            #[derive(
-                :: subxt :: ext :: scale_decode :: DecodeAsType,
-                :: subxt :: ext :: scale_encode :: EncodeAsType,
-                Clone,
-                Debug,
-                Eq,
-                PartialEq,
-            )]
-            #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
-            #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-            #[doc = "Drive was deleted and its agreements settled."]
-            pub struct DriveDeleted {
-                pub drive_id: drive_deleted::DriveId,
-                pub owner: drive_deleted::Owner,
-                pub bucket_id: drive_deleted::BucketId,
-                pub escrow_released: drive_deleted::EscrowReleased,
-            }
-            pub mod drive_deleted {
-                use super::runtime_types;
-                pub type DriveId = ::core::primitive::u64;
-                pub type Owner = ::subxt::utils::AccountId32;
-                pub type BucketId = ::core::primitive::u64;
-                pub type EscrowReleased = ::core::primitive::u128;
-            }
-            impl DriveDeleted {
-                const PALLET_NAME: &'static str = "DriveRegistry";
-                const EVENT_NAME: &'static str = "DriveDeleted";
-            }
-            impl ::subxt::events::DecodeAsEvent for DriveDeleted {
-                fn is_event(pallet_name: &str, event_name: &str) -> bool {
-                    pallet_name == Self::PALLET_NAME && event_name == Self::EVENT_NAME
-                }
-            }
-            #[derive(
-                :: subxt :: ext :: scale_decode :: DecodeAsType,
-                :: subxt :: ext :: scale_encode :: EncodeAsType,
-                Clone,
-                Debug,
-                Eq,
-                PartialEq,
-            )]
-            #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
-            #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-            #[doc = "Drive was shared with a member"]
-            pub struct DriveShared {
-                pub drive_id: drive_shared::DriveId,
-                pub member: drive_shared::Member,
-                pub role: drive_shared::Role,
-            }
-            pub mod drive_shared {
-                use super::runtime_types;
-                pub type DriveId = ::core::primitive::u64;
-                pub type Member = ::subxt::utils::AccountId32;
-                pub type Role = runtime_types::storage_primitives::Role;
-            }
-            impl DriveShared {
-                const PALLET_NAME: &'static str = "DriveRegistry";
-                const EVENT_NAME: &'static str = "DriveShared";
-            }
-            impl ::subxt::events::DecodeAsEvent for DriveShared {
-                fn is_event(pallet_name: &str, event_name: &str) -> bool {
-                    pallet_name == Self::PALLET_NAME && event_name == Self::EVENT_NAME
-                }
-            }
-            #[derive(
-                :: subxt :: ext :: scale_decode :: DecodeAsType,
-                :: subxt :: ext :: scale_encode :: EncodeAsType,
-                Clone,
-                Debug,
-                Eq,
-                PartialEq,
-            )]
-            #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
-            #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-            #[doc = "Member was removed from a shared drive"]
-            pub struct DriveUnshared {
-                pub drive_id: drive_unshared::DriveId,
-                pub member: drive_unshared::Member,
-            }
-            pub mod drive_unshared {
-                use super::runtime_types;
-                pub type DriveId = ::core::primitive::u64;
-                pub type Member = ::subxt::utils::AccountId32;
-            }
-            impl DriveUnshared {
-                const PALLET_NAME: &'static str = "DriveRegistry";
-                const EVENT_NAME: &'static str = "DriveUnshared";
-            }
-            impl ::subxt::events::DecodeAsEvent for DriveUnshared {
-                fn is_event(pallet_name: &str, event_name: &str) -> bool {
-                    pallet_name == Self::PALLET_NAME && event_name == Self::EVENT_NAME
-                }
-            }
-        }
-        pub mod storage {
-            use super::root_mod;
-            use super::runtime_types;
-            pub struct StorageApi;
-            impl StorageApi {
-                #[doc = " Maps bucket ID to drive ID (1-to-1 mapping)"]
-                pub fn bucket_to_drive(
-                    &self,
-                ) -> ::subxt::storage::StaticAddress<
-                    (bucket_to_drive::input::Param0,),
-                    bucket_to_drive::Output,
-                    ::subxt::utils::Maybe,
-                > {
-                    ::subxt::storage::StaticAddress::new_static(
-                        "DriveRegistry",
-                        "BucketToDrive",
-                        [
-                            24u8, 98u8, 157u8, 43u8, 62u8, 107u8, 96u8, 51u8, 72u8, 32u8, 158u8,
-                            242u8, 220u8, 247u8, 139u8, 236u8, 197u8, 123u8, 33u8, 157u8, 241u8,
-                            150u8, 91u8, 196u8, 98u8, 158u8, 140u8, 223u8, 149u8, 141u8, 35u8,
-                            190u8,
-                        ],
-                    )
-                }
-                #[doc = " Drive information storage"]
-                pub fn drives(
-                    &self,
-                ) -> ::subxt::storage::StaticAddress<
-                    (drives::input::Param0,),
-                    drives::Output,
-                    ::subxt::utils::Maybe,
-                > {
-                    ::subxt::storage::StaticAddress::new_static(
-                        "DriveRegistry",
-                        "Drives",
-                        [
-                            6u8, 173u8, 198u8, 89u8, 8u8, 84u8, 104u8, 248u8, 62u8, 64u8, 147u8,
-                            213u8, 51u8, 137u8, 60u8, 8u8, 7u8, 65u8, 185u8, 215u8, 86u8, 129u8,
-                            44u8, 231u8, 5u8, 217u8, 228u8, 146u8, 29u8, 13u8, 33u8, 34u8,
-                        ],
-                    )
-                }
-                #[doc = " User's drives (account -> list of drive IDs)"]
-                pub fn user_drives(
-                    &self,
-                ) -> ::subxt::storage::StaticAddress<
-                    (user_drives::input::Param0,),
-                    user_drives::Output,
-                    ::subxt::utils::Maybe,
-                > {
-                    ::subxt::storage::StaticAddress::new_static(
-                        "DriveRegistry",
-                        "UserDrives",
-                        [
-                            71u8, 98u8, 3u8, 82u8, 192u8, 97u8, 159u8, 43u8, 112u8, 17u8, 236u8,
-                            16u8, 178u8, 70u8, 21u8, 245u8, 38u8, 218u8, 2u8, 132u8, 56u8, 140u8,
-                            30u8, 161u8, 136u8, 83u8, 32u8, 101u8, 160u8, 36u8, 44u8, 60u8,
-                        ],
-                    )
-                }
-                #[doc = " Next drive ID counter"]
-                pub fn next_drive_id(
-                    &self,
-                ) -> ::subxt::storage::StaticAddress<(), next_drive_id::Output, ::subxt::utils::Yes>
-                {
-                    ::subxt::storage::StaticAddress::new_static(
-                        "DriveRegistry",
-                        "NextDriveId",
-                        [
-                            80u8, 203u8, 189u8, 173u8, 205u8, 143u8, 110u8, 190u8, 210u8, 5u8,
-                            129u8, 85u8, 187u8, 81u8, 198u8, 16u8, 184u8, 59u8, 0u8, 158u8, 90u8,
-                            45u8, 100u8, 55u8, 233u8, 9u8, 249u8, 121u8, 16u8, 75u8, 205u8, 199u8,
-                        ],
-                    )
-                }
-            }
-            pub mod bucket_to_drive {
-                use super::root_mod;
-                use super::runtime_types;
-                pub mod input {
-                    use super::runtime_types;
-                    pub type Param0 = ::core::primitive::u64;
-                }
-                pub type Output = ::core::primitive::u64;
-            }
-            pub mod drives {
-                use super::root_mod;
-                use super::runtime_types;
-                pub mod input {
-                    use super::runtime_types;
-                    pub type Param0 = ::core::primitive::u64;
-                }
-                pub type Output = runtime_types::file_system_primitives::DriveInfo<
-                    ::subxt::utils::AccountId32,
-                    ::core::primitive::u32,
-                >;
-            }
-            pub mod user_drives {
-                use super::root_mod;
-                use super::runtime_types;
-                pub mod input {
-                    use super::runtime_types;
-                    pub type Param0 = ::subxt::utils::AccountId32;
-                }
-                pub type Output = runtime_types::bounded_collections::bounded_vec::BoundedVec<
-                    ::core::primitive::u64,
-                >;
-            }
-            pub mod next_drive_id {
-                use super::root_mod;
-                use super::runtime_types;
-                pub mod input {
-                    use super::runtime_types;
-                }
-                pub type Output = ::core::primitive::u64;
-            }
-        }
-        pub mod constants {
-            use super::runtime_types;
-            pub struct ConstantsApi;
-            impl ConstantsApi {
-                #[doc = " Maximum number of drives per user"]
-                pub fn max_drives_per_user(
-                    &self,
-                ) -> ::subxt::constants::StaticAddress<::core::primitive::u32> {
-                    ::subxt::constants::StaticAddress::new_static(
-                        "DriveRegistry",
-                        "MaxDrivesPerUser",
-                        [
-                            98u8, 252u8, 116u8, 72u8, 26u8, 180u8, 225u8, 83u8, 200u8, 157u8,
-                            125u8, 151u8, 53u8, 76u8, 168u8, 26u8, 10u8, 9u8, 98u8, 68u8, 9u8,
-                            178u8, 197u8, 113u8, 31u8, 79u8, 200u8, 90u8, 203u8, 100u8, 41u8,
-                            145u8,
-                        ],
-                    )
-                }
-                #[doc = " Maximum length of drive name"]
-                pub fn max_drive_name_length(
-                    &self,
-                ) -> ::subxt::constants::StaticAddress<::core::primitive::u32> {
-                    ::subxt::constants::StaticAddress::new_static(
-                        "DriveRegistry",
-                        "MaxDriveNameLength",
-                        [
-                            98u8, 252u8, 116u8, 72u8, 26u8, 180u8, 225u8, 83u8, 200u8, 157u8,
-                            125u8, 151u8, 53u8, 76u8, 168u8, 26u8, 10u8, 9u8, 98u8, 68u8, 9u8,
-                            178u8, 197u8, 113u8, 31u8, 79u8, 200u8, 90u8, 203u8, 100u8, 41u8,
-                            145u8,
-                        ],
-                    )
-                }
-            }
-        }
-    }
-    pub mod s3_registry {
-        use super::root_mod;
-        use super::runtime_types;
-        #[doc = "The `Error` enum of this pallet."]
-        pub type Error = runtime_types::pallet_s3_registry::pallet::Error;
-        #[doc = "Contains a variant per dispatchable extrinsic that this pallet has."]
-        pub type Call = runtime_types::pallet_s3_registry::pallet::Call;
-        pub mod calls {
-            use super::root_mod;
-            use super::runtime_types;
-            #[derive(
-                :: subxt :: ext :: scale_decode :: DecodeAsType,
-                :: subxt :: ext :: scale_encode :: EncodeAsType,
-                Clone,
-                Debug,
-                Eq,
-                PartialEq,
-            )]
-            #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
-            #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-            #[doc = "Create a new S3 bucket."]
-            #[doc = ""]
-            #[doc = "This automatically creates an underlying Layer 0 bucket and links it"]
-            #[doc = "to the S3 bucket. The caller becomes the owner of both buckets."]
-            #[doc = ""]
-            #[doc = "Parameters:"]
-            #[doc = "- `name`: S3 bucket name (3-63 chars, lowercase alphanumeric + hyphens)"]
-            #[doc = "- `provider`: Explicit provider account that signed the terms."]
-            #[doc = "- `terms`: Provider-signed agreement terms."]
-            #[doc = "- `sig`: Provider signature over the SCALE-encoded terms."]
-            #[doc = "- `visibility`: Read visibility of the underlying Layer 0 bucket."]
-            pub struct CreateS3Bucket {
-                pub name: create_s3_bucket::Name,
-                pub provider: create_s3_bucket::Provider,
-                pub terms: create_s3_bucket::Terms,
-                pub sig: create_s3_bucket::Sig,
-                pub visibility: create_s3_bucket::Visibility,
-            }
-            pub mod create_s3_bucket {
-                use super::runtime_types;
-                pub type Name = ::subxt::alloc::vec::Vec<::core::primitive::u8>;
-                pub type Provider = ::subxt::utils::AccountId32;
-                pub type Terms = runtime_types::storage_primitives::agreement_term::AgreementTerms<
-                    ::subxt::utils::AccountId32,
-                    ::core::primitive::u128,
-                    ::core::primitive::u32,
-                >;
-                pub type Sig = runtime_types::sp_runtime::MultiSignature;
-                pub type Visibility = runtime_types::storage_primitives::Visibility;
-            }
-            impl CreateS3Bucket {
-                const PALLET_NAME: &'static str = "S3Registry";
-                const CALL_NAME: &'static str = "create_s3_bucket";
-            }
-            impl ::subxt::extrinsics::DecodeAsExtrinsic for CreateS3Bucket {
-                fn is_extrinsic(pallet_name: &str, call_name: &str) -> bool {
-                    pallet_name == Self::PALLET_NAME && call_name == Self::CALL_NAME
-                }
-            }
-            #[derive(
-                :: subxt :: ext :: scale_decode :: DecodeAsType,
-                :: subxt :: ext :: scale_encode :: EncodeAsType,
-                Clone,
-                Debug,
-                Eq,
-                PartialEq,
-            )]
-            #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
-            #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-            #[doc = "Delete an S3 bucket."]
-            #[doc = ""]
-            #[doc = "The bucket must be empty and caller must be the owner."]
-            pub struct DeleteS3Bucket {
-                pub s3_bucket_id: delete_s3_bucket::S3BucketId,
-            }
-            pub mod delete_s3_bucket {
-                use super::runtime_types;
-                pub type S3BucketId = ::core::primitive::u64;
-            }
-            impl DeleteS3Bucket {
-                const PALLET_NAME: &'static str = "S3Registry";
-                const CALL_NAME: &'static str = "delete_s3_bucket";
-            }
-            impl ::subxt::extrinsics::DecodeAsExtrinsic for DeleteS3Bucket {
-                fn is_extrinsic(pallet_name: &str, call_name: &str) -> bool {
-                    pallet_name == Self::PALLET_NAME && call_name == Self::CALL_NAME
-                }
-            }
-            #[derive(
-                :: subxt :: ext :: scale_decode :: DecodeAsType,
-                :: subxt :: ext :: scale_encode :: EncodeAsType,
-                Clone,
-                Debug,
-                Eq,
-                PartialEq,
-            )]
-            #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
-            #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-            #[doc = "Store or update object metadata."]
-            pub struct PutObjectMetadata {
-                pub s3_bucket_id: put_object_metadata::S3BucketId,
-                pub key: put_object_metadata::Key,
-                pub cid: put_object_metadata::Cid,
-                pub size: put_object_metadata::Size,
-                pub content_type: put_object_metadata::ContentType,
-                pub user_metadata: put_object_metadata::UserMetadata,
-            }
-            pub mod put_object_metadata {
-                use super::runtime_types;
-                pub type S3BucketId = ::core::primitive::u64;
-                pub type Key = ::subxt::alloc::vec::Vec<::core::primitive::u8>;
-                pub type Cid = ::subxt::utils::H256;
-                pub type Size = ::core::primitive::u64;
-                pub type ContentType = ::subxt::alloc::vec::Vec<::core::primitive::u8>;
-                pub type UserMetadata = ::subxt::alloc::vec::Vec<(
-                    ::subxt::alloc::vec::Vec<::core::primitive::u8>,
-                    ::subxt::alloc::vec::Vec<::core::primitive::u8>,
-                )>;
-            }
-            impl PutObjectMetadata {
-                const PALLET_NAME: &'static str = "S3Registry";
-                const CALL_NAME: &'static str = "put_object_metadata";
-            }
-            impl ::subxt::extrinsics::DecodeAsExtrinsic for PutObjectMetadata {
-                fn is_extrinsic(pallet_name: &str, call_name: &str) -> bool {
-                    pallet_name == Self::PALLET_NAME && call_name == Self::CALL_NAME
-                }
-            }
-            #[derive(
-                :: subxt :: ext :: scale_decode :: DecodeAsType,
-                :: subxt :: ext :: scale_encode :: EncodeAsType,
-                Clone,
-                Debug,
-                Eq,
-                PartialEq,
-            )]
-            #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
-            #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-            #[doc = "Delete object metadata."]
-            pub struct DeleteObjectMetadata {
-                pub s3_bucket_id: delete_object_metadata::S3BucketId,
-                pub key: delete_object_metadata::Key,
-            }
-            pub mod delete_object_metadata {
-                use super::runtime_types;
-                pub type S3BucketId = ::core::primitive::u64;
-                pub type Key = ::subxt::alloc::vec::Vec<::core::primitive::u8>;
-            }
-            impl DeleteObjectMetadata {
-                const PALLET_NAME: &'static str = "S3Registry";
-                const CALL_NAME: &'static str = "delete_object_metadata";
-            }
-            impl ::subxt::extrinsics::DecodeAsExtrinsic for DeleteObjectMetadata {
-                fn is_extrinsic(pallet_name: &str, call_name: &str) -> bool {
-                    pallet_name == Self::PALLET_NAME && call_name == Self::CALL_NAME
-                }
-            }
-            #[derive(
-                :: subxt :: ext :: scale_decode :: DecodeAsType,
-                :: subxt :: ext :: scale_encode :: EncodeAsType,
-                Clone,
-                Debug,
-                Eq,
-                PartialEq,
-            )]
-            #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
-            #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-            #[doc = "Copy object metadata from one location to another."]
-            pub struct CopyObjectMetadata {
-                pub src_bucket_id: copy_object_metadata::SrcBucketId,
-                pub src_key: copy_object_metadata::SrcKey,
-                pub dst_bucket_id: copy_object_metadata::DstBucketId,
-                pub dst_key: copy_object_metadata::DstKey,
-            }
-            pub mod copy_object_metadata {
-                use super::runtime_types;
-                pub type SrcBucketId = ::core::primitive::u64;
-                pub type SrcKey = ::subxt::alloc::vec::Vec<::core::primitive::u8>;
-                pub type DstBucketId = ::core::primitive::u64;
-                pub type DstKey = ::subxt::alloc::vec::Vec<::core::primitive::u8>;
-            }
-            impl CopyObjectMetadata {
-                const PALLET_NAME: &'static str = "S3Registry";
-                const CALL_NAME: &'static str = "copy_object_metadata";
-            }
-            impl ::subxt::extrinsics::DecodeAsExtrinsic for CopyObjectMetadata {
-                fn is_extrinsic(pallet_name: &str, call_name: &str) -> bool {
-                    pallet_name == Self::PALLET_NAME && call_name == Self::CALL_NAME
-                }
-            }
-            pub mod api {
-                pub struct TransactionApi;
-                impl TransactionApi {
-                    #[doc = "Create a new S3 bucket."]
-                    #[doc = ""]
-                    #[doc = "This automatically creates an underlying Layer 0 bucket and links it"]
-                    #[doc = "to the S3 bucket. The caller becomes the owner of both buckets."]
-                    #[doc = ""]
-                    #[doc = "Parameters:"]
-                    #[doc = "- `name`: S3 bucket name (3-63 chars, lowercase alphanumeric + hyphens)"]
-                    #[doc = "- `provider`: Explicit provider account that signed the terms."]
-                    #[doc = "- `terms`: Provider-signed agreement terms."]
-                    #[doc = "- `sig`: Provider signature over the SCALE-encoded terms."]
-                    #[doc = "- `visibility`: Read visibility of the underlying Layer 0 bucket."]
-                    pub fn create_s3_bucket(
-                        &self,
-                        name: super::create_s3_bucket::Name,
-                        provider: super::create_s3_bucket::Provider,
-                        terms: super::create_s3_bucket::Terms,
-                        sig: super::create_s3_bucket::Sig,
-                        visibility: super::create_s3_bucket::Visibility,
-                    ) -> ::subxt::transactions::StaticPayload<super::CreateS3Bucket>
-                    {
-                        ::subxt::transactions::StaticPayload::new_static(
-                            "S3Registry",
-                            "create_s3_bucket",
-                            super::CreateS3Bucket {
-                                name,
-                                provider,
-                                terms,
-                                sig,
-                                visibility,
-                            },
-                            [
-                                238u8, 158u8, 78u8, 112u8, 107u8, 108u8, 214u8, 25u8, 23u8, 232u8,
-                                209u8, 95u8, 173u8, 134u8, 10u8, 213u8, 138u8, 2u8, 209u8, 151u8,
-                                24u8, 66u8, 122u8, 128u8, 49u8, 135u8, 255u8, 43u8, 90u8, 28u8,
-                                101u8, 11u8,
-                            ],
-                        )
-                    }
-                    #[doc = "Delete an S3 bucket."]
-                    #[doc = ""]
-                    #[doc = "The bucket must be empty and caller must be the owner."]
-                    pub fn delete_s3_bucket(
-                        &self,
-                        s3_bucket_id: super::delete_s3_bucket::S3BucketId,
-                    ) -> ::subxt::transactions::StaticPayload<super::DeleteS3Bucket>
-                    {
-                        ::subxt::transactions::StaticPayload::new_static(
-                            "S3Registry",
-                            "delete_s3_bucket",
-                            super::DeleteS3Bucket { s3_bucket_id },
-                            [
-                                33u8, 44u8, 195u8, 154u8, 43u8, 151u8, 128u8, 19u8, 66u8, 173u8,
-                                10u8, 165u8, 185u8, 31u8, 113u8, 90u8, 254u8, 196u8, 56u8, 180u8,
-                                174u8, 61u8, 167u8, 91u8, 153u8, 124u8, 123u8, 217u8, 248u8, 134u8,
-                                25u8, 11u8,
-                            ],
-                        )
-                    }
-                    #[doc = "Store or update object metadata."]
-                    pub fn put_object_metadata(
-                        &self,
-                        s3_bucket_id: super::put_object_metadata::S3BucketId,
-                        key: super::put_object_metadata::Key,
-                        cid: super::put_object_metadata::Cid,
-                        size: super::put_object_metadata::Size,
-                        content_type: super::put_object_metadata::ContentType,
-                        user_metadata: super::put_object_metadata::UserMetadata,
-                    ) -> ::subxt::transactions::StaticPayload<super::PutObjectMetadata>
-                    {
-                        ::subxt::transactions::StaticPayload::new_static(
-                            "S3Registry",
-                            "put_object_metadata",
-                            super::PutObjectMetadata {
-                                s3_bucket_id,
-                                key,
-                                cid,
-                                size,
-                                content_type,
-                                user_metadata,
-                            },
-                            [
-                                197u8, 83u8, 30u8, 163u8, 178u8, 9u8, 170u8, 167u8, 88u8, 224u8,
-                                41u8, 184u8, 182u8, 191u8, 199u8, 225u8, 50u8, 216u8, 227u8, 114u8,
-                                182u8, 152u8, 181u8, 50u8, 220u8, 233u8, 245u8, 115u8, 212u8,
-                                248u8, 143u8, 184u8,
-                            ],
-                        )
-                    }
-                    #[doc = "Delete object metadata."]
-                    pub fn delete_object_metadata(
-                        &self,
-                        s3_bucket_id: super::delete_object_metadata::S3BucketId,
-                        key: super::delete_object_metadata::Key,
-                    ) -> ::subxt::transactions::StaticPayload<super::DeleteObjectMetadata>
-                    {
-                        ::subxt::transactions::StaticPayload::new_static(
-                            "S3Registry",
-                            "delete_object_metadata",
-                            super::DeleteObjectMetadata { s3_bucket_id, key },
-                            [
-                                251u8, 20u8, 134u8, 84u8, 158u8, 249u8, 168u8, 44u8, 126u8, 187u8,
-                                96u8, 127u8, 205u8, 38u8, 91u8, 176u8, 91u8, 106u8, 193u8, 248u8,
-                                20u8, 153u8, 196u8, 125u8, 241u8, 34u8, 160u8, 126u8, 169u8, 165u8,
-                                254u8, 122u8,
-                            ],
-                        )
-                    }
-                    #[doc = "Copy object metadata from one location to another."]
-                    pub fn copy_object_metadata(
-                        &self,
-                        src_bucket_id: super::copy_object_metadata::SrcBucketId,
-                        src_key: super::copy_object_metadata::SrcKey,
-                        dst_bucket_id: super::copy_object_metadata::DstBucketId,
-                        dst_key: super::copy_object_metadata::DstKey,
-                    ) -> ::subxt::transactions::StaticPayload<super::CopyObjectMetadata>
-                    {
-                        ::subxt::transactions::StaticPayload::new_static(
-                            "S3Registry",
-                            "copy_object_metadata",
-                            super::CopyObjectMetadata {
-                                src_bucket_id,
-                                src_key,
-                                dst_bucket_id,
-                                dst_key,
-                            },
-                            [
-                                195u8, 211u8, 103u8, 47u8, 220u8, 87u8, 75u8, 203u8, 9u8, 99u8,
-                                240u8, 118u8, 126u8, 220u8, 45u8, 196u8, 247u8, 114u8, 17u8, 189u8,
-                                16u8, 145u8, 0u8, 234u8, 111u8, 83u8, 230u8, 24u8, 169u8, 121u8,
-                                124u8, 57u8,
-                            ],
-                        )
-                    }
-                }
-            }
-        }
-        #[doc = "The `Event` enum of this pallet"]
-        pub type Event = runtime_types::pallet_s3_registry::pallet::Event;
-        pub mod events {
-            use super::runtime_types;
-            #[derive(
-                :: subxt :: ext :: scale_decode :: DecodeAsType,
-                :: subxt :: ext :: scale_encode :: EncodeAsType,
-                Clone,
-                Debug,
-                Eq,
-                PartialEq,
-            )]
-            #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
-            #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-            #[doc = "S3 bucket created."]
-            pub struct S3BucketCreated {
-                pub s3_bucket_id: s3_bucket_created::S3BucketId,
-                pub name: s3_bucket_created::Name,
-                pub layer0_bucket_id: s3_bucket_created::Layer0BucketId,
-                pub owner: s3_bucket_created::Owner,
-            }
-            pub mod s3_bucket_created {
-                use super::runtime_types;
-                pub type S3BucketId = ::core::primitive::u64;
-                pub type Name = ::subxt::alloc::vec::Vec<::core::primitive::u8>;
-                pub type Layer0BucketId = ::core::primitive::u64;
-                pub type Owner = ::subxt::utils::AccountId32;
-            }
-            impl S3BucketCreated {
-                const PALLET_NAME: &'static str = "S3Registry";
-                const EVENT_NAME: &'static str = "S3BucketCreated";
-            }
-            impl ::subxt::events::DecodeAsEvent for S3BucketCreated {
-                fn is_event(pallet_name: &str, event_name: &str) -> bool {
-                    pallet_name == Self::PALLET_NAME && event_name == Self::EVENT_NAME
-                }
-            }
-            #[derive(
-                :: subxt :: ext :: scale_decode :: DecodeAsType,
-                :: subxt :: ext :: scale_encode :: EncodeAsType,
-                Clone,
-                Debug,
-                Eq,
-                PartialEq,
-            )]
-            #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
-            #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-            #[doc = "S3 bucket deleted."]
-            pub struct S3BucketDeleted {
-                pub s3_bucket_id: s3_bucket_deleted::S3BucketId,
-            }
-            pub mod s3_bucket_deleted {
-                use super::runtime_types;
-                pub type S3BucketId = ::core::primitive::u64;
-            }
-            impl S3BucketDeleted {
-                const PALLET_NAME: &'static str = "S3Registry";
-                const EVENT_NAME: &'static str = "S3BucketDeleted";
-            }
-            impl ::subxt::events::DecodeAsEvent for S3BucketDeleted {
-                fn is_event(pallet_name: &str, event_name: &str) -> bool {
-                    pallet_name == Self::PALLET_NAME && event_name == Self::EVENT_NAME
-                }
-            }
-            #[derive(
-                :: subxt :: ext :: scale_decode :: DecodeAsType,
-                :: subxt :: ext :: scale_encode :: EncodeAsType,
-                Clone,
-                Debug,
-                Eq,
-                PartialEq,
-            )]
-            #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
-            #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-            #[doc = "Object metadata stored."]
-            pub struct ObjectPut {
-                pub s3_bucket_id: object_put::S3BucketId,
-                pub key: object_put::Key,
-                pub cid: object_put::Cid,
-                pub size: object_put::Size,
-            }
-            pub mod object_put {
-                use super::runtime_types;
-                pub type S3BucketId = ::core::primitive::u64;
-                pub type Key = ::subxt::alloc::vec::Vec<::core::primitive::u8>;
-                pub type Cid = ::subxt::utils::H256;
-                pub type Size = ::core::primitive::u64;
-            }
-            impl ObjectPut {
-                const PALLET_NAME: &'static str = "S3Registry";
-                const EVENT_NAME: &'static str = "ObjectPut";
-            }
-            impl ::subxt::events::DecodeAsEvent for ObjectPut {
-                fn is_event(pallet_name: &str, event_name: &str) -> bool {
-                    pallet_name == Self::PALLET_NAME && event_name == Self::EVENT_NAME
-                }
-            }
-            #[derive(
-                :: subxt :: ext :: scale_decode :: DecodeAsType,
-                :: subxt :: ext :: scale_encode :: EncodeAsType,
-                Clone,
-                Debug,
-                Eq,
-                PartialEq,
-            )]
-            #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
-            #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-            #[doc = "Object deleted."]
-            pub struct ObjectDeleted {
-                pub s3_bucket_id: object_deleted::S3BucketId,
-                pub key: object_deleted::Key,
-            }
-            pub mod object_deleted {
-                use super::runtime_types;
-                pub type S3BucketId = ::core::primitive::u64;
-                pub type Key = ::subxt::alloc::vec::Vec<::core::primitive::u8>;
-            }
-            impl ObjectDeleted {
-                const PALLET_NAME: &'static str = "S3Registry";
-                const EVENT_NAME: &'static str = "ObjectDeleted";
-            }
-            impl ::subxt::events::DecodeAsEvent for ObjectDeleted {
-                fn is_event(pallet_name: &str, event_name: &str) -> bool {
-                    pallet_name == Self::PALLET_NAME && event_name == Self::EVENT_NAME
-                }
-            }
-            #[derive(
-                :: subxt :: ext :: scale_decode :: DecodeAsType,
-                :: subxt :: ext :: scale_encode :: EncodeAsType,
-                Clone,
-                Debug,
-                Eq,
-                PartialEq,
-            )]
-            #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
-            #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-            #[doc = "Object copied."]
-            pub struct ObjectCopied {
-                pub src_bucket_id: object_copied::SrcBucketId,
-                pub src_key: object_copied::SrcKey,
-                pub dst_bucket_id: object_copied::DstBucketId,
-                pub dst_key: object_copied::DstKey,
-            }
-            pub mod object_copied {
-                use super::runtime_types;
-                pub type SrcBucketId = ::core::primitive::u64;
-                pub type SrcKey = ::subxt::alloc::vec::Vec<::core::primitive::u8>;
-                pub type DstBucketId = ::core::primitive::u64;
-                pub type DstKey = ::subxt::alloc::vec::Vec<::core::primitive::u8>;
-            }
-            impl ObjectCopied {
-                const PALLET_NAME: &'static str = "S3Registry";
-                const EVENT_NAME: &'static str = "ObjectCopied";
-            }
-            impl ::subxt::events::DecodeAsEvent for ObjectCopied {
-                fn is_event(pallet_name: &str, event_name: &str) -> bool {
-                    pallet_name == Self::PALLET_NAME && event_name == Self::EVENT_NAME
-                }
-            }
-        }
-        pub mod storage {
-            use super::root_mod;
-            use super::runtime_types;
-            pub struct StorageApi;
-            impl StorageApi {
-                #[doc = " S3 bucket registry: S3BucketId -> S3BucketInfo"]
-                pub fn s3_buckets(
-                    &self,
-                ) -> ::subxt::storage::StaticAddress<
-                    (s3_buckets::input::Param0,),
-                    s3_buckets::Output,
-                    ::subxt::utils::Maybe,
-                > {
-                    ::subxt::storage::StaticAddress::new_static(
-                        "S3Registry",
-                        "S3Buckets",
-                        [
-                            133u8, 12u8, 81u8, 116u8, 199u8, 169u8, 62u8, 241u8, 72u8, 86u8, 90u8,
-                            100u8, 31u8, 187u8, 55u8, 94u8, 254u8, 242u8, 15u8, 134u8, 124u8, 92u8,
-                            160u8, 53u8, 202u8, 253u8, 77u8, 64u8, 191u8, 219u8, 217u8, 55u8,
-                        ],
-                    )
-                }
-                #[doc = " Bucket name to ID mapping for uniqueness and lookup."]
-                pub fn bucket_name_to_id(
-                    &self,
-                ) -> ::subxt::storage::StaticAddress<
-                    (bucket_name_to_id::input::Param0,),
-                    bucket_name_to_id::Output,
-                    ::subxt::utils::Maybe,
-                > {
-                    ::subxt::storage::StaticAddress::new_static(
-                        "S3Registry",
-                        "BucketNameToId",
-                        [
-                            40u8, 72u8, 202u8, 192u8, 18u8, 57u8, 146u8, 116u8, 231u8, 117u8, 26u8,
-                            218u8, 87u8, 62u8, 195u8, 182u8, 20u8, 107u8, 1u8, 226u8, 172u8, 245u8,
-                            60u8, 126u8, 9u8, 60u8, 191u8, 26u8, 117u8, 215u8, 111u8, 69u8,
-                        ],
-                    )
-                }
-                #[doc = " User's S3 buckets."]
-                pub fn user_buckets(
-                    &self,
-                ) -> ::subxt::storage::StaticAddress<
-                    (user_buckets::input::Param0,),
-                    user_buckets::Output,
-                    ::subxt::utils::Maybe,
-                > {
-                    ::subxt::storage::StaticAddress::new_static(
-                        "S3Registry",
-                        "UserBuckets",
-                        [
-                            170u8, 138u8, 2u8, 39u8, 247u8, 214u8, 228u8, 96u8, 23u8, 158u8, 253u8,
-                            122u8, 189u8, 142u8, 194u8, 137u8, 206u8, 55u8, 182u8, 126u8, 210u8,
-                            92u8, 201u8, 121u8, 171u8, 214u8, 178u8, 202u8, 172u8, 241u8, 192u8,
-                            75u8,
-                        ],
-                    )
-                }
-                #[doc = " Object metadata: (S3BucketId, ObjectKey) -> ObjectMetadata"]
-                pub fn objects(
-                    &self,
-                ) -> ::subxt::storage::StaticAddress<
-                    (objects::input::Param0, objects::input::Param1),
-                    objects::Output,
-                    ::subxt::utils::Maybe,
-                > {
-                    ::subxt::storage::StaticAddress::new_static(
-                        "S3Registry",
-                        "Objects",
-                        [
-                            15u8, 70u8, 162u8, 182u8, 156u8, 30u8, 49u8, 86u8, 40u8, 111u8, 241u8,
-                            228u8, 176u8, 196u8, 75u8, 58u8, 156u8, 82u8, 255u8, 37u8, 196u8, 61u8,
-                            2u8, 57u8, 154u8, 217u8, 173u8, 244u8, 73u8, 91u8, 49u8, 58u8,
-                        ],
-                    )
-                }
-                #[doc = " Next S3 bucket ID (auto-increment)."]
-                pub fn next_s3_bucket_id(
-                    &self,
-                ) -> ::subxt::storage::StaticAddress<
-                    (),
-                    next_s3_bucket_id::Output,
-                    ::subxt::utils::Yes,
-                > {
-                    ::subxt::storage::StaticAddress::new_static(
-                        "S3Registry",
-                        "NextS3BucketId",
-                        [
-                            197u8, 132u8, 59u8, 193u8, 231u8, 202u8, 179u8, 57u8, 14u8, 67u8,
-                            167u8, 196u8, 200u8, 63u8, 149u8, 239u8, 22u8, 27u8, 59u8, 89u8, 153u8,
-                            21u8, 158u8, 69u8, 227u8, 159u8, 178u8, 155u8, 123u8, 120u8, 254u8,
-                            5u8,
-                        ],
-                    )
-                }
-            }
-            pub mod s3_buckets {
-                use super::root_mod;
-                use super::runtime_types;
-                pub mod input {
-                    use super::runtime_types;
-                    pub type Param0 = ::core::primitive::u64;
-                }
-                pub type Output = runtime_types::s3_primitives::S3BucketInfo<
-                    ::subxt::utils::AccountId32,
-                    ::core::primitive::u32,
-                >;
-            }
-            pub mod bucket_name_to_id {
-                use super::root_mod;
-                use super::runtime_types;
-                pub mod input {
-                    use super::runtime_types;
-                    pub type Param0 = runtime_types::bounded_collections::bounded_vec::BoundedVec<
-                        ::core::primitive::u8,
-                    >;
-                }
-                pub type Output = ::core::primitive::u64;
-            }
-            pub mod user_buckets {
-                use super::root_mod;
-                use super::runtime_types;
-                pub mod input {
-                    use super::runtime_types;
-                    pub type Param0 = ::subxt::utils::AccountId32;
-                }
-                pub type Output = runtime_types::bounded_collections::bounded_vec::BoundedVec<
-                    ::core::primitive::u64,
-                >;
-            }
-            pub mod objects {
-                use super::root_mod;
-                use super::runtime_types;
-                pub mod input {
-                    use super::runtime_types;
-                    pub type Param0 = ::core::primitive::u64;
-                    pub type Param1 = runtime_types::bounded_collections::bounded_vec::BoundedVec<
-                        ::core::primitive::u8,
-                    >;
-                }
-                pub type Output = runtime_types::s3_primitives::ObjectMetadata;
-            }
-            pub mod next_s3_bucket_id {
-                use super::root_mod;
-                use super::runtime_types;
-                pub mod input {
-                    use super::runtime_types;
-                }
-                pub type Output = ::core::primitive::u64;
-            }
-        }
-        pub mod constants {
-            use super::runtime_types;
-            pub struct ConstantsApi;
-            impl ConstantsApi {
-                #[doc = " Maximum number of buckets per user."]
-                pub fn max_buckets_per_user(
-                    &self,
-                ) -> ::subxt::constants::StaticAddress<::core::primitive::u32> {
-                    ::subxt::constants::StaticAddress::new_static(
-                        "S3Registry",
-                        "MaxBucketsPerUser",
-                        [
-                            98u8, 252u8, 116u8, 72u8, 26u8, 180u8, 225u8, 83u8, 200u8, 157u8,
-                            125u8, 151u8, 53u8, 76u8, 168u8, 26u8, 10u8, 9u8, 98u8, 68u8, 9u8,
-                            178u8, 197u8, 113u8, 31u8, 79u8, 200u8, 90u8, 203u8, 100u8, 41u8,
-                            145u8,
-                        ],
-                    )
-                }
-                #[doc = " Maximum number of objects per bucket."]
-                pub fn max_objects_per_bucket(
-                    &self,
-                ) -> ::subxt::constants::StaticAddress<::core::primitive::u32> {
-                    ::subxt::constants::StaticAddress::new_static(
-                        "S3Registry",
-                        "MaxObjectsPerBucket",
-                        [
-                            98u8, 252u8, 116u8, 72u8, 26u8, 180u8, 225u8, 83u8, 200u8, 157u8,
-                            125u8, 151u8, 53u8, 76u8, 168u8, 26u8, 10u8, 9u8, 98u8, 68u8, 9u8,
-                            178u8, 197u8, 113u8, 31u8, 79u8, 200u8, 90u8, 203u8, 100u8, 41u8,
-                            145u8,
-                        ],
-                    )
-                }
-            }
-        }
-    }
     pub mod revive {
         use super::root_mod;
         use super::runtime_types;
@@ -20839,10 +19551,10 @@ pub mod api {
                                 transaction_encoded,
                             },
                             [
-                                62u8, 164u8, 221u8, 224u8, 204u8, 240u8, 110u8, 229u8, 217u8,
-                                146u8, 166u8, 160u8, 116u8, 183u8, 212u8, 153u8, 242u8, 105u8,
-                                130u8, 97u8, 164u8, 186u8, 241u8, 54u8, 222u8, 33u8, 160u8, 160u8,
-                                184u8, 194u8, 45u8, 148u8,
+                                103u8, 255u8, 186u8, 229u8, 68u8, 166u8, 226u8, 35u8, 108u8, 71u8,
+                                58u8, 190u8, 12u8, 101u8, 76u8, 186u8, 161u8, 109u8, 127u8, 224u8,
+                                2u8, 188u8, 119u8, 205u8, 65u8, 208u8, 245u8, 157u8, 234u8, 89u8,
+                                64u8, 43u8,
                             ],
                         )
                     }
@@ -21010,10 +19722,10 @@ pub mod api {
                                 call: ::subxt::alloc::boxed::Box::new(call),
                             },
                             [
-                                15u8, 0u8, 138u8, 166u8, 30u8, 131u8, 222u8, 111u8, 127u8, 189u8,
-                                60u8, 72u8, 23u8, 229u8, 229u8, 111u8, 18u8, 2u8, 174u8, 244u8,
-                                77u8, 215u8, 86u8, 5u8, 75u8, 135u8, 106u8, 137u8, 199u8, 163u8,
-                                80u8, 102u8,
+                                206u8, 68u8, 37u8, 144u8, 118u8, 249u8, 143u8, 42u8, 182u8, 83u8,
+                                136u8, 9u8, 112u8, 96u8, 196u8, 238u8, 240u8, 164u8, 177u8, 233u8,
+                                206u8, 223u8, 59u8, 198u8, 125u8, 138u8, 123u8, 232u8, 215u8,
+                                126u8, 124u8, 107u8,
                             ],
                         )
                     }
@@ -21376,9 +20088,9 @@ pub mod api {
                         "Revive",
                         "EthBlockBuilderIR",
                         [
-                            62u8, 22u8, 204u8, 180u8, 89u8, 208u8, 118u8, 104u8, 70u8, 79u8, 254u8,
-                            35u8, 81u8, 30u8, 181u8, 91u8, 139u8, 0u8, 140u8, 81u8, 45u8, 123u8,
-                            181u8, 158u8, 118u8, 82u8, 95u8, 24u8, 133u8, 117u8, 33u8, 133u8,
+                            191u8, 4u8, 102u8, 110u8, 200u8, 40u8, 49u8, 157u8, 116u8, 225u8, 59u8,
+                            64u8, 19u8, 106u8, 76u8, 129u8, 155u8, 76u8, 133u8, 26u8, 241u8, 3u8,
+                            116u8, 81u8, 152u8, 121u8, 215u8, 246u8, 170u8, 43u8, 165u8, 5u8,
                         ],
                     )
                 }
@@ -22435,32 +21147,6 @@ pub mod api {
             #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
             pub struct MessageQueueChain(pub ::subxt::utils::H256);
-        }
-        pub mod file_system_primitives {
-            use super::runtime_types;
-            #[derive(
-                :: subxt :: ext :: scale_decode :: DecodeAsType,
-                :: subxt :: ext :: scale_encode :: EncodeAsType,
-                Clone,
-                Debug,
-                Eq,
-                PartialEq,
-            )]
-            #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
-            #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-            pub struct DriveInfo<_0, _1> {
-                pub owner: _0,
-                pub bucket_id: ::core::primitive::u64,
-                pub created_at: _1,
-                pub name: ::core::option::Option<
-                    runtime_types::bounded_collections::bounded_vec::BoundedVec<
-                        ::core::primitive::u8,
-                    >,
-                >,
-                pub max_capacity: ::core::primitive::u64,
-                pub storage_period: _1,
-                pub expires_at: _1,
-            }
         }
         pub mod frame_metadata_hash_extension {
             use super::runtime_types;
@@ -23868,161 +22554,6 @@ pub mod api {
                     #[doc = "registered. Other Invulnerables may have been set."]
                     InvalidInvulnerableSkipped {
                         account_id: ::subxt::utils::AccountId32,
-                    },
-                }
-            }
-        }
-        pub mod pallet_drive_registry {
-            use super::runtime_types;
-            pub mod pallet {
-                use super::runtime_types;
-                #[derive(
-                    :: subxt :: ext :: scale_decode :: DecodeAsType,
-                    :: subxt :: ext :: scale_encode :: EncodeAsType,
-                    Clone,
-                    Debug,
-                    Eq,
-                    PartialEq,
-                )]
-                #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
-                #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-                #[doc = "Contains a variant per dispatchable extrinsic that this pallet has."]
-                pub enum Call {
-                    #[codec(index = 0)]
-                    #[doc = "Create a new drive with automatic bucket creation"]
-                    #[doc = ""]
-                    #[doc = "Atomically opens the Layer 0 bucket + primary storage agreement"]
-                    #[doc = "(via `create_bucket_with_primary_internal`) and records the"]
-                    #[doc = "drive metadata on top. The caller obtains `terms` and `sig`"]
-                    #[doc = "off-chain from the provider; Layer 0 enforces signature, replay"]
-                    #[doc = "window, and capacity/stake/duration/price checks — those errors"]
-                    #[doc = "surface directly so the caller can react to them."]
-                    #[doc = ""]
-                    #[doc = ""]
-                    #[doc = "Parameters:"]
-                    #[doc = "- `name`: Optional human-readable name for the drive"]
-                    #[doc = "- `provider`: Provider account that signed the terms."]
-                    #[doc = "- `terms`: Provider-signed agreement terms."]
-                    #[doc = "- `sig`: Provider signature over the SCALE-encoded terms."]
-                    #[doc = "- `visibility`: Read visibility of the underlying Layer 0 bucket."]
-                    create_drive {
-                        name:
-                            ::core::option::Option<::subxt::alloc::vec::Vec<::core::primitive::u8>>,
-                        provider: ::subxt::utils::AccountId32,
-                        terms: runtime_types::storage_primitives::agreement_term::AgreementTerms<
-                            ::subxt::utils::AccountId32,
-                            ::core::primitive::u128,
-                            ::core::primitive::u32,
-                        >,
-                        sig: runtime_types::sp_runtime::MultiSignature,
-                        visibility: runtime_types::storage_primitives::Visibility,
-                    },
-                    #[codec(index = 2)]
-                    #[doc = "Delete a drive completely"]
-                    #[doc = ""]
-                    #[doc = "Ends all storage agreements with prorated refunds, pays providers for"]
-                    #[doc = "time served, removes the bucket from Layer 0, and removes the drive."]
-                    #[doc = ""]
-                    #[doc = "Parameters:"]
-                    #[doc = "- `drive_id`: The drive to delete"]
-                    delete_drive { drive_id: ::core::primitive::u64 },
-                    #[codec(index = 3)]
-                    #[doc = "Share a drive with another account by adding them as a member of"]
-                    #[doc = "the underlying Layer 0 bucket."]
-                    #[doc = ""]
-                    #[doc = "The caller must be an admin of the underlying bucket; the drive owner"]
-                    #[doc = "is one unless they stepped down. Layer 0 errors surface unchanged."]
-                    #[doc = ""]
-                    #[doc = "Parameters:"]
-                    #[doc = "- `drive_id`: The drive to share"]
-                    #[doc = "- `member`: Account to add"]
-                    #[doc = "- `role`: Role to assign (Admin, Writer, or Reader)"]
-                    share_drive {
-                        drive_id: ::core::primitive::u64,
-                        member: ::subxt::utils::AccountId32,
-                        role: runtime_types::storage_primitives::Role,
-                    },
-                    #[codec(index = 4)]
-                    #[doc = "Remove a member's access to a shared drive."]
-                    #[doc = ""]
-                    #[doc = "The caller must be an admin of the underlying bucket. Layer 0 errors"]
-                    #[doc = "surface unchanged."]
-                    #[doc = ""]
-                    #[doc = "Parameters:"]
-                    #[doc = "- `drive_id`: The drive to unshare"]
-                    #[doc = "- `member`: Account to remove"]
-                    unshare_drive {
-                        drive_id: ::core::primitive::u64,
-                        member: ::subxt::utils::AccountId32,
-                    },
-                }
-                #[derive(
-                    :: subxt :: ext :: scale_decode :: DecodeAsType,
-                    :: subxt :: ext :: scale_encode :: EncodeAsType,
-                    Clone,
-                    Debug,
-                    Eq,
-                    PartialEq,
-                )]
-                #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
-                #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-                #[doc = "Errors"]
-                pub enum Error {
-                    #[codec(index = 0)]
-                    #[doc = "Drive does not exist"]
-                    DriveNotFound,
-                    #[codec(index = 1)]
-                    #[doc = "Not the owner of the drive"]
-                    NotDriveOwner,
-                    #[codec(index = 2)]
-                    #[doc = "Maximum number of drives per user exceeded"]
-                    TooManyDrives,
-                    #[codec(index = 3)]
-                    #[doc = "Drive name too long"]
-                    DriveNameTooLong,
-                    #[codec(index = 4)]
-                    #[doc = "Drive ID overflow"]
-                    DriveIdOverflow,
-                }
-                #[derive(
-                    :: subxt :: ext :: scale_decode :: DecodeAsType,
-                    :: subxt :: ext :: scale_encode :: EncodeAsType,
-                    Clone,
-                    Debug,
-                    Eq,
-                    PartialEq,
-                )]
-                #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
-                #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-                #[doc = "Events"]
-                pub enum Event {
-                    #[codec(index = 0)]
-                    #[doc = "A new drive was created"]
-                    DriveCreated {
-                        drive_id: ::core::primitive::u64,
-                        owner: ::subxt::utils::AccountId32,
-                        bucket_id: ::core::primitive::u64,
-                    },
-                    #[codec(index = 1)]
-                    #[doc = "Drive was deleted and its agreements settled."]
-                    DriveDeleted {
-                        drive_id: ::core::primitive::u64,
-                        owner: ::subxt::utils::AccountId32,
-                        bucket_id: ::core::primitive::u64,
-                        escrow_released: ::core::primitive::u128,
-                    },
-                    #[codec(index = 2)]
-                    #[doc = "Drive was shared with a member"]
-                    DriveShared {
-                        drive_id: ::core::primitive::u64,
-                        member: ::subxt::utils::AccountId32,
-                        role: runtime_types::storage_primitives::Role,
-                    },
-                    #[codec(index = 3)]
-                    #[doc = "Member was removed from a shared drive"]
-                    DriveUnshared {
-                        drive_id: ::core::primitive::u64,
-                        member: ::subxt::utils::AccountId32,
                     },
                 }
             }
@@ -25790,179 +24321,6 @@ pub mod api {
                 #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
                 pub struct ReturnFlags {
                     pub bits: ::core::primitive::u32,
-                }
-            }
-        }
-        pub mod pallet_s3_registry {
-            use super::runtime_types;
-            pub mod pallet {
-                use super::runtime_types;
-                #[derive(
-                    :: subxt :: ext :: scale_decode :: DecodeAsType,
-                    :: subxt :: ext :: scale_encode :: EncodeAsType,
-                    Clone,
-                    Debug,
-                    Eq,
-                    PartialEq,
-                )]
-                #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
-                #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-                #[doc = "Contains a variant per dispatchable extrinsic that this pallet has."]
-                pub enum Call {
-                    #[codec(index = 0)]
-                    #[doc = "Create a new S3 bucket."]
-                    #[doc = ""]
-                    #[doc = "This automatically creates an underlying Layer 0 bucket and links it"]
-                    #[doc = "to the S3 bucket. The caller becomes the owner of both buckets."]
-                    #[doc = ""]
-                    #[doc = "Parameters:"]
-                    #[doc = "- `name`: S3 bucket name (3-63 chars, lowercase alphanumeric + hyphens)"]
-                    #[doc = "- `provider`: Explicit provider account that signed the terms."]
-                    #[doc = "- `terms`: Provider-signed agreement terms."]
-                    #[doc = "- `sig`: Provider signature over the SCALE-encoded terms."]
-                    #[doc = "- `visibility`: Read visibility of the underlying Layer 0 bucket."]
-                    create_s3_bucket {
-                        name: ::subxt::alloc::vec::Vec<::core::primitive::u8>,
-                        provider: ::subxt::utils::AccountId32,
-                        terms: runtime_types::storage_primitives::agreement_term::AgreementTerms<
-                            ::subxt::utils::AccountId32,
-                            ::core::primitive::u128,
-                            ::core::primitive::u32,
-                        >,
-                        sig: runtime_types::sp_runtime::MultiSignature,
-                        visibility: runtime_types::storage_primitives::Visibility,
-                    },
-                    #[codec(index = 1)]
-                    #[doc = "Delete an S3 bucket."]
-                    #[doc = ""]
-                    #[doc = "The bucket must be empty and caller must be the owner."]
-                    delete_s3_bucket {
-                        s3_bucket_id: ::core::primitive::u64,
-                    },
-                    #[codec(index = 2)]
-                    #[doc = "Store or update object metadata."]
-                    put_object_metadata {
-                        s3_bucket_id: ::core::primitive::u64,
-                        key: ::subxt::alloc::vec::Vec<::core::primitive::u8>,
-                        cid: ::subxt::utils::H256,
-                        size: ::core::primitive::u64,
-                        content_type: ::subxt::alloc::vec::Vec<::core::primitive::u8>,
-                        user_metadata: ::subxt::alloc::vec::Vec<(
-                            ::subxt::alloc::vec::Vec<::core::primitive::u8>,
-                            ::subxt::alloc::vec::Vec<::core::primitive::u8>,
-                        )>,
-                    },
-                    #[codec(index = 3)]
-                    #[doc = "Delete object metadata."]
-                    delete_object_metadata {
-                        s3_bucket_id: ::core::primitive::u64,
-                        key: ::subxt::alloc::vec::Vec<::core::primitive::u8>,
-                    },
-                    #[codec(index = 4)]
-                    #[doc = "Copy object metadata from one location to another."]
-                    copy_object_metadata {
-                        src_bucket_id: ::core::primitive::u64,
-                        src_key: ::subxt::alloc::vec::Vec<::core::primitive::u8>,
-                        dst_bucket_id: ::core::primitive::u64,
-                        dst_key: ::subxt::alloc::vec::Vec<::core::primitive::u8>,
-                    },
-                }
-                #[derive(
-                    :: subxt :: ext :: scale_decode :: DecodeAsType,
-                    :: subxt :: ext :: scale_encode :: EncodeAsType,
-                    Clone,
-                    Debug,
-                    Eq,
-                    PartialEq,
-                )]
-                #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
-                #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-                #[doc = "The `Error` enum of this pallet."]
-                pub enum Error {
-                    #[codec(index = 0)]
-                    #[doc = "Bucket name already exists."]
-                    BucketNameExists,
-                    #[codec(index = 1)]
-                    #[doc = "Invalid bucket name format."]
-                    InvalidBucketName,
-                    #[codec(index = 2)]
-                    #[doc = "Bucket not found."]
-                    BucketNotFound,
-                    #[codec(index = 3)]
-                    #[doc = "Not the bucket owner/admin."]
-                    NotBucketOwner,
-                    #[codec(index = 4)]
-                    #[doc = "Too many buckets for user."]
-                    TooManyBuckets,
-                    #[codec(index = 5)]
-                    #[doc = "Object not found."]
-                    ObjectNotFound,
-                    #[codec(index = 6)]
-                    #[doc = "Invalid object key format."]
-                    InvalidObjectKey,
-                    #[codec(index = 7)]
-                    #[doc = "Bucket is not empty."]
-                    BucketNotEmpty,
-                    #[codec(index = 8)]
-                    #[doc = "Too many objects in bucket."]
-                    TooManyObjects,
-                    #[codec(index = 9)]
-                    #[doc = "Object key too long."]
-                    ObjectKeyTooLong,
-                    #[codec(index = 10)]
-                    #[doc = "Content type too long."]
-                    ContentTypeTooLong,
-                    #[codec(index = 11)]
-                    #[doc = "Bucket total size would exceed the maximum supported value."]
-                    BucketSizeLimitReached,
-                }
-                #[derive(
-                    :: subxt :: ext :: scale_decode :: DecodeAsType,
-                    :: subxt :: ext :: scale_encode :: EncodeAsType,
-                    Clone,
-                    Debug,
-                    Eq,
-                    PartialEq,
-                )]
-                #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
-                #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-                #[doc = "The `Event` enum of this pallet"]
-                pub enum Event {
-                    #[codec(index = 0)]
-                    #[doc = "S3 bucket created."]
-                    S3BucketCreated {
-                        s3_bucket_id: ::core::primitive::u64,
-                        name: ::subxt::alloc::vec::Vec<::core::primitive::u8>,
-                        layer0_bucket_id: ::core::primitive::u64,
-                        owner: ::subxt::utils::AccountId32,
-                    },
-                    #[codec(index = 1)]
-                    #[doc = "S3 bucket deleted."]
-                    S3BucketDeleted {
-                        s3_bucket_id: ::core::primitive::u64,
-                    },
-                    #[codec(index = 2)]
-                    #[doc = "Object metadata stored."]
-                    ObjectPut {
-                        s3_bucket_id: ::core::primitive::u64,
-                        key: ::subxt::alloc::vec::Vec<::core::primitive::u8>,
-                        cid: ::subxt::utils::H256,
-                        size: ::core::primitive::u64,
-                    },
-                    #[codec(index = 3)]
-                    #[doc = "Object deleted."]
-                    ObjectDeleted {
-                        s3_bucket_id: ::core::primitive::u64,
-                        key: ::subxt::alloc::vec::Vec<::core::primitive::u8>,
-                    },
-                    #[codec(index = 4)]
-                    #[doc = "Object copied."]
-                    ObjectCopied {
-                        src_bucket_id: ::core::primitive::u64,
-                        src_key: ::subxt::alloc::vec::Vec<::core::primitive::u8>,
-                        dst_bucket_id: ::core::primitive::u64,
-                        dst_key: ::subxt::alloc::vec::Vec<::core::primitive::u8>,
-                    },
                 }
             }
         }
@@ -28725,72 +27083,6 @@ pub mod api {
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
             pub struct U256(pub [::core::primitive::u64; 4usize]);
         }
-        pub mod s3_primitives {
-            use super::runtime_types;
-            #[derive(
-                :: subxt :: ext :: scale_decode :: DecodeAsType,
-                :: subxt :: ext :: scale_encode :: EncodeAsType,
-                Clone,
-                Debug,
-                Eq,
-                PartialEq,
-            )]
-            #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
-            #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-            pub struct MetadataEntry {
-                pub key: runtime_types::bounded_collections::bounded_vec::BoundedVec<
-                    ::core::primitive::u8,
-                >,
-                pub value: runtime_types::bounded_collections::bounded_vec::BoundedVec<
-                    ::core::primitive::u8,
-                >,
-            }
-            #[derive(
-                :: subxt :: ext :: scale_decode :: DecodeAsType,
-                :: subxt :: ext :: scale_encode :: EncodeAsType,
-                Clone,
-                Debug,
-                Eq,
-                PartialEq,
-            )]
-            #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
-            #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-            pub struct ObjectMetadata {
-                pub cid: ::subxt::utils::H256,
-                pub size: ::core::primitive::u64,
-                pub last_modified: ::core::primitive::u64,
-                pub content_type: runtime_types::bounded_collections::bounded_vec::BoundedVec<
-                    ::core::primitive::u8,
-                >,
-                pub etag: runtime_types::bounded_collections::bounded_vec::BoundedVec<
-                    ::core::primitive::u8,
-                >,
-                pub user_metadata: runtime_types::bounded_collections::bounded_vec::BoundedVec<
-                    runtime_types::s3_primitives::MetadataEntry,
-                >,
-            }
-            #[derive(
-                :: subxt :: ext :: scale_decode :: DecodeAsType,
-                :: subxt :: ext :: scale_encode :: EncodeAsType,
-                Clone,
-                Debug,
-                Eq,
-                PartialEq,
-            )]
-            #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
-            #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-            pub struct S3BucketInfo<_0, _1> {
-                pub s3_bucket_id: ::core::primitive::u64,
-                pub name: runtime_types::bounded_collections::bounded_vec::BoundedVec<
-                    ::core::primitive::u8,
-                >,
-                pub layer0_bucket_id: ::core::primitive::u64,
-                pub owner: _0,
-                pub created_at: _1,
-                pub object_count: ::core::primitive::u64,
-                pub total_size: ::core::primitive::u64,
-            }
-        }
         pub mod sp_arithmetic {
             use super::runtime_types;
             pub mod fixed_point {
@@ -31479,10 +29771,6 @@ pub mod api {
                 Utility(runtime_types::pallet_utility::pallet::Call),
                 #[codec(index = 50)]
                 StorageProvider(runtime_types::pallet_storage_provider::pallet::Call),
-                #[codec(index = 51)]
-                DriveRegistry(runtime_types::pallet_drive_registry::pallet::Call),
-                #[codec(index = 52)]
-                S3Registry(runtime_types::pallet_s3_registry::pallet::Call),
                 #[codec(index = 60)]
                 Revive(runtime_types::pallet_revive::pallet::Call),
             }
@@ -31519,10 +29807,6 @@ pub mod api {
                 Utility(runtime_types::pallet_utility::pallet::Error),
                 #[codec(index = 50)]
                 StorageProvider(runtime_types::pallet_storage_provider::pallet::Error),
-                #[codec(index = 51)]
-                DriveRegistry(runtime_types::pallet_drive_registry::pallet::Error),
-                #[codec(index = 52)]
-                S3Registry(runtime_types::pallet_s3_registry::pallet::Error),
                 #[codec(index = 60)]
                 Revive(runtime_types::pallet_revive::pallet::Error),
             }
@@ -31563,10 +29847,6 @@ pub mod api {
                 Utility(runtime_types::pallet_utility::pallet::Event),
                 #[codec(index = 50)]
                 StorageProvider(runtime_types::pallet_storage_provider::pallet::Event),
-                #[codec(index = 51)]
-                DriveRegistry(runtime_types::pallet_drive_registry::pallet::Event),
-                #[codec(index = 52)]
-                S3Registry(runtime_types::pallet_s3_registry::pallet::Event),
                 #[codec(index = 60)]
                 Revive(runtime_types::pallet_revive::pallet::Event),
             }
