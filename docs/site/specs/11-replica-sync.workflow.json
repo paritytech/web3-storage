@@ -1,0 +1,59 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "Replica Sync",
+    "quality_profile": "showcase",
+    "views": [
+      { "id": "happy-path", "label": "Chain-first sync", "focus": ["snapshot", "read_chain", "fetch_peaks", "verify", "traverse", "fetch_nodes", "confirm", "sync_check"], "note": "The replica reads the trusted root from the chain and verifies every fetched node against it." },
+      { "id": "untrusted-sources", "label": "Untrusted sources", "focus": ["peak_source", "node_source", "verify", "mismatch"], "note": "Any data holder can serve. The replica rejects a source whose peaks do not hash to the chain root." },
+      { "id": "payment", "label": "Confirmation and payment", "focus": ["confirm", "sync_check", "sync_balance"], "note": "confirm_replica_sync pays sync_price from sync_balance when the root is new and min_sync_interval has passed." }
+    ]
+  },
+  "lanes": [
+    { "id": "chain", "label": "Chain" },
+    { "id": "replica", "label": "Replica Provider" },
+    { "id": "sources", "label": "Data Sources" },
+    { "id": "recovery", "label": "Recovery", "variant": "exception" }
+  ],
+  "phases": [
+    { "id": "anchor", "label": "Trusted root", "fromCol": 0, "toCol": 1 },
+    { "id": "walk", "label": "Verify and walk", "fromCol": 2, "toCol": 3, "variant": "emphasis" },
+    { "id": "settle", "label": "Fetch and confirm", "fromCol": 4, "toCol": 5 }
+  ],
+  "mainPath": ["read_chain", "fetch_peaks", "verify", "traverse", "fetch_nodes", "confirm", "sync_check"],
+  "nodes": [
+    { "id": "snapshot", "lane": "chain", "col": 0, "type": "database", "label": "Bucket State", "sublabel": "snapshot, historical_roots", "width": 150 },
+    { "id": "sync_balance", "lane": "chain", "col": 4, "type": "database", "label": "sync_balance", "sublabel": "held on owner", "width": 140 },
+    { "id": "sync_check", "lane": "chain", "col": 5, "type": "security", "label": "Match and Pay", "sublabel": "sync_price per sync", "tag": "ReplicaSynced", "width": 150 },
+    { "id": "read_chain", "lane": "replica", "col": 0, "type": "backend", "label": "Read Chain State", "sublabel": "runtime API", "width": 140 },
+    { "id": "fetch_peaks", "lane": "replica", "col": 1, "type": "backend", "label": "Fetch Peaks", "sublabel": "GET /mmr_peaks", "width": 140 },
+    { "id": "verify", "lane": "replica", "col": 2, "type": "security", "label": "Verify Peaks", "sublabel": "hash(peaks) == root", "width": 140 },
+    { "id": "traverse", "lane": "replica", "col": 3, "type": "backend", "label": "Top-Down Walk", "sublabel": "GET /mmr_subtree", "width": 140 },
+    { "id": "fetch_nodes", "lane": "replica", "col": 4, "type": "backend", "label": "Fetch Missing Nodes", "sublabel": "POST /fetch_nodes", "width": 150 },
+    { "id": "confirm", "lane": "replica", "col": 5, "type": "backend", "label": "confirm_replica_sync", "sublabel": "roots[7] + signature", "width": 150 },
+    { "id": "peak_source", "lane": "sources", "col": 1, "type": "cloud", "label": "Any Data Holder", "sublabel": "replica or data holder", "width": 150 },
+    { "id": "node_source", "lane": "sources", "col": 4, "type": "cloud", "label": "Node Source", "sublabel": "any data holder", "width": 140 },
+    { "id": "mismatch", "lane": "recovery", "col": 2, "type": "security", "label": "Peak Mismatch", "sublabel": "source rejected", "width": 140 }
+  ],
+  "edges": [
+    { "id": "trusted-root", "from": "snapshot", "to": "read_chain", "label": "trusted root", "variant": "emphasis" },
+    { "id": "start-sync", "from": "read_chain", "to": "fetch_peaks", "role": "main" },
+    { "id": "peaks-served", "from": "peak_source", "to": "fetch_peaks", "label": "peaks", "variant": "dashed" },
+    { "id": "check-peaks", "from": "fetch_peaks", "to": "verify", "role": "main", "variant": "security" },
+    { "id": "peaks-ok", "from": "verify", "to": "traverse", "label": "root matches", "role": "main", "variant": "emphasis" },
+    { "id": "peaks-bad", "from": "verify", "to": "mismatch", "label": "hash mismatch", "role": "error", "variant": "security" },
+    { "id": "retry-source", "from": "mismatch", "to": "fetch_peaks", "label": "try another holder", "role": "branch", "variant": "dashed" },
+    { "id": "walk-down", "from": "traverse", "to": "fetch_nodes", "label": "missing hashes", "role": "main" },
+    { "id": "nodes-served", "from": "node_source", "to": "fetch_nodes", "label": "nodes", "variant": "dashed" },
+    { "id": "sync-done", "from": "fetch_nodes", "to": "confirm", "label": "all verified", "role": "main", "variant": "emphasis" },
+    { "id": "submit", "from": "confirm", "to": "sync_check", "role": "main" },
+    { "id": "fund", "from": "sync_balance", "to": "sync_check", "label": "funds" }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "Chain first", "items": ["The replica reads the MMR root from the chain, not from a provider", "It checks peaks against that root before the traversal starts", "A source that serves wrong data fails the first hash check"] },
+    { "dot": "emerald", "title": "Top-down walk", "items": ["A matching hash skips the whole subtree", "Unchanged subtrees are detected at their first node", "Sync state is the set of missing nodes, so a sync can resume", "POST /exists checks which nodes a provider has"] },
+    { "dot": "amber", "title": "confirm_replica_sync", "items": ["roots: current snapshot plus 6 historical_roots positions (primes 3, 7, 11, 23, 47, 113)", "The first matching position is credited: position_matched 0 is current, 1-6 historical", "Rejected unless the root differs from last_sync and min_sync_interval has passed", "A confirmed root makes the replica challengeable by anyone", "Anyone can fund syncs with top_up_replica_sync_balance"] },
+    { "dot": "violet", "title": "Private buckets", "items": ["Primaries serve reads only to members; provider accounts are not members", "A replica syncs from other replicas or any data holder instead of the primaries", "Replicas serve everyone, on public and private buckets"] }
+  ]
+}

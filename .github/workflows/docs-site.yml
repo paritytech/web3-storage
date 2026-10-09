@@ -1,0 +1,49 @@
+name: Docs Site
+
+# Fails when docs/design/ changed and docs/site/ was not updated with it, or
+# when the archify commit pinned in archify.lock fails scripts/verify-archify.sh.
+# No `paths:` filter so the check always reports and is safe to require.
+on:
+  push:
+    branches: [main, dev]
+  # No base-branch filter: stacked PRs (base = another feature branch)
+  # must get the same CI as dev-targeted PRs.
+  pull_request:
+  merge_group:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  design-in-sync:
+    name: docs/site matches docs/design
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check design hashes
+        run: scripts/check-docs-site.sh
+
+  archify-verified:
+    name: pinned archify commit passes scripts/verify-archify.sh
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # The archify clone changes only when archify.lock changes.
+      - name: Cache the archify repository
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5
+        with:
+          path: ~/.cache/archify-repo.git
+          key: archify-repo-${{ hashFiles('.claude/skills/generate-docs/archify.lock') }}
+      - name: Verify archify
+        run: scripts/verify-archify.sh

@@ -1,0 +1,7 @@
+# The archify commit that scripts/verify-archify.sh last passed and a person
+# reviewed. Update only after the procedure in SKILL.md ("Update archify").
+repo=https://github.com/tt-a1i/archify.git
+commit=06dd052602dd9a369e4d034e24faef0917b5a60c
+tree=cff24583cbdc3b7c7313580f3fa0636ade2e5279
+version=2.17.0-dev.1
+verified=2026-09-23

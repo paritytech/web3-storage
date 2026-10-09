@@ -1,0 +1,4 @@
+/* Added to every diagram page by scripts/build-docs-site.sh. */
+.site-crumb { margin: 0 0 .5rem; font-size: .85rem; }
+.site-crumb a { color: inherit; opacity: .75; }
+.site-crumb a:hover { opacity: 1; }
