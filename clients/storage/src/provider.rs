@@ -163,6 +163,7 @@ impl ProviderClient {
             settings.replica_sync_price,
             settings.accepting_extensions,
             settings.max_capacity,
+            settings.min_bytes,
         );
 
         chain
@@ -558,6 +559,8 @@ pub struct ProviderSettings {
     pub accepting_extensions: bool,
     /// Maximum storage capacity in bytes. 0 = unlimited.
     pub max_capacity: u64,
+    /// Minimum `max_bytes` per agreement. 0 = no minimum.
+    pub min_bytes: u64,
 }
 
 #[derive(Debug, Clone)]

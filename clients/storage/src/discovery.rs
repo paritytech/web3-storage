@@ -49,6 +49,8 @@ pub enum PartialMatchReason {
     DurationMismatch,
     /// Provider is not accepting agreements.
     NotAccepting,
+    /// Requested bytes are below the provider's `min_bytes`.
+    BelowMinBytes,
 }
 
 /// Provider matching result.
@@ -80,6 +82,8 @@ pub struct ProviderInfo {
     pub committed_bytes: u64,
     /// Maximum capacity (0 = unlimited).
     pub max_capacity: u64,
+    /// Smallest agreement `max_bytes` the provider accepts (0 = no minimum).
+    pub min_bytes: u64,
     /// Free capacity per the chain; `None` is unlimited, not `Some(0)` ("full").
     pub available_capacity: Option<u64>,
     /// Minimum agreement duration.
@@ -121,6 +125,7 @@ impl From<rt_api::ProviderInfoResponse> for ProviderInfo {
             stake: p.stake,
             committed_bytes: p.committed_bytes,
             max_capacity: p.max_capacity,
+            min_bytes: p.min_bytes,
             available_capacity: p.available_capacity,
             min_duration: p.min_duration,
             max_duration: p.max_duration,
@@ -147,6 +152,7 @@ impl From<rt_api::PartialMatchReason> for PartialMatchReason {
             rt_api::PartialMatchReason::InsufficientCapacity => Self::InsufficientCapacity,
             rt_api::PartialMatchReason::DurationMismatch => Self::DurationMismatch,
             rt_api::PartialMatchReason::NotAccepting => Self::NotAccepting,
+            rt_api::PartialMatchReason::BelowMinBytes => Self::BelowMinBytes,
         }
     }
 }

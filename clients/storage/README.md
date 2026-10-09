@@ -272,7 +272,7 @@ match client.upload(1, data, Default::default()).await {
 ### ProviderClient
 
 - ✅ Register as storage provider with stake
-- ✅ Update provider settings (pricing, capacity)
+- ✅ Update provider settings (pricing, capacity, minimum agreement size)
 - ✅ Accept storage agreements
 - ✅ Respond to challenges with proofs
 - ✅ Confirm replica syncs for payment
