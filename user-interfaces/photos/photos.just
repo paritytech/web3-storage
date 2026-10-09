@@ -29,7 +29,7 @@ deploy seed='//Alice':
 
 # Headless M1–M3 flow: deploy → negotiate → createLibrary → mkdir album →
 # PUT photo + thumbnail → compute metadata root client-side → setRoot →
-# re-list + recompute + assert against the on-chain anchor and index_root →
+# re-list + recompute + assert against the on-chain anchor and the fs root →
 # edit the photo copy-on-write at the same path → re-anchor → download back +
 # assert the anchor moved while library/ownership/Writer grant survive.
 flow provider_seed='//Alice' client_seed='//Bob':
