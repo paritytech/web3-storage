@@ -317,3 +317,27 @@ fn add_primary_provider_works_on_a_frozen_bucket() {
         assert!(StorageAgreements::<Test>::get(bucket_id, 3).is_some());
     });
 }
+
+#[test]
+fn add_primary_provider_fails_when_below_min_bytes() {
+    new_test_ext().execute_with(|| {
+        run_to_block(1);
+        register_provider_with_settings(
+            2,
+            200,
+            ProviderSettings {
+                accepting_primary: true,
+                min_bytes: 51,
+                ..Default::default()
+            },
+        );
+        let bucket_id = create_bucket(1, 0);
+
+        // `quote_for` requests 50 bytes, one below the minimum.
+        let quote = quote_for(2, 1, bucket_id);
+        assert_err!(
+            add_primary(1, bucket_id, 2, quote),
+            Error::<Test>::MaxBytesBelowMinimum
+        );
+    });
+}

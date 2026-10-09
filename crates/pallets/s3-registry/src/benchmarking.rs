@@ -88,6 +88,7 @@ fn create_provider<T: Config>(index: u32) -> (T::AccountId, sp_core::sr25519::Pu
             replica_sync_price: Some(1u32.into()),
             accepting_extensions: true,
             max_capacity: capacity,
+            min_bytes: 0,
         },
     );
 

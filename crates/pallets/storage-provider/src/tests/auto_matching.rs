@@ -33,6 +33,7 @@ fn register_provider_for_matching(who: u64, price_per_byte: u64, max_capacity: u
             replica_sync_price: None,
             accepting_extensions: true,
             max_capacity,
+            min_bytes: 0,
         },
     );
 }
@@ -76,6 +77,7 @@ fn find_matching_providers_flags_not_accepting() {
                 replica_sync_price: None,
                 accepting_extensions: true,
                 max_capacity: 200,
+                min_bytes: 0,
             },
         );
 
@@ -141,6 +143,7 @@ fn find_matching_providers_flags_duration_mismatch() {
                 replica_sync_price: None,
                 accepting_extensions: true,
                 max_capacity: 200,
+                min_bytes: 0,
             },
         );
 
@@ -202,5 +205,66 @@ fn matched_provider_redeems_signed_terms() {
         // Verify provider's committed_bytes was updated
         let provider = Providers::<Test>::get(2).unwrap();
         assert_eq!(provider.committed_bytes, 100);
+    });
+}
+
+fn register_provider_with_min_bytes(who: u64, min_bytes: u64) {
+    register_provider_with_settings(
+        who,
+        200,
+        ProviderSettings {
+            accepting_primary: true,
+            max_capacity: 200,
+            min_bytes,
+            ..Default::default()
+        },
+    );
+}
+
+#[test]
+fn find_matching_providers_penalises_requests_below_min_bytes() {
+    new_test_ext().execute_with(|| {
+        register_provider_with_min_bytes(2, 100);
+
+        let below = StorageProvider::query_find_matching_providers(requirements(99, 100, 10), 10);
+        assert_eq!(below[0].match_score, 50);
+        assert_eq!(
+            below[0].partial_reason,
+            Some(PartialMatchReason::BelowMinBytes)
+        );
+        assert_eq!(below[0].info.min_bytes, 100);
+
+        // Exactly the minimum matches fully.
+        let at = StorageProvider::query_find_matching_providers(requirements(100, 100, 10), 10);
+        assert_eq!(at[0].match_score, 100);
+        assert!(at[0].partial_reason.is_none());
+    });
+}
+
+#[test]
+fn providers_with_capacity_excludes_providers_whose_min_bytes_is_above_request() {
+    new_test_ext().execute_with(|| {
+        register_provider_with_min_bytes(2, 100);
+        register_provider_with_min_bytes(3, 0);
+
+        let accounts = |bytes_needed| -> Vec<u64> {
+            StorageProvider::query_providers_with_capacity(bytes_needed, 0, 10)
+                .into_iter()
+                .map(|(account, _)| account)
+                .collect()
+        };
+
+        assert_eq!(accounts(99), vec![3]);
+
+        let mut both = accounts(100);
+        both.sort();
+        assert_eq!(both, vec![2, 3]);
+
+        let info = StorageProvider::query_providers_with_capacity(100, 0, 10)
+            .into_iter()
+            .find(|(account, _)| *account == 2)
+            .unwrap()
+            .1;
+        assert_eq!(info.min_bytes, 100);
     });
 }

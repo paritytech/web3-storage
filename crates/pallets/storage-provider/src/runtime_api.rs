@@ -40,6 +40,8 @@ pub struct ProviderInfoResponse {
     pub accepting_extensions: bool,
     /// Maximum storage capacity in bytes (0 = unlimited).
     pub max_capacity: u64,
+    /// Smallest agreement `max_bytes` accepted (0 = no minimum).
+    pub min_bytes: u64,
     /// Available capacity in bytes (None if unlimited).
     pub available_capacity: Option<u64>,
     /// Anchor block at which deregistration becomes finalisable
@@ -110,6 +112,8 @@ pub enum PartialMatchReason {
     DurationMismatch,
     /// Provider is not accepting agreements.
     NotAccepting,
+    /// Requested bytes are below the provider's `min_bytes`.
+    BelowMinBytes,
 }
 
 /// Provider matching result.
