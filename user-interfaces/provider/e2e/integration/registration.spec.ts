@@ -112,3 +112,37 @@ test("settings update post-registration: replica_sync_price round-trips", async 
     { timeoutMs: 60_000, description: `Eve's replica_sync_price to become ${newPrice}` },
   );
 });
+
+test("settings update post-registration: min_bytes round-trips", async ({ localPage }) => {
+  await localPage.getByTestId("nav-registration").click();
+
+  await expect(localPage.getByTestId("settings-minbytes-input")).toBeVisible({
+    timeout: 30_000,
+  });
+  const newMinBytes = "4096";
+  await localPage.getByTestId("settings-minbytes-input").fill(newMinBytes);
+  await localPage.getByTestId("settings-update").click();
+
+  await firstMatch(
+    getApi().query.StorageProvider.Providers.watchValue(Eve.address, READ_OPTS),
+    ({ value }) => value?.settings?.min_bytes?.toString() === newMinBytes,
+    { timeoutMs: 60_000, description: `Eve's min_bytes to become ${newMinBytes}` },
+  );
+});
+
+test("settings form blocks min_bytes above a limited max_capacity", async ({ localPage }) => {
+  await localPage.getByTestId("nav-registration").click();
+
+  await expect(localPage.getByTestId("settings-minbytes-input")).toBeVisible({
+    timeout: 30_000,
+  });
+  await localPage.getByTestId("settings-maxcapacity-input").fill("1000");
+  await localPage.getByTestId("settings-minbytes-input").fill("1001");
+
+  await expect(localPage.getByTestId("settings-minbytes-error")).toBeVisible();
+  await expect(localPage.getByTestId("settings-update")).toBeDisabled();
+
+  await localPage.getByTestId("settings-minbytes-input").fill("1000");
+  await expect(localPage.getByTestId("settings-minbytes-error")).toBeHidden();
+  await expect(localPage.getByTestId("settings-update")).toBeEnabled();
+});

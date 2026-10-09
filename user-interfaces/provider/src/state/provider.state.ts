@@ -49,6 +49,7 @@ export interface ProviderSettings {
   replicaSyncPrice: bigint | null
   acceptingExtensions: boolean
   maxCapacity: bigint
+  minBytes: bigint
 }
 
 export interface Agreement {
@@ -638,6 +639,7 @@ function convertProviderSettings(chain: OnChainProviderSettings): ProviderSettin
     replicaSyncPrice: chain.replicaSyncPrice,
     acceptingExtensions: chain.acceptingExtensions,
     maxCapacity: chain.maxCapacity,
+    minBytes: chain.minBytes,
   }
 }
 
