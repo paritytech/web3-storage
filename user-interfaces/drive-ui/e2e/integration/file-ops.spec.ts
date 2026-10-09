@@ -8,21 +8,16 @@
  * deterministic window — without the route intercept, the tests race.
  */
 import { test, expect } from "../fixtures";
-import { Bob, cleanupDrives } from "@web3-storage/test-helpers";
 import { createDriveViaUi } from "../helpers/createDriveViaUi";
 
 test.describe.configure({ mode: "serial" });
 test.setTimeout(180_000);
 
-test.afterEach(async () => {
-  await cleanupDrives(Bob);
-});
-
 async function selectFreshDrive(page: import("@playwright/test").Page) {
-  const driveId = await createDriveViaUi(page, `file-ops-${Date.now()}`);
-  await page.getByTestId(`drive-list-item-${driveId}`).click();
+  const bucketId = await createDriveViaUi(page);
+  await page.getByTestId(`drive-list-item-${bucketId}`).click();
   await expect(page.getByTestId("file-browser")).toBeVisible();
-  return { driveId };
+  return { bucketId };
 }
 
 test("multi-file upload appears in entries table", async ({ localPage }) => {

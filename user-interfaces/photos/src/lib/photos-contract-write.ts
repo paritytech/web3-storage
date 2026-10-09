@@ -20,7 +20,7 @@ import { PHOTOS_ABI } from '@/contract/photos-abi'
 /** Token base unit (12 decimals, like Polkadot). */
 export const UNIT = 10n ** 12n
 
-/** `IDriveRegistry.PrimitiveAgreementTerms`, shaped for viem ABI encoding. */
+/** `IWeb3Storage.PrimitiveAgreementTerms`, shaped for viem ABI encoding. */
 export interface PrimitiveAgreementTerms {
   owner: `0x${string}`
   maxBytes: bigint
@@ -102,7 +102,6 @@ export function toContractTerms(
 /** Arguments for `createLibrary`, in ABI order. */
 export interface CreateLibraryArgs {
   userAccount: `0x${string}`
-  name: string
   provider: `0x${string}`
   terms: PrimitiveAgreementTerms
   signature: `0x${string}`
@@ -112,7 +111,6 @@ export interface CreateLibraryArgs {
 export function encodeCreateLibrary(args: CreateLibraryArgs): Uint8Array {
   return encodeCall(PHOTOS_ABI, 'createLibrary', [
     args.userAccount,
-    args.name,
     args.provider,
     args.terms,
     args.signature,
@@ -288,7 +286,7 @@ export async function ensureAccountMapped(api: ParachainApi, signer: TxCreator):
 }
 
 export type SubmitCreateLibraryResult =
-  | { ok: true; driveId?: bigint }
+  | { ok: true; bucketId?: bigint }
   | { ok: false; error: CreateLibraryError }
 
 /**
@@ -296,12 +294,12 @@ export type SubmitCreateLibraryResult =
  * attaching `value` (the buffered payment). Returns a discriminated result so
  * the caller can surface a classified error inline rather than catching throws.
  *
- * A contract revert (the `createDrive` precompile rejecting the payment/terms,
- * or Photos.sol's `require`) does NOT fail the `Revive.call` extrinsic —
- * `result.ok` stays true with no drive created. So success is confirmed the way
- * the headless flow asserts it (`scripts/photos-flow.ts`): the on-chain
- * `DriveRegistry.DriveCreated` event (and the contract's `LibraryCreated` log).
- * Their absence means the call reverted.
+ * A contract revert (the `createBucketWithPrimary` precompile rejecting the
+ * payment/terms, or Photos.sol's `require`) does NOT fail the `Revive.call`
+ * extrinsic — `result.ok` stays true with no bucket created. So success is
+ * confirmed the way the headless flow asserts it (`scripts/photos-flow.ts`): the
+ * on-chain `StorageProvider.BucketCreated` event (and the contract's
+ * `LibraryCreated` log). Their absence means the call reverted.
  */
 export async function submitCreateLibrary(
   api: ParachainApi,
@@ -321,13 +319,13 @@ export async function submitCreateLibrary(
   if (!result.ok) {
     return { ok: false, error: classifyDispatchError(result.dispatchError) }
   }
-  const driveId = driveIdFromEvents(result.events, api, toHex(contractAddressBytes))
+  const bucketId = bucketIdFromEvents(result.events, api, toHex(contractAddressBytes))
   const created =
-    driveId !== undefined || api.event.DriveRegistry.DriveCreated.filter(result.events).length > 0
+    bucketId !== undefined || api.event.StorageProvider.BucketCreated.filter(result.events).length > 0
   if (!created) {
     return { ok: false, error: contractRevertedError() }
   }
-  return { ok: true, driveId }
+  return { ok: true, bucketId }
 }
 
 /**
@@ -363,18 +361,18 @@ function decodeContractLogs(
 }
 
 /**
- * Decode the `driveId` from the contract's `LibraryCreated` log in a successful
+ * Decode the `bucketId` from the contract's `LibraryCreated` log in a successful
  * `createLibrary` result, or `undefined` if it can't be found. Best-effort: the
  * UI flips to State B from the unsigned `libraryOf` re-read regardless.
  */
-export function driveIdFromEvents(
+export function bucketIdFromEvents(
   events: unknown[],
   api: ParachainApi,
   contractAddress: string,
 ): bigint | undefined {
   for (const log of decodeContractLogs(events, api, contractAddress)) {
-    const driveId = (log.args as { driveId?: bigint } | undefined)?.driveId
-    if (log.eventName === 'LibraryCreated' && driveId != null) return driveId
+    const bucketId = (log.args as { bucketId?: bigint } | undefined)?.bucketId
+    if (log.eventName === 'LibraryCreated' && bucketId != null) return bucketId
   }
   return undefined
 }
@@ -398,7 +396,7 @@ export function encodeSetRoot(rootCid: RootCid): Uint8Array {
 }
 
 /**
- * Anchor the drive's metadata Merkle root on-chain via `setRoot(rootCid)` — a
+ * Anchor the library bucket's metadata Merkle root on-chain via `setRoot(rootCid)` — a
  * signed, value-less `Revive.call`. The browser port of
  * `scripts/lib/photos.ts:anchorRoot`, submitting with `createAndSubmit` (+ the
  * shared stale-nonce retry) instead of the script's `submitTx` loop.

@@ -129,8 +129,8 @@ pub use provider_negotiation as agreement;
 /// standalone building block usable without the rest of this SDK, and their
 /// failure modes (transport, connect, subscribe) are its whole error surface.
 pub use storage_indexers::{
-    BlockEvent, BlockStream, EventFilter, EventStream, IndexerError, DRIVE_REGISTRY_PALLET,
-    S3_REGISTRY_PALLET, STORAGE_PALLETS, STORAGE_PROVIDER_PALLET,
+    BlockEvent, BlockStream, EventFilter, EventStream, IndexerError, STORAGE_PALLETS,
+    STORAGE_PROVIDER_PALLET,
 };
 
 // Re-export commonly used types

@@ -64,7 +64,9 @@ function CreationStatusCard({
           )}
         </div>
         <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium truncate">{item.name || "Untitled Drive"}</p>
+          <p className="text-sm font-medium truncate">
+            {item.bucketId !== undefined ? `Bucket #${item.bucketId}` : "New drive"}
+          </p>
           <p className="text-xs text-muted-foreground mt-0.5">
             {item.stage === "submitting" && "Submitting on-chain..."}
             {item.stage === "ready" && "Drive is ready to use"}
@@ -100,7 +102,6 @@ function CreationStatusCard({
 export default function NewDriveDialog({ open, onOpenChange }: NewDriveDialogProps) {
   const creations = useCreations();
 
-  const [name, setName] = useState("");
   const [capacity, setCapacity] = useState("10485760");
   const [duration, setDuration] = useState("10000");
   const [pricePerByte, setPricePerByte] = useState("0");
@@ -112,7 +113,7 @@ export default function NewDriveDialog({ open, onOpenChange }: NewDriveDialogPro
   /**
    * Clicking a provider's Select button IS the submit action. Negotiate
    * signed terms with the provider here, then hand them + the form values
-   * to the state hook, which runs the `submit_create_drive` chain submit.
+   * to the state hook, which runs the `create_bucket_with_primary` chain submit.
    */
   const handleProviderSelect = async (provider: AvailableProvider) => {
     setSubmitting(true);
@@ -154,15 +155,12 @@ export default function NewDriveDialog({ open, onOpenChange }: NewDriveDialogPro
         return;
       }
 
-      const drive = await createDrive({
-        name: name || undefined,
+      const bucketId = await createDrive({
         provider,
-        url: result.url,
         signed: result.signed,
         visibility,
       });
-      if (drive) {
-        setName("");
+      if (bucketId !== null) {
         onOpenChange(false);
       }
     } finally {
@@ -181,16 +179,6 @@ export default function NewDriveDialog({ open, onOpenChange }: NewDriveDialogPro
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Drive Name</label>
-              <Input
-                data-testid="new-drive-name"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="My Documents"
-              />
-            </div>
-
             <div className="grid gap-3 sm:grid-cols-3">
               <div className="space-y-1">
                 <label className="text-xs font-medium">Capacity (bytes)</label>
@@ -271,9 +259,9 @@ export default function NewDriveDialog({ open, onOpenChange }: NewDriveDialogPro
                     item={item}
                     onDismiss={dismissCreation}
                     onRetry={
-                      canRetryCreation(item.id) && name.trim()
+                      canRetryCreation(item.id)
                         ? (id) => {
-                            void retryCreation(id, name.trim());
+                            void retryCreation(id);
                           }
                         : undefined
                     }
