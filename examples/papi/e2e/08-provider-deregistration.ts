@@ -88,6 +88,7 @@ async function main() {
         replica_sync_price: undefined,
         accepting_extensions: true,
         max_capacity: 0n,
+        min_bytes: 0n,
       });
       const stored = (await api.query.StorageProvider.Providers.getValue(ferdie.address, READ_OPTS))!;
       assert.strictEqual(stored.settings.accepting_primary, true, "Should accept agreements again");

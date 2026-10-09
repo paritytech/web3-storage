@@ -79,6 +79,7 @@ export interface ProviderSettings {
   replica_sync_price: bigint | undefined;
   accepting_extensions: boolean;
   max_capacity: bigint;
+  min_bytes: bigint;
 }
 
 export interface RegistrationOptions {
@@ -98,6 +99,7 @@ const DEFAULT_SETTINGS: ProviderSettings = {
   replica_sync_price: undefined,
   accepting_extensions: true,
   max_capacity: 0n,
+  min_bytes: 0n,
 };
 
 export interface RegistrationResult {

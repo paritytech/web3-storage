@@ -26,6 +26,7 @@ import {
   makeSigner,
   READ_OPTS,
   sameAddress,
+  updateProviderSettings,
   waitForRelayBlock,
 } from "@web3-storage/sdk";
 import {
@@ -225,6 +226,46 @@ async function main() {
         "price_below_listed",
         "2.9"
       );
+    },
+  });
+
+  tests.push({
+    name: "2.9b min_bytes: provider refuses and chain rejects bytes below the minimum",
+    fn: async () => {
+      const stored = (await api.query.StorageProvider.Providers.getValue(
+        provider.address,
+        READ_OPTS,
+      ))!;
+      const original = {
+        min_duration: stored.settings.min_duration,
+        max_duration: stored.settings.max_duration,
+        price_per_byte: stored.settings.price_per_byte,
+        accepting_primary: stored.settings.accepting_primary,
+        replica_sync_price: stored.settings.replica_sync_price ?? undefined,
+        accepting_extensions: stored.settings.accepting_extensions,
+        max_capacity: stored.settings.max_capacity,
+        min_bytes: stored.settings.min_bytes,
+      };
+      // Signed while the provider has no minimum, redeemed after it raises one.
+      const earlier = await negotiateSigned(api, PROVIDER_URL, client, provider, {
+        maxBytes,
+        duration,
+      });
+      await updateProviderSettings(api, provider, { ...original, min_bytes: maxBytes + 1n });
+      try {
+        await assertNegotiateRejects(
+          () => negotiateSigned(api, PROVIDER_URL, client, provider, { maxBytes, duration }),
+          "max_bytes_below_minimum",
+          "2.9b"
+        );
+        const tx = api.tx.StorageProvider.create_bucket_with_primary({
+          ...buildSignedTermsArgs(provider, earlier),
+          visibility: Enum("Private"),
+        });
+        await submitTxExpectFailure(tx, client.signer, "MaxBytesBelowMinimum", "2.9b");
+      } finally {
+        await updateProviderSettings(api, provider, original);
+      }
     },
   });
 
