@@ -1,25 +1,25 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * FileSystemClient — drives (plain Layer 0 buckets) + the provider node's
- * /fs HTTP surface. The chain stores no drive name or drive record; a drive
- * is identified by its bucket id. Chain ops delegate to the layer-0 pallet wrappers (silent, no
- * auto-retry, finalized submission + finalized reads by default — UI-grade,
- * reorg-safe; tests/examples opt into in-block/best via readOpts/submitMode);
- * HTTP ops go through core's retrying fetch and are signed with the signer's
- * raw keypair, which the provider always requires.
+ * FileSystemClient: drives on plain Layer 0 buckets. The chain stores no
+ * drive record; a drive is identified by its bucket id. The directory tree
+ * is data in the bucket itself (format and limits in ../tree.ts), written
+ * and read with the provider's Layer 0 routes only.
  *
- * Verification: `downloadByCid` is verified (single chunk — its hash IS the
- * CID; the layer-0 downloadChunk throws CidMismatchError). Path-based
- * `downloadFile` is NOT verified: the provider's /fs file route returns no
- * data_root, and multi-chunk verification needs a Merkle DAG walk
- * (Rust-client parity) — tracked separately.
+ * Chain ops delegate to the layer-0 pallet wrappers (silent, no auto-retry,
+ * finalized submission and reads by default; tests and examples opt into
+ * best-block via readOpts/submitMode). Writes are signed with the signer,
+ * which needs a Writer or Admin role. Reads are unauthenticated: anyone who
+ * knows a CID can read the blob, so confidential files need client-side
+ * encryption. Every read is checked against the CIDs in the tree.
+ *
+ * One writer at a time: two clients that write the same drive concurrently
+ * can lose one of the changes (the last commit wins).
  */
 
-import { httpFetch } from "@web3-storage/core";
 import {
   createBucketWithPrimary as createBucketWithPrimaryTx,
-  downloadChunk,
+  readBlob,
   removeMember as removeMemberTx,
   setMember as setMemberTx,
   type WaitOpts,
@@ -27,6 +27,7 @@ import {
 
 import { Layer1Client, type Layer1ClientOptions } from "../base-client.js";
 import { getBucketInfos, listMemberBuckets } from "../bucket-info.js";
+import { withHttpContext } from "../http-context.js";
 import { resolveCreationTerms } from "../provider-url.js";
 import type {
   BucketMember,
@@ -34,7 +35,6 @@ import type {
   DriveInfo,
   FileWithType,
   FsEntry,
-  IndexRoot,
   MemberRole,
   UploadOptions,
   UploadResult,
@@ -128,151 +128,100 @@ export class FileSystemClient extends Layer1Client {
     return this.providers.waitForProvider(bucketId, opts);
   }
 
-  // ── FS HTTP ops ─────────────────────────────────────────────────────────
+  // ── File-system ops (the tree in the bucket; see ../tree.ts) ───────────
 
+  /**
+   * List a directory. With `recursive`, every descendant is included,
+   * depth-first. `mtime` is in milliseconds.
+   */
   async listDirectory(
     bucketId: bigint,
     path: string,
     opts: { recursive?: boolean; signal?: AbortSignal } = {},
   ): Promise<FsEntry[]> {
-    const providerUrl = await this.getProviderUrl(bucketId);
-    const params = new URLSearchParams({ path });
-    if (opts.recursive) params.set("recursive", "true");
-    const response = await httpFetch(
-      `${providerUrl}/fs/${bucketId}/ls?${params.toString()}`,
-      { signal: opts.signal, headers: await this.authHeaders("GET", bucketId) },
-      this.fetchOpts,
-    );
-    if (!response.ok) throw new Error(`List directory failed: ${response.status}`);
-    const result = await response.json();
-    type WireEntry = { name: string; path: string; entry_type: string; size?: number; mtime?: number };
-    return ((result.entries ?? []) as WireEntry[]).map((e) => ({
+    const tree = await this.openTree(bucketId, { signal: opts.signal });
+    const entries = await withHttpContext("List directory failed", () => tree.list(path, { recursive: opts.recursive }));
+    return entries.map((e) => ({
       name: e.name,
       path: e.path,
-      entryType: e.entry_type as "file" | "directory",
-      size: e.size ?? 0,
-      mtime: (e.mtime ?? 0) * 1000,
+      entryType: e.entryType,
+      size: Number(e.size),
+      mtime: Number(e.mtime) * 1000,
+      cid: e.cid,
     }));
   }
 
+  /**
+   * Store a file at `path`, replacing an existing file and creating missing
+   * parent directories. Fails when `path` is a directory. Requires a Writer
+   * or Admin role on the bucket.
+   */
   async uploadFile(
     bucketId: bigint,
     path: string,
     data: Uint8Array,
     options: UploadOptions = {},
   ): Promise<UploadResult> {
-    const providerUrl = await this.getProviderUrl(bucketId);
-    const response = await httpFetch(
-      `${providerUrl}/fs/${bucketId}/file?path=${encodeURIComponent(path)}`,
-      {
-        method: "PUT",
-        headers: {
-          "Content-Type": options.contentType || "application/octet-stream",
-          ...(await this.authHeaders("PUT", bucketId)),
-        },
-        body: data as BodyInit,
-        signal: options.signal,
-      },
-      this.fetchOpts,
+    const tree = await this.openTree(bucketId, { write: true, signal: options.signal });
+    const r = await withHttpContext("Upload failed", () =>
+      tree.putFile(path, data, { contentType: options.contentType }),
     );
-    if (!response.ok) {
-      throw new Error(`Upload failed: ${response.status} ${await response.text().catch(() => "")}`);
-    }
-    const body = await response.json().catch(() => ({}));
-    return { dataRoot: body.data_root, size: data.length };
+    return { dataRoot: r.contentRoot, manifestCid: r.manifestCid, rootCid: r.rootCid, size: r.size };
   }
 
-  /** GET the /fs file route, shared by the path-based download methods. */
-  private async fetchFileResponse(
-    bucketId: bigint,
-    path: string,
-    opts: { signal?: AbortSignal },
-  ): Promise<Response> {
-    const providerUrl = await this.getProviderUrl(bucketId);
-    const response = await httpFetch(
-      `${providerUrl}/fs/${bucketId}/file?path=${encodeURIComponent(path)}`,
-      { signal: opts.signal, headers: await this.authHeaders("GET", bucketId) },
-      this.fetchOpts,
-    );
-    if (!response.ok) throw new Error(`Download failed: ${response.status}`);
-    return response;
-  }
-
-  /**
-   * Download a file by path. UNVERIFIED — the /fs file route returns no
-   * data_root to check against; see the module docs.
-   */
+  /** Download a file by path. The content is checked against the drive's tree. */
   async downloadFile(
     bucketId: bigint,
     path: string,
     opts: { signal?: AbortSignal } = {},
   ): Promise<Uint8Array> {
-    const response = await this.fetchFileResponse(bucketId, path, opts);
-    return new Uint8Array(await response.arrayBuffer());
+    return (await this.downloadFileWithType(bucketId, path, opts)).bytes;
   }
 
   /**
-   * Download a file by path along with its stored MIME type (from the
-   * provider's `Content-Type` header) — e.g. to re-`uploadFile` it unchanged
-   * when moving/renaming a path. UNVERIFIED, like {@link downloadFile}.
+   * Download a file by path with its stored content type, e.g. to upload it
+   * again unchanged when moving a path. Checked like {@link downloadFile}.
    */
   async downloadFileWithType(
     bucketId: bigint,
     path: string,
     opts: { signal?: AbortSignal } = {},
   ): Promise<FileWithType> {
-    const response = await this.fetchFileResponse(bucketId, path, opts);
-    const contentType = response.headers.get("content-type") || "application/octet-stream";
-    return { bytes: new Uint8Array(await response.arrayBuffer()), contentType };
+    const tree = await this.openTree(bucketId, { signal: opts.signal });
+    const file = await withHttpContext("Download failed", () => tree.getFile(path));
+    return { bytes: file.bytes, contentType: file.contentType };
   }
 
-  /** Download a single chunk by CID — VERIFIED (throws CidMismatchError). */
-  async downloadByCid(providerUrl: string, cid: string): Promise<Uint8Array> {
-    return downloadChunk(providerUrl, cid);
+  /**
+   * Download a blob by CID from `providerUrl`. With `size`, every chunk is
+   * checked against the CID. Without it, a 64-byte result is not verified
+   * (see `ReadBlobOpts.size` in @web3-storage/layer0).
+   */
+  async downloadByCid(providerUrl: string, cid: string, size?: bigint | number): Promise<Uint8Array> {
+    return readBlob(providerUrl, cid, { fetch: this.fetchOpts.fetchImpl, size });
   }
 
+  /** Remove a file or an empty directory. Requires a Writer or Admin role. */
   async deleteFile(bucketId: bigint, path: string): Promise<void> {
-    const providerUrl = await this.getProviderUrl(bucketId);
-    const response = await httpFetch(
-      `${providerUrl}/fs/${bucketId}/file?path=${encodeURIComponent(path)}`,
-      { method: "DELETE", headers: await this.authHeaders("DELETE", bucketId) },
-      this.fetchOpts,
-    );
-    if (!response.ok) {
-      throw new Error(`Delete failed: ${response.status} ${await response.text().catch(() => "")}`);
-    }
+    const tree = await this.openTree(bucketId, { write: true });
+    await withHttpContext("Delete failed", () => tree.delete(path));
   }
 
+  /**
+   * Create a directory and any missing parents. Fails when `path` exists.
+   * Requires a Writer or Admin role.
+   */
   async createDirectory(bucketId: bigint, path: string): Promise<void> {
-    const providerUrl = await this.getProviderUrl(bucketId);
-    const response = await httpFetch(
-      `${providerUrl}/fs/${bucketId}/mkdir?path=${encodeURIComponent(path)}`,
-      { method: "POST", headers: await this.authHeaders("POST", bucketId) },
-      this.fetchOpts,
-    );
-    if (!response.ok) {
-      throw new Error(`Create directory failed: ${response.status} ${await response.text().catch(() => "")}`);
-    }
+    const tree = await this.openTree(bucketId, { write: true });
+    await withHttpContext("Create directory failed", () => tree.mkdir(path));
   }
 
-  /** The provider's own view of the drive's metadata Merkle root + counts. */
-  async getIndexRoot(bucketId: bigint): Promise<IndexRoot> {
-    const providerUrl = await this.getProviderUrl(bucketId);
-    const response = await httpFetch(
-      `${providerUrl}/fs/${bucketId}/index_root`,
-      { headers: await this.authHeaders("GET", bucketId) },
-      this.fetchOpts,
-    );
-    if (!response.ok) throw new Error(`index_root failed: ${response.status}`);
-    const body = await response.json();
-    if (typeof body.metadata_merkle_root !== "string") {
-      throw new Error("index_root response is missing metadata_merkle_root");
-    }
-    return {
-      indexRoot: body.metadata_merkle_root,
-      fileCount: Number(body.file_count ?? 0),
-      dirCount: Number(body.dir_count ?? 0),
-      totalSize: BigInt(body.total_size ?? 0),
-    };
+  /**
+   * CID of the drive's root directory (the bucket's last MMR leaf), 0x-hex,
+   * or `null` for a drive with no commits.
+   */
+  async getRootCid(bucketId: bigint): Promise<string | null> {
+    const tree = await this.openTree(bucketId);
+    return withHttpContext("Root lookup failed", () => tree.rootCid());
   }
 }
