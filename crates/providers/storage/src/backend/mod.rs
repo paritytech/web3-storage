@@ -118,29 +118,6 @@ pub trait StorageBackend: Send + Sync {
         data_roots: Vec<H256>,
     ) -> Result<(H256, u64, Vec<u64>), Error>;
 
-    /// Collect actual chunk data under a data root (DFS, leaf data in order).
-    fn collect_chunks(&self, root: H256) -> Vec<Vec<u8>> {
-        let mut chunks = Vec::new();
-        let mut stack = vec![root];
-
-        while let Some(hash) = stack.pop() {
-            if hash == H256::zero() {
-                continue;
-            }
-            if let Some(node) = self.get_node(&hash) {
-                if let Some(ref children) = node.children {
-                    for child in children.iter().rev() {
-                        stack.push(*child);
-                    }
-                } else {
-                    chunks.push(node.data.clone());
-                }
-            }
-        }
-
-        chunks
-    }
-
     /// Collect leaf chunk hashes under a data root (DFS, in order).
     fn collect_chunk_hashes(&self, root: H256) -> Vec<H256> {
         let mut hashes = Vec::new();

@@ -46,21 +46,6 @@ pub enum Error {
     #[error("Rate limiter failed: {0}")]
     RateLimiterFailed(String),
 
-    #[error("Object not found: bucket {bucket_id}, key {key}")]
-    ObjectNotFound { bucket_id: u64, key: String },
-
-    #[error("Invalid object key: {0}")]
-    InvalidObjectKey(String),
-
-    #[error("File not found: bucket {bucket_id}, path {path}")]
-    FileNotFound { bucket_id: u64, path: String },
-
-    #[error("Not a file: bucket {bucket_id}, path {path}")]
-    NotAFile { bucket_id: u64, path: String },
-
-    #[error("Invalid path: {0}")]
-    InvalidPath(String),
-
     #[error(transparent)]
     Auth(#[from] AuthError),
 
@@ -244,41 +229,6 @@ impl IntoResponse for Error {
                 ErrorResponse {
                     error: "serialization_error".to_string(),
                     details: Some(serde_json::json!({ "message": e.to_string() })),
-                },
-            ),
-            Error::ObjectNotFound { bucket_id, key } => (
-                StatusCode::NOT_FOUND,
-                ErrorResponse {
-                    error: "object_not_found".to_string(),
-                    details: Some(serde_json::json!({ "bucket_id": bucket_id, "key": key })),
-                },
-            ),
-            Error::InvalidObjectKey(key) => (
-                StatusCode::BAD_REQUEST,
-                ErrorResponse {
-                    error: "invalid_object_key".to_string(),
-                    details: Some(serde_json::json!({ "key": key })),
-                },
-            ),
-            Error::FileNotFound { bucket_id, path } => (
-                StatusCode::NOT_FOUND,
-                ErrorResponse {
-                    error: "file_not_found".to_string(),
-                    details: Some(serde_json::json!({ "bucket_id": bucket_id, "path": path })),
-                },
-            ),
-            Error::NotAFile { bucket_id, path } => (
-                StatusCode::BAD_REQUEST,
-                ErrorResponse {
-                    error: "not_a_file".to_string(),
-                    details: Some(serde_json::json!({ "bucket_id": bucket_id, "path": path })),
-                },
-            ),
-            Error::InvalidPath(msg) => (
-                StatusCode::BAD_REQUEST,
-                ErrorResponse {
-                    error: "invalid_path".to_string(),
-                    details: Some(serde_json::json!({ "message": msg })),
                 },
             ),
             Error::Auth(AuthError::AuthRequired | AuthError::TimestampExpired) => (
@@ -535,35 +485,6 @@ mod tests {
         );
         assert_eq!(
             status_of(Error::decode("node data", "invalid base64")),
-            StatusCode::BAD_REQUEST
-        );
-        assert_eq!(
-            status_of(Error::ObjectNotFound {
-                bucket_id: 1,
-                key: "k".into()
-            }),
-            StatusCode::NOT_FOUND
-        );
-        assert_eq!(
-            status_of(Error::InvalidObjectKey("k".into())),
-            StatusCode::BAD_REQUEST
-        );
-        assert_eq!(
-            status_of(Error::FileNotFound {
-                bucket_id: 1,
-                path: "/a".into()
-            }),
-            StatusCode::NOT_FOUND
-        );
-        assert_eq!(
-            status_of(Error::NotAFile {
-                bucket_id: 1,
-                path: "/a".into()
-            }),
-            StatusCode::BAD_REQUEST
-        );
-        assert_eq!(
-            status_of(Error::InvalidPath("p".into())),
             StatusCode::BAD_REQUEST
         );
         assert_eq!(
