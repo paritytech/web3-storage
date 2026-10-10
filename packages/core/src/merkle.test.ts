@@ -16,7 +16,7 @@ import {
   type MerkleEntry,
 } from "./merkle.js";
 import { computeCid } from "./verify.js";
-import { toHex } from "./bytes.js";
+import { concatBytes, toHex } from "./bytes.js";
 
 const ZERO32 = new Uint8Array(32);
 
@@ -123,7 +123,7 @@ describe("verifyChunkProof", () => {
 
 describe("verifyMmrProof", () => {
   const leafHash = (l: { dataRoot: Uint8Array; dataSize: bigint; totalSize: bigint }) =>
-    blake2b256(concat(l.dataRoot, u64le(l.dataSize), u64le(l.totalSize)));
+    blake2b256(concatBytes(l.dataRoot, u64le(l.dataSize), u64le(l.totalSize)));
   const leaves = [1, 2, 3].map((n) => ({
     dataRoot: computeCid(new Uint8Array([n])),
     dataSize: 1n,
@@ -164,7 +164,7 @@ describe("metadataMerkleRoot", () => {
   it("orders entries by UTF-8 path bytes regardless of input order", () => {
     const enc = new TextEncoder();
     const leafFor = (e: MerkleEntry) =>
-      blake2b256(concat(enc.encode(e.path), e.dataRoot, u64le(e.size)));
+      blake2b256(concatBytes(enc.encode(e.path), e.dataRoot, u64le(e.size)));
     const a: MerkleEntry = { path: "/a.jpg", dataRoot: ZERO32, size: 1n };
     const b: MerkleEntry = { path: "/b.jpg", dataRoot: ZERO32, size: 2n };
     const expected = toHex(paddedMerkleRoot([leafFor(a), leafFor(b)]));
@@ -179,15 +179,3 @@ describe("u64le", () => {
     expect(toHex(u64le(256n))).toBe("0x0001000000000000");
   });
 });
-
-function concat(...arrays: Uint8Array[]): Uint8Array {
-  let total = 0;
-  for (const a of arrays) total += a.length;
-  const out = new Uint8Array(total);
-  let off = 0;
-  for (const a of arrays) {
-    out.set(a, off);
-    off += a.length;
-  }
-  return out;
-}

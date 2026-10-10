@@ -11,7 +11,7 @@
 //
 // Pure functions, no I/O, browser-safe.
 
-import { bytesEq } from "./bytes.js";
+import { bytesEq, concatBytes } from "./bytes.js";
 import { computeCid, DEFAULT_CHUNK_SIZE } from "./verify.js";
 
 /** One drive entry as it contributes to the metadata Merkle tree. */
@@ -209,18 +209,6 @@ function nextPowerOfTwo(n: number): number {
   let p = 1;
   while (p < n) p <<= 1;
   return p;
-}
-
-function concatBytes(...arrays: Uint8Array[]): Uint8Array {
-  let total = 0;
-  for (const a of arrays) total += a.length;
-  const out = new Uint8Array(total);
-  let off = 0;
-  for (const a of arrays) {
-    out.set(a, off);
-    off += a.length;
-  }
-  return out;
 }
 
 /** Lexicographic comparison of two byte arrays (Rust `[u8]`/`str` ordering). */

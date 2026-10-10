@@ -13,6 +13,7 @@ import {
   bytesToBase64,
   chunkCount,
   computeCid,
+  concatBytes,
   createLimiter,
   DEFAULT_CHUNK_SIZE,
   hexToBytes,
@@ -380,7 +381,7 @@ export async function uploadBlob(
         providerUrl,
         bucketId,
         n.hash,
-        concat(n.left, n.right),
+        concatBytes(n.left, n.right),
         [n.left, n.right],
         signer,
         opts,
@@ -557,7 +558,7 @@ export async function readBlob(
       throw new BlobVerificationError(rootHex, `chunk ${i} has ${c.length} bytes`);
     }
   });
-  return concat(...chunks);
+  return concatBytes(...chunks);
 }
 
 /** `GET /read` in windows; each chunk is checked against its Merkle proof. */
@@ -647,7 +648,7 @@ async function walkBlob(providerUrl: string, root: Uint8Array, opts: ReadBlobOpt
       return [data];
     }
     const children = (node.children as string[]).map(hexToBytes);
-    if (children.length !== 2 || !bytesEq(concat(children[0], children[1]), data)) {
+    if (children.length !== 2 || !bytesEq(concatBytes(children[0], children[1]), data)) {
       throw new BlobVerificationError(rootHex, `node ${hashHex} has invalid children`);
     }
     const parts = await Promise.all(children.filter((c) => !bytesEq(c, zero)).map((c) => walk(c, depth + 1)));
@@ -658,14 +659,4 @@ async function walkBlob(providerUrl: string, root: Uint8Array, opts: ReadBlobOpt
     throw new BlobVerificationError(rootHex, "chunks do not rebuild the root");
   }
   return chunks;
-}
-
-function concat(...arrays: Uint8Array[]): Uint8Array {
-  const out = new Uint8Array(arrays.reduce((n, a) => n + a.length, 0));
-  let off = 0;
-  for (const a of arrays) {
-    out.set(a, off);
-    off += a.length;
-  }
-  return out;
 }
