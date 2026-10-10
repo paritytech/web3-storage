@@ -275,8 +275,8 @@ pub fn sign_sync_roots(
 }
 
 /// Helper: sign `commitment` for `bucket_id` the way a primary does for
-/// `checkpoint`, `extend_checkpoint` and `challenge_offchain`, with the pair
-/// stamped as the provider's registered key.
+/// `checkpoint`, `extend_checkpoint` and `challenge_offchain`. It writes the
+/// provider's key into storage, so call it before `assert_noop!`.
 #[allow(dead_code)]
 pub fn sign_commitment(
     provider: u64,
