@@ -1,0 +1,196 @@
+{
+  "about": "Written by clients/s3/src/fixtures.rs; read by packages/layer1/src/fixtures.test.ts. Regenerate: UPDATE_FS_FIXTURES=1 cargo test -p s3-client fixtures",
+  "blobs": {
+    "0x0cbe878e2768b006ffc1ad8de41a36e1a701fcfc0e81ffc43485bf57573bcc4a": "BwAAAAAAAAAEHGNhdC5qcGcAwsPS2TbX8rgYwCt31dv1kfymguzmpJeJ/UnbkWvzmCAEAAAAAAAAAADxU2UAAAAAAA==",
+    "0x0e5751c026e543b2e8ab2eb06099daa1d1e5df47778f7787faab45cdf12fe3a8": "",
+    "0x110f0ce1f55bb0906eed9b5c4e372325f4abb5e3a2c57f39c65c9b537e3e9ece": "aGVsbG8gZnJvbSBhLnR4dAo=",
+    "0x3630985b3a49ded02fa0e4dce73c425b516cc690b1ca0f67ef70afea0f04c2c0": "BwAAAAAAAAAEEGRvY3MBxuv8wC0vgZak6PsydxdzgqpowEezCe2Ljb7tJXzOisQAAAAAAAAAAADxU2UAAAAAAA==",
+    "0x3ef08b32322b98b1c85fa179c385f9f184e7869a1000fc17da026d030d088f62": "BwAAAAAAAAAEFGEudHh0ANOOQM7JhX/BsLZHoU0aIowWOfBtDVYhRcoNSXfZoxLcEQAAAAAAAAAA8VNlAAAAAAA=",
+    "0x424969d2fe47cdec2a824709b8066cc1d63cc4b6a16a3c1fa421cc2a6625f7c2": "bWVvdw==",
+    "0x47a941d1986efdf6c7c82a48ad6b503ceb7621e310686c5f858ec0b076b61ddb": "BwAAAAAAAABgYXBwbGljYXRpb24vb2N0ZXQtc3RyZWFtAAAAAAAAAAAEDldRwCblQ7Loqy6wYJnaodHl30d3j3eH+qtFzfEv46gAAAAAAAA=",
+    "0x50b9c98ebfac7f807734f0984ce119734808982b3b0c26dbe2b31b814b252d2f": "BwAAAAAAAAAQHGJpZy5iaW4AigZ+V6bntyGKGgUUTcmR9I4G7fdKZngooQ5X2vUNENRkAAwAAAAAAADxU2UAAAAAEGRvY3MBPvCLMjIrmLHIX6F5w4X58YTnhpoQAPwX2gJtAw0Ij2IAAAAAAAAAAADxU2UAAAAAFGVtcHR5AEepQdGYbv32x8gqSK1rUDzrdiHjEGhsX4WOwLB2th3bAAAAAAAAAAAA8VNlAAAAABhwaG90b3MBDL6HjidosAb/wa2N5Bo24acB/PwOgf/ENIW/V1c7zEoAAAAAAAAAAADxU2UAAAAAAA==",
+    "0x8a067e57a6e7b7218a1a05144dc991f48e06edf74a667828a10e57daf50d10d4": "BwAAAAAAAABgYXBwbGljYXRpb24vb2N0ZXQtc3RyZWFtZAAMAAAAAAAQzxVMR+9bo7oOWew2JjRheCGjvK1Wgeliuz1Q9j+8fWgAAAAAhubHjxYAKdy5azbLZcu22M5/tpQ0qk1CAbLosTm7jFQBAAAA0fL1hLJP1UA+eC/v5MAjaI9JmME78ConusQl1MYO/LICAAAA1iRe2M9wEDDALBa+ewqpAZgJrFoqP80UPb8cw+ZHdC0DAAAAAAA=",
+    "0x98b57c489c67428489b974bda2459cb534c80be8917d11e6a7b2ae62f0f671e3": "BwAAAAAAAAAEEGRvY3MBPvCLMjIrmLHIX6F5w4X58YTnhpoQAPwX2gJtAw0Ij2IAAAAAAAAAAADxU2UAAAAAAA==",
+    "0xa0e1836ebc8878cd96a6baee3cb3c6c1a56649d4a8e9070fac7e44b5a3a732ea": "BwAAAAAAAAAIFGEudHh0ANOOQM7JhX/BsLZHoU0aIowWOfBtDVYhRcoNSXfZoxLcEQAAAAAAAAAA8VNlAAAAABxvbGQudHh0AKEfklx0q9RY/1noCvQN531vIEkUkd28w7r7T9a3IA0qDQAAAAAAAAAA8VNlAAAAAAA=",
+    "0xa11f925c74abd458ff59e80af40de77d6f20491491ddbcc3bafb4fd6b7200d2a": "BwAAAAAAAAAodGV4dC9wbGFpbg0AAAAAAAAABMIx3S8ce6sbRdx9szMzs9VvMEJRCGSjRJD+pIHu3K2fAAAAAAAA",
+    "0xb0ed1a651ff38580baf5b8418cb0db538f73bc4b67c51233ad056ab1d2c264cc": "BwAAAAAAAAAQHGJpZy5iaW4AigZ+V6bntyGKGgUUTcmR9I4G7fdKZngooQ5X2vUNENRkAAwAAAAAAADxU2UAAAAAEGRvY3MBoOGDbryIeM2WprruPLPGwaVmSdSo6QcPrH5EtaOnMuoAAAAAAAAAAADxU2UAAAAAFGVtcHR5AEepQdGYbv32x8gqSK1rUDzrdiHjEGhsX4WOwLB2th3bAAAAAAAAAAAA8VNlAAAAABhwaG90b3MBDL6HjidosAb/wa2N5Bo24acB/PwOgf/ENIW/V1c7zEoAAAAAAAAAAADxU2UAAAAAAA==",
+    "0xc231dd2f1c7bab1b45dc7db33333b3d56f3042510864a34490fea481eedcad9f": "ZGVsZXRlZCBsYXRlcg==",
+    "0xc2c3d2d936d7f2b818c02b77d5dbf591fca682ece6a49789fd49db916bf39820": "BwAAAAAAAAAoaW1hZ2UvanBlZwQAAAAAAAAABEJJadL+R83sKoJHCbgGbMHWPMS2oWo8H6QhzCpmJffCAAAAAAAMFGFscGhhFGZpcnN0MGNhbWVyYS1tb2RlbBBYMTAwEHpldGEQbGFzdA==",
+    "0xc6ebfcc02d2f8196a4e8fb3277177382aa68c047b309ed8b8dbeed257cce8ac4": "BwAAAAAAAAAAAA==",
+    "0xc9962588f79bbb3be554f570c02e23ab2551b64b74d8ecad5a092f7876d011ac": "BwAAAAAAAAAEEGRvY3MBoOGDbryIeM2WprruPLPGwaVmSdSo6QcPrH5EtaOnMuoAAAAAAAAAAADxU2UAAAAAAA==",
+    "0xd38e40cec9857fc1b0b647a14d1a228c1639f06d0d562145ca0d4977d9a312dc": "BwAAAAAAAAAodGV4dC9wbGFpbhEAAAAAAAAABBEPDOH1W7CQbu2bXE43IyX0q7XjosV/OcZcm1N+Pp7OAAAAAAAA",
+    "0xe9ffba899c878bf8bf75a25d265a8402a51ce16edbaef2b356f72ea513f4655a": "BwAAAAAAAAAIHGJpZy5iaW4AigZ+V6bntyGKGgUUTcmR9I4G7fdKZngooQ5X2vUNENRkAAwAAAAAAADxU2UAAAAAEGRvY3MBoOGDbryIeM2WprruPLPGwaVmSdSo6QcPrH5EtaOnMuoAAAAAAAAAAADxU2UAAAAAAA==",
+    "0xfa72ad183ee76d94e2b2c460f9dda27185985a77bafa5e5c3176069513eec86d": "BwAAAAAAAAAMHGJpZy5iaW4AigZ+V6bntyGKGgUUTcmR9I4G7fdKZngooQ5X2vUNENRkAAwAAAAAAADxU2UAAAAAEGRvY3MBoOGDbryIeM2WprruPLPGwaVmSdSo6QcPrH5EtaOnMuoAAAAAAAAAAADxU2UAAAAAFGVtcHR5AEepQdGYbv32x8gqSK1rUDzrdiHjEGhsX4WOwLB2th3bAAAAAAAAAAAA8VNlAAAAAAA="
+  },
+  "bucket_id": 7,
+  "commits": [
+    [
+      "0xc6ebfcc02d2f8196a4e8fb3277177382aa68c047b309ed8b8dbeed257cce8ac4",
+      "0x3630985b3a49ded02fa0e4dce73c425b516cc690b1ca0f67ef70afea0f04c2c0"
+    ],
+    [
+      "0x110f0ce1f55bb0906eed9b5c4e372325f4abb5e3a2c57f39c65c9b537e3e9ece",
+      "0xd38e40cec9857fc1b0b647a14d1a228c1639f06d0d562145ca0d4977d9a312dc",
+      "0x3ef08b32322b98b1c85fa179c385f9f184e7869a1000fc17da026d030d088f62",
+      "0x98b57c489c67428489b974bda2459cb534c80be8917d11e6a7b2ae62f0f671e3"
+    ],
+    [
+      "0xc231dd2f1c7bab1b45dc7db33333b3d56f3042510864a34490fea481eedcad9f",
+      "0xa11f925c74abd458ff59e80af40de77d6f20491491ddbcc3bafb4fd6b7200d2a",
+      "0xa0e1836ebc8878cd96a6baee3cb3c6c1a56649d4a8e9070fac7e44b5a3a732ea",
+      "0xc9962588f79bbb3be554f570c02e23ab2551b64b74d8ecad5a092f7876d011ac"
+    ],
+    [
+      "0xd952c74797a9ba541356b20068cc3a94f8885d17959951e40cdfbb912637f508",
+      "0x8a067e57a6e7b7218a1a05144dc991f48e06edf74a667828a10e57daf50d10d4",
+      "0xe9ffba899c878bf8bf75a25d265a8402a51ce16edbaef2b356f72ea513f4655a"
+    ],
+    [
+      "0x0e5751c026e543b2e8ab2eb06099daa1d1e5df47778f7787faab45cdf12fe3a8",
+      "0x47a941d1986efdf6c7c82a48ad6b503ceb7621e310686c5f858ec0b076b61ddb",
+      "0xfa72ad183ee76d94e2b2c460f9dda27185985a77bafa5e5c3176069513eec86d"
+    ],
+    [
+      "0x424969d2fe47cdec2a824709b8066cc1d63cc4b6a16a3c1fa421cc2a6625f7c2",
+      "0xc2c3d2d936d7f2b818c02b77d5dbf591fca682ece6a49789fd49db916bf39820",
+      "0x0cbe878e2768b006ffc1ad8de41a36e1a701fcfc0e81ffc43485bf57573bcc4a",
+      "0xb0ed1a651ff38580baf5b8418cb0db538f73bc4b67c51233ad056ab1d2c264cc"
+    ],
+    [
+      "0x3ef08b32322b98b1c85fa179c385f9f184e7869a1000fc17da026d030d088f62",
+      "0x50b9c98ebfac7f807734f0984ce119734808982b3b0c26dbe2b31b814b252d2f"
+    ]
+  ],
+  "expected": {
+    "files": {
+      "/big.bin": {
+        "blake2_256": "0x2cf7e282c04bd48da05c772f0b78855542b0c0a34a6d8369fede10fbdfd6d310",
+        "content_root": "0xd952c74797a9ba541356b20068cc3a94f8885d17959951e40cdfbb912637f508",
+        "content_type": "application/octet-stream",
+        "manifest_cid": "0x8a067e57a6e7b7218a1a05144dc991f48e06edf74a667828a10e57daf50d10d4",
+        "mtime": 1700000000,
+        "size": 786532,
+        "user_metadata": []
+      },
+      "/docs/a.txt": {
+        "blake2_256": "0x110f0ce1f55bb0906eed9b5c4e372325f4abb5e3a2c57f39c65c9b537e3e9ece",
+        "content_root": "0x110f0ce1f55bb0906eed9b5c4e372325f4abb5e3a2c57f39c65c9b537e3e9ece",
+        "content_type": "text/plain",
+        "manifest_cid": "0xd38e40cec9857fc1b0b647a14d1a228c1639f06d0d562145ca0d4977d9a312dc",
+        "mtime": 1700000000,
+        "size": 17,
+        "user_metadata": []
+      },
+      "/empty": {
+        "blake2_256": "0x0e5751c026e543b2e8ab2eb06099daa1d1e5df47778f7787faab45cdf12fe3a8",
+        "content_root": "0x0e5751c026e543b2e8ab2eb06099daa1d1e5df47778f7787faab45cdf12fe3a8",
+        "content_type": "application/octet-stream",
+        "manifest_cid": "0x47a941d1986efdf6c7c82a48ad6b503ceb7621e310686c5f858ec0b076b61ddb",
+        "mtime": 1700000000,
+        "size": 0,
+        "user_metadata": []
+      },
+      "/photos/cat.jpg": {
+        "blake2_256": "0x424969d2fe47cdec2a824709b8066cc1d63cc4b6a16a3c1fa421cc2a6625f7c2",
+        "content_root": "0x424969d2fe47cdec2a824709b8066cc1d63cc4b6a16a3c1fa421cc2a6625f7c2",
+        "content_type": "image/jpeg",
+        "manifest_cid": "0xc2c3d2d936d7f2b818c02b77d5dbf591fca682ece6a49789fd49db916bf39820",
+        "mtime": 1700000000,
+        "size": 4,
+        "user_metadata": [
+          [
+            "alpha",
+            "first"
+          ],
+          [
+            "camera-model",
+            "X100"
+          ],
+          [
+            "zeta",
+            "last"
+          ]
+        ]
+      }
+    },
+    "listings": {
+      "/": [
+        {
+          "cid": "0x8a067e57a6e7b7218a1a05144dc991f48e06edf74a667828a10e57daf50d10d4",
+          "entry_type": "file",
+          "mtime": 1700000000,
+          "name": "big.bin",
+          "size": 786532
+        },
+        {
+          "cid": "0x3ef08b32322b98b1c85fa179c385f9f184e7869a1000fc17da026d030d088f62",
+          "entry_type": "directory",
+          "mtime": 1700000000,
+          "name": "docs",
+          "size": 0
+        },
+        {
+          "cid": "0x47a941d1986efdf6c7c82a48ad6b503ceb7621e310686c5f858ec0b076b61ddb",
+          "entry_type": "file",
+          "mtime": 1700000000,
+          "name": "empty",
+          "size": 0
+        },
+        {
+          "cid": "0x0cbe878e2768b006ffc1ad8de41a36e1a701fcfc0e81ffc43485bf57573bcc4a",
+          "entry_type": "directory",
+          "mtime": 1700000000,
+          "name": "photos",
+          "size": 0
+        }
+      ],
+      "/docs": [
+        {
+          "cid": "0xd38e40cec9857fc1b0b647a14d1a228c1639f06d0d562145ca0d4977d9a312dc",
+          "entry_type": "file",
+          "mtime": 1700000000,
+          "name": "a.txt",
+          "size": 17
+        }
+      ],
+      "/photos": [
+        {
+          "cid": "0xc2c3d2d936d7f2b818c02b77d5dbf591fca682ece6a49789fd49db916bf39820",
+          "entry_type": "file",
+          "mtime": 1700000000,
+          "name": "cat.jpg",
+          "size": 4
+        }
+      ]
+    },
+    "objects": {
+      "photos/cat.jpg": {
+        "blake2_256": "0x424969d2fe47cdec2a824709b8066cc1d63cc4b6a16a3c1fa421cc2a6625f7c2",
+        "content_type": "image/jpeg",
+        "etag": "0x424969d2fe47cdec2a824709b8066cc1d63cc4b6a16a3c1fa421cc2a6625f7c2",
+        "last_modified": 1700000000,
+        "metadata": {
+          "alpha": "first",
+          "camera-model": "X100",
+          "zeta": "last"
+        },
+        "size": 4
+      }
+    },
+    "root_cid": "0x50b9c98ebfac7f807734f0984ce119734808982b3b0c26dbe2b31b814b252d2f"
+  },
+  "generated_blobs": [
+    {
+      "chunk_hashes": [
+        "0xcf154c47ef5ba3ba0e59ec362634617821a3bcad5681e962bb3d50f63fbc7d68",
+        "0x86e6c78f160029dcb96b36cb65cbb6d8ce7fb69434aa4d4201b2e8b139bb8c54",
+        "0xd1f2f584b24fd5403e782fefe4c023688f4998c13bf02a27bac425d4c60efcb2",
+        "0xd6245ed8cf701030c02c16be7b0aa9019809ac5a2a3fcd143dbf1cc3e647742d"
+      ],
+      "cid": "0xd952c74797a9ba541356b20068cc3a94f8885d17959951e40cdfbb912637f508",
+      "generator": "byte i is i % 251",
+      "size": 786532
+    }
+  ],
+  "mtime": 1700000000
+}

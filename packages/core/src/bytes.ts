@@ -36,6 +36,19 @@ export function bytesEq(
   return true;
 }
 
+/** Concatenate byte arrays into one new array. */
+export function concatBytes(...arrays: Uint8Array[]): Uint8Array {
+  let total = 0;
+  for (const a of arrays) total += a.length;
+  const out = new Uint8Array(total);
+  let off = 0;
+  for (const a of arrays) {
+    out.set(a, off);
+    off += a.length;
+  }
+  return out;
+}
+
 export function bytesToBase64(bytes: Uint8Array): string {
   let bin = "";
   const CHUNK = 0x8000; // String.fromCharCode arg-count limit headroom

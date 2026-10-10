@@ -10,6 +10,8 @@
 //! 4. Upload files
 //! 5. List directories
 //! 6. Download and verify files
+//! 7. Read the drive from a second client instance
+//! 8. Delete a file and an empty directory
 //!
 //! Usage: cargo run --example ci_integration_test <chain_ws> <provider_url>
 //!
@@ -23,7 +25,7 @@ use storage_client::{AdminClient, ClientConfig, NegotiateRequest, ProviderClient
 use subxt_signer::sr25519::dev as dev_signer;
 
 async fn list_and_verify(
-    fs_client: &mut FileSystemClient,
+    fs_client: &FileSystemClient,
     bucket_id: u64,
     path: &str,
     expected_count: usize,
@@ -66,7 +68,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Step 1: Create the client
     println!("Step 1: Creating file system client...");
     let signer = Signer::from_seed("//Alice")?;
-    let mut fs_client = FileSystemClient::new(chain_ws, provider_url, signer.clone()).await?;
+    let fs_client = FileSystemClient::new(chain_ws, provider_url, signer.clone()).await?;
     println!("  Client connected successfully");
 
     let owner: AccountId32 = dev_signer::alice().public_key().0.into();
@@ -136,7 +138,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let test_content_1 = b"Hello from CI integration test!";
     fs_client
-        .upload_file(bucket_id, "/test-dir/hello.txt", test_content_1)
+        .upload_file(
+            bucket_id,
+            "/test-dir/hello.txt",
+            test_content_1,
+            Some("text/plain"),
+        )
         .await?;
     println!(
         "  Uploaded /test-dir/hello.txt ({} bytes)",
@@ -145,7 +152,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let test_content_2 = b"This is a nested file in the subdirectory.";
     fs_client
-        .upload_file(bucket_id, "/test-dir/subdir/nested.txt", test_content_2)
+        .upload_file(
+            bucket_id,
+            "/test-dir/subdir/nested.txt",
+            test_content_2,
+            None,
+        )
         .await?;
     println!(
         "  Uploaded /test-dir/subdir/nested.txt ({} bytes)",
@@ -156,7 +168,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!();
     println!("Step 6: Listing directories...");
 
-    let root_entries = list_and_verify(&mut fs_client, bucket_id, "/", 1).await?;
+    let root_entries = list_and_verify(&fs_client, bucket_id, "/", 1).await?;
     assert!(
         root_entries[0].is_directory(),
         "Expected test-dir to be a directory"
@@ -167,8 +179,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "Expected entry named 'test-dir'"
     );
 
-    list_and_verify(&mut fs_client, bucket_id, "/test-dir", 2).await?;
-    list_and_verify(&mut fs_client, bucket_id, "/test-dir/subdir", 1).await?;
+    list_and_verify(&fs_client, bucket_id, "/test-dir", 2).await?;
+    list_and_verify(&fs_client, bucket_id, "/test-dir/subdir", 1).await?;
 
     // Step 7: Download and verify files
     println!();
@@ -202,9 +214,35 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     println!("    Content verified!");
 
-    // Step 8: Share the drive with Bob, then revoke access
+    // Step 8: Open the drive from a new client instance. It finds the root
+    // directory through the bucket's last MMR leaf.
     println!();
-    println!("Step 8: Adding and removing a member...");
+    println!("Step 8: Reading the drive from a new client...");
+    let second_client =
+        FileSystemClient::new(chain_ws, provider_url, Signer::from_seed("//Alice")?).await?;
+    let file = second_client
+        .get_file(bucket_id, "/test-dir/hello.txt")
+        .await?;
+    assert_eq!(file.data.as_slice(), test_content_1);
+    assert_eq!(file.stat.content_type(), "text/plain");
+    println!(
+        "  Root CID: {:?}",
+        second_client.get_root_cid(bucket_id).await?
+    );
+
+    // Step 9: Delete a file and an empty directory
+    println!();
+    println!("Step 9: Deleting...");
+    fs_client
+        .delete(bucket_id, "/test-dir/subdir/nested.txt")
+        .await?;
+    fs_client.delete(bucket_id, "/test-dir/subdir").await?;
+    list_and_verify(&fs_client, bucket_id, "/test-dir", 1).await?;
+    println!("  Deleted /test-dir/subdir/nested.txt and /test-dir/subdir");
+
+    // Step 10: Share the drive with Bob, then revoke access
+    println!();
+    println!("Step 10: Adding and removing a member...");
     let bob: AccountId32 = dev_signer::bob().public_key().0.into();
     fs_client
         .add_member(bucket_id, bob.clone(), Role::Writer)
@@ -223,6 +261,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  - Uploaded 2 files");
     println!("  - Listed 3 directories");
     println!("  - Downloaded and verified 2 files");
+    println!("  - Read the drive from a second client");
+    println!("  - Deleted a file and a directory");
 
     Ok(())
 }

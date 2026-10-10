@@ -12,17 +12,22 @@
 //! drive means adding the account as a bucket member.
 //!
 //! - Drive creation (`create_bucket_with_primary`) and membership
-//! - File operations (upload, download)
-//! - Directory operations (create, list, traverse)
-//! - DAG navigation and CID resolution
+//! - File operations (upload, download, delete)
+//! - Directory operations (create, list, delete)
 //! - Checkpoints of the drive's bucket
+//!
+//! Files and directories are blobs in the drive's bucket, written and read
+//! through Layer 0 routes only. The root directory is the bucket's last MMR
+//! leaf, so any client instance can open a drive. See [`tree`] for the
+//! format, the write order and the limits (single writer, unauthenticated
+//! reads).
 //!
 //! # Example
 //!
 //! ```ignore
 //! use file_system_client::{FileSystemClient, Signer};
 //!
-//! let mut fs_client = FileSystemClient::new(
+//! let fs_client = FileSystemClient::new(
 //!     "ws://127.0.0.1:2222",
 //!     "http://127.0.0.1:3333",
 //!     Signer::from_seed("//Alice")?,
@@ -33,18 +38,18 @@
 //!     .create_drive(provider, signed.terms, signed.signature, Visibility::Private)
 //!     .await?;
 //!
-//! fs_client.upload_file(bucket_id, "/documents/report.pdf", &file_bytes).await?;
+//! fs_client
+//!     .upload_file(bucket_id, "/documents/report.pdf", &file_bytes, Some("application/pdf"))
+//!     .await?;
 //! let entries = fs_client.list_directory(bucket_id, "/documents").await?;
 //! let bytes = fs_client.download_file(bucket_id, "/documents/report.pdf").await?;
 //! ```
 
 mod substrate;
+pub mod tree;
 
-use file_system_primitives::{
-    compute_cid, Cid, DirectoryEntry, DirectoryNode, EntryType, FileManifest,
-};
-use sp_runtime::{AccountId32, BoundedVec};
-use std::collections::HashMap;
+use file_system_primitives::{Cid, DirectoryEntry, DEFAULT_MIME_TYPE};
+use sp_runtime::AccountId32;
 use std::sync::Arc;
 use storage_client::{
     BatchedCheckpointConfig, BatchedInterval, CheckpointCallback, CheckpointLoopHandle,
@@ -57,6 +62,7 @@ use tokio::sync::Mutex;
 pub use storage_client::{CheckpointConfig, CheckpointResult, Signer};
 pub use storage_primitives::{BucketId, Role};
 pub use substrate::SubstrateClient;
+pub use tree::{BlobLength, BlobStore, EmptyParents, FileContent, FileStat, Tree};
 
 /// File system client errors
 #[derive(Debug, Error)]
@@ -80,10 +86,26 @@ pub enum FsClientError {
     #[error("Not a file: {0}")]
     NotAFile(String),
 
-    /// This client has no root CID for the drive: it did not create the
-    /// drive. The root CID exists only in this client's memory.
-    #[error("Drive not found: bucket {0}")]
-    DriveNotFound(BucketId),
+    /// The directory has entries; delete them first.
+    #[error("Directory not empty: {0}")]
+    DirectoryNotEmpty(String),
+
+    /// The bucket's last MMR leaf is not a root directory of this drive.
+    /// Something other than the file system or S3 clients committed to the
+    /// bucket.
+    #[error("Bucket {bucket_id} is not a file system bucket: {reason}")]
+    NotAFileSystemBucket {
+        /// The bucket that was read.
+        bucket_id: BucketId,
+        /// What is wrong with the last leaf.
+        reason: String,
+    },
+
+    /// The provider's MMR proof is not a proof of the last leaf of its
+    /// commitment. A commit by another writer between the two requests also
+    /// causes it; retry the operation.
+    #[error("Invalid MMR proof for the last leaf of bucket {0}")]
+    InvalidMmrProof(BucketId),
 
     #[error("Network error: {0}")]
     Network(#[from] reqwest::Error),
@@ -106,8 +128,14 @@ pub enum FsClientError {
     #[error("Configuration error: {0}")]
     Config(String),
 
+    /// A blob's data root is not the CID that references it.
     #[error("CID mismatch: expected {expected:?}, got {got:?}")]
-    CidMismatch { expected: Cid, got: Cid },
+    CidMismatch {
+        /// The CID that references the blob.
+        expected: Cid,
+        /// The data root of the bytes read or uploaded.
+        got: Cid,
+    },
 }
 
 pub type Result<T> = std::result::Result<T, FsClientError>;
@@ -118,8 +146,6 @@ pub struct FileSystemClient {
     storage_client: StorageUserClient,
     /// Substrate blockchain client
     substrate_client: SubstrateClient,
-    /// In-memory cache of drive root CIDs (bucket_id -> root_cid)
-    root_cache: HashMap<BucketId, Cid>,
     /// Background checkpoint loop handle (if automatic checkpointing is enabled)
     checkpoint_handle: Option<Arc<Mutex<CheckpointLoopHandle>>>,
 }
@@ -153,13 +179,11 @@ impl FileSystemClient {
         Ok(Self {
             storage_client,
             substrate_client,
-            root_cache: HashMap::new(),
             checkpoint_handle: None,
         })
     }
 
-    /// Create a drive: a Layer 0 bucket with one primary agreement, plus an
-    /// empty root directory uploaded to the provider.
+    /// Create a drive: a Layer 0 bucket with one primary agreement.
     ///
     /// Submits `StorageProvider::create_bucket_with_primary`, which creates the
     /// bucket and opens the primary agreement in one call. The signer becomes
@@ -171,6 +195,7 @@ impl FileSystemClient {
     /// * `visibility` - Bucket read visibility
     ///
     /// Returns the bucket id. Use it as the drive id in every other call.
+    /// The drive starts empty; nothing is stored until the first write.
     ///
     /// # Example
     ///
@@ -199,31 +224,14 @@ impl FileSystemClient {
     /// ).await?;
     /// ```
     pub async fn create_drive(
-        &mut self,
+        &self,
         provider: AccountId32,
         terms: storage_client::AgreementTermsOf,
         sig: sp_runtime::MultiSignature,
         visibility: storage_client::Visibility,
     ) -> Result<BucketId> {
-        let bucket_id = self
-            .create_bucket_on_chain(provider, &terms, &sig, visibility)
-            .await?;
-
-        // Create an empty root directory and upload it to the provider
-        let root_dir = DirectoryNode::new_empty(bucket_id);
-        let root_dir_bytes = root_dir.to_scale_bytes();
-        let root_cid = self.upload_blob(bucket_id, &root_dir_bytes).await?;
-
-        // Verify the provider returned the CID we expect for these bytes.
-        // A mismatch means the provider's content-addressing disagrees with ours
-        // (corruption, tampering, or hash-algo drift) — refuse to continue.
-        Self::ensure_cid_matches(compute_cid(&root_dir_bytes), root_cid)?;
-
-        // Cache the root CID (now managed off-chain only)
-        tracing::debug!("create_drive: caching root_cid={root_cid:?} for bucket {bucket_id}");
-        self.root_cache.insert(bucket_id, root_cid);
-
-        Ok(bucket_id)
+        self.create_bucket_on_chain(provider, &terms, &sig, visibility)
+            .await
     }
 
     /// Add `member` to the drive's bucket with `role`, or change its role.
@@ -249,149 +257,79 @@ impl FileSystemClient {
         Ok(())
     }
 
-    /// Upload a file to the file system
+    /// The file tree of `bucket_id`, read and written through this client's
+    /// provider.
+    pub fn tree(&self, bucket_id: BucketId) -> Tree<&StorageUserClient> {
+        Tree::new(&self.storage_client, bucket_id)
+    }
+
+    /// Write `data` as the file at `path` (e.g. `/documents/report.pdf`).
     ///
-    /// # Arguments
-    ///
-    /// * `bucket_id` - Target drive
-    /// * `path` - File path (e.g., "/documents/report.pdf")
-    /// * `data` - File contents
+    /// Creates missing parent directories and replaces an existing file.
+    /// `content_type` `None` or `""` stores `application/octet-stream`. Fails with
+    /// [`FsClientError::NotAFile`] if `path` is a directory.
     pub async fn upload_file(
-        &mut self,
+        &self,
         bucket_id: BucketId,
         path: &str,
         data: &[u8],
-    ) -> Result<()> {
-        // Validate and parse path
-        let (parent_path, file_name) = Self::split_path(path)?;
-
-        // Split file into chunks (256 KiB chunks)
-        const CHUNK_SIZE: usize = 256 * 1024;
-        let mut manifest = FileManifest {
-            drive_id: bucket_id,
-            mime_type: BoundedVec::try_from(Self::guess_mime_type(file_name).into_bytes())
-                .map_err(|_| FsClientError::BoundedOverflow)?,
-            total_size: data.len() as u64,
-            chunks: BoundedVec::default(),
-            encryption_params: BoundedVec::default(),
-        };
-
-        for (i, chunk_data) in data.chunks(CHUNK_SIZE).enumerate() {
-            // Upload chunk and use the returned data_root as the chunk CID
-            let chunk_cid = self.upload_blob(bucket_id, chunk_data).await?;
-
-            manifest
-                .add_chunk(chunk_cid, i as u32)
-                .map_err(|_| FsClientError::BoundedOverflow)?;
-        }
-
-        let manifest_bytes = manifest.to_scale_bytes();
-        // Upload manifest and use the returned data_root as the file CID
-        let file_cid = self.upload_blob(bucket_id, &manifest_bytes).await?;
-
-        // Update parent directory
-        self.add_entry_to_directory(
-            bucket_id,
-            parent_path,
-            file_name,
-            file_cid,
-            data.len() as u64,
-            EntryType::File,
-        )
-        .await?;
-
-        // Mark drive as dirty for automatic checkpointing
+        content_type: Option<&str>,
+    ) -> Result<FileStat> {
+        let stat = self
+            .tree(bucket_id)
+            .put_file(
+                path,
+                data,
+                content_type.unwrap_or(DEFAULT_MIME_TYPE),
+                Vec::new(),
+            )
+            .await?;
         self.mark_drive_dirty(bucket_id).await?;
-
-        Ok(())
+        Ok(stat)
     }
 
-    /// Download a file from the file system
-    ///
-    /// # Returns
-    ///
-    /// The file contents as bytes
-    pub async fn download_file(&mut self, bucket_id: BucketId, path: &str) -> Result<Vec<u8>> {
-        // Navigate to file
-        let file_cid = self.resolve_path(bucket_id, path).await?;
-
-        // Fetch FileManifest
-        let manifest_bytes = self.fetch_blob(file_cid).await?;
-        let manifest = FileManifest::from_scale_bytes(&manifest_bytes)
-            .map_err(|e| FsClientError::Serialization(format!("Invalid manifest: {e:?}")))?;
-
-        // Validate it's a file
-        if manifest.chunks.is_empty() {
-            return Err(FsClientError::NotAFile(path.to_string()));
-        }
-
-        // Fetch and reassemble chunks
-        let mut file_data = Vec::with_capacity(manifest.total_size as usize);
-
-        for chunk in manifest.chunks.iter() {
-            let chunk_data = self.fetch_blob(chunk.cid).await?;
-            file_data.extend_from_slice(&chunk_data);
-        }
-
-        Ok(file_data)
+    /// Read the file at `path`. Checks the bytes against the file's content
+    /// root.
+    pub async fn download_file(&self, bucket_id: BucketId, path: &str) -> Result<Vec<u8>> {
+        Ok(self.get_file(bucket_id, path).await?.data)
     }
 
-    /// List entries in a directory
-    ///
-    /// # Returns
-    ///
-    /// Vector of directory entries
+    /// Read the file at `path` with its content type, size and mtime.
+    pub async fn get_file(&self, bucket_id: BucketId, path: &str) -> Result<FileContent> {
+        self.tree(bucket_id).get_file(path).await
+    }
+
+    /// List the entries of the directory at `path`, sorted by name.
     pub async fn list_directory(
-        &mut self,
+        &self,
         bucket_id: BucketId,
         path: &str,
     ) -> Result<Vec<DirectoryEntry>> {
-        // Navigate to directory
-        let dir_cid = self.resolve_path(bucket_id, path).await?;
-
-        // Fetch DirectoryNode
-        let dir_bytes = self.fetch_blob(dir_cid).await?;
-        let dir_node = DirectoryNode::from_scale_bytes(&dir_bytes)
-            .map_err(|e| FsClientError::Serialization(format!("Invalid directory: {e:?}")))?;
-
-        Ok(dir_node.children.into_inner())
+        self.tree(bucket_id).list(path).await
     }
 
-    /// Create a directory
-    pub async fn create_directory(&mut self, bucket_id: BucketId, path: &str) -> Result<()> {
-        let (parent_path, dir_name) = Self::split_path(path)?;
-
-        // Create empty directory and upload it
-        let new_dir = DirectoryNode::new_empty(bucket_id);
-        let new_dir_bytes = new_dir.to_scale_bytes();
-        let new_dir_cid = self.upload_blob(bucket_id, &new_dir_bytes).await?;
-
-        // Add to parent directory
-        self.add_entry_to_directory(
-            bucket_id,
-            parent_path,
-            dir_name,
-            new_dir_cid,
-            0,
-            EntryType::Directory,
-        )
-        .await?;
-
-        // Mark drive as dirty for automatic checkpointing
-        self.mark_drive_dirty(bucket_id).await?;
-
-        Ok(())
+    /// Create an empty directory at `path`, and any missing parents. Fails
+    /// with [`FsClientError::EntryExists`] if `path` exists.
+    pub async fn create_directory(&self, bucket_id: BucketId, path: &str) -> Result<()> {
+        self.tree(bucket_id).mkdir(path).await?;
+        self.mark_drive_dirty(bucket_id).await
     }
 
-    /// Get the root CID of a drive (managed off-chain via provider)
-    pub async fn get_root_cid(&mut self, bucket_id: BucketId) -> Result<Cid> {
-        // Root CID is now managed off-chain only (cached in-memory)
-        if let Some(cid) = self.root_cache.get(&bucket_id) {
-            tracing::debug!("get_root_cid: cache hit for bucket {bucket_id}, cid={cid:?}");
-            return Ok(*cid);
-        }
+    /// Delete the file or empty directory at `path`. Fails with
+    /// [`FsClientError::DirectoryNotEmpty`] for a directory with entries and
+    /// [`FsClientError::PathNotFound`] if `path` does not exist. The root
+    /// cannot be deleted. The deleted blobs remain in the bucket's history.
+    pub async fn delete(&self, bucket_id: BucketId, path: &str) -> Result<()> {
+        self.tree(bucket_id)
+            .delete(path, EmptyParents::Keep)
+            .await?;
+        self.mark_drive_dirty(bucket_id).await
+    }
 
-        Err(FsClientError::DriveNotFound(bucket_id))
+    /// CID of the drive's root directory: the data root of the bucket's last
+    /// MMR leaf. `None` if the drive has no commits yet.
+    pub async fn get_root_cid(&self, bucket_id: BucketId) -> Result<Option<Cid>> {
+        Ok(self.tree(bucket_id).load_root().await?.cid)
     }
 
     // ============ Checkpoint Methods ============
@@ -512,7 +450,7 @@ impl FileSystemClient {
     /// ).await?;
     ///
     /// // Now file operations will automatically mark the drive as dirty
-    /// fs_client.upload_file(bucket_id, "/file.txt", data).await?;
+    /// fs_client.upload_file(bucket_id, "/file.txt", data, None).await?;
     ///
     /// // Disable when done
     /// fs_client.disable_auto_checkpoints().await?;
@@ -611,240 +549,6 @@ impl FileSystemClient {
         Ok(())
     }
 
-    // ============ Internal Helper Methods ============
-
-    /// Resolve a path to a CID by traversing the DAG
-    async fn resolve_path(&mut self, bucket_id: BucketId, path: &str) -> Result<Cid> {
-        let mut current_cid = self.get_root_cid(bucket_id).await?;
-
-        // Handle root path
-        if path == "/" {
-            return Ok(current_cid);
-        }
-
-        // Split path into components
-        let components: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
-
-        // Traverse path
-        for component in components {
-            let dir_bytes = self.fetch_blob(current_cid).await?;
-            let dir_node = DirectoryNode::from_scale_bytes(&dir_bytes)
-                .map_err(|e| FsClientError::Serialization(format!("Invalid directory: {e:?}")))?;
-
-            // Find child entry
-            let entry = dir_node
-                .find_child(component)
-                .ok_or_else(|| FsClientError::PathNotFound(path.to_string()))?;
-
-            current_cid = entry.cid;
-        }
-
-        Ok(current_cid)
-    }
-
-    /// Add an entry to a directory and update the DAG up to root
-    async fn add_entry_to_directory(
-        &mut self,
-        bucket_id: BucketId,
-        parent_path: &str,
-        name: &str,
-        cid: Cid,
-        size: u64,
-        entry_type: EntryType,
-    ) -> Result<()> {
-        // Fetch parent directory
-        let parent_cid = self.resolve_path(bucket_id, parent_path).await?;
-        let parent_bytes = self.fetch_blob(parent_cid).await?;
-        let mut parent_node = DirectoryNode::from_scale_bytes(&parent_bytes)
-            .map_err(|e| FsClientError::Serialization(format!("Invalid directory: {e:?}")))?;
-
-        // Check if entry already exists
-        if parent_node.find_child(name).is_some() {
-            return Err(FsClientError::EntryExists(name.to_string()));
-        }
-
-        // Add new entry
-        let entry = DirectoryEntry {
-            name: BoundedVec::try_from(name.as_bytes().to_vec())
-                .map_err(|_| FsClientError::BoundedOverflow)?,
-            entry_type,
-            cid,
-            size,
-            mtime: Self::current_timestamp(),
-        };
-        parent_node
-            .add_child(entry)
-            .map_err(|_| FsClientError::BoundedOverflow)?;
-
-        // Upload updated parent
-        let new_parent_bytes = parent_node.to_scale_bytes();
-        let new_parent_cid = self.upload_blob(bucket_id, &new_parent_bytes).await?;
-
-        // Update ancestors up to root
-        let new_root_cid = self
-            .update_ancestors(bucket_id, parent_path, new_parent_cid)
-            .await?;
-
-        // Update cache (root CID is now managed off-chain only)
-        self.root_cache.insert(bucket_id, new_root_cid);
-
-        Ok(())
-    }
-
-    /// Update all ancestor directories up to root after a change
-    async fn update_ancestors(
-        &mut self,
-        bucket_id: BucketId,
-        path: &str,
-        new_child_cid: Cid,
-    ) -> Result<Cid> {
-        if path == "/" {
-            // We've reached root, return the new CID
-            return Ok(new_child_cid);
-        }
-
-        // Split path
-        let components: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
-
-        if components.is_empty() {
-            return Ok(new_child_cid);
-        }
-
-        // Build parent path
-        let child_name = components.last().unwrap();
-        let parent_path = if components.len() == 1 {
-            "/"
-        } else {
-            &path[..path.rfind('/').unwrap()]
-        };
-
-        // Fetch parent
-        let parent_cid = self.resolve_path(bucket_id, parent_path).await?;
-        let parent_bytes = self.fetch_blob(parent_cid).await?;
-        let mut parent_node = DirectoryNode::from_scale_bytes(&parent_bytes)
-            .map_err(|e| FsClientError::Serialization(format!("Invalid directory: {e:?}")))?;
-
-        // Update child entry
-        if let Some(entry) = parent_node.find_child_mut(child_name) {
-            entry.cid = new_child_cid;
-            entry.mtime = Self::current_timestamp();
-        }
-
-        // Upload updated parent
-        let new_parent_bytes = parent_node.to_scale_bytes();
-        let new_parent_cid = self.upload_blob(bucket_id, &new_parent_bytes).await?;
-
-        // Recurse to grandparent (box the future to avoid infinite size)
-        Box::pin(self.update_ancestors(bucket_id, parent_path, new_parent_cid)).await
-    }
-
-    /// Upload a blob to Layer 0 storage and return the data root
-    async fn upload_blob(&self, bucket_id: BucketId, data: &[u8]) -> Result<Cid> {
-        use storage_client::ChunkingStrategy;
-
-        // Upload data using default chunking strategy
-        let data_root = self
-            .storage_client
-            .upload(bucket_id, data, ChunkingStrategy::default())
-            .await
-            .map_err(|e| FsClientError::StorageClient(e.to_string()))?;
-
-        // The data_root returned by the storage client is the hash of the data
-        // which should match our CID for single-chunk uploads
-        tracing::debug!("Uploaded blob, data_root: {data_root:?}");
-
-        Ok(data_root)
-    }
-
-    /// Fetch a blob from Layer 0 storage by CID
-    async fn fetch_blob(&self, cid: Cid) -> Result<Vec<u8>> {
-        // Use the read API with CID as data root
-        // Note: This assumes provider maps CID to stored data
-        //
-        // We use a large but safe maximum length (1 TiB) instead of u64::MAX
-        // because the provider's chunk calculation would overflow with u64::MAX:
-        //   end_chunk = (offset + length + chunk_size - 1) / chunk_size
-        // With u64::MAX, this wraps around and results in end_chunk = 0.
-        const MAX_READ_LENGTH: u64 = 1024 * 1024 * 1024 * 1024; // 1 TiB
-
-        let data = self
-            .storage_client
-            .download(&cid, 0, MAX_READ_LENGTH)
-            .await
-            .map_err(|e| FsClientError::StorageClient(e.to_string()))?;
-
-        tracing::debug!(
-            "fetch_blob: cid={:?}, data_len={}, data_hex={}",
-            cid,
-            data.len(),
-            hex::encode(&data)
-        );
-
-        Ok(data)
-    }
-
-    /// Ensure a locally-computed CID matches the CID a provider returned for
-    /// the same bytes. Returns `CidMismatch` on disagreement so callers can
-    /// refuse to trust the provider's response.
-    fn ensure_cid_matches(expected: Cid, got: Cid) -> Result<()> {
-        if expected != got {
-            return Err(FsClientError::CidMismatch { expected, got });
-        }
-        Ok(())
-    }
-
-    /// Split a path into (parent_path, name)
-    fn split_path(path: &str) -> Result<(&str, &str)> {
-        if !path.starts_with('/') {
-            return Err(FsClientError::InvalidPath(
-                "Path must start with '/'".to_string(),
-            ));
-        }
-
-        if path == "/" {
-            return Err(FsClientError::InvalidPath(
-                "Cannot split root path".to_string(),
-            ));
-        }
-
-        let last_slash = path.rfind('/').unwrap();
-        let parent = if last_slash == 0 {
-            "/"
-        } else {
-            &path[..last_slash]
-        };
-        let name = &path[last_slash + 1..];
-
-        if name.is_empty() {
-            return Err(FsClientError::InvalidPath("Empty name".to_string()));
-        }
-
-        Ok((parent, name))
-    }
-
-    fn current_timestamp() -> u64 {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs()
-    }
-
-    fn guess_mime_type(filename: &str) -> String {
-        if filename.ends_with(".pdf") {
-            "application/pdf".to_string()
-        } else if filename.ends_with(".txt") {
-            "text/plain".to_string()
-        } else if filename.ends_with(".json") {
-            "application/json".to_string()
-        } else if filename.ends_with(".png") {
-            "image/png".to_string()
-        } else if filename.ends_with(".jpg") || filename.ends_with(".jpeg") {
-            "image/jpeg".to_string()
-        } else {
-            "application/octet-stream".to_string()
-        }
-    }
-
     // ============ Chain Interaction ============
 
     /// Submit `create_bucket_with_primary` and return the new bucket id from
@@ -872,50 +576,5 @@ impl FileSystemClient {
 
         tracing::info!("Drive created (bucket {})", created.bucket_id);
         Ok(created.bucket_id)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_split_path() {
-        assert_eq!(
-            FileSystemClient::split_path("/file.txt").unwrap(),
-            ("/", "file.txt")
-        );
-        assert_eq!(
-            FileSystemClient::split_path("/dir/file.txt").unwrap(),
-            ("/dir", "file.txt")
-        );
-        assert_eq!(
-            FileSystemClient::split_path("/a/b/c/file.txt").unwrap(),
-            ("/a/b/c", "file.txt")
-        );
-        assert!(FileSystemClient::split_path("/").is_err());
-        assert!(FileSystemClient::split_path("no-slash").is_err());
-    }
-
-    #[test]
-    fn ensure_cid_matches_accepts_matching_pair() {
-        let cid = compute_cid(b"hello world");
-        FileSystemClient::ensure_cid_matches(cid, cid).expect("matching CIDs must be accepted");
-    }
-
-    #[test]
-    fn ensure_cid_matches_rejects_provider_returning_different_blob() {
-        let uploaded = compute_cid(b"the bytes we uploaded");
-        let returned = compute_cid(b"a different blob the provider gave back");
-        assert_ne!(uploaded, returned, "test setup: CIDs must differ");
-        let err = FileSystemClient::ensure_cid_matches(uploaded, returned)
-            .expect_err("mismatched CIDs must be rejected");
-        match err {
-            FsClientError::CidMismatch { expected, got } => {
-                assert_eq!(expected, uploaded);
-                assert_eq!(got, returned);
-            }
-            other => panic!("expected CidMismatch, got {other:?}"),
-        }
     }
 }
