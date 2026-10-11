@@ -274,9 +274,6 @@ pub fn sign_sync_roots(
     pair.sign(&roots.encode()).into()
 }
 
-/// Helper: sign `commitment` for `bucket_id` the way a primary does for
-/// `checkpoint`, `extend_checkpoint` and `challenge_offchain`. It writes the
-/// provider's key into storage, so call it before `assert_noop!`.
 #[allow(dead_code)]
 pub fn sign_commitment(
     provider: u64,
@@ -286,8 +283,6 @@ pub fn sign_commitment(
     use codec::Encode;
     use sp_core::Pair as _;
     let payload = storage_primitives::CommitmentPayload::new(bucket_id, commitment);
-    // `verify_signature` checks the raw encoded payload (sr25519 hashes
-    // internally), so sign the encoding directly.
     sp_runtime::MultiSignature::Sr25519(provider_signer(provider).sign(&payload.encode()))
 }
 
