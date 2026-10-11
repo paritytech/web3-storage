@@ -2476,7 +2476,9 @@ pub mod pallet {
                 let payload = CommitmentPayload::new(bucket_id, snapshot.commitment);
                 let encoded_payload = payload.encode();
 
+                // A primary added after the checkpoint can be past the stored length.
                 let mut primary_signers = snapshot.primary_signers.clone();
+                primary_signers.resize(bucket.primary_providers.len().div_ceil(8), 0);
                 let mut added_providers = Vec::new();
 
                 for (signer, signature) in additional_signatures.iter() {
@@ -2487,22 +2489,16 @@ pub mod pallet {
                         .position(|p| p == signer)
                         .ok_or(Error::<T>::ProviderNotInSnapshot)?;
 
-                    // Check if already signed using bit manipulation
                     let byte_idx = idx / 8;
                     let bit_idx = idx % 8;
-                    if let Some(byte) = primary_signers.get(byte_idx) {
-                        if (byte & (1 << bit_idx)) != 0 {
-                            continue; // Skip already-signed providers
-                        }
+                    if primary_signers[byte_idx] & (1 << bit_idx) != 0 {
+                        continue;
                     }
 
                     // Verify signature
                     Self::verify_signature(signature, &encoded_payload, signer)?;
 
-                    // Set bit using manual bit manipulation
-                    if byte_idx < primary_signers.len() {
-                        primary_signers[byte_idx] |= 1 << bit_idx;
-                    }
+                    primary_signers[byte_idx] |= 1 << bit_idx;
                     added_providers.push(signer.clone());
                 }
 
