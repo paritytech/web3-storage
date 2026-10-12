@@ -97,13 +97,14 @@ pub fn padded_merkle_tree(leaf_hashes: &[H256]) -> (H256, Vec<MerkleNode>) {
     (root, nodes)
 }
 
-/// Build a Merkle proof for the leaf at `index` in the padded tree over
+/// Build a Merkle proof for slot `index` of the padded tree over
 /// `leaf_hashes`. The proof is empty for a single leaf.
 ///
-/// `None` if `index` is not the index of a leaf in `leaf_hashes` (padding slots
-/// are not leaves).
+/// A padding slot (`leaf_hashes.len() <= index < padded length`) gets the path
+/// from its zero leaf. `None` if `index` is past the padded length or there
+/// are no leaves.
 pub fn build_merkle_proof(leaf_hashes: &[H256], index: usize) -> Option<MerkleProof> {
-    if index >= leaf_hashes.len() {
+    if leaf_hashes.is_empty() || index >= leaf_hashes.len().next_power_of_two() {
         return None;
     }
 
@@ -249,11 +250,19 @@ mod tests {
     }
 
     #[test]
-    fn no_proof_for_an_index_that_is_not_a_leaf() {
+    fn no_proof_for_an_index_past_the_padded_tree() {
         assert!(build_merkle_proof(&[], 0).is_none());
         assert!(build_merkle_proof(&leaves(1), 1).is_none());
+        assert!(build_merkle_proof(&leaves(3), 4).is_none());
+    }
+
+    #[test]
+    fn padding_slot_proof_verifies_with_zero_leaf() {
+        let l = leaves(3);
+        let root = padded_merkle_root(&l);
         // Index 3 is a padding slot of the 4-slot tree over 3 leaves.
-        assert!(build_merkle_proof(&leaves(3), 3).is_none());
+        let proof = build_merkle_proof(&l, 3).unwrap();
+        assert!(verify_merkle_proof(H256::zero(), 3, &proof, &root));
     }
 
     #[test]

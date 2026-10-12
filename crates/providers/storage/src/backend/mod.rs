@@ -216,7 +216,10 @@ pub trait StorageBackend: Send + Sync {
             None => Vec::new(),
         };
 
-        Ok((chunk_data, build_merkle_proof(&chunk_hashes, slot)))
+        let proof = build_merkle_proof(&chunk_hashes, slot)
+            .ok_or_else(|| Error::NodeNotFound(format!("chunk_{chunk_index}")))?;
+
+        Ok((chunk_data, proof))
     }
 
     /// Delete data before a sequence number.
