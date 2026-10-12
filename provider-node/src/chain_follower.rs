@@ -6,9 +6,9 @@
 //! [`SubxtChainFollower`] owns the node's chain connection and publishes each
 //! new connection to the other chain consumers through a watch channel.
 
+use crate::chain_connection::{self, ChainHandle, ChainTransport};
+use crate::event_decoding::decode_block_events;
 use crate::subxt_client::{fetch_current_anchor_block, subxt_account};
-use provider_chain::chain_connection::{self, ChainHandle, ChainTransport};
-use provider_chain::decode_block_events;
 use provider_coordinator::{
     BlockContents, ChainConnection, ChainFollower, ChainStateChainClient, FinalizedBlock,
     FinalizedBlocks,
@@ -303,7 +303,7 @@ impl FinalizedBlocks for SubxtFinalizedBlocks {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use provider_chain::BlockEvent;
+    use provider_events::BlockEvent;
     use std::sync::Arc;
     use subxt::backend::LegacyBackend;
     use subxt::ext::scale_value::scale::encode_as_type;

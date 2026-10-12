@@ -10,11 +10,13 @@
 //! - Syncing data between providers (for replicas)
 
 pub mod api;
+pub mod chain_connection;
 pub(crate) mod chain_follower;
 pub mod challenge_proofs;
 pub mod cli;
 pub mod command;
 pub mod error;
+pub(crate) mod event_decoding;
 pub mod fs_api;
 pub mod membership;
 pub mod negotiate;
