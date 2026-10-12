@@ -5,7 +5,8 @@
  *
  * Accounts: //Alice (provider), //Bob (client)
  *
- * Tests: different sizes, S3 HTTP endpoints, roundtrip integrity, edge cases.
+ * Tests: different sizes, roundtrip integrity, edge cases. Workflow 03 covers
+ * S3 through the client.
  *
  * Usage: node e2e/04-data-upload-and-retrieval.js [chain_ws] [provider_url]
  */
@@ -16,7 +17,6 @@ import {
   downloadChunk,
   ensureProviderRegistered,
   makeSigner,
-  signProviderRequest,
   toHex,
   uploadChunk,
 } from "@web3-storage/sdk";
@@ -53,14 +53,6 @@ async function main() {
   );
 
   const tests: Array<{ name: string; fn: () => Promise<void> }> = [];
-
-  // The provider always enforces auth on the S3 routes (Reader to GET/HEAD/list,
-  // Writer to PUT/DELETE). Bob owns this bucket (Admin), so signing each request
-  // satisfies every role. Signs through `signBytes` — the same wallet surface
-  // real users sign with (it wraps in `<Bytes>…</Bytes>`; the provider accepts
-  // that). The signed message includes the HTTP verb, so it must match exactly.
-  const s3Auth = (method: string): Promise<Record<string, string>> =>
-    signProviderRequest(client.signer, method, bucketId);
 
   // ── Different sizes ───────────────────────────────────────────────────────
 
@@ -120,71 +112,10 @@ async function main() {
     },
   });
 
-  // ── S3 HTTP endpoints ─────────────────────────────────────────────────────
-
-  tests.push({
-    name: "4.5 S3 PUT/GET roundtrip",
-    fn: async () => {
-      // Use the S3-style HTTP endpoint on the provider.
-      const body = "Hello S3-style upload";
-      const url = new URL(`/s3/${bucketId}/object`, PROVIDER_URL);
-      url.searchParams.set("key", "e2e-test.txt");
-      const putResp = await fetch(url, {
-        method: "PUT",
-        headers: { "Content-Type": "text/plain", ...(await s3Auth("PUT")) },
-        body,
-      });
-      assert.ok(putResp.ok, `S3 PUT should succeed, got ${putResp.status}`);
-      const getResp = await fetch(url, { headers: await s3Auth("GET") });
-      assert.ok(getResp.ok, `GET should succeed, got ${getResp.status}`);
-      const downloaded = await getResp.text();
-      assert.strictEqual(downloaded, body, "S3 GET content should match PUT");
-    },
-  });
-
-  tests.push({
-    name: "4.6 S3 HEAD object",
-    fn: async () => {
-      const url = new URL(`/s3/${bucketId}/object`, PROVIDER_URL);
-      url.searchParams.set("key", "e2e-test.txt");
-      const resp = await fetch(url, { method: "HEAD", headers: await s3Auth("HEAD") });
-      assert.ok(resp.ok || resp.status === 405, `HEAD should return 200 or 405, got ${resp.status}`);
-    },
-  });
-
-  tests.push({
-    name: "4.7 S3 list objects",
-    fn: async () => {
-      const url = new URL(`/s3/${bucketId}/objects`, PROVIDER_URL);
-      const resp = await fetch(url, { headers: await s3Auth("GET") });
-      assert.ok(resp.ok, `S3 list should succeed, got ${resp.status}`);
-      const data = await resp.json();
-      assert.ok(Array.isArray(data.contents), "List should return a contents array");
-      // 4.5 PUT this key into the bucket and 4.8 hasn't deleted it yet.
-      assert.ok(
-        data.contents.some((o: { key: string }) => o.key === "e2e-test.txt"),
-        "List should include the object uploaded in 4.5"
-      );
-    },
-  });
-
-  tests.push({
-    name: "4.8 S3 DELETE object",
-    fn: async () => {
-      const url = new URL(`/s3/${bucketId}/object`, PROVIDER_URL);
-      url.searchParams.set("key", "e2e-test.txt");
-      const resp = await fetch(url, { method: "DELETE", headers: await s3Auth("DELETE") });
-      assert.ok(resp.ok, `S3 DELETE should succeed, got ${resp.status}`);
-      // Verify the object is gone.
-      const getResp = await fetch(url, { headers: await s3Auth("GET") });
-      assert.strictEqual(getResp.status, 404, `GET after DELETE should 404, got ${getResp.status}`);
-    },
-  });
-
   // ── Failure ───────────────────────────────────────────────────────────────
 
   tests.push({
-    name: "4.9 Download non-existent hash",
+    name: "4.5 Download non-existent hash",
     fn: async () => {
       const fakeHash = "0x" + "ab".repeat(32);
       try {
@@ -200,7 +131,7 @@ async function main() {
   // ── Edge cases ────────────────────────────────────────────────────────────
 
   tests.push({
-    name: "4.10 Upload binary (non-UTF8) data",
+    name: "4.6 Upload binary (non-UTF8) data",
     fn: async () => {
       const binary = randomBytes(512);
       const { hash } = await uploadChunk(PROVIDER_URL, bucketId, binary, client);
@@ -210,7 +141,7 @@ async function main() {
   });
 
   tests.push({
-    name: "4.11 Upload identical content twice — different MMR leaves",
+    name: "4.7 Upload identical content twice — different MMR leaves",
     fn: async () => {
       const data = "duplicate content for e2e";
       const first = await uploadChunk(PROVIDER_URL, bucketId, data, client);
@@ -225,7 +156,7 @@ async function main() {
   });
 
   tests.push({
-    name: "4.12 Verify blake2-256 hash",
+    name: "4.8 Verify blake2-256 hash",
     fn: async () => {
       const data = "verify hash computation";
       const bytes = new TextEncoder().encode(data);

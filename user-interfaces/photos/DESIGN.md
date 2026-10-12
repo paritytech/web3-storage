@@ -4,7 +4,8 @@
 
 Photos is a normal photo app backed by Web3 Storage. A custom Solidity contract
 (`Photos.sol`) creates a Layer 0 bucket through the storage-provider precompile (`IWeb3Storage`),
-and the app uses the provider's Layer 1 `/fs` API on that bucket, walking a signed-in user through:
+and the app stores a Layer 1 file system in that bucket through the SDK's `FileSystemClient`,
+walking a signed-in user through:
 
 1. **No library** — the user hasn't set up storage yet; let them create one *with a provider they
    choose*.
@@ -20,17 +21,17 @@ as the on-chain control plane.
 | Decision | Choice | Rationale |
 | --- | --- | --- |
 | Transport / signing | **Substrate-native only** (Polkadot extension + dev accounts) | Off-chain provider auth keeps working; no extra infra. |
-| Storage layer | **Layer 0 bucket + the provider's Layer 1 `/fs` API** | Directories give us **albums for free**, and the provider's `/fs` API + the SDK's `FileSystemClient` are reusable. |
+| Storage layer | **Layer 0 bucket + the SDK's Layer 1 `FileSystemClient`** | Directories give us **albums for free**, and the SDK's `FileSystemClient` is reusable. |
 | Contract calls | **PAPI `Revive` dispatchables** (`call`, `instantiate_with_code`), **viem for ABI only** | The CI-verified [`sc-coverage.ts`](../../examples/papi/sc-coverage.ts) / [`sc-team-drive.ts`](../../examples/papi/sc-team-drive.ts) pattern. |
 | EVM JSON-RPC / MetaMask | **Out of scope** | Runtime is eth-rpc-ready (`runtimes/web3-storage-local/src/revive.rs`), so a MetaMask UX is a clean future follow-up. |
 | Architecture | **Custom `Photos` contract, one contract-administered bucket per user** | The contract creates the bucket via the **storage-provider precompile** (`IWeb3Storage`, `0x…09010000`), is its admin, and anchors the album-tree root on-chain — a job the chain itself does not do. |
 | Provider model | **Single user-chosen primary provider** per bucket | `create_bucket_with_primary` opens a bucket + one primary atomically; the user picks the provider at creation. |
-| Album/tree state | **Off-chain directory tree on the provider + on-chain root anchor in the contract** | The `/fs` API holds the tree; the contract stores a **client-computed** `metadata_merkle_root` as an integrity anchor. |
+| Album/tree state | **Directory tree stored in the bucket + on-chain root anchor in the contract** | The client writes the tree as blobs in the bucket; the contract stores a **client-computed** `metadata_merkle_root` as an integrity anchor. |
 | Library structure (v1) | **Albums = directories** (one level of folders) | Nested sub-albums are a later extension of the same directory model. |
 
-### Why the `/fs` API (and where the contract fits)
+### Why the file-system client (and where the contract fits)
 
-The provider's `/fs` API gives a real **directory tree** per bucket, so albums and folders come
+The SDK's `FileSystemClient` gives a real **directory tree** per bucket, so albums and folders come
 for free instead of being hand-rolled into a manifest. `create_bucket_with_primary` takes an
 explicit `(provider, terms, signature)`, so the user **chooses** the provider.
 
@@ -50,7 +51,7 @@ content-addressed by blake2-256.
 ```
 Photos UI (React · dev-account/extension wallet · viem for ABI)
    │  PAPI: Revive.call (writes) · ReviveApi.call (unsigned reads)
-   │  HTTP: /fs/{bucketId}/… (albums, photos, thumbnails) — direct, bypasses the contract
+   │  HTTP: Layer 0 routes via FileSystemClient (albums, photos, thumbnails) — direct, bypasses the contract
    ▼
 Photos.sol (PolkaVM)            per user: { bucketId, rootCid }
    │  CALL 0x…09010000 (storage-provider precompile, IWeb3Storage)
@@ -58,7 +59,7 @@ Photos.sol (PolkaVM)            per user: { bucketId, rootCid }
 pallet_storage_provider         bucket + one primary agreement · contract account is admin
    │                            · user granted Writer
    ▼
-provider node  /fs/{bucketId}/…    holds the photo blobs, thumbnails, and the directory tree
+provider node  Layer 0 routes      holds the photo blobs, thumbnails, and the directory tree blobs
         (off-chain, browser ↔ provider; client-computed tree root anchored on-chain by the contract)
 ```
 
@@ -66,7 +67,7 @@ Origin model (from [`smart-contracts.md`](../../docs/drafts/smart-contracts.md))
 `RawOrigin::Signed(contract_account)`, so the **contract** is the admin of every user's bucket.
 Per-user attribution lives in the contract (`bucketOwner`). At creation the contract grants the
 user a **Writer** role on the bucket (`setMember` → `set_member` on the storage-provider
-pallet), so the browser can perform off-chain `/fs` operations directly with the user's own
+pallet), so the browser can sign the provider's Layer 0 write requests directly with the user's own
 wallet. This is custodial-by-ownership only — the transparent contract enforces "only you manage
 your library."
 
@@ -94,7 +95,7 @@ contract Photos {
     /// Create my library with a provider I chose. `msg.value` funds the agreement payment,
     /// reserved from the contract's balance when the precompile dispatches. The contract is the
     /// bucket admin and grants me (`userAccount`, my substrate AccountId32) a Writer role so my
-    /// browser can upload/list directly against the provider's `/fs` API.
+    /// browser can upload directly to the provider.
     function createLibrary(
         bytes32 userAccount,
         bytes32 provider,
@@ -136,7 +137,7 @@ contract Photos {
 Notes:
 - `bytes32 provider` / `bytes32 userAccount` are substrate `AccountId32`s (raw 32-byte account
   ids), per the precompile's type-encoding rules. `userAccount` is the signed-in user's own
-  substrate account — the one their wallet signs `/fs` requests with.
+  substrate account — the one their wallet signs provider write requests with.
 - `terms` is the precompile's `PrimitiveAgreementTerms`; `terms.owner` must be the contract's
   substrate-mapped account (the bucket admin). For a primary agreement, `hasBucketId = false` and
   `hasReplicaParams = false`. `price_per_byte` comes from the provider's **signed** terms.
@@ -158,16 +159,13 @@ v1 (per-user refunds = a follow-up; acceptable for a prototype).
 
 ## Albums, blobs & the root anchor
 
-Layer 1 gives a real directory tree per bucket, served by the provider's path-based `/fs` API:
-
-- `POST /fs/{bucketId}/mkdir` — create an album (a directory, e.g. `/Vacation`).
-- `GET  /fs/{bucketId}/ls?path=…` — list an album's entries (files + sub-directories).
-- `PUT  /fs/{bucketId}/file?path=…` / `GET …/file?path=…` — write / read a photo blob (the
-  client wraps the existing chunking; multi-MB photos stream in chunks).
-- `GET  /fs/{bucketId}/index_root` — the provider's view of the bucket's `metadata_merkle_root`
-  (a convenience cross-check only — the anchored value is always client-computed; see below).
-
-The SDK's `FileSystemClient` (`@web3-storage/sdk/fs`) already wraps these; the app reuses it.
+Layer 1 gives a real directory tree per bucket. The SDK's `FileSystemClient`
+(`@web3-storage/sdk/fs`) stores it in the bucket itself: file content, `FileManifest` and
+`DirectoryNode` blobs go up through the provider's Layer 0 routes (`PUT /node`, `POST /commit`),
+and the bucket's last MMR leaf points at the root directory. Reads go through `GET /read` and
+`GET /node`. Writes are signed by the user's wallet; reads are unauthenticated. The app calls
+the provider only through `FileSystemClient` methods such as `createDirectory`, `listDirectory`,
+`uploadFile`, and `downloadFile`.
 
 - **Albums**: directories. v1 ships one level of folders (`/Beach`, `/Family`); the same model
   nests for sub-albums later.
@@ -178,15 +176,14 @@ The SDK's `FileSystemClient` (`@web3-storage/sdk/fs`) already wraps these; the a
   when a photo is opened.
 - **Integrity anchor (client-computed)**: the bucket's metadata root is a *deterministic*
   blake2-256 Merkle tree over the bucket's **sorted** `(path, data_root, size)` entries
-  (`crates/providers/storage/src/index/fs.rs`), where each file's `data_root` is the content root the client
+  (`metadataMerkleRoot` in `packages/core/src/merkle.ts`), where each file's `data_root` is the content root the client
   already produces while chunking the upload. The client therefore **computes the root itself**
   rather than trusting the provider. After any mutation it anchors the locally-computed root via
   `setRoot(rootCid)`. To verify a library it recomputes the root from a fresh `ls` plus the
   downloaded files (checking each file against its own `data_root`) and asserts it equals the
   on-chain `rootCid` from `libraryOf` — a provider that hides, adds, swaps, or tampers with any
-  file produces a mismatch. Anchoring the provider's `index_root` instead would be circular (it
-  compares the provider's claim against the provider's claim); `/fs/index_root` is only a cheap
-  cross-check. Thumbnails are stored as ordinary files, so they're covered by the same root.
+  file produces a mismatch. Thumbnails are stored as ordinary files, so they're covered by the same
+  root.
 
 ## Data mutability & editing
 
@@ -201,7 +198,8 @@ recompute the root locally and `setRoot`. The pre-edit bytes linger as a superse
 
 Implications:
 - **No garbage collection.** Superseded blobs (pre-edit photos, replaced thumbnails) are never
-  reclaimed; they persist for the agreement's life. FS deletes only drop the path→CID mapping.
+  reclaimed; they persist for the agreement's life. FS deletes only write a new directory tree
+  without the entry.
 - **Quota = total of all versions.** An agreement pays for `max_bytes × duration` up front;
   accumulated versions consume that quota. To grow it, top up the agreement
   (`additional_bytes × remaining_duration × price`). Budget for the sum of all versions.
@@ -228,12 +226,12 @@ Implications:
    `value` = payment + buffer. The bucket is active on inclusion; → State B.
 
 **Create an album**
-- `POST /fs/{bucketId}/mkdir` for the new folder → recompute the tree root locally → `setRoot`.
+- `createDirectory` for the new folder → recompute the tree root locally → `setRoot`.
 
 **Upload a photo**
 1. Generate a downscaled thumbnail in the browser (canvas → JPEG, longest edge ~320px).
-2. `PUT /fs/{bucketId}/file?path=/Album/photo.jpg` (full) and `…?path=/.thumbs/Album/photo.jpg`
-   (thumb), keeping each file's locally-computed `data_root`.
+2. `uploadFile` to `/Album/photo.jpg` (full) and `/.thumbs/Album/photo.jpg` (thumb), keeping each
+   file's locally-computed `data_root`.
 3. Recompute the bucket's metadata Merkle root locally → `setRoot(rootCid)` — one cheap tx.
 
 **Edit a photo**
@@ -241,10 +239,10 @@ Implications:
   both) → recompute the root locally → `setRoot`. Copy-on-write; the original lingers.
 
 **List / view**
-- List an album: `GET /fs/{bucketId}/ls?path=/Album`, render the grid from each entry's thumbnail
+- List an album: `listDirectory(bucketId, '/Album')`, render the grid from each entry's thumbnail
   (kilobytes per cell); recompute the tree root locally from the listing (+ downloaded files) and
   check it equals the on-chain anchor.
-- View: open a photo → `GET /fs/{bucketId}/file?path=…` (full resolution) in a lightbox.
+- View: open a photo → `downloadFile` (full resolution) in a lightbox.
 
 ## Front-end app
 
@@ -258,7 +256,7 @@ This app matches the React 19 + Vite + Tailwind + PAPI stack and the shared pack
 | New dep | `viem` (ABI encode/decode only) |
 | Reads | `ReviveApi.call` dry-run + viem `decodeFunctionResult` (unsigned) |
 | Writes | `Revive.call` / `Revive.instantiate_with_code` via PAPI `createAndSubmit` |
-| FS ops | provider `/fs/{bucketId}/…` via the SDK's `FileSystemClient` |
+| FS ops | the SDK's `FileSystemClient` over the provider's Layer 0 routes |
 | Base | `GITHUB_PAGES` base `/web3-storage/photos/` |
 
 ### Screens (single-page, state-driven)
@@ -290,9 +288,9 @@ This app matches the React 19 + Vite + Tailwind + PAPI stack and the shared pack
   the provider isn't accepting or has no capacity.
 - **Insufficient `msg.value`** → compute payment from the signed `price_per_byte` and add a
   buffer; surface `PaymentExceedsMax` clearly.
-- **`/fs` authorization** → with provider auth enabled, the browser signs `/fs` requests with the
-  user's wallet; the Writer role granted at `createLibrary` (`setMember`) makes them pass. (Dev
-  chains may run `/fs` auth disabled, in which case the grant is unnecessary but still correct.)
+- **Provider authorization** → the browser signs the provider's Layer 0 write requests with the
+  user's wallet; the Writer role granted at `createLibrary` (`setMember`) makes them pass. Reads are
+  unauthenticated.
 - **Integrity mismatch** → reject/flag a library whose locally-recomputed metadata root ≠ the
   on-chain `rootCid`.
 - **Upload retry** → `PUT` is idempotent for the same bytes (content-addressed); `setRoot` is the
@@ -340,7 +338,7 @@ source, build, and deploy — lives **inside the app**, so Photos is self-contai
 
 Built as **minimal, independently reviewable milestones**. The strategy is to prove the entire
 backend headless first (contract → bucket → albums → editing), because that's where the risk lives
-(precompile origin, `msg.value`→payment, account mapping, `setMember` → `/fs` auth, the root
+(precompile origin, `msg.value`→payment, account mapping, `setMember` → provider write auth, the root
 anchor); only then build UI on a foundation that already works. All contract source, build, and
 deploy/flow scripts are **TypeScript and live in the app**.
 
@@ -357,14 +355,13 @@ provider's signed `price_per_byte` (`NativeToEthRatio = 10^6`).
 
 ### M2 — Albums + blobs + thumbnails + root anchor (headless)
 
-Drive the provider's `/fs` API (reuse drive-ui's `drive-client` chunking, ported to app-local TS):
+Use the SDK's `FileSystemClient`:
 `mkdir` an album → `PUT` a real multi-MB photo + a placeholder thumbnail blob (real canvas
 downscaling is browser-only; it lands in M6). Implement the **client-side root**: the deterministic
-blake2-256 Merkle over sorted `(path, data_root, size)` entries (mirroring
-`crates/providers/storage/src/index/fs.rs`) → `setRoot(rootCid)`. Verify: re-`ls`, byte-compare a downloaded
-photo against its `data_root`, recompute the root locally and assert it equals the on-chain anchor
-(and, as a sanity cross-check, the provider's `index_root`); a tampered tree fails the local
-recompute. **Done:** round-trip a photo through an album with a client-computed on-chain anchor proven.
+blake2-256 Merkle over sorted `(path, data_root, size)` entries (`metadataMerkleRoot` in
+`packages/core/src/merkle.ts`) → `setRoot(rootCid)`. Verify: re-`ls`, byte-compare a downloaded
+photo against its `data_root`, recompute the root locally and assert it equals the on-chain anchor;
+a tampered tree fails the local recompute. **Done:** round-trip a photo through an album with a client-computed on-chain anchor proven.
 
 ### M3 — Full headless flow → CI source of truth
 
@@ -395,7 +392,7 @@ negotiate/expired-terms errors clearly. **Done:** a fresh account goes A→B in 
 Port the M2 FS layer to the browser. Albums: list/create folders. Upload: generate a downscaled
 thumbnail (canvas → JPEG, longest edge ~320px), `PUT` the full photo + thumb, then recompute the
 root locally → `setRoot`. Grid: `ls` an album, render from thumbnails (kilobytes per cell); open a
-photo in a lightbox via the full `file?path=`. **Done:** create albums, upload several photos,
+photo in a lightbox via `downloadFile`. **Done:** create albums, upload several photos,
 reload, grid renders from thumbnails, opening one downloads full-res.
 
 ### M7 — Image editing
@@ -408,7 +405,7 @@ edit a photo, see the edit persist and reload, with the on-chain anchor updated.
 
 Playwright e2e (two states + create album + upload + edit + download) via
 `@web3-storage/test-helpers`; dev-only "Deploy contract" fallback when `photosContract` is unset;
-final error/edge pass (unmapped account, negotiate/expired terms, `/fs` auth, integrity mismatch,
+final error/edge pass (unmapped account, negotiate/expired terms, provider write auth, integrity mismatch,
 upload retry). Optional Solidity unit tests if a harness is added.
 
 ## Open questions / follow-ups

@@ -3,16 +3,14 @@
 //! HTTP API handlers for the provider node.
 
 use crate::error::Error;
-use crate::fs_api;
 use crate::negotiate::{self, AgreementTermsOf, NegotiateRequest, SignedTerms};
-use crate::s3_api;
 use crate::types::*;
 use crate::ProviderState;
 use axum::{
     extract::{ConnectInfo, DefaultBodyLimit, Query, Request, State},
     middleware::{from_fn_with_state, Next},
     response::Response,
-    routing::{get, post, put},
+    routing::{get, post},
     Json, Router,
 };
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
@@ -57,8 +55,6 @@ pub fn create_router(state: Arc<ProviderState>) -> Router {
                     axum::http::Method::GET,
                     axum::http::Method::PUT,
                     axum::http::Method::POST,
-                    axum::http::Method::DELETE,
-                    axum::http::Method::HEAD,
                 ])
                 .allow_headers([
                     axum::http::header::AUTHORIZATION,
@@ -104,26 +100,6 @@ pub fn create_router(state: Arc<ProviderState>) -> Router {
         // Replica sync status
         .route("/replica/historical_roots", get(get_historical_roots))
         .route("/replica/sync_status", get(get_replica_sync_status))
-        // S3-compatible object storage (key passed as ?key= query param)
-        .route(
-            "/s3/:bucket_id/object",
-            put(s3_api::s3_put_object)
-                .get(s3_api::s3_get_object)
-                .head(s3_api::s3_head_object)
-                .delete(s3_api::s3_delete_object),
-        )
-        .route("/s3/:bucket_id/objects", get(s3_api::s3_list_objects))
-        .route("/s3/:bucket_id/index_root", get(s3_api::s3_index_root))
-        // File system endpoints (path passed as ?path= query param)
-        .route(
-            "/fs/:bucket_id/file",
-            put(fs_api::fs_put_file)
-                .get(fs_api::fs_get_file)
-                .delete(fs_api::fs_delete_file),
-        )
-        .route("/fs/:bucket_id/mkdir", post(fs_api::fs_mkdir))
-        .route("/fs/:bucket_id/ls", get(fs_api::fs_list_dir))
-        .route("/fs/:bucket_id/index_root", get(fs_api::fs_index_root))
         .layer(DefaultBodyLimit::max(256 * 1024 * 1024)) // 256 MB
         .layer(TraceLayer::new_for_http())
         .layer(cors)
@@ -151,14 +127,14 @@ async fn rate_limit_by_ip_middleware(
 }
 
 /// Extract the Authorization header value from a header map.
-pub(crate) fn auth_header(headers: &axum::http::HeaderMap) -> Option<&str> {
+fn auth_header(headers: &axum::http::HeaderMap) -> Option<&str> {
     headers
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
 }
 
 /// Convenience wrapper around `provider_auth::require_role` using request headers.
-pub(crate) async fn check_role(
+async fn check_role(
     state: &ProviderState,
     headers: &axum::http::HeaderMap,
     method: &str,
@@ -597,11 +573,9 @@ async fn delete_data(
     headers: axum::http::HeaderMap,
     Json(request): Json<DeleteRequest>,
 ) -> Result<Json<DeleteResponse>, Error> {
-    // Admin-only, unlike the Writer-level deletes in the S3/FS layers: this L0
-    // prune rewrites the underlying MMR (dropping every leaf below
-    // `new_start_seq`), whereas the L1 deletes only drop an index entry and
-    // leave the tree intact. Rewriting the commitment is strictly more
-    // destructive, so it warrants the highest role.
+    // Admin-only: this prune rewrites the MMR (drops every leaf below
+    // `new_start_seq`) and so changes the commitment, unlike the Writer-level
+    // node uploads and commits.
     check_role(
         &state,
         &headers,
