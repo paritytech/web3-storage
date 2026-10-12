@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 //
-// M6 — album selector. Renders the drive's albums as tabs and an inline
+// M6 — album selector. Renders the library bucket's albums as tabs and an inline
 // "New album" affordance. Album selection and creation go through
 // `album.state.ts`; creating one recomputes + anchors the metadata root.
 

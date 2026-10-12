@@ -3,8 +3,10 @@
 //! Unified signer for provider-auth headers and on-chain extrinsics.
 
 use crate::{ClientError, ClientResult};
+use provider_auth::build_auth_header;
 use std::str::FromStr;
 use std::sync::Arc;
+use storage_primitives::BucketId;
 use subxt_signer::{sr25519::Keypair, SecretUri};
 
 /// A signer used for both provider-request authentication headers and on-chain
@@ -37,6 +39,23 @@ impl Signer {
     /// The underlying keypair, e.g. to build provider-auth headers.
     pub fn keypair(&self) -> &Keypair {
         &self.0
+    }
+
+    /// The `Authorization` header value for a provider request to `bucket_id`
+    /// (`method` = upper-case HTTP verb), signed with the current time. A clock
+    /// before the Unix epoch gives timestamp 0, which the provider rejects.
+    pub fn auth_header(&self, method: &str, bucket_id: BucketId) -> String {
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or_default();
+        build_auth_header(
+            &self.0.public_key().0,
+            method,
+            bucket_id,
+            timestamp,
+            |msg| self.0.sign(msg).0,
+        )
     }
 }
 
@@ -83,5 +102,35 @@ mod tests {
     #[test]
     fn invalid_seed_errors() {
         assert!(Signer::from_seed("not a valid bip39 mnemonic").is_err());
+    }
+
+    #[tokio::test]
+    async fn auth_header_passes_provider_verification() {
+        use provider_auth::{AuthError, Authenticator, RequiredRole, StaticMembershipResolver};
+        use sp_runtime::AccountId32;
+        use storage_primitives::Role;
+
+        let signer = Signer::from_seed("//Alice").unwrap();
+        let account = AccountId32::new(signer.keypair().public_key().0);
+        let auth = Authenticator::new(StaticMembershipResolver(vec![
+            (account, Role::Writer).into()
+        ]));
+
+        let header = signer.auth_header("PUT", 7);
+        assert!(auth
+            .require_role(Some(&header), "PUT", 7, RequiredRole::Writer)
+            .await
+            .is_ok());
+        // The signature covers the method and the bucket id.
+        assert!(matches!(
+            auth.require_role(Some(&header), "PUT", 8, RequiredRole::Writer)
+                .await,
+            Err(AuthError::AuthRequired)
+        ));
+        assert!(matches!(
+            auth.require_role(Some(&header), "GET", 7, RequiredRole::Reader)
+                .await,
+            Err(AuthError::AuthRequired)
+        ));
     }
 }

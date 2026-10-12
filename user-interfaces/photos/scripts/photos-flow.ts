@@ -58,7 +58,6 @@ const clientSeed = args[3] || "//Bob";
 const UNIT = 10n ** 12n;
 const MAX_BYTES = 1n << 20n; // 1 MiB quota
 const DURATION = 50; // blocks
-const LIBRARY_NAME = "my-photos";
 // Blocks to wait for the best-block view to catch up to a just-included setRoot.
 const ANCHOR_RETRY_BLOCKS = 5;
 
@@ -131,7 +130,6 @@ async function main() {
     const userAccount = toHex(user.publicKey); // bytes32 substrate AccountId32 → Writer grant
     const createData = encodeCall(abi, "createLibrary", [
       userAccount,
-      LIBRARY_NAME,
       toHex(provider.publicKey),
       signed.terms,
       signed.signature,
@@ -139,19 +137,20 @@ async function main() {
     const r = await callContract(api, user, deployed.addressBytes, createData, { value });
 
     // 3) Assert on events.
-    const driveCreated: any = requireOneEvent(r.events, api.event.DriveRegistry.DriveCreated, "DriveRegistry.DriveCreated");
-    const driveShared: any = requireOneEvent(r.events, api.event.DriveRegistry.DriveShared, "DriveRegistry.DriveShared");
-    const driveId: bigint = driveCreated.drive_id;
-    const bucketId: bigint = driveCreated.bucket_id;
-    console.log(`\n[3/3] driveId=${driveId}  bucketId=${bucketId}  owner=${driveCreated.owner}`);
+    const bucketCreated: any = requireOneEvent(r.events, api.event.StorageProvider.BucketCreated, "StorageProvider.BucketCreated");
+    const memberSet: any = requireOneEvent(r.events, api.event.StorageProvider.MemberSet, "StorageProvider.MemberSet");
+    const bucketId: bigint = bucketCreated.bucket_id;
+    console.log(`\n[3/3] bucketId=${bucketId}  admin=${bucketCreated.admin}`);
 
-    assert.ok(isSameAddress(driveCreated.owner, contractAccount.address), "drive owner is not the contract account");
-    assert.ok(isSameAddress(driveShared.member, user.address), "Writer grant member is not the user");
+    assert.ok(isSameAddress(bucketCreated.admin, contractAccount.address), "bucket admin is not the contract account");
+    assert.strictEqual(memberSet.bucket_id, bucketId, "Writer grant is on a different bucket");
+    assert.ok(isSameAddress(memberSet.member, user.address), "Writer grant member is not the user");
+    assert.strictEqual(memberSet.role?.type ?? memberSet.role, "Writer", "user role is not Writer");
 
     const contractLogs = decodeContractEmitted(r.events, api, deployed.address, abi);
     assert.ok(contractLogs.some((l) => l.eventName === "LibraryCreated"), "LibraryCreated event not emitted");
 
-    // Soft cross-check: the user shows up as a member on the underlying bucket.
+    // Soft cross-check: the user shows up as a member of the bucket.
     const bucket: any = await api.query.StorageProvider.Buckets.getValue(bucketId, READ_OPTS);
     const member = bucket?.members?.find((m: any) => isSameAddress(m.account, user.address));
     console.log("  bucket member role for user:", member ? (member.role?.type ?? member.role) : "(not found)");
@@ -161,14 +160,14 @@ async function main() {
     const lib = await readLibraryOf(api, deployed.addressBytes, substrateToH160(user.publicKey), user.address, abi);
     console.log("  libraryOf(user) [pre-anchor]:", lib);
     assert.ok(lib.exists, "libraryOf.exists is false");
-    assert.strictEqual(lib.driveId, driveId, "libraryOf.driveId mismatch");
+    assert.strictEqual(lib.bucketId, bucketId, "libraryOf.bucketId mismatch");
 
     // The client-maintained source of truth for the anchored metadata root:
     // updated on every mkdir/upload/edit below, so `index.root()` — never a
     // provider round-trip — is what we anchor and re-anchor. See `local-index.ts`.
     const index = new LocalIndex();
 
-    // Re-enumerate the drive for integrity, read the on-chain anchor back
+    // Re-enumerate the bucket for integrity, read the on-chain anchor back
     // (retrying while it lags the just-included setRoot, per `isStale`), and
     // assert index root == on-chain rootCid == provider index_root. The
     // enumeration only *verifies* the provider; the root comes from the index.
@@ -255,7 +254,7 @@ async function main() {
     console.log(`  localRoot=${localRoot}`);
     await anchorRoot(api, user, deployed.addressBytes, localRoot, abi);
 
-    // [M2 4/5] Verify against the client anchor: enumerate the drive fresh
+    // [M2 4/5] Verify against the client anchor: enumerate the bucket fresh
     // (downloading + re-hashing every file), assert each uploaded file's served
     // content matches the client's data_root (the real integrity check), then
     // recompute the root and assert it equals the on-chain anchor and (a sanity
@@ -324,15 +323,16 @@ async function main() {
     console.log(`  downloaded ${downloaded.length} bytes — matches edited photo ✓`);
 
     // Invariants that must survive an edit: the library still exists with the
-    // same driveId, the drive is still owned by the contract account, and the
+    // same bucketId, the contract account is still the bucket admin, and the
     // user still holds the Writer grant on the bucket. The edit touches data
     // only — never ownership or ACLs.
     assert.ok(editAnchored.exists, "libraryOf.exists became false after edit");
-    assert.strictEqual(editAnchored.driveId, driveId, "libraryOf.driveId changed after edit");
-    const driveAfterEdit: any = await api.query.DriveRegistry.Drives.getValue(driveId, READ_OPTS);
-    assert.ok(driveAfterEdit, "drive vanished from DriveRegistry after edit");
-    assert.ok(isSameAddress(driveAfterEdit.owner, contractAccount.address), "drive owner is no longer the contract account after edit");
+    assert.strictEqual(editAnchored.bucketId, bucketId, "libraryOf.bucketId changed after edit");
     const bucketAfterEdit: any = await api.query.StorageProvider.Buckets.getValue(bucketId, READ_OPTS);
+    assert.ok(
+      bucketAfterEdit?.members?.some((m: any) => isSameAddress(m.account, contractAccount.address) && (m.role?.type ?? m.role) === "Admin"),
+      "contract account is no longer the bucket admin after edit",
+    );
     assert.ok(bucketAfterEdit?.members?.some((m: any) => isSameAddress(m.account, user.address)), "user lost the Writer grant after edit");
 
     // End state — the contract this flow deployed (an ephemeral instance,
