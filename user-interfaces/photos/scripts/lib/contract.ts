@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 // Photos-specific contract glue: reshape a provider-signed quote into the
-// drive-registry precompile's `PrimitiveAgreementTerms` ABI struct. This is NOT
+// storage-provider precompile's `PrimitiveAgreementTerms` ABI struct. This is NOT
 // general SDK material (it is precompile-shaped), so it stays local to the app,
 // mirroring `examples/papi/sc-support.ts`.
 //
@@ -19,7 +19,7 @@ import {
   type ParachainApi,
 } from "@web3-storage/sdk";
 
-/** Mirror of `IDriveRegistry.PrimitiveAgreementTerms` for viem ABI encoding. */
+/** Mirror of `IWeb3Storage.PrimitiveAgreementTerms` for viem ABI encoding. */
 export interface PrimitiveAgreementTerms {
   owner: `0x${string}`;
   maxBytes: bigint;

@@ -1,25 +1,16 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 import { useState } from "react";
-import { Archive, MoreHorizontal, Plus, Server, Trash2, Users } from "lucide-react";
+import { Archive, Plus, Server, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import {
   ContextMenu,
   ContextMenuTrigger,
   ContextMenuContent,
   ContextMenuItem,
-  ContextMenuSeparator,
 } from "@/components/ui/context-menu";
-import { useBuckets, useSelectedBucket, selectBucket, deleteBucket } from "@/state";
+import { useBuckets, useSelectedBucket, selectBucket } from "@/state";
 import type { BucketInfo } from "@/lib/s3-client";
-import { toast } from "@/components/ui/toaster";
-import ConfirmDialog from "./ConfirmDialog";
 import NewBucketDialog from "./NewBucketDialog";
 import ManageAccessDialog from "./ManageAccessDialog";
 
@@ -58,22 +49,7 @@ export default function BucketList() {
   const buckets = useBuckets();
   const selected = useSelectedBucket();
   const [showNewBucket, setShowNewBucket] = useState(false);
-  const [bucketToDelete, setBucketToDelete] = useState<BucketInfo | null>(null);
   const [accessBucket, setAccessBucket] = useState<BucketInfo | null>(null);
-
-  const handleDelete = async () => {
-    if (!bucketToDelete) return;
-    try {
-      await deleteBucket(bucketToDelete.s3BucketId);
-      toast({ title: "Bucket deleted" });
-    } catch (err) {
-      toast({
-        title: "Delete failed",
-        description: err instanceof Error ? err.message : "Error",
-        variant: "destructive",
-      });
-    }
-  };
 
   return (
     <div className="flex flex-col gap-2" data-testid="bucket-list">
@@ -89,14 +65,13 @@ export default function BucketList() {
 
       <div className="flex flex-col gap-1 mt-2">
         {buckets.map((bucket) => {
-          const isSelected = selected?.s3BucketId === bucket.s3BucketId;
-          const name = bucket.name || `Bucket ${bucket.s3BucketId}`;
+          const isSelected = selected?.bucketId === bucket.bucketId;
 
           return (
-            <ContextMenu key={bucket.s3BucketId.toString()}>
+            <ContextMenu key={bucket.bucketId.toString()}>
               <ContextMenuTrigger asChild>
                 <div
-                  data-testid={`bucket-list-item-${bucket.s3BucketId}`}
+                  data-testid={`bucket-list-item-${bucket.bucketId}`}
                   className={`group flex items-center gap-2 rounded-lg px-3 py-2 text-sm cursor-pointer transition-colors ${
                     isSelected
                       ? "bg-primary/10 text-primary font-medium"
@@ -106,17 +81,14 @@ export default function BucketList() {
                 >
                   <Archive className={`h-4 w-4 flex-shrink-0 ${isSelected ? "text-primary" : "text-muted-foreground"}`} />
                   <div className="flex-1 min-w-0">
-                    <p className="truncate">{name}</p>
-                    <p className="text-xs text-muted-foreground">
-                      ID: {bucket.s3BucketId.toString()}
-                    </p>
+                    <p className="truncate">Bucket #{bucket.bucketId.toString()}</p>
                     {(() => {
                       const p = providerParts(bucket.providerInfo);
                       return (
                         <div
                           className="flex items-start gap-1 text-xs text-muted-foreground"
                           title={providerTitle(bucket.providerInfo)}
-                          data-testid={`bucket-list-provider-${bucket.s3BucketId}`}
+                          data-testid={`bucket-list-provider-${bucket.bucketId}`}
                         >
                           <Server className="h-3 w-3 flex-shrink-0 mt-0.5" />
                           {p ? (
@@ -136,7 +108,7 @@ export default function BucketList() {
                   </div>
                   <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                     <button
-                      data-testid={`bucket-list-access-${bucket.s3BucketId}`}
+                      data-testid={`bucket-list-access-${bucket.bucketId}`}
                       onClick={(e) => {
                         e.stopPropagation();
                         setAccessBucket(bucket);
@@ -145,27 +117,6 @@ export default function BucketList() {
                     >
                       <Users className="h-3.5 w-3.5" />
                     </button>
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <button
-                          data-testid={`bucket-list-menu-${bucket.s3BucketId}`}
-                          onClick={(e) => e.stopPropagation()}
-                          className="text-muted-foreground hover:text-foreground"
-                        >
-                          <MoreHorizontal className="h-3.5 w-3.5" />
-                        </button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
-                        <DropdownMenuItem
-                          data-testid={`bucket-list-delete-${bucket.s3BucketId}`}
-                          onClick={() => setBucketToDelete(bucket)}
-                          className="text-destructive focus:text-destructive"
-                        >
-                          <Trash2 className="mr-2 h-4 w-4" />
-                          Delete bucket
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
                   </div>
                 </div>
               </ContextMenuTrigger>
@@ -173,14 +124,6 @@ export default function BucketList() {
                 <ContextMenuItem onClick={() => setAccessBucket(bucket)}>
                   <Users className="mr-2 h-4 w-4" />
                   Manage access
-                </ContextMenuItem>
-                <ContextMenuSeparator />
-                <ContextMenuItem
-                  onClick={() => setBucketToDelete(bucket)}
-                  className="text-destructive focus:text-destructive"
-                >
-                  <Trash2 className="mr-2 h-4 w-4" />
-                  Delete bucket
                 </ContextMenuItem>
               </ContextMenuContent>
             </ContextMenu>
@@ -190,20 +133,12 @@ export default function BucketList() {
 
       <NewBucketDialog open={showNewBucket} onOpenChange={setShowNewBucket} />
 
-      <ConfirmDialog
-        open={!!bucketToDelete}
-        onOpenChange={() => setBucketToDelete(null)}
-        title={`Delete "${bucketToDelete?.name ?? `Bucket ${bucketToDelete?.s3BucketId}`}"?`}
-        description="This will permanently delete the bucket and all its objects. Storage agreements will be terminated with prorated refunds."
-        onConfirm={handleDelete}
-      />
-
       {accessBucket && (
         <ManageAccessDialog
           open={!!accessBucket}
           onOpenChange={() => setAccessBucket(null)}
-          bucketId={accessBucket.layer0BucketId}
-          bucketName={accessBucket.name ?? `Bucket ${accessBucket.s3BucketId}`}
+          bucketId={accessBucket.bucketId}
+          bucketName={`Bucket #${accessBucket.bucketId}`}
         />
       )}
     </div>
