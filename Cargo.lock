@@ -3307,14 +3307,20 @@ dependencies = [
 name = "file-system-client"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
+ "axum",
  "file-system-primitives",
- "hex",
+ "parity-scale-codec",
+ "provider-auth",
+ "provider-storage",
+ "provider-types",
  "reqwest",
  "sp-core",
  "sp-crypto-hashing",
  "sp-runtime",
  "storage-client",
  "storage-primitives",
+ "storage-provider-node",
  "storage-subxt",
  "subxt",
  "subxt-signer 0.50.2",
@@ -3336,8 +3342,8 @@ dependencies = [
  "scale-info",
  "serde",
  "sp-core",
- "sp-crypto-hashing",
  "sp-runtime",
+ "storage-primitives",
  "thiserror 2.0.18",
 ]
 
@@ -8142,15 +8148,22 @@ checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
 name = "s3-client"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
+ "axum",
+ "base64",
+ "file-system-client",
+ "file-system-primitives",
  "futures",
  "hex",
- "reqwest",
- "serde",
+ "provider-auth",
+ "provider-storage",
+ "provider-types",
  "serde_json",
  "sp-core",
  "sp-runtime",
  "storage-client",
  "storage-primitives",
+ "storage-provider-node",
  "storage-subxt",
  "subxt",
  "subxt-signer 0.50.2",

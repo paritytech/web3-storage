@@ -32,8 +32,10 @@ export interface FsEntry {
   path: string;
   entryType: "file" | "directory";
   size: number;
-  /** Milliseconds since epoch. */
+  /** Milliseconds since epoch (stored with second precision). */
   mtime: number;
+  /** File: CID of its manifest. Directory: CID of its directory node. 0x-hex. */
+  cid: string;
 }
 
 export interface UploadOptions {
@@ -42,21 +44,17 @@ export interface UploadOptions {
 }
 
 export interface UploadResult {
-  /** data_root CID echoed by the provider, when present in the response. */
-  dataRoot?: string;
+  /** CID of the file content (its `data_root`), 0x-hex. */
+  dataRoot: string;
+  /** CID of the file's manifest, 0x-hex. */
+  manifestCid: string;
+  /** CID of the drive's new root directory, 0x-hex. */
+  rootCid: string;
   size: number;
 }
 
 export interface FileWithType {
   bytes: Uint8Array;
-  /** MIME type from the provider's `Content-Type` header, or a generic fallback. */
+  /** MIME type stored in the file's manifest (`application/octet-stream` when none was given). */
   contentType: string;
-}
-
-export interface IndexRoot {
-  indexRoot: string;
-  fileCount: number;
-  dirCount: number;
-  /** Total byte count (u64 on the wire) — kept as bigint to avoid 2^53 loss. */
-  totalSize: bigint;
 }

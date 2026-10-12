@@ -575,6 +575,18 @@ impl StorageUserClient {
 
     /// Get the current MMR commitment for a bucket from the provider.
     pub async fn get_commitment(&self, bucket_id: BucketId) -> ClientResult<CommitmentResponse> {
+        self.get_commitment_if_exists(bucket_id)
+            .await?
+            .ok_or_else(|| ClientError::Api("Commitment request failed: 404 Not Found".into()))
+    }
+
+    /// Like [`Self::get_commitment`], but returns `None` when the provider
+    /// answers 404 (it has no record of the bucket: it has received no data
+    /// for it yet).
+    pub async fn get_commitment_if_exists(
+        &self,
+        bucket_id: BucketId,
+    ) -> ClientResult<Option<CommitmentResponse>> {
         let provider_url = self.base.get_provider_url()?;
         let response = self
             .base
@@ -584,16 +596,64 @@ impl StorageUserClient {
             .send()
             .await?;
 
-        if !response.status().is_success() {
+        let status = response.status();
+        if status == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        if !status.is_success() {
             return Err(ClientError::Api(format!(
-                "Commitment request failed: {}",
-                response.status()
+                "Commitment request failed: {status}"
             )));
         }
         response
             .json()
             .await
+            .map(Some)
             .map_err(|e| ClientError::Serialization(e.to_string()))
+    }
+
+    /// Get the MMR proof of the leaf at `leaf_index` of the bucket's current
+    /// MMR (`GET /mmr_proof`). The proof is not verified here: check it with
+    /// [`storage_primitives::verify_mmr_proof`] against a trusted MMR root.
+    pub async fn get_mmr_proof(
+        &self,
+        bucket_id: BucketId,
+        leaf_index: u64,
+    ) -> ClientResult<storage_primitives::MmrProof> {
+        let provider_url = self.base.get_provider_url()?;
+        let response = self
+            .base
+            .http
+            .get(format!("{provider_url}/mmr_proof"))
+            .query(&[
+                ("bucket_id", bucket_id.to_string()),
+                ("leaf_index", leaf_index.to_string()),
+            ])
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            return Err(ClientError::Api(format!(
+                "MMR proof request failed: {}",
+                response.status()
+            )));
+        }
+        let wire: MmrProofResponse = response
+            .json()
+            .await
+            .map_err(|e| ClientError::Serialization(e.to_string()))?;
+        Ok(storage_primitives::MmrProof {
+            peaks: wire.proof.peaks,
+            leaf: storage_primitives::MmrLeaf {
+                data_root: wire.leaf.data_root,
+                data_size: wire.leaf.data_size,
+                total_size: wire.leaf.total_size,
+            },
+            leaf_proof: storage_primitives::MerkleProof {
+                siblings: wire.proof.siblings,
+                path: wire.proof.path,
+            },
+        })
     }
 
     /// Check which data roots (hashes) exist on the provider.
@@ -697,6 +757,41 @@ pub struct CommitResponse {
     pub leaf_indices: Vec<u64>,
     #[serde(deserialize_with = "multi_signature_from_hex")]
     pub provider_signature: sp_runtime::MultiSignature,
+}
+
+/// Deserialize a list of `0x`-prefixed 32-byte hex strings, like [`h256_from_hex`].
+fn h256_vec_from_hex<'de, D>(de: D) -> Result<Vec<H256>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    <Vec<String> as serde::Deserialize>::deserialize(de)?
+        .iter()
+        .map(|s| crate::substrate::parse_h256(s).map_err(serde::de::Error::custom))
+        .collect()
+}
+
+/// Body of the provider's `GET /mmr_proof` response.
+#[derive(serde::Deserialize)]
+struct MmrProofResponse {
+    leaf: MmrLeafWire,
+    proof: MmrProofWire,
+}
+
+#[derive(serde::Deserialize)]
+struct MmrLeafWire {
+    #[serde(deserialize_with = "h256_from_hex")]
+    data_root: H256,
+    data_size: u64,
+    total_size: u64,
+}
+
+#[derive(serde::Deserialize)]
+struct MmrProofWire {
+    #[serde(deserialize_with = "h256_vec_from_hex")]
+    peaks: Vec<H256>,
+    #[serde(deserialize_with = "h256_vec_from_hex")]
+    siblings: Vec<H256>,
+    path: Vec<bool>,
 }
 
 #[derive(serde::Deserialize)]

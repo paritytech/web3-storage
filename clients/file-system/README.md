@@ -11,14 +11,38 @@ drive id. The chain stores no drive name and no drive record:
   with provider-signed terms and returns the bucket id from the
   `BucketCreated` event.
 - **Share**: `add_member` / `remove_member` submit `StorageProvider::set_member`
-  / `remove_member`. There is no separate share call. The member gets
-  provider access to the bucket, but cannot open the drive with this client:
-  see the root CID limit below.
+  / `remove_member`. There is no separate share call.
 - **Delete**: the client has no drive deletion. Layer 0 has no bucket deletion.
-- **Files and directories**: stored as content-addressed blobs (file manifests,
-  chunks, directory nodes) in the bucket through the provider. The drive's
-  root CID exists only in this client's memory, so only the client instance
-  that created a drive can read it.
+- **Files and directories**: SCALE-encoded `DirectoryNode` and `FileManifest`
+  blobs (`file-system-primitives`) plus file content, stored in the bucket
+  through Layer 0 routes only (`PUT /node`, `POST /commit`, `GET /read`,
+  `GET /node` (to check a 64-byte directory or manifest blob),
+  `GET /commitment`, `GET /mmr_proof`). The `tree` module contains the format
+  and the read and write logic; the S3 client uses the same module.
+
+### Root directory
+
+The root directory is the data root of the bucket's last MMR leaf. The client
+reads `GET /commitment`, then the MMR proof of the last leaf, checks the proof
+against the commitment, and reads the root directory from it. Any client
+instance can open the drive. A drive with no commits is empty.
+
+Each write reads the current root, uploads the new content, manifest and
+rewritten directories (from the changed entry up to the root), and commits
+them in one `POST /commit` with the new root last.
+
+### Limits
+
+- **Single writer.** Two writers that read the same root and then both commit
+  lose one change: the last commit wins.
+- **Only the file system and S3 clients may write the bucket.** A raw Layer 0
+  commit becomes the last leaf and the client then rejects the bucket
+  (`NotAFileSystemBucket`).
+- **Prefix deletes.** An Admin `POST /delete` with a new `start_seq` can let
+  the provider drop blobs the current tree still references.
+- **Reads are unauthenticated.** Layer 0 reads need no signature: anyone who
+  knows a CID can read the blob (#383, #396). Bucket visibility does not
+  protect file contents. Use client-side encryption for confidential data.
 
 ## Prerequisites
 
@@ -32,7 +56,7 @@ drive id. The chain stores no drive name and no drive record:
 use file_system_client::{FileSystemClient, Signer};
 use storage_client::{NegotiateRequest, ProviderClient, Visibility};
 
-let mut fs_client = FileSystemClient::new(
+let fs_client = FileSystemClient::new(
     "ws://127.0.0.1:2222",
     "http://127.0.0.1:3333",
     Signer::from_seed("//Alice")?,
@@ -58,15 +82,18 @@ let bucket_id = fs_client
     .await?;
 
 fs_client.create_directory(bucket_id, "/documents").await?;
-fs_client.upload_file(bucket_id, "/documents/hello.txt", b"hello").await?;
+fs_client
+    .upload_file(bucket_id, "/documents/hello.txt", b"hello", Some("text/plain"))
+    .await?;
 let entries = fs_client.list_directory(bucket_id, "/documents").await?;
-let data = fs_client.download_file(bucket_id, "/documents/hello.txt").await?;
+let file = fs_client.get_file(bucket_id, "/documents/hello.txt").await?;
+fs_client.delete(bucket_id, "/documents/hello.txt").await?;
 
 // Give Bob write access to the drive.
 fs_client.add_member(bucket_id, bob, file_system_client::Role::Writer).await?;
 ```
 
-The signer signs both extrinsics and provider HTTP requests.
+The signer signs extrinsics and the provider uploads and commits.
 
 Checkpoints: `submit_checkpoint`, `submit_checkpoint_with_config`, and
 `enable_auto_checkpoints` / `disable_auto_checkpoints` /

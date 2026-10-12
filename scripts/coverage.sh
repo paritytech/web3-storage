@@ -37,10 +37,10 @@ COV_PACKAGES=(
 # Not measured, with the reason per crate.
 COV_SKIP_PACKAGES=(
 	storage-client # chain-bound SDK; integration tests self-skip without a live chain
-	file-system-client # chain-bound layer-1 SDK
-	s3-client # chain-bound layer-1 SDK
+	file-system-client # layer-1 SDK; src is excluded by COV_IGNORE (clients/*/src)
+	s3-client # layer-1 SDK; src is excluded by COV_IGNORE (clients/*/src)
 	storage-primitives # pure types; enters reports only via dep graph (see COV_IGNORE)
-	file-system-primitives # pure types; enters reports only via dep graph (see COV_IGNORE)
+	file-system-primitives # format types and checks; excluded by COV_IGNORE (/primitives/)
 	s3-primitives # pure types; enters reports only via dep graph (see COV_IGNORE)
 	storage-parachain-runtime # exercised out of process (zombienet e2e)
 	storage-paseo-runtime # exercised out of process (zombienet e2e)

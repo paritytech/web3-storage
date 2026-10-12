@@ -9,12 +9,14 @@ description = "Client SDK for Layer 1 file system built on Scalable Web3 Storage
 
 [dependencies]
 # Internal dependencies
+codec = { workspace = true, features = ["std"] }
 file-system-primitives = { workspace = true, features = ["std"] }
 storage-client = { workspace = true }
 storage-primitives = { workspace = true, features = ["std"] }
 storage-subxt = { workspace = true }
 
 # Async runtime
+async-trait = { workspace = true }
 tokio = { workspace = true }
 reqwest = { workspace = true }
 
@@ -28,10 +30,15 @@ subxt = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 thiserror = { workspace = true }
-hex = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
+axum = { workspace = true }
+provider-auth = { workspace = true }
+provider-storage = { workspace = true, features = ["test-helpers"] }
+provider-types = { workspace = true }
+storage-provider-node = { workspace = true }
 subxt-signer = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 tokio-test = { workspace = true }
 
 [[example]]

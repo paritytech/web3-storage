@@ -37,4 +37,11 @@ message FileManifest {
   uint64 total_size = 3;            // Total file size in bytes
   repeated FileChunk chunks = 4;    // Ordered list of chunks
   string encryption_params = 5;     // Salt, IV, etc. for W3ACL (optional)
+  repeated MetadataEntry user_metadata = 6; // User metadata, in stored order
+}
+
+// A user metadata key-value pair
+message MetadataEntry {
+  string key = 1;
+  string value = 2;
 }

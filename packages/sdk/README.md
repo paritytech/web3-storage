@@ -93,13 +93,55 @@ The wrappers for its steps are `addPrimaryProvider` (new provider joins),
 `checkpoint` (new provider signs the snapshot after the client uploaded the
 data to it) and `endAgreement` (old provider leaves).
 
+## File systems and S3 buckets
+
+`FileSystemClient` and `S3Client` keep their data in the Layer 0 bucket
+itself and use only the provider's Layer 0 routes (`PUT /node`,
+`POST /commit`, `GET /node`, `GET /read`, `GET /commitment`,
+`GET /mmr_proof`). The format code exists in one module,
+`packages/layer1/src/tree.ts`:
+
+- Directories and files are SCALE-encoded `DirectoryNode` and
+  `FileManifest` blobs (`crates/primitives/file-system`). A blob's CID is
+  its `data_root` (`computeDataRoot`).
+- The root directory's CID is the bucket's last MMR leaf. A bucket with no
+  leaves is an empty drive.
+- A write uploads the new content, its manifest and each rewritten
+  directory up to the root, then commits them in one `/commit`, root last.
+- An S3 key `k` is the file at path `/k`. Directories between are created
+  on put and removed on delete when empty.
+
+Rules for callers:
+
+- **One writer at a time.** Two clients that write the same bucket
+  concurrently can lose one change: the last commit wins.
+- **Only these clients write the bucket.** A raw Layer 0 commit becomes the
+  last leaf, and the tree no longer loads (`FileSystemError` with code
+  `NotAFileSystem`).
+- **An Admin prefix delete** (`/delete` with a new `start_seq`) can remove
+  blobs that the current tree still references.
+- **Reads are unauthenticated.** Anyone who knows a CID can read the blob
+  (#383/#396). Encrypt confidential data on the client.
+- **Times are in milliseconds.** `FileSystemClient` and `S3Client` return
+  `mtime` and `lastModified` in milliseconds since the epoch. The stored
+  format (`DirectoryEntry.mtime`) and the Rust clients use seconds, so the
+  values are multiples of 1000.
+- **`S3Client.listObjects` pages** contain at most 1000 entries (`maxKeys`
+  is clamped to 1-1000), and each page reads the tree again. Use
+  `listAllObjects` to get every key from one read.
+
 ## Download verification
 
-| Path | Verified? | Why |
+| Path | Verified? | How |
 | --- | --- | --- |
-| `downloadChunk` / `fs.downloadByCid` | **Yes — throws `CidMismatchError`** | the requested hash IS the chunk's CID |
-| `s3.getObject` (by key) | No ([#410](https://github.com/paritytech/web3-storage/pull/410)) | the key → content mapping comes from the provider's S3 index; nothing on chain commits to it |
-| `fs.downloadFile` (by path) | No (documented) | the provider's `/fs` file route returns no `data_root` to check against |
+| `downloadChunk` | **Yes, throws `CidMismatchError`** | the requested hash is the node's hash |
+| `readBlob` / `fs.downloadByCid` with a size | **Yes, throws `BlobVerificationError`** | every chunk is checked against the blob's padded Merkle tree |
+| `readBlob` / `fs.downloadByCid` without a size | Partly | the tree is checked, but a provider can return an internal node as a 64-byte blob |
+| `fs.downloadFile`, `s3.getObject` | **Yes** | the path resolves through CID-checked directory and manifest blobs from the root CID |
+
+The root CID comes from the provider's last MMR leaf, checked against the
+provider's MMR root with `verifyLastMmrLeaf`. That MMR root is the provider's
+claim until it is compared with an on-chain checkpoint.
 
 Provider requests are signed (`Web3Storage <pubkey>:<sig>:<timestamp>` per
 the `crates/providers/auth` crate) whenever the signer carries a raw keypair
