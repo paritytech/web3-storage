@@ -38,6 +38,15 @@ describe("paddedMerkleRoot", () => {
     const expected = hashChildren(hashChildren(a, b), hashChildren(c, ZERO32));
     expect(toHex(paddedMerkleRoot([a, b, c]))).toBe(toHex(expected));
   });
+
+  // Same vector as `padded_merkle_tree_matches_ts_vector` in
+  // crates/primitives/storage, so the Rust and TS trees stay identical.
+  it("matches the Rust padded_merkle_tree vector", () => {
+    const leaf = (n: number) => computeCid(new Uint8Array([n]));
+    expect(toHex(paddedMerkleRoot([leaf(1), leaf(2), leaf(3)]))).toBe(
+      "0xb00ba4725e9a6c357dfffcf32d0ea9f2b73418705bdab4ea5a602cac23fbc650",
+    );
+  });
 });
 
 describe("computeDataRoot", () => {

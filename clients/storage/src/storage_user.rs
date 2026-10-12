@@ -479,6 +479,8 @@ impl StorageUserClient {
 
     fn chunk_data(data: &[u8], strategy: ChunkingStrategy) -> Vec<Vec<u8>> {
         match strategy {
+            // Empty data is one empty chunk, as on the provider.
+            ChunkingStrategy::Fixed(_) if data.is_empty() => vec![Vec::new()],
             ChunkingStrategy::Fixed(chunk_size) => {
                 data.chunks(chunk_size).map(|c| c.to_vec()).collect()
             }
@@ -525,58 +527,31 @@ impl StorageUserClient {
         Ok(())
     }
 
+    /// Upload the internal nodes of the padded Merkle tree over `leaf_hashes`
+    /// (`storage_primitives::padded_merkle_tree`, the shape the provider and
+    /// chunk proofs use) and return its root. Each distinct node is uploaded once.
     async fn build_merkle_tree(
         &self,
         provider_url: &str,
         bucket_id: BucketId,
         leaf_hashes: &[H256],
     ) -> ClientResult<H256> {
-        if leaf_hashes.is_empty() {
-            return Err(ClientError::Api(
-                "Cannot build Merkle tree with no leaves".to_string(),
-            ));
-        }
-
-        let mut current_level = leaf_hashes.to_vec();
-
-        while current_level.len() > 1 {
-            let mut next_level = Vec::new();
-
-            for pair in current_level.chunks(2) {
-                let parent_hash = if pair.len() == 2 {
-                    storage_primitives::hash_children(pair[0], pair[1])
-                } else {
-                    pair[0]
-                };
-
-                // Upload internal node
-                let children = pair.to_vec();
-                let parent_data = self.encode_internal_node(&children);
-
-                self.upload_node(
-                    provider_url,
-                    bucket_id,
-                    parent_hash,
-                    parent_data,
-                    Some(children),
-                )
-                .await?;
-
-                next_level.push(parent_hash);
+        let (root, nodes) = storage_primitives::padded_merkle_tree(leaf_hashes);
+        let mut uploaded = std::collections::HashSet::new();
+        for node in nodes {
+            if !uploaded.insert(node.hash) {
+                continue;
             }
-
-            current_level = next_level;
+            self.upload_node(
+                provider_url,
+                bucket_id,
+                node.hash,
+                node.data().to_vec(),
+                Some(vec![node.left, node.right]),
+            )
+            .await?;
         }
-
-        Ok(current_level[0])
-    }
-
-    fn encode_internal_node(&self, children: &[H256]) -> Vec<u8> {
-        // Simple encoding: concatenate child hashes
-        children
-            .iter()
-            .flat_map(|h| h.as_bytes().to_vec())
-            .collect()
+        Ok(root)
     }
 
     // ═════════════════════════════════════════════════════════════════════════

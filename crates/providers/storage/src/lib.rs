@@ -7,7 +7,6 @@
 pub mod backend;
 pub mod error;
 pub mod index;
-pub mod merkle;
 pub mod mmr;
 
 pub use backend::{
@@ -18,7 +17,6 @@ pub use error::Error;
 pub use index::{
     FsEntryMeta, FsIndexManager, FsListEntry, ListResult, ObjectEntry, ObjectMeta, S3IndexManager,
 };
-pub use merkle::build_merkle_proof;
 
 /// Names the scratch directories [`temp_rocksdb`] creates.
 #[cfg(any(test, feature = "test-helpers"))]

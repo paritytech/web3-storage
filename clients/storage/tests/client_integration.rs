@@ -43,14 +43,77 @@ async fn test_upload_returns_nonzero_root() {
 }
 
 #[tokio::test]
-async fn test_upload_empty_data_returns_error() {
+async fn test_upload_empty_data_is_one_empty_chunk() {
     let url = start_test_provider().await;
     let client = make_client(url);
 
-    let result = client.upload(1, b"", ChunkingStrategy::default()).await;
+    let data_root = client
+        .upload(1, b"", ChunkingStrategy::default())
+        .await
+        .unwrap();
 
-    // Empty data has no Merkle leaves — the client should surface a clear error.
-    assert!(result.is_err(), "expected error for empty upload, got Ok");
+    // Same as the provider and the TS SDK: empty data is a single empty chunk.
+    assert_eq!(data_root, storage_primitives::blake2_256(b""));
+}
+
+/// Three chunks pad to a four-leaf tree. The client must upload that tree
+/// (not one that moves the odd chunk up a level), or the provider cannot
+/// serve the last chunk and chunk proofs do not verify.
+#[tokio::test]
+async fn test_upload_odd_chunk_count_uses_padded_tree() {
+    let url = start_test_provider().await;
+    let client = make_client(url.clone());
+
+    let chunk_size = 256 * 1024;
+    let data: Vec<u8> = (0..chunk_size * 2 + 100).map(|i| (i % 251) as u8).collect();
+
+    let data_root = client
+        .upload(1, &data, ChunkingStrategy::default())
+        .await
+        .unwrap();
+
+    let leaves: Vec<H256> = data
+        .chunks(chunk_size)
+        .map(storage_primitives::blake2_256)
+        .collect();
+    assert_eq!(data_root, storage_primitives::padded_merkle_tree(&leaves).0);
+
+    let downloaded = client
+        .download_full(&data_root, data.len() as u64)
+        .await
+        .unwrap();
+    assert_eq!(downloaded, data);
+
+    // The provider's proof for the last chunk verifies against the client's root.
+    let response: serde_json::Value = reqwest::get(format!(
+        "{url}/chunk_proof?data_root={data_root:?}&chunk_index=2"
+    ))
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    let hash = |v: &serde_json::Value| -> H256 {
+        let hex = v.as_str().unwrap().trim_start_matches("0x");
+        H256::from_slice(&hex::decode(hex).unwrap())
+    };
+    let proof = storage_primitives::MerkleProof {
+        siblings: response["proof"]["siblings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(hash)
+            .collect(),
+        path: response["proof"]["path"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|b| b.as_bool().unwrap())
+            .collect(),
+    };
+    assert!(storage_primitives::verify_merkle_proof(
+        leaves[2], 2, &proof, &data_root
+    ));
 }
 
 #[tokio::test]
