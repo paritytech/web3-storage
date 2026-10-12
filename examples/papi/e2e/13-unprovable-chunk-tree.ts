@@ -150,7 +150,7 @@ async function main() {
       for (const ev of slashed) {
         slashedAmount += ev.payload.slashed_amount;
         console.log(
-          `          ChallengeSlashed reason=${ev.payload.reason.type} slashed_amount=${ev.payload.slashed_amount}`,
+          `          ChallengeSlashed slashed_amount=${ev.payload.slashed_amount}`,
         );
       }
       assert.strictEqual(slashed.length, 0, "provider must not be slashed");
