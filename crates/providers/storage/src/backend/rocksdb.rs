@@ -14,12 +14,19 @@ use rocksdb::{Options, DB};
 use sp_core::H256;
 use std::path::Path;
 use std::sync::Arc;
-use storage_primitives::{blake2_256, BucketId, MmrLeaf};
+use storage_primitives::{blake2_256, BucketId, Commitment, MmrLeaf};
 
 /// Column families for organizing data
 const CF_NODES: &str = "nodes";
 const CF_BUCKETS: &str = "buckets";
 const CF_ROOT_TO_BUCKET: &str = "root_to_bucket";
+/// Per-bucket `Vec<MmrLeaf>` that `delete_before` has pruned from `CF_BUCKETS`.
+/// Entry `i` is always the leaf at absolute sequence `i` - pruning only ever
+/// removes a prefix, so this stays a contiguous, gap-free run from sequence 0.
+/// Kept so an earlier signed commitment can still be proven after data it
+/// covers has been pruned from the live bucket state.
+const CF_PRUNED_LEAVES: &str = "pruned_leaves";
+
 /// Held the provider-allocated agreement nonce before nonces moved on chain
 /// (per-owner `AgreementNonces`). Dropped when an existing database is opened.
 const LEGACY_CF_METADATA: &str = "metadata";
@@ -43,7 +50,7 @@ impl DiskStorage {
         let has_legacy = DB::list_cf(&opts, path)
             .map(|names| names.iter().any(|name| name == LEGACY_CF_METADATA))
             .unwrap_or(false);
-        let mut cf_names = vec![CF_NODES, CF_BUCKETS, CF_ROOT_TO_BUCKET];
+        let mut cf_names = vec![CF_NODES, CF_BUCKETS, CF_ROOT_TO_BUCKET, CF_PRUNED_LEAVES];
         if has_legacy {
             cf_names.push(LEGACY_CF_METADATA);
         }
@@ -73,7 +80,37 @@ impl DiskStorage {
         let value = bucket.encode();
 
         self.db.put_cf(&cf, key, &value)?;
+        self.set_pruned_leaves(bucket_id, &[])?;
 
+        Ok(())
+    }
+
+    /// Get the leaves `delete_before` has pruned from this bucket, oldest
+    /// (sequence 0) first. Empty if the bucket has never been pruned.
+    fn get_pruned_leaves(&self, bucket_id: BucketId) -> Vec<MmrLeaf> {
+        let Some(cf) = self.db.cf_handle(CF_PRUNED_LEAVES) else {
+            return Vec::new();
+        };
+        let key = bucket_id.to_le_bytes();
+        let Ok(Some(value)) = self.db.get_cf(&cf, key) else {
+            return Vec::new();
+        };
+        match Vec::<MmrLeaf>::decode_all(&mut &value[..]) {
+            Ok(leaves) => leaves,
+            Err(e) => {
+                tracing::warn!(bucket_id, error = %e, "Failed to deserialize pruned leaves");
+                Vec::new()
+            }
+        }
+    }
+
+    fn set_pruned_leaves(&self, bucket_id: BucketId, leaves: &[MmrLeaf]) -> Result<(), Error> {
+        let cf = self
+            .db
+            .cf_handle(CF_PRUNED_LEAVES)
+            .ok_or(Error::ColumnFamilyMissing(CF_PRUNED_LEAVES))?;
+        let key = bucket_id.to_le_bytes();
+        self.db.put_cf(&cf, key, leaves.to_vec().encode())?;
         Ok(())
     }
 
@@ -369,7 +406,10 @@ impl DiskStorage {
         // Remove leaves before new_start_seq
         let to_remove = (new_start_seq - bucket.start_seq) as usize;
         if to_remove > 0 && to_remove <= bucket.leaves.len() {
-            bucket.leaves.drain(0..to_remove);
+            let drained: Vec<MmrLeaf> = bucket.leaves.drain(0..to_remove).collect();
+            let mut pruned = self.get_pruned_leaves(bucket_id);
+            pruned.extend(drained);
+            self.set_pruned_leaves(bucket_id, &pruned)?;
             bucket.start_seq = new_start_seq;
 
             // Recalculate MMR
@@ -385,7 +425,7 @@ impl DiskStorage {
         Ok((bucket.mmr_root, bucket.start_seq, bucket.leaf_count()))
     }
 
-    /// Get MMR proof for a leaf.
+    /// Get MMR proof for a leaf, against the bucket's current commitment.
     pub fn get_mmr_proof(
         &self,
         bucket_id: BucketId,
@@ -394,19 +434,69 @@ impl DiskStorage {
         let bucket = self
             .get_bucket(bucket_id)
             .ok_or(Error::BucketNotFound(bucket_id))?;
+        let commitment = Commitment {
+            mmr_root: bucket.mmr_root,
+            start_seq: bucket.start_seq,
+            leaf_count: bucket.leaf_count(),
+        };
+        self.get_mmr_proof_for(bucket_id, commitment, leaf_index)
+    }
 
-        let leaf = bucket
-            .leaves
-            .get(leaf_index as usize)
-            .ok_or(Error::NodeNotFound(format!("leaf_{leaf_index}")))?
-            .clone();
-
-        // Build MMR and generate proof
-        let mut mmr = crate::mmr::Mmr::new();
-        for l in &bucket.leaves {
-            mmr.push(blake2_256(&l.encode()));
+    /// Get MMR proof for a leaf against a specific commitment.
+    ///
+    /// Rebuilds the MMR over the leaves at sequence numbers
+    /// `commitment.start_seq .. commitment.start_seq + commitment.leaf_count`,
+    /// drawing on both the bucket's currently retained leaves and any it has
+    /// since pruned, so an earlier signed commitment stays provable after a
+    /// later commit or delete has moved the bucket on.
+    pub fn get_mmr_proof_for(
+        &self,
+        bucket_id: BucketId,
+        commitment: Commitment,
+        leaf_index: u64,
+    ) -> Result<storage_primitives::MmrProof, Error> {
+        if leaf_index >= commitment.leaf_count {
+            return Err(Error::NodeNotFound(format!("leaf_{leaf_index}")));
         }
 
+        let bucket = self
+            .get_bucket(bucket_id)
+            .ok_or(Error::BucketNotFound(bucket_id))?;
+
+        let range_start = commitment.start_seq;
+        let range_end = commitment.start_seq.saturating_add(commitment.leaf_count);
+        let retained_end = bucket.start_seq.saturating_add(bucket.leaves.len() as u64);
+        if range_end > retained_end {
+            return Err(Error::NodeNotFound(format!(
+                "commitment_range_{range_start}_{range_end}"
+            )));
+        }
+
+        let pruned = if range_start < bucket.start_seq {
+            self.get_pruned_leaves(bucket_id)
+        } else {
+            Vec::new()
+        };
+        let mut range_leaves = Vec::with_capacity(commitment.leaf_count as usize);
+        for seq in range_start..range_end {
+            let leaf = if seq < bucket.start_seq {
+                pruned.get(seq as usize)
+            } else {
+                bucket.leaves.get((seq - bucket.start_seq) as usize)
+            }
+            .ok_or_else(|| Error::NodeNotFound(format!("mmr_leaf_seq_{seq}")))?;
+            range_leaves.push(leaf.clone());
+        }
+
+        let mut mmr = crate::mmr::Mmr::new();
+        for l in &range_leaves {
+            mmr.push(blake2_256(&l.encode()));
+        }
+        if mmr.root() != commitment.mmr_root {
+            return Err(Error::CommitmentMismatch);
+        }
+
+        let leaf = range_leaves[leaf_index as usize].clone();
         let (siblings, path, peaks) = mmr
             .proof_with_path(leaf_index)
             .ok_or(Error::NodeNotFound(format!("mmr_proof_{leaf_index}")))?;
@@ -505,6 +595,15 @@ impl StorageBackend for DiskStorage {
         self.get_mmr_proof(bucket_id, leaf_index)
     }
 
+    fn get_mmr_proof_for(
+        &self,
+        bucket_id: BucketId,
+        commitment: Commitment,
+        leaf_index: u64,
+    ) -> Result<storage_primitives::MmrProof, Error> {
+        self.get_mmr_proof_for(bucket_id, commitment, leaf_index)
+    }
+
     fn get_mmr_peaks(&self, bucket_id: BucketId) -> Result<(H256, Vec<H256>), Error> {
         self.get_mmr_peaks(bucket_id)
     }
@@ -525,8 +624,8 @@ mod tests {
     fn on_disk_bytes() {
         // Raw keys and values as written through the public API.
         assert_eq!(
-            [CF_NODES, CF_BUCKETS, CF_ROOT_TO_BUCKET],
-            ["nodes", "buckets", "root_to_bucket"],
+            [CF_NODES, CF_BUCKETS, CF_ROOT_TO_BUCKET, CF_PRUNED_LEAVES],
+            ["nodes", "buckets", "root_to_bucket", "pruned_leaves"],
             "column-family names locate every record on disk",
         );
 
@@ -553,6 +652,17 @@ mod tests {
              e803000000000000"
         );
 
+        // CF_PRUNED_LEAVES: key = bucket_id as u64 little-endian, value =
+        // SCALE(Vec<MmrLeaf>). Empty right after init_bucket.
+        let cf = storage.db.cf_handle(CF_PRUNED_LEAVES).unwrap();
+        let key = hex::decode("0807060504030201").unwrap();
+        let raw = storage
+            .db
+            .get_cf(&cf, key)
+            .unwrap()
+            .expect("pruned-leaves record must exist once a bucket is initialised");
+        assert_eq!(hex::encode(&raw), "00");
+
         // CF_NODES: key = blake2_256(data), value = SCALE(StoredNode).
         let data = vec![1u8, 2, 3, 4, 5];
         let hash = blake2_256(&data);
@@ -560,6 +670,24 @@ mod tests {
         let cf = storage.db.cf_handle(CF_NODES).unwrap();
         let raw = storage.db.get_cf(&cf, hash.as_bytes()).unwrap().unwrap();
         assert_eq!(hex::encode(&raw), "14010203040500");
+
+        // delete_before moves the committed leaf into CF_PRUNED_LEAVES.
+        storage.commit(bucket_id, vec![hash]).unwrap();
+        storage.delete_before(bucket_id, 1).unwrap();
+        let cf = storage.db.cf_handle(CF_PRUNED_LEAVES).unwrap();
+        let key = hex::decode("0807060504030201").unwrap();
+        let raw = storage.db.get_cf(&cf, key).unwrap().unwrap();
+        // Vec<MmrLeaf>, compact length 1, then the pruned leaf: data_root =
+        // the committed chunk's hash, data_size = total_size = 5 (single
+        // chunk, no children).
+        let pruned_leaf = MmrLeaf {
+            data_root: hash,
+            data_size: 5,
+            total_size: 5,
+        };
+        let mut expected = vec![0x04u8]; // compact length 1
+        expected.extend_from_slice(&pruned_leaf.encode());
+        assert_eq!(raw, expected);
     }
 
     /// A database written before nonces moved on chain still opens, keeps
@@ -610,6 +738,102 @@ mod tests {
         assert!(
             matches!(err, Error::RocksDb(_)),
             "expected Error::RocksDb, got {err}"
+        );
+    }
+
+    #[test]
+    fn get_mmr_proof_for_defends_an_older_commitment_after_a_later_commit() {
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        let bucket_id: BucketId = 1;
+        storage.init_bucket(bucket_id, 1_000_000).unwrap();
+
+        let chunk_a = b"chunk-a".to_vec();
+        let hash_a = blake2_256(&chunk_a);
+        storage
+            .store_node(bucket_id, hash_a, chunk_a, None)
+            .unwrap();
+        let (root_a, _, _) = storage.commit(bucket_id, vec![hash_a]).unwrap();
+
+        // A second commit moves the bucket's current root on; root_a stays a
+        // commitment the provider signed and must still be provable.
+        let chunk_b = b"chunk-b".to_vec();
+        let hash_b = blake2_256(&chunk_b);
+        storage
+            .store_node(bucket_id, hash_b, chunk_b, None)
+            .unwrap();
+        storage.commit(bucket_id, vec![hash_b]).unwrap();
+
+        let commitment = Commitment {
+            mmr_root: root_a,
+            start_seq: 0,
+            leaf_count: 1,
+        };
+        let proof = storage.get_mmr_proof_for(bucket_id, commitment, 0).unwrap();
+        assert!(storage_primitives::verify_mmr_proof_at(
+            &proof, &root_a, 0, 1
+        ));
+    }
+
+    #[test]
+    fn get_mmr_proof_for_defends_a_pre_delete_commitment_after_delete_before() {
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        let bucket_id: BucketId = 1;
+        storage.init_bucket(bucket_id, 1_000_000).unwrap();
+
+        let chunk_a = b"chunk-a".to_vec();
+        let hash_a = blake2_256(&chunk_a);
+        storage
+            .store_node(bucket_id, hash_a, chunk_a, None)
+            .unwrap();
+        storage.commit(bucket_id, vec![hash_a]).unwrap();
+
+        let chunk_b = b"chunk-b".to_vec();
+        let hash_b = blake2_256(&chunk_b);
+        storage
+            .store_node(bucket_id, hash_b, chunk_b, None)
+            .unwrap();
+        let (root_ab, _, _) = storage.commit(bucket_id, vec![hash_b]).unwrap();
+
+        // Prune leaf 0 (chunk A). The commitment over both chunks still names
+        // leaf 1 (chunk B), which the provider still holds.
+        storage.delete_before(bucket_id, 1).unwrap();
+
+        let commitment = Commitment {
+            mmr_root: root_ab,
+            start_seq: 0,
+            leaf_count: 2,
+        };
+        let proof = storage.get_mmr_proof_for(bucket_id, commitment, 1).unwrap();
+        assert!(storage_primitives::verify_mmr_proof_at(
+            &proof, &root_ab, 1, 2
+        ));
+    }
+
+    #[test]
+    fn get_mmr_proof_for_rejects_a_commitment_the_backend_never_produced() {
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        let bucket_id: BucketId = 1;
+        storage.init_bucket(bucket_id, 1_000_000).unwrap();
+
+        let chunk_a = b"chunk-a".to_vec();
+        let hash_a = blake2_256(&chunk_a);
+        storage
+            .store_node(bucket_id, hash_a, chunk_a, None)
+            .unwrap();
+        storage.commit(bucket_id, vec![hash_a]).unwrap();
+
+        let bogus = Commitment {
+            mmr_root: H256::repeat_byte(0xff),
+            start_seq: 0,
+            leaf_count: 1,
+        };
+        let err = storage.get_mmr_proof_for(bucket_id, bogus, 0).unwrap_err();
+        assert!(
+            matches!(err, Error::CommitmentMismatch),
+            "expected Error::CommitmentMismatch, got {err}"
         );
     }
 }

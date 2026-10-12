@@ -21,6 +21,11 @@ pub enum Error {
     #[error("Invalid hash: expected {expected}, got {actual}")]
     InvalidHash { expected: String, actual: String },
 
+    /// A commitment-scoped query gave some but not all of `mmr_root`,
+    /// `start_seq` and `leaf_count` - they only make sense together.
+    #[error("mmr_root, start_seq and leaf_count must all be given together, or none of them")]
+    PartialCommitmentQuery,
+
     #[error("Invalid signature")]
     InvalidSignature,
 
@@ -197,6 +202,13 @@ impl IntoResponse for Error {
                         details: Some(serde_json::json!({ "message": msg })),
                     },
                 ),
+                StorageError::CommitmentMismatch => (
+                    StatusCode::BAD_REQUEST,
+                    ErrorResponse {
+                        error: "commitment_mismatch".to_string(),
+                        details: None,
+                    },
+                ),
             },
             Error::InvalidHash { expected, actual } => (
                 StatusCode::BAD_REQUEST,
@@ -206,6 +218,13 @@ impl IntoResponse for Error {
                         "expected": expected,
                         "actual": actual
                     })),
+                },
+            ),
+            Error::PartialCommitmentQuery => (
+                StatusCode::BAD_REQUEST,
+                ErrorResponse {
+                    error: "partial_commitment_query".to_string(),
+                    details: None,
                 },
             ),
             Error::InvalidSignature => (

@@ -1283,10 +1283,6 @@ pub mod api {
             use super::root_mod;
             use super::runtime_types;
             #[doc = " Runtime API for the storage provider pallet."]
-            #[doc = ""]
-            #[doc = " v2 reshaped `ProviderInfoResponse` (`deregister_at`, `reputation`) and added"]
-            #[doc = " `challenge_candidates`. Declared explicitly so callers can probe the version"]
-            #[doc = " instead of decoding a v1 shape that no longer exists."]
             pub struct StorageProviderApi;
             impl StorageProviderApi {
                 #[doc = " Get provider information."]
@@ -1460,9 +1456,9 @@ pub mod api {
                         "challenges_at",
                         (block,),
                         [
-                            216u8, 226u8, 89u8, 183u8, 95u8, 35u8, 105u8, 91u8, 152u8, 236u8, 56u8,
-                            37u8, 172u8, 121u8, 197u8, 250u8, 250u8, 144u8, 19u8, 130u8, 233u8,
-                            87u8, 54u8, 67u8, 254u8, 149u8, 243u8, 184u8, 245u8, 22u8, 53u8, 63u8,
+                            117u8, 0u8, 93u8, 125u8, 31u8, 17u8, 226u8, 237u8, 238u8, 62u8, 91u8,
+                            81u8, 5u8, 15u8, 238u8, 30u8, 97u8, 188u8, 42u8, 33u8, 14u8, 188u8,
+                            1u8, 89u8, 255u8, 45u8, 200u8, 185u8, 32u8, 192u8, 157u8, 184u8,
                         ],
                     )
                 }
@@ -1479,10 +1475,10 @@ pub mod api {
                         "bucket_challenges",
                         (bucket_id,),
                         [
-                            53u8, 180u8, 217u8, 216u8, 255u8, 151u8, 157u8, 88u8, 60u8, 121u8,
-                            205u8, 91u8, 183u8, 58u8, 180u8, 133u8, 95u8, 101u8, 158u8, 31u8,
-                            141u8, 122u8, 151u8, 164u8, 221u8, 22u8, 199u8, 72u8, 77u8, 196u8,
-                            69u8, 216u8,
+                            219u8, 81u8, 58u8, 40u8, 30u8, 84u8, 7u8, 181u8, 168u8, 200u8, 97u8,
+                            36u8, 100u8, 152u8, 157u8, 107u8, 223u8, 48u8, 124u8, 236u8, 189u8,
+                            145u8, 222u8, 54u8, 15u8, 63u8, 45u8, 133u8, 239u8, 187u8, 144u8,
+                            206u8,
                         ],
                     )
                 }
@@ -1500,10 +1496,10 @@ pub mod api {
                         "provider_challenges",
                         (provider,),
                         [
-                            48u8, 176u8, 221u8, 58u8, 106u8, 223u8, 57u8, 12u8, 188u8, 228u8,
-                            153u8, 226u8, 16u8, 115u8, 83u8, 57u8, 23u8, 119u8, 151u8, 116u8,
-                            116u8, 157u8, 139u8, 213u8, 127u8, 0u8, 155u8, 49u8, 73u8, 131u8, 15u8,
-                            249u8,
+                            211u8, 212u8, 218u8, 179u8, 108u8, 33u8, 119u8, 91u8, 43u8, 111u8,
+                            127u8, 200u8, 51u8, 97u8, 124u8, 182u8, 127u8, 81u8, 35u8, 16u8, 121u8,
+                            169u8, 40u8, 165u8, 206u8, 237u8, 166u8, 28u8, 140u8, 122u8, 81u8,
+                            139u8,
                         ],
                     )
                 }
@@ -1520,10 +1516,9 @@ pub mod api {
                         "challenger_challenges",
                         (challenger,),
                         [
-                            147u8, 30u8, 106u8, 195u8, 126u8, 16u8, 142u8, 181u8, 212u8, 197u8,
-                            189u8, 11u8, 65u8, 194u8, 218u8, 242u8, 218u8, 103u8, 31u8, 183u8,
-                            176u8, 234u8, 137u8, 239u8, 209u8, 159u8, 133u8, 211u8, 203u8, 64u8,
-                            90u8, 112u8,
+                            221u8, 48u8, 199u8, 220u8, 26u8, 38u8, 51u8, 178u8, 227u8, 168u8, 59u8,
+                            252u8, 26u8, 171u8, 44u8, 73u8, 6u8, 89u8, 230u8, 250u8, 196u8, 97u8,
+                            225u8, 0u8, 230u8, 162u8, 50u8, 31u8, 108u8, 116u8, 82u8, 109u8,
                         ],
                     )
                 }
@@ -3470,9 +3465,9 @@ pub mod api {
             .hash();
         runtime_metadata_hash
             == [
-                210u8, 204u8, 23u8, 173u8, 164u8, 85u8, 168u8, 226u8, 100u8, 49u8, 221u8, 43u8,
-                115u8, 6u8, 230u8, 67u8, 81u8, 163u8, 139u8, 171u8, 27u8, 114u8, 229u8, 251u8,
-                173u8, 213u8, 28u8, 133u8, 107u8, 37u8, 51u8, 150u8,
+                100u8, 90u8, 84u8, 255u8, 246u8, 74u8, 157u8, 175u8, 33u8, 186u8, 205u8, 77u8,
+                218u8, 129u8, 0u8, 90u8, 201u8, 180u8, 92u8, 125u8, 58u8, 110u8, 57u8, 19u8, 54u8,
+                84u8, 127u8, 119u8, 51u8, 244u8, 4u8, 89u8,
             ]
     }
     pub mod system {
@@ -18268,10 +18263,10 @@ pub mod api {
                         "StorageProvider",
                         "Challenges",
                         [
-                            235u8, 132u8, 91u8, 181u8, 74u8, 233u8, 182u8, 65u8, 84u8, 185u8,
-                            147u8, 3u8, 233u8, 101u8, 113u8, 24u8, 113u8, 27u8, 212u8, 51u8, 197u8,
-                            110u8, 134u8, 109u8, 63u8, 25u8, 63u8, 237u8, 187u8, 208u8, 109u8,
-                            128u8,
+                            106u8, 150u8, 174u8, 31u8, 102u8, 33u8, 194u8, 124u8, 197u8, 227u8,
+                            196u8, 2u8, 207u8, 231u8, 226u8, 0u8, 86u8, 58u8, 18u8, 148u8, 72u8,
+                            165u8, 187u8, 26u8, 192u8, 199u8, 242u8, 151u8, 227u8, 30u8, 81u8,
+                            61u8,
                         ],
                     )
                 }
@@ -21376,9 +21371,10 @@ pub mod api {
                         "Revive",
                         "EthBlockBuilderIR",
                         [
-                            62u8, 22u8, 204u8, 180u8, 89u8, 208u8, 118u8, 104u8, 70u8, 79u8, 254u8,
-                            35u8, 81u8, 30u8, 181u8, 91u8, 139u8, 0u8, 140u8, 81u8, 45u8, 123u8,
-                            181u8, 158u8, 118u8, 82u8, 95u8, 24u8, 133u8, 117u8, 33u8, 133u8,
+                            116u8, 166u8, 102u8, 147u8, 101u8, 7u8, 206u8, 214u8, 182u8, 48u8,
+                            13u8, 231u8, 127u8, 31u8, 239u8, 190u8, 57u8, 113u8, 220u8, 48u8,
+                            235u8, 146u8, 231u8, 159u8, 0u8, 226u8, 33u8, 141u8, 210u8, 200u8,
+                            66u8, 23u8,
                         ],
                     )
                 }
@@ -26540,6 +26536,7 @@ pub mod api {
                     pub challenger: ::subxt::utils::AccountId32,
                     pub mmr_root: ::subxt::utils::H256,
                     pub start_seq: ::core::primitive::u64,
+                    pub leaf_count: ::core::primitive::u64,
                     pub target: runtime_types::storage_primitives::ChunkLocation,
                     pub deposit: ::core::primitive::u128,
                     pub authorized: ::core::primitive::bool,
@@ -26786,61 +26783,66 @@ pub mod api {
                     #[doc = "for the deadline this challenge would land on."]
                     TooManyChallengesThisBlock,
                     #[codec(index = 56)]
+                    #[doc = "The challenged leaf index does not exist in the commitment's MMR:"]
+                    #[doc = "`target.leaf_index >= commitment.leaf_count`. Such a leaf cannot"]
+                    #[doc = "be proven, so the challenge could never be answered."]
+                    LeafOutOfRange,
+                    #[codec(index = 57)]
                     #[doc = "A provider signature does not verify against the commitment."]
                     InvalidSignature,
-                    #[codec(index = 57)]
+                    #[codec(index = 58)]
                     #[doc = "The bucket has no checkpoint yet."]
                     NoSnapshot,
-                    #[codec(index = 58)]
+                    #[codec(index = 59)]
                     #[doc = "A frozen bucket only accepts checkpoints that keep its"]
                     #[doc = "`frozen_start_seq`."]
                     SnapshotViolatesFrozen,
-                    #[codec(index = 59)]
+                    #[codec(index = 60)]
                     #[doc = "Fewer valid provider signatures than the bucket's `min_providers`."]
                     InsufficientSignatures,
-                    #[codec(index = 60)]
+                    #[codec(index = 61)]
                     #[doc = "A balance or counter computation overflowed."]
                     ArithmeticOverflow,
-                    #[codec(index = 61)]
+                    #[codec(index = 62)]
                     #[doc = "The public key is not 32 bytes (sr25519/ed25519) or 33 bytes"]
                     #[doc = "(compressed ecdsa), or does not match the signature's scheme."]
                     InvalidPublicKey,
-                    #[codec(index = 62)]
+                    #[codec(index = 63)]
                     #[doc = "Account is a member of too many buckets."]
                     TooManyBucketsForMember,
-                    #[codec(index = 63)]
+                    #[codec(index = 64)]
                     #[doc = "Provider signature over the SCALE-encoded terms is invalid."]
                     InvalidProviderSignature,
-                    #[codec(index = 64)]
+                    #[codec(index = 65)]
                     #[doc = "Signed terms have passed their `valid_until` block."]
                     TermsExpired,
-                    #[codec(index = 65)]
+                    #[codec(index = 66)]
                     #[doc = "Signed terms' `valid_until` extends beyond `now + RequestTimeout` —"]
                     #[doc = "the provider-signed validity window cap enforced on-chain."]
                     TermsValidityTooLong,
-                    #[codec(index = 66)]
+                    #[codec(index = 67)]
                     #[doc = "The terms' nonce does not match the owner's next expected"]
                     #[doc = "[`AgreementNonces`] value. Read the current value and request a"]
                     #[doc = "new quote with it."]
                     NonceMismatch,
-                    #[codec(index = 67)]
+                    #[codec(index = 68)]
                     #[doc = "The terms' declared owner does not match the extrinsic origin."]
                     TermsOwnerMismatch,
-                    #[codec(index = 68)]
+                    #[codec(index = 69)]
                     #[doc = "Replica terms missing from a signed quote redeemed as a replica"]
                     #[doc = "agreement."]
                     MissingReplicaTerms,
-                    #[codec(index = 69)]
+                    #[codec(index = 70)]
                     #[doc = "Replica terms present in a signed quote redeemed as a primary"]
                     #[doc = "agreement. Negotiate the quote without `replica_params`, or"]
                     #[doc = "redeem it with `add_replica_provider`."]
                     UnexpectedReplicaTerms,
-                    #[codec(index = 70)]
+                    #[codec(index = 71)]
                     #[doc = "The terms' `bucket` does not name the bucket the call targets:"]
                     #[doc = "`New` is redeemable only by the calls that create a bucket, and"]
                     #[doc = "`Existing(id)` only against bucket `id`."]
                     TermsBucketMismatch,
-                    #[codec(index = 71)]
+                    #[codec(index = 72)]
                     #[doc = "Storage agreement requested 0 byte"]
                     InvalidMaxBytesRequest,
                 }
@@ -27316,6 +27318,7 @@ pub mod api {
                     pub challenger: ::subxt::alloc::vec::Vec<::core::primitive::u8>,
                     pub mmr_root: ::subxt::utils::H256,
                     pub start_seq: ::core::primitive::u64,
+                    pub leaf_count: ::core::primitive::u64,
                     pub leaf_index: ::core::primitive::u64,
                     pub chunk_index: ::core::primitive::u64,
                     pub deadline: ::core::primitive::u32,

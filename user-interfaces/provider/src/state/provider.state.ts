@@ -82,6 +82,7 @@ export interface Challenge {
   chunkIndex: number
   mmrRoot: string
   startSeq: number
+  leafCount: number
   status: 'pending' | 'responded' | 'slashed' | 'expired'
   challengeType?: 'offchain' | 'checkpoint' | 'unknown'
   // Optional: challenges built from event payloads don't carry the tier.
@@ -540,6 +541,9 @@ export async function respondToChallenge(
     challenge.bucketId,
     challenge.leafIndex,
     challenge.chunkIndex,
+    challenge.mmrRoot,
+    challenge.startSeq,
+    challenge.leafCount,
   )
 
   // Step 2: Submit on-chain
@@ -688,6 +692,7 @@ function convertChallenge(chain: OnChainChallenge): Challenge {
     chunkIndex: chain.chunkIndex,
     mmrRoot: chain.mmrRoot,
     startSeq: chain.startSeq,
+    leafCount: chain.leafCount,
     status: chain.status,
     challengeType: chain.challengeType,
     authorized: chain.authorized,

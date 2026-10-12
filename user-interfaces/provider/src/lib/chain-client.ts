@@ -12,7 +12,7 @@
 import { Enum, type PolkadotClient, type Transaction, type TxFinalizedPayload } from 'polkadot-api'
 import { type InjectedPolkadotAccount } from 'polkadot-api/pjs-signer'
 import { BehaviorSubject } from 'rxjs'
-import { getSs58Prefix, isSameAddress, submitTx } from '@web3-storage/sdk'
+import { asHex, getSs58Prefix, isSameAddress, submitTx } from '@web3-storage/sdk'
 import {
   clientReady$,
   connectToChain,
@@ -277,6 +277,7 @@ export interface OnChainChallenge {
   chunkIndex: number
   mmrRoot: string
   startSeq: number
+  leafCount: number
   status: 'pending' | 'responded' | 'slashed' | 'expired'
   challengeType?: 'offchain' | 'checkpoint' | 'unknown'
   // Optional: event payloads don't carry the tier, only storage entries do.
@@ -496,6 +497,7 @@ export async function getProviderChallenges(address: string): Promise<OnChainCha
       chunkIndex: Number(ch.target.chunk_index),
       mmrRoot: ch.mmr_root,
       startSeq: Number(ch.start_seq),
+      leafCount: Number(ch.leaf_count),
       status: anchorBlock > deadline ? 'expired' : 'pending',
       authorized: ch.authorized,
       createdAt: 0,
@@ -618,10 +620,15 @@ export async function fetchChallengeProof(
   bucketId: number,
   leafIndex: number,
   chunkIndex: number,
+  mmrRoot: string,
+  startSeq: number,
+  leafCount: number,
 ): Promise<ChallengeProofData> {
-  // Step 1: MMR proof
+  // Step 1: MMR proof, against the challenged commitment — a later commit or
+  // delete_before must not invalidate an earlier signed commitment.
   const mmrRes = await fetch(
-    `${providerHttp}/mmr_proof?bucket_id=${bucketId}&leaf_index=${leafIndex}`,
+    `${providerHttp}/mmr_proof?bucket_id=${bucketId}&leaf_index=${leafIndex}` +
+      `&mmr_root=${asHex(mmrRoot)}&start_seq=${startSeq}&leaf_count=${leafCount}`,
   )
   if (!mmrRes.ok) {
     throw new Error(`MMR proof fetch failed: ${mmrRes.status} ${await mmrRes.text()}`)
@@ -751,6 +758,7 @@ export function subscribeToChallengeEvents(
           chunkIndex: 0,
           mmrRoot: '',
           startSeq: 0,
+          leafCount: 0,
           status: 'pending',
           challengeType: 'unknown',
           createdAt: block.number,
@@ -773,6 +781,7 @@ export function subscribeToChallengeEvents(
           chunkIndex: 0,
           mmrRoot: '',
           startSeq: 0,
+          leafCount: 0,
           status: 'responded',
           createdAt: 0,
           deadline: Number(payload.challenge_id.deadline),
@@ -794,6 +803,7 @@ export function subscribeToChallengeEvents(
           chunkIndex: 0,
           mmrRoot: '',
           startSeq: 0,
+          leafCount: 0,
           status: 'slashed',
           createdAt: 0,
           deadline: Number(payload.challenge_id.deadline),

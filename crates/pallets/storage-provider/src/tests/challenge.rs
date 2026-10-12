@@ -1345,6 +1345,29 @@ mod challenge_tests {
         });
     }
 
+    #[test]
+    fn challenge_checkpoint_fails_leaf_out_of_range() {
+        new_test_ext().execute_with(|| {
+            System::set_block_number(1);
+            let (mmr_root, _, _) = single_chunk_proof(b"chunk-0");
+            // Snapshot covers only leaf 0.
+            setup_primary_with_snapshot(mmr_root, 0, 1);
+
+            assert_noop!(
+                StorageProvider::challenge_checkpoint(
+                    RuntimeOrigin::signed(3),
+                    0,
+                    2,
+                    ChunkLocation {
+                        leaf_index: 1,
+                        chunk_index: 0
+                    }
+                ),
+                Error::<Test>::LeafOutOfRange
+            );
+        });
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
     // respond_to_challenge — happy paths and rejections
     // ─────────────────────────────────────────────────────────────────────────
@@ -1550,6 +1573,177 @@ mod challenge_tests {
         });
     }
 
+    /// A proof that genuinely verifies under the challenged root — but for a
+    /// leaf other than the one challenged — must not defend the challenge.
+    /// Without a position check, both leaf 0's and leaf 1's proofs hash up to
+    /// the same peak, so a provider holding only leaf 0 could otherwise
+    /// "defend" a challenge against leaf 1.
+    #[test]
+    fn respond_with_proof_for_a_different_leaf_is_rejected() {
+        new_test_ext().execute_with(|| {
+            System::set_block_number(1);
+
+            let leaf0 = MmrLeaf {
+                data_root: blake2_256(b"chunk-0"),
+                data_size: 7,
+                total_size: 7,
+            };
+            let leaf1 = MmrLeaf {
+                data_root: blake2_256(b"chunk-1"),
+                data_size: 7,
+                total_size: 14,
+            };
+            let hash0 = blake2_256(&leaf0.encode());
+            let hash1 = blake2_256(&leaf1.encode());
+            // 3-leaf MMR: peaks are [height-1 subtree over leaves 0-1, leaf 2].
+            let peak01 = storage_primitives::hash_children(hash0, hash1);
+            let leaf2 = MmrLeaf {
+                data_root: blake2_256(b"chunk-2"),
+                data_size: 7,
+                total_size: 21,
+            };
+            let hash2 = blake2_256(&leaf2.encode());
+            let mmr_root = storage_primitives::hash_children(peak01, hash2);
+
+            setup_primary_with_snapshot(mmr_root, 0, 3);
+
+            assert_ok!(StorageProvider::challenge_checkpoint(
+                RuntimeOrigin::signed(3),
+                0,
+                2,
+                ChunkLocation {
+                    leaf_index: 1,
+                    chunk_index: 0,
+                },
+            ));
+            let id = ChallengeId {
+                deadline: 101u64,
+                index: 0u16,
+            };
+
+            // A real, valid proof — but for leaf 0, not the challenged leaf 1.
+            let proof_for_leaf0 = MmrProof {
+                peaks: vec![peak01, hash2],
+                leaf: leaf0,
+                leaf_proof: MerkleProof {
+                    siblings: vec![hash1],
+                    path: vec![false],
+                },
+            };
+            assert_noop!(
+                StorageProvider::respond_to_challenge(
+                    RuntimeOrigin::signed(2),
+                    id,
+                    ChallengeResponse::Proof {
+                        chunk_data: make_chunk_bv(b"chunk-0"),
+                        mmr_proof: proof_for_leaf0,
+                        chunk_proof: MerkleProof {
+                            siblings: vec![],
+                            path: vec![],
+                        },
+                    },
+                ),
+                Error::<Test>::InvalidProof
+            );
+            assert_challenge_still_open();
+
+            // The real proof for the challenged leaf (leaf 1) defends it.
+            let proof_for_leaf1 = MmrProof {
+                peaks: vec![peak01, hash2],
+                leaf: leaf1,
+                leaf_proof: MerkleProof {
+                    siblings: vec![hash0],
+                    path: vec![true],
+                },
+            };
+            assert_ok!(StorageProvider::respond_to_challenge(
+                RuntimeOrigin::signed(2),
+                id,
+                ChallengeResponse::Proof {
+                    chunk_data: make_chunk_bv(b"chunk-1"),
+                    mmr_proof: proof_for_leaf1,
+                    chunk_proof: MerkleProof {
+                        siblings: vec![],
+                        path: vec![],
+                    },
+                },
+            ));
+            assert!(Challenges::<Test>::get(101, 0).is_none());
+            let provider = Providers::<Test>::get(2).unwrap();
+            assert_eq!(provider.stake, 200);
+            assert_eq!(provider.stats.challenges_failed, 0);
+        });
+    }
+
+    /// A challenge naming an older, smaller commitment is still defended by a
+    /// proof scoped to that commitment's leaf range — a later, larger root
+    /// (not modeled here) never invalidates a still-signed earlier one.
+    #[test]
+    fn respond_with_proof_scoped_to_an_older_smaller_commitment_defends() {
+        new_test_ext().execute_with(|| {
+            System::set_block_number(1);
+
+            let leaf0 = MmrLeaf {
+                data_root: blake2_256(b"chunk-0"),
+                data_size: 7,
+                total_size: 7,
+            };
+            let leaf1 = MmrLeaf {
+                data_root: blake2_256(b"chunk-1"),
+                data_size: 7,
+                total_size: 14,
+            };
+            let hash0 = blake2_256(&leaf0.encode());
+            let hash1 = blake2_256(&leaf1.encode());
+            // Root of the 2-leaf commitment as it stood before any further
+            // chunk was committed.
+            let mmr_root = storage_primitives::hash_children(hash0, hash1);
+
+            setup_primary_with_snapshot(mmr_root, 0, 2);
+
+            assert_ok!(StorageProvider::challenge_checkpoint(
+                RuntimeOrigin::signed(3),
+                0,
+                2,
+                ChunkLocation {
+                    leaf_index: 1,
+                    chunk_index: 0,
+                },
+            ));
+
+            let mmr_proof = MmrProof {
+                peaks: vec![mmr_root],
+                leaf: leaf1,
+                leaf_proof: MerkleProof {
+                    siblings: vec![hash0],
+                    path: vec![true],
+                },
+            };
+            assert_ok!(StorageProvider::respond_to_challenge(
+                RuntimeOrigin::signed(2),
+                ChallengeId {
+                    deadline: 101u64,
+                    index: 0u16,
+                },
+                ChallengeResponse::Proof {
+                    chunk_data: make_chunk_bv(b"chunk-1"),
+                    mmr_proof,
+                    chunk_proof: MerkleProof {
+                        siblings: vec![],
+                        path: vec![],
+                    },
+                },
+            ));
+
+            let provider = Providers::<Test>::get(2).unwrap();
+            assert_eq!(
+                provider.stake, 200,
+                "a defended challenge must not touch the stake"
+            );
+            assert_eq!(provider.stats.challenges_failed, 0);
+        });
+    }
+
     /// `Superseded` claimed against a leaf the snapshot does not cover is
     /// rejected: the data may still be live, so the provider has to prove it.
     #[test]
@@ -1557,8 +1751,8 @@ mod challenge_tests {
         new_test_ext().execute_with(|| {
             System::set_block_number(1);
             let (mmr_root, _, _) = single_chunk_proof(b"chunk-0");
-            // Snapshot covers seq 0..1. Pick leaf 5 — way beyond canonical.
-            setup_primary_with_snapshot(mmr_root, 0, 1);
+            // Snapshot covers seq 0..6, so challenging leaf 5 is valid at creation.
+            setup_primary_with_snapshot(mmr_root, 0, 6);
 
             assert_ok!(StorageProvider::challenge_checkpoint(
                 RuntimeOrigin::signed(3),
@@ -1569,6 +1763,23 @@ mod challenge_tests {
                     chunk_index: 0,
                 },
             ));
+
+            // Re-checkpoint to a smaller canonical range that no longer
+            // covers seq 5 — the Superseded defense requires the challenged
+            // seq to still be canonical, so the claim is invalid.
+            Buckets::<Test>::mutate(0u64, |bucket| {
+                let bucket = bucket.as_mut().expect("bucket exists");
+                bucket.snapshot = Some(BucketSnapshot {
+                    commitment: Commitment {
+                        mmr_root: H256::repeat_byte(0xCD),
+                        start_seq: 0,
+                        leaf_count: 1,
+                    },
+                    checkpoint_block: System::block_number(),
+                    primary_signers: vec![0b0000_0001],
+                });
+            });
+
             assert_noop!(
                 StorageProvider::respond_to_challenge(
                     RuntimeOrigin::signed(2),
@@ -2431,6 +2642,36 @@ mod challenge_tests {
         });
     }
 
+    #[test]
+    fn challenge_offchain_fails_leaf_out_of_range() {
+        new_test_ext().execute_with(|| {
+            System::set_block_number(1);
+            let (mmr_root, _, _) = single_chunk_proof(b"chunk-0");
+            setup_primary_with_snapshot(mmr_root, 0, 1);
+
+            // Sign a commitment covering only leaf 0, but target leaf 1.
+            let sig = signed_offchain_commitment(2, 0, mmr_root, 0, 1);
+            assert_noop!(
+                StorageProvider::challenge_offchain(
+                    RuntimeOrigin::signed(3),
+                    0,
+                    2,
+                    Commitment {
+                        mmr_root,
+                        start_seq: 0,
+                        leaf_count: 1,
+                    },
+                    ChunkLocation {
+                        leaf_index: 1,
+                        chunk_index: 0,
+                    },
+                    sig,
+                ),
+                Error::<Test>::LeafOutOfRange
+            );
+        });
+    }
+
     /// `challenge_replica` succeeds while the agreement is live and fails with
     /// `AgreementExpired` once the block reaches `expires_at`.
     #[test]
@@ -2496,6 +2737,58 @@ mod challenge_tests {
                     }
                 ),
                 Error::<Test>::AgreementExpired
+            );
+        });
+    }
+
+    #[test]
+    fn challenge_replica_fails_leaf_out_of_range() {
+        new_test_ext().execute_with(|| {
+            System::set_block_number(1);
+            let bucket_id = create_bucket(1, 1);
+            let replica_addr = b"/ip4/127.0.0.1/tcp/3001".to_vec();
+            assert_ok!(StorageProvider::register_provider(
+                RuntimeOrigin::signed(4),
+                replica_addr.try_into().unwrap(),
+                test_public_key(),
+                200
+            ));
+            // Confirmed sync covers only leaves 0..1.
+            let replica_agreement = StorageAgreement::<Test> {
+                owner: 1,
+                max_bytes: 100,
+                payment_locked: 0,
+                price_per_byte: 0,
+                expires_at: 50,
+                extensions_blocked: false,
+                role: ProviderRole::Replica {
+                    sync_balance: 100,
+                    sync_price: 1,
+                    min_sync_interval: 0,
+                    last_sync: Some(ReplicaSyncRecord {
+                        commitment: Commitment {
+                            mmr_root: H256::repeat_byte(0xAB),
+                            start_seq: 0,
+                            leaf_count: 1,
+                        },
+                        block: 1u64,
+                    }),
+                },
+                started_at: 1,
+            };
+            StorageAgreements::<Test>::insert(bucket_id, 4u64, replica_agreement);
+
+            assert_noop!(
+                StorageProvider::challenge_replica(
+                    RuntimeOrigin::signed(3),
+                    bucket_id,
+                    4,
+                    ChunkLocation {
+                        leaf_index: 1,
+                        chunk_index: 0
+                    }
+                ),
+                Error::<Test>::LeafOutOfRange
             );
         });
     }

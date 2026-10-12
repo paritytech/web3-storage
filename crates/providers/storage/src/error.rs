@@ -21,6 +21,12 @@ pub enum Error {
     #[error("Root not found: {0}")]
     RootNotFound(String),
 
+    /// The leaves covering a commitment's range were rebuilt, but the
+    /// resulting root does not match the commitment's signed root - the
+    /// caller asked for a commitment this backend never actually produced.
+    #[error("Commitment mismatch: rebuilt root does not match the signed commitment")]
+    CommitmentMismatch,
+
     #[error("Invalid hash: expected {expected}, got {actual}")]
     InvalidHash { expected: String, actual: String },
 

@@ -143,10 +143,17 @@ pub struct CheckpointSignatureResponse {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Query for MMR proof.
+///
+/// `mmr_root`, `start_seq` and `leaf_count` are optional and must be given
+/// together: with all three, the proof is built against that specific
+/// commitment; with none, against the bucket's current one.
 #[derive(Debug, Clone, Deserialize)]
 pub struct MmrProofQuery {
     pub bucket_id: BucketId,
     pub leaf_index: u64,
+    pub mmr_root: Option<String>,
+    pub start_seq: Option<u64>,
+    pub leaf_count: Option<u64>,
 }
 
 /// MMR leaf data.

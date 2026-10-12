@@ -839,6 +839,7 @@ fn detected_challenge(
         index,
         mmr_root: H256::from(challenge.mmr_root.0),
         start_seq: challenge.start_seq,
+        leaf_count: challenge.leaf_count,
         leaf_index: challenge.target.leaf_index,
         chunk_index: challenge.target.chunk_index,
         challenger: sp_core::crypto::AccountId32::from(challenge.challenger.0).to_ss58check(),
@@ -910,6 +911,7 @@ fn detected_from_response(challenge: ChallengeFromRuntimeApi) -> DetectedChallen
         index: challenge.index,
         mmr_root: H256::from(challenge.mmr_root.0),
         start_seq: challenge.start_seq,
+        leaf_count: challenge.leaf_count,
         leaf_index: challenge.leaf_index,
         chunk_index: challenge.chunk_index,
         challenger,
@@ -1046,6 +1048,7 @@ mod tests {
             challenger: subxt::utils::AccountId32([2u8; 32]),
             mmr_root: subxt::utils::H256([3u8; 32]),
             start_seq: 100,
+            leaf_count: 20,
             target: ChunkLocation {
                 leaf_index: 7,
                 chunk_index: 5,
@@ -1065,6 +1068,7 @@ mod tests {
         assert_eq!(detected.index, 3);
         assert_eq!(detected.mmr_root.0, [3u8; 32]);
         assert_eq!(detected.start_seq, 100);
+        assert_eq!(detected.leaf_count, 20);
         // Both come from the nested `target: ChunkLocation`, and they are
         // deliberately different values so a swapped mapping is caught.
         assert_eq!(detected.leaf_index, 7);
@@ -1092,6 +1096,7 @@ mod tests {
             challenger,
             mmr_root: subxt::utils::H256([3u8; 32]),
             start_seq: 100,
+            leaf_count: 20,
             leaf_index: 7,
             chunk_index: 5,
             deadline: 11,
@@ -1110,6 +1115,7 @@ mod tests {
         assert_eq!(detected.index, 3);
         assert_eq!(detected.mmr_root.0, [3u8; 32]);
         assert_eq!(detected.start_seq, 100);
+        assert_eq!(detected.leaf_count, 20);
         // Flat on this shape, unlike the nested `target` on the storage value.
         assert_eq!(detected.leaf_index, 7);
         assert_eq!(detected.chunk_index, 5);
