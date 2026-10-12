@@ -8,7 +8,7 @@ use s3_client::{PutObjectOptions, S3Client, Signer};
 use sp_runtime::AccountId32;
 use std::collections::HashMap;
 use std::env;
-use storage_client::{NegotiateRequest, ProviderClient};
+use storage_client::{AdminClient, ClientConfig, NegotiateRequest, ProviderClient};
 use subxt_signer::sr25519::dev as dev_signer;
 
 const DEFAULT_CHAIN_WS: &str = "ws://127.0.0.1:2222";
@@ -33,7 +33,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Account: {seed}\n");
 
     println!("Creating S3 client...");
-    let client = S3Client::new(chain_url, provider_url, Signer::from_seed(seed)?).await?;
+    let signer = Signer::from_seed(seed)?;
+    let client = S3Client::new(chain_url, provider_url, signer.clone()).await?;
     println!("S3 client created successfully!\n");
 
     // Resolve owner/provider accounts. Owner derives from `seed`; provider is
@@ -51,6 +52,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let provider = ProviderClient::fetch_provider_id(provider_url).await?;
     println!("  Provider account (from /info): {provider}");
 
+    let mut admin = AdminClient::new(
+        ClientConfig {
+            chain_ws_url: chain_url.to_string(),
+            ..Default::default()
+        },
+        signer,
+    )?;
+    admin.connect().await?;
+    let nonce = admin.agreement_nonce(&owner).await?;
+
     println!("Negotiating signed agreement terms with provider...");
     let signed = ProviderClient::negotiate_terms(
         provider_url,
@@ -59,6 +70,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             max_bytes: 1_000_000_000, // 1 GB
             duration: 500,            // 500 blocks
             price_per_byte: 1,
+            nonce,
             replica_params: None,
             bucket: None,
         },
@@ -69,36 +81,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         signed.terms.nonce, signed.terms.valid_until
     );
 
-    let bucket_name = format!(
-        "test-bucket-{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)?
-            .as_secs()
-    );
-
-    println!("Creating bucket: {bucket_name}");
-    let bucket = client
+    println!("Creating bucket...");
+    let bucket_id = client
         .create_bucket(
-            &bucket_name,
             provider,
             signed.terms,
             signed.signature,
-            storage_client::Visibility::Private,
+            s3_client::Visibility::Private,
         )
         .await?;
-    println!("Bucket created:");
-    println!("  S3 Bucket ID: {}", bucket.s3_bucket_id);
-    println!("  Layer 0 Bucket ID: {}", bucket.layer0_bucket_id);
-    println!();
+    println!("Bucket created: {bucket_id}\n");
 
     println!("Uploading object: hello.txt");
     let content = b"Hello, Web3 Storage!";
     let mut metadata = HashMap::new();
-    metadata.insert("x-custom-key".to_string(), "custom-value".to_string());
+    metadata.insert("custom-key".to_string(), "custom-value".to_string());
 
     let put_result = client
         .put_object(
-            &bucket_name,
+            bucket_id,
             "hello.txt",
             content,
             PutObjectOptions {
@@ -115,18 +116,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!();
 
     println!("Downloading object: hello.txt");
-    let get_result = client.get_object(&bucket_name, "hello.txt").await?;
+    let get_result = client.get_object(bucket_id, "hello.txt").await?;
     println!("Object downloaded:");
     println!("  Content: {}", String::from_utf8_lossy(&get_result.data));
     println!("  Size: {} bytes", get_result.size);
     println!();
 
-    println!("Cleaning up...");
-    client.delete_object(&bucket_name, "hello.txt").await?;
+    println!("Deleting object: hello.txt");
+    client.delete_object(bucket_id, "hello.txt").await?;
     println!("Object deleted");
-
-    client.delete_bucket(&bucket_name).await?;
-    println!("Bucket deleted");
     println!();
 
     println!("=== Example completed successfully! ===");

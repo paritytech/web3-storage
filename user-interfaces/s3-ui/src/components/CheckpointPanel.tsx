@@ -46,7 +46,7 @@ export default function CheckpointPanel({ onShowHistory }: CheckpointPanelProps)
   const [challengeOpen, setChallengeOpen] = useState(false);
   const [providers, setProviders] = useState<string[]>([]);
 
-  const bucketId = selectedBucket?.layer0BucketId ?? null;
+  const bucketId = selectedBucket?.bucketId ?? null;
   const challengeBusy = challengeStatus !== "idle";
   const [resolving, setResolving] = useState<string | null>(null);
   const [resolveError, setResolveError] = useState<string | null>(null);

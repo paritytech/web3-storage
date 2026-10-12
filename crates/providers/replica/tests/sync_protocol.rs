@@ -15,10 +15,10 @@ use axum::http::StatusCode;
 use codec::Encode;
 use common::{
     base64, body, dead_address, hex_hash, node_body, peaks_body, spawn_primary,
-    spawn_primary_with_nodes, status, test_storage, Reply,
+    spawn_primary_with_nodes, status, Reply,
 };
 use provider_replica::{Error, ReplicaSync};
-use provider_storage::StorageBackend;
+use provider_storage::{temp_rocksdb, StorageBackend};
 use sp_core::H256;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -43,7 +43,7 @@ struct Fixture {
 }
 
 fn fixture() -> Fixture {
-    let (storage, dir) = test_storage();
+    let (storage, dir) = temp_rocksdb();
     Fixture {
         sync: ReplicaSync::new(Arc::clone(&storage)),
         storage,

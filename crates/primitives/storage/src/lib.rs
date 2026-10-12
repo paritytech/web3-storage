@@ -18,12 +18,10 @@ use sp_core::H256;
 pub mod agreement_term;
 pub mod merkle;
 pub mod mmr;
-pub mod provider_replay_state;
 
 pub use agreement_term::*;
 pub use merkle::*;
 pub use mmr::*;
-pub use provider_replay_state::*;
 
 /// Bucket ID is a stable, unique identifier (not an index into a collection).
 /// Using u64 ensures IDs never get reused even if buckets are deleted.

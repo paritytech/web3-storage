@@ -250,8 +250,6 @@ pub struct InfoResponse {
 pub struct ProviderReadiness {
     /// A signing keypair is configured (node started with `--keyfile`).
     pub signing_configured: bool,
-    /// The nonce counter is bootstrapped from on-chain replay state.
-    pub nonce_counter_ready: bool,
     /// On-chain provider registration info has been loaded.
     pub provider_info_loaded: bool,
     /// The provider has announced deregistration; `/negotiate` is disabled and

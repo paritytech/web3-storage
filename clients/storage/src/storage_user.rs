@@ -14,7 +14,6 @@ use crate::encryption::{Cipher, EncryptionKey, XChaCha20Poly1305Cipher};
 use crate::verification::ClientVerifier;
 use crate::Signer;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
-use provider_auth::build_auth_header;
 use sp_core::H256;
 use storage_primitives::{blake2_256, BucketId};
 
@@ -47,19 +46,10 @@ impl StorageUserClient {
         method: &str,
         bucket_id: BucketId,
     ) -> reqwest::RequestBuilder {
-        let signer = self.auth_signer.keypair();
-        let timestamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or_default();
-        let header = build_auth_header(
-            &signer.public_key().0,
-            method,
-            bucket_id,
-            timestamp,
-            |msg| signer.sign(msg).0,
-        );
-        req.header("Authorization", header)
+        req.header(
+            "Authorization",
+            self.auth_signer.auth_header(method, bucket_id),
+        )
     }
 
     /// Enable client-side encryption with a custom cipher (builder pattern).

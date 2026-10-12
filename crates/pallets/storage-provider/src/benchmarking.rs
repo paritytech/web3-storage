@@ -86,13 +86,13 @@ fn setup_bucket<T: Config>(admin: &T::AccountId) -> BucketId {
         .expect("create_bucket_internal succeeds")
 }
 
-/// Build primary [`AgreementTerms`] suitable for a benchmark agreement.
+/// Build primary [`AgreementTerms`] suitable for a benchmark agreement, at
+/// the owner's next expected nonce.
 fn build_primary_terms<T: Config>(
     owner: &T::AccountId,
     bucket: BucketTarget,
     max_bytes: u64,
     duration: BlockNumberFor<T>,
-    nonce: u64,
 ) -> AgreementTermsOf<T> {
     AgreementTerms {
         owner: owner.clone(),
@@ -101,19 +101,19 @@ fn build_primary_terms<T: Config>(
         price_per_byte: 1u32.into(),
         valid_until: StorageProvider::<T>::current_anchor_block()
             .saturating_add(T::RequestTimeout::get()),
-        nonce,
+        nonce: AgreementNonces::<T>::get(owner),
         bucket,
         replica_params: None,
     }
 }
 
-/// Build replica [`AgreementTerms`] suitable for a benchmark agreement.
+/// Build replica [`AgreementTerms`] suitable for a benchmark agreement, at
+/// the owner's next expected nonce.
 fn build_replica_terms<T: Config>(
     owner: &T::AccountId,
     bucket_id: BucketId,
     max_bytes: u64,
     duration: BlockNumberFor<T>,
-    nonce: u64,
 ) -> AgreementTermsOf<T> {
     AgreementTerms {
         owner: owner.clone(),
@@ -122,7 +122,7 @@ fn build_replica_terms<T: Config>(
         price_per_byte: 1u32.into(),
         valid_until: StorageProvider::<T>::current_anchor_block()
             .saturating_add(T::RequestTimeout::get()),
-        nonce,
+        nonce: AgreementNonces::<T>::get(owner),
         bucket: BucketTarget::Existing(bucket_id),
         replica_params: Some(ReplicaTerms {
             sync_balance: funding::<T>() / 20u32.into(),
@@ -150,13 +150,7 @@ fn setup_primary_agreement<T: Config>(
     provider_index: u32,
 ) -> BucketId {
     let key = register_sr25519_key::<T>(provider, KEY_TYPE, provider_index);
-    let terms = build_primary_terms::<T>(
-        admin,
-        BucketTarget::New,
-        1_000_000u64,
-        100u32.into(),
-        provider_index as u64 + 1,
-    );
+    let terms = build_primary_terms::<T>(admin, BucketTarget::New, 1_000_000u64, 100u32.into());
     let sig = sign_terms::<T>(&key, &terms);
     Pallet::<T>::create_bucket_with_primary_internal(
         admin,
@@ -179,13 +173,7 @@ fn setup_replica_agreement<T: Config>(
     replica_index: u32,
 ) -> sp_core::sr25519::Public {
     let key = register_sr25519_key::<T>(replica, KEY_TYPE, replica_index);
-    let terms = build_replica_terms::<T>(
-        admin,
-        bucket_id,
-        1_000_000u64,
-        100u32.into(),
-        replica_index as u64 + 1,
-    );
+    let terms = build_replica_terms::<T>(admin, bucket_id, 1_000_000u64, 100u32.into());
     let sig = sign_terms::<T>(&key, &terms);
     Pallet::<T>::add_replica_provider_internal(admin, bucket_id, replica, terms, &sig)
         .expect("add_replica_provider_internal succeeds");
@@ -526,8 +514,8 @@ mod benchmarks {
         create_bucket(RawOrigin::Signed(admin), 1, Visibility::Private);
     }
 
-    /// Worst case: full signature verification + replay-window mutation +
-    /// bucket creation + agreement insertion.
+    /// Worst case: full signature verification + owner-nonce check and
+    /// increment + bucket creation + agreement insertion.
     #[benchmark]
     fn create_bucket_with_primary() {
         let admin = funded_account::<T>("admin", 0);
@@ -537,7 +525,7 @@ mod benchmarks {
         // verify_terms_signature can resolve a valid signer.
         let key = register_sr25519_key::<T>(&provider, KEY_TYPE, 0);
         let terms =
-            build_primary_terms::<T>(&admin, BucketTarget::New, 1_000_000u64, 100u32.into(), 1);
+            build_primary_terms::<T>(&admin, BucketTarget::New, 1_000_000u64, 100u32.into());
         let signature = sign_terms::<T>(&key, &terms);
 
         #[extrinsic_call]
@@ -550,8 +538,8 @@ mod benchmarks {
         );
     }
 
-    /// Worst case: full signature verification + replay-window mutation +
-    /// agreement insertion + push onto a primary set one below
+    /// Worst case: full signature verification + owner-nonce check and
+    /// increment + agreement insertion + push onto a primary set one below
     /// `MaxPrimaryProviders`.
     #[benchmark]
     fn add_primary_provider() {
@@ -574,7 +562,6 @@ mod benchmarks {
             BucketTarget::Existing(bucket_id),
             1_000_000u64,
             100u32.into(),
-            1,
         );
         let signature = sign_terms::<T>(&key, &terms);
 
@@ -588,8 +575,8 @@ mod benchmarks {
         );
     }
 
-    /// Worst case: replica signature verification + replay-window
-    /// mutation + agreement insertion on top of an existing bucket.
+    /// Worst case: replica signature verification + owner-nonce check
+    /// and increment + agreement insertion on top of an existing bucket.
     #[benchmark]
     fn add_replica_provider() {
         let admin = funded_account::<T>("admin", 0);
@@ -598,7 +585,7 @@ mod benchmarks {
 
         let replica = create_provider::<T>(1);
         let key = register_sr25519_key::<T>(&replica, KEY_TYPE, 1);
-        let terms = build_replica_terms::<T>(&admin, bucket_id, 1_000_000u64, 100u32.into(), 1);
+        let terms = build_replica_terms::<T>(&admin, bucket_id, 1_000_000u64, 100u32.into());
         let signature = sign_terms::<T>(&key, &terms);
 
         #[extrinsic_call]

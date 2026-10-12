@@ -162,11 +162,7 @@ impl SubxtChainClient {
     /// Backs `get_current_block` on the replica-sync trait.
     async fn current_anchor_block(&self) -> Result<u64, ChainClientError> {
         let at = self.at_current_block().await?;
-        Ok(u64::from(
-            provider_coordinator::fetch_current_anchor_block(&at)
-                .await
-                .map_err(|e| ChainClientError::query("current anchor block", e))?,
-        ))
+        Ok(u64::from(fetch_current_anchor_block(&at).await?))
     }
 
     /// Whether the failure is the chain rejecting the call itself (a
@@ -597,7 +593,7 @@ impl ReplicaSyncChainClient for SubxtChainClient {
 
         let payload = storage_subxt::api::runtime_apis()
             .storage_provider_api()
-            .provider_agreements(subxt::utils::AccountId32(*account.as_ref()))
+            .provider_agreements(subxt_account(&account))
             .unvalidated();
 
         let agreements = self
@@ -782,6 +778,35 @@ impl ReplicaSyncChainClient for SubxtChainClient {
 
 /// The generated `Challenge` value held in `StorageProvider::Challenges`.
 type OnChainChallenge = storage_subxt::api::storage_provider::storage::challenges::Output;
+
+/// Query the pallet's `StorageProviderApi::current_anchor_block` runtime API —
+/// the block every on-chain duration (timeouts, expiries, `valid_until`) is
+/// measured against. Reading it through the runtime API keeps the
+/// provider agnostic to whether the anchor is a relay, parachain, or other
+/// block number: the pallet decides via its `BlockNumberProvider`.
+pub(crate) async fn fetch_current_anchor_block<C>(
+    at: &subxt::client::ClientAtBlock<subxt::PolkadotConfig, C>,
+) -> Result<u32, ChainClientError>
+where
+    C: subxt::client::OnlineClientAtBlockT<subxt::PolkadotConfig>,
+{
+    // `unvalidated`: see the `storage-subxt` crate docs.
+    at.runtime_apis()
+        .call(
+            storage_subxt::api::runtime_apis()
+                .storage_provider_api()
+                .current_anchor_block()
+                .unvalidated(),
+        )
+        .await
+        .map_err(|e| ChainClientError::query("current anchor block", e))
+}
+
+/// Convert an account from the `sp_runtime` representation the node uses into
+/// the `subxt` one the generated bindings expect. Same 32 bytes either way.
+pub(crate) fn subxt_account(who: &sp_runtime::AccountId32) -> subxt::utils::AccountId32 {
+    subxt::utils::AccountId32(*<sp_runtime::AccountId32 as AsRef<[u8; 32]>>::as_ref(who))
+}
 
 /// `storage-primitives` and the generated bindings carry structurally identical
 /// proof types; only the `H256` differs (`sp_core` vs `subxt::utils`).

@@ -242,15 +242,16 @@ fn add_primary_provider_rejects_replayed_quote() {
         let (terms, sig) = quote_for(2, 1, bucket_id);
         assert_ok!(add_primary(1, bucket_id, 2, (terms.clone(), sig)));
 
-        // Same nonce, same provider: the replay window rejects it even though
-        // the agreement slot is free on a different bucket.
+        // Same nonce: the owner's nonce has advanced past it, so it is
+        // rejected even though the agreement slot is free on a different
+        // bucket.
         let other = create_bucket(1, 0);
         let mut replay = terms;
         replay.bucket = BucketTarget::Existing(other);
         let replay_sig = sign_terms(&provider_signer(2), &replay);
         assert_noop!(
             add_primary(1, other, 2, (replay, replay_sig)),
-            Error::<Test>::NonceAlreadyUsed
+            Error::<Test>::NonceMismatch
         );
     });
 }
