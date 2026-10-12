@@ -52,19 +52,23 @@
 //! [`AdminClient`] - Manage buckets and agreements
 //! ```no_run
 //! use storage_client::{AdminClient, NegotiateRequest, ProviderClient, Signer};
+//! use sp_runtime::AccountId32;
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! let client = AdminClient::with_defaults(Signer::from_seed("//Alice")?)?;
 //!
-//! // 1. Ask the provider node to sign agreement terms over HTTP. The
-//! //    provider allocates the nonce + validity window and signs.
+//! // 1. Read the owner's next expected nonce from chain, then ask the
+//! //    provider node to sign agreement terms over HTTP.
+//! let owner: AccountId32 = "5GrwvaEF...".parse()?;
+//! let nonce = client.agreement_nonce(&owner).await?;
 //! let signed = ProviderClient::negotiate_terms(
 //!     "http://provider.example:3333",
 //!     &NegotiateRequest {
-//!         owner: "5GrwvaEF...".parse()?,
+//!         owner,
 //!         max_bytes: 10 * 1024 * 1024 * 1024, // 10 GB
 //!         duration: 100_000,
 //!         price_per_byte: 1_000_000,
+//!         nonce,
 //!         replica_params: None,
 //!         bucket: None,
 //!     },
@@ -125,8 +129,8 @@ pub use provider_negotiation as agreement;
 /// standalone building block usable without the rest of this SDK, and their
 /// failure modes (transport, connect, subscribe) are its whole error surface.
 pub use storage_indexers::{
-    BlockEvent, BlockStream, EventFilter, EventStream, IndexerError, DRIVE_REGISTRY_PALLET,
-    S3_REGISTRY_PALLET, STORAGE_PALLETS, STORAGE_PROVIDER_PALLET,
+    BlockEvent, BlockStream, EventFilter, EventStream, IndexerError, STORAGE_PALLETS,
+    STORAGE_PROVIDER_PALLET,
 };
 
 // Re-export commonly used types

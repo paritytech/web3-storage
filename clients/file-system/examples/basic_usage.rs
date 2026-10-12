@@ -4,7 +4,7 @@
 //!
 //! This example demonstrates:
 //! - Negotiating signed agreement terms with a provider
-//! - Creating a drive (atomically opens bucket + primary agreement)
+//! - Creating a drive (a Layer 0 bucket with one primary agreement)
 //! - Creating directories
 //! - Uploading files
 //! - Listing directory contents
@@ -24,7 +24,7 @@
 use file_system_client::{FileSystemClient, Signer};
 use sp_runtime::AccountId32;
 use std::env;
-use storage_client::{NegotiateRequest, ProviderClient};
+use storage_client::{AdminClient, ClientConfig, NegotiateRequest, ProviderClient};
 use subxt_signer::sr25519::dev as dev_signer;
 
 const DEFAULT_CHAIN_WS: &str = "ws://127.0.0.1:2222";
@@ -49,14 +49,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // === STEP 1: Create the client ===
     println!("\n📡 Step 1: Connecting to blockchain and provider...");
 
-    let mut fs_client =
-        FileSystemClient::new(chain_ws, provider_url, Signer::from_seed("//Alice")?).await?;
+    let signer = Signer::from_seed("//Alice")?;
+    let mut fs_client = FileSystemClient::new(chain_ws, provider_url, signer.clone()).await?;
 
     let owner: AccountId32 = dev_signer::alice().public_key().0.into();
     let provider = ProviderClient::fetch_provider_id(provider_url).await?;
     println!("  Provider account (from /info): {provider}");
 
     println!("✅ Connected successfully!");
+
+    let mut admin = AdminClient::new(
+        ClientConfig {
+            chain_ws_url: chain_ws.to_string(),
+            ..Default::default()
+        },
+        signer,
+    )?;
+    admin.connect().await?;
+    let nonce = admin.agreement_nonce(&owner).await?;
 
     // === STEP 2: Negotiate signed terms with the provider ===
     println!("\n🤝 Step 2: Negotiating signed agreement terms...");
@@ -68,6 +78,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             max_bytes: 10_000_000_000, // 10 GB
             duration: 500,             // 500 blocks
             price_per_byte: 1,
+            nonce,
             replica_params: None,
             bucket: None,
         },
@@ -82,9 +93,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // === STEP 3: Create a drive ===
     println!("\n📁 Step 3: Creating a new drive...");
 
-    let drive_id = fs_client
+    let bucket_id = fs_client
         .create_drive(
-            Some("My Documents"),
             provider,
             signed.terms,
             signed.signature,
@@ -92,30 +102,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .await?;
 
-    println!("✅ Drive created with ID: {drive_id}");
+    println!("✅ Drive created: bucket {bucket_id}");
 
     // === STEP 4: Create directories ===
     println!("\n📂 Step 4: Creating directory structure...");
 
-    let bucket_id = fs_client.get_bucket_id(drive_id).await?;
-    println!("   Associated bucket: ID = {bucket_id}");
-
     println!("   Creating /documents...");
-    fs_client
-        .create_directory(drive_id, "/documents", bucket_id)
-        .await?;
+    fs_client.create_directory(bucket_id, "/documents").await?;
     println!("   ✅ Created /documents");
 
     println!("   Creating /documents/work...");
     fs_client
-        .create_directory(drive_id, "/documents/work", bucket_id)
+        .create_directory(bucket_id, "/documents/work")
         .await?;
     println!("   ✅ Created /documents/work");
 
     println!("   Creating /photos...");
-    fs_client
-        .create_directory(drive_id, "/photos", bucket_id)
-        .await?;
+    fs_client.create_directory(bucket_id, "/photos").await?;
     println!("   ✅ Created /photos");
 
     // === STEP 5: Upload files ===
@@ -127,7 +130,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         readme_content.len()
     );
     fs_client
-        .upload_file(drive_id, "/README.md", readme_content, bucket_id)
+        .upload_file(bucket_id, "/README.md", readme_content)
         .await?;
     println!("   ✅ Uploaded /README.md");
 
@@ -139,12 +142,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         report_content.len()
     );
     fs_client
-        .upload_file(
-            drive_id,
-            "/documents/work/report.txt",
-            report_content,
-            bucket_id,
-        )
+        .upload_file(bucket_id, "/documents/work/report.txt", report_content)
         .await?;
     println!("   ✅ Uploaded /documents/work/report.txt");
 
@@ -155,7 +153,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         notes_content.len()
     );
     fs_client
-        .upload_file(drive_id, "/documents/notes.txt", notes_content, bucket_id)
+        .upload_file(bucket_id, "/documents/notes.txt", notes_content)
         .await?;
     println!("   ✅ Uploaded /documents/notes.txt");
 
@@ -164,7 +162,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // List root directory
     println!("\n   Contents of /:");
-    let root_entries = fs_client.list_directory(drive_id, "/").await?;
+    let root_entries = fs_client.list_directory(bucket_id, "/").await?;
     for entry in root_entries {
         let entry_type = if entry.is_directory() { "📁" } else { "📄" };
         println!(
@@ -177,7 +175,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // List /documents directory
     println!("\n   Contents of /documents:");
-    let docs_entries = fs_client.list_directory(drive_id, "/documents").await?;
+    let docs_entries = fs_client.list_directory(bucket_id, "/documents").await?;
     for entry in docs_entries {
         let entry_type = if entry.is_directory() { "📁" } else { "📄" };
         println!(
@@ -191,7 +189,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // List /documents/work directory
     println!("\n   Contents of /documents/work:");
     let work_entries = fs_client
-        .list_directory(drive_id, "/documents/work")
+        .list_directory(bucket_id, "/documents/work")
         .await?;
     for entry in work_entries {
         let entry_type = if entry.is_directory() { "📁" } else { "📄" };
@@ -208,7 +206,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Download README.md
     println!("\n   Downloading /README.md...");
-    let downloaded_readme = fs_client.download_file(drive_id, "/README.md").await?;
+    let downloaded_readme = fs_client.download_file(bucket_id, "/README.md").await?;
     println!("   ✅ Downloaded {} bytes", downloaded_readme.len());
 
     // Verify content
@@ -225,7 +223,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Download report
     println!("\n   Downloading /documents/work/report.txt...");
     let downloaded_report = fs_client
-        .download_file(drive_id, "/documents/work/report.txt")
+        .download_file(bucket_id, "/documents/work/report.txt")
         .await?;
     println!("   ✅ Downloaded {} bytes", downloaded_report.len());
 
@@ -248,14 +246,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n{}", "=".repeat(60));
     println!("\n🎉 Example completed successfully!");
     println!("\n📊 Summary:");
-    println!("   ✅ Created drive: {drive_id}");
+    println!("   ✅ Created drive: bucket {bucket_id}");
     println!("   ✅ Created 3 directories");
     println!("   ✅ Uploaded 3 files");
     println!("   ✅ Listed directory contents");
     println!("   ✅ Downloaded and verified files");
     println!("\n💡 Next steps:");
-    println!("   - Try clearing the drive: clear_drive()");
-    println!("   - Try deleting the drive: delete_drive()");
+    println!("   - Share the drive: add_member()");
     println!("   - Explore more file operations");
     println!("   - Check the on-chain state via polkadot.js");
 

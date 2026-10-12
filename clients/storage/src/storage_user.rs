@@ -14,7 +14,6 @@ use crate::encryption::{Cipher, EncryptionKey, XChaCha20Poly1305Cipher};
 use crate::verification::ClientVerifier;
 use crate::Signer;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
-use provider_auth::build_auth_header;
 use sp_core::H256;
 use storage_primitives::{blake2_256, BucketId};
 
@@ -47,19 +46,10 @@ impl StorageUserClient {
         method: &str,
         bucket_id: BucketId,
     ) -> reqwest::RequestBuilder {
-        let signer = self.auth_signer.keypair();
-        let timestamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or_default();
-        let header = build_auth_header(
-            &signer.public_key().0,
-            method,
-            bucket_id,
-            timestamp,
-            |msg| signer.sign(msg).0,
-        );
-        req.header("Authorization", header)
+        req.header(
+            "Authorization",
+            self.auth_signer.auth_header(method, bucket_id),
+        )
     }
 
     /// Enable client-side encryption with a custom cipher (builder pattern).
@@ -547,38 +537,15 @@ impl StorageUserClient {
             ));
         }
 
-        let mut current_level = leaf_hashes.to_vec();
-
-        while current_level.len() > 1 {
-            let mut next_level = Vec::new();
-
-            for pair in current_level.chunks(2) {
-                let parent_hash = if pair.len() == 2 {
-                    storage_primitives::hash_children(pair[0], pair[1])
-                } else {
-                    pair[0]
-                };
-
-                // Upload internal node
-                let children = pair.to_vec();
-                let parent_data = self.encode_internal_node(&children);
-
-                self.upload_node(
-                    provider_url,
-                    bucket_id,
-                    parent_hash,
-                    parent_data,
-                    Some(children),
-                )
+        let (root, nodes) = storage_primitives::padded_merkle_tree(leaf_hashes);
+        for node in nodes {
+            let children = vec![node.left, node.right];
+            let data = self.encode_internal_node(&children);
+            self.upload_node(provider_url, bucket_id, node.hash, data, Some(children))
                 .await?;
-
-                next_level.push(parent_hash);
-            }
-
-            current_level = next_level;
         }
 
-        Ok(current_level[0])
+        Ok(root)
     }
 
     fn encode_internal_node(&self, children: &[H256]) -> Vec<u8> {

@@ -478,6 +478,24 @@ fn query_provider_challenges_returns_data() {
     });
 }
 
+/// The provider responder acts on this list, so an expired challenge (which
+/// `respond_to_challenge` rejects) must drop out of it the block after its
+/// deadline.
+#[test]
+fn query_provider_challenges_omits_expired() {
+    new_test_ext().execute_with(|| {
+        setup_two_challenges();
+        let deadline = u64::from(StorageProvider::query_provider_challenges(&2)[0].deadline);
+
+        System::set_block_number(deadline);
+        assert_eq!(StorageProvider::query_provider_challenges(&2).len(), 1);
+
+        System::set_block_number(deadline + 1);
+        assert!(StorageProvider::query_provider_challenges(&2).is_empty());
+        assert_eq!(StorageProvider::query_challenger_challenges(&3).len(), 1);
+    });
+}
+
 #[test]
 fn query_provider_challenges_empty_for_unknown() {
     new_test_ext().execute_with(|| {

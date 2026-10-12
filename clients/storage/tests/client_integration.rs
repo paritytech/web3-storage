@@ -128,6 +128,32 @@ async fn test_upload_then_commit() {
 }
 
 #[tokio::test]
+async fn test_commit_upload_with_non_power_of_two_chunk_count() {
+    let url = start_test_provider().await;
+    let client = make_client(url);
+
+    let chunk_size = 1024usize;
+    let data: Vec<u8> = (0..chunk_size * 3).map(|i| (i % 251) as u8).collect();
+
+    let data_root = client
+        .upload(1, &data, ChunkingStrategy::Fixed(chunk_size))
+        .await
+        .unwrap();
+
+    let chunk_hashes: Vec<H256> = data
+        .chunks(chunk_size)
+        .map(storage_primitives::blake2_256)
+        .collect();
+    assert_eq!(
+        data_root,
+        storage_primitives::padded_merkle_root(&chunk_hashes)
+    );
+
+    let commit = client.commit(1, vec![data_root]).await.unwrap();
+    assert_eq!(commit.leaf_indices, vec![0]);
+}
+
+#[tokio::test]
 async fn test_sequential_commits_increment_leaf_index() {
     let url = start_test_provider().await;
     let client = make_client(url);

@@ -8,21 +8,16 @@
 pub mod rocksdb;
 pub mod types;
 
-pub use rocksdb::{DiskNonceStore, DiskStorage};
+pub use rocksdb::DiskStorage;
 pub use types::{BucketState, StoredNode};
 
 use crate::error::Error;
-use crate::merkle::build_merkle_proof;
-use crate::nonce::NonceStore;
 use serde::{Deserialize, Serialize};
 use sp_core::H256;
 use std::fmt;
 use std::path::PathBuf;
 use std::sync::Arc;
-use storage_primitives::{hash_children, BucketId};
-
-/// A built backend: the storage, and the nonce store matching its persistence.
-pub type OpenedBackend = (Arc<dyn StorageBackend>, Arc<dyn NonceStore>);
+use storage_primitives::{build_merkle_proof, padded_merkle_tree, BucketId};
 
 /// Which backend to build, and what that backend needs.
 ///
@@ -35,15 +30,10 @@ pub enum StorageBackendSpec {
 }
 
 impl StorageBackendSpec {
-    /// Build the backend and the nonce store matching its persistence, so the
-    /// provider's extrinsic nonce survives a restart with its data.
-    pub fn build(&self) -> Result<OpenedBackend, Error> {
+    /// Build the backend.
+    pub fn build(&self) -> Result<Arc<dyn StorageBackend>, Error> {
         match self {
-            Self::RocksDb { path } => {
-                let disk = DiskStorage::new(path)?;
-                let nonce_store = disk.nonce_store();
-                Ok((Arc::new(disk), nonce_store))
-            }
+            Self::RocksDb { path } => Ok(Arc::new(DiskStorage::new(path)?)),
         }
     }
 }
@@ -192,7 +182,8 @@ pub trait StorageBackend: Send + Sync {
             .ok_or_else(|| Error::NodeNotFound(format!("chunk_data_{chunk_index}")))?
             .data;
 
-        let proof = build_merkle_proof(&chunk_hashes, chunk_index as usize);
+        let proof = build_merkle_proof(&chunk_hashes, chunk_index as usize)
+            .ok_or_else(|| Error::NodeNotFound(format!("chunk_{chunk_index}")))?;
 
         Ok((chunk_data, proof))
     }
@@ -272,31 +263,19 @@ pub fn build_padded_merkle_tree(
     bucket_id: BucketId,
     leaves: &[H256],
 ) -> H256 {
-    if leaves.is_empty() {
-        return H256::zero();
+    let (root, nodes) = padded_merkle_tree(leaves);
+    for node in nodes {
+        let mut node_data = Vec::new();
+        node_data.extend_from_slice(node.left.as_bytes());
+        node_data.extend_from_slice(node.right.as_bytes());
+        let _ = storage.store_node(
+            bucket_id,
+            node.hash,
+            node_data,
+            Some(vec![node.left, node.right]),
+        );
     }
-    if leaves.len() == 1 {
-        return leaves[0];
-    }
-
-    let padded_len = leaves.len().next_power_of_two();
-    let mut current_level = leaves.to_vec();
-    current_level.resize(padded_len, H256::zero());
-
-    while current_level.len() > 1 {
-        let mut next_level = Vec::new();
-        for pair in current_level.chunks(2) {
-            let parent = hash_children(pair[0], pair[1]);
-            let mut node_data = Vec::new();
-            node_data.extend_from_slice(pair[0].as_bytes());
-            node_data.extend_from_slice(pair[1].as_bytes());
-            let _ = storage.store_node(bucket_id, parent, node_data, Some(vec![pair[0], pair[1]]));
-            next_level.push(parent);
-        }
-        current_level = next_level;
-    }
-
-    current_level[0]
+    root
 }
 
 #[cfg(test)]
@@ -305,20 +284,16 @@ mod tests {
     use tempfile::TempDir;
 
     #[test]
-    fn rocksdb_pairs_with_a_nonce_store_that_survives_reopen() {
-        let dir = TempDir::new().unwrap();
-        let spec = StorageBackendSpec::RocksDb {
-            path: dir.path().to_path_buf(),
-        };
-
-        // Scoped so both halves drop and RocksDB releases the directory lock.
-        {
-            let (_storage, nonce_store) = spec.build().expect("RocksDB opens");
-            nonce_store.persist(7);
+    fn stored_tree_root_matches_padded_root() {
+        for n in [0, 1, 2, 3, 5, 8] {
+            let dir = TempDir::new().unwrap();
+            let storage = DiskStorage::new(dir.path()).unwrap();
+            let leaves: Vec<H256> = (1..=n).map(H256::from_low_u64_be).collect();
+            assert_eq!(
+                build_padded_merkle_tree(&storage, 1, &leaves),
+                storage_primitives::padded_merkle_root(&leaves),
+                "{n} leaves"
+            );
         }
-
-        let (_storage, nonce_store) = spec.build().expect("RocksDB reopens");
-        assert_eq!(nonce_store.load(), Some(7));
-        assert!(spec.to_string().starts_with("RocksDB at "));
     }
 }

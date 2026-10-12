@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use sp_core::H256;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use storage_primitives::{blake2_256, hash_children, BucketId};
+use storage_primitives::{blake2_256, padded_merkle_root, BucketId};
 
 /// Per-object metadata stored in the index.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -187,10 +187,6 @@ impl BucketIndex {
     ///
     /// This commitment can be included in checkpoints to prove the metadata state.
     pub fn metadata_merkle_root(&self) -> H256 {
-        if self.objects.is_empty() {
-            return H256::zero();
-        }
-
         // Build leaf hashes from sorted entries
         let leaves: Vec<H256> = self
             .objects
@@ -204,24 +200,7 @@ impl BucketIndex {
             })
             .collect();
 
-        if leaves.len() == 1 {
-            return leaves[0];
-        }
-
-        // Pad to power of 2 and build balanced tree
-        let padded_len = leaves.len().next_power_of_two();
-        let mut current_level = leaves;
-        current_level.resize(padded_len, H256::zero());
-
-        while current_level.len() > 1 {
-            let mut next_level = Vec::new();
-            for pair in current_level.chunks(2) {
-                next_level.push(hash_children(pair[0], pair[1]));
-            }
-            current_level = next_level;
-        }
-
-        current_level[0]
+        padded_merkle_root(&leaves)
     }
 }
 

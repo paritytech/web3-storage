@@ -1,16 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
-import { CidMismatchError, computeCid, toHex } from "@web3-storage/core";
 import { makeSigner } from "@web3-storage/layer0";
 import { S3Client } from "./client.js";
 
-const BUCKET = { s3BucketId: 7n, layer0BucketId: 9n };
+const BUCKET = 9n;
 
 function makeClient(opts: {
   body?: Uint8Array | string;
   json?: unknown;
-  onChainCid?: Uint8Array;
   status?: number;
 }) {
   const calls: Array<{ url: string; init?: RequestInit }> = [];
@@ -22,19 +20,7 @@ function makeClient(opts: {
     }
     return new Response(JSON.stringify(opts.json ?? {}), { status: opts.status ?? 200 });
   });
-  const api = {
-    query: {
-      S3Registry: {
-        Objects: {
-          getValue: vi.fn(async () =>
-            opts.onChainCid
-              ? { cid: toHex(opts.onChainCid), size: 1n, content_type: undefined, user_metadata: [] }
-              : undefined,
-          ),
-        },
-      },
-    },
-  };
+  const api = {};
   const client = new S3Client({
     api: api as never,
     signer: makeSigner("//Alice"),
@@ -59,27 +45,13 @@ describe("S3Client HTTP ops", () => {
     expect(headers.Authorization).toMatch(/^Web3Storage 0x/);
   });
 
-  it("getObject verifies single-chunk payloads against the on-chain cid", async () => {
-    const body = new TextEncoder().encode("verified bytes");
-    const { client } = makeClient({ body, onChainCid: computeCid(body) });
+  it("getObject returns the bytes and the provider's content type", async () => {
+    const body = new TextEncoder().encode("object bytes");
+    const { client, calls } = makeClient({ body });
     const got = await client.getObject(BUCKET, "x");
-    expect(got.verified).toBe(true);
+    expect(calls[0].url).toBe("http://provider.test/s3/9/object?key=x");
     expect(got.data).toEqual(body);
-  });
-
-  it("getObject hard-fails a corrupted single-chunk payload", async () => {
-    const body = new TextEncoder().encode("tampered");
-    const { client } = makeClient({
-      body,
-      onChainCid: computeCid(new TextEncoder().encode("original")),
-    });
-    await expect(client.getObject(BUCKET, "x")).rejects.toThrow(CidMismatchError);
-  });
-
-  it("getObject flags verified=false when no on-chain metadata exists", async () => {
-    const { client } = makeClient({ body: "anything" });
-    const got = await client.getObject(BUCKET, "x");
-    expect(got.verified).toBe(false);
+    expect(got.contentType).toBe("application/octet-stream");
   });
 
   it("listObjects maps the provider wire shape", async () => {
@@ -91,10 +63,8 @@ describe("S3Client HTTP ops", () => {
     expect(listed).toEqual([{ key: "k", size: 3, etag: "e", lastModified: 10_000 }]);
   });
 
-  it("validates bucket names and object keys", () => {
+  it("validates object keys", () => {
     const { client } = makeClient({});
-    expect(() => client.validateBucketName("ab")).toThrow("3-63");
-    expect(() => client.validateBucketName("Bad_Name")).toThrow("lowercase");
     expect(() => client.validateObjectKey("")).toThrow("1-1024");
   });
 });
