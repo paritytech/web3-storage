@@ -547,38 +547,15 @@ impl StorageUserClient {
             ));
         }
 
-        let mut current_level = leaf_hashes.to_vec();
-
-        while current_level.len() > 1 {
-            let mut next_level = Vec::new();
-
-            for pair in current_level.chunks(2) {
-                let parent_hash = if pair.len() == 2 {
-                    storage_primitives::hash_children(pair[0], pair[1])
-                } else {
-                    pair[0]
-                };
-
-                // Upload internal node
-                let children = pair.to_vec();
-                let parent_data = self.encode_internal_node(&children);
-
-                self.upload_node(
-                    provider_url,
-                    bucket_id,
-                    parent_hash,
-                    parent_data,
-                    Some(children),
-                )
+        let (root, nodes) = storage_primitives::padded_merkle_tree(leaf_hashes);
+        for node in nodes {
+            let children = vec![node.left, node.right];
+            let data = self.encode_internal_node(&children);
+            self.upload_node(provider_url, bucket_id, node.hash, data, Some(children))
                 .await?;
-
-                next_level.push(parent_hash);
-            }
-
-            current_level = next_level;
         }
 
-        Ok(current_level[0])
+        Ok(root)
     }
 
     fn encode_internal_node(&self, children: &[H256]) -> Vec<u8> {

@@ -9,14 +9,13 @@
 
 use super::{BucketInfo, BucketState, BucketStats, BucketSummary, StorageBackend, StoredNode};
 use crate::error::Error;
-use crate::merkle::padded_merkle_root;
 use crate::nonce::NonceStore;
 use codec::{DecodeAll, Encode};
 use rocksdb::{Options, DB};
 use sp_core::H256;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
-use storage_primitives::{blake2_256, BucketId, MmrLeaf};
+use storage_primitives::{blake2_256, padded_merkle_root, BucketId, Mmr, MmrLeaf};
 
 /// Column families for organizing data
 const CF_NODES: &str = "nodes";
@@ -319,12 +318,9 @@ impl DiskStorage {
 
         let start_seq = bucket.start_seq;
         let mut leaf_indices = Vec::new();
-        let mut mmr = crate::mmr::Mmr::new();
 
         // Rebuild MMR from existing leaves
-        for leaf in &bucket.leaves {
-            mmr.push(blake2_256(&leaf.encode()));
-        }
+        let mut mmr = Mmr::from_leaf_hashes(bucket.leaves.iter().map(MmrLeaf::hash));
 
         // Add new leaves
         let start_index = bucket.leaves.len() as u64;
@@ -345,8 +341,7 @@ impl DiskStorage {
                 data_size,
                 total_size,
             };
-            let leaf_hash = blake2_256(&leaf.encode());
-            mmr.push(leaf_hash);
+            mmr.push(leaf.hash());
             bucket.leaves.push(leaf);
         }
 
@@ -375,11 +370,7 @@ impl DiskStorage {
             bucket.start_seq = new_start_seq;
 
             // Recalculate MMR
-            let mut mmr = crate::mmr::Mmr::new();
-            for leaf in &bucket.leaves {
-                mmr.push(blake2_256(&leaf.encode()));
-            }
-            bucket.mmr_root = mmr.root();
+            bucket.mmr_root = Mmr::from_leaf_hashes(bucket.leaves.iter().map(MmrLeaf::hash)).root();
 
             self.update_bucket(bucket_id, &bucket)?;
         }
@@ -404,19 +395,16 @@ impl DiskStorage {
             .clone();
 
         // Build MMR and generate proof
-        let mut mmr = crate::mmr::Mmr::new();
-        for l in &bucket.leaves {
-            mmr.push(blake2_256(&l.encode()));
-        }
+        let mmr = Mmr::from_leaf_hashes(bucket.leaves.iter().map(MmrLeaf::hash));
 
-        let (siblings, path, peaks) = mmr
-            .proof_with_path(leaf_index)
+        let (leaf_proof, peaks) = mmr
+            .leaf_proof(leaf_index)
             .ok_or(Error::NodeNotFound(format!("mmr_proof_{leaf_index}")))?;
 
         Ok(storage_primitives::MmrProof {
             peaks,
             leaf,
-            leaf_proof: storage_primitives::MerkleProof { siblings, path },
+            leaf_proof,
         })
     }
 
@@ -426,10 +414,7 @@ impl DiskStorage {
             .get_bucket(bucket_id)
             .ok_or(Error::BucketNotFound(bucket_id))?;
 
-        let mut mmr = crate::mmr::Mmr::new();
-        for leaf in &bucket.leaves {
-            mmr.push(blake2_256(&leaf.encode()));
-        }
+        let mmr = Mmr::from_leaf_hashes(bucket.leaves.iter().map(MmrLeaf::hash));
 
         Ok((mmr.root(), mmr.peaks()))
     }

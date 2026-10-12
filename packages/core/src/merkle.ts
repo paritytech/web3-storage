@@ -6,8 +6,8 @@
 //
 // Mirrors, byte for byte:
 //   - `crates/providers/storage/src/index/fs.rs`     → `metadata_merkle_root`
-//   - `crates/providers/storage/src/backend/mod.rs`  → `build_padded_merkle_tree`
-//   - `crates/primitives/storage/src/lib.rs`         → `blake2_256`, `hash_children`, `DEFAULT_CHUNK_SIZE`
+//   - `crates/primitives/storage/src/merkle.rs`      → `padded_merkle_root`, `hash_children`
+//   - `crates/primitives/storage/src/lib.rs`         → `blake2_256`, `DEFAULT_CHUNK_SIZE`
 //
 // This is the multi-chunk Merkle DAG walk that `verify.ts` documents as the
 // missing "Rust-client parity" piece. Pure functions, no I/O — browser-safe.

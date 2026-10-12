@@ -7,8 +7,6 @@
 pub mod backend;
 pub mod error;
 pub mod index;
-pub mod merkle;
-pub mod mmr;
 pub mod nonce;
 
 pub use backend::{
@@ -19,7 +17,6 @@ pub use error::Error;
 pub use index::{
     FsEntryMeta, FsIndexManager, FsListEntry, ListResult, ObjectEntry, ObjectMeta, S3IndexManager,
 };
-pub use merkle::{build_merkle_proof, padded_merkle_root};
 pub use nonce::NonceStore;
 
 /// Names the scratch directories [`temp_rocksdb`] creates.
