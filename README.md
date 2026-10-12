@@ -190,9 +190,9 @@ Two types of nodes work together:
 ```
 web3-storage/
 ├── crates/
-│   ├── pallets/            # FRAME pallets: storage-provider, drive-registry, s3-registry
-│   │                       #   each with a precompiles/ subfolder (pallet_revive precompiles)
-│   ├── primitives/         # Shared types: storage, file-system, s3
+│   ├── pallets/            # FRAME pallet: storage-provider
+│   │                       #   with a precompiles/ subfolder (pallet_revive precompile)
+│   ├── primitives/         # Shared types: storage, file-system
 │   ├── providers/          # Provider-node library crates
 │   ├── storage-subxt/      # Static subxt runtime bindings
 │   └── utils/              # Ultility crates
