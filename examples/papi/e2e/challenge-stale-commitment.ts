@@ -111,8 +111,7 @@ async function main() {
       assert.strictEqual(
         slashed.length,
         0,
-        `Provider slashed: reason=${JSON.stringify(slashed[0]?.payload.reason)} ` +
-          `slashed_amount=${slashed[0]?.payload.slashed_amount}`,
+        `Provider slashed: slashed_amount=${slashed[0]?.payload.slashed_amount}`,
       );
       const defended = api.event.StorageProvider.ChallengeDefended.filter(result.events as never);
       assert.strictEqual(defended.length, 1, "Expected ChallengeDefended event");
