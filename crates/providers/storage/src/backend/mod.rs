@@ -213,6 +213,7 @@ pub trait StorageBackend: Send + Sync {
 ///
 /// Pads to the next power of 2 with `H256::zero()`. Returns the tree root hash,
 /// or the first error from storing an intermediate node.
+/// TODO: remove as a part of https://github.com/paritytech/web3-storage/pull/514
 pub fn build_padded_merkle_tree(
     storage: &dyn StorageBackend,
     bucket_id: BucketId,
