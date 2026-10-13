@@ -538,14 +538,16 @@ pub struct Bucket<T: Config> {
     /// Position 4: updated every 47 blocks (prime = 47)
     /// Position 5: updated every 113 blocks (prime = 113)
     /// 
-    /// Each entry stores (quotient, mmr_root) where quotient = block_number / prime.
+    /// Each entry stores (quotient, commitment) where quotient = block_number / prime.
     /// On each checkpoint, if current_block / prime != stored quotient, the entry
-    /// is updated with (new_quotient, current_snapshot_root). This means each
-    /// position remembers the root from the last time its prime boundary was crossed.
+    /// is updated with (new_quotient, current snapshot commitment). This means each
+    /// position remembers the commitment from the last time its prime boundary was
+    /// crossed. The whole commitment, not just the root: `confirm_replica_sync`
+    /// compares its end (`start_seq + leaf_count`) with the replica's `last_sync`.
     /// 
     /// Primes ensure positions don't align, maximizing coverage. A slow replica
     /// can match against older positions; `position_matched` in events tracks this.
-    pub historical_roots: [(u32, H256); 6],
+    pub historical_roots: [(u32, Commitment); 6],
     /// Total snapshots created for this bucket (for statistics)
     pub total_snapshots: u32,
 }
@@ -644,16 +646,24 @@ pub enum ProviderRole<T: Config> {
         sync_price: BalanceOf<T>,
         /// Minimum blocks between sync confirmations for this agreement.
         /// Set at agreement creation based on expected bucket activity.
-        /// 0 means no time-based limit (only "new root" check applies).
+        /// 0 means no time-based limit (only the advancing-end check applies).
         min_sync_interval: BlockNumberFor<T>,
-        /// Last confirmed sync: (mmr_root, block_number).
-        /// None if replica hasn't confirmed sync yet.
-        last_sync: Option<(H256, BlockNumberFor<T>)>,
+        /// Last confirmed sync: the matched commitment and the block of the
+        /// confirmation. None if the replica hasn't confirmed a sync yet.
+        last_sync: Option<ReplicaSyncRecord<BlockNumberFor<T>>>,
         /// For a virtual provider: which members of the agreement's snapshot
         /// signed `last_sync` (bitmask over the snapshot); they are the ones a
         /// failed `challenge_replica` slashes. Unused for a physical provider.
         last_sync_signers: u8,
     },
+}
+
+/// Defined in `storage_primitives`.
+pub struct ReplicaSyncRecord<BlockNumber> {
+    /// Commitment the replica confirmed (root + covered range).
+    pub commitment: Commitment,
+    /// Block of the confirmation; `min_sync_interval` counts from it.
+    pub block: BlockNumber,
 }
 
 /// Defined in `storage_primitives`: the off-chain quote a provider signs and
@@ -712,7 +722,7 @@ pub struct ReplicaTerms<Balance, BlockNumber> {
     /// accepted sync.
     pub sync_balance: Balance,
     /// Minimum blocks between sync confirmations the provider commits to.
-    /// 0 means no time-based limit (only "new root" check applies).
+    /// 0 means no time-based limit (only the advancing-end check applies).
     pub min_sync_interval: BlockNumber,
 }
 
@@ -897,16 +907,19 @@ how loaded a provider is, and deregistration requires it to reach zero.
 
 ### Replacement agreements
 
-The owner-only path that ends an agreement early. `create_replacement` stores a
+The owner-only path that ends an agreement early. Virtual providers only
+(`NotVirtual` otherwise): the base defines the mechanism; only the virtual-provider
+extension calls it, and for a physical provider the in-place `extend_agreement`
+covers every case. `create_replacement` stores a
 pending successor in the agreement record (`StorageAgreement.pending_replacement`):
-a fresh `agreement_id`, the provider's stake — for a virtual provider also its
-`VirtualSnapshot` (current member set and `per_provider_stake`) — its expiry
+a fresh `agreement_id`, the provider's stake and `VirtualSnapshot` (current
+member set and `per_provider_stake`) — for a replica agreement also the current
+`replica_sync_price` — its expiry
 `old.expires_at + additional_duration`, and the payment for
 `additional_duration` at the current price, held. Creation bumps `cur_until` to
 the successor's expiry ("Changeable Stake"): a later `set_stake` lowering locks
 the old figure until the successor ends, not only until the old agreement does.
-`additional_duration` may be 0 (a pure provider-set swap, the virtual-provider
-case). It needs no new quote
+`additional_duration` may be 0 (a pure member-set swap). It needs no new quote
 and is gated exactly like `extend_agreement`, zero duration included: rejected
 if `expected_version` changed, if the provider is not accepting extensions
 (globally, or `extensions_blocked` on this agreement), if a nonzero
@@ -916,10 +929,10 @@ are the provider's defence against an owner that makes a set sync again and
 again without ever activating (see below). While it
 is pending, `extend_agreement` and `top_up_agreement` on the old agreement are
 rejected (the successor's expiry and payment are fixed against the current
-term), and there is no cancel: the successor's provider may already have
+term), and there is no cancel: the successor's member set may already have
 synced and signed, so the owner is bound once created. It ends by activation or
-with the old agreement. For a virtual
-provider the in-place member-set check of `extend_agreement` does not apply.
+with the old agreement. The in-place member-set check of `extend_agreement`
+does not apply.
 Pending means not live for data: no challenges, commitments naming it are not
 valid, no checkpoint slots. Its stake snapshot is bound from creation. The old
 agreement runs on unchanged.
@@ -929,26 +942,43 @@ pub struct PendingReplacement<T: Config> {
     pub agreement_id: u64,
     /// Provider stake at creation; becomes `StorageAgreement.stake`.
     pub stake: BalanceOf<T>,
-    /// Virtual provider only: taken at creation, becomes
-    /// `StorageAgreement.virtual_snapshot` at activation.
-    pub virtual_snapshot: Option<VirtualSnapshot<T>>,
+    /// Taken at creation; at activation it is stored as `Some` in
+    /// `StorageAgreement.virtual_snapshot`.
+    pub virtual_snapshot: VirtualSnapshot<T>,
     /// `old.expires_at + additional_duration`, fixed at creation.
     pub expires_at: BlockNumberFor<T>,
     /// Payment for `additional_duration` at the price at creation. At
     /// activation the old agreement's unelapsed remainder is added.
     pub payment_locked: BalanceOf<T>,
+    /// Replica agreement only: `replica_sync_price` at creation; becomes the
+    /// successor's `sync_price`.
+    pub sync_price: Option<BalanceOf<T>>,
 }
 ```
 
-The first `checkpoint` carrying the successor's signature — for a virtual
-provider, at least `k` of its members' — **activates** it. Only `checkpoint`,
+For a primary agreement, the first `checkpoint` with `activate_replacements`
+set that carries at least `k` of the successor's members' signatures
+**activates** it. Only `checkpoint`,
 never `extend_checkpoint`: a checkpoint is the owner attesting the latest
 state, off-chain commitments included, and that is what the new set must have
 proven before it takes over; signatures over an old snapshot prove nothing
-about the data since. Activation therefore needs the owner. The record becomes the
+about the data since. Activation therefore needs the owner. A replica is liable
+for its last confirmed sync, so for a replica agreement the first
+`confirm_replica_sync` with `activate_replacement` set whose signatures
+satisfy the successor's snapshot activates it instead. For this one call the two rate-limit checks are replaced:
+the matched commitment's end must be at least the old agreement's `last_sync`
+end — equal is allowed, the new set takes over the state the old set already
+proved, with no new checkpoint needed; with no old `last_sync`, any accepted
+match — and `min_sync_interval` is not applied (later syncs count from the
+activating one). The old agreement's `sync_balance` and `min_sync_interval`
+are kept; the activating sync becomes the successor's `last_sync` and its
+signers its `last_sync_signers`. It is paid at the successor's snapshotted
+`sync_price`, and emits `ReplicaSynced`, only if it
+advances the end — an equal end is state already paid for. A checkpoint never
+activates a replica successor, a sync never a primary one. The record becomes the
 new agreement with the fixed `expires_at`; `cur_until` was bumped at creation.
 The old one settles as `extend_agreement` step 1 does: elapsed
-period paid to the old provider (a virtual's snapshotted members, equal split),
+period paid to the old snapshotted members, equal split,
 unelapsed remainder moved into the successor's escrow next to the payment for
 `additional_duration`. The successor serves the rest of the old stretch at the
 old price and the added stretch at the new one. As with an extension, the owner
@@ -959,16 +989,17 @@ activated: the old agreement settles as usual (its provider served the whole
 term), the successor's payment is released to the owner (nobody served the
 added stretch and nobody was challengeable for it), and `ReplacementExpired`
 is emitted.
-Any sync work the successor's provider did is unpaid — the graceful failure
-when the new set does not sign — or when the owner never submits the
-checkpoint. An owner can make a set sync for nothing; the provider's defence is
-`accepting_extensions` / `set_extensions_blocked`, which gate replacements
-too. Activation by checkpoint is what makes the
-handover safe: the new set becomes liable, and paid, only once it has signed
-the tip, so the client never pays for a guarantee it does not hold and there is
-no block in which nobody is liable. For a virtual provider, activation writes
-nothing to the members' `ProviderVirtuals` entries (virtual-provider extension,
-"Changing a live agreement's member set").
+Any sync work the successor's member set did is unpaid — the graceful failure
+when the new set does not sign — or, for a primary, when the owner never
+submits the checkpoint. An owner can make a set sync for nothing; the
+provider's defence is `accepting_extensions` / `set_extensions_blocked`, which
+gate replacements too. Activation by the successor's own proof — a checkpoint
+signature for a primary, a sync confirmation for a replica — is what makes the
+handover safe: the new set becomes liable, and paid, only once it has proven it
+holds the data, so the client never pays for a guarantee it does not hold and
+there is no block in which nobody is liable. Activation writes nothing to the
+members' `ProviderVirtuals` entries (virtual-provider extension, "Changing a
+live agreement's member set").
 
 Owner-only because activation spends the owner's escrow. A third party keeping a
 frozen bucket alive funds its own replica instead (design doc "Permissionless
@@ -1055,8 +1086,20 @@ on-chain signed payloads exist (all SCALE-encoded, all carry an explicit
   each late signer's payload the same way — from the snapshot's `commitment` and
   that signer's live `agreement_id` — so no stored per-signer disambiguator is
   needed.
-- The replica sync `roots` array (`[Option<H256>; 7]`) — signed for
-  `confirm_replica_sync` to attest which roots the replica actually has.
+- `ReplicaSyncPayload { version, bucket_id, agreement_id, roots }` — what a
+  replica signs for `confirm_replica_sync` to attest which roots it has
+  (`roots: [Option<H256>; 7]`). `bucket_id` and `agreement_id` bind it like
+  `CommitmentPayload`: usable only for that agreement, void when it ends.
+
+`checkpoint` and `confirm_replica_sync` carry an **activation flag** —
+`activate_replacements` and `activate_replacement`. Set, every provider in the
+call that has a pending replacement is verified against the replacement's
+snapshot and `agreement_id` ("Replacement agreements"); unset, every provider
+against its live agreement. The chain never tries both. Two consequences: a
+virtual's old set cannot co-sign a checkpoint that activates its replacement —
+its entries would be verified against the successor's snapshot; and a call
+with the flag set in which no provider has a pending replacement is rejected
+with `NoPendingReplacement`.
 
 **Provider signatures.** Every call that takes one provider's signature over
 the quote or one of these payloads takes a signature set, so the same call
@@ -1074,7 +1117,10 @@ provider, at least `k` distinct members of the call's member set, each verified
 against that member's own key, fewer rejects the call (virtual-provider
 extension). The member set is the live `members` for the three redemption calls
 and the agreement's snapshot for `challenge_offchain` and
-`confirm_replica_sync`.
+`confirm_replica_sync`. With the activation flag set it is the pending
+successor's `VirtualSnapshot` for every provider that has one, and a virtual's
+entries in `checkpoint` are expanded against that snapshot, not the live slot
+layout.
 
 Three calls take signatures of several providers or add to an existing set, and
 so use flat `(AccountId, Signature)` pairs instead:
@@ -1260,7 +1306,8 @@ pub enum Event<T: Config> {
         expires_at: BlockNumberFor<T>,
         payment_locked: BalanceOf<T>,
     },
-    /// A checkpoint activated the successor: the old agreement settled
+    /// A checkpoint (primary) or a sync confirmation (replica) activated the
+    /// successor: the old agreement settled
     /// (`payment_to_provider` for its elapsed period), the new one is live.
     ReplacementActivated {
         bucket_id: BucketId,
@@ -1804,18 +1851,22 @@ impl<T: Config> Pallet<T> {
         expected_version: u32,
     ) -> DispatchResult;
 
-    /// Store a pending successor for a live agreement (**owner only**); see
+    /// Store a pending successor for a live agreement (**owner only**,
+    /// virtual providers only — `NotVirtual` otherwise); see
     /// "Replacement agreements". Gated like `extend_agreement`:
     /// `expected_version`, accepting extensions (global and per agreement),
     /// `min_duration` on a nonzero `additional_duration`, `max_duration` on
     /// the successor's `expires_at − now`. No new quote. `additional_duration`
-    /// may be 0: a pure provider-set swap.
+    /// may be 0: a pure member-set swap.
     /// Blocks `extend_agreement` and `top_up_agreement` on this agreement
-    /// until activated or settled; cannot be cancelled. Locks the payment for
+    /// until activated or settled (`top_up_replica_sync_balance` stays
+    /// allowed; the balance is kept); cannot be cancelled. Locks the payment for
     /// `additional_duration` at the current price. Bumps the provider's
-    /// `cur_until` to the successor's expiry ("Changeable Stake"). Fails if
-    /// one is already pending. The successor activates only while this
-    /// agreement is live;
+    /// `cur_until` to the successor's expiry ("Changeable Stake"). For a
+    /// replica agreement also snapshots the current `replica_sync_price`;
+    /// such a successor activates by `confirm_replica_sync`, not `checkpoint`.
+    /// Fails if one is already pending. The successor activates only while
+    /// this agreement is live;
     /// otherwise it lapses when this agreement settles and its payment is
     /// released to the owner.
     pub fn create_replacement(
@@ -1944,8 +1995,9 @@ impl<T: Config> Pallet<T> {
     /// Early termination of primaries by the admin is an open question (see
     /// "Open Questions").
     /// 
-    /// **Replicas cannot be early-terminated:** There's no use case, and allowing
-    /// it would violate the principle of least surprise. A business checking on a
+    /// **Replicas cannot be ended early here:** the owner-only replacement
+    /// ("Replacement agreements") is the one early end, as for primaries. Allowing
+    /// it here would violate the principle of least surprise. A business checking on a
     /// bucket sees "5 providers with agreements until May" and concludes all is
     /// well - they shouldn't find the bucket dead the next day because someone
     /// terminated agreements early. If unhappy with a provider, simply don't extend.
@@ -2035,15 +2087,17 @@ impl<T: Config> Pallet<T> {
     /// Requires at least `min_providers` signing slots of the bucket's layout
     /// (`BucketSnapshot.primary_signers`). A virtual primary's signatures in one
     /// call are all-or-nothing: at least its threshold `k`, or none — fewer
-    /// rejects the call (virtual-provider extension, "Checkpoints"). Signatures of a pending
-    /// replacement's provider set are accepted only to activate it
-    /// ("Replacement agreements").
+    /// rejects the call (virtual-provider extension, "Checkpoints"). With
+    /// `activate_replacements` set, every primary that has a pending
+    /// replacement is verified against it and activated ("Replacement
+    /// agreements").
     /// For frozen buckets: start_seq must equal frozen_start_seq (only leaf_count can increase).
     pub fn checkpoint(
         origin: OriginFor<T>,
         bucket_id: BucketId,
         commitment: Commitment,
         signatures: BoundedVec<(T::AccountId, Signature), T::MaxPrimarySlots>,
+        activate_replacements: bool,
     ) -> DispatchResult;
 
     /// Extend an existing checkpoint's provider bitfield (anyone can call).
@@ -2221,7 +2275,13 @@ impl<T: Config> Pallet<T> {
     /// Replica confirms sync to one or more MMR roots.
     ///
     /// Called by the replica provider named in `provider`; for a virtual
-    /// provider, by any member of the replica agreement's snapshot.
+    /// provider, by any member of the replica agreement's snapshot. With
+    /// `activate_replacement` set the signatures are verified against the
+    /// pending successor's snapshot and `agreement_id` and activate it
+    /// ("Replacement agreements").
+    /// Only one sync per agreement is kept in the pool at a time; concurrent
+    /// submissions by other members are dropped there and never charged
+    /// ("Transaction extension for raced calls").
     /// 
     /// **Why this exists:**
     /// Replicas sync autonomously and need to prove they actually have the data.
@@ -2244,8 +2304,10 @@ impl<T: Config> Pallet<T> {
     /// 
     /// **Rate limiting:**
     /// Two checks prevent excessive sync confirmations:
-    /// 1. The matched root must differ from `last_sync.0` (must be new state)
-    /// 2. `current_block >= last_sync.1 + min_sync_interval` (per-agreement)
+    /// 1. The matched commitment's end (`start_seq + leaf_count`) must be
+    ///    greater than `last_sync.commitment`'s: the confirmed range only
+    ///    grows, and the same root is never paid twice
+    /// 2. `current_block >= last_sync.block + min_sync_interval` (per-agreement)
     /// 
     /// The first check ensures payment only for actual sync work. The second
     /// prevents hot buckets (writes every block) from causing excessive on-chain
@@ -2261,7 +2323,7 @@ impl<T: Config> Pallet<T> {
     /// failures) should be negligible if the replica syncs regularly.
     /// 
     /// On success (both checks pass):
-    /// - Updates replica's `last_sync` to `(matched_root, current_block)`
+    /// - Updates replica's `last_sync` to the matched commitment and `current_block`
     /// - Pays sync_price from replica's sync_balance
     /// - Emits ReplicaSynced event with position_matched for performance tracking
     ///   (position 0 = current snapshot, 1-6 = historical positions, higher = more lag)
@@ -2271,9 +2333,13 @@ impl<T: Config> Pallet<T> {
     /// - `provider`: The replica provider (for a virtual, its synthetic account)
     /// - `roots`: Array of optional MMR roots [current, pos0, pos1, pos2, pos3, pos4, pos5].
     ///   Replica sets Some(root) for positions they have, None for positions they don't.
-    /// - `signatures`: the provider's signatures over the roots array,
-    ///   satisfying the provider signature rule (`ProviderSignatures`). For a
-    ///   virtual provider the member set is the agreement's snapshot; the
+    /// - `activate_replacement`: verify against the pending replacement and
+    ///   activate it ("Replacement agreements")
+    /// - `signatures`: the provider's signatures over `ReplicaSyncPayload`
+    ///   (`version`, `bucket_id`, the live or the pending `agreement_id`,
+    ///   `roots`), satisfying the provider signature rule (`ProviderSignatures`). For a
+    ///   virtual provider the member set is the live agreement's snapshot, or
+    ///   with `activate_replacement` the pending successor's; the
     ///   accepted signers are stored in `last_sync_signers` and are the ones
     ///   slashed by a failed `challenge_replica` against it.
     #[pallet::weight(...)]
@@ -2282,8 +2348,9 @@ impl<T: Config> Pallet<T> {
         bucket_id: BucketId,
         provider: T::AccountId,
         /// Array of optional MMR roots: [current, pos0, pos1, pos2, pos3, pos4, pos5]
-        /// The provider signs this to attest which roots it has.
+        /// Signed inside `ReplicaSyncPayload` to attest which roots the replica has.
         roots: [Option<H256>; 7],
+        activate_replacement: bool,
         signatures: ProviderSignatures<T>,
     ) -> DispatchResult;
 
@@ -2652,7 +2719,8 @@ Response:
 Note: Signs the same payload as `/commitment`; kept as a separate endpoint
 for the checkpoint workflow, where the signatures go into the
 `checkpoint`/`extend_checkpoint` signature list (a virtual provider's entries
-all-or-nothing, see `checkpoint`).
+all-or-nothing, see `checkpoint`). A signature requested with the pending
+successor's `agreement_id` is submitted with `activate_replacements` set.
 
 Get MMR Proof
 ─────────────
@@ -2879,7 +2947,8 @@ requests when syncing many nodes.
    d. Verify fetched nodes: hash(data) == expected_hash
    e. Continue to children of newly fetched nodes
 6. Once all nodes fetched and verified:
-   a. Sign the roots array matching on-chain historical_roots (a virtual
+   a. Sign `ReplicaSyncPayload` — the `roots` matching on-chain
+      `historical_roots`, the live or the pending `agreement_id` (a virtual
       provider's members collect ≥`k` signatures between their nodes, as for
       commitments)
    b. Submit confirm_replica_sync on-chain
@@ -2963,6 +3032,21 @@ pub struct CommitmentPayload {
     pub agreement_id: u64,
     /// MMR commitment being signed over
     pub commitment: Commitment,
+}
+
+/// What a replica signs for `confirm_replica_sync`. Bound to one agreement
+/// exactly like `CommitmentPayload`.
+pub struct ReplicaSyncPayload {
+    /// `CURRENT_VERSION = 1`; bumps on any layout change, as for
+    /// `CommitmentPayload`.
+    pub version: u8,
+    /// The bucket the replica agreement is for.
+    pub bucket_id: BucketId,
+    /// The live agreement's id, or the pending replacement's to activate it.
+    pub agreement_id: u64,
+    /// `[current, pos0, pos1, pos2, pos3, pos4, pos5]`; `Some` for the roots
+    /// the replica has.
+    pub roots: [Option<H256>; 7],
 }
 ```
 
@@ -3147,36 +3231,61 @@ fn verify_challenge_response(
 }
 ```
 
-### Response transaction extension
+### Transaction extension for raced calls
 
-A response carries a chunk of up to 256 KiB, so its fee is dominated by length.
-Two responses to one challenge — a provider racing its challenger's
-`cancel_challenge`, or two members of a virtual provider — would today both be
-included and both charged: transaction validity does not consult pallet state,
-and a dispatch that fails still pays. A runtime `TransactionExtension` (the
-`CheckNonce` pattern) handles `respond_to_challenge { challenge_id, .. }`:
+Two calls can be submitted by several parties for one outcome, where only one
+can succeed: a challenge response — a provider racing its challenger's
+`cancel_challenge`, or two members of a virtual provider — and a replica sync
+confirmation, which any snapshotted member of a virtual replica may submit for
+the same round. A response carries a chunk of up to 256 KiB, so its fee is
+dominated by length. Today both would be included and both charged:
+transaction validity does not consult pallet state, and a dispatch that fails
+still pays. A runtime `TransactionExtension` (the `CheckNonce` pattern) handles
+both:
 
-- `validate` fails with `Stale` if the challenge does not exist and with
-  `BadSigner` if the signer is not an eligible responder — the challenged
-  provider, or for a virtual provider a member of the challenged agreement's
-  snapshot. Such a transaction is rejected by the first pool that sees it and
-  never gossiped further.
-- Otherwise it returns `provides: [challenge_id]`. The pool keeps at most one
-  ready transaction per tag, so a second response is rejected at import. Once a
-  response is included, every pool extracts its tags (validating at the parent
-  block, where it is still valid) and prunes the others. A straggler that
-  reaches the block builder anyway fails `validate` there and is dropped
-  uncharged.
+- `respond_to_challenge { challenge_id, .. }`: `validate` fails with `Stale` if
+  the challenge does not exist and with `BadSigner` if the signer is not an
+  eligible responder — the challenged provider, or for a virtual provider a
+  member of the challenged agreement's snapshot. Otherwise
+  `provides: [challenge_id]`.
+- `confirm_replica_sync { bucket_id, provider, activate_replacement, roots, .. }`:
+  `Stale` if there is no replica agreement, if `activate_replacement` is set
+  and none is pending, if `min_sync_interval` has not elapsed since
+  `last_sync.block` (not applied when activating a pending replacement), or if
+  the sync would not advance — no root in `roots`
+  matches a canonical or historical commitment whose end is greater than
+  `last_sync`'s (at least equal when activating). `BadSigner` if the signer
+  is not the provider named in `provider`, or for a virtual provider not a
+  member of the selected snapshot. Otherwise
+  `provides: [(bucket_id, provider)]`: one sync per agreement in
+  flight; a further advance is submitted once the previous one is included.
 
-The loser of a race pays nothing and takes no block space. A response that
-passes `validate` but fails at dispatch — a squatter taking the tag with garbage
-— is included and pays the full fee. Other calls pass through the extension
-unchanged.
+A transaction that fails `validate` is rejected by the first pool that sees it
+and never gossiped further. The pool keeps at most one ready transaction per
+tag, so a second response or sync is rejected at import (a higher tip replaces
+the pending one instead). Once one is included, every pool extracts its tags
+(validating at the parent block, where it is still valid) and prunes the
+others. A straggler that reaches the block builder anyway fails `validate` at
+the new block — the challenge is gone, the sync no longer advances — and is
+dropped uncharged.
+
+The loser of a race pays nothing and takes no block space. A transaction that
+passes `validate` but fails at dispatch — a squatter taking the tag with
+garbage; for a sync only the provider or a snapshotted member can take the tag
+— is included and pays the full fee. Other calls pass through the extension unchanged.
 
 ---
 
 ## Open Questions
 
+- **Who pays the sync confirmation fee.** `confirm_replica_sync` is submitted
+  by one member of a virtual replica while `sync_price` is split equally.
+  Direction: on success the pallet refunds the submitter's fee from the
+  agreement's `sync_balance` before splitting `sync_price`; if the balance
+  cannot cover it, the submitter pays. Open: a fixed `SyncFeeRefund` constant
+  or the actual fee via `pallet_transaction_payment::compute_fee`. (`Pays::No`
+  is out: every bound on free syncs is owner-controlled.) Later: route part of
+  the fee to the primaries that served the sync.
 - **Early termination of primaries by the admin.** Primaries are
   admin-controlled for write coordination, so the admin must keep control over
   who accepts writes; without early termination a hostile or misbehaving

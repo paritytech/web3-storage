@@ -11,7 +11,7 @@
 
 | Version | Changes |
 |---------|---------|
-| 2.5 | Stake, agreements and provider signatures reworked for virtual providers (stake changeable and snapshotted per agreement; no stake-per-byte rule; quotes carry no price or version, the client pins `expected_version`; per-owner quote nonce; one-step deregistration; owner-only extension; replacement agreements; provider refund; `ProviderSignatures` sets; `MaxPrimarySlots` counts physical signers; duplicate challenge responses dropped for free; `extend_challenge`; provider discovery off-chain; `create_bucket_with_storage`, provider-initiated checkpoints, `find_matching_providers`, `challenge_candidates` removed; typed runtime API responses). **Read**: "Provider Stake", "Storage Agreements" here; impl doc "Changeable Stake", "Stake vs. capacity", "Term Pinning", "Replacement agreements", "Provider Public Key & Signature Type", "Response transaction extension", "Runtime API", "Off-Chain: Provider Node API"; [Virtual Provider Extension](./001-virtual-provider-extension.md). |
+| 2.5 | Stake, agreements and provider signatures reworked for virtual providers (stake changeable and snapshotted per agreement; no stake-per-byte rule; quotes carry no price or version, the client pins `expected_version`; per-owner quote nonce; one-step deregistration; owner-only extension; replacement agreements (virtual providers only); provider refund; `ProviderSignatures` sets; `MaxPrimarySlots` counts physical signers; duplicate challenge responses dropped for free; `extend_challenge`; replica syncs must advance the commitment end, `historical_roots` keep commitments; replacement agreements for replicas activate by `confirm_replica_sync`; an activation flag on `checkpoint` and `confirm_replica_sync` selects the pending replacement; replica syncs sign `ReplicaSyncPayload` (`version`, `bucket_id`, `agreement_id`, `roots`); provider discovery off-chain; `create_bucket_with_storage`, provider-initiated checkpoints, `find_matching_providers`, `challenge_candidates` removed; typed runtime API responses). **Read**: "Provider Stake", "Storage Agreements" here; impl doc "Changeable Stake", "Stake vs. capacity", "Term Pinning", "Replacement agreements", `confirm_replica_sync`, "Provider Public Key & Signature Type", "Transaction extension for raced calls", "Runtime API", "Off-Chain: Provider Node API"; [Virtual Provider Extension](./001-virtual-provider-extension.md). |
 | 2.4 | Bucket creation and provider assignment are separate on-chain operations: `create_bucket`, `create_bucket_with_primary`, `add_primary_provider`, `add_replica_provider`. Provider-signed quotes name the bucket they are for. A bucket remains after its last agreement ends and can get new providers later; the client moves the data when a provider is added. **Read**: "Buckets: Stable Identity in a Fluid Provider Market"; "Two Classes of Providers"; "Provider Lifecycle in Bucket" in [Implementation Details](./scalable-web3-storage-implementation.md) for the four calls. |
 | 2.3 | Private buckets clarified (visibility flag, Reader role, primary challenges gated to members + primary-agreement owners, tier-split challenge stats). **Read**: new "Bucket Visibility & Access" section; "The Challenge Game". |
 | 2.2 | Challenge cost model reworked and clarified: a valid response never touches the provider's stake. The challenger's deposit covers the on-chain response cost; authorized challengers (bucket members + agreement owners) get a split where the provider bears a fraction (challenger's share floored at 50%, as leverage—not cheap recovery), while the general public pays in full (anti-DoS, since a provider can't serve everyone equally). Stake is slashed only on a missing/invalid response. |
@@ -482,8 +482,9 @@ Both directions always allowed, but asymmetric:
   cannot.
 
 **Anti-censorship is enforced—and cuts against privacy.** Two on-chain rules:
-replica agreements cannot be early-terminated (the admin has no rights over
-them), and a replica must answer challenges from *anyone* or lose its stake.
+the admin cannot end a replica agreement early (only its owner can, and only
+against an activated successor of a virtual provider), and a replica must
+answer challenges from *anyone* or lose its stake.
 So flipping private cannot silence what a replica already holds—intentional,
 replicas exist partly to protect the public against a hostile admin (see "Why
 this split?" above). The user-facing rule: **be careful what you make
@@ -576,7 +577,7 @@ provider's stake *is* snapshotted, so a provider can change its stake for future
 worse terms than they chose.
 
 **Binding commitment**: Neither party can exit early. Provider committed to store for the agreed duration. Client
-committed to pay for the agreed duration. The one exception is a replacement: the owner may end an agreement early
+committed to pay for the agreed duration. The one exception is a replacement (virtual providers only): the owner may end an agreement early
 against a proven successor, settling it as an extension would (impl doc "Replacement agreements").
 
 **Refund**: a provider that finds it cannot serve an agreement adequately may give the remaining payment back to the
