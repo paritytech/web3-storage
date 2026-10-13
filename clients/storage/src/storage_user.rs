@@ -550,13 +550,11 @@ impl StorageUserClient {
             for pair in current_level.chunks(2) {
                 let parent_hash = storage_primitives::hash_children(pair[0], pair[1]);
 
-                // The provider derives an internal node's data from its
-                // children, so nothing meaningful is uploaded here.
                 self.upload_node(
                     provider_url,
                     bucket_id,
                     parent_hash,
-                    Vec::new(),
+                    [pair[0].as_bytes(), pair[1].as_bytes()].concat(),
                     Some(vec![pair[0], pair[1]]),
                 )
                 .await?;

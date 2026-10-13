@@ -608,8 +608,8 @@ async fn test_non_power_of_two_upload_matches_padded_root_and_verifies() {
     let url = start_test_provider().await;
     let client = make_client(url.clone());
 
-    // Three chunks: previously failed with InvalidHash, since the client
-    // promoted the trailing lone node instead of zero-padding it.
+    // Three chunks: the client must zero-pad to four leaves (next power of two) like the provider,
+    // or the provider rejects the root with InvalidHash.
     let chunk_size = 1024usize;
     let data: Vec<u8> = (0..chunk_size * 3).map(|i| (i % 256) as u8).collect();
 

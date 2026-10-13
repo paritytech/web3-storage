@@ -164,18 +164,13 @@ impl ReplicaSync {
                 })
                 .transpose()?;
 
-            // A node that declares children is an internal node, and the peer
-            // must have declared exactly two of them.
-            let node = match children.clone() {
-                Some(children) => ChunkTreeNode::internal(children)?,
-                None => ChunkTreeNode::Chunk(data),
-            };
+            let node = ChunkTreeNode::from_wire(data, children)?;
 
             // Fetch children before storing the parent: store_node rejects an
             // internal node whose non-zero children aren't already present.
-            if let Some(child_hashes) = children {
+            if let ChunkTreeNode::Internal(child_hashes) = &node {
                 for child in child_hashes {
-                    self.fetch_subtree(bucket_id, child, primary_url).await?;
+                    self.fetch_subtree(bucket_id, *child, primary_url).await?;
                 }
             }
 
