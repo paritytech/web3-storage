@@ -12,27 +12,20 @@
  * 13.1 `/commit` rejects the unbalanced tree `R = H(H(c0, c1), c2)`. No proof
  *      for `c2` verifies against `R`, so a signed `R` lets the bucket admin
  *      slash the provider's whole stake with `SlashReason::InvalidProof`.
- * 13.2 A challenge on `c2` of `R` does not slash the provider: either
- *      `/commit` rejects `R`, or the provider defends the challenge.
  *
  * Usage: node --import tsx e2e/13-unprovable-chunk-tree.ts [chain_ws] [provider_url]
  */
 
 import assert from "node:assert";
 import {
-  addStake,
   bytesEq,
-  challengeOffchain,
   computeCid,
   ensureProviderRegistered,
-  fetchChallengeProof,
   hashChildren,
   makeSigner,
   paddedMerkleRoot,
   providerFetch,
   putChunk,
-  READ_OPTS,
-  respondToChallenge,
   toHex,
   type ChainSigner,
 } from "@web3-storage/sdk";
@@ -41,9 +34,6 @@ import { negotiateAndEstablish, runSuite, setupChain } from "./helpers.js";
 
 const CHAIN_WS = process.argv[2] || "ws://127.0.0.1:2222";
 const PROVIDER_URL = process.argv[3] || "http://127.0.0.1:3333";
-
-/** No binary proof for chunk 2 verifies against the unbalanced root `R`. */
-const CHALLENGED_CHUNK = 2n;
 
 /**
  * PUT a self-consistent internal node: `data = left || right` and
@@ -91,6 +81,15 @@ async function main() {
     });
   }
 
+  /** Assert `err` is the provider's `400 non_canonical_tree` rejection of `/commit`. */
+  function assertNonCanonicalTree(err: unknown): true {
+    const match = /^\/commit: (\d{3}) (.*)$/s.exec((err as Error).message);
+    assert.ok(match, `unexpected error: ${(err as Error).message}`);
+    assert.strictEqual(match[1], "400");
+    assert.strictEqual(JSON.parse(match[2]).error, "non_canonical_tree");
+    return true;
+  }
+
   const tests: Array<{ name: string; fn: () => Promise<void> }> = [];
 
   tests.push({
@@ -109,68 +108,13 @@ async function main() {
 
       await assert.rejects(
         commitRoot(root),
-        /\/commit: 4\d\d/,
+        assertNonCanonicalTree,
         "provider must not sign a root it cannot prove",
       );
     },
   });
 
-  let slashedAmount = 0n;
-  tests.push({
-    name: "13.2 A challenge on chunk 2 of the unbalanced tree does not slash the provider",
-    fn: async () => {
-      // R = H(H(c0, c1), c2), the same unbalanced tree as 13.1.
-      const inner = await putInternal(bucketId, owner, leaves[0], leaves[1]);
-      const root = await putInternal(bucketId, owner, inner, leaves[2]);
-
-      let commit: any;
-      try {
-        commit = await commitRoot(root);
-      } catch (err) {
-        // The provider did not sign R, so no challenge on R is possible.
-        assert.match((err as Error).message, /\/commit: 4\d\d/);
-        return;
-      }
-
-      const info = await api.query.StorageProvider.Providers.getValue(provider.address, READ_OPTS);
-      const stakeBefore = info!.stake;
-
-      const challengeId = await challengeOffchain(api, owner, provider, bucketId, {
-        mmrRoot: commit.mmr_root,
-        startSeq: commit.start_seq,
-        leafCount: commit.leaf_count,
-        leafIndex: commit.leaf_indices[0],
-        providerSignature: commit.provider_signature,
-        chunkIndex: CHALLENGED_CHUNK,
-      });
-      const proof = await fetchChallengeProof(api, PROVIDER_URL, challengeId);
-      const result = await respondToChallenge(api, provider, challengeId, proof);
-
-      const slashed = api.event.StorageProvider.ChallengeSlashed.filter(result.events as never);
-      for (const ev of slashed) {
-        slashedAmount += ev.payload.slashed_amount;
-        console.log(
-          `          ChallengeSlashed slashed_amount=${ev.payload.slashed_amount}`,
-        );
-      }
-      assert.strictEqual(slashed.length, 0, "provider must not be slashed");
-
-      const after = await api.query.StorageProvider.Providers.getValue(provider.address, READ_OPTS);
-      assert.strictEqual(after!.stake, stakeBefore, "provider stake must not change");
-    },
-  });
-
   await runSuite("13 - Provider signs only provable chunk trees", tests, { api, papi });
-
-  // Restore Alice's stake so later runs against the same chain still work.
-  if (slashedAmount > 0n) {
-    try {
-      await addStake(api, provider, slashedAmount);
-    } catch (err) {
-      console.log("  restoring provider stake failed:", (err as Error).message);
-      process.exitCode = 1;
-    }
-  }
 
   try {
     await restore();

@@ -310,14 +310,18 @@ impl DiskStorage {
             }
         }
 
-        // Verify balanced tree
+        // Verify balanced tree. Each root is walked once; its data size is
+        // reused below.
+        let mut data_sizes = Vec::with_capacity(data_roots.len());
         for root in &data_roots {
-            if padded_merkle_root(&self.collect_chunk_hashes(*root)) != *root {
+            let (chunk_hashes, data_size) = self.collect_leaves(*root);
+            if padded_merkle_root(&chunk_hashes) != *root {
                 return Err(Error::NonCanonicalTree(format!(
                     "0x{}",
                     hex::encode(root.as_bytes())
                 )));
             }
+            data_sizes.push(data_size);
         }
 
         // Get bucket and update MMR
@@ -333,11 +337,9 @@ impl DiskStorage {
 
         // Add new leaves
         let start_index = bucket.leaves.len() as u64;
-        for (i, data_root) in data_roots.iter().enumerate() {
+        for (i, (data_root, data_size)) in data_roots.iter().zip(data_sizes).enumerate() {
             leaf_indices.push(start_index + i as u64);
 
-            // Calculate data size by traversing the stored node tree
-            let data_size = self.calculate_tree_size(*data_root);
             let total_size = bucket
                 .leaves
                 .last()

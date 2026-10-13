@@ -18,11 +18,11 @@ pub enum Error {
     #[error("Quota exceeded: used {used}, max {max}")]
     QuotaExceeded { used: u64, max: u64 },
 
-    /// Cannot find bucket by given id (400)
+    /// Cannot find bucket by given id (404)
     #[error("Bucket not found: {0}")]
     BucketNotFound(u64),
 
-    /// Cannot find MMR root (400)
+    /// Cannot find MMR root (404)
     #[error("Root not found: {0}")]
     RootNotFound(String),
 

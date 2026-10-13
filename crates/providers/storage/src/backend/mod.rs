@@ -141,9 +141,11 @@ pub trait StorageBackend: Send + Sync {
         chunks
     }
 
-    /// Collect leaf chunk hashes under a data root (DFS, in order).
-    fn collect_chunk_hashes(&self, root: H256) -> Vec<H256> {
+    /// Collect the leaf chunk hashes under a data root (DFS, in order) and the
+    /// total byte size of those leaves, in one walk.
+    fn collect_leaves(&self, root: H256) -> (Vec<H256>, u64) {
         let mut hashes = Vec::new();
+        let mut size = 0u64;
         let mut stack = vec![root];
 
         while let Some(hash) = stack.pop() {
@@ -157,11 +159,12 @@ pub trait StorageBackend: Send + Sync {
                     }
                 } else {
                     hashes.push(hash);
+                    size = size.saturating_add(node.data.len() as u64);
                 }
             }
         }
 
-        hashes
+        (hashes, size)
     }
 
     /// Get chunk data and Merkle proof at the given index from a data root.
@@ -170,7 +173,7 @@ pub trait StorageBackend: Send + Sync {
         data_root: H256,
         chunk_index: u64,
     ) -> Result<(Vec<u8>, storage_primitives::MerkleProof), Error> {
-        let chunk_hashes = self.collect_chunk_hashes(data_root);
+        let (chunk_hashes, _) = self.collect_leaves(data_root);
 
         if chunk_index as usize >= chunk_hashes.len() {
             return Err(Error::NodeNotFound(format!("chunk_{chunk_index}")));
@@ -204,47 +207,30 @@ pub trait StorageBackend: Send + Sync {
 
     /// Get MMR peaks.
     fn get_mmr_peaks(&self, bucket_id: BucketId) -> Result<(H256, Vec<H256>), Error>;
-
-    /// Calculate the total data size of a content tree by traversing stored nodes.
-    fn calculate_tree_size(&self, root: H256) -> u64 {
-        let mut size = 0u64;
-        let mut stack = vec![root];
-
-        while let Some(hash) = stack.pop() {
-            if let Some(node) = self.get_node(&hash) {
-                if let Some(ref children) = node.children {
-                    stack.extend(children.iter().copied());
-                } else {
-                    size = size.saturating_add(node.data.len() as u64);
-                }
-            }
-        }
-
-        size
-    }
 }
 
 /// Build a balanced Merkle tree from leaf hashes, storing intermediate nodes in storage.
 ///
-/// Pads to the next power of 2 with `H256::zero()`. Returns the tree root hash.
+/// Pads to the next power of 2 with `H256::zero()`. Returns the tree root hash,
+/// or the first error from storing an intermediate node.
 pub fn build_padded_merkle_tree(
     storage: &dyn StorageBackend,
     bucket_id: BucketId,
     leaves: &[H256],
-) -> H256 {
+) -> Result<H256, Error> {
     let (root, nodes) = padded_merkle_tree(leaves);
     for node in nodes {
         let mut node_data = Vec::new();
         node_data.extend_from_slice(node.left.as_bytes());
         node_data.extend_from_slice(node.right.as_bytes());
-        let _ = storage.store_node(
+        storage.store_node(
             bucket_id,
             node.hash,
             node_data,
             Some(vec![node.left, node.right]),
-        );
+        )?;
     }
-    root
+    Ok(root)
 }
 
 #[cfg(test)]
@@ -254,15 +240,42 @@ mod tests {
 
     #[test]
     fn stored_tree_root_matches_padded_root() {
-        for n in [0, 1, 2, 3, 5, 8] {
+        for n in [0u8, 1, 2, 3, 5, 8] {
             let dir = TempDir::new().unwrap();
             let storage = DiskStorage::new(dir.path()).unwrap();
-            let leaves: Vec<H256> = (1..=n).map(H256::from_low_u64_be).collect();
+            storage.init_bucket(1, 1024 * 1024).unwrap();
+            let leaves: Vec<H256> = (1..=n)
+                .map(|i: u8| {
+                    let data = vec![i; 32];
+                    let hash = storage_primitives::blake2_256(&data);
+                    storage.store_node(1, hash, data, None).unwrap();
+                    hash
+                })
+                .collect();
             assert_eq!(
-                build_padded_merkle_tree(&storage, 1, &leaves),
+                build_padded_merkle_tree(&storage, 1, &leaves).unwrap(),
                 storage_primitives::padded_merkle_root(&leaves),
                 "{n} leaves"
             );
         }
+    }
+
+    #[test]
+    fn build_padded_merkle_tree_returns_store_error() {
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        // Room for the two 32-byte leaves but not for their 64-byte parent.
+        storage.init_bucket(1, 64).unwrap();
+        let leaves: Vec<H256> = [1u8, 2]
+            .into_iter()
+            .map(|i| {
+                let data = vec![i; 32];
+                let hash = storage_primitives::blake2_256(&data);
+                storage.store_node(1, hash, data, None).unwrap();
+                hash
+            })
+            .collect();
+        let err = build_padded_merkle_tree(&storage, 1, &leaves).unwrap_err();
+        assert!(matches!(err, Error::QuotaExceeded { .. }), "got {err:?}");
     }
 }

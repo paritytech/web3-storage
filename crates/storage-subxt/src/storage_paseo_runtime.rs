@@ -3470,9 +3470,9 @@ pub mod api {
             .hash();
         runtime_metadata_hash
             == [
-                210u8, 204u8, 23u8, 173u8, 164u8, 85u8, 168u8, 226u8, 100u8, 49u8, 221u8, 43u8,
-                115u8, 6u8, 230u8, 67u8, 81u8, 163u8, 139u8, 171u8, 27u8, 114u8, 229u8, 251u8,
-                173u8, 213u8, 28u8, 133u8, 107u8, 37u8, 51u8, 150u8,
+                238u8, 203u8, 105u8, 207u8, 55u8, 72u8, 169u8, 218u8, 188u8, 243u8, 255u8, 110u8,
+                221u8, 178u8, 150u8, 32u8, 162u8, 209u8, 201u8, 30u8, 242u8, 110u8, 53u8, 222u8,
+                245u8, 117u8, 7u8, 125u8, 181u8, 21u8, 94u8, 205u8,
             ]
     }
     pub mod system {
@@ -21376,9 +21376,9 @@ pub mod api {
                         "Revive",
                         "EthBlockBuilderIR",
                         [
-                            62u8, 22u8, 204u8, 180u8, 89u8, 208u8, 118u8, 104u8, 70u8, 79u8, 254u8,
-                            35u8, 81u8, 30u8, 181u8, 91u8, 139u8, 0u8, 140u8, 81u8, 45u8, 123u8,
-                            181u8, 158u8, 118u8, 82u8, 95u8, 24u8, 133u8, 117u8, 33u8, 133u8,
+                            253u8, 68u8, 53u8, 13u8, 135u8, 34u8, 155u8, 200u8, 52u8, 162u8, 179u8,
+                            176u8, 25u8, 84u8, 204u8, 81u8, 39u8, 52u8, 111u8, 137u8, 162u8, 247u8,
+                            47u8, 218u8, 75u8, 63u8, 183u8, 208u8, 85u8, 212u8, 227u8, 47u8,
                         ],
                     )
                 }
@@ -26560,8 +26560,8 @@ pub mod api {
                         chunk_data: runtime_types::bounded_collections::bounded_vec::BoundedVec<
                             ::core::primitive::u8,
                         >,
-                        mmr_proof: runtime_types::storage_primitives::MmrProof,
-                        chunk_proof: runtime_types::storage_primitives::MerkleProof,
+                        mmr_proof: runtime_types::storage_primitives::mmr::MmrProof,
+                        chunk_proof: runtime_types::storage_primitives::merkle::MerkleProof,
                     },
                     #[codec(index = 1)]
                     Deleted {
@@ -31676,6 +31676,56 @@ pub mod api {
                     pub sync_price: _0,
                 }
             }
+            pub mod merkle {
+                use super::runtime_types;
+                #[derive(
+                    :: subxt :: ext :: scale_decode :: DecodeAsType,
+                    :: subxt :: ext :: scale_encode :: EncodeAsType,
+                    Clone,
+                    Debug,
+                    Eq,
+                    PartialEq,
+                )]
+                #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                pub struct MerkleProof {
+                    pub siblings: ::subxt::alloc::vec::Vec<::subxt::utils::H256>,
+                    pub path: ::subxt::alloc::vec::Vec<::core::primitive::bool>,
+                }
+            }
+            pub mod mmr {
+                use super::runtime_types;
+                #[derive(
+                    :: subxt :: ext :: scale_decode :: DecodeAsType,
+                    :: subxt :: ext :: scale_encode :: EncodeAsType,
+                    Clone,
+                    Debug,
+                    Eq,
+                    PartialEq,
+                )]
+                #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                pub struct MmrLeaf {
+                    pub data_root: ::subxt::utils::H256,
+                    pub data_size: ::core::primitive::u64,
+                    pub total_size: ::core::primitive::u64,
+                }
+                #[derive(
+                    :: subxt :: ext :: scale_decode :: DecodeAsType,
+                    :: subxt :: ext :: scale_encode :: EncodeAsType,
+                    Clone,
+                    Debug,
+                    Eq,
+                    PartialEq,
+                )]
+                #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                pub struct MmrProof {
+                    pub peaks: ::subxt::alloc::vec::Vec<::subxt::utils::H256>,
+                    pub leaf: runtime_types::storage_primitives::mmr::MmrLeaf,
+                    pub leaf_proof: runtime_types::storage_primitives::merkle::MerkleProof,
+                }
+            }
             #[derive(
                 :: subxt :: ext :: scale_decode :: DecodeAsType,
                 :: subxt :: ext :: scale_encode :: EncodeAsType,
@@ -31749,50 +31799,6 @@ pub mod api {
                 Pay,
                 #[codec(index = 1)]
                 Burn { burn_percent: ::core::primitive::u8 },
-            }
-            #[derive(
-                :: subxt :: ext :: scale_decode :: DecodeAsType,
-                :: subxt :: ext :: scale_encode :: EncodeAsType,
-                Clone,
-                Debug,
-                Eq,
-                PartialEq,
-            )]
-            #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
-            #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-            pub struct MerkleProof {
-                pub siblings: ::subxt::alloc::vec::Vec<::subxt::utils::H256>,
-                pub path: ::subxt::alloc::vec::Vec<::core::primitive::bool>,
-            }
-            #[derive(
-                :: subxt :: ext :: scale_decode :: DecodeAsType,
-                :: subxt :: ext :: scale_encode :: EncodeAsType,
-                Clone,
-                Debug,
-                Eq,
-                PartialEq,
-            )]
-            #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
-            #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-            pub struct MmrLeaf {
-                pub data_root: ::subxt::utils::H256,
-                pub data_size: ::core::primitive::u64,
-                pub total_size: ::core::primitive::u64,
-            }
-            #[derive(
-                :: subxt :: ext :: scale_decode :: DecodeAsType,
-                :: subxt :: ext :: scale_encode :: EncodeAsType,
-                Clone,
-                Debug,
-                Eq,
-                PartialEq,
-            )]
-            #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
-            #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-            pub struct MmrProof {
-                pub peaks: ::subxt::alloc::vec::Vec<::subxt::utils::H256>,
-                pub leaf: runtime_types::storage_primitives::MmrLeaf,
-                pub leaf_proof: runtime_types::storage_primitives::MerkleProof,
             }
             #[derive(
                 :: subxt :: ext :: scale_decode :: DecodeAsType,
