@@ -17,7 +17,7 @@ use sp_core::H256;
 use std::fmt;
 use std::path::PathBuf;
 use std::sync::Arc;
-use storage_primitives::{build_merkle_proof, padded_merkle_tree, BucketId};
+use storage_primitives::{build_merkle_proof, merkle_tree, BucketId};
 
 /// Which backend to build, and what that backend needs.
 ///
@@ -142,10 +142,9 @@ pub trait StorageBackend: Send + Sync {
     }
 
     /// Collect the leaf chunk hashes under a data root (DFS, in order) and the
-    /// total byte size of those leaves, in one walk.
-    fn collect_leaves(&self, root: H256) -> (Vec<H256>, u64) {
-        let mut hashes = Vec::new();
-        let mut size = 0u64;
+    /// byte size of each leaf, in one walk.
+    fn collect_leaves(&self, root: H256) -> Vec<(H256, usize)> {
+        let mut leaves = Vec::new();
         let mut stack = vec![root];
 
         while let Some(hash) = stack.pop() {
@@ -158,13 +157,12 @@ pub trait StorageBackend: Send + Sync {
                         stack.push(*child);
                     }
                 } else {
-                    hashes.push(hash);
-                    size = size.saturating_add(node.data.len() as u64);
+                    leaves.push((hash, node.data.len()));
                 }
             }
         }
 
-        (hashes, size)
+        leaves
     }
 
     /// Get chunk data and Merkle proof at the given index from a data root.
@@ -173,7 +171,11 @@ pub trait StorageBackend: Send + Sync {
         data_root: H256,
         chunk_index: u64,
     ) -> Result<(Vec<u8>, storage_primitives::MerkleProof), Error> {
-        let (chunk_hashes, _) = self.collect_leaves(data_root);
+        let chunk_hashes: Vec<H256> = self
+            .collect_leaves(data_root)
+            .into_iter()
+            .map(|(hash, _)| hash)
+            .collect();
 
         if chunk_index as usize >= chunk_hashes.len() {
             return Err(Error::NodeNotFound(format!("chunk_{chunk_index}")));
@@ -211,15 +213,14 @@ pub trait StorageBackend: Send + Sync {
 
 /// Build a balanced Merkle tree from leaf hashes, storing intermediate nodes in storage.
 ///
-/// Pads to the next power of 2 with `H256::zero()`. Returns the tree root hash,
+/// An odd last node of a level moves up unchanged. Returns the tree root hash,
 /// or the first error from storing an intermediate node.
-/// TODO: remove as a part of https://github.com/paritytech/web3-storage/pull/514
-pub fn build_padded_merkle_tree(
+pub fn build_merkle_tree(
     storage: &dyn StorageBackend,
     bucket_id: BucketId,
     leaves: &[H256],
 ) -> Result<H256, Error> {
-    let (root, nodes) = padded_merkle_tree(leaves);
+    let (root, nodes) = merkle_tree(leaves);
     for node in nodes {
         let mut node_data = Vec::new();
         node_data.extend_from_slice(node.left.as_bytes());
@@ -240,7 +241,7 @@ mod tests {
     use tempfile::TempDir;
 
     #[test]
-    fn stored_tree_root_matches_padded_root() {
+    fn stored_tree_root_matches_merkle_root() {
         for n in [0u8, 1, 2, 3, 5, 8] {
             let dir = TempDir::new().unwrap();
             let storage = DiskStorage::new(dir.path()).unwrap();
@@ -254,15 +255,15 @@ mod tests {
                 })
                 .collect();
             assert_eq!(
-                build_padded_merkle_tree(&storage, 1, &leaves).unwrap(),
-                storage_primitives::padded_merkle_root(&leaves),
+                build_merkle_tree(&storage, 1, &leaves).unwrap(),
+                storage_primitives::merkle_root(&leaves),
                 "{n} leaves"
             );
         }
     }
 
     #[test]
-    fn build_padded_merkle_tree_returns_store_error() {
+    fn build_merkle_tree_returns_store_error() {
         let dir = TempDir::new().unwrap();
         let storage = DiskStorage::new(dir.path()).unwrap();
         // Room for the two 32-byte leaves but not for their 64-byte parent.
@@ -276,7 +277,7 @@ mod tests {
                 hash
             })
             .collect();
-        let err = build_padded_merkle_tree(&storage, 1, &leaves).unwrap_err();
+        let err = build_merkle_tree(&storage, 1, &leaves).unwrap_err();
         assert!(matches!(err, Error::QuotaExceeded { .. }), "got {err:?}");
     }
 }

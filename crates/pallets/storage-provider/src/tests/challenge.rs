@@ -1175,7 +1175,7 @@ fn challenge_count_per_deadline_is_capped() {
 mod challenge_tests {
     use super::*;
     use codec::Encode;
-    use frame_support::{dispatch::Pays, BoundedVec};
+    use frame_support::{dispatch::Pays, pallet_prelude::DispatchResult, BoundedVec};
     use sp_core::{Pair, H256};
     use storage_primitives::{
         blake2_256, BucketSnapshot, ChallengeId, ChunkLocation, Commitment, EndAction, MerkleProof,
@@ -1493,6 +1493,99 @@ mod challenge_tests {
                 ),
                 Error::<Test>::InvalidProof
             );
+            assert_challenge_still_open();
+        });
+    }
+
+    /// Proof data for a 3-chunk leaf (`data_size = 2 * DEFAULT_CHUNK_SIZE + 10`).
+    /// The chunk tree is `H(H(c0, c1), c2)`: the last chunk moves up one level
+    /// without a sibling. Returns the MMR root, the MMR proof, the last chunk and
+    /// its Merkle proof.
+    fn three_chunk_proof() -> (H256, MmrProof, Vec<u8>, MerkleProof) {
+        let size = storage_primitives::DEFAULT_CHUNK_SIZE as u64;
+        let c0 = blake2_256(b"chunk-0");
+        let c1 = blake2_256(b"chunk-1");
+        let last_chunk = b"0123456789".to_vec();
+        let c2 = blake2_256(&last_chunk);
+        let left = storage_primitives::hash_children(c0, c1);
+        let data_root = storage_primitives::hash_children(left, c2);
+        let leaf = MmrLeaf {
+            data_root,
+            data_size: 2 * size + 10,
+            total_size: 2 * size + 10,
+        };
+        let leaf_hash = blake2_256(&leaf.encode());
+        let mmr_proof = MmrProof {
+            peaks: vec![leaf_hash],
+            leaf,
+            leaf_proof: MerkleProof {
+                siblings: vec![],
+                path: vec![],
+            },
+        };
+        let chunk_proof = MerkleProof {
+            siblings: vec![left],
+            path: vec![true],
+        };
+        (leaf_hash, mmr_proof, last_chunk, chunk_proof)
+    }
+
+    /// Open a challenge on `chunk_index` of leaf 0 and answer it with the last
+    /// chunk of `three_chunk_proof`.
+    fn respond_with_last_chunk(chunk_index: u64) -> DispatchResult {
+        let (mmr_root, mmr_proof, chunk_data, chunk_proof) = three_chunk_proof();
+        setup_primary_with_snapshot(mmr_root, 0, 1);
+        assert_ok!(StorageProvider::challenge_checkpoint(
+            RuntimeOrigin::signed(3),
+            0,
+            2,
+            ChunkLocation {
+                leaf_index: 0,
+                chunk_index,
+            },
+        ));
+        StorageProvider::respond_to_challenge(
+            RuntimeOrigin::signed(2),
+            ChallengeId {
+                deadline: 101u64,
+                index: 0u16,
+            },
+            ChallengeResponse::Proof {
+                chunk_data: make_chunk_bv(&chunk_data),
+                mmr_proof,
+                chunk_proof,
+            },
+        )
+    }
+
+    /// The last chunk of a 3-chunk leaf has no sibling at the first level, and
+    /// the verifier derives the chunk count from the leaf's `data_size`.
+    #[test]
+    fn respond_with_valid_proof_for_last_of_three_chunks_defends_challenge() {
+        new_test_ext().execute_with(|| {
+            System::set_block_number(1);
+            assert_ok!(respond_with_last_chunk(2));
+            assert!(Challenges::<Test>::get(101, 0).is_none());
+        });
+    }
+
+    /// The last chunk answered for chunk 1 is rejected, although the proof
+    /// recombines to the data root for a tree with two leaves.
+    #[test]
+    fn respond_with_last_chunk_for_wrong_index_is_rejected() {
+        new_test_ext().execute_with(|| {
+            System::set_block_number(1);
+            assert_err!(respond_with_last_chunk(1), Error::<Test>::InvalidProof);
+            assert_challenge_still_open();
+        });
+    }
+
+    /// A chunk index that is not below the chunk count of `data_size` is rejected.
+    #[test]
+    fn respond_with_chunk_index_beyond_chunk_count_is_rejected() {
+        new_test_ext().execute_with(|| {
+            System::set_block_number(1);
+            assert_err!(respond_with_last_chunk(3), Error::<Test>::InvalidProof);
             assert_challenge_still_open();
         });
     }

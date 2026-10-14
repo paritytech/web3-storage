@@ -906,35 +906,54 @@ async fn post_commit(server: &TestServer, root: H256) -> reqwest::Response {
         .unwrap()
 }
 
-common::backend_tests! {
-    async fn test_commit_rejects_unbalanced_tree(backend) {
-        let server = TestServer::new(backend).await;
-        let [c0, c1, c2] = [b"chunk 0", b"chunk 1", b"chunk 2"]
-            .map(|d| storage_primitives::blake2_256(d));
-        for (hash, data) in [c0, c1, c2].iter().zip([b"chunk 0", b"chunk 1", b"chunk 2"]) {
-            assert_eq!(put_node(&server, data.to_vec(), None).await, *hash);
-        }
-        let left = put_parent(&server, c0, c1).await;
-        let root = put_parent(&server, left, c2).await;
+/// Upload leaf chunks of the given sizes, filled with 1, 2, 3, ..., and return
+/// their hashes.
+async fn put_chunks(server: &TestServer, sizes: &[usize]) -> Vec<H256> {
+    let mut chunks = Vec::new();
+    for (i, size) in sizes.iter().enumerate() {
+        chunks.push(put_node(server, vec![i as u8 + 1; *size], None).await);
+    }
+    chunks
+}
 
-        let resp = post_commit(&server, root).await;
-        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
-        let body: Value = resp.json().await.unwrap();
-        assert_eq!(body["error"], "non_canonical_tree");
+async fn assert_commit_rejected(server: &TestServer, root: H256) {
+    let resp = post_commit(server, root).await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "non_canonical_tree");
+}
+
+common::backend_tests! {
+    async fn test_commit_rejects_right_leaning_tree(backend) {
+        let server = TestServer::new(backend).await;
+        let chunk_size = storage_primitives::DEFAULT_CHUNK_SIZE as usize;
+        let c = put_chunks(&server, &[chunk_size; 3]).await;
+        let right = put_parent(&server, c[1], c[2]).await;
+        let root = put_parent(&server, c[0], right).await;
+
+        assert_commit_rejected(&server, root).await;
     }
 }
 
 common::backend_tests! {
-    async fn test_commit_padded_tree_chunk_proofs_verify(backend) {
+    async fn test_commit_rejects_chunks_of_other_sizes(backend) {
         let server = TestServer::new(backend).await;
-        let datas: [&[u8]; 3] = [b"chunk 0", b"chunk 1", b"chunk 2"];
-        let mut chunks = Vec::new();
-        for data in datas {
-            chunks.push(put_node(&server, data.to_vec(), None).await);
-        }
+        // The tree has the right shape, but the chunks are not DEFAULT_CHUNK_SIZE.
+        let c = put_chunks(&server, &[7, 7, 7]).await;
+        let left = put_parent(&server, c[0], c[1]).await;
+        let root = put_parent(&server, left, c[2]).await;
+
+        assert_commit_rejected(&server, root).await;
+    }
+}
+
+common::backend_tests! {
+    async fn test_commit_tree_chunk_proofs_verify(backend) {
+        let server = TestServer::new(backend).await;
+        let chunk_size = storage_primitives::DEFAULT_CHUNK_SIZE as usize;
+        let chunks = put_chunks(&server, &[chunk_size, chunk_size, 10]).await;
         let left = put_parent(&server, chunks[0], chunks[1]).await;
-        let right = put_parent(&server, chunks[2], H256::zero()).await;
-        let root = put_parent(&server, left, right).await;
+        let root = put_parent(&server, left, chunks[2]).await;
 
         assert_eq!(post_commit(&server, root).await.status(), StatusCode::OK);
 
@@ -962,7 +981,7 @@ common::backend_tests! {
                 .collect();
             let proof = storage_primitives::MerkleProof { siblings, path };
             assert!(
-                storage_primitives::verify_merkle_proof(*chunk, index as u64, &proof, &root),
+                storage_primitives::verify_merkle_proof(*chunk, index as u64, 3, &proof, &root),
                 "chunk {index}"
             );
         }

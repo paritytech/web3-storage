@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use sp_core::H256;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use storage_primitives::{blake2_256, padded_merkle_root, BucketId};
+use storage_primitives::{blake2_256, merkle_root, BucketId};
 
 /// Per-entry metadata stored in the FS index.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -168,7 +168,7 @@ impl DriveIndex {
             })
             .collect();
 
-        padded_merkle_root(&leaves)
+        merkle_root(&leaves)
     }
 }
 

@@ -14,7 +14,7 @@ use rocksdb::{Options, DB};
 use sp_core::H256;
 use std::path::Path;
 use std::sync::Arc;
-use storage_primitives::{blake2_256, padded_merkle_root, BucketId, Mmr, MmrLeaf};
+use storage_primitives::{blake2_256, merkle_root, BucketId, Mmr, MmrLeaf, DEFAULT_CHUNK_SIZE};
 
 /// Column families for organizing data
 const CF_NODES: &str = "nodes";
@@ -23,6 +23,21 @@ const CF_ROOT_TO_BUCKET: &str = "root_to_bucket";
 /// Held the provider-allocated agreement nonce before nonces moved on chain
 /// (per-owner `AgreementNonces`). Dropped when an existing database is opened.
 const LEGACY_CF_METADATA: &str = "metadata";
+
+/// `true` if the leaf sizes follow the fixed chunk size: every chunk is
+/// `DEFAULT_CHUNK_SIZE` bytes except the last, which has at most that many
+/// (and at least one byte when there are several chunks).
+fn has_fixed_chunk_sizes(sizes: &[usize]) -> bool {
+    let chunk_size = DEFAULT_CHUNK_SIZE as usize;
+    match sizes.split_last() {
+        None => false,
+        Some((last, rest)) => {
+            rest.iter().all(|size| *size == chunk_size)
+                && *last <= chunk_size
+                && (rest.is_empty() || *last > 0)
+        }
+    }
+}
 
 /// Disk-based storage backend using RocksDB.
 pub struct DiskStorage {
@@ -310,18 +325,19 @@ impl DiskStorage {
             }
         }
 
-        // Verify balanced tree. Each root is walked once; its data size is
-        // reused below.
+        // Verify the tree shape and the chunk sizes. Each root is walked once;
+        // its data size is reused below.
         let mut data_sizes = Vec::with_capacity(data_roots.len());
         for root in &data_roots {
-            let (chunk_hashes, data_size) = self.collect_leaves(*root);
-            if padded_merkle_root(&chunk_hashes) != *root {
+            let (chunk_hashes, chunk_sizes): (Vec<H256>, Vec<usize>) =
+                self.collect_leaves(*root).into_iter().unzip();
+            if merkle_root(&chunk_hashes) != *root || !has_fixed_chunk_sizes(&chunk_sizes) {
                 return Err(Error::NonCanonicalTree(format!(
                     "0x{}",
                     hex::encode(root.as_bytes())
                 )));
             }
-            data_sizes.push(data_size);
+            data_sizes.push(chunk_sizes.iter().map(|size| *size as u64).sum::<u64>());
         }
 
         // Get bucket and update MMR
@@ -562,11 +578,15 @@ mod tests {
 
     const BUCKET: BucketId = 1;
 
-    fn store_chunk(storage: &DiskStorage, byte: u8) -> H256 {
-        let data = vec![byte; 8];
+    fn store_chunk_of_len(storage: &DiskStorage, byte: u8, len: usize) -> H256 {
+        let data = vec![byte; len];
         let hash = blake2_256(&data);
         storage.store_node(BUCKET, hash, data, None).unwrap();
         hash
+    }
+
+    fn store_chunk(storage: &DiskStorage, byte: u8) -> H256 {
+        store_chunk_of_len(storage, byte, DEFAULT_CHUNK_SIZE as usize)
     }
 
     fn store_parent(storage: &DiskStorage, children: Vec<H256>) -> H256 {
@@ -598,11 +618,11 @@ mod tests {
     }
 
     #[test]
-    fn commit_rejects_unbalanced_tree() {
+    fn commit_rejects_right_leaning_tree() {
         let (_dir, storage) = committing_storage();
         let [c0, c1, c2] = [1, 2, 3].map(|b| store_chunk(&storage, b));
-        let left = store_parent(&storage, vec![c0, c1]);
-        let root = store_parent(&storage, vec![left, c2]);
+        let right = store_parent(&storage, vec![c1, c2]);
+        let root = store_parent(&storage, vec![c0, right]);
         assert_rejected_and_bucket_unchanged(&storage, root);
     }
 
@@ -624,14 +644,70 @@ mod tests {
     }
 
     #[test]
-    fn commit_accepts_padded_tree_and_single_leaf() {
+    fn commit_rejects_zero_padded_tree() {
         let (_dir, storage) = committing_storage();
         let [c0, c1, c2] = [1, 2, 3].map(|b| store_chunk(&storage, b));
         let left = store_parent(&storage, vec![c0, c1]);
         let right = store_parent(&storage, vec![c2, H256::zero()]);
         let root = store_parent(&storage, vec![left, right]);
+        assert_rejected_and_bucket_unchanged(&storage, root);
+    }
+
+    #[test]
+    fn commit_accepts_tree_with_the_odd_chunk_moved_up_and_single_leaf() {
+        let (_dir, storage) = committing_storage();
+        let [c0, c1, c2] = [1, 2, 3].map(|b| store_chunk(&storage, b));
+        let left = store_parent(&storage, vec![c0, c1]);
+        let root = store_parent(&storage, vec![left, c2]);
         storage.commit(BUCKET, vec![root, c0]).unwrap();
-        assert_eq!(storage.get_bucket(BUCKET).unwrap().leaves.len(), 2);
+        let leaves = storage.get_bucket(BUCKET).unwrap().leaves;
+        assert_eq!(leaves.len(), 2);
+        assert_eq!(leaves[0].data_size, 3 * DEFAULT_CHUNK_SIZE as u64);
+    }
+
+    #[test]
+    fn commit_accepts_a_short_last_chunk() {
+        let (_dir, storage) = committing_storage();
+        let [c0, c1] = [1, 2].map(|b| store_chunk(&storage, b));
+        let c2 = store_chunk_of_len(&storage, 3, 10);
+        let left = store_parent(&storage, vec![c0, c1]);
+        let root = store_parent(&storage, vec![left, c2]);
+        storage.commit(BUCKET, vec![root]).unwrap();
+        let leaves = storage.get_bucket(BUCKET).unwrap().leaves;
+        assert_eq!(leaves[0].data_size, 2 * DEFAULT_CHUNK_SIZE as u64 + 10);
+    }
+
+    #[test]
+    fn commit_accepts_a_single_empty_chunk() {
+        let (_dir, storage) = committing_storage();
+        let root = store_chunk_of_len(&storage, 0, 0);
+        storage.commit(BUCKET, vec![root]).unwrap();
+        assert_eq!(storage.get_bucket(BUCKET).unwrap().leaves[0].data_size, 0);
+    }
+
+    #[test]
+    fn commit_rejects_a_short_chunk_that_is_not_last() {
+        let (_dir, storage) = committing_storage();
+        let c0 = store_chunk_of_len(&storage, 1, 10);
+        let c1 = store_chunk(&storage, 2);
+        let root = store_parent(&storage, vec![c0, c1]);
+        assert_rejected_and_bucket_unchanged(&storage, root);
+    }
+
+    #[test]
+    fn commit_rejects_an_empty_last_chunk_of_several() {
+        let (_dir, storage) = committing_storage();
+        let c0 = store_chunk(&storage, 1);
+        let c1 = store_chunk_of_len(&storage, 2, 0);
+        let root = store_parent(&storage, vec![c0, c1]);
+        assert_rejected_and_bucket_unchanged(&storage, root);
+    }
+
+    #[test]
+    fn commit_rejects_a_chunk_larger_than_the_chunk_size() {
+        let (_dir, storage) = committing_storage();
+        let root = store_chunk_of_len(&storage, 1, DEFAULT_CHUNK_SIZE as usize + 1);
+        assert_rejected_and_bucket_unchanged(&storage, root);
     }
 
     /// A database written before nonces moved on chain still opens, keeps

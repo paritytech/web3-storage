@@ -9,7 +9,7 @@ mod event_fanout;
 mod membership;
 
 use provider_auth::{Authenticator, StaticMembershipResolver};
-use provider_storage::{build_padded_merkle_tree, temp_rocksdb, StorageBackend};
+use provider_storage::{build_merkle_tree, temp_rocksdb, StorageBackend};
 use sp_runtime::AccountId32;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -77,7 +77,7 @@ pub fn test_state_with_data() -> (Arc<ProviderState>, DetectedChallenge, TempDir
         .store_node(1, chunk_hash, chunk_data.to_vec(), None)
         .unwrap();
 
-    let data_root = build_padded_merkle_tree(storage.as_ref(), 1, &[chunk_hash]).unwrap();
+    let data_root = build_merkle_tree(storage.as_ref(), 1, &[chunk_hash]).unwrap();
     assert_eq!(data_root, chunk_hash);
 
     let (mmr_root, start_seq, leaf_indices) = storage.commit(1, vec![data_root]).unwrap();

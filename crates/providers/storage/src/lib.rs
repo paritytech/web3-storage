@@ -9,7 +9,7 @@ pub mod error;
 pub mod index;
 
 pub use backend::{
-    build_padded_merkle_tree, BucketInfo, BucketState, BucketStats, BucketSummary, DiskStorage,
+    build_merkle_tree, BucketInfo, BucketState, BucketStats, BucketSummary, DiskStorage,
     StorageBackend, StorageBackendSpec, StoredNode,
 };
 pub use error::Error;

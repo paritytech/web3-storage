@@ -2710,6 +2710,7 @@ pub mod pallet {
                     let chunk_ok = storage_primitives::verify_merkle_proof(
                         chunk_hash,
                         challenge.target.chunk_index,
+                        storage_primitives::chunk_count(mmr_proof.leaf.data_size),
                         chunk_proof,
                         &mmr_proof.leaf.data_root,
                     );

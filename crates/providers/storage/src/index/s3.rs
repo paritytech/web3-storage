@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use sp_core::H256;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use storage_primitives::{blake2_256, padded_merkle_root, BucketId};
+use storage_primitives::{blake2_256, merkle_root, BucketId};
 
 /// Per-object metadata stored in the index.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -200,7 +200,7 @@ impl BucketIndex {
             })
             .collect();
 
-        padded_merkle_root(&leaves)
+        merkle_root(&leaves)
     }
 }
 
