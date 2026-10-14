@@ -119,6 +119,11 @@ sp-storage = { version = "25.0.0", default-features = false }
 sp-transaction-pool = { version = "43.0.0", default-features = false }
 sp-version = { version = "46.0.0", default-features = false }
 
+# Merkle tree and Merkle Mountain Range
+binary-merkle-tree = { version = "16.1.1", default-features = false }
+hash256-std-hasher = { version = "0.15.2", default-features = false }
+polkadot-ckb-merkle-mountain-range = { version = "0.8.2", default-features = false }
+
 # Polkadot
 pallet-xcm = { version = "29.0.0", default-features = false }
 pallet-xcm-benchmarks = { version = "29.0.0", default-features = false }
