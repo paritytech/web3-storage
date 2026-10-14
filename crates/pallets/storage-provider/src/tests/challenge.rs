@@ -1221,14 +1221,41 @@ mod challenge_tests {
         };
         let leaf_hash = hash_leaf(&leaf.encode());
         let mmr_proof = MmrProof {
-            peaks: vec![leaf_hash],
             leaf,
-            leaf_proof: MerkleProof {
-                siblings: vec![],
-                path: vec![],
-            },
+            leaf_index: 0,
+            leaf_count: 1,
+            items: vec![],
         };
         (leaf_hash, mmr_proof)
+    }
+
+    /// Two single-chunk leaves in one MMR. Returns the MMR root and each leaf's
+    /// MMR proof. The chunk proof of a single-chunk leaf is empty.
+    fn two_leaf_mmr(chunk_a: &[u8], chunk_b: &[u8]) -> (H256, [MmrProof; 2]) {
+        let leaves = [chunk_a, chunk_b].map(|chunk| MmrLeaf {
+            data_root: hash_leaf(chunk),
+            data_size: chunk.len() as u64,
+            total_size: chunk.len() as u64,
+        });
+        let [hash_a, hash_b] = leaves.clone().map(|leaf| hash_leaf(&leaf.encode()));
+        let [leaf_a, leaf_b] = leaves;
+        (
+            hash_children(hash_a, hash_b),
+            [
+                MmrProof {
+                    leaf: leaf_a,
+                    leaf_index: 0,
+                    leaf_count: 2,
+                    items: vec![hash_b],
+                },
+                MmrProof {
+                    leaf: leaf_b,
+                    leaf_index: 1,
+                    leaf_count: 2,
+                    items: vec![hash_a],
+                },
+            ],
+        )
     }
 
     fn make_chunk_bv(data: &[u8]) -> BoundedVec<u8, <Test as Config>::MaxChunkSize> {
@@ -1406,6 +1433,42 @@ mod challenge_tests {
             assert_eq!(provider.stats.challenges_failed, 0);
             assert_eq!(provider.stats.challenges_received_public, 1);
             assert_eq!(provider.stats.challenges_received_authorized, 0);
+        });
+    }
+
+    #[test]
+    fn respond_with_proof_of_the_challenged_leaf_defends_challenge() {
+        new_test_ext().execute_with(|| {
+            System::set_block_number(1);
+            let (chunk_a, chunk_b) = (b"chunk-a".to_vec(), b"chunk-b".to_vec());
+            let (mmr_root, [_, proof_b]) = two_leaf_mmr(&chunk_a, &chunk_b);
+            setup_primary_with_snapshot(mmr_root, 0, 2);
+            assert_ok!(StorageProvider::challenge_checkpoint(
+                RuntimeOrigin::signed(3),
+                0,
+                2,
+                ChunkLocation {
+                    leaf_index: 1,
+                    chunk_index: 0,
+                },
+            ));
+
+            assert_ok!(StorageProvider::respond_to_challenge(
+                RuntimeOrigin::signed(2),
+                ChallengeId {
+                    deadline: 101u64,
+                    index: 0u16,
+                },
+                ChallengeResponse::Proof {
+                    chunk_data: make_chunk_bv(&chunk_b),
+                    mmr_proof: proof_b,
+                    chunk_proof: MerkleProof {
+                        siblings: vec![],
+                        path: vec![],
+                    },
+                },
+            ));
+            assert!(Challenges::<Test>::get(101, 0).is_none());
         });
     }
 
@@ -1694,14 +1757,11 @@ mod challenge_tests {
                 data_size: 1,
                 total_size: 1,
             };
-            let bad_peak = hash_leaf(&bad_leaf.encode());
             let bad_mmr_proof = MmrProof {
-                peaks: vec![bad_peak],
                 leaf: bad_leaf,
-                leaf_proof: MerkleProof {
-                    siblings: vec![],
-                    path: vec![],
-                },
+                leaf_index: 0,
+                leaf_count: 1,
+                items: vec![],
             };
             assert_noop!(
                 StorageProvider::respond_to_challenge(

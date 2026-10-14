@@ -975,8 +975,7 @@ mod benchmarks {
         // most siblings the pallet accepts.
         //
         // MMR (1 leaf):  mmr_root = hash_leaf(encode(mmr_leaf))
-        //   leaf_proof = empty (leaf IS the single peak, no siblings)
-        //   peaks = [mmr_root]
+        //   items = empty (leaf IS the single peak, no siblings)
         let chunk_size = T::MaxChunkSize::get() as usize;
         let chunk_bytes = alloc::vec![0xBEu8; chunk_size];
         let chunk_data: BoundedVec<u8, T::MaxChunkSize> =
@@ -1001,12 +1000,10 @@ mod benchmarks {
         let mmr_root = leaf_hash; // single-peak MMR, root == peak == leaf_hash
 
         let mmr_proof = storage_primitives::MmrProof {
-            peaks: alloc::vec![leaf_hash],
             leaf: mmr_leaf,
-            leaf_proof: storage_primitives::MerkleProof {
-                siblings: alloc::vec![],
-                path: alloc::vec![],
-            },
+            leaf_index: 0,
+            leaf_count: 1,
+            items: alloc::vec![],
         };
         let chunk_proof = storage_primitives::MerkleProof {
             path: alloc::vec![false; siblings.len()],

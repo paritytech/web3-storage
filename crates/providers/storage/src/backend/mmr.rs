@@ -75,7 +75,12 @@ pub(super) fn mmr_proof(leaves: &[MmrLeaf], leaf_index: u64) -> Result<MmrProof,
         .proof_items()
         .to_vec();
 
-    Ok(MmrProof { leaf, items })
+    Ok(MmrProof {
+        leaf,
+        leaf_index,
+        leaf_count: leaves.len() as u64,
+        items,
+    })
 }
 
 #[cfg(test)]
@@ -161,7 +166,7 @@ mod tests {
                 let proof = mmr_proof(&all, leaf_index).unwrap();
                 assert_eq!(proof.leaf, all[leaf_index as usize]);
                 assert!(
-                    storage_primitives::verify_mmr_proof(&proof, leaf_index, leaf_count, &root),
+                    storage_primitives::verify_mmr_proof(&proof, &root),
                     "leaf {leaf_index} of {leaf_count}"
                 );
             }

@@ -258,6 +258,11 @@ pub struct MerkleProof {
 pub struct MmrProof {
     /// The leaf being proven
     pub leaf: MmrLeaf,
+    /// Index of the leaf in the MMR.
+    pub leaf_index: u64,
+    /// Number of leaves in the MMR the proof was built for. It fixes the MMR
+    /// shape, and with it the number and order of the proof items.
+    pub leaf_count: u64,
     /// Proof hashes in the order `polkadot-ckb-merkle-mountain-range`
     /// produces: one per peak to the left of the leaf's peak, then the
     /// siblings from the leaf up to its peak, then one item for all peaks to
@@ -570,22 +575,19 @@ impl Merge for StorageMerge {
 // Verification Utilities
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Verify that `proof.leaf` is the leaf at `leaf_index` of the MMR that has
-/// `leaf_count` leaves and root `root`.
+/// Verify an MMR proof
 ///
-/// The caller supplies `leaf_index` and `leaf_count`. The proof does not
-/// carry them, so it cannot prove the leaf at another position. The library
-/// treats missing or extra trailing proof items as the bagged peaks to the
-/// right, so the proof does not authenticate `leaf_count` itself.
-pub fn verify_mmr_proof(proof: &MmrProof, leaf_index: u64, leaf_count: u64, root: &H256) -> bool {
+/// This verifies that `proof.leaf` is the leaf at `proof.leaf_index` of the
+/// MMR with the given root.
+pub fn verify_mmr_proof(proof: &MmrProof, root: &H256) -> bool {
     // `leaf_count / 2` bound: the library computes `2 * leaf_count`.
-    if leaf_index >= leaf_count || leaf_count > u64::MAX / 2 {
+    if proof.leaf_index >= proof.leaf_count || proof.leaf_count > u64::MAX / 2 {
         return false;
     }
 
-    let mmr_size = mmr_lib::leaf_index_to_mmr_size(leaf_count - 1);
+    let mmr_size = mmr_lib::leaf_index_to_mmr_size(proof.leaf_count - 1);
     let leaf = (
-        mmr_lib::leaf_index_to_pos(leaf_index),
+        mmr_lib::leaf_index_to_pos(proof.leaf_index),
         hash_leaf(&proof.leaf.encode()),
     );
     mmr_lib::MerkleProof::<H256, StorageMerge>::new(mmr_size, proof.items.clone())
@@ -905,6 +907,8 @@ mod tests {
             root,
             MmrProof {
                 leaf: test_leaf(index),
+                leaf_index: index,
+                leaf_count,
                 items,
             },
         )
@@ -916,7 +920,7 @@ mod tests {
             for index in 0..leaf_count {
                 let (root, proof) = mmr_root_and_proof(leaf_count, index);
                 assert!(
-                    verify_mmr_proof(&proof, index, leaf_count, &root),
+                    verify_mmr_proof(&proof, &root),
                     "leaf {index} of {leaf_count}"
                 );
             }
@@ -924,13 +928,15 @@ mod tests {
     }
 
     #[test]
-    fn mmr_proof_does_not_verify_for_another_leaf_index() {
+    fn mmr_proof_does_not_verify_with_another_leaf_index() {
         for leaf_count in 2u64..=17 {
             for index in 0..leaf_count {
                 let (root, proof) = mmr_root_and_proof(leaf_count, index);
                 for other in (0..leaf_count).filter(|other| *other != index) {
+                    let mut moved = proof.clone();
+                    moved.leaf_index = other;
                     assert!(
-                        !verify_mmr_proof(&proof, other, leaf_count, &root),
+                        !verify_mmr_proof(&moved, &root),
                         "proof for leaf {index} verified as leaf {other} of {leaf_count}"
                     );
                 }
@@ -941,33 +947,46 @@ mod tests {
     #[test]
     fn tampered_mmr_proof_does_not_verify() {
         let (root, proof) = mmr_root_and_proof(7, 2);
-        assert!(verify_mmr_proof(&proof, 2, 7, &root));
+        assert!(verify_mmr_proof(&proof, &root));
 
         let mut wrong_leaf = proof.clone();
         wrong_leaf.leaf.data_size += 1;
-        assert!(!verify_mmr_proof(&wrong_leaf, 2, 7, &root));
+        assert!(!verify_mmr_proof(&wrong_leaf, &root));
 
         let mut wrong_item = proof.clone();
         wrong_item.items[0] = H256::repeat_byte(0x44);
-        assert!(!verify_mmr_proof(&wrong_item, 2, 7, &root));
+        assert!(!verify_mmr_proof(&wrong_item, &root));
 
         let mut missing_item = proof.clone();
         missing_item.items.pop();
-        assert!(!verify_mmr_proof(&missing_item, 2, 7, &root));
+        assert!(!verify_mmr_proof(&missing_item, &root));
 
         let mut extra_item = proof.clone();
         extra_item.items.push(H256::repeat_byte(0x55));
-        assert!(!verify_mmr_proof(&extra_item, 2, 7, &root));
+        assert!(!verify_mmr_proof(&extra_item, &root));
 
-        assert!(!verify_mmr_proof(&proof, 2, 7, &H256::repeat_byte(0x66)));
+        assert!(!verify_mmr_proof(&proof, &H256::repeat_byte(0x66)));
     }
 
     #[test]
     fn mmr_proof_rejects_invalid_leaf_position_without_panicking() {
         let (root, proof) = mmr_root_and_proof(4, 1);
-        assert!(!verify_mmr_proof(&proof, 0, 0, &root));
-        assert!(!verify_mmr_proof(&proof, 4, 4, &root));
-        assert!(!verify_mmr_proof(&proof, 1, u64::MAX / 2 + 1, &root));
-        assert!(!verify_mmr_proof(&proof, u64::MAX, u64::MAX, &root));
+
+        let mut outside = proof.clone();
+        outside.leaf_index = 4;
+        assert!(!verify_mmr_proof(&outside, &root));
+        outside.leaf_index = u64::MAX;
+        assert!(!verify_mmr_proof(&outside, &root));
+
+        let mut empty = proof.clone();
+        empty.leaf_index = 0;
+        empty.leaf_count = 0;
+        assert!(!verify_mmr_proof(&empty, &root));
+
+        let mut huge = proof;
+        huge.leaf_count = u64::MAX / 2 + 1;
+        assert!(!verify_mmr_proof(&huge, &root));
+        huge.leaf_count = u64::MAX;
+        assert!(!verify_mmr_proof(&huge, &root));
     }
 }
