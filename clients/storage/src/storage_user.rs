@@ -14,7 +14,6 @@ use crate::encryption::{Cipher, EncryptionKey, XChaCha20Poly1305Cipher};
 use crate::verification::ClientVerifier;
 use crate::Signer;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
-use provider_auth::build_auth_header;
 use sp_core::H256;
 use storage_primitives::{hash_children, hash_leaf, BucketId};
 
@@ -47,19 +46,10 @@ impl StorageUserClient {
         method: &str,
         bucket_id: BucketId,
     ) -> reqwest::RequestBuilder {
-        let signer = self.auth_signer.keypair();
-        let timestamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or_default();
-        let header = build_auth_header(
-            &signer.public_key().0,
-            method,
-            bucket_id,
-            timestamp,
-            |msg| signer.sign(msg).0,
-        );
-        req.header("Authorization", header)
+        req.header(
+            "Authorization",
+            self.auth_signer.auth_header(method, bucket_id),
+        )
     }
 
     /// Enable client-side encryption with a custom cipher (builder pattern).
@@ -572,13 +562,11 @@ impl StorageUserClient {
             for pair in current_level.chunks(2) {
                 let parent_hash = storage_primitives::hash_children(pair[0], pair[1]);
 
-                // The provider derives an internal node's data from its
-                // children, so nothing meaningful is uploaded here.
                 self.upload_node(
                     provider_url,
                     bucket_id,
                     parent_hash,
-                    Vec::new(),
+                    [pair[0].as_bytes(), pair[1].as_bytes()].concat(),
                     Some(vec![pair[0], pair[1]]),
                 )
                 .await?;

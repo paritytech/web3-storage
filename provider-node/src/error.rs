@@ -159,6 +159,13 @@ impl IntoResponse for Error {
                         details: Some(serde_json::json!({ "expected": 2, "actual": count })),
                     },
                 ),
+                StorageError::InvalidInternalNodeData => (
+                    StatusCode::BAD_REQUEST,
+                    ErrorResponse {
+                        error: "invalid_internal_node_data".to_string(),
+                        details: None,
+                    },
+                ),
                 StorageError::QuotaExceeded { used, max } => (
                     StatusCode::INSUFFICIENT_STORAGE,
                     ErrorResponse {

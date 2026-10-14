@@ -236,9 +236,6 @@ async fn peak_hashes_are_not_node_keys_so_every_real_sync_404s() {
     );
 }
 
-/// The defect #392 and #65 describe - `fetch_subtree` storing a node before
-/// the children it names exist - is fixed: children are fetched first, so an
-/// internal peak stores cleanly together with the subtree beneath it.
 #[tokio::test]
 async fn an_internal_peak_is_stored_after_the_children_beneath_it() {
     let left_data = b"left-chunk".to_vec();
