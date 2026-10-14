@@ -132,11 +132,11 @@ async fn test_commit_upload_with_non_power_of_two_chunk_count() {
     let url = start_test_provider().await;
     let client = make_client(url);
 
-    let chunk_size = 1024usize;
-    let data: Vec<u8> = (0..chunk_size * 3).map(|i| (i % 251) as u8).collect();
+    let chunk_size = storage_primitives::DEFAULT_CHUNK_SIZE as usize;
+    let data: Vec<u8> = (0..chunk_size * 2 + 10).map(|i| (i % 251) as u8).collect();
 
     let data_root = client
-        .upload(1, &data, ChunkingStrategy::Fixed(chunk_size))
+        .upload(1, &data, ChunkingStrategy::default())
         .await
         .unwrap();
 
@@ -144,13 +144,31 @@ async fn test_commit_upload_with_non_power_of_two_chunk_count() {
         .chunks(chunk_size)
         .map(storage_primitives::blake2_256)
         .collect();
-    assert_eq!(
-        data_root,
-        storage_primitives::padded_merkle_root(&chunk_hashes)
-    );
+    assert_eq!(data_root, storage_primitives::merkle_root(&chunk_hashes));
 
     let commit = client.commit(1, vec![data_root]).await.unwrap();
     assert_eq!(commit.leaf_indices, vec![0]);
+}
+
+#[tokio::test]
+async fn test_commit_rejects_upload_with_non_default_chunk_size() {
+    let url = start_test_provider().await;
+    let client = make_client(url);
+
+    let chunk_size = 1024usize;
+    let data: Vec<u8> = (0..chunk_size * 2).map(|i| (i % 251) as u8).collect();
+
+    let data_root = client
+        .upload(1, &data, ChunkingStrategy::Fixed(chunk_size))
+        .await
+        .unwrap();
+
+    let err = client
+        .commit(1, vec![data_root])
+        .await
+        .err()
+        .expect("commit must be rejected");
+    assert!(err.to_string().contains("400 Bad Request"), "got {err}");
 }
 
 #[tokio::test]
@@ -265,16 +283,17 @@ async fn test_download_partial_offset() {
     let url = start_test_provider().await;
     let client = make_client(url);
 
-    // Use a small fixed chunk size so we get predictable chunk boundaries.
-    let chunk_size = 16usize;
-    let data: Vec<u8> = (0u8..64).collect(); // 64 bytes, 4 chunks of 16
+    // Two full chunks, so the chunk boundary is predictable and the provider
+    // accepts the commit.
+    let chunk_size = storage_primitives::DEFAULT_CHUNK_SIZE as usize;
+    let data: Vec<u8> = (0..chunk_size * 2).map(|i| (i % 251) as u8).collect();
     let data_root = client
-        .upload(1, &data, ChunkingStrategy::Fixed(chunk_size))
+        .upload(1, &data, ChunkingStrategy::default())
         .await
         .unwrap();
     client.commit(1, vec![data_root]).await.unwrap();
 
-    // Download chunk 0 (bytes 0..16)
+    // Download chunk 0
     let chunk0 = client
         .download(&data_root, 0, chunk_size as u64)
         .await

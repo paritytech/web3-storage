@@ -537,7 +537,7 @@ impl StorageUserClient {
             ));
         }
 
-        let (root, nodes) = storage_primitives::padded_merkle_tree(leaf_hashes);
+        let (root, nodes) = storage_primitives::merkle_tree(leaf_hashes);
         for node in nodes {
             let children = vec![node.left, node.right];
             let data = self.encode_internal_node(&children);
