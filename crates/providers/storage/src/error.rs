@@ -49,6 +49,9 @@ pub enum Error {
     #[error("Serialization error: {0}")]
     Serialization(String),
 
+    #[error("MMR error: {0}")]
+    Mmr(String),
+
     /// The RocksDB engine itself failed. Carries the engine's error as
     /// `source()` so the cause survives instead of being flattened into a
     /// message.

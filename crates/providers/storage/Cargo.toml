@@ -13,6 +13,7 @@ codec = { workspace = true, features = ["std"] }
 dashmap = { workspace = true }
 hex = { workspace = true, features = ["std"] }
 parking_lot = { workspace = true }
+polkadot-ckb-merkle-mountain-range = { workspace = true, features = ["std"] }
 rocksdb = { workspace = true }
 serde = { workspace = true, features = ["std"] }
 serde_json = { workspace = true, features = ["std"] }

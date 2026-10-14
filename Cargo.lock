@@ -7286,6 +7286,7 @@ dependencies = [
  "hex",
  "parity-scale-codec",
  "parking_lot",
+ "polkadot-ckb-merkle-mountain-range",
  "rocksdb",
  "serde",
  "serde_json",

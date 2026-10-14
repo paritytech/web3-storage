@@ -5,6 +5,7 @@
 //! [`StorageBackendSpec`] names an implementation and its configuration, and
 //! builds it — that is what the provider node selects at startup.
 
+mod mmr;
 pub mod rocksdb;
 pub mod types;
 
