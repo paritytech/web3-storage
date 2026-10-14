@@ -61,6 +61,26 @@ impl SubstrateClient {
             .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))
     }
 
+    /// Sign `tx`, submit it and wait for finalized success. Returns the
+    /// extrinsic's events.
+    pub async fn submit(
+        &self,
+        tx: &impl subxt::tx::Payload,
+    ) -> Result<subxt::extrinsics::ExtrinsicEvents<PolkadotConfig>, ClientError> {
+        let signer = self.signer()?;
+        self.api()
+            .at_current_block()
+            .await
+            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
+            .transactions()
+            .sign_and_submit_then_watch_default(tx, signer)
+            .await
+            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
+            .wait_for_finalized_success()
+            .await
+            .map_err(|e| ClientError::Chain(format!("Transaction failed: {e}")))
+    }
+
     /// Get the signer if available.
     pub fn signer(&self) -> Result<&Signer, ClientError> {
         self.signer
@@ -398,6 +418,13 @@ pub mod extrinsics {
             convert::challenge_id(challenge_id.0, challenge_id.1),
             response,
         )
+    }
+
+    /// Create a resolve_expired_challenge extrinsic payload.
+    pub fn resolve_expired_challenge(challenge_id: (u32, u16)) -> impl Payload {
+        api::tx()
+            .storage_provider()
+            .resolve_expired_challenge(convert::challenge_id(challenge_id.0, challenge_id.1))
     }
 }
 

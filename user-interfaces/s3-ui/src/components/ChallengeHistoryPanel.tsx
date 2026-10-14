@@ -70,9 +70,7 @@ function HistoryEntry({ entry, explorerUrl }: { entry: ChallengeHistoryEntry; ex
           <span className="text-muted-foreground">
             Slashed: <span className="text-foreground">{formatUnits(entry.slashDetails.slashedAmount)} tokens</span>
           </span>
-          <span className="text-muted-foreground">
-            Your reward: <span className="text-foreground">{formatUnits(entry.slashDetails.challengerReward)} tokens</span>
-          </span>
+          <span className="text-muted-foreground">Deposit refunded (no reward)</span>
         </div>
       )}
     </div>

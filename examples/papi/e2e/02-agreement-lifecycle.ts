@@ -24,7 +24,6 @@ import {
   endAgreement,
   ensureProviderRegistered,
   makeSigner,
-  negotiateTerms,
   READ_OPTS,
   sameAddress,
   waitForRelayBlock,
@@ -178,7 +177,7 @@ async function main() {
       };
       await api.tx.StorageProvider.create_bucket_with_primary(args).createAndSubmit(client.signer);
       const replay = api.tx.StorageProvider.create_bucket_with_primary(args);
-      await submitTxExpectFailure(replay, client.signer, "NonceAlreadyUsed", "2.6");
+      await submitTxExpectFailure(replay, client.signer, "NonceMismatch", "2.6");
     },
   });
 
@@ -218,13 +217,10 @@ async function main() {
       // signature as consent to those terms.
       await assertNegotiateRejects(
         () =>
-          negotiateTerms(PROVIDER_URL, {
-            owner: client.address,
-            max_bytes: maxBytes,
+          negotiateSigned(api, PROVIDER_URL, client, provider, {
+            maxBytes,
             duration,
-            price_per_byte: 0n,
-            replica_params: null,
-            bucket: null,
+            pricePerByte: 0n,
           }),
         "price_below_listed",
         "2.9"
@@ -235,8 +231,7 @@ async function main() {
   tests.push({
     name: "2.10 create_bucket then add_primary_provider",
     fn: async () => {
-      // The two-step path: an empty bucket first, a provider assigned after.
-      const { bucketId } = await createBucket(api, client, { minProviders: 1 });
+      const { bucketId } = await createBucket(api, client);
       const empty = (await api.query.StorageProvider.Buckets.getValue(bucketId, READ_OPTS))!;
       assert.strictEqual(
         empty.primary_providers.length,
@@ -252,16 +247,14 @@ async function main() {
       });
       await addPrimaryProvider(api, client, provider, signed);
 
-      const bucket = (await api.query.StorageProvider.Buckets.getValue(bucketId, READ_OPTS))!;
+      const [bucket, agreement] = await Promise.all([
+        api.query.StorageProvider.Buckets.getValue(bucketId, READ_OPTS),
+        api.query.StorageProvider.StorageAgreements.getValue(bucketId, provider.address, READ_OPTS),
+      ]);
       assert.ok(
-        bucket.primary_providers.some((p: string) => sameAddress(p, provider.address)),
+        bucket!.primary_providers.some((p: string) => sameAddress(p, provider.address)),
         "Provider should be in primary_providers after add_primary_provider"
       );
-      const agreement = (await api.query.StorageProvider.StorageAgreements.getValue(
-        bucketId,
-        provider.address,
-        READ_OPTS
-      ))!;
       assert.ok(agreement, "Agreement should exist after add_primary_provider");
     },
   });
@@ -269,8 +262,8 @@ async function main() {
   tests.push({
     name: "2.11 add_primary_provider rejects a quote for another bucket",
     fn: async () => {
-      const { bucketId } = await createBucket(api, client, { minProviders: 1 });
-      const { bucketId: other } = await createBucket(api, client, { minProviders: 1 });
+      const { bucketId } = await createBucket(api, client);
+      const { bucketId: other } = await createBucket(api, client);
 
       // Signed for `other`, submitted against `bucketId`.
       const signed = await negotiateSigned(api, PROVIDER_URL, client, provider, {

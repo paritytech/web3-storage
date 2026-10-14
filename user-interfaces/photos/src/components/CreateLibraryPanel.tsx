@@ -52,7 +52,6 @@ export function CreateLibraryPanel({ account, contract, network, onCreated }: Pr
   const [size, setSize] = useState('1')
   const [unit, setUnit] = useState<ByteUnit>('MiB')
   const [duration, setDuration] = useState('50')
-  const [name, setName] = useState('my-photos')
 
   // Reset any prior creation state and (re)load providers for this account/network.
   useEffect(() => {
@@ -83,7 +82,7 @@ export function CreateLibraryPanel({ account, contract, network, onCreated }: Pr
     creation.stage === 'submitting' ||
     creation.stage === 'ready'
 
-  const inputsValid = sizeBytes > 0n && durationBlocks > 0 && name.trim().length > 0
+  const inputsValid = sizeBytes > 0n && durationBlocks > 0
 
   function handleCreate(provider: PhotosProvider) {
     void createLibrary({
@@ -92,7 +91,6 @@ export function CreateLibraryPanel({ account, contract, network, onCreated }: Pr
       provider,
       sizeBytes,
       durationBlocks,
-      name: name.trim(),
     })
   }
 
@@ -109,7 +107,7 @@ export function CreateLibraryPanel({ account, contract, network, onCreated }: Pr
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-5">
-          {/* ── Size / duration / name inputs ── */}
+          {/* ── Size / duration inputs ── */}
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Field label="Storage size">
               <div className="flex items-center gap-2">
@@ -145,15 +143,6 @@ export function CreateLibraryPanel({ account, contract, network, onCreated }: Pr
               />
             </Field>
           </div>
-          <Field label="Library name">
-            <Input
-              value={name}
-              disabled={inFlight}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="my-photos"
-              data-testid="name-input"
-            />
-          </Field>
 
           {/* ── Status (in-flight / failed) vs provider list ── */}
           {creation.stage === 'failed' ? (

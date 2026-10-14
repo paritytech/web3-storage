@@ -11,6 +11,9 @@
 import { Enum } from "polkadot-api";
 
 import type { SignedTerms } from "@web3-storage/core";
+import { signedTermsBucketId } from "@web3-storage/papi";
+
+export { signedTermsBucketId };
 
 import { asHex, hexToBytes, type ParachainApi } from "../address.js";
 import { getProviderNodeInfo } from "../provider-http.js";
@@ -94,10 +97,10 @@ export async function ensureProviderRegistered(
     opts,
   );
 
-  // The provider node keeps its chain state (signing key, nonce counter,
-  // registered settings) live from finalized blocks and rejects /negotiate
-  // with 503 ChainStateNotReady until it has synced. Wait for it to catch up
-  // to this registration + price so the very next negotiate succeeds.
+  // The provider node keeps its chain state (signing key, registered
+  // settings) live from finalized blocks and rejects /negotiate with 503
+  // ChainStateNotReady until it has synced. Wait for it to catch up to this
+  // registration + price so the very next negotiate succeeds.
   const MAX_ATTEMPTS = 20; // 20 × 3s = 60s
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     const { readiness, provider_registration_info } = await getProviderNodeInfo(providerUrl);
@@ -105,7 +108,7 @@ export async function ensureProviderRegistered(
       readiness.provider_info_loaded &&
       provider_registration_info != null &&
       BigInt(provider_registration_info.settings.price_per_byte) === pricePerByte;
-    if (readiness.signing_configured && readiness.nonce_counter_ready && priceSynced) return;
+    if (readiness.signing_configured && priceSynced) return;
     await new Promise((resolve) => setTimeout(resolve, 3000));
   }
   throw new Error(
@@ -151,17 +154,13 @@ export function decodeMultiSignature(sigHex: string) {
 }
 
 /**
- * Bucket id a signed quote names, or `undefined` when it is for a bucket
- * created at redemption.
- *
- * `@web3-storage/papi` carries its own copy for the UIs, which do not depend
- * on this package — keep the two in step.
+ * Read `owner`'s next expected agreement nonce — the value to pass as
+ * `NegotiateRequest.nonce` when requesting a quote. Reads at the best block:
+ * a finalized read can lag an owner's own just-redeemed agreement and hand
+ * back a stale (already-consumed) nonce.
  */
-export function signedTermsBucketId(signed: SignedTerms): bigint | undefined {
-  const bucket = signed.terms.bucket;
-  return typeof bucket === "object" && bucket !== null && "Existing" in bucket
-    ? BigInt(bucket.Existing)
-    : undefined;
+export async function getAgreementNonce(api: ParachainApi, owner: string): Promise<bigint> {
+  return api.query.StorageProvider.AgreementNonces.getValue(owner, READ_OPTS);
 }
 
 /**
@@ -273,8 +272,7 @@ export async function createBucketWithPrimary(
 /**
  * Redeem provider-signed primary terms via `add_primary_provider`: adds a
  * primary to the existing bucket the terms name. Admin only. The new primary
- * has none of the bucket's data — upload it and include the provider's
- * signature in the next checkpoint.
+ * has none of the bucket's data.
  */
 export async function addPrimaryProvider(
   api: ParachainApi,
@@ -492,6 +490,24 @@ export async function respondToChallenge(
     }),
     provider.signer,
     { label: "respond_to_challenge", ...opts },
+  );
+}
+
+/**
+ * Slash the provider of a challenge that expired without a response. Anyone
+ * may call it; the challenger's deposit is refunded and the call is free on
+ * success.
+ */
+export async function resolveExpiredChallenge(
+  api: ParachainApi,
+  signer: ChainSigner,
+  challengeId: { deadline: number; index: number },
+  opts: SubmitOpts = {},
+) {
+  return submitTx(
+    api.tx.StorageProvider.resolve_expired_challenge({ challenge_id: challengeId }),
+    signer.signer,
+    { label: "resolve_expired_challenge", ...opts },
   );
 }
 

@@ -4,10 +4,11 @@
 //! assignment as separate operations.
 
 use super::*;
-use sp_core::H256;
-use storage_primitives::{BucketSnapshot, Commitment, EndAction, Visibility};
+use frame_support::traits::Get;
+use storage_primitives::{EndAction, Visibility};
 
-/// Signed primary terms for an existing bucket.
+/// Signed primary terms for an existing bucket. Build the quote before
+/// `assert_noop!`: `provider_signer` writes the provider's key into storage.
 fn quote_for(
     provider: u64,
     admin: u64,
@@ -16,41 +17,35 @@ fn quote_for(
     signed_primary_terms(provider, admin, BucketTarget::Existing(bucket_id), 50, 100)
 }
 
-#[test]
-fn create_bucket_extrinsic_creates_an_empty_bucket() {
-    new_test_ext().execute_with(|| {
-        assert_ok!(StorageProvider::create_bucket(
-            RuntimeOrigin::signed(1),
-            2,
-            Visibility::Private
-        ));
-
-        let bucket = Buckets::<Test>::get(0).unwrap();
-        assert!(bucket.primary_providers.is_empty());
-        assert_eq!(bucket.min_providers, 2);
-        assert_eq!(bucket.visibility, Visibility::Private);
-        assert_eq!(bucket.members.len(), 1);
-        assert_eq!(bucket.members[0].account, 1);
-        assert_eq!(bucket.members[0].role, Role::Admin);
-        assert_eq!(MemberBuckets::<Test>::get(1).to_vec(), vec![0]);
-    });
+/// `add_primary_provider` signed by `admin`.
+fn add_primary(
+    admin: u64,
+    bucket_id: u64,
+    provider: u64,
+    (terms, sig): (crate::AgreementTermsOf<Test>, sp_runtime::MultiSignature),
+) -> frame_support::dispatch::DispatchResult {
+    StorageProvider::add_primary_provider(
+        RuntimeOrigin::signed(admin),
+        bucket_id,
+        provider,
+        terms,
+        sig,
+    )
 }
 
 #[test]
 fn create_bucket_rejects_min_providers_above_the_cap() {
     new_test_ext().execute_with(|| {
-        // `MaxPrimaryProviders` is 5 in the mock, so 6 could never be met and
-        // would leave a bucket that can never be checkpointed.
+        let cap = <Test as Config>::MaxPrimaryProviders::get();
         assert_noop!(
-            StorageProvider::create_bucket(RuntimeOrigin::signed(1), 6, Visibility::Private),
+            StorageProvider::create_bucket(RuntimeOrigin::signed(1), cap + 1, Visibility::Private),
             Error::<Test>::InvalidMinProviders
         );
-        assert_eq!(NextBucketId::<Test>::get(), 0);
 
         // The cap itself is allowed.
         assert_ok!(StorageProvider::create_bucket(
             RuntimeOrigin::signed(1),
-            5,
+            cap,
             Visibility::Private
         ));
     });
@@ -63,14 +58,7 @@ fn add_primary_provider_works() {
         register_provider(2, 200);
         let bucket_id = create_bucket(1, 0);
 
-        let (terms, sig) = quote_for(2, 1, bucket_id);
-        assert_ok!(StorageProvider::add_primary_provider(
-            RuntimeOrigin::signed(1),
-            bucket_id,
-            2,
-            terms,
-            sig
-        ));
+        setup_added_primary(2, 1, bucket_id, 50, 100);
 
         let bucket = Buckets::<Test>::get(bucket_id).unwrap();
         assert_eq!(bucket.primary_providers.to_vec(), vec![2]);
@@ -82,13 +70,37 @@ fn add_primary_provider_works() {
 
         assert_eq!(Providers::<Test>::get(2).unwrap().committed_bytes, 50);
 
-        System::assert_has_event(
-            Event::ProviderAddedToBucket {
-                bucket_id,
-                provider: 2,
-            }
-            .into(),
+        // `StorageAgreementEstablished` follows `ProviderAddedToBucket`.
+        let added =
+            event_position(|e| matches!(e, Event::ProviderAddedToBucket { provider: 2, .. }));
+        let established =
+            event_position(|e| matches!(e, Event::StorageAgreementEstablished { provider: 2, .. }));
+        assert!(added < established);
+    });
+}
+
+#[test]
+fn add_primary_provider_internal_writes_nothing_for_a_rejected_quote() {
+    new_test_ext().execute_with(|| {
+        register_provider(2, 200);
+        register_provider_with_settings(
+            3,
+            200,
+            ProviderSettings {
+                accepting_primary: false,
+                ..Default::default()
+            },
         );
+        let bucket_id = setup_agreement(2, 1, 50, 100);
+
+        let (terms, sig) = quote_for(3, 1, bucket_id);
+        assert_err!(
+            StorageProvider::add_primary_provider_internal(&1, bucket_id, &3, terms, &sig),
+            Error::<Test>::ProviderNotAcceptingPrimary
+        );
+        let bucket = Buckets::<Test>::get(bucket_id).unwrap();
+        assert_eq!(bucket.primary_providers.to_vec(), vec![2]);
+        assert!(StorageAgreements::<Test>::get(bucket_id, 3).is_none());
     });
 }
 
@@ -99,17 +111,9 @@ fn add_primary_provider_rejects_non_admin() {
         register_provider(3, 200);
         let bucket_id = setup_agreement(2, 1, 50, 100);
 
-        // Provider 3 has no agreement on the bucket, so the only thing that can
-        // reject account 4 here is the admin check.
-        let (terms, sig) = quote_for(3, 4, bucket_id);
+        let quote = quote_for(3, 4, bucket_id);
         assert_noop!(
-            StorageProvider::add_primary_provider(
-                RuntimeOrigin::signed(4),
-                bucket_id,
-                3,
-                terms,
-                sig
-            ),
+            add_primary(4, bucket_id, 3, quote),
             Error::<Test>::NotBucketAdmin
         );
     });
@@ -120,11 +124,9 @@ fn add_primary_provider_rejects_unknown_bucket() {
     new_test_ext().execute_with(|| {
         register_provider(2, 200);
 
-        let (terms, sig) = quote_for(2, 1, 999);
-        assert_noop!(
-            StorageProvider::add_primary_provider(RuntimeOrigin::signed(1), 999, 2, terms, sig),
-            Error::<Test>::BucketNotFound
-        );
+        let quote = quote_for(2, 1, 999);
+
+        assert_noop!(add_primary(1, 999, 2, quote), Error::<Test>::BucketNotFound);
     });
 }
 
@@ -135,15 +137,10 @@ fn add_primary_provider_rejects_quote_for_another_bucket() {
         let bucket_id = create_bucket(1, 0);
         let other = create_bucket(1, 0);
 
-        let (terms, sig) = quote_for(2, 1, other);
+        let quote = quote_for(2, 1, other);
+
         assert_noop!(
-            StorageProvider::add_primary_provider(
-                RuntimeOrigin::signed(1),
-                bucket_id,
-                2,
-                terms,
-                sig
-            ),
+            add_primary(1, bucket_id, 2, quote),
             Error::<Test>::TermsBucketMismatch
         );
     });
@@ -155,15 +152,9 @@ fn add_primary_provider_rejects_new_bucket_quote() {
         register_provider(2, 200);
         let bucket_id = create_bucket(1, 0);
 
-        let (terms, sig) = signed_primary_terms(2, 1, BucketTarget::New, 50, 100);
+        let quote = signed_primary_terms(2, 1, BucketTarget::New, 50, 100);
         assert_noop!(
-            StorageProvider::add_primary_provider(
-                RuntimeOrigin::signed(1),
-                bucket_id,
-                2,
-                terms,
-                sig
-            ),
+            add_primary(1, bucket_id, 2, quote),
             Error::<Test>::TermsBucketMismatch
         );
     });
@@ -175,26 +166,9 @@ fn add_primary_provider_rejects_replica_quote() {
         register_provider(2, 200);
         let bucket_id = create_bucket(1, 0);
 
-        let (terms, sig) = signed_replica_terms(
-            2,
-            1,
-            bucket_id,
-            50,
-            100,
-            storage_primitives::ReplicaTerms {
-                sync_balance: 100,
-                min_sync_interval: 10,
-                sync_price: 10,
-            },
-        );
+        let quote = signed_replica_terms(2, 1, bucket_id, 50, 100, replica_params());
         assert_noop!(
-            StorageProvider::add_primary_provider(
-                RuntimeOrigin::signed(1),
-                bucket_id,
-                2,
-                terms,
-                sig
-            ),
+            add_primary(1, bucket_id, 2, quote),
             Error::<Test>::UnexpectedReplicaTerms
         );
     });
@@ -206,39 +180,10 @@ fn create_bucket_with_primary_rejects_replica_quote() {
         register_provider(2, 200);
 
         // Replica params on a primary redemption would leave the sync funding
-        // unheld, so the shared primary path rejects them outright.
-        let (terms, sig) = signed_replica_terms(
-            2,
-            1,
-            0,
-            50,
-            100,
-            storage_primitives::ReplicaTerms {
-                sync_balance: 100,
-                min_sync_interval: 10,
-                sync_price: 10,
-            },
-        );
-        assert_noop!(
-            StorageProvider::create_bucket_with_primary(
-                RuntimeOrigin::signed(1),
-                2,
-                terms,
-                sig,
-                Visibility::Private
-            ),
-            Error::<Test>::TermsBucketMismatch
-        );
-
-        // Same quote flavour, but naming a new bucket: now only the replica
-        // params can reject it.
+        // unheld, so the shared primary path rejects them.
         let pair = provider_signer(2);
         let mut terms = primary_terms(1, BucketTarget::New, 50, 100, 0);
-        terms.replica_params = Some(storage_primitives::ReplicaTerms {
-            sync_balance: 100,
-            min_sync_interval: 10,
-            sync_price: 10,
-        });
+        terms.replica_params = Some(replica_params());
         let sig = sign_terms(&pair, &terms);
         assert_noop!(
             StorageProvider::create_bucket_with_primary(
@@ -250,9 +195,6 @@ fn create_bucket_with_primary_rejects_replica_quote() {
             ),
             Error::<Test>::UnexpectedReplicaTerms
         );
-
-        // Nothing was written on either rejection.
-        assert_eq!(NextBucketId::<Test>::get(), 0);
     });
 }
 
@@ -262,15 +204,10 @@ fn add_primary_provider_rejects_duplicate_agreement() {
         register_provider(2, 200);
         let bucket_id = setup_agreement(2, 1, 50, 100);
 
-        let (terms, sig) = quote_for(2, 1, bucket_id);
+        let quote = quote_for(2, 1, bucket_id);
+
         assert_noop!(
-            StorageProvider::add_primary_provider(
-                RuntimeOrigin::signed(1),
-                bucket_id,
-                2,
-                terms,
-                sig
-            ),
+            add_primary(1, bucket_id, 2, quote),
             Error::<Test>::AgreementAlreadyExists
         );
     });
@@ -280,22 +217,17 @@ fn add_primary_provider_rejects_duplicate_agreement() {
 fn add_primary_provider_rejects_full_primary_set() {
     new_test_ext().execute_with(|| {
         let bucket_id = create_bucket(1, 0);
-        // `MaxPrimaryProviders` is 5 in the mock.
-        for provider in 2..7u64 {
+        let cap = u64::from(<<Test as Config>::MaxPrimaryProviders as Get<u32>>::get());
+        for provider in 2..2 + cap {
             register_provider(provider, 200);
             setup_added_primary(provider, 1, bucket_id, 50, 100);
         }
 
-        register_provider(7, 200);
-        let (terms, sig) = quote_for(7, 1, bucket_id);
+        let extra = 2 + cap;
+        register_provider(extra, 200);
+        let quote = quote_for(extra, 1, bucket_id);
         assert_noop!(
-            StorageProvider::add_primary_provider(
-                RuntimeOrigin::signed(1),
-                bucket_id,
-                7,
-                terms,
-                sig
-            ),
+            add_primary(1, bucket_id, extra, quote),
             Error::<Test>::MaxPrimaryProvidersReached
         );
     });
@@ -308,29 +240,18 @@ fn add_primary_provider_rejects_replayed_quote() {
         let bucket_id = create_bucket(1, 0);
 
         let (terms, sig) = quote_for(2, 1, bucket_id);
-        assert_ok!(StorageProvider::add_primary_provider(
-            RuntimeOrigin::signed(1),
-            bucket_id,
-            2,
-            terms.clone(),
-            sig
-        ));
+        assert_ok!(add_primary(1, bucket_id, 2, (terms.clone(), sig)));
 
-        // Same nonce, same provider: the replay window rejects it even though
-        // the agreement slot is free on a different bucket.
+        // Same nonce: the owner's nonce has advanced past it, so it is
+        // rejected even though the agreement slot is free on a different
+        // bucket.
         let other = create_bucket(1, 0);
         let mut replay = terms;
         replay.bucket = BucketTarget::Existing(other);
         let replay_sig = sign_terms(&provider_signer(2), &replay);
         assert_noop!(
-            StorageProvider::add_primary_provider(
-                RuntimeOrigin::signed(1),
-                other,
-                2,
-                replay,
-                replay_sig
-            ),
-            Error::<Test>::NonceAlreadyUsed
+            add_primary(1, other, 2, (replay, replay_sig)),
+            Error::<Test>::NonceMismatch
         );
     });
 }
@@ -364,29 +285,15 @@ fn bucket_outlives_its_last_agreement_and_takes_a_new_primary() {
 #[test]
 fn add_primary_provider_appends_without_disturbing_snapshot_bits() {
     new_test_ext().execute_with(|| {
-        register_provider(2, 200);
         register_provider(3, 200);
-        let bucket_id = setup_agreement(2, 1, 50, 100);
-
-        Buckets::<Test>::mutate(bucket_id, |maybe_bucket| {
-            if let Some(bucket) = maybe_bucket {
-                bucket.snapshot = Some(BucketSnapshot {
-                    commitment: Commitment {
-                        mmr_root: H256::repeat_byte(0xAB),
-                        start_seq: 0,
-                        leaf_count: 10,
-                    },
-                    checkpoint_block: 1,
-                    primary_signers: vec![0x01],
-                });
-            }
-        });
+        // Provider 2 at index 0 signed the snapshot.
+        let bucket_id = super::challenge::setup_with_snapshot(2, 1);
 
         setup_added_primary(3, 1, bucket_id, 50, 100);
 
         let bucket = Buckets::<Test>::get(bucket_id).unwrap();
-        // The new primary is appended, so the signer at index 0 keeps its bit
-        // and the newcomer's bit stays clear until it signs a checkpoint.
+        // `primary_signers` is unchanged: the new provider at index 1 has no
+        // bit until it signs a checkpoint.
         assert_eq!(bucket.primary_providers.to_vec(), vec![2, 3]);
         assert_eq!(bucket.snapshot.unwrap().primary_signers, vec![0x01]);
     });

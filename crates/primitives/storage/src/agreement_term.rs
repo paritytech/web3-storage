@@ -38,8 +38,8 @@ pub struct AgreementTerms<AccountId, Balance, BlockNumber> {
     pub price_per_byte: Balance,
     /// Block number after which the quote is no longer redeemable.
     pub valid_until: BlockNumber,
-    /// Provider-chosen replay-protection nonce; uniqueness is enforced
-    /// through the provider's sliding replay window.
+    /// Owner-chosen replay-protection nonce; must equal the owner's next
+    /// expected agreement nonce at redemption.
     pub nonce: u64,
     /// Bucket the quote is for. The provider signs it, so a quote cannot be
     /// redirected to another bucket.
@@ -88,17 +88,13 @@ impl<AccountId: Encode, Balance: Encode, BlockNumber: Encode>
 )]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum BucketTarget {
-    /// A bucket created when the quote is redeemed. Only
-    /// `create_bucket_with_primary` accepts it.
+    /// A bucket created when the quote is redeemed.
     New,
-    /// An existing bucket. Only `add_primary_provider` and
-    /// `add_replica_provider` accept it, and only for this bucket id.
+    /// An existing bucket. The redeeming call must target this bucket id.
     Existing(crate::BucketId),
 }
 
-/// `Some(id)` maps to [`BucketTarget::Existing`], `None` to
-/// [`BucketTarget::New`] — the shape callers that model the target as an
-/// optional bucket id (the `/negotiate` request, the Solidity mirrors) send.
+/// `None` → [`BucketTarget::New`], `Some(id)` → [`BucketTarget::Existing`].
 impl From<Option<crate::BucketId>> for BucketTarget {
     fn from(bucket_id: Option<crate::BucketId>) -> Self {
         bucket_id.map_or(Self::New, Self::Existing)

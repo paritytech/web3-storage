@@ -13,7 +13,8 @@ packages/
                                    pallet, signers, tx submission, watchValue
                                    waits, provider-node HTTP, ./revive
   layer1/   @web3-storage/layer1   the storage interfaces: FileSystemClient
-                                   (drives) and S3Client (buckets/objects)
+                                   (drives) and S3Client (buckets/objects),
+                                   both on plain Layer 0 buckets
   sdk/      @web3-storage/sdk      this package: re-exports all three and
                                    hosts the Web3Storage facade
 ```
@@ -28,7 +29,7 @@ back up.
 
   ```ts
   const w3s = await Web3Storage.connect("ws://127.0.0.1:2222", { signer: makeSigner("//Alice") });
-  const { driveId, bucketId } = await w3s.fs.createDrive({ maxCapacity: 1n << 20n, storagePeriod: 100, payment: 10n ** 12n });
+  const { bucketId } = await w3s.fs.createDrive({ maxCapacity: 1n << 20n, storagePeriod: 100 });
   await w3s.fs.waitForProvider(bucketId);
   await w3s.fs.uploadFile(bucketId, "/hello.txt", new TextEncoder().encode("hi"));
   ```
@@ -81,32 +82,23 @@ targets:
 | `addPrimaryProvider` | `bucket: <id>` | `add_primary_provider` (admin only) |
 | `addReplicaProvider` | `bucket: <id>` | `add_replica_provider` |
 
-`signedTermsBucketId(signed)` reads the bucket id back out of a signed quote;
+`signedTermsBucketId(signed)` returns the bucket id a signed quote names;
 it returns `undefined` for a quote that creates its bucket.
 
 ### Changing a bucket's primary provider
 
-A bucket outlives its agreements, and its `bucket_id` never changes, so
-switching provider does not break any reference to it:
-
-1. `addPrimaryProvider` with a quote for the bucket. Both primaries are now on
-   the bucket; only the old one has the data.
-2. Download the bucket's data from the old primary (skip this if a local copy
-   remains) and upload it to the new one.
-3. Ask the new primary to sign a commitment and `checkpoint` it, so the new
-   primary enters the snapshot's signer bitfield.
-4. `endAgreement` against the old primary.
-
-The client moves the data: primaries do not sync with each other, and nothing
-on-chain transfers it.
+The procedure is specified in the design doc, [Provider Lifecycle in
+Bucket](../../docs/design/scalable-web3-storage-implementation.md#provider-lifecycle-in-bucket).
+The wrappers for its steps are `addPrimaryProvider` (new provider joins),
+`checkpoint` (new provider signs the snapshot after the client uploaded the
+data to it) and `endAgreement` (old provider leaves).
 
 ## Download verification
 
 | Path | Verified? | Why |
 | --- | --- | --- |
 | `downloadChunk` / `fs.downloadByCid` | **Yes — throws `CidMismatchError`** | the requested hash IS the chunk's CID |
-| `s3.getObject`, payload ≤ 256 KiB | **Yes — throws `CidMismatchError`** | single-chunk `data_root` equals the chunk hash; compared against the on-chain `S3Registry.Objects` cid |
-| `s3.getObject`, payload > 256 KiB | `verified: false` flag | the on-chain cid is a Merkle root; reproducing it needs a DAG walk (Rust-client parity) — tracked separately |
+| `s3.getObject` (by key) | No ([#410](https://github.com/paritytech/web3-storage/pull/410)) | the key → content mapping comes from the provider's S3 index; nothing on chain commits to it |
 | `fs.downloadFile` (by path) | No (documented) | the provider's `/fs` file route returns no `data_root` to check against |
 
 Provider requests are signed (`Web3Storage <pubkey>:<sig>:<timestamp>` per

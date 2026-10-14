@@ -26,6 +26,7 @@ use pallet_revive::{
     ExecOrigin as Origin,
 };
 use pallet_storage_provider::{BalanceOf, WeightInfo};
+use sp_runtime::traits::SaturatedConversion;
 use storage_primitives::{BucketId, EndAction, Role, Visibility};
 use tracing::error;
 
@@ -80,6 +81,11 @@ where
                 sync_price: BalanceOf::<T>::from(terms.replicaParams.syncPrice),
             }),
     })
+}
+
+/// `NextBucketId` before dispatch: the id the bucket-creating call assigns.
+fn pending_bucket_id<Runtime: pallet_storage_provider::Config>() -> BucketId {
+    pallet_storage_provider::NextBucketId::<Runtime>::get()
 }
 
 /// Decode the SCALE-encoded `MultiSignature` the provider returned from
@@ -157,7 +163,7 @@ where
                 env.charge(
                     <Runtime as pallet_storage_provider::Config>::WeightInfo::create_bucket(),
                 )?;
-                let bucket_id: BucketId = pallet_storage_provider::NextBucketId::<Runtime>::get();
+                let bucket_id = pending_bucket_id::<Runtime>();
                 pallet_storage_provider::Pallet::<Runtime>::create_bucket(
                     frame_origin,
                     *minProviders,
@@ -179,7 +185,7 @@ where
                 let provider = decode_account::<Runtime>(&provider.0)?;
                 let terms = decode_terms::<Runtime>(terms)?;
                 let sig = decode_signature(signature)?;
-                let bucket_id: BucketId = pallet_storage_provider::NextBucketId::<Runtime>::get();
+                let bucket_id = pending_bucket_id::<Runtime>();
                 pallet_storage_provider::Pallet::<Runtime>::create_bucket_with_primary(
                     frame_origin,
                     provider,
@@ -371,9 +377,11 @@ where
                     <Runtime as pallet_storage_provider::Config>::WeightInfo::challenge_checkpoint(
                     ),
                 )?;
+                let who = frame_system::ensure_signed(frame_origin)
+                    .map_err(|e| revert(&e, "challengeCheckpoint needs a signed caller"))?;
                 let provider = decode_account::<Runtime>(&provider.0)?;
-                pallet_storage_provider::Pallet::<Runtime>::challenge_checkpoint(
-                    frame_origin,
+                let id = pallet_storage_provider::Pallet::<Runtime>::do_challenge_checkpoint(
+                    who,
                     *bucketId,
                     provider,
                     storage_primitives::ChunkLocation {
@@ -382,6 +390,24 @@ where
                     },
                 )
                 .map_err(|e| revert(&e, "challengeCheckpoint failed"))?;
+                let deadline: u32 = id.deadline.saturated_into();
+                Ok((deadline, id.index).abi_encode())
+            }
+
+            IWeb3StorageCalls::resolveExpiredChallenge(
+                IWeb3Storage::resolveExpiredChallengeCall { deadline, index },
+            ) => {
+                env.charge(
+                    <Runtime as pallet_storage_provider::Config>::WeightInfo::resolve_expired_challenge(),
+                )?;
+                pallet_storage_provider::Pallet::<Runtime>::resolve_expired_challenge(
+                    frame_origin,
+                    storage_primitives::ChallengeId {
+                        deadline: (*deadline).into(),
+                        index: *index,
+                    },
+                )
+                .map_err(|e| revert(&e, "resolveExpiredChallenge failed"))?;
                 Ok(Vec::new())
             }
         }
