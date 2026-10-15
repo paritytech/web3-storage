@@ -454,6 +454,9 @@ pub type NextBucketId<T: Config> = StorageValue<_, BucketId, ValueQuery>;
 
 /// Bucket ID is a stable, unique identifier (not an index into a collection).
 /// Using u64 ensures IDs never get reused even if buckets are deleted.
+/// `BucketId` and `AgreementId` encode exactly as their inner integer: SCALE
+/// does this for a single-field struct, and `#[serde(transparent)]` keeps
+/// them plain JSON numbers in the provider HTTP API.
 pub struct BucketId(pub u64);
 
 /// Agreement ID, unique per bucket (`Bucket.next_agreement_id`); the pair
@@ -799,7 +802,8 @@ pub struct Challenge<T: Config> {
 /// Number of unresolved challenges outstanding against a specific
 /// `(bucket, provider)` pair. Incremented in `create_challenge` and
 /// decremented exactly once per resolution (defended in
-/// `respond_to_challenge`, or timed out in `resolve_expired_challenge`). Gates
+/// `respond_to_challenge`, cancelled in `cancel_challenge`, or timed out in
+/// `resolve_expired_challenge`). Gates
 /// that agreement's teardown (`end_agreement`, `claim_expired_agreement`,
 /// `cleanup_bucket_internal`): an agreement — and with it the provider's
 /// `committed_bytes` — cannot be released out from under a live challenge.
@@ -1240,12 +1244,6 @@ pub enum Event<T: Config> {
         provider: T::AccountId,
         reason: RemovalReason,
     },
-    PrimaryAgreementEndedEarly {
-        bucket_id: BucketId,
-        provider: T::AccountId,
-        payment_to_provider: BalanceOf<T>,
-        burned: BalanceOf<T>,
-    },
     SlashedProviderRemoved {
         bucket_id: BucketId,
         provider: T::AccountId,
@@ -1523,7 +1521,7 @@ impl<T: Config> Pallet<T> {
     /// Raising takes effect immediately. Lowering is allowed only when no higher
     /// stake generation is still owed (`higher_stake_lock` expired, i.e.
     /// `now >= higher_stake_lock.until`) and the new value is `>= MinProviderStake`;
-    /// otherwise `StakeStillLocked` / `InsufficientStakeForCommitted`. Existing
+    /// otherwise `StakeStillLocked` / `StakeBelowMinimum`. Existing
     /// agreements keep the stake they snapshotted — see "Changeable Stake".
     /// Bumps `version` only when lowering (a raise is strictly better — see
     /// "Term Pinning").
@@ -2227,7 +2225,8 @@ impl<T: Config> Pallet<T> {
 
     /// Challenge on-chain checkpoint (no signatures needed).
     /// Provider must be in current snapshot's provider list **and** have a live
-    /// agreement for this bucket (`AgreementNotFound` otherwise). Liability
+    /// agreement for this bucket (`AgreementNotFound` if it has none,
+    /// `AgreementExpired` if it has expired). Liability
     /// tracks the agreement, not lingering snapshot membership: once a
     /// provider's last agreement ends it is un-challengeable — even if it is
     /// still named in an un-superseded snapshot — so it can deregister and
@@ -2256,9 +2255,10 @@ impl<T: Config> Pallet<T> {
     /// On a `Private` bucket, the gate applies iff the challenged provider's
     /// current agreement has role `Primary`
     /// (`NotAuthorizedForPrivateBucket`; role-based gate, see above).
-    /// Rejected if `agreement_id` is not the provider's live agreement for this
-    /// bucket (`AgreementNotFound`) — a commitment is void once its agreement
-    /// ends, so obsolete signatures can't be used to slash.
+    /// Rejected if `agreement_id` is not the provider's agreement for this
+    /// bucket (`AgreementNotFound`) or that agreement has expired
+    /// (`AgreementExpired`) — a commitment is void once its agreement ends, so
+    /// obsolete signatures can't be used to slash.
     /// 
     /// Preferred for hot buckets where snapshots change frequently.
     pub fn challenge_offchain(

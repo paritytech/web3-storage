@@ -357,7 +357,7 @@ Bucket (on-chain, stable identifier)
 ├── bucket_id: BucketId         // permanent, never reused
 ├── members: [Admin, Writers, Readers]
 ├── min_providers: u32          // quorum for checkpoints
-├── primary_providers: [A, B]   // admin-controlled, max ~5
+├── primary_providers: [A, B]   // admin-controlled, max `MaxPrimarySlots` signing slots
 ├── snapshot: { mmr_root, start_seq, leaf_count }
 └── storage agreements → providers
 ```
@@ -390,7 +390,7 @@ Providers fall into two categories with different trust models:
 - Added only by bucket admin, by redeeming a provider-signed quote (`create_bucket_with_primary`, `add_primary_provider`)
 - Receive writes directly from clients
 - Count toward `min_providers` for checkpoints
-- Limited to ~5 per bucket (prevents bloat)
+- Limited to `MaxPrimarySlots` signing slots per bucket (prevents bloat)
 
 **Replica Providers** (permissionless):
 - Added by anyone (you, a third party, a charity) by redeeming a provider-signed quote (`add_replica_provider`)
