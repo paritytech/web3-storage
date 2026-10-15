@@ -5,7 +5,7 @@
  *
  * Accounts: //Alice (provider), //Bob (bucket admin)
  *
- * The provider's proof builder (`build_merkle_proof`) assumes the canonical
+ * The provider's proof builder (`build_merkle_proofs`) assumes the canonical
  * tree: chunks of `DEFAULT_CHUNK_SIZE` bytes except the last, and a binary tree
  * in which an odd last node moves up a level unchanged. The pallet derives the
  * chunk count from the data size. The provider becomes liable for every root it
