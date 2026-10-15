@@ -244,11 +244,9 @@ sp_api::decl_runtime_apis! {
     /// Runtime API for the storage provider pallet.
     ///
     /// v2 reshaped `ProviderInfoResponse` (`deregister_at`, `reputation`) and added
-    /// `challenge_candidates`. v4 replaced `ChallengeResponse`'s `mmr_root`,
-    /// `start_seq`, `leaf_index` and `chunk_index` with the embedded
-    /// `commitment` and `target`. Declared explicitly so callers can probe the
-    /// version instead of decoding a shape that no longer exists.
-    #[api_version(4)]
+    /// `challenge_candidates`. Declared explicitly so callers can probe the version
+    /// instead of decoding a v1 shape that no longer exists.
+    #[api_version(3)]
     pub trait StorageProviderApi<AccountId, BlockNumber, Balance>
     where
         AccountId: Encode + Decode,
