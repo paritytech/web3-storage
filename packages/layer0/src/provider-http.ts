@@ -10,9 +10,9 @@ import {
   base64ToBytes,
   bytesToBase64,
   CidMismatchError,
+  DEFAULT_CHUNK_SIZE,
   hashChildren,
   hashLeaf,
-  MAX_CHUNK_SIZE,
   nodeHash,
   signProviderRequest,
   type ProviderRequestSigner,
@@ -105,12 +105,12 @@ export interface PutChunkResult {
 
 /**
  * Throw before sending a leaf the provider rejects: a leaf above
- * `MAX_CHUNK_SIZE` cannot be proven on-chain.
+ * `DEFAULT_CHUNK_SIZE` cannot be proven on-chain.
  */
 function assertLeafFits(bytes: Uint8Array): void {
-  if (bytes.length > MAX_CHUNK_SIZE) {
+  if (bytes.length > DEFAULT_CHUNK_SIZE) {
     throw new RangeError(
-      `chunk is ${bytes.length} bytes, above the ${MAX_CHUNK_SIZE} byte maximum; split it into smaller chunks`,
+      `chunk is ${bytes.length} bytes, above the ${DEFAULT_CHUNK_SIZE} byte maximum; split it into smaller chunks`,
     );
   }
 }
@@ -126,7 +126,7 @@ function assertLeafFits(bytes: Uint8Array): void {
  * Pass `children` to store an internal node instead of a leaf chunk. The
  * provider requires every child to exist already.
  *
- * Throws `RangeError` for a leaf above `MAX_CHUNK_SIZE`, before any request.
+ * Throws `RangeError` for a leaf above `DEFAULT_CHUNK_SIZE`, before any request.
  */
 export async function putChunk(
   providerUrl: string,
@@ -161,7 +161,7 @@ export async function putChunk(
  * `signer` authenticates the `PUT /node` and `POST /commit` requests; it must
  * hold a Writer/Admin role on `bucketId` (the provider always enforces this).
  *
- * Throws `RangeError` for a leaf above `MAX_CHUNK_SIZE`, before any request.
+ * Throws `RangeError` for a leaf above `DEFAULT_CHUNK_SIZE`, before any request.
  */
 export async function uploadChunk(
   providerUrl: string,

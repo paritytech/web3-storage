@@ -440,7 +440,7 @@ common::backend_tests! {
 common::backend_tests! {
     async fn test_upload_node_rejects_leaf_above_max_chunk_size(backend) {
         let server = TestServer::new(backend).await;
-        let max = storage_primitives::MAX_CHUNK_SIZE as usize;
+        let max = storage_primitives::DEFAULT_CHUNK_SIZE as usize;
 
         let put = |data: Vec<u8>| {
             let hash = storage_primitives::hash_leaf(&data);

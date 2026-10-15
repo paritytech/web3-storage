@@ -28,7 +28,7 @@ import {
   fetchChallengeProof,
   hashLeaf,
   makeSigner,
-  MAX_CHUNK_SIZE,
+  DEFAULT_CHUNK_SIZE,
   providerFetch,
   respondToChallenge,
   uploadChunk,
@@ -129,7 +129,7 @@ async function main() {
       {
         name: "14.1 Control: a 256 KiB leaf is challenged and defended",
         fn: async () => {
-          const { challengeId } = await uploadAndChallenge(MAX_CHUNK_SIZE);
+          const { challengeId } = await uploadAndChallenge(DEFAULT_CHUNK_SIZE);
           // The provider node runs with the challenge responder. Respond here
           // too in case the node has it disabled; whichever lands first wins.
           if (await challengeExists(challengeId)) {
@@ -166,7 +166,7 @@ async function main() {
       {
         name: "14.2 PUT /node of a 256 KiB + 1 byte leaf is rejected",
         fn: async () => {
-          const payload = new Uint8Array(MAX_CHUNK_SIZE + 1).fill(7);
+          const payload = new Uint8Array(DEFAULT_CHUNK_SIZE + 1).fill(7);
           const hash = toHex(hashLeaf(payload));
           const sign = { signer: owner.signer, bucketId };
           // `providerFetch` throws `<path>: <status> <body>` on a non-2xx reply.
@@ -205,7 +205,7 @@ async function main() {
             uploadChunk(
               PROVIDER_URL,
               bucketId,
-              new Uint8Array(MAX_CHUNK_SIZE + 1),
+              new Uint8Array(DEFAULT_CHUNK_SIZE + 1),
               owner,
             ),
             RangeError,

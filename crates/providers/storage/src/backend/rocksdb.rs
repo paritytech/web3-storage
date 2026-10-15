@@ -15,7 +15,7 @@ use rocksdb::{Options, DB};
 use sp_core::H256;
 use std::path::Path;
 use std::sync::Arc;
-use storage_primitives::{hash_leaf, BucketId, MmrLeaf, MAX_CHUNK_SIZE};
+use storage_primitives::{hash_leaf, BucketId, MmrLeaf, DEFAULT_CHUNK_SIZE};
 
 /// Column families for organizing data
 const CF_NODES: &str = "nodes";
@@ -233,10 +233,10 @@ impl DiskStorage {
     ) -> Result<(), Error> {
         // Checked first so an oversized leaf is not hashed.
         if let ChunkTreeNode::Chunk(data) = &node {
-            if data.len() > MAX_CHUNK_SIZE as usize {
+            if data.len() > DEFAULT_CHUNK_SIZE as usize {
                 return Err(Error::ChunkTooLarge {
                     size: data.len() as u64,
-                    max: MAX_CHUNK_SIZE,
+                    max: DEFAULT_CHUNK_SIZE,
                 });
             }
         }
@@ -701,7 +701,7 @@ mod tests {
         let bucket_id: BucketId = 1;
         storage.init_bucket(bucket_id, u64::MAX).unwrap();
 
-        let data = vec![7u8; MAX_CHUNK_SIZE as usize];
+        let data = vec![7u8; DEFAULT_CHUNK_SIZE as usize];
         let hash = hash_leaf(&data);
         storage
             .store_node(bucket_id, hash, ChunkTreeNode::Chunk(data))
@@ -716,7 +716,7 @@ mod tests {
         let bucket_id: BucketId = 1;
         storage.init_bucket(bucket_id, u64::MAX).unwrap();
 
-        let data = vec![7u8; MAX_CHUNK_SIZE as usize + 1];
+        let data = vec![7u8; DEFAULT_CHUNK_SIZE as usize + 1];
         let hash = hash_leaf(&data);
         let err = storage
             .store_node(bucket_id, hash, ChunkTreeNode::Chunk(data))
@@ -724,7 +724,7 @@ mod tests {
         assert!(matches!(
             err,
             Error::ChunkTooLarge { size, max }
-                if size == MAX_CHUNK_SIZE as u64 + 1 && max == MAX_CHUNK_SIZE
+                if size == DEFAULT_CHUNK_SIZE as u64 + 1 && max == DEFAULT_CHUNK_SIZE
         ));
         assert!(storage.get_node(&hash).is_none());
         assert_eq!(storage.get_bucket(bucket_id).unwrap().used_bytes, 0);
@@ -739,7 +739,7 @@ mod tests {
 
         // Written past `store_node`, as a database from before the size check
         // can contain it.
-        let node = ChunkTreeNode::Chunk(vec![7u8; MAX_CHUNK_SIZE as usize + 1]);
+        let node = ChunkTreeNode::Chunk(vec![7u8; DEFAULT_CHUNK_SIZE as usize + 1]);
         let hash = node.hash();
         let cf = storage.db.cf_handle(CF_NODES).unwrap();
         storage
