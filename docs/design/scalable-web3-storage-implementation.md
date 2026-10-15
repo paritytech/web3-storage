@@ -454,7 +454,14 @@ pub type NextBucketId<T: Config> = StorageValue<_, BucketId, ValueQuery>;
 
 /// Bucket ID is a stable, unique identifier (not an index into a collection).
 /// Using u64 ensures IDs never get reused even if buckets are deleted.
-pub type BucketId = u64;
+pub struct BucketId(pub u64);
+
+/// Agreement ID, unique per bucket (`Bucket.next_agreement_id`); the pair
+/// `(BucketId, AgreementId)` identifies an agreement on this chain. `u32`: ids
+/// are minted only at agreement creation and replacement, so a bucket cannot
+/// exhaust it. The counter must never wrap — an id reused within a bucket
+/// would revive that agreement's void commitments.
+pub struct AgreementId(pub u32);
 
 /// Buckets: containers for data with membership and storage agreements
 #[pallet::storage]
@@ -499,7 +506,7 @@ pub struct Bucket<T: Config> {
     /// Next agreement id to assign, incremented on each agreement created.
     /// Makes every agreement in this bucket uniquely identifiable over time so a
     /// commitment binds to a specific agreement (see `StorageAgreement.agreement_id`).
-    pub next_agreement_id: u64,
+    pub next_agreement_id: AgreementId,
     /// Read visibility (see `Visibility`). On-chain, only the challenge
     /// extrinsics read it: `Private` restricts primary challenges to members
     /// and primary-agreement owners.
@@ -590,7 +597,7 @@ pub struct StorageAgreement<T: Config> {
     /// the agreement it was made for; when the agreement ends, its commitments
     /// are void — a re-registering provider can't be challenged on obsolete
     /// state, and off-chain commitments have a definite end of life.
-    pub agreement_id: u64,
+    pub agreement_id: AgreementId,
     /// Who owns this agreement (can top up quota, transfer ownership)
     pub owner: T::AccountId,
     /// Maximum bytes (quota) — provider accepts uploads up to this
@@ -669,7 +676,7 @@ pub struct ReplicaSyncRecord<BlockNumber> {
 /// Defined in `storage_primitives`: the off-chain quote a provider signs and
 /// the owner redeems on-chain (see `create_bucket_with_primary` /
 /// `add_primary_provider` / `add_replica_provider`). The provider signs
-/// `blake2_256(context | SCALE(terms))`, where `context` is
+/// `blake2_256(context | genesis_hash | SCALE(terms))`, where `context` is
 /// `PRIMARY_TERM_CONTEXT` (`"primary-term-v2:"`) or `REPLICA_TERM_CONTEXT`
 /// (`"replica-term-v2:"`) — domain separation between the two flavours.
 ///
@@ -939,7 +946,7 @@ agreement runs on unchanged.
 
 ```rust
 pub struct PendingReplacement<T: Config> {
-    pub agreement_id: u64,
+    pub agreement_id: AgreementId,
     /// Provider stake at creation; becomes `StorageAgreement.stake`.
     pub stake: BalanceOf<T>,
     /// Taken at creation; at activation it is stored as `Some` in
@@ -1074,9 +1081,11 @@ hex, so the scheme tag travels with the signature on every wire path.
 
 Besides the quote (`AgreementTerms`, signed with a flavour context prefix), two
 on-chain signed payloads exist (all SCALE-encoded, all carry an explicit
-`version: u8` so the protocol can evolve without breaking existing signatures):
+`version: u8` so the protocol can evolve without breaking existing signatures,
+and all include the chain's genesis hash in the preimage so a signature is valid
+on one chain only — "Chain binding" under `CommitmentPayload`):
 
-- `CommitmentPayload { version, bucket_id, agreement_id, commitment }` —
+- `CommitmentPayload { version, genesis_hash, bucket_id, agreement_id, commitment }` —
   what providers sign for `commit`, `checkpoint`, `extend_checkpoint`, and
   `challenge_offchain` (`commitment: Commitment` is defined in [Data
   Structures](#data-structures)). For `challenge_offchain` the challenger
@@ -1086,7 +1095,7 @@ on-chain signed payloads exist (all SCALE-encoded, all carry an explicit
   each late signer's payload the same way — from the snapshot's `commitment` and
   that signer's live `agreement_id` — so no stored per-signer disambiguator is
   needed.
-- `ReplicaSyncPayload { version, bucket_id, agreement_id, roots }` — what a
+- `ReplicaSyncPayload { version, genesis_hash, bucket_id, agreement_id, roots }` — what a
   replica signs for `confirm_replica_sync` to attest which roots it has
   (`roots: [Option<H256>; 7]`). `bucket_id` and `agreement_id` bind it like
   `CommitmentPayload`: usable only for that agreement, void when it ends.
@@ -1269,7 +1278,7 @@ pub enum Event<T: Config> {
     /// primary provider. Always follows `ProviderAddedToBucket`.
     StorageAgreementEstablished {
         bucket_id: BucketId,
-        agreement_id: u64,
+        agreement_id: AgreementId,
         provider: T::AccountId,
         owner: T::AccountId,
         terms: AgreementTerms<T>,
@@ -1279,7 +1288,7 @@ pub enum Event<T: Config> {
     /// Owner redeemed provider-signed replica terms against an existing bucket.
     ReplicaAgreementEstablished {
         bucket_id: BucketId,
-        agreement_id: u64,
+        agreement_id: AgreementId,
         provider: T::AccountId,
         owner: T::AccountId,
         terms: AgreementTerms<T>,
@@ -1302,7 +1311,7 @@ pub enum Event<T: Config> {
     ReplacementCreated {
         bucket_id: BucketId,
         provider: T::AccountId,
-        agreement_id: u64,
+        agreement_id: AgreementId,
         expires_at: BlockNumberFor<T>,
         payment_locked: BalanceOf<T>,
     },
@@ -1312,8 +1321,8 @@ pub enum Event<T: Config> {
     ReplacementActivated {
         bucket_id: BucketId,
         provider: T::AccountId,
-        old_agreement_id: u64,
-        agreement_id: u64,
+        old_agreement_id: AgreementId,
+        agreement_id: AgreementId,
         expires_at: BlockNumberFor<T>,
         payment_to_provider: BalanceOf<T>,
     },
@@ -1322,7 +1331,7 @@ pub enum Event<T: Config> {
     ReplacementExpired {
         bucket_id: BucketId,
         provider: T::AccountId,
-        agreement_id: u64,
+        agreement_id: AgreementId,
         refunded: BalanceOf<T>,
     },
     AgreementOwnershipTransferred {
@@ -1716,8 +1725,9 @@ impl<T: Config> Pallet<T> {
     // - `now <= terms.valid_until <= now + T::RequestTimeout`
     //   (`TermsExpired` / `TermsValidityTooLong`)
     // - `sigs` must satisfy the provider signature rule (see
-    //   `ProviderSignatures`) over `blake2_256(context | SCALE(terms))` with
-    //   the flavour's context; for a virtual provider the member set is its
+    //   `ProviderSignatures`) over
+    //   `blake2_256(context | genesis_hash | SCALE(terms))` with the
+    //   flavour's context; for a virtual provider the member set is its
     //   live `members`, which the new agreement snapshots
     // - `terms.nonce` must equal the owner's next expected agreement nonce
     //   (`NonceMismatch`; see `AgreementNonces`)
@@ -2249,7 +2259,7 @@ impl<T: Config> Pallet<T> {
         origin: OriginFor<T>,
         bucket_id: BucketId,
         provider: T::AccountId,
-        agreement_id: u64,
+        agreement_id: AgreementId,
         commitment: Commitment,
         target: ChunkLocation,
         provider_signatures: ProviderSignatures<T>,
@@ -2590,7 +2600,7 @@ Response (200 OK):
   "leaf_count": 7,  // number of leaves after the commit
   "leaf_indices": [5, 6],  // indices assigned to each data_root
   "provider_signatures": [{ "signer": "5F...", "signature": "0x..." }]
-    // over CommitmentPayload{ version, bucket_id, agreement_id, commitment }
+    // over CommitmentPayload{ version, genesis_hash, bucket_id, agreement_id, commitment }
 }
 
 Response (400 Bad Request):
@@ -2699,8 +2709,9 @@ Response:
 
 Note: The returned signatures cover a `CommitmentPayload` with the real
 `leaf_count`; `challenge_offchain` reconstructs the payload from the
-`commitment` and `agreement_id` the challenger passes, so the same values
-returned here must be passed on-chain unchanged.
+`commitment` and `agreement_id` the challenger passes, plus the chain's own
+genesis hash, so the same values returned here must be passed on-chain
+unchanged.
 
 Get Checkpoint Signature (for checkpoint extrinsic)
 ───────────────────────────────────────────────────
@@ -3017,9 +3028,16 @@ forward compatibility.
 ```rust
 pub struct CommitmentPayload {
     /// Protocol version for future compatibility. CURRENT_VERSION = 1 on
-    /// `dev` today; adding `agreement_id` below is a layout change and bumps
-    /// it to 2 so v1 signatures cannot verify against the new payload.
+    /// `dev` today; adding `genesis_hash` and `agreement_id` below is a layout
+    /// change and bumps it to 2 so v1 signatures cannot verify against the
+    /// new payload.
     pub version: u8,
+    /// Genesis hash of the chain the commitment is for. Not a call parameter
+    /// and not in any HTTP response: the signer puts its chain's hash into
+    /// the preimage and the chain reconstructs with its own
+    /// (`frame_system::block_hash(0)`), so a signature made for another chain
+    /// fails to verify.
+    pub genesis_hash: H256,
     /// Reference to on-chain bucket. Mandatory — there is no anonymous /
     /// "best-effort" commitment mode in the current implementation.
     pub bucket_id: BucketId,
@@ -3029,7 +3047,7 @@ pub struct CommitmentPayload {
     /// sole replay bound: a signature is usable only against the exact agreement
     /// it names, and dies with that agreement — no separate time-based nonce is
     /// needed (see "Replay & commitment validity").
-    pub agreement_id: u64,
+    pub agreement_id: AgreementId,
     /// MMR commitment being signed over
     pub commitment: Commitment,
 }
@@ -3040,24 +3058,28 @@ pub struct ReplicaSyncPayload {
     /// `CURRENT_VERSION = 1`; bumps on any layout change, as for
     /// `CommitmentPayload`.
     pub version: u8,
+    /// Chain binding, as in `CommitmentPayload`.
+    pub genesis_hash: H256,
     /// The bucket the replica agreement is for.
     pub bucket_id: BucketId,
     /// The live agreement's id, or the pending replacement's to activate it.
-    pub agreement_id: u64,
+    pub agreement_id: AgreementId,
     /// `[current, pos0, pos1, pos2, pos3, pos4, pos5]`; `Some` for the roots
     /// the replica has.
     pub roots: [Option<H256>; 7],
 }
 ```
 
-> **Cross-chain uniqueness (future).** `bucket_id` is unique only *per chain*, so
-> if this pallet ever runs on more than one parachain, a commitment signed on
-> chain A could be replayed against the same `bucket_id` on chain B. When that
-> happens, add the **`para_id`** to `CommitmentPayload` (and the checkpoint
-> payload) to domain-separate signatures per chain. Not needed while a single
-> chain exists; an absent/zero `para_id` defaults to the base para, so the field
-> can be introduced later without breaking existing single-chain signatures
-> (behind the `version` bump).
+> **Chain binding.** `bucket_id` and `agreement_id` are per-chain counters, so
+> the same numbers exist on every chain this pallet runs on. A provider
+> registered with one key on two chains could otherwise have a commitment,
+> sync confirmation or quote it signed on chain A replayed against the
+> same-numbered bucket and agreement on chain B — liability for data it never
+> stored there. Every provider-signed payload therefore includes the genesis
+> hash in its preimage: `CommitmentPayload`, `ReplicaSyncPayload`, and the
+> quote context (`blake2_256(context | genesis_hash | SCALE(terms))`). Signed
+> extrinsics are already chain-bound by `CheckGenesis`; this applies the same
+> rule to the signatures inside them.
 
 ### MMR Leaf
 
