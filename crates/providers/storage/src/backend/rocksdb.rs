@@ -438,7 +438,7 @@ impl DiskStorage {
             .ok_or(Error::BucketNotFound(bucket_id))?;
 
         if leaf_index >= commitment_leaf_count {
-            return Err(Error::NodeNotFound(format!(
+            return Err(Error::CommitmentNotReproducible(format!(
                 "leaf_{leaf_index} outside commitment ({commitment_leaf_count} leaves)"
             )));
         }
@@ -446,7 +446,7 @@ impl DiskStorage {
         // Rebase the commitment window onto the local leaf vector, which
         // covers [bucket.start_seq, bucket.start_seq + leaves.len()).
         if commitment_start_seq < bucket.start_seq {
-            return Err(Error::NodeNotFound(format!(
+            return Err(Error::CommitmentNotReproducible(format!(
                 "leaves from seq {commitment_start_seq} pruned (local start_seq {})",
                 bucket.start_seq
             )));
@@ -454,7 +454,7 @@ impl DiskStorage {
         let offset = (commitment_start_seq - bucket.start_seq) as usize;
         let end = offset.saturating_add(commitment_leaf_count as usize);
         if end > bucket.leaves.len() {
-            return Err(Error::NodeNotFound(format!(
+            return Err(Error::CommitmentNotReproducible(format!(
                 "commitment range {commitment_start_seq}+{commitment_leaf_count} exceeds local \
                  leaves (local end {})",
                 bucket.start_seq.saturating_add(bucket.leaf_count())
@@ -470,7 +470,7 @@ impl DiskStorage {
         // the local history diverged from what was signed, and any proof from
         // it would fail on-chain verification anyway.
         if storage_primitives::bag_peaks(&mmr.peaks()) != commitment_root {
-            return Err(Error::NodeNotFound(format!(
+            return Err(Error::CommitmentNotReproducible(format!(
                 "commitment_root 0x{} not reproducible from local leaves",
                 hex::encode(commitment_root.as_bytes())
             )));
