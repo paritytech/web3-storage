@@ -30,9 +30,8 @@ pub enum Error {
     #[error("Failed to decode {what}: {reason}")]
     Decode { what: &'static str, reason: String },
 
-    /// A node a primary provider served does not hash to the hash it was
-    /// requested by. The primary is serving wrong data; nothing from it is
-    /// stored.
+    /// A node a primary provider served does not hash to the requested hash.
+    /// The node is not stored and the sync stops; sync from another provider.
     #[error("Node from primary hashes to {actual:?}, expected {expected:?}")]
     NodeHashMismatch { expected: H256, actual: H256 },
 

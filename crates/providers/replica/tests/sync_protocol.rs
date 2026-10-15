@@ -219,12 +219,13 @@ async fn a_node_whose_hash_does_not_match_its_data_is_rejected() {
     );
     assert_err!(
         sync_serving_node(claimed, reply).await,
-        Error::NodeHashMismatch { expected, .. } if expected == claimed
+        Error::NodeHashMismatch { expected, actual }
+            if expected == claimed && actual == blake2_256(b"payload hashing to something else")
     );
 }
 
 #[tokio::test]
-async fn an_internal_node_with_the_wrong_hash_is_rejected_before_its_children_are_fetched() {
+async fn an_internal_node_with_the_wrong_hash_is_rejected_before_its_children_are_stored() {
     let left_data = b"left-chunk".to_vec();
     let left = blake2_256(&left_data);
     let right_data = b"right-chunk".to_vec();
@@ -261,17 +262,18 @@ async fn an_internal_node_with_the_wrong_hash_is_rejected_before_its_children_ar
 
     assert_err!(
         f.sync.sync_from_primary(BUCKET, &url).await,
-        Error::NodeHashMismatch { expected, .. } if expected == requested
+        Error::NodeHashMismatch { expected, actual }
+            if expected == requested && actual == hash_children(left, right)
     );
     assert_eq!(
         f.storage.get_node(&left),
         None,
-        "children must not be fetched"
+        "children must not be stored"
     );
     assert_eq!(
         f.storage.get_node(&right),
         None,
-        "children must not be fetched"
+        "children must not be stored"
     );
 }
 
