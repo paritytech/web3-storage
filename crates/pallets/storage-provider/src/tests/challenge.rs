@@ -1190,25 +1190,8 @@ mod challenge_tests {
     /// MMR containing a single chunk. With one chunk, the data_root collapses to
     /// the chunk hash and the MMR root collapses to the leaf hash.
     fn single_chunk_proof(chunk_data: &[u8]) -> (H256, MmrProof, MerkleProof) {
-        let chunk_hash = hash_leaf(chunk_data);
         // Single chunk → data_root is the chunk hash (no intermediate nodes).
-        let data_root = chunk_hash;
-        let leaf = MmrLeaf {
-            data_root,
-            data_size: chunk_data.len() as u64,
-            total_size: chunk_data.len() as u64,
-        };
-        let leaf_hash = hash_leaf(&leaf.encode());
-        // Single leaf → MMR root is the leaf hash.
-        let mmr_root = leaf_hash;
-        let mmr_proof = MmrProof {
-            peaks: vec![leaf_hash],
-            leaf,
-            leaf_proof: MerkleProof {
-                siblings: vec![],
-                path: vec![],
-            },
-        };
+        let (mmr_root, mmr_proof) = single_leaf_mmr(hash_leaf(chunk_data), chunk_data.len() as u64);
         let chunk_proof = MerkleProof {
             siblings: vec![],
             path: vec![],
@@ -1225,10 +1208,18 @@ mod challenge_tests {
         let leaves: Vec<H256> = (0u8..4).map(|i| hash_leaf(&[i])).collect();
         let left = hash_children(leaves[0], leaves[1]);
         let right = hash_children(leaves[2], leaves[3]);
+        let (mmr_root, mmr_proof) = single_leaf_mmr(hash_children(left, right), size);
+        (mmr_root, mmr_proof, leaves, right)
+    }
+
+    /// A single-leaf MMR over data with `data_root` and `data_size`. The MMR
+    /// root is the leaf hash and the leaf proof is empty. Returns the MMR root
+    /// and the MMR proof.
+    fn single_leaf_mmr(data_root: H256, data_size: u64) -> (H256, MmrProof) {
         let leaf = MmrLeaf {
-            data_root: hash_children(left, right),
-            data_size: size,
-            total_size: size,
+            data_root,
+            data_size,
+            total_size: data_size,
         };
         let leaf_hash = hash_leaf(&leaf.encode());
         let mmr_proof = MmrProof {
@@ -1239,7 +1230,7 @@ mod challenge_tests {
                 path: vec![],
             },
         };
-        (leaf_hash, mmr_proof, leaves, right)
+        (leaf_hash, mmr_proof)
     }
 
     fn make_chunk_bv(data: &[u8]) -> BoundedVec<u8, <Test as Config>::MaxChunkSize> {
@@ -1615,25 +1606,12 @@ mod challenge_tests {
         let c2 = storage_primitives::hash_leaf(&last_chunk);
         let left = storage_primitives::hash_children(c0, c1);
         let data_root = storage_primitives::hash_children(left, c2);
-        let leaf = MmrLeaf {
-            data_root,
-            data_size: 2 * size + 10,
-            total_size: 2 * size + 10,
-        };
-        let leaf_hash = storage_primitives::hash_leaf(&leaf.encode());
-        let mmr_proof = MmrProof {
-            peaks: vec![leaf_hash],
-            leaf,
-            leaf_proof: MerkleProof {
-                siblings: vec![],
-                path: vec![],
-            },
-        };
+        let (mmr_root, mmr_proof) = single_leaf_mmr(data_root, 2 * size + 10);
         let chunk_proof = MerkleProof {
             siblings: vec![left],
             path: vec![true],
         };
-        (leaf_hash, mmr_proof, last_chunk, chunk_proof)
+        (mmr_root, mmr_proof, last_chunk, chunk_proof)
     }
 
     /// Open a challenge on `chunk_index` of leaf 0 and answer it with the last
