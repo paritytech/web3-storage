@@ -22,7 +22,7 @@ use crate::error::Error;
 use codec::{Decode, Encode};
 use sp_core::H256;
 use std::borrow::Cow;
-use storage_primitives::{hash_children, MmrLeaf};
+use storage_primitives::{hash_children, MmrLeaf, DEFAULT_CHUNK_SIZE};
 
 /// Version of the on-disk encoding of the records in this module.
 ///
@@ -86,11 +86,18 @@ pub enum ChunkTreeNode {
 impl ChunkTreeNode {
     /// Build a node from the `data` and optional `children` a peer sent.
     ///
-    /// Without children the node is a chunk. With children it is an internal
-    /// node: it must have exactly two children, and `data` must be the
-    /// concatenation of the two child hashes.
+    /// Without children the node is a chunk of at most `DEFAULT_CHUNK_SIZE`
+    /// bytes, because a larger chunk cannot be proven on-chain. With children
+    /// it is an internal node: it must have exactly two children, and `data`
+    /// must be the concatenation of the two child hashes.
     pub fn from_wire(data: Vec<u8>, children: Option<Vec<H256>>) -> Result<Self, Error> {
         let Some(children) = children else {
+            if data.len() > DEFAULT_CHUNK_SIZE as usize {
+                return Err(Error::ChunkTooLarge {
+                    size: data.len() as u64,
+                    max: DEFAULT_CHUNK_SIZE,
+                });
+            }
             return Ok(Self::Chunk(data));
         };
         let count = children.len();
@@ -270,6 +277,16 @@ mod tests {
             ChunkTreeNode::from_wire(vec![1, 2, 3], None).unwrap(),
             ChunkTreeNode::Chunk(vec![1, 2, 3])
         );
+    }
+
+    #[test]
+    fn from_wire_rejects_a_chunk_above_default_chunk_size() {
+        let max = DEFAULT_CHUNK_SIZE as usize;
+        assert!(ChunkTreeNode::from_wire(vec![7; max], None).is_ok());
+        assert!(matches!(
+            ChunkTreeNode::from_wire(vec![7; max + 1], None),
+            Err(Error::ChunkTooLarge { size, max: DEFAULT_CHUNK_SIZE }) if size == max as u64 + 1
+        ));
     }
 
     #[test]

@@ -18,7 +18,7 @@ use sp_core::H256;
 use std::fmt;
 use std::path::PathBuf;
 use std::sync::Arc;
-use storage_primitives::{hash_children, BucketId, DEFAULT_CHUNK_SIZE};
+use storage_primitives::{hash_children, BucketId};
 
 /// Which backend to build, and what that backend needs.
 ///
@@ -204,10 +204,7 @@ pub trait StorageBackend: Send + Sync {
     fn get_mmr_peaks(&self, bucket_id: BucketId) -> Result<(H256, Vec<H256>), Error>;
 
     /// Calculate the total data size of a content tree by traversing stored nodes.
-    ///
-    /// Fails with [`Error::ChunkTooLarge`] if the tree contains a leaf above
-    /// `DEFAULT_CHUNK_SIZE`, so the provider never signs a commitment over it.
-    fn calculate_tree_size(&self, root: H256) -> Result<u64, Error> {
+    fn calculate_tree_size(&self, root: H256) -> u64 {
         let mut size = 0u64;
         let mut stack = vec![root];
 
@@ -215,20 +212,12 @@ pub trait StorageBackend: Send + Sync {
             if let Some(node) = self.get_node(&hash) {
                 match node {
                     ChunkTreeNode::Internal { left, right } => stack.extend([left, right]),
-                    ChunkTreeNode::Chunk(data) => {
-                        if data.len() > DEFAULT_CHUNK_SIZE as usize {
-                            return Err(Error::ChunkTooLarge {
-                                size: data.len() as u64,
-                                max: DEFAULT_CHUNK_SIZE,
-                            });
-                        }
-                        size = size.saturating_add(data.len() as u64);
-                    }
+                    ChunkTreeNode::Chunk(data) => size = size.saturating_add(data.len() as u64),
                 }
             }
         }
 
-        Ok(size)
+        size
     }
 }
 
