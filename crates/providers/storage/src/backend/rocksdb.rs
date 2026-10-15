@@ -267,13 +267,11 @@ impl DiskStorage {
             let missing: Vec<String> = [left, right]
                 .into_iter()
                 .filter(|h| {
-                    **h != H256::zero()
-                        && self
-                            .db
-                            .get_cf(&cf_nodes, h.as_bytes())
-                            .ok()
-                            .flatten()
-                            .is_none()
+                    self.db
+                        .get_cf(&cf_nodes, h.as_bytes())
+                        .ok()
+                        .flatten()
+                        .is_none()
                 })
                 .map(|h| format!("0x{}", hex::encode(h.as_bytes())))
                 .collect();
@@ -741,25 +739,6 @@ mod tests {
     }
 
     #[test]
-    fn commit_rejects_zero_child_in_the_middle() {
-        let (_dir, storage) = committing_storage();
-        let [c0, c1] = [1, 2].map(|b| store_chunk(&storage, b));
-        let left = store_parent(&storage, c0, H256::zero());
-        let root = store_parent(&storage, left, c1);
-        assert_rejected_and_bucket_unchanged(&storage, root);
-    }
-
-    #[test]
-    fn commit_rejects_zero_padded_tree() {
-        let (_dir, storage) = committing_storage();
-        let [c0, c1, c2] = [1, 2, 3].map(|b| store_chunk(&storage, b));
-        let left = store_parent(&storage, c0, c1);
-        let right = store_parent(&storage, c2, H256::zero());
-        let root = store_parent(&storage, left, right);
-        assert_rejected_and_bucket_unchanged(&storage, root);
-    }
-
-    #[test]
     fn commit_accepts_tree_with_the_odd_chunk_moved_up_and_single_leaf() {
         let (_dir, storage) = committing_storage();
         let [c0, c1, c2] = [1, 2, 3].map(|b| store_chunk(&storage, b));
@@ -850,26 +829,33 @@ mod tests {
     }
 
     #[test]
-    fn internal_node_with_zero_children_stores_and_charges_64_bytes() {
-        let (storage, _dir) = storage_with_bucket();
-        let bucket_id: BucketId = 1;
+    fn internal_node_charges_64_bytes() {
+        let (_dir, storage) = committing_storage();
+        let [left, right] = [1, 2].map(|b| store_chunk_of_len(&storage, b, 10));
+        let used = storage.get_bucket(BUCKET).unwrap().used_bytes;
 
-        // Zero-padding children need no existing node, so this isolates the
-        // quota charge from the children-exist check.
-        let hash = storage_primitives::hash_children(H256::zero(), H256::zero());
-        storage
+        store_parent(&storage, left, right);
+
+        let bucket = storage.get_bucket(BUCKET).unwrap();
+        assert_eq!(bucket.used_bytes, used + 64);
+    }
+
+    #[test]
+    fn store_node_rejects_a_zero_child() {
+        let (_dir, storage) = committing_storage();
+        let c0 = store_chunk(&storage, 1);
+        let hash = storage_primitives::hash_children(c0, H256::zero());
+        let err = storage
             .store_node(
-                bucket_id,
+                BUCKET,
                 hash,
                 ChunkTreeNode::Internal {
-                    left: H256::zero(),
+                    left: c0,
                     right: H256::zero(),
                 },
             )
-            .expect("an all-zero-children internal node has nothing to look up");
-
-        let bucket = storage.get_bucket(bucket_id).unwrap();
-        assert_eq!(bucket.used_bytes, 64);
+            .unwrap_err();
+        assert!(matches!(err, Error::ChildrenMissing(_)), "got {err:?}");
     }
 
     #[test]

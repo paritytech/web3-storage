@@ -123,9 +123,6 @@ pub trait StorageBackend: Send + Sync {
         let mut stack = vec![root];
 
         while let Some(hash) = stack.pop() {
-            if hash == H256::zero() {
-                continue;
-            }
             if let Some(node) = self.get_node(&hash) {
                 match node {
                     ChunkTreeNode::Internal { left, right } => {
@@ -147,9 +144,6 @@ pub trait StorageBackend: Send + Sync {
         let mut stack = vec![root];
 
         while let Some(hash) = stack.pop() {
-            if hash == H256::zero() {
-                continue;
-            }
             if let Some(node) = self.get_node(&hash) {
                 match node {
                     ChunkTreeNode::Internal { left, right } => {
