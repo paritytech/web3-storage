@@ -2557,9 +2557,6 @@ pub mod pallet {
             origin: OriginFor<T>,
             bucket_id: BucketId,
             provider: T::AccountId,
-            // Passed through verbatim so the payload reconstruction matches
-            // what the provider signed; its `leaf_count` binds the proof to
-            // `target.leaf_index` in `respond_to_challenge`.
             commitment: Commitment,
             target: ChunkLocation,
             provider_signature: sp_runtime::MultiSignature,
@@ -2937,13 +2934,12 @@ pub mod pallet {
                         ensure!(anchor_block >= min_next_block, Error::<T>::SyncTooFrequent);
                     }
 
-                    // Find matching root position
-                    let (position_matched, matched) = Self::find_matching_root(&bucket, &roots)?;
+                    let matched = Self::find_matching_root(&bucket, &roots)?;
 
                     // Check it's a new root
                     if let Some(record) = last_sync {
                         ensure!(
-                            matched.mmr_root != record.commitment.mmr_root,
+                            matched.commitment.mmr_root != record.commitment.mmr_root,
                             Error::<T>::InvalidSyncRoot
                         );
                     }
@@ -2955,11 +2951,8 @@ pub mod pallet {
                     );
                     *sync_balance = sync_balance.saturating_sub(*sync_price);
 
-                    // The matched commitment carries the range `challenge_replica`
-                    // binds proofs to, whether it is the current snapshot or a
-                    // historical one.
                     *last_sync = Some(ReplicaSyncRecord {
-                        commitment: matched,
+                        commitment: matched.commitment,
                         block: anchor_block,
                     });
 
@@ -2979,8 +2972,8 @@ pub mod pallet {
                     Self::deposit_event(Event::ReplicaSynced {
                         bucket_id,
                         provider: who.clone(),
-                        mmr_root: matched.mmr_root,
-                        position_matched,
+                        mmr_root: matched.commitment.mmr_root,
+                        position_matched: matched.position,
                         sync_payment: *sync_price,
                     });
 

@@ -5,6 +5,13 @@ use frame_support::pallet_prelude::*;
 use sp_core::H256;
 use storage_primitives::{Commitment, HISTORICAL_ROOT_PRIMES};
 
+/// The root a replica sync matched: `position` 0 is the current snapshot,
+/// 1..=6 index `Bucket::historical_roots`.
+pub(crate) struct MatchedRoot {
+    pub position: u8,
+    pub commitment: Commitment,
+}
+
 impl<T: Config> Pallet<T> {
     pub(crate) fn update_historical_roots(
         bucket: &mut Bucket<T>,
@@ -24,20 +31,25 @@ impl<T: Config> Pallet<T> {
     pub(crate) fn find_matching_root(
         bucket: &Bucket<T>,
         roots: &[Option<H256>; 7],
-    ) -> Result<(u8, Commitment), DispatchError> {
-        // Check current snapshot first
+    ) -> Result<MatchedRoot, DispatchError> {
         if let (Some(snapshot), Some(root)) = (&bucket.snapshot, roots[0]) {
             if snapshot.commitment.mmr_root == root {
-                return Ok((0, snapshot.commitment));
+                return Ok(MatchedRoot {
+                    position: 0,
+                    commitment: snapshot.commitment,
+                });
             }
         }
 
-        // Check historical roots. A zero root is an entry no checkpoint has
-        // written yet, not a commitment a replica can sync to.
+        // A zero root is an entry no checkpoint has written yet, not a
+        // commitment a replica can sync to.
         for i in 0..6 {
             let entry = bucket.historical_roots[i].1;
             if entry.mmr_root != H256::zero() && roots[i + 1] == Some(entry.mmr_root) {
-                return Ok((i as u8 + 1, entry));
+                return Ok(MatchedRoot {
+                    position: i as u8 + 1,
+                    commitment: entry,
+                });
             }
         }
 
