@@ -39,6 +39,19 @@ impl StorageUserClient {
         })
     }
 
+    /// Attach the signed `Authorization` header (`method` = upper-case HTTP verb).
+    fn sign(
+        &self,
+        req: reqwest::RequestBuilder,
+        method: &str,
+        bucket_id: BucketId,
+    ) -> reqwest::RequestBuilder {
+        req.header(
+            "Authorization",
+            self.auth_signer.auth_header(method, bucket_id),
+        )
+    }
+
     /// Enable client-side encryption with a custom cipher (builder pattern).
     pub fn with_encryption(mut self, cipher: Box<dyn Cipher>) -> Self {
         self.cipher = Some(cipher);
@@ -346,11 +359,7 @@ impl StorageUserClient {
             .http
             .post(format!("{provider_url}/commit"))
             .json(&request);
-        let response = self
-            .auth_signer
-            .sign_request(req, "POST", bucket_id)
-            .send()
-            .await?;
+        let response = self.sign(req, "POST", bucket_id).send().await?;
 
         if !response.status().is_success() {
             return Err(ClientError::Api(format!(
@@ -381,11 +390,7 @@ impl StorageUserClient {
             .http
             .get(format!("{provider_url}/checkpoint-signature"))
             .query(&[("bucket_id", bucket_id.to_string())]);
-        let response = self
-            .auth_signer
-            .sign_request(req, "GET", bucket_id)
-            .send()
-            .await?;
+        let response = self.sign(req, "GET", bucket_id).send().await?;
 
         if !response.status().is_success() {
             return Err(ClientError::Api(format!(
@@ -507,11 +512,7 @@ impl StorageUserClient {
             .http
             .put(format!("{provider_url}/node"))
             .json(&request);
-        let response = self
-            .auth_signer
-            .sign_request(req, "PUT", bucket_id)
-            .send()
-            .await?;
+        let response = self.sign(req, "PUT", bucket_id).send().await?;
 
         if !response.status().is_success() {
             return Err(ClientError::Api(format!(
@@ -604,11 +605,7 @@ impl StorageUserClient {
             .http
             .get(format!("{provider_url}/commitment"))
             .query(&[("bucket_id", bucket_id.to_string())]);
-        let response = self
-            .auth_signer
-            .sign_request(req, "GET", bucket_id)
-            .send()
-            .await?;
+        let response = self.sign(req, "GET", bucket_id).send().await?;
 
         if !response.status().is_success() {
             return Err(ClientError::Api(format!(
@@ -641,11 +638,7 @@ impl StorageUserClient {
             .http
             .post(format!("{provider_url}/exists"))
             .json(&request);
-        let response = self
-            .auth_signer
-            .sign_request(req, "POST", bucket_id)
-            .send()
-            .await?;
+        let response = self.sign(req, "POST", bucket_id).send().await?;
 
         if !response.status().is_success() {
             return Err(ClientError::Api(format!(

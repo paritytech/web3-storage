@@ -1213,7 +1213,7 @@ impl CheckpointManager {
             // the timestamp stays inside the provider's skew window.
             let mut req = self.http_client.get(&url);
             if let Ok(signer) = self.chain_client.signer() {
-                req = signer.sign_request(req, "GET", bucket_id);
+                req = req.header("Authorization", signer.auth_header("GET", bucket_id));
             }
 
             let result =
