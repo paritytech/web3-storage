@@ -17,7 +17,9 @@ use sp_core::H256;
 use std::fmt;
 use std::path::PathBuf;
 use std::sync::Arc;
-use storage_primitives::{build_merkle_proof, merkle_tree, BucketId};
+use storage_primitives::{
+    build_merkle_proof, merkle_root, merkle_tree, BucketId, DEFAULT_CHUNK_SIZE,
+};
 
 /// Which backend to build, and what that backend needs.
 ///
@@ -156,6 +158,34 @@ pub trait StorageBackend: Send + Sync {
         }
 
         leaves
+    }
+
+    /// Byte size of the data under `root`, if `root` is the canonical tree
+    /// over its chunks.
+    ///
+    /// The canonical tree is `merkle_tree` over chunks of `DEFAULT_CHUNK_SIZE`
+    /// bytes, except the last, which has at most that many and at least one
+    /// byte when there are several chunks. The pallet derives the chunk count
+    /// from the data size, so it can verify proofs only against this tree.
+    fn canonical_data_size(&self, root: H256) -> Result<u64, Error> {
+        let (chunk_hashes, chunk_sizes): (Vec<H256>, Vec<usize>) =
+            self.collect_leaves(root).into_iter().unzip();
+        let chunk_size = DEFAULT_CHUNK_SIZE as usize;
+        let fixed_sizes = match chunk_sizes.split_last() {
+            None => false,
+            Some((last, rest)) => {
+                rest.iter().all(|size| *size == chunk_size)
+                    && *last <= chunk_size
+                    && (rest.is_empty() || *last > 0)
+            }
+        };
+        if !fixed_sizes || merkle_root(&chunk_hashes) != root {
+            return Err(Error::NonCanonicalTree(format!(
+                "0x{}",
+                hex::encode(root.as_bytes())
+            )));
+        }
+        Ok(chunk_sizes.iter().map(|size| *size as u64).sum())
     }
 
     /// Get chunk data and Merkle proof at the given index from a data root.

@@ -15,7 +15,7 @@ use rocksdb::{Options, DB};
 use sp_core::H256;
 use std::path::Path;
 use std::sync::Arc;
-use storage_primitives::{hash_leaf, merkle_root, BucketId, MmrLeaf, DEFAULT_CHUNK_SIZE};
+use storage_primitives::{hash_leaf, BucketId, MmrLeaf};
 
 /// Column families for organizing data
 const CF_NODES: &str = "nodes";
@@ -27,21 +27,6 @@ const COLUMN_FAMILIES: [&str; 4] = [CF_NODES, CF_BUCKETS, CF_ROOT_TO_BUCKET, CF_
 
 /// RocksDB key for the persisted format version.
 const KEY_FORMAT_VERSION: &[u8] = b"format_version";
-
-/// `true` if the leaf sizes follow the fixed chunk size: every chunk is
-/// `DEFAULT_CHUNK_SIZE` bytes except the last, which has at most that many
-/// (and at least one byte when there are several chunks).
-fn has_fixed_chunk_sizes(sizes: &[usize]) -> bool {
-    let chunk_size = DEFAULT_CHUNK_SIZE as usize;
-    match sizes.split_last() {
-        None => false,
-        Some((last, rest)) => {
-            rest.iter().all(|size| *size == chunk_size)
-                && *last <= chunk_size
-                && (rest.is_empty() || *last > 0)
-        }
-    }
-}
 
 /// Disk-based storage backend using RocksDB.
 pub struct DiskStorage {
@@ -377,18 +362,10 @@ impl DiskStorage {
 
         // Verify the tree shape and the chunk sizes. Each root is walked once;
         // its data size is reused below.
-        let mut data_sizes = Vec::with_capacity(data_roots.len());
-        for root in &data_roots {
-            let (chunk_hashes, chunk_sizes): (Vec<H256>, Vec<usize>) =
-                self.collect_leaves(*root).into_iter().unzip();
-            if merkle_root(&chunk_hashes) != *root || !has_fixed_chunk_sizes(&chunk_sizes) {
-                return Err(Error::NonCanonicalTree(format!(
-                    "0x{}",
-                    hex::encode(root.as_bytes())
-                )));
-            }
-            data_sizes.push(chunk_sizes.iter().map(|size| *size as u64).sum::<u64>());
-        }
+        let data_sizes = data_roots
+            .iter()
+            .map(|root| self.canonical_data_size(*root))
+            .collect::<Result<Vec<_>, _>>()?;
 
         // Get bucket and update MMR
         let mut bucket = self
@@ -590,6 +567,7 @@ impl StorageBackend for DiskStorage {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use storage_primitives::DEFAULT_CHUNK_SIZE;
     use tempfile::TempDir;
 
     /// Open the database at `path` directly, bypassing `DiskStorage::new` and
