@@ -29,9 +29,9 @@ const BUCKET: BucketId = 1;
 
 /// Asserts the error matches `$pattern`, printing it when it does not.
 macro_rules! assert_err {
-    ($result:expr, $pattern:pat) => {
+    ($result:expr, $pattern:pat $(if $guard:expr)?) => {
         let err = $result.unwrap_err();
-        assert!(matches!(err, $pattern), "got {err}");
+        assert!(matches!(err, $pattern $(if $guard)?), "got {err}");
     };
 }
 
@@ -219,7 +219,59 @@ async fn a_node_whose_hash_does_not_match_its_data_is_rejected() {
     );
     assert_err!(
         sync_serving_node(claimed, reply).await,
-        Error::Backend(provider_storage::Error::InvalidHash { .. })
+        Error::NodeHashMismatch { expected, .. } if expected == claimed
+    );
+}
+
+#[tokio::test]
+async fn an_internal_node_with_the_wrong_hash_is_rejected_before_its_children_are_fetched() {
+    let left_data = b"left-chunk".to_vec();
+    let left = blake2_256(&left_data);
+    let right_data = b"right-chunk".to_vec();
+    let right = blake2_256(&right_data);
+    // The primary serves a well-formed internal node under a hash that is not
+    // the hash of its children.
+    let requested = H256::repeat_byte(0x11);
+    assert_ne!(requested, hash_children(left, right));
+
+    let nodes = HashMap::from([
+        (
+            hex_hash(requested),
+            node_body(
+                &hex_hash(requested),
+                &base64(&[left.as_bytes(), right.as_bytes()].concat()),
+                Some(vec![hex_hash(left), hex_hash(right)]),
+            ),
+        ),
+        (
+            hex_hash(left),
+            node_body(&hex_hash(left), &base64(&left_data), None),
+        ),
+        (
+            hex_hash(right),
+            node_body(&hex_hash(right), &base64(&right_data), None),
+        ),
+    ]);
+    let f = fixture();
+    let url = spawn_primary_with_nodes(
+        peaks_body(&hex_hash(unheld_root()), &[hex_hash(requested)]),
+        nodes,
+    )
+    .await;
+
+    assert_err!(
+        f.sync.sync_from_primary(BUCKET, &url).await,
+        Error::NodeHashMismatch { expected, .. } if expected == requested
+    );
+    assert_eq!(
+        f.storage.get_node(&left),
+        None,
+        "children must not be fetched"
+    );
+    assert_eq!(
+        f.storage.get_node(&right),
+        None,
+        "children must not be fetched"
     );
 }
 

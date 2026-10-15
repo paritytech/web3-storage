@@ -159,6 +159,16 @@ impl ReplicaSync {
 
             let node = ChunkTreeNode::from_wire(data, children)?;
 
+            // Verify the node before following its children, so a primary
+            // cannot make this replica fetch subtrees under a wrong hash.
+            let actual = node.hash();
+            if actual != root_hash {
+                return Err(Error::NodeHashMismatch {
+                    expected: root_hash,
+                    actual,
+                });
+            }
+
             // Fetch children before storing the parent: store_node rejects an
             // internal node whose non-zero children aren't already present.
             if let ChunkTreeNode::Internal { left, right } = &node {
