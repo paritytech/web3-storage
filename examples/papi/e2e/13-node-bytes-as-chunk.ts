@@ -14,11 +14,9 @@
  *        / \    / \
  *       c0 c1  c2 c3
  *
- * Before the fix for #480, chunks and internal nodes hashed the same way. The
- * 64 bytes of `L` (`hash(c0) || hash(c1)`) with the 1-step proof `[R]` reached
- * `root`, and the chain accepted them as chunk 0. A provider that kept only `L`
- * and `R` could defend every challenge. Chunks now hash with prefix `0x00` and
- * nodes with `0x01`, so the forged response fails with `InvalidProof`.
+ * Chunks hash with prefix `0x00` and internal nodes with `0x01`, so the 64
+ * bytes of `L` (`hash(c0) || hash(c1)`) with the 1-step proof `[R]` do not
+ * verify as chunk 0, and the chain rejects them with `InvalidProof`.
  *
  * 13.1 The provider answers a challenge on chunk 0 with the real chunk.
  * 13.2 A response to a challenge on chunk 0 with the bytes of `L` and the
