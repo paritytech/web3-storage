@@ -313,15 +313,15 @@
           <text data-detail="context" x="459" y="258" class="t-muted" font-size="8" text-anchor="middle">hash(peaks) == root</text>
         </g>
 
-        <g id="node-traverse" data-node-id="traverse" data-node-label="Top-Down Walk" tabindex="0" role="button" aria-label="Focus Top-Down Walk, GET /mmr_subtree, Replica Provider › Verify and walk" aria-pressed="false" data-node-kind="backend" data-node-sublabel="GET /mmr_subtree" data-node-context="Replica Provider › Verify and walk">
-          <title>Top-Down Walk · GET /mmr_subtree · Replica Provider › Verify and walk</title>
+        <g id="node-traverse" data-node-id="traverse" data-node-label="Top-Down Walk" tabindex="0" role="button" aria-label="Focus Top-Down Walk, GET /node, child links, Replica Provider › Verify and walk" aria-pressed="false" data-node-kind="backend" data-node-sublabel="GET /node, child links" data-node-context="Replica Provider › Verify and walk">
+          <title>Top-Down Walk · GET /node, child links · Replica Provider › Verify and walk</title>
           <rect x="604.6" y="220" width="140" height="52" rx="6" class="c-mask"/>
           <rect x="604.6" y="220" width="140" height="52" rx="6" class="c-backend" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(610.6 226) scale(0.6875)">
             <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
           </g>
           <text data-node-label="" data-detail-anchor="" x="674.6" y="241" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Top-Down Walk</text>
-          <text data-detail="context" x="674.6" y="258" class="t-muted" font-size="8" text-anchor="middle">GET /mmr_subtree</text>
+          <text data-detail="context" x="674.6" y="258" class="t-muted" font-size="8" text-anchor="middle">GET /node, child links</text>
         </g>
 
         <g id="node-fetch_nodes" data-node-id="fetch_nodes" data-node-label="Fetch Missing Nodes" tabindex="0" role="button" aria-label="Focus Fetch Missing Nodes, POST /fetch_nodes, Replica Provider › Fetch and confirm" aria-pressed="false" data-node-kind="backend" data-node-sublabel="POST /fetch_nodes" data-node-context="Replica Provider › Fetch and confirm">
@@ -346,15 +346,15 @@
           <text data-detail="context" x="1130.3999999999999" y="258" class="t-muted" font-size="8" text-anchor="middle">roots[7] + signature</text>
         </g>
 
-        <g id="node-peak_source" data-node-id="peak_source" data-node-label="Any Data Holder" tabindex="0" role="button" aria-label="Focus Any Data Holder, replica or data holder, Data Sources › Trusted root" aria-pressed="false" data-node-kind="cloud" data-node-sublabel="replica or data holder" data-node-context="Data Sources › Trusted root">
-          <title>Any Data Holder · replica or data holder · Data Sources › Trusted root</title>
+        <g id="node-peak_source" data-node-id="peak_source" data-node-label="Any Data Holder" tabindex="0" role="button" aria-label="Focus Any Data Holder, primaries, then replicas, Data Sources › Trusted root" aria-pressed="false" data-node-kind="cloud" data-node-sublabel="primaries, then replicas" data-node-context="Data Sources › Trusted root">
+          <title>Any Data Holder · primaries, then replicas · Data Sources › Trusted root</title>
           <rect x="216" y="346" width="150" height="52" rx="6" class="c-mask"/>
           <rect x="216" y="346" width="150" height="52" rx="6" class="c-cloud" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="cloud" class="semantic-sigil s-cloud" transform="translate(222 352) scale(0.6875)">
             <path d="M4.3 12.5h7.3a2.4 2.4 0 0 0 .2-4.8 4 4 0 0 0-7.5-1.3A3.1 3.1 0 0 0 4.3 12.5Z"/>
           </g>
           <text data-node-label="" data-detail-anchor="" x="291" y="367" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Any Data Holder</text>
-          <text data-detail="context" x="291" y="384" class="t-muted" font-size="8" text-anchor="middle">replica or data holder</text>
+          <text data-detail="context" x="291" y="384" class="t-muted" font-size="8" text-anchor="middle">primaries, then replicas</text>
         </g>
 
         <g id="node-node_source" data-node-id="node_source" data-node-label="Node Source" tabindex="0" role="button" aria-label="Focus Node Source, any data holder, Data Sources › Fetch and confirm" aria-pressed="false" data-node-kind="cloud" data-node-sublabel="any data holder" data-node-context="Data Sources › Fetch and confirm">
@@ -672,8 +672,8 @@
           <h3>Private buckets</h3>
         </div>
         <ul>
-          <li>&bull; Primaries serve reads only to members; provider accounts are not members</li>
-          <li>&bull; A replica syncs from other replicas or any data holder instead of the primaries</li>
+          <li>&bull; Primaries reject GET /mmr_peaks: a replica provider is not a member</li>
+          <li>&bull; The replica syncs from other replicas or any data holder instead</li>
           <li>&bull; Replicas serve everyone, on public and private buckets</li>
         </ul>
       </div>
