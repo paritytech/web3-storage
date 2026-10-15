@@ -2,6 +2,8 @@
 
 //! API types for the provider node.
 
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
+use provider_storage::ChunkTreeNode;
 use serde::{Deserialize, Serialize};
 use storage_primitives::BucketId;
 
@@ -37,6 +39,27 @@ pub struct DownloadNodeResponse {
     pub hash: String,
     pub data: String,
     pub children: Option<Vec<String>>,
+}
+
+impl DownloadNodeResponse {
+    /// The wire form of `node`, which is stored under `hash`.
+    pub fn new(hash: String, node: &ChunkTreeNode) -> Self {
+        let children = match node {
+            ChunkTreeNode::Chunk(_) => None,
+            ChunkTreeNode::Internal(children) => Some(
+                children
+                    .iter()
+                    .map(|h| format!("0x{}", hex::encode(h.as_bytes())))
+                    .collect(),
+            ),
+        };
+
+        Self {
+            hash,
+            data: BASE64.encode(node.preimage()),
+            children,
+        }
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -321,18 +344,10 @@ pub struct FetchNodesRequest {
     pub hashes: Vec<String>,
 }
 
-/// Fetched node data.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FetchedNode {
-    pub hash: String,
-    pub data: String,
-    pub children: Option<Vec<String>>,
-}
-
 /// Response with fetched nodes.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FetchNodesResponse {
-    pub nodes: Vec<FetchedNode>,
+    pub nodes: Vec<DownloadNodeResponse>,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

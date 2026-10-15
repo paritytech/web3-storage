@@ -7,6 +7,7 @@
 //!
 //! [`types`]: super::types
 
+use super::types::FORMAT_VERSION;
 use super::{BucketInfo, BucketState, BucketStats, BucketSummary, ChunkTreeNode, StorageBackend};
 use crate::error::Error;
 use codec::{DecodeAll, Encode};
@@ -22,25 +23,8 @@ const CF_BUCKETS: &str = "buckets";
 const CF_ROOT_TO_BUCKET: &str = "root_to_bucket";
 const CF_METADATA: &str = "metadata";
 
-/// Held the provider-allocated agreement nonce in [`CF_METADATA`] before
-/// nonces moved on chain (per-owner `AgreementNonces`). Deleted when an
-/// existing database is opened.
-const LEGACY_KEY_NONCE: &[u8] = b"nonce_counter";
-
 /// RocksDB key for the persisted format version.
 const KEY_FORMAT_VERSION: &[u8] = b"format_version";
-
-/// Current on-disk format version.
-///
-/// Bump this whenever a change alters what `ChunkTreeNode` or `BucketState`
-/// encode to, or how a node hash or a stored root is computed, so this build
-/// fails loudly on an incompatible database instead of silently misreading
-/// its bytes.
-/// See <https://github.com/paritytech/web3-storage/issues/375>.
-///
-/// Version 2 hashes leaves, nodes and MMR peaks with different prefixes;
-/// version 1 databases hold untagged node keys and roots.
-const FORMAT_VERSION: u32 = 2;
 
 /// Disk-based storage backend using RocksDB.
 pub struct DiskStorage {
@@ -57,11 +41,6 @@ impl DiskStorage {
 
         let cf_names = vec![CF_NODES, CF_BUCKETS, CF_ROOT_TO_BUCKET, CF_METADATA];
         let db = DB::open_cf(&opts, path, &cf_names)?;
-
-        let cf = db
-            .cf_handle(CF_METADATA)
-            .ok_or(Error::ColumnFamilyMissing(CF_METADATA))?;
-        db.delete_cf(&cf, LEGACY_KEY_NONCE)?;
 
         Self::check_format_version(&db)?;
 
@@ -113,8 +92,8 @@ impl DiskStorage {
                 .ok_or(Error::ColumnFamilyMissing(cf_name))?;
             if db
                 .iterator_cf(&cf, rocksdb::IteratorMode::Start)
-                .flatten()
                 .next()
+                .transpose()?
                 .is_some()
             {
                 return Ok(false);
@@ -295,12 +274,12 @@ impl DiskStorage {
             }
         }
 
-        // Check quota. An internal node costs a fixed 64 B (two H256
-        // children) regardless of what it once cost to store its preimage.
+        // Check quota.
         let mut bucket = self
             .get_bucket(bucket_id)
             .ok_or(Error::BucketNotFound(bucket_id))?;
 
+        // An internal node costs a fixed 64 B (two H256 children).
         let charge: u64 = match &node {
             ChunkTreeNode::Chunk(data) => data.len() as u64,
             ChunkTreeNode::Internal(_) => 64,
@@ -678,43 +657,6 @@ mod tests {
         );
     }
 
-    /// A database written before nonces moved on chain still opens, keeps
-    /// its records and format version, and loses the legacy nonce key.
-    #[test]
-    fn opening_deletes_legacy_nonce_key() {
-        let dir = TempDir::new().unwrap();
-        DiskStorage::new(dir.path()).unwrap();
-        {
-            let opts = Options::default();
-            let db = DB::open_cf(
-                &opts,
-                dir.path(),
-                [CF_NODES, CF_BUCKETS, CF_ROOT_TO_BUCKET, CF_METADATA],
-            )
-            .unwrap();
-            let cf = db.cf_handle(CF_METADATA).unwrap();
-            db.put_cf(&cf, LEGACY_KEY_NONCE, 7u64.to_le_bytes())
-                .unwrap();
-            let cf = db.cf_handle(CF_BUCKETS).unwrap();
-            db.put_cf(&cf, 1u64.to_le_bytes(), BucketState::new(1_000).encode())
-                .unwrap();
-        }
-
-        let storage = DiskStorage::new(dir.path()).unwrap();
-        let cf = storage.db.cf_handle(CF_METADATA).unwrap();
-        assert!(storage.db.get_cf(&cf, LEGACY_KEY_NONCE).unwrap().is_none());
-        assert!(storage
-            .db
-            .get_cf(&cf, KEY_FORMAT_VERSION)
-            .unwrap()
-            .is_some());
-        assert!(storage.get_bucket(1).is_some());
-        drop(storage);
-
-        // Reopening a migrated database is a no-op.
-        DiskStorage::new(dir.path()).unwrap();
-    }
-
     #[test]
     fn store_node_rejects_internal_node_whose_children_disagree_with_expected_hash() {
         let dir = TempDir::new().unwrap();
@@ -829,7 +771,7 @@ mod tests {
     }
 
     #[test]
-    fn internal_node_charges_the_same_64_bytes_as_before_the_refactor() {
+    fn internal_node_charges_constant_amount_of_bytes() {
         let dir = TempDir::new().unwrap();
         let storage = DiskStorage::new(dir.path()).unwrap();
         let bucket_id: BucketId = 1;
@@ -920,12 +862,12 @@ mod tests {
         DiskStorage::new(dir.path()).expect("reopening this build's own database must succeed");
     }
 
-    /// Create a database, then overwrite its recorded format version directly,
-    /// bypassing `DiskStorage::new`, and try to open it again.
-    fn open_with_recorded_version(version: u32) -> Result<DiskStorage, Error> {
+    #[test]
+    fn opening_a_database_with_a_different_format_version_fails() {
         let dir = TempDir::new().unwrap();
         DiskStorage::new(dir.path()).unwrap();
 
+        // Corrupt the recorded version directly, bypassing DiskStorage::new.
         let mut opts = Options::default();
         opts.create_if_missing(true);
         opts.create_missing_column_families(true);
@@ -936,27 +878,11 @@ mod tests {
         )
         .unwrap();
         let cf = db.cf_handle(CF_METADATA).unwrap();
-        db.put_cf(&cf, KEY_FORMAT_VERSION, version.to_le_bytes())
+        db.put_cf(&cf, KEY_FORMAT_VERSION, 9999u32.to_le_bytes())
             .unwrap();
         drop(db);
 
-        DiskStorage::new(dir.path())
-    }
-
-    #[test]
-    fn opening_a_database_with_a_different_format_version_fails() {
-        match open_with_recorded_version(9999) {
-            Err(Error::IncompatibleFormat(_)) => {}
-            other => panic!(
-                "expected an incompatible-format error, got {}",
-                other.is_ok()
-            ),
-        }
-    }
-
-    #[test]
-    fn opening_a_database_written_with_untagged_hashes_fails() {
-        match open_with_recorded_version(1) {
+        match DiskStorage::new(dir.path()) {
             Err(Error::IncompatibleFormat(_)) => {}
             other => panic!(
                 "expected an incompatible-format error, got {}",

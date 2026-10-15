@@ -479,6 +479,37 @@ common::backend_tests! {
     }
 }
 
+common::backend_tests! {
+    async fn test_upload_internal_node_rejects_data_that_is_not_its_children(backend) {
+        let server = TestServer::new(backend).await;
+
+        let left = "0x0000000000000000000000000000000000000000000000000000000000000001";
+        let right = "0x0000000000000000000000000000000000000000000000000000000000000002";
+        let hash = storage_primitives::hash_children(
+            H256::from_slice(&hex_decode(left).unwrap()),
+            H256::from_slice(&hex_decode(right).unwrap()),
+        );
+
+        let response = server
+            .client
+            .put(server.url("/node"))
+            .json(&json!({
+                "bucket_id": 1,
+                "hash": format!("0x{}", hex_encode(hash.as_bytes())),
+                "data": BASE64.encode(b"unrelated bytes"),
+                "children": [left, right],
+            }))
+            .send()
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+        let body: Value = response.json().await.unwrap();
+        assert_eq!(body["error"], "invalid_internal_node_data");
+    }
+}
+
 /// The hash of an internal node from its data (`left ++ right`).
 fn rehash_node(data: &[u8]) -> sp_core::H256 {
     storage_primitives::hash_children(

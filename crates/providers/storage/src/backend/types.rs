@@ -13,8 +13,8 @@
 //! [`MmrLeaf`] - changes that format, and a provider restarted on data written
 //! by the previous build will fail to decode it. The golden-vector tests in
 //! [`tests::compatibility_tests`] pin the encoding byte-for-byte so such a change breaks the build
-//! instead of a live provider; when one is intended, it needs a versioning and
-//! migration story (see issue #375) alongside the new vectors.
+//! instead of a live provider; when one is intended, bump [`FORMAT_VERSION`]
+//! alongside the new vectors.
 //!
 //! [`StorageBackend`]: super::StorageBackend
 
@@ -22,6 +22,13 @@ use crate::error::Error;
 use codec::{Decode, Encode};
 use sp_core::H256;
 use storage_primitives::{hash_children, MmrLeaf};
+
+/// Version of the on-disk encoding of the records in this module.
+///
+/// Bump it whenever a change alters what [`ChunkTreeNode`] or [`BucketState`]
+/// encode to, so a build fails on a database in another format instead of
+/// misreading its bytes.
+pub const FORMAT_VERSION: u32 = 1;
 
 /// Per-bucket state a backend persists: the bucket's MMR and its quota usage.
 #[derive(Debug, Clone, PartialEq, Encode, Decode)]
@@ -85,6 +92,21 @@ impl ChunkTreeNode {
             .map_err(|_| Error::InvalidChildCount(count))
     }
 
+    /// Build a node from the `data` and optional `children` a peer sent.
+    ///
+    /// Without children the node is a chunk. With children it is an internal
+    /// node, and `data` must be the concatenation of its two child hashes.
+    pub fn from_wire(data: Vec<u8>, children: Option<Vec<H256>>) -> Result<Self, Error> {
+        let Some(children) = children else {
+            return Ok(Self::Chunk(data));
+        };
+        let node = Self::internal(children)?;
+        if node.preimage() != data {
+            return Err(Error::InvalidInternalNodeData);
+        }
+        Ok(node)
+    }
+
     /// The bytes this node serves as data: `data` for a chunk,
     /// `concat(children)` for an internal node. The node's hash is taken over
     /// these bytes behind a prefix that depends on the node kind, see [`Self::hash`].
@@ -115,9 +137,8 @@ mod tests {
     use codec::DecodeAll;
 
     /// Pins the exact bytes these records encode to. A failure here means
-    /// existing provider databases can no longer be decoded - a storage
-    /// version/migration is required
-    /// (see <https://github.com/paritytech/web3-storage/issues/375>).
+    /// existing provider databases can no longer be decoded - bump
+    /// `FORMAT_VERSION`.
     ///
     /// The raw keys and values a backend writes around them are pinned by that
     /// backend, e.g. `rocksdb::tests::on_disk_bytes`.
@@ -243,6 +264,42 @@ mod tests {
             total_size: 222,
         });
         assert_eq!(bucket.leaf_count(), 1);
+    }
+
+    #[test]
+    fn from_wire_without_children_is_a_chunk() {
+        assert_eq!(
+            ChunkTreeNode::from_wire(vec![1, 2, 3], None).unwrap(),
+            ChunkTreeNode::Chunk(vec![1, 2, 3])
+        );
+    }
+
+    #[test]
+    fn from_wire_accepts_internal_node_whose_data_is_its_children() {
+        let (left, right) = (H256::repeat_byte(1), H256::repeat_byte(2));
+        let data = [left.as_bytes(), right.as_bytes()].concat();
+        assert_eq!(
+            ChunkTreeNode::from_wire(data, Some(vec![left, right])).unwrap(),
+            ChunkTreeNode::Internal([left, right])
+        );
+    }
+
+    #[test]
+    fn from_wire_rejects_wrong_child_count() {
+        let child = H256::repeat_byte(1);
+        assert!(matches!(
+            ChunkTreeNode::from_wire(child.as_bytes().to_vec(), Some(vec![child])),
+            Err(Error::InvalidChildCount(1))
+        ));
+    }
+
+    #[test]
+    fn from_wire_rejects_internal_node_data_that_differs_from_its_children() {
+        let (left, right) = (H256::repeat_byte(1), H256::repeat_byte(2));
+        assert!(matches!(
+            ChunkTreeNode::from_wire(Vec::new(), Some(vec![left, right])),
+            Err(Error::InvalidInternalNodeData)
+        ));
     }
 
     #[test]

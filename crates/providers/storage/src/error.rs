@@ -15,6 +15,9 @@ pub enum Error {
     #[error("Invalid child count: expected 2, got {0}")]
     InvalidChildCount(usize),
 
+    #[error("Internal node data is not the concatenation of its children")]
+    InvalidInternalNodeData,
+
     #[error("Quota exceeded: used {used}, max {max}")]
     QuotaExceeded { used: u64, max: u64 },
 
