@@ -49,9 +49,9 @@ impl fmt::Display for StorageBackendSpec {
 
 /// Result of committing data roots to a bucket's MMR.
 ///
-/// All fields are computed under one lock, so `leaf_count` is consistent with
-/// `mmr_root` — never re-read it separately, a concurrent commit/delete could
-/// desync the two.
+/// `mmr_root` and `leaf_count` come from the same bucket state, so they are
+/// consistent with each other; a separate read could see a later commit or
+/// delete.
 #[derive(Debug, Clone)]
 pub struct CommitOutcome {
     /// MMR root after the commit.
