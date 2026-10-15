@@ -455,10 +455,11 @@ Hashes of private content are unguessable, and every surface that would
 *reveal* them — walking the MMR from its peaks, listing a node's buckets — is
 gated. The accepted limits: anyone a hash was ever shared with keeps byte
 access for as long as the data is hosted (revocation means re-encrypting),
-and an on-chain challenge response publishes a chunk plus its sibling hashes,
-opening that subtree. Binding hash-keyed reads to buckets would mean per-node
-ownership indexes over a deduplicated store; take that on only if capability
-semantics prove too weak in practice.
+and an on-chain challenge response publishes the challenged leaf's `data_root`
+in its MMR proof, which opens the whole upload behind that leaf. With
+client-side encryption, those bytes are ciphertext. Binding hash-keyed reads to
+buckets would mean per-node ownership indexes over a deduplicated store; take
+that on only if capability semantics prove too weak in practice.
 
 Two serving allowances follow from roles, not membership: a **replica** serves
 every read to everyone (the rule above — visibility binds primaries only), and
