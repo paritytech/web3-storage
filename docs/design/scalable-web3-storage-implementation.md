@@ -2597,12 +2597,7 @@ fn verify_challenge_response(
             // Bound to the challenged leaf: the expected path and peak are derived
             // from (target.leaf_index, commitment.leaf_count), so a proof for a
             // different leaf of the same MMR does not verify.
-            let mmr_ok = verify_mmr_proof(
-                mmr_proof,
-                challenge.target.leaf_index,
-                challenge.commitment.leaf_count,
-                &challenge.commitment.mmr_root,
-            );
+            let mmr_ok = verify_mmr_proof(mmr_proof, challenge.target.leaf_index, &challenge.commitment);
             if chunk_ok && mmr_ok { Ok(()) } else { Err(Error::InvalidProof) }
         }
 
