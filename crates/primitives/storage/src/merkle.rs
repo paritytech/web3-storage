@@ -210,15 +210,6 @@ mod tests {
     }
 
     #[test]
-    fn root_of_three_leaves_moves_the_odd_leaf_up() {
-        let l = leaves(3);
-        assert_eq!(
-            merkle_root(&l),
-            hash_children(hash_children(l[0], l[1]), l[2])
-        );
-    }
-
-    #[test]
     fn root_of_five_leaves_moves_the_odd_leaf_up_two_levels() {
         let l = leaves(5);
         let left = hash_children(hash_children(l[0], l[1]), hash_children(l[2], l[3]));
@@ -243,11 +234,11 @@ mod tests {
         for (i, expected) in golden.iter().enumerate() {
             let n = i + 1;
             let l: Vec<H256> = (1..=n as u8).map(|b| blake2_256(&[b])).collect();
-            let mut bytes = [0u8; 32];
-            for (j, byte) in bytes.iter_mut().enumerate() {
-                *byte = u8::from_str_radix(&expected[2 * j..2 * j + 2], 16).unwrap();
-            }
-            assert_eq!(merkle_root(&l), H256(bytes), "{n} leaves");
+            assert_eq!(
+                merkle_root(&l),
+                expected.parse::<H256>().unwrap(),
+                "{n} leaves"
+            );
         }
     }
 

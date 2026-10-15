@@ -946,6 +946,21 @@ mod tests {
                 .parse::<H256>()
                 .unwrap()
         );
+
+        // `/commit` accepts only canonical chunk sizes, so the MMR vector
+        // commits the single chunk `abc`, whose root is its leaf hash.
+        let abc = hash_leaf(b"abc");
+        storage
+            .store_node(1, abc, ChunkTreeNode::Chunk(b"abc".to_vec()))
+            .unwrap();
+        let (mmr_root, _, leaf_indices) = storage.commit(1, vec![abc]).unwrap();
+        assert_eq!(leaf_indices, vec![0]);
+        assert_eq!(
+            mmr_root,
+            "5892aeee490d7378e4dcabfaf79053c3073ece6437f74c001c82a55de8ac977c"
+                .parse::<H256>()
+                .unwrap()
+        );
     }
 
     #[test]

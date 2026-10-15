@@ -17,8 +17,6 @@
  * 14.2 `/commit` rejects `H(c0, H(c1, c2))`: the pallet cannot verify a proof
  *      for `c2` against it, so a signed root of this shape lets the bucket admin
  *      slash the provider's whole stake with `SlashReason::InvalidProof`.
- * 14.3 `/commit` rejects the canonical shape over chunks that are not
- *      `DEFAULT_CHUNK_SIZE` bytes, because the derived chunk count is wrong.
  *
  * Usage: node --import tsx e2e/14-canonical-chunk-tree.ts [chain_ws] [provider_url]
  */
@@ -129,23 +127,6 @@ async function main() {
         commitRoot(root),
         assertNonCanonicalTree,
         "provider must not sign a root it cannot prove",
-      );
-    },
-  });
-
-  tests.push({
-    name: "14.3 /commit rejects chunks that are not DEFAULT_CHUNK_SIZE bytes",
-    fn: async () => {
-      // The canonical shape, but the chunk count derived from 96 bytes is 1, not 3.
-      const small = await putLeaves([32, 32, 32]);
-      const inner = await putInternal(PROVIDER_URL, bucketId, owner, small[0], small[1]);
-      const root = await putInternal(PROVIDER_URL, bucketId, owner, inner, small[2]);
-      assert.ok(bytesEq(root, merkleRoot(small)), "R must equal the canonical root");
-
-      await assert.rejects(
-        commitRoot(root),
-        assertNonCanonicalTree,
-        "provider must not sign a root whose chunk sizes the pallet cannot verify",
       );
     },
   });

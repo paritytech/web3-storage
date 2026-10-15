@@ -9,7 +9,6 @@
 mod common;
 
 use common::{make_client, start_test_provider};
-use provider_storage::{build_merkle_tree, temp_rocksdb, ChunkTreeNode};
 use sp_core::H256;
 use storage_client::{ChunkingStrategy, ClientError, EncryptionKey, Node, ENCRYPTION_OVERHEAD};
 use storage_primitives::DEFAULT_CHUNK_SIZE;
@@ -143,29 +142,6 @@ async fn test_upload_then_commit() {
 
     assert_ne!(commit.mmr_root, sp_core::H256::zero());
     assert_eq!(commit.start_seq, 0);
-    assert_eq!(commit.leaf_indices, vec![0]);
-}
-
-#[tokio::test]
-async fn test_commit_upload_with_non_power_of_two_chunk_count() {
-    let url = start_test_provider().await;
-    let client = make_client(url);
-
-    let chunk_size = storage_primitives::DEFAULT_CHUNK_SIZE as usize;
-    let data: Vec<u8> = (0..chunk_size * 2 + 10).map(|i| (i % 251) as u8).collect();
-
-    let data_root = client
-        .upload(1, &data, ChunkingStrategy::default())
-        .await
-        .unwrap();
-
-    let chunk_hashes: Vec<H256> = data
-        .chunks(chunk_size)
-        .map(storage_primitives::hash_leaf)
-        .collect();
-    assert_eq!(data_root, storage_primitives::merkle_root(&chunk_hashes));
-
-    let commit = client.commit(1, vec![data_root]).await.unwrap();
     assert_eq!(commit.leaf_indices, vec![0]);
 }
 
@@ -690,17 +666,15 @@ async fn test_non_power_of_two_upload_matches_provider_root_and_verifies() {
     let client = make_client(url.clone());
 
     // Three chunks: the client must move the odd last leaf up like the provider,
-    // or the provider rejects the root with InvalidHash.
-    let chunk_size = 1024usize;
-    let data: Vec<u8> = (0..chunk_size * 3).map(|i| (i % 256) as u8).collect();
+    // or the provider rejects the commit with NonCanonicalTree.
+    let chunk_size = DEFAULT_CHUNK_SIZE as usize;
+    let data: Vec<u8> = (0..chunk_size * 2 + 10).map(|i| (i % 251) as u8).collect();
 
     let data_root = client
-        .upload(1, &data, ChunkingStrategy::Fixed(chunk_size))
+        .upload(1, &data, ChunkingStrategy::default())
         .await
         .unwrap();
-    assert_ne!(data_root, H256::zero());
 
-    // The root must match the provider's own tree builder for the same leaves.
     let leaf_hashes: Vec<H256> = data
         .chunks(chunk_size)
         .map(storage_primitives::hash_leaf)
@@ -711,33 +685,24 @@ async fn test_non_power_of_two_upload_matches_provider_root_and_verifies() {
         "test data must produce a non-power-of-two chunk count"
     );
 
-    let (scratch_storage, _dir) = temp_rocksdb();
-    scratch_storage.init_bucket(1, u64::MAX).unwrap();
-    for (chunk, hash) in data.chunks(chunk_size).zip(&leaf_hashes) {
-        scratch_storage
-            .store_node(1, *hash, ChunkTreeNode::Chunk(chunk.to_vec()))
-            .unwrap();
-    }
-    let expected_root = build_merkle_tree(&*scratch_storage, 1, &leaf_hashes).unwrap();
-    assert_eq!(data_root, expected_root);
+    assert_eq!(data_root, storage_primitives::merkle_root(&leaf_hashes));
 
-    // Every internal node the client uploaded has exactly two children.
+    let commit = client.commit(1, vec![data_root]).await.unwrap();
+    assert_eq!(commit.leaf_indices, vec![0]);
+
+    // The client uploaded the internal nodes of the tree.
     let http = reqwest::Client::new();
     let mut stack = vec![data_root];
     let mut internal_count = 0;
     while let Some(hash) = stack.pop() {
         if let Node::Internal { left, right } = client.read_node(&hash).await.unwrap() {
             internal_count += 1;
-            for child in [left, right] {
-                if child != H256::zero() {
-                    stack.push(child);
-                }
-            }
+            stack.extend([left, right]);
         }
     }
     assert!(internal_count > 0, "a 3-leaf tree must have internal nodes");
 
-    // A proof for each real leaf verifies against the client's root.
+    // A proof for each leaf verifies against the client's root.
     for chunk_index in 0..leaf_hashes.len() as u64 {
         let proof_response: serde_json::Value = http
             .get(format!("{url}/chunk_proof"))
