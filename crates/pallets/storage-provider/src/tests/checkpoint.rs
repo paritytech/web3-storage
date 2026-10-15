@@ -159,3 +159,56 @@ fn extend_checkpoint_skips_primary_that_already_signed() {
         assert!(snapshot.has_provider_signed(1));
     });
 }
+
+#[test]
+fn extend_checkpoint_skips_duplicate_signer_in_same_call() {
+    new_test_ext().execute_with(|| {
+        // Signature checks need real primaries, so set up agreements.
+        run_to_block(1);
+        register_provider(2, 200);
+        register_provider(3, 200);
+        let bucket_id = setup_agreement(2, 1, 50, 100);
+
+        let commitment = Commitment {
+            mmr_root: H256::repeat_byte(0xAB),
+            start_seq: 0,
+            leaf_count: 10,
+        };
+        assert_ok!(StorageProvider::checkpoint(
+            RuntimeOrigin::signed(1),
+            bucket_id,
+            commitment,
+            vec![(2, sign_commitment(2, bucket_id, commitment))]
+                .try_into()
+                .unwrap(),
+        ));
+        setup_added_primary(3, 1, bucket_id, 50, 100);
+
+        // The first entry sets provider 3's bit, so the second (invalid) entry
+        // is skipped without verification.
+        let other_commitment = Commitment {
+            mmr_root: H256::repeat_byte(0xCD),
+            ..commitment
+        };
+        assert_ok!(StorageProvider::extend_checkpoint(
+            RuntimeOrigin::signed(1),
+            bucket_id,
+            vec![
+                (3, sign_commitment(3, bucket_id, commitment)),
+                (3, sign_commitment(3, bucket_id, other_commitment)),
+            ]
+            .try_into()
+            .unwrap(),
+        ));
+        System::assert_last_event(
+            Event::BucketCheckpointed {
+                bucket_id,
+                commitment,
+                providers: vec![3],
+            }
+            .into(),
+        );
+        let snapshot = Buckets::<Test>::get(bucket_id).unwrap().snapshot.unwrap();
+        assert!(snapshot.has_provider_signed(1));
+    });
+}
