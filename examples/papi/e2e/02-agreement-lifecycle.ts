@@ -24,7 +24,6 @@ import {
   endAgreement,
   ensureProviderRegistered,
   makeSigner,
-  negotiateTerms,
   READ_OPTS,
   sameAddress,
   waitForRelayBlock,
@@ -178,7 +177,7 @@ async function main() {
       };
       await api.tx.StorageProvider.create_bucket_with_primary(args).createAndSubmit(client.signer);
       const replay = api.tx.StorageProvider.create_bucket_with_primary(args);
-      await submitTxExpectFailure(replay, client.signer, "NonceAlreadyUsed", "2.6");
+      await submitTxExpectFailure(replay, client.signer, "NonceMismatch", "2.6");
     },
   });
 
@@ -218,13 +217,10 @@ async function main() {
       // signature as consent to those terms.
       await assertNegotiateRejects(
         () =>
-          negotiateTerms(PROVIDER_URL, {
-            owner: client.address,
-            max_bytes: maxBytes,
+          negotiateSigned(api, PROVIDER_URL, client, provider, {
+            maxBytes,
             duration,
-            price_per_byte: 0n,
-            replica_params: null,
-            bucket: null,
+            pricePerByte: 0n,
           }),
         "price_below_listed",
         "2.9"

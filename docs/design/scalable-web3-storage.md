@@ -4,14 +4,15 @@
 | --- | --- |
 | **Authors** | eskimor |
 | **Status** | Draft |
-| **Version** | 2.5 |
+| **Version** | 2.6 |
 | **Related** | [Implementation Details](./scalable-web3-storage-implementation.md), [Proof-of-DOT Infrastructure Strategy](https://docs.google.com/document/d/1fNv75FCEBFkFoG__s_Xu10UZd0QsGIE9AKnrouzz-U8/) |
 
 ## Version History
 
 | Version | Changes |
 |---------|---------|
-| 2.5 | Stake, agreements and provider signatures reworked for virtual providers (stake changeable and snapshotted per agreement; no stake-per-byte rule; quotes carry no price or version, the client pins `expected_version`; per-owner quote nonce; one-step deregistration; owner-only extension; replacement agreements (virtual providers only); provider refund; `ProviderSignatures` sets; `MaxPrimarySlots` counts physical signers; duplicate challenge responses dropped for free; `extend_challenge`; replica syncs must advance the commitment end, `historical_roots` keep commitments; replacement agreements for replicas activate by `confirm_replica_sync`; an activation flag on `checkpoint` and `confirm_replica_sync` selects the pending replacement; replica syncs sign `ReplicaSyncPayload` (`version`, `genesis_hash`, `bucket_id`, `agreement_id`, `roots`); every provider-signed payload includes the genesis hash; `BucketId` and `AgreementId` are newtypes; provider discovery off-chain; `create_bucket_with_storage`, provider-initiated checkpoints, `find_matching_providers`, `challenge_candidates` removed; typed runtime API responses). **Read**: "Provider Stake", "Storage Agreements" here; impl doc "Changeable Stake", "Stake vs. capacity", "Term Pinning", "Replacement agreements", `confirm_replica_sync`, "Provider Public Key & Signature Type", `CommitmentPayload` ("Chain binding"), "Transaction extension for raced calls", "Runtime API", "Off-Chain: Provider Node API"; [Virtual Provider Extension](./001-virtual-provider-extension.md). |
+| 2.6 | Stake, agreements and provider signatures reworked for virtual providers (stake changeable and snapshotted per agreement; no stake-per-byte rule; quotes carry no price or version, the client pins `expected_version`; per-owner quote nonce; one-step deregistration; owner-only extension; replacement agreements (virtual providers only); provider refund; `ProviderSignatures` sets; `MaxPrimarySlots` counts physical signers; duplicate challenge responses dropped for free; `extend_challenge`; replica syncs must advance the commitment end, `historical_roots` keep commitments; replacement agreements for replicas activate by `confirm_replica_sync`; an activation flag on `checkpoint` and `confirm_replica_sync` selects the pending replacement; replica syncs sign `ReplicaSyncPayload` (`version`, `genesis_hash`, `bucket_id`, `agreement_id`, `roots`); every provider-signed payload includes the genesis hash; `BucketId` and `AgreementId` are newtypes; provider discovery off-chain; `create_bucket_with_storage`, provider-initiated checkpoints, `find_matching_providers`, `challenge_candidates` removed; typed runtime API responses). **Read**: "Provider Stake", "Storage Agreements" here; impl doc "Changeable Stake", "Stake vs. capacity", "Term Pinning", "Replacement agreements", `confirm_replica_sync`, "Provider Public Key & Signature Type", `CommitmentPayload` ("Chain binding"), "Transaction extension for raced calls", "Runtime API", "Off-Chain: Provider Node API"; [Virtual Provider Extension](./001-virtual-provider-extension.md). |
+| 2.5 | Challenge resolution and slashing are lazy: an unanswered challenge is slashed by the permissionless `resolve_expired_challenge` call (no per-block sweep). A timeout is the only slash reason. **Read**: "The Challenge Game", Resolution; `resolve_expired_challenge` in [Implementation Details](./scalable-web3-storage-implementation.md). |
 | 2.4 | Bucket creation and provider assignment are separate on-chain operations: `create_bucket`, `create_bucket_with_primary`, `add_primary_provider`, `add_replica_provider`. Provider-signed quotes name the bucket they are for. A bucket remains after its last agreement ends and can get new providers later; the client moves the data when a provider is added. **Read**: "Buckets: Stable Identity in a Fluid Provider Market"; "Two Classes of Providers"; "Provider Lifecycle in Bucket" in [Implementation Details](./scalable-web3-storage-implementation.md) for the four calls. |
 | 2.3 | Private buckets clarified (visibility flag, Reader role, primary challenges gated to members + primary-agreement owners, tier-split challenge stats). **Read**: new "Bucket Visibility & Access" section; "The Challenge Game". |
 | 2.2 | Challenge cost model reworked and clarified: a valid response never touches the provider's stake. The challenger's deposit covers the on-chain response cost; authorized challengers (bucket members + agreement owners) get a split where the provider bears a fraction (challenger's share floored at 50%, as leverage—not cheap recovery), while the general public pays in full (anti-DoS, since a provider can't serve everyone equally). Stake is slashed only on a missing/invalid response. |
@@ -645,7 +646,10 @@ below):
      from the challenger's deposit (in full, or only a fraction—see below).
      Any excess deposit is returned to the challenger.
    - Cancelled by challenger: Deposit returned (challenger paid only tx fees)
-   - Invalid/no proof: Provider's full stake slashed; challenger made whole
+   - Invalid proof: Response rejected (provider pays the tx fee); the
+     challenge stays open until the deadline
+   - No proof by the deadline: anyone submits `resolve_expired_challenge`
+     (free on success); provider's full stake slashed; challenger made whole
      from the slash (deposit and tx fees refunded—no reward beyond costs)
 ```
 
@@ -703,12 +707,12 @@ would make griefing cheap). Faster responses cost the provider less:
 | Blocks 96+ | 50% | 50% |
 
 The general public is not on this table: the challenger always pays 100%. (The
-failure case—no or invalid response—is separate: the provider's full stake is
-slashed and the challenger is made whole from it, per Resolution above.)
+failure case—no response by the deadline—is separate: the provider's full stake
+is slashed and the challenger is made whole from it, per Resolution above.)
 
 The net effect: a provider's *monetary* challenge exposure is bounded to the
 counterparties it chose to accept—strangers can be a nuisance but can't drain
-it—while a missing or invalid response always costs the full stake. Vetting whom
+it—while a missing response always costs the full stake. Vetting whom
 it signs agreements with is how a provider controls its risk.
 
 ### The Burn Option

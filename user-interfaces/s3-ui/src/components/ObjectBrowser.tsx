@@ -141,7 +141,7 @@ export default function ObjectBrowser() {
 
   const handleCopyKey = useCallback((key: string) => {
     const uri = selectedBucket
-      ? `s3://${selectedBucket.name || selectedBucket.s3BucketId}/${key}`
+      ? `s3://${selectedBucket.bucketId}/${key}`
       : key;
     navigator.clipboard.writeText(uri).then(
       () => toast({ title: "Copied", description: uri }),
@@ -154,7 +154,7 @@ export default function ObjectBrowser() {
   const { folders, files } = deriveEntries(objects, currentPrefix);
 
   const breadcrumbs = () => {
-    const bucketName = selectedBucket.name || `Bucket ${selectedBucket.s3BucketId}`;
+    const bucketName = `Bucket #${selectedBucket.bucketId}`;
     const segments: { label: string; prefix: string }[] = [
       { label: bucketName, prefix: "" },
     ];
@@ -273,7 +273,7 @@ export default function ObjectBrowser() {
         {showHistory ? (
           <div className="flex-1 pt-4">
             <ChallengeHistoryPanel
-              bucketId={selectedBucket.layer0BucketId ?? null}
+              bucketId={selectedBucket.bucketId}
               onClose={() => setShowHistory(false)}
             />
           </div>

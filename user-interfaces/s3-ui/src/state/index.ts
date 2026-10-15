@@ -78,7 +78,6 @@ export {
   retryCreation,
   canRetryCreation,
   dismissCreation,
-  deleteBucket,
   listAvailableProviders,
   queryMatchingProviders,
   fetchMembers,

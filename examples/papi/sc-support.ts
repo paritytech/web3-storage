@@ -13,7 +13,14 @@
  */
 
 import { ss58Address } from "@polkadot-labs/hdkd-helpers";
-import { negotiateTerms, signedTermsBucketId, toHex, type ChainSigner } from "@web3-storage/sdk";
+import {
+  getAgreementNonce,
+  negotiateTerms,
+  signedTermsBucketId,
+  toHex,
+  type ChainSigner,
+  type ParachainApi,
+} from "@web3-storage/sdk";
 
 /**
  * Derive a contract's substrate account from its H160 via the
@@ -39,6 +46,7 @@ export function h160ToSubstrate(addressBytes: Uint8Array): {
  * terms.
  */
 export async function negotiatePrecompileTerms(
+  api: ParachainApi,
   providerUrl: string,
   owner: { address: string; publicKey: Uint8Array } | ChainSigner,
   {
@@ -48,6 +56,7 @@ export async function negotiatePrecompileTerms(
     bucketId: existingBucket,
   }: { maxBytes: bigint; duration: number; pricePerByte: bigint; bucketId?: bigint }
 ) {
+  const nonce = await getAgreementNonce(api, owner.address);
   // `bucketId` set: a quote for an existing bucket (addPrimaryProvider);
   // unset: a quote that creates its bucket (createBucketWithPrimary).
   const signed = await negotiateTerms(providerUrl, {
@@ -55,6 +64,7 @@ export async function negotiatePrecompileTerms(
     max_bytes: BigInt(maxBytes),
     duration,
     price_per_byte: pricePerByte,
+    nonce,
     replica_params: null,
     bucket: existingBucket ?? null,
   });
