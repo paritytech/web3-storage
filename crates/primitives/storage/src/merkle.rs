@@ -316,9 +316,7 @@ mod tests {
         assert!(build_merkle_proofs(&leaves(3), 3..5).is_empty());
         assert_eq!(build_merkle_proofs(&leaves(7), 6..8).len(), 1);
         assert!(build_merkle_proofs(&leaves(7), 7..7).is_empty());
-        #[allow(clippy::reversed_empty_ranges)]
-        let reversed = 4..2;
-        assert!(build_merkle_proofs(&leaves(7), reversed).is_empty());
+        assert!(build_merkle_proofs(&leaves(7), Range { start: 4, end: 2 }).is_empty());
     }
 
     #[test]

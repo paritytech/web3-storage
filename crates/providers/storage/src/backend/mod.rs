@@ -333,8 +333,7 @@ mod tests {
             .collect();
         assert_eq!(clipped, chunks[3..]);
         assert!(storage.get_chunks_in_range(root, 7..9).unwrap().is_empty());
-        #[allow(clippy::reversed_empty_ranges)]
-        let reversed = 3..1;
+        let reversed = Range { start: 3, end: 1 };
         assert!(storage
             .get_chunks_in_range(root, reversed)
             .unwrap()
