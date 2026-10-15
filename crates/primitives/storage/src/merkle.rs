@@ -322,6 +322,8 @@ mod tests {
         assert!(build_merkle_proofs(&leaves(1), 1..2).is_empty());
         assert!(build_merkle_proofs(&leaves(3), 3..5).is_empty());
         assert_eq!(build_merkle_proofs(&leaves(7), 6..8).len(), 1);
+        assert!(build_merkle_proofs(&leaves(7), 7..7).is_empty());
+        assert!(build_merkle_proofs(&leaves(7), 4..2).is_empty());
     }
 
     #[test]

@@ -341,6 +341,7 @@ mod tests {
             .collect();
         assert_eq!(clipped, chunks[3..]);
         assert!(storage.get_chunks_in_range(root, 7..9).unwrap().is_empty());
+        assert!(storage.get_chunks_in_range(root, 3..1).unwrap().is_empty());
         assert!(matches!(
             storage.get_chunk_at_index(root, 5),
             Err(Error::NodeNotFound(_))

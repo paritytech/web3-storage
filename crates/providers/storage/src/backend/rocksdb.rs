@@ -718,6 +718,10 @@ mod tests {
         let (storage, _dir) = storage_with_bucket(COMMIT_QUOTA);
         let [c0, c1, c2] = [1, 2, 3].map(|b| store_chunk(&storage, b));
         let root = build_merkle_tree(&storage, BUCKET, &[c0, c1, c2]).unwrap();
+        assert_eq!(
+            root,
+            storage_primitives::hash_children(storage_primitives::hash_children(c0, c1), c2)
+        );
         storage.commit(BUCKET, vec![root, c0]).unwrap();
         let leaves = storage.get_bucket(BUCKET).unwrap().leaves;
         assert_eq!(leaves.len(), 2);
@@ -811,6 +815,24 @@ mod tests {
 
         let bucket = storage.get_bucket(BUCKET).unwrap();
         assert_eq!(bucket.used_bytes, used + 64);
+    }
+
+    #[test]
+    fn store_node_rejects_a_zero_child() {
+        let (storage, _dir) = storage_with_bucket(COMMIT_QUOTA);
+        let c0 = store_chunk(&storage, 1);
+        let hash = storage_primitives::hash_children(c0, H256::zero());
+        let err = storage
+            .store_node(
+                BUCKET,
+                hash,
+                ChunkTreeNode::Internal {
+                    left: c0,
+                    right: H256::zero(),
+                },
+            )
+            .unwrap_err();
+        assert!(matches!(err, Error::ChildrenMissing(_)), "got {err:?}");
     }
 
     #[test]
