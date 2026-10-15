@@ -944,7 +944,7 @@ The chunks are the leaves of a binary Merkle tree with the shape defined in RFC 
 ```
 Internal Node
 ├── hash: H256 = blake2_256(0x01 ++ left ++ right)
-├── children: [H256, H256]
+├── children: [left: H256, right: H256]
 ```
 
 A tree over `n > 1` chunks splits at `k`, the largest power of two smaller than `n`: the left subtree covers chunks `0..k`, the right subtree covers chunks `k..n`. Pairing adjacent nodes left to right at each level and moving an unpaired last node up unchanged builds the same tree. There is no padding: every position in the tree is a chunk or a node over chunks. A tree over one chunk is that chunk's hash. Empty data has no tree and cannot be committed.
