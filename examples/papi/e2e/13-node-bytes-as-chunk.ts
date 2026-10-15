@@ -15,7 +15,10 @@
  *
  * Chunks hash with prefix `0x00` and internal nodes with `0x01`, so the 64
  * bytes of `L` (`hash(c0) || hash(c1)`) with the 1-step proof `[R]` do not
- * verify as chunk 0, and the chain rejects them with `InvalidProof`.
+ * verify as chunk 0, and the chain rejects them with `InvalidProof`. The chain
+ * derives the chunk count (4) from the data size, so it also rejects the
+ * 1-step proof for its length. `internal_node_bytes_do_not_verify_as_a_chunk`
+ * in `crates/primitives/storage/src/lib.rs` tests the prefixes alone.
  *
  * 13.1 The provider answers a challenge on chunk 0 with the real chunk.
  * 13.2 A response to a challenge on chunk 0 with the bytes of `L` and the

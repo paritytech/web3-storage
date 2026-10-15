@@ -246,7 +246,7 @@ pub trait StorageBackend: Send + Sync {
     fn get_mmr_peaks(&self, bucket_id: BucketId) -> Result<(H256, Vec<H256>), Error>;
 }
 
-/// Build a balanced Merkle tree from leaf hashes, storing intermediate nodes in storage.
+/// Build the Merkle tree over leaf hashes, storing the internal nodes in storage.
 ///
 /// An odd last node of a level moves up unchanged. Returns the tree root hash,
 /// or the first error from storing an intermediate node.

@@ -97,7 +97,7 @@ pub async fn fs_put_file(
         })
         .collect::<Result<Vec<_>, Error>>()?;
 
-    // 3. Build balanced Merkle tree
+    // 3. Build the Merkle tree
     let data_root = build_merkle_tree(&*state.storage, bucket_id, &chunk_hashes)?;
 
     // 4. Commit data_root to MMR
