@@ -15,10 +15,11 @@ use crate::error::Error;
 use serde::{Deserialize, Serialize};
 use sp_core::H256;
 use std::fmt;
+use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::Arc;
 use storage_primitives::{
-    build_merkle_proof, merkle_root, merkle_tree, BucketId, DEFAULT_CHUNK_SIZE,
+    build_merkle_proofs, merkle_root, merkle_tree, BucketId, MerkleProof, DEFAULT_CHUNK_SIZE,
 };
 
 /// Which backend to build, and what that backend needs.
@@ -193,26 +194,38 @@ pub trait StorageBackend: Send + Sync {
         &self,
         data_root: H256,
         chunk_index: u64,
-    ) -> Result<(Vec<u8>, storage_primitives::MerkleProof), Error> {
+    ) -> Result<(Vec<u8>, MerkleProof), Error> {
+        self.get_chunks_in_range(data_root, chunk_index..chunk_index.saturating_add(1))?
+            .pop()
+            .ok_or_else(|| Error::NodeNotFound(format!("chunk_{chunk_index}")))
+    }
+
+    /// Get the data and Merkle proof of each chunk with an index in `range`
+    /// from a data root, with one walk of the tree. Leaves out indices past the
+    /// last chunk.
+    fn get_chunks_in_range(
+        &self,
+        data_root: H256,
+        range: Range<u64>,
+    ) -> Result<Vec<(Vec<u8>, MerkleProof)>, Error> {
         let chunk_hashes: Vec<H256> = self
             .collect_leaves(data_root)
             .into_iter()
             .map(|(hash, _)| hash)
             .collect();
 
-        if chunk_index as usize >= chunk_hashes.len() {
-            return Err(Error::NodeNotFound(format!("chunk_{chunk_index}")));
-        }
+        let end = range.end.min(chunk_hashes.len() as u64) as usize;
+        let start = (range.start as usize).min(end);
+        // `start..end` is within the leaf indices, so this is always `Some`.
+        let proofs = build_merkle_proofs(&chunk_hashes, start..end).unwrap_or_default();
 
-        let chunk_hash = chunk_hashes[chunk_index as usize];
-        let Some(ChunkTreeNode::Chunk(chunk_data)) = self.get_node(&chunk_hash) else {
-            return Err(Error::NodeNotFound(format!("chunk_data_{chunk_index}")));
-        };
-
-        let proof = build_merkle_proof(&chunk_hashes, chunk_index as usize)
-            .ok_or_else(|| Error::NodeNotFound(format!("chunk_{chunk_index}")))?;
-
-        Ok((chunk_data, proof))
+        (start..end)
+            .zip(proofs)
+            .map(|(index, proof)| match self.get_node(&chunk_hashes[index]) {
+                Some(ChunkTreeNode::Chunk(data)) => Ok((data, proof)),
+                _ => Err(Error::NodeNotFound(format!("chunk_data_{index}"))),
+            })
+            .collect()
     }
 
     /// Delete data before a sequence number.

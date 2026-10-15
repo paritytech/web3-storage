@@ -370,26 +370,23 @@ async fn read_chunks(
     let start_chunk = query.offset / chunk_size;
     let end_chunk = (query.offset + query.length).div_ceil(chunk_size);
 
-    let mut chunks = Vec::new();
-    for chunk_idx in start_chunk..end_chunk {
-        match state.storage.get_chunk_at_index(data_root, chunk_idx) {
-            Ok((data, proof)) => {
-                chunks.push(ChunkWithProof {
-                    hash: format!(
-                        "0x{}",
-                        hex::encode(storage_primitives::hash_leaf(&data).as_bytes())
-                    ),
-                    data: BASE64.encode(&data),
-                    proof: proof
-                        .siblings
-                        .iter()
-                        .map(|h| format!("0x{}", hex::encode(h.as_bytes())))
-                        .collect(),
-                });
-            }
-            Err(_) => break,
-        }
-    }
+    let chunks = state
+        .storage
+        .get_chunks_in_range(data_root, start_chunk..end_chunk)?
+        .into_iter()
+        .map(|(data, proof)| ChunkWithProof {
+            hash: format!(
+                "0x{}",
+                hex::encode(storage_primitives::hash_leaf(&data).as_bytes())
+            ),
+            data: BASE64.encode(&data),
+            proof: proof
+                .siblings
+                .iter()
+                .map(|h| format!("0x{}", hex::encode(h.as_bytes())))
+                .collect(),
+        })
+        .collect();
 
     Ok(Json(ReadResponse { chunks }))
 }

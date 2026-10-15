@@ -10,6 +10,7 @@
 
 use crate::{hash_children, MerkleProof, DEFAULT_CHUNK_SIZE};
 use alloc::vec::Vec;
+use core::ops::Range;
 use sp_core::H256;
 
 /// An internal node of the tree.
@@ -95,11 +96,31 @@ pub fn merkle_tree(leaf_hashes: &[H256]) -> (H256, Vec<MerkleNode>) {
 ///
 /// `None` if `index` is not the index of a leaf in `leaf_hashes`.
 pub fn build_merkle_proof(leaf_hashes: &[H256], index: usize) -> Option<MerkleProof> {
-    if index >= leaf_hashes.len() {
+    build_merkle_proofs(leaf_hashes, index..index.checked_add(1)?)?.pop()
+}
+
+/// Build the Merkle proofs for the leaves at `indices` in the tree over
+/// `leaf_hashes`. Hashes the tree once for all proofs.
+///
+/// `None` if `indices` is not a range of leaf indices in `leaf_hashes`.
+pub fn build_merkle_proofs(
+    leaf_hashes: &[H256],
+    indices: Range<usize>,
+) -> Option<Vec<MerkleProof>> {
+    if indices.start > indices.end || indices.end > leaf_hashes.len() {
         return None;
     }
 
     let levels = levels(leaf_hashes);
+    Some(
+        indices
+            .map(|index| proof_from_levels(&levels, index))
+            .collect(),
+    )
+}
+
+/// Proof for the leaf at `index`, from the `levels` of a tree with that leaf.
+fn proof_from_levels(levels: &[Vec<H256>], index: usize) -> MerkleProof {
     let mut siblings = Vec::new();
     let mut path = Vec::new();
     let mut idx = index;
@@ -115,7 +136,7 @@ pub fn build_merkle_proof(leaf_hashes: &[H256], index: usize) -> Option<MerklePr
         idx /= 2;
     }
 
-    Some(MerkleProof { siblings, path })
+    MerkleProof { siblings, path }
 }
 
 /// `true` if `proof` links `leaf_hash` at leaf `index` of a tree with
@@ -302,6 +323,18 @@ mod tests {
         let proof = proof_for(&l, 2);
         assert_eq!(proof.siblings, [hash_children(l[0], l[1])]);
         assert_eq!(proof.path, [true]);
+    }
+
+    #[test]
+    fn proofs_of_a_range_equal_single_proofs() {
+        let l = leaves(7);
+        let proofs = build_merkle_proofs(&l, 2..6).unwrap();
+        assert_eq!(proofs.len(), 4);
+        for (proof, index) in proofs.iter().zip(2..6) {
+            assert_eq!(*proof, proof_for(&l, index), "index {index}");
+        }
+        assert_eq!(build_merkle_proofs(&l, 7..7), Some(Vec::new()));
+        assert!(build_merkle_proofs(&l, 6..8).is_none());
     }
 
     #[test]
