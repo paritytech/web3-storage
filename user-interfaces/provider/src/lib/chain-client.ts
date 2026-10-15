@@ -453,9 +453,9 @@ export async function getBucketDetails(
       : null
 
     const historicalRoots: Array<{ position: number; root: string }> = []
-    for (const [pos, root] of bucket.historical_roots) {
+    for (const [pos, commitment] of bucket.historical_roots) {
       const posNum = Number(pos)
-      const rootStr = root
+      const rootStr = commitment.mmr_root
       if (posNum > 0 || (rootStr !== '0x' && !/^0x0+$/.test(rootStr))) {
         historicalRoots.push({ position: posNum, root: rootStr })
       }

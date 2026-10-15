@@ -501,14 +501,14 @@ pub struct Bucket<T: Config> {
     /// Position 4: updated every 47 blocks (prime = 47)
     /// Position 5: updated every 113 blocks (prime = 113)
     /// 
-    /// Each entry stores (quotient, mmr_root) where quotient = block_number / prime.
+    /// Each entry stores (quotient, commitment) where quotient = block_number / prime.
     /// On each checkpoint, if current_block / prime != stored quotient, the entry
-    /// is updated with (new_quotient, current_snapshot_root). This means each
-    /// position remembers the root from the last time its prime boundary was crossed.
+    /// is updated with (new_quotient, new_snapshot_commitment). This means each
+    /// position remembers the commitment from the last time its prime boundary was crossed.
     /// 
     /// Primes ensure positions don't align, maximizing coverage. A slow replica
     /// can match against older positions; `position_matched` in events tracks this.
-    pub historical_roots: [(u32, H256); 6],
+    pub historical_roots: [(u32, Commitment); 6],
     /// Total snapshots created for this bucket (for statistics)
     pub total_snapshots: u32,
 }
@@ -1796,8 +1796,8 @@ impl<T: Config> Pallet<T> {
     /// 
     /// **Rate limiting:**
     /// Two checks prevent excessive sync confirmations:
-    /// 1. The matched root must differ from `last_sync.0` (must be new state)
-    /// 2. `current_block >= last_sync.1 + min_sync_interval` (per-agreement)
+    /// 1. The matched root must differ from `last_sync.commitment.mmr_root` (must be new state)
+    /// 2. `current_block >= last_sync.block + min_sync_interval` (per-agreement)
     /// 
     /// The first check ensures payment only for actual sync work. The second
     /// prevents hot buckets (writes every block) from causing excessive on-chain
@@ -1813,7 +1813,9 @@ impl<T: Config> Pallet<T> {
     /// failures) should be negligible if the replica syncs regularly.
     /// 
     /// On success (both checks pass):
-    /// - Updates replica's `last_sync` to `(matched_root, current_block)`
+    /// - Updates replica's `last_sync` to the matched commitment and `current_block`;
+    ///   a historical match records that entry's full commitment, so
+    ///   `challenge_replica` can bind a proof to it as well
     /// - Pays sync_price from replica's sync_balance
     /// - Emits ReplicaSynced event with position_matched for performance tracking
     ///   (position 0 = current snapshot, 1-6 = historical positions, higher = more lag)

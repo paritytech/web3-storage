@@ -646,8 +646,11 @@ pub mod pallet {
         pub primary_providers: BoundedVec<T::AccountId, T::MaxPrimaryProviders>,
         /// Current canonical state.
         pub snapshot: Option<BucketSnapshot<BlockNumberFor<T>>>,
-        /// Historical MMR roots for replica sync validation.
-        pub historical_roots: [(u32, H256); 6],
+        /// Recent snapshot commitments for replica sync validation, one per
+        /// prime-spaced position (see `update_historical_roots`). Each entry is
+        /// the full commitment, so a replica that syncs to one of these roots
+        /// records a range `challenge_replica` can bind a proof to.
+        pub historical_roots: [(u32, Commitment); 6],
         /// Total snapshots created for this bucket.
         pub total_snapshots: u32,
     }
@@ -2427,7 +2430,7 @@ pub mod pallet {
                 let anchor_block = Self::current_anchor_block();
 
                 // Update historical roots
-                Self::update_historical_roots(bucket, anchor_block, commitment.mmr_root);
+                Self::update_historical_roots(bucket, anchor_block, commitment);
 
                 bucket.snapshot = Some(BucketSnapshot {
                     commitment,
@@ -2935,13 +2938,12 @@ pub mod pallet {
                     }
 
                     // Find matching root position
-                    let (position_matched, matched_root) =
-                        Self::find_matching_root(&bucket, &roots)?;
+                    let (position_matched, matched) = Self::find_matching_root(&bucket, &roots)?;
 
                     // Check it's a new root
                     if let Some(record) = last_sync {
                         ensure!(
-                            matched_root != record.commitment.mmr_root,
+                            matched.mmr_root != record.commitment.mmr_root,
                             Error::<T>::InvalidSyncRoot
                         );
                     }
@@ -2953,32 +2955,11 @@ pub mod pallet {
                     );
                     *sync_balance = sync_balance.saturating_sub(*sync_price);
 
-                    // Capture sequence metadata for the matched root so a
-                    // future `challenge_replica` can target a specific leaf.
-                    // For the current snapshot (position_matched == 0) we
-                    // know start_seq + leaf_count exactly. Historical roots
-                    // don't carry sequence metadata in `historical_roots`, so
-                    // they default to 0 here — challenges targeting a leaf
-                    // beyond seq 0 in that case still work because
-                    // `challenge_replica` only uses `start_seq` as an offset
-                    // additive identity.
-                    let (start_seq, leaf_count) = if position_matched == 0 {
-                        bucket
-                            .snapshot
-                            .as_ref()
-                            .map(|s| (s.commitment.start_seq, s.commitment.leaf_count))
-                            .unwrap_or((0, 0))
-                    } else {
-                        (0u64, 0u64)
-                    };
-
-                    // Update last sync
+                    // The matched commitment carries the range `challenge_replica`
+                    // binds proofs to, whether it is the current snapshot or a
+                    // historical one.
                     *last_sync = Some(ReplicaSyncRecord {
-                        commitment: Commitment {
-                            mmr_root: matched_root,
-                            start_seq,
-                            leaf_count,
-                        },
+                        commitment: matched,
                         block: anchor_block,
                     });
 
@@ -2998,7 +2979,7 @@ pub mod pallet {
                     Self::deposit_event(Event::ReplicaSynced {
                         bucket_id,
                         provider: who.clone(),
-                        mmr_root: matched_root,
+                        mmr_root: matched.mmr_root,
                         position_matched,
                         sync_payment: *sync_price,
                     });

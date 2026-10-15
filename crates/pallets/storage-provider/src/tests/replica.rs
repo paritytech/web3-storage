@@ -484,7 +484,7 @@ fn challenge_replica_binds_to_synced_range() {
             RuntimeOrigin::signed(2),
             bucket_id,
             roots,
-            sp_runtime::MultiSignature::Sr25519([0u8; 64].into()),
+            sign_sync_roots(2, &roots),
         ));
 
         // Anyone can challenge the replica; the challenge is bound to the synced range.
@@ -507,6 +507,68 @@ fn challenge_replica_binds_to_synced_range() {
         assert_eq!(c.commitment.leaf_count, 10);
         assert_eq!(c.target.leaf_index, 3);
         assert_eq!(c.target.chunk_index, 1);
+    });
+}
+
+#[test]
+fn challenge_replica_binds_to_historical_sync_range() {
+    use sp_core::H256;
+    use storage_primitives::{ChunkLocation, Commitment, ProviderRole};
+    new_test_ext().execute_with(|| {
+        frame_system::Pallet::<Test>::set_block_number(1);
+        let bucket_id = setup_replica_with_snapshot();
+
+        // A historical entry distinct from the current snapshot, with its own range.
+        let historical = Commitment {
+            mmr_root: H256::repeat_byte(0x11),
+            start_seq: 2,
+            leaf_count: 5,
+        };
+        Buckets::<Test>::mutate(bucket_id, |bucket| {
+            bucket.as_mut().unwrap().historical_roots[0] = (1, historical);
+        });
+
+        // The replica syncs to the historical root (position 1), not the snapshot.
+        let mut roots = [None; 7];
+        roots[1] = Some(historical.mmr_root);
+        assert_ok!(StorageProvider::confirm_replica_sync(
+            RuntimeOrigin::signed(2),
+            bucket_id,
+            roots,
+            sign_sync_roots(2, &roots),
+        ));
+        let agreement = StorageAgreements::<Test>::get(bucket_id, 2).unwrap();
+        let ProviderRole::Replica { last_sync, .. } = &agreement.role else {
+            panic!("expected replica");
+        };
+        assert_eq!(last_sync.as_ref().unwrap().commitment, historical);
+
+        // A challenge binds to that range: its last leaf is in, the next is out.
+        assert_noop!(
+            StorageProvider::challenge_replica(
+                RuntimeOrigin::signed(4),
+                bucket_id,
+                2,
+                ChunkLocation {
+                    leaf_index: 5,
+                    chunk_index: 0,
+                },
+            ),
+            Error::<Test>::LeafBeyondCanonical
+        );
+        assert_ok!(StorageProvider::challenge_replica(
+            RuntimeOrigin::signed(4),
+            bucket_id,
+            2,
+            ChunkLocation {
+                leaf_index: 4,
+                chunk_index: 0,
+            },
+        ));
+        assert_eq!(
+            Challenges::<Test>::get(101, 0).unwrap().commitment,
+            historical
+        );
     });
 }
 

@@ -119,9 +119,9 @@ pub enum ProviderRole<Balance, BlockNumber> {
     },
 }
 
-/// Snapshot metadata captured at a replica's `confirm_replica_sync` so the
-/// pallet can later challenge a specific leaf without going back to the
-/// historical_roots table (which doesn't store sequence metadata).
+/// The commitment a replica confirmed sync to in `confirm_replica_sync`:
+/// the current snapshot's or a historical one. `challenge_replica` binds
+/// its challenges to this range.
 #[derive(
     Clone,
     Copy,
