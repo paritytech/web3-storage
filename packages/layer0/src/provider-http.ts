@@ -110,7 +110,7 @@ export interface PutChunkResult {
 function assertLeafFits(bytes: Uint8Array): void {
   if (bytes.length > DEFAULT_CHUNK_SIZE) {
     throw new RangeError(
-      `chunk is ${bytes.length} bytes, above the ${DEFAULT_CHUNK_SIZE} byte maximum; split it into smaller chunks`,
+      `chunk is ${bytes.length} bytes, above the ${DEFAULT_CHUNK_SIZE} byte maximum; split the data into ${DEFAULT_CHUNK_SIZE} byte chunks`,
     );
   }
 }
