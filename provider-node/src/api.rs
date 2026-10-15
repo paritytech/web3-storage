@@ -374,11 +374,8 @@ async fn read_chunks(
         .storage
         .get_chunks_in_range(data_root, start_chunk..end_chunk)?
         .into_iter()
-        .map(|(data, proof)| ChunkWithProof {
-            hash: format!(
-                "0x{}",
-                hex::encode(storage_primitives::hash_leaf(&data).as_bytes())
-            ),
+        .map(|(hash, data, proof)| ChunkWithProof {
+            hash: format!("0x{}", hex::encode(hash.as_bytes())),
             data: BASE64.encode(&data),
             proof: proof
                 .siblings

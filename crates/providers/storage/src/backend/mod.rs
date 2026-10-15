@@ -195,35 +195,38 @@ pub trait StorageBackend: Send + Sync {
         data_root: H256,
         chunk_index: u64,
     ) -> Result<(Vec<u8>, MerkleProof), Error> {
-        self.get_chunks_in_range(data_root, chunk_index..chunk_index.saturating_add(1))?
+        let (_, data, proof) = self
+            .get_chunks_in_range(data_root, chunk_index..chunk_index.saturating_add(1))?
             .pop()
-            .ok_or_else(|| Error::NodeNotFound(format!("chunk_{chunk_index}")))
+            .ok_or_else(|| Error::NodeNotFound(format!("chunk_{chunk_index}")))?;
+        Ok((data, proof))
     }
 
-    /// Get the data and Merkle proof of each chunk with an index in `range`
-    /// from a data root, with one walk of the tree. Leaves out indices past the
-    /// last chunk.
+    /// Get the hash, data and Merkle proof of each chunk with an index in
+    /// `range` from a data root, with one walk of the tree. Leaves out indices
+    /// past the last chunk.
     fn get_chunks_in_range(
         &self,
         data_root: H256,
         range: Range<u64>,
-    ) -> Result<Vec<(Vec<u8>, MerkleProof)>, Error> {
+    ) -> Result<Vec<(H256, Vec<u8>, MerkleProof)>, Error> {
         let chunk_hashes: Vec<H256> = self
             .collect_leaves(data_root)
             .into_iter()
             .map(|(hash, _)| hash)
             .collect();
 
-        let end = range.end.min(chunk_hashes.len() as u64) as usize;
-        let start = (range.start as usize).min(end);
-        // `start..end` is within the leaf indices, so this is always `Some`.
-        let proofs = build_merkle_proofs(&chunk_hashes, start..end).unwrap_or_default();
+        let chunk_count = chunk_hashes.len() as u64;
+        let start = range.start.min(chunk_count) as usize;
+        let proofs = build_merkle_proofs(&chunk_hashes, start..range.end.min(chunk_count) as usize);
 
-        (start..end)
+        chunk_hashes[start..]
+            .iter()
             .zip(proofs)
-            .map(|(index, proof)| match self.get_node(&chunk_hashes[index]) {
-                Some(ChunkTreeNode::Chunk(data)) => Ok((data, proof)),
-                _ => Err(Error::NodeNotFound(format!("chunk_data_{index}"))),
+            .enumerate()
+            .map(|(i, (hash, proof))| match self.get_node(hash) {
+                Some(ChunkTreeNode::Chunk(data)) => Ok((*hash, data, proof)),
+                _ => Err(Error::NodeNotFound(format!("chunk_data_{}", start + i))),
             })
             .collect()
     }
@@ -272,24 +275,37 @@ pub fn build_merkle_tree(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use storage_primitives::{hash_leaf, verify_merkle_proof};
     use tempfile::TempDir;
+
+    /// A database with bucket 1 of `quota` bytes that stores `chunks`, and the
+    /// chunk hashes.
+    fn storage_with_chunks(quota: u64, chunks: &[Vec<u8>]) -> (TempDir, DiskStorage, Vec<H256>) {
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        storage.init_bucket(1, quota).unwrap();
+        let hashes = chunks
+            .iter()
+            .map(|data| {
+                let hash = hash_leaf(data);
+                storage
+                    .store_node(1, hash, ChunkTreeNode::Chunk(data.clone()))
+                    .unwrap();
+                hash
+            })
+            .collect();
+        (dir, storage, hashes)
+    }
+
+    /// `n` chunks of 32 bytes, the first filled with 1, the next with 2, ...
+    fn chunks(n: u8) -> Vec<Vec<u8>> {
+        (1..=n).map(|i| vec![i; 32]).collect()
+    }
 
     #[test]
     fn stored_tree_root_matches_merkle_root() {
-        for n in [0u8, 1, 2, 3, 5, 8] {
-            let dir = TempDir::new().unwrap();
-            let storage = DiskStorage::new(dir.path()).unwrap();
-            storage.init_bucket(1, 1024 * 1024).unwrap();
-            let leaves: Vec<H256> = (1..=n)
-                .map(|i: u8| {
-                    let data = vec![i; 32];
-                    let hash = storage_primitives::hash_leaf(&data);
-                    storage
-                        .store_node(1, hash, ChunkTreeNode::Chunk(data))
-                        .unwrap();
-                    hash
-                })
-                .collect();
+        for n in [0, 1, 2, 3, 5, 8] {
+            let (_dir, storage, leaves) = storage_with_chunks(1024 * 1024, &chunks(n));
             assert_eq!(
                 build_merkle_tree(&storage, 1, &leaves).unwrap(),
                 storage_primitives::merkle_root(&leaves),
@@ -300,33 +316,16 @@ mod tests {
 
     #[test]
     fn chunks_in_range_match_single_chunks_and_clip_to_the_last_chunk() {
-        let dir = TempDir::new().unwrap();
-        let storage = DiskStorage::new(dir.path()).unwrap();
-        storage.init_bucket(1, 1024 * 1024).unwrap();
-        let chunks: Vec<Vec<u8>> = (1..=5u8).map(|i| vec![i; 32]).collect();
-        let leaves: Vec<H256> = chunks
-            .iter()
-            .map(|data| {
-                let hash = storage_primitives::hash_leaf(data);
-                storage
-                    .store_node(1, hash, ChunkTreeNode::Chunk(data.clone()))
-                    .unwrap();
-                hash
-            })
-            .collect();
+        let chunks = chunks(5);
+        let (_dir, storage, leaves) = storage_with_chunks(1024 * 1024, &chunks);
         let root = build_merkle_tree(&storage, 1, &leaves).unwrap();
 
         let range = storage.get_chunks_in_range(root, 1..4).unwrap();
         assert_eq!(range.len(), 3);
-        for (index, (data, proof)) in (1..4).zip(&range) {
+        for (index, (hash, data, proof)) in (1..4).zip(&range) {
             assert_eq!(*data, chunks[index as usize]);
-            assert!(storage_primitives::verify_merkle_proof(
-                storage_primitives::hash_leaf(data),
-                index,
-                5,
-                proof,
-                &root
-            ));
+            assert_eq!(*hash, leaves[index as usize]);
+            assert!(verify_merkle_proof(*hash, index, 5, proof, &root));
             assert_eq!(
                 *proof,
                 storage.get_chunk_at_index(root, index).unwrap().1,
@@ -338,7 +337,7 @@ mod tests {
             .get_chunks_in_range(root, 3..10)
             .unwrap()
             .into_iter()
-            .map(|(data, _)| data)
+            .map(|(_, data, _)| data)
             .collect();
         assert_eq!(clipped, chunks[3..]);
         assert!(storage.get_chunks_in_range(root, 7..9).unwrap().is_empty());
@@ -350,21 +349,8 @@ mod tests {
 
     #[test]
     fn build_merkle_tree_returns_store_error() {
-        let dir = TempDir::new().unwrap();
-        let storage = DiskStorage::new(dir.path()).unwrap();
         // Room for the two 32-byte leaves but not for their 64-byte parent.
-        storage.init_bucket(1, 64).unwrap();
-        let leaves: Vec<H256> = [1u8, 2]
-            .into_iter()
-            .map(|i| {
-                let data = vec![i; 32];
-                let hash = storage_primitives::hash_leaf(&data);
-                storage
-                    .store_node(1, hash, ChunkTreeNode::Chunk(data))
-                    .unwrap();
-                hash
-            })
-            .collect();
+        let (_dir, storage, leaves) = storage_with_chunks(64, &chunks(2));
         let err = build_merkle_tree(&storage, 1, &leaves).unwrap_err();
         assert!(matches!(err, Error::QuotaExceeded { .. }), "got {err:?}");
     }

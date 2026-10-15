@@ -52,13 +52,16 @@ fn levels(leaf_hashes: &[H256]) -> Vec<Vec<H256>> {
     levels
 }
 
+/// Root of the tree with these `levels`: `H256::zero()` for no levels.
+fn root(levels: &[Vec<H256>]) -> H256 {
+    levels.last().map_or_else(H256::zero, |root| root[0])
+}
+
 /// Root of the tree over `leaf_hashes`.
 ///
 /// No leaves give `H256::zero()` and one leaf gives that leaf.
 pub fn merkle_root(leaf_hashes: &[H256]) -> H256 {
-    levels(leaf_hashes)
-        .last()
-        .map_or_else(H256::zero, |root| root[0])
+    root(&levels(leaf_hashes))
 }
 
 /// Root and internal nodes of the tree over `leaf_hashes`.
@@ -83,36 +86,25 @@ pub fn merkle_tree(leaf_hashes: &[H256]) -> (H256, Vec<MerkleNode>) {
                 })
         })
         .collect();
-    let root = levels.last().map_or_else(H256::zero, |root| root[0]);
-    (root, nodes)
-}
-
-/// Build a Merkle proof for the leaf at `index` in the tree over
-/// `leaf_hashes`. The proof is empty for a single leaf.
-///
-/// `None` if `index` is not the index of a leaf in `leaf_hashes`.
-pub fn build_merkle_proof(leaf_hashes: &[H256], index: usize) -> Option<MerkleProof> {
-    build_merkle_proofs(leaf_hashes, index..index.checked_add(1)?)?.pop()
+    (root(&levels), nodes)
 }
 
 /// Build the Merkle proofs for the leaves at `indices` in the tree over
-/// `leaf_hashes`. Hashes the tree once for all proofs.
+/// `leaf_hashes`, in index order. Hashes the tree once for all proofs. The
+/// proof of a single leaf is empty.
 ///
-/// `None` if `indices` is not a range of leaf indices in `leaf_hashes`.
-pub fn build_merkle_proofs(
-    leaf_hashes: &[H256],
-    indices: Range<usize>,
-) -> Option<Vec<MerkleProof>> {
-    if indices.start > indices.end || indices.end > leaf_hashes.len() {
-        return None;
+/// Leaves out indices past the last leaf.
+pub fn build_merkle_proofs(leaf_hashes: &[H256], indices: Range<usize>) -> Vec<MerkleProof> {
+    let end = indices.end.min(leaf_hashes.len());
+    let start = indices.start.min(end);
+    if start == end {
+        return Vec::new();
     }
 
     let levels = levels(leaf_hashes);
-    Some(
-        indices
-            .map(|index| proof_from_levels(&levels, index))
-            .collect(),
-    )
+    (start..end)
+        .map(|index| proof_from_levels(&levels, index))
+        .collect()
 }
 
 /// Proof for the leaf at `index`, from the `levels` of a tree with that leaf.
@@ -189,7 +181,9 @@ mod tests {
     }
 
     fn proof_for(l: &[H256], index: usize) -> MerkleProof {
-        build_merkle_proof(l, index).unwrap()
+        let mut proofs = build_merkle_proofs(l, index..index + 1);
+        assert_eq!(proofs.len(), 1, "index {index}");
+        proofs.remove(0)
     }
 
     #[test]
@@ -315,20 +309,19 @@ mod tests {
     #[test]
     fn proofs_of_a_range_equal_single_proofs() {
         let l = leaves(7);
-        let proofs = build_merkle_proofs(&l, 2..6).unwrap();
+        let proofs = build_merkle_proofs(&l, 2..6);
         assert_eq!(proofs.len(), 4);
         for (proof, index) in proofs.iter().zip(2..6) {
             assert_eq!(*proof, proof_for(&l, index), "index {index}");
         }
-        assert_eq!(build_merkle_proofs(&l, 7..7), Some(Vec::new()));
-        assert!(build_merkle_proofs(&l, 6..8).is_none());
     }
 
     #[test]
-    fn no_proof_for_an_index_outside_the_leaves() {
-        assert!(build_merkle_proof(&[], 0).is_none());
-        assert!(build_merkle_proof(&leaves(1), 1).is_none());
-        assert!(build_merkle_proof(&leaves(3), 3).is_none());
+    fn proofs_leave_out_indices_past_the_last_leaf() {
+        assert!(build_merkle_proofs(&[], 0..1).is_empty());
+        assert!(build_merkle_proofs(&leaves(1), 1..2).is_empty());
+        assert!(build_merkle_proofs(&leaves(3), 3..5).is_empty());
+        assert_eq!(build_merkle_proofs(&leaves(7), 6..8).len(), 1);
     }
 
     #[test]
