@@ -25,10 +25,9 @@ pub enum Error {
     #[error("Quota exceeded: used {used}, max {max}")]
     QuotaExceeded { used: u64, max: u64 },
 
-    /// A chunk above the size a challenge response can contain. The provider
-    /// cannot prove it on-chain, so it rejects it when a peer sends it.
-    #[error("Chunk too large: {size} bytes, max {max}")]
-    ChunkTooLarge { size: u64, max: u32 },
+    /// A chunk above `DEFAULT_CHUNK_SIZE` bytes.
+    #[error("Chunk too large: {size} bytes, max {max}", max = storage_primitives::DEFAULT_CHUNK_SIZE)]
+    ChunkTooLarge { size: u64 },
 
     #[error("Bucket not found: {0}")]
     BucketNotFound(u64),

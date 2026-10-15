@@ -87,15 +87,13 @@ impl ChunkTreeNode {
     /// Build a node from the `data` and optional `children` a peer sent.
     ///
     /// Without children the node is a chunk of at most `DEFAULT_CHUNK_SIZE`
-    /// bytes, because a larger chunk cannot be proven on-chain. With children
-    /// it is an internal node: it must have exactly two children, and `data`
-    /// must be the concatenation of the two child hashes.
+    /// bytes. With children it is an internal node: it must have exactly two
+    /// children, and `data` must be the concatenation of the two child hashes.
     pub fn from_wire(data: Vec<u8>, children: Option<Vec<H256>>) -> Result<Self, Error> {
         let Some(children) = children else {
             if data.len() > DEFAULT_CHUNK_SIZE as usize {
                 return Err(Error::ChunkTooLarge {
                     size: data.len() as u64,
-                    max: DEFAULT_CHUNK_SIZE,
                 });
             }
             return Ok(Self::Chunk(data));
@@ -285,7 +283,7 @@ mod tests {
         assert!(ChunkTreeNode::from_wire(vec![7; max], None).is_ok());
         assert!(matches!(
             ChunkTreeNode::from_wire(vec![7; max + 1], None),
-            Err(Error::ChunkTooLarge { size, max: DEFAULT_CHUNK_SIZE }) if size == max as u64 + 1
+            Err(Error::ChunkTooLarge { size }) if size == max as u64 + 1
         ));
     }
 

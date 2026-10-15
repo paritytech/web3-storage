@@ -101,8 +101,8 @@ impl StorageUserClient {
         data: &[u8],
         strategy: ChunkingStrategy,
     ) -> ClientResult<H256> {
-        // A chunk size of 0 makes `chunks()` panic, and a leaf above
-        // `DEFAULT_CHUNK_SIZE` can never be proven on-chain.
+        // A chunk size of 0 makes `chunks()` panic, and the provider rejects a
+        // chunk above `DEFAULT_CHUNK_SIZE`.
         if let ChunkingStrategy::Fixed(chunk_size) = strategy {
             if chunk_size == 0 || chunk_size > DEFAULT_CHUNK_SIZE as usize {
                 return Err(ClientError::Config(format!(
