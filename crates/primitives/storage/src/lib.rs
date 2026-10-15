@@ -26,11 +26,9 @@ pub use merkle::*;
 pub type BucketId = u64;
 
 /// Chunk size, 256 KiB. Every chunk of a committed data root has this size,
-/// except the last, which can be shorter.
-///
-/// The runtime uses it as `MaxChunkSize`, the largest leaf a challenge response
-/// can contain. The provider rejects a larger chunk on upload and replica sync,
-/// and rejects a commit whose chunks have other sizes.
+/// except the last, which can be shorter. The runtime uses it as
+/// `MaxChunkSize`. The provider rejects a larger chunk on upload and replica
+/// sync.
 pub const DEFAULT_CHUNK_SIZE: u32 = 256 * 1024;
 
 /// Prime numbers used for historical root bucketing.
@@ -780,7 +778,9 @@ mod tests {
         };
         assert!(verify_merkle_proof(leaves[0], 0, 4, &honest, &root));
 
-        // The bytes of `left` presented as chunk data with one sibling.
+        // The bytes of `left` presented as chunk data with one sibling. A
+        // count of 2 makes one sibling the right length, so only the prefix
+        // rejects the proof.
         let mut node_bytes = leaves[0].as_bytes().to_vec();
         node_bytes.extend_from_slice(leaves[1].as_bytes());
         let forged = MerkleProof {

@@ -360,8 +360,7 @@ impl DiskStorage {
             }
         }
 
-        // Verify the tree shape and the chunk sizes. Each root is walked once;
-        // its data size is reused below.
+        // Reject non-canonical roots before the MMR changes.
         let data_sizes = data_roots
             .iter()
             .map(|root| self.canonical_data_size(*root))
@@ -577,7 +576,7 @@ mod tests {
         DB::open_cf(&DiskStorage::db_options(), path, COLUMN_FAMILIES).unwrap()
     }
 
-    /// A fresh database with bucket 1 initialised with a `quota` B quota.
+    /// A database with bucket 1 of `quota` bytes.
     fn storage_with_bucket(quota: u64) -> (DiskStorage, TempDir) {
         let dir = TempDir::new().unwrap();
         let storage = DiskStorage::new(dir.path()).unwrap();
@@ -946,8 +945,8 @@ mod tests {
                 .unwrap()
         );
 
-        // `/commit` accepts only canonical chunk sizes, so the MMR vector
-        // commits the single chunk `abc`, whose root is its leaf hash.
+        // `commit` accepts only canonical chunk sizes, so the MMR vector
+        // commits the single chunk `abc`.
         let abc = hash_leaf(b"abc");
         storage
             .store_node(1, abc, ChunkTreeNode::Chunk(b"abc".to_vec()))

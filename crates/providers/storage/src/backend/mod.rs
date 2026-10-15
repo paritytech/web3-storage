@@ -140,8 +140,8 @@ pub trait StorageBackend: Send + Sync {
         chunks
     }
 
-    /// Collect the leaf chunk hashes under a data root (DFS, in order) and the
-    /// byte size of each leaf, in one walk.
+    /// Hash and byte size of each chunk under `root`, in leaf order. Skips
+    /// nodes missing from storage.
     fn collect_leaves(&self, root: H256) -> Vec<(H256, usize)> {
         let mut leaves = Vec::new();
         let mut stack = vec![root];
@@ -161,13 +161,9 @@ pub trait StorageBackend: Send + Sync {
         leaves
     }
 
-    /// Byte size of the data under `root`, if `root` is the canonical tree
-    /// over its chunks.
-    ///
-    /// The canonical tree is `merkle_tree` over chunks of `DEFAULT_CHUNK_SIZE`
-    /// bytes, except the last, which has at most that many and at least one
-    /// byte when there are several chunks. The pallet derives the chunk count
-    /// from the data size, so it can verify proofs only against this tree.
+    /// Byte size of the data under `root`. Fails with `NonCanonicalTree` unless
+    /// `root` is `merkle_root` over chunks of `DEFAULT_CHUNK_SIZE` bytes, except
+    /// the last, which can be shorter but not empty when there are several.
     fn canonical_data_size(&self, root: H256) -> Result<u64, Error> {
         let (chunk_hashes, chunk_sizes): (Vec<H256>, Vec<usize>) =
             self.collect_leaves(root).into_iter().unzip();
@@ -202,9 +198,8 @@ pub trait StorageBackend: Send + Sync {
         Ok((data, proof))
     }
 
-    /// Get the hash, data and Merkle proof of each chunk with an index in
-    /// `range` from a data root, with one walk of the tree. Leaves out indices
-    /// past the last chunk.
+    /// Hash, data and Merkle proof of each chunk of `data_root` with an index
+    /// in `range`. Leaves out indices past the last chunk.
     fn get_chunks_in_range(
         &self,
         data_root: H256,
@@ -249,10 +244,8 @@ pub trait StorageBackend: Send + Sync {
     fn get_mmr_peaks(&self, bucket_id: BucketId) -> Result<(H256, Vec<H256>), Error>;
 }
 
-/// Build the Merkle tree over leaf hashes, storing the internal nodes in storage.
-///
-/// An odd last node of a level moves up unchanged. Returns the tree root hash,
-/// or the first error from storing an intermediate node.
+/// Store the internal nodes of `storage_primitives::merkle_tree` over `leaves`
+/// and return the root. Returns the first `store_node` error.
 pub fn build_merkle_tree(
     storage: &dyn StorageBackend,
     bucket_id: BucketId,
@@ -297,7 +290,6 @@ mod tests {
         (dir, storage, hashes)
     }
 
-    /// `n` chunks of 32 bytes, the first filled with 1, the next with 2, ...
     fn chunks(n: u8) -> Vec<Vec<u8>> {
         (1..=n).map(|i| vec![i; 32]).collect()
     }

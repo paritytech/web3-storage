@@ -70,9 +70,7 @@ export function bagPeaks(peaks: Uint8Array[]): Uint8Array {
 
 /**
  * Merkle root over `leaves`; an odd last node of a level moves up unchanged.
- * Empty → 32 zero bytes; a single leaf → that leaf verbatim.
- * Identical to the provider's `build_merkle_tree` / the tail of
- * `metadata_merkle_root`.
+ * Empty → 32 zero bytes; a single leaf → a copy of that leaf.
  */
 export function merkleRoot(leaves: Uint8Array[]): Uint8Array {
   if (leaves.length === 0) return new Uint8Array(32);
@@ -90,11 +88,7 @@ export function merkleRoot(leaves: Uint8Array[]): Uint8Array {
   return level[0];
 }
 
-/**
- * Number of chunks (tree leaves) of data with `dataSize` bytes. Every chunk is
- * `DEFAULT_CHUNK_SIZE` bytes except the last, and empty data is one empty chunk.
- * Mirrors `chunk_count` in `crates/primitives/storage/src/merkle.rs`.
- */
+/** Number of chunks (tree leaves) of data with `dataSize` bytes; empty data is one chunk. */
 export function chunkCount(dataSize: number): number {
   return Math.max(1, Math.ceil(dataSize / DEFAULT_CHUNK_SIZE));
 }

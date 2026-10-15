@@ -1212,9 +1212,7 @@ mod challenge_tests {
         (mmr_root, mmr_proof, leaves, right)
     }
 
-    /// A single-leaf MMR over data with `data_root` and `data_size`. The MMR
-    /// root is the leaf hash and the leaf proof is empty. Returns the MMR root
-    /// and the MMR proof.
+    /// Root and proof of a single-leaf MMR over `data_root` and `data_size`.
     fn single_leaf_mmr(data_root: H256, data_size: u64) -> (H256, MmrProof) {
         let leaf = MmrLeaf {
             data_root,
@@ -1594,10 +1592,9 @@ mod challenge_tests {
         });
     }
 
-    /// Proof data for a 3-chunk leaf (`data_size = 2 * DEFAULT_CHUNK_SIZE + 10`).
-    /// The chunk tree is `H(H(c0, c1), c2)`: the last chunk moves up one level
-    /// without a sibling. Returns the MMR root, the MMR proof, the last chunk and
-    /// its Merkle proof.
+    /// Proof data for a 3-chunk leaf (`data_size = 2 * DEFAULT_CHUNK_SIZE + 10`)
+    /// with chunk tree `H(H(c0, c1), c2)`. Returns the MMR root, the MMR proof,
+    /// the last chunk and its Merkle proof.
     fn three_chunk_proof() -> (H256, MmrProof, Vec<u8>, MerkleProof) {
         let size = storage_primitives::DEFAULT_CHUNK_SIZE as u64;
         let c0 = storage_primitives::hash_leaf(b"chunk-0");
@@ -1642,8 +1639,7 @@ mod challenge_tests {
         )
     }
 
-    /// The last chunk of a 3-chunk leaf has no sibling at the first level, and
-    /// the verifier derives the chunk count from the leaf's `data_size`.
+    /// The verifier derives the chunk count from the leaf's `data_size`.
     #[test]
     fn respond_with_valid_proof_for_last_of_three_chunks_defends_challenge() {
         new_test_ext().execute_with(|| {
@@ -1653,8 +1649,8 @@ mod challenge_tests {
         });
     }
 
-    /// The last chunk answered for chunk 1 is rejected, although the proof
-    /// recombines to the data root for a tree with two leaves.
+    /// The proof recombines to the data root for a two-leaf tree; only the
+    /// chunk count from `data_size` rejects it.
     #[test]
     fn respond_with_last_chunk_for_wrong_index_is_rejected() {
         new_test_ext().execute_with(|| {
@@ -1664,7 +1660,6 @@ mod challenge_tests {
         });
     }
 
-    /// A chunk index that is not below the chunk count of `data_size` is rejected.
     #[test]
     fn respond_with_chunk_index_beyond_chunk_count_is_rejected() {
         new_test_ext().execute_with(|| {

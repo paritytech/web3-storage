@@ -278,8 +278,7 @@ async fn test_download_partial_offset() {
     let url = start_test_provider().await;
     let client = make_client(url);
 
-    // Two full chunks, so the chunk boundary is predictable and the provider
-    // accepts the commit.
+    // Two full chunks.
     let chunk_size = storage_primitives::DEFAULT_CHUNK_SIZE as usize;
     let data: Vec<u8> = (0..chunk_size * 2).map(|i| (i % 251) as u8).collect();
     let data_root = client
@@ -665,8 +664,7 @@ async fn test_non_power_of_two_upload_matches_provider_root_and_verifies() {
     let url = start_test_provider().await;
     let client = make_client(url.clone());
 
-    // Three chunks: the client must move the odd last leaf up like the provider,
-    // or the provider rejects the commit with NonCanonicalTree.
+    // Three chunks, so the last leaf has no sibling.
     let chunk_size = DEFAULT_CHUNK_SIZE as usize;
     let data: Vec<u8> = (0..chunk_size * 2 + 10).map(|i| (i % 251) as u8).collect();
 

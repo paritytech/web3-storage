@@ -2,11 +2,8 @@
 
 //! Merkle tree over the chunks of one data root.
 //!
-//! The tree is a binary tree in which an odd last node of a level moves up to
-//! the next level unchanged, and every internal node is
-//! `hash_children(left, right)`. No leaves give `H256::zero()` and one leaf is
-//! its own root. The provider builds, stores and proves against this shape, and
-//! the pallet verifies proofs against it.
+//! Every internal node is `hash_children(left, right)`. An odd last node of a
+//! level moves up to the next level unchanged.
 
 use crate::{hash_children, MerkleProof, DEFAULT_CHUNK_SIZE};
 use alloc::vec::Vec;
@@ -52,7 +49,6 @@ fn levels(leaf_hashes: &[H256]) -> Vec<Vec<H256>> {
     levels
 }
 
-/// Root of the tree with these `levels`: `H256::zero()` for no levels.
 fn root(levels: &[Vec<H256>]) -> H256 {
     levels.last().map_or_else(H256::zero, |root| root[0])
 }
@@ -66,8 +62,7 @@ pub fn merkle_root(leaf_hashes: &[H256]) -> H256 {
 
 /// Root and internal nodes of the tree over `leaf_hashes`.
 ///
-/// Nodes come children before parents, so a store that requires children to
-/// exist can insert them in order. No leaves or one leaf give no nodes.
+/// Nodes come children before parents.
 pub fn merkle_tree(leaf_hashes: &[H256]) -> (H256, Vec<MerkleNode>) {
     let levels = levels(leaf_hashes);
     let nodes = levels
@@ -89,11 +84,8 @@ pub fn merkle_tree(leaf_hashes: &[H256]) -> (H256, Vec<MerkleNode>) {
     (root(&levels), nodes)
 }
 
-/// Build the Merkle proofs for the leaves at `indices` in the tree over
-/// `leaf_hashes`, in index order. Hashes the tree once for all proofs. The
-/// proof of a single leaf is empty.
-///
-/// Leaves out indices past the last leaf.
+/// Merkle proofs for the leaves at `indices` in the tree over `leaf_hashes`,
+/// in index order. Leaves out indices past the last leaf.
 pub fn build_merkle_proofs(leaf_hashes: &[H256], indices: Range<usize>) -> Vec<MerkleProof> {
     let end = indices.end.min(leaf_hashes.len());
     let start = indices.start.min(end);
@@ -115,7 +107,6 @@ fn proof_from_levels(levels: &[Vec<H256>], index: usize) -> MerkleProof {
 
     // The last level is the root, which has no sibling.
     for level in &levels[..levels.len() - 1] {
-        // An odd last node moves up without a sibling.
         if idx != level.len() - 1 || level.len().is_multiple_of(2) {
             let is_right = idx % 2 == 1;
             siblings.push(level[idx ^ 1]);
@@ -130,9 +121,9 @@ fn proof_from_levels(levels: &[Vec<H256>], index: usize) -> MerkleProof {
 /// `true` if `proof` links `leaf_hash` at leaf `index` of a tree with
 /// `leaf_count` leaves to `root`.
 ///
-/// Rejects proofs whose `siblings` and `path` lengths differ or whose path bits
-/// do not match `index`, an `index` outside the tree, and proofs with a wrong
-/// number of siblings for `leaf_count`.
+/// `leaf_count` must come from authenticated data, such as a proven
+/// `data_size`. With a count chosen by the prover, a proof for another index
+/// can verify.
 pub fn verify_merkle_proof(
     leaf_hash: H256,
     index: u64,
@@ -264,7 +255,7 @@ mod tests {
 
     #[test]
     fn tree_has_one_node_per_pair() {
-        // n leaves have n - 1 internal nodes in a tree without padding.
+        // n leaves give n - 1 internal nodes.
         for n in 2..=9 {
             assert_eq!(merkle_tree(&leaves(n)).1.len(), n - 1, "{n} leaves");
         }
@@ -384,7 +375,6 @@ mod tests {
 
     #[test]
     fn proof_of_the_odd_last_leaf_binds_the_leaf_count() {
-        // The proof of leaf 2 in a 3-leaf tree is valid for index 2 of 3 only.
         let l = leaves(3);
         let root = merkle_root(&l);
         let proof = proof_for(&l, 2);
@@ -393,9 +383,7 @@ mod tests {
         assert!(!verify_merkle_proof(l[2], 1, 3, &proof, &root));
         // With a count of 2, index 2 is outside the tree.
         assert!(!verify_merkle_proof(l[2], 2, 2, &proof, &root));
-        // The root over 3 leaves is also the root over the 2 leaves
-        // `[H(l0, l1), l2]`, so a prover-chosen count of 2 would accept index 1.
-        // The count must come from authenticated data.
+        // The root over 3 leaves is also the root over `[H(l0, l1), l2]`.
         assert!(verify_merkle_proof(l[2], 1, 2, &proof, &root));
     }
 

@@ -5,18 +5,16 @@
  *
  * Accounts: //Alice (provider), //Bob (bucket admin)
  *
- * The provider's proof builder (`build_merkle_proofs`) assumes the canonical
- * tree: chunks of `DEFAULT_CHUNK_SIZE` bytes except the last, and a binary tree
- * in which an odd last node moves up a level unchanged. The pallet derives the
- * chunk count from the data size. The provider becomes liable for every root it
- * signs in `POST /commit`, so it must sign only roots it can prove.
+ * `POST /commit` signs only the canonical tree: chunks of `DEFAULT_CHUNK_SIZE`
+ * bytes except the last, and an odd last node moves up a level unchanged. The
+ * provider cannot prove a chunk of a root with another shape.
  *
  * 14.1 `/commit` signs the canonical tree `R = H(H(c0, c1), c2)` over chunks of
  *      `DEFAULT_CHUNK_SIZE`, `DEFAULT_CHUNK_SIZE` and 10 bytes, and the provider
  *      defends a challenge on chunk 2.
  * 14.2 `/commit` rejects `H(c0, H(c1, c2))`: the pallet cannot verify a proof
- *      for `c2` against it, so a signed root of this shape lets the bucket admin
- *      slash the provider's whole stake with `SlashReason::InvalidProof`.
+ *      for `c2` against it, so a challenge on `c2` expires and slashes the
+ *      provider.
  *
  * Usage: node --import tsx e2e/14-canonical-chunk-tree.ts [chain_ws] [provider_url]
  */
@@ -59,7 +57,6 @@ async function main() {
     true, // finalize: the provider reads bucket membership from finalized state
   );
 
-  /** Upload leaf chunks of the given sizes, filled with 1, 2, 3, ..., and return their hashes. */
   async function putLeaves(sizes: number[]): Promise<Uint8Array[]> {
     const leaves: Uint8Array[] = [];
     for (const [i, size] of sizes.entries()) {
@@ -78,7 +75,6 @@ async function main() {
     });
   }
 
-  /** Assert `err` is the provider's `400 non_canonical_tree` rejection of `/commit`. */
   function assertNonCanonicalTree(err: unknown): true {
     const match = /^\/commit: (\d{3}) (.*)$/s.exec((err as Error).message);
     assert.ok(match, `unexpected error: ${(err as Error).message}`);
@@ -95,7 +91,6 @@ async function main() {
   tests.push({
     name: "14.1 /commit signs the canonical chunk tree and the provider defends chunk 2",
     fn: async () => {
-      // R = H(H(c0, c1), c2): the last chunk moves up a level without a sibling.
       const inner = await putInternal(PROVIDER_URL, bucketId, owner, leaves[0], leaves[1]);
       const root = await putInternal(PROVIDER_URL, bucketId, owner, inner, leaves[2]);
       assert.ok(bytesEq(root, merkleRoot(leaves)), "R must equal the canonical root");

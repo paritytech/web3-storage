@@ -16,9 +16,7 @@
  * Chunks hash with prefix `0x00` and internal nodes with `0x01`, so the 64
  * bytes of `L` (`hash(c0) || hash(c1)`) with the 1-step proof `[R]` do not
  * verify as chunk 0, and the chain rejects them with `InvalidProof`. The chain
- * derives the chunk count (4) from the data size, so it also rejects the
- * 1-step proof for its length. `internal_node_bytes_do_not_verify_as_a_chunk`
- * in `crates/primitives/storage/src/lib.rs` tests the prefixes alone.
+ * also rejects the 1-step proof because 4 chunks need 2 siblings.
  *
  * 13.1 The provider answers a challenge on chunk 0 with the real chunk.
  * 13.2 A response to a challenge on chunk 0 with the bytes of `L` and the
@@ -66,8 +64,7 @@ async function main() {
       true, // finalize: the provider reads bucket membership from finalized state
     );
 
-    // The provider commits only trees whose chunks are DEFAULT_CHUNK_SIZE
-    // bytes, except a shorter last chunk.
+    // `/commit` accepts only DEFAULT_CHUNK_SIZE chunks, except a shorter last one.
     const chunks = [0, 1, 2, 3].map((i) =>
       new Uint8Array(i < 3 ? DEFAULT_CHUNK_SIZE : 32).fill(i + 1),
     );
