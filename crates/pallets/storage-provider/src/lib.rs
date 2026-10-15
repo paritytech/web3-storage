@@ -2712,13 +2712,10 @@ pub mod pallet {
                         chunk_proof,
                         &mmr_proof.leaf.data_root,
                     );
-                    // Bound to the challenged `leaf_index`: a valid proof for a
-                    // different leaf of the same MMR does not verify.
                     let mmr_ok = storage_primitives::verify_mmr_proof(
                         mmr_proof,
                         challenge.target.leaf_index,
-                        challenge.commitment.leaf_count,
-                        &challenge.commitment.mmr_root,
+                        &challenge.commitment,
                     );
                     ensure!(chunk_ok && mmr_ok, Error::<T>::InvalidProof);
                 }

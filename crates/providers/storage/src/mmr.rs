@@ -231,7 +231,7 @@ mod tests {
     fn challenge_binds_leaf_index() {
         use codec::Encode;
         use storage_primitives::{
-            verify_merkle_proof, verify_mmr_proof, MerkleProof, MmrLeaf, MmrProof,
+            verify_merkle_proof, verify_mmr_proof, Commitment, MerkleProof, MmrLeaf, MmrProof,
         };
 
         // A bucket MMR of 6 single-chunk "files". For a single chunk,
@@ -259,6 +259,11 @@ mod tests {
             leaves.push(leaf);
         }
         let root = root_of(&mmr);
+        let commitment = |leaf_count: u64| Commitment {
+            mmr_root: root,
+            start_seq: 0,
+            leaf_count,
+        };
 
         // Build an on-chain `storage_primitives::MmrProof` for a chosen leaf index.
         let make_proof = |idx: u64| -> MmrProof {
@@ -279,7 +284,7 @@ mod tests {
         let pallet_accepts = |chunk_data: &[u8], challenged_leaf: u64, proof: &MmrProof| -> bool {
             let chunk_hash = blake2_256(chunk_data);
             verify_merkle_proof(chunk_hash, 0, &empty, &proof.leaf.data_root)
-                && verify_mmr_proof(proof, challenged_leaf, leaf_count, &root)
+                && verify_mmr_proof(proof, challenged_leaf, &commitment(leaf_count))
         };
 
         // HONEST: challenge for leaf 5, answer with leaf 5 -> accepted.
@@ -324,7 +329,7 @@ mod tests {
 
         // A wrong leaf_count (peak-structure mismatch) fails.
         assert!(
-            !verify_mmr_proof(&make_proof(5), 5, leaf_count + 1, &root),
+            !verify_mmr_proof(&make_proof(5), 5, &commitment(leaf_count + 1)),
             "a mismatched leaf_count must fail"
         );
     }
@@ -349,7 +354,11 @@ mod tests {
             mmr.push(blake2_256(&leaf.encode()));
         }
 
-        let root = root_of(&mmr);
+        let commitment = storage_primitives::Commitment {
+            mmr_root: root_of(&mmr),
+            start_seq: 0,
+            leaf_count: 5,
+        };
 
         for (i, leaf) in mmr_leaves.iter().enumerate() {
             let (siblings, path, peaks) =
@@ -362,7 +371,7 @@ mod tests {
             };
 
             assert!(
-                storage_primitives::verify_mmr_proof(&mmr_proof, i as u64, 5, &root),
+                storage_primitives::verify_mmr_proof(&mmr_proof, i as u64, &commitment),
                 "verify_mmr_proof failed for leaf {i}"
             );
         }

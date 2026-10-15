@@ -704,25 +704,21 @@ mod tests {
             roots.push(root);
         }
 
-        let proof = storage
-            .get_mmr_proof_for_commitment(
-                1,
-                &storage_primitives::Commitment {
-                    mmr_root: roots[1],
-                    start_seq: 0,
-                    leaf_count: 2,
-                },
-                1,
-            )
-            .unwrap();
-        assert!(storage_primitives::verify_mmr_proof(
-            &proof, 1, 2, &roots[1]
-        ));
+        let cited = storage_primitives::Commitment {
+            mmr_root: roots[1],
+            start_seq: 0,
+            leaf_count: 2,
+        };
+        let proof = storage.get_mmr_proof_for_commitment(1, &cited, 1).unwrap();
+        assert!(storage_primitives::verify_mmr_proof(&proof, 1, &cited));
         // The same proof must not satisfy a challenge citing the current
         // 3-leaf commitment: its peaks bag to the cited two-leaf root.
-        assert!(!storage_primitives::verify_mmr_proof(
-            &proof, 1, 3, &roots[2]
-        ));
+        let current = storage_primitives::Commitment {
+            mmr_root: roots[2],
+            start_seq: 0,
+            leaf_count: 3,
+        };
+        assert!(!storage_primitives::verify_mmr_proof(&proof, 1, &current));
 
         // A leaf index outside the cited commitment is rejected even though
         // the bucket currently holds it.
@@ -779,24 +775,14 @@ mod tests {
 
         // Challenge cites the post-prune commitment (start_seq 1); its
         // leaf_index 1 is global seq 2 — the third leaf ever committed.
-        let proof = storage
-            .get_mmr_proof_for_commitment(
-                1,
-                &storage_primitives::Commitment {
-                    mmr_root: post_prune_root,
-                    start_seq: 1,
-                    leaf_count: 2,
-                },
-                1,
-            )
-            .unwrap();
+        let cited = storage_primitives::Commitment {
+            mmr_root: post_prune_root,
+            start_seq: 1,
+            leaf_count: 2,
+        };
+        let proof = storage.get_mmr_proof_for_commitment(1, &cited, 1).unwrap();
         assert_eq!(proof.leaf.data_root, expected.data_root);
-        assert!(storage_primitives::verify_mmr_proof(
-            &proof,
-            1,
-            2,
-            &post_prune_root
-        ));
+        assert!(storage_primitives::verify_mmr_proof(&proof, 1, &cited));
     }
 
     #[test]

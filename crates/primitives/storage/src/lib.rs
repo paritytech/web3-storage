@@ -119,9 +119,8 @@ pub enum ProviderRole<Balance, BlockNumber> {
     },
 }
 
-/// The commitment a replica confirmed sync to in `confirm_replica_sync`:
-/// the current snapshot's or a historical one. `challenge_replica` binds
-/// its challenges to this range.
+/// The commitment a replica last confirmed sync to. `challenge_replica`
+/// targets leaves of this commitment.
 #[derive(
     Clone,
     Copy,
@@ -560,15 +559,14 @@ pub fn mmr_leaf_position(leaf_index: u64, leaf_count: u64) -> Option<MmrLeafPosi
     None
 }
 
-/// Verify an MMR inclusion proof, **bound to the exact `(leaf_index, leaf_count)`**.
+/// Verify an MMR inclusion proof for leaf `leaf_index` of `commitment`.
 ///
-/// The expected root-ward path and target peak are *derived* from
-/// `(leaf_index, leaf_count)` and checked against the proof, so a prover cannot
-/// satisfy a challenge for one leaf with a proof for a different leaf it still
-/// holds.
-pub fn verify_mmr_proof(proof: &MmrProof, leaf_index: u64, leaf_count: u64, root: &H256) -> bool {
+/// The expected root-ward path and target peak are derived from
+/// `(leaf_index, commitment.leaf_count)` and checked against the proof, so a
+/// proof for a different leaf of the same MMR fails.
+pub fn verify_mmr_proof(proof: &MmrProof, leaf_index: u64, commitment: &Commitment) -> bool {
     // Derive the leaf's canonical position; rejects out-of-range leaves.
-    let pos = match mmr_leaf_position(leaf_index, leaf_count) {
+    let pos = match mmr_leaf_position(leaf_index, commitment.leaf_count) {
         Some(pos) => pos,
         None => return false,
     };
@@ -576,7 +574,7 @@ pub fn verify_mmr_proof(proof: &MmrProof, leaf_index: u64, leaf_count: u64, root
     // One sibling per level, and one peak per set bit of leaf_count.
     if proof.leaf_proof.siblings.len() != pos.height as usize
         || proof.leaf_proof.path.len() != pos.height as usize
-        || proof.peaks.len() != leaf_count.count_ones() as usize
+        || proof.peaks.len() != commitment.leaf_count.count_ones() as usize
     {
         return false;
     }
@@ -607,7 +605,7 @@ pub fn verify_mmr_proof(proof: &MmrProof, leaf_index: u64, leaf_count: u64, root
     }
 
     // The peaks must bag to the committed root.
-    bag_peaks(&proof.peaks) == *root
+    bag_peaks(&proof.peaks) == commitment.mmr_root
 }
 
 #[cfg(test)]
@@ -793,6 +791,14 @@ mod tests {
         }
     }
 
+    fn commitment(mmr_root: H256, leaf_count: u64) -> Commitment {
+        Commitment {
+            mmr_root,
+            start_seq: 0,
+            leaf_count,
+        }
+    }
+
     #[test]
     fn test_verify_mmr_proof_single_leaf() {
         let l0 = leaf(blake2_256(b"file0"), 10);
@@ -809,11 +815,11 @@ mod tests {
         };
 
         // Honest: leaf 0 of a 1-leaf MMR verifies.
-        assert!(verify_mmr_proof(&proof, 0, 1, &root));
+        assert!(verify_mmr_proof(&proof, 0, &commitment(root, 1)));
         // Out-of-range leaf_index is rejected.
-        assert!(!verify_mmr_proof(&proof, 1, 1, &root));
+        assert!(!verify_mmr_proof(&proof, 1, &commitment(root, 1)));
         // Wrong leaf_count (claims 2 leaves) is rejected on path length.
-        assert!(!verify_mmr_proof(&proof, 0, 2, &root));
+        assert!(!verify_mmr_proof(&proof, 0, &commitment(root, 2)));
     }
 
     #[test]
@@ -845,12 +851,12 @@ mod tests {
         };
 
         // Each leaf verifies at its own index.
-        assert!(verify_mmr_proof(&proof0, 0, 2, &root));
-        assert!(verify_mmr_proof(&proof1, 1, 2, &root));
+        assert!(verify_mmr_proof(&proof0, 0, &commitment(root, 2)));
+        assert!(verify_mmr_proof(&proof1, 1, &commitment(root, 2)));
 
         // Substitution is rejected: leaf 0's proof cannot answer a leaf-1
         // challenge, nor leaf 1's a leaf-0 challenge.
-        assert!(!verify_mmr_proof(&proof0, 1, 2, &root));
-        assert!(!verify_mmr_proof(&proof1, 0, 2, &root));
+        assert!(!verify_mmr_proof(&proof0, 1, &commitment(root, 2)));
+        assert!(!verify_mmr_proof(&proof1, 0, &commitment(root, 2)));
     }
 }
