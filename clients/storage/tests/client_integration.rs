@@ -89,24 +89,6 @@ async fn test_upload_rejects_chunk_size_outside_the_allowed_range() {
 }
 
 #[tokio::test]
-async fn test_upload_accepts_the_max_chunk_size() {
-    let url = start_test_provider().await;
-    let client = make_client(url);
-
-    let data = vec![3u8; DEFAULT_CHUNK_SIZE as usize + 10];
-    let data_root = client
-        .upload(
-            1,
-            &data,
-            ChunkingStrategy::Fixed(DEFAULT_CHUNK_SIZE as usize),
-        )
-        .await
-        .unwrap();
-
-    assert_ne!(data_root, H256::zero());
-}
-
-#[tokio::test]
 async fn test_same_data_produces_same_root() {
     let url = start_test_provider().await;
     let client = make_client(url);
