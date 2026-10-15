@@ -129,10 +129,9 @@ pub trait StorageBackend: Send + Sync {
             }
             if let Some(node) = self.get_node(&hash) {
                 match node {
-                    ChunkTreeNode::Internal(children) => {
-                        for child in children.into_iter().rev() {
-                            stack.push(child);
-                        }
+                    ChunkTreeNode::Internal { left, right } => {
+                        stack.push(right);
+                        stack.push(left);
                     }
                     ChunkTreeNode::Chunk(data) => chunks.push(data),
                 }
@@ -153,10 +152,9 @@ pub trait StorageBackend: Send + Sync {
             }
             if let Some(node) = self.get_node(&hash) {
                 match node {
-                    ChunkTreeNode::Internal(children) => {
-                        for child in children.into_iter().rev() {
-                            stack.push(child);
-                        }
+                    ChunkTreeNode::Internal { left, right } => {
+                        stack.push(right);
+                        stack.push(left);
                     }
                     ChunkTreeNode::Chunk(_) => hashes.push(hash),
                 }
@@ -181,7 +179,7 @@ pub trait StorageBackend: Send + Sync {
         let chunk_hash = chunk_hashes[chunk_index as usize];
         let chunk_data = match self.get_node(&chunk_hash) {
             Some(ChunkTreeNode::Chunk(data)) => data,
-            Some(ChunkTreeNode::Internal(_)) | None => {
+            Some(ChunkTreeNode::Internal { .. }) | None => {
                 return Err(Error::NodeNotFound(format!("chunk_data_{chunk_index}")));
             }
         };
@@ -219,7 +217,7 @@ pub trait StorageBackend: Send + Sync {
         while let Some(hash) = stack.pop() {
             if let Some(node) = self.get_node(&hash) {
                 match node {
-                    ChunkTreeNode::Internal(children) => stack.extend(children),
+                    ChunkTreeNode::Internal { left, right } => stack.extend([left, right]),
                     ChunkTreeNode::Chunk(data) => {
                         if data.len() > MAX_CHUNK_SIZE as usize {
                             return Err(Error::ChunkTooLarge {
@@ -263,7 +261,10 @@ pub fn build_padded_merkle_tree(
             let _ = storage.store_node(
                 bucket_id,
                 parent,
-                ChunkTreeNode::Internal([pair[0], pair[1]]),
+                ChunkTreeNode::Internal {
+                    left: pair[0],
+                    right: pair[1],
+                },
             );
             next_level.push(parent);
         }

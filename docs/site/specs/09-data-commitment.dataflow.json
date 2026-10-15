@@ -81,7 +81,7 @@
       "id": "chunks",
       "type": "database",
       "label": "Chunks",
-      "sublabel": "blake2_256(data)",
+      "sublabel": "blake2_256(0x00 ++ data)",
       "stage": 1,
       "row": 0,
       "tag": "leaves"
@@ -90,7 +90,7 @@
       "id": "internal",
       "type": "database",
       "label": "Internal Nodes",
-      "sublabel": "content is child hashes",
+      "sublabel": "two child hashes",
       "stage": 1,
       "row": 2,
       "tag": "bottom-up"
@@ -161,7 +161,7 @@
       "id": "build-tree",
       "from": "chunks",
       "to": "internal",
-      "label": "parent = hash(child hashes)",
+      "label": "blake2_256(0x01 ++ left ++ right)",
       "classification": "content-addressed",
       "labelDy": 60
     },
@@ -221,6 +221,7 @@
       "title": "Content addressing",
       "items": [
         "Chunks and internal nodes are both addressed by hash",
+        "Chunks hash with prefix 0x00 and nodes with 0x01, so a node does not verify as a chunk",
         "Upload is bottom-up: children must exist before the parent",
         "If the root hash exists, the whole tree is present"
       ]
@@ -230,6 +231,7 @@
       "title": "One MMR per bucket",
       "items": [
         "Append adds a leaf; delete raises start_seq; freeze locks start_seq",
+        "The MMR uses the same 0x00 and 0x01 prefixes and bags peaks right to left with blake2_256(0x02 ++ peak ++ rest)",
         "Canonical range: [start_seq, start_seq + leaf_count)",
         "Non-canonical [A, A+N) is prunable once canonical [B, B+M) has B+M > A+N"
       ]

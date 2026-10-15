@@ -176,6 +176,23 @@ async fn non_base64_node_data_is_a_decode_error() {
 }
 
 #[tokio::test]
+async fn child_hash_of_wrong_length_is_a_decode_error() {
+    let peak = H256::repeat_byte(0x11);
+    let reply = node_body(
+        &hex_hash(peak),
+        &base64(b"payload"),
+        Some(vec![format!("0x{}", "ab".repeat(31))]),
+    );
+    assert_err!(
+        sync_serving_node(peak, reply).await,
+        Error::Decode {
+            what: "child hash",
+            ..
+        }
+    );
+}
+
+#[tokio::test]
 async fn non_hex_child_hash_is_a_decode_error() {
     let peak = H256::repeat_byte(0x11);
     let reply = node_body(
@@ -277,7 +294,7 @@ async fn an_internal_peak_is_stored_after_the_children_beneath_it() {
     );
     assert_eq!(
         f.storage.get_node(&parent),
-        Some(ChunkTreeNode::Internal([left, right])),
+        Some(ChunkTreeNode::Internal { left, right }),
         "the parent must be stored once its children are present"
     );
     assert_eq!(

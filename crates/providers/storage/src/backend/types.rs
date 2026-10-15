@@ -73,8 +73,13 @@ impl BucketState {
 pub enum ChunkTreeNode {
     /// Leaf: hash = hash_leaf(data) = blake2_256(0x00 ++ data)
     Chunk(Vec<u8>),
-    /// Internal: hash = hash_children(children[0], children[1]) = blake2_256(0x01 ++ left ++ right)
-    Internal([H256; 2]),
+    /// Internal: hash = hash_children(left, right) = blake2_256(0x01 ++ left ++ right)
+    Internal {
+        /// Left child.
+        left: H256,
+        /// Right child.
+        right: H256,
+    },
 }
 
 impl ChunkTreeNode {
@@ -86,10 +91,10 @@ impl ChunkTreeNode {
     /// input enters - rather than anywhere deeper.
     pub fn internal(children: Vec<H256>) -> Result<Self, Error> {
         let count = children.len();
-        children
+        let [left, right]: [H256; 2] = children
             .try_into()
-            .map(Self::Internal)
-            .map_err(|_| Error::InvalidChildCount(count))
+            .map_err(|_| Error::InvalidChildCount(count))?;
+        Ok(Self::Internal { left, right })
     }
 
     /// Build a node from the `data` and optional `children` a peer sent.
@@ -113,10 +118,10 @@ impl ChunkTreeNode {
     pub fn preimage(&self) -> Vec<u8> {
         match self {
             Self::Chunk(data) => data.clone(),
-            Self::Internal(children) => {
+            Self::Internal { left, right } => {
                 let mut bytes = Vec::with_capacity(64);
-                bytes.extend_from_slice(children[0].as_bytes());
-                bytes.extend_from_slice(children[1].as_bytes());
+                bytes.extend_from_slice(left.as_bytes());
+                bytes.extend_from_slice(right.as_bytes());
                 bytes
             }
         }
@@ -126,7 +131,7 @@ impl ChunkTreeNode {
     pub fn hash(&self) -> H256 {
         match self {
             Self::Chunk(data) => storage_primitives::hash_leaf(data),
-            Self::Internal(children) => hash_children(children[0], children[1]),
+            Self::Internal { left, right } => hash_children(*left, *right),
         }
     }
 }
@@ -203,11 +208,14 @@ mod tests {
             );
             assert_golden(ChunkTreeNode::Chunk(vec![]), "0000");
             assert_golden(
-                ChunkTreeNode::Internal([H256::repeat_byte(0x11), H256::repeat_byte(0x22)]),
+                ChunkTreeNode::Internal {
+                    left: H256::repeat_byte(0x11),
+                    right: H256::repeat_byte(0x22),
+                },
                 concat!(
                     // variant 1 (Internal)
                     "01",
-                    // children: [H256; 2], fixed-size, no length prefix
+                    // left, right: H256 each, fixed-size, no length prefix
                     "1111111111111111111111111111111111111111111111111111111111111111",
                     "2222222222222222222222222222222222222222222222222222222222222222",
                 ),
@@ -280,7 +288,7 @@ mod tests {
         let data = [left.as_bytes(), right.as_bytes()].concat();
         assert_eq!(
             ChunkTreeNode::from_wire(data, Some(vec![left, right])).unwrap(),
-            ChunkTreeNode::Internal([left, right])
+            ChunkTreeNode::Internal { left, right }
         );
     }
 
@@ -316,7 +324,7 @@ mod tests {
 
         assert_eq!(
             ChunkTreeNode::internal(vec![left, right]).unwrap(),
-            ChunkTreeNode::Internal([left, right])
+            ChunkTreeNode::Internal { left, right }
         );
 
         for children in [vec![], vec![left], vec![left, right, left]] {
@@ -330,7 +338,7 @@ mod tests {
     fn internal_preimage_and_hash_are_derived_from_children() {
         let left = H256::repeat_byte(0x11);
         let right = H256::repeat_byte(0x22);
-        let node = ChunkTreeNode::Internal([left, right]);
+        let node = ChunkTreeNode::Internal { left, right };
 
         let mut expected_preimage = left.as_bytes().to_vec();
         expected_preimage.extend_from_slice(right.as_bytes());

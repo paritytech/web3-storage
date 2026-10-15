@@ -1467,6 +1467,23 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
+    async fn test_get_node_hash_of_wrong_length(backend) {
+        let server = TestServer::new(backend).await;
+
+        let resp = server
+            .client
+            .get(server.url("/node?hash=0x01"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+        let body: Value = resp.json().await.unwrap();
+        assert_eq!(body["error"], "invalid_hash");
+    }
+}
+
+common::backend_tests! {
     async fn test_get_node_not_found(backend) {
         let server = TestServer::new(backend).await;
 

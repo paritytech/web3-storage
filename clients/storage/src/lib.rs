@@ -157,7 +157,7 @@ pub use provider::{ProviderClient, ProviderSettings};
 pub use signer::Signer;
 pub use storage_user::{
     CheckpointSignatureResponse, CommitResponse, CommitmentResponse, ExistsResponse,
-    HealthResponse, StorageUserClient,
+    HealthResponse, Node, StorageUserClient,
 };
 pub use verification::ClientVerifier;
 

@@ -285,7 +285,7 @@
           <rect x="448.66666666666674" y="447" width="142" height="16" rx="3" class="c-mask"/>
           <text x="519.6666666666667" y="457" class="t-muted" font-size="9" text-anchor="middle">chunks: hash, data, proof</text>
         </g>
-        <text data-detail="fine" x="176" y="485" class="t-dim" font-size="7">client checks blake2_256 and Merkle path</text>
+        <text data-detail="fine" x="176" y="485" class="t-dim" font-size="7">client checks blake2_256(0x00 ++ data) and Merkle path</text>
         </g>
 
         <g data-edge-from="client" data-edge-to="primary" data-edge-label="GET /mmr_proof?bucket_id&amp;leaf_index" data-edge-key="8" data-edge-id="mmr-proof">
@@ -604,7 +604,7 @@
           <h3>What the client verifies</h3>
         </div>
         <ul>
-          <li>&bull; blake2_256(chunk) equals its hash</li>
+          <li>&bull; blake2_256(0x00 ++ data) equals the chunk hash</li>
           <li>&bull; Merkle path from chunk to data_root</li>
           <li>&bull; MMR proof from data_root to mmr_root</li>
         </ul>

@@ -227,14 +227,7 @@ async fn get_node(
     State(state): State<Arc<ProviderState>>,
     Query(query): Query<GetNodeQuery>,
 ) -> Result<Json<DownloadNodeResponse>, Error> {
-    let hash_bytes =
-        hex::decode(query.hash.strip_prefix("0x").unwrap_or(&query.hash)).map_err(|_| {
-            Error::InvalidHash {
-                expected: query.hash.clone(),
-                actual: "invalid hex".to_string(),
-            }
-        })?;
-    let hash = H256::from_slice(&hash_bytes);
+    let hash = decode_hash(&query.hash)?;
 
     let node = state
         .storage
@@ -258,13 +251,7 @@ async fn upload_node(
     )
     .await?;
 
-    // Decode hash
-    let hash_bytes = hex::decode(request.hash.strip_prefix("0x").unwrap_or(&request.hash))
-        .map_err(|_| Error::InvalidHash {
-            expected: request.hash.clone(),
-            actual: "invalid hex".to_string(),
-        })?;
-    let hash = H256::from_slice(&hash_bytes);
+    let hash = decode_hash(&request.hash)?;
 
     // Decode data
     let data = BASE64
@@ -276,15 +263,7 @@ async fn upload_node(
         .children
         .map(|c| {
             c.iter()
-                .map(|h| {
-                    let bytes = hex::decode(h.strip_prefix("0x").unwrap_or(h)).map_err(|_| {
-                        Error::InvalidHash {
-                            expected: h.clone(),
-                            actual: "invalid hex".to_string(),
-                        }
-                    })?;
-                    Ok(H256::from_slice(&bytes))
-                })
+                .map(|h| decode_hash(h))
                 .collect::<Result<Vec<_>, Error>>()
         })
         .transpose()?;
@@ -307,14 +286,7 @@ async fn check_exists(
     let hashes: Vec<H256> = request
         .hashes
         .iter()
-        .map(|h| {
-            let bytes =
-                hex::decode(h.strip_prefix("0x").unwrap_or(h)).map_err(|_| Error::InvalidHash {
-                    expected: h.clone(),
-                    actual: "invalid hex".to_string(),
-                })?;
-            Ok(H256::from_slice(&bytes))
-        })
+        .map(|h| decode_hash(h))
         .collect::<Result<Vec<_>, Error>>()?;
 
     let (exists, missing) = state.storage.check_exists(request.bucket_id, &hashes);
@@ -352,14 +324,7 @@ async fn commit(
     let data_roots: Vec<H256> = request
         .data_roots
         .iter()
-        .map(|h| {
-            let bytes =
-                hex::decode(h.strip_prefix("0x").unwrap_or(h)).map_err(|_| Error::InvalidHash {
-                    expected: h.clone(),
-                    actual: "invalid hex".to_string(),
-                })?;
-            Ok(H256::from_slice(&bytes))
-        })
+        .map(|h| decode_hash(h))
         .collect::<Result<Vec<_>, Error>>()?;
 
     let (mmr_root, start_seq, leaf_indices) =
@@ -398,17 +363,7 @@ async fn read_chunks(
     State(state): State<Arc<ProviderState>>,
     Query(query): Query<ReadQuery>,
 ) -> Result<Json<ReadResponse>, Error> {
-    let root_bytes = hex::decode(
-        query
-            .data_root
-            .strip_prefix("0x")
-            .unwrap_or(&query.data_root),
-    )
-    .map_err(|_| Error::InvalidHash {
-        expected: query.data_root.clone(),
-        actual: "invalid hex".to_string(),
-    })?;
-    let data_root = H256::from_slice(&root_bytes);
+    let data_root = decode_hash(&query.data_root)?;
 
     // Calculate chunk indices
     let chunk_size = storage_primitives::DEFAULT_CHUNK_SIZE as u64;
@@ -544,17 +499,7 @@ async fn get_chunk_proof(
     State(state): State<Arc<ProviderState>>,
     Query(query): Query<ChunkProofQuery>,
 ) -> Result<Json<ChunkProofResponse>, Error> {
-    let root_bytes = hex::decode(
-        query
-            .data_root
-            .strip_prefix("0x")
-            .unwrap_or(&query.data_root),
-    )
-    .map_err(|_| Error::InvalidHash {
-        expected: query.data_root.clone(),
-        actual: "invalid hex".to_string(),
-    })?;
-    let data_root = H256::from_slice(&root_bytes);
+    let data_root = decode_hash(&query.data_root)?;
 
     let (chunk_data, proof) = state
         .storage
@@ -673,14 +618,7 @@ async fn fetch_nodes(
     let mut nodes = Vec::new();
 
     for hash_str in &request.hashes {
-        let hash_bytes =
-            hex::decode(hash_str.strip_prefix("0x").unwrap_or(hash_str)).map_err(|_| {
-                Error::InvalidHash {
-                    expected: hash_str.clone(),
-                    actual: "invalid hex".to_string(),
-                }
-            })?;
-        let hash = H256::from_slice(&hash_bytes);
+        let hash = decode_hash(hash_str)?;
 
         if let Some(node) = state.storage.get_node(&hash) {
             nodes.push(DownloadNodeResponse::new(hash_str.clone(), &node));

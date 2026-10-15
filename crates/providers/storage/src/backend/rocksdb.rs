@@ -249,14 +249,14 @@ impl DiskStorage {
         }
 
         // If internal node, verify children exist
-        if let ChunkTreeNode::Internal(child_hashes) = &node {
+        if let ChunkTreeNode::Internal { left, right } = &node {
             let cf_nodes = self
                 .db
                 .cf_handle(CF_NODES)
                 .ok_or(Error::ColumnFamilyMissing(CF_NODES))?;
 
-            let missing: Vec<String> = child_hashes
-                .iter()
+            let missing: Vec<String> = [left, right]
+                .into_iter()
                 .filter(|h| {
                     **h != H256::zero()
                         && self
@@ -282,7 +282,7 @@ impl DiskStorage {
         // An internal node costs a fixed 64 B (two H256 children).
         let charge: u64 = match &node {
             ChunkTreeNode::Chunk(data) => data.len() as u64,
-            ChunkTreeNode::Internal(_) => 64,
+            ChunkTreeNode::Internal { .. } => 64,
         };
 
         let new_size = bucket.used_bytes.saturating_add(charge);
@@ -576,9 +576,8 @@ mod tests {
     use tempfile::TempDir;
 
     /// Pins the raw keys and values this engine writes. A failure here means
-    /// existing provider databases can no longer be read - a storage
-    /// version/migration is required
-    /// (see <https://github.com/paritytech/web3-storage/issues/375>).
+    /// existing provider databases can no longer be read - bump
+    /// [`FORMAT_VERSION`].
     ///
     /// The record encodings themselves are pinned in [`super::types`].
     #[test]
@@ -639,7 +638,10 @@ mod tests {
             .store_node(
                 bucket_id,
                 internal_hash,
-                ChunkTreeNode::Internal([chunk_hash, other_hash]),
+                ChunkTreeNode::Internal {
+                    left: chunk_hash,
+                    right: other_hash,
+                },
             )
             .unwrap();
         let raw = storage
@@ -673,7 +675,7 @@ mod tests {
             .store_node(
                 bucket_id,
                 claimed_hash,
-                ChunkTreeNode::Internal([left, right]),
+                ChunkTreeNode::Internal { left, right },
             )
             .unwrap_err();
         assert!(matches!(err, Error::InvalidHash { .. }));
@@ -754,7 +756,10 @@ mod tests {
             .store_node(
                 bucket_id,
                 hash,
-                ChunkTreeNode::Internal([missing_child, H256::zero()]),
+                ChunkTreeNode::Internal {
+                    left: missing_child,
+                    right: H256::zero(),
+                },
             )
             .unwrap_err();
         assert!(matches!(err, Error::ChildrenMissing(_)));
@@ -765,7 +770,10 @@ mod tests {
             .store_node(
                 bucket_id,
                 padded_hash,
-                ChunkTreeNode::Internal([H256::zero(), H256::zero()]),
+                ChunkTreeNode::Internal {
+                    left: H256::zero(),
+                    right: H256::zero(),
+                },
             )
             .expect("an all-zero-children internal node has nothing to look up");
     }
@@ -784,7 +792,10 @@ mod tests {
             .store_node(
                 bucket_id,
                 hash,
-                ChunkTreeNode::Internal([H256::zero(), H256::zero()]),
+                ChunkTreeNode::Internal {
+                    left: H256::zero(),
+                    right: H256::zero(),
+                },
             )
             .unwrap();
 
@@ -829,12 +840,12 @@ mod tests {
             .store_node(
                 bucket_id,
                 internal_hash,
-                ChunkTreeNode::Internal([left, right]),
+                ChunkTreeNode::Internal { left, right },
             )
             .unwrap();
         assert_eq!(
             storage.get_node(&internal_hash),
-            Some(ChunkTreeNode::Internal([left, right]))
+            Some(ChunkTreeNode::Internal { left, right })
         );
     }
 
