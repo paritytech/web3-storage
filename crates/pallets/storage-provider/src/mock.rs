@@ -274,6 +274,18 @@ pub fn sign_sync_roots(
     pair.sign(&roots.encode()).into()
 }
 
+#[allow(dead_code)]
+pub fn sign_commitment(
+    provider: u64,
+    bucket_id: u64,
+    commitment: storage_primitives::Commitment,
+) -> sp_runtime::MultiSignature {
+    use codec::Encode;
+    use sp_core::Pair as _;
+    let payload = storage_primitives::CommitmentPayload::new(bucket_id, commitment);
+    sp_runtime::MultiSignature::Sr25519(provider_signer(provider).sign(&payload.encode()))
+}
+
 /// Helper: primary terms
 /// + at the owner's next expected nonce
 /// + valid for the current RequestTimeout window.
