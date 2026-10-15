@@ -25,10 +25,12 @@ pub use merkle::*;
 /// Using u64 ensures IDs never get reused even if buckets are deleted.
 pub type BucketId = u64;
 
-/// Chunk size, 256 KiB, and the largest leaf a challenge response can contain.
+/// Chunk size, 256 KiB. Every chunk of a committed data root has this size,
+/// except the last, which can be shorter.
 ///
-/// The runtime uses it as `MaxChunkSize`. A provider must not store or sign a
-/// leaf above it, because that leaf cannot be proven on-chain.
+/// The runtime uses it as `MaxChunkSize`, the largest leaf a challenge response
+/// can contain. The provider rejects a larger chunk on upload and replica sync,
+/// and rejects a commit whose chunks have other sizes.
 pub const DEFAULT_CHUNK_SIZE: u32 = 256 * 1024;
 
 /// Prime numbers used for historical root bucketing.

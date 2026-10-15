@@ -238,7 +238,7 @@ impl StorageUserClient {
         }
 
         // Trim to requested range
-        let chunk_size = 256 * 1024;
+        let chunk_size = u64::from(DEFAULT_CHUNK_SIZE);
         let start = (offset % chunk_size) as usize;
         let end = start + length as usize;
         let trimmed = if end <= data.len() {
@@ -425,7 +425,7 @@ impl StorageUserClient {
     pub async fn spot_check(&mut self, data_root: &H256, chunk_index: u64) -> ClientResult<bool> {
         use std::time::Instant;
 
-        let chunk_size = 256 * 1024u64; // 256 KiB
+        let chunk_size = u64::from(DEFAULT_CHUNK_SIZE);
         let offset = chunk_index * chunk_size;
         let provider_url = self.base.get_provider_url()?.to_string();
 

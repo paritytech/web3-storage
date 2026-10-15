@@ -158,7 +158,7 @@ impl ClientVerifier {
         let start = Instant::now();
 
         // Read the chunk
-        let chunk_size = 256 * 1024; // 256 KiB
+        let chunk_size = u64::from(storage_primitives::DEFAULT_CHUNK_SIZE);
         let offset = chunk_index * chunk_size;
         let result = client.read_data(data_root, offset, chunk_size).await;
 

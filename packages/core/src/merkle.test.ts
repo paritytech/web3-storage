@@ -6,6 +6,7 @@ import {
   bagPeaks,
   chunkCount,
   computeDataRoot,
+  DEFAULT_CHUNK_SIZE,
   hashChildren,
   hashLeaf,
   merkleRoot,
@@ -132,7 +133,7 @@ describe("merkleRoot", () => {
 
 describe("chunkCount", () => {
   it("rounds up and has a minimum of one", () => {
-    const chunk = 256 * 1024;
+    const chunk = DEFAULT_CHUNK_SIZE;
     expect(chunkCount(0)).toBe(1);
     expect(chunkCount(1)).toBe(1);
     expect(chunkCount(chunk)).toBe(1);
@@ -152,7 +153,7 @@ describe("computeDataRoot", () => {
   });
 
   it("multi-chunk file folds chunk hashes via the Merkle tree", () => {
-    const chunk = 256 * 1024;
+    const chunk = DEFAULT_CHUNK_SIZE;
     const bytes = new Uint8Array(chunk + 100).fill(7);
     const h0 = hashLeaf(bytes.subarray(0, chunk));
     const h1 = hashLeaf(bytes.subarray(chunk));
