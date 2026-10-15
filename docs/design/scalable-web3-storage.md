@@ -944,7 +944,9 @@ Internal Node
 ```
 
 In a committed tree, an internal node has exactly two children.
-A data root is the root of the zero-padded balanced binary tree over the chunks, so the provider can prove any chunk against it.
+A data root is the root of the binary tree over the chunks, so the provider can prove any chunk against it.
+When a level has an odd number of nodes, the last node moves up unchanged, without padding.
+All chunks have the fixed chunk size except the last, so the verifier derives the chunk count from the proven `data_size` of the MMR leaf.
 
 **Why content-addressed?**
 - Deduplication: Identical chunks stored once

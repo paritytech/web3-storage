@@ -97,6 +97,7 @@ async function main() {
 
     const provider = makeSigner(providerSeed);
     const user = makeSigner(clientSeed);
+    fs.setSigner(user);
 
     // Precondition: provider registered + accepting. Read its locked price.
     const info: any = await api.query.StorageProvider.Providers.getValue(provider.address, READ_OPTS);
