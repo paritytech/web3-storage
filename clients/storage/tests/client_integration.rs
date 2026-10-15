@@ -278,7 +278,6 @@ async fn test_download_partial_offset() {
     let url = start_test_provider().await;
     let client = make_client(url);
 
-    // Two full chunks.
     let chunk_size = storage_primitives::DEFAULT_CHUNK_SIZE as usize;
     let data: Vec<u8> = (0..chunk_size * 2).map(|i| (i % 251) as u8).collect();
     let data_root = client

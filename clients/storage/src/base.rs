@@ -193,9 +193,9 @@ pub struct AgreementInfo {
 /// Chunking strategy for data upload.
 #[derive(Debug, Clone, Copy)]
 pub enum ChunkingStrategy {
-    /// Fixed-size chunks (default: `DEFAULT_CHUNK_SIZE`). The provider rejects
-    /// the commit if a chunk other than the last is not `DEFAULT_CHUNK_SIZE`
-    /// bytes.
+    /// Fixed-size chunks (default: `DEFAULT_CHUNK_SIZE`). The provider commits
+    /// only chunks of `DEFAULT_CHUNK_SIZE` bytes, except a shorter, non-empty
+    /// last chunk, so use `DEFAULT_CHUNK_SIZE`.
     Fixed(usize),
     /// TODO: Content-defined chunking (not yet implemented)
     ///

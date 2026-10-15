@@ -1669,7 +1669,7 @@ mod challenge_tests {
         });
     }
 
-    /// Same for an MMR proof that does not bag to the challenged root.
+    /// An MMR proof that does not bag to the challenged root is rejected.
     #[test]
     fn respond_with_invalid_mmr_proof_is_rejected() {
         new_test_ext().execute_with(|| {

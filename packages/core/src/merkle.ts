@@ -88,7 +88,10 @@ export function merkleRoot(leaves: Uint8Array[]): Uint8Array {
   return level[0];
 }
 
-/** Number of chunks (tree leaves) of data with `dataSize` bytes; empty data is one chunk. */
+/**
+ * Number of chunks (tree leaves) of data with `dataSize` bytes; empty data is
+ * one chunk. Mirrors `chunk_count` in `crates/primitives/storage/src/merkle.rs`.
+ */
 export function chunkCount(dataSize: number): number {
   return Math.max(1, Math.ceil(dataSize / DEFAULT_CHUNK_SIZE));
 }

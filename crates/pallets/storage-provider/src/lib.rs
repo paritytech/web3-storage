@@ -202,7 +202,8 @@ pub mod pallet {
         type MinProviderStake: Get<BalanceOf<Self>>;
 
         /// Maximum chunk size for challenge responses. Must equal
-        /// `storage_primitives::DEFAULT_CHUNK_SIZE`.
+        /// `storage_primitives::DEFAULT_CHUNK_SIZE`, which `respond_to_challenge`
+        /// uses to derive the chunk count from `data_size`.
         #[pallet::constant]
         type MaxChunkSize: Get<u32>;
 

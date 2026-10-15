@@ -62,7 +62,8 @@ pub fn merkle_root(leaf_hashes: &[H256]) -> H256 {
 
 /// Root and internal nodes of the tree over `leaf_hashes`.
 ///
-/// Nodes come children before parents.
+/// Nodes come children before parents, so a store that requires children to
+/// exist can insert them in order. No leaves or one leaf give no nodes.
 pub fn merkle_tree(leaf_hashes: &[H256]) -> (H256, Vec<MerkleNode>) {
     let levels = levels(leaf_hashes);
     let nodes = levels
@@ -107,6 +108,7 @@ fn proof_from_levels(levels: &[Vec<H256>], index: usize) -> MerkleProof {
 
     // The last level is the root, which has no sibling.
     for level in &levels[..levels.len() - 1] {
+        // An odd last node moves up without a sibling.
         if idx != level.len() - 1 || level.len().is_multiple_of(2) {
             let is_right = idx % 2 == 1;
             siblings.push(level[idx ^ 1]);
