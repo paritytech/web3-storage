@@ -4,6 +4,11 @@
 // per-file data root, so a client can compute the on-chain integrity anchor
 // itself and verify a drive without trusting the provider.
 //
+// Mirrors, byte for byte:
+//   - `crates/providers/storage/src/index/fs.rs`     → `metadata_merkle_root`
+//   - `crates/providers/storage/src/backend/mod.rs`  → `build_padded_merkle_tree`
+//   - `crates/primitives/storage/src/lib.rs`         → `hash_leaf`, `hash_children`, `bag_peaks`, `DEFAULT_CHUNK_SIZE`
+//
 // This is the multi-chunk Merkle DAG walk that `verify.ts` documents as the
 // missing "Rust-client parity" piece. Pure functions, no I/O — browser-safe.
 

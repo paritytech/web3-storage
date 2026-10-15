@@ -464,9 +464,12 @@ impl<BlockNumber> BucketSnapshot<BlockNumber> {
 // Hashing Utilities
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Compute blake2b-256 hash of data
+/// Compute blake2b-256 hash of data.
+///
+/// In the runtime this calls the host function, which is faster than hashing
+/// in wasm. Native code hashes directly and needs no externalities.
 pub fn blake2_256(data: &[u8]) -> H256 {
-    sp_crypto_hashing::blake2_256(data).into()
+    sp_io::hashing::blake2_256(data).into()
 }
 
 /// Prefix of a Merkle leaf preimage: a chunk, an MMR leaf or a metadata entry.
@@ -838,6 +841,10 @@ mod tests {
             },
         };
         assert!(verify_mmr_proof(&proof, &root));
+
+        let mut not_a_peak = proof.clone();
+        not_a_peak.leaf_proof.siblings[0] = H256::repeat_byte(0x55);
+        assert!(!verify_mmr_proof(&not_a_peak, &root));
 
         let mut wrong_root = proof.clone();
         wrong_root.peaks[1] = H256::repeat_byte(0x44);

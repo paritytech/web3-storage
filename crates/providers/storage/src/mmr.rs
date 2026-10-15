@@ -30,16 +30,7 @@ impl Mmr {
 
     /// Get the current root hash (bagged peaks).
     pub fn root(&self) -> H256 {
-        if self.nodes.is_empty() {
-            return H256::zero();
-        }
-
-        let peaks = self.peaks();
-        if peaks.is_empty() {
-            return H256::zero();
-        }
-
-        bag_peaks(&peaks)
+        bag_peaks(&self.peaks())
     }
 
     /// Get the peaks of the MMR (left to right, highest to lowest height).
@@ -228,6 +219,7 @@ mod tests {
     #[test]
     fn test_mmr_basic() {
         let mut mmr = Mmr::new();
+        assert_eq!(mmr.root(), H256::zero());
 
         let leaf1 = blake2_256(b"leaf1");
         let leaf2 = blake2_256(b"leaf2");

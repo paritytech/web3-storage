@@ -217,7 +217,7 @@
 
         <!-- Flow paths -->
         <path data-edge-from="file" data-edge-to="chunks" data-edge-label="split by client layout" data-edge-key="0" data-edge-id="split" data-composition-points="156,271;207.5,271;207.5,157;259,157" d="M 156 271 L 207.5 271 L 207.5 157 L 259 157" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
-        <path data-edge-from="chunks" data-edge-to="internal" data-edge-label="blake2_256(0x01 ++ left ++ right)" data-edge-key="1" data-edge-id="build-tree" data-composition-points="315,186;315,356" d="M 315 186 L 315 356" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="chunks" data-edge-to="internal" data-edge-label="parent = hash(child hashes)" data-edge-key="1" data-edge-id="build-tree" data-composition-points="315,186;315,356" d="M 315 186 L 315 356" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
         <path data-edge-from="internal" data-edge-to="data_root" data-edge-label="complete tree implies root" data-edge-key="2" data-edge-id="tree-root" data-composition-points="371,385;422.5,385;422.5,157;474,157" d="M 371 385 L 422.5 385 L 422.5 157 L 474 157" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
         <path data-edge-from="data_root" data-edge-to="mmr" data-edge-label="POST /commit appends MmrLeaf" data-edge-key="3" data-edge-id="append-leaf" data-composition-points="530,186;530,356" d="M 530 186 L 530 356" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
         <path data-edge-from="mmr" data-edge-to="snapshot" data-edge-label="checkpoint(commitment, signatures)" data-edge-key="4" data-edge-id="checkpoint-root" data-composition-points="586,385;637.5,385;637.5,157;689,157" d="M 586 385 L 637.5 385 L 637.5 157 L 689 157" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
@@ -241,8 +241,8 @@
         <text data-detail="fine" x="100" y="289" class="t-frontend" font-size="7" text-anchor="middle">client-controlled</text>
         </g>
 
-        <g id="node-chunks" data-node-id="chunks" data-node-label="Chunks" tabindex="0" role="button" aria-label="Focus Chunks, blake2_256(0x00 ++ data), 02 / Content addressing" aria-pressed="false" data-node-kind="database" data-node-sublabel="blake2_256(0x00 ++ data)" data-node-tag="leaves" data-node-context="02 / Content addressing">
-          <title>Chunks · blake2_256(0x00 ++ data) · 02 / Content addressing · leaves</title>
+        <g id="node-chunks" data-node-id="chunks" data-node-label="Chunks" tabindex="0" role="button" aria-label="Focus Chunks, blake2_256(data), 02 / Content addressing" aria-pressed="false" data-node-kind="database" data-node-sublabel="blake2_256(data)" data-node-tag="leaves" data-node-context="02 / Content addressing">
+          <title>Chunks · blake2_256(data) · 02 / Content addressing · leaves</title>
           <rect x="259" y="128" width="112" height="58" rx="6" class="c-mask"/>
           <rect x="259" y="128" width="112" height="58" rx="6" class="c-database" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="database" class="semantic-sigil s-database" transform="translate(265 134) scale(0.6875)">
@@ -250,12 +250,12 @@
             <path d="M3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8c0 1.1 2.2 2 5 2s5-.9 5-2"/>
           </g>
           <text data-node-label="" data-detail-anchor="" x="315" y="149" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">Chunks</text>
-          <text data-detail="context" x="315" y="165" class="t-muted" font-size="7" text-anchor="middle">blake2_256(0x00 ++ data)</text>
+          <text data-detail="context" x="315" y="165" class="t-muted" font-size="7" text-anchor="middle">blake2_256(data)</text>
         <text data-detail="fine" x="315" y="175" class="t-database" font-size="7" text-anchor="middle">leaves</text>
         </g>
 
-        <g id="node-internal" data-node-id="internal" data-node-label="Internal Nodes" tabindex="0" role="button" aria-label="Focus Internal Nodes, two child hashes, 02 / Content addressing" aria-pressed="false" data-node-kind="database" data-node-sublabel="two child hashes" data-node-tag="bottom-up" data-node-context="02 / Content addressing">
-          <title>Internal Nodes · two child hashes · 02 / Content addressing · bottom-up</title>
+        <g id="node-internal" data-node-id="internal" data-node-label="Internal Nodes" tabindex="0" role="button" aria-label="Focus Internal Nodes, content is child hashes, 02 / Content addressing" aria-pressed="false" data-node-kind="database" data-node-sublabel="content is child hashes" data-node-tag="bottom-up" data-node-context="02 / Content addressing">
+          <title>Internal Nodes · content is child hashes · 02 / Content addressing · bottom-up</title>
           <rect x="259" y="356" width="112" height="58" rx="6" class="c-mask"/>
           <rect x="259" y="356" width="112" height="58" rx="6" class="c-database" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="database" class="semantic-sigil s-database" transform="translate(265 362) scale(0.6875)">
@@ -263,7 +263,7 @@
             <path d="M3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8c0 1.1 2.2 2 5 2s5-.9 5-2"/>
           </g>
           <text data-node-label="" data-detail-anchor="" x="315" y="377" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">Internal Nodes</text>
-          <text data-detail="context" x="315" y="393" class="t-muted" font-size="7" text-anchor="middle">two child hashes</text>
+          <text data-detail="context" x="315" y="393" class="t-muted" font-size="7" text-anchor="middle">content is child hashes</text>
         <text data-detail="fine" x="315" y="403" class="t-database" font-size="7" text-anchor="middle">bottom-up</text>
         </g>
 
@@ -346,9 +346,9 @@
           <text x="207.5" y="204" class="t-backend" font-size="8" text-anchor="middle">split by client layout</text>
         <text data-detail="fine" x="207.5" y="215" class="t-dim" font-size="7" text-anchor="middle">plaintext or ciphertext</text>
         </g>
-        <g data-detail="context" data-edge-from="chunks" data-edge-to="internal" data-edge-label="blake2_256(0x01 ++ left ++ right)" data-edge-key="1" data-edge-id="build-tree">
-          <rect x="228.15" y="225" width="173.7" height="27" rx="4" class="c-mask"/>
-          <text x="315" y="236" class="t-muted" font-size="8" text-anchor="middle">blake2_256(0x01 ++ left ++ right)</text>
+        <g data-detail="context" data-edge-from="chunks" data-edge-to="internal" data-edge-label="parent = hash(child hashes)" data-edge-key="1" data-edge-id="build-tree">
+          <rect x="242.85" y="225" width="144.3" height="27" rx="4" class="c-mask"/>
+          <text x="315" y="236" class="t-muted" font-size="8" text-anchor="middle">parent = hash(child hashes)</text>
         <text data-detail="fine" x="315" y="247" class="t-dim" font-size="7" text-anchor="middle">content-addressed</text>
         </g>
         <g data-detail="context" data-edge-from="internal" data-edge-to="data_root" data-edge-label="complete tree implies root" data-edge-key="2" data-edge-id="tree-root">
@@ -595,7 +595,6 @@
         </div>
         <ul>
           <li>&bull; Chunks and internal nodes are both addressed by hash</li>
-          <li>&bull; Chunks hash with prefix 0x00 and nodes with 0x01, so a node does not verify as a chunk</li>
           <li>&bull; Upload is bottom-up: children must exist before the parent</li>
           <li>&bull; If the root hash exists, the whole tree is present</li>
         </ul>
@@ -608,7 +607,6 @@
         </div>
         <ul>
           <li>&bull; Append adds a leaf; delete raises start_seq; freeze locks start_seq</li>
-          <li>&bull; The MMR uses the same 0x00 and 0x01 prefixes and bags peaks right to left with blake2_256(0x02 ++ peak ++ rest)</li>
           <li>&bull; Canonical range: [start_seq, start_seq + leaf_count)</li>
           <li>&bull; Non-canonical [A, A+N) is prunable once canonical [B, B+M) has B+M &gt; A+N</li>
         </ul>

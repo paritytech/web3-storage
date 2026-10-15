@@ -7,6 +7,7 @@
  * workflow file can focus on scenario logic.
  */
 
+import assert from "node:assert";
 import type { TxCreator } from "polkadot-api/tx-creator";
 import {
   bytesEq,
@@ -27,7 +28,6 @@ import {
   type SignedTerms,
   type SubmittableTx,
 } from "@web3-storage/sdk";
-import assert from "node:assert";
 
 // ── Test runner primitives ──────────────────────────────────────────────────
 
@@ -271,6 +271,7 @@ export async function negotiateAndEstablish(
   return { bucketId, signed };
 }
 
+/** Upload the internal node over `left` and `right`, check its hash and return it. */
 export async function putInternal(
   providerUrl: string,
   bucketId: bigint,
