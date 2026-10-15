@@ -715,9 +715,8 @@ pub struct CommitResponse {
     #[serde(deserialize_with = "h256_from_hex")]
     pub mmr_root: H256,
     pub start_seq: u64,
-    /// Leaf count signed into the commitment; `challenge_offchain` needs it to
-    /// bind the challenged leaf. No `#[serde(default)]`: a provider omitting it
-    /// must fail loudly, not silently yield `leaf_count = 0`.
+    /// Leaf count signed into the commitment; `challenge_offchain` binds the
+    /// challenged leaf to it.
     pub leaf_count: u64,
     pub leaf_indices: Vec<u64>,
     #[serde(deserialize_with = "multi_signature_from_hex")]

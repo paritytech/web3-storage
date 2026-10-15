@@ -371,8 +371,6 @@ async fn commit(
 
     let outcome = state.storage.commit(request.bucket_id, data_roots)?;
 
-    // The signed commitment must match what the pallet reconstructs from the
-    // challenger's args, so it can back a bound `challenge_offchain`.
     let payload = CommitmentPayload::new(
         request.bucket_id,
         Commitment {
@@ -450,9 +448,6 @@ async fn get_commitment(
         .get_bucket(query.bucket_id)
         .ok_or(provider_storage::Error::BucketNotFound(query.bucket_id))?;
 
-    // Create commitment payload and sign it. The real `leaf_count` is signed so
-    // the returned signature can back a bound `challenge_offchain` (the pallet
-    // verifies the signature over the real leaf_count and binds the leaf_index).
     let payload = CommitmentPayload::new(
         query.bucket_id,
         Commitment {
@@ -604,9 +599,6 @@ async fn delete_data(
         .storage
         .delete_before(request.bucket_id, request.new_start_seq)?;
 
-    // Create commitment payload and sign it over the real post-delete
-    // leaf_count so the signature can back a bound `challenge_offchain` against
-    // the post-delete state.
     let payload = CommitmentPayload::new(
         request.bucket_id,
         Commitment {
