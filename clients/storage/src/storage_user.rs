@@ -551,10 +551,6 @@ impl StorageUserClient {
                 "Cannot build Merkle tree with no leaves".to_string(),
             ));
         }
-        if leaf_hashes.len() == 1 {
-            return Ok(leaf_hashes[0]);
-        }
-
         let (root, nodes) = storage_primitives::merkle_tree(leaf_hashes);
         for node in nodes {
             self.upload_node(
