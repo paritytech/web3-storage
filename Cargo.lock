@@ -10149,7 +10149,7 @@ dependencies = [
  "scale-info",
  "serde",
  "sp-core",
- "sp-crypto-hashing",
+ "sp-io",
 ]
 
 [[package]]
