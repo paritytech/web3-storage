@@ -129,7 +129,7 @@
       </div>
     </div>
 
-    <script id="archify-guided-views-data" type="application/json">[{"id":"happy-path","label":"Chain-first sync","focus":["snapshot","read_chain","fetch_peaks","verify","traverse","fetch_nodes","confirm","sync_check"],"note":"The replica reads the trusted root from the chain and verifies every fetched node against it."},{"id":"untrusted-sources","label":"Untrusted sources","focus":["peak_source","node_source","verify","mismatch"],"note":"Any data holder can serve. The replica rejects a source where bag_peaks(peaks) differs from the chain root."},{"id":"payment","label":"Confirmation and payment","focus":["confirm","sync_check","sync_balance"],"note":"confirm_replica_sync pays sync_price from sync_balance when the root is new and min_sync_interval has passed."}]</script>
+    <script id="archify-guided-views-data" type="application/json">[{"id":"happy-path","label":"Chain-first sync","focus":["snapshot","read_chain","fetch_peaks","verify","traverse","fetch_nodes","confirm","sync_check"],"note":"The replica reads the trusted root from the chain and verifies every fetched node against it."},{"id":"untrusted-sources","label":"Untrusted sources","focus":["peak_source","node_source","verify","mismatch"],"note":"Any data holder can serve. The replica rejects a source whose peaks do not hash to the chain root."},{"id":"payment","label":"Confirmation and payment","focus":["confirm","sync_check","sync_balance"],"note":"confirm_replica_sync pays sync_price from sync_balance when the root is new and min_sync_interval has passed."}]</script>
 
     <script src="assets/archify/i18n.js?v=b331908a8a55"></script>
     <div class="guided-views no-print" id="guided-views" hidden aria-label="Guided diagram views">
@@ -301,8 +301,8 @@
           <text data-detail="context" x="291" y="258" class="t-muted" font-size="8" text-anchor="middle">GET /mmr_peaks</text>
         </g>
 
-        <g id="node-verify" data-node-id="verify" data-node-label="Verify Peaks" tabindex="0" role="button" aria-label="Focus Verify Peaks, bag_peaks(peaks) == root, Replica Provider › Verify and walk" aria-pressed="false" data-node-kind="security" data-node-sublabel="bag_peaks(peaks) == root" data-node-context="Replica Provider › Verify and walk">
-          <title>Verify Peaks · bag_peaks(peaks) == root · Replica Provider › Verify and walk</title>
+        <g id="node-verify" data-node-id="verify" data-node-label="Verify Peaks" tabindex="0" role="button" aria-label="Focus Verify Peaks, hash(peaks) == root, Replica Provider › Verify and walk" aria-pressed="false" data-node-kind="security" data-node-sublabel="hash(peaks) == root" data-node-context="Replica Provider › Verify and walk">
+          <title>Verify Peaks · hash(peaks) == root · Replica Provider › Verify and walk</title>
           <rect x="389" y="220" width="140" height="52" rx="6" class="c-mask"/>
           <rect x="389" y="220" width="140" height="52" rx="6" class="c-security" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="security" class="semantic-sigil s-security" transform="translate(395 226) scale(0.6875)">
@@ -310,7 +310,7 @@
             <path d="m5.8 8 1.5 1.5 3-3"/>
           </g>
           <text data-node-label="" data-detail-anchor="" x="459" y="241" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Verify Peaks</text>
-          <text data-detail="context" x="459" y="258" class="t-muted" font-size="8" text-anchor="middle">bag_peaks(peaks) == root</text>
+          <text data-detail="context" x="459" y="258" class="t-muted" font-size="8" text-anchor="middle">hash(peaks) == root</text>
         </g>
 
         <g id="node-traverse" data-node-id="traverse" data-node-label="Top-Down Walk" tabindex="0" role="button" aria-label="Focus Top-Down Walk, GET /mmr_subtree, Replica Provider › Verify and walk" aria-pressed="false" data-node-kind="backend" data-node-sublabel="GET /mmr_subtree" data-node-context="Replica Provider › Verify and walk">
@@ -636,7 +636,6 @@
           <li>&bull; The replica reads the MMR root from the chain, not from a provider</li>
           <li>&bull; It checks peaks against that root before the traversal starts</li>
           <li>&bull; A source that serves wrong data fails the first hash check</li>
-          <li>&bull; A fetched chunk hashes with prefix 0x00; a node with two children hashes with 0x01</li>
         </ul>
       </div>
 
