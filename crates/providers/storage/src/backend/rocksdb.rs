@@ -36,16 +36,19 @@ pub struct DiskStorage {
 impl DiskStorage {
     /// Create a new disk storage instance.
     pub fn new(path: impl AsRef<Path>) -> Result<Self, Error> {
-        let path = path.as_ref();
-        let mut opts = Options::default();
-        opts.create_if_missing(true);
-        opts.create_missing_column_families(true);
-
-        let db = DB::open_cf(&opts, path, COLUMN_FAMILIES)?;
+        let db = DB::open_cf(&Self::db_options(), path.as_ref(), COLUMN_FAMILIES)?;
 
         Self::check_format_version(&db)?;
 
         Ok(Self { db: Arc::new(db) })
+    }
+
+    /// Options this engine opens its database with.
+    fn db_options() -> Options {
+        let mut opts = Options::default();
+        opts.create_if_missing(true);
+        opts.create_missing_column_families(true);
+        opts
     }
 
     /// Verify the on-disk format version, seeding it on a genuinely fresh
@@ -270,11 +273,8 @@ impl DiskStorage {
             .get_bucket(bucket_id)
             .ok_or(Error::BucketNotFound(bucket_id))?;
 
-        // An internal node costs a fixed 64 B (two H256 children).
-        let charge: u64 = match &node {
-            ChunkTreeNode::Chunk(data) => data.len() as u64,
-            ChunkTreeNode::Internal { .. } => 64,
-        };
+        // A node costs its preimage length.
+        let charge = node.preimage().len() as u64;
 
         let new_size = bucket.used_bytes.saturating_add(charge);
         if new_size > bucket.max_bytes {
@@ -569,10 +569,15 @@ mod tests {
     /// Open the database at `path` directly, bypassing `DiskStorage::new` and
     /// its format-version check.
     fn open_raw(path: &Path) -> DB {
-        let mut opts = Options::default();
-        opts.create_if_missing(true);
-        opts.create_missing_column_families(true);
-        DB::open_cf(&opts, path, COLUMN_FAMILIES).unwrap()
+        DB::open_cf(&DiskStorage::db_options(), path, COLUMN_FAMILIES).unwrap()
+    }
+
+    /// A fresh database with bucket 1 initialised with a 1000 B quota.
+    fn storage_with_bucket() -> (DiskStorage, TempDir) {
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        storage.init_bucket(1, 1_000).unwrap();
+        (storage, dir)
     }
 
     /// Pins the raw keys and values this engine writes. A failure here means
@@ -627,8 +632,8 @@ mod tests {
         // variant 0 (Chunk), compact length 5, then the bytes
         assert_eq!(hex::encode(&raw), "00140102030405");
 
-        // CF_NODES: an internal node's value is exactly 64 B - variant tag
-        // plus the two child hashes, no stored preimage.
+        // CF_NODES: an internal node's value is 65 B - the variant tag plus
+        // the two child hashes, no stored preimage.
         let other_hash = blake2_256(&[9u8]);
         storage
             .store_node(bucket_id, other_hash, ChunkTreeNode::Chunk(vec![9]))
@@ -661,10 +666,8 @@ mod tests {
 
     #[test]
     fn store_node_rejects_internal_node_whose_children_disagree_with_expected_hash() {
-        let dir = TempDir::new().unwrap();
-        let storage = DiskStorage::new(dir.path()).unwrap();
+        let (storage, _dir) = storage_with_bucket();
         let bucket_id: BucketId = 1;
-        storage.init_bucket(bucket_id, 1_000).unwrap();
 
         let left = H256::zero();
         let right = H256::zero();
@@ -682,11 +685,9 @@ mod tests {
     }
 
     #[test]
-    fn store_node_rejects_missing_child_but_exempts_zero_padding() {
-        let dir = TempDir::new().unwrap();
-        let storage = DiskStorage::new(dir.path()).unwrap();
+    fn store_node_rejects_missing_child() {
+        let (storage, _dir) = storage_with_bucket();
         let bucket_id: BucketId = 1;
-        storage.init_bucket(bucket_id, 1_000).unwrap();
 
         let missing_child = H256::repeat_byte(0x42);
         let hash = storage_primitives::hash_children(missing_child, H256::zero());
@@ -701,27 +702,12 @@ mod tests {
             )
             .unwrap_err();
         assert!(matches!(err, Error::ChildrenMissing(_)));
-
-        // The zero sentinel alone (both children padding) needs no existing node.
-        let padded_hash = storage_primitives::hash_children(H256::zero(), H256::zero());
-        storage
-            .store_node(
-                bucket_id,
-                padded_hash,
-                ChunkTreeNode::Internal {
-                    left: H256::zero(),
-                    right: H256::zero(),
-                },
-            )
-            .expect("an all-zero-children internal node has nothing to look up");
     }
 
     #[test]
-    fn internal_node_charges_constant_amount_of_bytes() {
-        let dir = TempDir::new().unwrap();
-        let storage = DiskStorage::new(dir.path()).unwrap();
+    fn internal_node_with_zero_children_stores_and_charges_64_bytes() {
+        let (storage, _dir) = storage_with_bucket();
         let bucket_id: BucketId = 1;
-        storage.init_bucket(bucket_id, 1_000).unwrap();
 
         // Zero-padding children need no existing node, so this isolates the
         // quota charge from the children-exist check.
@@ -735,7 +721,7 @@ mod tests {
                     right: H256::zero(),
                 },
             )
-            .unwrap();
+            .expect("an all-zero-children internal node has nothing to look up");
 
         let bucket = storage.get_bucket(bucket_id).unwrap();
         assert_eq!(bucket.used_bytes, 64);
@@ -743,10 +729,8 @@ mod tests {
 
     #[test]
     fn get_node_round_trips_both_variants() {
-        let dir = TempDir::new().unwrap();
-        let storage = DiskStorage::new(dir.path()).unwrap();
+        let (storage, _dir) = storage_with_bucket();
         let bucket_id: BucketId = 1;
-        storage.init_bucket(bucket_id, 1_000).unwrap();
 
         let chunk_data = vec![7u8, 8, 9];
         let chunk_hash = blake2_256(&chunk_data);

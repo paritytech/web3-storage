@@ -167,7 +167,6 @@ impl ReplicaSync {
                 }
             }
 
-            // Store locally
             self.storage.store_node(bucket_id, root_hash, node)?;
 
             Ok(())
