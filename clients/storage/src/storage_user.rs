@@ -493,7 +493,7 @@ impl StorageUserClient {
             }
             ChunkingStrategy::ContentDefined => {
                 // TODO: Implement content-defined chunking
-                Self::chunk_data(data, ChunkingStrategy::Fixed(DEFAULT_CHUNK_SIZE as usize))
+                Self::chunk_data(data, ChunkingStrategy::default())
             }
         }
     }
