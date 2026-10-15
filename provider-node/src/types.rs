@@ -46,8 +46,8 @@ impl DownloadNodeResponse {
     pub fn new(hash: String, node: &ChunkTreeNode) -> Self {
         let children = match node {
             ChunkTreeNode::Chunk(_) => None,
-            ChunkTreeNode::Internal(children) => Some(
-                children
+            ChunkTreeNode::Internal { left, right } => Some(
+                [left, right]
                     .iter()
                     .map(|h| format!("0x{}", hex::encode(h.as_bytes())))
                     .collect(),

@@ -277,7 +277,7 @@ async fn an_internal_peak_is_stored_after_the_children_beneath_it() {
     );
     assert_eq!(
         f.storage.get_node(&parent),
-        Some(ChunkTreeNode::Internal([left, right])),
+        Some(ChunkTreeNode::Internal { left, right }),
         "the parent must be stored once its children are present"
     );
     assert_eq!(

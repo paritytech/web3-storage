@@ -168,8 +168,8 @@ impl ReplicaSync {
 
             // Fetch children before storing the parent: store_node rejects an
             // internal node whose non-zero children aren't already present.
-            if let ChunkTreeNode::Internal(child_hashes) = &node {
-                for child in child_hashes {
+            if let ChunkTreeNode::Internal { left, right } = &node {
+                for child in [left, right] {
                     self.fetch_subtree(bucket_id, *child, primary_url).await?;
                 }
             }
