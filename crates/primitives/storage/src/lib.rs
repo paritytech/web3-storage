@@ -833,6 +833,10 @@ mod tests {
         };
         assert!(verify_mmr_proof(&proof, &root));
 
+        let mut not_a_peak = proof.clone();
+        not_a_peak.leaf_proof.siblings[0] = H256::repeat_byte(0x55);
+        assert!(!verify_mmr_proof(&not_a_peak, &root));
+
         let mut wrong_root = proof.clone();
         wrong_root.peaks[1] = H256::repeat_byte(0x44);
         assert!(!verify_mmr_proof(&wrong_root, &root));

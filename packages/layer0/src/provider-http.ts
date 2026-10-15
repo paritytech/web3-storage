@@ -109,8 +109,8 @@ export interface PutChunkResult {
  *
  * `signer` authenticates the `PUT /node` request; it must hold a Writer/Admin
  * role on `bucketId` (the provider always enforces this).
- * 
- * `children` to store an internal node instead of a leaf chunk. The
+ *
+ * Pass `children` to store an internal node instead of a leaf chunk. The
  * provider requires every child to exist already.
  */
 export async function putChunk(

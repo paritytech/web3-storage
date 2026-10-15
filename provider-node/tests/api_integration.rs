@@ -414,7 +414,7 @@ common::backend_tests! {
         let child_hash = H256::repeat_byte(0x11);
         let child_hex = format!("0x{}", hex_encode(child_hash.as_bytes()));
 
-        let hash = storage_primitives::blake2_256(child_hash.as_bytes());
+        let hash = storage_primitives::hash_children(child_hash, child_hash);
         let response = server
             .client
             .put(server.url("/node"))
