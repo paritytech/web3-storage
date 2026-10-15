@@ -32,12 +32,12 @@ impl<T: Config> Pallet<T> {
             }
         }
 
-        // Check historical roots
+        // Check historical roots. A zero root is an entry no checkpoint has
+        // written yet, not a commitment a replica can sync to.
         for i in 0..6 {
-            if let Some(root) = roots[i + 1] {
-                if bucket.historical_roots[i].1.mmr_root == root {
-                    return Ok((i as u8 + 1, bucket.historical_roots[i].1));
-                }
+            let entry = bucket.historical_roots[i].1;
+            if entry.mmr_root != H256::zero() && roots[i + 1] == Some(entry.mmr_root) {
+                return Ok((i as u8 + 1, entry));
             }
         }
 

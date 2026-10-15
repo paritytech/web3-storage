@@ -573,6 +573,30 @@ fn challenge_replica_binds_to_historical_sync_range() {
 }
 
 #[test]
+fn confirm_replica_sync_rejects_an_unwritten_historical_entry() {
+    use sp_core::H256;
+    new_test_ext().execute_with(|| {
+        frame_system::Pallet::<Test>::set_block_number(1);
+        let bucket_id = setup_replica_with_snapshot();
+
+        // No checkpoint has written position 1 yet; its zero root is not a
+        // commitment, so claiming it must not earn a sync payment or a
+        // last_sync the replica cannot be challenged on.
+        let mut roots = [None; 7];
+        roots[1] = Some(H256::zero());
+        assert_noop!(
+            StorageProvider::confirm_replica_sync(
+                RuntimeOrigin::signed(2),
+                bucket_id,
+                roots,
+                sign_sync_roots(2, &roots),
+            ),
+            Error::<Test>::InvalidSyncRoot
+        );
+    });
+}
+
+#[test]
 fn confirm_replica_sync_fails_sync_too_frequent() {
     new_test_ext().execute_with(|| {
         frame_system::Pallet::<Test>::set_block_number(1);
