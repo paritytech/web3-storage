@@ -98,8 +98,6 @@ pub struct DetectedChallenge {
     pub commitment: Commitment,
     /// Leaf + chunk to prove.
     pub target: ChunkLocation,
-    /// Challenger's account.
-    pub challenger: String,
 }
 
 /// Result of responding to a challenge.

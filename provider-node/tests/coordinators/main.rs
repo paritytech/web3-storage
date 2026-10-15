@@ -96,7 +96,6 @@ pub fn test_state_with_data() -> (Arc<ProviderState>, DetectedChallenge, TempDir
             leaf_index: 0,
             chunk_index: 0,
         },
-        challenger: ALICE_SS58.to_string(),
     };
 
     let state = Arc::new(ProviderState::with_provider_id(

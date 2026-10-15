@@ -2,7 +2,7 @@
 
 //! Integration tests for the challenge responder.
 
-use super::{alice_account, test_state, test_state_with_data, wait_for, ALICE_SS58};
+use super::{alice_account, test_state, test_state_with_data, wait_for};
 use sp_core::H256;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -92,7 +92,6 @@ fn make_challenge(bucket_id: BucketId, deadline: u32, index: u16) -> DetectedCha
             leaf_index: 5,
             chunk_index: 0,
         },
-        challenger: ALICE_SS58.to_string(),
     }
 }
 
@@ -239,7 +238,6 @@ async fn test_proof_generation_failed_no_bucket() {
             leaf_index: 0,
             chunk_index: 0,
         },
-        challenger: ALICE_SS58.to_string(),
     };
 
     let mock = Arc::new(MockChallengeChainClient::new().with_challenges(vec![challenge]));
