@@ -82,36 +82,21 @@ impl Mmr {
         self.nodes.get(pos as usize).copied()
     }
 
-    /// Generate a proof for a leaf at the given index.
-    pub fn proof(&self, leaf_index: u64) -> Option<MmrProof> {
-        let (siblings, path, peaks) = self.proof_with_path(leaf_index)?;
-        Some(MmrProof {
-            leaf_index,
-            siblings,
-            path,
-            peaks,
-        })
-    }
-
     /// Generate a proof with path bits for a leaf at the given index.
     ///
     /// Returns `(siblings, path_bits, peaks)` suitable for constructing
     /// a `storage_primitives::MmrProof`. At each level, `is_right = true`
     /// means the current node is the right child (sibling is to its left).
     pub fn proof_with_path(&self, leaf_index: u64) -> Option<(Vec<H256>, Vec<bool>, Vec<H256>)> {
-        if leaf_index >= self.leaf_count {
-            return None;
-        }
-
-        let (peak_height, local_leaf_index) = self.locate_leaf(leaf_index);
+        let position = storage_primitives::mmr_leaf_position(leaf_index, self.leaf_count)?;
         let leaf_pos = Self::leaf_index_to_pos(leaf_index);
 
         let mut siblings = Vec::new();
         let mut path = Vec::new();
         let mut pos = leaf_pos;
 
-        for h in 0..peak_height {
-            let is_right = (local_leaf_index >> h) & 1 == 1;
+        for h in 0..position.height {
+            let is_right = (position.local_index >> h) & 1 == 1;
             let subtree_size = (1u64 << (h + 1)) - 1;
 
             let sibling_pos = if is_right {
@@ -134,30 +119,6 @@ impl Mmr {
         Some((siblings, path, self.peaks()))
     }
 
-    /// Determine which peak subtree a leaf belongs to.
-    ///
-    /// Returns `(peak_height, local_leaf_index)` where peak_height is the
-    /// height of the peak's perfect binary subtree and local_leaf_index is
-    /// the leaf's 0-based index within that subtree.
-    fn locate_leaf(&self, leaf_index: u64) -> (u32, u64) {
-        let mut remaining = self.leaf_count;
-        let mut leaf_offset = 0u64;
-
-        while remaining > 0 {
-            let h = 63 - remaining.leading_zeros();
-            let subtree_leaves = 1u64 << h;
-
-            if leaf_index < leaf_offset + subtree_leaves {
-                return (h, leaf_index - leaf_offset);
-            }
-
-            leaf_offset += subtree_leaves;
-            remaining -= subtree_leaves;
-        }
-
-        unreachable!("leaf_index should be < leaf_count")
-    }
-
     /// Convert a 0-based leaf index to its position in the nodes array.
     fn leaf_index_to_pos(leaf_index: u64) -> u64 {
         2 * leaf_index - (leaf_index.count_ones() as u64)
@@ -170,19 +131,6 @@ impl Default for Mmr {
     }
 }
 
-/// Proof of inclusion in an MMR.
-#[derive(Debug, Clone)]
-pub struct MmrProof {
-    /// Index of the leaf in the MMR
-    pub leaf_index: u64,
-    /// Sibling hashes on the path to the peak
-    pub siblings: Vec<H256>,
-    /// Path bits (true = current node is right child)
-    pub path: Vec<bool>,
-    /// Peaks of the MMR
-    pub peaks: Vec<H256>,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -191,27 +139,6 @@ mod tests {
     /// Bagged root of `m`'s current peaks.
     fn root_of(m: &Mmr) -> H256 {
         storage_primitives::bag_peaks(&m.peaks())
-    }
-
-    /// Walk a proof to its peak and bag; test scaffolding for the local
-    /// prover's proof type (the production verifier lives in primitives and
-    /// takes the SCALE proof type).
-    fn verify_proof(root: H256, leaf_hash: H256, proof: &MmrProof) -> bool {
-        if proof.siblings.len() != proof.path.len() {
-            return false;
-        }
-        let mut current = leaf_hash;
-        for (sibling, is_right) in proof.siblings.iter().zip(proof.path.iter()) {
-            current = if *is_right {
-                hash_children(*sibling, current)
-            } else {
-                hash_children(current, *sibling)
-            };
-        }
-        if !proof.peaks.contains(&current) {
-            return false;
-        }
-        storage_primitives::bag_peaks(&proof.peaks) == root
     }
 
     #[test]
@@ -246,62 +173,6 @@ mod tests {
                 mmr.nodes.len() as u64,
                 expected_nodes,
                 "node count wrong after {i} leaves"
-            );
-        }
-    }
-
-    #[test]
-    fn test_mmr_proof() {
-        let mut mmr = Mmr::new();
-
-        let leaves: Vec<H256> = (0..5)
-            .map(|i| blake2_256(format!("leaf{i}").as_bytes()))
-            .collect();
-
-        for leaf in &leaves {
-            mmr.push(*leaf);
-        }
-
-        let root = root_of(&mmr);
-
-        for (i, leaf) in leaves.iter().enumerate() {
-            let proof = mmr.proof(i as u64).expect("proof should exist");
-            assert!(
-                verify_proof(root, *leaf, &proof),
-                "proof should verify for leaf {i}"
-            );
-        }
-    }
-
-    #[test]
-    fn test_proof_with_path() {
-        let mut mmr = Mmr::new();
-
-        let leaves: Vec<H256> = (0..5)
-            .map(|i| blake2_256(format!("leaf{i}").as_bytes()))
-            .collect();
-
-        for leaf in &leaves {
-            mmr.push(*leaf);
-        }
-
-        let root = root_of(&mmr);
-
-        for (i, leaf) in leaves.iter().enumerate() {
-            let (siblings, path, _peaks) =
-                mmr.proof_with_path(i as u64).expect("proof should exist");
-
-            // Verify via the local proof walker
-            let proof = mmr.proof(i as u64).expect("proof should exist");
-            assert!(
-                verify_proof(root, *leaf, &proof),
-                "basic proof should verify for leaf {i}"
-            );
-
-            assert_eq!(
-                siblings.len(),
-                path.len(),
-                "siblings and path length mismatch for leaf {i}"
             );
         }
     }
