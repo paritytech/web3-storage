@@ -566,9 +566,8 @@ mod tests {
     use tempfile::TempDir;
 
     /// Pins the raw keys and values this engine writes. A failure here means
-    /// existing provider databases can no longer be read - a storage
-    /// version/migration is required
-    /// (see <https://github.com/paritytech/web3-storage/issues/375>).
+    /// existing provider databases can no longer be read - bump
+    /// [`FORMAT_VERSION`].
     ///
     /// The record encodings themselves are pinned in [`super::types`].
     #[test]

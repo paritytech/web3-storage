@@ -19,11 +19,14 @@ pub use provider_types::ProviderInfo;
 pub struct UploadNodeRequest {
     /// Bucket this node belongs to
     pub bucket_id: BucketId,
-    /// Expected hash of the node data
+    /// Expected hash of the node: the chunk hash for a chunk, the hash of
+    /// the two children for an internal node
     pub hash: String,
-    /// Base64-encoded node data
+    /// Base64-encoded node data: the chunk bytes for a chunk, the left child
+    /// hash followed by the right child hash for an internal node. The
+    /// provider rejects an internal node whose data differs.
     pub data: String,
-    /// Child hashes for internal nodes, null for leaf chunks
+    /// Left and right child hashes for an internal node, null for a chunk
     pub children: Option<Vec<String>>,
 }
 

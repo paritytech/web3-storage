@@ -75,9 +75,9 @@ pub enum ChunkTreeNode {
     Chunk(Vec<u8>),
     /// Internal: hash = hash_children(left, right)
     Internal {
-        /// First child.
+        /// Left child.
         left: H256,
-        /// Second child.
+        /// Right child.
         right: H256,
     },
 }
