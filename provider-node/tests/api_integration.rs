@@ -409,24 +409,11 @@ common::backend_tests! {
     async fn test_upload_internal_node_rejects_children_that_are_not_a_pair(backend) {
         let server = TestServer::new(backend).await;
 
-        let child = b"lonely-child";
-        let child_hash = storage_primitives::hash_leaf(child);
+        // The child count is checked before anything is looked up, so the
+        // child does not need to exist.
+        let child_hash = H256::repeat_byte(0x11);
         let child_hex = format!("0x{}", hex_encode(child_hash.as_bytes()));
 
-        server
-            .client
-            .put(server.url("/node"))
-            .json(&json!({
-                "bucket_id": 1,
-                "hash": child_hex,
-                "data": BASE64.encode(child),
-                "children": null,
-            }))
-            .send()
-            .await
-            .unwrap();
-
-        // The hash cannot be derived: a single child is not a representable node.
         let hash = storage_primitives::blake2_256(child_hash.as_bytes());
         let response = server
             .client
@@ -454,12 +441,8 @@ common::backend_tests! {
     async fn test_upload_internal_node_rejects_data_that_is_not_its_children(backend) {
         let server = TestServer::new(backend).await;
 
-        let left = "0x0000000000000000000000000000000000000000000000000000000000000001";
-        let right = "0x0000000000000000000000000000000000000000000000000000000000000002";
-        let hash = storage_primitives::hash_children(
-            H256::from_slice(&hex_decode(left).unwrap()),
-            H256::from_slice(&hex_decode(right).unwrap()),
-        );
+        let (left, right) = (H256::from_low_u64_be(1), H256::from_low_u64_be(2));
+        let hash = storage_primitives::hash_children(left, right);
 
         let response = server
             .client
@@ -468,7 +451,10 @@ common::backend_tests! {
                 "bucket_id": 1,
                 "hash": format!("0x{}", hex_encode(hash.as_bytes())),
                 "data": BASE64.encode(b"unrelated bytes"),
-                "children": [left, right],
+                "children": [
+                    format!("0x{}", hex_encode(left.as_bytes())),
+                    format!("0x{}", hex_encode(right.as_bytes())),
+                ],
             }))
             .send()
             .await
