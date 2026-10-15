@@ -4,13 +4,15 @@
 | --- | --- |
 | **Authors** | eskimor |
 | **Status** | Draft |
-| **Version** | 2.3 |
+| **Version** | 2.5 |
 | **Related** | [Implementation Details](./scalable-web3-storage-implementation.md), [Proof-of-DOT Infrastructure Strategy](https://docs.google.com/document/d/1fNv75FCEBFkFoG__s_Xu10UZd0QsGIE9AKnrouzz-U8/) |
 
 ## Version History
 
 | Version | Changes |
 |---------|---------|
+| 2.5 | Challenge resolution and slashing are lazy: an unanswered challenge is slashed by the permissionless `resolve_expired_challenge` call (no per-block sweep). A timeout is the only slash reason. **Read**: "The Challenge Game", Resolution; `resolve_expired_challenge` in [Implementation Details](./scalable-web3-storage-implementation.md). |
+| 2.4 | Bucket creation and provider assignment are separate on-chain operations: `create_bucket`, `create_bucket_with_primary`, `add_primary_provider`, `add_replica_provider`. Provider-signed quotes name the bucket they are for. A bucket remains after its last agreement ends and can get new providers later; the client moves the data when a provider is added. **Read**: "Buckets: Stable Identity in a Fluid Provider Market"; "Two Classes of Providers"; "Provider Lifecycle in Bucket" in [Implementation Details](./scalable-web3-storage-implementation.md) for the four calls. |
 | 2.3 | Private buckets clarified (visibility flag, Reader role, primary challenges gated to members + primary-agreement owners, tier-split challenge stats). **Read**: new "Bucket Visibility & Access" section; "The Challenge Game". |
 | 2.2 | Challenge cost model reworked and clarified: a valid response never touches the provider's stake. The challenger's deposit covers the on-chain response cost; authorized challengers (bucket members + agreement owners) get a split where the provider bears a fraction (challenger's share floored at 50%, as leverage—not cheap recovery), while the general public pays in full (anti-DoS, since a provider can't serve everyone equally). Stake is slashed only on a missing/invalid response. |
 | 2.1 | Clarification on rewards for the challenger: There should be none, just refund. Plus some corrections with regards to PDP and Filecoin. |
@@ -265,7 +267,7 @@ What if you don't trust aggregate metrics? What if you have strict requirements?
 trust, pay them directly, verify them yourself. Now you have at least one replica whose reliability you've personally
 established.
 
-Or simply **challenge directly.** Anyone can challenge any provider for any data they have a commitment for (exception: a private bucket's primaries accept challenges only from members and primary-agreement owners). Don't trust
+Or simply **challenge directly.** Anyone can challenge any provider for any data they have a commitment for (exceptions: a provider cannot challenge itself, and a private bucket's primaries accept challenges only from members and primary-agreement owners). Don't trust
 that a provider still has the data? Fetch one random chunk. If they respond, you've verified (and recovered that chunk).
 If they don't, you challenge, they get slashed, and the world learns they're unreliable.
 
@@ -364,7 +366,9 @@ Bucket (on-chain, stable identifier)
 A content hash names data but doesn't guarantee anyone stores it. A bucket makes availability explicit and controllable:
 
 - **Stable identity**: The bucket_id never changes, even as providers come and go. Applications reference buckets, not
-  providers. Switch providers without breaking links.
+  providers. Switch providers without breaking links. Each provider joins a bucket with one agreement, at bucket
+  creation or later, and a bucket whose agreements have all ended remains on-chain; the admin can add a new provider
+  later.
 
 - **Explicit availability**: On-chain state shows exactly which providers have agreements. No guessing, no DHT lookups,
   no hoping.
@@ -381,13 +385,13 @@ A content hash names data but doesn't guarantee anyone stores it. A bucket makes
 Providers fall into two categories with different trust models:
 
 **Primary Providers** (admin-controlled):
-- Added only by bucket admin
+- Added only by bucket admin, by redeeming a provider-signed quote (`create_bucket_with_primary`, `add_primary_provider`)
 - Receive writes directly from clients
 - Count toward `min_providers` for checkpoints
 - Limited to ~5 per bucket (prevents bloat)
 
 **Replica Providers** (permissionless):
-- Added by anyone (you, a third party, a charity)
+- Added by anyone (you, a third party, a charity) by redeeming a provider-signed quote (`add_replica_provider`)
 - Sync data autonomously from primaries or other replicas
 - Paid per successful sync confirmation
 - Unlimited count
@@ -616,7 +620,10 @@ below):
      from the challenger's deposit (in full, or only a fraction—see below).
      Any excess deposit is returned to the challenger.
    - Cancelled by challenger: Deposit returned (challenger paid only tx fees)
-   - Invalid/no proof: Provider's full stake slashed; challenger made whole
+   - Invalid proof: Response rejected (provider pays the tx fee); the
+     challenge stays open until the deadline
+   - No proof by the deadline: anyone submits `resolve_expired_challenge`
+     (free on success); provider's full stake slashed; challenger made whole
      from the slash (deposit and tx fees refunded—no reward beyond costs)
 ```
 
@@ -674,12 +681,12 @@ would make griefing cheap). Faster responses cost the provider less:
 | Blocks 96+ | 50% | 50% |
 
 The general public is not on this table: the challenger always pays 100%. (The
-failure case—no or invalid response—is separate: the provider's full stake is
-slashed and the challenger is made whole from it, per Resolution above.)
+failure case—no response by the deadline—is separate: the provider's full stake
+is slashed and the challenger is made whole from it, per Resolution above.)
 
 The net effect: a provider's *monetary* challenge exposure is bounded to the
 counterparties it chose to accept—strangers can be a nuisance but can't drain
-it—while a missing or invalid response always costs the full stake. Vetting whom
+it—while a missing response always costs the full stake. Vetting whom
 it signs agreements with is how a provider controls its risk.
 
 ### The Burn Option
@@ -1198,6 +1205,31 @@ For use cases requiring stronger guarantees than game-theoretic verification—p
 replicas (which lack natural client verification) and fire-and-forget archival—optional
 periodic proofs similar to Filecoin's PDP could be added as a premium feature. This can
 be layered on later without changing the core protocol.
+
+### Provider-to-Provider Fetch
+
+A primary joining a bucket that already has data gets that data from the client,
+which uploads it to the new primary and may first download it from a provider
+that has it (a client that still keeps a local copy only uploads). A provider
+API could let the new primary fetch the data directly instead, the way a replica
+syncs today. The transfer needs no trust: chunks and internal nodes are
+content-addressed, so the receiver verifies everything against the data root it
+already knows from the chain.
+
+Such an API will likely be added, but it does not replace the client path. A
+fetch between two providers leaves no on-chain record, so a failure does not
+show whether the serving provider did not serve or the new primary did not
+request the data. The client path assigns the fault, because the client performs
+both halves and sees which one fails. A failed fetch therefore falls back to it,
+and the fallback starts with a punishment for the provider at fault: a burn
+instead of a payment for the new primary, or a challenge against the serving
+provider.
+
+Serving the fetch is part of the serving provider's agreement: a provider is
+paid to store and to serve, and one full download at a reasonable speed is
+included in the price it quotes. A provider that does not serve while its
+agreement is active gets burned or challenged like any provider that does not
+serve reads.
 
 ### Isolation Mode
 

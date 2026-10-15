@@ -75,7 +75,7 @@ pub use pallet_storage_provider;
 use constants::{
     consensus::{
         async_backing::UNINCLUDED_SEGMENT_CAPACITY, BLOCK_PROCESSING_VELOCITY,
-        MAXIMUM_BLOCK_WEIGHT, RELAY_CHAIN_SLOT_DURATION_MILLIS, SLOT_DURATION,
+        MAXIMUM_BLOCK_WEIGHT, RELAY_CHAIN_SLOT_DURATION_MILLIS, RELAY_PARENT_OFFSET, SLOT_DURATION,
     },
     currency::{EXISTENTIAL_DEPOSIT, MICROUNIT},
     system::{AVERAGE_ON_INITIALIZE_RATIO, NORMAL_DISPATCH_RATIO},
@@ -174,13 +174,7 @@ pub const VERSION: RuntimeVersion = RuntimeVersion {
     spec_name: Cow::Borrowed("web3-storage-parachain"),
     impl_name: Cow::Borrowed("web3-storage-parachain"),
     authoring_version: 1,
-    // Encodes the runtime semver: major * 1_000_000 + minor * 1_000 + patch.
-    // * 0.4.1 -> 4_001 on dev (#212), released as v0.4.1-paseo and still the deployed value;
-    // * 4_002 for the breaking Challenges storage reshape (Vec -> StorageDoubleMap) (#125);
-    // * 4_003 for dropping the vestigial `ChallengerStatRecord::total_earnings` field (#125);
-    // * 4_004 for `StorageProviderApi` v2: `challenge_candidates`, `deregister_at`, `reputation` (#318);
-    // * 4_005 for the leaf-index binding: Challenge/ReplicaSyncRecord reshape + v1 migration (#301).
-    spec_version: 4_005,
+    spec_version: 4_011,
     impl_version: 0,
     apis: RUNTIME_API_VERSIONS,
     // Bumped whenever call encoding changes, so offline signers and stale-metadata
@@ -189,8 +183,11 @@ pub const VERSION: RuntimeVersion = RuntimeVersion {
     // * 2 in the v0.2.0-paseo release, still the deployed value;
     // * 3 for dropping the commitment nonce: `checkpoint` and `challenge_offchain` each lost
     //   a `nonce` argument, and `respond_to_challenge`'s `ChallengeResponse::Deleted` variant
-    //   lost its `nonce` field (#339).
-    transaction_version: 3,
+    //   lost its `nonce` field (#339);
+    // * 4 for the `visibility` argument appended to `establish_storage_agreement`
+    //   (now `create_bucket_with_primary`),
+    //   `create_drive` and `create_s3_bucket` (#330).
+    transaction_version: 4,
     system_version: 1,
 };
 
@@ -262,7 +259,7 @@ impl frame_system::Config for Runtime {
     type Version = Version;
     type PalletInfo = PalletInfo;
     type OnNewAccount = ();
-    type OnKilledAccount = ();
+    type OnKilledAccount = StorageProvider;
     type AccountData = pallet_balances::AccountData<Balance>;
     type SystemWeightInfo = weights::frame_system::WeightInfo<Runtime>;
     type ExtensionsWeightInfo = weights::frame_system_extensions::WeightInfo<Runtime>;
@@ -357,7 +354,7 @@ impl cumulus_pallet_parachain_system::Config for Runtime {
     type CheckAssociatedRelayNumber = RelayNumberMonotonicallyIncreases;
     type ConsensusHook = ConsensusHook;
     type WeightInfo = weights::cumulus_pallet_parachain_system::WeightInfo<Runtime>;
-    type RelayParentOffset = ConstU32<0>;
+    type RelayParentOffset = ConstU32<RELAY_PARENT_OFFSET>;
     // V3 scheduling stays off; enabling it before collators support it stalls the chain.
     type SchedulingSignatureVerifier = ();
 }
@@ -757,7 +754,7 @@ pallet_revive::impl_runtime_apis_plus_revive_traits!(
 
     impl cumulus_primitives_core::RelayParentOffsetApi<Block> for Runtime {
         fn relay_parent_offset() -> u32 {
-            0
+            RELAY_PARENT_OFFSET
         }
 
         fn max_claim_queue_offset() -> u8 {

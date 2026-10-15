@@ -283,11 +283,17 @@ fn agreement_entry_points_reject_deregistering_provider() {
         )));
 
         // Every agreement-creating entry point now rejects with
-        // DeregisterAnnounced. The check runs after the nonce window
-        // advances, so assert the error only.
-        let (terms, sig) = signed_primary_terms(2, 1, 50, 100);
+        // DeregisterAnnounced. The check runs after the owner's nonce
+        // counter advances, so assert the error only.
+        let (terms, sig) = signed_primary_terms(2, 1, BucketTarget::New, 50, 100);
         assert_err!(
-            StorageProvider::establish_storage_agreement(RuntimeOrigin::signed(1), 2, terms, sig),
+            StorageProvider::create_bucket_with_primary(
+                RuntimeOrigin::signed(1),
+                2,
+                terms,
+                sig,
+                storage_primitives::Visibility::Public
+            ),
             Error::<Test>::DeregisterAnnounced
         );
 
@@ -304,7 +310,7 @@ fn agreement_entry_points_reject_deregistering_provider() {
             },
         );
         assert_err!(
-            StorageProvider::establish_replica_agreement(
+            StorageProvider::add_replica_provider(
                 RuntimeOrigin::signed(1),
                 bucket_id,
                 2,
@@ -618,11 +624,17 @@ fn establish_agreement_fails_when_capacity_exceeded() {
         );
 
         // Terms for 60 bytes exceed max_capacity of 50. The capacity
-        // check runs after the nonce window advances, so assert the
-        // error only.
-        let (terms, sig) = signed_primary_terms(2, 1, 60, 10);
+        // check runs after the owner's nonce counter advances, so assert
+        // the error only.
+        let (terms, sig) = signed_primary_terms(2, 1, BucketTarget::New, 60, 10);
         assert_err!(
-            StorageProvider::establish_storage_agreement(RuntimeOrigin::signed(1), 2, terms, sig),
+            StorageProvider::create_bucket_with_primary(
+                RuntimeOrigin::signed(1),
+                2,
+                terms,
+                sig,
+                storage_primitives::Visibility::Public
+            ),
             Error::<Test>::CapacityExceeded
         );
     });

@@ -10,29 +10,35 @@ extern crate alloc;
 use alloc::vec::Vec;
 use codec::{Decode, Encode};
 use scale_info::TypeInfo;
-use storage_primitives::{BucketId, BucketSnapshot, ChunkLocation, Commitment, ProviderRole, Role};
+use storage_primitives::{
+    BucketId, BucketSnapshot, ChunkLocation, Commitment, ProviderRole, Role, Visibility,
+};
 
 /// Provider information returned by runtime API.
 #[derive(Clone, PartialEq, Eq, Encode, Decode, TypeInfo, Debug)]
 #[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
 pub struct ProviderInfoResponse {
+    /// Network address clients connect to.
     pub multiaddr: Vec<u8>,
+    /// Raw public key the provider signs with.
     pub public_key: Vec<u8>,
+    /// Stake currently locked.
     pub stake: u128,
+    /// Bytes committed across live agreements.
     pub committed_bytes: u64,
+    /// Shortest agreement accepted, in anchor blocks.
     pub min_duration: u32,
+    /// Longest agreement accepted, in anchor blocks.
     pub max_duration: u32,
+    /// Price per byte per anchor block.
     pub price_per_byte: u128,
+    /// Whether new primary agreements are accepted.
     pub accepting_primary: bool,
+    /// Payment per confirmed replica sync; `None` means no replica
+    /// agreements.
     pub replica_sync_price: Option<u128>,
+    /// Whether agreement extensions are accepted.
     pub accepting_extensions: bool,
-    pub registered_at: u32,
-    pub agreements_total: u32,
-    pub agreements_extended: u32,
-    pub agreements_not_extended: u32,
-    pub agreements_burned: u32,
-    pub challenges_received: u32,
-    pub challenges_failed: u32,
     /// Maximum storage capacity in bytes (0 = unlimited).
     pub max_capacity: u64,
     /// Available capacity in bytes (None if unlimited).
@@ -40,8 +46,42 @@ pub struct ProviderInfoResponse {
     /// Anchor block at which deregistration becomes finalisable
     /// (`None` = not deregistering).
     pub deregister_at: Option<u32>,
-    /// Reputation 0-100, from [`reputation_score`]. Carried here so clients
-    /// never re-implement the formula.
+    /// Historical, quality-signal statistics for this provider.
+    pub stats: ProviderStatsInfo,
+}
+
+/// Historical, quality-signal statistics for a provider, returned as a
+/// group by runtime API so clients can consume "track record" separately
+/// from settings and connection info.
+#[derive(Clone, PartialEq, Eq, Encode, Decode, TypeInfo, Debug)]
+#[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
+pub struct ProviderStatsInfo {
+    /// Anchor block of registration.
+    pub registered_at: u32,
+    /// Agreements ever opened.
+    pub agreements_total: u32,
+    /// Agreements extended at least once.
+    pub agreements_extended: u32,
+    /// Agreements that ran to expiry without an extension.
+    pub agreements_not_extended: u32,
+    /// Agreements the owner closed with a burn.
+    pub agreements_burned: u32,
+    /// Lifetime cumulative quota ever committed — NOT current usage.
+    pub total_bytes_committed: u64,
+    /// Successfully defended challenges from authorized challengers
+    /// (member/agreement owner at creation). Counted at resolution.
+    pub challenges_received_authorized: u32,
+    /// Same, for general-public challengers.
+    pub challenges_received_public: u32,
+    /// Challenges lost, each of which slashed the provider.
+    pub challenges_failed: u32,
+    /// Total payment ever received for storage service. Never resets, not
+    /// even on a slash.
+    pub lifetime_revenue: u128,
+    /// Reputation 0-100, from [`ProviderStats::reputation`]. Carried here so
+    /// clients never re-implement the formula.
+    ///
+    /// [`ProviderStats::reputation`]: crate::ProviderStats::reputation
     pub reputation: u8,
 }
 
@@ -93,7 +133,9 @@ pub struct MatchedProvider {
 #[derive(Clone, PartialEq, Eq, Encode, Decode, TypeInfo, Debug)]
 #[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
 pub struct BucketMemberResponse {
-    pub account: Vec<u8>, // Encoded AccountId
+    /// SCALE-encoded account id.
+    pub account: Vec<u8>,
+    /// Role held in the bucket.
     pub role: Role,
 }
 
@@ -101,28 +143,47 @@ pub struct BucketMemberResponse {
 #[derive(Clone, PartialEq, Eq, Encode, Decode, TypeInfo, Debug)]
 #[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
 pub struct BucketResponse {
+    /// The bucket.
     pub bucket_id: BucketId,
+    /// Members and their roles.
     pub members: Vec<BucketMemberResponse>,
+    /// Set once the bucket is frozen: the sequence it is append-only from.
     pub frozen_start_seq: Option<u64>,
+    /// Primary-provider signatures a checkpoint needs.
     pub min_providers: u32,
-    pub primary_providers: Vec<Vec<u8>>, // Vec of encoded AccountIds
+    /// SCALE-encoded account ids of the primary providers.
+    pub primary_providers: Vec<Vec<u8>>,
+    /// Current canonical checkpoint, if any.
     pub snapshot: Option<BucketSnapshot<u32>>,
+    /// Checkpoints made so far.
     pub total_snapshots: u32,
+    /// Who may read the bucket.
+    pub visibility: Visibility,
 }
 
 /// Storage agreement information.
 #[derive(Clone, PartialEq, Eq, Encode, Decode, TypeInfo, Debug)]
 #[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
 pub struct AgreementResponse {
+    /// The bucket.
     pub bucket_id: BucketId,
-    pub owner: Vec<u8>,    // Encoded AccountId
-    pub provider: Vec<u8>, // Encoded AccountId
+    /// SCALE-encoded owner account id.
+    pub owner: Vec<u8>,
+    /// SCALE-encoded provider account id.
+    pub provider: Vec<u8>,
+    /// Quota in bytes.
     pub max_bytes: u64,
+    /// Escrow still held for this agreement.
     pub payment_locked: u128,
+    /// Price locked at creation or last extension.
     pub price_per_byte: u128,
+    /// Anchor block the agreement expires at.
     pub expires_at: u32,
+    /// Whether the provider refuses extensions.
     pub extensions_blocked: bool,
+    /// Primary or replica, with the replica's sync state.
     pub role: ProviderRole<u128, u32>,
+    /// Anchor block the agreement started at.
     pub started_at: u32,
 }
 
@@ -137,52 +198,57 @@ pub const MAX_CHALLENGE_CANDIDATES: u32 = 256;
 pub struct ChallengeCandidate {
     /// One of the buckets this provider stores for — the challenge target.
     pub bucket_id: BucketId,
-    pub provider: Vec<u8>, // Encoded AccountId
+    /// SCALE-encoded provider account id.
+    pub provider: Vec<u8>,
+    /// Stake currently locked.
     pub stake: u128,
-    pub challenges_received: u32,
+    /// Successfully defended challenges from authorized challengers
+    /// (member/agreement owner at creation). Counted at resolution.
+    pub challenges_received_authorized: u32,
+    /// Same, for general-public challengers.
+    pub challenges_received_public: u32,
+    /// Challenges lost, each of which slashed the provider.
     pub challenges_failed: u32,
-    /// Reputation 0–100, from [`reputation_score`].
+    /// Reputation 0–100, from [`ProviderStats::reputation`].
+    ///
+    /// [`ProviderStats::reputation`]: crate::ProviderStats::reputation
     pub reputation: u8,
-}
-
-/// A provider's 0–100 reputation from its on-chain challenge record.
-///
-/// Providers with no recorded challenges score 100 — benefit of the doubt, so
-/// a newly registered provider is not immediately challenge-worthy.
-pub fn reputation_score(challenges_received: u32, challenges_failed: u32) -> u8 {
-    if challenges_received == 0 {
-        return 100;
-    }
-    let defended = challenges_received.saturating_sub(challenges_failed);
-    ((defended as u64 * 100) / challenges_received as u64).min(100) as u8
 }
 
 /// Challenge information.
 #[derive(Clone, PartialEq, Eq, Encode, Decode, TypeInfo, Debug)]
 #[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
 pub struct ChallengeResponse {
+    /// Bucket holding the challenged data.
     pub bucket_id: BucketId,
-    pub provider: Vec<u8>,   // Encoded AccountId
-    pub challenger: Vec<u8>, // Encoded AccountId
-    /// The commitment being challenged; its `leaf_count` binds the proof.
+    /// SCALE-encoded account id of the challenged provider.
+    pub provider: Vec<u8>,
+    /// SCALE-encoded account id of the challenger.
+    pub challenger: Vec<u8>,
+    /// Commitment the provider must prove against; its `leaf_count` binds the
+    /// proof to `target.leaf_index`.
     pub commitment: Commitment,
-    /// Leaf + chunk being challenged.
+    /// Challenged leaf and chunk.
     pub target: ChunkLocation,
+    /// Anchor block the response is due by.
     pub deadline: u32,
     /// Stable per-deadline index, forming `ChallengeId { deadline, index }`.
     pub index: u16,
+    /// Deposit the challenger locked.
     pub deposit: u128,
+    /// Challenger tier snapshotted at creation (member/agreement owner).
+    pub authorized: bool,
 }
 
 sp_api::decl_runtime_apis! {
     /// Runtime API for the storage provider pallet.
     ///
     /// v2 reshaped `ProviderInfoResponse` (`deregister_at`, `reputation`) and added
-    /// `challenge_candidates`. v3 reshaped `ChallengeResponse` around the embedded
-    /// `Commitment`/`ChunkLocation` (leaf-index binding). Declared explicitly so
-    /// callers can probe the version instead of decoding a shape that no longer
-    /// exists.
-    #[api_version(3)]
+    /// `challenge_candidates`. v4 replaced `ChallengeResponse`'s `mmr_root`,
+    /// `start_seq`, `leaf_index` and `chunk_index` with the embedded
+    /// `commitment` and `target`. Declared explicitly so callers can probe the
+    /// version instead of decoding a shape that no longer exists.
+    #[api_version(4)]
     pub trait StorageProviderApi<AccountId, BlockNumber, Balance>
     where
         AccountId: Encode + Decode,
@@ -220,7 +286,8 @@ sp_api::decl_runtime_apis! {
         /// Get all challenges for a specific bucket.
         fn bucket_challenges(bucket_id: BucketId) -> Vec<ChallengeResponse>;
 
-        /// Get all challenges targeting a specific provider.
+        /// Challenges targeting a provider that it can still answer; expired
+        /// ones are omitted.
         fn provider_challenges(provider: AccountId) -> Vec<ChallengeResponse>;
 
         /// Get all challenges created by a specific challenger.
@@ -243,7 +310,9 @@ sp_api::decl_runtime_apis! {
         /// appears once, paired with one of its buckets, so a caller challenges
         /// it at most once per round.
         ///
-        /// Reputation runs from 0 to 100 (see [`reputation_score`]).
+        /// Reputation runs from 0 to 100 (see [`ProviderStats::reputation`]).
+        ///
+        /// [`ProviderStats::reputation`]: crate::ProviderStats::reputation
         /// `max_reputation` saturates outside that range instead of erroring:
         /// `0` matches nothing, and any value above 100 disables the filter.
         ///

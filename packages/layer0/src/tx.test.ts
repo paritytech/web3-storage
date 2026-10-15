@@ -14,16 +14,10 @@ import {
 
 afterEach(() => vi.useRealTimers());
 
-function fakeTx(): { tx: SubmittableTx; stream: Subject<any>; signed: number } {
+function fakeTx(): { tx: SubmittableTx; stream: Subject<any> } {
   const stream = new Subject<any>();
-  const holder = { signed: 0 };
-  const tx = {
-    signSubmitAndWatch: () => {
-      holder.signed += 1;
-      return stream as never;
-    },
-  } as unknown as SubmittableTx;
-  return { tx, stream, get signed() { return holder.signed; } } as never;
+  const tx = { createSubmitAndWatch: () => stream as never } as unknown as SubmittableTx;
+  return { tx, stream };
 }
 
 const signer = {} as never;
@@ -37,12 +31,12 @@ describe("submitTx", () => {
     const statuses: TxStatusUpdate[] = [];
     const p = submitTx(tx, signer, { label: "t", onStatus: (u) => statuses.push(u) });
     await tick();
-    stream.next({ type: "signed" });
+    stream.next({ type: "created" });
     stream.next({ type: "broadcasted", txHash: "0x01" });
-    stream.next({ type: "txBestBlocksState", found: true, ok: true, block: { hash: "0xb" }, events: [1] });
+    stream.next({ type: "inBestBlock", ok: true, block: { hash: "0xb" }, events: [1] });
     const result = await p;
     expect((result as any).events).toEqual([1]);
-    expect(statuses.map((s) => s.phase)).toEqual(["signed", "in-pool", "best"]);
+    expect(statuses.map((s) => s.phase)).toEqual(["created", "in-pool", "best"]);
     expect(statuses.at(-1)!.final).toBe(true);
   });
 
@@ -52,8 +46,7 @@ describe("submitTx", () => {
     const guarded = p.catch((e) => e);
     await tick();
     stream.next({
-      type: "txBestBlocksState",
-      found: true,
+      type: "inBestBlock",
       ok: false,
       dispatchError: { type: "Module", value: { type: "StorageProvider", value: { type: "Nope" } } },
     });
@@ -65,17 +58,22 @@ describe("submitTx", () => {
   it("waits for finalization in finalized mode", async () => {
     const { tx, stream } = fakeTx();
     let settled = false;
-    const p = submitTx(tx, signer, { mode: "finalized", label: "t", onStatus: null }).then((r) => {
+    const statuses: TxStatusUpdate[] = [];
+    const p = submitTx(tx, signer, { mode: "finalized", label: "t", onStatus: (u) => statuses.push(u) }).then((r) => {
       settled = true;
       return r;
     });
     await tick();
-    stream.next({ type: "txBestBlocksState", found: true, ok: true, block: { hash: "0xb" }, events: [] });
+    stream.next({ type: "inBestBlock", ok: true, block: { hash: "0xb" }, events: [] });
+    await tick();
+    expect(settled).toBe(false);
+    stream.next({ type: "notInBestBlock", txHash: "0x01" });
     await tick();
     expect(settled).toBe(false);
     stream.next({ type: "finalized", ok: true, block: { hash: "0xf" }, events: [] });
     await p;
     expect(settled).toBe(true);
+    expect(statuses.map((s) => s.phase)).toEqual(["best", "finalized"]);
   });
 
   it("retries on stale-nonce stream errors, then succeeds", async () => {
@@ -83,7 +81,7 @@ describe("submitTx", () => {
     let attempt = 0;
     let current = new Subject<any>();
     const tx = {
-      signSubmitAndWatch: () => {
+      createSubmitAndWatch: () => {
         attempt += 1;
         current = new Subject<any>();
         return current as never;
@@ -92,7 +90,7 @@ describe("submitTx", () => {
     const p = submitTx(tx, signer, { label: "t", onStatus: null });
     current.error(new Error("Invalid Transaction: Stale"));
     await vi.advanceTimersByTimeAsync(6_500);
-    current.next({ type: "txBestBlocksState", found: true, ok: true, block: { hash: "0xb" }, events: [] });
+    current.next({ type: "inBestBlock", ok: true, block: { hash: "0xb" }, events: [] });
     await p;
     expect(attempt).toBe(2);
   });

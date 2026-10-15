@@ -13,7 +13,6 @@
  */
 
 import { Subscription } from "rxjs";
-import type { PolkadotSigner } from "polkadot-api";
 import { parachain } from "@polkadot-api/descriptors";
 import { getSs58AddressInfo } from "@polkadot-api/substrate-bindings";
 import {
@@ -23,6 +22,9 @@ import {
   parseMultiaddrToUrl,
   removeMember as removeMemberTx,
   requireOneEvent,
+  resolveExpiredChallenge as resolveExpiredChallengeTx,
+  getBucketVisibility as getBucketVisibilityQuery,
+  setBucketVisibility as setBucketVisibilityTx,
   setMember as setMemberTx,
   submitTx,
   toSs58,
@@ -30,17 +32,18 @@ import {
   type Keypair,
   type NegotiateRequest,
   type SignedTerms,
+  type Visibility,
 } from "@web3-storage/sdk";
 import { S3Client as SdkS3Client } from "@web3-storage/sdk/s3";
-import type { PrimaryProviderInfo } from "@web3-storage/sdk/s3";
+import type { BucketInfo, BucketMember, MemberRole } from "@web3-storage/sdk/s3";
 import type { ParachainApi } from "@/state/chain.state";
 
-export type Signer = PolkadotSigner;
+export type Signer = ChainSigner["signer"];
 
 // Re-export the SDK negotiate primitives + types the create-bucket components
 // (NewBucketDialog, ProviderPickerPanel) and the state layer import from here.
 export { buildSignedTermsArgs, negotiateTerms };
-export type { NegotiateRequest, SignedTerms };
+export type { BucketInfo, BucketMember, MemberRole, NegotiateRequest, SignedTerms, Visibility };
 
 /** `parseMultiaddrToHttp` is the SDK's `parseMultiaddrToUrl` under the old name. */
 export const parseMultiaddrToHttp = parseMultiaddrToUrl;
@@ -50,18 +53,7 @@ export function isValidSs58(address: string): boolean {
   return getSs58AddressInfo(address).isValid;
 }
 
-// ── View types (UI-shaped; the SDK's S3Client returns its own structs that we
-// map onto these so components keep a stable surface) ───────────────────────────
-
-export interface BucketInfo {
-  s3BucketId: bigint;
-  name: string;
-  layer0BucketId: bigint;
-  owner: string;
-  createdAt: bigint;
-  /** Primary providers of the underlying layer-0 bucket. */
-  providerInfo: PrimaryProviderInfo[];
-}
+// ── View types (UI-shaped; buckets use the SDK's `BucketInfo` as is) ─────────
 
 export interface S3ObjectInfo {
   key: string;
@@ -79,7 +71,8 @@ export interface AvailableProvider {
   account: string;
   multiaddr: string;
   stake: bigint;
-  availableCapacity: bigint;
+  /** Free capacity per the chain; `undefined` = unlimited, not `0n` ("full"). */
+  availableCapacity: bigint | undefined;
   maxCapacity: bigint;
   pricePerByte: bigint;
   minDuration: number;
@@ -98,15 +91,28 @@ export interface MatchingProviders extends AvailableProvider {
   agreementsExtended: number;
   agreementsNotExtended: number;
   agreementsBurned: number;
-  challengesReceived: number;
+  /** Challenges resolved in the provider's favor (authorized + public tiers). */
+  challengesDefended: number;
   challengesFailed: number;
+  /** 0-100, computed on-chain by `ProviderStats::reputation`. */
+  reputation: number;
 }
 
-export type MemberRole = "Admin" | "Writer" | "Reader";
+/**
+ * `StorageProviderApi.providers` limit for the full list. One page for
+ * everything: paging over the hash-ordered `Providers` map skips or repeats a
+ * provider when a registration or deregistration occurs between two pages,
+ * and this client has no block handle to pin the pages to. The storage scan
+ * this replaced read the whole map in one call too.
+ */
+const ALL_PROVIDERS = 0xffff_ffff;
 
-export interface BucketMember {
-  account: string;
-  role: MemberRole;
+/** Most free capacity first; unlimited (`undefined`) sorts ahead of metered. */
+function byFreeCapacityDesc(a: AvailableProvider, b: AvailableProvider): number {
+  if (a.availableCapacity === b.availableCapacity) return 0;
+  if (a.availableCapacity === undefined) return -1;
+  if (b.availableCapacity === undefined) return 1;
+  return b.availableCapacity > a.availableCapacity ? 1 : -1;
 }
 
 export interface CheckpointInfo {
@@ -146,7 +152,6 @@ export interface ChallengeSlashResult {
   challengeId: { deadline: number; index: number };
   provider: string;
   slashedAmount: bigint;
-  challengerReward: bigint;
   blockNumber: number;
   blockHash: string;
 }
@@ -248,46 +253,29 @@ export class S3Client {
   // ── S3 Bucket operations (on-chain, via the SDK's S3Client) ─────────────────
 
   /**
-   * Redeem provider-signed terms in `create_s3_bucket` (negotiate→establish).
-   * The terms are pre-negotiated by the create-bucket UI; `providerUrl` primes
-   * nothing here — the SDK resolves the provider from chain on first use.
+   * Redeem provider-signed terms in `create_bucket_with_primary`
+   * (negotiate→establish). The terms are pre-negotiated by the create-bucket
+   * UI. Returns the new Layer 0 bucket id.
    */
   async createBucket(
-    name: string,
     providerAccount: string,
     providerUrl: string,
     signed: SignedTerms,
-  ): Promise<BucketInfo> {
-    const info = await this.requireS3().createBucket(name, {
+    visibility?: Visibility,
+  ): Promise<bigint> {
+    const { bucketId } = await this.requireS3().createBucket({
       maxCapacity: BigInt(signed.terms.max_bytes),
       duration: signed.terms.duration,
       provider: { address: providerAccount, url: providerUrl },
       signedTerms: signed,
+      visibility,
     });
-    return {
-      s3BucketId: info.s3BucketId,
-      name: info.name,
-      layer0BucketId: info.layer0BucketId,
-      owner: info.owner,
-      createdAt: BigInt(info.createdAt),
-      providerInfo: [{ account: providerAccount, multiaddr: "", url: providerUrl }],
-    };
+    return bucketId;
   }
 
+  /** Every bucket the signer is a member of (`StorageProvider.MemberBuckets`). */
   async listBuckets(): Promise<BucketInfo[]> {
-    const list = await this.requireS3().listBuckets();
-    return list.map((b) => ({
-      s3BucketId: b.s3BucketId,
-      name: b.name,
-      layer0BucketId: b.layer0BucketId,
-      owner: b.owner,
-      createdAt: BigInt(b.createdAt),
-      providerInfo: b.providerInfo,
-    }));
-  }
-
-  async deleteBucket(s3BucketId: bigint): Promise<void> {
-    await this.requireS3().deleteBucket(s3BucketId);
+    return this.requireS3().listBuckets();
   }
 
   // ── S3 Object operations (HTTP, via the SDK's S3Client) ─────────────────────
@@ -298,19 +286,23 @@ export class S3Client {
     data: Uint8Array,
     options?: { signal?: AbortSignal },
   ): Promise<UploadResult> {
-    const result = await this.requireS3().putObject({ layer0BucketId: bucketId }, key, data, {
+    const result = await this.requireS3().putObject(bucketId, key, data, {
       signal: options?.signal,
     });
     return { cid: result.cid ?? "", size: result.size };
   }
 
+  /**
+   * Download an object by key. Unverified: the provider's index maps the key
+   * to content and nothing on chain commits to that mapping (#410).
+   */
   async getObject(bucketId: bigint, key: string): Promise<Uint8Array> {
-    const { data } = await this.requireS3().getObject({ layer0BucketId: bucketId }, key);
+    const { data } = await this.requireS3().getObject(bucketId, key);
     return data;
   }
 
   async listObjects(bucketId: bigint, prefix?: string): Promise<S3ObjectInfo[]> {
-    const summaries = await this.requireS3().listObjects({ layer0BucketId: bucketId }, prefix);
+    const summaries = await this.requireS3().listObjects(bucketId, prefix);
     return summaries.map((o) => ({
       key: o.key,
       size: o.size,
@@ -320,7 +312,7 @@ export class S3Client {
   }
 
   async deleteObject(bucketId: bigint, key: string): Promise<void> {
-    await this.requireS3().deleteObject({ layer0BucketId: bucketId }, key);
+    await this.requireS3().deleteObject(bucketId, key);
   }
 
   // ── Members (read is a chain query; writes go through layer0 wrappers) ───────
@@ -350,45 +342,38 @@ export class S3Client {
     await removeMemberTx(this.requireApi(), this.requireOwner(), bucketId, { address: account });
   }
 
-  // ── Provider discovery (UI-side; raw `StorageProvider.Providers` + the
-  // `find_matching_providers` runtime API — not modelled by the SDK) ──────────
+  async getBucketVisibility(bucketId: bigint): Promise<Visibility> {
+    return getBucketVisibilityQuery(this.requireApi(), bucketId);
+  }
 
+  async setBucketVisibility(bucketId: bigint, visibility: Visibility): Promise<void> {
+    await setBucketVisibilityTx(this.requireApi(), this.requireOwner(), bucketId, visibility);
+  }
+
+  // ── Provider discovery (UI-side; the `providers` and
+  // `find_matching_providers` runtime APIs — not modelled by the SDK) ─────────
+
+  /** Every registered provider, sorted by free capacity descending. */
   async listAvailableProviders(): Promise<AvailableProvider[]> {
     const api = this.requireApi();
-    const entries = await api.query.StorageProvider.Providers.getEntries();
-    const providers: AvailableProvider[] = [];
+    const page = await api.apis.StorageProviderApi.providers(0, ALL_PROVIDERS);
 
-    for (const entry of entries) {
-      const provider = entry.value;
-      const account = entry.keyArgs[0] as string;
-      const settings = provider.settings;
+    const providers: AvailableProvider[] = page.map(([account, info]) => ({
+      account,
+      multiaddr: new TextDecoder().decode(info.multiaddr),
+      stake: info.stake,
+      // The chain already computed this; `null` is its "unlimited".
+      availableCapacity:
+        info.available_capacity == null ? undefined : BigInt(info.available_capacity),
+      maxCapacity: BigInt(info.max_capacity),
+      pricePerByte: info.price_per_byte,
+      minDuration: info.min_duration,
+      maxDuration: info.max_duration,
+      acceptingPrimary: info.accepting_primary,
+      agreementsTotal: info.stats.agreements_total,
+    }));
 
-      const multiaddrStr = new TextDecoder().decode(provider.multiaddr);
-      const maxCapacity = BigInt(settings.max_capacity ?? 0);
-      const committedBytes = BigInt(provider.committed_bytes ?? 0);
-      const availableCapacity =
-        maxCapacity > committedBytes ? maxCapacity - committedBytes : 0n;
-
-      providers.push({
-        account,
-        multiaddr: multiaddrStr,
-        stake: BigInt(provider.stake ?? 0),
-        availableCapacity,
-        maxCapacity,
-        pricePerByte: BigInt(settings.price_per_byte ?? 0),
-        minDuration: settings.min_duration ?? 0,
-        maxDuration: settings.max_duration ?? 0,
-        acceptingPrimary: settings.accepting_primary ?? false,
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        agreementsTotal: (provider.stats as any)?.agreements_total ?? 0,
-      });
-    }
-
-    providers.sort((a, b) => {
-      if (b.availableCapacity > a.availableCapacity) return 1;
-      if (b.availableCapacity < a.availableCapacity) return -1;
-      return 0;
-    });
+    providers.sort(byFreeCapacityDesc);
 
     return providers;
   }
@@ -413,8 +398,9 @@ export class S3Client {
         const info = match.info;
         const maxCapacity = BigInt(info.max_capacity ?? 0);
         const committedBytes = BigInt(info.committed_bytes ?? 0);
+        // The chain already computed this; `null` is its "unlimited".
         const availableCapacity =
-          maxCapacity > committedBytes ? maxCapacity - committedBytes : 0n;
+          info.available_capacity == null ? undefined : BigInt(info.available_capacity);
 
         return {
           account: toSs58(match.account),
@@ -430,13 +416,16 @@ export class S3Client {
           replicaSyncPrice:
             info.replica_sync_price != null ? BigInt(info.replica_sync_price) : undefined,
           acceptingExtensions: info.accepting_extensions ?? false,
-          registeredAt: Number(info.registered_at ?? 0),
-          agreementsTotal: info.agreements_total ?? 0,
-          agreementsExtended: info.agreements_extended ?? 0,
-          agreementsNotExtended: info.agreements_not_extended ?? 0,
-          agreementsBurned: info.agreements_burned ?? 0,
-          challengesReceived: info.challenges_received ?? 0,
-          challengesFailed: info.challenges_failed ?? 0,
+          registeredAt: Number(info.stats.registered_at ?? 0),
+          agreementsTotal: info.stats.agreements_total ?? 0,
+          agreementsExtended: info.stats.agreements_extended ?? 0,
+          agreementsNotExtended: info.stats.agreements_not_extended ?? 0,
+          agreementsBurned: info.stats.agreements_burned ?? 0,
+          challengesDefended:
+            (info.stats.challenges_received_authorized ?? 0) +
+            (info.stats.challenges_received_public ?? 0),
+          challengesFailed: info.stats.challenges_failed ?? 0,
+          reputation: info.stats.reputation,
           matchScore: match.match_score,
           partialReason: match.partial_reason?.type ?? "",
         };
@@ -525,12 +514,38 @@ export class S3Client {
     return dataSize === 0 ? 1 : Math.ceil(dataSize / chunkSize);
   }
 
-  async isChallengeActive(deadline: number): Promise<boolean> {
+  /** Slash the provider of a challenge that expired unanswered; anyone may call it. */
+  async resolveExpiredChallenge(
+    challengeId: { deadline: number; index: number },
+  ): Promise<ChallengeSlashResult> {
     const api = this.requireApi();
-    // Challenges is a StorageDoubleMap keyed by (deadline, index); an active
-    // deadline has at least one entry under its prefix.
-    const entries = await api.query.StorageProvider.Challenges.getEntries(deadline);
-    return entries.length > 0;
+    const result = await resolveExpiredChallengeTx(api, this.requireOwner(), challengeId, {
+      mode: "finalized",
+    });
+    if (result.type !== "finalized") {
+      throw new Error("resolve_expired_challenge did not finalize");
+    }
+    const slashed = requireOneEvent(
+      result.events,
+      api.event.StorageProvider.ChallengeSlashed,
+      "ChallengeSlashed",
+    );
+    return {
+      challengeId: { deadline: slashed.challenge_id.deadline, index: slashed.challenge_id.index },
+      provider: slashed.provider,
+      slashedAmount: slashed.slashed_amount,
+      blockNumber: result.block.number,
+      blockHash: result.block.hash,
+    };
+  }
+
+  async isChallengeActive(challengeId: { deadline: number; index: number }): Promise<boolean> {
+    const api = this.requireApi();
+    const entry = await api.query.StorageProvider.Challenges.getValue(
+      challengeId.deadline,
+      challengeId.index,
+    );
+    return entry !== undefined;
   }
 
   async getOpenChallenges(bucketId: bigint): Promise<OpenChallenge[]> {
@@ -603,7 +618,6 @@ export class S3Client {
               challengeId: { deadline: p.challenge_id.deadline, index: p.challenge_id.index },
               provider: p.provider,
               slashedAmount: p.slashed_amount,
-              challengerReward: p.challenger_reward,
               blockNumber: block.number,
               blockHash: block.hash,
             });

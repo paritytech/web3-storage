@@ -3,13 +3,10 @@
 use crate::Member;
 use crate::*;
 use alloc::vec::Vec;
-use frame_support::{
-    pallet_prelude::*,
-    traits::{Currency, ExistenceRequirement, ReservableCurrency},
-};
+use frame_support::pallet_prelude::*;
 use sp_core::H256;
 use sp_runtime::traits::{SaturatedConversion, Saturating, Zero};
-use storage_primitives::{BucketId, Role};
+use storage_primitives::{BucketId, ProviderRole, Role, Visibility};
 
 impl<T: Config> Pallet<T> {
     /// Internal function to cleanup a bucket and all its agreements.
@@ -70,18 +67,19 @@ impl<T: Config> Pallet<T> {
             // Payment to provider = total locked - refund to owner
             let payment_to_provider = agreement.payment_locked.saturating_sub(refund_to_owner);
 
-            // Unreserve from owner
-            T::Currency::unreserve(&agreement.owner, agreement.payment_locked);
+            // A replica's unspent sync balance is escrowed alongside the fee
+            // and goes back to the owner with the refund.
+            let refund_to_owner = match &agreement.role {
+                ProviderRole::Replica { sync_balance, .. } => {
+                    refund_to_owner.saturating_add(*sync_balance)
+                }
+                ProviderRole::Primary => refund_to_owner,
+            };
 
-            // Pay provider their earned portion
-            if !payment_to_provider.is_zero() {
-                T::Currency::transfer(
-                    &agreement.owner,
-                    &provider,
-                    payment_to_provider,
-                    ExistenceRequirement::KeepAlive,
-                )?;
-            }
+            // Settle the earned portion straight out of escrow; the unspent
+            // remainder is released back to the owner.
+            Self::settle_payment(&agreement.owner, &provider, payment_to_provider)?;
+            Self::release_payment(&agreement.owner, refund_to_owner)?;
 
             // Track total refunded (owner keeps the unspent portion)
             total_refunded = total_refunded.saturating_add(refund_to_owner);
@@ -92,6 +90,10 @@ impl<T: Config> Pallet<T> {
                     provider_info.committed_bytes = provider_info
                         .committed_bytes
                         .saturating_sub(agreement.max_bytes);
+                    provider_info.stats.lifetime_revenue = provider_info
+                        .stats
+                        .lifetime_revenue
+                        .saturating_add(payment_to_provider);
                     provider_info.stats.agreements_not_extended = provider_info
                         .stats
                         .agreements_not_extended
@@ -125,10 +127,7 @@ impl<T: Config> Pallet<T> {
         Ok(total_refunded)
     }
 
-    /// Create a bucket internally (for use by other pallets like Layer 1 File System).
-    ///
-    /// This bypasses the normal extrinsic flow and creates a bucket directly,
-    /// with the specified account as admin.
+    /// Creates a bucket with `admin` as its sole admin.
     ///
     /// Parameters:
     /// - `admin`: Account that will be the bucket admin.
@@ -136,16 +135,24 @@ impl<T: Config> Pallet<T> {
     ///   sign each checkpoint.
     /// - `initial_primary`: Optional provider to seed as the bucket's
     ///   first `primary_providers` entry. Used by
-    ///   `establish_storage_agreement_internal` to atomically create the
+    ///   `create_bucket_with_primary_internal` to atomically create the
     ///   bucket together with its primary agreement; pass `None` for
     ///   buckets that will register primaries later.
+    /// - `visibility`: Read visibility. Creation surfaces that omit the
+    ///   choice must pass `Visibility::Private` (fail-safe default).
     ///
     /// Returns: bucket_id
     pub(crate) fn create_bucket_internal(
         admin: &T::AccountId,
         min_providers: u32,
         initial_primary: Option<&T::AccountId>,
+        visibility: Visibility,
     ) -> Result<BucketId, DispatchError> {
+        ensure!(
+            min_providers <= T::MaxPrimaryProviders::get(),
+            Error::<T>::InvalidMinProviders
+        );
+
         let bucket_id = NextBucketId::<T>::get();
         NextBucketId::<T>::put(bucket_id.saturating_add(1));
 
@@ -174,6 +181,7 @@ impl<T: Config> Pallet<T> {
             snapshot: None,
             historical_roots: [(0, H256::zero()); 6],
             total_snapshots: 0,
+            visibility,
         };
 
         Buckets::<T>::insert(bucket_id, bucket);

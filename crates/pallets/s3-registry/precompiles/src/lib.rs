@@ -71,7 +71,7 @@ where
         price_per_byte: BalanceOf::<T>::from(terms.pricePerByte),
         valid_until: BlockNumberFor::<T>::from(terms.validUntil),
         nonce: terms.nonce,
-        bucket_id: terms.hasBucketId.then_some(terms.bucketId),
+        bucket: terms.hasBucketId.then_some(terms.bucketId).into(),
         replica_params: terms
             .hasReplicaParams
             .then(|| storage_primitives::ReplicaTerms {
@@ -80,6 +80,19 @@ where
                 sync_price: BalanceOf::<T>::from(terms.replicaParams.syncPrice),
             }),
     })
+}
+
+/// The Solidity-side enum decodes fallibly in `alloy`, so out-of-range
+/// bytes revert before dispatch; the `__Invalid` arm is defensive only.
+fn to_visibility(
+    visibility: IS3Registry::Visibility,
+) -> Result<storage_primitives::Visibility, Error> {
+    match visibility {
+        IS3Registry::Visibility::Public => Ok(storage_primitives::Visibility::Public),
+        IS3Registry::Visibility::Private => Ok(storage_primitives::Visibility::Private),
+        // Rejected by ABI decoding already; kept total to stay panic-free.
+        IS3Registry::Visibility::__Invalid => Err(revert(&"__Invalid", "Invalid visibility")),
+    }
 }
 
 /// Precompile wrapping `pallet_s3_registry`'s public extrinsics.
@@ -122,6 +135,7 @@ where
                 provider,
                 terms,
                 signature,
+                visibility,
             }) => {
                 env.charge(
                     <Runtime as pallet_s3_registry::Config>::WeightInfo::create_s3_bucket(),
@@ -145,6 +159,7 @@ where
                     provider,
                     terms,
                     sig,
+                    to_visibility(*visibility)?,
                 )
                 .map_err(|e| revert(&e, "createS3Bucket failed"))?;
                 Ok(s3_bucket_id.abi_encode())

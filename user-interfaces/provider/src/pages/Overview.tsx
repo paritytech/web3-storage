@@ -25,7 +25,7 @@ import { useSelectedAccount } from '@/state/wallet.state'
 import { useSelectedNetwork, useSelectedNetworkId } from '@/state/network.state'
 import { useChainInfo, useConnectionStatus, useAnchorBlock } from '@/state/chain.state'
 import { RequireProvider } from '@/components/RequireProvider'
-import { formatBytes, formatTokens, formatDuration, formatHash } from '@/utils/format'
+import { formatBytes, formatTokens, formatDuration, formatHash } from '@web3-storage/format'
 
 function StatCard({
   title,
@@ -502,10 +502,12 @@ function OverviewContent() {
                 </Badge>
               </div>
               <div>
-                <p className="text-sm text-gray-400">Accepting Replica</p>
-                <Badge variant={settings.acceptingReplica ? 'success' : 'secondary'}>
-                  {settings.acceptingReplica ? 'Yes' : 'No'}
-                </Badge>
+                <p className="text-sm text-gray-400">Replica Sync Price</p>
+                {settings.replicaSyncPrice !== null ? (
+                  <p className="font-medium">{formatTokens(settings.replicaSyncPrice)}</p>
+                ) : (
+                  <Badge variant="secondary">Not accepting replicas</Badge>
+                )}
               </div>
               <div>
                 <p className="text-sm text-gray-400">Accepting Extensions</p>

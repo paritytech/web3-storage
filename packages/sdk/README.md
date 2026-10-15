@@ -13,7 +13,8 @@ packages/
                                    pallet, signers, tx submission, watchValue
                                    waits, provider-node HTTP, ./revive
   layer1/   @web3-storage/layer1   the storage interfaces: FileSystemClient
-                                   (drives) and S3Client (buckets/objects)
+                                   (drives) and S3Client (buckets/objects),
+                                   both on plain Layer 0 buckets
   sdk/      @web3-storage/sdk      this package: re-exports all three and
                                    hosts the Web3Storage facade
 ```
@@ -28,7 +29,7 @@ back up.
 
   ```ts
   const w3s = await Web3Storage.connect("ws://127.0.0.1:2222", { signer: makeSigner("//Alice") });
-  const { driveId, bucketId } = await w3s.fs.createDrive({ maxCapacity: 1n << 20n, storagePeriod: 100, payment: 10n ** 12n });
+  const { bucketId } = await w3s.fs.createDrive({ maxCapacity: 1n << 20n, storagePeriod: 100 });
   await w3s.fs.waitForProvider(bucketId);
   await w3s.fs.uploadFile(bucketId, "/hello.txt", new TextEncoder().encode("hi"));
   ```
@@ -64,23 +65,49 @@ Canonical rules, established by the E2E suite's finalization fixes
 Every pallet wrapper accepts a trailing `SubmitOpts` so apps can override the
 test-suite defaults: the layer-1 clients pass `retryStale: 0` (a user-visible
 retry is the right UX, not an automatic one) and `onStatus: null` unless the
-app supplies a listener. `submitTx` streams `signed`/`in-pool`/`best`/
+app supplies a listener. `submitTx` streams `created`/`in-pool`/`best`/
 `finalized` phases with a `final` flag; the default console listener prints
 only the final one.
+
+## Buckets and their providers
+
+Bucket creation and provider assignment are separate calls. A quote names the
+bucket it is for, so negotiate it against the bucket the redeeming call
+targets:
+
+| Wrapper | Negotiate with | Redeems |
+| --- | --- | --- |
+| `createBucket` | — | `create_bucket` |
+| `createBucketWithPrimary` | `bucket: null` | `create_bucket_with_primary` |
+| `addPrimaryProvider` | `bucket: <id>` | `add_primary_provider` (admin only) |
+| `addReplicaProvider` | `bucket: <id>` | `add_replica_provider` |
+
+`signedTermsBucketId(signed)` returns the bucket id a signed quote names;
+it returns `undefined` for a quote that creates its bucket.
+
+### Changing a bucket's primary provider
+
+The procedure is specified in the design doc, [Provider Lifecycle in
+Bucket](../../docs/design/scalable-web3-storage-implementation.md#provider-lifecycle-in-bucket).
+The wrappers for its steps are `addPrimaryProvider` (new provider joins),
+`checkpoint` (new provider signs the snapshot after the client uploaded the
+data to it) and `endAgreement` (old provider leaves).
 
 ## Download verification
 
 | Path | Verified? | Why |
 | --- | --- | --- |
 | `downloadChunk` / `fs.downloadByCid` | **Yes — throws `CidMismatchError`** | the requested hash IS the chunk's CID |
-| `s3.getObject`, payload ≤ 256 KiB | **Yes — throws `CidMismatchError`** | single-chunk `data_root` equals the chunk hash; compared against the on-chain `S3Registry.Objects` cid |
-| `s3.getObject`, payload > 256 KiB | `verified: false` flag | the on-chain cid is a Merkle root; reproducing it needs a DAG walk (Rust-client parity) — tracked separately |
+| `s3.getObject` (by key) | No ([#410](https://github.com/paritytech/web3-storage/pull/410)) | the key → content mapping comes from the provider's S3 index; nothing on chain commits to it |
 | `fs.downloadFile` (by path) | No (documented) | the provider's `/fs` file route returns no `data_root` to check against |
 
 Provider requests are signed (`Web3Storage <pubkey>:<sig>:<timestamp>` per
 the `crates/providers/auth` crate) whenever the signer carries a raw keypair
 (`makeSigner` populates it). Wallet-extension signers can't produce the raw
-sr25519 signature — unauthenticated providers still work.
+sr25519 signature — unauthenticated providers still work. Client auth is
+sr25519-only ([#304](https://github.com/paritytech/web3-storage/issues/304)
+tracks extending it); *provider* signatures are multi-scheme and arrive as
+SCALE-encoded `MultiSignature` hex, decoded by `decodeMultiSignature`.
 
 ## Deliberately NOT in this package
 
@@ -95,6 +122,67 @@ sr25519 signature — unauthenticated providers still work.
 - **Pre-subscription warmup guards** (`waitForChainReady`,
   `waitForBlockProduction`) stay polling-based on purpose: during zombienet
   warmup there are no blocks/metadata yet, so a subscription would hang.
+
+## Canonical PAPI patterns (no `@polkadot/*`)
+
+Repo rule (see the root `CLAUDE.md`): all JS/TS talks to the chain through
+`polkadot-api` — never `@polkadot/keyring`, `@polkadot/util-crypto`,
+`@polkadot/util`, `@polkadot/api`, or any other `@polkadot/*` package.
+Consumers should import the helpers below from this SDK rather than
+re-deriving them; the snippets document what the SDK does under the hood.
+
+The signer/derive pattern behind `makeSigner` — set up the derive function
+once at module load, then call `makeSigner("//Alice")` etc.:
+
+```js
+import { getTxCreator } from "polkadot-api/tx-creator";
+import { sr25519CreateDerive } from "@polkadot-labs/hdkd";
+import {
+  DEV_PHRASE,
+  entropyToMiniSecret,
+  mnemonicToEntropy,
+  ss58Address,
+} from "@polkadot-labs/hdkd-helpers";
+
+const devMiniSecret = entropyToMiniSecret(mnemonicToEntropy(DEV_PHRASE));
+const deriveSr25519 = sr25519CreateDerive(devMiniSecret);
+
+export function makeSigner(seed) {
+  const keyPair = deriveSr25519(seed); // seed is a SURI path like "//Alice"
+  return {
+    signer: getTxCreator(keyPair.publicKey, "Sr25519", keyPair.sign),
+    address: ss58Address(keyPair.publicKey), // prefix 42 (`5…`), same as @polkadot/keyring default
+    publicKey: keyPair.publicKey,
+    seed,
+  };
+}
+```
+
+No `cryptoWaitReady()` — hdkd is synchronous.
+
+**SS58 gotcha**: `ss58Address` defaults to substrate prefix 42 (`5…`) while
+PAPI surfaces accounts with the runtime SS58 prefix (Polkadot-style `1…` on
+this parachain) — same key, different string, so string equality fails.
+Compare raw bytes via `ss58Decode`:
+
+```js
+import { ss58Decode } from "@polkadot-labs/hdkd-helpers";
+
+// ss58Decode(addr) → [bytes, prefix]
+export function sameAddress(a, b) {
+  try {
+    const [aBytes] = ss58Decode(a);
+    const [bBytes] = ss58Decode(b);
+    if (aBytes.length !== bBytes.length) return false;
+    for (let i = 0; i < aBytes.length; i++) {
+      if (aBytes[i] !== bBytes[i]) return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+```
 
 ## Descriptors
 

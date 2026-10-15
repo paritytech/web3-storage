@@ -107,7 +107,7 @@ fn query_bucket_agreements_returns_data() {
         register_provider(2, 200);
         register_provider(4, 200);
         let bucket_id = setup_agreement(2, 1, 50, 200);
-        add_primary_to_bucket(4, 1, bucket_id, 30);
+        setup_added_primary(4, 1, bucket_id, 30, 200);
 
         let agreements = StorageProvider::query_bucket_agreements(bucket_id);
         assert_eq!(agreements.len(), 2);
@@ -304,7 +304,7 @@ fn query_challenges_at_returns_data() {
         register_provider(2, 200);
         register_provider(4, 200);
         let bucket_id = setup_agreement(2, 1, 50, 200);
-        add_primary_to_bucket(4, 1, bucket_id, 50);
+        setup_added_primary(4, 1, bucket_id, 50, 200);
 
         // Insert snapshot signed by both primaries (bits 0 and 1).
         Buckets::<Test>::mutate(bucket_id, |maybe_bucket| {
@@ -404,7 +404,7 @@ fn setup_two_challenges() -> u64 {
     register_provider(2, 200);
     register_provider(4, 200);
     let bucket_id = setup_agreement(2, 1, 50, 200);
-    add_primary_to_bucket(4, 1, bucket_id, 50);
+    setup_added_primary(4, 1, bucket_id, 50, 200);
 
     Buckets::<Test>::mutate(bucket_id, |maybe_bucket| {
         if let Some(bucket) = maybe_bucket {
@@ -478,6 +478,24 @@ fn query_provider_challenges_returns_data() {
     });
 }
 
+/// The provider responder acts on this list, so an expired challenge (which
+/// `respond_to_challenge` rejects) must drop out of it the block after its
+/// deadline.
+#[test]
+fn query_provider_challenges_omits_expired() {
+    new_test_ext().execute_with(|| {
+        setup_two_challenges();
+        let deadline = u64::from(StorageProvider::query_provider_challenges(&2)[0].deadline);
+
+        System::set_block_number(deadline);
+        assert_eq!(StorageProvider::query_provider_challenges(&2).len(), 1);
+
+        System::set_block_number(deadline + 1);
+        assert!(StorageProvider::query_provider_challenges(&2).is_empty());
+        assert_eq!(StorageProvider::query_challenger_challenges(&3).len(), 1);
+    });
+}
+
 #[test]
 fn query_provider_challenges_empty_for_unknown() {
     new_test_ext().execute_with(|| {
@@ -517,27 +535,31 @@ fn query_challenger_challenges_empty_for_unknown() {
 
 /// Give a registered provider a challenge record without running the full
 /// challenge flow, so reputation can be set precisely.
-fn set_challenge_stats(who: u64, received: u32, failed: u32) {
+fn set_challenge_stats(who: u64, defended: u32, failed: u32) {
     Providers::<Test>::mutate(who, |maybe| {
         let info = maybe.as_mut().expect("provider registered");
-        info.stats.challenges_received = received;
+        info.stats.challenges_received_public = defended;
         info.stats.challenges_failed = failed;
     });
 }
 
 #[test]
 fn reputation_score_matches_client_cases() {
-    use crate::runtime_api::reputation_score;
-    // No challenges yet: benefit of the doubt.
-    assert_eq!(reputation_score(0, 0), 100);
+    let stats = |defended: u32, failed: u32| ProviderStats::<Test> {
+        challenges_received_public: defended,
+        challenges_failed: failed,
+        ..Default::default()
+    };
+    // No resolved challenges yet: benefit of the doubt.
+    assert_eq!(stats(0, 0).reputation(), 100);
     // Every challenge defended.
-    assert_eq!(reputation_score(10, 0), 100);
+    assert_eq!(stats(10, 0).reputation(), 100);
     // Half failed.
-    assert_eq!(reputation_score(10, 5), 50);
+    assert_eq!(stats(5, 5).reputation(), 50);
     // All failed.
-    assert_eq!(reputation_score(10, 10), 0);
-    // More failures than challenges cannot underflow.
-    assert_eq!(reputation_score(3, 9), 0);
+    assert_eq!(stats(0, 10).reputation(), 0);
+    // Mostly failed: floor of the defended share.
+    assert_eq!(stats(3, 9).reputation(), 25);
 }
 
 #[test]
@@ -562,6 +584,77 @@ fn query_provider_info_reports_deregister_at() {
                 .unwrap()
                 .deregister_at,
             announced.map(|b| b as u32),
+        );
+    });
+}
+
+#[test]
+fn query_provider_info_reports_lifetime_revenue() {
+    new_test_ext().execute_with(|| {
+        register_provider_with_settings(
+            2,
+            200,
+            ProviderSettings {
+                price_per_byte: 1,
+                accepting_primary: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            StorageProvider::query_provider_info(&2)
+                .unwrap()
+                .stats
+                .lifetime_revenue,
+            0
+        );
+
+        let bucket_id = setup_agreement(2, 1, 10, 100); // payment = 1 * 10 * 100 = 1000
+        run_to_block(101);
+        assert_ok!(StorageProvider::end_agreement(
+            RuntimeOrigin::signed(1),
+            bucket_id,
+            2,
+            storage_primitives::EndAction::Pay
+        ));
+
+        let revenue = Providers::<Test>::get(2).unwrap().stats.lifetime_revenue;
+        assert_eq!(revenue, 1000, "sanity check on the underlying storage");
+        assert_eq!(
+            StorageProvider::query_provider_info(&2)
+                .unwrap()
+                .stats
+                .lifetime_revenue,
+            revenue as u128,
+        );
+    });
+}
+
+#[test]
+fn query_providers_reports_lifetime_revenue() {
+    new_test_ext().execute_with(|| {
+        register_provider_with_settings(
+            2,
+            200,
+            ProviderSettings {
+                price_per_byte: 1,
+                accepting_primary: true,
+                ..Default::default()
+            },
+        );
+        let bucket_id = setup_agreement(2, 1, 10, 100);
+        run_to_block(101);
+        assert_ok!(StorageProvider::end_agreement(
+            RuntimeOrigin::signed(1),
+            bucket_id,
+            2,
+            storage_primitives::EndAction::Pay
+        ));
+
+        let listed = StorageProvider::query_providers(0, 10);
+        assert_eq!(listed.len(), 1);
+        assert_eq!(
+            listed[0].1.stats.lifetime_revenue,
+            Providers::<Test>::get(2).unwrap().stats.lifetime_revenue as u128,
         );
     });
 }
@@ -596,13 +689,14 @@ fn challenge_candidates_filters_by_reputation() {
 
         // Provider 2 defends everything; provider 3 fails half.
         set_challenge_stats(2, 10, 0);
-        set_challenge_stats(3, 10, 5);
+        set_challenge_stats(3, 5, 5);
 
         let candidates = StorageProvider::query_challenge_candidates(90, 10);
         assert_eq!(candidates.len(), 1, "only the sub-threshold provider");
         assert_eq!(candidates[0].provider, 3u64.encode());
         assert_eq!(candidates[0].reputation, 50);
-        assert_eq!(candidates[0].challenges_received, 10);
+        assert_eq!(candidates[0].challenges_received_authorized, 0);
+        assert_eq!(candidates[0].challenges_received_public, 5);
         assert_eq!(candidates[0].challenges_failed, 5);
         assert_eq!(candidates[0].stake, 200);
     });
@@ -615,9 +709,9 @@ fn challenge_candidates_orders_worst_first() {
             register_provider(who, 200);
             setup_agreement(who, 1, 50, 200);
         }
-        set_challenge_stats(2, 10, 3); // 70
-        set_challenge_stats(3, 10, 9); // 10
-        set_challenge_stats(4, 10, 6); // 40
+        set_challenge_stats(2, 7, 3); // 70
+        set_challenge_stats(3, 1, 9); // 10
+        set_challenge_stats(4, 4, 6); // 40
 
         let candidates = StorageProvider::query_challenge_candidates(100, 10);
         let order: Vec<u8> = candidates.iter().map(|c| c.reputation).collect();

@@ -12,6 +12,8 @@ includes = [
 	"runtimes/**/*.rs",
 	"user-interfaces/drive-ui/**/*.ts",
 	"user-interfaces/drive-ui/**/*.tsx",
+	"user-interfaces/explorer/**/*.ts",
+	"user-interfaces/explorer/**/*.tsx",
 	"user-interfaces/photos/scripts/**/*.ts",
 	"user-interfaces/provider/**/*.ts",
 	"user-interfaces/provider/**/*.tsx",

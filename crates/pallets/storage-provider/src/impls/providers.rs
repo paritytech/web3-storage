@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::*;
-use frame_support::{pallet_prelude::*, traits::ReservableCurrency};
+use frame_support::pallet_prelude::*;
 use sp_runtime::traits::CheckedMul;
-use storage_primitives::ReplayWindow;
 
 impl<T: Config> Pallet<T> {
     /// Reject any path that would create a new commitment for a
@@ -74,17 +73,18 @@ impl<T: Config> Pallet<T> {
             Error::<T>::InsufficientStake
         );
 
-        // Validate public key length (32 bytes for Sr25519/Ed25519, 33 for Ecdsa compressed)
+        // Validate public key length: 32 bytes (Sr25519/Ed25519) or 33
+        // (compressed Ecdsa/Eth). The BoundedVec keeps 64 bytes of capacity
+        // reserved for future schemes, but no supported scheme verifies
+        // against a longer key, so anything else would register a provider
+        // that can never pass signature verification (#274, #300).
         let key_len = public_key.len();
-        ensure!(
-            key_len == 32 || key_len == 33 || key_len == 64,
-            Error::<T>::InvalidPublicKey
-        );
+        ensure!(key_len == 32 || key_len == 33, Error::<T>::InvalidPublicKey);
 
         Self::validate_settings(&settings, 0, stake)?;
 
-        // Reserve stake
-        T::Currency::reserve(who, stake)?;
+        // Hold stake as collateral
+        Self::hold_stake(who, stake)?;
 
         let anchor_block = Self::current_anchor_block();
 
@@ -102,7 +102,6 @@ impl<T: Config> Pallet<T> {
         };
 
         Providers::<T>::insert(who, provider_info);
-        ProviderReplayStates::<T>::insert(who, ReplayWindow::default());
 
         Self::deposit_event(Event::ProviderRegistered {
             provider: who.clone(),

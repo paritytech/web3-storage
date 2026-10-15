@@ -68,7 +68,7 @@ impl pallet_balances::Config for Test {
     type WeightInfo = ();
     type FreezeIdentifier = ();
     type MaxFreezes = ();
-    type RuntimeHoldReason = ();
+    type RuntimeHoldReason = RuntimeHoldReason;
     type RuntimeFreezeReason = ();
     type DoneSlashHandler = ();
 }
@@ -89,6 +89,7 @@ parameter_types! {
 
 impl pallet_storage_provider::Config for Test {
     type Currency = Balances;
+    type RuntimeHoldReason = RuntimeHoldReason;
     type Treasury = TreasuryAccount;
     type MinStakePerByte = MinStakePerByte;
     type MaxMultiaddrLength = MaxMultiaddrLength;

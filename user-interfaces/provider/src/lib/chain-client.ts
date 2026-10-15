@@ -3,7 +3,7 @@
 /**
  * Chain Client - Direct blockchain interaction via WebSocket.
  *
- * Single-library setup: polkadot-api (PAPI) v2 typed API for both queries and
+ * Single-library setup: polkadot-api (PAPI) v3 typed API for both queries and
  * tx submission. The typed API is built from descriptors regenerated against
  * the live runtime via `pnpm papi:generate`. PR-5 of user-interfaces/AUDIT.md
  * tracked the migration from the previous dual @polkadot/api + PAPI setup.
@@ -179,12 +179,12 @@ async function submit(
   onProgress?: TxProgressCallback,
 ): Promise<TxFinalizedPayload> {
   try {
-    const result = await submitTx(tx, signer.polkadotSigner, {
+    const result = await submitTx(tx, signer.txCreator, {
       mode: 'finalized',
       retryStale: 0,
       label: description,
       onStatus: (u) => {
-        if (u.phase === 'signed') {
+        if (u.phase === 'in-pool') {
           onProgress?.({ type: 'broadcast', message: 'Transaction broadcast to network…' })
         } else if (u.phase === 'best') {
           onProgress?.({
@@ -221,6 +221,8 @@ export interface OnChainProviderInfo {
   registeredAt: number
   multiaddr?: string
   deregisterAt?: number
+  /** Chain's `lifetime_revenue` for the current registration. */
+  lifetimeRevenue: bigint
 }
 
 export interface OnChainProviderSettings {
@@ -228,7 +230,7 @@ export interface OnChainProviderSettings {
   maxDuration: number
   pricePerByte: bigint
   acceptingPrimary: boolean
-  acceptingReplica: boolean
+  /** Price per successful sync confirmation; `null` mirrors the chain's `None` (not accepting replicas). */
   replicaSyncPrice: bigint | null
   acceptingExtensions: boolean
   maxCapacity: bigint
@@ -277,6 +279,8 @@ export interface OnChainChallenge {
   startSeq: number
   status: 'pending' | 'responded' | 'slashed' | 'expired'
   challengeType?: 'offchain' | 'checkpoint' | 'unknown'
+  // Optional: event payloads don't carry the tier, only storage entries do.
+  authorized?: boolean
   createdAt: number
   deadline: number
 }
@@ -302,6 +306,7 @@ export interface OnChainBucketDetails {
   snapshot: OnChainBucketSnapshot | null
   historicalRoots: Array<{ position: number; root: string }>
   totalSnapshots: number
+  visibility: 'Public' | 'Private'
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -327,6 +332,7 @@ export async function getProviderData(
     registeredAt: provider.stats.registered_at,
     multiaddr: new TextDecoder().decode(provider.multiaddr),
     deregisterAt: provider.deregister_at ?? undefined,
+    lifetimeRevenue: provider.stats.lifetime_revenue,
   }
   const s = provider.settings
   const settings: OnChainProviderSettings = {
@@ -334,7 +340,6 @@ export async function getProviderData(
     maxDuration: s.max_duration,
     pricePerByte: s.price_per_byte,
     acceptingPrimary: s.accepting_primary,
-    acceptingReplica: s.replica_sync_price !== undefined,
     replicaSyncPrice: s.replica_sync_price ?? null,
     acceptingExtensions: s.accepting_extensions,
     maxCapacity: s.max_capacity,
@@ -465,6 +470,7 @@ export async function getBucketDetails(
       snapshot,
       historicalRoots,
       totalSnapshots: bucket.total_snapshots,
+      visibility: bucket.visibility.type,
     })
   }
   return out
@@ -491,6 +497,7 @@ export async function getProviderChallenges(address: string): Promise<OnChainCha
       mmrRoot: ch.commitment.mmr_root,
       startSeq: Number(ch.commitment.start_seq),
       status: anchorBlock > deadline ? 'expired' : 'pending',
+      authorized: ch.authorized,
       createdAt: 0,
       deadline,
     })
@@ -515,7 +522,7 @@ export async function submitRegisterProvider(
   onProgress?: TxProgressCallback,
 ): Promise<void> {
   const a = requireApi()
-  const publicKey = params.publicKey || signer.polkadotSigner.publicKey
+  const publicKey = params.publicKey || signer.txCreator.publicKey
   if (!publicKey) throw new Error('No public key available for signing')
 
   const multiaddrBytes = new TextEncoder().encode(params.multiaddr)
@@ -543,8 +550,7 @@ export async function submitUpdateSettings(
       max_duration: settings.maxDuration,
       price_per_byte: settings.pricePerByte,
       accepting_primary: settings.acceptingPrimary,
-      replica_sync_price:
-        settings.acceptingReplica && settings.replicaSyncPrice ? settings.replicaSyncPrice : undefined,
+      replica_sync_price: settings.replicaSyncPrice ?? undefined,
       accepting_extensions: settings.acceptingExtensions,
       max_capacity: settings.maxCapacity,
     },
@@ -695,6 +701,22 @@ export async function submitRespondToChallenge(
   })
 
   return submit(tx, signer, 'Challenge response', onProgress)
+}
+
+/**
+ * Build and submit a `resolve_expired_challenge` extrinsic. Permissionless; a
+ * provider calls it on its own expired challenge to take the slash and
+ * unblock deregistration.
+ */
+export async function submitResolveExpiredChallenge(
+  challengeId: { deadline: number; index: number },
+  signer: InjectedPolkadotAccount,
+  onProgress?: TxProgressCallback,
+): Promise<TxFinalizedPayload> {
+  const a = requireApi()
+  onProgress?.({ type: 'signing', message: 'Signing resolution...' })
+  const tx = a.tx.StorageProvider.resolve_expired_challenge({ challenge_id: challengeId })
+  return submit(tx, signer, 'Resolve expired challenge', onProgress)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

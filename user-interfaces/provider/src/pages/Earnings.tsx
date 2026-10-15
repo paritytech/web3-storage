@@ -11,7 +11,7 @@ import {
 } from '@/state/provider.state'
 import { RequireProvider } from '@/components/RequireProvider'
 import { useAnchorBlock } from '@/state/chain.state'
-import { formatTokens, formatBytes, formatBlockNumber } from '@/utils/format'
+import { formatTokens, formatBytes, formatBlockNumber } from '@web3-storage/format'
 
 export function Earnings() {
   return (

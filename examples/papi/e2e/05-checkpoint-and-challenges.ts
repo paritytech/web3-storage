@@ -19,6 +19,7 @@ import {
   fetchCheckpointSignature,
   makeSigner,
   respondToChallenge,
+  setBucketVisibility,
   submitClientCheckpoint,
   uploadChunk,
 } from "@web3-storage/sdk";
@@ -31,6 +32,8 @@ const PROVIDER_URL = process.argv[3] || "http://127.0.0.1:3333";
 async function main() {
   const provider = makeSigner("//Alice");
   const client = makeSigner("//Bob");
+  // Neither a member nor an agreement owner of the bucket below.
+  const stranger = makeSigner("//Ferdie");
 
   const { papi, api } = await setupChain(CHAIN_WS);
   await ensureProviderRegistered(api, provider, PROVIDER_URL);
@@ -114,6 +117,12 @@ async function main() {
   tests.push({
     name: "5.4 Challenge a provider not in the snapshot",
     fn: async () => {
+      // challenge_checkpoint validates the *provider* against the snapshot at
+      // creation, but NOT the leaf_index: a beyond-canonical leaf is rejected
+      // later, when the provider answers with Superseded (see the
+      // respond_with_bogus_superseded_claim_is_rejected unit test). So
+      // the creation-time guard to exercise here is the provider
+      // check — Bob is not a primary provider of this bucket.
       const tx = api.tx.StorageProvider.challenge_checkpoint({
         bucket_id: bucketId,
         provider: client.address, // not in the snapshot's primary_providers
@@ -124,17 +133,58 @@ async function main() {
   });
 
   tests.push({
-    name: "5.5 Challenge a leaf beyond the canonical range",
+    name: "5.5 Private bucket blocks stranger challenges on the primary",
+    fn: async () => {
+      // The bucket was created with the wrapper default (Private): a signed
+      // account that is neither a member nor a primary-agreement owner may
+      // not challenge the primary.
+      const tx = api.tx.StorageProvider.challenge_checkpoint({
+        bucket_id: bucketId,
+        provider: provider.address,
+        target: { leaf_index: BigInt(uploadInfo.leafIndex), chunk_index: 0n },
+      });
+      await submitTxExpectFailure(tx, stranger.signer, "NotAuthorizedForPrivateBucket", "5.5");
+    },
+  });
+
+  tests.push({
+    name: "5.6 Publicized bucket: stranger challenge defended at zero provider cost",
+    fn: async () => {
+      await setBucketVisibility(api, client, bucketId, "Public");
+      const challengeId = await challengeCheckpoint(
+        api,
+        stranger,
+        provider,
+        bucketId,
+        uploadInfo.leafIndex
+      );
+      const proof = await fetchChallengeProof(api, PROVIDER_URL, challengeId);
+      const result = await respondToChallenge(api, provider, challengeId, proof);
+      const events = api.event.StorageProvider.ChallengeDefended.filter(result.events as never);
+      assert.strictEqual(events.length, 1, "Expected ChallengeDefended event");
+      // Public tier: the stranger's deposit reimburses the provider in full;
+      // the provider bears nothing and its stake is never touched.
+      assert.strictEqual(
+        events[0].payload.provider_cost,
+        0n,
+        "public defense must cost the provider 0"
+      );
+      assert.ok(events[0].payload.challenger_cost > 0n, "the stranger pays the full deposit");
+    },
+  });
+
+  tests.push({
+    name: "5.7 Challenge a leaf beyond the canonical range",
     fn: async () => {
       // A challenge on a leaf the snapshot's leaf_count does not cover is
-      // rejected at creation: no proof could ever defend it, so accepting it
-      // would let a stranger slash an honest provider via the timeout.
+      // rejected at creation: no proof could defend it, so accepting it would
+      // let anyone slash an honest provider via the timeout.
       const tx = api.tx.StorageProvider.challenge_checkpoint({
         bucket_id: bucketId,
         provider: provider.address,
         target: { leaf_index: 999n, chunk_index: 0n },
       });
-      await submitTxExpectFailure(tx, client.signer, "LeafBeyondCanonical", "5.5");
+      await submitTxExpectFailure(tx, client.signer, "LeafBeyondCanonical", "5.7");
     },
   });
 

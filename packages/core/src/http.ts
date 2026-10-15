@@ -69,7 +69,7 @@ export async function httpFetch(
 
 /**
  * The signing surface needed to authenticate a provider request. Matches the
- * subset of PAPI's `PolkadotSigner` we use, so both a derived dev signer and a
+ * subset of PAPI's `SignerTxCreator` we use, so both a derived dev signer and a
  * browser wallet extension satisfy it. `signBytes` is async and — for wallets
  * and PAPI signers alike — wraps the payload in `<Bytes>…</Bytes>`; the provider
  * accepts that wrapped form (see `wrap_bytes` in crates/providers/auth).
@@ -104,12 +104,13 @@ export async function signProviderRequest(
 }
 
 // ── Off-chain agreement-term negotiation ────────────────────────────────────
-// The off-chain half of the negotiate -> establish flow (#105). The bucket
+// The off-chain half of the negotiate -> redeem flow (#105). The bucket
 // owner POSTs a quote to the provider node's /negotiate endpoint; the provider
 // signs AgreementTerms and returns them as SignedTerms, which the owner then
-// redeems on-chain via establish_storage_agreement / create_drive /
-// create_s3_bucket. Pure HTTP here — the SCALE/Enum shaping of the response
-// lives in layer0 (buildSignedTermsArgs), so core stays chain-free.
+// redeems on-chain via create_bucket_with_primary, add_primary_provider,
+// add_replica_provider, create_drive or create_s3_bucket. Pure HTTP here —
+// the SCALE/Enum shaping of the response is in layer0
+// (buildSignedTermsArgs), so core stays chain-free.
 
 /** Replica-sync parameters carried by replica agreement terms. */
 export interface ReplicaTermsWire {
@@ -129,9 +130,26 @@ export interface NegotiateRequest {
   max_bytes: bigint | number | string;
   duration: number;
   price_per_byte?: bigint | number | string;
-  bucket_id?: bigint | number | string | null;
+  /** The owner's next expected agreement nonce (read from chain). */
+  nonce: bigint | number | string;
+  /**
+   * Bucket the quote is for: an existing bucket id, or null/omitted for a
+   * bucket created when the quote is redeemed. The provider node maps it to
+   * the signed `BucketTarget`.
+   */
+  bucket?: bigint | number | string | null;
   replica_params?: ReplicaTermsWire | null;
 }
+
+/**
+ * Bucket a signed quote is for — serde's encoding of the runtime's
+ * `BucketTarget`: `"New"` for a bucket created at redemption,
+ * `{ Existing: <bucket id> }` for one that already exists.
+ *
+ * `@web3-storage/papi` declares the same type; neither package depends on
+ * the other, so the two declarations must match.
+ */
+export type BucketTargetWire = "New" | { Existing: bigint | number | string };
 
 /** Provider-signed terms returned by POST /negotiate. */
 export interface SignedTerms {
@@ -142,18 +160,22 @@ export interface SignedTerms {
     price_per_byte: bigint | number | string;
     valid_until: number;
     nonce: bigint | number | string;
-    bucket_id?: bigint | number | string | null;
+    bucket: BucketTargetWire;
     replica_params?: ReplicaTermsWire | null;
   };
-  /** SCALE-encoded MultiSignature as 0x-hex, e.g. `0x01<64-byte sr25519 sig>`. */
+  /**
+   * SCALE-encoded MultiSignature as 0x-hex — the variant byte tags the
+   * scheme, e.g. `0x01<64-byte sr25519 sig>` or `0x02<65-byte ecdsa sig>`.
+   */
   signature: string;
 }
 
 /**
  * POST /negotiate and return the provider-signed terms. bigint fields are
  * serialized as decimal strings (the provider's serde accepts string-or-number
- * for the u64/u128 fields). Single attempt by default: /negotiate allocates a
- * provider-side nonce, so retrying a transient 5xx would waste nonces.
+ * for the u64/u128 fields). The caller supplies `nonce`, so retrying a
+ * transient 5xx just re-asks the provider to sign the same nonce again —
+ * safe to retry with the default backoff.
  */
 export async function negotiateTerms(
   providerUrl: string,
@@ -168,7 +190,7 @@ export async function negotiateTerms(
       headers: { "content-type": "application/json" },
       body: JSON.stringify(request, (_k, v) => (typeof v === "bigint" ? v.toString() : v)),
     },
-    { retries: 1, ...opts },
+    opts,
   );
   if (!res.ok) {
     throw new HttpError(

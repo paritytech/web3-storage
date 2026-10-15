@@ -45,7 +45,7 @@ export interface ProviderSettings {
   maxDuration: number
   pricePerByte: bigint
   acceptingPrimary: boolean
-  acceptingReplica: boolean
+  /** Price per successful sync confirmation; `null` means not accepting replicas. */
   replicaSyncPrice: bigint | null
   acceptingExtensions: boolean
   maxCapacity: bigint
@@ -84,6 +84,8 @@ export interface Challenge {
   startSeq: number
   status: 'pending' | 'responded' | 'slashed' | 'expired'
   challengeType?: 'offchain' | 'checkpoint' | 'unknown'
+  // Optional: challenges built from event payloads don't carry the tier.
+  authorized?: boolean
   createdAt: number
   deadline: number
 }
@@ -98,6 +100,7 @@ export interface AgreementRequest {
 }
 
 export interface EarningsSummary {
+  /** The chain's `lifetime_revenue` for the current registration. */
   totalEarned: bigint
   pendingPayouts: bigint
   lastPayoutBlock: number
@@ -116,6 +119,7 @@ export interface BucketDetail {
   minProviders: number
   primaryProviders: string[]
   totalSnapshots: number
+  visibility: 'Public' | 'Private'
   snapshot: { mmrRoot: string; startSeq: number; leafCount: number; checkpointBlock: number } | null
   historicalRoots: Array<{ position: number; root: string }>
   agreement: {
@@ -330,7 +334,8 @@ export async function loadProviderData(
     )
 
     earnings$.next({
-      totalEarned: 0n, // Would need historical data
+      // Chain's running total, so no event replay; reset by deregistering.
+      totalEarned: providerData?.info.lifetimeRevenue ?? 0n,
       pendingPayouts: 0n, // Would need escrow queries
       lastPayoutBlock: 0,
       activeAgreementValue: activeValue,
@@ -545,12 +550,31 @@ export async function respondToChallenge(
     onProgress,
   )
 
-  // Step 3: Update local state
-  const key = challengeKey(challenge)
-  const existing = challenges$.getValue()
+  setChallengeStatus(challenge, 'responded')
+}
+
+/**
+ * Resolve an expired challenge against this provider: slashes the stake and
+ * clears the pending counter that blocks deregistration.
+ */
+export async function resolveExpiredChallenge(
+  challenge: Challenge,
+  signer: import('polkadot-api/pjs-signer').InjectedPolkadotAccount,
+  onProgress?: (status: import('@/lib/chain-client').TxStatus) => void,
+): Promise<void> {
+  const { submitResolveExpiredChallenge } = await import('@/lib/chain-client')
+  await submitResolveExpiredChallenge(
+    { deadline: challenge.deadline, index: challenge.id },
+    signer,
+    onProgress,
+  )
+  setChallengeStatus(challenge, 'slashed')
+}
+
+function setChallengeStatus(challenge: Challenge, status: Challenge['status']): void {
   const merged = new Map<string, Challenge>()
-  for (const c of existing) merged.set(challengeKey(c), c)
-  merged.set(key, { ...challenge, status: 'responded' })
+  for (const c of challenges$.getValue()) merged.set(challengeKey(c), c)
+  merged.set(challengeKey(challenge), { ...challenge, status })
   challenges$.next(Array.from(merged.values()).sort((a, b) => b.deadline - a.deadline))
 }
 
@@ -611,7 +635,6 @@ function convertProviderSettings(chain: OnChainProviderSettings): ProviderSettin
     maxDuration: chain.maxDuration,
     pricePerByte: chain.pricePerByte,
     acceptingPrimary: chain.acceptingPrimary,
-    acceptingReplica: chain.acceptingReplica,
     replicaSyncPrice: chain.replicaSyncPrice,
     acceptingExtensions: chain.acceptingExtensions,
     maxCapacity: chain.maxCapacity,
@@ -667,6 +690,7 @@ function convertChallenge(chain: OnChainChallenge): Challenge {
     startSeq: chain.startSeq,
     status: chain.status,
     challengeType: chain.challengeType,
+    authorized: chain.authorized,
     createdAt: chain.createdAt,
     deadline: chain.deadline,
   }
@@ -683,6 +707,7 @@ function convertBucketDetail(
     minProviders: chain.minProviders,
     primaryProviders: chain.primaryProviders,
     totalSnapshots: chain.totalSnapshots,
+    visibility: chain.visibility,
     snapshot: chain.snapshot,
     historicalRoots: chain.historicalRoots,
     agreement: agreement ? {

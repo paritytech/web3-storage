@@ -5,7 +5,7 @@
 //! enforces bucket roles).
 //!
 //! * [`http_auth`] — the signed `Authorization` header format.
-//! * [`membership`] — bucket members, the role ladder, and a TTL cache.
+//! * [`membership`] — bucket members and visibility, the role ladder, and a TTL cache.
 //! * [`verify`] — [`Authenticator`]: signature verification and role enforcement.
 
 pub mod error;
@@ -18,7 +18,7 @@ pub mod verify;
 pub use error::{AuthError, MembershipError};
 pub use http_auth::{auth_message, build_auth_header};
 pub use membership::{
-    Invalidation, Member, MembershipInvalidations, MembershipResolver, RequiredRole,
+    BucketAccess, Invalidation, Member, MembershipInvalidations, MembershipResolver, RequiredRole,
     StaticMembershipResolver,
 };
 pub use verify::Authenticator;

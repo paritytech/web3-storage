@@ -15,15 +15,16 @@ import {
   canRetryCreation,
   createBucket,
   dismissCreation,
+  getApi,
   getSignerAddress,
   retryCreation,
   useCreations,
   type CreationStatus,
 } from "@/state";
-import { type AvailableProvider } from "@/lib/s3-client";
-import { formatBytes } from "@/lib/utils";
+import { type AvailableProvider, type Visibility } from "@/lib/s3-client";
+import { formatBytes } from "@web3-storage/format";
 import ProviderPickerPanel from "./ProviderPickerPanel";
-import { negotiateProviderTerms } from "@web3-storage/sdk";
+import { getAgreementNonce, negotiateProviderTerms } from "@web3-storage/sdk";
 
 interface NewBucketDialogProps {
   open: boolean;
@@ -63,7 +64,9 @@ function CreationStatusCard({
           )}
         </div>
         <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium truncate">{item.name}</p>
+          <p className="text-sm font-medium truncate">
+            {item.bucketId !== undefined ? `Bucket #${item.bucketId}` : "New bucket"}
+          </p>
           <p className="text-xs text-muted-foreground mt-0.5">
             {item.stage === "submitting" && "Submitting on-chain..."}
             {item.stage === "ready" && "Bucket is ready to use"}
@@ -99,10 +102,10 @@ function CreationStatusCard({
 export default function NewBucketDialog({ open, onOpenChange }: NewBucketDialogProps) {
   const creations = useCreations();
 
-  const [name, setName] = useState("");
   const [capacity, setCapacity] = useState("10485760");
   const [duration, setDuration] = useState("10000");
   const [pricePerByte, setPricePerByte] = useState("0");
+  const [visibility, setVisibility] = useState<Visibility>("Private");
   const [submitting, setSubmitting] = useState(false);
   const [negotiateError, setNegotiateError] = useState<string | null>(null);
   const [isShowProviderPicker, setIsShowProviderPicker] = useState<boolean>(false);
@@ -116,28 +119,42 @@ export default function NewBucketDialog({ open, onOpenChange }: NewBucketDialogP
         setNegotiateError("Signer not set");
         return;
       }
+      const api = getApi();
+      if (!api) {
+        setNegotiateError("Not connected to chain");
+        return;
+      }
 
+      let nonce: bigint;
+      try {
+        nonce = await getAgreementNonce(api, owner);
+      } catch (e) {
+        setNegotiateError(
+          `Failed to read agreement nonce: ${e instanceof Error ? e.message : String(e)}`,
+        );
+        return;
+      }
       const result = await negotiateProviderTerms(provider, {
         owner,
         max_bytes: BigInt(capacity),
         duration: parseInt(duration, 10),
         price_per_byte: BigInt(pricePerByte || "0"),
+        nonce,
         replica_params: null,
-        bucket_id: null,
+        bucket: null,
       });
       if (!result.ok) {
         setNegotiateError(result.error);
         return;
       }
 
-      const bucket = await createBucket({
-        name: name || "Untitled Bucket",
+      const bucketId = await createBucket({
         provider,
         url: result.url,
         signed: result.signed,
+        visibility,
       });
-      if (bucket) {
-        setName("");
+      if (bucketId !== null) {
         onOpenChange(false);
       }
     } finally {
@@ -155,16 +172,6 @@ export default function NewBucketDialog({ open, onOpenChange }: NewBucketDialogP
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
-          <div className="space-y-2">
-            <label className="text-sm font-medium">Bucket Name</label>
-            <Input
-              data-testid="new-bucket-name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="my-bucket"
-            />
-          </div>
-
           <div className="grid gap-3 sm:grid-cols-3">
             <div className="space-y-1">
               <label className="text-xs font-medium">Capacity (bytes)</label>
@@ -199,6 +206,22 @@ export default function NewBucketDialog({ open, onOpenChange }: NewBucketDialogP
             </div>
           </div>
 
+          <div className="space-y-1">
+            <label className="text-xs font-medium">Visibility</label>
+            <select
+              data-testid="new-bucket-visibility"
+              value={visibility}
+              onChange={(e) => setVisibility(e.target.value as Visibility)}
+              className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring sm:max-w-48"
+            >
+              <option value="Private">Private</option>
+              <option value="Public">Public</option>
+            </select>
+            <p className="text-xs text-muted-foreground">
+              Private: providers serve reads only to members.
+            </p>
+          </div>
+
           {isShowProviderPicker ? (
             <ProviderPickerPanel
               onSelect={handleProviderSelect}
@@ -227,9 +250,9 @@ export default function NewBucketDialog({ open, onOpenChange }: NewBucketDialogP
                   item={item}
                   onDismiss={dismissCreation}
                   onRetry={
-                    canRetryCreation(item.id) && name.trim()
+                    canRetryCreation(item.id)
                       ? (id) => {
-                          void retryCreation(id, name.trim());
+                          void retryCreation(id);
                         }
                       : undefined
                   }

@@ -8,6 +8,12 @@ pragma solidity ^0.8.34;
 ///         bucket owner; bucket names follow the S3 convention (3-63 chars,
 ///         lowercase alphanumeric + hyphens). `cid` is a substrate `H256`.
 interface IS3Registry {
+    /// Read visibility of the S3 bucket's underlying Layer 0 bucket.
+    enum Visibility {
+        Public,
+        Private
+    }
+
     // TODO: Find out way to make it re-useable
     struct PrimitiveReplicaTerms {
         /// Balance reserved by the owner to fund per-sync confirmations.
@@ -30,11 +36,12 @@ interface IS3Registry {
         uint128 pricePerByte;
         /// Block number after which the quote is no longer redeemable.
         uint32 validUntil;
-        /// Provider-chosen replay-protection nonce.
+        /// Owner-chosen replay-protection nonce: must equal the owner's next
+        /// expected on-chain value.
         uint64 nonce;
-        /// `true` if the quote is bound to an existing bucket (`Some(_)` on
-        /// the Rust side) — required for replica terms; primary terms leave
-        /// this false.
+        /// `true` if the quote names an existing bucket
+        /// (`BucketTarget::Existing` on the Rust side); `false` for a bucket
+        /// created at redemption (`BucketTarget::New`).
         bool hasBucketId;
         /// Target bucket id; only read when `hasBucketId` is true.
         uint64 bucketId;
@@ -49,12 +56,14 @@ interface IS3Registry {
     /// `terms` must match the SCALE payload the provider signed; `terms.owner`
     /// must be the caller's substrate-mapped account. `signature` is the
     /// SCALE-encoded `MultiSignature` from the provider's `/negotiate`
-    /// response (variant byte + raw signature bytes).
+    /// response (variant byte + raw signature bytes). `visibility` sets the
+    /// underlying Layer 0 bucket's read visibility.
     function createS3Bucket(
         string calldata name,
         bytes32 provider,
         PrimitiveAgreementTerms calldata terms,
-        bytes calldata signature
+        bytes calldata signature,
+        Visibility visibility
     ) external returns (uint64 s3BucketId);
 
     /// Delete an empty bucket. Caller must be the owner.

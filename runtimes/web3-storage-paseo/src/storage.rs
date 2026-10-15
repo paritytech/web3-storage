@@ -14,7 +14,7 @@ use crate::{
     paseo_constants::{
         consensus::RELAY_CHAIN_SLOT_DURATION_MILLIS, currency::UNIT, relay_time::RC_HOURS,
     },
-    AccountId, Balance, Balances, BlockNumber, Runtime, RuntimeEvent,
+    AccountId, Balance, Balances, BlockNumber, Runtime, RuntimeEvent, RuntimeHoldReason,
 };
 
 // Storage-backed parameters: each value below is the default, but can be
@@ -40,15 +40,12 @@ parameter_types! {
     pub storage MinStakePerByte: Balance = 1_000;
     /// Must be `> ChallengeTimeout` so any challenge opened up to the
     /// announcement block matures (provider stays slashable) before the
-    /// provider can withdraw stake, and `> RequestTimeout` so a
-    /// pre-deregistration agreement quote expires before re-registration (the
-    /// re-register replay defense). Both are checked in `integrity_test`.
+    /// provider can withdraw stake. Checked in `integrity_test`.
     /// Value: the 48h challenge window plus a 6h grace.
     pub storage DeregisterAnnouncementPeriod: BlockNumber = 54 * RC_HOURS;
-    /// Caps the challenges sharing one deadline (relay block) and the
-    /// `on_initialize` sweep's per-block slash budget. Generous: only
-    /// challenges created while the chain sits on the same relay parent
-    /// share a deadline.
+    /// Caps the challenges sharing one deadline (relay block); bounds the
+    /// per-deadline index allocator. Generous: only challenges created while
+    /// the chain sits on the same relay parent share a deadline.
     pub storage MaxChallengesPerDeadline: u16 = 1_000;
     /// One anchor block = one relay slot: `BlockNumberProvider` below reads
     /// the relay chain. `const` (not `storage`): a physical property of the
@@ -94,6 +91,7 @@ impl pallet_s3_registry::Config for Runtime {
 
 impl pallet_storage_provider::Config for Runtime {
     type Currency = Balances;
+    type RuntimeHoldReason = RuntimeHoldReason;
     type Treasury = TreasuryAccount;
     type MinStakePerByte = MinStakePerByte;
     type MaxMultiaddrLength = ConstU32<128>;

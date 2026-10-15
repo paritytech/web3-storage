@@ -14,7 +14,12 @@ fn create_bucket_fails_too_many_buckets() {
         // `create_bucket_internal` mutates NextBucketId before the member
         // index push fails, so only assert the error.
         assert_err!(
-            StorageProvider::create_bucket_internal(&1, 0, None),
+            StorageProvider::create_bucket_internal(
+                &1,
+                0,
+                None,
+                storage_primitives::Visibility::Public
+            ),
             Error::<Test>::TooManyBucketsForMember
         );
     });

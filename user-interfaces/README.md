@@ -1,15 +1,17 @@
 # Web3 Storage UIs
 
-Three React + Vite + Polkadot-API single-page apps:
+Five React + Vite + Polkadot-API single-page apps:
 
 - **`drive-ui/`** (port `5174`) — Layer 1 file system browser. Drives, files, members, checkpoints. Talks to the parachain (`ws://127.0.0.1:2222`) and to whichever provider node a drive's bucket points at (resolved via on-chain multiaddr).
 - **`s3-ui/`** (port `5177`) — Layer 0 S3-style object store. Buckets, objects, client-side encryption, checkpoints.
 - **`provider/`** (port `5175`) — Provider operator dashboard. Registration, agreements, checkpoints, challenges, earnings.
+- **`photos/`** (port `5178`) — Photo library backed by decentralized storage, with the album-tree root anchored on-chain via a smart contract.
+- **`explorer/`** (port `5179`) — Capacity Explorer, the network-wide on-chain view. Summary stats plus searchable lists of every provider, agreement, bucket, and open challenge. Read-only: never submits an extrinsic; a wallet is only used to highlight "mine".
 
 State management:
-- `provider/`, `drive-ui/`, and `s3-ui/` use RxJS `BehaviorSubject` + `@react-rxjs/core` `bind()`. State files live in `src/state/*.state.ts`.
+- All apps use RxJS `BehaviorSubject` + `@react-rxjs/core` `bind()`. State files live in `src/state/*.state.ts`.
 
-All three share `@web3-storage/network-config` (in `shared/network-config`) for endpoint selection and persistence.
+All apps share `@web3-storage/network-config` (in `shared/network-config`) for endpoint selection and persistence.
 
 ## Local development
 
@@ -22,17 +24,20 @@ just start-provider      # provider HTTP node (port 3333)
 cd user-interfaces/drive-ui && pnpm dev      # http://localhost:5174
 cd user-interfaces/s3-ui && pnpm dev         # http://localhost:5177
 cd user-interfaces/provider && pnpm dev      # http://localhost:5175
+cd user-interfaces/photos && pnpm dev        # http://localhost:5178
+cd user-interfaces/explorer && pnpm dev      # http://localhost:5179
 ```
 
 The UIs are members of the repo-root **pnpm** workspace (`/pnpm-workspace.yaml`, alongside `packages/*` and `examples/papi`); inter-workspace deps use the `workspace:*` protocol. Run `pnpm install` at the repo root. Stick with pnpm — switching to npm breaks workspace resolution.
 
 ## Tests
 
-The harness is shared across the three UIs. Layout:
+The harness is shared across the UIs (drive-ui, provider, and explorer have e2e suites today). Layout:
 
-- **Vitest** for pure-function unit tests (drive-ui's `src/lib/__tests__/multiaddr.test.ts`, provider's existing `src/lib/chain-client.test.ts` + `src/utils/format.test.ts`).
+- **Vitest** for pure-function unit tests (drive-ui's `src/lib/__tests__/multiaddr.test.ts`, provider's `src/state/challengeKey.test.ts`, explorer's `src/lib/explorer-client.test.ts`, and the shared formatters' suite in `shared/format/src/index.test.ts`).
 - **Playwright** for E2E smoke + feature tests against a real local chain + provider. Each UI has its own `playwright.config.ts` and `e2e/` directory.
 - Shared helpers in `shared/test-helpers/` (`makeLocalPageFixture`, `waitForConnection`, `waitForMinBlock`, `probeProviderHealth`).
+- Shared display formatters in `shared/format/` (`@web3-storage/format`) — the single home for token/byte/address/time formatting; apps must import from it instead of hand-rolling copies.
 
 ### Running
 
@@ -43,6 +48,7 @@ just test-ui-unit
 # E2E for one UI (requires chain + provider running)
 just test-ui-drive
 just test-ui-provider
+just test-ui-explorer
 
 # Everything: unit + e2e (waits for chain + provider /health, then serial)
 just test-ui
@@ -50,19 +56,19 @@ just test-ui
 
 ### Adding a new test
 
-1. **Unit (drive-ui or provider):** add `src/**/*.test.{ts,tsx}` next to the code. Uses Vitest config in each package.
+1. **Unit (drive-ui, provider, explorer, or shared/format):** add `src/**/*.test.{ts,tsx}` next to the code. Uses Vitest config in each package.
 2. **E2E (any UI):** add `e2e/integration/<feature>.spec.ts`. Use the local fixture: `import { test, expect } from "../fixtures";`. Reach for `localPage` to get a hydrated, connected page.
 
 ### Test-id naming convention
 
 Add `data-testid="{area}-{element}"` to interactive elements. `area` is the UI region (`connect`, `account`, `drive-list`, `file-browser`, `manage-access`, `checkpoint`, `commit-strategy`, `s3`, `bucket`, `accounts`, `nav`, `provider`, `registration`, `settings`, …). `element` is the role (`button`, `submit`, `dialog`, `input`, `row-{id}`).
 
-Examples in use across the three UIs:
+Examples in use across the UIs:
 
 **drive-ui** (post PR 1):
 - `connect-button`, `connect-dialog`, `connect-endpoint-input`, `connect-submit`
 - `account-button`, `account-dialog`, `account-dialog-alice`, `signer-address`, `balance-display`
-- `block-number` (chain-connection indicator — present in all three UIs)
+- `block-number` (chain-connection indicator — present in every UI)
 - `drive-list`, `drive-list-item-{id}`, `drive-list-delete-{id}`
 - `new-drive-dialog`, `new-drive-name`, `new-drive-submit`
 - `file-browser`, `breadcrumbs`, `breadcrumb-{i}`, `entry-row-{type}-{name}`, `entries-grid`, `entries-table`, `upload-input`
@@ -80,6 +86,13 @@ Examples in use across the three UIs:
 - `settings-multiaddr-input`, `settings-multiaddr-update`, `settings-priceperbyte-input`, `settings-maxcapacity-input`, `settings-update`
 - `provider-info`, `stat-card-{slug}`, `stat-value-{slug}`
 - `buckets-table`, `buckets-row-{id}`, `agreements-table`, `agreements-row-{id}`
+
+**explorer** (Capacity Explorer, read-only network view):
+- `nav-{label}` (summary / providers / agreements / buckets / challenges)
+- `summary-stat-{providers|stake|data|agreements|buckets|challenges}`
+- `{area}-table`, `{area}-row-{id}`, `{area}-search` for each list page
+- `{area}-unavailable` (degraded section)
+- `highlight-mine-button`, `refresh-settings-button`, `connection-status`
 
 ### Running the feature-level e2e suite (PR 3)
 
@@ -102,7 +115,7 @@ Tests are idempotent: chain-state collisions (already-registered provider, lefto
 ## Workspace gotchas
 
 - The parachain descriptors have a single owner: `packages/papi` tracks the only metadata snapshot, and its nested `@polkadot-api/descriptors` package is a workspace member every consumer (UIs, `packages/sdk`, `examples/papi`) depends on via `workspace:*`. `pnpm install` at the repo root regenerates descriptors from the tracked metadata; `pnpm run papi:generate` (chain running) refreshes the snapshot itself. Inter-workspace deps only resolve under pnpm.
-- Canonical dev ports: drive-ui `5174`, provider `5175`, s3-ui `5177`.
+- Canonical dev ports: drive-ui `5174`, provider `5175`, landing `5176`, s3-ui `5177`, photos `5178`, explorer `5179`.
 
 ## License
 

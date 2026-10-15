@@ -18,6 +18,7 @@ use axum::{
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use codec::Encode;
 use provider_auth::RequiredRole;
+use provider_types::SigningRefused;
 use sp_core::H256;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -90,7 +91,9 @@ pub fn create_router(state: Arc<ProviderState>) -> Router {
         .route("/mmr_peaks", get(get_mmr_peaks))
         .route("/mmr_subtree", get(get_mmr_subtree))
         .route("/fetch_nodes", post(fetch_nodes))
-        // Off-chain term negotiation (signed AgreementTerms for `establish_storage_agreement`)
+        // Off-chain term negotiation: signed AgreementTerms the caller redeems
+        // on-chain (create_bucket_with_primary / add_primary_provider /
+        // add_replica_provider).
         .route(
             "/negotiate",
             post(negotiate_terms).layer(from_fn_with_state(
@@ -142,7 +145,7 @@ async fn rate_limit_by_ip_middleware(
         // hide detail error from client.
         Err(err) => {
             tracing::warn!("rate limiter error for {ip}: {err}; rejecting request");
-            Err(Error::Internal("RateLimited".to_string()))
+            Err(Error::RateLimiterFailed(err.to_string()))
         }
     }
 }
@@ -187,12 +190,6 @@ async fn info(State(state): State<Arc<ProviderState>>) -> Json<InfoResponse> {
         provider_id: state.provider_id.clone(),
         readiness: ProviderReadiness {
             signing_configured: state.keypair.is_some(),
-            nonce_counter_ready: state
-                .chain_state
-                .nonce_counter
-                .read()
-                .as_ref()
-                .is_some_and(|c| c.is_bootstrapped()),
             provider_info_loaded: provider_registration_info.is_some(),
             deregistering: provider_registration_info
                 .as_ref()
@@ -279,7 +276,7 @@ async fn upload_node(
     // Decode data
     let data = BASE64
         .decode(&request.data)
-        .map_err(|e| Error::Serialization(e.to_string()))?;
+        .map_err(|e| Error::decode("node data", e))?;
 
     // Decode children
     let children = request
@@ -745,15 +742,18 @@ async fn get_historical_roots(
 /// - `provider_info_unavailable` — provider not registered on chain yet; the
 ///   chain-state coordinator clears this automatically once registration lands, no
 ///   restart needed.
-/// - `nonce_counter_unavailable` — counter not yet aligned with the chain's replay
-///   window.
+/// - `provider_key_mismatch` — the local signing key differs from the registered
+///   on-chain `public_key`; signed terms would never verify. Clears on the next
+///   provider-info refresh once the keys agree. Not specific to this endpoint:
+///   the guard sits in [`ProviderState::sign`], so `/commit`, `/commitment`,
+///   `/checkpoint-signature` and deletion proofs return it too.
 /// - `provider_deregistering` — provider has announced deregistration and no longer
 ///   signs new terms.
 async fn negotiate_terms(
     State(state): State<Arc<ProviderState>>,
     Json(req): Json<NegotiateRequest>,
 ) -> Result<Json<SignedTerms>, Error> {
-    let keypair = state.keypair.as_ref().ok_or(Error::SigningUnavailable)?;
+    let keypair = state.keypair.as_ref().ok_or(SigningRefused::NoKey)?;
 
     // Both the anchor block and RequestTimeout must be known before we can sign
     // — otherwise we'd emit unbounded or already-expired terms.
@@ -779,7 +779,7 @@ async fn negotiate_terms(
         .provider_info
         .read()
         .clone()
-        .ok_or(Error::ProviderInfoUnavailable)?;
+        .ok_or(SigningRefused::Unregistered)?;
 
     // A provider that has announced deregistration is winding down and must not
     // sign new terms — the on-chain pallet rejects them too once deregistering.
@@ -787,34 +787,25 @@ async fn negotiate_terms(
         return Err(Error::ProviderDeregistering);
     }
 
-    negotiate::validate_request(&req, &info)?;
+    // Signing with a key the chain doesn't know about produces terms that can
+    // never be redeemed — fail fast instead. Checked against the snapshot this
+    // request is already using, so a re-registration heals it on the next
+    // refresh without a restart.
+    state.ensure_signing_key_matches(&info)?;
 
-    // Guard on both presence and bootstrap status: during the transient window
-    // where the chain has a provider entry but no replay state yet, the
-    // coordinator publishes a Some counter that has not yet been aligned with
-    // the on-chain replay head. Signing with it would issue nonces not derived
-    // from chain state, so we reject until is_bootstrapped() is true.
-    let nonce_counter = state
-        .chain_state
-        .nonce_counter
-        .read()
-        .clone()
-        .ok_or(Error::NonceCounterUnavailable)?;
-    if !nonce_counter.is_bootstrapped() {
-        return Err(Error::NonceCounterUnavailable);
-    }
+    negotiate::validate_request(&req, &info)?;
 
     let terms: AgreementTermsOf = AgreementTerms {
         owner: req.owner,
         max_bytes: req.max_bytes,
         duration: req.duration,
-        price_per_byte: info.price_per_byte,
+        price_per_byte: info.settings.price_per_byte,
         valid_until: anchor_block.saturating_add(request_timeout),
-        nonce: nonce_counter.next(),
-        bucket_id: req.bucket_id,
+        nonce: req.nonce,
+        bucket: req.bucket.into(),
         replica_params: req.replica_params,
     };
-    Ok(Json(provider_negotiation::sign_terms(keypair, terms)))
+    Ok(Json(keypair.sign_terms(terms)))
 }
 
 /// Get replica sync status for a bucket.

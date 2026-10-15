@@ -3,28 +3,18 @@
 /** File-system interface types (drive-backed storage). */
 
 import type { SignedTerms } from "@web3-storage/core";
+import type { Visibility } from "@web3-storage/layer0";
 
 import type { ProviderChoice } from "../provider-url.js";
 
 export type { PrimaryProviderInfo } from "../provider-url.js";
-import type { PrimaryProviderInfo } from "../provider-url.js";
+export type { BucketInfo, BucketMember, MemberRole } from "../bucket-info.js";
+import type { BucketInfo } from "../bucket-info.js";
 
-export interface DriveInfo {
-  driveId: bigint;
-  bucketId: bigint;
-  owner: string;
-  name: string | null;
-  maxCapacity: bigint;
-  // block-number fields are u32 on chain → number in PAPI's typed API
-  createdAt: number;
-  storagePeriod: number;
-  expiresAt: number;
-  /** Primary providers of the underlying layer-0 bucket. */
-  providerInfo: PrimaryProviderInfo[];
-}
+/** A drive is a Layer 0 bucket; the chain stores nothing drive-specific. */
+export type DriveInfo = BucketInfo;
 
 export interface CreateDriveOptions {
-  name?: string;
   /** Bytes the agreement covers — the negotiated terms' max_bytes. */
   maxCapacity: bigint;
   /** Agreement duration in blocks — the negotiated terms' duration. */
@@ -33,6 +23,8 @@ export interface CreateDriveOptions {
   provider?: ProviderChoice;
   /** Pre-negotiated terms (skips /negotiate). Requires provider.address. */
   signedTerms?: SignedTerms;
+  /** Read visibility of the underlying Layer 0 bucket (default Private). */
+  visibility?: Visibility;
 }
 
 export interface FsEntry {
@@ -42,13 +34,6 @@ export interface FsEntry {
   size: number;
   /** Milliseconds since epoch. */
   mtime: number;
-}
-
-export type MemberRole = "Admin" | "Writer" | "Reader";
-
-export interface BucketMember {
-  account: string;
-  role: MemberRole;
 }
 
 export interface UploadOptions {

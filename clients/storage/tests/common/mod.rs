@@ -173,11 +173,17 @@ pub async fn chain_setup() -> Option<ChainSetup> {
         valid_until: u32::MAX,
         nonce,
         replica_params: None,
-        bucket_id: None,
+        bucket: storage_primitives::BucketTarget::New,
     };
     let signed_terms = sign_terms(&alice_keypair, terms);
     let bucket_id = admin
-        .establish_storage_agreement(alice_ss58.clone(), signed_terms)
+        .create_bucket_with_primary(
+            alice_ss58.clone(),
+            signed_terms,
+            // Public: the shared harness backs suites written under the open
+            // (pre-visibility) challenge semantics.
+            storage_client::Visibility::Public,
+        )
         .await
         .ok()?;
 
@@ -211,15 +217,28 @@ pub async fn alice_challenger() -> Option<ChallengerClient> {
     Some(client)
 }
 
-/// Build a `ProviderClient` signed by Alice. Returns `None` if the chain is down.
-#[allow(dead_code)]
-pub async fn alice_provider() -> Option<ProviderClient> {
-    let mut client =
-        ProviderClient::new(chain_config(), Signer::from_seed("//Alice").ok()?).ok()?;
+/// Build a `ProviderClient` signed by the dev account at `seed`. Returns `None`
+/// if the chain is down.
+async fn dev_provider(seed: &str) -> Option<ProviderClient> {
+    let mut client = ProviderClient::new(chain_config(), Signer::from_seed(seed).ok()?).ok()?;
     if client.connect().await.is_err() {
         return None;
     }
     Some(client)
+}
+
+/// Build a `ProviderClient` signed by Alice, the provider `chain_setup`
+/// registers. Returns `None` if the chain is down.
+#[allow(dead_code)]
+pub async fn alice_provider() -> Option<ProviderClient> {
+    dev_provider("//Alice").await
+}
+
+/// Build a `ProviderClient` signed by Bob, who is never registered as a
+/// provider. Returns `None` if the chain is down.
+#[allow(dead_code)]
+pub async fn bob_provider() -> Option<ProviderClient> {
+    dev_provider("//Bob").await
 }
 
 /// Build a read-only `DiscoveryClient`. Returns `None` if the chain is down.
@@ -236,18 +255,18 @@ pub async fn dev_discovery() -> Option<DiscoveryClient> {
 
 /// Spawn an in-process provider node on a random port and return its URL.
 ///
-/// Uses `//Alice` as the signing key so endpoints that sign commitments
-/// (`/commit`, `/commitment`, `/checkpoint-signature`, `/delete`) work end-to-end.
-/// `//Alice` is granted `Admin` on every bucket.
+/// Uses `//Alice` as the signing key and publishes a matching on-chain
+/// registration, so endpoints that sign commitments (`/commit`, `/commitment`,
+/// `/checkpoint-signature`, `/delete`) work end-to-end. `//Alice` is granted
+/// `Admin` on every bucket.
 pub async fn start_test_provider() -> String {
     // The spawned server lives for the whole test binary, so its database
     // outlives any guard this could hand back: keep the directory. It is left
     // behind under the temp dir, named `provider_storage::TEMP_DIR_PREFIX*`.
-    let (storage, nonce_store, dir) = temp_rocksdb();
+    let (storage, dir) = temp_rocksdb();
     let _ = dir.keep();
     let deps = ProviderDeps {
         storage,
-        nonce_store,
         auth: Arc::new(Authenticator::new(StaticMembershipResolver(vec![(
             dev_account("alice"),
             Role::Admin,
@@ -255,6 +274,7 @@ pub async fn start_test_provider() -> String {
             .into()]))),
     };
     let state = ProviderState::with_seed(deps, "//Alice").expect("//Alice is a valid SURI");
+    publish_matching_registration(&state);
     let app = create_router(Arc::new(state));
 
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -266,6 +286,38 @@ pub async fn start_test_provider() -> String {
 
     tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
     format!("http://{addr}")
+}
+
+/// Publish a registration snapshot whose `public_key` matches this state's own
+/// signing key, as the chain-state coordinator would once the provider is
+/// registered on chain. Signing endpoints refuse without one.
+fn publish_matching_registration(state: &ProviderState) {
+    let public_key = state
+        .keypair
+        .as_ref()
+        .expect("test provider signs with //Alice")
+        .public_key_bytes();
+    state
+        .chain_state
+        .provider_info
+        .write()
+        .replace(provider_types::ProviderInfo {
+            multiaddr: "/ip4/127.0.0.1/tcp/3333".to_string(),
+            public_key,
+            stake: 1_000_000_000_000,
+            committed_bytes: 0,
+            settings: provider_types::ProviderSettings {
+                min_duration: 10,
+                max_duration: 100_000,
+                price_per_byte: 1,
+                accepting_primary: true,
+                replica_sync_price: None,
+                accepting_extensions: true,
+                max_capacity: 0,
+            },
+            stats: Default::default(),
+            deregister_at: None,
+        });
 }
 
 /// Spawn `n` independent in-process provider nodes.

@@ -14,7 +14,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useCheckpointInfo, useSelectedBucket, getS3Client } from "@/state";
 import { submitChallenge } from "@/state/challenge.state";
-import { truncateHash } from "@/lib/utils";
+import { truncateHash } from "@web3-storage/format";
 import { toast } from "@/components/ui/toaster";
 
 interface ChallengeDialogProps {
@@ -33,7 +33,7 @@ export default function ChallengeDialog({ open, onOpenChange, providers }: Chall
   const [chunkCount, setChunkCount] = useState<number | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  const bucketId = selectedBucket?.layer0BucketId ?? null;
+  const bucketId = selectedBucket?.bucketId ?? null;
   const leafCount = info?.leafCount ?? 0n;
   const maxLeaf = leafCount > 0n ? leafCount - 1n : 0n;
 

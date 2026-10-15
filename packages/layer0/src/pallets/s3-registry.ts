@@ -2,20 +2,24 @@
 
 /** Thin typed wrappers around the S3Registry pallet (Layer 1 — S3-style objects). */
 
+import { Enum } from "polkadot-api";
+
 import type { SignedTerms } from "@web3-storage/core";
 
 import { asHex, type ParachainApi } from "../address.js";
 import type { ChainSigner } from "../signers.js";
 import { requireOneEvent, submitTx, type SubmitOpts } from "../tx.js";
-import { buildSignedTermsArgs } from "./storage-provider.js";
+import { buildSignedTermsArgs, type Visibility } from "./storage-provider.js";
 
 const utf8 = (s: string) => new TextEncoder().encode(s);
 
 /**
  * Create an S3 bucket by redeeming provider-signed terms (#105). Layer 0's
- * establish_storage_agreement_internal opens the underlying Layer 0 bucket +
+ * create_bucket_with_primary_internal opens the underlying Layer 0 bucket +
  * primary agreement atomically inside create_s3_bucket, so `provider`/`signed`
  * come from a prior {@link negotiateTerms} against that provider.
+ * `opts.visibility` sets the underlying bucket's read visibility (default
+ * Private).
  */
 export async function createS3Bucket(
   api: ParachainApi,
@@ -23,12 +27,13 @@ export async function createS3Bucket(
   name: string,
   provider: ChainSigner | { address: string },
   signed: SignedTerms,
-  opts: SubmitOpts = {},
+  opts: SubmitOpts & { visibility?: Visibility } = {},
 ) {
   const result = await submitTx(
     api.tx.S3Registry.create_s3_bucket({
       name: utf8(name),
       ...buildSignedTermsArgs(provider, signed),
+      visibility: Enum(opts.visibility ?? "Private"),
     }),
     client.signer,
     { label: "create_s3_bucket", ...opts },

@@ -16,13 +16,15 @@
 //! (reads, writes, storage) happen off-chain between clients and providers.
 
 #![cfg_attr(not(feature = "std"), no_std)]
+#![warn(missing_docs)]
 
 extern crate alloc;
 
 pub use pallet::*;
 
+/// Pallet internals: the agreement, bucket, challenge, and payment logic behind
+/// the extrinsics and runtime APIs.
 pub mod impls;
-pub mod migrations;
 pub mod runtime_api;
 pub mod weights;
 pub use weights::WeightInfo;
@@ -49,7 +51,7 @@ pub mod pallet {
     use alloc::vec::Vec;
     use frame_support::{
         pallet_prelude::*,
-        traits::{BalanceStatus, Currency, ExistenceRequirement, ReservableCurrency},
+        traits::fungible::{BalancedHold, Inspect, Mutate, MutateHold},
         CloneNoBound, DebugNoBound, DefaultNoBound, EqNoBound, PartialEqNoBound,
     };
     /// The parachain block height. Re-exported so dependent pallets get the
@@ -57,17 +59,18 @@ pub mod pallet {
     pub use frame_system::pallet_prelude::BlockNumberFor as SystemBlockNumberFor;
     use frame_system::pallet_prelude::*;
     use sp_core::H256;
-    use sp_runtime::traits::{Bounded, CheckedAdd, Saturating, Zero};
+    use sp_runtime::traits::{Bounded, CheckedAdd, SaturatedConversion, Saturating, Zero};
     #[cfg(feature = "try-runtime")]
     use sp_runtime::TryRuntimeError;
     use storage_primitives::{
-        BucketId, BucketSnapshot, ChallengeId, ChallengerStatRecord, ChunkLocation, Commitment,
-        CommitmentPayload, EndAction, MerkleProof, MmrProof, ProviderRole, RemovalReason,
-        ReplayWindow, ReplicaSyncRecord, Role, SlashReason,
+        BucketId, BucketSnapshot, ChallengeId, ChunkLocation, Commitment, CommitmentPayload,
+        EndAction, MerkleProof, MmrProof, ProviderRole, RemovalReason, ReplicaSyncRecord, Role,
+        Visibility,
     };
 
+    /// Balance type of the configured currency.
     pub type BalanceOf<T> =
-        <<T as Config>::Currency as Currency<<T as frame_system::Config>::AccountId>>::Balance;
+        <<T as Config>::Currency as Inspect<<T as frame_system::Config>::AccountId>>::Balance;
 
     /// The anchor clock ([`Config::BlockNumberProvider`], relay chain in
     /// production) that every duration, deadline and expiry in this pallet is
@@ -80,84 +83,53 @@ pub mod pallet {
 
     /// Provider-signed agreement quote bound to this pallet's account, balance,
     /// and block-number types.
+    ///
+    /// Every call that redeems a quote (`create_bucket_with_primary`,
+    /// `add_primary_provider`, `add_replica_provider`) verifies the provider's
+    /// signature, checks and advances the owner's agreement nonce, then
+    /// runs the provider/capacity/stake checks and holds the payment
+    /// before it writes the agreement.
     pub type AgreementTermsOf<T> = storage_primitives::AgreementTerms<
         <T as frame_system::Config>::AccountId,
         BalanceOf<T>,
         BlockNumberFor<T>,
     >;
 
-    const STORAGE_VERSION: StorageVersion = StorageVersion::new(1);
+    const STORAGE_VERSION: StorageVersion = StorageVersion::new(0);
 
     #[pallet::pallet]
     #[pallet::storage_version(STORAGE_VERSION)]
     pub struct Pallet<T>(_);
 
-    /// Maximum deadline keys the slash sweep probes per block. Relay block
-    /// numbers can jump by more than one per parachain block, so the sweep
-    /// covers a range; this caps the probing and the remainder carries over via
-    /// [`LastSweptChallengeBlock`]. Slashing is bounded separately by
-    /// [`MAX_SWEEP_SLASH_BUDGET`].
-    pub(crate) const MAX_SWEEP_SPAN: u32 = 32;
-
-    /// Maximum challenges the slash sweep slashes per block, across all deadline
-    /// keys it touches. Decoupled from [`Config::MaxChallengesPerDeadline`] (up
-    /// to 1000) because slashing that many in one block would consume the whole
-    /// block's PoV (~5 KB each). A fully loaded deadline instead drains over
-    /// several blocks via the [`LastSweptChallengeBlock`] carry-over. The
-    /// effective budget is `min(MaxChallengesPerDeadline, MAX_SWEEP_SLASH_BUDGET)`,
-    /// so runtimes with a smaller per-deadline cap (e.g. tests) are unaffected.
-    pub(crate) const MAX_SWEEP_SLASH_BUDGET: u32 = 100;
+    /// Why this pallet is holding somebody's funds.
+    ///
+    /// Tagging each claim keeps them separable on one account: releasing or
+    /// slashing one can never reach another, and the bookkeeping in
+    /// [`Providers`] / [`StorageAgreements`] / [`Challenges`] stays checkable
+    /// against the balances pallet.
+    #[pallet::composite_enum]
+    pub enum HoldReason {
+        /// Provider collateral. The only hold that is ever slashed.
+        ProviderStake,
+        /// An agreement's prepaid fee, held on its owner (plus, for replicas,
+        /// the sync balance) until settlement.
+        AgreementPayment,
+        /// A challenger's anti-spam deposit, refunded on resolution minus the
+        /// provider's response-cost share.
+        ChallengeDeposit,
+    }
 
     #[pallet::hooks]
     impl<T: Config> Hooks<SystemBlockNumberFor<T>> for Pallet<T> {
-        /// Slash providers whose challenges expired unanswered.
-        ///
-        /// Deadlines are relay-chain blocks ([`Config::BlockNumberProvider`]),
-        /// which can jump by more than one per parachain block, so this drains a
-        /// *range* of deadline keys, tracking progress in
-        /// [`LastSweptChallengeBlock`] rather than probing the single key `n`.
-        ///
-        /// - **Which keys are final.** In `on_initialize` the validation-data
-        ///   inherent has not run, so [`Pallet::current_anchor_block`] is the relay
-        ///   parent `p` of the *previous* parachain block. A challenge with
-        ///   deadline `d` stays respondable while some block has relay parent
-        ///   `<= d`; every future block has relay parent `>= p`; so keys `< p`
-        ///   are unrespondable and draining them cannot race a valid response.
-        ///   Cost: a one-block lag — the slash lands the block after `p` passes
-        ///   `d`. Escape hatches are unaffected; they gate on the
-        ///   [`PendingChallenges`] counters, not on the sweep.
-        /// - **Budget.** [`MAX_SWEEP_SPAN`] caps keys probed per block;
-        ///   [`MAX_SWEEP_SLASH_BUDGET`] caps slashes per block so one maturing
-        ///   deadline cannot eat the block's PoV. On exhaustion the cursor parks
-        ///   just below the partly drained key; the rest carries over.
-        /// - **Why `on_initialize`.** Work done is returned as weight instead of
-        ///   pre-reserved, which `on_finalize` cannot do.
-        ///
-        /// The algorithm lives in [`Pallet::sweep_expired_challenges`] (and its
-        /// `challenge_sweep_range` / `slash_expired_at` helpers) so the range
-        /// resolution and the per-key drain read as separate, testable steps.
-        fn on_initialize(_do_not_use_local_block_number: SystemBlockNumberFor<T>) -> Weight {
-            Self::sweep_expired_challenges()
-        }
-
         fn integrity_test() {
-            // The re-register replay defense relies on RequestTimeout being strictly
-            // shorter than DeregisterAnnouncementPeriod: a quote signed at block S
-            // expires at S+RequestTimeout, which is before the provider can complete
-            // deregistration and re-register (requiring DeregisterAnnouncementPeriod
-            // more blocks), so an old quote cannot be replayed against the new
-            // incarnation.
-            // At the same time, the deregistration announcement window must be
-            // strictly longer than the challenge response timeout, so any
-            // challenge created up to the announcement block matures (and the
-            // provider stays slashable) strictly before the provider can
-            // complete deregistration.
+            // The deregistration announcement window must be strictly longer
+            // than the challenge response timeout, so any challenge created up
+            // to the announcement block matures (and the provider stays
+            // slashable) strictly before the provider can complete
+            // deregistration.
             assert!(
-                T::RequestTimeout::get() < T::DeregisterAnnouncementPeriod::get()
-                    && T::DeregisterAnnouncementPeriod::get() > T::ChallengeTimeout::get(),
-                "RequestTimeout must be less than DeregisterAnnouncementPeriod \
-                to close the re-register replay window, and \
-                DeregisterAnnouncementPeriod must be > ChallengeTimeout so a \
+                T::DeregisterAnnouncementPeriod::get() > T::ChallengeTimeout::get(),
+                "DeregisterAnnouncementPeriod must be > ChallengeTimeout so a \
                 challenge created at the announcement block matures while the \
                 provider is still slashable"
             );
@@ -174,10 +146,31 @@ pub mod pallet {
         }
     }
 
+    /// Gives [`AgreementNonces`] the same lifetime `frame_system` gives the
+    /// account: the entry exists until the account is reaped, and the
+    /// existential deposit pays for it. Runtimes set
+    /// `frame_system::Config::OnKilledAccount` to this pallet.
+    ///
+    /// A quote redeemed before the reap becomes redeemable again only while it is
+    /// still valid, which is at most `RequestTimeout` after its redemption. Only
+    /// the owner can redeem it, and it pays the price the provider signed. A held
+    /// payment keeps the owner alive, so a reap inside that window needs an owner
+    /// with no paid agreement.
+    impl<T: Config> frame_support::traits::OnKilledAccount<T::AccountId> for Pallet<T> {
+        fn on_killed_account(who: &T::AccountId) {
+            AgreementNonces::<T>::remove(who);
+        }
+    }
+
     #[pallet::config]
     pub trait Config: frame_system::Config<RuntimeEvent: From<Event<Self>>> {
-        /// Currency type for payments and staking.
-        type Currency: ReservableCurrency<Self::AccountId>;
+        /// Currency for payments and staking.
+        type Currency: Mutate<Self::AccountId>
+            + MutateHold<Self::AccountId, Reason = Self::RuntimeHoldReason>
+            + BalancedHold<Self::AccountId>;
+
+        /// The runtime's overarching hold reason.
+        type RuntimeHoldReason: From<HoldReason>;
 
         /// Treasury account to receive burned payments.
         type Treasury: Get<Self::AccountId>;
@@ -212,11 +205,11 @@ pub mod pallet {
         #[pallet::constant]
         type ChallengeTimeout: Get<BlockNumberFor<Self>>;
 
-        /// Deposit required to open a challenge. Reserved from the challenger
+        /// Deposit required to open a challenge. Held from the challenger
         /// on `challenge_*` and refunded (minus a response-time-proportional
-        /// cost share) when the provider successfully defends, or returned
-        /// in full alongside a 10% slash reward when the provider is
-        /// slashed. Sets the floor on challenge spam economics — too low
+        /// cost share paid to the provider) when the provider successfully
+        /// defends, or returned in full — with no reward — when the provider
+        /// is slashed. Sets the floor on challenge spam economics — too low
         /// and griefing is free; too high and legitimate challenges become
         /// unaffordable.
         #[pallet::constant]
@@ -245,16 +238,11 @@ pub mod pallet {
         type DeregisterAnnouncementPeriod: Get<BlockNumberFor<Self>>;
 
         /// Maximum number of challenges that may share a single deadline
-        /// (relay chain block), and the per-block slash budget of the
-        /// `on_initialize` timeout sweep.
-        ///
-        /// Bounds the per-deadline challenge count at creation, and the sweep
-        /// never slashes more than this many challenges per block regardless
-        /// of how many deadline keys a gap matured at once — so the worst
-        /// case per block equals one fully-loaded deadline. Note that
-        /// consecutive parachain blocks can share a relay parent, so
-        /// challenges created in different parachain blocks may share a
-        /// deadline; the bound is this explicit cap, not block co-location.
+        /// (relay chain block). Bounds the per-deadline index allocator
+        /// (`NextChallengeIndex`). Consecutive parachain blocks can share a
+        /// relay parent, so challenges created in different parachain blocks
+        /// may share a deadline; the bound is this explicit cap, not block
+        /// co-location.
         #[pallet::constant]
         type MaxChallengesPerDeadline: Get<u16>;
 
@@ -290,12 +278,14 @@ pub mod pallet {
     #[pallet::getter(fn providers)]
     pub type Providers<T: Config> = StorageMap<_, Blake2_128Concat, T::AccountId, ProviderInfo<T>>;
 
-    /// Per-provider sliding replay window over signed agreement-term nonces.
-    /// See [`storage_primitives::ReplayWindow`] for the bit layout
+    /// Next expected `AgreementTerms.nonce` for this owner. Redemption
+    /// requires an exact match and advances the counter by one, so a signed
+    /// quote is redeemable at most once.
+    /// The entry is removed when the account is reaped (see the
+    /// `OnKilledAccount` impl for `Pallet`).
     #[pallet::storage]
-    #[pallet::getter(fn provider_replay_states)]
-    pub type ProviderReplayStates<T: Config> =
-        StorageMap<_, Blake2_128Concat, T::AccountId, ReplayWindow, ValueQuery>;
+    pub type AgreementNonces<T: Config> =
+        StorageMap<_, Blake2_128Concat, T::AccountId, u64, ValueQuery>;
 
     /// Monotonically increasing bucket ID counter.
     #[pallet::storage]
@@ -339,25 +329,20 @@ pub mod pallet {
     >;
 
     /// Next stable challenge index to allocate for a given deadline block.
-    /// Monotonically increasing per deadline; never decremented when a
-    /// challenge is resolved, guaranteeing index stability for siblings.
+    /// Monotonically increasing per deadline and never decremented when a
+    /// challenge is resolved, so sibling ids stay valid. Removed by
+    /// `resolve_expired_challenge`; a deadline whose challenges were all
+    /// answered keeps its entry.
     #[pallet::storage]
     pub type NextChallengeIndex<T: Config> =
         StorageMap<_, Blake2_128Concat, BlockNumberFor<T>, u16, ValueQuery>;
 
-    /// Highest deadline key the `on_initialize` slash sweep has drained. Each
-    /// block it sweeps up to (but excluding) the previous block's relay parent.
-    /// `None` until the first block after genesis/upgrade anchors it. A cursor
-    /// over anchor-denominated deadline keys, hence [`BlockNumberFor`].
-    #[pallet::storage]
-    pub type LastSweptChallengeBlock<T: Config> = StorageValue<_, BlockNumberFor<T>, OptionQuery>;
-
     /// Number of unresolved challenges currently outstanding against a
     /// provider, summed across every bucket. Incremented in `create_challenge`
-    /// and decremented exactly once per resolution (defended/invalid-response
-    /// in `respond_to_challenge`, or timeout in the `on_initialize` sweep). Gates
-    /// `complete_deregister`: a provider cannot exit while still slashable for
-    /// a pending challenge.
+    /// and decremented exactly once per resolution (defended in
+    /// `respond_to_challenge`, or timed out in `resolve_expired_challenge`).
+    /// Gates `complete_deregister`: a provider cannot exit while still
+    /// slashable for a pending challenge.
     #[pallet::storage]
     pub type PendingChallenges<T: Config> =
         StorageMap<_, Blake2_128Concat, T::AccountId, u32, ValueQuery>;
@@ -376,14 +361,6 @@ pub mod pallet {
         u32,
         ValueQuery,
     >;
-
-    /// Per-challenger aggregates so the SDK doesn't have to scan historical
-    /// events to answer `get_challenge_stats`. Updated by `create_challenge`,
-    /// the defended path of `respond_to_challenge`, and
-    /// `slash_provider_for_failed_challenge`.
-    #[pallet::storage]
-    pub type ChallengerStats<T: Config> =
-        StorageMap<_, Blake2_128Concat, T::AccountId, ChallengerStatRecord, ValueQuery>;
 
     /// Reverse index: account → bucket IDs they are a member of.
     #[pallet::storage]
@@ -410,8 +387,8 @@ pub mod pallet {
     )]
     #[serde(bound(serialize = "", deserialize = ""), rename_all = "camelCase")]
     pub struct GenesisProvider<T: Config> {
-        /// Provider account; must be endowed with at least `stake` by the
-        /// balances genesis.
+        /// Provider account; must be endowed with at least `stake` plus the
+        /// existential deposit by the balances genesis.
         pub account: T::AccountId,
         /// Multiaddr for connecting to this provider, hex-encoded in JSON
         /// ("0x..."); must fit `T::MaxMultiaddrLength`.
@@ -420,7 +397,7 @@ pub mod pallet {
         /// Raw public key bytes (32, 33 or 64), hex-encoded in JSON.
         #[serde(with = "sp_core::bytes")]
         pub public_key: Vec<u8>,
-        /// Stake to reserve; must be at least `T::MinProviderStake`.
+        /// Stake to hold; must be at least `T::MinProviderStake`.
         pub stake: BalanceOf<T>,
         /// Provider settings, validated like `update_provider_settings`.
         pub settings: ProviderSettings<T>,
@@ -432,8 +409,8 @@ pub mod pallet {
     pub struct GenesisConfig<T: Config> {
         /// Buckets to create at genesis: (admin_account, min_providers).
         pub buckets: Vec<(T::AccountId, u32)>,
-        /// Providers to register at genesis. Their stake is reserved from
-        /// the balances-genesis endowment.
+        /// Providers to register at genesis. Their stake is held from the
+        /// balances-genesis endowment.
         pub providers: Vec<GenesisProvider<T>>,
     }
 
@@ -461,8 +438,14 @@ pub mod pallet {
                 .expect("genesis provider registration should not fail");
             }
             for (admin, min_providers) in &self.buckets {
-                Pallet::<T>::create_bucket_internal(admin, *min_providers, None)
-                    .expect("genesis bucket creation should not fail");
+                // Genesis omits the choice, so the fail-safe wrapper default applies.
+                Pallet::<T>::create_bucket_internal(
+                    admin,
+                    *min_providers,
+                    None,
+                    Visibility::Private,
+                )
+                .expect("genesis bucket creation should not fail");
             }
         }
     }
@@ -574,17 +557,74 @@ pub mod pallet {
         pub agreements_burned: u32,
         /// Total bytes ever committed across all agreements.
         pub total_bytes_committed: u64,
-        /// Number of challenges received.
-        pub challenges_received: u32,
-        /// Number of challenges where provider was slashed.
+        /// Challenges from authorized challengers (member/agreement owner at
+        /// challenge creation) that the provider responded to. Counted at
+        /// resolution — a challenge resolves into exactly one of
+        /// received_authorized / received_public (successfully defended) or
+        /// failed (slashed).
+        pub challenges_received_authorized: u32,
+        /// Same, for general-public challengers.
+        pub challenges_received_public: u32,
+        /// Number of challenges where provider was slashed. Tier-independent
+        /// and disjoint from the received counters.
         pub challenges_failed: u32,
+        /// Total payment ever received by this provider for storage service:
+        /// agreement settlements, extension payments, and replica sync
+        /// payments. Monotonically increasing, never reset by a slash or
+        /// anything else. A historical record, not a live balance.
+        pub lifetime_revenue: BalanceOf<T>,
+    }
+
+    impl<T: Config> ProviderStats<T> {
+        /// Successfully defended challenges across both challenger tiers.
+        pub fn challenges_defended(&self) -> u32 {
+            self.challenges_received_authorized
+                .saturating_add(self.challenges_received_public)
+        }
+
+        /// A provider's 0–100 reputation from its on-chain challenge record:
+        /// the share of resolved challenges it defended. Both counters are
+        /// tallied at resolution, so pending challenges never count against a
+        /// provider.
+        ///
+        /// Providers with no resolved challenges score 100 — benefit of the
+        /// doubt, so a newly registered provider is not immediately
+        /// challenge-worthy.
+        pub fn reputation(&self) -> u8 {
+            let defended = self.challenges_defended();
+            let total = defended as u64 + self.challenges_failed as u64;
+            if total == 0 {
+                return 100;
+            }
+            ((defended as u64 * 100) / total).min(100) as u8
+        }
+    }
+
+    impl<T: Config> From<&ProviderStats<T>> for crate::runtime_api::ProviderStatsInfo {
+        fn from(stats: &ProviderStats<T>) -> Self {
+            Self {
+                registered_at: stats.registered_at.saturated_into::<u32>(),
+                agreements_total: stats.agreements_total,
+                agreements_extended: stats.agreements_extended,
+                agreements_not_extended: stats.agreements_not_extended,
+                agreements_burned: stats.agreements_burned,
+                total_bytes_committed: stats.total_bytes_committed,
+                challenges_received_authorized: stats.challenges_received_authorized,
+                challenges_received_public: stats.challenges_received_public,
+                challenges_failed: stats.challenges_failed,
+                lifetime_revenue: stats.lifetime_revenue.saturated_into::<u128>(),
+                reputation: stats.reputation(),
+            }
+        }
     }
 
     /// Bucket member with role.
     #[derive(Clone, PartialEq, Eq, Encode, Decode, TypeInfo, MaxEncodedLen, Debug)]
     #[scale_info(skip_type_params(T))]
     pub struct Member<T: Config> {
+        /// The member's account.
         pub account: T::AccountId,
+        /// Role the member holds in the bucket.
         pub role: Role,
     }
 
@@ -594,6 +634,10 @@ pub mod pallet {
     pub struct Bucket<T: Config> {
         /// Members who can interact with this bucket.
         pub members: BoundedVec<Member<T>, T::MaxMembers>,
+        /// Read visibility (see `Visibility`). On-chain, only challenge
+        /// creation reads it: `Private` restricts primary challenges to
+        /// members and primary-agreement owners.
+        pub visibility: Visibility,
         /// If Some, bucket is append-only from this start_seq.
         pub frozen_start_seq: Option<u64>,
         /// Minimum primary provider signatures required for checkpoint.
@@ -613,6 +657,10 @@ pub mod pallet {
     #[scale_info(skip_type_params(T))]
     pub struct StorageAgreement<T: Config> {
         /// Who owns this agreement (can top up, transfer ownership).
+        ///
+        /// The whole escrow is held on *this* account, whoever paid it in, and
+        /// every settlement path draws on it — so reassigning `owner` must move
+        /// the hold too.
         pub owner: T::AccountId,
         /// Maximum bytes (quota).
         pub max_bytes: u64,
@@ -628,6 +676,20 @@ pub mod pallet {
         pub role: ProviderRole<BalanceOf<T>, BlockNumberFor<T>>,
         /// Block when agreement became active.
         pub started_at: BlockNumberFor<T>,
+    }
+
+    impl<T: Config> StorageAgreement<T> {
+        /// Everything this agreement keeps under `AgreementPayment` on
+        /// `owner`: the prepaid fee plus, for a replica, the unspent sync
+        /// balance.
+        pub(crate) fn escrow(&self) -> BalanceOf<T> {
+            match &self.role {
+                ProviderRole::Replica { sync_balance, .. } => {
+                    self.payment_locked.saturating_add(*sync_balance)
+                }
+                ProviderRole::Primary => self.payment_locked,
+            }
+        }
     }
 
     /// Active challenge against a provider.
@@ -647,6 +709,11 @@ pub mod pallet {
         pub target: ChunkLocation,
         /// Deposit locked by challenger.
         pub deposit: BalanceOf<T>,
+        /// Whether the challenger was authorized (bucket member or agreement
+        /// owner, via `is_authorized`) at challenge creation. Snapshotted so
+        /// membership/agreement changes between creation and response cannot
+        /// alter the fee split applied in `respond_to_challenge`.
+        pub authorized: bool,
     }
 
     /// Challenge response from provider.
@@ -664,15 +731,24 @@ pub mod pallet {
     pub enum ChallengeResponse<T: Config> {
         /// Provide the chunk with proofs.
         Proof {
+            /// Bytes of the challenged chunk.
             chunk_data: BoundedVec<u8, T::MaxChunkSize>,
+            /// Proves the leaf is part of the committed MMR.
             mmr_proof: MmrProof,
+            /// Proves the chunk is part of the leaf.
             chunk_proof: MerkleProof,
         },
         /// Data was deleted - show newer commitment without this seq.
         Deleted {
+            /// Root of the newer commitment that no longer holds the
+            /// challenged sequence.
             new_mmr_root: H256,
+            /// Start sequence of that commitment; must be past the
+            /// challenged one.
             new_start_seq: u64,
+            /// Bucket admin who authorised the deletion.
             admin: T::AccountId,
+            /// The admin's signature over the newer commitment.
             admin_signature: sp_runtime::MultiSignature,
         },
         /// Challenged state has been superseded by canonical.
@@ -687,184 +763,299 @@ pub mod pallet {
     #[pallet::generate_deposit(pub(super) fn deposit_event)]
     pub enum Event<T: Config> {
         // Provider events
+        /// A new provider registered and locked its initial stake.
         ProviderRegistered {
+            /// The new provider.
             provider: T::AccountId,
+            /// Stake locked at registration.
             stake: BalanceOf<T>,
         },
+        /// A provider completed deregistration and got its stake back.
         ProviderDeregistered {
+            /// The departing provider.
             provider: T::AccountId,
+            /// Stake unreserved to the provider.
             stake_returned: BalanceOf<T>,
         },
         /// Provider has announced their intention to deregister. Stake stays
         /// reserved and the provider remains on-chain (and slashable) until
         /// `complete_after`, at which point they may call `complete_deregister`.
         DeregisterAnnounced {
+            /// The departing provider.
             provider: T::AccountId,
+            /// Anchor block after which `complete_deregister` succeeds.
             complete_after: BlockNumberFor<T>,
         },
         /// Provider cancelled a previously-announced deregistration.
         DeregisterCancelled {
+            /// The provider staying on.
             provider: T::AccountId,
         },
+        /// A provider locked more stake.
         ProviderStakeAdded {
+            /// The provider.
             provider: T::AccountId,
+            /// Stake added by this call.
             amount: BalanceOf<T>,
+            /// Total stake after the top-up.
             total_stake: BalanceOf<T>,
         },
+        /// A provider changed its pricing, limits, or acceptance flags.
         ProviderSettingsUpdated {
+            /// The provider.
             provider: T::AccountId,
+            /// The full settings now in force.
             settings: ProviderSettings<T>,
         },
+        /// A provider changed the network address clients connect to.
         ProviderMultiaddrUpdated {
+            /// The provider.
             provider: T::AccountId,
+            /// The new address.
             multiaddr: BoundedVec<u8, T::MaxMultiaddrLength>,
         },
+        /// A provider blocked or unblocked extensions of its agreement on a
+        /// bucket.
         ExtensionsBlocked {
+            /// Bucket the agreement is on.
             bucket_id: BucketId,
+            /// The provider.
             provider: T::AccountId,
+            /// `true` if extensions are now refused.
             blocked: bool,
         },
 
         // Bucket events
+        /// A bucket was created.
         BucketCreated {
+            /// The new bucket.
             bucket_id: BucketId,
+            /// Its first admin.
             admin: T::AccountId,
         },
+        /// A bucket became append-only from `frozen_start_seq` on.
         BucketFrozen {
+            /// The frozen bucket.
             bucket_id: BucketId,
+            /// Start sequence of the snapshot the bucket was frozen at.
             frozen_start_seq: u64,
         },
+        /// A bucket and its agreements were torn down.
         BucketDeleted {
+            /// The removed bucket.
             bucket_id: BucketId,
         },
-        MemberSet {
+        /// An admin changed who may read the bucket.
+        BucketVisibilityChanged {
+            /// The bucket.
             bucket_id: BucketId,
+            /// Visibility now in force.
+            visibility: Visibility,
+        },
+        /// A member was added or given a different role.
+        MemberSet {
+            /// The bucket.
+            bucket_id: BucketId,
+            /// The member.
             member: T::AccountId,
+            /// Role the member now holds.
             role: Role,
         },
+        /// A member lost access to the bucket.
         MemberRemoved {
+            /// The bucket.
             bucket_id: BucketId,
+            /// The removed member.
             member: T::AccountId,
         },
+        /// A commitment became the bucket's canonical state, or gained more
+        /// provider signatures.
         BucketCheckpointed {
+            /// The bucket.
             bucket_id: BucketId,
+            /// The checkpointed MMR commitment.
             commitment: Commitment,
+            /// Providers whose signatures back it.
             providers: Vec<T::AccountId>,
         },
+        /// A primary provider was added to the bucket's provider set, by
+        /// `create_bucket_with_primary`, `add_primary_provider`, or another
+        /// call that creates a bucket with a primary provider. Followed by
+        /// `StorageAgreementEstablished`.
         ProviderAddedToBucket {
+            /// The bucket.
             bucket_id: BucketId,
+            /// The provider.
             provider: T::AccountId,
         },
+        /// A primary provider left the bucket's provider set.
         PrimaryProviderRemoved {
+            /// The bucket.
             bucket_id: BucketId,
+            /// The provider.
             provider: T::AccountId,
+            /// Why it left.
             reason: RemovalReason,
         },
-        PrimaryAgreementEndedEarly {
-            bucket_id: BucketId,
-            provider: T::AccountId,
-            payment_to_provider: BalanceOf<T>,
-            burned: BalanceOf<T>,
-        },
+        /// A slashed provider was cleaned out of a bucket and the owner's
+        /// escrow released.
         SlashedProviderRemoved {
+            /// The bucket.
             bucket_id: BucketId,
+            /// The slashed provider.
             provider: T::AccountId,
+            /// Locked payment plus, for a replica, the unspent sync balance.
             payment_returned_to_owner: BalanceOf<T>,
         },
 
         // Replica events
+        /// A replica confirmed it holds the bucket's data at `mmr_root` and
+        /// was paid for the sync.
         ReplicaSynced {
+            /// The bucket.
             bucket_id: BucketId,
+            /// The replica provider.
             provider: T::AccountId,
+            /// Root the replica synced to.
             mmr_root: H256,
+            /// Where `mmr_root` was found: 0 is the current snapshot, higher
+            /// values index the bucket's recent root history.
             position_matched: u8,
+            /// Paid to the replica from its sync balance.
             sync_payment: BalanceOf<T>,
         },
+        /// Funds were added to the balance that pays a replica per sync.
         ReplicaSyncBalanceToppedUp {
+            /// The bucket.
             bucket_id: BucketId,
+            /// The replica provider.
             provider: T::AccountId,
+            /// Amount added.
             amount: BalanceOf<T>,
+            /// Sync balance after the top-up.
             new_total: BalanceOf<T>,
         },
 
         // Agreement events
-        AgreementAccepted {
-            bucket_id: BucketId,
-            provider: T::AccountId,
-            expires_at: BlockNumberFor<T>,
-        },
+        /// The owner bought more quota on an agreement.
         AgreementToppedUp {
+            /// The bucket.
             bucket_id: BucketId,
+            /// The provider.
             provider: T::AccountId,
+            /// Extra payment escrowed.
             amount: BalanceOf<T>,
+            /// Quota after the top-up.
             new_max_bytes: u64,
         },
+        /// An agreement's expiry was pushed out and the extension paid for.
         AgreementExtended {
+            /// The bucket.
             bucket_id: BucketId,
+            /// The provider.
             provider: T::AccountId,
+            /// New expiry, in anchor blocks.
             new_expires_at: BlockNumberFor<T>,
+            /// Escrowed for the extension.
             payment: BalanceOf<T>,
         },
+        /// The agreement's owner changed.
         AgreementOwnershipTransferred {
+            /// The bucket.
             bucket_id: BucketId,
+            /// The provider.
             provider: T::AccountId,
+            /// Previous owner.
             old_owner: T::AccountId,
+            /// New owner.
             new_owner: T::AccountId,
+            /// Escrow moved to the new owner's hold: the prepaid fee plus,
+            /// for a replica, the unspent sync balance.
+            escrow: BalanceOf<T>,
         },
+        /// An agreement was settled and closed.
         AgreementEnded {
+            /// The bucket.
             bucket_id: BucketId,
+            /// The provider.
             provider: T::AccountId,
+            /// Escrow released to the provider.
             payment_to_provider: BalanceOf<T>,
+            /// Escrow burned because the owner chose `EndAction::Burn`.
             burned: BalanceOf<T>,
         },
-        AgreementExpiredClaimed {
-            bucket_id: BucketId,
-            provider: T::AccountId,
-            payment_to_provider: BalanceOf<T>,
-        },
-        /// Owner redeemed provider-signed terms; bucket created and agreement
-        /// opened atomically.
+        /// A primary agreement was opened by `create_bucket_with_primary`,
+        /// `add_primary_provider`, or another call that creates a bucket
+        /// with a primary provider. Always follows `ProviderAddedToBucket`.
         StorageAgreementEstablished {
+            /// The bucket.
             bucket_id: BucketId,
+            /// The provider.
             provider: T::AccountId,
+            /// Owner who redeemed the terms.
             owner: T::AccountId,
+            /// The provider-signed terms.
             terms: AgreementTermsOf<T>,
+            /// Anchor block the agreement expires at.
             expires_at: BlockNumberFor<T>,
         },
         /// Owner redeemed provider-signed replica terms; replica agreement
         /// opened against an existing bucket.
         ReplicaAgreementEstablished {
+            /// The bucket.
             bucket_id: BucketId,
+            /// The replica provider.
             provider: T::AccountId,
+            /// Owner who redeemed the terms.
             owner: T::AccountId,
+            /// The provider-signed terms.
             terms: AgreementTermsOf<T>,
+            /// Anchor block the agreement expires at.
             expires_at: BlockNumberFor<T>,
         },
 
         // Challenge events
+        /// Someone challenged a provider to prove it still holds a chunk.
         ChallengeCreated {
+            /// Id to respond with.
             challenge_id: ChallengeId<BlockNumberFor<T>>,
+            /// Bucket holding the challenged data.
             bucket_id: BucketId,
+            /// The challenged provider.
             provider: T::AccountId,
+            /// Who issued the challenge.
             challenger: T::AccountId,
+            /// Anchor block the response is due by.
             respond_by: BlockNumberFor<T>,
         },
+        /// The provider proved it holds the data. The two `*_cost` fields
+        /// say who pays which part of the response cost, not who receives
+        /// money — together they always sum to the deposit.
         ChallengeDefended {
+            /// The challenge.
             challenge_id: ChallengeId<BlockNumberFor<T>>,
+            /// The provider that responded.
             provider: T::AccountId,
+            /// Anchor blocks between challenge and response.
             response_time_blocks: BlockNumberFor<T>,
+            /// Part paid by the challenger: moved from their deposit to the
+            /// provider to cover the cost of responding.
             challenger_cost: BalanceOf<T>,
+            /// Part paid by the provider itself: simply not refunded — no
+            /// funds move, and this amount of the deposit goes back to the
+            /// challenger.
             provider_cost: BalanceOf<T>,
         },
+        /// A provider failed to respond before the deadline. Its whole stake
+        /// went to the Treasury and the challenger's deposit was refunded;
+        /// there is no reward.
         ChallengeSlashed {
+            /// The challenge.
             challenge_id: ChallengeId<BlockNumberFor<T>>,
+            /// The slashed provider.
             provider: T::AccountId,
+            /// Stake taken from the provider.
             slashed_amount: BalanceOf<T>,
-            challenger_reward: BalanceOf<T>,
-            /// Whether the provider was slashed for failing to respond
-            /// (`Timeout`) or for submitting a demonstrably-false response
-            /// (`InvalidProof` etc).
-            reason: SlashReason,
         },
     }
 
@@ -875,23 +1066,27 @@ pub mod pallet {
     #[pallet::error]
     pub enum Error<T> {
         // Provider errors
-        /// Account already has a provider record.
+        /// The account is already a registered provider.
         ProviderAlreadyRegistered,
-        /// No provider record for this account.
+        /// The account is not a registered provider.
         ProviderNotFound,
-        /// Stake below `MinProviderStake`.
+        /// The stake is below `MinProviderStake`.
         InsufficientStake,
-        /// Stake does not back the requested bytes.
+        /// The provider's stake cannot back the bytes it would commit to
+        /// (`committed_bytes × MinStakePerByte`); add stake or commit less.
         InsufficientStakeForBytes,
-        /// Provider still has live agreements.
+        /// The provider still has committed bytes; its agreements must end
+        /// before it can deregister.
         ProviderHasActiveAgreements,
-        /// Provider is not accepting new primary agreements.
+        /// The provider is not accepting new primary agreements.
         ProviderNotAcceptingPrimary,
-        /// Provider is not accepting replicas (`replica_sync_price` unset).
+        /// The provider has no replica sync price set, so it takes no replica
+        /// agreements.
         ProviderNotAcceptingReplicas,
-        /// Provider is not accepting agreement extensions.
+        /// The provider is not accepting agreement extensions.
         ProviderNotAcceptingExtensions,
-        /// `remove_slashed` target still has stake.
+        /// `remove_slashed` only applies to a provider whose stake was slashed
+        /// to zero.
         ProviderNotSlashed,
         /// Cannot set `max_capacity` below current `committed_bytes`.
         CapacityBelowCommitted,
@@ -911,119 +1106,143 @@ pub mod pallet {
         // Bucket errors
         /// No bucket with this id.
         BucketNotFound,
-        /// Bucket is frozen (append-only).
+        /// The bucket is already frozen.
         BucketFrozen,
-        /// Operation requires a frozen bucket.
-        BucketNotFrozen,
-        /// Caller is not a bucket admin.
+        /// The caller is not an admin of the bucket.
         NotBucketAdmin,
-        /// Caller is not a bucket member.
-        NotBucketMember,
-        /// Caller has no write permission on the bucket.
+        /// The caller is neither a writer nor an admin of the bucket.
         NotBucketWriter,
-        /// No such member in the bucket.
+        /// The account is not a member of the bucket.
         MemberNotFound,
-        /// Admins cannot be demoted, only removed.
+        /// An admin cannot demote or remove another admin; admins only step
+        /// down themselves.
         CannotDemoteAdmin,
-        /// A bucket must keep at least one admin.
+        /// The bucket must keep at least one admin; promote another member
+        /// first.
         LastAdminCannotBeRemoved,
-        /// Bucket member list is full (`MaxMembers`).
+        /// The bucket already has `MaxMembers` members.
         MaxMembersReached,
-        /// Bucket primary-provider list is full (`MaxPrimaryProviders`).
+        /// The bucket already has `MaxPrimaryProviders` primary providers.
         MaxPrimaryProvidersReached,
-        /// Snapshot carries fewer signatures than `min_providers`.
+        /// The current snapshot carries fewer provider signatures than the
+        /// bucket's `min_providers`.
         MinProvidersNotMet,
-        /// `min_providers` exceeds the bucket's primary-provider count.
+        /// A `min_providers` value the bucket cannot satisfy: above
+        /// `MaxPrimaryProviders` at creation, or above the bucket's current
+        /// primary count in `set_min_providers`. Pass a smaller number, or
+        /// add primaries first.
         InvalidMinProviders,
+        /// Only members and primary-agreement owners may challenge a primary
+        /// provider of a private bucket.
+        NotAuthorizedForPrivateBucket,
 
         // Agreement errors
-        /// No agreement for this `(bucket, provider)`.
+        /// No agreement between this bucket and provider.
         AgreementNotFound,
-        /// An agreement for this `(bucket, provider)` already exists.
+        /// This bucket and provider already have an agreement.
         AgreementAlreadyExists,
-        /// Agreement is past its expiry block.
+        /// The agreement has expired; settle it with `end_agreement` or
+        /// `claim_expired_agreement`.
         AgreementExpired,
-        /// Agreement has not expired yet.
+        /// The agreement is still live, or the owner's settlement window has
+        /// not passed yet.
         AgreementNotExpired,
-        /// Extensions are blocked for this agreement.
+        /// The provider blocked extensions of this agreement
+        /// (`set_extensions_blocked`).
         AgreementExtensionsBlocked,
-        /// Caller does not own this agreement.
+        /// Only the agreement owner may do this.
         NotAgreementOwner,
-        /// Duration below the provider's `min_duration`.
+        /// The new owner is the current owner.
+        TransferToSelf,
+        /// The duration is below the provider's `min_duration`.
         DurationTooShort,
-        /// Duration above the provider's `max_duration`.
+        /// The duration is above the provider's `max_duration`.
         DurationTooLong,
-        /// Cost exceeds the caller's `max_payment` cap.
+        /// `price_per_byte × bytes × duration` exceeds the caller's
+        /// `max_payment`.
         PaymentExceedsMax,
-        /// Replica agreements run to expiry; admins cannot terminate them.
+        /// Replica agreements cannot be ended early; they run to expiry.
         CannotTerminateReplica,
-        /// `SettlementTimeout` passed; the payment can only be swept now.
+        /// More than `SettlementTimeout` has passed since expiry; only the
+        /// provider can settle now, via `claim_expired_agreement`.
         SettlementWindowPassed,
 
         // Replica errors
-        /// Provider is not a replica for this bucket.
+        /// The agreement is not a replica agreement.
         NotReplica,
-        /// Sync confirmed less than `min_sync_interval` blocks after the last.
+        /// Less than `min_sync_interval` since the replica's last confirmed
+        /// sync.
         SyncTooFrequent,
-        /// Synced root is neither the current snapshot nor a known
-        /// historical root.
+        /// None of the submitted roots match the bucket's current snapshot or
+        /// its recent root history.
         InvalidSyncRoot,
-        /// `sync_balance` cannot cover the per-sync price.
+        /// The sync balance cannot cover one more `sync_price`; top it up with
+        /// `top_up_replica_sync_balance`.
         InsufficientSyncBalance,
-        /// Last sync was to a historical root whose `(start_seq, leaf_count)`
-        /// range the chain does not retain, so `challenge_replica` cannot bind
-        /// a proof; re-sync to the current snapshot or use `challenge_offchain`.
-        ReplicaSyncRangeUnknown,
 
         // Challenge errors
-        /// No challenge at this `(deadline, index)`.
+        /// The challenger is the challenged provider. A self-challenge costs
+        /// nothing (the response refunds the challenger's own deposit) and
+        /// would pad the defended-challenge counters behind reputation.
+        SelfChallenge,
+        /// No challenge with this id.
         ChallengeNotFound,
-        /// A challenge already exists at this id.
-        ChallengeAlreadyExists,
-        /// Response proof failed verification.
-        InvalidChallengeProof,
-        /// Response arrived after the challenge deadline.
+        /// The response deadline has passed.
         ChallengeExpired,
-        /// Responder is not the challenged provider.
+        /// The deadline has not passed; the provider may still respond.
+        ChallengeNotExpired,
+        /// Only the challenged provider may respond.
         NotChallengeProvider,
-        /// Provider did not sign the bucket's current snapshot.
+        /// The chunk or MMR proof does not verify. The challenge stays open;
+        /// respond again before the deadline.
+        InvalidProof,
+        /// `new_start_seq` does not cover the challenged leaf, or the admin
+        /// signature does not verify. The challenge stays open.
+        InvalidDeletionClaim,
+        /// No canonical snapshot replaces the challenged root and covers the
+        /// challenged leaf. The challenge stays open.
+        InvalidSupersededClaim,
+        /// The provider did not sign the bucket's current snapshot, so there
+        /// is no on-chain commitment to challenge; use `challenge_offchain`
+        /// with a signed commitment instead.
         ProviderNotInSnapshot,
-        /// `leaf_index` is not covered by the commitment's `leaf_count`; the
-        /// leaf does not exist, so no valid proof could ever defend it.
+        /// `target.leaf_index` is not below the commitment's `leaf_count`: the
+        /// leaf does not exist, so no proof could defend the challenge.
         LeafBeyondCanonical,
-        /// Deletion-response admin signature or range failed verification.
-        InvalidDeletionProof,
-        /// Provider cannot deregister with unresolved challenges pending.
+        /// A provider with unresolved challenges (`PendingChallenges > 0`)
+        /// cannot complete deregistration — they are still slashable.
         ProviderHasPendingChallenges,
-        /// Agreement cannot be torn down with an unresolved challenge pending.
+        /// An agreement with an unresolved challenge against this
+        /// `(bucket, provider)` cannot be torn down until the challenge
+        /// resolves (defended or timed out).
         AgreementHasPendingChallenge,
-        /// `MaxChallengesPerDeadline` already allocated for this deadline;
-        /// bounds the `on_initialize` sweep's per-key drain.
+        /// `MaxChallengesPerDeadline` challenges have already been allocated
+        /// for the deadline this challenge would land on.
         TooManyChallengesThisBlock,
 
         // Checkpoint errors
-        /// Signature does not verify against the provider's registered key.
+        /// A provider signature does not verify against the commitment.
         InvalidSignature,
-        /// Bucket has no snapshot yet.
+        /// The bucket has no checkpoint yet.
         NoSnapshot,
-        /// Snapshot `start_seq` is below the bucket's `frozen_start_seq`.
+        /// A frozen bucket only accepts checkpoints that keep its
+        /// `frozen_start_seq`.
         SnapshotViolatesFrozen,
-        /// Fewer valid signatures than the bucket's `min_providers`.
+        /// Fewer valid provider signatures than the bucket's `min_providers`.
         InsufficientSignatures,
 
         // General errors
-        /// Arithmetic overflow in a balance or size computation.
+        /// A balance or counter computation overflowed.
         ArithmeticOverflow,
-        /// Multiaddr failed validation.
-        InvalidMultiaddr,
-        /// Public key is not a valid Sr25519/Ed25519/ECDSA key.
+        /// The public key is not 32 bytes (sr25519/ed25519) or 33 bytes
+        /// (compressed ecdsa), or does not match the signature's scheme.
         InvalidPublicKey,
 
         // Reverse index errors
         /// Account is a member of too many buckets.
         TooManyBucketsForMember,
 
-        // establish_storage_agreement errors
+        // Quote-redemption errors
         /// Provider signature over the SCALE-encoded terms is invalid.
         InvalidProviderSignature,
         /// Signed terms have passed their `valid_until` block.
@@ -1031,20 +1250,22 @@ pub mod pallet {
         /// Signed terms' `valid_until` extends beyond `now + RequestTimeout` —
         /// the provider-signed validity window cap enforced on-chain.
         TermsValidityTooLong,
-        /// The terms' nonce has already been consumed inside the provider's
-        /// replay window.
-        NonceAlreadyUsed,
-        /// The terms' nonce is older than the provider's replay window
-        /// (distance from `hsn` ≥ [`storage_primitives::REPLAY_WINDOW_BITS`]).
-        NonceTooOld,
+        /// The terms' nonce does not match the owner's next expected
+        /// [`AgreementNonces`] value. Read the current value and request a
+        /// new quote with it.
+        NonceMismatch,
         /// The terms' declared owner does not match the extrinsic origin.
         TermsOwnerMismatch,
         /// Replica terms missing from a signed quote redeemed as a replica
         /// agreement.
         MissingReplicaTerms,
-        /// The terms' bucket binding does not match the redeeming extrinsic:
-        /// primary terms must carry no bucket, replica terms must name the
-        /// targeted bucket.
+        /// Replica terms present in a signed quote redeemed as a primary
+        /// agreement. Negotiate the quote without `replica_params`, or
+        /// redeem it with `add_replica_provider`.
+        UnexpectedReplicaTerms,
+        /// The terms' `bucket` does not name the bucket the call targets:
+        /// `New` is redeemable only by the calls that create a bucket, and
+        /// `Existing(id)` only against bucket `id`.
         TermsBucketMismatch,
         /// Agreement requested zero bytes.
         InvalidMaxBytesRequest,
@@ -1085,7 +1306,8 @@ pub mod pallet {
             )
         }
 
-        /// Add stake to an existing provider registration.
+        /// Lock more stake for the calling provider. Stake caps the bytes and
+        /// capacity a provider may commit to.
         #[pallet::call_index(1)]
         #[pallet::weight(T::WeightInfo::add_stake())]
         pub fn add_stake(origin: OriginFor<T>, amount: BalanceOf<T>) -> DispatchResult {
@@ -1101,7 +1323,7 @@ pub mod pallet {
                     .checked_add(&amount)
                     .ok_or(Error::<T>::ArithmeticOverflow)?;
 
-                T::Currency::reserve(&who, amount)?;
+                Self::hold_stake(&who, amount)?;
 
                 Self::deposit_event(Event::ProviderStakeAdded {
                     provider: who.clone(),
@@ -1124,8 +1346,10 @@ pub mod pallet {
         ///    slashable for any pending or freshly-created challenge.
         /// 2. `complete_deregister` — callable once `deregister_at` has
         ///    elapsed (by which point any challenge created up to the
-        ///    announcement block has already matured, because the period
-        ///    must be `> ChallengeTimeout`).
+        ///    announcement block has expired, because the period must be
+        ///    `> ChallengeTimeout`; an unanswered one still has to be
+        ///    resolved with `resolve_expired_challenge`, which the provider
+        ///    may call itself).
         ///
         /// The two-step flow closes the slashing race where a provider
         /// could withdraw stake between the end of their last agreement
@@ -1197,18 +1421,18 @@ pub mod pallet {
             );
             // A provider with unresolved challenges is still slashable; they
             // must not be able to exit and unreserve their stake before those
-            // challenges mature. The `DeregisterAnnouncementPeriod >
+            // challenges are resolved. The `DeregisterAnnouncementPeriod >
             // ChallengeTimeout` invariant (see `integrity_test`) guarantees any
-            // challenge created up to the announcement block resolves before
-            // the wait window elapses, so this only blocks genuinely-live ones.
+            // challenge created up to the announcement block has expired by
+            // now; an unanswered one is resolved with
+            // `resolve_expired_challenge`, which the provider may call itself.
             ensure!(
                 PendingChallenges::<T>::get(&who) == 0,
                 Error::<T>::ProviderHasPendingChallenges
             );
 
-            T::Currency::unreserve(&who, provider.stake);
+            Self::release_stake(&who, provider.stake)?;
             Providers::<T>::remove(&who);
-            ProviderReplayStates::<T>::remove(&who);
 
             Self::deposit_event(Event::ProviderDeregistered {
                 provider: who,
@@ -1248,7 +1472,12 @@ pub mod pallet {
             Ok(())
         }
 
-        /// Update provider settings.
+        /// Replace the calling provider's settings: accepted durations, price
+        /// per byte, replica sync price, acceptance flags, and capacity.
+        ///
+        /// Rejected while a deregistration is announced, if
+        /// `min_duration > max_duration`, if capacity drops below the bytes
+        /// already committed, or if the stake cannot back the capacity.
         #[pallet::call_index(3)]
         #[pallet::weight(T::WeightInfo::update_provider_settings())]
         pub fn update_provider_settings(
@@ -1287,7 +1516,8 @@ pub mod pallet {
             Ok(())
         }
 
-        /// Update the provider's multiaddr (network endpoint).
+        /// Change the network address clients use to reach the calling
+        /// provider.
         #[pallet::call_index(5)]
         #[pallet::weight(T::WeightInfo::update_provider_multiaddr())]
         pub fn update_provider_multiaddr(
@@ -1313,7 +1543,9 @@ pub mod pallet {
             Ok(())
         }
 
-        /// Block or unblock extensions for a specific bucket.
+        /// Provider only. Refuse (or allow again) extensions of the caller's
+        /// live agreement on `bucket_id`, so a provider can wind down one
+        /// agreement without leaving the network.
         #[pallet::call_index(4)]
         #[pallet::weight(T::WeightInfo::block_extensions())]
         pub fn set_extensions_blocked(
@@ -1359,28 +1591,76 @@ pub mod pallet {
         // Bucket Management
         // ─────────────────────────────────────────────────────────────────────
 
-        /// Redeem provider-signed terms: create a bucket + primary agreement
-        /// in a single call.
+        /// Create an empty bucket with the caller as its sole admin.
         ///
-        /// The provider signs a SCALE-encoded [`AgreementTermsOf<T>`] off-chain;
-        /// the owner submits it here. The pallet verifies the signature,
-        /// rejects replays via the provider's sliding nonce window, then runs
-        /// the standard provider/capacity/stake checks and opens the
-        /// agreement.
-        #[pallet::call_index(17)]
-        #[pallet::weight(T::WeightInfo::establish_storage_agreement())]
-        pub fn establish_storage_agreement(
+        /// The bucket has no providers and no data. Add a primary with
+        /// [`Pallet::add_primary_provider`].
+        ///
+        /// Parameters:
+        /// - `min_providers`: primary-provider signatures each checkpoint
+        ///   needs. At most `MaxPrimaryProviders` (`InvalidMinProviders`).
+        ///   Changeable later with [`Pallet::set_min_providers`].
+        /// - `visibility`: who may read the bucket (see [`Visibility`]).
+        #[pallet::call_index(10)]
+        #[pallet::weight(T::WeightInfo::create_bucket())]
+        pub fn create_bucket(
             origin: OriginFor<T>,
+            min_providers: u32,
+            visibility: Visibility,
+        ) -> DispatchResult {
+            let who = ensure_signed(origin)?;
+            Self::create_bucket_internal(&who, min_providers, None, visibility)?;
+            Ok(())
+        }
+
+        /// Redeem provider-signed primary terms. Equivalent to
+        /// [`Pallet::create_bucket`] followed by
+        /// [`Pallet::add_primary_provider`], in one transaction.
+        ///
+        /// The provider signs a SCALE-encoded [`AgreementTermsOf<T>`] with
+        /// `bucket: BucketTarget::New` off-chain; the owner submits it here.
+        ///
+        /// `visibility` sets the new bucket's read visibility (see
+        /// [`Visibility`]); it is the owner's choice and not part of the
+        /// provider-signed terms.
+        #[pallet::call_index(17)]
+        #[pallet::weight(T::WeightInfo::create_bucket_with_primary())]
+        pub fn create_bucket_with_primary(
+            origin: OriginFor<T>,
+            provider: T::AccountId,
+            terms: AgreementTermsOf<T>,
+            sig: sp_runtime::MultiSignature,
+            visibility: Visibility,
+        ) -> DispatchResult {
+            let who = ensure_signed(origin)?;
+            Self::create_bucket_with_primary_internal(&who, &provider, terms, &sig, visibility)?;
+            Ok(())
+        }
+
+        /// Admin only. Redeem provider-signed primary terms against an
+        /// existing bucket, adding the provider to its primary set.
+        ///
+        /// The quote must name `bucket: BucketTarget::Existing(bucket_id)`
+        /// and the caller as `terms.owner`. Works on a bucket whose earlier
+        /// agreements have all ended and on a frozen bucket.
+        ///
+        /// The new provider has none of the bucket's data and is not in the
+        /// current snapshot's signer bitfield.
+        #[pallet::call_index(18)]
+        #[pallet::weight(T::WeightInfo::add_primary_provider())]
+        pub fn add_primary_provider(
+            origin: OriginFor<T>,
+            bucket_id: BucketId,
             provider: T::AccountId,
             terms: AgreementTermsOf<T>,
             sig: sp_runtime::MultiSignature,
         ) -> DispatchResult {
             let who = ensure_signed(origin)?;
-            Self::establish_storage_agreement_internal(&who, &provider, terms, &sig)?;
-            Ok(())
+            Self::add_primary_provider_internal(&who, bucket_id, &provider, terms, &sig)
         }
 
-        /// Set minimum providers required for checkpoint.
+        /// Admin only. Set how many primary-provider signatures a checkpoint
+        /// needs. Cannot exceed the bucket's primary provider count.
         #[pallet::call_index(11)]
         #[pallet::weight(T::WeightInfo::set_bucket_min_providers())]
         pub fn set_min_providers(
@@ -1406,7 +1686,9 @@ pub mod pallet {
             })
         }
 
-        /// Freeze bucket - make append-only (irreversible).
+        /// Admin only. Make the bucket append-only from its current snapshot
+        /// on. Irreversible; the snapshot must already carry `min_providers`
+        /// signatures.
         #[pallet::call_index(12)]
         #[pallet::weight(T::WeightInfo::freeze_bucket())]
         pub fn freeze_bucket(origin: OriginFor<T>, bucket_id: BucketId) -> DispatchResult {
@@ -1440,7 +1722,40 @@ pub mod pallet {
             })
         }
 
-        /// Add or update a member's role.
+        /// Set bucket read visibility (admin only).
+        ///
+        /// Flips `Public` ⇄ `Private` unconditionally in both directions — a
+        /// precondition on existing replicas would hand third parties a veto
+        /// over the admin. Effects are asymmetric: privatizing does not recall
+        /// data already replicated, publicizing cannot be undone.
+        #[pallet::call_index(16)]
+        #[pallet::weight(T::WeightInfo::set_bucket_visibility())]
+        pub fn set_bucket_visibility(
+            origin: OriginFor<T>,
+            bucket_id: BucketId,
+            visibility: Visibility,
+        ) -> DispatchResult {
+            let who = ensure_signed(origin)?;
+
+            Buckets::<T>::try_mutate(bucket_id, |maybe_bucket| -> DispatchResult {
+                let bucket = maybe_bucket.as_mut().ok_or(Error::<T>::BucketNotFound)?;
+
+                Self::ensure_admin(&who, bucket)?;
+
+                bucket.visibility = visibility;
+
+                Self::deposit_event(Event::BucketVisibilityChanged {
+                    bucket_id,
+                    visibility,
+                });
+
+                Ok(())
+            })
+        }
+
+        /// Admin only. Add a member or change their role. An admin may step
+        /// down themselves but cannot demote another admin, and the last
+        /// admin cannot step down.
         #[pallet::call_index(13)]
         #[pallet::weight(T::WeightInfo::set_bucket_member())]
         pub fn set_member(
@@ -1499,7 +1814,8 @@ pub mod pallet {
             })
         }
 
-        /// Remove member from bucket.
+        /// Admin only. Remove a member. Same admin protections as
+        /// `set_member`.
         #[pallet::call_index(14)]
         #[pallet::weight(T::WeightInfo::remove_bucket_member())]
         pub fn remove_member(
@@ -1564,8 +1880,10 @@ pub mod pallet {
             let agreement = StorageAgreements::<T>::take(bucket_id, &provider)
                 .ok_or(Error::<T>::AgreementNotFound)?;
 
-            // Return locked payment to owner (provider failed their duty)
-            T::Currency::unreserve(&agreement.owner, agreement.payment_locked);
+            // The provider failed their duty, so the whole escrow returns to
+            // the owner.
+            let returned = agreement.escrow();
+            Self::release_payment(&agreement.owner, returned)?;
 
             // Update provider committed_bytes
             Providers::<T>::mutate(&provider, |maybe_provider| {
@@ -1599,7 +1917,7 @@ pub mod pallet {
             Self::deposit_event(Event::SlashedProviderRemoved {
                 bucket_id,
                 provider,
-                payment_returned_to_owner: agreement.payment_locked,
+                payment_returned_to_owner: returned,
             });
 
             Ok(())
@@ -1609,17 +1927,16 @@ pub mod pallet {
         // Storage Agreements
         // ─────────────────────────────────────────────────────────────────────
 
-        /// Redeem provider-signed terms for a replica storage agreement.
+        /// Redeem provider-signed replica terms against an existing bucket.
+        /// Callable by whoever the provider quoted for, not only the bucket's
+        /// members.
         ///
         /// The provider signs a SCALE-encoded [`AgreementTermsOf<T>`] with
-        /// `replica_params: Some(_)` off-chain; the owner submits it here.
-        /// The pallet verifies the signature, rejects replays via the
-        /// provider's sliding nonce window, then runs the standard
-        /// provider/capacity/stake checks and opens the replica agreement on
-        /// an existing bucket.
+        /// `bucket: BucketTarget::Existing(bucket_id)` and
+        /// `replica_params: Some(_)` off-chain; the caller submits it here.
         #[pallet::call_index(20)]
-        #[pallet::weight(T::WeightInfo::establish_replica_agreement())]
-        pub fn establish_replica_agreement(
+        #[pallet::weight(T::WeightInfo::add_replica_provider())]
+        pub fn add_replica_provider(
             origin: OriginFor<T>,
             bucket_id: BucketId,
             provider: T::AccountId,
@@ -1627,11 +1944,17 @@ pub mod pallet {
             sig: sp_runtime::MultiSignature,
         ) -> DispatchResult {
             let who = ensure_signed(origin)?;
-            Self::establish_replica_agreement_internal(&who, bucket_id, &provider, terms, &sig)?;
-            Ok(())
+            Self::add_replica_provider_internal(&who, bucket_id, &provider, terms, &sig)
         }
 
-        /// End agreement with pay/burn decision.
+        /// Owner only. Settle and close an agreement, choosing whether the
+        /// remaining escrow goes to the provider or is (partly) burned.
+        ///
+        /// Before expiry the owner must also be a bucket admin, and only
+        /// primary agreements can be ended early. After expiry the owner has
+        /// `SettlementTimeout` to call this; then only the provider can
+        /// settle, via `claim_expired_agreement`. Blocked while a challenge
+        /// against the agreement is pending.
         #[pallet::call_index(25)]
         #[pallet::weight(match action {
             EndAction::Pay => T::WeightInfo::end_agreement(0),
@@ -1691,7 +2014,9 @@ pub mod pallet {
             )
         }
 
-        /// Claim payment for expired agreement (provider only).
+        /// Provider only. Collect the escrow of an expired agreement once the
+        /// owner's `SettlementTimeout` window has passed without settlement.
+        /// Blocked while a challenge against the agreement is pending.
         #[pallet::call_index(26)]
         #[pallet::weight(T::WeightInfo::claim_expired_agreement())]
         pub fn claim_expired_agreement(
@@ -1775,8 +2100,10 @@ pub mod pallet {
 
                     ensure!(payment <= max_payment, Error::<T>::PaymentExceedsMax);
 
-                    // Reserve payment
-                    T::Currency::reserve(&who, payment)?;
+                    // Owner-gated above, so `who == agreement.owner`; routed
+                    // through `hold_payment_from` anyway so every escrow in
+                    // the pallet reaches the owner by the same rule.
+                    Self::hold_payment_from(&who, &agreement.owner, payment)?;
 
                     // Update agreement
                     let new_max_bytes = agreement
@@ -1811,7 +2138,59 @@ pub mod pallet {
             )
         }
 
+        /// Transfer the agreement to `new_owner` (current owner only). The
+        /// new owner can top up, extend, settle, or transfer it again.
+        ///
+        /// The escrow — the prepaid fee plus, for a replica, the unspent sync
+        /// balance — moves to `new_owner` and stays on hold; every later
+        /// settlement and refund uses the new owner.
+        ///
+        /// Bucket membership does not move: the new owner cannot write to or
+        /// administer the bucket, and the bucket admin keeps every admin
+        /// power over the agreement, including early termination, which pays
+        /// out or burns the new owner's escrow. Challenge rights follow the
+        /// owner; open challenges keep the authorization they were created
+        /// with.
+        #[pallet::call_index(29)]
+        #[pallet::weight(T::WeightInfo::transfer_agreement_ownership())]
+        pub fn transfer_agreement_ownership(
+            origin: OriginFor<T>,
+            bucket_id: BucketId,
+            provider: T::AccountId,
+            new_owner: T::AccountId,
+        ) -> DispatchResult {
+            let who = ensure_signed(origin)?;
+            ensure!(new_owner != who, Error::<T>::TransferToSelf);
+
+            let escrow = StorageAgreements::<T>::try_mutate(
+                bucket_id,
+                &provider,
+                |maybe_agreement| -> Result<BalanceOf<T>, DispatchError> {
+                    let agreement = maybe_agreement
+                        .as_mut()
+                        .ok_or(Error::<T>::AgreementNotFound)?;
+                    ensure!(agreement.owner == who, Error::<T>::NotAgreementOwner);
+
+                    let escrow = agreement.escrow();
+                    Self::transfer_payment_on_hold(&who, &new_owner, escrow)?;
+                    agreement.owner = new_owner.clone();
+                    Ok(escrow)
+                },
+            )?;
+
+            Self::deposit_event(Event::AgreementOwnershipTransferred {
+                bucket_id,
+                provider,
+                old_owner: who,
+                new_owner,
+                escrow,
+            });
+            Ok(())
+        }
+
         /// Extend agreement duration (immediate, no provider approval needed).
+        /// Only while the agreement is live — an expired one settles via
+        /// `end_agreement` / `claim_expired_agreement`.
         ///
         /// This:
         /// 1. Settles current period: releases payment to provider for elapsed time
@@ -1875,35 +2254,34 @@ pub mod pallet {
                     }
                     // If price same or decreased, anyone can extend (permissionless persistence)
 
-                    // Settle current period
-                    let elapsed = anchor_block.saturating_sub(agreement.started_at);
-                    let _remaining = if anchor_block < agreement.expires_at {
-                        agreement.expires_at.saturating_sub(anchor_block)
-                    } else {
-                        Zero::zero()
-                    };
+                    // An expired agreement settles via `end_agreement` /
+                    // `claim_expired_agreement`; extending it here would pay
+                    // the provider for time it was under no obligation.
+                    ensure!(
+                        anchor_block < agreement.expires_at,
+                        Error::<T>::AgreementExpired
+                    );
 
-                    // Calculate payment for elapsed time at old rate
+                    // Settle the elapsed period at the old rate, capped at
+                    // this agreement's escrow: a mid-flight top-up raises
+                    // `max_bytes` without back-paying elapsed time, and the
+                    // hold aggregates per owner, so an uncapped settle could
+                    // drain other agreements' escrow.
+                    let elapsed = anchor_block.saturating_sub(agreement.started_at);
                     let elapsed_payment = if !elapsed.is_zero() {
                         Self::calculate_payment(
                             agreement.price_per_byte,
                             agreement.max_bytes,
                             elapsed,
                         )?
+                        .min(agreement.payment_locked)
                     } else {
                         Zero::zero()
                     };
 
-                    // Release elapsed payment to provider
-                    if !elapsed_payment.is_zero() {
-                        T::Currency::unreserve(&agreement.owner, elapsed_payment);
-                        T::Currency::transfer(
-                            &agreement.owner,
-                            &provider,
-                            elapsed_payment,
-                            ExistenceRequirement::KeepAlive,
-                        )?;
-                    }
+                    // Pay the provider for the elapsed period straight out of
+                    // escrow — one atomic move, never briefly spendable.
+                    Self::settle_payment(&agreement.owner, &provider, elapsed_payment)?;
 
                     // Calculate new payment for extension at current rate
                     let extension_payment = Self::calculate_payment(
@@ -1917,8 +2295,9 @@ pub mod pallet {
                         Error::<T>::PaymentExceedsMax
                     );
 
-                    // Lock new payment from caller (not necessarily the owner)
-                    T::Currency::reserve(&who, extension_payment)?;
+                    // Lock new payment from the caller (not necessarily the
+                    // owner); it is escrowed on the owner regardless.
+                    Self::hold_payment_from(&who, &agreement.owner, extension_payment)?;
 
                     // Update agreement
                     agreement.expires_at = anchor_block.saturating_add(additional_duration);
@@ -1949,6 +2328,10 @@ pub mod pallet {
                         if let Some(provider_info) = maybe_provider {
                             provider_info.stats.agreements_extended =
                                 provider_info.stats.agreements_extended.saturating_add(1);
+                            provider_info.stats.lifetime_revenue = provider_info
+                                .stats
+                                .lifetime_revenue
+                                .saturating_add(elapsed_payment);
                         }
                     });
 
@@ -1968,7 +2351,10 @@ pub mod pallet {
         // Checkpoints
         // ─────────────────────────────────────────────────────────────────────
 
-        /// Submit a new checkpoint with provider signatures.
+        /// Writer or admin. Make a provider-signed commitment the bucket's
+        /// canonical state. Needs valid signatures from at least
+        /// `min_providers` of the bucket's primary providers; a frozen bucket
+        /// only accepts commitments that keep its `frozen_start_seq`.
         #[pallet::call_index(30)]
         #[pallet::weight(T::WeightInfo::checkpoint())]
         pub fn checkpoint(
@@ -2022,6 +2408,12 @@ pub mod pallet {
                     let byte_idx = idx / 8;
                     let bit_idx = idx % 8;
                     primary_signers[byte_idx] |= 1 << bit_idx;
+                    // TODO(#388): this counts signature entries, not distinct
+                    // providers, so one provider's signature repeated N times
+                    // satisfies `min_providers = N`. Count `primary_signers`
+                    // (which ORs, so it is duplicate-free) the way the freeze
+                    // path does, or reject a repeated signer outright.
+                    // https://github.com/paritytech/web3-storage/issues/388
                     signing_count += 1;
                     signing_providers.push(signer.clone());
                 }
@@ -2055,10 +2447,8 @@ pub mod pallet {
             })
         }
 
-        /// Add additional provider signatures to existing checkpoint.
-        ///
-        /// Allows late-signing providers to add their signatures to the current
-        /// snapshot. Useful when a provider signs off-chain commitments later.
+        /// Writer or admin. Add signatures from primary providers that signed
+        /// the current snapshot late.
         #[pallet::call_index(31)]
         #[pallet::weight(T::WeightInfo::extend_checkpoint())]
         pub fn extend_checkpoint(
@@ -2148,34 +2538,8 @@ pub mod pallet {
             target: ChunkLocation,
         ) -> DispatchResult {
             let who = ensure_signed(origin)?;
-
-            let bucket = Buckets::<T>::get(bucket_id).ok_or(Error::<T>::BucketNotFound)?;
-            let snapshot = bucket.snapshot.as_ref().ok_or(Error::<T>::NoSnapshot)?;
-
-            // Verify provider is in snapshot
-            let provider_idx = bucket
-                .primary_providers
-                .iter()
-                .position(|p| p == &provider)
-                .ok_or(Error::<T>::ProviderNotInSnapshot)?;
-
-            // Check if provider bit is set in the bitfield
-            let provider_signed = snapshot.has_provider_signed(provider_idx);
-            ensure!(provider_signed, Error::<T>::ProviderNotInSnapshot);
-
-            // Verify provider has an ACTIVE agreement for this bucket. As with
-            // `challenge_offchain`/`challenge_replica`, challengeability must
-            // track genuine obligation: a challenge can only open while the
-            // agreement is live (not into the settlement window), so an expired
-            // checkpoint can no longer be challenged.
-            let agreement = StorageAgreements::<T>::get(bucket_id, &provider)
-                .ok_or(Error::<T>::AgreementNotFound)?;
-            ensure!(
-                Self::current_anchor_block() < agreement.expires_at,
-                Error::<T>::AgreementExpired
-            );
-
-            Self::create_challenge(who, bucket_id, provider, snapshot.commitment, target)
+            Self::do_challenge_checkpoint(who, bucket_id, provider, target)?;
+            Ok(())
         }
 
         /// Challenge off-chain commitment (requires provider signature).
@@ -2199,11 +2563,9 @@ pub mod pallet {
         ) -> DispatchResult {
             let who = ensure_signed(origin)?;
 
-            // Verify the bucket exists
-            ensure!(
-                Buckets::<T>::contains_key(bucket_id),
-                Error::<T>::BucketNotFound
-            );
+            // Verify the bucket exists (loaded in full: the private-bucket
+            // gate and the challenger tier read its visibility and members).
+            let bucket = Buckets::<T>::get(bucket_id).ok_or(Error::<T>::BucketNotFound)?;
 
             // Verify provider has an ACTIVE agreement for this bucket. An
             // expired-but-unswept agreement leaves a stale row in
@@ -2234,7 +2596,16 @@ pub mod pallet {
             Self::verify_signature(&provider_signature, &encoded_payload, &provider)?;
 
             // Create the challenge
-            Self::create_challenge(who, bucket_id, provider, commitment, target)
+            Self::create_challenge(
+                who,
+                bucket_id,
+                &bucket,
+                provider,
+                &agreement.role,
+                commitment,
+                target,
+            )?;
+            Ok(())
         }
 
         /// Challenge a replica based on their on-chain sync confirmation.
@@ -2264,26 +2635,39 @@ pub mod pallet {
 
             let commitment = match &agreement.role {
                 ProviderRole::Replica { last_sync, .. } => {
-                    let record = last_sync.as_ref().ok_or(Error::<T>::InvalidSyncRoot)?;
-                    // Bind the challenge to the synced range. Only a sync to the
-                    // bucket's current snapshot records `(start_seq, leaf_count)`;
-                    // a replica synced only to a historical root cannot be soundly
-                    // challenged here (the chain doesn't retain that root's range).
-                    let (start_seq, leaf_count) =
-                        record.range.ok_or(Error::<T>::ReplicaSyncRangeUnknown)?;
-                    Commitment {
-                        mmr_root: record.root,
-                        start_seq,
-                        leaf_count,
-                    }
+                    last_sync
+                        .as_ref()
+                        .ok_or(Error::<T>::InvalidSyncRoot)?
+                        .commitment
                 }
                 ProviderRole::Primary => return Err(Error::<T>::NotReplica.into()),
             };
 
-            Self::create_challenge(who, bucket_id, provider, commitment, target)
+            // Needed for the challenger-tier snapshot (replicas are never
+            // gated by visibility, but the tier still applies).
+            let bucket = Buckets::<T>::get(bucket_id).ok_or(Error::<T>::BucketNotFound)?;
+
+            Self::create_challenge(
+                who,
+                bucket_id,
+                &bucket,
+                provider,
+                &agreement.role,
+                commitment,
+                target,
+            )?;
+            Ok(())
         }
 
-        /// Respond to a challenge.
+        /// Challenged provider only. Answer before the deadline with a chunk
+        /// proof, a proof that the data was legitimately deleted, or a note
+        /// that the challenged state has been superseded.
+        ///
+        /// A valid response settles the deposit between challenger and
+        /// provider. An invalid one is rejected (`InvalidProof`,
+        /// `InvalidDeletionClaim`, `InvalidSupersededClaim`): the fee is paid
+        /// and the challenge stays open until the deadline. An unanswered
+        /// challenge is slashed by `resolve_expired_challenge`.
         #[pallet::call_index(41)]
         #[pallet::weight(match response {
             ChallengeResponse::Proof { .. } => T::WeightInfo::respond_to_challenge_proof(),
@@ -2297,21 +2681,11 @@ pub mod pallet {
         ) -> DispatchResult {
             let who = ensure_signed(origin)?;
 
-            // Consume the challenge up front. With the stable-index DoubleMap
-            // a single `take` removes exactly this challenge and leaves its
-            // siblings (sharing the same deadline) untouched and addressable.
-            // Any `?`-bail below (wrong provider, expired, missing bucket)
-            // reverts the extrinsic, rolling the `take` back so the challenge
-            // remains pending; only the adjudicated `response_outcome` (which
-            // never short-circuits with `?`) commits the removal.
+            // Consume the challenge and its pending counters up front. Every
+            // error below rolls both back (the call runs in a storage layer),
+            // so a rejected response leaves the challenge pending.
             let challenge = Challenges::<T>::take(challenge_id.deadline, challenge_id.index)
                 .ok_or(Error::<T>::ChallengeNotFound)?;
-
-            // The `take` consumes this challenge, so resolve the pending
-            // counters now — this covers BOTH the defended path and the
-            // invalid-response slash path below. Any `?`-bail after this point
-            // reverts the whole extrinsic (including this decrement and the
-            // `take`), so the challenge and its counters stay in lockstep.
             Self::decrement_pending(challenge.bucket_id, &challenge.provider);
 
             ensure!(challenge.provider == who, Error::<T>::NotChallengeProvider);
@@ -2322,20 +2696,10 @@ pub mod pallet {
                 Error::<T>::ChallengeExpired
             );
 
-            // Verify response
             let bucket =
                 Buckets::<T>::get(challenge.bucket_id).ok_or(Error::<T>::BucketNotFound)?;
 
-            // Adjudicate the response. Returns:
-            //   `Ok(())`       — response defends the challenge
-            //   `Err(reason)`  — response is a demonstrable lie; slash the
-            //                    provider immediately (do NOT let them stall
-            //                    until the deadline timeout)
-            //
-            // Parameter-shape errors (stale nonce, non-admin signer, missing
-            // bucket snapshot for `Deleted`) still bubble up as `DispatchError`
-            // — they represent caller mistakes, not adversarial responses.
-            let response_outcome: Result<(), SlashReason> = match &response {
+            match &response {
                 ChallengeResponse::Proof {
                     chunk_data,
                     mmr_proof,
@@ -2348,20 +2712,15 @@ pub mod pallet {
                         chunk_proof,
                         &mmr_proof.leaf.data_root,
                     );
-                    // Verify the MMR proof, bound to the exact challenged
-                    // `leaf_index`: the provider cannot answer with a proof for a
-                    // different leaf it still holds.
+                    // Bound to the challenged `leaf_index`: a valid proof for a
+                    // different leaf of the same MMR does not verify.
                     let mmr_ok = storage_primitives::verify_mmr_proof(
                         mmr_proof,
                         challenge.target.leaf_index,
                         challenge.commitment.leaf_count,
                         &challenge.commitment.mmr_root,
                     );
-                    if chunk_ok && mmr_ok {
-                        Ok(())
-                    } else {
-                        Err(SlashReason::InvalidProof)
-                    }
+                    ensure!(chunk_ok && mmr_ok, Error::<T>::InvalidProof);
                 }
                 ChallengeResponse::Deleted {
                     new_mmr_root,
@@ -2375,70 +2734,44 @@ pub mod pallet {
                         .commitment
                         .start_seq
                         .saturating_add(challenge.target.leaf_index);
-                    if challenged_seq >= *new_start_seq {
-                        // Provider claims data was purged before the
-                        // challenged leaf, but the new start_seq doesn't
-                        // actually cover it.
-                        Err(SlashReason::InvalidDeletionClaim)
-                    } else {
-                        let deletion_payload = CommitmentPayload::new(
-                            challenge.bucket_id,
-                            Commitment {
-                                mmr_root: *new_mmr_root,
-                                start_seq: *new_start_seq,
-                                leaf_count: 0, // not needed for deletion proof
-                            },
-                        );
-                        let encoded = deletion_payload.encode();
-                        if Self::verify_signature(admin_signature, &encoded, admin).is_ok() {
-                            Ok(())
-                        } else {
-                            Err(SlashReason::InvalidDeletionClaim)
-                        }
-                    }
+                    ensure!(
+                        challenged_seq < *new_start_seq,
+                        Error::<T>::InvalidDeletionClaim
+                    );
+                    let deletion_payload = CommitmentPayload::new(
+                        challenge.bucket_id,
+                        Commitment {
+                            mmr_root: *new_mmr_root,
+                            start_seq: *new_start_seq,
+                            leaf_count: 0, // not needed for deletion proof
+                        },
+                    );
+                    ensure!(
+                        Self::verify_signature(admin_signature, &deletion_payload.encode(), admin)
+                            .is_ok(),
+                        Error::<T>::InvalidDeletionClaim
+                    );
                 }
                 ChallengeResponse::Superseded => {
-                    // A `Superseded` defense only holds when the challenged
-                    // commitment was genuinely replaced by a newer canonical
-                    // snapshot. Without a snapshot to lean on the claim is
-                    // unsupported, so we slash.
-                    match bucket.snapshot.as_ref() {
-                        None => Err(SlashReason::InvalidSupersededClaim),
-                        Some(snapshot) => {
-                            let challenged_seq = challenge
-                                .commitment
-                                .start_seq
-                                .saturating_add(challenge.target.leaf_index);
-                            // (a) The challenged root must NOT be the current
-                            // canonical root — if it still is, the data is live
-                            // and the provider must answer with a `Proof`.
-                            // (b)+(c) The challenged seq must still sit inside
-                            // the canonical range; front-rolled/deleted data
-                            // has to go through the admin-signed `Deleted` path.
-                            if challenge.commitment.mmr_root != snapshot.commitment.mmr_root
-                                && snapshot.contains_seq(challenged_seq)
-                            {
-                                Ok(())
-                            } else {
-                                Err(SlashReason::InvalidSupersededClaim)
-                            }
-                        }
-                    }
+                    // Valid only when a newer canonical snapshot replaced the
+                    // challenged root and still covers the challenged seq. A
+                    // root equal to the canonical one means the data is live
+                    // and needs a `Proof`; a seq below `start_seq` needs the
+                    // admin-signed `Deleted` path.
+                    let snapshot = bucket
+                        .snapshot
+                        .as_ref()
+                        .ok_or(Error::<T>::InvalidSupersededClaim)?;
+                    let challenged_seq = challenge
+                        .commitment
+                        .start_seq
+                        .saturating_add(challenge.target.leaf_index);
+                    ensure!(
+                        challenge.commitment.mmr_root != snapshot.commitment.mmr_root
+                            && snapshot.contains_seq(challenged_seq),
+                        Error::<T>::InvalidSupersededClaim
+                    );
                 }
-            };
-
-            // The challenge was already removed by the `take` above; the owned
-            // `challenge` value feeds either the defended-path cost-split or
-            // the slash helper. The adjudication has concluded, so the
-            // removal now becomes the committed state transition.
-
-            if let Err(reason) = response_outcome {
-                // Invalid response → slash now. The extrinsic itself returns
-                // `Ok(())` because the slash *is* the valid state transition;
-                // the provider is the one paying the price, recorded via the
-                // `ChallengeSlashed { reason, .. }` event.
-                Self::slash_provider_for_failed_challenge(&challenge, challenge_id, reason);
-                return Ok(());
             }
 
             // Calculate response time (blocks since challenge was created)
@@ -2447,15 +2780,22 @@ pub mod pallet {
                 .saturating_sub(T::ChallengeTimeout::get());
             let response_time = anchor_block.saturating_sub(challenge_created_at);
 
-            // Calculate cost split based on response time
-            // Per design:
-            // Block 1: Challenger 90%, Provider 10%
-            // Blocks 2-5: Challenger 80%, Provider 20%
-            // Blocks 6-24: Challenger 70%, Provider 30%
-            // Blocks 25-95: Challenger 60%, Provider 40%
-            // Blocks 96+: Challenger 50%, Provider 50%
-
-            let challenger_percent = if response_time <= BlockNumberFor::<T>::from(1u32) {
+            // A valid response never touches the provider's stake — only the
+            // response cost (proxied by the deposit) is at issue, and the
+            // challenger's deposit reimburses it. How much of that cost the
+            // provider is made to bear depends on the tier snapshotted at
+            // creation:
+            // - General public pays in full — the provider bears nothing
+            //   (anti-DDoS: if strangers got the split, a crowd could each pay
+            //   little while collectively draining the provider).
+            // - Authorized challengers (members/agreement owners) get a split
+            //   by response time, floored at 50% — leverage, not cheap
+            //   recovery:
+            //   Block 1: 90/10, 2-5: 80/20, 6-24: 70/30, 25-95: 60/40,
+            //   96+: 50/50 (challenger/provider).
+            let challenger_percent = if !challenge.authorized {
+                100u32
+            } else if response_time <= BlockNumberFor::<T>::from(1u32) {
                 90u32
             } else if response_time <= BlockNumberFor::<T>::from(5u32) {
                 80u32
@@ -2467,51 +2807,36 @@ pub mod pallet {
                 50u32
             };
 
-            let provider_percent = 100u32.saturating_sub(challenger_percent);
+            let challenger_share = challenge.deposit * challenger_percent.into() / 100u32.into();
 
-            // Calculate actual costs
-            let challenger_cost = challenge.deposit * challenger_percent.into() / 100u32.into();
-            let provider_cost = challenge.deposit * provider_percent.into() / 100u32.into();
-
-            // Challenger forfeits `challenger_cost` to the provider as
-            // compensation for the work of responding: move it from the
-            // challenger's reserved balance into the provider's free balance.
-            let not_moved = T::Currency::repatriate_reserved(
+            // Pay the challenger's share to the provider for the work of
+            // responding and give the rest of the deposit back to the
+            // challenger. The event reports what actually moved (mirrors
+            // `ChallengeSlashed`).
+            let challenger_cost = Self::settle_challenge_deposit(
                 &challenge.challenger,
                 &challenge.provider,
-                challenger_cost,
-                BalanceStatus::Free,
-            )
-            .unwrap_or(challenger_cost);
-            // Refund challenger the rest of their deposit. Anything that could
-            // not be moved (should not happen) is released back to them too, so
-            // no funds stay stuck in the challenger's reserved balance.
-            let refund = challenge
-                .deposit
-                .saturating_sub(challenger_cost)
-                .saturating_add(not_moved);
-            T::Currency::unreserve(&challenge.challenger, refund);
+                challenge.deposit,
+                challenger_share,
+            );
+            // The provider pays its share by simply not being refunded for it
+            // — no funds move from the provider, and its stake stays intact.
+            let provider_cost = challenge.deposit.saturating_sub(challenger_cost);
 
-            // Slash provider_cost from provider's stake and route it to the
-            // Treasury (no burning). `resolve_creating` restores the issuance
-            // burned by `slash_reserved`, keeping total issuance unchanged.
-            let (provider_cost_imbalance, remaining) =
-                T::Currency::slash_reserved(&who, provider_cost);
-            let actually_slashed = provider_cost.saturating_sub(remaining);
-            T::Currency::resolve_creating(&T::Treasury::get(), provider_cost_imbalance);
-
-            // Update provider stake in storage
+            // Count the responded-to challenge per tier (resolution-time
+            // stats; creation leaves no trace).
             Providers::<T>::mutate(&who, |maybe_provider| {
                 if let Some(provider) = maybe_provider {
-                    provider.stake = provider.stake.saturating_sub(actually_slashed);
+                    if challenge.authorized {
+                        provider.stats.challenges_received_authorized = provider
+                            .stats
+                            .challenges_received_authorized
+                            .saturating_add(1);
+                    } else {
+                        provider.stats.challenges_received_public =
+                            provider.stats.challenges_received_public.saturating_add(1);
+                    }
                 }
-            });
-
-            // Challenger lost — they pay `challenger_cost` from their deposit
-            // and the provider keeps their stake. Bump the failed counter so
-            // the SDK can report a realistic success rate.
-            ChallengerStats::<T>::mutate(&challenge.challenger, |stats| {
-                stats.failed_challenges = stats.failed_challenges.saturating_add(1);
             });
 
             Self::deposit_event(Event::ChallengeDefended {
@@ -2519,26 +2844,66 @@ pub mod pallet {
                 provider: who,
                 response_time_blocks: response_time,
                 challenger_cost,
-                provider_cost: actually_slashed,
+                provider_cost,
             });
 
             Ok(())
+        }
+
+        /// Slash a provider whose challenge expired without a response.
+        ///
+        /// Anyone may call this; it is free on success. Slashes the provider's
+        /// whole stake to the Treasury, refunds the challenger's deposit and
+        /// clears the pending-challenge counters that block the provider's
+        /// exits. A provider may call it against itself to unblock
+        /// `complete_deregister`.
+        ///
+        /// Errors: `ChallengeNotExpired` while the provider may still respond
+        /// (`anchor <= deadline`); `ChallengeNotFound` once resolved.
+        #[pallet::call_index(45)]
+        #[pallet::weight(T::WeightInfo::resolve_expired_challenge())]
+        pub fn resolve_expired_challenge(
+            origin: OriginFor<T>,
+            challenge_id: ChallengeId<BlockNumberFor<T>>,
+        ) -> DispatchResultWithPostInfo {
+            ensure_signed_or_root(origin)?;
+            ensure!(
+                Self::current_anchor_block() > challenge_id.deadline,
+                Error::<T>::ChallengeNotExpired
+            );
+            let challenge = Challenges::<T>::take(challenge_id.deadline, challenge_id.index)
+                .ok_or(Error::<T>::ChallengeNotFound)?;
+            NextChallengeIndex::<T>::remove(challenge_id.deadline);
+            Self::decrement_pending(challenge.bucket_id, &challenge.provider);
+            Self::slash_provider_for_failed_challenge(&challenge, challenge_id);
+            Ok(Pays::No.into())
         }
 
         // ─────────────────────────────────────────────────────────────────────
         // Replica Sync
         // ─────────────────────────────────────────────────────────────────────
 
-        /// Replica confirms sync to MMR roots.
+        /// Replica provider only. Attest, with a signature over `roots`, that
+        /// the replica holds the bucket at one of them. If a root matches the
+        /// current snapshot or recent history, the replica is paid
+        /// `sync_price` from its sync balance. Rate-limited by
+        /// `min_sync_interval`.
         #[pallet::call_index(50)]
         #[pallet::weight(T::WeightInfo::confirm_replica_sync())]
         pub fn confirm_replica_sync(
             origin: OriginFor<T>,
             bucket_id: BucketId,
             roots: [Option<H256>; 7],
-            _signature: sp_runtime::MultiSignature,
+            signature: sp_runtime::MultiSignature,
         ) -> DispatchResult {
             let who = ensure_signed(origin)?;
+
+            // The replica attests which roots it actually holds by signing
+            // the SCALE-encoded `roots` array with its registered key.
+            // There is no nonce: a replayed confirmation re-attests the same
+            // roots, and the new-root / sync-interval checks below already
+            // make that a no-op.
+            Self::verify_signature(&signature, &roots.encode(), &who)?;
 
             let bucket = Buckets::<T>::get(bucket_id).ok_or(Error::<T>::BucketNotFound)?;
 
@@ -2575,7 +2940,10 @@ pub mod pallet {
 
                     // Check it's a new root
                     if let Some(record) = last_sync {
-                        ensure!(matched_root != record.root, Error::<T>::InvalidSyncRoot);
+                        ensure!(
+                            matched_root != record.commitment.mmr_root,
+                            Error::<T>::InvalidSyncRoot
+                        );
                     }
 
                     // Pay for sync
@@ -2585,36 +2953,47 @@ pub mod pallet {
                     );
                     *sync_balance = sync_balance.saturating_sub(*sync_price);
 
-                    // Update last sync. Record the synced range only when the
-                    // replica matched the current snapshot (position 0), so
-                    // challenge_replica can bind the proof to a leaf; a match on a
-                    // historical root carries no on-chain range (the chain does
-                    // not retain `historical_roots` sequence metadata), so its
-                    // range is left `None` and `challenge_replica` rejects it with
-                    // `ReplicaSyncRangeUnknown` rather than opening an
-                    // undefendable challenge.
-                    let range = if position_matched == 0 {
+                    // Capture sequence metadata for the matched root so a
+                    // future `challenge_replica` can target a specific leaf.
+                    // For the current snapshot (position_matched == 0) we
+                    // know start_seq + leaf_count exactly. Historical roots
+                    // don't carry sequence metadata in `historical_roots`, so
+                    // they default to 0 here — challenges targeting a leaf
+                    // beyond seq 0 in that case still work because
+                    // `challenge_replica` only uses `start_seq` as an offset
+                    // additive identity.
+                    let (start_seq, leaf_count) = if position_matched == 0 {
                         bucket
                             .snapshot
                             .as_ref()
                             .map(|s| (s.commitment.start_seq, s.commitment.leaf_count))
+                            .unwrap_or((0, 0))
                     } else {
-                        None
+                        (0u64, 0u64)
                     };
+
+                    // Update last sync
                     *last_sync = Some(ReplicaSyncRecord {
-                        root: matched_root,
-                        range,
+                        commitment: Commitment {
+                            mmr_root: matched_root,
+                            start_seq,
+                            leaf_count,
+                        },
                         block: anchor_block,
                     });
 
-                    // Transfer sync payment to provider
-                    T::Currency::unreserve(&agreement.owner, *sync_price);
-                    T::Currency::transfer(
-                        &agreement.owner,
-                        &who,
-                        *sync_price,
-                        ExistenceRequirement::KeepAlive,
-                    )?;
+                    // Pay the sync fee straight out of escrow.
+                    let sync_payment = *sync_price;
+                    Self::settle_payment(&agreement.owner, &who, sync_payment)?;
+
+                    Providers::<T>::mutate(&who, |maybe_provider| {
+                        if let Some(provider_info) = maybe_provider {
+                            provider_info.stats.lifetime_revenue = provider_info
+                                .stats
+                                .lifetime_revenue
+                                .saturating_add(sync_payment);
+                        }
+                    });
 
                     Self::deposit_event(Event::ReplicaSynced {
                         bucket_id,
@@ -2629,7 +3008,8 @@ pub mod pallet {
             )
         }
 
-        /// Top up a replica's sync balance.
+        /// Add funds to the balance that pays a replica per confirmed sync.
+        /// Anyone may pay; the funds are escrowed on the agreement owner.
         #[pallet::call_index(51)]
         #[pallet::weight(T::WeightInfo::top_up_replica_sync_balance())]
         pub fn top_up_replica_sync_balance(
@@ -2640,8 +3020,6 @@ pub mod pallet {
         ) -> DispatchResult {
             let who = ensure_signed(origin)?;
 
-            T::Currency::reserve(&who, amount)?;
-
             StorageAgreements::<T>::try_mutate(
                 bucket_id,
                 &provider,
@@ -2649,6 +3027,10 @@ pub mod pallet {
                     let agreement = maybe_agreement
                         .as_mut()
                         .ok_or(Error::<T>::AgreementNotFound)?;
+
+                    // Escrowed on the owner: `sync_balance` is settled from the
+                    // owner's hold, whoever paid to top it up.
+                    Self::hold_payment_from(&who, &agreement.owner, amount)?;
 
                     let sync_balance = match &mut agreement.role {
                         ProviderRole::Replica { sync_balance, .. } => sync_balance,

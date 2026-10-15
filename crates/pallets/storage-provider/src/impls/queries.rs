@@ -20,6 +20,7 @@ fn challenge_to_response<T: Config>(
         deadline: deadline.saturated_into(),
         index,
         deposit: c.deposit.saturated_into::<u128>(),
+        authorized: c.authorized,
     }
 }
 
@@ -49,8 +50,7 @@ fn agreement_to_response<T: Config>(
                 sync_price: sync_price.saturated_into::<u128>(),
                 min_sync_interval: min_sync_interval.saturated_into::<u32>(),
                 last_sync: last_sync.map(|r| ReplicaSyncRecord {
-                    root: r.root,
-                    range: r.range,
+                    commitment: r.commitment,
                     block: r.block.saturated_into::<u32>(),
                 }),
             },
@@ -61,15 +61,11 @@ fn agreement_to_response<T: Config>(
 
 impl<T: Config> Pallet<T> {
     /// The anchor block: the clock every pallet duration (timeouts, expiries,
-    /// `valid_until`, nonce age) is measured against. Whether that is a relay
+    /// `valid_until`) is measured against. Whether that is a relay
     /// chain block, parachain block, or something else is a
     /// [`Config::BlockNumberProvider`] detail — callers (including off-chain
     /// consumers via the `current_anchor_block` runtime API) need not care.
     /// The relay chain in production, `System` in tests.
-    ///
-    /// During `on_initialize` this returns the *previous* block's anchor value
-    /// (the validation-data inherent has not run yet); everywhere else it is
-    /// the current block's.
     pub fn current_anchor_block() -> BlockNumberFor<T> {
         <T::BlockNumberProvider as sp_runtime::traits::BlockNumberProvider>::current_block_number()
     }
@@ -107,20 +103,10 @@ impl<T: Config> Pallet<T> {
                     .replica_sync_price
                     .map(|p| p.saturated_into::<u128>()),
                 accepting_extensions: info.settings.accepting_extensions,
-                registered_at: info.stats.registered_at.saturated_into::<u32>(),
-                agreements_total: info.stats.agreements_total,
-                agreements_extended: info.stats.agreements_extended,
-                agreements_not_extended: info.stats.agreements_not_extended,
-                agreements_burned: info.stats.agreements_burned,
-                challenges_received: info.stats.challenges_received,
-                challenges_failed: info.stats.challenges_failed,
                 max_capacity,
                 available_capacity,
                 deregister_at: info.deregister_at.map(|b| b.saturated_into::<u32>()),
-                reputation: crate::runtime_api::reputation_score(
-                    info.stats.challenges_received,
-                    info.stats.challenges_failed,
-                ),
+                stats: crate::runtime_api::ProviderStatsInfo::from(&info.stats),
             }
         })
     }
@@ -157,20 +143,10 @@ impl<T: Config> Pallet<T> {
                             .replica_sync_price
                             .map(|p| p.saturated_into::<u128>()),
                         accepting_extensions: info.settings.accepting_extensions,
-                        registered_at: info.stats.registered_at.saturated_into::<u32>(),
-                        agreements_total: info.stats.agreements_total,
-                        agreements_extended: info.stats.agreements_extended,
-                        agreements_not_extended: info.stats.agreements_not_extended,
-                        agreements_burned: info.stats.agreements_burned,
-                        challenges_received: info.stats.challenges_received,
-                        challenges_failed: info.stats.challenges_failed,
                         max_capacity,
                         available_capacity,
                         deregister_at: info.deregister_at.map(|b| b.saturated_into::<u32>()),
-                        reputation: crate::runtime_api::reputation_score(
-                            info.stats.challenges_received,
-                            info.stats.challenges_failed,
-                        ),
+                        stats: crate::runtime_api::ProviderStatsInfo::from(&info.stats),
                     },
                 )
             })
@@ -202,10 +178,14 @@ impl<T: Config> Pallet<T> {
                 primary_signers: s.primary_signers.clone(),
             }),
             total_snapshots: bucket.total_snapshots,
+            visibility: bucket.visibility,
         })
     }
 
     /// Query bucket providers.
+    ///
+    /// Returns every primary, including one just added by
+    /// `add_primary_provider` that has not received the bucket's data yet.
     pub fn query_bucket_providers(bucket_id: BucketId) -> Vec<T::AccountId> {
         Buckets::<T>::get(bucket_id)
             .map(|bucket| bucket.primary_providers.to_vec())
@@ -272,12 +252,15 @@ impl<T: Config> Pallet<T> {
             .collect()
     }
 
-    /// Query all challenges targeting a specific provider.
+    /// Challenges targeting a provider that it can still answer
+    /// (`deadline >= current_anchor_block`). Expired ones are omitted; they
+    /// wait for `resolve_expired_challenge`.
     pub fn query_provider_challenges(
         provider: &T::AccountId,
     ) -> Vec<crate::runtime_api::ChallengeResponse> {
+        let now = Self::current_anchor_block();
         Challenges::<T>::iter()
-            .filter(|(_, _, c)| &c.provider == provider)
+            .filter(|(deadline, _, c)| &c.provider == provider && *deadline >= now)
             .map(|(deadline, index, c)| challenge_to_response::<T>(deadline, index, c))
             .collect()
     }

@@ -7,11 +7,12 @@
  * workflow file can focus on scenario logic.
  */
 
-import type { PolkadotSigner } from "polkadot-api/signer";
+import type { TxCreator } from "polkadot-api/tx-creator";
 import {
   connect,
-  establishStorageAgreement,
+  createBucketWithPrimary,
   formatDispatchError,
+  getAgreementNonce,
   negotiateTerms,
   READ_OPTS,
   waitForBlockProduction,
@@ -103,7 +104,7 @@ export async function runSuite<C>(
  * Submit a transaction and assert it is *included* but *dispatches with an
  * error* whose stringified representation contains `expectedError`.
  *
- * The included-block result (`txBestBlocksState`) is the source of truth: a
+ * The included-block result (`inBestBlock`) is the source of truth: a
  * dispatch failure surfaces as `result.ok === false` with a typed
  * `result.dispatchError`, which we match via {@link formatDispatchError}. The
  * "tx succeeded" and "wrong error" assertions are checked on that typed result
@@ -118,13 +119,13 @@ export async function runSuite<C>(
  */
 export async function submitTxExpectFailure(
   tx: SubmittableTx,
-  signer: PolkadotSigner,
+  signer: TxCreator,
   expectedError: string,
   label: string,
 ) {
   let result: any;
   try {
-    const observable = tx.signSubmitAndWatch(signer);
+    const observable = tx.createSubmitAndWatch(signer);
     result = await new Promise<any>((resolve, reject) => {
       let done = false;
       let sub: { unsubscribe(): void } | undefined;
@@ -142,7 +143,7 @@ export async function submitTxExpectFailure(
       sub = observable.subscribe({
         next: (ev) => {
           if (done) return;
-          if (ev.type === "txBestBlocksState" && ev.found) {
+          if (ev.type === "inBestBlock") {
             cleanup();
             resolve(ev);
           }
@@ -204,7 +205,7 @@ export async function getFree(api: ParachainApi, who: ChainSigner): Promise<bigi
 export interface NegotiateOpts {
   maxBytes: bigint;
   duration: number;
-  /** Set for replica agreements against an existing bucket. */
+  /** Set for a quote against an existing bucket. */
   bucketId?: bigint | null;
   replicaParams?: { sync_balance: bigint; min_sync_interval: number } | null;
   /** Defaults to the provider's current on-chain price_per_byte. */
@@ -222,23 +223,26 @@ export async function negotiateSigned(
   provider: ChainSigner,
   { maxBytes, duration, bucketId = null, replicaParams = null, pricePerByte = null }: NegotiateOpts,
 ): Promise<SignedTerms> {
-  let price = pricePerByte;
-  if (price == null) {
-    const info = await api.query.StorageProvider.Providers.getValue(provider.address, READ_OPTS);
-    price = info?.settings?.price_per_byte ?? 1n;
-  }
+  const [nonce, price] = await Promise.all([
+    getAgreementNonce(api, owner.address),
+    pricePerByte ??
+      api.query.StorageProvider.Providers.getValue(provider.address, READ_OPTS).then(
+        (info) => info?.settings?.price_per_byte ?? 1n,
+      ),
+  ]);
   return negotiateTerms(providerUrl, {
     owner: owner.address,
     max_bytes: maxBytes,
     duration,
     price_per_byte: price,
-    bucket_id: bucketId,
+    nonce,
+    bucket: bucketId,
     replica_params: replicaParams,
   });
 }
 
 /**
- * Negotiate signed terms and redeem them via establish_storage_agreement.
+ * Negotiate signed terms and redeem them via create_bucket_with_primary.
  * Returns the new bucket id plus the signed terms (handy for replica flows).
  */
 export async function negotiateAndEstablish(
@@ -253,7 +257,7 @@ export async function negotiateAndEstablish(
   finalized = false,
 ): Promise<{ bucketId: bigint; signed: SignedTerms }> {
   const signed = await negotiateSigned(api, providerUrl, owner, provider, opts);
-  const { bucketId } = await establishStorageAgreement(
+  const { bucketId } = await createBucketWithPrimary(
     api,
     owner,
     provider,

@@ -2,15 +2,15 @@
 //
 // Write path for the Photos contract: map the signer's account, encode
 // `createLibrary`, and submit it through `pallet_revive` via PAPI's
-// `signAndSubmit`. The browser port of the M1 create sequence in
+// `createAndSubmit`. The browser port of the M1 create sequence in
 // `scripts/photos-flow.ts` (+ `scripts/lib/contract.ts`), but submitting with
-// `tx.signAndSubmit(signer)` instead of the script-only `submitTx` loop. viem is
+// `tx.createAndSubmit(signer)` instead of the script-only `submitTx` loop. viem is
 // used for ABI encode/decode only — no EVM RPC client.
 
 import { ss58Decode } from '@polkadot-labs/hdkd-helpers'
 import { decodeEventLog } from 'viem'
-import type { PolkadotSigner } from 'polkadot-api'
-import { toHex, type ParachainApi, type SignedTerms } from '@web3-storage/papi'
+import type { TxCreator } from 'polkadot-api/tx-creator'
+import { signedTermsBucketId, toHex, type ParachainApi, type SignedTerms } from '@web3-storage/papi'
 // Reuse the SDK's ABI encoder and the shared gas/storage defaults so the browser
 // path can't drift from the headless flow (`scripts/*`) that already imports them.
 import { DEFAULT_GAS_LIMIT, DEFAULT_STORAGE_DEPOSIT_LIMIT, encodeCall } from '@web3-storage/sdk/revive'
@@ -20,13 +20,14 @@ import { PHOTOS_ABI } from '@/contract/photos-abi'
 /** Token base unit (12 decimals, like Polkadot). */
 export const UNIT = 10n ** 12n
 
-/** `IDriveRegistry.PrimitiveAgreementTerms`, shaped for viem ABI encoding. */
+/** `IWeb3Storage.PrimitiveAgreementTerms`, shaped for viem ABI encoding. */
 export interface PrimitiveAgreementTerms {
   owner: `0x${string}`
   maxBytes: bigint
   duration: number
   pricePerByte: bigint
   validUntil: number
+  /** Owner-chosen replay-protection nonce: must equal the owner's next expected on-chain value. */
   nonce: bigint
   hasBucketId: boolean
   bucketId: bigint
@@ -74,7 +75,7 @@ export function toContractTerms(
     min_sync_interval?: number
     sync_price?: number | bigint
   } | null
-  const bucket = t.bucket_id
+  const bucketId = signedTermsBucketId(signed)
   return {
     terms: {
       owner: toHex(ownerPublicKey) as `0x${string}`,
@@ -89,8 +90,8 @@ export function toContractTerms(
         minSyncInterval: Number(rp?.min_sync_interval ?? 0),
         syncPrice: BigInt(rp?.sync_price ?? 0),
       },
-      hasBucketId: bucket != null,
-      bucketId: BigInt(bucket ?? 0),
+      hasBucketId: bucketId != null,
+      bucketId: bucketId ?? 0n,
     },
     signature: (signed.signature.startsWith('0x')
       ? signed.signature
@@ -101,7 +102,6 @@ export function toContractTerms(
 /** Arguments for `createLibrary`, in ABI order. */
 export interface CreateLibraryArgs {
   userAccount: `0x${string}`
-  name: string
   provider: `0x${string}`
   terms: PrimitiveAgreementTerms
   signature: `0x${string}`
@@ -111,7 +111,6 @@ export interface CreateLibraryArgs {
 export function encodeCreateLibrary(args: CreateLibraryArgs): Uint8Array {
   return encodeCall(PHOTOS_ABI, 'createLibrary', [
     args.userAccount,
-    args.name,
     args.provider,
     args.terms,
     args.signature,
@@ -187,14 +186,14 @@ function waitForNextBlock(timeoutMs = 12_000): Promise<void> {
   })
 }
 
-/** `signAndSubmit` with a bounded retry on stale-nonce rejections. */
-async function signAndSubmitWithRetry<T>(
-  tx: { signAndSubmit: (signer: PolkadotSigner) => Promise<T> },
-  signer: PolkadotSigner,
+/** `createAndSubmit` with a bounded retry on stale-nonce rejections. */
+async function createAndSubmitWithRetry<T>(
+  tx: { createAndSubmit: (signer: TxCreator) => Promise<T> },
+  signer: TxCreator,
 ): Promise<T> {
   for (let attempt = 1; ; attempt++) {
     try {
-      return await tx.signAndSubmit(signer)
+      return await tx.createAndSubmit(signer)
     } catch (err) {
       if (attempt >= STALE_MAX_ATTEMPTS || !isStaleError(err)) throw err
       await waitForNextBlock()
@@ -205,7 +204,7 @@ async function signAndSubmitWithRetry<T>(
 export type CreateLibraryErrorKind =
   | 'payment-exceeds-max'
   | 'terms-expired'
-  | 'terms-reused'
+  | 'nonce-mismatch'
   | 'bad-signature'
   | 'already-exists'
   | 'capacity'
@@ -254,10 +253,11 @@ export function classifyDispatchError(dispatchError: unknown): CreateLibraryErro
       message: 'The provider-signed terms expired before the transaction landed. Try again to re-negotiate.',
     }
   }
-  if (raw.includes('NonceAlreadyUsed')) {
+  if (raw.includes('NonceMismatch')) {
     return {
-      kind: 'terms-reused',
-      message: 'The signed terms were already used. Try again to re-negotiate fresh terms.',
+      kind: 'nonce-mismatch',
+      message:
+        "The signed terms' nonce no longer matches the owner's agreement nonce, usually because another transaction through this contract used it first. Try again.",
     }
   }
   if (raw.includes('InvalidSignature') || raw.includes('BadSignature')) {
@@ -277,8 +277,8 @@ export function classifyDispatchError(dispatchError: unknown): CreateLibraryErro
  * re-map of an already-mapped account is treated as success. Mirrors
  * `scripts/lib/contract.ts:ensureAccountMapped`.
  */
-export async function ensureAccountMapped(api: ParachainApi, signer: PolkadotSigner): Promise<void> {
-  const result = await signAndSubmitWithRetry(api.tx.Revive.map_account(), signer)
+export async function ensureAccountMapped(api: ParachainApi, signer: TxCreator): Promise<void> {
+  const result = await createAndSubmitWithRetry(api.tx.Revive.map_account(), signer)
   if (result.ok) return
   const raw = stringifyDispatchError(result.dispatchError)
   if (raw.includes('AccountAlreadyMapped') || raw.includes('AlreadyMapped')) return
@@ -286,7 +286,7 @@ export async function ensureAccountMapped(api: ParachainApi, signer: PolkadotSig
 }
 
 export type SubmitCreateLibraryResult =
-  | { ok: true; driveId?: bigint }
+  | { ok: true; bucketId?: bigint }
   | { ok: false; error: CreateLibraryError }
 
 /**
@@ -294,16 +294,16 @@ export type SubmitCreateLibraryResult =
  * attaching `value` (the buffered payment). Returns a discriminated result so
  * the caller can surface a classified error inline rather than catching throws.
  *
- * A contract revert (the `createDrive` precompile rejecting the payment/terms,
- * or Photos.sol's `require`) does NOT fail the `Revive.call` extrinsic —
- * `result.ok` stays true with no drive created. So success is confirmed the way
- * the headless flow asserts it (`scripts/photos-flow.ts`): the on-chain
- * `DriveRegistry.DriveCreated` event (and the contract's `LibraryCreated` log).
- * Their absence means the call reverted.
+ * A contract revert (the `createBucketWithPrimary` precompile rejecting the
+ * payment/terms, or Photos.sol's `require`) does NOT fail the `Revive.call`
+ * extrinsic — `result.ok` stays true with no bucket created. So success is
+ * confirmed the way the headless flow asserts it (`scripts/photos-flow.ts`): the
+ * on-chain `StorageProvider.BucketCreated` event (and the contract's
+ * `LibraryCreated` log). Their absence means the call reverted.
  */
 export async function submitCreateLibrary(
   api: ParachainApi,
-  signer: PolkadotSigner,
+  signer: TxCreator,
   contractAddressBytes: Uint8Array,
   data: Uint8Array,
   { value }: { value: bigint },
@@ -315,17 +315,17 @@ export async function submitCreateLibrary(
     storage_deposit_limit: DEFAULT_STORAGE_DEPOSIT_LIMIT,
     data, // Vec<u8> → Uint8Array
   })
-  const result = await signAndSubmitWithRetry(tx, signer)
+  const result = await createAndSubmitWithRetry(tx, signer)
   if (!result.ok) {
     return { ok: false, error: classifyDispatchError(result.dispatchError) }
   }
-  const driveId = driveIdFromEvents(result.events, api, toHex(contractAddressBytes))
+  const bucketId = bucketIdFromEvents(result.events, api, toHex(contractAddressBytes))
   const created =
-    driveId !== undefined || api.event.DriveRegistry.DriveCreated.filter(result.events).length > 0
+    bucketId !== undefined || api.event.StorageProvider.BucketCreated.filter(result.events).length > 0
   if (!created) {
     return { ok: false, error: contractRevertedError() }
   }
-  return { ok: true, driveId }
+  return { ok: true, bucketId }
 }
 
 /**
@@ -361,18 +361,18 @@ function decodeContractLogs(
 }
 
 /**
- * Decode the `driveId` from the contract's `LibraryCreated` log in a successful
+ * Decode the `bucketId` from the contract's `LibraryCreated` log in a successful
  * `createLibrary` result, or `undefined` if it can't be found. Best-effort: the
  * UI flips to State B from the unsigned `libraryOf` re-read regardless.
  */
-export function driveIdFromEvents(
+export function bucketIdFromEvents(
   events: unknown[],
   api: ParachainApi,
   contractAddress: string,
 ): bigint | undefined {
   for (const log of decodeContractLogs(events, api, contractAddress)) {
-    const driveId = (log.args as { driveId?: bigint } | undefined)?.driveId
-    if (log.eventName === 'LibraryCreated' && driveId != null) return driveId
+    const bucketId = (log.args as { bucketId?: bigint } | undefined)?.bucketId
+    if (log.eventName === 'LibraryCreated' && bucketId != null) return bucketId
   }
   return undefined
 }
@@ -396,9 +396,9 @@ export function encodeSetRoot(rootCid: RootCid): Uint8Array {
 }
 
 /**
- * Anchor the drive's metadata Merkle root on-chain via `setRoot(rootCid)` — a
+ * Anchor the library bucket's metadata Merkle root on-chain via `setRoot(rootCid)` — a
  * signed, value-less `Revive.call`. The browser port of
- * `scripts/lib/photos.ts:anchorRoot`, submitting with `signAndSubmit` (+ the
+ * `scripts/lib/photos.ts:anchorRoot`, submitting with `createAndSubmit` (+ the
  * shared stale-nonce retry) instead of the script's `submitTx` loop.
  *
  * Like `createLibrary`, a contract revert (Photos.sol's `require(lib.exists)`)
@@ -407,7 +407,7 @@ export function encodeSetRoot(rootCid: RootCid): Uint8Array {
  */
 export async function submitSetRoot(
   api: ParachainApi,
-  signer: PolkadotSigner,
+  signer: TxCreator,
   contractAddressBytes: Uint8Array,
   rootCid: RootCid,
 ): Promise<void> {
@@ -418,7 +418,7 @@ export async function submitSetRoot(
     storage_deposit_limit: DEFAULT_STORAGE_DEPOSIT_LIMIT,
     data: encodeSetRoot(rootCid),
   })
-  const result = await signAndSubmitWithRetry(tx, signer)
+  const result = await createAndSubmitWithRetry(tx, signer)
   if (!result.ok) {
     throw new Error(`setRoot failed on-chain: ${stringifyDispatchError(result.dispatchError)}`)
   }

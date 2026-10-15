@@ -242,33 +242,6 @@ impl ProviderClient {
     // Term Negotiation (off-chain)
     // ═════════════════════════════════════════════════════════════════════════
 
-    /// Read a provider's on-chain `ProviderReplayState.hsn`. Returns
-    /// `Ok(None)` if the provider has no replay state yet (never signed
-    /// any terms).
-    pub async fn fetch_replay_hsn(
-        chain_ws_url: &str,
-        provider: &AccountId32,
-    ) -> ClientResult<Option<u64>> {
-        let chain = SubstrateClient::connect(chain_ws_url).await?;
-        let at = chain.at_current_block().await?;
-        let value = at
-            .storage()
-            .try_fetch(
-                api::storage().storage_provider().provider_replay_states(),
-                (convert::to_subxt_account(provider),),
-            )
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to fetch replay state: {e}")))?;
-
-        let Some(value) = value else {
-            return Ok(None);
-        };
-        let window = value
-            .decode()
-            .map_err(|e| ClientError::Chain(format!("Failed to decode replay state: {e}")))?;
-        Ok(Some(window.hsn))
-    }
-
     /// Read the chain's `StorageProvider::RequestTimeout` runtime constant —
     /// the validity window (in blocks) applied to provider-signed terms.
     ///
@@ -285,7 +258,8 @@ impl ProviderClient {
             .entry(
                 storage_subxt::api::constants()
                     .storage_provider()
-                    .request_timeout(),
+                    .request_timeout()
+                    .unvalidated(),
             )
             .map_err(|e| ClientError::Chain(format!("Failed to decode RequestTimeout: {e}")))?;
 
@@ -294,9 +268,9 @@ impl ProviderClient {
 
     /// Negotiate provider-signed agreement terms over HTTP.
     ///
-    /// Owner posts the proposed shape; the provider node allocates nonce + validity window from
-    /// its own state, signs, returns a [`SignedTerms`](crate::agreement::SignedTerms) ready for
-    /// [`AdminClient::establish_storage_agreement`](crate::admin::AdminClient::establish_storage_agreement).
+    /// Owner posts the proposed shape and its next agreement nonce; the provider node sets the
+    /// validity window, signs, and returns a [`SignedTerms`](crate::agreement::SignedTerms) ready for
+    /// [`AdminClient::create_bucket_with_primary`](crate::admin::AdminClient::create_bucket_with_primary).
     pub async fn negotiate_terms(
         provider_url: &str,
         req: &crate::agreement::NegotiateRequest,
@@ -394,7 +368,7 @@ impl ProviderClient {
         &self,
         bucket_id: BucketId,
         mmr_roots: [Option<H256>; 7],
-        signature: Vec<u8>,
+        signature: &sp_runtime::MultiSignature,
     ) -> ClientResult<()> {
         let chain = self.base.chain()?;
         let signer = chain.signer()?;
@@ -405,7 +379,7 @@ impl ProviderClient {
             mmr_roots.iter().filter(|r| r.is_some()).count()
         );
 
-        let tx = extrinsics::confirm_replica_sync(bucket_id, mmr_roots, signature)?;
+        let tx = extrinsics::confirm_replica_sync(bucket_id, mmr_roots, signature);
 
         chain
             .api()
@@ -514,100 +488,61 @@ impl ProviderClient {
     // Monitoring & Analytics
     // ═════════════════════════════════════════════════════════════════════════
 
-    /// Get your provider statistics.
-    pub async fn get_stats(&self) -> ClientResult<ProviderStats> {
-        let chain = self.base.chain()?;
-        let provider_account = self.provider_account();
-
-        let at = chain.at_current_block().await?;
-        let value = at
-            .storage()
-            .try_fetch(
-                api::storage().storage_provider().providers(),
-                (convert::to_subxt_account(&provider_account),),
-            )
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to fetch provider: {e}")))?;
-
-        let Some(value) = value else {
-            return Ok(ProviderStats::default());
-        };
-
-        let info = value
-            .decode()
-            .map_err(|e| ClientError::Chain(format!("Failed to decode provider: {e}")))?;
-
-        let reputation = if info.stats.agreements_total > 0 {
-            let failure_rate =
-                info.stats.challenges_failed as f64 / info.stats.agreements_total as f64;
-            ((1.0 - failure_rate) * 100.0).clamp(0.0, 100.0) as u8
-        } else {
-            100
-        };
-
-        Ok(ProviderStats {
-            stake: info.stake,
-            committed_bytes: info.committed_bytes,
-            agreements_total: info.stats.agreements_total,
-            agreements_extended: info.stats.agreements_extended,
-            challenges_received: info.stats.challenges_received,
-            challenges_failed: info.stats.challenges_failed,
-            reputation,
-        })
-    }
-
-    /// Get your total earnings (all time).
+    /// Get your provider statistics, or `None` if the account is not a
+    /// registered provider.
     ///
-    /// Note: historical earnings are not stored on-chain; this returns 0.
-    pub async fn get_total_earnings(&self) -> ClientResult<u128> {
-        Ok(0)
-    }
-
-    /// Get your current committed bytes vs available capacity.
-    pub async fn get_capacity_info(&self) -> ClientResult<CapacityInfo> {
-        let chain = self.base.chain()?;
-        let provider_account = self.provider_account();
-
-        let at = chain.at_current_block().await?;
-        let value = at
-            .storage()
-            .try_fetch(
-                api::storage().storage_provider().providers(),
-                (convert::to_subxt_account(&provider_account),),
-            )
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to fetch provider: {e}")))?;
-
-        let Some(value) = value else {
-            return Ok(CapacityInfo {
-                committed_bytes: 0,
-                available_bytes: 0,
-                stake: 0,
-                required_stake: 0,
-            });
+    /// Via the `provider_info` runtime API, so `reputation` is the chain's own
+    /// number rather than a formula re-implemented here.
+    pub async fn get_stats(&self) -> ClientResult<Option<ProviderStats>> {
+        let Some(info) = self.get_provider_info(&self.provider_account()).await? else {
+            return Ok(None);
         };
 
-        let info = value
-            .decode()
-            .map_err(|e| ClientError::Chain(format!("Failed to decode provider: {e}")))?;
-
-        let available_bytes = info
-            .settings
-            .max_capacity
-            .saturating_sub(info.committed_bytes);
-
-        Ok(CapacityInfo {
-            committed_bytes: info.committed_bytes,
-            available_bytes,
+        Ok(Some(ProviderStats {
             stake: info.stake,
-            required_stake: 0,
-        })
+            committed_bytes: info.committed_bytes,
+            agreements_total: info.agreements_total,
+            agreements_extended: info.agreements_extended,
+            challenges_received_authorized: info.challenges_received_authorized,
+            challenges_received_public: info.challenges_received_public,
+            challenges_failed: info.challenges_failed,
+            reputation: info.reputation,
+        }))
     }
 
-    /// Monitor reputation score.
-    pub async fn get_reputation(&self) -> ClientResult<u8> {
-        let stats = self.get_stats().await?;
-        Ok(stats.reputation)
+    /// Get your total earnings (all time), or `None` if the account is not a
+    /// registered provider.
+    ///
+    /// The chain's `lifetime_revenue`, counted from the current registration —
+    /// deregistering drops the provider record and the tally with it.
+    pub async fn get_total_earnings(&self) -> ClientResult<Option<u128>> {
+        Ok(self
+            .get_provider_info(&self.provider_account())
+            .await?
+            .map(|info| info.lifetime_revenue))
+    }
+
+    /// Get your current committed bytes vs available capacity, or `None` if
+    /// the account is not a registered provider.
+    ///
+    /// `available_bytes` is the chain's `available_capacity`: `None` is
+    /// unlimited, distinct from `Some(0)` ("full").
+    pub async fn get_capacity_info(&self) -> ClientResult<Option<CapacityInfo>> {
+        let Some(info) = self.get_provider_info(&self.provider_account()).await? else {
+            return Ok(None);
+        };
+
+        Ok(Some(CapacityInfo {
+            committed_bytes: info.committed_bytes,
+            available_bytes: info.available_capacity,
+            stake: info.stake,
+        }))
+    }
+
+    /// Monitor reputation score, or `None` if the account is not a registered
+    /// provider. An unregistered account has no score — it is not a zero.
+    pub async fn get_reputation(&self) -> ClientResult<Option<u8>> {
+        Ok(self.get_stats().await?.map(|stats| stats.reputation))
     }
 }
 
@@ -653,13 +588,17 @@ pub struct ChallengeInfo {
     pub chunk_index: u64,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct ProviderStats {
     pub stake: u128,
     pub committed_bytes: u64,
     pub agreements_total: u32,
     pub agreements_extended: u32,
-    pub challenges_received: u32,
+    /// Successfully defended challenges from authorized challengers
+    /// (member/agreement owner at creation). Counted at resolution.
+    pub challenges_received_authorized: u32,
+    /// Same, for general-public challengers.
+    pub challenges_received_public: u32,
     pub challenges_failed: u32,
     pub reputation: u8,
 }
@@ -667,7 +606,11 @@ pub struct ProviderStats {
 #[derive(Debug, Clone)]
 pub struct CapacityInfo {
     pub committed_bytes: u64,
-    pub available_bytes: u64,
+    /// Free capacity as the chain reports it; `None` = unlimited.
+    pub available_bytes: Option<u64>,
+    /// Staked balance. The pallet requires `MinStakePerByte` times the bytes
+    /// committed by each new agreement, and times `max_capacity` when
+    /// `update_provider_settings` sets a non-zero one. It exposes no
+    /// required-stake figure, so none is reported here.
     pub stake: u128,
-    pub required_stake: u128,
 }

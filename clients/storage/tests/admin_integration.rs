@@ -36,7 +36,7 @@ async fn test_bucket_lifecycle() {
     let _guard = chain_guard().await;
 
     // `chain_setup` registers Alice as a provider, signs primary terms with
-    // her keypair, and redeems them via `establish_storage_agreement` to
+    // her keypair, and redeems them via `create_bucket_with_primary` to
     // create a fresh bucket. Returns `None` when the chain isn't reachable.
     let setup = match common::chain_setup().await {
         Some(s) => s,

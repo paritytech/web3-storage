@@ -26,10 +26,13 @@ export interface PhotosProvider {
   url: string | null
   pricePerByte: bigint
   acceptingPrimary: boolean
-  availableCapacity: bigint
+  /** Free capacity per the chain; `undefined` = unlimited, not `0n` ("full"). */
+  availableCapacity: bigint | undefined
   maxCapacity: bigint
   minDuration: number
   maxDuration: number
+  /** 0-100, computed on-chain by `ProviderStats::reputation`. */
+  reputation: number
 }
 
 /**
@@ -49,8 +52,9 @@ export async function listProviders(api: ParachainApi): Promise<PhotosProvider[]
     const info = match.info
     const multiaddr = decoder.decode(info.multiaddr)
     const maxCapacity = BigInt(info.max_capacity ?? 0)
-    const committedBytes = BigInt(info.committed_bytes ?? 0)
-    const availableCapacity = maxCapacity > committedBytes ? maxCapacity - committedBytes : 0n
+    // The chain already computed this; `null` is its "unlimited".
+    const availableCapacity =
+      info.available_capacity == null ? undefined : BigInt(info.available_capacity)
 
     return {
       // `match.account` is the SCALE-encoded AccountId (32 raw bytes) — the same
@@ -58,20 +62,23 @@ export async function listProviders(api: ParachainApi): Promise<PhotosProvider[]
       account: toSs58(match.account),
       multiaddr,
       url: parseMultiaddrToUrl(multiaddr),
-      pricePerByte: BigInt(info.price_per_byte ?? 0),
-      acceptingPrimary: info.accepting_primary ?? false,
+      pricePerByte: info.price_per_byte,
+      acceptingPrimary: info.accepting_primary,
       availableCapacity,
       // `max_capacity === 0` means "unlimited" in the pallet.
       maxCapacity,
-      minDuration: info.min_duration ?? 0,
-      maxDuration: info.max_duration ?? 0,
+      minDuration: info.min_duration,
+      maxDuration: info.max_duration,
+      reputation: info.stats.reputation,
     }
   })
 
+  // Most free capacity first; unlimited (`undefined`) sorts ahead of metered.
   providers.sort((a, b) => {
-    if (b.availableCapacity > a.availableCapacity) return 1
-    if (b.availableCapacity < a.availableCapacity) return -1
-    return 0
+    if (a.availableCapacity === b.availableCapacity) return 0
+    if (a.availableCapacity === undefined) return -1
+    if (b.availableCapacity === undefined) return 1
+    return b.availableCapacity > a.availableCapacity ? 1 : -1
   })
 
   return providers
@@ -98,8 +105,8 @@ export function annotate(
   const reasons: string[] = []
   if (!provider.acceptingPrimary) reasons.push('Not accepting')
   if (provider.url === null) reasons.push('No HTTP endpoint')
-  // `max_capacity === 0` is unlimited; otherwise it must cover the request.
-  if (provider.maxCapacity !== 0n && provider.availableCapacity < bytesNeeded) {
+  // `undefined` free capacity is unlimited; otherwise it must cover the request.
+  if (provider.availableCapacity !== undefined && provider.availableCapacity < bytesNeeded) {
     reasons.push('Capacity full')
   }
   if (durationBlocks < provider.minDuration) reasons.push('Duration too short')

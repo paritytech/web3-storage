@@ -24,9 +24,6 @@ otherwise — or a PR number via `gh pr view` / `gh pr diff`):
    Check the directory listing — new design docs may have been added since this list
    was written.
 
-   `docs/reference/` is derived documentation rather than design — the
-   `reference-docs` skill covers it.
-
 2. Optionally consult `docs/drafts/` for background. These documents are unratified,
    WIP, or archives of removed functionality, so they are context rather than spec —
    but they often explain the reasoning behind an area the design docs cover only

@@ -46,7 +46,8 @@ Both use `HAS_CONTRACT_INFO = false` (no storage deposits or contract metadata; 
 | `extendAgreement(uint64 bucketId, bytes32 provider, uint32 additionalDuration, uint128 maxPayment)`                 | `extend_agreement`                                  |
 | `endAgreementPay(uint64 bucketId, bytes32 provider)`                                                                | `end_agreement` (action: `Pay`)                     |
 | `endAgreementBurn(uint64 bucketId, bytes32 provider, uint8 burnPercent)`                                            | `end_agreement` (action: `Burn { burn_percent }`)   |
-| `challengeCheckpoint(uint64 bucketId, bytes32 provider, uint64 leafIndex, uint64 chunkIndex)`                       | `challenge_checkpoint`                              |
+| `challengeCheckpoint(uint64 bucketId, bytes32 provider, uint64 leafIndex, uint64 chunkIndex) → (uint32 deadline, uint16 index)` | `challenge_checkpoint`                 |
+| `resolveExpiredChallenge(uint32 deadline, uint16 index)`                                                            | `resolve_expired_challenge` (permissionless; gas is charged even though the native call is free) |
 
 ### `IDriveRegistry` (drive-registry, `0x…09020000`)
 
@@ -75,7 +76,7 @@ Both use `HAS_CONTRACT_INFO = false` (no storage deposits or contract metadata; 
 | `BucketId` / `DriveId` (`u64`) | `uint64`   | Synthesized pre-dispatch from `NextBucketId` / `NextDriveId` so the contract gets back the id assigned to *this* call.            |
 | `BlockNumberFor<T>` (`u32`)    | `uint32`   |                                                                                                                                    |
 | `BalanceOf<T>` (`u128`)        | `uint128`  | Substrate atomic units — not eth wei.                                                                                              |
-| `AccountId` (`AccountId32`)    | `bytes32`  | Raw 32-byte sr25519 pubkey. Substrate-only providers can't be safely round-tripped through `AccountId32Mapper.to_address()`.       |
+| `AccountId` (`AccountId32`)    | `bytes32`  | Raw 32-byte `AccountId32` (the account id, not a public key). Substrate-only providers can't be safely round-tripped through `AccountId32Mapper.to_address()`. |
 | `Role`             | `uint8`    | 0 = Admin, 1 = Writer, 2 = Reader.                                                                                                 |
 | `EndAction`        | (split)    | `endAgreementPay` / `endAgreementBurn(uint8 burnPercent)` — cleaner Solidity than encoding the Rust enum directly.                 |
 | `Option<Vec<u8>>` (drive name) | `string`   | Empty string ⇒ `None`.                                                                                                             |
@@ -114,16 +115,16 @@ For extrinsics with parameterized weights (e.g. `end_agreement(a: u32)`), we pas
    - dispatch with `RawOrigin::Signed(env.caller_account_id())`,
    - encode the return value via `SolValue::abi_encode()`.
 3. Mirror the function declaration into `examples/contracts/IWeb3Storage.sol` (the vendored ABI) and any contract that calls it.
-4. Add a happy-path exercise to `examples/papi/sc-coverage.js` — direct `Revive.call(precompileAddr, calldata)` plus an assertion on the resulting on-chain state.
+4. Add a happy-path exercise to `examples/papi/sc-coverage.ts` — direct `Revive.call(precompileAddr, calldata)` plus an assertion on the resulting on-chain state.
 
 ## Testing
 
 Four scripts cover the surface end-to-end:
 
 - **`just sc-demo`** (`examples/papi/sc-flow.ts`) — full marketplace dApp story via `StorageMarketplace.sol`: deploy, `buyStorage` with `msg.value`, off-chain upload/challenge round-trip, `endMyAgreement`. Asserts provider earned tokens + contract events fired.
-- **`just sc-coverage`** (`examples/papi/sc-coverage.js`) — direct precompile invocations (no intermediate contract) for every selector across all three precompiles. Each call submits as a signed substrate tx whose `dest` is the precompile address; on success, the script asserts the underlying pallet's storage / event was updated.
-- **`just sc-team-drive`** (`examples/papi/sc-team-drive.js`) — drive-registry dApp via `SharedTeamDrive.sol`: deploy, `createTeam`, `invite` / `kick`, `disband`.
-- **`just sc-token-gated`** (`examples/papi/sc-token-gated.js`) — s3-registry dApp via `TokenGatedDrive.sol`: deploy, `initialize`, `mint` an NFT-shaped access token per S3 object, `transfer`, `burn` (deletes object metadata), `shutdown`.
+- **`just sc-coverage`** (`examples/papi/sc-coverage.ts`) — direct precompile invocations (no intermediate contract) for every selector across all three precompiles. Each call submits as a signed substrate tx whose `dest` is the precompile address; on success, the script asserts the underlying pallet's storage / event was updated.
+- **`just sc-team-drive`** (`examples/papi/sc-team-drive.ts`) — drive-registry dApp via `SharedTeamDrive.sol`: deploy, `createTeam`, `invite` / `kick`, `disband`.
+- **`just sc-token-gated`** (`examples/papi/sc-token-gated.ts`) — s3-registry dApp via `TokenGatedDrive.sol`: deploy, `initialize`, `mint` an NFT-shaped access token per S3 object, `transfer`, `burn` (deletes object metadata), `shutdown`.
 
 All four run in CI under `.github/workflows/integration-tests.yml` against both runtime matrix entries.
 

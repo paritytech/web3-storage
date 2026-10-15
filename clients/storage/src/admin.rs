@@ -54,76 +54,143 @@ impl AdminClient {
         self.base.set_signer(self.signer.clone())
     }
 
+    /// Read `owner`'s next expected agreement nonce from chain: the value to
+    /// pass as `NegotiateRequest.nonce` when requesting a quote. `0` for an
+    /// owner who has never redeemed a quote yet.
+    pub async fn agreement_nonce(&self, owner: &AccountId32) -> ClientResult<u64> {
+        let chain = self.base.chain()?;
+        let at = chain.at_current_block().await?;
+        let value = at
+            .storage()
+            .try_fetch(
+                api::storage().storage_provider().agreement_nonces(),
+                (convert::to_subxt_account(owner),),
+            )
+            .await
+            .map_err(|e| ClientError::Chain(format!("Failed to fetch agreement nonce: {e}")))?;
+        match value {
+            Some(v) => v
+                .decode()
+                .map_err(|e| ClientError::Chain(format!("Failed to decode agreement nonce: {e}"))),
+            None => Ok(0),
+        }
+    }
+
     // ═════════════════════════════════════════════════════════════════════════
     // Bucket Management
     // ═════════════════════════════════════════════════════════════════════════
 
-    /// Redeem provider-signed terms to open a bucket + primary agreement
-    /// atomically.
+    /// Create an empty bucket with this client's account as its sole admin.
     ///
-    /// `terms` and `sig` come from the provider — typically via
-    /// [`ProviderClient::negotiate_terms`](crate::provider::ProviderClient::negotiate_terms),
-    /// but any source that produces a valid signature works.
+    /// `min_providers` is how many primary-provider signatures each checkpoint
+    /// needs; add the providers with
+    /// [`AdminClient::add_primary_provider`].
+    pub async fn create_bucket(
+        &self,
+        min_providers: u32,
+        visibility: storage_primitives::Visibility,
+    ) -> ClientResult<BucketId> {
+        let tx = extrinsics::create_bucket(min_providers, visibility);
+        let events = self.base.chain()?.submit(&tx).await?;
+        let bucket_id = Self::created_bucket_id(&events)?;
+
+        tracing::info!("Created bucket {} for {}", bucket_id, self.admin_account());
+        Ok(bucket_id)
+    }
+
+    /// Redeem provider-signed primary terms to open a bucket and its first
+    /// primary agreement in one transaction.
+    ///
+    /// `signed_terms` comes from the provider — typically via
+    /// [`ProviderClient::negotiate_terms`](crate::provider::ProviderClient::negotiate_terms)
+    /// with `bucket: None`, but any source that produces a valid signature
+    /// works.
     ///
     /// # Example
     /// ```no_run
     /// # use storage_client::{AdminClient, NegotiateRequest, ProviderClient, Signer};
+    /// # use sp_runtime::AccountId32;
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let client = AdminClient::with_defaults(Signer::from_seed("//Alice")?)?;
+    /// let owner: AccountId32 = "5GrwvaEF...".parse()?;
+    /// let nonce = client.agreement_nonce(&owner).await?;
     /// let signed = ProviderClient::negotiate_terms(
     ///     "http://provider.example:3333",
     ///     &NegotiateRequest {
-    ///         owner: "5GrwvaEF...".parse()?,
+    ///         owner,
     ///         max_bytes: 1_000_000,
     ///         duration: 100,
     ///         price_per_byte: 1_000_000,
+    ///         nonce,
     ///         replica_params: None,
-    ///         bucket_id: None,
+    ///         bucket: None,
     ///     },
     /// ).await?;
-    /// let bucket_id = client.establish_storage_agreement(
+    /// let bucket_id = client.create_bucket_with_primary(
     ///     "5FHneW46...".to_string(),
     ///     signed,
+    ///     storage_primitives::Visibility::Private,
     /// ).await?;
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn establish_storage_agreement(
+    pub async fn create_bucket_with_primary(
         &self,
         provider: String,
         signed_terms: SignedTerms,
+        visibility: storage_primitives::Visibility,
     ) -> ClientResult<BucketId> {
         let SignedTerms { terms, signature } = signed_terms;
-        let chain = self.base.chain()?;
-        let signer = chain.signer()?;
         let provider_account = SubstrateClient::parse_account(&provider)?;
 
+        let tx = extrinsics::create_bucket_with_primary(
+            provider_account,
+            &terms,
+            &signature,
+            visibility,
+        );
+        let events = self.base.chain()?.submit(&tx).await?;
+        let bucket_id = Self::created_bucket_id(&events)?;
+
         tracing::info!(
-            "Establishing storage agreement with provider {} for owner {} (max_bytes={}, duration={}, nonce={})",
+            "Bucket {} created with primary provider {} (max_bytes={}, duration={})",
+            bucket_id,
             provider,
-            self.admin_account(),
             terms.max_bytes,
             terms.duration,
-            terms.nonce,
         );
+        Ok(bucket_id)
+    }
 
-        let tx = extrinsics::establish_storage_agreement(provider_account, &terms, &signature);
+    /// Redeem provider-signed primary terms against an existing bucket,
+    /// adding the provider to its primary set.
+    ///
+    /// The quote must name this bucket (negotiate with `bucket: Some(id)`).
+    /// The new provider has none of the bucket's data.
+    pub async fn add_primary_provider(
+        &self,
+        bucket_id: BucketId,
+        provider: String,
+        signed_terms: SignedTerms,
+    ) -> ClientResult<()> {
+        let SignedTerms { terms, signature } = signed_terms;
+        let provider_account = SubstrateClient::parse_account(&provider)?;
 
-        let tx_progress = chain
-            .api()
-            .at_current_block()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
-            .transactions()
-            .sign_and_submit_then_watch_default(&tx, signer)
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?;
+        let tx = extrinsics::add_primary_provider(bucket_id, provider_account, &terms, &signature);
+        self.base.chain()?.submit(&tx).await?;
 
-        let events = tx_progress
-            .wait_for_finalized_success()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Transaction failed: {e}")))?;
+        tracing::info!(
+            "Added primary provider {} to bucket {}",
+            provider,
+            bucket_id
+        );
+        Ok(())
+    }
 
+    /// The bucket id from the `BucketCreated` event a creation call emits.
+    fn created_bucket_id(
+        events: &subxt::extrinsics::ExtrinsicEvents<subxt::PolkadotConfig>,
+    ) -> ClientResult<BucketId> {
         let created = events
             .find_first::<BucketCreated>()
             .ok_or_else(|| {
@@ -132,12 +199,6 @@ impl AdminClient {
             .map_err(|e| {
                 ClientError::Chain(format!("Failed to decode BucketCreated event: {e}"))
             })?;
-
-        tracing::info!(
-            "Storage agreement established; bucket {} created with provider {}",
-            created.bucket_id,
-            provider,
-        );
         Ok(created.bucket_id)
     }
 
@@ -148,23 +209,10 @@ impl AdminClient {
         member: String,
         role: Role,
     ) -> ClientResult<()> {
-        let chain = self.base.chain()?;
-        let signer = chain.signer()?;
         let member_account = SubstrateClient::parse_account(&member)?;
 
         let tx = extrinsics::set_member(bucket_id, member_account, role);
-        chain
-            .api()
-            .at_current_block()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
-            .transactions()
-            .sign_and_submit_then_watch_default(&tx, signer)
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
-            .wait_for_finalized_success()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Transaction failed: {e}")))?;
+        self.base.chain()?.submit(&tx).await?;
 
         tracing::info!(
             "Added member {} to bucket {} with role {:?}",
@@ -177,23 +225,10 @@ impl AdminClient {
 
     /// Remove a member from a bucket.
     pub async fn remove_member(&self, bucket_id: BucketId, member: String) -> ClientResult<()> {
-        let chain = self.base.chain()?;
-        let signer = chain.signer()?;
         let member_account = SubstrateClient::parse_account(&member)?;
 
         let tx = extrinsics::remove_bucket_member(bucket_id, member_account);
-        chain
-            .api()
-            .at_current_block()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
-            .transactions()
-            .sign_and_submit_then_watch_default(&tx, signer)
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
-            .wait_for_finalized_success()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Transaction failed: {e}")))?;
+        self.base.chain()?.submit(&tx).await?;
 
         tracing::info!("Removed member {} from bucket {}", member, bucket_id);
         Ok(())
@@ -206,23 +241,10 @@ impl AdminClient {
         member: String,
         new_role: Role,
     ) -> ClientResult<()> {
-        let chain = self.base.chain()?;
-        let signer = chain.signer()?;
         let member_account = SubstrateClient::parse_account(&member)?;
 
         let tx = extrinsics::set_member(bucket_id, member_account, new_role);
-        chain
-            .api()
-            .at_current_block()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
-            .transactions()
-            .sign_and_submit_then_watch_default(&tx, signer)
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
-            .wait_for_finalized_success()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Transaction failed: {e}")))?;
+        self.base.chain()?.submit(&tx).await?;
 
         tracing::info!(
             "Updated member {} in bucket {} to role {:?}",
@@ -244,24 +266,24 @@ impl AdminClient {
         bucket_id: BucketId,
         _frozen_start_seq: u64,
     ) -> ClientResult<()> {
-        let chain = self.base.chain()?;
-        let signer = chain.signer()?;
-
         let tx = extrinsics::freeze_bucket(bucket_id);
-        chain
-            .api()
-            .at_current_block()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
-            .transactions()
-            .sign_and_submit_then_watch_default(&tx, signer)
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
-            .wait_for_finalized_success()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Transaction failed: {e}")))?;
+        self.base.chain()?.submit(&tx).await?;
 
         tracing::info!("Froze bucket {}", bucket_id);
+        Ok(())
+    }
+
+    /// Set bucket read visibility (admin only). Flips `Public` ⇄ `Private`
+    /// unconditionally in both directions.
+    pub async fn set_bucket_visibility(
+        &self,
+        bucket_id: BucketId,
+        visibility: storage_primitives::Visibility,
+    ) -> ClientResult<()> {
+        let tx = extrinsics::set_bucket_visibility(bucket_id, visibility);
+        self.base.chain()?.submit(&tx).await?;
+
+        tracing::info!("Set bucket {} visibility to {:?}", bucket_id, visibility);
         Ok(())
     }
 
@@ -280,8 +302,6 @@ impl AdminClient {
         additional_duration: u32,
         max_payment: u128,
     ) -> ClientResult<()> {
-        let chain = self.base.chain()?;
-        let signer = chain.signer()?;
         let provider_account = SubstrateClient::parse_account(&provider)?;
 
         let tx = extrinsics::extend_agreement(
@@ -290,18 +310,7 @@ impl AdminClient {
             additional_duration,
             max_payment,
         );
-        chain
-            .api()
-            .at_current_block()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
-            .transactions()
-            .sign_and_submit_then_watch_default(&tx, signer)
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
-            .wait_for_finalized_success()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Transaction failed: {e}")))?;
+        self.base.chain()?.submit(&tx).await?;
 
         tracing::info!(
             "Extended agreement with {} for bucket {} by {} blocks",
@@ -320,8 +329,6 @@ impl AdminClient {
         additional_bytes: u64,
         max_payment: u128,
     ) -> ClientResult<()> {
-        let chain = self.base.chain()?;
-        let signer = chain.signer()?;
         let provider_account = SubstrateClient::parse_account(&provider)?;
 
         let tx = extrinsics::top_up_agreement(
@@ -330,24 +337,39 @@ impl AdminClient {
             additional_bytes,
             max_payment,
         );
-        chain
-            .api()
-            .at_current_block()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
-            .transactions()
-            .sign_and_submit_then_watch_default(&tx, signer)
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
-            .wait_for_finalized_success()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Transaction failed: {e}")))?;
+        self.base.chain()?.submit(&tx).await?;
 
         tracing::info!(
             "Topped up agreement with {} for bucket {} by {} bytes",
             provider,
             bucket_id,
             additional_bytes
+        );
+        Ok(())
+    }
+
+    /// Hand an agreement to a new owner; the escrow moves with it.
+    pub async fn transfer_agreement_ownership(
+        &self,
+        bucket_id: BucketId,
+        provider: String,
+        new_owner: String,
+    ) -> ClientResult<()> {
+        let provider_account = SubstrateClient::parse_account(&provider)?;
+        let new_owner_account = SubstrateClient::parse_account(&new_owner)?;
+
+        let tx = extrinsics::transfer_agreement_ownership(
+            bucket_id,
+            provider_account,
+            new_owner_account,
+        );
+        self.base.chain()?.submit(&tx).await?;
+
+        tracing::info!(
+            "Transferred agreement with {} for bucket {} to {}",
+            provider,
+            bucket_id,
+            new_owner
         );
         Ok(())
     }
@@ -361,23 +383,10 @@ impl AdminClient {
         provider: String,
         action: EndAction,
     ) -> ClientResult<()> {
-        let chain = self.base.chain()?;
-        let signer = chain.signer()?;
         let provider_account = SubstrateClient::parse_account(&provider)?;
 
         let tx = extrinsics::end_agreement(bucket_id, provider_account, action);
-        chain
-            .api()
-            .at_current_block()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
-            .transactions()
-            .sign_and_submit_then_watch_default(&tx, signer)
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
-            .wait_for_finalized_success()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Transaction failed: {e}")))?;
+        self.base.chain()?.submit(&tx).await?;
 
         tracing::info!(
             "Terminated agreement with {} for bucket {} with action {:?}",
@@ -397,23 +406,9 @@ impl AdminClient {
         bucket_id: BucketId,
         provider: String,
     ) -> ClientResult<()> {
-        let chain = self.base.chain()?;
-        let signer = chain.signer()?;
-
         let _ = provider; // The signer must be the provider; `provider` param is for logging.
         let tx = extrinsics::set_extensions_blocked(bucket_id, true);
-        chain
-            .api()
-            .at_current_block()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
-            .transactions()
-            .sign_and_submit_then_watch_default(&tx, signer)
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
-            .wait_for_finalized_success()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Transaction failed: {e}")))?;
+        self.base.chain()?.submit(&tx).await?;
 
         tracing::info!(
             "Blocked extensions for agreement with {} on bucket {}",
@@ -452,18 +447,16 @@ impl AdminClient {
     /// Submit a checkpoint with provider signatures.
     ///
     /// This creates a canonical on-chain snapshot of the bucket state,
-    /// enabling `challenge_checkpoint` to work against it.
+    /// enabling `challenge_checkpoint` to work against it. Signatures arrive
+    /// already typed (the SDK's provider responses deserialize them), so the
+    /// only thing left to parse here is the SS58 account strings.
     pub async fn submit_checkpoint(
         &self,
         bucket_id: BucketId,
         commitment: Commitment,
-        signatures: Vec<(String, Vec<u8>)>, // (provider SS58, signature bytes)
+        signatures: Vec<(String, sp_runtime::MultiSignature)>, // (provider SS58, signature)
     ) -> ClientResult<()> {
-        let chain = self.base.chain()?;
-        let signer = chain.signer()?;
-
-        // Parse provider accounts
-        let parsed_sigs: Vec<(sp_runtime::AccountId32, Vec<u8>)> = signatures
+        let parsed_sigs: Vec<(sp_runtime::AccountId32, sp_runtime::MultiSignature)> = signatures
             .into_iter()
             .map(|(account_str, sig)| {
                 let account = SubstrateClient::parse_account(&account_str)?;
@@ -471,22 +464,9 @@ impl AdminClient {
             })
             .collect::<ClientResult<Vec<_>>>()?;
 
-        let tx = extrinsics::checkpoint(bucket_id, commitment, parsed_sigs)?;
+        let tx = extrinsics::checkpoint(bucket_id, commitment, &parsed_sigs);
 
-        let tx_progress = chain
-            .api()
-            .at_current_block()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to submit checkpoint tx: {e}")))?
-            .transactions()
-            .sign_and_submit_then_watch_default(&tx, signer)
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to submit checkpoint tx: {e}")))?;
-
-        tx_progress
-            .wait_for_finalized_success()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Checkpoint transaction failed: {e}")))?;
+        self.base.chain()?.submit(&tx).await?;
 
         tracing::info!(
             "Checkpoint submitted for bucket {} with MMR root 0x{}",
@@ -539,6 +519,7 @@ impl AdminClient {
             frozen_start_seq: bucket.frozen_start_seq,
             min_providers: bucket.min_providers,
             snapshot,
+            visibility: bucket.visibility.into(),
         })
     }
 
@@ -613,6 +594,7 @@ pub struct BucketInfo {
     pub frozen_start_seq: Option<u64>,
     pub min_providers: u32,
     pub snapshot: Option<SnapshotInfo>,
+    pub visibility: storage_primitives::Visibility,
 }
 
 #[derive(Debug, Clone)]

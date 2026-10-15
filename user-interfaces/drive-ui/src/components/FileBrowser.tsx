@@ -52,7 +52,7 @@ import {
   deleteEntry,
   createFolder,
 } from "@/state";
-import { formatBytes, formatTimestamp } from "@/lib/utils";
+import { formatBytes, formatTimestamp } from "@web3-storage/format";
 import { toast } from "@/components/ui/toaster";
 import type { FsEntry } from "@/lib/drive-client";
 import UploadZone from "./UploadZone";
@@ -189,7 +189,7 @@ export default function FileBrowser() {
   if (!selectedDrive) return null;
 
   const breadcrumbs = () => {
-    const driveName = selectedDrive.name || `Drive ${selectedDrive.driveId}`;
+    const driveName = `Bucket #${selectedDrive.bucketId}`;
     const segments = [{ name: driveName, path: "/" }];
     if (currentPath !== "/") {
       const parts = currentPath.split("/").filter(Boolean);

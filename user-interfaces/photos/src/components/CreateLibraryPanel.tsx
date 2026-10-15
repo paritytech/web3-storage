@@ -27,7 +27,7 @@ import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { Spinner } from '@/components/ui/Spinner'
 import { Badge } from '@/components/ui/Badge'
-import { bytesFromUnit, formatAddress, formatBytes, formatTokens, type ByteUnit } from '@/utils/format'
+import { bytesFromUnit, formatAddress, formatAmount, formatBytesBinary, type ByteUnit } from '@web3-storage/format'
 
 interface Props {
   account: InjectedPolkadotAccount
@@ -52,7 +52,6 @@ export function CreateLibraryPanel({ account, contract, network, onCreated }: Pr
   const [size, setSize] = useState('1')
   const [unit, setUnit] = useState<ByteUnit>('MiB')
   const [duration, setDuration] = useState('50')
-  const [name, setName] = useState('my-photos')
 
   // Reset any prior creation state and (re)load providers for this account/network.
   useEffect(() => {
@@ -83,7 +82,7 @@ export function CreateLibraryPanel({ account, contract, network, onCreated }: Pr
     creation.stage === 'submitting' ||
     creation.stage === 'ready'
 
-  const inputsValid = sizeBytes > 0n && durationBlocks > 0 && name.trim().length > 0
+  const inputsValid = sizeBytes > 0n && durationBlocks > 0
 
   function handleCreate(provider: PhotosProvider) {
     void createLibrary({
@@ -92,7 +91,6 @@ export function CreateLibraryPanel({ account, contract, network, onCreated }: Pr
       provider,
       sizeBytes,
       durationBlocks,
-      name: name.trim(),
     })
   }
 
@@ -109,7 +107,7 @@ export function CreateLibraryPanel({ account, contract, network, onCreated }: Pr
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-5">
-          {/* ── Size / duration / name inputs ── */}
+          {/* ── Size / duration inputs ── */}
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Field label="Storage size">
               <div className="flex items-center gap-2">
@@ -145,15 +143,6 @@ export function CreateLibraryPanel({ account, contract, network, onCreated }: Pr
               />
             </Field>
           </div>
-          <Field label="Library name">
-            <Input
-              value={name}
-              disabled={inFlight}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="my-photos"
-              data-testid="name-input"
-            />
-          </Field>
 
           {/* ── Status (in-flight / failed) vs provider list ── */}
           {creation.stage === 'failed' ? (
@@ -288,7 +277,10 @@ function ProviderList({
                 </code>
                 {eligible ? (
                   <Badge variant="secondary">
-                    {p.maxCapacity === 0n ? 'unmetered' : formatBytes(p.availableCapacity)} free
+                    {p.availableCapacity === undefined
+                      ? 'unmetered'
+                      : formatBytesBinary(p.availableCapacity)}{' '}
+                    free
                   </Badge>
                 ) : (
                   <Badge variant="warning">{reasons[0]}</Badge>
@@ -296,10 +288,10 @@ function ProviderList({
               </div>
               {inputsValid && (
                 <div className="text-xs text-gray-500">
-                  ~{formatTokens(value)} tokens
+                  ~{formatAmount(value)} tokens
                   <span className="text-gray-600">
                     {' '}
-                    (agreement {formatTokens(payment)}, rest a refundable buffer)
+                    (agreement {formatAmount(payment)}, rest a refundable buffer)
                   </span>
                 </div>
               )}

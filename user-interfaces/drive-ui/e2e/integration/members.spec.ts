@@ -13,28 +13,23 @@
  * still the sole member when the duplicate-check test runs.
  */
 import { test, expect } from "../fixtures";
-import { Bob, Charlie, cleanupDrives } from "@web3-storage/test-helpers";
+import { Bob, Charlie } from "@web3-storage/test-helpers";
 import { createDriveInFreshContext } from "../helpers/createDriveViaUi";
 
 test.describe.configure({ mode: "serial" });
 test.setTimeout(180_000);
 
-let driveId: bigint;
+let bucketId: bigint;
 
 test.beforeAll(async ({ browser }) => {
   test.setTimeout(180_000);
-  driveId = await createDriveInFreshContext(browser, `members-${Date.now()}`);
-});
-
-test.afterAll(async () => {
-  test.setTimeout(60_000);
-  await cleanupDrives(Bob);
+  bucketId = await createDriveInFreshContext(browser);
 });
 
 async function openAccessDialog(page: import("@playwright/test").Page) {
   await page.reload();
-  await page.getByTestId(`drive-list-item-${driveId}`).hover();
-  await page.getByTestId(`drive-list-access-${driveId}`).click();
+  await page.getByTestId(`drive-list-item-${bucketId}`).hover();
+  await page.getByTestId(`drive-list-access-${bucketId}`).click();
   await expect(page.getByTestId("manage-access-dialog")).toBeVisible();
 }
 
@@ -63,7 +58,7 @@ test("add Reader → list refreshes without manual click", async ({ localPage })
   await localPage.getByTestId("add-member-submit").click();
 
   // After tx settles, Charlie's row should appear without clicking refresh.
-  // signAndSubmit waits for finalization (~24-36s on local zombienet) and
+  // createAndSubmit waits for finalization (~24-36s on local zombienet) and
   // refresh follows. 45s used to be "comfortable headroom" but CI runs the
   // drive-ui suite back-to-back with file-ops which holds the chain busy
   // for several minutes, and the set_member finalize has overshot 45s

@@ -5,7 +5,7 @@
 //! This client provides operations for:
 //! - Monitoring provider performance
 //! - Creating challenges to verify data availability
-//! - Collecting rewards from successful challenges
+//! - Resolving expired challenges (the deposit comes back; there is no reward)
 //! - Automated challenge strategies
 
 use crate::base::{BaseClient, ClientConfig, ClientError, ClientResult};
@@ -27,7 +27,7 @@ pub struct ChallengerClient {
 }
 
 /// Top of the reputation scale, mirroring
-/// `pallet_storage_provider::runtime_api::reputation_score`, which returns
+/// `pallet_storage_provider::ProviderStats::reputation`, which returns
 /// 0..=100. Not importable: this crate depends on the generated bindings
 /// rather than on the pallet.
 const REPUTATION_SCALE_MAX: u8 = 100;
@@ -154,14 +154,16 @@ impl ChallengerClient {
     /// - `commitment`: The signed commitment; its `leaf_count` binds the proof
     ///   to `target.leaf_index` in `respond_to_challenge`.
     /// - `target`: Which leaf + chunk within that commitment to challenge
-    /// - `provider_signature`: The provider's signature on the commitment (64 bytes for Sr25519)
+    /// - `provider_signature`: The provider's scheme-tagged signature on the
+    ///   commitment, as returned by
+    ///   [`CommitResponse::provider_signature`](crate::CommitResponse)
     pub async fn challenge_offchain(
         &self,
         bucket_id: BucketId,
         provider: String,
         commitment: Commitment,
         target: ChunkLocation,
-        provider_signature: Vec<u8>,
+        provider_signature: sp_runtime::MultiSignature,
     ) -> ClientResult<ChallengeId> {
         let chain = self.base.chain()?;
         let signer = chain.signer()?;
@@ -183,8 +185,8 @@ impl ChallengerClient {
             provider_account,
             commitment,
             target,
-            provider_signature,
-        )?;
+            &provider_signature,
+        );
 
         let tx_progress = chain
             .api()
@@ -261,16 +263,68 @@ impl ChallengerClient {
         Ok(challenge_id)
     }
 
+    /// Slash the provider of a challenge that expired without a response.
+    /// Anyone may call this; the challenger's deposit is refunded in full.
+    pub async fn resolve_expired_challenge(&self, challenge_id: ChallengeId) -> ClientResult<()> {
+        let chain = self.base.chain()?;
+        let signer = chain.signer()?;
+        let tx = extrinsics::resolve_expired_challenge((challenge_id.deadline, challenge_id.index));
+
+        let tx_progress = chain
+            .api()
+            .at_current_block()
+            .await
+            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
+            .transactions()
+            .sign_and_submit_then_watch_default(&tx, signer)
+            .await
+            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?;
+
+        tx_progress
+            .wait_for_finalized_success()
+            .await
+            .map_err(|e| ClientError::Chain(format!("Transaction failed: {e}")))?;
+
+        tracing::info!(
+            "Challenge resolved: deadline={}, index={}",
+            challenge_id.deadline,
+            challenge_id.index
+        );
+        Ok(())
+    }
+
+    /// Resolve every challenge this challenger opened whose deadline has
+    /// passed. Returns the ids resolved; one that fails (for example because
+    /// someone else resolved it first) is logged and skipped.
+    pub async fn resolve_my_expired_challenges(&self) -> ClientResult<Vec<ChallengeId>> {
+        let mut resolved = Vec::new();
+        for challenge in self.list_my_challenges().await? {
+            if challenge.status != ChallengeStatus::Expired {
+                continue;
+            }
+            match self.resolve_expired_challenge(challenge.challenge_id).await {
+                Ok(()) => resolved.push(challenge.challenge_id),
+                Err(e) => tracing::warn!(
+                    "resolve_expired_challenge(deadline={}, index={}) failed: {e}",
+                    challenge.challenge_id.deadline,
+                    challenge.challenge_id.index
+                ),
+            }
+        }
+        Ok(resolved)
+    }
+
     // ═════════════════════════════════════════════════════════════════════════
     // Monitoring & Strategy
     // ═════════════════════════════════════════════════════════════════════════
 
-    /// Get all active challenges created by this challenger.
+    /// All open challenges created by this challenger, expired ones included.
     pub async fn list_my_challenges(&self) -> ClientResult<Vec<ChallengeInfo>> {
         let chain = self.base.chain()?;
         let challenger = convert::to_subxt_account(&self.challenger_account());
 
         let at = chain.at_current_block().await?;
+        let anchor = fetch_current_anchor_block(&at).await?;
 
         let challenges = at
             .runtime_apis()
@@ -299,7 +353,7 @@ impl ChallengerClient {
                     provider: convert::account_hex(&provider),
                     deadline: c.deadline,
                     deposit: c.deposit,
-                    status: ChallengeStatus::Pending,
+                    status: challenge_status(c.deadline, anchor),
                 })
             })
             .collect())
@@ -331,17 +385,18 @@ impl ChallengerClient {
             .await
             .map_err(|e| ClientError::Chain(format!("provider_info runtime API failed: {e}")))?;
 
-        let (challenges_received, challenges_failed, reputation) = if let Some(info) = provider_info
+        let (challenges_defended, challenges_failed, reputation) = if let Some(info) = provider_info
         {
             (
-                info.challenges_received,
-                info.challenges_failed,
-                info.reputation,
+                info.stats
+                    .challenges_received_authorized
+                    .saturating_add(info.stats.challenges_received_public),
+                info.stats.challenges_failed,
+                info.stats.reputation,
             )
         } else {
             return Err(ClientError::Chain(format!("Provider {provider} not found")));
         };
-
         // Compute checkpoint age from bucket snapshot
         let last_checkpoint_age = {
             // `checkpoint_block` is on the pallet's anchor clock (relay
@@ -371,11 +426,11 @@ impl ChallengerClient {
             }
         };
 
-        let challenge_success_rate = if challenges_received == 0 {
+        let total_resolved = challenges_defended.saturating_add(challenges_failed);
+        let challenge_success_rate = if total_resolved == 0 {
             100.0
         } else {
-            let defended = challenges_received.saturating_sub(challenges_failed);
-            defended as f64 / challenges_received as f64 * 100.0
+            challenges_defended as f64 / total_resolved as f64 * 100.0
         };
 
         let recommendation = if reputation < 60 {
@@ -469,22 +524,12 @@ impl ChallengerClient {
         Ok(challenge_ids)
     }
 
-    /// Check if a challenge has been settled.
-    ///
-    /// Challenge rewards are distributed automatically by the chain in `on_finalize`
-    /// when the response deadline passes without a valid response from the provider.
-    /// Returns `None` if the challenge is still pending or has already been settled
-    /// (reward auto-distributed). The exact reward amount is not available on-chain
-    /// after settlement without querying historical events.
-    pub async fn check_and_claim_reward(
-        &self,
-        challenge_id: ChallengeId,
-    ) -> ClientResult<Option<u128>> {
+    /// Whether a challenge has left `Challenges`: answered by the provider,
+    /// or resolved after its deadline with `resolve_expired_challenge`.
+    /// Settlement refunds the challenger's deposit; there is no reward.
+    pub async fn is_challenge_settled(&self, challenge_id: ChallengeId) -> ClientResult<bool> {
         let chain = self.base.chain()?;
-
         let at = chain.at_current_block().await?;
-        // Challenges is a double map (deadline, index) -> Challenge: a point
-        // fetch answers pending-vs-settled directly.
         let entry = at
             .storage()
             .try_fetch(
@@ -493,76 +538,12 @@ impl ChallengerClient {
             )
             .await
             .map_err(|e| ClientError::Chain(format!("Failed to fetch challenges: {e}")))?;
-
-        if entry.is_some() {
-            tracing::info!(
-                "Challenge (deadline={}, index={}) is still pending",
-                challenge_id.deadline,
-                challenge_id.index
-            );
-            Ok(None) // Pending — no reward yet
-        } else {
-            tracing::info!(
-                "Challenge (deadline={}, index={}) has been settled",
-                challenge_id.deadline,
-                challenge_id.index
-            );
-            Ok(None) // Settled — reward was auto-distributed on-chain
-        }
+        Ok(entry.is_none())
     }
 
     // ═════════════════════════════════════════════════════════════════════════
     // Analytics
     // ═════════════════════════════════════════════════════════════════════════
-
-    /// Get aggregated stats for this account's challenge activity.
-    ///
-    /// Pulls counters from on-chain `ChallengerStats`. The pallet maintains
-    /// these on `create_challenge`, on `ChallengeDefended`, and on each
-    /// `slash_provider_for_failed_challenge` call.
-    pub async fn get_challenge_stats(&self) -> ClientResult<ChallengeStats> {
-        let stats = self.fetch_challenger_stats().await?;
-        Ok(ChallengeStats {
-            total_challenges: stats.total_challenges,
-            successful_challenges: stats.successful_challenges,
-            failed_challenges: stats.failed_challenges,
-            // The pallet doesn't yet track an average response time per
-            // challenger; leave at 0 until that aggregate is added.
-            avg_response_time: 0,
-        })
-    }
-
-    /// Read this account's `ChallengerStats` record from chain. Returns a
-    /// zeroed record (matching the pallet's `ValueQuery` default) if the
-    /// account has never opened a challenge.
-    async fn fetch_challenger_stats(&self) -> ClientResult<FetchedChallengerStats> {
-        let chain = self.base.chain()?;
-
-        let at = chain.at_current_block().await?;
-
-        let value = match at
-            .storage()
-            .try_fetch(
-                api::storage().storage_provider().challenger_stats(),
-                (convert::to_subxt_account(&self.challenger_account()),),
-            )
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to fetch ChallengerStats: {e}")))?
-        {
-            Some(v) => v,
-            None => return Ok(FetchedChallengerStats::default()),
-        };
-
-        let record = value
-            .decode()
-            .map_err(|e| ClientError::Chain(format!("Decode ChallengerStats: {e}")))?;
-
-        Ok(FetchedChallengerStats {
-            total_challenges: record.total_challenges,
-            successful_challenges: record.successful_challenges,
-            failed_challenges: record.failed_challenges,
-        })
-    }
 
     /// Providers worth challenging: those holding a storage agreement whose
     /// reputation is below `max_reputation`, worst first.
@@ -607,10 +588,9 @@ impl ChallengerClient {
             .collect())
     }
 
-    /// Find the most profitable providers to challenge, ranked by expected value.
-    ///
-    /// Scores eligible providers by reputation (from on-chain stats) and stake.
-    /// Providers with lower reputation and higher stake are ranked highest.
+    /// Providers worth challenging, most likely to fail first; ties go to
+    /// the larger stake (more at risk). A challenge is a check on the
+    /// provider — a successful one refunds the deposit and pays no reward.
     ///
     /// `max_reputation` bounds eligibility: a provider qualifies when its
     /// reputation is strictly below it. The chain also caps the eligible pool
@@ -622,8 +602,8 @@ impl ChallengerClient {
         limit: usize,
     ) -> ClientResult<Vec<ChallengeTarget>> {
         // The chain returns the worst-by-reputation candidates up to this cap.
-        // Reputation is the inverse of failure rate, so that ordering covers
-        // half of the expected value below; the half it misses is stake.
+        // Reputation is the inverse of failure rate, so that ordering matches
+        // the ranking below; only the stake tiebreaker is not covered.
         let candidates = self
             .challenge_candidates(max_reputation, MAX_CHALLENGE_CANDIDATES)
             .await?;
@@ -631,35 +611,25 @@ impl ChallengerClient {
         let mut targets: Vec<ChallengeTarget> = Vec::new();
 
         for (bucket_id, provider, candidate) in &candidates {
-            let stake = candidate.stake;
-            let received = candidate.challenges_received;
-            let failed = candidate.challenges_failed;
-
-            // Rough reward estimate: ~10% of stake gets slashed on failure
-            let potential_reward = stake / 10;
-
-            // Success probability is inverse of their historic defense rate
-            let fail_rate = if received == 0 {
-                0.1 // assume 10% base risk for untested providers
-            } else {
-                failed as f64 / received as f64
-            };
-            // Higher fail_rate = higher success probability for challenger
-            let success_probability = (fail_rate * 0.8 + 0.1).min(1.0);
-
-            let expected_value = (potential_reward as f64 * success_probability) as u128;
-
+            let defended = candidate
+                .challenges_received_authorized
+                .saturating_add(candidate.challenges_received_public);
             targets.push(ChallengeTarget {
                 provider: convert::account_hex(&convert::to_subxt_account(provider)),
                 bucket_id: *bucket_id,
-                potential_reward,
-                success_probability,
-                expected_value,
+                stake: candidate.stake,
+                failure_probability: failure_probability(
+                    defended.into(),
+                    candidate.challenges_failed.into(),
+                ),
             });
         }
 
-        // Rank by expected value descending
-        targets.sort_by(|a, b| b.expected_value.cmp(&a.expected_value));
+        targets.sort_by(|a, b| {
+            b.failure_probability
+                .total_cmp(&a.failure_probability)
+                .then(b.stake.cmp(&a.stake))
+        });
         targets.truncate(limit);
 
         Ok(targets)
@@ -709,7 +679,7 @@ pub struct ChallengeInfo {
     pub status: ChallengeStatus,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ChallengeStatus {
     Pending,
     Responded { response_time: u32 },
@@ -735,29 +705,52 @@ pub enum ChallengeRecommendation {
     Skip,
 }
 
-#[derive(Debug, Clone, Default)]
-pub struct ChallengeStats {
-    pub total_challenges: u32,
-    pub successful_challenges: u32,
-    pub failed_challenges: u32,
-    pub avg_response_time: u32,
-}
-
-/// Internal: the raw `ChallengerStatRecord` shape pulled from chain.
-/// Public callers see `ChallengeStats` which wraps these counters with the
-/// `avg_response_time` field the SDK historically exposed.
-#[derive(Debug, Clone, Default)]
-struct FetchedChallengerStats {
-    total_challenges: u32,
-    successful_challenges: u32,
-    failed_challenges: u32,
-}
-
 #[derive(Debug, Clone)]
 pub struct ChallengeTarget {
     pub provider: String,
     pub bucket_id: BucketId,
-    pub potential_reward: u128,
-    pub success_probability: f64,
-    pub expected_value: u128,
+    pub stake: u128,
+    pub failure_probability: f64,
+}
+
+/// `Expired` once the anchor clock has passed the deadline; the provider may
+/// still respond while `anchor <= deadline`.
+fn challenge_status(deadline: u32, anchor: u32) -> ChallengeStatus {
+    if anchor > deadline {
+        ChallengeStatus::Expired
+    } else {
+        ChallengeStatus::Pending
+    }
+}
+
+/// Estimated probability that the provider fails a challenge: its historic
+/// failure rate, shrunk toward a 10% prior so untested providers are not
+/// ranked at zero.
+fn failure_probability(defended: u64, failed: u64) -> f64 {
+    let total = defended.saturating_add(failed);
+    let fail_rate = if total == 0 {
+        0.1
+    } else {
+        failed as f64 / total as f64
+    };
+    (fail_rate * 0.8 + 0.1).min(1.0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn challenge_is_pending_until_the_anchor_passes_the_deadline() {
+        assert_eq!(challenge_status(101, 100), ChallengeStatus::Pending);
+        assert_eq!(challenge_status(101, 101), ChallengeStatus::Pending);
+        assert_eq!(challenge_status(101, 102), ChallengeStatus::Expired);
+    }
+
+    #[test]
+    fn untested_providers_get_the_prior_and_failures_rank_higher() {
+        assert!((failure_probability(0, 0) - 0.18).abs() < 1e-9);
+        assert!(failure_probability(9, 1) < failure_probability(1, 1));
+        assert!(failure_probability(0, 5) <= 1.0);
+    }
 }

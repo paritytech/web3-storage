@@ -16,10 +16,8 @@ use scale_info::TypeInfo;
 use sp_core::H256;
 
 pub mod agreement_term;
-pub mod provider_replay_state;
 
 pub use agreement_term::*;
-pub use provider_replay_state::*;
 
 /// Bucket ID is a stable, unique identifier (not an index into a collection).
 /// Using u64 ensures IDs never get reused even if buckets are deleted.
@@ -59,6 +57,36 @@ pub enum Role {
     Reader,
 }
 
+/// Whether primaries serve reads to anyone, or only to members.
+///
+/// The members-only restriction of `Private` is a cooperative request to
+/// honest primaries, not on-chain-enforced; replicas serve everyone
+/// regardless. On-chain, `Private` restricts primary challenges to bucket
+/// members and primary-agreement owners.
+#[derive(
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Default,
+    Encode,
+    Decode,
+    DecodeWithMemTracking,
+    TypeInfo,
+    MaxEncodedLen,
+    Debug,
+)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum Visibility {
+    /// Primaries serve reads to anyone.
+    Public,
+    /// Primaries serve reads only to members (Admin/Writer/Reader). The
+    /// fail-safe default: creation surfaces that omit the choice must
+    /// protect data, not expose it.
+    #[default]
+    Private,
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Provider Types
 // ─────────────────────────────────────────────────────────────────────────────
@@ -91,7 +119,7 @@ pub enum ProviderRole<Balance, BlockNumber> {
     },
 }
 
-/// A replica's last confirmed sync, captured at `confirm_replica_sync` so the
+/// Snapshot metadata captured at a replica's `confirm_replica_sync` so the
 /// pallet can later challenge a specific leaf without going back to the
 /// historical_roots table (which doesn't store sequence metadata).
 #[derive(
@@ -108,14 +136,8 @@ pub enum ProviderRole<Balance, BlockNumber> {
 )]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ReplicaSyncRecord<BlockNumber> {
-    /// MMR root the replica synced to.
-    pub root: H256,
-    /// `(start_seq, leaf_count)` of the synced root, when it was the bucket's
-    /// current snapshot (so the range is known on-chain). `None` if the replica
-    /// synced only to a historical root, whose range the chain does not retain;
-    /// `challenge_replica` then returns `ReplicaSyncRangeUnknown` because it
-    /// cannot bind the proof to a specific leaf.
-    pub range: Option<(u64, u64)>,
+    /// MMR commitment the replica confirmed sync to (root + covered range).
+    pub commitment: Commitment,
     /// Block at which `confirm_replica_sync` was executed.
     pub block: BlockNumber,
 }
@@ -174,68 +196,6 @@ pub enum RemovalReason {
 // ─────────────────────────────────────────────────────────────────────────────
 // Challenge Types
 // ─────────────────────────────────────────────────────────────────────────────
-
-/// Aggregated per-challenger statistics kept on-chain so the SDK can answer
-/// "how many challenges have I issued / won / lost / earned" without scanning
-/// historical events. Updated on `create_challenge`, on `ChallengeDefended`,
-/// and on `ChallengeSlashed`.
-#[derive(
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Encode,
-    Decode,
-    DecodeWithMemTracking,
-    TypeInfo,
-    MaxEncodedLen,
-    Default,
-    Debug,
-)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct ChallengerStatRecord {
-    /// Total challenges the challenger has ever opened.
-    pub total_challenges: u32,
-    /// Challenges where the provider was slashed (either invalid response or
-    /// timeout). The challenger is only made whole (deposit refunded) and earns
-    /// no reward — the slashed stake goes entirely to the Treasury, per the
-    /// design's challenge model.
-    pub successful_challenges: u32,
-    /// Challenges where the provider successfully defended.
-    pub failed_challenges: u32,
-}
-
-/// Why a provider was slashed via the challenge mechanism.
-///
-/// Emitted in `ChallengeSlashed` so observers can distinguish a provider that
-/// went silent (Timeout) from one that submitted a demonstrably-false response
-/// (InvalidProof, InvalidDeletionClaim, InvalidSupersededClaim).
-#[derive(
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Encode,
-    Decode,
-    DecodeWithMemTracking,
-    TypeInfo,
-    MaxEncodedLen,
-    Debug,
-)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub enum SlashReason {
-    /// Provider failed to respond before the challenge deadline.
-    Timeout,
-    /// Provider submitted a `Proof` response whose chunk-Merkle or MMR proof
-    /// did not verify.
-    InvalidProof,
-    /// Provider submitted a `Deleted` response with a signature or
-    /// `new_start_seq` that does not stand up against on-chain state.
-    InvalidDeletionClaim,
-    /// Provider claimed `Superseded` but the bucket's canonical snapshot
-    /// does not actually cover the challenged sequence.
-    InvalidSupersededClaim,
-}
 
 /// Challenge identifier combining deadline and index.
 #[derive(
@@ -306,7 +266,9 @@ pub struct MmrProof {
 /// commitment over a contiguous range of leaves.
 ///
 /// One reusable type instead of three loose fields: it is a field group inside
-/// [`CommitmentPayload`] and [`BucketSnapshot`].
+/// [`CommitmentPayload`], [`BucketSnapshot`], and [`ReplicaSyncRecord`], and it
+/// is the single argument the checkpoint/challenge extrinsics take in place of
+/// passing `mmr_root`, `start_seq`, and `leaf_count` separately.
 #[derive(
     Clone,
     Copy,
@@ -651,6 +613,18 @@ pub fn verify_mmr_proof(proof: &MmrProof, leaf_index: u64, leaf_count: u64, root
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `BucketTarget` replaced `Option<BucketId>` in `AgreementTerms` without
+    /// changing the SCALE encoding, so quotes signed before the change still
+    /// verify and `transaction_version` did not change.
+    #[test]
+    fn bucket_target_encodes_like_option_bucket_id() {
+        assert_eq!(BucketTarget::New.encode(), None::<BucketId>.encode());
+        assert_eq!(
+            BucketTarget::Existing(5).encode(),
+            Some(5 as BucketId).encode()
+        );
+    }
 
     #[test]
     fn test_commitment_payload_range() {

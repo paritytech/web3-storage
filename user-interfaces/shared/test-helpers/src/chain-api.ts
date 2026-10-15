@@ -10,7 +10,7 @@
 import { createClient, type PolkadotClient } from "polkadot-api";
 import { getWsProvider } from "polkadot-api/ws";
 import { parachain } from "@polkadot-api/descriptors";
-import type { PolkadotSigner } from "polkadot-api/signer";
+import type { TxCreator } from "polkadot-api/tx-creator";
 import {
   firstMatch,
   submitTx,
@@ -59,7 +59,7 @@ export function disconnect(): void {
  * whole suites depend on, and a reorged-out registration would fail every
  * downstream test with non-local errors.
  */
-export async function submitExtrinsic(tx: SubmittableTx, signer: PolkadotSigner) {
+export async function submitExtrinsic(tx: SubmittableTx, signer: TxCreator) {
   return submitTx(tx, signer, { mode: "finalized", retryStale: 1, onStatus: null });
 }
 
@@ -70,7 +70,7 @@ export async function submitExtrinsic(tx: SubmittableTx, signer: PolkadotSigner)
  */
 export async function submitExtrinsicBestBlock(
   tx: SubmittableTx,
-  signer: PolkadotSigner,
+  signer: TxCreator,
 ): Promise<void> {
   await submitTx(tx, signer, { mode: "best", retryStale: 1, onStatus: null });
 }

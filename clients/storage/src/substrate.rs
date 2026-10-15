@@ -61,6 +61,26 @@ impl SubstrateClient {
             .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))
     }
 
+    /// Sign `tx`, submit it and wait for finalized success. Returns the
+    /// extrinsic's events.
+    pub async fn submit(
+        &self,
+        tx: &impl subxt::tx::Payload,
+    ) -> Result<subxt::extrinsics::ExtrinsicEvents<PolkadotConfig>, ClientError> {
+        let signer = self.signer()?;
+        self.api()
+            .at_current_block()
+            .await
+            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
+            .transactions()
+            .sign_and_submit_then_watch_default(tx, signer)
+            .await
+            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
+            .wait_for_finalized_success()
+            .await
+            .map_err(|e| ClientError::Chain(format!("Transaction failed: {e}")))
+    }
+
     /// Get the signer if available.
     pub fn signer(&self) -> Result<&Signer, ClientError> {
         self.signer
@@ -150,47 +170,77 @@ pub mod extrinsics {
             .update_provider_settings(settings)
     }
 
-    /// Build an `establish_storage_agreement` extrinsic payload.
+    /// Build a `create_bucket` extrinsic payload.
+    pub fn create_bucket(
+        min_providers: u32,
+        visibility: storage_primitives::Visibility,
+    ) -> impl Payload {
+        api::tx()
+            .storage_provider()
+            .create_bucket(min_providers, convert::visibility(visibility))
+    }
+
+    /// Build a `create_bucket_with_primary` extrinsic payload.
     ///
     /// Bundles the SCALE-encoded provider-signed terms and signature into
-    /// the dynamic call shape Layer 0 expects. The chain hashes
+    /// the call shape Layer 0 expects. The chain hashes
     /// `blake2_256(TERM_CONTEXT | SCALE(terms))` and verifies the
     /// signature against the provider's registered public key.
-    pub fn establish_storage_agreement(
+    pub fn create_bucket_with_primary(
+        provider: AccountId32,
+        terms: &crate::agreement::AgreementTermsOf,
+        sig: &sp_runtime::MultiSignature,
+        visibility: storage_primitives::Visibility,
+    ) -> impl Payload {
+        api::tx().storage_provider().create_bucket_with_primary(
+            convert::to_subxt_account(&provider),
+            convert::agreement_terms(terms),
+            convert::multisig(sig),
+            convert::visibility(visibility),
+        )
+    }
+
+    /// Build an `add_primary_provider` extrinsic payload (admin only).
+    pub fn add_primary_provider(
+        bucket_id: u64,
         provider: AccountId32,
         terms: &crate::agreement::AgreementTermsOf,
         sig: &sp_runtime::MultiSignature,
     ) -> impl Payload {
-        api::tx().storage_provider().establish_storage_agreement(
+        api::tx().storage_provider().add_primary_provider(
+            bucket_id,
             convert::to_subxt_account(&provider),
             convert::agreement_terms(terms),
             convert::multisig(sig),
         )
     }
 
+    /// Build a `set_bucket_visibility` extrinsic payload (admin only).
+    pub fn set_bucket_visibility(
+        bucket_id: u64,
+        visibility: storage_primitives::Visibility,
+    ) -> impl Payload {
+        api::tx()
+            .storage_provider()
+            .set_bucket_visibility(bucket_id, convert::visibility(visibility))
+    }
+
     /// Create a checkpoint extrinsic payload to submit an on-chain snapshot.
-    ///
-    /// Fails if any signature is not exactly 64 bytes (sr25519).
     pub fn checkpoint(
         bucket_id: u64,
         commitment: Commitment,
-        signatures: Vec<(AccountId32, Vec<u8>)>,
-    ) -> Result<impl Payload, ClientError> {
+        signatures: &[(AccountId32, sp_runtime::MultiSignature)],
+    ) -> impl Payload {
         let sigs = signatures
-            .into_iter()
-            .map(|(account, sig)| {
-                Ok((
-                    convert::to_subxt_account(&account),
-                    convert::sr25519_signature(sig)?,
-                ))
-            })
-            .collect::<Result<Vec<_>, ClientError>>()?;
+            .iter()
+            .map(|(account, sig)| (convert::to_subxt_account(account), convert::multisig(sig)))
+            .collect();
 
-        Ok(api::tx().storage_provider().checkpoint(
+        api::tx().storage_provider().checkpoint(
             bucket_id,
             convert::commitment(&commitment),
             convert::bounded(sigs),
-        ))
+        )
     }
 
     /// Create a challenge_checkpoint extrinsic payload.
@@ -209,21 +259,20 @@ pub mod extrinsics {
     /// Create a challenge_offchain extrinsic payload.
     ///
     /// Uses the provider's off-chain signature instead of an on-chain checkpoint.
-    /// Fails if the signature is not exactly 64 bytes (sr25519).
     pub fn challenge_offchain(
         bucket_id: u64,
         provider: AccountId32,
         commitment: Commitment,
         target: ChunkLocation,
-        provider_signature: Vec<u8>,
-    ) -> Result<impl Payload, ClientError> {
-        Ok(api::tx().storage_provider().challenge_offchain(
+        provider_signature: &sp_runtime::MultiSignature,
+    ) -> impl Payload {
+        api::tx().storage_provider().challenge_offchain(
             bucket_id,
             convert::to_subxt_account(&provider),
             convert::commitment(&commitment),
             convert::chunk_location(&target),
-            convert::sr25519_signature(provider_signature)?,
-        ))
+            convert::multisig(provider_signature),
+        )
     }
 
     /// Create an add_stake extrinsic payload.
@@ -237,18 +286,16 @@ pub mod extrinsics {
     }
 
     /// Create a confirm_replica_sync extrinsic payload.
-    ///
-    /// Fails if the signature is not exactly 64 bytes (sr25519).
     pub fn confirm_replica_sync(
         bucket_id: u64,
         roots: [Option<H256>; 7],
-        signature: Vec<u8>,
-    ) -> Result<impl Payload, ClientError> {
-        Ok(api::tx().storage_provider().confirm_replica_sync(
+        signature: &sp_runtime::MultiSignature,
+    ) -> impl Payload {
+        api::tx().storage_provider().confirm_replica_sync(
             bucket_id,
             roots,
-            convert::sr25519_signature(signature)?,
-        ))
+            convert::multisig(signature),
+        )
     }
 
     /// Create a challenge_replica extrinsic payload.
@@ -321,6 +368,19 @@ pub mod extrinsics {
         )
     }
 
+    /// Create a transfer_agreement_ownership extrinsic payload.
+    pub fn transfer_agreement_ownership(
+        bucket_id: u64,
+        provider: AccountId32,
+        new_owner: AccountId32,
+    ) -> impl Payload {
+        api::tx().storage_provider().transfer_agreement_ownership(
+            bucket_id,
+            convert::to_subxt_account(&provider),
+            convert::to_subxt_account(&new_owner),
+        )
+    }
+
     /// Create an end_agreement extrinsic payload.
     pub fn end_agreement(
         bucket_id: u64,
@@ -359,6 +419,13 @@ pub mod extrinsics {
             response,
         )
     }
+
+    /// Create a resolve_expired_challenge extrinsic payload.
+    pub fn resolve_expired_challenge(challenge_id: (u32, u16)) -> impl Payload {
+        api::tx()
+            .storage_provider()
+            .resolve_expired_challenge(convert::challenge_id(challenge_id.0, challenge_id.1))
+    }
 }
 
 // Helper functions for common operations
@@ -392,12 +459,29 @@ pub async fn fetch_current_anchor_block<C>(
 where
     C: subxt::client::OnlineClientAtBlockT<PolkadotConfig>,
 {
+    // `unvalidated`: see the `storage-subxt` crate docs.
     let payload = storage_subxt::api::runtime_apis()
         .storage_provider_api()
-        .current_anchor_block();
+        .current_anchor_block()
+        .unvalidated();
     at.runtime_apis().call(payload).await.map_err(|e| {
         ClientError::Chain(format!("current_anchor_block runtime API call failed: {e}"))
     })
+}
+
+/// Decode a provider-emitted signature — `0x`-prefixed hex of a SCALE-encoded
+/// [`sp_runtime::MultiSignature`], the wire format every provider-node signing
+/// endpoint uses — back into the typed value.
+///
+/// Decoding must consume the input exactly: a value with trailing bytes is
+/// rejected rather than silently truncated, so this agrees with the JS SDK's
+/// per-variant length check on the same wire format.
+pub fn decode_multi_signature(sig_hex: &str) -> Result<sp_runtime::MultiSignature, ClientError> {
+    use codec::DecodeAll;
+    let s = sig_hex.strip_prefix("0x").unwrap_or(sig_hex);
+    let bytes = hex::decode(s).map_err(|e| ClientError::Serialization(e.to_string()))?;
+    sp_runtime::MultiSignature::decode_all(&mut &bytes[..])
+        .map_err(|e| ClientError::Serialization(format!("invalid SCALE MultiSignature: {e}")))
 }
 
 /// Parse a hex string to H256.

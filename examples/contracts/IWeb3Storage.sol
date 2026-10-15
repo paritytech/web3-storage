@@ -8,9 +8,20 @@ pragma solidity ^0.8.34;
 ///         values (32-byte sr25519 public keys) cross the boundary as `bytes32`;
 ///         the EVM caller's substrate-mapped account is derived from
 ///         `msg.sender` via `AccountId32Mapper`.
-///
-/// Role tags: 0 = Admin, 1 = Writer, 2 = Reader.
 interface IWeb3Storage {
+    /// Bucket member role.
+    enum Role {
+        Admin,
+        Writer,
+        Reader
+    }
+
+    /// Bucket read visibility.
+    enum Visibility {
+        Public,
+        Private
+    }
+
     // TODO: Find out way to make it re-useable
     struct PrimitiveReplicaTerms {
         /// Balance reserved by the owner to fund per-sync confirmations.
@@ -33,11 +44,12 @@ interface IWeb3Storage {
         uint128 pricePerByte;
         /// Block number after which the quote is no longer redeemable.
         uint32 validUntil;
-        /// Provider-chosen replay-protection nonce.
+        /// Owner-chosen replay-protection nonce: must equal the owner's next
+        /// expected on-chain value.
         uint64 nonce;
-        /// `true` if the quote is bound to an existing bucket (`Some(_)` on
-        /// the Rust side) — required for replica terms; primary terms leave
-        /// this false.
+        /// `true` if the quote names an existing bucket
+        /// (`BucketTarget::Existing` on the Rust side); `false` for a bucket
+        /// created at redemption (`BucketTarget::New`).
         bool hasBucketId;
         /// Target bucket id; only read when `hasBucketId` is true.
         uint64 bucketId;
@@ -49,25 +61,50 @@ interface IWeb3Storage {
 
     // --- Bucket lifecycle ---------------------------------------------------
 
-    /// Redeem provider-signed agreement terms: create a bucket and open a
-    /// primary agreement atomically. `terms` must match the SCALE payload the
-    /// provider signed; `terms.owner` must be the caller's substrate-mapped
-    /// account. `signature` is the SCALE-encoded `MultiSignature` from the
-    /// provider's `/negotiate` response (variant byte + raw signature bytes).
-    /// Returns the new bucket id.
-    function establishStorageAgreement(
+    /// Create an empty bucket with the caller as its sole admin.
+    /// `minProviders` is how many primary-provider signatures each checkpoint
+    /// needs. Returns the new bucket id.
+    function createBucket(uint32 minProviders, Visibility visibility)
+        external
+        returns (uint64 bucketId);
+
+    /// Redeem provider-signed primary terms: create a bucket and open its
+    /// first primary agreement atomically. `terms` must match the SCALE
+    /// payload the provider signed, with `hasBucketId` false;
+    /// `terms.owner` must be the caller's substrate-mapped account.
+    /// `signature` is the SCALE-encoded `MultiSignature` from the provider's
+    /// `/negotiate` response (variant byte + raw signature bytes).
+    /// `visibility` sets the new bucket's read visibility. Returns the new
+    /// bucket id.
+    function createBucketWithPrimary(
+        bytes32 provider,
+        PrimitiveAgreementTerms calldata terms,
+        bytes calldata signature,
+        Visibility visibility
+    ) external returns (uint64 bucketId);
+
+    /// Admin only. Redeem provider-signed primary terms against an existing
+    /// bucket, adding the provider to its primary set. `terms.hasBucketId`
+    /// must be true and `terms.bucketId` must equal `bucketId`.
+    function addPrimaryProvider(
+        uint64 bucketId,
         bytes32 provider,
         PrimitiveAgreementTerms calldata terms,
         bytes calldata signature
-    ) external returns (uint64 bucketId);
+    ) external;
 
     /// Freeze a bucket — append-only, irreversible.
     function freezeBucket(uint64 bucketId) external;
 
+    /// Set bucket read visibility (admin only).
+    /// Always reversible on-chain, but publicizing cannot recall data
+    /// already disclosed.
+    function setBucketVisibility(uint64 bucketId, Visibility visibility) external;
+
     // --- Membership ---------------------------------------------------------
 
     /// Add or update a bucket member.
-    function setMember(uint64 bucketId, bytes32 member, uint8 role) external;
+    function setMember(uint64 bucketId, bytes32 member, Role role) external;
 
     /// Remove a member from a bucket.
     function removeMember(uint64 bucketId, bytes32 member) external;
@@ -98,11 +135,16 @@ interface IWeb3Storage {
 
     // --- Challenges ---------------------------------------------------------
 
-    /// Challenge a provider's checkpoint at a specific leaf/chunk.
+    /// Challenge a provider's checkpoint at a specific leaf/chunk. Returns the
+    /// challenge id, needed to resolve it after the deadline.
     function challengeCheckpoint(
         uint64 bucketId,
         bytes32 provider,
         uint64 leafIndex,
         uint64 chunkIndex
-    ) external;
+    ) external returns (uint32 deadline, uint16 index);
+
+    /// Slash a provider whose challenge expired unanswered. Permissionless;
+    /// gas is charged even though the native call is free on success.
+    function resolveExpiredChallenge(uint32 deadline, uint16 index) external;
 }

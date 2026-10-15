@@ -133,7 +133,7 @@ async function main() {
     //    account so the precompile can reserve the agreement payment.
     console.log("\n[4/6] buyStorage{value: 5 UNIT}(provider, terms[1KiB×50], sig)…");
     const contractAccount = h160ToSubstrate(deployed.addressBytes);
-    const signed = await negotiatePrecompileTerms(PROVIDER_URL, contractAccount, {
+    const signed = await negotiatePrecompileTerms(api, PROVIDER_URL, contractAccount, {
       maxBytes: MAX_BYTES,
       duration: DURATION,
       pricePerByte: PRICE_PER_BYTE,
@@ -196,7 +196,7 @@ async function main() {
     // 6) End the agreement *through the contract*. Only the original buyer
     //    (the marketplace's bucket-owner mapping) can call this.
     console.log("\n[6/6] endMyAgreement via contract…");
-    const providerBytes32 = provider.publicKey; // substrate AccountId32 = 32-byte sr25519 pubkey
+    const providerBytes32 = provider.publicKey; // the provider's AccountId32 (32 raw bytes)
     const endData = encodeCall(abi, "endMyAgreement", [
       bucketId,
       toHex(providerBytes32),
