@@ -299,6 +299,43 @@ mod tests {
     }
 
     #[test]
+    fn chunks_in_range_match_single_chunks_and_clip_to_the_last_chunk() {
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        storage.init_bucket(1, 1024 * 1024).unwrap();
+        let chunks: Vec<Vec<u8>> = (1..=5u8).map(|i| vec![i; 32]).collect();
+        let leaves: Vec<H256> = chunks
+            .iter()
+            .map(|data| {
+                let hash = storage_primitives::hash_leaf(data);
+                storage
+                    .store_node(1, hash, ChunkTreeNode::Chunk(data.clone()))
+                    .unwrap();
+                hash
+            })
+            .collect();
+        let root = build_merkle_tree(&storage, 1, &leaves).unwrap();
+
+        let range = storage.get_chunks_in_range(root, 1..4).unwrap();
+        assert_eq!(range.len(), 3);
+        for (index, (data, proof)) in (1..4).zip(&range) {
+            assert_eq!(*data, chunks[index as usize]);
+            assert_eq!(
+                *proof,
+                storage.get_chunk_at_index(root, index).unwrap().1,
+                "index {index}"
+            );
+        }
+
+        assert_eq!(storage.get_chunks_in_range(root, 3..10).unwrap().len(), 2);
+        assert!(storage.get_chunks_in_range(root, 7..9).unwrap().is_empty());
+        assert!(matches!(
+            storage.get_chunk_at_index(root, 5),
+            Err(Error::NodeNotFound(_))
+        ));
+    }
+
+    #[test]
     fn build_merkle_tree_returns_store_error() {
         let dir = TempDir::new().unwrap();
         let storage = DiskStorage::new(dir.path()).unwrap();
