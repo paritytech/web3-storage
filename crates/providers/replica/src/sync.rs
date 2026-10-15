@@ -193,17 +193,11 @@ struct DownloadNodeResponse {
     children: Option<Vec<String>>,
 }
 
-/// Decode hex string (with or without 0x prefix). `what` names the value
-/// being decoded, for the error message.
-fn hex_decode(what: &'static str, s: &str) -> Result<Vec<u8>, Error> {
-    let s = s.strip_prefix("0x").unwrap_or(s);
-    hex::decode(s).map_err(|e| Error::decode(what, e))
-}
-
-/// Decode a hex string into a 32-byte hash. `what` names the value being
-/// decoded, for the error message.
+/// Decode a hex string (with or without 0x prefix) into a 32-byte hash.
+/// `what` names the value being decoded, for the error message.
 fn hash_decode(what: &'static str, s: &str) -> Result<H256, Error> {
-    let bytes = hex_decode(what, s)?;
+    let bytes =
+        hex::decode(s.strip_prefix("0x").unwrap_or(s)).map_err(|e| Error::decode(what, e))?;
     if bytes.len() != 32 {
         return Err(Error::decode(
             what,

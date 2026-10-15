@@ -22,6 +22,8 @@ const CF_NODES: &str = "nodes";
 const CF_BUCKETS: &str = "buckets";
 const CF_ROOT_TO_BUCKET: &str = "root_to_bucket";
 const CF_METADATA: &str = "metadata";
+/// Every column family this engine opens.
+const COLUMN_FAMILIES: [&str; 4] = [CF_NODES, CF_BUCKETS, CF_ROOT_TO_BUCKET, CF_METADATA];
 
 /// RocksDB key for the persisted format version.
 const KEY_FORMAT_VERSION: &[u8] = b"format_version";
@@ -39,8 +41,7 @@ impl DiskStorage {
         opts.create_if_missing(true);
         opts.create_missing_column_families(true);
 
-        let cf_names = vec![CF_NODES, CF_BUCKETS, CF_ROOT_TO_BUCKET, CF_METADATA];
-        let db = DB::open_cf(&opts, path, &cf_names)?;
+        let db = DB::open_cf(&opts, path, COLUMN_FAMILIES)?;
 
         Self::check_format_version(&db)?;
 
@@ -86,7 +87,7 @@ impl DiskStorage {
 
     /// Whether every column family this engine uses is empty.
     fn is_empty(db: &DB) -> Result<bool, Error> {
-        for cf_name in [CF_NODES, CF_BUCKETS, CF_ROOT_TO_BUCKET, CF_METADATA] {
+        for cf_name in COLUMN_FAMILIES {
             let cf = db
                 .cf_handle(cf_name)
                 .ok_or(Error::ColumnFamilyMissing(cf_name))?;
@@ -565,6 +566,15 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
+    /// Open the database at `path` directly, bypassing `DiskStorage::new` and
+    /// its format-version check.
+    fn open_raw(path: &Path) -> DB {
+        let mut opts = Options::default();
+        opts.create_if_missing(true);
+        opts.create_missing_column_families(true);
+        DB::open_cf(&opts, path, COLUMN_FAMILIES).unwrap()
+    }
+
     /// Pins the raw keys and values this engine writes. A failure here means
     /// existing provider databases can no longer be read - bump
     /// [`FORMAT_VERSION`].
@@ -574,7 +584,7 @@ mod tests {
     fn on_disk_bytes() {
         // Raw keys and values as written through the public API.
         assert_eq!(
-            [CF_NODES, CF_BUCKETS, CF_ROOT_TO_BUCKET, CF_METADATA],
+            COLUMN_FAMILIES,
             ["nodes", "buckets", "root_to_bucket", "metadata"],
             "column-family names locate every record on disk",
         );
@@ -807,27 +817,16 @@ mod tests {
         DiskStorage::new(dir.path()).unwrap();
 
         // Corrupt the recorded version directly, bypassing DiskStorage::new.
-        let mut opts = Options::default();
-        opts.create_if_missing(true);
-        opts.create_missing_column_families(true);
-        let db = DB::open_cf(
-            &opts,
-            dir.path(),
-            [CF_NODES, CF_BUCKETS, CF_ROOT_TO_BUCKET, CF_METADATA],
-        )
-        .unwrap();
+        let db = open_raw(dir.path());
         let cf = db.cf_handle(CF_METADATA).unwrap();
         db.put_cf(&cf, KEY_FORMAT_VERSION, 9999u32.to_le_bytes())
             .unwrap();
         drop(db);
 
-        match DiskStorage::new(dir.path()) {
-            Err(Error::IncompatibleFormat(_)) => {}
-            other => panic!(
-                "expected an incompatible-format error, got {}",
-                other.is_ok()
-            ),
-        }
+        assert!(matches!(
+            DiskStorage::new(dir.path()),
+            Err(Error::IncompatibleFormat(_))
+        ));
     }
 
     #[test]
@@ -837,27 +836,16 @@ mod tests {
         // Simulate a database written before format versioning existed: real
         // data, but no format_version key - bypassing DiskStorage::new so no
         // version ever gets recorded.
-        let mut opts = Options::default();
-        opts.create_if_missing(true);
-        opts.create_missing_column_families(true);
-        let db = DB::open_cf(
-            &opts,
-            dir.path(),
-            [CF_NODES, CF_BUCKETS, CF_ROOT_TO_BUCKET, CF_METADATA],
-        )
-        .unwrap();
+        let db = open_raw(dir.path());
         let cf = db.cf_handle(CF_BUCKETS).unwrap();
         db.put_cf(&cf, 1u64.to_le_bytes(), BucketState::new(1_000).encode())
             .unwrap();
         drop(db);
 
-        match DiskStorage::new(dir.path()) {
-            Err(Error::IncompatibleFormat(_)) => {}
-            other => panic!(
-                "expected an incompatible-format error, got {}",
-                other.is_ok()
-            ),
-        }
+        assert!(matches!(
+            DiskStorage::new(dir.path()),
+            Err(Error::IncompatibleFormat(_))
+        ));
     }
 
     #[test]

@@ -21,6 +21,7 @@
 use crate::error::Error;
 use codec::{Decode, Encode};
 use sp_core::H256;
+use std::borrow::Cow;
 use storage_primitives::{hash_children, MmrLeaf};
 
 /// Version of the on-disk encoding of the records in this module.
@@ -83,13 +84,10 @@ pub enum ChunkTreeNode {
 }
 
 impl ChunkTreeNode {
-    /// Build an internal node from a child list of unproven length, as it
-    /// arrives over the wire.
-    ///
-    /// A list that is not exactly two hashes describes a node this type cannot
-    /// represent, so it is rejected here - at the boundary where untrusted
-    /// input enters - rather than anywhere deeper.
-    pub fn internal(children: Vec<H256>) -> Result<Self, Error> {
+    /// Build an internal node from a child list of unproven length, for
+    /// [`Self::from_wire`]. A list that is not exactly two hashes describes a
+    /// node this type cannot represent, so it is rejected.
+    fn internal(children: Vec<H256>) -> Result<Self, Error> {
         let count = children.len();
         let [left, right]: [H256; 2] = children
             .try_into()
@@ -106,22 +104,20 @@ impl ChunkTreeNode {
             return Ok(Self::Chunk(data));
         };
         let node = Self::internal(children)?;
-        if node.preimage() != data {
+        if *node.preimage() != *data {
             return Err(Error::InvalidInternalNodeData);
         }
         Ok(node)
     }
 
     /// The bytes that hash to this node's identity: `data` for a chunk,
-    /// `concat(children)` for an internal node.
-    pub fn preimage(&self) -> Vec<u8> {
+    /// `concat(children)` for an internal node. A chunk's bytes are borrowed,
+    /// not copied.
+    pub fn preimage(&self) -> Cow<'_, [u8]> {
         match self {
-            Self::Chunk(data) => data.clone(),
+            Self::Chunk(data) => Cow::Borrowed(data),
             Self::Internal { left, right } => {
-                let mut bytes = Vec::with_capacity(64);
-                bytes.extend_from_slice(left.as_bytes());
-                bytes.extend_from_slice(right.as_bytes());
-                bytes
+                Cow::Owned([left.as_bytes(), right.as_bytes()].concat())
             }
         }
     }
@@ -312,7 +308,7 @@ mod tests {
     #[test]
     fn chunk_preimage_and_hash_are_its_data() {
         let node = ChunkTreeNode::Chunk(vec![1, 2, 3]);
-        assert_eq!(node.preimage(), vec![1, 2, 3]);
+        assert_eq!(*node.preimage(), [1, 2, 3]);
         assert_eq!(node.hash(), storage_primitives::blake2_256(&[1, 2, 3]));
     }
 
@@ -341,7 +337,7 @@ mod tests {
 
         let mut expected_preimage = left.as_bytes().to_vec();
         expected_preimage.extend_from_slice(right.as_bytes());
-        assert_eq!(node.preimage(), expected_preimage);
+        assert_eq!(*node.preimage(), *expected_preimage);
         assert_eq!(node.hash(), hash_children(left, right));
     }
 }

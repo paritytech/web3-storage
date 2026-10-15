@@ -11,6 +11,7 @@
 
 use crate::base::{BaseClient, ChunkingStrategy, ClientConfig, ClientError, ClientResult};
 use crate::encryption::{Cipher, EncryptionKey, XChaCha20Poly1305Cipher};
+use crate::substrate::parse_h256;
 use crate::verification::ClientVerifier;
 use crate::Signer;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
@@ -112,11 +113,12 @@ impl StorageUserClient {
         let chunks = Self::chunk_data(upload_data, strategy);
 
         // Upload chunks (leaves)
-        let chunk_hashes: Vec<H256> = chunks.iter().map(|chunk| blake2_256(chunk)).collect();
-
-        for chunk in &chunks {
-            self.upload_node(provider_url, bucket_id, &Node::Chunk(chunk.clone()))
-                .await?;
+        let mut chunk_hashes = Vec::with_capacity(chunks.len());
+        for chunk in chunks {
+            chunk_hashes.push(
+                self.upload_node(provider_url, bucket_id, &Node::Chunk(chunk))
+                    .await?,
+            );
         }
 
         // Build Merkle tree bottom-up
@@ -296,7 +298,7 @@ impl StorageUserClient {
             .children
             .map(|c| {
                 c.iter()
-                    .map(|h| decode_h256(h))
+                    .map(|h| parse_h256(h))
                     .collect::<ClientResult<Vec<H256>>>()
             })
             .transpose()?;
@@ -483,12 +485,13 @@ impl StorageUserClient {
         }
     }
 
+    /// Upload `node` and return its hash.
     async fn upload_node(
         &self,
         provider_url: &str,
         bucket_id: BucketId,
         node: &Node,
-    ) -> ClientResult<()> {
+    ) -> ClientResult<H256> {
         let (data, children) = match node {
             Node::Chunk(data) => (BASE64.encode(data), None),
             Node::Internal { left, right } => (
@@ -499,9 +502,10 @@ impl StorageUserClient {
                 ]),
             ),
         };
+        let hash = node.hash();
         let request = UploadNodeRequest {
             bucket_id,
-            hash: BaseClient::hex_encode(node.hash().as_bytes()),
+            hash: BaseClient::hex_encode(hash.as_bytes()),
             data,
             children,
         };
@@ -520,7 +524,7 @@ impl StorageUserClient {
             )));
         }
 
-        Ok(())
+        Ok(hash)
     }
 
     async fn build_merkle_tree(
@@ -534,10 +538,6 @@ impl StorageUserClient {
                 "Cannot build Merkle tree with no leaves".to_string(),
             ));
         }
-        if leaf_hashes.len() == 1 {
-            return Ok(leaf_hashes[0]);
-        }
-
         let padded_len = leaf_hashes.len().next_power_of_two();
         let mut current_level = leaf_hashes.to_vec();
         current_level.resize(padded_len, H256::zero());
@@ -546,19 +546,11 @@ impl StorageUserClient {
             let mut next_level = Vec::new();
 
             for pair in current_level.chunks(2) {
-                let parent_hash = storage_primitives::hash_children(pair[0], pair[1]);
-
-                self.upload_node(
-                    provider_url,
-                    bucket_id,
-                    &Node::Internal {
-                        left: pair[0],
-                        right: pair[1],
-                    },
-                )
-                .await?;
-
-                next_level.push(parent_hash);
+                let parent = Node::Internal {
+                    left: pair[0],
+                    right: pair[1],
+                };
+                next_level.push(self.upload_node(provider_url, bucket_id, &parent).await?);
             }
 
             current_level = next_level;
@@ -704,17 +696,6 @@ impl Node {
         }
         Ok(Self::Internal { left, right })
     }
-}
-
-fn decode_h256(s: &str) -> ClientResult<H256> {
-    let bytes = BaseClient::hex_decode(s)?;
-    if bytes.len() != 32 {
-        return Err(ClientError::Serialization(format!(
-            "Invalid hash length: expected 32 bytes, got {}",
-            bytes.len()
-        )));
-    }
-    Ok(H256::from_slice(&bytes))
 }
 
 #[derive(serde::Serialize)]
@@ -870,15 +851,6 @@ mod tests {
         assert_eq!(
             Node::Internal { left, right }.hash(),
             storage_primitives::hash_children(left, right)
-        );
-    }
-
-    #[test]
-    fn decode_h256_rejects_a_hash_of_wrong_length() {
-        assert!(decode_h256(&format!("0x{}", "ab".repeat(31))).is_err());
-        assert_eq!(
-            decode_h256(&format!("0x{}", "ab".repeat(32))).unwrap(),
-            H256::repeat_byte(0xab)
         );
     }
 
