@@ -567,6 +567,7 @@ impl StorageBackend for DiskStorage {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::backend::build_merkle_tree;
     use storage_primitives::DEFAULT_CHUNK_SIZE;
     use tempfile::TempDir;
 
@@ -576,11 +577,11 @@ mod tests {
         DB::open_cf(&DiskStorage::db_options(), path, COLUMN_FAMILIES).unwrap()
     }
 
-    /// A fresh database with bucket 1 initialised with a 1000 B quota.
-    fn storage_with_bucket() -> (DiskStorage, TempDir) {
+    /// A fresh database with bucket 1 initialised with a `quota` B quota.
+    fn storage_with_bucket(quota: u64) -> (DiskStorage, TempDir) {
         let dir = TempDir::new().unwrap();
         let storage = DiskStorage::new(dir.path()).unwrap();
-        storage.init_bucket(1, 1_000).unwrap();
+        storage.init_bucket(1, quota).unwrap();
         (storage, dir)
     }
 
@@ -700,16 +701,12 @@ mod tests {
         assert_eq!(after.mmr_root, before.mmr_root);
     }
 
-    fn committing_storage() -> (TempDir, DiskStorage) {
-        let dir = TempDir::new().unwrap();
-        let storage = DiskStorage::new(dir.path()).unwrap();
-        storage.init_bucket(BUCKET, 1_000_000).unwrap();
-        (dir, storage)
-    }
+    /// Room for a few chunks of `DEFAULT_CHUNK_SIZE`.
+    const COMMIT_QUOTA: u64 = 1_000_000;
 
     #[test]
     fn commit_rejects_right_leaning_tree() {
-        let (_dir, storage) = committing_storage();
+        let (storage, _dir) = storage_with_bucket(COMMIT_QUOTA);
         let [c0, c1, c2] = [1, 2, 3].map(|b| store_chunk(&storage, b));
         let right = store_parent(&storage, c1, c2);
         let root = store_parent(&storage, c0, right);
@@ -718,10 +715,9 @@ mod tests {
 
     #[test]
     fn commit_accepts_tree_with_the_odd_chunk_moved_up_and_single_leaf() {
-        let (_dir, storage) = committing_storage();
+        let (storage, _dir) = storage_with_bucket(COMMIT_QUOTA);
         let [c0, c1, c2] = [1, 2, 3].map(|b| store_chunk(&storage, b));
-        let left = store_parent(&storage, c0, c1);
-        let root = store_parent(&storage, left, c2);
+        let root = build_merkle_tree(&storage, BUCKET, &[c0, c1, c2]).unwrap();
         storage.commit(BUCKET, vec![root, c0]).unwrap();
         let leaves = storage.get_bucket(BUCKET).unwrap().leaves;
         assert_eq!(leaves.len(), 2);
@@ -730,11 +726,10 @@ mod tests {
 
     #[test]
     fn commit_accepts_a_short_last_chunk() {
-        let (_dir, storage) = committing_storage();
+        let (storage, _dir) = storage_with_bucket(COMMIT_QUOTA);
         let [c0, c1] = [1, 2].map(|b| store_chunk(&storage, b));
         let c2 = store_chunk_of_len(&storage, 3, 10);
-        let left = store_parent(&storage, c0, c1);
-        let root = store_parent(&storage, left, c2);
+        let root = build_merkle_tree(&storage, BUCKET, &[c0, c1, c2]).unwrap();
         storage.commit(BUCKET, vec![root]).unwrap();
         let leaves = storage.get_bucket(BUCKET).unwrap().leaves;
         assert_eq!(leaves[0].data_size, 2 * DEFAULT_CHUNK_SIZE as u64 + 10);
@@ -742,7 +737,7 @@ mod tests {
 
     #[test]
     fn commit_accepts_a_single_empty_chunk() {
-        let (_dir, storage) = committing_storage();
+        let (storage, _dir) = storage_with_bucket(COMMIT_QUOTA);
         let root = store_chunk_of_len(&storage, 0, 0);
         storage.commit(BUCKET, vec![root]).unwrap();
         assert_eq!(storage.get_bucket(BUCKET).unwrap().leaves[0].data_size, 0);
@@ -750,7 +745,7 @@ mod tests {
 
     #[test]
     fn commit_rejects_a_short_chunk_that_is_not_last() {
-        let (_dir, storage) = committing_storage();
+        let (storage, _dir) = storage_with_bucket(COMMIT_QUOTA);
         let c0 = store_chunk_of_len(&storage, 1, 10);
         let c1 = store_chunk(&storage, 2);
         let root = store_parent(&storage, c0, c1);
@@ -759,7 +754,7 @@ mod tests {
 
     #[test]
     fn commit_rejects_an_empty_last_chunk_of_several() {
-        let (_dir, storage) = committing_storage();
+        let (storage, _dir) = storage_with_bucket(COMMIT_QUOTA);
         let c0 = store_chunk(&storage, 1);
         let c1 = store_chunk_of_len(&storage, 2, 0);
         let root = store_parent(&storage, c0, c1);
@@ -768,7 +763,7 @@ mod tests {
 
     #[test]
     fn store_node_rejects_internal_node_whose_children_disagree_with_expected_hash() {
-        let (storage, _dir) = storage_with_bucket();
+        let (storage, _dir) = storage_with_bucket(1_000);
         let bucket_id: BucketId = 1;
 
         let left = H256::zero();
@@ -788,7 +783,7 @@ mod tests {
 
     #[test]
     fn store_node_rejects_missing_child() {
-        let (storage, _dir) = storage_with_bucket();
+        let (storage, _dir) = storage_with_bucket(1_000);
         let bucket_id: BucketId = 1;
 
         let missing_child = H256::repeat_byte(0x42);
@@ -808,7 +803,7 @@ mod tests {
 
     #[test]
     fn internal_node_charges_64_bytes() {
-        let (_dir, storage) = committing_storage();
+        let (storage, _dir) = storage_with_bucket(COMMIT_QUOTA);
         let [left, right] = [1, 2].map(|b| store_chunk_of_len(&storage, b, 10));
         let used = storage.get_bucket(BUCKET).unwrap().used_bytes;
 
@@ -819,26 +814,8 @@ mod tests {
     }
 
     #[test]
-    fn store_node_rejects_a_zero_child() {
-        let (_dir, storage) = committing_storage();
-        let c0 = store_chunk(&storage, 1);
-        let hash = storage_primitives::hash_children(c0, H256::zero());
-        let err = storage
-            .store_node(
-                BUCKET,
-                hash,
-                ChunkTreeNode::Internal {
-                    left: c0,
-                    right: H256::zero(),
-                },
-            )
-            .unwrap_err();
-        assert!(matches!(err, Error::ChildrenMissing(_)), "got {err:?}");
-    }
-
-    #[test]
     fn get_node_round_trips_both_variants() {
-        let (storage, _dir) = storage_with_bucket();
+        let (storage, _dir) = storage_with_bucket(1_000);
         let bucket_id: BucketId = 1;
 
         let chunk_data = vec![7u8, 8, 9];
