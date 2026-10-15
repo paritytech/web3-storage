@@ -6,11 +6,9 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum Error {
-    /// Cannot find node (404)
     #[error("Node not found: {0}")]
     NodeNotFound(String),
 
-    /// Missing children (400)
     #[error("Children missing: {0:?}")]
     ChildrenMissing(Vec<String>),
 
@@ -24,40 +22,41 @@ pub enum Error {
     #[error("Internal node data is not the concatenation of its children")]
     InvalidInternalNodeData,
 
-    /// Storage exceeds allowance (507)
     #[error("Quota exceeded: used {used}, max {max}")]
     QuotaExceeded { used: u64, max: u64 },
 
-    /// A leaf above the size a challenge response can contain. The provider
-    /// cannot prove it on-chain, so it rejects it at store and at commit.
-    #[error("Chunk too large: {size} bytes, max {max}")]
-    ChunkTooLarge { size: u64, max: u32 },
+    /// A leaf chunk above `DEFAULT_CHUNK_SIZE` bytes. Split the data into chunks
+    /// of at most that size.
+    #[error("Chunk too large: {size} bytes, max {max}", max = storage_primitives::DEFAULT_CHUNK_SIZE)]
+    ChunkTooLarge { size: u64 },
 
-    /// Cannot find bucket by given id (404)
     #[error("Bucket not found: {0}")]
     BucketNotFound(u64),
 
-    /// Cannot find MMR root (404)
     #[error("Root not found: {0}")]
     RootNotFound(String),
 
-    /// Invalid leaf hash (400)
     #[error("Invalid hash: expected {expected}, got {actual}")]
     InvalidHash { expected: String, actual: String },
 
-    /// Invalid tree shape (400)
+    /// A data root whose tree is not the canonical tree over fixed-size
+    /// chunks. Build the tree with `storage_primitives::merkle_tree` over
+    /// chunks of `DEFAULT_CHUNK_SIZE` bytes, with only the last chunk shorter.
     #[error("Non-canonical tree: {0}")]
     NonCanonicalTree(String),
 
-    /// Serialization error (400)
     #[error("Serialization error: {0}")]
     Serialization(String),
 
-    /// Internal RocksDb errors (500)
+    /// The RocksDB engine itself failed. Carries the engine's error as
+    /// `source()` so the cause survives instead of being flattened into a
+    /// message.
     #[error("RocksDB error: {0}")]
     RocksDb(#[from] rocksdb::Error),
 
-    /// A column family the engine expects was absent (500)
+    /// A column family the engine expects was absent from the open database:
+    /// a layout bug or a database written by a different build, not an I/O
+    /// fault.
     #[error("Column family not found: {0}")]
     ColumnFamilyMissing(&'static str),
 

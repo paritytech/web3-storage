@@ -6,9 +6,8 @@
 //
 // Mirrors, byte for byte:
 //   - `crates/providers/storage/src/index/fs.rs`     → `metadata_merkle_root`
-//   - `crates/primitives/storage/src/merkle.rs`      → `merkle_root`, `hash_leaf`, `hash_children`
-//   - `crates/primitives/storage/src/mmr.rs`         → `bag_peaks`
-//   - `crates/primitives/storage/src/lib.rs`         → `DEFAULT_CHUNK_SIZE`, `MAX_CHUNK_SIZE`
+//   - `crates/primitives/storage/src/merkle.rs`      → `merkle_root`, `chunk_count`
+//   - `crates/primitives/storage/src/lib.rs`         → `hash_leaf`, `hash_children`, `bag_peaks`, `DEFAULT_CHUNK_SIZE`
 //
 // This is the multi-chunk Merkle DAG walk that `verify.ts` documents as the
 // missing "Rust-client parity" piece. Pure functions, no I/O — browser-safe.
@@ -17,14 +16,11 @@ import { blake2b256 } from "@polkadot-labs/hdkd-helpers";
 
 import { concatBytes } from "./bytes.js";
 
-/** Mirror of DEFAULT_CHUNK_SIZE in crates/primitives/storage/src/lib.rs. */
-export const DEFAULT_CHUNK_SIZE = 256 * 1024;
-
 /**
- * Mirror of MAX_CHUNK_SIZE in crates/primitives/storage/src/lib.rs: the largest
- * leaf a challenge response can contain. A provider cannot prove a bigger leaf.
+ * Mirror of DEFAULT_CHUNK_SIZE in crates/primitives/storage/src/lib.rs: the
+ * chunk size, and the largest leaf a challenge response can contain.
  */
-export const MAX_CHUNK_SIZE = 256 * 1024;
+export const DEFAULT_CHUNK_SIZE = 256 * 1024;
 
 /** Prefix of an internal node preimage; leaves use a different prefix. */
 const NODE_PREFIX = 0x01;

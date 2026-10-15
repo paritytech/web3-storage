@@ -60,7 +60,7 @@
     <tr><td>Primary provider</td><td>Added by the admin. Receives writes from clients and signs checkpoints. At most <code>MaxPrimaryProviders</code> (5) per bucket.</td></tr>
     <tr><td>Replica provider</td><td>Added by any account that gets a replica quote from the provider (the quote names that account). Syncs data from other providers, confirms sync on-chain, and receives a payment per confirmation. No limit per bucket.</td></tr>
     <tr><td>Storage agreement</td><td>One per provider per bucket: quota (<code>max_bytes</code>), locked price, expiry, role, and owner. The payment is held on the owner until settlement.</td></tr>
-    <tr><td><code>data_root</code></td><td>Merkle root of a chunk tree. Chunks are at most 256 KiB and addressed by <code>blake2_256(0x00 ++ data)</code>. An internal node has exactly two children; its hash is <code>blake2_256(0x01 ++ left ++ right)</code>.</td></tr>
+    <tr><td><code>data_root</code></td><td>Merkle root of a chunk tree. Chunks are at most 256 KiB and addressed by <code>blake2_256</code> hash.</td></tr>
     <tr><td>MMR and commitment</td><td>Each bucket has one Merkle Mountain Range. Each leaf holds a <code>data_root</code>. A <code>Commitment</code> is <code>(mmr_root, start_seq, leaf_count)</code>.</td></tr>
     <tr><td>Checkpoint</td><td>A commitment written on-chain with signatures from at least <code>min_providers</code> primaries.</td></tr>
     <tr><td>Challenge</td><td>An on-chain request that forces a provider to post one chunk with Merkle proofs, or lose its stake.</td></tr>

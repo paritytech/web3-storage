@@ -27,7 +27,6 @@ export {
   verifyCid,
   CidMismatchError,
   DEFAULT_CHUNK_SIZE,
-  MAX_CHUNK_SIZE,
   computeDataRoot,
   metadataMerkleRoot,
   merkleRoot,

@@ -8,21 +8,9 @@
 //! its own root. The provider builds, stores and proves against this shape, and
 //! the pallet verifies proofs against it.
 
-use crate::{blake2_256, DEFAULT_CHUNK_SIZE};
+use crate::{hash_children, MerkleProof, DEFAULT_CHUNK_SIZE};
 use alloc::vec::Vec;
-use codec::{Decode, DecodeWithMemTracking, Encode};
-use scale_info::TypeInfo;
 use sp_core::H256;
-
-/// Merkle proof for verifying inclusion.
-#[derive(Clone, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo, Debug)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct MerkleProof {
-    /// Sibling hashes from leaf to root
-    pub siblings: Vec<H256>,
-    /// Path bits (false = left, true = right)
-    pub path: Vec<bool>,
-}
 
 /// An internal node of the tree.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -33,32 +21,6 @@ pub struct MerkleNode {
     pub left: H256,
     /// Right child hash.
     pub right: H256,
-}
-
-/// Prefix of a Merkle leaf preimage: a chunk, an MMR leaf or a metadata entry.
-const LEAF_PREFIX: u8 = 0x00;
-/// Prefix of an internal Merkle node preimage.
-const NODE_PREFIX: u8 = 0x01;
-
-/// Hash a Merkle leaf: `blake2_256(0x00 ++ data)`.
-///
-/// Leaves and internal nodes use different prefixes, so the bytes of an
-/// internal node never hash to the same value as a leaf.
-pub fn hash_leaf(data: &[u8]) -> H256 {
-    let mut preimage = Vec::with_capacity(1 + data.len());
-    preimage.push(LEAF_PREFIX);
-    preimage.extend_from_slice(data);
-    blake2_256(&preimage)
-}
-
-/// Hash two children into an internal Merkle node:
-/// `blake2_256(0x01 ++ left ++ right)`.
-pub fn hash_children(left: H256, right: H256) -> H256 {
-    let mut data = [0u8; 65];
-    data[0] = NODE_PREFIX;
-    data[1..33].copy_from_slice(left.as_bytes());
-    data[33..].copy_from_slice(right.as_bytes());
-    blake2_256(&data)
 }
 
 /// Number of chunks (tree leaves) of data with `data_size` bytes.
@@ -203,6 +165,7 @@ pub fn verify_merkle_proof(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::blake2_256;
 
     fn leaves(n: usize) -> Vec<H256> {
         (1..=n).map(|i| H256::from_low_u64_be(i as u64)).collect()

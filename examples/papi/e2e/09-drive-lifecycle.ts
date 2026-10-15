@@ -9,7 +9,7 @@
  * file and directory ops, add/change/remove members, and failure cases. The
  * chain stores no drive name or drive record: a drive is its bucket id.
  *
- * Usage: node --import tsx e2e/09-drive-lifecycle.ts [chain_ws] [provider_url]
+ * Usage: node e2e/09-drive-lifecycle.js [chain_ws] [provider_url]
  */
 
 import assert from "node:assert";

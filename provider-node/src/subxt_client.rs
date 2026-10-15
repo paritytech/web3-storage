@@ -25,9 +25,8 @@ use storage_primitives::BucketId;
 use storage_subxt::api::runtime_types::bounded_collections::bounded_vec::BoundedVec;
 use storage_subxt::api::runtime_types::pallet_storage_provider::pallet::ChallengeResponse as RuntimeChallengeResponse;
 use storage_subxt::api::runtime_types::storage_primitives::{
-    merkle::MerkleProof as RuntimeMerkleProof,
-    mmr::{MmrLeaf as RuntimeMmrLeaf, MmrProof as RuntimeMmrProof},
-    ChallengeId as RuntimeChallengeId,
+    ChallengeId as RuntimeChallengeId, MerkleProof as RuntimeMerkleProof,
+    MmrLeaf as RuntimeMmrLeaf, MmrProof as RuntimeMmrProof,
 };
 use subxt::dynamic::Value;
 use subxt::error::{DispatchError, TransactionEventsError, TransactionFinalizedSuccessError};

@@ -9,7 +9,7 @@
  * writes, and failure cases. The chain stores no bucket name and no object
  * metadata: the provider's S3 index maps keys to content.
  *
- * Usage: node --import tsx e2e/03-s3-bucket-and-objects.ts [chain_ws] [provider_url]
+ * Usage: node e2e/03-s3-bucket-and-objects.js [chain_ws] [provider_url]
  */
 
 import assert from "node:assert";

@@ -193,7 +193,7 @@ pub struct AgreementInfo {
 /// Chunking strategy for data upload.
 #[derive(Debug, Clone, Copy)]
 pub enum ChunkingStrategy {
-    /// Fixed-size chunks (default: 256 KiB)
+    /// Fixed-size chunks (default: `DEFAULT_CHUNK_SIZE`)
     Fixed(usize),
     /// TODO: Content-defined chunking (not yet implemented)
     ///
@@ -207,7 +207,7 @@ pub enum ChunkingStrategy {
 
 impl Default for ChunkingStrategy {
     fn default() -> Self {
-        Self::Fixed(256 * 1024)
+        Self::Fixed(storage_primitives::DEFAULT_CHUNK_SIZE as usize)
     }
 }
 

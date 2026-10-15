@@ -11,11 +11,12 @@
 
 use crate::base::{BaseClient, ChunkingStrategy, ClientConfig, ClientError, ClientResult};
 use crate::encryption::{Cipher, EncryptionKey, XChaCha20Poly1305Cipher};
+use crate::substrate::parse_h256;
 use crate::verification::ClientVerifier;
 use crate::Signer;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use sp_core::H256;
-use storage_primitives::{hash_children, hash_leaf, BucketId, MAX_CHUNK_SIZE};
+use storage_primitives::{hash_children, hash_leaf, BucketId, DEFAULT_CHUNK_SIZE};
 
 /// Client for storage users (end users who store/retrieve data).
 pub struct StorageUserClient {
@@ -81,7 +82,7 @@ impl StorageUserClient {
     /// 4. Return the data root hash
     ///
     /// Returns [`ClientError::Config`] before any request if a
-    /// [`ChunkingStrategy::Fixed`] size is 0 or above `MAX_CHUNK_SIZE`.
+    /// [`ChunkingStrategy::Fixed`] size is 0 or above `DEFAULT_CHUNK_SIZE`.
     ///
     /// # Example
     /// ```no_run
@@ -100,12 +101,12 @@ impl StorageUserClient {
         data: &[u8],
         strategy: ChunkingStrategy,
     ) -> ClientResult<H256> {
-        // A chunk size of 0 makes `chunks()` panic, and a leaf above
-        // `MAX_CHUNK_SIZE` can never be proven on-chain.
+        // A chunk size of 0 makes `chunks()` panic, and the provider rejects a
+        // chunk above `DEFAULT_CHUNK_SIZE`.
         if let ChunkingStrategy::Fixed(chunk_size) = strategy {
-            if chunk_size == 0 || chunk_size > MAX_CHUNK_SIZE as usize {
+            if chunk_size == 0 || chunk_size > DEFAULT_CHUNK_SIZE as usize {
                 return Err(ClientError::Config(format!(
-                    "chunk size must be between 1 and {MAX_CHUNK_SIZE} bytes, got {chunk_size}"
+                    "chunk size must be between 1 and {DEFAULT_CHUNK_SIZE} bytes, got {chunk_size}"
                 )));
             }
         }
@@ -125,11 +126,12 @@ impl StorageUserClient {
         let chunks = Self::chunk_data(upload_data, strategy);
 
         // Upload chunks (leaves)
-        let chunk_hashes: Vec<H256> = chunks.iter().map(|chunk| hash_leaf(chunk)).collect();
-
-        for chunk in &chunks {
-            self.upload_node(provider_url, bucket_id, &Node::Chunk(chunk.clone()))
-                .await?;
+        let mut chunk_hashes = Vec::with_capacity(chunks.len());
+        for chunk in chunks {
+            chunk_hashes.push(
+                self.upload_node(provider_url, bucket_id, &Node::Chunk(chunk))
+                    .await?,
+            );
         }
 
         // Build Merkle tree bottom-up
@@ -309,7 +311,7 @@ impl StorageUserClient {
             .children
             .map(|c| {
                 c.iter()
-                    .map(|h| decode_h256(h))
+                    .map(|h| parse_h256(h))
                     .collect::<ClientResult<Vec<H256>>>()
             })
             .transpose()?;
@@ -491,17 +493,18 @@ impl StorageUserClient {
             }
             ChunkingStrategy::ContentDefined => {
                 // TODO: Implement content-defined chunking
-                Self::chunk_data(data, ChunkingStrategy::Fixed(256 * 1024))
+                Self::chunk_data(data, ChunkingStrategy::default())
             }
         }
     }
 
+    /// Upload `node` and return its hash.
     async fn upload_node(
         &self,
         provider_url: &str,
         bucket_id: BucketId,
         node: &Node,
-    ) -> ClientResult<()> {
+    ) -> ClientResult<H256> {
         let (data, children) = match node {
             Node::Chunk(data) => (BASE64.encode(data), None),
             Node::Internal { left, right } => (
@@ -512,9 +515,10 @@ impl StorageUserClient {
                 ]),
             ),
         };
+        let hash = node.hash();
         let request = UploadNodeRequest {
             bucket_id,
-            hash: BaseClient::hex_encode(node.hash().as_bytes()),
+            hash: BaseClient::hex_encode(hash.as_bytes()),
             data,
             children,
         };
@@ -533,7 +537,7 @@ impl StorageUserClient {
             )));
         }
 
-        Ok(())
+        Ok(hash)
     }
 
     async fn build_merkle_tree(
@@ -706,17 +710,6 @@ impl Node {
     }
 }
 
-fn decode_h256(s: &str) -> ClientResult<H256> {
-    let bytes = BaseClient::hex_decode(s)?;
-    if bytes.len() != 32 {
-        return Err(ClientError::Serialization(format!(
-            "Invalid hash length: expected 32 bytes, got {}",
-            bytes.len()
-        )));
-    }
-    Ok(H256::from_slice(&bytes))
-}
-
 #[derive(serde::Serialize)]
 struct UploadNodeRequest {
     bucket_id: u64,
@@ -870,15 +863,6 @@ mod tests {
         assert_eq!(
             Node::Internal { left, right }.hash(),
             storage_primitives::hash_children(left, right)
-        );
-    }
-
-    #[test]
-    fn decode_h256_rejects_a_hash_of_wrong_length() {
-        assert!(decode_h256(&format!("0x{}", "ab".repeat(31))).is_err());
-        assert_eq!(
-            decode_h256(&format!("0x{}", "ab".repeat(32))).unwrap(),
-            H256::repeat_byte(0xab)
         );
     }
 

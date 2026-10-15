@@ -17,24 +17,19 @@ use sp_core::H256;
 
 pub mod agreement_term;
 pub mod merkle;
-pub mod mmr;
 
 pub use agreement_term::*;
 pub use merkle::*;
-pub use mmr::*;
 
 /// Bucket ID is a stable, unique identifier (not an index into a collection).
 /// Using u64 ensures IDs never get reused even if buckets are deleted.
 pub type BucketId = u64;
 
-/// Default chunk size: 256 KiB
-pub const DEFAULT_CHUNK_SIZE: u32 = 256 * 1024;
-
-/// Largest leaf, in bytes, that a challenge response can contain.
+/// Chunk size, 256 KiB, and the largest leaf a challenge response can contain.
 ///
 /// The runtime uses it as `MaxChunkSize`. A provider must not store or sign a
 /// leaf above it, because that leaf cannot be proven on-chain.
-pub const MAX_CHUNK_SIZE: u32 = 256 * 1024;
+pub const DEFAULT_CHUNK_SIZE: u32 = 256 * 1024;
 
 /// Prime numbers used for historical root bucketing.
 /// These provide logarithmic time coverage for replica sync validation.
@@ -226,6 +221,46 @@ pub struct ChallengeId<BlockNumber> {
     pub deadline: BlockNumber,
     /// Index within the deadline's challenge list
     pub index: u16,
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MMR and Merkle Types
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// MMR leaf containing data root and size information.
+#[derive(
+    Clone, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo, MaxEncodedLen, Debug,
+)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct MmrLeaf {
+    /// Merkle root of chunk tree
+    pub data_root: H256,
+    /// Size of content under this data_root
+    pub data_size: u64,
+    /// Cumulative unique bytes in MMR at this point
+    pub total_size: u64,
+}
+
+/// Merkle proof for verifying inclusion.
+#[derive(Clone, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct MerkleProof {
+    /// Sibling hashes from leaf to root
+    pub siblings: Vec<H256>,
+    /// Path bits (false = left, true = right)
+    pub path: Vec<bool>,
+}
+
+/// MMR proof for verifying leaf inclusion.
+#[derive(Clone, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct MmrProof {
+    /// Peaks of the MMR
+    pub peaks: Vec<H256>,
+    /// The leaf being proven
+    pub leaf: MmrLeaf,
+    /// Proof from leaf to peak
+    pub leaf_proof: MerkleProof,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -428,9 +463,95 @@ impl<BlockNumber> BucketSnapshot<BlockNumber> {
 // Hashing Utilities
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Compute blake2b-256 hash of data
+/// Compute blake2b-256 hash of data.
+///
+/// In the runtime this calls the host function, which is faster than hashing
+/// in wasm. Native code hashes directly and needs no externalities.
 pub fn blake2_256(data: &[u8]) -> H256 {
-    sp_crypto_hashing::blake2_256(data).into()
+    sp_io::hashing::blake2_256(data).into()
+}
+
+/// Prefix of a Merkle leaf preimage: a chunk, an MMR leaf or a metadata entry.
+const LEAF_PREFIX: u8 = 0x00;
+/// Prefix of an internal Merkle node preimage.
+const NODE_PREFIX: u8 = 0x01;
+/// Prefix of the preimage that combines two MMR peaks.
+const PEAK_PREFIX: u8 = 0x02;
+
+/// Hash a Merkle leaf: `blake2_256(0x00 ++ data)`.
+///
+/// Leaves and internal nodes use different prefixes, so the bytes of an
+/// internal node never hash to the same value as a leaf.
+pub fn hash_leaf(data: &[u8]) -> H256 {
+    let mut preimage = Vec::with_capacity(1 + data.len());
+    preimage.push(LEAF_PREFIX);
+    preimage.extend_from_slice(data);
+    blake2_256(&preimage)
+}
+
+/// Hash two children into an internal Merkle node:
+/// `blake2_256(0x01 ++ left ++ right)`.
+pub fn hash_children(left: H256, right: H256) -> H256 {
+    let mut data = [0u8; 65];
+    data[0] = NODE_PREFIX;
+    data[1..33].copy_from_slice(left.as_bytes());
+    data[33..].copy_from_slice(right.as_bytes());
+    blake2_256(&data)
+}
+
+/// Combine MMR peaks into the MMR root.
+///
+/// Peaks fold from right to left with `blake2_256(0x02 ++ peak ++ rest)`.
+/// One peak is the root itself and no peaks give the zero root.
+pub fn bag_peaks(peaks: &[H256]) -> H256 {
+    peaks
+        .iter()
+        .rev()
+        .copied()
+        .reduce(|rest, peak| {
+            let mut data = [0u8; 65];
+            data[0] = PEAK_PREFIX;
+            data[1..33].copy_from_slice(peak.as_bytes());
+            data[33..].copy_from_slice(rest.as_bytes());
+            blake2_256(&data)
+        })
+        .unwrap_or_default()
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Verification Utilities
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Verify an MMR proof
+///
+/// This verifies that a leaf at the given index with the given hash
+/// is part of an MMR with the given root.
+pub fn verify_mmr_proof(proof: &MmrProof, root: &H256) -> bool {
+    if proof.leaf_proof.siblings.len() != proof.leaf_proof.path.len() {
+        return false;
+    }
+
+    // First verify the Merkle proof gets us to the data root
+    let leaf_hash = hash_leaf(&proof.leaf.encode());
+
+    // Hash up from leaf through the Merkle proof to reach a peak
+    let mut current = leaf_hash;
+    for (i, sibling) in proof.leaf_proof.siblings.iter().enumerate() {
+        let is_right = proof.leaf_proof.path.get(i).copied().unwrap_or(false);
+        current = if is_right {
+            hash_children(*sibling, current)
+        } else {
+            hash_children(current, *sibling)
+        };
+    }
+
+    // Current should be one of the peaks
+    if !proof.peaks.contains(&current) {
+        return false;
+    }
+
+    // Verify that peaks bag to the root
+    bag_peaks(&proof.peaks) == *root
 }
 
 #[cfg(test)]
@@ -696,6 +817,10 @@ mod tests {
             },
         };
         assert!(verify_mmr_proof(&proof, &root));
+
+        let mut not_a_peak = proof.clone();
+        not_a_peak.leaf_proof.siblings[0] = H256::repeat_byte(0x55);
+        assert!(!verify_mmr_proof(&not_a_peak, &root));
 
         let mut wrong_root = proof.clone();
         wrong_root.peaks[1] = H256::repeat_byte(0x44);

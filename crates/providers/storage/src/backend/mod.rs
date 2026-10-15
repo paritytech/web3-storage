@@ -181,11 +181,8 @@ pub trait StorageBackend: Send + Sync {
         }
 
         let chunk_hash = chunk_hashes[chunk_index as usize];
-        let chunk_data = match self.get_node(&chunk_hash) {
-            Some(ChunkTreeNode::Chunk(data)) => data,
-            Some(ChunkTreeNode::Internal { .. }) | None => {
-                return Err(Error::NodeNotFound(format!("chunk_data_{chunk_index}")));
-            }
+        let Some(ChunkTreeNode::Chunk(chunk_data)) = self.get_node(&chunk_hash) else {
+            return Err(Error::NodeNotFound(format!("chunk_data_{chunk_index}")));
         };
 
         let proof = build_merkle_proof(&chunk_hashes, chunk_index as usize)

@@ -21,7 +21,8 @@
 use crate::error::Error;
 use codec::{Decode, Encode};
 use sp_core::H256;
-use storage_primitives::{hash_children, MmrLeaf};
+use std::borrow::Cow;
+use storage_primitives::{hash_children, MmrLeaf, DEFAULT_CHUNK_SIZE};
 
 /// Version of the on-disk encoding of the records in this module.
 ///
@@ -83,30 +84,26 @@ pub enum ChunkTreeNode {
 }
 
 impl ChunkTreeNode {
-    /// Build an internal node from a child list of unproven length, as it
-    /// arrives over the wire.
+    /// Build a node from the `data` and optional `children` a peer sent.
     ///
-    /// A list that is not exactly two hashes describes a node this type cannot
-    /// represent, so it is rejected here - at the boundary where untrusted
-    /// input enters - rather than anywhere deeper.
-    pub fn internal(children: Vec<H256>) -> Result<Self, Error> {
+    /// Without children the node is a chunk of at most `DEFAULT_CHUNK_SIZE`
+    /// bytes. With children it is an internal node: it must have exactly two
+    /// children, and `data` must be the concatenation of the two child hashes.
+    pub fn from_wire(data: Vec<u8>, children: Option<Vec<H256>>) -> Result<Self, Error> {
+        let Some(children) = children else {
+            if data.len() > DEFAULT_CHUNK_SIZE as usize {
+                return Err(Error::ChunkTooLarge {
+                    size: data.len() as u64,
+                });
+            }
+            return Ok(Self::Chunk(data));
+        };
         let count = children.len();
         let [left, right]: [H256; 2] = children
             .try_into()
             .map_err(|_| Error::InvalidChildCount(count))?;
-        Ok(Self::Internal { left, right })
-    }
-
-    /// Build a node from the `data` and optional `children` a peer sent.
-    ///
-    /// Without children the node is a chunk. With children it is an internal
-    /// node, and `data` must be the concatenation of its two child hashes.
-    pub fn from_wire(data: Vec<u8>, children: Option<Vec<H256>>) -> Result<Self, Error> {
-        let Some(children) = children else {
-            return Ok(Self::Chunk(data));
-        };
-        let node = Self::internal(children)?;
-        if node.preimage() != data {
+        let node = Self::Internal { left, right };
+        if *node.preimage() != *data {
             return Err(Error::InvalidInternalNodeData);
         }
         Ok(node)
@@ -114,15 +111,13 @@ impl ChunkTreeNode {
 
     /// The bytes this node serves as data: `data` for a chunk,
     /// `concat(children)` for an internal node. The node's hash is taken over
-    /// these bytes behind a prefix that depends on the node kind, see [`Self::hash`].
-    pub fn preimage(&self) -> Vec<u8> {
+    /// these bytes behind a prefix that depends on the node kind, see
+    /// [`Self::hash`]. A chunk's bytes are borrowed, not copied.
+    pub fn preimage(&self) -> Cow<'_, [u8]> {
         match self {
-            Self::Chunk(data) => data.clone(),
+            Self::Chunk(data) => Cow::Borrowed(data),
             Self::Internal { left, right } => {
-                let mut bytes = Vec::with_capacity(64);
-                bytes.extend_from_slice(left.as_bytes());
-                bytes.extend_from_slice(right.as_bytes());
-                bytes
+                Cow::Owned([left.as_bytes(), right.as_bytes()].concat())
             }
         }
     }
@@ -283,6 +278,16 @@ mod tests {
     }
 
     #[test]
+    fn from_wire_rejects_a_chunk_above_default_chunk_size() {
+        let max = DEFAULT_CHUNK_SIZE as usize;
+        assert!(ChunkTreeNode::from_wire(vec![7; max], None).is_ok());
+        assert!(matches!(
+            ChunkTreeNode::from_wire(vec![7; max + 1], None),
+            Err(Error::ChunkTooLarge { size }) if size == max as u64 + 1
+        ));
+    }
+
+    #[test]
     fn from_wire_accepts_internal_node_whose_data_is_its_children() {
         let (left, right) = (H256::repeat_byte(1), H256::repeat_byte(2));
         let data = [left.as_bytes(), right.as_bytes()].concat();
@@ -295,10 +300,12 @@ mod tests {
     #[test]
     fn from_wire_rejects_wrong_child_count() {
         let child = H256::repeat_byte(1);
-        assert!(matches!(
-            ChunkTreeNode::from_wire(child.as_bytes().to_vec(), Some(vec![child])),
-            Err(Error::InvalidChildCount(1))
-        ));
+        for children in [vec![], vec![child], vec![child, child, child]] {
+            let count = children.len();
+            let data = children.iter().flat_map(|h| h.0).collect();
+            let err = ChunkTreeNode::from_wire(data, Some(children)).unwrap_err();
+            assert!(matches!(err, Error::InvalidChildCount(n) if n == count));
+        }
     }
 
     #[test]
@@ -313,25 +320,8 @@ mod tests {
     #[test]
     fn chunk_preimage_and_hash_are_its_data() {
         let node = ChunkTreeNode::Chunk(vec![1, 2, 3]);
-        assert_eq!(node.preimage(), vec![1, 2, 3]);
+        assert_eq!(*node.preimage(), [1, 2, 3]);
         assert_eq!(node.hash(), storage_primitives::hash_leaf(&[1, 2, 3]));
-    }
-
-    #[test]
-    fn internal_accepts_exactly_two_children_and_rejects_anything_else() {
-        let left = H256::repeat_byte(0x11);
-        let right = H256::repeat_byte(0x22);
-
-        assert_eq!(
-            ChunkTreeNode::internal(vec![left, right]).unwrap(),
-            ChunkTreeNode::Internal { left, right }
-        );
-
-        for children in [vec![], vec![left], vec![left, right, left]] {
-            let count = children.len();
-            let err = ChunkTreeNode::internal(children).unwrap_err();
-            assert!(matches!(err, Error::InvalidChildCount(n) if n == count));
-        }
     }
 
     #[test]
@@ -342,7 +332,7 @@ mod tests {
 
         let mut expected_preimage = left.as_bytes().to_vec();
         expected_preimage.extend_from_slice(right.as_bytes());
-        assert_eq!(node.preimage(), expected_preimage);
+        assert_eq!(*node.preimage(), *expected_preimage);
         assert_eq!(node.hash(), hash_children(left, right));
     }
 }

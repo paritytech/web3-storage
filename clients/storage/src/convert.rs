@@ -132,18 +132,18 @@ pub fn challenge_id(deadline: u32, index: u16) -> rt::ChallengeId<u32> {
 }
 
 /// [`storage_primitives::MerkleProof`] → generated twin.
-pub fn merkle_proof(p: &storage_primitives::MerkleProof) -> rt::merkle::MerkleProof {
-    rt::merkle::MerkleProof {
+pub fn merkle_proof(p: &storage_primitives::MerkleProof) -> rt::MerkleProof {
+    rt::MerkleProof {
         siblings: p.siblings.clone(),
         path: p.path.clone(),
     }
 }
 
 /// [`storage_primitives::MmrProof`] → generated twin.
-pub fn mmr_proof(p: &storage_primitives::MmrProof) -> rt::mmr::MmrProof {
-    rt::mmr::MmrProof {
+pub fn mmr_proof(p: &storage_primitives::MmrProof) -> rt::MmrProof {
+    rt::MmrProof {
         peaks: p.peaks.clone(),
-        leaf: rt::mmr::MmrLeaf {
+        leaf: rt::MmrLeaf {
             data_root: p.leaf.data_root,
             data_size: p.leaf.data_size,
             total_size: p.leaf.total_size,
