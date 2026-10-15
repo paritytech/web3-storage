@@ -461,7 +461,7 @@ impl<BlockNumber> BucketSnapshot<BlockNumber> {
 /// Compute blake2b-256 hash of data.
 ///
 /// In the runtime this calls the host function, which is faster than hashing
-/// in wasm.
+/// in wasm. Native code hashes directly and needs no externalities.
 pub fn blake2_256(data: &[u8]) -> H256 {
     sp_io::hashing::blake2_256(data).into()
 }
