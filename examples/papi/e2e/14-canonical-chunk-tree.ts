@@ -5,8 +5,9 @@
  *
  * Accounts: //Alice (provider), //Bob (bucket admin)
  *
- * The provider cannot prove a chunk of a root whose tree is not the canonical
- * tree, so `POST /commit` signs only that tree.
+ * `POST /commit` signs only the canonical tree: chunks of `DEFAULT_CHUNK_SIZE`
+ * bytes except a shorter last chunk, and an odd last node moves up a level
+ * unchanged. The provider cannot prove a chunk of a root with another shape.
  *
  * 14.1 `/commit` signs the canonical tree `R = H(H(c0, c1), c2)` over chunks of
  *      `DEFAULT_CHUNK_SIZE`, `DEFAULT_CHUNK_SIZE` and 10 bytes, and the provider
