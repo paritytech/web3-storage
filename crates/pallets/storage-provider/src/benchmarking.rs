@@ -972,10 +972,10 @@ mod benchmarks {
 
         // Construct a single-chunk / single-leaf MMR so all proof verifications pass.
         //
-        // Chunk tree (1 chunk):  data_root = blake2_256(chunk_data)
+        // Chunk tree (1 chunk):  data_root = hash_leaf(chunk_data)
         //   chunk_proof = empty (leaf IS the root, no siblings)
         //
-        // MMR (1 leaf):  mmr_root = blake2_256(encode(mmr_leaf))
+        // MMR (1 leaf):  mmr_root = hash_leaf(encode(mmr_leaf))
         //   leaf_proof = empty (leaf IS the single peak, no siblings)
         //   peaks = [mmr_root]
         let chunk_size = T::MaxChunkSize::get() as usize;
@@ -983,7 +983,7 @@ mod benchmarks {
         let chunk_data: BoundedVec<u8, T::MaxChunkSize> =
             BoundedVec::try_from(chunk_bytes.clone()).unwrap();
 
-        let chunk_hash = storage_primitives::blake2_256(&chunk_bytes);
+        let chunk_hash = storage_primitives::hash_leaf(&chunk_bytes);
         let data_root = chunk_hash; // single-element Merkle tree
 
         let mmr_leaf = storage_primitives::MmrLeaf {
@@ -991,7 +991,7 @@ mod benchmarks {
             data_size: chunk_size as u64,
             total_size: chunk_size as u64,
         };
-        let leaf_hash = storage_primitives::blake2_256(&codec::Encode::encode(&mmr_leaf));
+        let leaf_hash = storage_primitives::hash_leaf(&codec::Encode::encode(&mmr_leaf));
         let mmr_root = leaf_hash; // single-peak MMR, root == peak == leaf_hash
 
         let mmr_proof = storage_primitives::MmrProof {

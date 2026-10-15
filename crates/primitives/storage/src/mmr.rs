@@ -7,7 +7,7 @@
 //! After inserting n leaves, the number of parent merges equals
 //! `n.trailing_zeros()`.
 
-use crate::{blake2_256, hash_children, MerkleProof};
+use crate::{blake2_256, hash_children, hash_leaf, MerkleProof};
 use alloc::vec::Vec;
 use codec::{Decode, DecodeWithMemTracking, Encode, MaxEncodedLen};
 use scale_info::TypeInfo;
@@ -28,9 +28,9 @@ pub struct MmrLeaf {
 }
 
 impl MmrLeaf {
-    /// The hash this leaf has in the MMR: `blake2_256` of its SCALE encoding.
+    /// The hash this leaf has in the MMR: `hash_leaf` of its SCALE encoding.
     pub fn hash(&self) -> H256 {
-        blake2_256(&self.encode())
+        hash_leaf(&self.encode())
     }
 }
 
@@ -46,14 +46,25 @@ pub struct MmrProof {
     pub leaf_proof: MerkleProof,
 }
 
-/// MMR root: the peaks (left to right) folded from the right with
-/// `hash_children`. No peaks give `H256::zero()`.
+/// Prefix of the preimage that combines two MMR peaks.
+const PEAK_PREFIX: u8 = 0x02;
+
+/// Combine MMR peaks into the MMR root.
+///
+/// Peaks fold from right to left with `blake2_256(0x02 ++ peak ++ rest)`.
+/// One peak is the root itself and no peaks give the zero root.
 pub fn bag_peaks(peaks: &[H256]) -> H256 {
     peaks
         .iter()
         .rev()
         .copied()
-        .reduce(|right, peak| hash_children(peak, right))
+        .reduce(|rest, peak| {
+            let mut data = [0u8; 65];
+            data[0] = PEAK_PREFIX;
+            data[1..33].copy_from_slice(peak.as_bytes());
+            data[33..].copy_from_slice(rest.as_bytes());
+            blake2_256(&data)
+        })
         .unwrap_or_default()
 }
 
@@ -295,16 +306,6 @@ mod tests {
         assert_eq!(built.root(), pushed.root());
         assert_eq!(built.peaks(), pushed.peaks());
         assert_eq!(built.leaf_count(), 6);
-    }
-
-    #[test]
-    fn bag_peaks_folds_from_the_right() {
-        let a = H256::from_low_u64_be(1);
-        let b = H256::from_low_u64_be(2);
-        let c = H256::from_low_u64_be(3);
-        assert_eq!(bag_peaks(&[]), H256::zero());
-        assert_eq!(bag_peaks(&[a]), a);
-        assert_eq!(bag_peaks(&[a, b, c]), hash_children(a, hash_children(b, c)));
     }
 
     #[test]

@@ -11,7 +11,7 @@
 
 use crate::Error;
 use base64::Engine;
-use provider_storage::StorageBackend;
+use provider_storage::{ChunkTreeNode, StorageBackend};
 use reqwest::Client;
 use sp_core::H256;
 use std::sync::Arc;
@@ -75,8 +75,7 @@ impl ReplicaSync {
         let local_bucket = self.storage.get_bucket(bucket_id);
 
         // Determine what we need to fetch
-        let target_root = hex_decode("mmr_root", &peaks_response.mmr_root)?;
-        let target_root = H256::from_slice(&target_root);
+        let target_root = hash_decode("mmr_root", &peaks_response.mmr_root)?;
 
         // If we already have this root, we're done
         if let Some(bucket) = local_bucket {
@@ -98,10 +97,7 @@ impl ReplicaSync {
         let peaks: Vec<H256> = peaks_response
             .peaks
             .iter()
-            .map(|h| {
-                let bytes = hex_decode("peak hash", h)?;
-                Ok(H256::from_slice(&bytes))
-            })
+            .map(|h| hash_decode("peak hash", h))
             .collect::<Result<Vec<_>, Error>>()?;
 
         // Fetch nodes for each peak
@@ -156,24 +152,23 @@ impl ReplicaSync {
                 .children
                 .map(|c| {
                     c.iter()
-                        .map(|h| {
-                            let bytes = hex_decode("child hash", h)?;
-                            Ok(H256::from_slice(&bytes))
-                        })
+                        .map(|h| hash_decode("child hash", h))
                         .collect::<Result<Vec<_>, Error>>()
                 })
                 .transpose()?;
 
-            // Store locally
-            self.storage
-                .store_node(bucket_id, root_hash, data, children.clone())?;
+            let node = ChunkTreeNode::from_wire(data, children)?;
 
-            // Recursively fetch children
-            if let Some(child_hashes) = children {
-                for child in child_hashes {
-                    self.fetch_subtree(bucket_id, child, primary_url).await?;
+            // Fetch children before storing the parent: store_node rejects an
+            // internal node whose non-zero children aren't already present.
+            if let ChunkTreeNode::Internal { left, right } = &node {
+                for child in [left, right] {
+                    self.fetch_subtree(bucket_id, *child, primary_url).await?;
                 }
             }
+
+            // Store locally
+            self.storage.store_node(bucket_id, root_hash, node)?;
 
             Ok(())
         })
@@ -203,4 +198,17 @@ struct DownloadNodeResponse {
 fn hex_decode(what: &'static str, s: &str) -> Result<Vec<u8>, Error> {
     let s = s.strip_prefix("0x").unwrap_or(s);
     hex::decode(s).map_err(|e| Error::decode(what, e))
+}
+
+/// Decode a hex string into a 32-byte hash. `what` names the value being
+/// decoded, for the error message.
+fn hash_decode(what: &'static str, s: &str) -> Result<H256, Error> {
+    let bytes = hex_decode(what, s)?;
+    if bytes.len() != 32 {
+        return Err(Error::decode(
+            what,
+            format!("expected 32 bytes, got {}", bytes.len()),
+        ));
+    }
+    Ok(H256::from_slice(&bytes))
 }

@@ -9,7 +9,7 @@ pub mod rocksdb;
 pub mod types;
 
 pub use rocksdb::DiskStorage;
-pub use types::{BucketState, StoredNode};
+pub use types::{BucketState, ChunkTreeNode};
 
 use crate::error::Error;
 use serde::{Deserialize, Serialize};
@@ -96,17 +96,16 @@ pub trait StorageBackend: Send + Sync {
     /// Get total bytes stored across all nodes.
     fn total_bytes(&self) -> u64;
 
-    /// Store a node (chunk or internal node).
+    /// Store a node under the hash the caller claims for it.
     fn store_node(
         &self,
         bucket_id: BucketId,
         expected_hash: H256,
-        data: Vec<u8>,
-        children: Option<Vec<H256>>,
+        node: ChunkTreeNode,
     ) -> Result<(), Error>;
 
     /// Get a node by hash.
-    fn get_node(&self, hash: &H256) -> Option<StoredNode>;
+    fn get_node(&self, hash: &H256) -> Option<ChunkTreeNode>;
 
     /// Check which hashes exist in storage.
     fn check_exists(&self, bucket_id: BucketId, hashes: &[H256]) -> (Vec<H256>, Vec<H256>);
@@ -128,12 +127,12 @@ pub trait StorageBackend: Send + Sync {
                 continue;
             }
             if let Some(node) = self.get_node(&hash) {
-                if let Some(ref children) = node.children {
-                    for child in children.iter().rev() {
-                        stack.push(*child);
+                match node {
+                    ChunkTreeNode::Internal { left, right } => {
+                        stack.push(right);
+                        stack.push(left);
                     }
-                } else {
-                    chunks.push(node.data.clone());
+                    ChunkTreeNode::Chunk(data) => chunks.push(data),
                 }
             }
         }
@@ -152,12 +151,12 @@ pub trait StorageBackend: Send + Sync {
                 continue;
             }
             if let Some(node) = self.get_node(&hash) {
-                if let Some(ref children) = node.children {
-                    for child in children.iter().rev() {
-                        stack.push(*child);
+                match node {
+                    ChunkTreeNode::Internal { left, right } => {
+                        stack.push(right);
+                        stack.push(left);
                     }
-                } else {
-                    leaves.push((hash, node.data.len()));
+                    ChunkTreeNode::Chunk(data) => leaves.push((hash, data.len())),
                 }
             }
         }
@@ -182,10 +181,12 @@ pub trait StorageBackend: Send + Sync {
         }
 
         let chunk_hash = chunk_hashes[chunk_index as usize];
-        let chunk_data = self
-            .get_node(&chunk_hash)
-            .ok_or_else(|| Error::NodeNotFound(format!("chunk_data_{chunk_index}")))?
-            .data;
+        let chunk_data = match self.get_node(&chunk_hash) {
+            Some(ChunkTreeNode::Chunk(data)) => data,
+            Some(ChunkTreeNode::Internal { .. }) | None => {
+                return Err(Error::NodeNotFound(format!("chunk_data_{chunk_index}")));
+            }
+        };
 
         let proof = build_merkle_proof(&chunk_hashes, chunk_index as usize)
             .ok_or_else(|| Error::NodeNotFound(format!("chunk_{chunk_index}")))?;
@@ -222,14 +223,13 @@ pub fn build_merkle_tree(
 ) -> Result<H256, Error> {
     let (root, nodes) = merkle_tree(leaves);
     for node in nodes {
-        let mut node_data = Vec::new();
-        node_data.extend_from_slice(node.left.as_bytes());
-        node_data.extend_from_slice(node.right.as_bytes());
         storage.store_node(
             bucket_id,
             node.hash,
-            node_data,
-            Some(vec![node.left, node.right]),
+            ChunkTreeNode::Internal {
+                left: node.left,
+                right: node.right,
+            },
         )?;
     }
     Ok(root)
@@ -249,8 +249,10 @@ mod tests {
             let leaves: Vec<H256> = (1..=n)
                 .map(|i: u8| {
                     let data = vec![i; 32];
-                    let hash = storage_primitives::blake2_256(&data);
-                    storage.store_node(1, hash, data, None).unwrap();
+                    let hash = storage_primitives::hash_leaf(&data);
+                    storage
+                        .store_node(1, hash, ChunkTreeNode::Chunk(data))
+                        .unwrap();
                     hash
                 })
                 .collect();
@@ -272,8 +274,10 @@ mod tests {
             .into_iter()
             .map(|i| {
                 let data = vec![i; 32];
-                let hash = storage_primitives::blake2_256(&data);
-                storage.store_node(1, hash, data, None).unwrap();
+                let hash = storage_primitives::hash_leaf(&data);
+                storage
+                    .store_node(1, hash, ChunkTreeNode::Chunk(data))
+                    .unwrap();
                 hash
             })
             .collect();

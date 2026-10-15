@@ -30,6 +30,12 @@ pub type BucketId = u64;
 /// Default chunk size: 256 KiB
 pub const DEFAULT_CHUNK_SIZE: u32 = 256 * 1024;
 
+/// Largest leaf, in bytes, that a challenge response can contain.
+///
+/// The runtime uses it as `MaxChunkSize`. A provider must not store or sign a
+/// leaf above it, because that leaf cannot be proven on-chain.
+pub const MAX_CHUNK_SIZE: u32 = 256 * 1024;
+
 /// Prime numbers used for historical root bucketing.
 /// These provide logarithmic time coverage for replica sync validation.
 pub const HISTORICAL_ROOT_PRIMES: [u32; 6] = [3, 7, 11, 23, 47, 113];
@@ -563,5 +569,144 @@ mod tests {
         // Different input should produce different output
         let hash3 = blake2_256(b"hello world!");
         assert_ne!(hash, hash3);
+    }
+
+    fn h(hex: &str) -> H256 {
+        hex.parse().unwrap()
+    }
+
+    /// Expected values come from an independent blake2b-256 computation over
+    /// the documented preimages. The TypeScript package asserts the same
+    /// leaf, node and root values.
+    mod golden_vectors {
+        use super::*;
+
+        const LEAF_EMPTY: &str = "03170a2e7597b7b7e3d84c05391d139a62b157e78786d8c082f29dcf4c111314";
+        const LEAF_ABC: &str = "4b44b5a5f9e6fafead231e4d609a8e88053a6053c087b68e24e31faf0fb8dfe7";
+        const LEAF_A: &str = "7234082e1dd0b5ec0acd71875d61c9f374af30c100bc4de7aa4eb3f15bbed686";
+        const LEAF_B: &str = "b3d5dedf654e9fc853bdc5daf79330c5a1eaf2b910f2a36c72ef8ea999ccf953";
+        const LEAF_C: &str = "960259f5c0885e7b7967cc25158bc9069db1ca8222e7beffdfffe5dea0297966";
+        const NODE_AB: &str = "ee616625a590167bc4b3dc703ab4f3f2ddecbee6b9d05fee9281f02046e6082e";
+        const ROOT_3_CHUNKS: &str =
+            "17321db51c1ef3ec1f77e271aa300b4e5c6091708bcba37e46025774a26142ee";
+        const MMR_LEAF: &str = "3fbff3e341e04b94439e2f793f6983fda1cb58b7e8cc09b73670245f7e816f8d";
+        const BAG_2_PEAKS: &str =
+            "39ffd1718a7a2d0f61de8f7902cb47d9661392d004d5b91e835ccd3d475cd035";
+        const BAG_3_PEAKS: &str =
+            "de6b5def5927714c7e957d45b39ba6b3cb1b24c08d3d72e038387f46268eb23f";
+
+        #[test]
+        fn leaf_hash_uses_the_leaf_prefix() {
+            assert_eq!(hash_leaf(b""), h(LEAF_EMPTY));
+            assert_eq!(hash_leaf(b"abc"), h(LEAF_ABC));
+            assert_ne!(hash_leaf(b"abc"), blake2_256(b"abc"));
+        }
+
+        #[test]
+        fn node_hash_uses_the_node_prefix() {
+            assert_eq!(hash_children(h(LEAF_A), h(LEAF_B)), h(NODE_AB));
+        }
+
+        #[test]
+        fn three_chunk_root_moves_the_odd_leaf_up() {
+            let left = hash_children(h(LEAF_A), h(LEAF_B));
+            assert_eq!(hash_children(left, h(LEAF_C)), h(ROOT_3_CHUNKS));
+            assert_eq!(
+                merkle_root(&[h(LEAF_A), h(LEAF_B), h(LEAF_C)]),
+                h(ROOT_3_CHUNKS)
+            );
+        }
+
+        #[test]
+        fn mmr_leaf_hash_covers_the_encoded_leaf() {
+            let leaf = MmrLeaf {
+                data_root: H256::repeat_byte(0x11),
+                data_size: 1,
+                total_size: 2,
+            };
+            assert_eq!(hash_leaf(&leaf.encode()), h(MMR_LEAF));
+        }
+
+        #[test]
+        fn peaks_bag_right_to_left_with_the_peak_prefix() {
+            let peaks: Vec<H256> = (1..=3).map(H256::repeat_byte).collect();
+            assert_eq!(bag_peaks(&peaks[..2]), h(BAG_2_PEAKS));
+            assert_eq!(bag_peaks(&peaks), h(BAG_3_PEAKS));
+        }
+
+        #[test]
+        fn one_peak_is_the_root_and_no_peaks_give_zero() {
+            let peak = H256::repeat_byte(7);
+            assert_eq!(bag_peaks(&[peak]), peak);
+            assert_eq!(bag_peaks(&[]), H256::zero());
+        }
+    }
+
+    #[test]
+    fn internal_node_bytes_do_not_verify_as_a_chunk() {
+        // Four chunks: root = H(H(l0, l1), H(l2, l3)).
+        let leaves: Vec<H256> = (0u8..4).map(|i| hash_leaf(&[i])).collect();
+        let left = hash_children(leaves[0], leaves[1]);
+        let right = hash_children(leaves[2], leaves[3]);
+        let root = hash_children(left, right);
+
+        // The honest proof for chunk 0 verifies.
+        let honest = MerkleProof {
+            siblings: vec![leaves[1], right],
+            path: vec![false, false],
+        };
+        assert!(verify_merkle_proof(leaves[0], 0, 4, &honest, &root));
+
+        // The bytes of `left` presented as chunk data with one sibling.
+        let mut node_bytes = leaves[0].as_bytes().to_vec();
+        node_bytes.extend_from_slice(leaves[1].as_bytes());
+        let forged = MerkleProof {
+            siblings: vec![right],
+            path: vec![false],
+        };
+        assert!(!verify_merkle_proof(
+            hash_leaf(&node_bytes),
+            0,
+            2,
+            &forged,
+            &root
+        ));
+    }
+
+    #[test]
+    fn mmr_proof_checks_leaf_peaks_and_proof_shape() {
+        let leaf = MmrLeaf {
+            data_root: H256::repeat_byte(0x11),
+            data_size: 1,
+            total_size: 2,
+        };
+        let leaf_hash = hash_leaf(&leaf.encode());
+        let sibling = H256::repeat_byte(0x22);
+        let peak = hash_children(leaf_hash, sibling);
+        let other_peak = H256::repeat_byte(0x33);
+        let peaks = vec![peak, other_peak];
+        let root = bag_peaks(&peaks);
+
+        let proof = MmrProof {
+            peaks,
+            leaf,
+            leaf_proof: MerkleProof {
+                siblings: vec![sibling],
+                path: vec![false],
+            },
+        };
+        assert!(verify_mmr_proof(&proof, &root));
+
+        let mut wrong_root = proof.clone();
+        wrong_root.peaks[1] = H256::repeat_byte(0x44);
+        assert!(!verify_mmr_proof(&wrong_root, &root));
+
+        let mut short_path = proof.clone();
+        short_path.leaf_proof.path.clear();
+        assert!(!verify_mmr_proof(&short_path, &root));
+
+        let mut long_path = proof;
+        long_path.leaf_proof.path.push(true);
+        assert!(!verify_mmr_proof(&long_path, &root));
     }
 }

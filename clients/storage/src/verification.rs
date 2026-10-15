@@ -167,10 +167,7 @@ impl ClientVerifier {
 
         // Record the request
         match &result {
-            Ok(data) => {
-                // Verify chunk hash
-                let _expected_hash = storage_primitives::blake2_256(data);
-
+            Ok(_) => {
                 // Get the expected hash from the proof
                 // In a full implementation, we would fetch the chunk with proof
                 // and verify the proof chain up to the data_root

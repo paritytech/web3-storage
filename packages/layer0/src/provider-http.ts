@@ -6,10 +6,14 @@
  * consumers can typecheck and use these directly.
  */
 
-import { blake2b256 } from "@polkadot-labs/hdkd-helpers";
 import {
   base64ToBytes,
   bytesToBase64,
+  CidMismatchError,
+  hashChildren,
+  hashLeaf,
+  MAX_CHUNK_SIZE,
+  nodeHash,
   signProviderRequest,
   type ProviderRequestSigner,
 } from "@web3-storage/core";
@@ -100,6 +104,18 @@ export interface PutChunkResult {
 }
 
 /**
+ * Throw before sending a leaf the provider rejects: a leaf above
+ * `MAX_CHUNK_SIZE` cannot be proven on-chain.
+ */
+function assertLeafFits(bytes: Uint8Array): void {
+  if (bytes.length > MAX_CHUNK_SIZE) {
+    throw new RangeError(
+      `chunk is ${bytes.length} bytes, above the ${MAX_CHUNK_SIZE} byte maximum; split it into smaller chunks`,
+    );
+  }
+}
+
+/**
  * PUT a single chunk to the provider without requesting an MMR commitment.
  * Suitable for S3-style object uploads where the Layer 1 metadata records
  * the CID itself and no Layer 0 checkpoint follows immediately.
@@ -109,17 +125,20 @@ export interface PutChunkResult {
  *
  * `children` to store an internal node instead of a leaf chunk. The
  * provider requires every child to exist already.
+ *
+ * Throws `RangeError` for a leaf above `MAX_CHUNK_SIZE`, before any request.
  */
 export async function putChunk(
   providerUrl: string,
   bucketId: bigint | number,
   data: Uint8Array | string,
   signer: ChainSigner,
-  children: Uint8Array[] | null = null,
+  children: [Uint8Array, Uint8Array] | null = null,
 ): Promise<PutChunkResult> {
   const sign = { signer: signer.signer, bucketId };
   const bytes = data instanceof Uint8Array ? data : new TextEncoder().encode(data);
-  const cid = blake2b256(bytes);
+  if (!children) assertLeafFits(bytes);
+  const cid = children ? hashChildren(children[0], children[1]) : hashLeaf(bytes);
   const hash = toHex(cid);
   await providerFetch(providerUrl, "/node", {
     method: "PUT",
@@ -141,6 +160,8 @@ export async function putChunk(
  *
  * `signer` authenticates the `PUT /node` and `POST /commit` requests; it must
  * hold a Writer/Admin role on `bucketId` (the provider always enforces this).
+ *
+ * Throws `RangeError` for a leaf above `MAX_CHUNK_SIZE`, before any request.
  */
 export async function uploadChunk(
   providerUrl: string,
@@ -150,7 +171,8 @@ export async function uploadChunk(
 ): Promise<{ hash: string; data: Uint8Array; commit: any }> {
   const sign = { signer: signer.signer, bucketId };
   const bytes = data instanceof Uint8Array ? data : new TextEncoder().encode(data);
-  const hash = toHex(blake2b256(bytes));
+  assertLeafFits(bytes);
+  const hash = toHex(hashLeaf(bytes));
   await providerFetch(providerUrl, "/node", {
     method: "PUT",
     body: {
@@ -169,6 +191,11 @@ export async function uploadChunk(
   return { hash, data: bytes, commit };
 }
 
+/**
+ * Download a node by hash and verify it: bytes without children must hash as
+ * a leaf, and a node with two children must hold exactly their concatenation
+ * and hash as a node over them. Throws {@link CidMismatchError} otherwise.
+ */
 export async function downloadChunk(
   providerUrl: string,
   chunkHashHex: string,
@@ -176,7 +203,13 @@ export async function downloadChunk(
   const downloaded = await providerFetch(providerUrl, "/node", {
     params: { hash: chunkHashHex },
   });
-  return base64ToBytes(downloaded.data);
+  const data = base64ToBytes(downloaded.data);
+  const expected = asHex(chunkHashHex).toLowerCase();
+  const hash = nodeHash(data, downloaded.children ?? null);
+  if (!hash) throw new CidMismatchError(expected, "malformed internal node");
+  const actual = toHex(hash);
+  if (actual !== expected) throw new CidMismatchError(expected, actual);
+  return data;
 }
 
 export async function fetchCheckpointSignature(

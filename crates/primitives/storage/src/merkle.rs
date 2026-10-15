@@ -35,11 +35,29 @@ pub struct MerkleNode {
     pub right: H256,
 }
 
-/// Hash of the two children of an internal node: `blake2_256(left || right)`.
+/// Prefix of a Merkle leaf preimage: a chunk, an MMR leaf or a metadata entry.
+const LEAF_PREFIX: u8 = 0x00;
+/// Prefix of an internal Merkle node preimage.
+const NODE_PREFIX: u8 = 0x01;
+
+/// Hash a Merkle leaf: `blake2_256(0x00 ++ data)`.
+///
+/// Leaves and internal nodes use different prefixes, so the bytes of an
+/// internal node never hash to the same value as a leaf.
+pub fn hash_leaf(data: &[u8]) -> H256 {
+    let mut preimage = Vec::with_capacity(1 + data.len());
+    preimage.push(LEAF_PREFIX);
+    preimage.extend_from_slice(data);
+    blake2_256(&preimage)
+}
+
+/// Hash two children into an internal Merkle node:
+/// `blake2_256(0x01 ++ left ++ right)`.
 pub fn hash_children(left: H256, right: H256) -> H256 {
-    let mut data = [0u8; 64];
-    data[..32].copy_from_slice(left.as_bytes());
-    data[32..].copy_from_slice(right.as_bytes());
+    let mut data = [0u8; 65];
+    data[0] = NODE_PREFIX;
+    data[1..33].copy_from_slice(left.as_bytes());
+    data[33..].copy_from_slice(right.as_bytes());
     blake2_256(&data)
 }
 
@@ -229,14 +247,14 @@ mod tests {
     fn roots_match_golden_vectors() {
         let golden = [
             "ee155ace9c40292074cb6aff8c9ccdd273c81648ff1149ef36bcea6ebb8a3e25",
-            "5a3746f7ad1bece55c75e3cd11d299fe5f3e4f4fb03035e3b8d87d182d705de7",
-            "e0d2cb92e481829535abbcab54c8fd72f5a8d9787d37312d3679f1a745b5effb",
-            "114d5dc3c70125a2159b283e59b8ac4330014aa80cccdad51d5ee18f02c37a7e",
-            "9a8a0313d2a3e6190c5619884c1fb351e52ed99f96bb93253b6dcb77765ebf63",
-            "25875908add04dfb7035e7e8ff383fcc92b2586bbe6c64dc0d607902366e7b48",
-            "bfd907b4476ee8bda6531809a94c59149108b1881c253746530b10c1354b4843",
-            "e0ae36209c0562a4d8075c37a23572e393ab3c3e9e95b6e061f8c203b06f7f27",
-            "3a60ffa28abb95e837960000c1e9644b08084c5ac838aadc103a6f5f1f840ced",
+            "5632fced358a72ed6fd53ada497c9980a010c7e82c8386a10c12f2f27f9195f3",
+            "56d7f37e08c1fac178a24ff1a5cc3413e35e4816ad2ce2a79120f3072bc9c618",
+            "226e43e73fc2eb5cb50dc8f74106275685bf54f1aabd6e07e67c285f6f1032f9",
+            "96c211dab54f3b6abd7a0f240df556dc810fc28d216c3b60dde7f491bbb5805e",
+            "ea39f530b256e22bbff141464469eca0da922437cbab3e08fc706ac147ddc002",
+            "470b3383b4658c30ba2466cc75dba6f0316fbe66e0e711708b47a85650f803b1",
+            "734ed4bd23af21a41d23be13e369e592f49499fd2ef89e1b33b96a4540daa0f7",
+            "c487902011078c0f151b8986afe18f487d7c69f46d58fd4ce293ade5b2a40ce5",
         ];
         for (i, expected) in golden.iter().enumerate() {
             let n = i + 1;

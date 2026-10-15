@@ -7,22 +7,24 @@
 //!
 //! [`types`]: super::types
 
-use super::{BucketInfo, BucketState, BucketStats, BucketSummary, StorageBackend, StoredNode};
+use super::types::FORMAT_VERSION;
+use super::{BucketInfo, BucketState, BucketStats, BucketSummary, ChunkTreeNode, StorageBackend};
 use crate::error::Error;
 use codec::{DecodeAll, Encode};
 use rocksdb::{Options, DB};
 use sp_core::H256;
 use std::path::Path;
 use std::sync::Arc;
-use storage_primitives::{blake2_256, merkle_root, BucketId, Mmr, MmrLeaf, DEFAULT_CHUNK_SIZE};
+use storage_primitives::{merkle_root, BucketId, Mmr, MmrLeaf, DEFAULT_CHUNK_SIZE, MAX_CHUNK_SIZE};
 
 /// Column families for organizing data
 const CF_NODES: &str = "nodes";
 const CF_BUCKETS: &str = "buckets";
 const CF_ROOT_TO_BUCKET: &str = "root_to_bucket";
-/// Held the provider-allocated agreement nonce before nonces moved on chain
-/// (per-owner `AgreementNonces`). Dropped when an existing database is opened.
-const LEGACY_CF_METADATA: &str = "metadata";
+const CF_METADATA: &str = "metadata";
+
+/// RocksDB key for the persisted format version.
+const KEY_FORMAT_VERSION: &[u8] = b"format_version";
 
 /// `true` if the leaf sizes follow the fixed chunk size: every chunk is
 /// `DEFAULT_CHUNK_SIZE` bytes except the last, which has at most that many
@@ -52,23 +54,67 @@ impl DiskStorage {
         opts.create_if_missing(true);
         opts.create_missing_column_families(true);
 
-        // RocksDB only opens a database with every column family it has, so
-        // the legacy one is opened (then dropped) when present. A missing
-        // database lists nothing.
-        let has_legacy = DB::list_cf(&opts, path)
-            .map(|names| names.iter().any(|name| name == LEGACY_CF_METADATA))
-            .unwrap_or(false);
-        let mut cf_names = vec![CF_NODES, CF_BUCKETS, CF_ROOT_TO_BUCKET];
-        if has_legacy {
-            cf_names.push(LEGACY_CF_METADATA);
-        }
+        let cf_names = vec![CF_NODES, CF_BUCKETS, CF_ROOT_TO_BUCKET, CF_METADATA];
+        let db = DB::open_cf(&opts, path, &cf_names)?;
 
-        let mut db = DB::open_cf(&opts, path, &cf_names)?;
-        if has_legacy {
-            db.drop_cf(LEGACY_CF_METADATA)?;
-        }
+        Self::check_format_version(&db)?;
 
         Ok(Self { db: Arc::new(db) })
+    }
+
+    /// Verify the on-disk format version, seeding it on a genuinely fresh
+    /// database.
+    ///
+    /// A database with no recorded version is compatible only if every
+    /// column family is empty; otherwise it predates format versioning and
+    /// this build's decoders cannot be trusted to read it. A recorded version
+    /// that disagrees with [`FORMAT_VERSION`] always fails - silently reading
+    /// its buckets as missing would look like data loss, not a format error.
+    fn check_format_version(db: &DB) -> Result<(), Error> {
+        let cf = db
+            .cf_handle(CF_METADATA)
+            .ok_or(Error::ColumnFamilyMissing(CF_METADATA))?;
+
+        match db.get_cf(&cf, KEY_FORMAT_VERSION)? {
+            Some(raw) => {
+                let stored = u32::from_le_bytes(raw.as_slice().try_into().map_err(|_| {
+                    Error::IncompatibleFormat("corrupt format_version value".to_string())
+                })?);
+                if stored != FORMAT_VERSION {
+                    return Err(Error::IncompatibleFormat(format!(
+                        "database format version {stored} is incompatible with this build \
+                         (expects {FORMAT_VERSION}); a migration is required"
+                    )));
+                }
+                Ok(())
+            }
+            None if Self::is_empty(db)? => {
+                Ok(db.put_cf(&cf, KEY_FORMAT_VERSION, FORMAT_VERSION.to_le_bytes())?)
+            }
+            None => Err(Error::IncompatibleFormat(
+                "database has data but no recorded format version - it predates format \
+                 versioning and cannot be safely opened by this build"
+                    .to_string(),
+            )),
+        }
+    }
+
+    /// Whether every column family this engine uses is empty.
+    fn is_empty(db: &DB) -> Result<bool, Error> {
+        for cf_name in [CF_NODES, CF_BUCKETS, CF_ROOT_TO_BUCKET, CF_METADATA] {
+            let cf = db
+                .cf_handle(cf_name)
+                .ok_or(Error::ColumnFamilyMissing(cf_name))?;
+            if db
+                .iterator_cf(&cf, rocksdb::IteratorMode::Start)
+                .next()
+                .transpose()?
+                .is_some()
+            {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 
     /// Initialize a bucket with the given quota.
@@ -189,16 +235,27 @@ impl DiskStorage {
             .sum()
     }
 
-    /// Store a node (chunk or internal node).
+    /// Store a node under the hash the caller claims for it.
     pub fn store_node(
         &self,
         bucket_id: BucketId,
         expected_hash: H256,
-        data: Vec<u8>,
-        children: Option<Vec<H256>>,
+        node: ChunkTreeNode,
     ) -> Result<(), Error> {
-        // Verify hash
-        let actual_hash = blake2_256(&data);
+        // Checked first so an oversized leaf is not hashed.
+        if let ChunkTreeNode::Chunk(data) = &node {
+            if data.len() > MAX_CHUNK_SIZE as usize {
+                return Err(Error::ChunkTooLarge {
+                    size: data.len() as u64,
+                    max: MAX_CHUNK_SIZE,
+                });
+            }
+        }
+
+        // Verify hash: derived from the children for an internal node, so a
+        // node whose children don't match its claimed identity is rejected
+        // here rather than trusted.
+        let actual_hash = node.hash();
         if actual_hash != expected_hash {
             return Err(Error::InvalidHash {
                 expected: format!("0x{}", hex::encode(expected_hash.as_bytes())),
@@ -207,14 +264,14 @@ impl DiskStorage {
         }
 
         // If internal node, verify children exist
-        if let Some(ref child_hashes) = children {
+        if let ChunkTreeNode::Internal { left, right } = &node {
             let cf_nodes = self
                 .db
                 .cf_handle(CF_NODES)
                 .ok_or(Error::ColumnFamilyMissing(CF_NODES))?;
 
-            let missing: Vec<String> = child_hashes
-                .iter()
+            let missing: Vec<String> = [left, right]
+                .into_iter()
                 .filter(|h| {
                     **h != H256::zero()
                         && self
@@ -232,12 +289,18 @@ impl DiskStorage {
             }
         }
 
-        // Check quota
+        // Check quota.
         let mut bucket = self
             .get_bucket(bucket_id)
             .ok_or(Error::BucketNotFound(bucket_id))?;
 
-        let new_size = bucket.used_bytes.saturating_add(data.len() as u64);
+        // An internal node costs a fixed 64 B (two H256 children).
+        let charge: u64 = match &node {
+            ChunkTreeNode::Chunk(data) => data.len() as u64,
+            ChunkTreeNode::Internal { .. } => 64,
+        };
+
+        let new_size = bucket.used_bytes.saturating_add(charge);
         if new_size > bucket.max_bytes {
             return Err(Error::QuotaExceeded {
                 used: bucket.used_bytes,
@@ -253,14 +316,12 @@ impl DiskStorage {
 
         let key = expected_hash.as_bytes();
         if self.db.get_cf(&cf_nodes, key)?.is_none() {
-            let data_len = data.len() as u64;
-            let node = StoredNode { data, children };
             let value = node.encode();
 
             self.db.put_cf(&cf_nodes, key, &value)?;
 
             // Update quota
-            bucket.used_bytes = bucket.used_bytes.saturating_add(data_len);
+            bucket.used_bytes = bucket.used_bytes.saturating_add(charge);
             self.update_bucket(bucket_id, &bucket)?;
         }
 
@@ -268,11 +329,11 @@ impl DiskStorage {
     }
 
     /// Get a node by hash.
-    pub fn get_node(&self, hash: &H256) -> Option<StoredNode> {
+    pub fn get_node(&self, hash: &H256) -> Option<ChunkTreeNode> {
         let cf = self.db.cf_handle(CF_NODES)?;
         let key = hash.as_bytes();
         let value = self.db.get_cf(&cf, key).ok()??;
-        match StoredNode::decode_all(&mut &value[..]) {
+        match ChunkTreeNode::decode_all(&mut &value[..]) {
             Ok(node) => Some(node),
             Err(e) => {
                 tracing::warn!(hash = %format!("0x{}", hex::encode(hash.as_bytes())), error = %e, "Failed to deserialize node");
@@ -331,6 +392,15 @@ impl DiskStorage {
         for root in &data_roots {
             let (chunk_hashes, chunk_sizes): (Vec<H256>, Vec<usize>) =
                 self.collect_leaves(*root).into_iter().unzip();
+            if let Some(size) = chunk_sizes
+                .iter()
+                .find(|size| **size > MAX_CHUNK_SIZE as usize)
+            {
+                return Err(Error::ChunkTooLarge {
+                    size: *size as u64,
+                    max: MAX_CHUNK_SIZE,
+                });
+            }
             if merkle_root(&chunk_hashes) != *root || !has_fixed_chunk_sizes(&chunk_sizes) {
                 return Err(Error::NonCanonicalTree(format!(
                     "0x{}",
@@ -481,13 +551,12 @@ impl StorageBackend for DiskStorage {
         &self,
         bucket_id: BucketId,
         expected_hash: H256,
-        data: Vec<u8>,
-        children: Option<Vec<H256>>,
+        node: ChunkTreeNode,
     ) -> Result<(), Error> {
-        self.store_node(bucket_id, expected_hash, data, children)
+        self.store_node(bucket_id, expected_hash, node)
     }
 
-    fn get_node(&self, hash: &H256) -> Option<StoredNode> {
+    fn get_node(&self, hash: &H256) -> Option<ChunkTreeNode> {
         self.get_node(hash)
     }
 
@@ -527,20 +596,20 @@ impl StorageBackend for DiskStorage {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use storage_primitives::hash_leaf;
     use tempfile::TempDir;
 
     /// Pins the raw keys and values this engine writes. A failure here means
-    /// existing provider databases can no longer be read - a storage
-    /// version/migration is required
-    /// (see <https://github.com/paritytech/web3-storage/issues/375>).
+    /// existing provider databases can no longer be read - bump
+    /// [`FORMAT_VERSION`].
     ///
     /// The record encodings themselves are pinned in [`super::types`].
     #[test]
     fn on_disk_bytes() {
         // Raw keys and values as written through the public API.
         assert_eq!(
-            [CF_NODES, CF_BUCKETS, CF_ROOT_TO_BUCKET],
-            ["nodes", "buckets", "root_to_bucket"],
+            [CF_NODES, CF_BUCKETS, CF_ROOT_TO_BUCKET, CF_METADATA],
+            ["nodes", "buckets", "root_to_bucket", "metadata"],
             "column-family names locate every record on disk",
         );
 
@@ -567,21 +636,61 @@ mod tests {
              e803000000000000"
         );
 
-        // CF_NODES: key = blake2_256(data), value = SCALE(StoredNode).
+        // CF_NODES: key = hash_leaf(data), value = SCALE(ChunkTreeNode).
         let data = vec![1u8, 2, 3, 4, 5];
-        let hash = blake2_256(&data);
-        storage.store_node(bucket_id, hash, data, None).unwrap();
+        let chunk_hash = hash_leaf(&data);
+        storage
+            .store_node(bucket_id, chunk_hash, ChunkTreeNode::Chunk(data))
+            .unwrap();
         let cf = storage.db.cf_handle(CF_NODES).unwrap();
-        let raw = storage.db.get_cf(&cf, hash.as_bytes()).unwrap().unwrap();
-        assert_eq!(hex::encode(&raw), "14010203040500");
+        let raw = storage
+            .db
+            .get_cf(&cf, chunk_hash.as_bytes())
+            .unwrap()
+            .unwrap();
+        // variant 0 (Chunk), compact length 5, then the bytes
+        assert_eq!(hex::encode(&raw), "00140102030405");
+
+        // CF_NODES: an internal node's value is exactly 64 B - variant tag
+        // plus the two child hashes, no stored preimage.
+        let other_hash = hash_leaf(&[9u8]);
+        storage
+            .store_node(bucket_id, other_hash, ChunkTreeNode::Chunk(vec![9]))
+            .unwrap();
+        let internal_hash = storage_primitives::hash_children(chunk_hash, other_hash);
+        storage
+            .store_node(
+                bucket_id,
+                internal_hash,
+                ChunkTreeNode::Internal {
+                    left: chunk_hash,
+                    right: other_hash,
+                },
+            )
+            .unwrap();
+        let raw = storage
+            .db
+            .get_cf(&cf, internal_hash.as_bytes())
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            hex::encode(&raw),
+            format!(
+                "01{}{}",
+                hex::encode(chunk_hash.as_bytes()),
+                hex::encode(other_hash.as_bytes())
+            )
+        );
     }
 
     const BUCKET: BucketId = 1;
 
     fn store_chunk_of_len(storage: &DiskStorage, byte: u8, len: usize) -> H256 {
         let data = vec![byte; len];
-        let hash = blake2_256(&data);
-        storage.store_node(BUCKET, hash, data, None).unwrap();
+        let hash = hash_leaf(&data);
+        storage
+            .store_node(BUCKET, hash, ChunkTreeNode::Chunk(data))
+            .unwrap();
         hash
     }
 
@@ -589,14 +698,10 @@ mod tests {
         store_chunk_of_len(storage, byte, DEFAULT_CHUNK_SIZE as usize)
     }
 
-    fn store_parent(storage: &DiskStorage, children: Vec<H256>) -> H256 {
-        let data: Vec<u8> = children
-            .iter()
-            .flat_map(|c| c.as_bytes().to_vec())
-            .collect();
-        let hash = blake2_256(&data);
+    fn store_parent(storage: &DiskStorage, left: H256, right: H256) -> H256 {
+        let hash = storage_primitives::hash_children(left, right);
         storage
-            .store_node(BUCKET, hash, data, Some(children))
+            .store_node(BUCKET, hash, ChunkTreeNode::Internal { left, right })
             .unwrap();
         hash
     }
@@ -621,16 +726,8 @@ mod tests {
     fn commit_rejects_right_leaning_tree() {
         let (_dir, storage) = committing_storage();
         let [c0, c1, c2] = [1, 2, 3].map(|b| store_chunk(&storage, b));
-        let right = store_parent(&storage, vec![c1, c2]);
-        let root = store_parent(&storage, vec![c0, right]);
-        assert_rejected_and_bucket_unchanged(&storage, root);
-    }
-
-    #[test]
-    fn commit_rejects_node_with_three_children() {
-        let (_dir, storage) = committing_storage();
-        let [c0, c1, c2] = [1, 2, 3].map(|b| store_chunk(&storage, b));
-        let root = store_parent(&storage, vec![c0, c1, c2]);
+        let right = store_parent(&storage, c1, c2);
+        let root = store_parent(&storage, c0, right);
         assert_rejected_and_bucket_unchanged(&storage, root);
     }
 
@@ -638,8 +735,8 @@ mod tests {
     fn commit_rejects_zero_child_in_the_middle() {
         let (_dir, storage) = committing_storage();
         let [c0, c1] = [1, 2].map(|b| store_chunk(&storage, b));
-        let left = store_parent(&storage, vec![c0, H256::zero()]);
-        let root = store_parent(&storage, vec![left, c1]);
+        let left = store_parent(&storage, c0, H256::zero());
+        let root = store_parent(&storage, left, c1);
         assert_rejected_and_bucket_unchanged(&storage, root);
     }
 
@@ -647,9 +744,9 @@ mod tests {
     fn commit_rejects_zero_padded_tree() {
         let (_dir, storage) = committing_storage();
         let [c0, c1, c2] = [1, 2, 3].map(|b| store_chunk(&storage, b));
-        let left = store_parent(&storage, vec![c0, c1]);
-        let right = store_parent(&storage, vec![c2, H256::zero()]);
-        let root = store_parent(&storage, vec![left, right]);
+        let left = store_parent(&storage, c0, c1);
+        let right = store_parent(&storage, c2, H256::zero());
+        let root = store_parent(&storage, left, right);
         assert_rejected_and_bucket_unchanged(&storage, root);
     }
 
@@ -657,8 +754,8 @@ mod tests {
     fn commit_accepts_tree_with_the_odd_chunk_moved_up_and_single_leaf() {
         let (_dir, storage) = committing_storage();
         let [c0, c1, c2] = [1, 2, 3].map(|b| store_chunk(&storage, b));
-        let left = store_parent(&storage, vec![c0, c1]);
-        let root = store_parent(&storage, vec![left, c2]);
+        let left = store_parent(&storage, c0, c1);
+        let root = store_parent(&storage, left, c2);
         storage.commit(BUCKET, vec![root, c0]).unwrap();
         let leaves = storage.get_bucket(BUCKET).unwrap().leaves;
         assert_eq!(leaves.len(), 2);
@@ -670,8 +767,8 @@ mod tests {
         let (_dir, storage) = committing_storage();
         let [c0, c1] = [1, 2].map(|b| store_chunk(&storage, b));
         let c2 = store_chunk_of_len(&storage, 3, 10);
-        let left = store_parent(&storage, vec![c0, c1]);
-        let root = store_parent(&storage, vec![left, c2]);
+        let left = store_parent(&storage, c0, c1);
+        let root = store_parent(&storage, left, c2);
         storage.commit(BUCKET, vec![root]).unwrap();
         let leaves = storage.get_bucket(BUCKET).unwrap().leaves;
         assert_eq!(leaves[0].data_size, 2 * DEFAULT_CHUNK_SIZE as u64 + 10);
@@ -690,7 +787,7 @@ mod tests {
         let (_dir, storage) = committing_storage();
         let c0 = store_chunk_of_len(&storage, 1, 10);
         let c1 = store_chunk(&storage, 2);
-        let root = store_parent(&storage, vec![c0, c1]);
+        let root = store_parent(&storage, c0, c1);
         assert_rejected_and_bucket_unchanged(&storage, root);
     }
 
@@ -699,49 +796,307 @@ mod tests {
         let (_dir, storage) = committing_storage();
         let c0 = store_chunk(&storage, 1);
         let c1 = store_chunk_of_len(&storage, 2, 0);
-        let root = store_parent(&storage, vec![c0, c1]);
+        let root = store_parent(&storage, c0, c1);
         assert_rejected_and_bucket_unchanged(&storage, root);
     }
 
     #[test]
-    fn commit_rejects_a_chunk_larger_than_the_chunk_size() {
-        let (_dir, storage) = committing_storage();
-        let root = store_chunk_of_len(&storage, 1, DEFAULT_CHUNK_SIZE as usize + 1);
-        assert_rejected_and_bucket_unchanged(&storage, root);
-    }
-
-    /// A database written before nonces moved on chain still opens, keeps
-    /// its records, and loses the legacy `metadata` column family.
-    #[test]
-    fn opening_drops_legacy_metadata_column_family() {
+    fn store_node_rejects_internal_node_whose_children_disagree_with_expected_hash() {
         let dir = TempDir::new().unwrap();
-        {
-            let mut opts = Options::default();
-            opts.create_if_missing(true);
-            opts.create_missing_column_families(true);
-            let db = DB::open_cf(
-                &opts,
-                dir.path(),
-                [CF_NODES, CF_BUCKETS, CF_ROOT_TO_BUCKET, LEGACY_CF_METADATA],
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        let bucket_id: BucketId = 1;
+        storage.init_bucket(bucket_id, 1_000).unwrap();
+
+        let left = H256::zero();
+        let right = H256::zero();
+        let claimed_hash = H256::repeat_byte(0xaa);
+        assert_ne!(claimed_hash, storage_primitives::hash_children(left, right));
+
+        let err = storage
+            .store_node(
+                bucket_id,
+                claimed_hash,
+                ChunkTreeNode::Internal { left, right },
+            )
+            .unwrap_err();
+        assert!(matches!(err, Error::InvalidHash { .. }));
+    }
+
+    #[test]
+    fn store_node_accepts_a_leaf_of_max_chunk_size() {
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        let bucket_id: BucketId = 1;
+        storage.init_bucket(bucket_id, u64::MAX).unwrap();
+
+        let data = vec![7u8; MAX_CHUNK_SIZE as usize];
+        let hash = hash_leaf(&data);
+        storage
+            .store_node(bucket_id, hash, ChunkTreeNode::Chunk(data))
+            .unwrap();
+        assert!(storage.get_node(&hash).is_some());
+    }
+
+    #[test]
+    fn store_node_rejects_a_leaf_above_max_chunk_size() {
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        let bucket_id: BucketId = 1;
+        storage.init_bucket(bucket_id, u64::MAX).unwrap();
+
+        let data = vec![7u8; MAX_CHUNK_SIZE as usize + 1];
+        let hash = hash_leaf(&data);
+        let err = storage
+            .store_node(bucket_id, hash, ChunkTreeNode::Chunk(data))
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            Error::ChunkTooLarge { size, max }
+                if size == MAX_CHUNK_SIZE as u64 + 1 && max == MAX_CHUNK_SIZE
+        ));
+        assert!(storage.get_node(&hash).is_none());
+        assert_eq!(storage.get_bucket(bucket_id).unwrap().used_bytes, 0);
+    }
+
+    #[test]
+    fn commit_rejects_a_root_containing_a_leaf_above_max_chunk_size() {
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        let bucket_id: BucketId = 1;
+        storage.init_bucket(bucket_id, u64::MAX).unwrap();
+
+        // Written past `store_node`, as a database from before the size check
+        // can contain it.
+        let node = ChunkTreeNode::Chunk(vec![7u8; MAX_CHUNK_SIZE as usize + 1]);
+        let hash = node.hash();
+        let cf = storage.db.cf_handle(CF_NODES).unwrap();
+        storage
+            .db
+            .put_cf(&cf, hash.as_bytes(), node.encode())
+            .unwrap();
+
+        let before = storage.get_bucket(bucket_id).unwrap();
+        let err = storage.commit(bucket_id, vec![hash]).unwrap_err();
+        assert!(matches!(err, Error::ChunkTooLarge { .. }));
+
+        let after = storage.get_bucket(bucket_id).unwrap();
+        assert_eq!(after.leaves.len(), before.leaves.len());
+        assert_eq!(after.mmr_root, before.mmr_root);
+    }
+
+    #[test]
+    fn store_node_rejects_missing_child_but_exempts_zero_padding() {
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        let bucket_id: BucketId = 1;
+        storage.init_bucket(bucket_id, 1_000).unwrap();
+
+        let missing_child = H256::repeat_byte(0x42);
+        let hash = storage_primitives::hash_children(missing_child, H256::zero());
+        let err = storage
+            .store_node(
+                bucket_id,
+                hash,
+                ChunkTreeNode::Internal {
+                    left: missing_child,
+                    right: H256::zero(),
+                },
+            )
+            .unwrap_err();
+        assert!(matches!(err, Error::ChildrenMissing(_)));
+
+        // The zero sentinel alone (both children padding) needs no existing node.
+        let padded_hash = storage_primitives::hash_children(H256::zero(), H256::zero());
+        storage
+            .store_node(
+                bucket_id,
+                padded_hash,
+                ChunkTreeNode::Internal {
+                    left: H256::zero(),
+                    right: H256::zero(),
+                },
+            )
+            .expect("an all-zero-children internal node has nothing to look up");
+    }
+
+    #[test]
+    fn internal_node_charges_constant_amount_of_bytes() {
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        let bucket_id: BucketId = 1;
+        storage.init_bucket(bucket_id, 1_000).unwrap();
+
+        // Zero-padding children need no existing node, so this isolates the
+        // quota charge from the children-exist check.
+        let hash = storage_primitives::hash_children(H256::zero(), H256::zero());
+        storage
+            .store_node(
+                bucket_id,
+                hash,
+                ChunkTreeNode::Internal {
+                    left: H256::zero(),
+                    right: H256::zero(),
+                },
             )
             .unwrap();
-            let cf = db.cf_handle(LEGACY_CF_METADATA).unwrap();
-            db.put_cf(&cf, b"nonce_counter", 7u64.to_le_bytes())
+
+        let bucket = storage.get_bucket(bucket_id).unwrap();
+        assert_eq!(bucket.used_bytes, 64);
+    }
+
+    #[test]
+    fn get_node_round_trips_both_variants() {
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        let bucket_id: BucketId = 1;
+        storage.init_bucket(bucket_id, 1_000).unwrap();
+
+        let chunk_data = vec![7u8, 8, 9];
+        let chunk_hash = hash_leaf(&chunk_data);
+        storage
+            .store_node(
+                bucket_id,
+                chunk_hash,
+                ChunkTreeNode::Chunk(chunk_data.clone()),
+            )
+            .unwrap();
+        assert_eq!(
+            storage.get_node(&chunk_hash),
+            Some(ChunkTreeNode::Chunk(chunk_data))
+        );
+
+        let left_data = vec![1u8];
+        let left = hash_leaf(&left_data);
+        storage
+            .store_node(bucket_id, left, ChunkTreeNode::Chunk(left_data))
+            .unwrap();
+        let right_data = vec![2u8];
+        let right = hash_leaf(&right_data);
+        storage
+            .store_node(bucket_id, right, ChunkTreeNode::Chunk(right_data))
+            .unwrap();
+
+        let internal_hash = storage_primitives::hash_children(left, right);
+        storage
+            .store_node(
+                bucket_id,
+                internal_hash,
+                ChunkTreeNode::Internal { left, right },
+            )
+            .unwrap();
+        assert_eq!(
+            storage.get_node(&internal_hash),
+            Some(ChunkTreeNode::Internal { left, right })
+        );
+    }
+
+    #[test]
+    fn a_fresh_database_records_the_current_format_version() {
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+
+        let cf = storage.db.cf_handle(CF_METADATA).unwrap();
+        let raw = storage
+            .db
+            .get_cf(&cf, KEY_FORMAT_VERSION)
+            .unwrap()
+            .expect("a fresh database must record a format version");
+        assert_eq!(
+            u32::from_le_bytes(raw.as_slice().try_into().unwrap()),
+            FORMAT_VERSION
+        );
+    }
+
+    #[test]
+    fn reopening_a_database_this_build_created_succeeds() {
+        let dir = TempDir::new().unwrap();
+        DiskStorage::new(dir.path()).unwrap();
+        DiskStorage::new(dir.path()).expect("reopening this build's own database must succeed");
+    }
+
+    #[test]
+    fn opening_a_database_with_a_different_format_version_fails() {
+        let dir = TempDir::new().unwrap();
+        DiskStorage::new(dir.path()).unwrap();
+
+        // Corrupt the recorded version directly, bypassing DiskStorage::new.
+        let mut opts = Options::default();
+        opts.create_if_missing(true);
+        opts.create_missing_column_families(true);
+        let db = DB::open_cf(
+            &opts,
+            dir.path(),
+            [CF_NODES, CF_BUCKETS, CF_ROOT_TO_BUCKET, CF_METADATA],
+        )
+        .unwrap();
+        let cf = db.cf_handle(CF_METADATA).unwrap();
+        db.put_cf(&cf, KEY_FORMAT_VERSION, 9999u32.to_le_bytes())
+            .unwrap();
+        drop(db);
+
+        match DiskStorage::new(dir.path()) {
+            Err(Error::IncompatibleFormat(_)) => {}
+            other => panic!(
+                "expected an incompatible-format error, got {}",
+                other.is_ok()
+            ),
+        }
+    }
+
+    /// Roots built by the provider equal the values the primitives and the
+    /// TypeScript package assert for the same chunks.
+    #[test]
+    fn provider_roots_match_the_shared_hash_vectors() {
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        storage.init_bucket(1, 1_000_000).unwrap();
+
+        let mut leaves = Vec::new();
+        for chunk in [b"a", b"b", b"c"] {
+            let hash = hash_leaf(chunk);
+            storage
+                .store_node(1, hash, ChunkTreeNode::Chunk(chunk.to_vec()))
                 .unwrap();
-            let cf = db.cf_handle(CF_BUCKETS).unwrap();
-            db.put_cf(&cf, 1u64.to_le_bytes(), BucketState::new(1_000).encode())
-                .unwrap();
+            leaves.push(hash);
         }
 
-        let storage = DiskStorage::new(dir.path()).unwrap();
-        assert!(storage.db.cf_handle(LEGACY_CF_METADATA).is_none());
-        assert!(storage.get_bucket(1).is_some());
-        drop(storage);
+        let data_root = crate::backend::build_merkle_tree(&storage, 1, &leaves).unwrap();
+        assert_eq!(
+            data_root,
+            "17321db51c1ef3ec1f77e271aa300b4e5c6091708bcba37e46025774a26142ee"
+                .parse::<H256>()
+                .unwrap()
+        );
+    }
 
-        let names = DB::list_cf(&Options::default(), dir.path()).unwrap();
-        assert!(!names.iter().any(|name| name == LEGACY_CF_METADATA));
-        // Reopening a migrated database is a no-op.
-        DiskStorage::new(dir.path()).unwrap();
+    #[test]
+    fn opening_a_non_empty_pre_versioning_database_fails() {
+        let dir = TempDir::new().unwrap();
+
+        // Simulate a database written before format versioning existed: real
+        // data, but no format_version key - bypassing DiskStorage::new so no
+        // version ever gets recorded.
+        let mut opts = Options::default();
+        opts.create_if_missing(true);
+        opts.create_missing_column_families(true);
+        let db = DB::open_cf(
+            &opts,
+            dir.path(),
+            [CF_NODES, CF_BUCKETS, CF_ROOT_TO_BUCKET, CF_METADATA],
+        )
+        .unwrap();
+        let cf = db.cf_handle(CF_BUCKETS).unwrap();
+        db.put_cf(&cf, 1u64.to_le_bytes(), BucketState::new(1_000).encode())
+            .unwrap();
+        drop(db);
+
+        match DiskStorage::new(dir.path()) {
+            Err(Error::IncompatibleFormat(_)) => {}
+            other => panic!(
+                "expected an incompatible-format error, got {}",
+                other.is_ok()
+            ),
+        }
     }
 
     #[test]

@@ -90,7 +90,7 @@ impl pallet_storage_provider::Config for Runtime {
     type MaxMembers = ConstU32<100>;
     type MaxPrimaryProviders = ConstU32<5>;
     type MinProviderStake = MinProviderStake;
-    type MaxChunkSize = ConstU32<262144>; // 256 KiB
+    type MaxChunkSize = ConstU32<{ storage_primitives::MAX_CHUNK_SIZE }>;
     type ChallengeTimeout = ChallengeTimeout;
     type ChallengeDeposit = ChallengeDeposit;
     type SettlementTimeout = SettlementTimeout;

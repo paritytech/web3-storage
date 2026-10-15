@@ -931,22 +931,22 @@ All data is broken into fixed-size chunks (e.g., 256KB), each identified by its 
 
 ```
 Chunk
-├── hash: H256 = blake2_256(data)
+├── hash: H256 = blake2_256(0x00 ++ data)
 ├── data: bytes (up to 256KB)
 ```
 
-Internal nodes in Merkle trees are also chunks—their content is child hashes:
+Chunks are the leaves of a binary Merkle tree. An internal node has exactly two children:
 
 ```
 Internal Node
-├── hash: H256 = blake2_256(child_hashes)
+├── hash: H256 = blake2_256(0x01 ++ left ++ right)
 ├── children: [H256, H256]
 ```
 
-In a committed tree, an internal node has exactly two children.
 A data root is the root of the binary tree over the chunks, so the provider can prove any chunk against it.
 When a level has an odd number of nodes, the last node moves up unchanged, without padding.
 All chunks have the fixed chunk size except the last, so the verifier derives the chunk count from the proven `data_size` of the MMR leaf.
+The different prefixes make a node's bytes fail to verify as chunk data, so a provider cannot answer a chunk challenge with an internal node instead of the chunk.
 
 **Why content-addressed?**
 - Deduplication: Identical chunks stored once
@@ -975,6 +975,9 @@ MmrLeaf
 ├── data_size: u64       // logical size of this data
 ├── total_size: u64      // cumulative unique bytes in bucket
 ```
+
+The MMR hashes its leaves and nodes with the same `0x00` and `0x01` prefixes.
+It bags its peaks right to left with `blake2_256(0x02 ++ peak ++ rest)`; a single peak is the root, and an empty MMR has a zero root.
 
 **Append**: Add new leaf with new data_root
 **Delete**: Increase start_seq (old leaves no longer in range)
