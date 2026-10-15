@@ -1285,10 +1285,8 @@ pub mod api {
             #[doc = " Runtime API for the storage provider pallet."]
             #[doc = ""]
             #[doc = " v2 reshaped `ProviderInfoResponse` (`deregister_at`, `reputation`) and added"]
-            #[doc = " `challenge_candidates`. v4 replaced `ChallengeResponse`'s `mmr_root`,"]
-            #[doc = " `start_seq`, `leaf_index` and `chunk_index` with the embedded"]
-            #[doc = " `commitment` and `target`. Declared explicitly so callers can probe the"]
-            #[doc = " version instead of decoding a shape that no longer exists."]
+            #[doc = " `challenge_candidates`. Declared explicitly so callers can probe the version"]
+            #[doc = " instead of decoding a v1 shape that no longer exists."]
             pub struct StorageProviderApi;
             impl StorageProviderApi {
                 #[doc = " Get provider information."]
@@ -3472,9 +3470,9 @@ pub mod api {
             .hash();
         runtime_metadata_hash
             == [
-                183u8, 243u8, 195u8, 123u8, 25u8, 35u8, 243u8, 122u8, 141u8, 120u8, 195u8, 99u8,
-                39u8, 20u8, 214u8, 242u8, 160u8, 15u8, 213u8, 0u8, 73u8, 136u8, 145u8, 171u8, 42u8,
-                13u8, 69u8, 116u8, 10u8, 142u8, 43u8, 183u8,
+                208u8, 11u8, 220u8, 137u8, 146u8, 72u8, 191u8, 156u8, 245u8, 4u8, 101u8, 147u8,
+                175u8, 24u8, 63u8, 231u8, 184u8, 168u8, 106u8, 207u8, 20u8, 164u8, 195u8, 110u8,
+                7u8, 158u8, 188u8, 134u8, 141u8, 213u8, 47u8, 194u8,
             ]
     }
     pub mod system {
@@ -21381,10 +21379,10 @@ pub mod api {
                         "Revive",
                         "EthBlockBuilderIR",
                         [
-                            15u8, 221u8, 149u8, 249u8, 66u8, 92u8, 51u8, 169u8, 139u8, 220u8,
-                            164u8, 167u8, 21u8, 74u8, 128u8, 153u8, 208u8, 238u8, 161u8, 25u8,
-                            42u8, 214u8, 94u8, 143u8, 177u8, 4u8, 149u8, 229u8, 28u8, 58u8, 49u8,
-                            5u8,
+                            202u8, 196u8, 178u8, 139u8, 1u8, 79u8, 215u8, 113u8, 139u8, 234u8,
+                            105u8, 11u8, 114u8, 125u8, 179u8, 184u8, 101u8, 241u8, 61u8, 46u8,
+                            177u8, 3u8, 62u8, 253u8, 150u8, 226u8, 95u8, 14u8, 70u8, 21u8, 24u8,
+                            24u8,
                         ],
                     )
                 }
