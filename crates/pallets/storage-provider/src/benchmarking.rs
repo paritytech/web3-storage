@@ -970,10 +970,9 @@ mod benchmarks {
         let provider = create_provider::<T>(0);
         let bucket_id = setup_primary_agreement::<T>(&admin, &provider, 0);
 
-        // Construct a single-chunk / single-leaf MMR so all proof verifications pass.
-        //
-        // Chunk tree (1 chunk):  data_root = hash_leaf(chunk_data)
-        //   chunk_proof = empty (leaf IS the root, no siblings)
+        // Chunk tree: the largest `data_size` gives the most chunks, and chunk 0
+        // of that tree has a sibling at every level, so the chunk proof has the
+        // most siblings the pallet accepts.
         //
         // MMR (1 leaf):  mmr_root = hash_leaf(encode(mmr_leaf))
         //   leaf_proof = empty (leaf IS the single peak, no siblings)
@@ -983,13 +982,20 @@ mod benchmarks {
         let chunk_data: BoundedVec<u8, T::MaxChunkSize> =
             BoundedVec::try_from(chunk_bytes.clone()).unwrap();
 
-        let chunk_hash = storage_primitives::hash_leaf(&chunk_bytes);
-        let data_root = chunk_hash; // single-element Merkle tree
+        let data_size = u64::MAX;
+        let depth = storage_primitives::chunk_count(data_size).ilog2();
+        let siblings: alloc::vec::Vec<H256> = (0..depth)
+            .map(|level| H256::from_low_u64_be(u64::from(level) + 1))
+            .collect();
+        let data_root = siblings.iter().fold(
+            storage_primitives::hash_leaf(&chunk_bytes),
+            |node, sibling| storage_primitives::hash_children(node, *sibling),
+        );
 
         let mmr_leaf = storage_primitives::MmrLeaf {
             data_root,
-            data_size: chunk_size as u64,
-            total_size: chunk_size as u64,
+            data_size,
+            total_size: data_size,
         };
         let leaf_hash = storage_primitives::hash_leaf(&codec::Encode::encode(&mmr_leaf));
         let mmr_root = leaf_hash; // single-peak MMR, root == peak == leaf_hash
@@ -1003,8 +1009,8 @@ mod benchmarks {
             },
         };
         let chunk_proof = storage_primitives::MerkleProof {
-            siblings: alloc::vec![],
-            path: alloc::vec![],
+            path: alloc::vec![false; siblings.len()],
+            siblings,
         };
 
         let challenge_id = insert_challenge::<T>(bucket_id, &provider, &admin, mmr_root);
