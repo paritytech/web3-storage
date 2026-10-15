@@ -320,6 +320,13 @@ mod tests {
         assert_eq!(range.len(), 3);
         for (index, (data, proof)) in (1..4).zip(&range) {
             assert_eq!(*data, chunks[index as usize]);
+            assert!(storage_primitives::verify_merkle_proof(
+                storage_primitives::hash_leaf(data),
+                index,
+                5,
+                proof,
+                &root
+            ));
             assert_eq!(
                 *proof,
                 storage.get_chunk_at_index(root, index).unwrap().1,
@@ -327,7 +334,13 @@ mod tests {
             );
         }
 
-        assert_eq!(storage.get_chunks_in_range(root, 3..10).unwrap().len(), 2);
+        let clipped: Vec<Vec<u8>> = storage
+            .get_chunks_in_range(root, 3..10)
+            .unwrap()
+            .into_iter()
+            .map(|(data, _)| data)
+            .collect();
+        assert_eq!(clipped, chunks[3..]);
         assert!(storage.get_chunks_in_range(root, 7..9).unwrap().is_empty());
         assert!(matches!(
             storage.get_chunk_at_index(root, 5),
