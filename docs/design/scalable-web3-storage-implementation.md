@@ -1691,6 +1691,10 @@ impl<T: Config> Pallet<T> {
     // Game"). The gate reads the challenged provider's role from its *current*
     // agreement—the same lookup that yields `AgreementNotFound`—so an ended
     // agreement means no challenge, never a stale role.
+    // In all three modes the target leaf must exist: `target.leaf_index` must
+    // be below the commitment's `leaf_count`, else `LeafBeyondCanonical`. A
+    // challenge on a leaf that does not exist has no valid response and
+    // would only resolve by timeout slash.
     // The challenger's deposit must cover the
     // provider's on-chain response cost (generously over-estimated; excess is
     // refunded on resolution). On a valid response the provider's stake is
