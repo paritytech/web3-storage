@@ -44,11 +44,7 @@ fn levels(leaf_hashes: &[H256]) -> Vec<Vec<H256>> {
     while level.len() > 1 {
         let next = level
             .chunks(2)
-            .map(|pair| match pair {
-                [left, right] => hash_children(*left, *right),
-                [last] => *last,
-                _ => unreachable!("chunks(2) yields one or two items"),
-            })
+            .filter_map(|pair| pair.iter().copied().reduce(hash_children))
             .collect();
         levels.push(core::mem::replace(&mut level, next));
     }
