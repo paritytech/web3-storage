@@ -958,7 +958,7 @@ BucketSnapshot
 ├── start_seq: u64       // first leaf sequence number
 ├── leaf_count: u64      // number of leaves
 ├── checkpoint_block: Block
-├── primary_signers: BitVec  // which primaries signed
+├── primary_signers: Vec<u8> // bitfield: which primaries signed
 ```
 
 **Canonical range**: `[start_seq, start_seq + leaf_count)`
