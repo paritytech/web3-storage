@@ -2,9 +2,11 @@
 
 //! API types for the provider node.
 
+use crate::error::Error;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use provider_storage::ChunkTreeNode;
 use serde::{Deserialize, Serialize};
+use sp_core::H256;
 use storage_primitives::BucketId;
 
 pub use provider_storage::{BucketStats, BucketSummary};
@@ -13,6 +15,21 @@ pub use provider_types::ProviderInfo;
 // ─────────────────────────────────────────────────────────────────────────────
 // Node Upload/Download Types
 // ─────────────────────────────────────────────────────────────────────────────
+
+/// Decode a `0x`-prefixed or bare hex hash. Returns `InvalidHash` if the hex is
+/// invalid or the length is not 32 bytes.
+pub(crate) fn decode_hash(hash: &str) -> Result<H256, Error> {
+    let invalid = |actual: String| Error::InvalidHash {
+        expected: hash.to_string(),
+        actual,
+    };
+    let bytes = hex::decode(hash.strip_prefix("0x").unwrap_or(hash))
+        .map_err(|_| invalid("invalid hex".to_string()))?;
+    if bytes.len() != 32 {
+        return Err(invalid(format!("{} bytes", bytes.len())));
+    }
+    Ok(H256::from_slice(&bytes))
+}
 
 /// Request to upload a node (chunk or internal node).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -420,4 +437,22 @@ pub struct ReplicaSyncCoordinatorStatusResponse {
     pub active_syncs: usize,
     /// Buckets being tracked as replica.
     pub tracked_buckets: Vec<BucketId>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn decode_hash_accepts_32_bytes_with_or_without_prefix() {
+        let hex = "ab".repeat(32);
+        assert_eq!(decode_hash(&hex).unwrap(), H256::repeat_byte(0xab));
+        assert_eq!(
+            decode_hash(&format!("0x{hex}")).unwrap(),
+            H256::repeat_byte(0xab)
+        );
+        for bad in ["ab".repeat(31), "ab".repeat(33), "zz".repeat(32)] {
+            assert!(matches!(decode_hash(&bad), Err(Error::InvalidHash { .. })));
+        }
+    }
 }

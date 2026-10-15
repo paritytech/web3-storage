@@ -114,8 +114,8 @@ impl StorageUserClient {
         // Upload chunks (leaves)
         let chunk_hashes: Vec<H256> = chunks.iter().map(|chunk| blake2_256(chunk)).collect();
 
-        for (chunk, hash) in chunks.iter().zip(chunk_hashes.iter()) {
-            self.upload_node(provider_url, bucket_id, *hash, chunk.clone(), None)
+        for chunk in &chunks {
+            self.upload_node(provider_url, bucket_id, &Node::Chunk(chunk.clone()))
                 .await?;
         }
 
@@ -247,7 +247,8 @@ impl StorageUserClient {
 
     /// Read a single node by its hash.
     ///
-    /// Returns the node data and optionally its children hashes (for internal nodes).
+    /// Returns a chunk with its bytes, or an internal node with its two child
+    /// hashes.
     ///
     /// # Example
     /// ```no_run
@@ -255,12 +256,13 @@ impl StorageUserClient {
     /// # use sp_core::H256;
     /// # async fn example(hash: H256) -> Result<(), Box<dyn std::error::Error>> {
     /// let client = StorageUserClient::new(ClientConfig::default(), Signer::from_seed("//Alice")?)?;
-    /// let (data, children) = client.read_node(&hash).await?;
-    /// println!("Read {} bytes", data.len());
+    /// if let storage_client::Node::Chunk(data) = client.read_node(&hash).await? {
+    ///     println!("Read {} bytes", data.len());
+    /// }
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn read_node(&self, hash: &H256) -> ClientResult<(Vec<u8>, Option<Vec<H256>>)> {
+    pub async fn read_node(&self, hash: &H256) -> ClientResult<Node> {
         let provider_url = self.base.get_provider_url()?;
         let hash_hex = BaseClient::hex_encode(hash.as_bytes());
 
@@ -294,30 +296,22 @@ impl StorageUserClient {
             .children
             .map(|c| {
                 c.iter()
-                    .map(|h| {
-                        let bytes = BaseClient::hex_decode(h)?;
-                        Ok(H256::from_slice(&bytes))
-                    })
+                    .map(|h| decode_h256(h))
                     .collect::<ClientResult<Vec<H256>>>()
             })
             .transpose()?;
 
-        Ok((data, children))
+        Node::from_wire(data, children)
     }
 
-    /// Read a node and verify its hash matches.
-    ///
-    /// Returns the data if hash verification passes.
-    pub async fn read_node_verified(&self, hash: &H256) -> ClientResult<Vec<u8>> {
-        let (data, _children) = self.read_node(hash).await?;
-
-        // Verify the hash
-        let computed_hash = blake2_256(&data);
-        if &computed_hash != hash {
+    /// Read a node and verify that it hashes to `hash`.
+    pub async fn read_node_verified(&self, hash: &H256) -> ClientResult<Node> {
+        let node = self.read_node(hash).await?;
+        if &node.hash() != hash {
             return Err(ClientError::VerificationFailed);
         }
 
-        Ok(data)
+        Ok(node)
     }
 
     // ═════════════════════════════════════════════════════════════════════════
@@ -493,19 +487,23 @@ impl StorageUserClient {
         &self,
         provider_url: &str,
         bucket_id: BucketId,
-        hash: H256,
-        data: Vec<u8>,
-        children: Option<Vec<H256>>,
+        node: &Node,
     ) -> ClientResult<()> {
+        let (data, children) = match node {
+            Node::Chunk(data) => (BASE64.encode(data), None),
+            Node::Internal { left, right } => (
+                BASE64.encode([left.as_bytes(), right.as_bytes()].concat()),
+                Some(vec![
+                    BaseClient::hex_encode(left.as_bytes()),
+                    BaseClient::hex_encode(right.as_bytes()),
+                ]),
+            ),
+        };
         let request = UploadNodeRequest {
             bucket_id,
-            hash: BaseClient::hex_encode(hash.as_bytes()),
-            data: BASE64.encode(&data),
-            children: children.map(|c| {
-                c.iter()
-                    .map(|h| BaseClient::hex_encode(h.as_bytes()))
-                    .collect()
-            }),
+            hash: BaseClient::hex_encode(node.hash().as_bytes()),
+            data,
+            children,
         };
 
         let req = self
@@ -553,9 +551,10 @@ impl StorageUserClient {
                 self.upload_node(
                     provider_url,
                     bucket_id,
-                    parent_hash,
-                    [pair[0].as_bytes(), pair[1].as_bytes()].concat(),
-                    Some(vec![pair[0], pair[1]]),
+                    &Node::Internal {
+                        left: pair[0],
+                        right: pair[1],
+                    },
                 )
                 .await?;
 
@@ -663,6 +662,60 @@ impl crate::verification::ProviderReadAccess for StorageUserClient {
 }
 
 // API types
+
+/// A chunk-tree node: a chunk with its bytes, or an internal node with its two
+/// child hashes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Node {
+    /// Chunk bytes.
+    Chunk(Vec<u8>),
+    /// Child hashes of an internal node.
+    Internal {
+        /// Left child hash.
+        left: H256,
+        /// Right child hash.
+        right: H256,
+    },
+}
+
+impl Node {
+    /// This node's hash: the chunk hash for a chunk, the hash of the two
+    /// children for an internal node.
+    pub fn hash(&self) -> H256 {
+        match self {
+            Self::Chunk(data) => blake2_256(data),
+            Self::Internal { left, right } => storage_primitives::hash_children(*left, *right),
+        }
+    }
+
+    /// Build a node from the `data` and `children` of a `/node` response.
+    /// `VerificationFailed` if an internal node does not have exactly two
+    /// children or its `data` is not the left child hash followed by the right
+    /// child hash.
+    fn from_wire(data: Vec<u8>, children: Option<Vec<H256>>) -> ClientResult<Self> {
+        let Some(children) = children else {
+            return Ok(Self::Chunk(data));
+        };
+        let [left, right]: [H256; 2] = children
+            .try_into()
+            .map_err(|_| ClientError::VerificationFailed)?;
+        if data != [left.as_bytes(), right.as_bytes()].concat() {
+            return Err(ClientError::VerificationFailed);
+        }
+        Ok(Self::Internal { left, right })
+    }
+}
+
+fn decode_h256(s: &str) -> ClientResult<H256> {
+    let bytes = BaseClient::hex_decode(s)?;
+    if bytes.len() != 32 {
+        return Err(ClientError::Serialization(format!(
+            "Invalid hash length: expected 32 bytes, got {}",
+            bytes.len()
+        )));
+    }
+    Ok(H256::from_slice(&bytes))
+}
 
 #[derive(serde::Serialize)]
 struct UploadNodeRequest {
@@ -784,6 +837,50 @@ impl CommitmentResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn node_from_wire_checks_child_count_and_data() {
+        let (left, right) = (H256::repeat_byte(1), H256::repeat_byte(2));
+        let data = [left.as_bytes(), right.as_bytes()].concat();
+
+        assert_eq!(
+            Node::from_wire(vec![1, 2, 3], None).unwrap(),
+            Node::Chunk(vec![1, 2, 3])
+        );
+        assert_eq!(
+            Node::from_wire(data.clone(), Some(vec![left, right])).unwrap(),
+            Node::Internal { left, right }
+        );
+        for (data, children) in [
+            (data.clone(), vec![left]),
+            (data, vec![left, right, left]),
+            (Vec::new(), vec![left, right]),
+        ] {
+            assert!(matches!(
+                Node::from_wire(data, Some(children)),
+                Err(ClientError::VerificationFailed)
+            ));
+        }
+    }
+
+    #[test]
+    fn node_hash_is_the_chunk_hash_or_the_hash_of_the_children() {
+        let (left, right) = (H256::repeat_byte(1), H256::repeat_byte(2));
+        assert_eq!(Node::Chunk(vec![1, 2, 3]).hash(), blake2_256(&[1, 2, 3]));
+        assert_eq!(
+            Node::Internal { left, right }.hash(),
+            storage_primitives::hash_children(left, right)
+        );
+    }
+
+    #[test]
+    fn decode_h256_rejects_a_hash_of_wrong_length() {
+        assert!(decode_h256(&format!("0x{}", "ab".repeat(31))).is_err());
+        assert_eq!(
+            decode_h256(&format!("0x{}", "ab".repeat(32))).unwrap(),
+            H256::repeat_byte(0xab)
+        );
+    }
 
     fn commitment_json(mmr_root: &str, signature: &str) -> String {
         format!(
