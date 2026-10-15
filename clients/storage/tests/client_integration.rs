@@ -11,7 +11,7 @@ mod common;
 use common::{make_client, start_test_provider};
 use provider_storage::{build_padded_merkle_tree, temp_rocksdb};
 use sp_core::H256;
-use storage_client::{ChunkingStrategy, EncryptionKey, ENCRYPTION_OVERHEAD};
+use storage_client::{ChunkingStrategy, EncryptionKey, Node, ENCRYPTION_OVERHEAD};
 
 // ============================================================================
 // Health
@@ -273,9 +273,9 @@ async fn test_read_node_returns_leaf_data() {
         .await
         .unwrap();
 
-    let (node_data, _children) = client.read_node(&data_root).await.unwrap();
+    let node = client.read_node(&data_root).await.unwrap();
 
-    assert_eq!(node_data, data);
+    assert_eq!(node, Node::Chunk(data.to_vec()));
 }
 
 #[tokio::test]
@@ -289,9 +289,9 @@ async fn test_read_node_verified_passes_for_valid_hash() {
         .await
         .unwrap();
 
-    let verified_data = client.read_node_verified(&data_root).await.unwrap();
+    let verified = client.read_node_verified(&data_root).await.unwrap();
 
-    assert_eq!(verified_data, data);
+    assert_eq!(verified, Node::Chunk(data.to_vec()));
 }
 
 #[tokio::test]
@@ -308,13 +308,12 @@ async fn test_read_node_verified_checks_an_internal_node_by_its_children() {
 
     // The root of a two-chunk file is an internal node; its data is the
     // concatenation of its two child hashes.
-    let (_, children) = client.read_node(&data_root).await.unwrap();
-    let children = children.expect("a two-chunk root is an internal node");
-    let node_data = client.read_node_verified(&data_root).await.unwrap();
-    assert_eq!(
-        node_data,
-        [children[0].as_bytes(), children[1].as_bytes()].concat()
+    let node = client.read_node(&data_root).await.unwrap();
+    assert!(
+        matches!(node, Node::Internal { .. }),
+        "a two-chunk root is an internal node"
     );
+    assert_eq!(client.read_node_verified(&data_root).await.unwrap(), node);
 }
 
 #[tokio::test]
@@ -341,17 +340,13 @@ async fn test_read_internal_node_has_children() {
         .await
         .unwrap();
 
-    let (_node_data, children) = client.read_node(&data_root).await.unwrap();
+    let node = client.read_node(&data_root).await.unwrap();
 
     assert!(
-        children.is_some(),
-        "internal node should report its children"
-    );
-    assert_eq!(
-        children.unwrap().len(),
-        2,
+        matches!(node, Node::Internal { .. }),
         "two-chunk upload should produce a root with two children"
     );
+    assert_eq!(client.read_node_verified(&data_root).await.unwrap(), node);
 }
 
 // ============================================================================
@@ -664,28 +659,11 @@ async fn test_non_power_of_two_upload_matches_padded_root_and_verifies() {
     let mut stack = vec![data_root];
     let mut internal_count = 0;
     while let Some(hash) = stack.pop() {
-        let node: serde_json::Value = http
-            .get(format!("{url}/node"))
-            .query(&[("hash", format!("0x{}", hex::encode(hash.as_bytes())))])
-            .send()
-            .await
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
-
-        if let Some(children) = node["children"].as_array() {
+        if let Node::Internal { left, right } = client.read_node(&hash).await.unwrap() {
             internal_count += 1;
-            assert_eq!(
-                children.len(),
-                2,
-                "internal node must have exactly two children"
-            );
-            for child in children {
-                let bytes = hex::decode(child.as_str().unwrap().trim_start_matches("0x")).unwrap();
-                let child_hash = H256::from_slice(&bytes);
-                if child_hash != H256::zero() {
-                    stack.push(child_hash);
+            for child in [left, right] {
+                if child != H256::zero() {
+                    stack.push(child);
                 }
             }
         }
