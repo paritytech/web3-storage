@@ -225,7 +225,7 @@ mod tests {
         );
     }
 
-    // `verify_mmr_proof(proof, leaf_index, leaf_count, root)` accepts a leaf
+    // `verify_mmr_proof(proof, leaf_index, commitment)` accepts a leaf
     // only when it is presented at its own index.
     #[test]
     fn challenge_binds_leaf_index() {

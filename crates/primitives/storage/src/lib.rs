@@ -119,8 +119,8 @@ pub enum ProviderRole<Balance, BlockNumber> {
     },
 }
 
-/// The commitment a replica last confirmed sync to. `challenge_replica`
-/// targets leaves of this commitment.
+/// A replica's last confirmed sync: the commitment and the anchor block.
+/// `challenge_replica` targets leaves of this commitment.
 #[derive(
     Clone,
     Copy,

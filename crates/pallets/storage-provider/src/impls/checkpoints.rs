@@ -6,7 +6,7 @@ use sp_core::H256;
 use storage_primitives::{Commitment, HISTORICAL_ROOT_PRIMES};
 
 /// The root a replica sync matched: `position` 0 is the current snapshot,
-/// 1..=6 index `Bucket::historical_roots`.
+/// `position` p in 1..=6 is `Bucket::historical_roots[p - 1]`.
 pub(crate) struct MatchedRoot {
     pub position: u8,
     pub commitment: Commitment,
