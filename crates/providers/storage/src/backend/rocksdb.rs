@@ -15,7 +15,7 @@ use rocksdb::{Options, DB};
 use sp_core::H256;
 use std::path::Path;
 use std::sync::Arc;
-use storage_primitives::{hash_leaf, BucketId, MmrLeaf};
+use storage_primitives::{bag_peaks, hash_leaf, BucketId, MmrLeaf};
 
 /// Column families for organizing data
 const CF_NODES: &str = "nodes";
@@ -455,28 +455,7 @@ impl DiskStorage {
         let bucket = self
             .get_bucket(bucket_id)
             .ok_or(Error::BucketNotFound(bucket_id))?;
-
-        let leaf = bucket
-            .leaves
-            .get(leaf_index as usize)
-            .ok_or(Error::NodeNotFound(format!("leaf_{leaf_index}")))?
-            .clone();
-
-        // Build MMR and generate proof
-        let mut mmr = crate::mmr::Mmr::new();
-        for l in &bucket.leaves {
-            mmr.push(hash_leaf(&l.encode()));
-        }
-
-        let (siblings, path, peaks) = mmr
-            .proof_with_path(leaf_index)
-            .ok_or(Error::NodeNotFound(format!("mmr_proof_{leaf_index}")))?;
-
-        Ok(storage_primitives::MmrProof {
-            peaks,
-            leaf,
-            leaf_proof: storage_primitives::MerkleProof { siblings, path },
-        })
+        mmr_proof(&bucket.leaves, leaf_index)
     }
 
     /// See [`StorageBackend::get_mmr_proof_for_commitment`].
@@ -486,62 +465,47 @@ impl DiskStorage {
         commitment: &storage_primitives::Commitment,
         leaf_index: u64,
     ) -> Result<storage_primitives::MmrProof, Error> {
-        let commitment_root = commitment.mmr_root;
-        let commitment_start_seq = commitment.start_seq;
-        let commitment_leaf_count = commitment.leaf_count;
         let bucket = self
             .get_bucket(bucket_id)
             .ok_or(Error::BucketNotFound(bucket_id))?;
 
-        if leaf_index >= commitment_leaf_count {
+        if leaf_index >= commitment.leaf_count {
             return Err(Error::CommitmentNotReproducible(format!(
-                "leaf_{leaf_index} outside commitment ({commitment_leaf_count} leaves)"
+                "leaf_{leaf_index} outside commitment ({} leaves)",
+                commitment.leaf_count
             )));
         }
 
         // Rebase the commitment window onto the local leaf vector, which
         // covers [bucket.start_seq, bucket.start_seq + leaves.len()).
-        if commitment_start_seq < bucket.start_seq {
+        if commitment.start_seq < bucket.start_seq {
             return Err(Error::CommitmentNotReproducible(format!(
-                "leaves from seq {commitment_start_seq} pruned (local start_seq {})",
-                bucket.start_seq
+                "leaves from seq {} pruned (local start_seq {})",
+                commitment.start_seq, bucket.start_seq
             )));
         }
-        let offset = (commitment_start_seq - bucket.start_seq) as usize;
-        let end = offset.saturating_add(commitment_leaf_count as usize);
+        let offset = (commitment.start_seq - bucket.start_seq) as usize;
+        let end = offset.saturating_add(commitment.leaf_count as usize);
         if end > bucket.leaves.len() {
             return Err(Error::CommitmentNotReproducible(format!(
-                "commitment range {commitment_start_seq}+{commitment_leaf_count} exceeds local \
-                 leaves (local end {})",
+                "commitment range {}+{} exceeds local leaves (local end {})",
+                commitment.start_seq,
+                commitment.leaf_count,
                 bucket.start_seq.saturating_add(bucket.leaf_count())
             )));
         }
-        let window = &bucket.leaves[offset..end];
 
-        let mut mmr = crate::mmr::Mmr::new();
-        for leaf in window {
-            mmr.push(hash_leaf(&leaf.encode()));
-        }
+        let proof = mmr_proof(&bucket.leaves[offset..end], leaf_index)?;
         // The rebuilt prefix must reproduce the cited root; a mismatch means
         // the local history diverged from what was signed, and any proof from
         // it would fail on-chain verification anyway.
-        if mmr.root() != commitment_root {
+        if bag_peaks(&proof.peaks) != commitment.mmr_root {
             return Err(Error::CommitmentNotReproducible(format!(
                 "commitment_root 0x{} not reproducible from local leaves",
-                hex::encode(commitment_root.as_bytes())
+                hex::encode(commitment.mmr_root.as_bytes())
             )));
         }
-
-        let leaf = window[leaf_index as usize].clone();
-        let (siblings, path, peaks) = mmr
-            .proof_with_path(leaf_index)
-            .ok_or(Error::NodeNotFound(format!("mmr_proof_{leaf_index}")))?;
-
-        Ok(storage_primitives::MmrProof {
-            peaks,
-            leaf,
-            leaf_proof: storage_primitives::MerkleProof { siblings, path },
-        })
+        Ok(proof)
     }
 
     /// Get MMR peaks.
@@ -557,6 +521,29 @@ impl DiskStorage {
 
         Ok((mmr.root(), mmr.peaks()))
     }
+}
+
+/// Build the MMR over `leaves` and prove the leaf at `leaf_index`.
+fn mmr_proof(leaves: &[MmrLeaf], leaf_index: u64) -> Result<storage_primitives::MmrProof, Error> {
+    let leaf = leaves
+        .get(leaf_index as usize)
+        .ok_or(Error::NodeNotFound(format!("leaf_{leaf_index}")))?
+        .clone();
+
+    let mut mmr = crate::mmr::Mmr::new();
+    for l in leaves {
+        mmr.push(hash_leaf(&l.encode()));
+    }
+
+    let (siblings, path, peaks) = mmr
+        .proof_with_path(leaf_index)
+        .ok_or(Error::NodeNotFound(format!("mmr_proof_{leaf_index}")))?;
+
+    Ok(storage_primitives::MmrProof {
+        peaks,
+        leaf,
+        leaf_proof: storage_primitives::MerkleProof { siblings, path },
+    })
 }
 
 impl StorageBackend for DiskStorage {
