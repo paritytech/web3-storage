@@ -52,7 +52,7 @@ impl<T: Config> Pallet<T> {
         )
     }
 
-    /// Shared choke point for the three `challenge_*` extrinsics: validates
+    /// Common entry for the three `challenge_*` extrinsics: validates
     /// the target, reserves the challenger's deposit, and stores the challenge
     /// under a stable `(deadline, index)` id.
     pub(crate) fn create_challenge(
