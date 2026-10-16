@@ -603,9 +603,10 @@ export async function submitCompleteDeregister(
 export interface ChallengeProofData {
   chunkData: Uint8Array
   mmrProof: {
-    peaks: string[]
     leaf: { dataRoot: string; dataSize: bigint; totalSize: bigint }
-    leafProof: { siblings: string[]; path: boolean[] }
+    leafIndex: bigint
+    leafCount: bigint
+    items: string[]
   }
   chunkProof: { siblings: string[]; path: boolean[] }
 }
@@ -647,16 +648,14 @@ export async function fetchChallengeProof(
   return {
     chunkData,
     mmrProof: {
-      peaks: mmr.proof.peaks as string[],
       leaf: {
         dataRoot,
         dataSize: BigInt(mmr.leaf.data_size),
         totalSize: BigInt(mmr.leaf.total_size),
       },
-      leafProof: {
-        siblings: mmr.proof.siblings as string[],
-        path: mmr.proof.path as boolean[],
-      },
+      leafIndex: BigInt(mmr.proof.leaf_index),
+      leafCount: BigInt(mmr.proof.leaf_count),
+      items: mmr.proof.items as string[],
     },
     chunkProof: {
       siblings: chunk.proof.siblings as string[],
@@ -682,16 +681,14 @@ export async function submitRespondToChallenge(
     response: Enum('Proof', {
       chunk_data: proof.chunkData,
       mmr_proof: {
-        peaks: proof.mmrProof.peaks,
         leaf: {
           data_root: proof.mmrProof.leaf.dataRoot,
           data_size: proof.mmrProof.leaf.dataSize,
           total_size: proof.mmrProof.leaf.totalSize,
         },
-        leaf_proof: {
-          siblings: proof.mmrProof.leafProof.siblings,
-          path: proof.mmrProof.leafProof.path,
-        },
+        leaf_index: proof.mmrProof.leafIndex,
+        leaf_count: proof.mmrProof.leafCount,
+        items: proof.mmrProof.items,
       },
       chunk_proof: {
         siblings: proof.chunkProof.siblings,

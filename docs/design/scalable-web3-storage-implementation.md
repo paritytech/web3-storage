@@ -2175,7 +2175,7 @@ GET /mmr_proof?bucket_id=0x...&leaf_index=5
 Response:
 {
   "leaf": { "data_root": "0x...", "data_size": 2097152, "total_size": 52428800 },
-  "proof": { "peaks": [...], "siblings": [...] }
+  "proof": { "leaf_index": 5, "leaf_count": 42, "items": ["0x...", ...] }
 }
 
 Get Chunk Proof
@@ -2494,13 +2494,19 @@ pub struct MerkleProof {
 }
 
 pub struct MmrProof {
-    /// Peaks of the MMR
-    pub peaks: Vec<H256>,
-    /// The leaf being proven. Verification hashes `leaf.encode()` as the
-    /// proof's starting point, so the leaf content is part of the proof.
+    /// The leaf being proven. Verification hashes `0x00 ++ leaf.encode()` as
+    /// the proof's starting point, so the leaf content is part of the proof.
     pub leaf: MmrLeaf,
-    /// Proof from leaf to peak
-    pub leaf_proof: MerkleProof,
+    /// Position of the leaf in the MMR.
+    pub leaf_index: u64,
+    /// Number of leaves in the MMR. Together with `leaf_index` it fixes the
+    /// MMR shape the verifier recomputes.
+    pub leaf_count: u64,
+    /// One hash per peak to the left of the leaf's peak, then the sibling
+    /// hashes from the leaf up to its peak, then one hash for all peaks to
+    /// the right of it (bagged if there are several). The leaf's own peak is
+    /// not included; the verifier computes it.
+    pub items: Vec<H256>,
 }
 ```
 

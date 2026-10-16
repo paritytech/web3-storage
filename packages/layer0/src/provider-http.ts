@@ -241,16 +241,14 @@ export async function fetchChallengeProof(
   return {
     chunk_data: base64ToBytes(chunk.chunk_data),
     mmr_proof: {
-      peaks: mmr.proof.peaks.map((h: string) => asHex(h)),
       leaf: {
         data_root: asHex(mmr.leaf.data_root),
         data_size: BigInt(mmr.leaf.data_size),
         total_size: BigInt(mmr.leaf.total_size),
       },
-      leaf_proof: {
-        siblings: mmr.proof.siblings.map((h: string) => asHex(h)),
-        path: mmr.proof.path,
-      },
+      leaf_index: BigInt(mmr.proof.leaf_index),
+      leaf_count: BigInt(mmr.proof.leaf_count),
+      items: mmr.proof.items.map((h: string) => asHex(h)),
     },
     chunk_proof: {
       siblings: chunk.proof.siblings.map((h: string) => asHex(h)),
