@@ -292,7 +292,7 @@ parachain `HOURS`:
 | `MaxMultiaddrLength` | `128` |
 | `MaxMembers` | `100` |
 | `MaxPrimaryProviders` | `5` |
-| `MaxChunkSize` | `262_144` (256 KiB, the protocol's `CHUNK_SIZE`) |
+| `MaxChunkSize` | `262_144` (256 KiB, the `CHUNK_SIZE` of leaf version 1) |
 | `ChallengeTimeout` | `48 * RC_HOURS` |
 | `SettlementTimeout` | `24 * RC_HOURS` |
 | `RequestTimeout` | `6 * RC_HOURS` |
@@ -2018,7 +2018,7 @@ Response (200 OK):
 Response (400 Bad Request):
 { "error": "children_missing", "missing": ["0xchild2..."] }
 { "error": "invalid_node" }               // both or neither of data and children
-{ "error": "invalid_child_count" }        // children is not exactly two hashes
+{ "error": "invalid_child_count", "expected": 2, "actual": 3 }
 { "error": "chunk_too_large", "size": 300000, "max": 262144 }
 
 Response (507 Insufficient Storage):
@@ -2522,20 +2522,21 @@ pub struct MmrLeaf {
     pub total_size: u64,
 }
 // Sequence number is implicit: start_seq + leaf_position
+```
 
 The provider writes `LEAF_VERSION`, the current version, into every leaf it
 commits. A verifier reads `leaf_version` first and checks the rest of the leaf
 under that version: its fields, its `CHUNK_SIZE`, the chunk tree shape and the
-hash prefixes. The pallet accepts every version it knows and rejects a leaf
-with an unknown version. A format change bumps `LEAF_VERSION`; leaves of
-different versions share one MMR, so no root has to be recomputed.
-```
+hash prefixes. The pallet accepts every version it knows; a response whose
+leaf has an unknown version fails with `InvalidProof`. A format change bumps
+`LEAF_VERSION`; leaves of different versions share one MMR, so no root has to
+be recomputed.
 
 ### Hash Prefixes
 
 Every hash in the chunk tree and the MMR is `blake2_256` over a one-byte
-prefix and the payload. The prefix says what kind of node the payload is, so
-bytes of one kind never verify as another.
+prefix and the payload. The prefix identifies the kind of node the payload
+is, so a node's bytes never verify as a leaf of the same tree.
 
 | Prefix | Preimage | Hashes | Function |
 |---|---|---|---|
@@ -2554,9 +2555,8 @@ largest power of two smaller than `n`.
 
 Every chunk has `CHUNK_SIZE` bytes (256 KiB in leaf version 1) except the
 last, which has 1 to `CHUNK_SIZE` bytes, so `n = ceil(data_size / CHUNK_SIZE)`
-and `n >= 1`. Empty
-data has no chunks: the client does not upload it, and a root whose last
-chunk is empty fails the `/commit` check.
+and `n >= 1`. Empty data has no chunks: the client does not upload it, and a
+root whose last chunk is empty fails the `/commit` check.
 
 `binary_merkle_tree` (polkadot-sdk) builds this shape when it is called with
 pre-hashed leaves (its `*_raw` functions) and a hasher that prefixes `0x01`:
