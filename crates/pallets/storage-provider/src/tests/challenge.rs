@@ -2966,7 +2966,7 @@ mod challenge_tests {
                             chunk_index: 0,
                         },
                     ),
-                    Error::<Test>::LeafBeyondCanonical
+                    Error::<Test>::LeafNotInCommitment
                 );
             }
             assert_ok!(StorageProvider::challenge_checkpoint(

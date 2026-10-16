@@ -643,7 +643,7 @@
           <li>&bull; Private bucket, primary provider: member or primary-agreement owner only (NotAuthorizedForPrivateBucket)</li>
           <li>&bull; The gate reads the provider&#39;s role from its current agreement; replicas are open to anyone</li>
           <li>&bull; Tier: authorized (member or any agreement owner) or public, stored in Challenge.authorized at creation</li>
-          <li>&bull; The target leaf must exist: leaf_index below the commitment&#39;s leaf_count, else LeafBeyondCanonical</li>
+          <li>&bull; The target leaf must exist: leaf_index below the commitment&#39;s leaf_count, else LeafNotInCommitment</li>
         </ul>
       </div>
 

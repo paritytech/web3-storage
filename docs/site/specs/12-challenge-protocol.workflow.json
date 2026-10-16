@@ -304,7 +304,7 @@
         "Private bucket, primary provider: member or primary-agreement owner only (NotAuthorizedForPrivateBucket)",
         "The gate reads the provider's role from its current agreement; replicas are open to anyone",
         "Tier: authorized (member or any agreement owner) or public, stored in Challenge.authorized at creation",
-        "The target leaf must exist: leaf_index below the commitment's leaf_count, else LeafBeyondCanonical"
+        "The target leaf must exist: leaf_index below the commitment's leaf_count, else LeafNotInCommitment"
       ]
     },
     {

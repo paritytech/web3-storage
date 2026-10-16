@@ -69,7 +69,7 @@ impl<T: Config> Pallet<T> {
         // and would resolve only by timeout slash.
         ensure!(
             target.leaf_index < commitment.leaf_count,
-            Error::<T>::LeafBeyondCanonical
+            Error::<T>::LeafNotInCommitment
         );
 
         // Private-bucket gate: the public has no legitimate reliance on data

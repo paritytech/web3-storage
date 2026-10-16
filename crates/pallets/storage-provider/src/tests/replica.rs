@@ -554,7 +554,7 @@ fn challenge_replica_binds_to_historical_sync_range() {
                     chunk_index: 0,
                 },
             ),
-            Error::<Test>::LeafBeyondCanonical
+            Error::<Test>::LeafNotInCommitment
         );
         assert_ok!(StorageProvider::challenge_replica(
             RuntimeOrigin::signed(4),

@@ -1219,8 +1219,9 @@ pub mod pallet {
         /// with a signed commitment instead.
         ProviderNotInSnapshot,
         /// `target.leaf_index` is not below the commitment's `leaf_count`: the
-        /// leaf does not exist, so no proof could defend the challenge.
-        LeafBeyondCanonical,
+        /// leaf does not exist, so no proof could defend the challenge. Pick a
+        /// `leaf_index` below `leaf_count`.
+        LeafNotInCommitment,
         /// A provider with unresolved challenges (`PendingChallenges > 0`)
         /// cannot complete deregistration — they are still slashable.
         ProviderHasPendingChallenges,
