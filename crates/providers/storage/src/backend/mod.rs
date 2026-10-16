@@ -62,7 +62,8 @@ pub struct CommitOutcome {
     pub start_seq: u64,
     /// Leaf count backing `mmr_root`.
     pub leaf_count: u64,
-    /// Global sequence numbers assigned to the committed leaves.
+    /// Leaf indices of the committed leaves within this commitment (relative to
+    /// `start_seq`).
     pub leaf_indices: Vec<u64>,
 }
 
