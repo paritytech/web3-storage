@@ -60,8 +60,8 @@
     <tr><td>Primary provider</td><td>Added by the admin. Receives writes from clients and signs checkpoints. At most <code>MaxPrimaryProviders</code> (5) per bucket.</td></tr>
     <tr><td>Replica provider</td><td>Added by any account that gets a replica quote from the provider (the quote names that account). Syncs data from other providers, confirms sync on-chain, and receives a payment per confirmation. No limit per bucket.</td></tr>
     <tr><td>Storage agreement</td><td>One per provider per bucket: quota (<code>max_bytes</code>), locked price, expiry, role, and owner. The payment is held on the owner until settlement.</td></tr>
-    <tr><td><code>data_root</code></td><td>Merkle root of a chunk tree. Chunks are at most 256 KiB and addressed by <code>blake2_256</code> hash.</td></tr>
-    <tr><td>MMR and commitment</td><td>Each bucket has one Merkle Mountain Range. Each leaf holds a <code>data_root</code>. A <code>Commitment</code> is <code>(mmr_root, start_seq, leaf_count)</code>.</td></tr>
+    <tr><td><code>data_root</code></td><td>Root of the chunk tree: a binary RFC 9162 Merkle tree over 256 KiB chunks (only the last chunk is shorter), without padding. A chunk hashes as <code>blake2_256(0x00 ++ data)</code>, a node as <code>blake2_256(0x01 ++ left ++ right)</code>. The chunk count is <code>ceil(data_size / 256 KiB)</code>; it is not part of the commitment.</td></tr>
+    <tr><td>MMR and commitment</td><td>Each bucket has one Merkle Mountain Range. Each leaf starts with <code>leaf_version</code> (1 in this guide) and holds a <code>data_root</code> and its <code>data_size</code>. A <code>Commitment</code> is <code>(mmr_root, start_seq, leaf_count)</code>.</td></tr>
     <tr><td>Checkpoint</td><td>A commitment written on-chain with signatures from at least <code>min_providers</code> primaries.</td></tr>
     <tr><td>Challenge</td><td>An on-chain request that forces a provider to post one chunk with Merkle proofs, or lose its stake.</td></tr>
   </tbody>
@@ -97,7 +97,7 @@ bucket://42/fs/my_website/logo.png    mutable: path in the latest snapshot</code
   </li>
   <li>
     <h3>Upload</h3>
-    <p>Split data into chunks of at most 256 KiB and build the Merkle tree. Call <code>POST /exists</code> with hashes, top-down, to skip subtrees the provider already has. Upload missing nodes bottom-up with <code>PUT /node</code>: a parent is rejected (<code>children_missing</code>) until its children exist. Uploads above the agreement quota fail with <code>507 quota_exceeded</code>.</p>
+    <p>Split data into 256 KiB chunks (only the last chunk is shorter; empty data cannot be committed) and build the RFC 9162 Merkle tree. Call <code>POST /exists</code> with hashes, top-down, to skip subtrees the provider already has. Upload missing nodes bottom-up with <code>PUT /node</code>, a chunk as <code>data</code> and an internal node as <code>children</code>: a parent is rejected (<code>children_missing</code>) until its children exist, and a chunk above 256 KiB is rejected (<code>chunk_too_large</code>). Uploads above the agreement quota fail with <code>507 quota_exceeded</code>. <code>POST /commit</code> rejects a root with another tree shape or chunk size (<code>non_canonical_tree</code>).</p>
     <p>Primaries do not sync with each other. Upload to every primary that must store the data.</p>
   </li>
   <li>
