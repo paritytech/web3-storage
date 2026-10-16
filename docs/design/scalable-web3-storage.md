@@ -956,7 +956,7 @@ The chunk count is not part of the commitment. It follows from the data size rec
 - Fixed-size chunks: simple, and private (chunk boundaries reveal nothing about the content). Upper layers may use content-defined chunking.
 - No padding: every `chunk_index < n` addresses a real chunk, and the verifier derives `n` from `data_size` instead of trusting a chunk count.
 - Prefixes: a node's bytes never hash as a chunk, so a provider cannot answer a chunk challenge with an internal node instead of the chunk.
-- `CHUNK_SIZE` is fixed for the protocol: `n` is derived from it for every existing leaf, so it can change only together with a versioned leaf format.
+- `CHUNK_SIZE` is defined per `leaf_version` (256 KiB for version 1): `n` is derived from it for every leaf of that version, so changing it means a new leaf version, and existing leaves keep theirs.
 
 **Why content-addressed?**
 - Deduplication: Identical chunks stored once
@@ -981,12 +981,15 @@ BucketSnapshot
 **MMR leaves** contain:
 ```
 MmrLeaf
+├── leaf_version: u8     // leaf format version; defines CHUNK_SIZE and the chunk tree
 ├── data_root: H256      // Merkle root of chunk tree
 ├── data_size: u64       // byte length of the data under data_root
 ├── total_size: u64      // cumulative unique bytes in bucket
 ```
 
-The MMR hashes its leaves and nodes with the same `0x00` and `0x01` prefixes: a leaf hash is `blake2_256(0x00 ++ leaf.encode())`. It bags its peaks right to left with `blake2_256(0x02 ++ peak ++ rest)`; a single peak is the root, and an empty MMR has a zero root.
+The MMR hashes its leaves and nodes with the same `0x00` and `0x01` prefixes: a leaf hash is `blake2_256(0x00 ++ leaf.encode())`, and `leaf_version` is the first field, so a verifier reads the version before anything else. It bags its peaks right to left with `blake2_256(0x02 ++ peak ++ rest)`; a single peak is the root, and an empty MMR has a zero root.
+
+`leaf_version` defines everything a verifier needs to check a leaf: its fields, its `CHUNK_SIZE`, the chunk tree shape and the hash prefixes. Version 1 is the format in this document. A new version can change any of them; leaves of different versions share one MMR, and each leaf verifies under its own version.
 
 **Append**: Add new leaf with new data_root
 **Delete**: Increase start_seq (old leaves no longer in range)

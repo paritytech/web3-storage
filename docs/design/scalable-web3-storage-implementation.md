@@ -228,9 +228,10 @@ pub trait Config: frame_system::Config<RuntimeEvent: From<Event<Self>>> {
     #[pallet::constant]
     type MinProviderStake: Get<BalanceOf<Self>>;
 
-    /// The protocol's `CHUNK_SIZE` (256 KiB). Bounds `chunk_data` in a
-    /// challenge response; the chain derives a leaf's chunk count from
-    /// `data_size` and this value.
+    /// Upper bound of `chunk_data` in a challenge response: at least the
+    /// `CHUNK_SIZE` of every leaf version the pallet accepts. A leaf's chunk
+    /// count comes from its own version's `CHUNK_SIZE`, not from this value,
+    /// so a runtime upgrade that changes it does not change `n` for any leaf.
     #[pallet::constant]
     type MaxChunkSize: Get<u32>;
 
@@ -2195,7 +2196,7 @@ GET /mmr_proof?bucket_id=0x...&leaf_index=5
 
 Response:
 {
-  "leaf": { "data_root": "0x...", "data_size": 2097152, "total_size": 52428800 },
+  "leaf": { "leaf_version": 1, "data_root": "0x...", "data_size": 2097152, "total_size": 52428800 },
   "proof": { "peaks": [...], "siblings": [...] }
 }
 
@@ -2501,6 +2502,10 @@ pub struct CommitmentPayload {
 
 ```rust
 pub struct MmrLeaf {
+    /// Leaf format version (`LEAF_VERSION = 1`). First field, so the leaf
+    /// hash preimage is `0x00 ++ leaf_version ++ ...`. The version defines the
+    /// fields below, `CHUNK_SIZE` and the chunk tree shape.
+    pub leaf_version: u8,
     /// Root of the chunk tree (see "Chunk Tree")
     pub data_root: H256,
     /// Byte length of the data under `data_root`. The chunk count is
@@ -2510,6 +2515,13 @@ pub struct MmrLeaf {
     pub total_size: u64,
 }
 // Sequence number is implicit: start_seq + leaf_position
+
+The provider writes `LEAF_VERSION`, the current version, into every leaf it
+commits. A verifier reads `leaf_version` first and checks the rest of the leaf
+under that version: its fields, its `CHUNK_SIZE`, the chunk tree shape and the
+hash prefixes. The pallet accepts every version it knows and rejects a leaf
+with an unknown version. A format change bumps `LEAF_VERSION`; leaves of
+different versions share one MMR, so no root has to be recomputed.
 ```
 
 ### Chunk Tree
@@ -2523,8 +2535,9 @@ chunks of one piece of data, with `blake2_256` in place of SHA-256:
   is `hash_node(tree(chunks[0..k]), tree(chunks[k..n]))` with `k` the largest
   power of two smaller than `n`
 
-Every chunk has `CHUNK_SIZE` = 256 KiB bytes except the last, which has 1 to
-`CHUNK_SIZE` bytes, so `n = ceil(data_size / CHUNK_SIZE)` and `n >= 1`. Empty
+Every chunk has `CHUNK_SIZE` bytes (256 KiB in leaf version 1) except the
+last, which has 1 to `CHUNK_SIZE` bytes, so `n = ceil(data_size / CHUNK_SIZE)`
+and `n >= 1`. Empty
 data has no chunks: the client does not upload it, and a root whose last
 chunk is empty fails the `/commit` check.
 
@@ -2640,7 +2653,7 @@ fn verify_challenge_response(
         ChallengeResponse::Proof { chunk_data, mmr_proof, chunk_proof } => {
             // The chunk must sit in the leaf and the leaf in the committed MMR.
             // The chunk count comes from the proven leaf, not from the prover.
-            let chunk_count = chunk_count(mmr_proof.leaf.data_size); // ceil(data_size / CHUNK_SIZE)
+            let chunk_count = chunk_count(&mmr_proof.leaf); // ceil(data_size / CHUNK_SIZE of leaf_version)
             let chunk_hash = hash_leaf(chunk_data); // blake2_256(0x00 ++ chunk_data)
             let chunk_ok = verify_merkle_proof(
                 chunk_hash, challenge.target.chunk_index, chunk_count, chunk_proof, &mmr_proof.leaf.data_root,
@@ -2652,7 +2665,7 @@ fn verify_challenge_response(
         ChallengeResponse::ChunkOutOfRange { mmr_proof } => {
             // The leaf must be in the committed MMR and have no chunk at the index.
             let mmr_ok = verify_mmr_proof(mmr_proof, &challenge.mmr_root);
-            let out_of_range = challenge.target.chunk_index >= chunk_count(mmr_proof.leaf.data_size);
+            let out_of_range = challenge.target.chunk_index >= chunk_count(&mmr_proof.leaf);
             if mmr_ok && out_of_range { Ok(()) } else { Err(Error::InvalidProof) }
         }
 
