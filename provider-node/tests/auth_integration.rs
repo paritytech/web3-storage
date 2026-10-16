@@ -582,7 +582,7 @@ async fn delete_missing_auth_returns_401() {
 
 /// Build an `UploadNodeRequest` body for `bucket_id` storing `data`.
 fn node_body(bucket_id: u64, data: &[u8]) -> Value {
-    let hash = storage_primitives::blake2_256(data);
+    let hash = storage_primitives::hash_leaf(data);
     serde_json::json!({
         "bucket_id": bucket_id,
         "hash": format!("0x{}", hex::encode(hash.as_bytes())),
@@ -652,7 +652,7 @@ async fn commit_writer_can_commit() {
     let data = b"committed chunk";
     let hash_hex = format!(
         "0x{}",
-        hex::encode(storage_primitives::blake2_256(data).as_bytes())
+        hex::encode(storage_primitives::hash_leaf(data).as_bytes())
     );
     let ts = current_timestamp();
     let header = make_auth_header(&alice, "PUT", 1, ts);

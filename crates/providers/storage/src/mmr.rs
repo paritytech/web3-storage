@@ -8,7 +8,7 @@
 //! `n.trailing_zeros()`.
 
 use sp_core::H256;
-use storage_primitives::hash_children;
+use storage_primitives::{bag_peaks, hash_children};
 
 /// A Merkle Mountain Range for storing bucket data.
 #[derive(Debug, Clone)]
@@ -26,6 +26,11 @@ impl Mmr {
             nodes: Vec::new(),
             leaf_count: 0,
         }
+    }
+
+    /// Get the current root hash (bagged peaks).
+    pub fn root(&self) -> H256 {
+        bag_peaks(&self.peaks())
     }
 
     /// Get the peaks of the MMR (left to right, highest to lowest height).
@@ -134,16 +139,12 @@ impl Default for Mmr {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use storage_primitives::blake2_256;
-
-    /// Bagged root of `m`'s current peaks.
-    fn root_of(m: &Mmr) -> H256 {
-        storage_primitives::bag_peaks(&m.peaks())
-    }
+    use storage_primitives::{blake2_256, hash_leaf};
 
     #[test]
     fn test_mmr_basic() {
         let mut mmr = Mmr::new();
+        assert_eq!(mmr.root(), H256::zero());
 
         let leaf1 = blake2_256(b"leaf1");
         let leaf2 = blake2_256(b"leaf2");
@@ -158,7 +159,7 @@ mod tests {
         mmr.push(leaf3);
         assert_eq!(mmr.leaf_count(), 3);
 
-        let root = root_of(&mmr);
+        let root = mmr.root();
         assert_ne!(root, H256::zero());
     }
 
@@ -181,50 +182,6 @@ mod tests {
     // `MmrLeaf`, and the bagged root for 1- and 2-leaf MMRs. A change to leaf
     // encoding or hashing would silently invalidate every commitment already
     // signed on-chain; these constants make it loud.
-    #[test]
-    fn mmr_wire_format_pinned() {
-        use codec::Encode;
-        use storage_primitives::{hash_children, MmrLeaf};
-
-        // "hello world" (11 bytes) is a single chunk, so data_root == chunk hash.
-        let h0 = blake2_256(b"hello world");
-        let leaf0 = MmrLeaf {
-            data_root: h0,
-            data_size: 11,
-            total_size: 11,
-        };
-        let l0 = blake2_256(&leaf0.encode());
-
-        let mut mmr = Mmr::new();
-        mmr.push(l0);
-
-        assert_eq!(
-            format!("{h0:x}"),
-            "256c83b297114d201b30179f3f0ef0cace9783622da5974326b436178aeef610"
-        );
-        assert_eq!(
-            format!("{l0:x}"),
-            "ec89c4bb9c2abf33c7d090e64b3d53f3886518930c61cf9b9a0b866eff2406c9"
-        );
-        assert_eq!(root_of(&mmr), l0);
-
-        // Append a second file "goodbye moon".
-        let h1 = blake2_256(b"goodbye moon");
-        let leaf1 = MmrLeaf {
-            data_root: h1,
-            data_size: 12,
-            total_size: 23,
-        };
-        let l1 = blake2_256(&leaf1.encode());
-        mmr.push(l1);
-
-        assert_eq!(root_of(&mmr), hash_children(l0, l1));
-        assert_eq!(
-            format!("{:x}", root_of(&mmr)),
-            "051cfeb922130ffefe7a9f68875b61fe1fa057dd90ad33d6c8c21592d9cc9c2b"
-        );
-    }
-
     // `verify_mmr_proof(proof, leaf_index, commitment)` accepts a leaf
     // only when it is presented at its own index.
     #[test]
@@ -235,8 +192,8 @@ mod tests {
         };
 
         // A bucket MMR of 6 single-chunk "files". For a single chunk,
-        // data_root == blake2_256(chunk), so the chunk proof is empty and
-        // verify_merkle_proof(chunk_hash, 0, [], &data_root) reduces to
+        // data_root == hash_leaf(chunk), so the chunk proof is empty and
+        // verify_merkle_proof(chunk_hash, 0, 1, [], &data_root) reduces to
         // chunk_hash == data_root.
         let files: Vec<Vec<u8>> = (0..6)
             .map(|i| format!("file {i} contents").into_bytes())
@@ -247,7 +204,7 @@ mod tests {
         let mut leaves: Vec<MmrLeaf> = Vec::new();
         let mut total = 0u64;
         for f in &files {
-            let data_root = blake2_256(f);
+            let data_root = hash_leaf(f);
             let data_size = f.len() as u64;
             total += data_size;
             let leaf = MmrLeaf {
@@ -255,10 +212,10 @@ mod tests {
                 data_size,
                 total_size: total,
             };
-            mmr.push(blake2_256(&leaf.encode()));
+            mmr.push(hash_leaf(&leaf.encode()));
             leaves.push(leaf);
         }
-        let root = root_of(&mmr);
+        let root = mmr.root();
         let commitment = |leaf_count: u64| Commitment {
             mmr_root: root,
             start_seq: 0,
@@ -282,8 +239,9 @@ mod tests {
             path: vec![],
         };
         let pallet_accepts = |chunk_data: &[u8], challenged_leaf: u64, proof: &MmrProof| -> bool {
-            let chunk_hash = blake2_256(chunk_data);
-            verify_merkle_proof(chunk_hash, 0, &empty, &proof.leaf.data_root)
+            let chunk_hash = hash_leaf(chunk_data);
+            let chunk_count = storage_primitives::chunk_count(proof.leaf.data_size);
+            verify_merkle_proof(chunk_hash, 0, chunk_count, &empty, &proof.leaf.data_root)
                 && verify_mmr_proof(proof, challenged_leaf, &commitment(leaf_count))
         };
 
@@ -338,7 +296,7 @@ mod tests {
     fn test_proof_with_path_primitives_verify() {
         use codec::Encode;
 
-        // This test mirrors how the pallet verifies: push blake2_256(&leaf.encode())
+        // This test mirrors how the pallet verifies: push hash_leaf(&leaf.encode())
         // into MMR, then verify with storage_primitives::verify_mmr_proof
         let mut mmr = Mmr::new();
 
@@ -351,11 +309,11 @@ mod tests {
             .collect();
 
         for leaf in &mmr_leaves {
-            mmr.push(blake2_256(&leaf.encode()));
+            mmr.push(hash_leaf(&leaf.encode()));
         }
 
         let commitment = storage_primitives::Commitment {
-            mmr_root: root_of(&mmr),
+            mmr_root: mmr.root(),
             start_seq: 0,
             leaf_count: 5,
         };

@@ -134,6 +134,11 @@ pub mod pallet {
                 provider is still slashable"
             );
             assert!(
+                T::MaxChunkSize::get() == storage_primitives::DEFAULT_CHUNK_SIZE,
+                "MaxChunkSize must equal DEFAULT_CHUNK_SIZE; the pallet derives \
+                the chunk count of a data root from its size with that chunk size"
+            );
+            assert!(
                 T::AnchorBlockTimeMillis::get() > 0,
                 "AnchorBlockTimeMillis must be non-zero; off-chain consumers \
                 convert anchor-denominated durations to wall-clock time with it"
@@ -196,7 +201,9 @@ pub mod pallet {
         #[pallet::constant]
         type MinProviderStake: Get<BalanceOf<Self>>;
 
-        /// Maximum chunk size for challenge responses (e.g., 256 KiB).
+        /// Maximum chunk size for challenge responses. Must equal
+        /// `storage_primitives::DEFAULT_CHUNK_SIZE`, which `respond_to_challenge`
+        /// uses to derive the chunk count from `data_size`.
         #[pallet::constant]
         type MaxChunkSize: Get<u32>;
 
@@ -2705,10 +2712,11 @@ pub mod pallet {
                     mmr_proof,
                     chunk_proof,
                 } => {
-                    let chunk_hash = storage_primitives::blake2_256(chunk_data);
+                    let chunk_hash = storage_primitives::hash_leaf(chunk_data);
                     let chunk_ok = storage_primitives::verify_merkle_proof(
                         chunk_hash,
                         challenge.target.chunk_index,
+                        storage_primitives::chunk_count(mmr_proof.leaf.data_size),
                         chunk_proof,
                         &mmr_proof.leaf.data_root,
                     );

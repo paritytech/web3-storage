@@ -265,8 +265,7 @@ impl FileSystemClient {
         // Validate and parse path
         let (parent_path, file_name) = Self::split_path(path)?;
 
-        // Split file into chunks (256 KiB chunks)
-        const CHUNK_SIZE: usize = 256 * 1024;
+        const CHUNK_SIZE: usize = storage_primitives::DEFAULT_CHUNK_SIZE as usize;
         let mut manifest = FileManifest {
             drive_id: bucket_id,
             mime_type: BoundedVec::try_from(Self::guess_mime_type(file_name).into_bytes())

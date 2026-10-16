@@ -85,7 +85,7 @@ impl pallet_storage_provider::Config for Test {
     type MaxMembers = ConstU32<100>;
     type MaxPrimaryProviders = ConstU32<5>;
     type MinProviderStake = ConstU64<100>;
-    type MaxChunkSize = ConstU32<262144>; // 256 KiB
+    type MaxChunkSize = ConstU32<{ storage_primitives::DEFAULT_CHUNK_SIZE }>;
     type ChallengeTimeout = ConstU64<100>;
     type ChallengeDeposit = ConstU64<100>; // same value as pre-fix hardcoded constant — keeps existing tests' math intact
     type SettlementTimeout = ConstU64<50>;
