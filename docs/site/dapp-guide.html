@@ -61,7 +61,7 @@
     <tr><td>Replica provider</td><td>Added by any account that gets a replica quote from the provider (the quote names that account). Syncs data from other providers, confirms sync on-chain, and receives a payment per confirmation. No limit per bucket.</td></tr>
     <tr><td>Storage agreement</td><td>One per provider per bucket: quota (<code>max_bytes</code>), locked price, expiry, role, and owner. The payment is held on the owner until settlement.</td></tr>
     <tr><td><code>data_root</code></td><td>Root of the chunk tree: a binary RFC 9162 Merkle tree over 256 KiB chunks (only the last chunk is shorter), without padding. A chunk hashes as <code>blake2_256(0x00 ++ data)</code>, a node as <code>blake2_256(0x01 ++ left ++ right)</code>. The chunk count is <code>ceil(data_size / 256 KiB)</code>; it is not part of the commitment.</td></tr>
-    <tr><td>MMR and commitment</td><td>Each bucket has one Merkle Mountain Range. Each leaf holds a <code>data_root</code>. A <code>Commitment</code> is <code>(mmr_root, start_seq, leaf_count)</code>.</td></tr>
+    <tr><td>MMR and commitment</td><td>Each bucket has one Merkle Mountain Range. Each leaf starts with <code>leaf_version</code> (1 in this guide) and holds a <code>data_root</code> and its <code>data_size</code>. A <code>Commitment</code> is <code>(mmr_root, start_seq, leaf_count)</code>.</td></tr>
     <tr><td>Checkpoint</td><td>A commitment written on-chain with signatures from at least <code>min_providers</code> primaries.</td></tr>
     <tr><td>Challenge</td><td>An on-chain request that forces a provider to post one chunk with Merkle proofs, or lose its stake.</td></tr>
   </tbody>
