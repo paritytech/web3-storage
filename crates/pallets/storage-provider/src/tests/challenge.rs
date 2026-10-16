@@ -1175,11 +1175,11 @@ fn challenge_count_per_deadline_is_capped() {
 mod challenge_tests {
     use super::*;
     use codec::Encode;
-    use frame_support::{dispatch::Pays, BoundedVec};
+    use frame_support::{dispatch::Pays, pallet_prelude::DispatchResult, BoundedVec};
     use sp_core::{Pair, H256};
     use storage_primitives::{
-        blake2_256, BucketSnapshot, ChallengeId, ChunkLocation, Commitment, EndAction, MerkleProof,
-        MmrLeaf, MmrProof, ProviderRole, ReplicaSyncRecord,
+        hash_children, hash_leaf, BucketSnapshot, ChallengeId, ChunkLocation, Commitment,
+        EndAction, MerkleProof, MmrLeaf, MmrProof, ProviderRole, ReplicaSyncRecord,
     };
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -1190,17 +1190,36 @@ mod challenge_tests {
     /// MMR containing a single chunk. With one chunk, the data_root collapses to
     /// the chunk hash and the MMR root collapses to the leaf hash.
     fn single_chunk_proof(chunk_data: &[u8]) -> (H256, MmrProof, MerkleProof) {
-        let chunk_hash = blake2_256(chunk_data);
         // Single chunk → data_root is the chunk hash (no intermediate nodes).
-        let data_root = chunk_hash;
+        let (mmr_root, mmr_proof) = single_leaf_mmr(hash_leaf(chunk_data), chunk_data.len() as u64);
+        let chunk_proof = MerkleProof {
+            siblings: vec![],
+            path: vec![],
+        };
+        (mmr_root, mmr_proof, chunk_proof)
+    }
+
+    /// A four-chunk file (chunk `i` is the single byte `i`, and `data_size`
+    /// gives four chunks) in a single-leaf MMR. Returns the MMR root, the MMR
+    /// proof, the chunk leaf hashes and the right subtree hash, which is chunk
+    /// 0's second sibling.
+    fn four_chunk_file() -> (H256, MmrProof, Vec<H256>, H256) {
+        let size = 4 * storage_primitives::DEFAULT_CHUNK_SIZE as u64;
+        let leaves: Vec<H256> = (0u8..4).map(|i| hash_leaf(&[i])).collect();
+        let left = hash_children(leaves[0], leaves[1]);
+        let right = hash_children(leaves[2], leaves[3]);
+        let (mmr_root, mmr_proof) = single_leaf_mmr(hash_children(left, right), size);
+        (mmr_root, mmr_proof, leaves, right)
+    }
+
+    /// Root and proof of a single-leaf MMR over `data_root` and `data_size`.
+    fn single_leaf_mmr(data_root: H256, data_size: u64) -> (H256, MmrProof) {
         let leaf = MmrLeaf {
             data_root,
-            data_size: chunk_data.len() as u64,
-            total_size: chunk_data.len() as u64,
+            data_size,
+            total_size: data_size,
         };
-        let leaf_hash = blake2_256(&leaf.encode());
-        // Single leaf → MMR root is the leaf hash.
-        let mmr_root = leaf_hash;
+        let leaf_hash = hash_leaf(&leaf.encode());
         let mmr_proof = MmrProof {
             peaks: vec![leaf_hash],
             leaf,
@@ -1209,11 +1228,7 @@ mod challenge_tests {
                 path: vec![],
             },
         };
-        let chunk_proof = MerkleProof {
-            siblings: vec![],
-            path: vec![],
-        };
-        (mmr_root, mmr_proof, chunk_proof)
+        (leaf_hash, mmr_proof)
     }
 
     fn make_chunk_bv(data: &[u8]) -> BoundedVec<u8, <Test as Config>::MaxChunkSize> {
@@ -1453,6 +1468,86 @@ mod challenge_tests {
         });
     }
 
+    #[test]
+    fn respond_with_valid_proof_in_multi_chunk_file_defends_challenge() {
+        new_test_ext().execute_with(|| {
+            System::set_block_number(1);
+            let (mmr_root, mmr_proof, leaves, right) = four_chunk_file();
+            setup_primary_with_snapshot(mmr_root, 0, 1);
+            assert_ok!(StorageProvider::challenge_checkpoint(
+                RuntimeOrigin::signed(3),
+                0,
+                2,
+                ChunkLocation {
+                    leaf_index: 0,
+                    chunk_index: 0,
+                },
+            ));
+
+            assert_ok!(StorageProvider::respond_to_challenge(
+                RuntimeOrigin::signed(2),
+                ChallengeId {
+                    deadline: 101u64,
+                    index: 0u16,
+                },
+                ChallengeResponse::Proof {
+                    chunk_data: make_chunk_bv(&[0u8]),
+                    mmr_proof,
+                    chunk_proof: MerkleProof {
+                        siblings: vec![leaves[1], right],
+                        path: vec![false, false],
+                    },
+                },
+            ));
+
+            assert!(Challenges::<Test>::get(101, 0).is_none());
+            assert_eq!(Providers::<Test>::get(2).unwrap().stake, 200);
+        });
+    }
+
+    /// The bytes of an internal node must not defend a chunk challenge: a
+    /// provider holding only the node `H(l0, l1)` cannot answer for chunk 0
+    /// with that node's bytes and one sibling.
+    #[test]
+    fn respond_with_internal_node_bytes_as_chunk_is_rejected() {
+        new_test_ext().execute_with(|| {
+            System::set_block_number(1);
+            let (mmr_root, mmr_proof, leaves, right) = four_chunk_file();
+            setup_primary_with_snapshot(mmr_root, 0, 1);
+            assert_ok!(StorageProvider::challenge_checkpoint(
+                RuntimeOrigin::signed(3),
+                0,
+                2,
+                ChunkLocation {
+                    leaf_index: 0,
+                    chunk_index: 0,
+                },
+            ));
+
+            let mut node_bytes = leaves[0].as_bytes().to_vec();
+            node_bytes.extend_from_slice(leaves[1].as_bytes());
+            assert_noop!(
+                StorageProvider::respond_to_challenge(
+                    RuntimeOrigin::signed(2),
+                    ChallengeId {
+                        deadline: 101u64,
+                        index: 0u16,
+                    },
+                    ChallengeResponse::Proof {
+                        chunk_data: make_chunk_bv(&node_bytes),
+                        mmr_proof,
+                        chunk_proof: MerkleProof {
+                            siblings: vec![right],
+                            path: vec![false],
+                        },
+                    },
+                ),
+                Error::<Test>::InvalidProof
+            );
+            assert_challenge_still_open();
+        });
+    }
+
     /// A response whose chunk-Merkle proof does not verify is rejected and
     /// slashes nothing: a bad answer must not cost the provider its stake,
     /// and the challenge stays open for a correct one.
@@ -1497,7 +1592,84 @@ mod challenge_tests {
         });
     }
 
-    /// Same for an MMR proof that does not bag to the challenged root.
+    /// Proof data for a 3-chunk leaf (`data_size = 2 * DEFAULT_CHUNK_SIZE + 10`)
+    /// with chunk tree `H(H(c0, c1), c2)`. Returns the MMR root, the MMR proof,
+    /// the last chunk and its Merkle proof.
+    fn three_chunk_proof() -> (H256, MmrProof, Vec<u8>, MerkleProof) {
+        let size = storage_primitives::DEFAULT_CHUNK_SIZE as u64;
+        let c0 = storage_primitives::hash_leaf(b"chunk-0");
+        let c1 = storage_primitives::hash_leaf(b"chunk-1");
+        let last_chunk = b"0123456789".to_vec();
+        let c2 = storage_primitives::hash_leaf(&last_chunk);
+        let left = storage_primitives::hash_children(c0, c1);
+        let data_root = storage_primitives::hash_children(left, c2);
+        let (mmr_root, mmr_proof) = single_leaf_mmr(data_root, 2 * size + 10);
+        let chunk_proof = MerkleProof {
+            siblings: vec![left],
+            path: vec![true],
+        };
+        (mmr_root, mmr_proof, last_chunk, chunk_proof)
+    }
+
+    /// Open a challenge on `chunk_index` of leaf 0 and answer it with the last
+    /// chunk of `three_chunk_proof`.
+    fn respond_with_last_chunk(chunk_index: u64) -> DispatchResult {
+        let (mmr_root, mmr_proof, chunk_data, chunk_proof) = three_chunk_proof();
+        setup_primary_with_snapshot(mmr_root, 0, 1);
+        assert_ok!(StorageProvider::challenge_checkpoint(
+            RuntimeOrigin::signed(3),
+            0,
+            2,
+            ChunkLocation {
+                leaf_index: 0,
+                chunk_index,
+            },
+        ));
+        StorageProvider::respond_to_challenge(
+            RuntimeOrigin::signed(2),
+            ChallengeId {
+                deadline: 101u64,
+                index: 0u16,
+            },
+            ChallengeResponse::Proof {
+                chunk_data: make_chunk_bv(&chunk_data),
+                mmr_proof,
+                chunk_proof,
+            },
+        )
+    }
+
+    /// The verifier derives the chunk count from the leaf's `data_size`.
+    #[test]
+    fn respond_with_valid_proof_for_last_of_three_chunks_defends_challenge() {
+        new_test_ext().execute_with(|| {
+            System::set_block_number(1);
+            assert_ok!(respond_with_last_chunk(2));
+            assert!(Challenges::<Test>::get(101, 0).is_none());
+        });
+    }
+
+    /// The proof recombines to the data root for a two-leaf tree; only the
+    /// chunk count from `data_size` rejects it.
+    #[test]
+    fn respond_with_last_chunk_for_wrong_index_is_rejected() {
+        new_test_ext().execute_with(|| {
+            System::set_block_number(1);
+            assert_err!(respond_with_last_chunk(1), Error::<Test>::InvalidProof);
+            assert_challenge_still_open();
+        });
+    }
+
+    #[test]
+    fn respond_with_chunk_index_beyond_chunk_count_is_rejected() {
+        new_test_ext().execute_with(|| {
+            System::set_block_number(1);
+            assert_err!(respond_with_last_chunk(3), Error::<Test>::InvalidProof);
+            assert_challenge_still_open();
+        });
+    }
+
+    /// An MMR proof that does not bag to the challenged root is rejected.
     #[test]
     fn respond_with_invalid_mmr_proof_is_rejected() {
         new_test_ext().execute_with(|| {
@@ -1522,7 +1694,7 @@ mod challenge_tests {
                 data_size: 1,
                 total_size: 1,
             };
-            let bad_peak = blake2_256(&bad_leaf.encode());
+            let bad_peak = hash_leaf(&bad_leaf.encode());
             let bad_mmr_proof = MmrProof {
                 peaks: vec![bad_peak],
                 leaf: bad_leaf,

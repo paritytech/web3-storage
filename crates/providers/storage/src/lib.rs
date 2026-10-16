@@ -7,18 +7,16 @@
 pub mod backend;
 pub mod error;
 pub mod index;
-pub mod merkle;
 pub mod mmr;
 
 pub use backend::{
-    build_padded_merkle_tree, BucketInfo, BucketState, BucketStats, BucketSummary, DiskStorage,
-    StorageBackend, StorageBackendSpec, StoredNode,
+    build_merkle_tree, BucketInfo, BucketState, BucketStats, BucketSummary, ChunkTreeNode,
+    DiskStorage, StorageBackend, StorageBackendSpec,
 };
 pub use error::Error;
 pub use index::{
     FsEntryMeta, FsIndexManager, FsListEntry, ListResult, ObjectEntry, ObjectMeta, S3IndexManager,
 };
-pub use merkle::build_merkle_proof;
 
 /// Names the scratch directories [`temp_rocksdb`] creates.
 #[cfg(any(test, feature = "test-helpers"))]

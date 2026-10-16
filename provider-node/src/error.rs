@@ -152,6 +152,30 @@ impl IntoResponse for Error {
                         details: Some(serde_json::json!({ "missing": children })),
                     },
                 ),
+                StorageError::InvalidChildCount(count) => (
+                    StatusCode::BAD_REQUEST,
+                    ErrorResponse {
+                        error: "invalid_child_count".to_string(),
+                        details: Some(serde_json::json!({ "expected": 2, "actual": count })),
+                    },
+                ),
+                StorageError::ChunkTooLarge { size } => (
+                    StatusCode::BAD_REQUEST,
+                    ErrorResponse {
+                        error: "chunk_too_large".to_string(),
+                        details: Some(serde_json::json!({
+                            "size": size,
+                            "max": storage_primitives::DEFAULT_CHUNK_SIZE,
+                        })),
+                    },
+                ),
+                StorageError::InvalidInternalNodeData => (
+                    StatusCode::BAD_REQUEST,
+                    ErrorResponse {
+                        error: "invalid_internal_node_data".to_string(),
+                        details: None,
+                    },
+                ),
                 StorageError::QuotaExceeded { used, max } => (
                     StatusCode::INSUFFICIENT_STORAGE,
                     ErrorResponse {
@@ -183,7 +207,16 @@ impl IntoResponse for Error {
                         })),
                     },
                 ),
-                e @ (StorageError::RocksDb(_) | StorageError::ColumnFamilyMissing(_)) => (
+                StorageError::NonCanonicalTree(root) => (
+                    StatusCode::BAD_REQUEST,
+                    ErrorResponse {
+                        error: "non_canonical_tree".to_string(),
+                        details: Some(serde_json::json!({ "data_root": root })),
+                    },
+                ),
+                e @ (StorageError::RocksDb(_)
+                | StorageError::ColumnFamilyMissing(_)
+                | StorageError::IncompatibleFormat(_)) => (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     ErrorResponse {
                         error: "internal_error".to_string(),
@@ -478,6 +511,18 @@ mod tests {
             status_of(Error::from(provider_storage::Error::ChildrenMissing(
                 vec![]
             ))),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            status_of(Error::from(provider_storage::Error::NonCanonicalTree(
+                "x".into()
+            ))),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            status_of(Error::from(provider_storage::Error::ChunkTooLarge {
+                size: 2
+            })),
             StatusCode::BAD_REQUEST
         );
         assert_eq!(

@@ -19,12 +19,12 @@ use axum::{
     Json,
 };
 use provider_auth::RequiredRole;
-use provider_storage::{build_padded_merkle_tree, FsEntryMeta};
+use provider_storage::{build_merkle_tree, ChunkTreeNode, FsEntryMeta};
 use serde::{Deserialize, Serialize};
 use sp_core::H256;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
-use storage_primitives::{blake2_256, BucketId};
+use storage_primitives::{hash_leaf, BucketId};
 
 /// Query parameter for file path.
 #[derive(Debug, Deserialize)]
@@ -89,16 +89,16 @@ pub async fn fs_put_file(
     let chunk_hashes: Vec<H256> = chunks
         .iter()
         .map(|chunk| {
-            let hash = blake2_256(chunk);
+            let hash = hash_leaf(chunk);
             state
                 .storage
-                .store_node(bucket_id, hash, chunk.to_vec(), None)?;
+                .store_node(bucket_id, hash, ChunkTreeNode::Chunk(chunk.to_vec()))?;
             Ok(hash)
         })
         .collect::<Result<Vec<_>, Error>>()?;
 
-    // 3. Build balanced Merkle tree
-    let data_root = build_padded_merkle_tree(&*state.storage, bucket_id, &chunk_hashes);
+    // 3. Build the Merkle tree
+    let data_root = build_merkle_tree(&*state.storage, bucket_id, &chunk_hashes)?;
 
     // 4. Commit data_root to MMR
     let (_mmr_root, _start_seq, leaf_indices) = state.storage.commit(bucket_id, vec![data_root])?;
