@@ -106,7 +106,7 @@ impl DiskStorage {
         Ok(true)
     }
 
-    /// See [`StorageBackend::init_bucket`].
+    /// Initialize a bucket with the given quota.
     pub fn init_bucket(&self, bucket_id: BucketId, max_bytes: u64) -> Result<(), Error> {
         let cf = self
             .db
@@ -182,7 +182,7 @@ impl DiskStorage {
             .collect()
     }
 
-    /// See [`StorageBackend::list_buckets`].
+    /// List all buckets.
     pub fn list_buckets(&self) -> Vec<BucketSummary> {
         self.iter_buckets(|bucket_id, state| BucketSummary {
             bucket_id,
@@ -192,7 +192,7 @@ impl DiskStorage {
         })
     }
 
-    /// See [`StorageBackend::get_bucket_stats`].
+    /// Get storage statistics per bucket.
     pub fn get_bucket_stats(&self) -> Vec<BucketStats> {
         self.iter_buckets(|bucket_id, state| BucketStats {
             bucket_id,
@@ -202,7 +202,7 @@ impl DiskStorage {
         })
     }
 
-    /// See [`StorageBackend::total_nodes`].
+    /// Get total node count.
     pub fn total_nodes(&self) -> u64 {
         let cf = match self.db.cf_handle(CF_NODES) {
             Some(cf) => cf,
@@ -214,8 +214,10 @@ impl DiskStorage {
             .count() as u64
     }
 
-    /// See [`StorageBackend::total_bytes`]. Sums per-bucket `used_bytes` from
-    /// CF_BUCKETS instead of scanning all nodes.
+    /// Get total bytes stored across all buckets.
+    ///
+    /// Sums per-bucket `used_bytes` from CF_BUCKETS instead of scanning all nodes,
+    /// since each bucket already tracks its byte usage.
     pub fn total_bytes(&self) -> u64 {
         self.iter_buckets(|_, state| state.used_bytes)
             .into_iter()
@@ -314,7 +316,7 @@ impl DiskStorage {
         }
     }
 
-    /// See [`StorageBackend::check_exists`].
+    /// Check which hashes exist.
     pub fn check_exists(&self, _bucket_id: BucketId, hashes: &[H256]) -> (Vec<H256>, Vec<H256>) {
         let cf = match self.db.cf_handle(CF_NODES) {
             Some(cf) => cf,
@@ -336,7 +338,7 @@ impl DiskStorage {
         (exists, missing)
     }
 
-    /// See [`StorageBackend::commit`].
+    /// Commit data roots to the bucket's MMR.
     pub fn commit(
         &self,
         bucket_id: BucketId,
@@ -415,7 +417,7 @@ impl DiskStorage {
         })
     }
 
-    /// See [`StorageBackend::delete_before`].
+    /// Delete data before a given sequence number.
     pub fn delete_before(
         &self,
         bucket_id: BucketId,
@@ -444,7 +446,7 @@ impl DiskStorage {
         Ok((bucket.mmr_root, bucket.start_seq, bucket.leaf_count()))
     }
 
-    /// See [`StorageBackend::get_mmr_proof`].
+    /// Get MMR proof for a leaf.
     pub fn get_mmr_proof(
         &self,
         bucket_id: BucketId,
@@ -542,7 +544,7 @@ impl DiskStorage {
         })
     }
 
-    /// See [`StorageBackend::get_mmr_peaks`].
+    /// Get MMR peaks.
     pub fn get_mmr_peaks(&self, bucket_id: BucketId) -> Result<(H256, Vec<H256>), Error> {
         let bucket = self
             .get_bucket(bucket_id)

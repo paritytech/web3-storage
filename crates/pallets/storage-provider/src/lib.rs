@@ -1098,19 +1098,21 @@ pub mod pallet {
         /// `remove_slashed` only applies to a provider whose stake was slashed
         /// to zero.
         ProviderNotSlashed,
-        /// Cannot set `max_capacity` below current `committed_bytes`.
+        /// Cannot set max_capacity below current committed_bytes.
         CapacityBelowCommitted,
-        /// Accepting would exceed `max_capacity` (committed + request).
+        /// Provider capacity exceeded on accept (committed + request > max_capacity).
         CapacityExceeded,
-        /// Stake insufficient to back the declared capacity.
+        /// Stake insufficient to back declared capacity.
         InsufficientStakeForCapacity,
         /// Provider settings specify `min_duration > max_duration`.
         MinDurationExceedsMaxDuration,
-        /// Action blocked while a deregistration announcement is pending.
+        /// Provider has already announced a deregistration; the action is
+        /// rejected until they complete or cancel it.
         DeregisterAnnounced,
-        /// No announced deregistration to complete or cancel.
+        /// Provider has no announced deregistration to complete or cancel.
         DeregisterNotAnnounced,
-        /// `DeregisterAnnouncementPeriod` has not elapsed yet.
+        /// `complete_deregister` called before `DeregisterAnnouncementPeriod`
+        /// elapsed.
         DeregisterPeriodNotElapsed,
 
         // Bucket errors
@@ -1277,7 +1279,7 @@ pub mod pallet {
         /// `New` is redeemable only by the calls that create a bucket, and
         /// `Existing(id)` only against bucket `id`.
         TermsBucketMismatch,
-        /// Agreement requested zero bytes.
+        /// Storage agreement requested 0 byte
         InvalidMaxBytesRequest,
     }
 
