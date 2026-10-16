@@ -9,7 +9,6 @@ use serde::{Deserialize, Serialize};
 use sp_core::H256;
 use storage_primitives::BucketId;
 
-pub use provider_storage::{BucketStats, BucketSummary};
 pub use provider_types::ProviderInfo;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -132,6 +131,7 @@ pub struct CommitResponse {
 /// Query parameters for reading chunks.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ReadQuery {
+    pub bucket_id: BucketId,
     pub data_root: String,
     pub offset: u64,
     pub length: u64,
@@ -218,6 +218,7 @@ pub struct MmrProofData {
 /// Query for chunk proof.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ChunkProofQuery {
+    pub bucket_id: BucketId,
     pub data_root: String,
     pub chunk_index: u64,
 }
@@ -263,16 +264,6 @@ pub struct DeleteResponse {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Bucket Types
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Response with bucket list.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ListBucketsResponse {
-    pub buckets: Vec<BucketSummary>,
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // Health/Info Types
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -309,12 +300,14 @@ pub struct HealthResponse {
 
 /// Provider statistics response.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Aggregate node-wide totals. Deliberately carries no per-bucket breakdown:
+/// this endpoint is unauthenticated, and listing bucket ids would sidestep
+/// the per-bucket read gates.
 pub struct StatsResponse {
     pub provider_id: String,
     pub total_buckets: usize,
     pub total_nodes: u64,
     pub total_bytes: u64,
-    pub buckets: Vec<BucketStats>,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -335,29 +328,9 @@ pub struct MmrPeaksResponse {
     pub peaks: Vec<String>,
 }
 
-/// Query for MMR subtree.
-#[derive(Debug, Clone, Deserialize)]
-pub struct MmrSubtreeQuery {
-    pub bucket_id: BucketId,
-    pub peak_index: u32,
-    pub depth: u32,
-}
-
-/// MMR node info.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MmrNode {
-    pub position: u64,
-    pub hash: String,
-    pub children: Option<Vec<u64>>,
-}
-
-/// Response with MMR subtree.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MmrSubtreeResponse {
-    pub nodes: Vec<MmrNode>,
-}
-
-/// Request to fetch multiple nodes.
+/// Request to fetch multiple nodes of a bucket. Like `GET /node`, the hash is
+/// the read capability (see the L0 read-access rules in the design doc's
+/// "Bucket Visibility & Access").
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FetchNodesRequest {
     pub bucket_id: BucketId,

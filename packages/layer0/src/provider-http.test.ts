@@ -35,7 +35,16 @@ describe("downloadChunk", () => {
   it("returns a chunk that hashes as a leaf", async () => {
     const chunk = enc.encode("a chunk");
     stubFetch(() => ({ data: bytesToBase64(chunk), children: null }));
-    await expect(downloadChunk(PROVIDER, toHex(hashLeaf(chunk)))).resolves.toEqual(chunk);
+    await expect(downloadChunk(PROVIDER, 1n, toHex(hashLeaf(chunk)))).resolves.toEqual(chunk);
+  });
+
+  it("names the bucket in the request, which the provider requires", async () => {
+    const chunk = enc.encode("a chunk");
+    const fetchMock = stubFetch(() => ({ data: bytesToBase64(chunk), children: null }));
+    await downloadChunk(PROVIDER, 7n, toHex(hashLeaf(chunk)));
+    const url = new URL(fetchMock.mock.calls[0][0]);
+    expect(url.searchParams.get("bucket_id")).toBe("7");
+    expect(url.searchParams.get("hash")).toBe(toHex(hashLeaf(chunk)));
   });
 
   it("returns an internal node that hashes over its two children", async () => {
@@ -43,13 +52,13 @@ describe("downloadChunk", () => {
     const right = hashLeaf(enc.encode("right"));
     const data = new Uint8Array([...left, ...right]);
     stubFetch(() => ({ data: bytesToBase64(data), children: [toHex(left), toHex(right)] }));
-    await expect(downloadChunk(PROVIDER, toHex(hashChildren(left, right)))).resolves.toEqual(data);
+    await expect(downloadChunk(PROVIDER, 1n, toHex(hashChildren(left, right)))).resolves.toEqual(data);
   });
 
   it("throws CidMismatchError for tampered chunk bytes", async () => {
     const chunk = enc.encode("a chunk");
     stubFetch(() => ({ data: bytesToBase64(enc.encode("another")), children: null }));
-    await expect(downloadChunk(PROVIDER, toHex(hashLeaf(chunk)))).rejects.toBeInstanceOf(
+    await expect(downloadChunk(PROVIDER, 1n, toHex(hashLeaf(chunk)))).rejects.toBeInstanceOf(
       CidMismatchError,
     );
   });
@@ -61,7 +70,7 @@ describe("downloadChunk", () => {
       data: bytesToBase64(enc.encode("something else")),
       children: [toHex(left), toHex(right)],
     }));
-    await expect(downloadChunk(PROVIDER, toHex(hashChildren(left, right)))).rejects.toBeInstanceOf(
+    await expect(downloadChunk(PROVIDER, 1n, toHex(hashChildren(left, right)))).rejects.toBeInstanceOf(
       CidMismatchError,
     );
   });
@@ -69,7 +78,7 @@ describe("downloadChunk", () => {
   it("throws CidMismatchError when a node does not have exactly two children", async () => {
     const left = hashLeaf(enc.encode("left"));
     stubFetch(() => ({ data: bytesToBase64(left), children: [toHex(left)] }));
-    await expect(downloadChunk(PROVIDER, toHex(hashLeaf(left)))).rejects.toBeInstanceOf(CidMismatchError);
+    await expect(downloadChunk(PROVIDER, 1n, toHex(hashLeaf(left)))).rejects.toBeInstanceOf(CidMismatchError);
   });
 
   it("does not accept a node's bytes served as a chunk", async () => {
@@ -77,7 +86,7 @@ describe("downloadChunk", () => {
     const right = hashLeaf(enc.encode("right"));
     const data = new Uint8Array([...left, ...right]);
     stubFetch(() => ({ data: bytesToBase64(data), children: null }));
-    await expect(downloadChunk(PROVIDER, toHex(hashChildren(left, right)))).rejects.toBeInstanceOf(
+    await expect(downloadChunk(PROVIDER, 1n, toHex(hashChildren(left, right)))).rejects.toBeInstanceOf(
       CidMismatchError,
     );
   });

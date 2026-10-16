@@ -68,7 +68,7 @@ async function main() {
   tests.push({
     name: "5.1 Client checkpoint",
     fn: async () => {
-      const ck = await fetchCheckpointSignature(PROVIDER_URL, bucketId);
+      const ck = await fetchCheckpointSignature(PROVIDER_URL, bucketId, client);
       assert.ok(ck.mmr_root, "Checkpoint should have mmr_root");
       const result = await submitClientCheckpoint(api, client, provider, bucketId, ck);
       const events = api.event.StorageProvider.BucketCheckpointed.filter(result.events as never);
@@ -87,7 +87,7 @@ async function main() {
         uploadInfo
       );
       assert.ok(challengeId.deadline, "Challenge should have a deadline");
-      const proof = await fetchChallengeProof(api, PROVIDER_URL, challengeId);
+      const proof = await fetchChallengeProof(api, PROVIDER_URL, challengeId, provider);
       const result = await respondToChallenge(api, provider, challengeId, proof);
       const events = api.event.StorageProvider.ChallengeDefended.filter(result.events as never);
       assert.strictEqual(events.length, 1, "Expected ChallengeDefended event");
@@ -105,7 +105,7 @@ async function main() {
         uploadInfo.leafIndex
       );
       assert.ok(challengeId.deadline, "Challenge should have a deadline");
-      const proof = await fetchChallengeProof(api, PROVIDER_URL, challengeId);
+      const proof = await fetchChallengeProof(api, PROVIDER_URL, challengeId, provider);
       const result = await respondToChallenge(api, provider, challengeId, proof);
       const events = api.event.StorageProvider.ChallengeDefended.filter(result.events as never);
       assert.strictEqual(events.length, 1, "Expected ChallengeDefended event");
@@ -158,7 +158,7 @@ async function main() {
         bucketId,
         uploadInfo.leafIndex
       );
-      const proof = await fetchChallengeProof(api, PROVIDER_URL, challengeId);
+      const proof = await fetchChallengeProof(api, PROVIDER_URL, challengeId, provider);
       const result = await respondToChallenge(api, provider, challengeId, proof);
       const events = api.event.StorageProvider.ChallengeDefended.filter(result.events as never);
       assert.strictEqual(events.length, 1, "Expected ChallengeDefended event");

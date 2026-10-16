@@ -540,6 +540,7 @@ export async function respondToChallenge(
     challenge.bucketId,
     challenge.leafIndex,
     challenge.chunkIndex,
+    signer,
   )
 
   // Step 2: Submit on-chain

@@ -30,7 +30,9 @@ pub fn alice_account() -> AccountId32 {
 pub fn test_deps(storage: Arc<dyn StorageBackend>) -> ProviderDeps {
     ProviderDeps {
         storage,
-        auth: Arc::new(Authenticator::new(StaticMembershipResolver(vec![]))),
+        auth: Arc::new(Authenticator::new(StaticMembershipResolver::private(
+            vec![],
+        ))),
     }
 }
 

@@ -109,7 +109,7 @@
   <a class="card" href="10-read-and-verify.html">
     <div class="head"><span class="num">10</span><span class="kind">sequence</span></div>
     <h3>Read and verify</h3>
-    <p>Find the bucket's providers on-chain, read with a signed request on a private bucket, check every chunk against its hash and proof, and move to another provider when one fails.</p>
+    <p>Find the bucket's providers on-chain, get the MMR proof with a signed request on a private bucket, read chunks by <code>data_root</code>, check every chunk against its hash and proof, and move to another provider when one fails.</p>
     <span class="src">Design: The Chain as Credible Threat; Bucket Visibility &amp; Access; Automated Verification. Implementation: Authentication &amp; RBAC; Read; Runtime API</span>
   </a>
 </div>
@@ -119,8 +119,8 @@
   <a class="card" href="11-replica-sync.html">
     <div class="head"><span class="num">11</span><span class="kind">workflow</span></div>
     <h3>Replica sync</h3>
-    <p>Take the trusted root from the chain, verify peaks, fetch missing nodes top-down, then confirm on-chain to receive the per-sync payment.</p>
-    <span class="src">Implementation: Replica Sync API; confirm_replica_sync</span>
+    <p>Take the trusted root from the chain, verify peaks from a primary or, on a private bucket, another replica, fetch missing nodes top-down, then confirm on-chain to receive the per-sync payment.</p>
+    <span class="src">Design: Bucket Visibility &amp; Access. Implementation: Replica Sync API; confirm_replica_sync</span>
   </a>
   <a class="card" href="12-challenge-protocol.html">
     <div class="head"><span class="num">12</span><span class="kind">workflow</span></div>
