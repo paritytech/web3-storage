@@ -855,7 +855,7 @@ async fn hash_keyed_reads_stay_open_on_private_bucket() {
 
     let resp = server
         .client
-        .get(server.url(&format!("/node?hash={hash_hex}")))
+        .get(server.url(&format!("/node?bucket_id=1&hash={hash_hex}")))
         .send()
         .await
         .unwrap();
@@ -868,7 +868,7 @@ async fn hash_keyed_reads_stay_open_on_private_bucket() {
     let resp = server
         .client
         .post(server.url("/fetch_nodes"))
-        .json(&serde_json::json!({ "hashes": [hash_hex] }))
+        .json(&serde_json::json!({ "bucket_id": 1, "hashes": [hash_hex] }))
         .send()
         .await
         .unwrap();

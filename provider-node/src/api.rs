@@ -23,7 +23,7 @@ use provider_types::SigningRefused;
 use sp_core::H256;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use storage_primitives::AgreementTerms;
+use storage_primitives::{AgreementTerms, BucketId};
 use storage_primitives::{Commitment, CommitmentPayload};
 use tokio_rate_limit::RateLimiter;
 use tower_http::cors::CorsLayer;
@@ -216,7 +216,16 @@ async fn stats(State(state): State<Arc<ProviderState>>) -> Json<StatsResponse> {
 
 #[derive(serde::Deserialize)]
 struct GetNodeQuery {
+    bucket_id: BucketId,
     hash: String,
+}
+
+fn require_bucket(state: &ProviderState, bucket_id: BucketId) -> Result<(), Error> {
+    state
+        .storage
+        .get_bucket(bucket_id)
+        .ok_or(provider_storage::Error::BucketNotFound(bucket_id))?;
+    Ok(())
 }
 
 async fn get_node(
@@ -224,6 +233,7 @@ async fn get_node(
     Query(query): Query<GetNodeQuery>,
 ) -> Result<Json<DownloadNodeResponse>, Error> {
     let hash = decode_hash(&query.hash)?;
+    require_bucket(&state, query.bucket_id)?;
 
     let node = state
         .storage
@@ -370,6 +380,7 @@ async fn read_chunks(
     Query(query): Query<ReadQuery>,
 ) -> Result<Json<ReadResponse>, Error> {
     let data_root = decode_hash(&query.data_root)?;
+    require_bucket(&state, query.bucket_id)?;
 
     // Calculate chunk indices
     let chunk_size = storage_primitives::DEFAULT_CHUNK_SIZE as u64;
@@ -530,6 +541,7 @@ async fn get_chunk_proof(
     Query(query): Query<ChunkProofQuery>,
 ) -> Result<Json<ChunkProofResponse>, Error> {
     let data_root = decode_hash(&query.data_root)?;
+    require_bucket(&state, query.bucket_id)?;
 
     let (chunk_data, proof) = state
         .storage
@@ -630,6 +642,7 @@ async fn fetch_nodes(
     State(state): State<Arc<ProviderState>>,
     Json(request): Json<FetchNodesRequest>,
 ) -> Result<Json<FetchNodesResponse>, Error> {
+    require_bucket(&state, request.bucket_id)?;
     let mut nodes = Vec::new();
 
     for hash_str in &request.hashes {

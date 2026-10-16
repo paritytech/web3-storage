@@ -641,7 +641,7 @@ export async function fetchChallengeProof(
   const dataRoot: string = mmr.leaf.data_root
   const dataRootBare = dataRoot.replace(/^0x/, '')
   const chunkRes = await fetch(
-    `${providerHttp}/chunk_proof?data_root=${dataRootBare}&chunk_index=${chunkIndex}`,
+    `${providerHttp}/chunk_proof?bucket_id=${bucketId}&data_root=${dataRootBare}&chunk_index=${chunkIndex}`,
   )
   if (!chunkRes.ok) {
     throw new Error(`Chunk proof fetch failed: ${chunkRes.status} ${await chunkRes.text()}`)

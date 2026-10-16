@@ -130,7 +130,10 @@ impl ReplicaSync {
             let response = self
                 .http
                 .get(format!("{source_url}/node"))
-                .query(&[("hash", format!("0x{}", hex::encode(root_hash.as_bytes())))])
+                .query(&[
+                    ("bucket_id", bucket_id.to_string()),
+                    ("hash", format!("0x{}", hex::encode(root_hash.as_bytes()))),
+                ])
                 .send()
                 .await
                 .map_err(|e| Error::source_request("node", e))?;

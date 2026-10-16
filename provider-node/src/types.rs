@@ -131,6 +131,7 @@ pub struct CommitResponse {
 /// Query parameters for reading chunks.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ReadQuery {
+    pub bucket_id: BucketId,
     pub data_root: String,
     pub offset: u64,
     pub length: u64,
@@ -217,6 +218,7 @@ pub struct MmrProofData {
 /// Query for chunk proof.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ChunkProofQuery {
+    pub bucket_id: BucketId,
     pub data_root: String,
     pub chunk_index: u64,
 }
@@ -326,11 +328,12 @@ pub struct MmrPeaksResponse {
     pub peaks: Vec<String>,
 }
 
-/// Request to fetch multiple nodes. Hash-keyed with no bucket binding — a
-/// capability read, like `GET /node` (see the L0 read-access rules in the
-/// design doc's "Bucket Visibility & Access").
+/// Request to fetch multiple nodes of a bucket. Like `GET /node`, the hash is
+/// the read capability (see the L0 read-access rules in the design doc's
+/// "Bucket Visibility & Access").
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FetchNodesRequest {
+    pub bucket_id: BucketId,
     pub hashes: Vec<String>,
 }
 

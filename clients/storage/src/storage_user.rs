@@ -187,13 +187,14 @@ impl StorageUserClient {
     /// # use sp_core::H256;
     /// # async fn example(data_root: H256) -> Result<(), Box<dyn std::error::Error>> {
     /// let client = StorageUserClient::new(ClientConfig::default(), Signer::from_seed("//Alice")?)?;
-    /// let data = client.download(&data_root, 0, 1024).await?;
+    /// let data = client.download(1, &data_root, 0, 1024).await?;
     /// println!("Downloaded {} bytes", data.len());
     /// # Ok(())
     /// # }
     /// ```
     pub async fn download(
         &self,
+        bucket_id: BucketId,
         data_root: &H256,
         offset: u64,
         length: u64,
@@ -205,6 +206,7 @@ impl StorageUserClient {
             .http
             .get(format!("{provider_url}/read"))
             .query(&[
+                ("bucket_id", bucket_id.to_string()),
                 ("data_root", BaseClient::hex_encode(data_root.as_bytes())),
                 ("offset", offset.to_string()),
                 ("length", length.to_string()),
@@ -256,8 +258,13 @@ impl StorageUserClient {
     }
 
     /// Download entire file by data root.
-    pub async fn download_full(&self, data_root: &H256, total_size: u64) -> ClientResult<Vec<u8>> {
-        self.download(data_root, 0, total_size).await
+    pub async fn download_full(
+        &self,
+        bucket_id: BucketId,
+        data_root: &H256,
+        total_size: u64,
+    ) -> ClientResult<Vec<u8>> {
+        self.download(bucket_id, data_root, 0, total_size).await
     }
 
     /// Read a single node by its hash.
@@ -271,13 +278,13 @@ impl StorageUserClient {
     /// # use sp_core::H256;
     /// # async fn example(hash: H256) -> Result<(), Box<dyn std::error::Error>> {
     /// let client = StorageUserClient::new(ClientConfig::default(), Signer::from_seed("//Alice")?)?;
-    /// if let storage_client::Node::Chunk(data) = client.read_node(&hash).await? {
+    /// if let storage_client::Node::Chunk(data) = client.read_node(1, &hash).await? {
     ///     println!("Read {} bytes", data.len());
     /// }
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn read_node(&self, hash: &H256) -> ClientResult<Node> {
+    pub async fn read_node(&self, bucket_id: BucketId, hash: &H256) -> ClientResult<Node> {
         let provider_url = self.base.get_provider_url()?;
         let hash_hex = BaseClient::hex_encode(hash.as_bytes());
 
@@ -285,7 +292,7 @@ impl StorageUserClient {
             .base
             .http
             .get(format!("{provider_url}/node"))
-            .query(&[("hash", &hash_hex)])
+            .query(&[("bucket_id", bucket_id.to_string()), ("hash", hash_hex)])
             .send()
             .await?;
 
@@ -320,8 +327,8 @@ impl StorageUserClient {
     }
 
     /// Read a node and verify that it hashes to `hash`.
-    pub async fn read_node_verified(&self, hash: &H256) -> ClientResult<Node> {
-        let node = self.read_node(hash).await?;
+    pub async fn read_node_verified(&self, bucket_id: BucketId, hash: &H256) -> ClientResult<Node> {
+        let node = self.read_node(bucket_id, hash).await?;
         if &node.hash() != hash {
             return Err(ClientError::VerificationFailed);
         }
@@ -421,7 +428,12 @@ impl StorageUserClient {
     /// Perform a spot-check on a provider to verify data integrity.
     ///
     /// Returns true if the check passed.
-    pub async fn spot_check(&mut self, data_root: &H256, chunk_index: u64) -> ClientResult<bool> {
+    pub async fn spot_check(
+        &mut self,
+        bucket_id: BucketId,
+        data_root: &H256,
+        chunk_index: u64,
+    ) -> ClientResult<bool> {
         use std::time::Instant;
 
         let chunk_size = u64::from(DEFAULT_CHUNK_SIZE);
@@ -429,7 +441,9 @@ impl StorageUserClient {
         let provider_url = self.base.get_provider_url()?.to_string();
 
         let start = Instant::now();
-        let result = self.download(data_root, offset, chunk_size).await;
+        let result = self
+            .download(bucket_id, data_root, offset, chunk_size)
+            .await;
         let duration = start.elapsed();
 
         match result {
@@ -451,6 +465,7 @@ impl StorageUserClient {
     /// Returns (passed_count, failed_count).
     pub async fn spot_check_batch(
         &mut self,
+        bucket_id: BucketId,
         data_root: &H256,
         num_checks: usize,
         total_chunks: u64,
@@ -463,7 +478,7 @@ impl StorageUserClient {
 
         for _ in 0..num_checks {
             let chunk_index = rng.gen_range(0..total_chunks);
-            if self.spot_check(data_root, chunk_index).await? {
+            if self.spot_check(bucket_id, data_root, chunk_index).await? {
                 passed += 1;
             } else {
                 failed += 1;
@@ -646,11 +661,12 @@ impl StorageUserClient {
 impl crate::verification::ProviderReadAccess for StorageUserClient {
     async fn read_data(
         &self,
+        bucket_id: BucketId,
         data_root: &H256,
         offset: u64,
         length: u64,
     ) -> Result<Vec<u8>, crate::ClientError> {
-        self.download(data_root, offset, length).await
+        self.download(bucket_id, data_root, offset, length).await
     }
 
     fn provider_url(&self) -> &str {

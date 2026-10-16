@@ -177,10 +177,11 @@ export async function uploadChunk(
  */
 export async function downloadChunk(
   providerUrl: string,
+  bucketId: bigint | number,
   chunkHashHex: string,
 ): Promise<Uint8Array> {
   const downloaded = await providerFetch(providerUrl, "/node", {
-    params: { hash: chunkHashHex },
+    params: { bucket_id: bucketId, hash: chunkHashHex },
   });
   const data = base64ToBytes(downloaded.data);
   const expected = asHex(chunkHashHex).toLowerCase();
@@ -247,6 +248,7 @@ export async function fetchChallengeProof(
   });
   const chunk = await providerFetch(providerUrl, "/chunk_proof", {
     params: {
+      bucket_id: challenge.bucket_id,
       data_root: mmr.leaf.data_root,
       chunk_index: challenge.target.chunk_index,
     },

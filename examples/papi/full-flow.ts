@@ -105,7 +105,7 @@ async function uploadAndVerify(api: ParachainApi, bucketId: bigint, signer: Chai
   const { hash, data, commit } = await uploadChunk(PROVIDER_URL, bucketId, payload, signer);
   console.log("  Uploaded %d bytes, mmr_root=%s", data.length, commit.mmr_root);
 
-  const downloaded = await downloadChunk(PROVIDER_URL, hash);
+  const downloaded = await downloadChunk(PROVIDER_URL, bucketId, hash);
   assert.deepStrictEqual(
     downloaded,
     data,

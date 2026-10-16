@@ -53,6 +53,8 @@ pub fn node_body(hash: &str, data: &str, children: Option<Vec<String>>) -> Reply
 
 #[derive(serde::Deserialize)]
 struct NodeQuery {
+    #[serde(rename = "bucket_id")]
+    _bucket_id: u64,
     hash: String,
 }
 

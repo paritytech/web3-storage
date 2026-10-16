@@ -393,7 +393,7 @@ async function main() {
       // — possession of the hash is the capability; the enumeration surfaces
       // that would reveal it are gated (12.14).
       const { hash } = await putChunk(PROVIDER_URL, bucketId, "capability read probe", writer);
-      assert.strictEqual(await statusOf("GET", `/node?hash=${hash}`), 200);
+      assert.strictEqual(await statusOf("GET", `/node?bucket_id=${bucketId}&hash=${hash}`), 200);
     },
   });
 
