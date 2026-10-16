@@ -1283,10 +1283,6 @@ pub mod api {
             use super::root_mod;
             use super::runtime_types;
             #[doc = " Runtime API for the storage provider pallet."]
-            #[doc = ""]
-            #[doc = " v2 reshaped `ProviderInfoResponse` (`deregister_at`, `reputation`) and added"]
-            #[doc = " `challenge_candidates`. Declared explicitly so callers can probe the version"]
-            #[doc = " instead of decoding a v1 shape that no longer exists."]
             pub struct StorageProviderApi;
             impl StorageProviderApi {
                 #[doc = " Get provider information."]
