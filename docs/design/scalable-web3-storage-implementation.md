@@ -60,7 +60,7 @@ primaries (replicas stay challengeable by anyone).
 
 Users who create conflicts without checkpointing waste their quota—providers must keep all signed data.
 
-**Content-addressed storage**: Everything (chunks and internal nodes) is addressed by hash. Internal nodes are data whose content is their two child hashes; chunks and nodes are hashed with different prefixes (`0x00` for a chunk, `0x01` for a node). Upload is bottom-up: children must exist before parent can be stored. If a root hash exists, the entire tree is guaranteed complete. The provider signs a commitment only over roots whose tree is the RFC 9162 tree over `CHUNK_SIZE` chunks (see "Chunk Tree"), and rejects other shapes and chunk sizes.
+**Content-addressed storage**: Everything (chunks and internal nodes) is addressed by hash. An internal node is its two child hashes; chunks and nodes are hashed with different prefixes (`0x00` for a chunk, `0x01` for a node). Upload is bottom-up: children must exist before parent can be stored. If a root hash exists, the entire tree is guaranteed complete. The provider signs a commitment only over roots whose tree is the RFC 9162 tree over `CHUNK_SIZE` chunks (see "Chunk Tree"), and rejects other shapes and chunk sizes.
 
 ### Provider Lifecycle in Bucket
 
@@ -1991,13 +1991,21 @@ Upload Node (chunk or internal node)
 PUT /node
 Authorization: Web3Storage <...>       # Writer or Admin
 
-Request:
+Request (a chunk):
 {
   "bucket_id": 1234,                   // u64
-  "hash": "0xabc...",
-  "data": "<base64 encoded>",
-  "children": ["0xchild1...", "0xchild2..."] | null  // exactly two for a node, null for a chunk
+  "hash": "0xabc...",                  // hash_leaf(data)
+  "data": "<base64 encoded>"
 }
+
+Request (an internal node):
+{
+  "bucket_id": 1234,
+  "hash": "0xdef...",                  // hash_children(left, right)
+  "children": ["0xleft...", "0xright..."]
+}
+
+A request carries exactly one of `data` and `children`.
 
 Note: HTTP API is used for simplicity and firewall-friendliness. Binary protocols
 (e.g., libp2p streams) could be added later for efficiency. Base64 encoding adds
@@ -2009,8 +2017,8 @@ Response (200 OK):
 
 Response (400 Bad Request):
 { "error": "children_missing", "missing": ["0xchild2..."] }
-{ "error": "invalid_child_count" }        // a node with other than two children
-{ "error": "invalid_internal_node_data" } // node data is not left ++ right
+{ "error": "invalid_node" }               // both or neither of data and children
+{ "error": "invalid_child_count" }        // children is not exactly two hashes
 { "error": "chunk_too_large", "size": 300000, "max": 262144 }
 
 Response (507 Insufficient Storage):
@@ -2145,12 +2153,11 @@ Download Node
 ─────────────
 GET /node?hash=0x...
 
-Response (200 OK):
-{
-  "hash": "0xabc...",
-  "data": "<base64 encoded>",
-  "children": ["0xchild1...", "0xchild2..."] | null
-}
+Response (200 OK), a chunk:
+{ "hash": "0xabc...", "data": "<base64 encoded>" }
+
+Response (200 OK), an internal node:
+{ "hash": "0xdef...", "children": ["0xleft...", "0xright..."] }
 
 Response (404 Not Found):
 { "error": "not_found" }
@@ -2392,8 +2399,8 @@ Request:
 Response:
 {
   "nodes": [
-    { "hash": "0xdef...", "data": "<base64>", "children": ["0xchild1...", "0xchild2..."] },
-    { "hash": "0x456...", "data": "<base64>", "children": null }  // leaf chunk
+    { "hash": "0xdef...", "children": ["0xleft...", "0xright..."] },  // internal node
+    { "hash": "0x456...", "data": "<base64>" }                        // chunk
   ]
 }
 
@@ -2414,8 +2421,8 @@ requests when syncing many nodes.
    a. Fetch subtree level by level (breadth-first)
    b. At each level, check which nodes exist locally
    c. Fetch missing nodes from any available provider
-   d. Verify fetched nodes against expected_hash: `children: null` is a chunk, hashed with `0x00`;
-      a node with two children is hashed with `0x01` over its children and rejected if that does not match
+   d. Verify fetched nodes against expected_hash: a node with `data` is a chunk, hashed with `0x00`;
+      a node with `children` is hashed with `0x01` over left ++ right; reject a mismatch
    e. Continue to children of newly fetched nodes
 6. Once all nodes fetched and verified:
    a. Build signature over roots array matching on-chain historical_roots
