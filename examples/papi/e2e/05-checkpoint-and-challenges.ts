@@ -118,8 +118,7 @@ async function main() {
     name: "5.4 Challenge a provider not in the snapshot",
     fn: async () => {
       // challenge_checkpoint checks at creation that the provider signed the
-      // snapshot. Bob is not a primary provider of this bucket. (5.7 covers
-      // the leaf_index check.)
+      // snapshot. Bob did not sign it. (5.7 covers the leaf_index check.)
       const tx = api.tx.StorageProvider.challenge_checkpoint({
         bucket_id: bucketId,
         provider: client.address, // not in the snapshot's primary_providers
