@@ -178,10 +178,6 @@ mod tests {
         }
     }
 
-    // Pins the wire format: blake2-256 of a raw chunk, the SCALE encoding of
-    // `MmrLeaf`, and the bagged root for 1- and 2-leaf MMRs. A change to leaf
-    // encoding or hashing would silently invalidate every commitment already
-    // signed on-chain; these constants make it loud.
     // `verify_mmr_proof(proof, leaf_index, commitment)` accepts a leaf
     // only when it is presented at its own index.
     #[test]
