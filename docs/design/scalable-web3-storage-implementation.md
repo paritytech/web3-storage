@@ -1964,9 +1964,11 @@ Three Reader-level exemptions, all resolved from the same cached lookup:
 
 **Hash-keyed reads are capability reads.** `GET /node`, `GET /read`,
 `GET /chunk_proof` and `POST /fetch_nodes` are keyed by a blake2-256 hash or
-data root and carry no bucket binding (the node store is a single
-content-addressed namespace with cross-bucket dedup), so they are served
-without authentication: possession of the hash is the capability. Hashes of
+data root and take a `bucket_id`. The node answers 404 `bucket_not_found` for
+a bucket it does not store, and serves the rest without authentication: the
+node store is a single content-addressed namespace with cross-bucket dedup, so
+the node cannot tell whether a hash belongs to the named bucket, and
+possession of the hash is the capability. Hashes of
 private data are unguessable and every enumeration surface that would reveal
 them (the MMR shape via `/mmr_peaks`, per-bucket listings) is gated; see the
 design doc's "Bucket Visibility & Access" for the rule and its limits.
@@ -2091,10 +2093,10 @@ Response (400 Bad Request):
 ```
 Read Chunks
 ───────────
-GET /read?data_root=0x...&offset=0&length=2097152
+GET /read?bucket_id=1&data_root=0x...&offset=0&length=2097152
 
-Capability read: keyed by data root, no bucket binding, unauthenticated
-(see Authentication & RBAC).
+Capability read: keyed by data root, unauthenticated; 404 for a bucket the
+node does not store (see Authentication & RBAC).
 
 Response:
 {
@@ -2153,10 +2155,10 @@ bounds, or beyond its capacity, and rejects requests while deregistering.
 
 Download Node
 ─────────────
-GET /node?hash=0x...
+GET /node?bucket_id=1&hash=0x...
 
-Capability read: keyed by hash, no bucket binding, unauthenticated
-(see Authentication & RBAC).
+Capability read: keyed by hash, unauthenticated; 404 for a bucket the node
+does not store (see Authentication & RBAC).
 
 Response (200 OK):
 {
@@ -2219,9 +2221,10 @@ Response:
 
 Get Chunk Proof
 ───────────────
-GET /chunk_proof?data_root=0x...&chunk_index=3
+GET /chunk_proof?bucket_id=1&data_root=0x...&chunk_index=3
 
-Capability read: keyed by data root, no bucket binding, unauthenticated.
+Capability read: keyed by data root, unauthenticated; 404 for a bucket the
+node does not store.
 
 Response:
 {
@@ -2376,11 +2379,12 @@ Fetch Nodes (batched, for sync)
 ───────────────────────────────
 POST /fetch_nodes
 
-Capability read: keyed by hash, no bucket binding, unauthenticated
-(see Authentication & RBAC).
+Capability read: keyed by hash, unauthenticated; 404 for a bucket the node
+does not store (see Authentication & RBAC).
 
 Request:
 {
+  "bucket_id": 1,
   "hashes": ["0xdef...", "0x456...", ...]
 }
 

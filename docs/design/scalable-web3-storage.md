@@ -11,7 +11,7 @@
 
 | Version | Changes |
 |---------|---------|
-| 2.6 | Layer-0 read access spelled out: bucket-bound reads gate at Reader on primaries; hash-keyed lookups (`/node`, `/read`, `/chunk_proof`, `/fetch_nodes`) are **capability reads** — possession of the hash grants the bytes, with the enumeration surfaces gated; operator self-read allowance. **Read**: "Read access at Layer 0" under Bucket Visibility & Access. |
+| 2.6 | Layer-0 read access spelled out: bucket-bound reads gate at Reader on primaries; hash-keyed lookups (`/node`, `/read`, `/chunk_proof`, `/fetch_nodes`) take a bucket id but are **capability reads** — possession of the hash grants the bytes, with the enumeration surfaces gated; operator self-read allowance. **Read**: "Read access at Layer 0" under Bucket Visibility & Access. |
 | 2.5 | Challenge resolution and slashing are lazy: an unanswered challenge is slashed by the permissionless `resolve_expired_challenge` call (no per-block sweep). A timeout is the only slash reason. **Read**: "The Challenge Game", Resolution; `resolve_expired_challenge` in [Implementation Details](./scalable-web3-storage-implementation.md). |
 | 2.4 | Bucket creation and provider assignment are separate on-chain operations: `create_bucket`, `create_bucket_with_primary`, `add_primary_provider`, `add_replica_provider`. Provider-signed quotes name the bucket they are for. A bucket remains after its last agreement ends and can get new providers later; the client moves the data when a provider is added. **Read**: "Buckets: Stable Identity in a Fluid Provider Market"; "Two Classes of Providers"; "Provider Lifecycle in Bucket" in [Implementation Details](./scalable-web3-storage-implementation.md) for the four calls. |
 | 2.3 | Private buckets clarified (visibility flag, Reader role, primary challenges gated to members + primary-agreement owners, tier-split challenge stats). **Read**: new "Bucket Visibility & Access" section; "The Challenge Game". |
@@ -445,11 +445,13 @@ surfaces it can bind to. A primary's **bucket-bound reads** — the MMR shape (`
 per-leaf proofs, existence probes, per-bucket listings — take a bucket id and
 gate at Reader: members only when `private`, anyone when `public`. The
 **hash-keyed lookups** (`GET /node`, `GET /read`, `GET /chunk_proof`,
-`POST /fetch_nodes`) carry no bucket at all: the store is one
-content-addressed namespace, deduplicated across buckets, so a node can belong
-to several buckets at once and "which bucket is asking" has no well-defined
-answer. These are **capability reads** — possession of a blake2-256 hash *is*
-the read capability, the way possession of an unguessable URL is.
+`POST /fetch_nodes`) also take a bucket id: a provider may store each bucket
+separately, and who reads can matter (under load a provider may serve the
+bucket owner first, to avoid costly challenges). They do not gate at Reader. A
+provider that keeps one content-addressed store, deduplicated across buckets,
+cannot tell whether a hash belongs to the bucket a request names. These are
+**capability reads** — possession of a blake2-256 hash *is* the read
+capability, the way possession of an unguessable URL is.
 
 Hashes of private content are unguessable, and every surface that would
 *reveal* them — walking the MMR from its peaks, listing a node's buckets — is
@@ -457,9 +459,9 @@ gated. The accepted limits: anyone a hash was ever shared with keeps byte
 access for as long as the data is hosted (revocation means re-encrypting),
 and an on-chain challenge response publishes the challenged leaf's `data_root`
 in its MMR proof, which opens the whole upload behind that leaf. With
-client-side encryption, those bytes are ciphertext. Binding hash-keyed reads to
-buckets would mean per-node ownership indexes over a deduplicated store; take
-that on only if capability semantics prove too weak in practice.
+client-side encryption, those bytes are ciphertext. Gating hash-keyed reads at
+Reader needs the provider to check that a hash belongs to the named bucket:
+per-bucket storage, or an index of each node's buckets over a shared store.
 
 Two serving allowances follow from roles, not membership: a **replica** serves
 every read to everyone (the rule above — visibility binds primaries only), and
