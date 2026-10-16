@@ -2011,7 +2011,7 @@ Response (400 Bad Request):
 { "error": "children_missing", "missing": ["0xchild2..."] }
 { "error": "invalid_child_count" }        // a node with other than two children
 { "error": "invalid_internal_node_data" } // node data is not left ++ right
-{ "error": "chunk_too_large" }            // a chunk above CHUNK_SIZE
+{ "error": "chunk_too_large", "size": 300000, "max": 262144 }
 
 Response (507 Insufficient Storage):
 { "error": "quota_exceeded", "used": 1000000, "max": 1000000 }
@@ -2076,7 +2076,7 @@ Response (200 OK):
 
 Response (400 Bad Request):
 { "error": "root_not_found", "missing": ["0xroot2..."] }
-{ "error": "non_canonical_tree" }
+{ "error": "non_canonical_tree", "data_root": "0xroot1..." }
 ```
 
 ### Read
