@@ -535,24 +535,6 @@ fn hash_peaks(left: H256, right: H256) -> H256 {
     blake2_256(&data)
 }
 
-/// [`sp_core::Hasher`] for `binary-merkle-tree` that hashes internal nodes the
-/// same way as [`hash_children`].
-///
-/// Pass leaf hashes to the library's `*_raw` functions. The library then
-/// calls `hash` only on `left ++ right`, so the result is
-/// `blake2_256(0x01 ++ left ++ right)`.
-pub struct StorageHasher;
-
-impl sp_core::Hasher for StorageHasher {
-    type Out = H256;
-    type StdHasher = hash256_std_hasher::Hash256StdHasher;
-    const LENGTH: usize = 32;
-
-    fn hash(x: &[u8]) -> H256 {
-        hash_prefixed(NODE_PREFIX, x)
-    }
-}
-
 /// [`Merge`] for `polkadot-ckb-merkle-mountain-range` that builds the same
 /// MMR roots as [`hash_children`] and [`bag_peaks`].
 pub struct StorageMerge;
@@ -802,24 +784,6 @@ mod tests {
             assert_eq!(bag_peaks(&[peak]), peak);
             assert_eq!(bag_peaks(&[]), H256::zero());
         }
-
-        #[test]
-        fn library_root_over_three_chunks_matches_golden_root() {
-            let leaves = [h(LEAF_A), h(LEAF_B), h(LEAF_C)];
-            let root = binary_merkle_tree::merkle_root_raw::<StorageHasher, _>(leaves);
-            assert_eq!(root, h(ROOT_3_CHUNKS));
-        }
-    }
-
-    #[test]
-    fn storage_hasher_hashes_like_hash_children() {
-        use sp_core::Hasher;
-
-        let left = H256::repeat_byte(0x0a);
-        let right = H256::repeat_byte(0x0b);
-        let mut input = left.as_bytes().to_vec();
-        input.extend_from_slice(right.as_bytes());
-        assert_eq!(StorageHasher::hash(&input), hash_children(left, right));
     }
 
     /// For every MMR size up to 33 leaves, the library root over the peaks

@@ -3471,9 +3471,9 @@ pub mod api {
             .hash();
         runtime_metadata_hash
             == [
-                110u8, 216u8, 131u8, 159u8, 195u8, 51u8, 73u8, 157u8, 235u8, 74u8, 19u8, 246u8,
-                208u8, 102u8, 138u8, 227u8, 84u8, 96u8, 52u8, 50u8, 54u8, 79u8, 128u8, 201u8,
-                178u8, 255u8, 165u8, 136u8, 0u8, 42u8, 144u8, 239u8,
+                125u8, 217u8, 224u8, 38u8, 89u8, 58u8, 7u8, 24u8, 200u8, 31u8, 68u8, 63u8, 38u8,
+                231u8, 141u8, 237u8, 80u8, 123u8, 184u8, 202u8, 155u8, 233u8, 104u8, 185u8, 227u8,
+                78u8, 242u8, 167u8, 218u8, 4u8, 246u8, 160u8,
             ]
     }
     pub mod system {
@@ -18539,7 +18539,9 @@ pub mod api {
                         ],
                     )
                 }
-                #[doc = " Maximum chunk size for challenge responses (e.g., 256 KiB)."]
+                #[doc = " Maximum chunk size for challenge responses. Must equal"]
+                #[doc = " `storage_primitives::DEFAULT_CHUNK_SIZE`, which `respond_to_challenge`"]
+                #[doc = " uses to derive the chunk count from `data_size`."]
                 pub fn max_chunk_size(
                     &self,
                 ) -> ::subxt::constants::StaticAddress<::core::primitive::u32> {
@@ -21377,9 +21379,10 @@ pub mod api {
                         "Revive",
                         "EthBlockBuilderIR",
                         [
-                            179u8, 162u8, 199u8, 87u8, 83u8, 149u8, 103u8, 85u8, 27u8, 198u8, 37u8,
-                            64u8, 199u8, 203u8, 177u8, 180u8, 196u8, 63u8, 141u8, 255u8, 63u8,
-                            215u8, 198u8, 51u8, 46u8, 222u8, 214u8, 240u8, 58u8, 11u8, 84u8, 51u8,
+                            116u8, 252u8, 171u8, 232u8, 171u8, 25u8, 191u8, 131u8, 17u8, 30u8,
+                            43u8, 52u8, 157u8, 0u8, 13u8, 193u8, 199u8, 100u8, 25u8, 242u8, 44u8,
+                            168u8, 162u8, 132u8, 183u8, 30u8, 12u8, 154u8, 225u8, 250u8, 99u8,
+                            89u8,
                         ],
                     )
                 }

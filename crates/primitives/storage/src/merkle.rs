@@ -167,7 +167,22 @@ pub fn verify_merkle_proof(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::blake2_256;
+    use crate::{blake2_256, hash_prefixed, NODE_PREFIX};
+    use binary_merkle_tree::Leaf;
+
+    /// Hashes `left ++ right` like [`hash_children`], so `binary-merkle-tree`
+    /// builds the same tree when given leaf hashes.
+    struct StorageHasher;
+
+    impl sp_core::Hasher for StorageHasher {
+        type Out = H256;
+        type StdHasher = hash256_std_hasher::Hash256StdHasher;
+        const LENGTH: usize = 32;
+
+        fn hash(x: &[u8]) -> H256 {
+            hash_prefixed(NODE_PREFIX, x)
+        }
+    }
 
     fn leaves(n: usize) -> Vec<H256> {
         (1..=n).map(|i| H256::from_low_u64_be(i as u64)).collect()
@@ -428,5 +443,36 @@ mod tests {
         assert_eq!(chunk_count(chunk + 1), 2);
         assert_eq!(chunk_count(2 * chunk), 2);
         assert_eq!(chunk_count(2 * chunk + 10), 3);
+    }
+
+    /// `binary-merkle-tree` builds the same roots and proofs, and accepts our
+    /// proofs.
+    #[test]
+    fn roots_and_proofs_match_binary_merkle_tree() {
+        for n in 0..=33 {
+            let l = leaves(n);
+            let root = merkle_root(&l);
+            assert_eq!(
+                root,
+                binary_merkle_tree::merkle_root_raw::<StorageHasher, _>(l.clone()),
+                "{n} leaves"
+            );
+            for (i, leaf) in l.iter().enumerate() {
+                let siblings = proof_for(&l, i).siblings;
+                let reference =
+                    binary_merkle_tree::merkle_proof_raw::<StorageHasher, _>(l.clone(), i as u32);
+                assert_eq!(siblings, reference.proof, "{n} leaves, index {i}");
+                assert!(
+                    binary_merkle_tree::verify_proof::<StorageHasher, _, _>(
+                        &root,
+                        siblings,
+                        n as u32,
+                        i as u32,
+                        Leaf::Hash(*leaf)
+                    ),
+                    "{n} leaves, index {i}"
+                );
+            }
+        }
     }
 }
