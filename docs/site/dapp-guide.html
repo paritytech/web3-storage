@@ -97,7 +97,7 @@ bucket://42/fs/my_website/logo.png    mutable: path in the latest snapshot</code
   </li>
   <li>
     <h3>Upload</h3>
-    <p>Split data into 256 KiB chunks (only the last chunk is shorter; empty data cannot be committed) and build the RFC 9162 Merkle tree. Call <code>POST /exists</code> with hashes, top-down, to skip subtrees the provider already has. Upload missing nodes bottom-up with <code>PUT /node</code>: a parent is rejected (<code>children_missing</code>) until its children exist, and a chunk above 256 KiB is rejected (<code>chunk_too_large</code>). Uploads above the agreement quota fail with <code>507 quota_exceeded</code>. <code>POST /commit</code> rejects a root with another tree shape or chunk size (<code>non_canonical_tree</code>).</p>
+    <p>Split data into 256 KiB chunks (only the last chunk is shorter; empty data cannot be committed) and build the RFC 9162 Merkle tree. Call <code>POST /exists</code> with hashes, top-down, to skip subtrees the provider already has. Upload missing nodes bottom-up with <code>PUT /node</code>, a chunk as <code>data</code> and an internal node as <code>children</code>: a parent is rejected (<code>children_missing</code>) until its children exist, and a chunk above 256 KiB is rejected (<code>chunk_too_large</code>). Uploads above the agreement quota fail with <code>507 quota_exceeded</code>. <code>POST /commit</code> rejects a root with another tree shape or chunk size (<code>non_canonical_tree</code>).</p>
     <p>Primaries do not sync with each other. Upload to every primary that must store the data.</p>
   </li>
   <li>
