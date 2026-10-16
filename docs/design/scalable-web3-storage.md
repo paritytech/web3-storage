@@ -955,7 +955,7 @@ The chunk count is not part of the commitment. It follows from the data size rec
 - Binary: inclusion proofs are shortest for a given chunk count (a tree of arity `a` needs `(a - 1) * log_a(n)` sibling hashes, which grows with `a`), and binary trees match RFC 9162 and the available libraries.
 - Fixed-size chunks: simple, and private (chunk boundaries reveal nothing about the content). Upper layers may use content-defined chunking.
 - No padding: every `chunk_index < n` addresses a real chunk, and the verifier derives `n` from `data_size` instead of trusting a chunk count.
-- Prefixes: a node's bytes never hash as a chunk, so a provider cannot answer a chunk challenge with an internal node instead of the chunk.
+- Prefixes: a node's bytes never hash as a chunk, so a provider cannot answer a chunk challenge with an internal node instead of the chunk. "Hash Prefixes" in [Implementation Details](./scalable-web3-storage-implementation.md) lists every prefix.
 - `CHUNK_SIZE` is defined per `leaf_version` (256 KiB for version 1): `n` is derived from it for every leaf of that version, so changing it means a new leaf version, and existing leaves keep theirs.
 
 **Why content-addressed?**

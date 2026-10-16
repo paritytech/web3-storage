@@ -2524,16 +2524,26 @@ with an unknown version. A format change bumps `LEAF_VERSION`; leaves of
 different versions share one MMR, so no root has to be recomputed.
 ```
 
+### Hash Prefixes
+
+Every hash in the chunk tree and the MMR is `blake2_256` over a one-byte
+prefix and the payload. The prefix says what kind of node the payload is, so
+bytes of one kind never verify as another.
+
+| Prefix | Preimage | Hashes | Function |
+|---|---|---|---|
+| `0x00` | `0x00 ++ chunk` | a chunk: leaf of the chunk tree | `hash_leaf` |
+| `0x00` | `0x00 ++ leaf.encode()` | an `MmrLeaf`: leaf of the MMR (`leaf_version` is the first byte after the prefix) | `hash_leaf` |
+| `0x01` | `0x01 ++ left ++ right` | an internal node, in the chunk tree and in the MMR | `hash_children` |
+| `0x02` | `0x02 ++ peak ++ rest` | the MMR root: peaks folded right to left, one peak is the root, no peaks give zero | `bag_peaks` |
+
 ### Chunk Tree
 
 The chunk tree is the binary Merkle tree of RFC 9162 (section 2.1.1) over the
-chunks of one piece of data, with `blake2_256` in place of SHA-256:
-
-- `hash_leaf(chunk) = blake2_256(0x00 ++ chunk)`
-- `hash_node(left, right) = blake2_256(0x01 ++ left ++ right)`
-- the tree over one chunk is `hash_leaf(chunk)`; the tree over `n > 1` chunks
-  is `hash_node(tree(chunks[0..k]), tree(chunks[k..n]))` with `k` the largest
-  power of two smaller than `n`
+chunks of one piece of data, with the hashes of "Hash Prefixes" in place of
+SHA-256: the tree over one chunk is `hash_leaf(chunk)`; the tree over `n > 1`
+chunks is `hash_children(tree(chunks[0..k]), tree(chunks[k..n]))` with `k` the
+largest power of two smaller than `n`.
 
 Every chunk has `CHUNK_SIZE` bytes (256 KiB in leaf version 1) except the
 last, which has 1 to `CHUNK_SIZE` bytes, so `n = ceil(data_size / CHUNK_SIZE)`
