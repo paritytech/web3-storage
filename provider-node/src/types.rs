@@ -210,9 +210,9 @@ pub struct MmrProofResponse {
 /// MMR proof data.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MmrProofData {
-    pub peaks: Vec<String>,
-    pub siblings: Vec<String>,
-    pub path: Vec<bool>,
+    pub leaf_index: u64,
+    pub leaf_count: u64,
+    pub items: Vec<String>,
 }
 
 /// Query for chunk proof.

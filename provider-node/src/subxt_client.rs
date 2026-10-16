@@ -1001,13 +1001,14 @@ impl ChallengeChainClient for SubxtChainClient {
         let response = RuntimeChallengeResponse::Proof {
             chunk_data: BoundedVec(chunk_data),
             mmr_proof: RuntimeMmrProof {
-                peaks: mmr_proof.peaks.into_iter().map(to_runtime_hash).collect(),
                 leaf: RuntimeMmrLeaf {
                     data_root: to_runtime_hash(mmr_proof.leaf.data_root),
                     data_size: mmr_proof.leaf.data_size,
                     total_size: mmr_proof.leaf.total_size,
                 },
-                leaf_proof: to_runtime_merkle_proof(mmr_proof.leaf_proof),
+                leaf_index: mmr_proof.leaf_index,
+                leaf_count: mmr_proof.leaf_count,
+                items: mmr_proof.items.into_iter().map(to_runtime_hash).collect(),
             },
             chunk_proof: to_runtime_merkle_proof(chunk_proof),
         };

@@ -1148,18 +1148,49 @@ common::backend_tests! {
     async fn test_mmr_proof_endpoint(backend) {
         let server = TestServer::new(backend).await;
         upload_and_commit(&server, 1).await;
+        upload_and_commit(&server, 1).await;
 
         let resp = server
             .client
-            .get(server.url("/mmr_proof?bucket_id=1&leaf_index=0"))
+            .get(server.url("/mmr_proof?bucket_id=1&leaf_index=1"))
             .send()
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
-
         let body: Value = resp.json().await.unwrap();
-        assert!(body["leaf"]["data_root"].is_string());
-        assert!(body["proof"]["peaks"].is_array());
+
+        let peaks: Value = server
+            .client
+            .get(server.url("/mmr_peaks?bucket_id=1"))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+
+        let h256 = |v: &Value| v.as_str().unwrap().parse::<H256>().unwrap();
+        let proof = storage_primitives::MmrProof {
+            leaf: storage_primitives::MmrLeaf {
+                data_root: h256(&body["leaf"]["data_root"]),
+                data_size: body["leaf"]["data_size"].as_u64().unwrap(),
+                total_size: body["leaf"]["total_size"].as_u64().unwrap(),
+            },
+            leaf_index: body["proof"]["leaf_index"].as_u64().unwrap(),
+            leaf_count: body["proof"]["leaf_count"].as_u64().unwrap(),
+            items: body["proof"]["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(h256)
+                .collect(),
+        };
+        assert_eq!((proof.leaf_index, proof.leaf_count), (1, 2));
+        assert!(!proof.items.is_empty());
+        assert!(storage_primitives::verify_mmr_proof(
+            &proof,
+            &h256(&peaks["mmr_root"])
+        ));
     }
 }
 

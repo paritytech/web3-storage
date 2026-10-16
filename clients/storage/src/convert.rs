@@ -142,13 +142,14 @@ pub fn merkle_proof(p: &storage_primitives::MerkleProof) -> rt::MerkleProof {
 /// [`storage_primitives::MmrProof`] → generated twin.
 pub fn mmr_proof(p: &storage_primitives::MmrProof) -> rt::MmrProof {
     rt::MmrProof {
-        peaks: p.peaks.clone(),
         leaf: rt::MmrLeaf {
             data_root: p.leaf.data_root,
             data_size: p.leaf.data_size,
             total_size: p.leaf.total_size,
         },
-        leaf_proof: merkle_proof(&p.leaf_proof),
+        leaf_index: p.leaf_index,
+        leaf_count: p.leaf_count,
+        items: p.items.clone(),
     }
 }
 

@@ -410,7 +410,8 @@ common::backend_tests! {
 
         let body: Value = proof_response.json().await.unwrap();
         assert!(body["leaf"]["data_root"].is_string());
-        assert!(body["proof"]["peaks"].is_array());
+        assert_eq!(body["proof"]["leaf_index"].as_u64(), Some(leaf_index));
+        assert!(body["proof"]["items"].is_array());
     }
 }
 

@@ -473,18 +473,13 @@ async fn get_mmr_proof(
             total_size: mmr_proof.leaf.total_size,
         },
         proof: MmrProofData {
-            peaks: mmr_proof
-                .peaks
+            leaf_index: mmr_proof.leaf_index,
+            leaf_count: mmr_proof.leaf_count,
+            items: mmr_proof
+                .items
                 .iter()
                 .map(|h| format!("0x{}", hex::encode(h.as_bytes())))
                 .collect(),
-            siblings: mmr_proof
-                .leaf_proof
-                .siblings
-                .iter()
-                .map(|h| format!("0x{}", hex::encode(h.as_bytes())))
-                .collect(),
-            path: mmr_proof.leaf_proof.path,
         },
     }))
 }
