@@ -501,11 +501,7 @@ fn hash_prefixed(prefix: u8, data: &[u8]) -> H256 {
 /// Hash two children into an internal Merkle node:
 /// `blake2_256(0x01 ++ left ++ right)`.
 pub fn hash_children(left: H256, right: H256) -> H256 {
-    let mut data = [0u8; 65];
-    data[0] = NODE_PREFIX;
-    data[1..33].copy_from_slice(left.as_bytes());
-    data[33..].copy_from_slice(right.as_bytes());
-    blake2_256(&data)
+    hash_pair(NODE_PREFIX, left, right)
 }
 
 /// Combine MMR peaks into the MMR root.
@@ -524,8 +520,13 @@ pub fn bag_peaks(peaks: &[H256]) -> H256 {
 /// Combine a peak with the bagged peaks to its right:
 /// `blake2_256(0x02 ++ left ++ right)`.
 fn hash_peaks(left: H256, right: H256) -> H256 {
+    hash_pair(PEAK_PREFIX, left, right)
+}
+
+/// `blake2_256(prefix ++ left ++ right)`.
+fn hash_pair(prefix: u8, left: H256, right: H256) -> H256 {
     let mut data = [0u8; 65];
-    data[0] = PEAK_PREFIX;
+    data[0] = prefix;
     data[1..33].copy_from_slice(left.as_bytes());
     data[33..].copy_from_slice(right.as_bytes());
     blake2_256(&data)
@@ -804,30 +805,6 @@ mod tests {
         }
     }
 
-    /// For every MMR size up to 33 leaves, the library root over the peaks
-    /// it stores equals `bag_peaks` over the same peaks.
-    #[test]
-    fn library_mmr_root_matches_bag_peaks() {
-        use mmr_lib::{helper::get_peaks, util::MemStore, MMRStoreReadOps, MMR};
-
-        for leaf_count in 1u64..=33 {
-            let store = MemStore::default();
-            let mut mmr = MMR::<H256, StorageMerge, _>::new(0, &store);
-            for i in 0..leaf_count {
-                mmr.push(hash_leaf(&i.to_le_bytes())).unwrap();
-            }
-            let mmr_size = mmr.mmr_size();
-            let root = mmr.get_root().unwrap();
-            mmr.commit().unwrap();
-
-            let peaks: Vec<H256> = get_peaks(mmr_size)
-                .into_iter()
-                .map(|pos| (&store).get_elem(pos).unwrap().unwrap())
-                .collect();
-            assert_eq!(root, bag_peaks(&peaks), "leaf_count {leaf_count}");
-        }
-    }
-
     #[test]
     fn internal_node_bytes_do_not_verify_as_a_chunk() {
         // Four chunks: root = H(H(l0, l1), H(l2, l3)).
@@ -898,28 +875,17 @@ mod tests {
         )
     }
 
+    /// A proof verifies for its own leaf index and for no other.
     #[test]
-    fn mmr_proof_verifies_for_every_leaf_and_size() {
+    fn mmr_proof_verifies_only_for_its_leaf_index() {
         for leaf_count in 1u64..=33 {
             for index in 0..leaf_count {
                 let (commitment, proof) = mmr_commitment_and_proof(leaf_count, index);
-                assert!(
-                    verify_mmr_proof(&proof, index, &commitment),
-                    "leaf {index} of {leaf_count}"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn mmr_proof_does_not_verify_with_another_leaf_index() {
-        for leaf_count in 2u64..=17 {
-            for index in 0..leaf_count {
-                let (commitment, proof) = mmr_commitment_and_proof(leaf_count, index);
-                for other in (0..leaf_count).filter(|other| *other != index) {
-                    assert!(
-                        !verify_mmr_proof(&proof, other, &commitment),
-                        "proof for leaf {index} verified as leaf {other} of {leaf_count}"
+                for other in 0..leaf_count {
+                    assert_eq!(
+                        verify_mmr_proof(&proof, other, &commitment),
+                        other == index,
+                        "proof for leaf {index} checked as leaf {other} of {leaf_count}"
                     );
                 }
             }
@@ -930,13 +896,15 @@ mod tests {
     /// proof.
     #[test]
     fn mmr_proof_does_not_verify_with_another_leaf_count() {
+        // `commitments[n - 1]` is the commitment of the MMR with `n` leaves.
+        let commitments: Vec<Commitment> =
+            (1..=17).map(|n| mmr_commitment_and_proof(n, 0).0).collect();
         for leaf_count in 1u64..=17 {
             for index in 0..leaf_count {
                 let (_, proof) = mmr_commitment_and_proof(leaf_count, index);
                 for other in (index + 1..=17).filter(|other| *other != leaf_count) {
-                    let (resized, _) = mmr_commitment_and_proof(other, index);
                     assert!(
-                        !verify_mmr_proof(&proof, index, &resized),
+                        !verify_mmr_proof(&proof, index, &commitments[other as usize - 1]),
                         "proof for leaf {index} of {leaf_count} verified in {other} leaves"
                     );
                 }

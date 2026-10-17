@@ -1148,7 +1148,7 @@ common::backend_tests! {
     async fn test_mmr_proof_endpoint(backend) {
         let server = TestServer::new(backend).await;
         upload_and_commit(&server, 1).await;
-        upload_and_commit(&server, 1).await;
+        let (_, commit) = upload_and_commit(&server, 1).await;
 
         let resp = server
             .client
@@ -1158,16 +1158,6 @@ common::backend_tests! {
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
         let body: Value = resp.json().await.unwrap();
-
-        let peaks: Value = server
-            .client
-            .get(server.url("/mmr_peaks?bucket_id=1"))
-            .send()
-            .await
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
 
         let h256 = |v: &Value| v.as_str().unwrap().parse::<H256>().unwrap();
         let proof = storage_primitives::MmrProof {
@@ -1185,9 +1175,9 @@ common::backend_tests! {
         };
         assert!(!proof.items.is_empty());
         let commitment = storage_primitives::Commitment {
-            mmr_root: h256(&peaks["mmr_root"]),
-            start_seq: 0,
-            leaf_count: 2,
+            mmr_root: h256(&commit["mmr_root"]),
+            start_seq: commit["start_seq"].as_u64().unwrap(),
+            leaf_count: commit["leaf_count"].as_u64().unwrap(),
         };
         assert!(storage_primitives::verify_mmr_proof(&proof, 1, &commitment));
     }

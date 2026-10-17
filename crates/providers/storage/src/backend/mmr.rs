@@ -6,56 +6,35 @@
 
 use crate::error::Error;
 use codec::Encode;
-use polkadot_ckb_merkle_mountain_range::{
-    self as mmr_lib, helper::get_peaks, util::MemStore, MMRStoreReadOps, MMR,
-};
+use polkadot_ckb_merkle_mountain_range::{self as mmr_lib, util::MemStore, MMR};
 use sp_core::H256;
 use storage_primitives::{hash_leaf, MmrLeaf, MmrProof, StorageMerge};
 
 type LeafMmr<'a> = MMR<H256, StorageMerge, &'a MemStore<H256>>;
 
-fn mmr_error(error: mmr_lib::Error) -> Error {
-    Error::Mmr(error.to_string())
-}
-
 /// The MMR over `leaves`, with its nodes in `store`.
 fn build<'a>(store: &'a MemStore<H256>, leaves: &[MmrLeaf]) -> Result<LeafMmr<'a>, Error> {
     let mut mmr = LeafMmr::new(0, store);
     for leaf in leaves {
-        mmr.push(hash_leaf(&leaf.encode())).map_err(mmr_error)?;
+        mmr.push(hash_leaf(&leaf.encode()))?;
     }
     Ok(mmr)
 }
 
 /// Root of the MMR over `leaves`. No leaves give the zero root.
 pub(super) fn mmr_root(leaves: &[MmrLeaf]) -> Result<H256, Error> {
-    if leaves.is_empty() {
-        return Ok(H256::zero());
-    }
-    let store = MemStore::default();
-    build(&store, leaves)?.get_root().map_err(mmr_error)
+    Ok(mmr_peaks(leaves)?.0)
 }
 
-/// Root and peaks (left to right) of the MMR over `leaves`.
+/// Root and peaks (left to right) of the MMR over `leaves`. No leaves give
+/// the zero root and no peaks.
 pub(super) fn mmr_peaks(leaves: &[MmrLeaf]) -> Result<(H256, Vec<H256>), Error> {
     if leaves.is_empty() {
         return Ok((H256::zero(), Vec::new()));
     }
     let store = MemStore::default();
-    let mut mmr = build(&store, leaves)?;
-    let root = mmr.get_root().map_err(mmr_error)?;
-    let mmr_size = mmr.mmr_size();
-    mmr.commit().map_err(mmr_error)?;
-
-    let peaks = get_peaks(mmr_size)
-        .into_iter()
-        .map(|pos| {
-            (&store)
-                .get_elem(pos)
-                .map_err(mmr_error)?
-                .ok_or_else(|| Error::Mmr(format!("missing MMR node at position {pos}")))
-        })
-        .collect::<Result<_, Error>>()?;
+    let mmr = build(&store, leaves)?;
+    let (peaks, root) = mmr.get_ancestor_peaks_and_root(mmr.mmr_size())?;
     Ok((root, peaks))
 }
 
@@ -68,10 +47,9 @@ pub(super) fn mmr_proof(leaves: &[MmrLeaf], leaf_index: u64) -> Result<(H256, Mm
 
     let store = MemStore::default();
     let mmr = build(&store, leaves)?;
-    let root = mmr.get_root().map_err(mmr_error)?;
+    let root = mmr.get_root()?;
     let items = mmr
-        .gen_proof(vec![mmr_lib::leaf_index_to_pos(leaf_index)])
-        .map_err(mmr_error)?
+        .gen_proof(vec![mmr_lib::leaf_index_to_pos(leaf_index)])?
         .proof_items()
         .to_vec();
 

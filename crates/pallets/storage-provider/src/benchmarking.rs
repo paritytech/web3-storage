@@ -959,10 +959,8 @@ mod benchmarks {
         );
     }
 
-    /// `Proof` response — hashes MaxChunkSize bytes and verifies MMR + Merkle proofs.
-    /// Uses a worst-case MMR proof (the largest MMR `verify_mmr_proof` accepts,
-    /// 62-level climb) so the flat weight bounds the deepest verification, not
-    /// just the single-leaf case.
+    /// `Proof` response — hashes MaxChunkSize bytes and verifies MMR + Merkle proofs
+    /// in their worst case, so the flat weight bounds every verification.
     #[benchmark]
     fn respond_to_challenge_proof() {
         let admin = funded_account::<T>("admin", 0);
