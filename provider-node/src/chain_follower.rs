@@ -335,7 +335,7 @@ mod tests {
     fn key_prefix(pallet: &str, entry: &str) -> String {
         let mut key = sp_crypto_hashing::twox_128(pallet.as_bytes()).to_vec();
         key.extend(sp_crypto_hashing::twox_128(entry.as_bytes()));
-        format!("0x{}", hex::encode(key))
+        sp_core::bytes::to_hex(&key, false)
     }
 
     /// Look up the value type of a storage entry in the runtime metadata.
@@ -548,7 +548,7 @@ mod tests {
     /// mocked header carries block number 42; the runtime API always answers
     /// `4242` for the anchor block, so a test can tell the two apart.
     async fn mock_api(storage: Vec<(String, String)>) -> subxt::OnlineClient<PolkadotConfig> {
-        let metadata_hex = format!("0x{}", hex::encode(METADATA));
+        let metadata_hex = sp_core::bytes::to_hex(METADATA, false);
         let mock = MockRpcClient::builder()
             .method_handler("state_getMetadata", move |_params| {
                 let metadata_hex = metadata_hex.clone();
@@ -586,7 +586,7 @@ mod tests {
                         .encode(),
                     other => panic!("mock RPC: unhandled state_call {other}"),
                 };
-                Json(format!("0x{}", hex::encode(response)))
+                Json(sp_core::bytes::to_hex(&response, false))
             })
             .method_handler("chain_getBlockHash", |_params| async {
                 Json(GENESIS_HASH.to_string())
@@ -718,7 +718,7 @@ mod tests {
         let client = SubxtChainStateClient {
             api: mock_api(vec![(
                 key_prefix(PALLET_NAME, "Providers"),
-                format!("0x{}", hex::encode(encoded)),
+                sp_core::bytes::to_hex(&encoded, false),
             )])
             .await,
         };
@@ -787,7 +787,7 @@ mod tests {
 
         let api = mock_api(vec![(
             key_prefix("System", "Events"),
-            format!("0x{}", hex::encode(events_bytes)),
+            sp_core::bytes::to_hex(&events_bytes, false),
         )])
         .await;
         let at = api.at_current_block().await.expect("block handle");
@@ -804,10 +804,7 @@ mod tests {
         let md = metadata();
         let api = mock_api(vec![(
             key_prefix("System", "Events"),
-            format!(
-                "0x{}",
-                hex::encode(encoded_membership_events(&md, &provider_account()))
-            ),
+            sp_core::bytes::to_hex(&encoded_membership_events(&md, &provider_account()), false),
         )])
         .await;
 
@@ -825,10 +822,7 @@ mod tests {
         let md = metadata();
         let api = mock_api(vec![(
             key_prefix("System", "Events"),
-            format!(
-                "0x{}",
-                hex::encode(encoded_events(&md, &provider_account()))
-            ),
+            sp_core::bytes::to_hex(&encoded_events(&md, &provider_account()), false),
         )])
         .await;
 
@@ -851,7 +845,7 @@ mod tests {
 
         let api = mock_api(vec![(
             key_prefix("System", "Events"),
-            format!("0x{}", hex::encode(events_bytes)),
+            sp_core::bytes::to_hex(&events_bytes, false),
         )])
         .await;
 
