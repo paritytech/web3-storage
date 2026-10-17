@@ -17,14 +17,12 @@ serde = { workspace = true, optional = true }
 
 [dev-dependencies]
 binary-merkle-tree = { workspace = true }
-hash256-std-hasher = { workspace = true }
 
 [features]
 default = ["std"]
 std = [
 	"binary-merkle-tree/std",
 	"codec/std",
-	"hash256-std-hasher/std",
 	"polkadot-ckb-merkle-mountain-range/std",
 	"scale-info/std",
 	"serde/std",

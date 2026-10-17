@@ -445,25 +445,12 @@ async fn get_checkpoint_signature(
 async fn get_mmr_proof(
     State(state): State<Arc<ProviderState>>,
     Query(query): Query<MmrProofQuery>,
-) -> Result<Json<MmrProofResponse>, Error> {
-    let mmr_proof = state
-        .storage
-        .get_mmr_proof(query.bucket_id, query.leaf_index)?;
-
-    Ok(Json(MmrProofResponse {
-        leaf: MmrLeafData {
-            data_root: format!("0x{}", hex::encode(mmr_proof.leaf.data_root.as_bytes())),
-            data_size: mmr_proof.leaf.data_size,
-            total_size: mmr_proof.leaf.total_size,
-        },
-        proof: MmrProofData {
-            items: mmr_proof
-                .items
-                .iter()
-                .map(|h| format!("0x{}", hex::encode(h.as_bytes())))
-                .collect(),
-        },
-    }))
+) -> Result<Json<storage_primitives::MmrProof>, Error> {
+    Ok(Json(
+        state
+            .storage
+            .get_mmr_proof(query.bucket_id, query.leaf_index)?,
+    ))
 }
 
 async fn get_chunk_proof(
@@ -478,16 +465,9 @@ async fn get_chunk_proof(
     let chunk_hash = storage_primitives::hash_leaf(&chunk_data);
 
     Ok(Json(ChunkProofResponse {
-        chunk_hash: format!("0x{}", hex::encode(chunk_hash.as_bytes())),
+        chunk_hash,
         chunk_data: Some(BASE64.encode(&chunk_data)),
-        proof: MerkleProofData {
-            siblings: proof
-                .siblings
-                .iter()
-                .map(|h| format!("0x{}", hex::encode(h.as_bytes())))
-                .collect(),
-            path: proof.path,
-        },
+        proof,
     }))
 }
 

@@ -1157,22 +1157,9 @@ common::backend_tests! {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
-        let body: Value = resp.json().await.unwrap();
+        let proof: storage_primitives::MmrProof = resp.json().await.unwrap();
 
         let h256 = |v: &Value| v.as_str().unwrap().parse::<H256>().unwrap();
-        let proof = storage_primitives::MmrProof {
-            leaf: storage_primitives::MmrLeaf {
-                data_root: h256(&body["leaf"]["data_root"]),
-                data_size: body["leaf"]["data_size"].as_u64().unwrap(),
-                total_size: body["leaf"]["total_size"].as_u64().unwrap(),
-            },
-            items: body["proof"]["items"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(h256)
-                .collect(),
-        };
         assert!(!proof.items.is_empty());
         let commitment = storage_primitives::Commitment {
             mmr_root: h256(&commit["mmr_root"]),

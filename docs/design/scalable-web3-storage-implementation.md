@@ -2186,7 +2186,7 @@ GET /mmr_proof?bucket_id=0x...&leaf_index=5
 Response:
 {
   "leaf": { "data_root": "0x...", "data_size": 2097152, "total_size": 52428800 },
-  "proof": { "items": ["0x...", ...] }
+  "items": ["0x...", ...]
 }
 
 Get Chunk Proof

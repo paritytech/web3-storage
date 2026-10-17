@@ -176,7 +176,7 @@ mod tests {
 
     impl sp_core::Hasher for StorageHasher {
         type Out = H256;
-        type StdHasher = hash256_std_hasher::Hash256StdHasher;
+        type StdHasher = <sp_core::Blake2Hasher as sp_core::Hasher>::StdHasher;
         const LENGTH: usize = 32;
 
         fn hash(x: &[u8]) -> H256 {

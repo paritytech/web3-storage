@@ -10137,7 +10137,6 @@ name = "storage-primitives"
 version = "0.1.0"
 dependencies = [
  "binary-merkle-tree",
- "hash256-std-hasher",
  "parity-scale-codec",
  "polkadot-ckb-merkle-mountain-range",
  "scale-info",

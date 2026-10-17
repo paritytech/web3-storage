@@ -19,16 +19,10 @@ pub use provider_types::ProviderInfo;
 /// Decode a `0x`-prefixed or bare hex hash. Returns `InvalidHash` if the hex is
 /// invalid or the length is not 32 bytes.
 pub(crate) fn decode_hash(hash: &str) -> Result<H256, Error> {
-    let invalid = |actual: String| Error::InvalidHash {
+    hash.parse::<H256>().map_err(|e| Error::InvalidHash {
         expected: hash.to_string(),
-        actual,
-    };
-    let bytes = hex::decode(hash.strip_prefix("0x").unwrap_or(hash))
-        .map_err(|_| invalid("invalid hex".to_string()))?;
-    if bytes.len() != 32 {
-        return Err(invalid(format!("{} bytes", bytes.len())));
-    }
-    Ok(H256::from_slice(&bytes))
+        actual: e.to_string(),
+    })
 }
 
 /// Request to upload a node (chunk or internal node).
@@ -192,27 +186,6 @@ pub struct MmrProofQuery {
     pub leaf_index: u64,
 }
 
-/// MMR leaf data.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MmrLeafData {
-    pub data_root: String,
-    pub data_size: u64,
-    pub total_size: u64,
-}
-
-/// MMR proof response.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MmrProofResponse {
-    pub leaf: MmrLeafData,
-    pub proof: MmrProofData,
-}
-
-/// MMR proof data.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MmrProofData {
-    pub items: Vec<String>,
-}
-
 /// Query for chunk proof.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ChunkProofQuery {
@@ -223,18 +196,11 @@ pub struct ChunkProofQuery {
 /// Chunk proof response.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChunkProofResponse {
-    pub chunk_hash: String,
+    pub chunk_hash: H256,
     /// Base64-encoded chunk data (included for challenge responses)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub chunk_data: Option<String>,
-    pub proof: MerkleProofData,
-}
-
-/// Merkle proof data.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MerkleProofData {
-    pub siblings: Vec<String>,
-    pub path: Vec<bool>,
+    pub proof: storage_primitives::MerkleProof,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
