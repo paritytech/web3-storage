@@ -117,7 +117,7 @@ pub struct CommitRequest {
 pub struct CommitResponse {
     pub mmr_root: String,
     pub start_seq: u64,
-    /// Number of leaves in the MMR after the commit.
+    /// Leaf count of the MMR after this commit (signed into the commitment).
     pub leaf_count: u64,
     /// Leaf indices assigned to each data root
     pub leaf_indices: Vec<u64>,
@@ -210,8 +210,6 @@ pub struct MmrProofResponse {
 /// MMR proof data.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MmrProofData {
-    pub leaf_index: u64,
-    pub leaf_count: u64,
     pub items: Vec<String>,
 }
 

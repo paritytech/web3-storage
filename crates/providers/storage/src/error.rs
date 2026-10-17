@@ -9,6 +9,9 @@ pub enum Error {
     #[error("Node not found: {0}")]
     NodeNotFound(String),
 
+    #[error("Commitment not reproducible from local leaves: {0}")]
+    CommitmentNotReproducible(String),
+
     #[error("Children missing: {0:?}")]
     ChildrenMissing(Vec<String>),
 

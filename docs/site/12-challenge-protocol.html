@@ -643,6 +643,7 @@
           <li>&bull; Private bucket, primary provider: member or primary-agreement owner only (NotAuthorizedForPrivateBucket)</li>
           <li>&bull; The gate reads the provider&#39;s role from its current agreement; replicas are open to anyone</li>
           <li>&bull; Tier: authorized (member or any agreement owner) or public, stored in Challenge.authorized at creation</li>
+          <li>&bull; The target leaf must exist: leaf_index below the commitment&#39;s leaf_count, else LeafNotInCommitment</li>
         </ul>
       </div>
 
@@ -667,7 +668,7 @@
           <h3>Responses and rejections</h3>
         </div>
         <ul>
-          <li>&bull; Proof: chunk in leaf, leaf in committed MMR; else InvalidProof</li>
+          <li>&bull; Proof: chunk in leaf, leaf at the challenged leaf_index in the committed MMR; else InvalidProof</li>
           <li>&bull; Deleted: admin-signed commitment with new_start_seq above the challenged leaf; else InvalidDeletionClaim</li>
           <li>&bull; Superseded: a newer canonical snapshot covers the leaf; else InvalidSupersededClaim</li>
           <li>&bull; A rejected response costs the provider its tx fee; the challenge stays open until the deadline</li>

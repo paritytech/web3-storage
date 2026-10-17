@@ -147,8 +147,6 @@ pub fn mmr_proof(p: &storage_primitives::MmrProof) -> rt::MmrProof {
             data_size: p.leaf.data_size,
             total_size: p.leaf.total_size,
         },
-        leaf_index: p.leaf_index,
-        leaf_count: p.leaf_count,
         items: p.items.clone(),
     }
 }

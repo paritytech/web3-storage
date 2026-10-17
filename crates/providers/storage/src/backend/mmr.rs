@@ -18,11 +18,13 @@ fn mmr_error(error: mmr_lib::Error) -> Error {
     Error::Mmr(error.to_string())
 }
 
-fn push_leaves(mmr: &mut LeafMmr, leaves: &[MmrLeaf]) -> Result<(), Error> {
+/// The MMR over `leaves`, with its nodes in `store`.
+fn build<'a>(store: &'a MemStore<H256>, leaves: &[MmrLeaf]) -> Result<LeafMmr<'a>, Error> {
+    let mut mmr = LeafMmr::new(0, store);
     for leaf in leaves {
         mmr.push(hash_leaf(&leaf.encode())).map_err(mmr_error)?;
     }
-    Ok(())
+    Ok(mmr)
 }
 
 /// Root of the MMR over `leaves`. No leaves give the zero root.
@@ -31,9 +33,7 @@ pub(super) fn mmr_root(leaves: &[MmrLeaf]) -> Result<H256, Error> {
         return Ok(H256::zero());
     }
     let store = MemStore::default();
-    let mut mmr = LeafMmr::new(0, &store);
-    push_leaves(&mut mmr, leaves)?;
-    mmr.get_root().map_err(mmr_error)
+    build(&store, leaves)?.get_root().map_err(mmr_error)
 }
 
 /// Root and peaks (left to right) of the MMR over `leaves`.
@@ -42,12 +42,12 @@ pub(super) fn mmr_peaks(leaves: &[MmrLeaf]) -> Result<(H256, Vec<H256>), Error> 
         return Ok((H256::zero(), Vec::new()));
     }
     let store = MemStore::default();
-    let mut mmr = LeafMmr::new(0, &store);
-    push_leaves(&mut mmr, leaves)?;
+    let mut mmr = build(&store, leaves)?;
     let root = mmr.get_root().map_err(mmr_error)?;
+    let mmr_size = mmr.mmr_size();
     mmr.commit().map_err(mmr_error)?;
 
-    let peaks = get_peaks(mmr.mmr_size())
+    let peaks = get_peaks(mmr_size)
         .into_iter()
         .map(|pos| {
             (&store)
@@ -59,34 +59,29 @@ pub(super) fn mmr_peaks(leaves: &[MmrLeaf]) -> Result<(H256, Vec<H256>), Error> 
     Ok((root, peaks))
 }
 
-/// Proof that the leaf at `leaf_index` is in the MMR over `leaves`.
-pub(super) fn mmr_proof(leaves: &[MmrLeaf], leaf_index: u64) -> Result<MmrProof, Error> {
+/// Root of the MMR over `leaves` and the proof for the leaf at `leaf_index`.
+pub(super) fn mmr_proof(leaves: &[MmrLeaf], leaf_index: u64) -> Result<(H256, MmrProof), Error> {
     let leaf = leaves
         .get(leaf_index as usize)
         .ok_or(Error::NodeNotFound(format!("leaf_{leaf_index}")))?
         .clone();
 
     let store = MemStore::default();
-    let mut mmr = LeafMmr::new(0, &store);
-    push_leaves(&mut mmr, leaves)?;
+    let mmr = build(&store, leaves)?;
+    let root = mmr.get_root().map_err(mmr_error)?;
     let items = mmr
         .gen_proof(vec![mmr_lib::leaf_index_to_pos(leaf_index)])
         .map_err(mmr_error)?
         .proof_items()
         .to_vec();
 
-    Ok(MmrProof {
-        leaf,
-        leaf_index,
-        leaf_count: leaves.len() as u64,
-        items,
-    })
+    Ok((root, MmrProof { leaf, items }))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use storage_primitives::bag_peaks;
+    use storage_primitives::{bag_peaks, Commitment};
 
     fn leaf(i: u64) -> MmrLeaf {
         MmrLeaf {
@@ -161,12 +156,17 @@ mod tests {
     fn proofs_verify_for_every_leaf() {
         for leaf_count in 1..=33u64 {
             let all = leaves(leaf_count);
-            let root = mmr_root(&all).unwrap();
+            let commitment = Commitment {
+                mmr_root: mmr_root(&all).unwrap(),
+                start_seq: 0,
+                leaf_count,
+            };
             for leaf_index in 0..leaf_count {
-                let proof = mmr_proof(&all, leaf_index).unwrap();
+                let (root, proof) = mmr_proof(&all, leaf_index).unwrap();
+                assert_eq!(root, commitment.mmr_root);
                 assert_eq!(proof.leaf, all[leaf_index as usize]);
                 assert!(
-                    storage_primitives::verify_mmr_proof(&proof, &root),
+                    storage_primitives::verify_mmr_proof(&proof, leaf_index, &commitment),
                     "leaf {leaf_index} of {leaf_count}"
                 );
             }

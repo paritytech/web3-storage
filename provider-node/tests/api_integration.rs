@@ -1176,8 +1176,6 @@ common::backend_tests! {
                 data_size: body["leaf"]["data_size"].as_u64().unwrap(),
                 total_size: body["leaf"]["total_size"].as_u64().unwrap(),
             },
-            leaf_index: body["proof"]["leaf_index"].as_u64().unwrap(),
-            leaf_count: body["proof"]["leaf_count"].as_u64().unwrap(),
             items: body["proof"]["items"]
                 .as_array()
                 .unwrap()
@@ -1185,12 +1183,13 @@ common::backend_tests! {
                 .map(h256)
                 .collect(),
         };
-        assert_eq!((proof.leaf_index, proof.leaf_count), (1, 2));
         assert!(!proof.items.is_empty());
-        assert!(storage_primitives::verify_mmr_proof(
-            &proof,
-            &h256(&peaks["mmr_root"])
-        ));
+        let commitment = storage_primitives::Commitment {
+            mmr_root: h256(&peaks["mmr_root"]),
+            start_seq: 0,
+            leaf_count: 2,
+        };
+        assert!(storage_primitives::verify_mmr_proof(&proof, 1, &commitment));
     }
 }
 

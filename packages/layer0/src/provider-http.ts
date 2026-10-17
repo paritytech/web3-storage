@@ -246,8 +246,6 @@ export async function fetchChallengeProof(
         data_size: BigInt(mmr.leaf.data_size),
         total_size: BigInt(mmr.leaf.total_size),
       },
-      leaf_index: BigInt(mmr.proof.leaf_index),
-      leaf_count: BigInt(mmr.proof.leaf_count),
       items: mmr.proof.items.map((h: string) => asHex(h)),
     },
     chunk_proof: {

@@ -653,8 +653,11 @@ pub mod pallet {
         pub primary_providers: BoundedVec<T::AccountId, T::MaxPrimaryProviders>,
         /// Current canonical state.
         pub snapshot: Option<BucketSnapshot<BlockNumberFor<T>>>,
-        /// Historical MMR roots for replica sync validation.
-        pub historical_roots: [(u32, H256); 6],
+        /// Recent snapshot commitments for replica sync validation, one per
+        /// prime-spaced position (see `update_historical_roots`). Each entry is
+        /// the full commitment, so a replica that syncs to one of these roots
+        /// records a range `challenge_replica` can bind a proof to.
+        pub historical_roots: [(u32, Commitment); 6],
         /// Total snapshots created for this bucket.
         pub total_snapshots: u32,
     }
@@ -709,10 +712,9 @@ pub mod pallet {
         pub provider: T::AccountId,
         /// Account that issued the challenge.
         pub challenger: T::AccountId,
-        /// MMR root the provider committed to.
-        pub mmr_root: H256,
-        /// Start sequence of the commitment.
-        pub start_seq: u64,
+        /// The commitment being challenged; its `leaf_count` binds the proof
+        /// to the exact `leaf_index` in `respond_to_challenge`.
+        pub commitment: Commitment,
         /// Leaf + chunk being challenged.
         pub target: ChunkLocation,
         /// Deposit locked by challenger.
@@ -1216,6 +1218,10 @@ pub mod pallet {
         /// is no on-chain commitment to challenge; use `challenge_offchain`
         /// with a signed commitment instead.
         ProviderNotInSnapshot,
+        /// `target.leaf_index` is not below the commitment's `leaf_count`: the
+        /// leaf does not exist, so no proof could defend the challenge. Pick a
+        /// `leaf_index` below `leaf_count`.
+        LeafNotInCommitment,
         /// A provider with unresolved challenges (`PendingChallenges > 0`)
         /// cannot complete deregistration — they are still slashable.
         ProviderHasPendingChallenges,
@@ -2434,7 +2440,7 @@ pub mod pallet {
                 let anchor_block = Self::current_anchor_block();
 
                 // Update historical roots
-                Self::update_historical_roots(bucket, anchor_block, commitment.mmr_root);
+                Self::update_historical_roots(bucket, anchor_block, commitment);
 
                 bucket.snapshot = Some(BucketSnapshot {
                     commitment,
@@ -2561,11 +2567,7 @@ pub mod pallet {
             origin: OriginFor<T>,
             bucket_id: BucketId,
             provider: T::AccountId,
-            // `commitment` carries the `(mmr_root, start_seq, leaf_count)` the
-            // provider signed. The challenger passes it through so the payload
-            // reconstruction matches the signed `CommitmentPayload` exactly.
             commitment: Commitment,
-            // `target` is the leaf+chunk being challenged within `commitment`.
             target: ChunkLocation,
             provider_signature: sp_runtime::MultiSignature,
         ) -> DispatchResult {
@@ -2721,8 +2723,11 @@ pub mod pallet {
                         chunk_proof,
                         &mmr_proof.leaf.data_root,
                     );
-                    let mmr_ok =
-                        storage_primitives::verify_mmr_proof(mmr_proof, &challenge.mmr_root);
+                    let mmr_ok = storage_primitives::verify_mmr_proof(
+                        mmr_proof,
+                        challenge.target.leaf_index,
+                        &challenge.commitment,
+                    );
                     ensure!(chunk_ok && mmr_ok, Error::<T>::InvalidProof);
                 }
                 ChallengeResponse::Deleted {
@@ -2734,6 +2739,7 @@ pub mod pallet {
                     Self::ensure_admin(admin, &bucket)?;
 
                     let challenged_seq = challenge
+                        .commitment
                         .start_seq
                         .saturating_add(challenge.target.leaf_index);
                     ensure!(
@@ -2765,10 +2771,11 @@ pub mod pallet {
                         .as_ref()
                         .ok_or(Error::<T>::InvalidSupersededClaim)?;
                     let challenged_seq = challenge
+                        .commitment
                         .start_seq
                         .saturating_add(challenge.target.leaf_index);
                     ensure!(
-                        challenge.mmr_root != snapshot.commitment.mmr_root
+                        challenge.commitment.mmr_root != snapshot.commitment.mmr_root
                             && snapshot.contains_seq(challenged_seq),
                         Error::<T>::InvalidSupersededClaim
                     );
@@ -2935,14 +2942,12 @@ pub mod pallet {
                         ensure!(anchor_block >= min_next_block, Error::<T>::SyncTooFrequent);
                     }
 
-                    // Find matching root position
-                    let (position_matched, matched_root) =
-                        Self::find_matching_root(&bucket, &roots)?;
+                    let matched = Self::find_matching_root(&bucket, &roots)?;
 
                     // Check it's a new root
                     if let Some(record) = last_sync {
                         ensure!(
-                            matched_root != record.commitment.mmr_root,
+                            matched.commitment.mmr_root != record.commitment.mmr_root,
                             Error::<T>::InvalidSyncRoot
                         );
                     }
@@ -2954,32 +2959,8 @@ pub mod pallet {
                     );
                     *sync_balance = sync_balance.saturating_sub(*sync_price);
 
-                    // Capture sequence metadata for the matched root so a
-                    // future `challenge_replica` can target a specific leaf.
-                    // For the current snapshot (position_matched == 0) we
-                    // know start_seq + leaf_count exactly. Historical roots
-                    // don't carry sequence metadata in `historical_roots`, so
-                    // they default to 0 here — challenges targeting a leaf
-                    // beyond seq 0 in that case still work because
-                    // `challenge_replica` only uses `start_seq` as an offset
-                    // additive identity.
-                    let (start_seq, leaf_count) = if position_matched == 0 {
-                        bucket
-                            .snapshot
-                            .as_ref()
-                            .map(|s| (s.commitment.start_seq, s.commitment.leaf_count))
-                            .unwrap_or((0, 0))
-                    } else {
-                        (0u64, 0u64)
-                    };
-
-                    // Update last sync
                     *last_sync = Some(ReplicaSyncRecord {
-                        commitment: Commitment {
-                            mmr_root: matched_root,
-                            start_seq,
-                            leaf_count,
-                        },
+                        commitment: matched.commitment,
                         block: anchor_block,
                     });
 
@@ -2999,8 +2980,8 @@ pub mod pallet {
                     Self::deposit_event(Event::ReplicaSynced {
                         bucket_id,
                         provider: who.clone(),
-                        mmr_root: matched_root,
-                        position_matched,
+                        mmr_root: matched.commitment.mmr_root,
+                        position_matched: matched.position,
                         sync_payment: *sync_price,
                     });
 
