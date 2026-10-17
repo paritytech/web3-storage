@@ -341,7 +341,7 @@
       "items": [
         "ProviderInfo also has multiaddr, public_key, stats",
         "role: Primary, or Replica { sync_balance, sync_price, min_sync_interval, last_sync }",
-        "PendingChallengesByBucket also gates claim_expired_agreement",
+        "PendingChallengesByBucket also gates claim_expired_agreement and remove_slashed",
         "AgreementNonces: AccountId → next expected terms.nonce; redemption advances it (NonceMismatch)"
       ]
     },

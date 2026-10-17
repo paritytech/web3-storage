@@ -669,8 +669,8 @@
         </div>
         <ul>
           <li>&bull; Proof: chunk in leaf, leaf at the challenged leaf_index in the committed MMR; else InvalidProof</li>
-          <li>&bull; Deleted: admin-signed commitment with new_start_seq above the challenged leaf; else InvalidDeletionClaim</li>
-          <li>&bull; Superseded: a newer canonical snapshot covers the leaf; else InvalidSupersededClaim</li>
+          <li>&bull; Deleted (primary providers only): admin-signed commitment with new_start_seq above the challenged leaf; a replica, or no such commitment, gets InvalidDeletionClaim</li>
+          <li>&bull; Superseded (primary providers only): a newer canonical snapshot covers the leaf; a replica, or no such snapshot, gets InvalidSupersededClaim</li>
           <li>&bull; A rejected response costs the provider its tx fee; the challenge stays open until the deadline</li>
           <li>&bull; No response by the deadline: anyone calls resolve_expired_challenge (free on success); only a timeout slashes</li>
         </ul>
@@ -684,7 +684,7 @@
         <ul>
           <li>&bull; The provider loses its full stake, not a per-bucket share</li>
           <li>&bull; The challenger gets the deposit and tx fees back, with no reward</li>
-          <li>&bull; Anyone can call remove_slashed; the owner gets the remaining agreement payment back</li>
+          <li>&bull; Anyone can call remove_slashed once the provider has no open challenge on the bucket (AgreementHasPendingChallenge); the owner gets the remaining agreement payment back</li>
         </ul>
       </div>
     </div>

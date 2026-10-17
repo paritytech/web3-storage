@@ -345,7 +345,7 @@
           <rect x="332" y="622" width="194" height="16" rx="3" class="c-mask"/>
           <text x="429" y="632" class="t-messagebus" font-size="9" text-anchor="middle">remove_slashed(bucket_id, provider)</text>
         </g>
-        <text data-detail="fine" x="176" y="660" class="t-dim" font-size="7">anyone may call</text>
+        <text data-detail="fine" x="176" y="660" class="t-dim" font-size="7">anyone may call once no challenge is open</text>
         </g>
 
         <g data-edge-from="pallet" data-edge-to="holds" data-edge-label="remaining AgreementPayment to owner" data-edge-key="14" data-edge-id="payment">
@@ -670,7 +670,7 @@
         </div>
         <ul>
           <li>&bull; Gates complete_deregister; the provider may call resolve_expired_challenge itself</li>
-          <li>&bull; PendingChallengesByBucket gates end_agreement, claim_expired_agreement</li>
+          <li>&bull; PendingChallengesByBucket gates end_agreement, claim_expired_agreement, remove_slashed</li>
           <li>&bull; Each resolution decrements both once</li>
         </ul>
       </div>

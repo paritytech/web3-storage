@@ -324,8 +324,8 @@
       "title": "Responses and rejections",
       "items": [
         "Proof: chunk in leaf, leaf at the challenged leaf_index in the committed MMR; else InvalidProof",
-        "Deleted: admin-signed commitment with new_start_seq above the challenged leaf; else InvalidDeletionClaim",
-        "Superseded: a newer canonical snapshot covers the leaf; else InvalidSupersededClaim",
+        "Deleted (primary providers only): admin-signed commitment with new_start_seq above the challenged leaf; a replica, or no such commitment, gets InvalidDeletionClaim",
+        "Superseded (primary providers only): a newer canonical snapshot covers the leaf; a replica, or no such snapshot, gets InvalidSupersededClaim",
         "A rejected response costs the provider its tx fee; the challenge stays open until the deadline",
         "No response by the deadline: anyone calls resolve_expired_challenge (free on success); only a timeout slashes"
       ]
@@ -336,7 +336,7 @@
       "items": [
         "The provider loses its full stake, not a per-bucket share",
         "The challenger gets the deposit and tx fees back, with no reward",
-        "Anyone can call remove_slashed; the owner gets the remaining agreement payment back"
+        "Anyone can call remove_slashed once the provider has no open challenge on the bucket (AgreementHasPendingChallenge); the owner gets the remaining agreement payment back"
       ]
     }
   ]
