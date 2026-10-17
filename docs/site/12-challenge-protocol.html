@@ -129,7 +129,7 @@
       </div>
     </div>
 
-    <script id="archify-guided-views-data" type="application/json">[{"id":"happy-path","label":"Defended challenge","focus":["open","gate","window","respond","verify","defended"],"note":"A valid response before the deadline leaves the stake untouched. The deposit reimburses the response fee per tier."},{"id":"gate-view","label":"Who may challenge","focus":["open","gate","denied"],"note":"The chain rejects a self-challenge, and a private-bucket primary challenge from a non-member without a primary agreement."},{"id":"failure","label":"Slash","focus":["window","verify","rejected","expire","slashed"],"note":"Invalid responses are rejected; the challenge stays open. After the deadline, resolve_expired_challenge (anyone) slashes the full stake."},{"id":"exit","label":"Cancel","focus":["open","window","cancelled"],"note":"The design doc allows cancel before the response. The implementation doc defines no cancel extrinsic yet."}]</script>
+    <script id="archify-guided-views-data" type="application/json">[{"id":"happy-path","label":"Defended challenge","focus":["open","gate","window","respond","verify","defended"],"note":"A valid response before the deadline leaves the stake untouched. The deposit reimburses the response fee per tier."},{"id":"gate-view","label":"Who may challenge","focus":["open","gate","denied"],"note":"The chain rejects a self-challenge, and a private-bucket primary challenge from a non-member without a primary agreement."},{"id":"failure","label":"Slash","focus":["window","verify","rejected","expire","slashed"],"note":"Invalid responses are rejected; the challenge stays open. After the deadline, resolve_expired_challenge (anyone) slashes the full stake."},{"id":"exit","label":"Cancel","focus":["open","window","cancelled"],"note":"cancel_challenge: the challenger withdraws before the response, no later than the deadline. Deposit released in full; stats untouched."}]</script>
 
     <script src="assets/archify/i18n.js?v=b331908a8a55"></script>
     <div class="guided-views no-print" id="guided-views" hidden aria-label="Guided diagram views">
@@ -229,7 +229,7 @@
 
         <!-- Edge paths -->
         <path data-edge-from="gate" data-edge-to="window" data-edge-label="authorized or public" data-edge-key="0" data-edge-id="admitted" data-composition-points="308,246;422,246" d="M 308 246 L 422 246" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
-        <path data-edge-from="window" data-edge-to="cancelled" data-edge-label="cancel before response" data-edge-key="1" data-edge-id="cancel" data-composition-points="492,212;492,154" d="M 492 212 L 492 154" class="a-dashed" stroke-width="1.4" marker-end="url(#arrowhead-dashed)"/>
+        <path data-edge-from="window" data-edge-to="cancelled" data-edge-label="cancel_challenge" data-edge-key="1" data-edge-id="cancel" data-composition-points="492,212;492,154" d="M 492 212 L 492 154" class="a-dashed" stroke-width="1.4" marker-end="url(#arrowhead-dashed)"/>
         <path data-edge-from="window" data-edge-to="expire" data-edge-label="no response by the deadline" data-edge-key="2" data-edge-id="expired" data-composition-points="492,280;492,552;612,552;612,532" d="M 492 280 L 492 552 L 612 552 L 612 532" class="a-security" stroke-width="1.4" marker-end="url(#arrowhead-security)"/>
         <path data-edge-from="verify" data-edge-to="rejected" data-edge-label="invalid" data-edge-key="3" data-edge-id="invalid" data-composition-points="770,272;770,294;861,294;861,372;845,372" d="M 770 272 L 770 294 L 861 294 L 861 372 L 845 372" class="a-security" stroke-width="1.4" marker-end="url(#arrowhead-security)"/>
         <path data-edge-from="respond" data-edge-to="verify" data-edge-key="4" data-edge-id="judge" data-composition-points="612,346;612,246;695,246" d="M 612 346 L 612 246 L 695 246" class="a-security" stroke-width="1.4" marker-end="url(#arrowhead-security)"/>
@@ -255,8 +255,8 @@
         <text data-detail="fine" x="118" y="142" class="t-frontend" font-size="7" text-anchor="middle">ChallengeDeposit</text>
         </g>
 
-        <g id="node-cancelled" data-node-id="cancelled" data-node-label="Cancel" tabindex="0" role="button" aria-label="Focus Cancel, design doc only, Challenger › Wait and answer" aria-pressed="false" data-node-kind="messagebus" data-node-sublabel="design doc only" data-node-tag="no extrinsic" data-node-context="Challenger › Wait and answer">
-          <title>Cancel · design doc only · Challenger › Wait and answer · no extrinsic</title>
+        <g id="node-cancelled" data-node-id="cancelled" data-node-label="Cancel" tabindex="0" role="button" aria-label="Focus Cancel, cancel_challenge, Challenger › Wait and answer" aria-pressed="false" data-node-kind="messagebus" data-node-sublabel="cancel_challenge" data-node-tag="challenger only" data-node-context="Challenger › Wait and answer">
+          <title>Cancel · cancel_challenge · Challenger › Wait and answer · challenger only</title>
           <rect x="422" y="86" width="140" height="68" rx="6" class="c-mask"/>
           <rect x="422" y="86" width="140" height="68" rx="6" class="c-messagebus" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="messagebus" class="semantic-sigil s-messagebus" transform="translate(428 92) scale(0.6875)">
@@ -266,8 +266,8 @@
             <circle cx="7" cy="11.5" r="1" class="sigil-fill"/>
           </g>
           <text data-node-label="" data-detail-anchor="" x="492" y="107" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Cancel</text>
-          <text data-detail="context" x="492" y="124" class="t-muted" font-size="8" text-anchor="middle">design doc only</text>
-        <text data-detail="fine" x="492" y="142" class="t-messagebus" font-size="7" text-anchor="middle">no extrinsic</text>
+          <text data-detail="context" x="492" y="124" class="t-muted" font-size="8" text-anchor="middle">cancel_challenge</text>
+        <text data-detail="fine" x="492" y="142" class="t-messagebus" font-size="7" text-anchor="middle">challenger only</text>
         </g>
 
         <g id="node-gate" data-node-id="gate" data-node-label="Authorization Gate" tabindex="0" role="button" aria-label="Focus Authorization Gate, tier fixed at creation, Chain › Open" aria-pressed="false" data-node-kind="security" data-node-sublabel="tier fixed at creation" data-node-context="Chain › Open">
@@ -386,9 +386,9 @@
           <rect x="312" y="226" width="106" height="14" rx="3" class="c-mask"/>
           <text x="365" y="236" class="t-muted" font-size="8" text-anchor="middle">authorized or public</text>
         </g>
-        <g data-detail="context" data-edge-from="window" data-edge-to="cancelled" data-edge-label="cancel before response" data-edge-key="1" data-edge-id="cancel">
-          <rect x="434.2" y="192" width="115.6" height="14" rx="3" class="c-mask"/>
-          <text x="492" y="202" class="t-database" font-size="8" text-anchor="middle">cancel before response</text>
+        <g data-detail="context" data-edge-from="window" data-edge-to="cancelled" data-edge-label="cancel_challenge" data-edge-key="1" data-edge-id="cancel">
+          <rect x="448.6" y="192" width="86.8" height="14" rx="3" class="c-mask"/>
+          <text x="492" y="202" class="t-database" font-size="8" text-anchor="middle">cancel_challenge</text>
         </g>
         <g data-detail="context" data-edge-from="window" data-edge-to="expire" data-edge-label="no response by the deadline" data-edge-key="2" data-edge-id="expired">
           <rect x="482.2" y="532" width="139.6" height="14" rx="3" class="c-mask"/>
@@ -673,6 +673,7 @@
           <li>&bull; Superseded: a newer canonical snapshot covers the leaf; else InvalidSupersededClaim</li>
           <li>&bull; A rejected response costs the provider its tx fee; the challenge stays open until the deadline</li>
           <li>&bull; No response by the deadline: anyone calls resolve_expired_challenge (free on success); only a timeout slashes</li>
+          <li>&bull; cancel_challenge (challenger only, before the response and no later than the deadline): deposit released in full, provider stats untouched (ChallengeCancelled)</li>
         </ul>
       </div>
 

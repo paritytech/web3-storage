@@ -82,7 +82,7 @@ export interface Challenge {
   chunkIndex: number
   mmrRoot: string
   startSeq: number
-  status: 'pending' | 'responded' | 'slashed' | 'expired'
+  status: 'pending' | 'responded' | 'slashed' | 'expired' | 'cancelled'
   challengeType?: 'offchain' | 'checkpoint' | 'unknown'
   // Optional: challenges built from event payloads don't carry the tier.
   authorized?: boolean

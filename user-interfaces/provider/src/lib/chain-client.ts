@@ -277,7 +277,7 @@ export interface OnChainChallenge {
   chunkIndex: number
   mmrRoot: string
   startSeq: number
-  status: 'pending' | 'responded' | 'slashed' | 'expired'
+  status: 'pending' | 'responded' | 'slashed' | 'expired' | 'cancelled'
   challengeType?: 'offchain' | 'checkpoint' | 'unknown'
   // Optional: event payloads don't carry the tier, only storage entries do.
   authorized?: boolean
@@ -802,6 +802,27 @@ export function subscribeToChallengeEvents(
     },
     error: (err) => console.error('ChallengeSlashed subscription error:', err),
   })
+  const cancelled = a.event.StorageProvider.ChallengeCancelled.watch().subscribe({
+    next: ({ events }) => {
+      for (const { payload } of events) {
+        if (!isSameAddress(payload.provider, address)) continue
+        onChallenge({
+          id: Number(payload.challenge_id.index),
+          bucketId: Number(payload.bucket_id),
+          challenger: payload.challenger,
+          provider: address,
+          leafIndex: 0,
+          chunkIndex: 0,
+          mmrRoot: '',
+          startSeq: 0,
+          status: 'cancelled',
+          createdAt: 0,
+          deadline: Number(payload.challenge_id.deadline),
+        })
+      }
+    },
+    error: (err) => console.error('ChallengeCancelled subscription error:', err),
+  })
   // Avoid "unused" warning on c since the function captured it for closure-
   // visibility purposes in case future changes need raw client access.
   void c
@@ -809,5 +830,6 @@ export function subscribeToChallengeEvents(
     created.unsubscribe()
     defended.unsubscribe()
     slashed.unsubscribe()
+    cancelled.unsubscribe()
   }
 }

@@ -48,7 +48,7 @@
           "window",
           "cancelled"
         ],
-        "note": "The design doc allows cancel before the response. The implementation doc defines no cancel extrinsic yet."
+        "note": "cancel_challenge: the challenger withdraws before the response, no later than the deadline. Deposit released in full; stats untouched."
       }
     ]
   },
@@ -118,8 +118,8 @@
       "col": 2,
       "type": "messagebus",
       "label": "Cancel",
-      "sublabel": "design doc only",
-      "tag": "no extrinsic",
+      "sublabel": "cancel_challenge",
+      "tag": "challenger only",
       "width": 140
     },
     {
@@ -242,7 +242,7 @@
       "id": "cancel",
       "from": "window",
       "to": "cancelled",
-      "label": "cancel before response",
+      "label": "cancel_challenge",
       "role": "branch",
       "variant": "dashed"
     },
@@ -327,7 +327,8 @@
         "Deleted: admin-signed commitment with new_start_seq above the challenged leaf; else InvalidDeletionClaim",
         "Superseded: a newer canonical snapshot covers the leaf; else InvalidSupersededClaim",
         "A rejected response costs the provider its tx fee; the challenge stays open until the deadline",
-        "No response by the deadline: anyone calls resolve_expired_challenge (free on success); only a timeout slashes"
+        "No response by the deadline: anyone calls resolve_expired_challenge (free on success); only a timeout slashes",
+        "cancel_challenge (challenger only, before the response and no later than the deadline): deposit released in full, provider stats untouched (ChallengeCancelled)"
       ]
     },
     {
