@@ -200,6 +200,12 @@ export async function fetchCheckpointSignature(
   });
 }
 
+/** The `Proof` payload of a `respond_to_challenge` response. */
+export type ChallengeProof = Extract<
+  Parameters<ParachainApi["tx"]["StorageProvider"]["respond_to_challenge"]>[0]["response"],
+  { type: "Proof" }
+>["value"];
+
 /**
  * Build the proof payload for `respond_to_challenge` by reading the challenge
  * from chain state and fetching MMR + chunk proofs from the provider node.
@@ -208,7 +214,7 @@ export async function fetchChallengeProof(
   api: ParachainApi,
   providerUrl: string,
   challengeId: { deadline: number; index: number },
-): Promise<any> {
+): Promise<ChallengeProof> {
   // Best block: a finalized read would lag the just-created challenge.
   // Challenges is a StorageDoubleMap keyed by (deadline, index), so the single
   // challenge is read directly with both keys.
@@ -241,16 +247,12 @@ export async function fetchChallengeProof(
   return {
     chunk_data: base64ToBytes(chunk.chunk_data),
     mmr_proof: {
-      peaks: mmr.proof.peaks.map((h: string) => asHex(h)),
       leaf: {
         data_root: asHex(mmr.leaf.data_root),
         data_size: BigInt(mmr.leaf.data_size),
         total_size: BigInt(mmr.leaf.total_size),
       },
-      leaf_proof: {
-        siblings: mmr.proof.siblings.map((h: string) => asHex(h)),
-        path: mmr.proof.path,
-      },
+      items: mmr.items.map((h: string) => asHex(h)),
     },
     chunk_proof: {
       siblings: chunk.proof.siblings.map((h: string) => asHex(h)),

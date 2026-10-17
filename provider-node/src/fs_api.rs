@@ -129,7 +129,7 @@ pub async fn fs_put_file(
     state.fs_index.put_file(bucket_id, path, meta);
 
     Ok(Json(PutFileResponse {
-        data_root: format!("0x{}", hex::encode(data_root.as_bytes())),
+        data_root,
         size,
         leaf_index,
     }))
@@ -273,7 +273,7 @@ pub async fn fs_index_root(
 
     Ok(Json(FsIndexRootResponse {
         bucket_id,
-        metadata_merkle_root: format!("0x{}", hex::encode(root.as_bytes())),
+        metadata_merkle_root: root,
         file_count,
         dir_count,
         total_size,
@@ -286,7 +286,7 @@ pub async fn fs_index_root(
 
 #[derive(Debug, Serialize)]
 pub struct PutFileResponse {
-    pub data_root: String,
+    pub data_root: H256,
     pub size: u64,
     pub leaf_index: u64,
 }
@@ -323,7 +323,7 @@ pub struct ListDirResponse {
 #[derive(Debug, Serialize)]
 pub struct FsIndexRootResponse {
     pub bucket_id: BucketId,
-    pub metadata_merkle_root: String,
+    pub metadata_merkle_root: H256,
     pub file_count: u64,
     pub dir_count: u64,
     pub total_size: u64,

@@ -223,7 +223,8 @@ impl IntoResponse for Error {
                 ),
                 e @ (StorageError::RocksDb(_)
                 | StorageError::ColumnFamilyMissing(_)
-                | StorageError::IncompatibleFormat(_)) => (
+                | StorageError::IncompatibleFormat(_)
+                | StorageError::Mmr(_)) => (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     ErrorResponse {
                         error: "internal_error".to_string(),

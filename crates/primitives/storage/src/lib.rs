@@ -12,6 +12,7 @@ extern crate alloc;
 use alloc::vec::Vec;
 use codec::{Decode, DecodeWithMemTracking, Encode, MaxEncodedLen};
 use core::fmt::Debug;
+use polkadot_ckb_merkle_mountain_range::{self as mmr_lib, Merge};
 use scale_info::TypeInfo;
 use sp_core::H256;
 
@@ -251,15 +252,19 @@ pub struct MerkleProof {
 }
 
 /// MMR proof for verifying leaf inclusion.
+///
+/// The proof does not contain the leaf index or the MMR size: the verifier
+/// takes both from the challenge and its commitment (see [`verify_mmr_proof`]).
 #[derive(Clone, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct MmrProof {
-    /// Peaks of the MMR
-    pub peaks: Vec<H256>,
     /// The leaf being proven
     pub leaf: MmrLeaf,
-    /// Proof from leaf to peak
-    pub leaf_proof: MerkleProof,
+    /// Proof hashes: one per peak to the left of the leaf's peak, then the
+    /// siblings from the leaf up to its peak, then one item for all peaks to
+    /// the right (the bagged peaks if there are several). The leaf's own peak
+    /// is not included, because the verifier computes it.
+    pub items: Vec<H256>,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -482,8 +487,13 @@ const PEAK_PREFIX: u8 = 0x02;
 /// Leaves and internal nodes use different prefixes, so the bytes of an
 /// internal node never hash to the same value as a leaf.
 pub fn hash_leaf(data: &[u8]) -> H256 {
+    hash_prefixed(LEAF_PREFIX, data)
+}
+
+/// `blake2_256(prefix ++ data)`.
+fn hash_prefixed(prefix: u8, data: &[u8]) -> H256 {
     let mut preimage = Vec::with_capacity(1 + data.len());
-    preimage.push(LEAF_PREFIX);
+    preimage.push(prefix);
     preimage.extend_from_slice(data);
     blake2_256(&preimage)
 }
@@ -491,11 +501,7 @@ pub fn hash_leaf(data: &[u8]) -> H256 {
 /// Hash two children into an internal Merkle node:
 /// `blake2_256(0x01 ++ left ++ right)`.
 pub fn hash_children(left: H256, right: H256) -> H256 {
-    let mut data = [0u8; 65];
-    data[0] = NODE_PREFIX;
-    data[1..33].copy_from_slice(left.as_bytes());
-    data[33..].copy_from_slice(right.as_bytes());
-    blake2_256(&data)
+    hash_pair(NODE_PREFIX, left, right)
 }
 
 /// Combine MMR peaks into the MMR root.
@@ -507,108 +513,87 @@ pub fn bag_peaks(peaks: &[H256]) -> H256 {
         .iter()
         .rev()
         .copied()
-        .reduce(|rest, peak| {
-            let mut data = [0u8; 65];
-            data[0] = PEAK_PREFIX;
-            data[1..33].copy_from_slice(peak.as_bytes());
-            data[33..].copy_from_slice(rest.as_bytes());
-            blake2_256(&data)
-        })
+        .reduce(|rest, peak| hash_peaks(peak, rest))
         .unwrap_or_default()
+}
+
+/// Combine a peak with the bagged peaks to its right:
+/// `blake2_256(0x02 ++ left ++ right)`.
+fn hash_peaks(left: H256, right: H256) -> H256 {
+    hash_pair(PEAK_PREFIX, left, right)
+}
+
+/// `blake2_256(prefix ++ left ++ right)`.
+fn hash_pair(prefix: u8, left: H256, right: H256) -> H256 {
+    let mut data = [0u8; 65];
+    data[0] = prefix;
+    data[1..33].copy_from_slice(left.as_bytes());
+    data[33..].copy_from_slice(right.as_bytes());
+    blake2_256(&data)
+}
+
+/// [`Merge`] for `polkadot-ckb-merkle-mountain-range` that builds the same
+/// MMR roots as [`hash_children`] and [`bag_peaks`].
+pub struct StorageMerge;
+
+impl Merge for StorageMerge {
+    type Item = H256;
+
+    fn merge(left: &H256, right: &H256) -> mmr_lib::Result<H256> {
+        Ok(hash_children(*left, *right))
+    }
+
+    /// The library bags peaks from right to left and passes the right-hand
+    /// value first.
+    fn merge_peaks(right: &H256, left: &H256) -> mmr_lib::Result<H256> {
+        Ok(hash_peaks(*left, *right))
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Verification Utilities
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// A leaf's canonical position within an MMR, as derived by
-/// [`mmr_leaf_position`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct MmrLeafPosition {
-    /// Index of the leaf's peak in the peaks list (ordered tallest → shortest).
-    pub peak_index: usize,
-    /// 0-based index within that peak's perfect subtree; bit `k` set means
-    /// right child at level `k` of the root-ward path.
-    pub local_index: u64,
-    /// Height of that subtree — the proof's expected path length.
-    pub height: u32,
-}
-
-/// Locate a leaf within an MMR of `leaf_count` leaves.
+/// Verify that `proof` proves leaf `leaf_index` of `commitment`.
 ///
-/// Returns `None` if `leaf_index >= leaf_count` (the leaf does not exist).
-pub fn mmr_leaf_position(leaf_index: u64, leaf_count: u64) -> Option<MmrLeafPosition> {
-    if leaf_index >= leaf_count {
-        return None;
-    }
-    let mut remaining = leaf_count;
-    let mut offset = 0u64;
-    let mut peak_index = 0usize;
-    while remaining > 0 {
-        // Highest set bit of `remaining` => height of the current (tallest) peak.
-        let height = 63 - remaining.leading_zeros();
-        let subtree_leaves = 1u64 << height;
-        if leaf_index < offset.saturating_add(subtree_leaves) {
-            return Some(MmrLeafPosition {
-                peak_index,
-                local_index: leaf_index - offset,
-                height,
-            });
-        }
-        offset = offset.saturating_add(subtree_leaves);
-        remaining -= subtree_leaves;
-        peak_index += 1;
-    }
-    None
-}
-
-/// Verify an MMR inclusion proof for leaf `leaf_index` of `commitment`.
-///
-/// The expected root-ward path and target peak are derived from
-/// `(leaf_index, commitment.leaf_count)` and checked against the proof, so a
-/// proof for a different leaf of the same MMR fails.
+/// `commitment.leaf_count` fixes the MMR shape and with it the number of
+/// proof items. If `commitment.mmr_root` is the root of an MMR with
+/// `leaf_count` leaves, a proof for another leaf, or for an MMR of another
+/// size, fails.
 pub fn verify_mmr_proof(proof: &MmrProof, leaf_index: u64, commitment: &Commitment) -> bool {
-    // Derive the leaf's canonical position; rejects out-of-range leaves.
-    let pos = match mmr_leaf_position(leaf_index, commitment.leaf_count) {
-        Some(pos) => pos,
-        None => return false,
-    };
-
-    // One sibling per level, and one peak per set bit of leaf_count.
-    if proof.leaf_proof.siblings.len() != pos.height as usize
-        || proof.leaf_proof.path.len() != pos.height as usize
-        || proof.peaks.len() != commitment.leaf_count.count_ones() as usize
-    {
+    // Reject `leaf_count > u64::MAX / 2`: `leaf_index_to_mmr_size` computes
+    // `2 * leaf_count`, which overflows above that.
+    if leaf_index >= commitment.leaf_count || commitment.leaf_count > u64::MAX / 2 {
+        return false;
+    }
+    // The library also accepts proofs with fewer or more items for the peaks
+    // right of the leaf's peak, and ignores the items of a 1-leaf MMR.
+    if proof.items.len() != mmr_proof_len(leaf_index, commitment.leaf_count) {
         return false;
     }
 
-    // Climb from the leaf to its peak. The direction at each level is the
-    // corresponding bit of the local index; a proof whose path bit disagrees is
-    // rejected. The climbed hash must then be the peak at the leaf's expected
-    // position (not merely *some* peak under the root).
-    let mut current = hash_leaf(&proof.leaf.encode());
-    for (k, (&sibling, &is_right)) in proof
-        .leaf_proof
-        .siblings
-        .iter()
-        .zip(proof.leaf_proof.path.iter())
-        .enumerate()
-    {
-        if is_right != ((pos.local_index >> k) & 1 == 1) {
-            return false;
-        }
-        current = if is_right {
-            hash_children(sibling, current)
-        } else {
-            hash_children(current, sibling)
-        };
-    }
-    if proof.peaks.get(pos.peak_index) != Some(&current) {
-        return false;
-    }
+    let mmr_size = mmr_lib::leaf_index_to_mmr_size(commitment.leaf_count - 1);
+    let leaf = (
+        mmr_lib::leaf_index_to_pos(leaf_index),
+        hash_leaf(&proof.leaf.encode()),
+    );
+    mmr_lib::MerkleProof::<H256, StorageMerge>::new(mmr_size, proof.items.clone())
+        .verify(commitment.mmr_root, alloc::vec![leaf])
+        .unwrap_or(false)
+}
 
-    // The peaks must bag to the committed root.
-    bag_peaks(&proof.peaks) == commitment.mmr_root
+/// Number of items in the proof for leaf `leaf_index` of an MMR with
+/// `leaf_count` leaves, as documented on [`MmrProof::items`]. Requires
+/// `leaf_index < leaf_count`.
+fn mmr_proof_len(leaf_index: u64, leaf_count: u64) -> usize {
+    // The peaks are the set bits of `leaf_count`, tallest first. The leaf is
+    // in the peak at the highest bit where `leaf_index` and `leaf_count`
+    // differ: the set bits above it are the peaks to the left, the set bits
+    // below it the peaks to the right.
+    let height = 63 - (leaf_index ^ leaf_count).leading_zeros();
+    let left_peaks = (leaf_count >> (height + 1)).count_ones();
+    let right_peaks = u32::from(leaf_count & ((1 << height) - 1) != 0);
+    (left_peaks + height + right_peaks) as usize
 }
 
 #[cfg(test)]
@@ -749,110 +734,6 @@ mod tests {
         assert_ne!(hash, hash3);
     }
 
-    #[test]
-    fn test_mmr_leaf_position() {
-        let pos = |peak_index, local_index, height| {
-            Some(MmrLeafPosition {
-                peak_index,
-                local_index,
-                height,
-            })
-        };
-
-        // Out-of-range leaves do not exist.
-        assert_eq!(mmr_leaf_position(0, 0), None);
-        assert_eq!(mmr_leaf_position(5, 5), None);
-        assert_eq!(mmr_leaf_position(7, 7), None);
-
-        // Single leaf: peak 0, local 0, height 0.
-        assert_eq!(mmr_leaf_position(0, 1), pos(0, 0, 0));
-
-        // leaf_count = 7 decomposes into peaks 4 (h2) + 2 (h1) + 1 (h0),
-        // ordered tallest-first.
-        assert_eq!(mmr_leaf_position(0, 7), pos(0, 0, 2));
-        assert_eq!(mmr_leaf_position(3, 7), pos(0, 3, 2));
-        assert_eq!(mmr_leaf_position(4, 7), pos(1, 0, 1));
-        assert_eq!(mmr_leaf_position(5, 7), pos(1, 1, 1));
-        assert_eq!(mmr_leaf_position(6, 7), pos(2, 0, 0));
-    }
-
-    fn leaf(data_root: H256, total: u64) -> MmrLeaf {
-        MmrLeaf {
-            data_root,
-            data_size: total,
-            total_size: total,
-        }
-    }
-
-    fn commitment(mmr_root: H256, leaf_count: u64) -> Commitment {
-        Commitment {
-            mmr_root,
-            start_seq: 0,
-            leaf_count,
-        }
-    }
-
-    #[test]
-    fn test_verify_mmr_proof_single_leaf() {
-        let l0 = leaf(blake2_256(b"file0"), 10);
-        let l0_hash = hash_leaf(&l0.encode());
-        let root = bag_peaks(&[l0_hash]);
-
-        let proof = MmrProof {
-            peaks: vec![l0_hash],
-            leaf: l0,
-            leaf_proof: MerkleProof {
-                siblings: vec![],
-                path: vec![],
-            },
-        };
-
-        // Honest: leaf 0 of a 1-leaf MMR verifies.
-        assert!(verify_mmr_proof(&proof, 0, &commitment(root, 1)));
-        // Out-of-range leaf_index is rejected.
-        assert!(!verify_mmr_proof(&proof, 1, &commitment(root, 1)));
-        // Wrong leaf_count (claims 2 leaves) is rejected on path length.
-        assert!(!verify_mmr_proof(&proof, 0, &commitment(root, 2)));
-    }
-
-    #[test]
-    fn test_verify_mmr_proof_binds_leaf_index_two_leaves() {
-        let l0 = leaf(blake2_256(b"file0"), 10);
-        let l1 = leaf(blake2_256(b"file1"), 30);
-        let l0_hash = hash_leaf(&l0.encode());
-        let l1_hash = hash_leaf(&l1.encode());
-        let parent = hash_children(l0_hash, l1_hash);
-        let root = bag_peaks(&[parent]);
-
-        // Proof for leaf 0 (left child: path bit false, sibling = leaf 1).
-        let proof0 = MmrProof {
-            peaks: vec![parent],
-            leaf: l0,
-            leaf_proof: MerkleProof {
-                siblings: vec![l1_hash],
-                path: vec![false],
-            },
-        };
-        // Proof for leaf 1 (right child: path bit true, sibling = leaf 0).
-        let proof1 = MmrProof {
-            peaks: vec![parent],
-            leaf: l1,
-            leaf_proof: MerkleProof {
-                siblings: vec![l0_hash],
-                path: vec![true],
-            },
-        };
-
-        // Each leaf verifies at its own index.
-        assert!(verify_mmr_proof(&proof0, 0, &commitment(root, 2)));
-        assert!(verify_mmr_proof(&proof1, 1, &commitment(root, 2)));
-
-        // Substitution is rejected: leaf 0's proof cannot answer a leaf-1
-        // challenge, nor leaf 1's a leaf-0 challenge.
-        assert!(!verify_mmr_proof(&proof0, 1, &commitment(root, 2)));
-        assert!(!verify_mmr_proof(&proof1, 0, &commitment(root, 2)));
-    }
-
     fn h(hex: &str) -> H256 {
         hex.parse().unwrap()
     }
@@ -957,45 +838,147 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn mmr_proof_checks_leaf_peaks_and_proof_shape() {
-        let leaf = MmrLeaf {
-            data_root: H256::repeat_byte(0x11),
-            data_size: 1,
-            total_size: 2,
-        };
-        let leaf_hash = hash_leaf(&leaf.encode());
-        let sibling = H256::repeat_byte(0x22);
-        let peak = hash_children(leaf_hash, sibling);
-        let other_peak = H256::repeat_byte(0x33);
-        let peaks = vec![peak, other_peak];
-        let root = bag_peaks(&peaks);
+    fn test_leaf(i: u64) -> MmrLeaf {
+        MmrLeaf {
+            data_root: H256::repeat_byte(i as u8 + 1),
+            data_size: i,
+            total_size: 2 * i,
+        }
+    }
 
-        let proof = MmrProof {
-            peaks,
-            leaf,
-            leaf_proof: MerkleProof {
-                siblings: vec![sibling],
-                path: vec![false],
+    /// Build the MMR over `leaf_count` test leaves with the library. Returns
+    /// its commitment and the proof for the leaf at `index`.
+    fn mmr_commitment_and_proof(leaf_count: u64, index: u64) -> (Commitment, MmrProof) {
+        use mmr_lib::{util::MemStore, MMR};
+
+        let store = MemStore::default();
+        let mut mmr = MMR::<H256, StorageMerge, _>::new(0, &store);
+        let positions: Vec<u64> = (0..leaf_count)
+            .map(|i| mmr.push(hash_leaf(&test_leaf(i).encode())).unwrap())
+            .collect();
+        let commitment = Commitment {
+            mmr_root: mmr.get_root().unwrap(),
+            start_seq: 0,
+            leaf_count,
+        };
+        let items = mmr
+            .gen_proof(vec![positions[index as usize]])
+            .unwrap()
+            .proof_items()
+            .to_vec();
+        (
+            commitment,
+            MmrProof {
+                leaf: test_leaf(index),
+                items,
             },
+        )
+    }
+
+    /// A proof verifies for its own leaf index and for no other.
+    #[test]
+    fn mmr_proof_verifies_only_for_its_leaf_index() {
+        for leaf_count in 1u64..=33 {
+            for index in 0..leaf_count {
+                let (commitment, proof) = mmr_commitment_and_proof(leaf_count, index);
+                for other in 0..leaf_count {
+                    assert_eq!(
+                        verify_mmr_proof(&proof, other, &commitment),
+                        other == index,
+                        "proof for leaf {index} checked as leaf {other} of {leaf_count}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// The commitment of another MMR size over the same leaves rejects the
+    /// proof.
+    #[test]
+    fn mmr_proof_does_not_verify_with_another_leaf_count() {
+        // `commitments[n - 1]` is the commitment of the MMR with `n` leaves.
+        let commitments: Vec<Commitment> =
+            (1..=17).map(|n| mmr_commitment_and_proof(n, 0).0).collect();
+        for leaf_count in 1u64..=17 {
+            for index in 0..leaf_count {
+                let (_, proof) = mmr_commitment_and_proof(leaf_count, index);
+                for other in (index + 1..=17).filter(|other| *other != leaf_count) {
+                    assert!(
+                        !verify_mmr_proof(&proof, index, &commitments[other as usize - 1]),
+                        "proof for leaf {index} of {leaf_count} verified in {other} leaves"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn mmr_proof_len_matches_the_library() {
+        for leaf_count in 1u64..=65 {
+            for index in 0..leaf_count {
+                let (_, proof) = mmr_commitment_and_proof(leaf_count, index);
+                assert_eq!(
+                    mmr_proof_len(index, leaf_count),
+                    proof.items.len(),
+                    "leaf {index} of {leaf_count}"
+                );
+            }
+        }
+        // The largest MMR `verify_mmr_proof` accepts: 63 peaks.
+        assert_eq!(mmr_proof_len(0, u64::MAX / 2), 63);
+        assert_eq!(mmr_proof_len(u64::MAX / 2 - 1, u64::MAX / 2), 62);
+    }
+
+    #[test]
+    fn tampered_mmr_proof_does_not_verify() {
+        let (commitment, proof) = mmr_commitment_and_proof(7, 2);
+        assert!(verify_mmr_proof(&proof, 2, &commitment));
+
+        let mut wrong_leaf = proof.clone();
+        wrong_leaf.leaf.data_size += 1;
+        assert!(!verify_mmr_proof(&wrong_leaf, 2, &commitment));
+
+        let mut wrong_item = proof.clone();
+        wrong_item.items[0] = H256::repeat_byte(0x44);
+        assert!(!verify_mmr_proof(&wrong_item, 2, &commitment));
+
+        let mut missing_item = proof.clone();
+        missing_item.items.pop();
+        assert!(!verify_mmr_proof(&missing_item, 2, &commitment));
+
+        let mut extra_item = proof.clone();
+        extra_item.items.push(H256::repeat_byte(0x55));
+        assert!(!verify_mmr_proof(&extra_item, 2, &commitment));
+
+        // A 1-leaf MMR takes no items.
+        let (single, mut single_proof) = mmr_commitment_and_proof(1, 0);
+        assert!(verify_mmr_proof(&single_proof, 0, &single));
+        single_proof.items.push(H256::repeat_byte(0x55));
+        assert!(!verify_mmr_proof(&single_proof, 0, &single));
+
+        let wrong_root = Commitment {
+            mmr_root: H256::repeat_byte(0x66),
+            ..commitment
         };
-        let committed = commitment(root, 3);
-        assert!(verify_mmr_proof(&proof, 0, &committed));
+        assert!(!verify_mmr_proof(&proof, 2, &wrong_root));
+    }
 
-        let mut not_a_peak = proof.clone();
-        not_a_peak.leaf_proof.siblings[0] = H256::repeat_byte(0x55);
-        assert!(!verify_mmr_proof(&not_a_peak, 0, &committed));
+    #[test]
+    fn mmr_proof_rejects_invalid_leaf_position_without_panicking() {
+        let (commitment, proof) = mmr_commitment_and_proof(4, 1);
 
-        let mut wrong_root = proof.clone();
-        wrong_root.peaks[1] = H256::repeat_byte(0x44);
-        assert!(!verify_mmr_proof(&wrong_root, 0, &committed));
+        assert!(!verify_mmr_proof(&proof, 4, &commitment));
+        assert!(!verify_mmr_proof(&proof, u64::MAX, &commitment));
 
-        let mut short_path = proof.clone();
-        short_path.leaf_proof.path.clear();
-        assert!(!verify_mmr_proof(&short_path, 0, &committed));
-
-        let mut long_path = proof;
-        long_path.leaf_proof.path.push(true);
-        assert!(!verify_mmr_proof(&long_path, 0, &committed));
+        for leaf_count in [0, u64::MAX / 2 + 1, u64::MAX] {
+            let resized = Commitment {
+                leaf_count,
+                ..commitment
+            };
+            assert!(
+                !verify_mmr_proof(&proof, 0, &resized),
+                "{leaf_count} leaves"
+            );
+        }
     }
 }

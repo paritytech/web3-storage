@@ -7,7 +7,6 @@
 pub mod backend;
 pub mod error;
 pub mod index;
-pub mod mmr;
 
 pub use backend::{
     build_merkle_tree, BucketInfo, BucketState, BucketStats, BucketSummary, ChunkTreeNode,

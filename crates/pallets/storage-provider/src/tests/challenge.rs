@@ -1221,12 +1221,8 @@ mod challenge_tests {
         };
         let leaf_hash = hash_leaf(&leaf.encode());
         let mmr_proof = MmrProof {
-            peaks: vec![leaf_hash],
             leaf,
-            leaf_proof: MerkleProof {
-                siblings: vec![],
-                path: vec![],
-            },
+            items: vec![],
         };
         (leaf_hash, mmr_proof)
     }
@@ -1694,14 +1690,9 @@ mod challenge_tests {
                 data_size: 1,
                 total_size: 1,
             };
-            let bad_peak = hash_leaf(&bad_leaf.encode());
             let bad_mmr_proof = MmrProof {
-                peaks: vec![bad_peak],
                 leaf: bad_leaf,
-                leaf_proof: MerkleProof {
-                    siblings: vec![],
-                    path: vec![],
-                },
+                items: vec![],
             };
             assert_noop!(
                 StorageProvider::respond_to_challenge(
@@ -3004,7 +2995,6 @@ mod challenge_tests {
 
     /// `Proof` response for leaf `index` of `two_leaf_mmr`.
     fn two_leaf_proof(
-        root: H256,
         leaves: &[(Vec<u8>, MmrLeaf, H256); 2],
         index: usize,
     ) -> ChallengeResponse<Test> {
@@ -3013,12 +3003,8 @@ mod challenge_tests {
         ChallengeResponse::Proof {
             chunk_data: make_chunk_bv(chunk),
             mmr_proof: MmrProof {
-                peaks: vec![root],
                 leaf: leaf.clone(),
-                leaf_proof: MerkleProof {
-                    siblings: vec![*sibling],
-                    path: vec![index == 1],
-                },
+                items: vec![*sibling],
             },
             chunk_proof: MerkleProof {
                 siblings: vec![],
@@ -3062,7 +3048,7 @@ mod challenge_tests {
                 StorageProvider::respond_to_challenge(
                     RuntimeOrigin::signed(2),
                     id,
-                    two_leaf_proof(root, &leaves, 0),
+                    two_leaf_proof(&leaves, 0),
                 ),
                 Error::<Test>::InvalidProof
             );
@@ -3071,7 +3057,7 @@ mod challenge_tests {
             assert_ok!(StorageProvider::respond_to_challenge(
                 RuntimeOrigin::signed(2),
                 id,
-                two_leaf_proof(root, &leaves, 1),
+                two_leaf_proof(&leaves, 1),
             ));
             assert!(Challenges::<Test>::get(101, 0).is_none());
         });
@@ -3118,7 +3104,7 @@ mod challenge_tests {
                         deadline: 101u64,
                         index: 0u16,
                     },
-                    two_leaf_proof(root, &leaves, 0),
+                    two_leaf_proof(&leaves, 0),
                 ),
                 Error::<Test>::InvalidProof
             );

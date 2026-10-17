@@ -2186,7 +2186,7 @@ GET /mmr_proof?bucket_id=0x...&leaf_index=5
 Response:
 {
   "leaf": { "data_root": "0x...", "data_size": 2097152, "total_size": 52428800 },
-  "proof": { "peaks": [...], "siblings": [...] }
+  "items": ["0x...", ...]
 }
 
 Get Chunk Proof
@@ -2505,13 +2505,14 @@ pub struct MerkleProof {
 }
 
 pub struct MmrProof {
-    /// Peaks of the MMR
-    pub peaks: Vec<H256>,
-    /// The leaf being proven. Verification hashes `leaf.encode()` as the
-    /// proof's starting point, so the leaf content is part of the proof.
+    /// The leaf being proven. Verification hashes `0x00 ++ leaf.encode()` as
+    /// the proof's starting point, so the leaf content is part of the proof.
     pub leaf: MmrLeaf,
-    /// Proof from leaf to peak
-    pub leaf_proof: MerkleProof,
+    /// One hash per peak to the left of the leaf's peak, then the sibling
+    /// hashes from the leaf up to its peak, then one hash for all peaks to
+    /// the right of it (bagged if there are several). The leaf's own peak is
+    /// not included; the verifier computes it.
+    pub items: Vec<H256>,
 }
 ```
 
@@ -2594,9 +2595,9 @@ fn verify_challenge_response(
             let chunk_ok = verify_merkle_proof(
                 chunk_hash, challenge.target.chunk_index, chunk_proof, &mmr_proof.leaf.data_root,
             );
-            // Bound to the challenged leaf: the expected path and peak are derived
-            // from (target.leaf_index, commitment.leaf_count), so a proof for a
-            // different leaf of the same MMR does not verify.
+            // Bound to the challenged leaf: the leaf position and the MMR shape
+            // come from (target.leaf_index, commitment.leaf_count), not from the
+            // proof, so a proof for a different leaf of the same MMR does not verify.
             let mmr_ok = verify_mmr_proof(mmr_proof, challenge.target.leaf_index, &challenge.commitment);
             if chunk_ok && mmr_ok { Ok(()) } else { Err(Error::InvalidProof) }
         }
