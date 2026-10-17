@@ -50,14 +50,14 @@
       "type": "security",
       "label": "Fungible holds",
       "sublabel": "HoldReason",
-      "tag": "ProviderStake, AgreementPayment, ChallengeDeposit",
+      "tag": "ProviderStake, AgreementPayment, ChallengeDeposit, StorageDeposit",
       "pos": [
         20,
         30
       ],
       "size": [
-        190,
-        100
+        250,
+        110
       ]
     },
     {
@@ -349,7 +349,8 @@
       "dot": "emerald",
       "title": "Buckets",
       "items": [
-        "Bucket also has visibility, frozen_start_seq, min_providers, historical_roots",
+        "Bucket also has visibility, frozen_start_seq, min_providers, historical_roots, creator, deposit",
+        "creator pays the StorageDeposit hold at create_bucket; delete_bucket releases it to the creator",
         "snapshot.primary_signers: bit i set if primary_providers[i] signed",
         "NextBucketId allocates each BucketId"
       ]
@@ -360,6 +361,7 @@
       "items": [
         "Challenge includes bucket_id, provider, challenger, mmr_root, start_seq, target, deposit, authorized",
         "Hold: deposit as ChallengeDeposit",
+        "PendingChallengesByBucket removes an entry at 0; delete_bucket needs none under the bucket",
         "resolve_expired_challenge (anyone, free on success) slashes a provider whose challenge expired"
       ]
     }

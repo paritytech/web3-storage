@@ -129,7 +129,7 @@
       </div>
     </div>
 
-    <script id="archify-guided-views-data" type="application/json">[{"id":"main-path","label":"Creation to freeze","focus":["absent","empty","assigned","checkpointed","frozen"],"note":"Two creation paths, then checkpoint and the irreversible freeze."},{"id":"no-providers","label":"Bucket without providers","focus":["checkpointed","frozen","unserved","assigned"],"note":"Ending the last agreement keeps the bucket; the admin can add a new primary."},{"id":"visibility","label":"Visibility","focus":["public","private"],"note":"set_bucket_visibility flips Public and Private in both directions at any state."}]</script>
+    <script id="archify-guided-views-data" type="application/json">[{"id":"main-path","label":"Creation to freeze","focus":["absent","empty","assigned","checkpointed","frozen"],"note":"Two creation paths, then checkpoint and the irreversible freeze."},{"id":"no-providers","label":"Bucket without providers","focus":["checkpointed","frozen","unserved","assigned","absent"],"note":"Ending the last agreement keeps the bucket; the admin can add a new primary or delete the bucket."},{"id":"visibility","label":"Visibility","focus":["public","private"],"note":"set_bucket_visibility flips Public and Private in both directions at any state."}]</script>
 
     <script src="assets/archify/i18n.js?v=b331908a8a55"></script>
     <div class="guided-views no-print" id="guided-views" hidden aria-label="Guided diagram views">
@@ -218,9 +218,11 @@
         <path data-edge-from="checkpointed" data-edge-to="frozen" data-edge-label="freeze_bucket" data-edge-key="4" data-edge-id="freeze" data-composition-points="615,157;651,157" d="M 615 157 L 651 157" class="a-security" stroke-width="1.1" marker-end="url(#arrowhead-security)"/>
         <path data-edge-from="checkpointed" data-edge-to="unserved" data-edge-label="last agreement ends" data-edge-key="5" data-edge-id="last-ends" data-composition-points="556,188;556,278" d="M 556 188 L 556 278" class="a-default" stroke-width="1.1" marker-end="url(#arrowhead)"/>
         <path data-edge-from="frozen" data-edge-to="unserved" data-edge-label="last agreement ends" data-edge-key="6" data-edge-id="frozen-last-ends" data-composition-points="710,188;710,307;619,307" d="M 710 188 L 710 297 Q 710 307 700 307 L 619 307" class="a-default" stroke-width="1.1" marker-end="url(#arrowhead)"/>
-        <path data-edge-from="unserved" data-edge-to="assigned" data-edge-label="add_primary_provider" data-edge-key="7" data-edge-id="re-add" data-composition-points="493,307;402,307;402,188" d="M 493 307 L 412 307 Q 402 307 402 297 L 402 188" class="a-emphasis" stroke-width="2" marker-end="url(#arrowhead-emphasis)"/>
+        <path data-edge-from="unserved" data-edge-to="assigned" data-edge-label="add_primary_provider" data-edge-key="7" data-edge-id="re-add" data-composition-points="493,314;402,314;402,188" d="M 493 314 L 412 314 Q 402 314 402 304 L 402 188" class="a-emphasis" stroke-width="2" marker-end="url(#arrowhead-emphasis)"/>
         <path data-edge-from="public" data-edge-to="private" data-edge-label="set_bucket_visibility(Private)" data-edge-key="8" data-edge-id="to-private" data-composition-points="461,479;651,479" d="M 461 479 L 651 479" class="a-default" stroke-width="1.1" marker-end="url(#arrowhead)"/>
         <path data-edge-from="private" data-edge-to="public" data-edge-label="set_bucket_visibility(Public)" data-edge-key="9" data-edge-id="to-public" data-composition-points="710,508;710,542;402,542;402,508" d="M 710 508 L 710 532 Q 710 542 700 542 L 412 542 Q 402 542 402 532 L 402 508" class="a-dashed" stroke-width="1.1" marker-end="url(#arrowhead-dashed)"/>
+        <path data-edge-from="empty" data-edge-to="absent" data-edge-label="delete_bucket" data-edge-key="10" data-edge-id="delete-empty" data-composition-points="248,188;248,222;94,222;94,188" d="M 248 188 L 248 212 Q 248 222 238 222 L 104 222 Q 94 222 94 212 L 94 188" class="a-dashed" stroke-width="1.1" marker-end="url(#arrowhead-dashed)"/>
+        <path data-edge-from="unserved" data-edge-to="absent" data-edge-label="delete_bucket" data-edge-key="11" data-edge-id="delete-unserved" data-composition-points="493,300;94,300;94,188" d="M 493 300 L 104 300 Q 94 300 94 290 L 94 188" class="a-dashed" stroke-width="1.1" marker-end="url(#arrowhead-dashed)"/>
 
         <!-- States -->
         <g id="node-absent" data-node-id="absent" data-node-label="No Bucket" tabindex="0" role="button" aria-label="Focus No Bucket, no bucket_id, Bucket state" aria-pressed="false" data-node-kind="start" data-node-sublabel="no bucket_id" data-node-context="Bucket state">
@@ -353,8 +355,8 @@
           <text x="664.5" y="274" class="t-muted" font-size="8" text-anchor="middle">last agreement ends</text>
         </g>
         <g data-detail="context" data-edge-from="unserved" data-edge-to="assigned" data-edge-label="add_primary_provider" data-edge-key="7" data-edge-id="re-add">
-          <rect x="347" y="226.5" width="110" height="16" rx="4" class="c-mask"/>
-          <text x="402" y="237.5" class="t-backend" font-size="8" text-anchor="middle">add_primary_provider</text>
+          <rect x="347" y="230" width="110" height="16" rx="4" class="c-mask"/>
+          <text x="402" y="241" class="t-backend" font-size="8" text-anchor="middle">add_primary_provider</text>
         </g>
         <g data-detail="context" data-edge-from="public" data-edge-to="private" data-edge-label="set_bucket_visibility(Private)" data-edge-key="8" data-edge-id="to-private">
           <rect x="476.5" y="458" width="159" height="16" rx="4" class="c-mask"/>
@@ -363,6 +365,14 @@
         <g data-detail="context" data-edge-from="private" data-edge-to="public" data-edge-label="set_bucket_visibility(Public)" data-edge-key="9" data-edge-id="to-public">
           <rect x="478.95" y="521" width="154.10000000000002" height="16" rx="4" class="c-mask"/>
           <text x="556" y="532" class="t-messagebus" font-size="8" text-anchor="middle">set_bucket_visibility(Public)</text>
+        </g>
+        <g data-detail="context" data-edge-from="empty" data-edge-to="absent" data-edge-label="delete_bucket" data-edge-key="10" data-edge-id="delete-empty">
+          <rect x="133.15" y="201" width="75.7" height="16" rx="4" class="c-mask"/>
+          <text x="171" y="212" class="t-messagebus" font-size="8" text-anchor="middle">delete_bucket</text>
+        </g>
+        <g data-detail="context" data-edge-from="unserved" data-edge-to="absent" data-edge-label="delete_bucket" data-edge-key="11" data-edge-id="delete-unserved">
+          <rect x="56.15" y="241" width="75.7" height="16" rx="4" class="c-mask"/>
+          <text x="94" y="252" class="t-messagebus" font-size="8" text-anchor="middle">delete_bucket</text>
         </g>
 
         <!-- Legend -->
@@ -581,7 +591,7 @@
           <h3>Creation</h3>
         </div>
         <ul>
-          <li>&bull; create_bucket: anyone; caller is sole admin; bucket_id assigned and never changes</li>
+          <li>&bull; create_bucket: anyone; caller is sole admin and creator, pays the storage deposit; bucket_id assigned and never changes</li>
           <li>&bull; create_bucket_with_primary: bucket and first primary in one call, min_providers = 1</li>
           <li>&bull; add_primary_provider: bucket admin, below MaxPrimaryProviders</li>
         </ul>
@@ -608,6 +618,7 @@
           <li>&bull; Ending the last agreement deletes the agreement, not the bucket</li>
           <li>&bull; Members, snapshot and frozen_start_seq remain; a frozen bucket stays frozen</li>
           <li>&bull; add_primary_provider works on a bucket with zero primaries and on a frozen bucket</li>
+          <li>&bull; delete_bucket: admin only; zero agreements (BucketNotEmpty) and no open challenge (BucketHasPendingChallenge); the deposit returns to the creator even if no longer admin (BucketDeleted)</li>
         </ul>
       </div>
 

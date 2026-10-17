@@ -55,7 +55,7 @@
   <thead><tr><th>Term</th><th>Meaning</th></tr></thead>
   <tbody>
     <tr><td>Bucket</td><td>On-chain container with a permanent <code>bucket_id</code>. It lists members, providers and the current snapshot. Providers can change; the id does not.</td></tr>
-    <tr><td>Roles</td><td><code>Admin</code> (members, settings, delete data), <code>Writer</code> (append), <code>Reader</code> (read, only meaningful on a private bucket). Each role includes the next.</td></tr>
+    <tr><td>Roles</td><td><code>Admin</code> (members, settings, delete data, delete the bucket), <code>Writer</code> (append), <code>Reader</code> (read, only meaningful on a private bucket). Each role includes the next.</td></tr>
     <tr><td>Visibility</td><td><code>Public</code> or <code>Private</code>. On a private bucket, primaries serve reads only to members. See <a href="#private">Private buckets</a>.</td></tr>
     <tr><td>Primary provider</td><td>Added by the admin. Receives writes from clients and signs checkpoints. At most <code>MaxPrimaryProviders</code> (5) per bucket.</td></tr>
     <tr><td>Replica provider</td><td>Added by any account that gets a replica quote from the provider (the quote names that account). Syncs data from other providers, confirms sync on-chain, and receives a payment per confirmation. No limit per bucket.</td></tr>
@@ -92,7 +92,7 @@ bucket://42/fs/my_website/logo.png    mutable: path in the latest snapshot</code
   <li>
     <h3>Create the bucket</h3>
     <p>One transaction: <code>create_bucket_with_primary(provider, terms, sig, visibility)</code> with a quote for <code>bucket: null</code>. Or two: <code>create_bucket(min_providers, visibility)</code>, then <code>add_primary_provider(bucket_id, provider, terms, sig)</code> as admin with a quote for that bucket id.</p>
-    <p>The pallet holds <code>price_per_byte × max_bytes × duration</code> on the owner. Add more primaries the same way. Add members with <code>set_member(bucket_id, member, role)</code>. If your wrapper lets the user skip the visibility choice, default to <code>Private</code>.</p>
+    <p><code>create_bucket</code> holds a storage deposit on the caller, the bucket's <code>creator</code>; <code>delete_bucket</code> returns it (see <a href="#costs">Costs</a>). The pallet holds <code>price_per_byte × max_bytes × duration</code> on the owner. Add more primaries the same way. Add members with <code>set_member(bucket_id, member, role)</code>. If your wrapper lets the user skip the visibility choice, default to <code>Private</code>.</p>
     <p class="see">Diagram: <a href="06-bucket-and-providers.html">06 Bucket creation and provider assignment</a></p>
   </li>
   <li>
@@ -145,7 +145,7 @@ bucket://42/fs/my_website/logo.png    mutable: path in the latest snapshot</code
   </li>
   <li>
     <h3>Delete data or freeze</h3>
-    <p>An admin deletes old leaves with <code>POST /delete</code> and a <code>new_start_seq</code>; the provider returns a new commitment. <code>freeze_bucket</code> makes the bucket append-only. Freezing cannot be undone.</p>
+    <p>An admin deletes old leaves with <code>POST /delete</code> and a <code>new_start_seq</code>; the provider returns a new commitment. <code>freeze_bucket</code> makes the bucket append-only. Freezing cannot be undone. An admin removes a bucket with no agreements and no open challenge with <code>delete_bucket</code>; the storage deposit returns to the creator.</p>
   </li>
 </ol>
 </section>
@@ -174,6 +174,7 @@ bucket://42/fs/my_website/logo.png    mutable: path in the latest snapshot</code
     <tr><td>Challenge response, member or agreement owner</td><td>Challenger: at least 50%. Provider: the rest</td><td>A slower response makes the provider pay a larger share. The design gives example tiers from 90% / 10% to 50% / 50%</td></tr>
     <tr><td>Invalid challenge response</td><td>Provider</td><td>The response is rejected and the provider pays its transaction fee; the challenge stays open</td></tr>
     <tr><td>No response by the deadline</td><td>Provider</td><td>The provider loses its full stake. The challenger gets the deposit and fees back, with no reward</td></tr>
+    <tr><td>Bucket storage deposit</td><td>Bucket creator</td><td>Held at <code>create_bucket</code>: <code>UNIT / 10</code> plus <code>MICROUNIT</code> per byte of the state <code>create_bucket</code> adds (342 bytes today). Released to the creator by <code>delete_bucket</code></td></tr>
     <tr><td>Burn</td><td>Agreement owner</td><td>The locked payment plus a premium from the owner's free balance. Without the premium funds, the burn fails</td></tr>
   </tbody>
 </table>
