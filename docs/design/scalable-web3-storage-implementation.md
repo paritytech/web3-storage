@@ -35,7 +35,16 @@ primaries (replicas stay challengeable by anyone).
 
 **Redundancy**: A bucket can have storage agreements with multiple providers. The `min_providers` setting controls how many providers must acknowledge a state before it can be checkpointed. This ensures minimum redundancy for critical data.
 
-**Append-only mode**: When `frozen_start_seq` is set, the bucket becomes append-only from that point. The start_seq can never decrease below the frozen value, preventing deletion of historical data. This is irreversible and requires the current snapshot to meet `min_providers` threshold.
+**Append-only mode**: When `frozen_start_seq` is set, the bucket becomes append-only from that point. The start_seq stays at the frozen value and only the end advances, preventing deletion of historical data. This is irreversible and requires the current snapshot to meet `min_providers` threshold.
+
+**Checkpoints only move forward**: A new checkpoint is compared with the current snapshot. Its start never moves back. With the same start, its end (`start_seq + leaf_count`) must be past the current end. A deletion moves the start forward and keeps the end, so with a later start the end must not be before the current end. A frozen bucket keeps its start, so its end must advance:
+
+| | Frozen | Not frozen |
+|---|---|---|
+| `start_seq` | `== frozen_start_seq` | `>= old_start` (deletion moves it forward) |
+| End (`start_seq + leaf_count`) | `> old_end` | `> old_end` with the same start, `>= old_end` after a deletion |
+
+The chain compares ranges only: it cannot check that the new MMR extends the old one.
 
 ### Storage Model
 
@@ -469,7 +478,7 @@ pub struct Bucket<T: Config> {
     /// and primary-agreement owners.
     pub visibility: Visibility,
     /// If Some, bucket is append-only from this start_seq.
-    /// Checkpoints with start_seq < frozen_start_seq are rejected (prevents deletions).
+    /// Checkpoints with start_seq != frozen_start_seq are rejected (prevents deletions).
     pub frozen_start_seq: Option<u64>,
     /// Minimum primary provider signatures required for checkpoint.
     pub min_providers: u32,
@@ -1628,7 +1637,11 @@ impl<T: Config> Pallet<T> {
     /// 
     /// Creates a new canonical state (new `Commitment`).
     /// Requires at least min_providers signatures from providers in bucket.primary_providers.
-    /// For frozen buckets: start_seq must equal frozen_start_seq (only leaf_count can increase).
+    /// For frozen buckets: start_seq must equal frozen_start_seq (only leaf_count can increase;
+    /// `SnapshotViolatesFrozen` otherwise).
+    /// Never moves the bucket backwards (`SnapshotNotForward`): with the same start the end
+    /// must be past the current end; after a deletion (later start) the end must not be
+    /// before it. See "Checkpoints only move forward".
     pub fn checkpoint(
         origin: OriginFor<T>,
         bucket_id: BucketId,
