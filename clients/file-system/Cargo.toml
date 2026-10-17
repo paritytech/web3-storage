@@ -19,8 +19,6 @@ tokio = { workspace = true }
 reqwest = { workspace = true }
 
 # Substrate/Polkadot
-sp-core = { workspace = true, features = ["std"] }
-sp-crypto-hashing = { workspace = true, features = ["std"] }
 sp-runtime = { workspace = true, features = ["std"] }
 subxt = { workspace = true }
 
@@ -32,7 +30,6 @@ hex = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
 subxt-signer = { workspace = true }
-tokio-test = { workspace = true }
 
 [[example]]
 name = "basic_usage"

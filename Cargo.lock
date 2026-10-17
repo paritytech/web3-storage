@@ -3310,8 +3310,6 @@ dependencies = [
  "file-system-primitives",
  "hex",
  "reqwest",
- "sp-core",
- "sp-crypto-hashing",
  "sp-runtime",
  "storage-client",
  "storage-primitives",
@@ -3320,7 +3318,6 @@ dependencies = [
  "subxt-signer 0.50.2",
  "thiserror 2.0.18",
  "tokio",
- "tokio-test",
  "tracing",
  "tracing-subscriber 0.3.23",
 ]
@@ -5708,7 +5705,6 @@ dependencies = [
  "pallet-revive",
  "pallet-storage-provider",
  "parity-scale-codec",
- "sp-core",
  "sp-runtime",
  "storage-primitives",
  "tracing",
@@ -5932,7 +5928,6 @@ dependencies = [
  "frame-system",
  "pallet-balances",
  "pallet-storage-provider",
- "pallet-timestamp",
  "parity-scale-codec",
  "s3-primitives",
  "scale-info",
@@ -6047,7 +6042,6 @@ dependencies = [
  "sp-api",
  "sp-core",
  "sp-io",
- "sp-keyring",
  "sp-keystore",
  "sp-runtime",
  "storage-primitives",
@@ -6062,7 +6056,6 @@ dependencies = [
  "pallet-revive",
  "pallet-storage-provider",
  "parity-scale-codec",
- "sp-core",
  "sp-runtime",
  "storage-primitives",
  "tracing",
@@ -9972,7 +9965,6 @@ dependencies = [
  "serde",
  "serde_json",
  "sp-core",
- "sp-crypto-hashing",
  "sp-runtime",
  "storage-indexers",
  "storage-primitives",
@@ -10045,7 +10037,6 @@ dependencies = [
  "polkadot-parachain-primitives",
  "polkadot-runtime-common",
  "scale-info",
- "serde",
  "serde_json",
  "sp-api",
  "sp-block-builder",
@@ -10116,7 +10107,6 @@ dependencies = [
  "polkadot-parachain-primitives",
  "polkadot-runtime-common",
  "scale-info",
- "serde",
  "serde_json",
  "sp-api",
  "sp-block-builder",
@@ -10873,17 +10863,6 @@ dependencies = [
  "futures-core",
  "pin-project-lite",
  "tokio",
-]
-
-[[package]]
-name = "tokio-test"
-version = "0.4.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3f6d24790a10a7af737693a3e8f1d03faef7e6ca0cc99aae5066f533766de545"
-dependencies = [
- "futures-core",
- "tokio",
- "tokio-stream",
 ]
 
 [[package]]
