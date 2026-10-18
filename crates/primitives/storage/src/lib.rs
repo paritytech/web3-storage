@@ -260,12 +260,11 @@ pub struct MerkleProof {
 pub struct MmrProof {
     /// The leaf being proven
     pub leaf: MmrLeaf,
-    /// Hashes that link `leaf` to the commitment's MMR root, in this order: one
-    /// per peak left of the leaf's peak, the siblings from the leaf up to its
-    /// peak, and one hash of the bagged peaks to its right (if any). This is
-    /// exactly what `polkadot-ckb-merkle-mountain-range` produces: build the MMR
-    /// over the commitment's leaves and take `proof_items()` of
-    /// `gen_proof(vec![leaf_index_to_pos(leaf_index)])`.
+    /// Proof items: the peaks left of the leaf's peak, the siblings from the
+    /// leaf up to its peak, then one hash of the bagged peaks to its right (see
+    /// the `MmrProof` section of the implementation design doc).
+    /// `polkadot-ckb-merkle-mountain-range`'s `gen_proof(..).proof_items()`
+    /// produces them.
     pub items: Vec<H256>,
 }
 

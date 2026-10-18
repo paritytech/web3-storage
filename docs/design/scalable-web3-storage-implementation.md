@@ -2505,17 +2505,26 @@ pub struct MerkleProof {
 }
 
 pub struct MmrProof {
-    /// The leaf being proven. Its hash is the proof's starting point.
+    /// The leaf being proven.
     pub leaf: MmrLeaf,
-    /// Hashes that link `leaf` to the commitment's MMR root, in this order: one
-    /// per peak left of the leaf's peak, the siblings from the leaf up to its
-    /// peak, and one hash of the bagged peaks to its right (if any). This is
-    /// exactly what `polkadot-ckb-merkle-mountain-range` produces: build the MMR
-    /// over the commitment's leaves and take `proof_items()` of
-    /// `gen_proof(vec![leaf_index_to_pos(leaf_index)])`.
+    /// Proof for leaf `leaf_index` of an MMR with `leaf_count` leaves. Both
+    /// values come from the challenge and its commitment, not from the proof.
+    /// Items, in this order:
+    /// 1. the root of each peak left of the leaf's peak, left to right;
+    /// 2. the sibling at each level from the leaf up to its peak, bottom up;
+    /// 3. if any peaks are right of the leaf's peak, one hash of them, bagged
+    ///    right to left.
+    /// A proof with any other number of items is rejected.
     pub items: Vec<H256>,
 }
 ```
+
+Hashing: leaf `blake2_256(0x00 ++ leaf.encode())`, node
+`blake2_256(0x01 ++ left ++ right)`, peak bagging
+`blake2_256(0x02 ++ peak ++ rest)`, the same rules that build the MMR root.
+Reference implementation: `polkadot-ckb-merkle-mountain-range` with
+`StorageMerge` (`gen_proof(..).proof_items()` to build, `MerkleProof::verify` to
+check).
 
 ---
 
