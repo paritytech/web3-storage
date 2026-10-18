@@ -2514,7 +2514,8 @@ pub struct MmrProof {
     /// 2. the sibling at each level from the leaf up to its peak, bottom up;
     /// 3. if any peaks are right of the leaf's peak, one hash of them, bagged
     ///    right to left.
-    /// A proof with any other number of items is rejected.
+    /// A proof with any other number of items is rejected, and so is any
+    /// proof against a commitment with more than `u64::MAX / 2` leaves.
     pub items: Vec<H256>,
 }
 ```

@@ -264,7 +264,7 @@ pub struct MmrProof {
     /// leaf up to its peak, then one hash of the bagged peaks to its right (see
     /// the `MmrProof` section of the implementation design doc).
     /// `polkadot-ckb-merkle-mountain-range`'s `gen_proof(..).proof_items()`
-    /// produces them.
+    /// with [`StorageMerge`] produces them.
     pub items: Vec<H256>,
 }
 
