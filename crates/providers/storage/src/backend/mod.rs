@@ -192,10 +192,7 @@ pub trait StorageBackend: Send + Sync {
             }
         };
         if !fixed_sizes || merkle_root(&chunk_hashes) != root {
-            return Err(Error::NonCanonicalTree(format!(
-                "0x{}",
-                hex::encode(root.as_bytes())
-            )));
+            return Err(Error::NonCanonicalTree(format!("{:#x}", root)));
         }
         Ok(chunk_sizes.iter().map(|size| *size as u64).sum())
     }

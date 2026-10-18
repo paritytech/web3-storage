@@ -478,29 +478,21 @@ where
 /// per-variant length check on the same wire format.
 pub fn decode_multi_signature(sig_hex: &str) -> Result<sp_runtime::MultiSignature, ClientError> {
     use codec::DecodeAll;
-    let s = sig_hex.strip_prefix("0x").unwrap_or(sig_hex);
-    let bytes = hex::decode(s).map_err(|e| ClientError::Serialization(e.to_string()))?;
+    let bytes = array_bytes::hex2bytes(sig_hex)
+        .map_err(|e| ClientError::Serialization(format!("{e:?}")))?;
     sp_runtime::MultiSignature::decode_all(&mut &bytes[..])
         .map_err(|e| ClientError::Serialization(format!("invalid SCALE MultiSignature: {e}")))
 }
 
 /// Parse a hex string to H256.
 pub fn parse_h256(hex: &str) -> Result<H256, ClientError> {
-    let hex = hex.strip_prefix("0x").unwrap_or(hex);
-    let bytes =
-        hex::decode(hex).map_err(|e| ClientError::Serialization(format!("Invalid hex: {e}")))?;
-    if bytes.len() != 32 {
-        return Err(ClientError::Serialization(format!(
-            "Expected 32 bytes, got {}",
-            bytes.len()
-        )));
-    }
-    Ok(H256::from_slice(&bytes))
+    hex.parse()
+        .map_err(|e| ClientError::Serialization(format!("Invalid H256 hex: {e}")))
 }
 
 /// Convert H256 to hex string.
 pub fn h256_to_hex(hash: &H256) -> String {
-    format!("0x{}", hex::encode(hash.as_bytes()))
+    format!("{hash:#x}")
 }
 
 #[cfg(test)]

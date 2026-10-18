@@ -7254,7 +7254,6 @@ dependencies = [
  "async-trait",
  "axum",
  "base64",
- "hex",
  "parity-scale-codec",
  "provider-chain",
  "provider-storage",
@@ -7275,8 +7274,8 @@ dependencies = [
 name = "provider-storage"
 version = "0.1.0"
 dependencies = [
+ "array-bytes 6.2.3",
  "dashmap",
- "hex",
  "parity-scale-codec",
  "parking_lot",
  "polkadot-ckb-merkle-mountain-range",
@@ -9949,12 +9948,12 @@ dependencies = [
 name = "storage-client"
 version = "0.1.0"
 dependencies = [
+ "array-bytes 6.2.3",
  "async-trait",
  "axum",
  "base64",
  "chacha20poly1305",
  "futures",
- "hex",
  "parity-scale-codec",
  "provider-auth",
  "provider-negotiation",
@@ -10149,6 +10148,7 @@ dependencies = [
 name = "storage-provider-node"
 version = "0.4.1"
 dependencies = [
+ "array-bytes 6.2.3",
  "async-trait",
  "axum",
  "base64",

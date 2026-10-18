@@ -26,7 +26,7 @@ pub fn to_sp_account(a: &subxt::utils::AccountId32) -> sp_runtime::AccountId32 {
 /// Render a chain-side account as the `0x…` hex string the SDK's public
 /// structs carry.
 pub fn account_hex(a: &subxt::utils::AccountId32) -> String {
-    format!("0x{}", hex::encode(a.0))
+    array_bytes::bytes2hex("0x", a.0)
 }
 
 /// Decode an account carried by a runtime-API response, where accounts arrive

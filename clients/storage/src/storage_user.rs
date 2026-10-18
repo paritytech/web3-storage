@@ -91,7 +91,7 @@ impl StorageUserClient {
     /// let client = StorageUserClient::new(ClientConfig::default(), Signer::from_seed("//Alice")?)?;
     /// let data = b"Hello, decentralized world!";
     /// let data_root = client.upload(1, data, Default::default()).await?;
-    /// println!("Uploaded data with root: 0x{}", hex::encode(data_root.as_bytes()));
+    /// println!("Uploaded data with root: {data_root:#x}");
     /// # Ok(())
     /// # }
     /// ```
@@ -205,7 +205,7 @@ impl StorageUserClient {
             .http
             .get(format!("{provider_url}/read"))
             .query(&[
-                ("data_root", BaseClient::hex_encode(data_root.as_bytes())),
+                ("data_root", format!("{:#x}", data_root)),
                 ("offset", offset.to_string()),
                 ("length", length.to_string()),
             ])
@@ -228,9 +228,8 @@ impl StorageUserClient {
                 .map_err(|e| ClientError::Serialization(e.to_string()))?;
 
             // Verify chunk hash
-            let expected_hash = BaseClient::hex_decode(&chunk.hash)?;
-            let actual_hash = hash_leaf(&chunk_data);
-            if actual_hash.as_bytes() != expected_hash.as_slice() {
+            let expected_hash = parse_h256(&chunk.hash)?;
+            if hash_leaf(&chunk_data) != expected_hash {
                 return Err(ClientError::VerificationFailed);
             }
 
@@ -279,7 +278,7 @@ impl StorageUserClient {
     /// ```
     pub async fn read_node(&self, hash: &H256) -> ClientResult<Node> {
         let provider_url = self.base.get_provider_url()?;
-        let hash_hex = BaseClient::hex_encode(hash.as_bytes());
+        let hash_hex = format!("{:#x}", hash);
 
         let response = self
             .base
@@ -357,10 +356,7 @@ impl StorageUserClient {
 
         let request = CommitRequest {
             bucket_id,
-            data_roots: data_roots
-                .iter()
-                .map(|h| BaseClient::hex_encode(h.as_bytes()))
-                .collect(),
+            data_roots: data_roots.iter().map(|h| format!("{:#x}", h)).collect(),
         };
 
         let req = self
@@ -508,16 +504,13 @@ impl StorageUserClient {
             Node::Chunk(data) => (BASE64.encode(data), None),
             Node::Internal { left, right } => (
                 BASE64.encode([left.as_bytes(), right.as_bytes()].concat()),
-                Some(vec![
-                    BaseClient::hex_encode(left.as_bytes()),
-                    BaseClient::hex_encode(right.as_bytes()),
-                ]),
+                Some(vec![format!("{:#x}", left), format!("{:#x}", right)]),
             ),
         };
         let hash = node.hash();
         let request = UploadNodeRequest {
             bucket_id,
-            hash: BaseClient::hex_encode(hash.as_bytes()),
+            hash: format!("{:#x}", hash),
             data,
             children,
         };
@@ -617,10 +610,7 @@ impl StorageUserClient {
         let provider_url = self.base.get_provider_url()?;
         let request = ExistsRequest {
             bucket_id,
-            hashes: hashes
-                .iter()
-                .map(|h| BaseClient::hex_encode(h.as_bytes()))
-                .collect(),
+            hashes: hashes.iter().map(|h| format!("{:#x}", h)).collect(),
         };
         let response = self
             .base
@@ -870,12 +860,12 @@ mod tests {
     fn sr25519_signature_hex() -> String {
         use codec::Encode;
         let sig = sp_runtime::MultiSignature::Sr25519(sp_core::sr25519::Signature::from([9u8; 64]));
-        format!("0x{}", hex::encode(sig.encode()))
+        array_bytes::bytes2hex("0x", sig.encode())
     }
 
     #[test]
     fn commitment_response_deserializes_typed_root_and_signature() {
-        let root_hex = format!("0x{}", hex::encode([7u8; 32]));
+        let root_hex = array_bytes::bytes2hex("0x", [7u8; 32]);
         let resp: CommitmentResponse =
             serde_json::from_str(&commitment_json(&root_hex, &sr25519_signature_hex())).unwrap();
         assert_eq!(resp.mmr_root, H256::from([7u8; 32]));
@@ -888,13 +878,13 @@ mod tests {
     #[test]
     fn commitment_response_rejects_undecodable_signature() {
         // Not hex at all.
-        let root_hex = format!("0x{}", hex::encode([7u8; 32]));
+        let root_hex = array_bytes::bytes2hex("0x", [7u8; 32]);
         assert!(
             serde_json::from_str::<CommitmentResponse>(&commitment_json(&root_hex, "not-hex"))
                 .is_err()
         );
         // 0x01 tags Sr25519, whose signature is 64 bytes — 63 must not decode.
-        let truncated = format!("0x01{}", hex::encode([9u8; 63]));
+        let truncated = array_bytes::bytes2hex("0x", [[1u8].as_slice(), &[9u8; 63]].concat());
         assert!(
             serde_json::from_str::<CommitmentResponse>(&commitment_json(&root_hex, &truncated))
                 .is_err(),
@@ -902,7 +892,7 @@ mod tests {
         );
         // Trailing bytes past a well-formed signature must be refused too,
         // not silently ignored — the JS SDK rejects the same value.
-        let overlong = format!("0x01{}", hex::encode([9u8; 65]));
+        let overlong = array_bytes::bytes2hex("0x", [[1u8].as_slice(), &[9u8; 65]].concat());
         assert!(
             serde_json::from_str::<CommitmentResponse>(&commitment_json(&root_hex, &overlong))
                 .is_err(),

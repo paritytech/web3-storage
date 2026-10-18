@@ -187,7 +187,7 @@ impl DiskStorage {
     pub fn list_buckets(&self) -> Vec<BucketSummary> {
         self.iter_buckets(|bucket_id, state| BucketSummary {
             bucket_id,
-            mmr_root: format!("0x{}", hex::encode(state.mmr_root.as_bytes())),
+            mmr_root: format!("{:#x}", state.mmr_root),
             start_seq: state.start_seq,
             leaf_count: state.leaf_count(),
         })
@@ -238,8 +238,8 @@ impl DiskStorage {
         let actual_hash = node.hash();
         if actual_hash != expected_hash {
             return Err(Error::InvalidHash {
-                expected: format!("0x{}", hex::encode(expected_hash.as_bytes())),
-                actual: format!("0x{}", hex::encode(actual_hash.as_bytes())),
+                expected: format!("{:#x}", expected_hash),
+                actual: format!("{:#x}", actual_hash),
             });
         }
 
@@ -259,7 +259,7 @@ impl DiskStorage {
                         .flatten()
                         .is_none()
                 })
-                .map(|h| format!("0x{}", hex::encode(h.as_bytes())))
+                .map(|h| format!("{:#x}", h))
                 .collect();
 
             if !missing.is_empty() {
@@ -311,7 +311,7 @@ impl DiskStorage {
         match ChunkTreeNode::decode_all(&mut &value[..]) {
             Ok(node) => Some(node),
             Err(e) => {
-                tracing::warn!(hash = %format!("0x{}", hex::encode(hash.as_bytes())), error = %e, "Failed to deserialize node");
+                tracing::warn!(hash = %format!("{:#x}", hash), error = %e, "Failed to deserialize node");
                 None
             }
         }
@@ -354,10 +354,7 @@ impl DiskStorage {
         for root in &data_roots {
             let key = root.as_bytes();
             if self.db.get_cf(&cf_nodes, key)?.is_none() {
-                return Err(Error::RootNotFound(format!(
-                    "0x{}",
-                    hex::encode(root.as_bytes())
-                )));
+                return Err(Error::RootNotFound(format!("{:#x}", root)));
             }
         }
 
@@ -489,8 +486,8 @@ impl DiskStorage {
         // it would fail on-chain verification anyway.
         if root != commitment.mmr_root {
             return Err(Error::CommitmentNotReproducible(format!(
-                "commitment_root 0x{} not reproducible from local leaves",
-                hex::encode(commitment.mmr_root.as_bytes())
+                "commitment_root {:#x} not reproducible from local leaves",
+                commitment.mmr_root
             )));
         }
         Ok(proof)
@@ -633,14 +630,14 @@ mod tests {
         let bucket_id: BucketId = 0x0102030405060708;
         storage.init_bucket(bucket_id, 1_000).unwrap();
         let cf = storage.db.cf_handle(CF_BUCKETS).unwrap();
-        let key = hex::decode("0807060504030201").unwrap();
+        let key = [8u8, 7, 6, 5, 4, 3, 2, 1];
         let raw = storage
             .db
             .get_cf(&cf, key)
             .unwrap()
             .expect("bucket must be stored under the little-endian bucket_id key");
         assert_eq!(
-            hex::encode(&raw),
+            array_bytes::bytes2hex("", &raw),
             // BucketState::new(1_000): zero root, no leaves, max_bytes = 1_000
             "0000000000000000000000000000000000000000000000000000000000000000\
              0000000000000000\
@@ -662,7 +659,7 @@ mod tests {
             .unwrap()
             .unwrap();
         // variant 0 (Chunk), compact length 5, then the bytes
-        assert_eq!(hex::encode(&raw), "00140102030405");
+        assert_eq!(array_bytes::bytes2hex("", &raw), "00140102030405");
 
         // CF_NODES: an internal node's value is 65 B - the variant tag plus
         // the two child hashes, no stored preimage.
@@ -687,11 +684,11 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(
-            hex::encode(&raw),
+            array_bytes::bytes2hex("", &raw),
             format!(
                 "01{}{}",
-                hex::encode(chunk_hash.as_bytes()),
-                hex::encode(other_hash.as_bytes())
+                array_bytes::bytes2hex("", chunk_hash),
+                array_bytes::bytes2hex("", other_hash)
             )
         );
     }

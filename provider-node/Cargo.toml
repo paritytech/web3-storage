@@ -8,6 +8,7 @@ repository.workspace = true
 description = "Off-chain provider node for scalable Web3 storage"
 
 [dependencies]
+array-bytes = { workspace = true }
 provider-auth = { workspace = true }
 provider-chain = { workspace = true, features = ["all"] }
 provider-challenge = { workspace = true }

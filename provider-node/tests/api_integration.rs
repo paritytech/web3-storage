@@ -382,12 +382,12 @@ common::backend_tests! {
 
         // Create internal node data (child hashes concatenated)
         let mut node_data = Vec::new();
-        node_data.extend_from_slice(&sp_core::bytes::from_hex(child1).unwrap());
-        node_data.extend_from_slice(&sp_core::bytes::from_hex(child2).unwrap());
+        node_data.extend_from_slice(&array_bytes::hex2bytes(child1).unwrap());
+        node_data.extend_from_slice(&array_bytes::hex2bytes(child2).unwrap());
 
         let hash = storage_primitives::hash_children(
-            sp_core::H256::from_slice(&sp_core::bytes::from_hex(child1).unwrap()),
-            sp_core::H256::from_slice(&sp_core::bytes::from_hex(child2).unwrap()),
+            child1.parse::<sp_core::H256>().unwrap(),
+            child2.parse::<sp_core::H256>().unwrap(),
         );
         let hash_hex = format!("{hash:#x}");
 
@@ -711,7 +711,7 @@ fn alice_public() -> sr25519::Public {
 /// `MultiSignature`, as emitted by `ProviderState::sign`.
 fn decode_provider_signature(sig_hex: &str) -> sp_runtime::MultiSignature {
     use codec::Decode;
-    let bytes = sp_core::bytes::from_hex(sig_hex).expect("signature hex parses");
+    let bytes = array_bytes::hex2bytes(sig_hex).expect("signature hex parses");
     sp_runtime::MultiSignature::decode(&mut &bytes[..]).expect("valid SCALE MultiSignature")
 }
 
@@ -748,8 +748,7 @@ common::backend_tests! {
 
         // Reconstruct exactly what the handler signed: CommitmentPayload with
         // the real post-commit leaf_count (no longer hardcoded 0).
-        let mmr_root_bytes = sp_core::bytes::from_hex(mmr_root_hex).unwrap();
-        let mmr_root = H256::from_slice(&mmr_root_bytes);
+        let mmr_root: H256 = mmr_root_hex.parse().unwrap();
         let leaf_count = body["leaf_count"]
             .as_u64()
             .expect("leaf_count present in /commit response");
@@ -789,7 +788,7 @@ common::backend_tests! {
         assert_eq!(resp.status(), StatusCode::OK);
         let body: Value = resp.json().await.unwrap();
 
-        let mmr_root = H256::from_slice(&sp_core::bytes::from_hex(body["mmr_root"].as_str().unwrap()).unwrap());
+        let mmr_root = body["mmr_root"].as_str().unwrap().parse::<H256>().unwrap();
         let start_seq = body["start_seq"].as_u64().unwrap();
         let leaf_count = body["leaf_count"].as_u64().unwrap();
         assert!(leaf_count > 0, "leaf_count must be the real on-disk value");
@@ -823,7 +822,7 @@ common::backend_tests! {
         let bucket_id = 9;
 
         let (_h, body) = upload_and_commit(&server, bucket_id).await;
-        let mmr_root = H256::from_slice(&sp_core::bytes::from_hex(body["mmr_root"].as_str().unwrap()).unwrap());
+        let mmr_root = body["mmr_root"].as_str().unwrap().parse::<H256>().unwrap();
         let start_seq = body["start_seq"].as_u64().unwrap();
         let sig = expect_sr25519(decode_provider_signature(
             body["provider_signature"].as_str().unwrap(),
@@ -857,8 +856,7 @@ async fn commit_signs_with_configured_ed25519_scheme() {
     let bucket_id = 11;
 
     let (_h, body) = upload_and_commit(&server, bucket_id).await;
-    let mmr_root =
-        H256::from_slice(&sp_core::bytes::from_hex(body["mmr_root"].as_str().unwrap()).unwrap());
+    let mmr_root = body["mmr_root"].as_str().unwrap().parse::<H256>().unwrap();
     let start_seq = body["start_seq"].as_u64().unwrap();
     let leaf_count = body["leaf_count"].as_u64().unwrap();
 
@@ -1424,7 +1422,7 @@ common::backend_tests! {
         // /commit proofs: a real signature, in the SCALE MultiSignature wire
         // format, over the *post-delete* commitment. A zero placeholder or a
         // raw untagged signature both pass a `starts_with("0x")` check.
-        let mmr_root = H256::from_slice(&sp_core::bytes::from_hex(body["mmr_root"].as_str().unwrap()).unwrap());
+        let mmr_root = body["mmr_root"].as_str().unwrap().parse::<H256>().unwrap();
         let sig = expect_sr25519(decode_provider_signature(
             body["provider_signature"].as_str().unwrap(),
         ));

@@ -500,9 +500,9 @@ impl ReplicaSyncCoordinator {
                     }
 
                     tracing::info!(
-                        "Starting sync for bucket {} (target root: 0x{})",
+                        "Starting sync for bucket {} (target root: {:#x})",
                         duty.bucket_id,
-                        hex::encode(duty.target_mmr_root.as_bytes())
+                        duty.target_mmr_root
                     );
 
                     let result = self.sync_and_confirm(&duty).await;
@@ -666,19 +666,19 @@ impl ReplicaSyncCoordinator {
                     if synced_root == duty.target_mmr_root {
                         sync_success = true;
                         tracing::info!(
-                            "Successfully synced bucket {} from {}: root = 0x{}",
+                            "Successfully synced bucket {} from {}: root = {:#x}",
                             duty.bucket_id,
                             endpoint,
-                            hex::encode(synced_root.as_bytes())
+                            synced_root
                         );
                         break;
                     } else {
                         tracing::warn!(
-                            "Sync mismatch for bucket {} from {}: expected 0x{}, got 0x{}",
+                            "Sync mismatch for bucket {} from {}: expected {:#x}, got {:#x}",
                             duty.bucket_id,
                             endpoint,
-                            hex::encode(duty.target_mmr_root.as_bytes()),
-                            hex::encode(synced_root.as_bytes())
+                            duty.target_mmr_root,
+                            synced_root
                         );
                     }
                 }
@@ -715,9 +715,8 @@ impl ReplicaSyncCoordinator {
             return SyncResult::VerificationFailed {
                 bucket_id: duty.bucket_id,
                 reason: format!(
-                    "Root mismatch: expected 0x{}, got 0x{}",
-                    hex::encode(duty.target_mmr_root.as_bytes()),
-                    hex::encode(local_bucket.mmr_root.as_bytes())
+                    "Root mismatch: expected {:#x}, got {:#x}",
+                    duty.target_mmr_root, local_bucket.mmr_root
                 ),
             };
         }
