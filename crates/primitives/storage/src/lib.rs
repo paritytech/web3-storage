@@ -261,7 +261,9 @@ pub struct MmrProof {
     /// The leaf being proven
     pub leaf: MmrLeaf,
     /// Hashes that link `leaf` to the commitment's MMR root, in the order
-    /// `polkadot-ckb-merkle-mountain-range` produces them.
+    /// `polkadot-ckb-merkle-mountain-range` produces them: build the MMR over
+    /// the commitment's leaves and take `proof_items()` of
+    /// `gen_proof(vec![leaf_index_to_pos(leaf_index)])`.
     pub items: Vec<H256>,
 }
 
