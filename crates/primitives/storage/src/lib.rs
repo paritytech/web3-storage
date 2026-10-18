@@ -507,7 +507,9 @@ pub fn hash_children(left: H256, right: H256) -> H256 {
 /// Combine MMR peaks into the MMR root.
 ///
 /// Peaks fold from right to left with `blake2_256(0x02 ++ peak ++ rest)`.
-/// One peak is the root itself and no peaks give the zero root.
+/// One peak is the root itself and no peaks give the zero root. This is the
+/// rule [`StorageMerge`] applies inside the MMR library; the library does not
+/// export its own bagging function.
 pub fn bag_peaks(peaks: &[H256]) -> H256 {
     peaks
         .iter()
@@ -961,6 +963,55 @@ mod tests {
             ..commitment
         };
         assert!(!verify_mmr_proof(&proof, 2, &wrong_root));
+    }
+
+    /// The largest MMR `verify_mmr_proof` accepts (`u64::MAX / 2` leaves, 63
+    /// peaks of heights 62 down to 0): the first leaf of a peak of every
+    /// height verifies with a synthetic proof, and a changed item fails.
+    #[test]
+    fn mmr_proof_verifies_at_the_largest_leaf_count() {
+        let leaf_count = u64::MAX / 2;
+        let leaf = test_leaf(1);
+        for height in [0u32, 1, 31, 61, 62] {
+            // Peaks taller than `height` are to the left of the leaf's peak.
+            let left_peaks: Vec<H256> = (0..62 - height)
+                .map(|i| H256::from_low_u64_be(u64::from(i) + 1))
+                .collect();
+            let leaf_index = leaf_count & !((2u64 << height) - 1);
+            // The first leaf of its peak is a left child at every level.
+            let siblings: Vec<H256> = (0..height)
+                .map(|i| H256::repeat_byte(i as u8 + 1))
+                .collect();
+            let peak = siblings
+                .iter()
+                .fold(hash_leaf(&leaf.encode()), |node, sibling| {
+                    hash_children(node, *sibling)
+                });
+            let right_peaks = (height > 0).then(|| H256::repeat_byte(0xFF));
+
+            let mut peaks = left_peaks.clone();
+            peaks.push(peak);
+            peaks.extend(right_peaks);
+            let commitment = Commitment {
+                mmr_root: bag_peaks(&peaks),
+                start_seq: 0,
+                leaf_count,
+            };
+            let mut items = left_peaks;
+            items.extend(siblings);
+            items.extend(right_peaks);
+            let mut proof = MmrProof {
+                leaf: leaf.clone(),
+                items,
+            };
+
+            assert!(
+                verify_mmr_proof(&proof, leaf_index, &commitment),
+                "leaf {leaf_index} in the height-{height} peak"
+            );
+            proof.items[0] = H256::repeat_byte(0xEE);
+            assert!(!verify_mmr_proof(&proof, leaf_index, &commitment));
+        }
     }
 
     #[test]

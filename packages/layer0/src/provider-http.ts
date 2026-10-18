@@ -237,6 +237,10 @@ export async function fetchChallengeProof(
       leaf_index: challenge.target.leaf_index,
     },
   });
+  if (!Array.isArray(mmr.items))
+    throw new Error(
+      "Provider /mmr_proof response has no `items`: the provider node is older than this client",
+    );
   const chunk = await providerFetch(providerUrl, "/chunk_proof", {
     params: {
       data_root: mmr.leaf.data_root,
