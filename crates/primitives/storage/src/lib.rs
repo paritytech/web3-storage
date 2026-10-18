@@ -507,16 +507,11 @@ pub fn hash_children(left: H256, right: H256) -> H256 {
 
 /// Combine MMR peaks into the MMR root.
 ///
-/// Peaks fold from right to left with `blake2_256(0x02 ++ peak ++ rest)`.
-/// One peak is the root itself and no peaks give the zero root. This is the
-/// rule [`StorageMerge`] applies inside the MMR library; the library does not
-/// export its own bagging function.
+/// Peaks fold from right to left with `blake2_256(0x02 ++ peak ++ rest)`, the
+/// library's bagging with [`StorageMerge`]. One peak is the root itself and
+/// no peaks give the zero root.
 pub fn bag_peaks(peaks: &[H256]) -> H256 {
-    peaks
-        .iter()
-        .rev()
-        .copied()
-        .reduce(|rest, peak| hash_peaks(peak, rest))
+    mmr_lib::ancestry_proof::bagging_peaks_hashes::<H256, StorageMerge>(peaks.to_vec())
         .unwrap_or_default()
 }
 
