@@ -568,34 +568,31 @@ pub fn verify_mmr_proof(proof: &MmrProof, leaf_index: u64, commitment: &Commitme
     if leaf_index >= commitment.leaf_count || commitment.leaf_count > u64::MAX / 2 {
         return false;
     }
+    let mmr_size = mmr_lib::leaf_index_to_mmr_size(commitment.leaf_count - 1);
+    let leaf_pos = mmr_lib::leaf_index_to_pos(leaf_index);
     // The library also accepts proofs with fewer or more items for the peaks
     // right of the leaf's peak, and ignores the items of a 1-leaf MMR.
-    if proof.items.len() != mmr_proof_len(leaf_index, commitment.leaf_count) {
+    if Some(proof.items.len()) != mmr_proof_len(leaf_pos, mmr_size) {
         return false;
     }
 
-    let mmr_size = mmr_lib::leaf_index_to_mmr_size(commitment.leaf_count - 1);
-    let leaf = (
-        mmr_lib::leaf_index_to_pos(leaf_index),
-        hash_leaf(&proof.leaf.encode()),
-    );
+    let leaf = (leaf_pos, hash_leaf(&proof.leaf.encode()));
     mmr_lib::MerkleProof::<H256, StorageMerge>::new(mmr_size, proof.items.clone())
         .verify(commitment.mmr_root, alloc::vec![leaf])
         .unwrap_or(false)
 }
 
-/// Number of items in the proof for leaf `leaf_index` of an MMR with
-/// `leaf_count` leaves, as documented on [`MmrProof::items`]. Requires
-/// `leaf_index < leaf_count`.
-fn mmr_proof_len(leaf_index: u64, leaf_count: u64) -> usize {
-    // The peaks are the set bits of `leaf_count`, tallest first. The leaf is
-    // in the peak at the highest bit where `leaf_index` and `leaf_count`
-    // differ: the set bits above it are the peaks to the left, the set bits
-    // below it the peaks to the right.
-    let height = 63 - (leaf_index ^ leaf_count).leading_zeros();
-    let left_peaks = (leaf_count >> (height + 1)).count_ones();
-    let right_peaks = u32::from(leaf_count & ((1 << height) - 1) != 0);
-    (left_peaks + height + right_peaks) as usize
+/// Number of items in the proof for the leaf at `leaf_pos` of an MMR of
+/// `mmr_size` nodes, as documented on [`MmrProof::items`]: one per peak to the
+/// left, one per level of the leaf's peak, and one for the peaks to the right.
+/// `None` if no peak covers `leaf_pos`.
+fn mmr_proof_len(leaf_pos: u64, mmr_size: u64) -> Option<usize> {
+    use mmr_lib::helper::{get_peaks, pos_height_in_tree};
+
+    let peaks = get_peaks(mmr_size);
+    let peak = peaks.iter().position(|pos| *pos >= leaf_pos)?;
+    let height = usize::from(pos_height_in_tree(peaks[peak]));
+    Some(peak + height + usize::from(peak + 1 < peaks.len()))
 }
 
 #[cfg(test)]
@@ -920,15 +917,21 @@ mod tests {
             for index in 0..leaf_count {
                 let (_, proof) = mmr_commitment_and_proof(leaf_count, index);
                 assert_eq!(
-                    mmr_proof_len(index, leaf_count),
-                    proof.items.len(),
+                    mmr_proof_len(
+                        mmr_lib::leaf_index_to_pos(index),
+                        mmr_lib::leaf_index_to_mmr_size(leaf_count - 1)
+                    ),
+                    Some(proof.items.len()),
                     "leaf {index} of {leaf_count}"
                 );
             }
         }
         // The largest MMR `verify_mmr_proof` accepts: 63 peaks.
-        assert_eq!(mmr_proof_len(0, u64::MAX / 2), 63);
-        assert_eq!(mmr_proof_len(u64::MAX / 2 - 1, u64::MAX / 2), 62);
+        let leaf_count = u64::MAX / 2;
+        let mmr_size = mmr_lib::leaf_index_to_mmr_size(leaf_count - 1);
+        let len = |index| mmr_proof_len(mmr_lib::leaf_index_to_pos(index), mmr_size);
+        assert_eq!(len(0), Some(63));
+        assert_eq!(len(leaf_count - 1), Some(62));
     }
 
     #[test]
