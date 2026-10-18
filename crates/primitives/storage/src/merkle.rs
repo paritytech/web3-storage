@@ -7,7 +7,8 @@
 //!
 //! `binary-merkle-tree` builds the same roots and proofs (see the tests) but
 //! does not replace this module: its `verify_proof` accepts proofs at other
-//! leaf indices for the same leaf count, it counts leaves in `u32`, and it
+//! leaf indices for the same leaf count (pinned by
+//! `only_our_verifier_binds_the_leaf_index`), it counts leaves in `u32`, and it
 //! exposes neither internal nodes nor range proofs.
 
 use crate::{hash_children, MerkleProof, DEFAULT_CHUNK_SIZE};
@@ -479,5 +480,40 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// Why this module is not replaced by `binary-merkle-tree`: for the same
+    /// leaf count, its `verify_proof` accepts some proofs at another leaf
+    /// index, ours accepts none. If a library release closes this, reconsider
+    /// switching.
+    #[test]
+    fn only_our_verifier_binds_the_leaf_index() {
+        let mut library_accepted = 0;
+        for n in 1..=40usize {
+            let l = leaves(n);
+            let root = merkle_root(&l);
+            for i in 0..n {
+                let proof = proof_for(&l, i);
+                for j in (0..n).filter(|j| *j != i) {
+                    assert!(
+                        !verify_merkle_proof(l[i], j as u64, n as u64, &proof, &root),
+                        "leaf {i} of {n} verified at index {j}"
+                    );
+                    if binary_merkle_tree::verify_proof::<StorageHasher, _, _>(
+                        &root,
+                        proof.siblings.clone(),
+                        n as u32,
+                        j as u32,
+                        Leaf::Hash(l[i]),
+                    ) {
+                        library_accepted += 1;
+                    }
+                }
+            }
+        }
+        assert!(
+            library_accepted > 0,
+            "binary-merkle-tree now binds the leaf index"
+        );
     }
 }
