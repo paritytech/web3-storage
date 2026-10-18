@@ -966,8 +966,9 @@ mod tests {
     }
 
     /// The largest MMR `verify_mmr_proof` accepts (`u64::MAX / 2` leaves, 63
-    /// peaks of heights 62 down to 0): the first leaf of a peak of every
-    /// height verifies with a synthetic proof, and a changed item fails.
+    /// peaks of heights 62 down to 0): the first and the last leaf of a peak
+    /// of every height verify with a synthetic proof, and a changed first or
+    /// last item fails.
     #[test]
     fn mmr_proof_verifies_at_the_largest_leaf_count() {
         let leaf_count = u64::MAX / 2;
@@ -977,40 +978,58 @@ mod tests {
             let left_peaks: Vec<H256> = (0..62 - height)
                 .map(|i| H256::from_low_u64_be(u64::from(i) + 1))
                 .collect();
-            let leaf_index = leaf_count & !((2u64 << height) - 1);
-            // The first leaf of its peak is a left child at every level.
+            let first_leaf = leaf_count & !((2u64 << height) - 1);
             let siblings: Vec<H256> = (0..height)
                 .map(|i| H256::repeat_byte(i as u8 + 1))
                 .collect();
-            let peak = siblings
-                .iter()
-                .fold(hash_leaf(&leaf.encode()), |node, sibling| {
-                    hash_children(node, *sibling)
-                });
             let right_peaks = (height > 0).then(|| H256::repeat_byte(0xFF));
 
-            let mut peaks = left_peaks.clone();
-            peaks.push(peak);
-            peaks.extend(right_peaks);
-            let commitment = Commitment {
-                mmr_root: bag_peaks(&peaks),
-                start_seq: 0,
-                leaf_count,
-            };
-            let mut items = left_peaks;
-            items.extend(siblings);
-            items.extend(right_peaks);
-            let mut proof = MmrProof {
-                leaf: leaf.clone(),
-                items,
-            };
+            // The first leaf of a peak is a left child at every level, the
+            // last leaf a right child.
+            for (leaf_index, is_right) in
+                [(first_leaf, false), (first_leaf + (1 << height) - 1, true)]
+            {
+                let peak = siblings
+                    .iter()
+                    .fold(hash_leaf(&leaf.encode()), |node, sibling| {
+                        if is_right {
+                            hash_children(*sibling, node)
+                        } else {
+                            hash_children(node, *sibling)
+                        }
+                    });
+                let mut peaks = left_peaks.clone();
+                peaks.push(peak);
+                peaks.extend(right_peaks);
+                let commitment = Commitment {
+                    mmr_root: bag_peaks(&peaks),
+                    start_seq: 0,
+                    leaf_count,
+                };
+                let mut items = left_peaks.clone();
+                items.extend(siblings.iter().copied());
+                items.extend(right_peaks);
+                let proof = MmrProof {
+                    leaf: leaf.clone(),
+                    items,
+                };
 
-            assert!(
-                verify_mmr_proof(&proof, leaf_index, &commitment),
-                "leaf {leaf_index} in the height-{height} peak"
-            );
-            proof.items[0] = H256::repeat_byte(0xEE);
-            assert!(!verify_mmr_proof(&proof, leaf_index, &commitment));
+                assert!(
+                    verify_mmr_proof(&proof, leaf_index, &commitment),
+                    "leaf {leaf_index} in the height-{height} peak"
+                );
+                if proof.items.is_empty() {
+                    continue;
+                }
+                for changed in [0, proof.items.len() - 1] {
+                    let mut tampered = proof.clone();
+                    tampered.items[changed] = H256::repeat_byte(0xEE);
+                    assert!(
+                        !verify_mmr_proof(&tampered, leaf_index, &commitment),
+                        "leaf {leaf_index}, item {changed} changed"
+                    );
+                }
+            }
         }
     }
 

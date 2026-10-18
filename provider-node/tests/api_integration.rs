@@ -103,7 +103,7 @@ common::backend_tests! {
         // Create test data
         let data = b"Hello, World!";
         let hash = storage_primitives::hash_leaf(data);
-        let hash_hex = format!("0x{}", hex_encode(hash.as_bytes()));
+        let hash_hex = format!("{hash:#x}");
 
         // Upload node
         let upload_response = server
@@ -139,6 +139,18 @@ common::backend_tests! {
 
         let downloaded_data = BASE64.decode(body["data"].as_str().unwrap()).unwrap();
         assert_eq!(downloaded_data, data);
+
+        // A bare hex request gets the `0x`-prefixed hash back.
+        let body: Value = server
+            .client
+            .get(server.url(&format!("/node?hash={}", &hash_hex[2..])))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(body["hash"], hash_hex);
     }
 }
 
@@ -149,7 +161,7 @@ common::backend_tests! {
         // Upload a node first
         let data = b"Test data for exists check";
         let hash = storage_primitives::hash_leaf(data);
-        let hash_hex = format!("0x{}", hex_encode(hash.as_bytes()));
+        let hash_hex = format!("{hash:#x}");
 
         server
             .client
@@ -198,7 +210,7 @@ common::backend_tests! {
         // Upload a data root (leaf chunk)
         let data = b"Chunk data for commit test";
         let hash = storage_primitives::hash_leaf(data);
-        let hash_hex = format!("0x{}", hex_encode(hash.as_bytes()));
+        let hash_hex = format!("{hash:#x}");
 
         server
             .client
@@ -256,7 +268,7 @@ common::backend_tests! {
         // Upload to bucket 1 to create it
         let data = b"Data for bucket 1";
         let hash = storage_primitives::hash_leaf(data);
-        let hash_hex = format!("0x{}", hex_encode(hash.as_bytes()));
+        let hash_hex = format!("{hash:#x}");
 
         server
             .client
@@ -325,10 +337,7 @@ common::backend_tests! {
             .put(server.url("/node"))
             .json(&json!({
                 "bucket_id": 1,
-                "hash": format!(
-                    "0x{}",
-                    hex_encode(storage_primitives::blake2_256(data).as_bytes())
-                ),
+                "hash": format!("{:#x}", storage_primitives::blake2_256(data)),
                 "data": BASE64.encode(data),
                 "children": null
             }))
@@ -348,14 +357,11 @@ common::backend_tests! {
             .put(server.url("/node"))
             .json(&json!({
                 "bucket_id": 1,
-                "hash": format!(
-                    "0x{}",
-                    hex_encode(storage_primitives::blake2_256(&node_data).as_bytes())
-                ),
+                "hash": format!("{:#x}", storage_primitives::blake2_256(&node_data)),
                 "data": BASE64.encode(&node_data),
                 "children": [
-                    format!("0x{}", hex_encode(left.as_bytes())),
-                    format!("0x{}", hex_encode(right.as_bytes())),
+                    format!("{left:#x}"),
+                    format!("{right:#x}"),
                 ]
             }))
             .send()
@@ -376,14 +382,14 @@ common::backend_tests! {
 
         // Create internal node data (child hashes concatenated)
         let mut node_data = Vec::new();
-        node_data.extend_from_slice(&hex_decode(child1).unwrap());
-        node_data.extend_from_slice(&hex_decode(child2).unwrap());
+        node_data.extend_from_slice(&sp_core::bytes::from_hex(child1).unwrap());
+        node_data.extend_from_slice(&sp_core::bytes::from_hex(child2).unwrap());
 
         let hash = storage_primitives::hash_children(
-            sp_core::H256::from_slice(&hex_decode(child1).unwrap()),
-            sp_core::H256::from_slice(&hex_decode(child2).unwrap()),
+            sp_core::H256::from_slice(&sp_core::bytes::from_hex(child1).unwrap()),
+            sp_core::H256::from_slice(&sp_core::bytes::from_hex(child2).unwrap()),
         );
-        let hash_hex = format!("0x{}", hex_encode(hash.as_bytes()));
+        let hash_hex = format!("{hash:#x}");
 
         let response = server
             .client
@@ -412,7 +418,7 @@ common::backend_tests! {
         // The child count is checked before anything is looked up, so the
         // child does not need to exist.
         let child_hash = H256::repeat_byte(0x11);
-        let child_hex = format!("0x{}", hex_encode(child_hash.as_bytes()));
+        let child_hex = format!("{child_hash:#x}");
 
         let hash = storage_primitives::hash_children(child_hash, child_hash);
         let response = server
@@ -420,7 +426,7 @@ common::backend_tests! {
             .put(server.url("/node"))
             .json(&json!({
                 "bucket_id": 1,
-                "hash": format!("0x{}", hex_encode(hash.as_bytes())),
+                "hash": format!("{hash:#x}"),
                 "data": BASE64.encode(child_hash.as_bytes()),
                 "children": [child_hex],
             }))
@@ -446,7 +452,7 @@ common::backend_tests! {
             let hash = storage_primitives::hash_leaf(&data);
             let request = server.client.put(server.url("/node")).json(&json!({
                 "bucket_id": 1,
-                "hash": format!("0x{}", hex_encode(hash.as_bytes())),
+                "hash": format!("{hash:#x}"),
                 "data": BASE64.encode(&data),
                 "children": null,
             }));
@@ -478,11 +484,11 @@ common::backend_tests! {
             .put(server.url("/node"))
             .json(&json!({
                 "bucket_id": 1,
-                "hash": format!("0x{}", hex_encode(hash.as_bytes())),
+                "hash": format!("{hash:#x}"),
                 "data": BASE64.encode(b"unrelated bytes"),
                 "children": [
-                    format!("0x{}", hex_encode(left.as_bytes())),
-                    format!("0x{}", hex_encode(right.as_bytes())),
+                    format!("{left:#x}"),
+                    format!("{right:#x}"),
                 ],
             }))
             .send()
@@ -515,7 +521,7 @@ common::backend_tests! {
         let mut node_data = Vec::new();
         for chunk in [b"left-chunk".as_slice(), b"right-chunk".as_slice()] {
             let chunk_hash = storage_primitives::hash_leaf(chunk);
-            child_hexes.push(format!("0x{}", hex_encode(chunk_hash.as_bytes())));
+            child_hexes.push(format!("{chunk_hash:#x}"));
             node_data.extend_from_slice(chunk_hash.as_bytes());
 
             server
@@ -523,7 +529,7 @@ common::backend_tests! {
                 .put(server.url("/node"))
                 .json(&json!({
                     "bucket_id": 1,
-                    "hash": format!("0x{}", hex_encode(chunk_hash.as_bytes())),
+                    "hash": format!("{chunk_hash:#x}"),
                     "data": BASE64.encode(chunk),
                     "children": null,
                 }))
@@ -536,7 +542,7 @@ common::backend_tests! {
             storage_primitives::hash_leaf(b"left-chunk"),
             storage_primitives::hash_leaf(b"right-chunk"),
         );
-        let hash_hex = format!("0x{}", hex_encode(hash.as_bytes()));
+        let hash_hex = format!("{hash:#x}");
 
         let response = server
             .client
@@ -598,7 +604,7 @@ common::backend_tests! {
 
         for chunk in &chunks {
             let hash = storage_primitives::hash_leaf(chunk);
-            let hash_hex = format!("0x{}", hex_encode(hash.as_bytes()));
+            let hash_hex = format!("{hash:#x}");
             chunk_hashes.push(hash_hex.clone());
 
             let response = server
@@ -663,7 +669,7 @@ common::backend_tests! {
 async fn upload_and_commit(server: &TestServer, bucket_id: u64) -> (String, Value) {
     let data = b"chunk-for-signature-tests";
     let hash = storage_primitives::hash_leaf(data);
-    let hash_hex = format!("0x{}", hex_encode(hash.as_bytes()));
+    let hash_hex = format!("{hash:#x}");
 
     let resp = server
         .client
@@ -705,7 +711,7 @@ fn alice_public() -> sr25519::Public {
 /// `MultiSignature`, as emitted by `ProviderState::sign`.
 fn decode_provider_signature(sig_hex: &str) -> sp_runtime::MultiSignature {
     use codec::Decode;
-    let bytes = hex_decode(sig_hex).expect("signature hex parses");
+    let bytes = sp_core::bytes::from_hex(sig_hex).expect("signature hex parses");
     sp_runtime::MultiSignature::decode(&mut &bytes[..]).expect("valid SCALE MultiSignature")
 }
 
@@ -742,7 +748,7 @@ common::backend_tests! {
 
         // Reconstruct exactly what the handler signed: CommitmentPayload with
         // the real post-commit leaf_count (no longer hardcoded 0).
-        let mmr_root_bytes = hex_decode(mmr_root_hex).unwrap();
+        let mmr_root_bytes = sp_core::bytes::from_hex(mmr_root_hex).unwrap();
         let mmr_root = H256::from_slice(&mmr_root_bytes);
         let leaf_count = body["leaf_count"]
             .as_u64()
@@ -783,7 +789,7 @@ common::backend_tests! {
         assert_eq!(resp.status(), StatusCode::OK);
         let body: Value = resp.json().await.unwrap();
 
-        let mmr_root = H256::from_slice(&hex_decode(body["mmr_root"].as_str().unwrap()).unwrap());
+        let mmr_root = H256::from_slice(&sp_core::bytes::from_hex(body["mmr_root"].as_str().unwrap()).unwrap());
         let start_seq = body["start_seq"].as_u64().unwrap();
         let leaf_count = body["leaf_count"].as_u64().unwrap();
         assert!(leaf_count > 0, "leaf_count must be the real on-disk value");
@@ -817,7 +823,7 @@ common::backend_tests! {
         let bucket_id = 9;
 
         let (_h, body) = upload_and_commit(&server, bucket_id).await;
-        let mmr_root = H256::from_slice(&hex_decode(body["mmr_root"].as_str().unwrap()).unwrap());
+        let mmr_root = H256::from_slice(&sp_core::bytes::from_hex(body["mmr_root"].as_str().unwrap()).unwrap());
         let start_seq = body["start_seq"].as_u64().unwrap();
         let sig = expect_sr25519(decode_provider_signature(
             body["provider_signature"].as_str().unwrap(),
@@ -851,7 +857,8 @@ async fn commit_signs_with_configured_ed25519_scheme() {
     let bucket_id = 11;
 
     let (_h, body) = upload_and_commit(&server, bucket_id).await;
-    let mmr_root = H256::from_slice(&hex_decode(body["mmr_root"].as_str().unwrap()).unwrap());
+    let mmr_root =
+        H256::from_slice(&sp_core::bytes::from_hex(body["mmr_root"].as_str().unwrap()).unwrap());
     let start_seq = body["start_seq"].as_u64().unwrap();
     let leaf_count = body["leaf_count"].as_u64().unwrap();
 
@@ -886,7 +893,7 @@ common::backend_tests! {
 
         let data = b"chunk-without-key";
         let hash = storage_primitives::hash_leaf(data);
-        let hash_hex = format!("0x{}", hex_encode(hash.as_bytes()));
+        let hash_hex = format!("{hash:#x}");
 
         server
             .client
@@ -926,7 +933,7 @@ common::backend_tests! {
         // to make /commitment reach state.sign(...).
         let data = b"chunk-for-commitment-503";
         let hash = storage_primitives::hash_leaf(data);
-        let hash_hex = format!("0x{}", hex_encode(hash.as_bytes()));
+        let hash_hex = format!("{hash:#x}");
         server
             .client
             .put(server.url("/node"))
@@ -972,7 +979,7 @@ common::backend_tests! {
         // to make /commitment reach state.sign(...) too.
         let data = b"chunk-for-commitment-unregistered";
         let hash = storage_primitives::hash_leaf(data);
-        let hash_hex = format!("0x{}", hex_encode(hash.as_bytes()));
+        let hash_hex = format!("{hash:#x}");
         server
             .client
             .put(server.url("/node"))
@@ -1012,7 +1019,7 @@ common::backend_tests! {
         // Seed and commit so the delete handler can reach its sign() call.
         let data = b"chunk-for-delete-503";
         let hash = storage_primitives::hash_leaf(data);
-        let hash_hex = format!("0x{}", hex_encode(hash.as_bytes()));
+        let hash_hex = format!("{hash:#x}");
         server
             .client
             .put(server.url("/node"))
@@ -1239,7 +1246,7 @@ common::backend_tests! {
 
         let data = b"fetch-nodes-test-data";
         let hash = storage_primitives::hash_leaf(data);
-        let hash_hex = format!("0x{}", hex_encode(hash.as_bytes()));
+        let hash_hex = format!("{hash:#x}");
 
         server
             .client
@@ -1362,11 +1369,11 @@ common::backend_tests! {
         // Commit two data roots
         let data1 = b"chunk-for-delete-1";
         let hash1 = storage_primitives::hash_leaf(data1);
-        let hash1_hex = format!("0x{}", hex_encode(hash1.as_bytes()));
+        let hash1_hex = format!("{hash1:#x}");
 
         let data2 = b"chunk-for-delete-2";
         let hash2 = storage_primitives::hash_leaf(data2);
-        let hash2_hex = format!("0x{}", hex_encode(hash2.as_bytes()));
+        let hash2_hex = format!("{hash2:#x}");
 
         for (hash_hex, data) in [(&hash1_hex, &data1[..]), (&hash2_hex, &data2[..])] {
             server
@@ -1417,7 +1424,7 @@ common::backend_tests! {
         // /commit proofs: a real signature, in the SCALE MultiSignature wire
         // format, over the *post-delete* commitment. A zero placeholder or a
         // raw untagged signature both pass a `starts_with("0x")` check.
-        let mmr_root = H256::from_slice(&hex_decode(body["mmr_root"].as_str().unwrap()).unwrap());
+        let mmr_root = H256::from_slice(&sp_core::bytes::from_hex(body["mmr_root"].as_str().unwrap()).unwrap());
         let sig = expect_sr25519(decode_provider_signature(
             body["provider_signature"].as_str().unwrap(),
         ));
@@ -1524,7 +1531,7 @@ common::backend_tests! {
 
         let data = b"child test data";
         let hash = storage_primitives::hash_leaf(data);
-        let hash_hex = format!("0x{}", hex_encode(hash.as_bytes()));
+        let hash_hex = format!("{hash:#x}");
 
         let resp = server
             .client
@@ -1573,7 +1580,7 @@ common::backend_tests! {
         // Upload a valid node first (upload doesn't need signing)
         let data = b"commit-no-key";
         let hash = storage_primitives::hash_leaf(data);
-        let hash_hex = format!("0x{}", hex_encode(hash.as_bytes()));
+        let hash_hex = format!("{hash:#x}");
 
         server
             .client
@@ -1657,22 +1664,4 @@ common::backend_tests! {
         let body: Value = resp.json().await.unwrap();
         assert_eq!(body["error"], "invalid_hash");
     }
-}
-
-// Helper functions
-
-fn hex_encode(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
-}
-
-fn hex_decode(s: &str) -> Result<Vec<u8>, &'static str> {
-    let s = s.strip_prefix("0x").unwrap_or(s);
-    if !s.len().is_multiple_of(2) {
-        return Err("invalid hex length");
-    }
-
-    (0..s.len())
-        .step_by(2)
-        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).map_err(|_| "invalid hex"))
-        .collect()
 }

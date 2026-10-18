@@ -201,8 +201,8 @@ impl ProviderState {
         };
         if &info.public_key != local {
             tracing::warn!(
-                registered = %hex::encode(&info.public_key),
-                local = %hex::encode(local),
+                registered = %sp_core::hexdisplay::HexDisplay::from(&info.public_key.as_slice()),
+                local = %sp_core::hexdisplay::HexDisplay::from(&local.as_slice()),
                 "local signing key does not match registered on-chain public_key"
             );
             return Err(SigningRefused::KeyMismatch);

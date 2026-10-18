@@ -10153,7 +10153,6 @@ dependencies = [
  "axum",
  "base64",
  "clap",
- "hex",
  "parity-scale-codec",
  "parking_lot",
  "provider-auth",
