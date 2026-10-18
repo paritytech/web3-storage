@@ -8,7 +8,7 @@ repository.workspace = true
 description = "Chain connection handling and typed event decoding for provider nodes"
 
 [dependencies]
-hex = { workspace = true, features = ["std"], optional = true }
+array-bytes = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
 sp-runtime = { workspace = true, features = ["std"] }
 storage-primitives = { workspace = true, features = ["std"] }
@@ -29,7 +29,7 @@ default = ["all"]
 all = ["connection", "decode"]
 # The subxt client construction (chain_connection.rs) and its Error type.
 connection = [
-	"dep:hex",
+	"dep:array-bytes",
 	"dep:serde_json",
 	"dep:subxt",
 	"dep:subxt-rpcs",

@@ -19,7 +19,7 @@ storage-primitives = { workspace = true }
 serde = { workspace = true, optional = true }
 
 # Utilities
-hex = { workspace = true, features = ["alloc"] }
+array-bytes = { workspace = true }
 
 # Error handling (std only)
 thiserror = { workspace = true, optional = true }
@@ -31,7 +31,6 @@ prost-build = { workspace = true }
 default = ["std"]
 std = [
 	"codec/std",
-	"hex/std",
 	"prost",
 	"scale-info/std",
 	"serde/std",

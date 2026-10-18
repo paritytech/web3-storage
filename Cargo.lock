@@ -3307,8 +3307,8 @@ dependencies = [
 name = "file-system-client"
 version = "0.1.0"
 dependencies = [
+ "array-bytes 6.2.3",
  "file-system-primitives",
- "hex",
  "reqwest",
  "sp-runtime",
  "storage-client",
@@ -3326,7 +3326,7 @@ dependencies = [
 name = "file-system-primitives"
 version = "0.1.0"
 dependencies = [
- "hex",
+ "array-bytes 6.2.3",
  "parity-scale-codec",
  "prost",
  "prost-build",
@@ -7177,8 +7177,8 @@ dependencies = [
 name = "provider-auth"
 version = "0.1.0"
 dependencies = [
+ "array-bytes 6.2.3",
  "async-trait",
- "hex",
  "moka",
  "sp-core",
  "storage-primitives",
@@ -7191,7 +7191,7 @@ dependencies = [
 name = "provider-chain"
 version = "0.1.0"
 dependencies = [
- "hex",
+ "array-bytes 6.2.3",
  "serde_json",
  "sp-runtime",
  "storage-primitives",
@@ -7236,7 +7236,7 @@ dependencies = [
 name = "provider-negotiation"
 version = "0.1.0"
 dependencies = [
- "hex",
+ "array-bytes 6.2.3",
  "parity-scale-codec",
  "serde",
  "serde_json",
@@ -8135,8 +8135,8 @@ checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
 name = "s3-client"
 version = "0.1.0"
 dependencies = [
+ "array-bytes 6.2.3",
  "futures",
- "hex",
  "reqwest",
  "serde",
  "serde_json",
@@ -8157,7 +8157,7 @@ dependencies = [
 name = "s3-primitives"
 version = "0.1.0"
 dependencies = [
- "hex",
+ "array-bytes 6.2.3",
  "parity-scale-codec",
  "scale-info",
  "sp-core",
@@ -9931,8 +9931,8 @@ name = "storage-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "array-bytes 6.2.3",
  "clap",
- "hex",
  "rand 0.8.8",
  "serde",
  "serde_json",
