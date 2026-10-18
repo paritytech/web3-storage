@@ -4,6 +4,11 @@
 //!
 //! Every internal node is `hash_children(left, right)`. An odd last node of a
 //! level moves up to the next level unchanged.
+//!
+//! `binary-merkle-tree` builds the same roots and proofs (see the tests) but
+//! does not replace this module: its `verify_proof` accepts proofs at other
+//! leaf indices for the same leaf count, it counts leaves in `u32`, and it
+//! exposes neither internal nodes nor range proofs.
 
 use crate::{hash_children, MerkleProof, DEFAULT_CHUNK_SIZE};
 use alloc::vec::Vec;
