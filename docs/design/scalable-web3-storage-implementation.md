@@ -2505,13 +2505,10 @@ pub struct MerkleProof {
 }
 
 pub struct MmrProof {
-    /// The leaf being proven. Verification hashes `0x00 ++ leaf.encode()` as
-    /// the proof's starting point, so the leaf content is part of the proof.
+    /// The leaf being proven. Its hash is the proof's starting point.
     pub leaf: MmrLeaf,
-    /// One hash per peak to the left of the leaf's peak, then the sibling
-    /// hashes from the leaf up to its peak, then one hash for all peaks to
-    /// the right of it (bagged if there are several). The leaf's own peak is
-    /// not included; the verifier computes it.
+    /// Hashes that link `leaf` to the commitment's MMR root, in the order
+    /// `polkadot-ckb-merkle-mountain-range` produces them.
     pub items: Vec<H256>,
 }
 ```

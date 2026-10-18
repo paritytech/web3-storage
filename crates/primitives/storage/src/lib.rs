@@ -260,10 +260,8 @@ pub struct MerkleProof {
 pub struct MmrProof {
     /// The leaf being proven
     pub leaf: MmrLeaf,
-    /// Proof hashes: one per peak to the left of the leaf's peak, then the
-    /// siblings from the leaf up to its peak, then one item for all peaks to
-    /// the right (the bagged peaks if there are several). The leaf's own peak
-    /// is not included, because the verifier computes it.
+    /// Hashes that link `leaf` to the commitment's MMR root, in the order
+    /// `polkadot-ckb-merkle-mountain-range` produces them.
     pub items: Vec<H256>,
 }
 
@@ -583,9 +581,9 @@ pub fn verify_mmr_proof(proof: &MmrProof, leaf_index: u64, commitment: &Commitme
 }
 
 /// Number of items in the proof for the leaf at `leaf_pos` of an MMR of
-/// `mmr_size` nodes, as documented on [`MmrProof::items`]: one per peak to the
-/// left, one per level of the leaf's peak, and one for the peaks to the right.
-/// `None` if no peak covers `leaf_pos`.
+/// `mmr_size` nodes: one per peak to the left, one per level of the leaf's
+/// peak, and one for the peaks to the right. `None` if no peak covers
+/// `leaf_pos`.
 fn mmr_proof_len(leaf_pos: u64, mmr_size: u64) -> Option<usize> {
     use mmr_lib::helper::{get_peaks, pos_height_in_tree};
 
