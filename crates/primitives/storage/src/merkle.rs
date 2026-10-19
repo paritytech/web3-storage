@@ -4,12 +4,6 @@
 //!
 //! Every internal node is `hash_children(left, right)`. An odd last node of a
 //! level moves up to the next level unchanged.
-//!
-//! `binary-merkle-tree` builds the same roots and proofs (see the tests) but
-//! does not replace this module: its `verify_proof` accepts proofs at other
-//! leaf indices for the same leaf count (pinned by
-//! `only_our_verifier_binds_the_leaf_index`), it counts leaves in `u32`, and it
-//! exposes neither internal nodes nor range proofs.
 
 use crate::{hash_children, MerkleProof, DEFAULT_CHUNK_SIZE};
 use alloc::vec::Vec;
@@ -173,22 +167,7 @@ pub fn verify_merkle_proof(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{blake2_256, hash_prefixed, NODE_PREFIX};
-    use binary_merkle_tree::Leaf;
-
-    /// Hashes `left ++ right` like [`hash_children`], so `binary-merkle-tree`
-    /// builds the same tree when given leaf hashes.
-    struct StorageHasher;
-
-    impl sp_core::Hasher for StorageHasher {
-        type Out = H256;
-        type StdHasher = <sp_core::Blake2Hasher as sp_core::Hasher>::StdHasher;
-        const LENGTH: usize = 32;
-
-        fn hash(x: &[u8]) -> H256 {
-            hash_prefixed(NODE_PREFIX, x)
-        }
-    }
+    use crate::blake2_256;
 
     fn leaves(n: usize) -> Vec<H256> {
         (1..=n).map(|i| H256::from_low_u64_be(i as u64)).collect()
@@ -449,71 +428,5 @@ mod tests {
         assert_eq!(chunk_count(chunk + 1), 2);
         assert_eq!(chunk_count(2 * chunk), 2);
         assert_eq!(chunk_count(2 * chunk + 10), 3);
-    }
-
-    /// `binary-merkle-tree` builds the same roots and proofs, and accepts our
-    /// proofs.
-    #[test]
-    fn roots_and_proofs_match_binary_merkle_tree() {
-        for n in 0..=33 {
-            let l = leaves(n);
-            let root = merkle_root(&l);
-            assert_eq!(
-                root,
-                binary_merkle_tree::merkle_root_raw::<StorageHasher, _>(l.clone()),
-                "{n} leaves"
-            );
-            for (i, leaf) in l.iter().enumerate() {
-                let siblings = proof_for(&l, i).siblings;
-                let reference =
-                    binary_merkle_tree::merkle_proof_raw::<StorageHasher, _>(l.clone(), i as u32);
-                assert_eq!(siblings, reference.proof, "{n} leaves, index {i}");
-                assert!(
-                    binary_merkle_tree::verify_proof::<StorageHasher, _, _>(
-                        &root,
-                        siblings,
-                        n as u32,
-                        i as u32,
-                        Leaf::Hash(*leaf)
-                    ),
-                    "{n} leaves, index {i}"
-                );
-            }
-        }
-    }
-
-    /// Why this module is not replaced by `binary-merkle-tree`: for the same
-    /// leaf count, its `verify_proof` accepts some proofs at another leaf
-    /// index, ours accepts none. If a library release closes this, reconsider
-    /// switching.
-    #[test]
-    fn only_our_verifier_binds_the_leaf_index() {
-        let mut library_accepted = 0;
-        for n in 1..=40usize {
-            let l = leaves(n);
-            let root = merkle_root(&l);
-            for i in 0..n {
-                let proof = proof_for(&l, i);
-                for j in (0..n).filter(|j| *j != i) {
-                    assert!(
-                        !verify_merkle_proof(l[i], j as u64, n as u64, &proof, &root),
-                        "leaf {i} of {n} verified at index {j}"
-                    );
-                    if binary_merkle_tree::verify_proof::<StorageHasher, _, _>(
-                        &root,
-                        proof.siblings.clone(),
-                        n as u32,
-                        j as u32,
-                        Leaf::Hash(l[i]),
-                    ) {
-                        library_accepted += 1;
-                    }
-                }
-            }
-        }
-        assert!(
-            library_accepted > 0,
-            "binary-merkle-tree now binds the leaf index"
-        );
     }
 }

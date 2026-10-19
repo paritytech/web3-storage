@@ -122,8 +122,7 @@ sp-version = { version = "46.0.0", default-features = false }
 # Hex encoding, as used across the Polkadot SDK
 array-bytes = { version = "6.2.3", default-features = false }
 
-# Merkle tree and Merkle Mountain Range
-binary-merkle-tree = { version = "16.1.1", default-features = false }
+# Merkle Mountain Range
 polkadot-ckb-merkle-mountain-range = { version = "0.8.2", default-features = false }
 
 # Polkadot

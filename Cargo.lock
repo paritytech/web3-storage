@@ -10127,7 +10127,6 @@ dependencies = [
 name = "storage-primitives"
 version = "0.1.0"
 dependencies = [
- "binary-merkle-tree",
  "parity-scale-codec",
  "polkadot-ckb-merkle-mountain-range",
  "scale-info",

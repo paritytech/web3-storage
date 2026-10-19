@@ -15,13 +15,9 @@ sp-core = { workspace = true }
 sp-io = { workspace = true }
 serde = { workspace = true, optional = true }
 
-[dev-dependencies]
-binary-merkle-tree = { workspace = true }
-
 [features]
 default = ["std"]
 std = [
-	"binary-merkle-tree/std",
 	"codec/std",
 	"polkadot-ckb-merkle-mountain-range/std",
 	"scale-info/std",
