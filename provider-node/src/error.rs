@@ -197,6 +197,13 @@ impl IntoResponse for Error {
                         details: Some(serde_json::json!({ "data_root": root })),
                     },
                 ),
+                StorageError::CommitmentNotReproducible(reason) => (
+                    StatusCode::NOT_FOUND,
+                    ErrorResponse {
+                        error: "commitment_not_reproducible".to_string(),
+                        details: Some(serde_json::json!({ "reason": reason })),
+                    },
+                ),
                 StorageError::InvalidHash { expected, actual } => (
                     StatusCode::BAD_REQUEST,
                     ErrorResponse {
@@ -534,6 +541,12 @@ mod tests {
         );
         assert_eq!(
             status_of(Error::from(provider_storage::Error::BucketNotFound(1))),
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(
+            status_of(Error::from(
+                provider_storage::Error::CommitmentNotReproducible("x".into())
+            )),
             StatusCode::NOT_FOUND
         );
         assert_eq!(

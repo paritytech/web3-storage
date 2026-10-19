@@ -661,7 +661,7 @@
           <li>&bull; roots: current snapshot plus 6 historical_roots positions (primes 3, 7, 11, 23, 47, 113)</li>
           <li>&bull; The first matching position is credited: position_matched 0 is current, 1-6 historical</li>
           <li>&bull; Rejected unless the root differs from last_sync and min_sync_interval has passed</li>
-          <li>&bull; A confirmed root makes the replica challengeable by anyone</li>
+          <li>&bull; last_sync records the matched commitment (root, start_seq, leaf_count), for historical positions too; challenge_replica binds proofs to it</li>
           <li>&bull; Anyone can fund syncs with top_up_replica_sync_balance</li>
         </ul>
       </div>
