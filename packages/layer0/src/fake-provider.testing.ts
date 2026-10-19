@@ -181,7 +181,7 @@ export class FakeProvider {
     return json(200, { hash, data: bytesToBase64(node.data), children: node.children });
   }
 
-  /** Chunk hashes under `root` in order (`collect_chunk_hashes`). */
+  /** Chunk hashes under `root` in order (`collect_leaves`). */
   private chunkHashes(root: string): string[] {
     const out: string[] = [];
     const stack = [root];
