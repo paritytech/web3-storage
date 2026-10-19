@@ -247,6 +247,7 @@ impl FinalizedBlocks for SubxtFinalizedBlocks {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use provider_coordinator::BlockContents;
     use provider_events::BlockEvent;
     use std::sync::Arc;
     use subxt::backend::LegacyBackend;
@@ -795,11 +796,11 @@ mod tests {
         assert!(membership_changed_bucket_ids(&events).is_empty());
     }
 
-    /// The tracked metadata with the `role` field removed from the
-    /// `StorageProvider::MemberSet` event, so a `MemberSet` record encoded
+    /// The tracked metadata with `field` removed from the
+    /// `StorageProvider::<event>` event, so a record of that event encoded
     /// against it no longer decodes against the static bindings. Expects the
     /// snapshot to be V16 metadata.
-    fn metadata_without_member_set_role() -> Vec<u8> {
+    fn metadata_without_event_field(event: &str, field: &str) -> Vec<u8> {
         use codec::{Decode, Encode};
         use subxt::ext::frame_metadata::{RuntimeMetadata, RuntimeMetadataPrefixed};
 
@@ -825,37 +826,26 @@ mod tests {
         let scale_info::TypeDef::Variant(variants) = &mut ty.ty.type_def else {
             panic!("event type is not an enum");
         };
-        let member_set = variants
+        let variant = variants
             .variants
             .iter_mut()
-            .find(|variant| variant.name == "MemberSet")
-            .expect("MemberSet variant");
-        member_set
-            .fields
-            .retain(|field| field.name.as_deref() != Some("role"));
+            .find(|variant| variant.name == event)
+            .expect("event variant");
+        variant.fields.retain(|f| f.name.as_deref() != Some(field));
         prefixed.encode()
     }
 
-    /// A membership event whose fields do not match the static bindings
-    /// escalates to `MembershipScopeUnknown` instead of being dropped.
-    #[tokio::test]
-    async fn undecodable_membership_event_escalates() {
-        let drifted = metadata_without_member_set_role();
+    /// Decode `records`, encoded against `metadata`, through a mock chain
+    /// that serves `metadata`.
+    async fn decode_with_metadata(metadata: Vec<u8>, records: Vec<Value>) -> BlockContents {
         let md = {
             use codec::Decode;
-            subxt::Metadata::decode(&mut &drifted[..]).expect("edited metadata decodes")
+            subxt::Metadata::decode(&mut &metadata[..]).expect("edited metadata decodes")
         };
-        let member_set = event_record(Value::named_variant(
-            "MemberSet",
-            [
-                ("bucket_id", Value::u128(7)),
-                ("member", Value::from_bytes([3u8; 32])),
-            ],
-        ));
         let ty = storage_value_type(&md, "System", "Events");
-        let events_bytes = encode_value(&md, ty, &Value::unnamed_composite([member_set]));
+        let events_bytes = encode_value(&md, ty, &Value::unnamed_composite(records));
         let api = mock_api_with_metadata(
-            drifted,
+            metadata,
             vec![(
                 key_prefix("System", "Events"),
                 format!("0x{}", hex::encode(events_bytes)),
@@ -865,13 +855,59 @@ mod tests {
 
         let at = api.at_current_block().await.expect("block handle");
         let events = at.events().fetch().await.expect("events fetch");
-        let contents = decode_block_contents(&events, 42);
+        decode_block_contents(&events, 42)
+    }
+
+    /// A membership event whose fields do not match the static bindings
+    /// escalates to `MembershipScopeUnknown` instead of being dropped.
+    #[tokio::test]
+    async fn undecodable_membership_event_escalates() {
+        let member_set = event_record(Value::named_variant(
+            "MemberSet",
+            [
+                ("bucket_id", Value::u128(7)),
+                ("member", Value::from_bytes([3u8; 32])),
+            ],
+        ));
+        let contents = decode_with_metadata(
+            metadata_without_event_field("MemberSet", "role"),
+            vec![member_set],
+        )
+        .await;
 
         assert!(matches!(
             contents.events.as_slice(),
             [BlockEvent::MembershipScopeUnknown { at_block: 42 }]
         ));
         assert!(contents.lifecycle.is_empty());
+    }
+
+    /// A lifecycle event whose fields do not match the static bindings is
+    /// skipped, and the other events of the block still decode.
+    #[tokio::test]
+    async fn undecodable_lifecycle_event_is_skipped() {
+        let registered = event_record(Value::named_variant(
+            "ProviderRegistered",
+            [(
+                "provider",
+                Value::from_bytes(<AccountId32 as AsRef<[u8]>>::as_ref(&provider_account())),
+            )],
+        ));
+        let bucket_deleted = event_record(Value::named_variant(
+            "BucketDeleted",
+            [("bucket_id", Value::u128(8))],
+        ));
+        let contents = decode_with_metadata(
+            metadata_without_event_field("ProviderRegistered", "stake"),
+            vec![registered, bucket_deleted],
+        )
+        .await;
+
+        assert!(contents.lifecycle.is_empty());
+        assert!(matches!(
+            contents.events.as_slice(),
+            [BlockEvent::BucketMembershipChanged { bucket_id: 8 }]
+        ));
     }
 
     /// End-to-end through [`SubxtFinalizedBlocks::next`]: the anchor block
