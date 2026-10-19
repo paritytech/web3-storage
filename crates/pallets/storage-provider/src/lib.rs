@@ -898,7 +898,9 @@ pub mod pallet {
             /// The provider.
             provider: T::AccountId,
         },
-        /// A primary provider left the bucket's provider set.
+        /// A primary provider left the bucket's provider set. Its bit was
+        /// dropped from the snapshot's `primary_signers` and the higher bits
+        /// shifted down.
         PrimaryProviderRemoved {
             /// The bucket.
             bucket_id: BucketId,
@@ -1872,6 +1874,9 @@ pub mod pallet {
         /// Anyone can call this to clean up slashed providers.
         /// The provider must have zero stake (indicating they were slashed).
         /// Returns payment to agreement owner and removes the provider from the bucket.
+        /// For a primary this also removes it from `primary_providers`,
+        /// re-indexes the snapshot bitfield and emits `PrimaryProviderRemoved`
+        /// with reason `Slashed`.
         #[pallet::call_index(15)]
         #[pallet::weight(T::WeightInfo::remove_slashed())]
         pub fn remove_slashed(
@@ -1968,6 +1973,11 @@ pub mod pallet {
         /// `SettlementTimeout` to call this; then only the provider can
         /// settle, via `claim_expired_agreement`. Blocked while a challenge
         /// against the agreement is pending.
+        ///
+        /// Ending a primary agreement removes the provider from the bucket's
+        /// `primary_providers`, re-indexes the snapshot's `primary_signers`
+        /// bitfield and emits `PrimaryProviderRemoved` with reason
+        /// `AdminTerminated` before expiry or `Expired` after.
         #[pallet::call_index(25)]
         #[pallet::weight(match action {
             EndAction::Pay => T::WeightInfo::end_agreement(0),
@@ -2030,6 +2040,9 @@ pub mod pallet {
         /// Provider only. Collect the escrow of an expired agreement once the
         /// owner's `SettlementTimeout` window has passed without settlement.
         /// Blocked while a challenge against the agreement is pending.
+        /// For a primary this also removes it from `primary_providers`,
+        /// re-indexes the snapshot bitfield and emits `PrimaryProviderRemoved`
+        /// with reason `Expired`.
         #[pallet::call_index(26)]
         #[pallet::weight(T::WeightInfo::claim_expired_agreement())]
         pub fn claim_expired_agreement(

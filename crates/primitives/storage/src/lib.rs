@@ -390,9 +390,12 @@ pub struct BucketSnapshot<BlockNumber> {
     pub commitment: Commitment,
     /// Block at which checkpointed
     pub checkpoint_block: BlockNumber,
-    /// Bitfield indicating which primary providers signed this snapshot.
-    /// Bit i is set if primary_providers[i] signed.
-    /// Uses Vec<u8> with LSB0 ordering for efficient bit manipulation.
+    /// Bitfield of which primary providers signed this snapshot: bit i (LSB0)
+    /// is set if `primary_providers[i]` signed. Bit i always refers to the
+    /// current `primary_providers[i]`: removing a primary drops its bit and
+    /// shifts the higher bits down (`remove_provider_bit`); adding a primary
+    /// leaves the bitfield unchanged until it signs via `extend_checkpoint` or
+    /// the next `checkpoint`, which regenerates the bitfield.
     pub primary_signers: Vec<u8>,
 }
 

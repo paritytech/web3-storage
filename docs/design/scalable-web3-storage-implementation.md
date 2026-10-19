@@ -522,9 +522,16 @@ pub struct BucketSnapshot<BlockNumber> {
     /// Bit i (LSB0) is set if `primary_providers[i]` signed.
     /// Stored as `Vec<u8>` with explicit `count_signers()` / `has_provider_signed()`
     /// helpers rather than `BitVec` to keep encoding stable and `no_std`-friendly.
-    /// `primary_providers` is bounded by `T::MaxPrimaryProviders` (e.g., 5), so
-    /// indices are stable within a checkpoint; if it changes between checkpoints
-    /// the bitfield is regenerated at the next checkpoint.
+    /// `primary_providers` is bounded by `T::MaxPrimaryProviders` (e.g., 5).
+    /// Bit i always refers to the current `primary_providers[i]`: removing a
+    /// primary on any path (`end_agreement`, `claim_expired_agreement`,
+    /// `remove_slashed`) drops its bit and shifts the higher bits down
+    /// (`remove_provider_bit()`), so each remaining signer's bit stays set and
+    /// no provider gets a bit for a snapshot it did not sign. Adding a primary
+    /// appends to `primary_providers` and leaves the bitfield unchanged; the new
+    /// primary gets its bit when it signs the current snapshot via
+    /// `extend_checkpoint`, or at the next `checkpoint`, which regenerates the
+    /// bitfield from its signatures.
     pub primary_signers: Vec<u8>,
 }
 // Canonical range is [start_seq, start_seq + leaf_count)
@@ -1574,6 +1581,12 @@ impl<T: Config> Pallet<T> {
     /// `create_bucket_with_primary` / `add_primary_provider`);
     /// `transfer_agreement_ownership` can separate them.
     /// Admin has no special privileges over replica agreements.
+    ///
+    /// Ending a primary agreement removes the provider from
+    /// `bucket.primary_providers`, re-indexes `snapshot.primary_signers` (see
+    /// `BucketSnapshot`) and emits `PrimaryProviderRemoved` with reason
+    /// `AdminTerminated` (early) or `Expired`. `claim_expired_agreement` does
+    /// the same with reason `Expired`.
     ///
     /// Blocked while a challenge against `(bucket, provider)` is unresolved
     /// (`AgreementHasPendingChallenge`, via `PendingChallengesByBucket`): an
