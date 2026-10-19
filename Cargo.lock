@@ -10164,6 +10164,7 @@ dependencies = [
  "provider-storage",
  "provider-types",
  "reqwest",
+ "scale-info",
  "serde",
  "serde_json",
  "sp-core",
