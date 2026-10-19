@@ -11,12 +11,12 @@
 
 use crate::base::{BaseClient, ChunkingStrategy, ClientConfig, ClientError, ClientResult};
 use crate::encryption::{Cipher, EncryptionKey, XChaCha20Poly1305Cipher};
+use crate::substrate::parse_h256;
 use crate::verification::ClientVerifier;
 use crate::Signer;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
-use provider_auth::build_auth_header;
 use sp_core::H256;
-use storage_primitives::{blake2_256, BucketId};
+use storage_primitives::{hash_children, hash_leaf, BucketId, DEFAULT_CHUNK_SIZE};
 
 /// Client for storage users (end users who store/retrieve data).
 pub struct StorageUserClient {
@@ -47,19 +47,10 @@ impl StorageUserClient {
         method: &str,
         bucket_id: BucketId,
     ) -> reqwest::RequestBuilder {
-        let signer = self.auth_signer.keypair();
-        let timestamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or_default();
-        let header = build_auth_header(
-            &signer.public_key().0,
-            method,
-            bucket_id,
-            timestamp,
-            |msg| signer.sign(msg).0,
-        );
-        req.header("Authorization", header)
+        req.header(
+            "Authorization",
+            self.auth_signer.auth_header(method, bucket_id),
+        )
     }
 
     /// Enable client-side encryption with a custom cipher (builder pattern).
@@ -90,6 +81,9 @@ impl StorageUserClient {
     /// 3. Upload all nodes to the provider
     /// 4. Return the data root hash
     ///
+    /// Returns [`ClientError::Config`] before any request if a
+    /// [`ChunkingStrategy::Fixed`] size is 0 or above `DEFAULT_CHUNK_SIZE`.
+    ///
     /// # Example
     /// ```no_run
     /// # use storage_client::{ClientConfig, Signer, StorageUserClient};
@@ -107,6 +101,16 @@ impl StorageUserClient {
         data: &[u8],
         strategy: ChunkingStrategy,
     ) -> ClientResult<H256> {
+        // A chunk size of 0 makes `chunks()` panic, and the provider rejects a
+        // chunk above `DEFAULT_CHUNK_SIZE`.
+        if let ChunkingStrategy::Fixed(chunk_size) = strategy {
+            if chunk_size == 0 || chunk_size > DEFAULT_CHUNK_SIZE as usize {
+                return Err(ClientError::Config(format!(
+                    "chunk size must be between 1 and {DEFAULT_CHUNK_SIZE} bytes, got {chunk_size}"
+                )));
+            }
+        }
+
         let provider_url = self.base.get_provider_url()?;
 
         // Encrypt data before chunking if encryption is enabled
@@ -122,11 +126,12 @@ impl StorageUserClient {
         let chunks = Self::chunk_data(upload_data, strategy);
 
         // Upload chunks (leaves)
-        let chunk_hashes: Vec<H256> = chunks.iter().map(|chunk| blake2_256(chunk)).collect();
-
-        for (chunk, hash) in chunks.iter().zip(chunk_hashes.iter()) {
-            self.upload_node(provider_url, bucket_id, *hash, chunk.clone(), None)
-                .await?;
+        let mut chunk_hashes = Vec::with_capacity(chunks.len());
+        for chunk in chunks {
+            chunk_hashes.push(
+                self.upload_node(provider_url, bucket_id, &Node::Chunk(chunk))
+                    .await?,
+            );
         }
 
         // Build Merkle tree bottom-up
@@ -224,7 +229,7 @@ impl StorageUserClient {
 
             // Verify chunk hash
             let expected_hash = BaseClient::hex_decode(&chunk.hash)?;
-            let actual_hash = blake2_256(&chunk_data);
+            let actual_hash = hash_leaf(&chunk_data);
             if actual_hash.as_bytes() != expected_hash.as_slice() {
                 return Err(ClientError::VerificationFailed);
             }
@@ -233,7 +238,7 @@ impl StorageUserClient {
         }
 
         // Trim to requested range
-        let chunk_size = 256 * 1024;
+        let chunk_size = u64::from(DEFAULT_CHUNK_SIZE);
         let start = (offset % chunk_size) as usize;
         let end = start + length as usize;
         let trimmed = if end <= data.len() {
@@ -257,7 +262,8 @@ impl StorageUserClient {
 
     /// Read a single node by its hash.
     ///
-    /// Returns the node data and optionally its children hashes (for internal nodes).
+    /// Returns a chunk with its bytes, or an internal node with its two child
+    /// hashes.
     ///
     /// # Example
     /// ```no_run
@@ -265,12 +271,13 @@ impl StorageUserClient {
     /// # use sp_core::H256;
     /// # async fn example(hash: H256) -> Result<(), Box<dyn std::error::Error>> {
     /// let client = StorageUserClient::new(ClientConfig::default(), Signer::from_seed("//Alice")?)?;
-    /// let (data, children) = client.read_node(&hash).await?;
-    /// println!("Read {} bytes", data.len());
+    /// if let storage_client::Node::Chunk(data) = client.read_node(&hash).await? {
+    ///     println!("Read {} bytes", data.len());
+    /// }
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn read_node(&self, hash: &H256) -> ClientResult<(Vec<u8>, Option<Vec<H256>>)> {
+    pub async fn read_node(&self, hash: &H256) -> ClientResult<Node> {
         let provider_url = self.base.get_provider_url()?;
         let hash_hex = BaseClient::hex_encode(hash.as_bytes());
 
@@ -304,30 +311,22 @@ impl StorageUserClient {
             .children
             .map(|c| {
                 c.iter()
-                    .map(|h| {
-                        let bytes = BaseClient::hex_decode(h)?;
-                        Ok(H256::from_slice(&bytes))
-                    })
+                    .map(|h| parse_h256(h))
                     .collect::<ClientResult<Vec<H256>>>()
             })
             .transpose()?;
 
-        Ok((data, children))
+        Node::from_wire(data, children)
     }
 
-    /// Read a node and verify its hash matches.
-    ///
-    /// Returns the data if hash verification passes.
-    pub async fn read_node_verified(&self, hash: &H256) -> ClientResult<Vec<u8>> {
-        let (data, _children) = self.read_node(hash).await?;
-
-        // Verify the hash
-        let computed_hash = blake2_256(&data);
-        if &computed_hash != hash {
+    /// Read a node and verify that it hashes to `hash`.
+    pub async fn read_node_verified(&self, hash: &H256) -> ClientResult<Node> {
+        let node = self.read_node(hash).await?;
+        if &node.hash() != hash {
             return Err(ClientError::VerificationFailed);
         }
 
-        Ok(data)
+        Ok(node)
     }
 
     // ═════════════════════════════════════════════════════════════════════════
@@ -386,9 +385,8 @@ impl StorageUserClient {
 
     /// Get a checkpoint-compatible signature from the provider.
     ///
-    /// Unlike `commit` which signs with `leaf_count=0` (for `challenge_offchain`),
-    /// this returns a signature over the real `leaf_count`, suitable for submitting
-    /// an on-chain checkpoint via the `checkpoint` extrinsic.
+    /// Returns a signature over the commitment with the real `leaf_count`,
+    /// suitable for the on-chain `checkpoint` extrinsic.
     pub async fn get_checkpoint_signature(
         &self,
         bucket_id: BucketId,
@@ -426,7 +424,7 @@ impl StorageUserClient {
     pub async fn spot_check(&mut self, data_root: &H256, chunk_index: u64) -> ClientResult<bool> {
         use std::time::Instant;
 
-        let chunk_size = 256 * 1024u64; // 256 KiB
+        let chunk_size = u64::from(DEFAULT_CHUNK_SIZE);
         let offset = chunk_index * chunk_size;
         let provider_url = self.base.get_provider_url()?.to_string();
 
@@ -494,28 +492,34 @@ impl StorageUserClient {
             }
             ChunkingStrategy::ContentDefined => {
                 // TODO: Implement content-defined chunking
-                Self::chunk_data(data, ChunkingStrategy::Fixed(256 * 1024))
+                Self::chunk_data(data, ChunkingStrategy::default())
             }
         }
     }
 
+    /// Upload `node` and return its hash.
     async fn upload_node(
         &self,
         provider_url: &str,
         bucket_id: BucketId,
-        hash: H256,
-        data: Vec<u8>,
-        children: Option<Vec<H256>>,
-    ) -> ClientResult<()> {
+        node: &Node,
+    ) -> ClientResult<H256> {
+        let (data, children) = match node {
+            Node::Chunk(data) => (BASE64.encode(data), None),
+            Node::Internal { left, right } => (
+                BASE64.encode([left.as_bytes(), right.as_bytes()].concat()),
+                Some(vec![
+                    BaseClient::hex_encode(left.as_bytes()),
+                    BaseClient::hex_encode(right.as_bytes()),
+                ]),
+            ),
+        };
+        let hash = node.hash();
         let request = UploadNodeRequest {
             bucket_id,
             hash: BaseClient::hex_encode(hash.as_bytes()),
-            data: BASE64.encode(&data),
-            children: children.map(|c| {
-                c.iter()
-                    .map(|h| BaseClient::hex_encode(h.as_bytes()))
-                    .collect()
-            }),
+            data,
+            children,
         };
 
         let req = self
@@ -532,7 +536,7 @@ impl StorageUserClient {
             )));
         }
 
-        Ok(())
+        Ok(hash)
     }
 
     async fn build_merkle_tree(
@@ -546,47 +550,20 @@ impl StorageUserClient {
                 "Cannot build Merkle tree with no leaves".to_string(),
             ));
         }
-
-        let mut current_level = leaf_hashes.to_vec();
-
-        while current_level.len() > 1 {
-            let mut next_level = Vec::new();
-
-            for pair in current_level.chunks(2) {
-                let parent_hash = if pair.len() == 2 {
-                    storage_primitives::hash_children(pair[0], pair[1])
-                } else {
-                    pair[0]
-                };
-
-                // Upload internal node
-                let children = pair.to_vec();
-                let parent_data = self.encode_internal_node(&children);
-
-                self.upload_node(
-                    provider_url,
-                    bucket_id,
-                    parent_hash,
-                    parent_data,
-                    Some(children),
-                )
-                .await?;
-
-                next_level.push(parent_hash);
-            }
-
-            current_level = next_level;
+        let (root, nodes) = storage_primitives::merkle_tree(leaf_hashes);
+        for node in nodes {
+            self.upload_node(
+                provider_url,
+                bucket_id,
+                &Node::Internal {
+                    left: node.left,
+                    right: node.right,
+                },
+            )
+            .await?;
         }
 
-        Ok(current_level[0])
-    }
-
-    fn encode_internal_node(&self, children: &[H256]) -> Vec<u8> {
-        // Simple encoding: concatenate child hashes
-        children
-            .iter()
-            .flat_map(|h| h.as_bytes().to_vec())
-            .collect()
+        Ok(root)
     }
 
     // ═════════════════════════════════════════════════════════════════════════
@@ -685,6 +662,49 @@ impl crate::verification::ProviderReadAccess for StorageUserClient {
 
 // API types
 
+/// A chunk-tree node: a chunk with its bytes, or an internal node with its two
+/// child hashes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Node {
+    /// Chunk bytes.
+    Chunk(Vec<u8>),
+    /// Child hashes of an internal node.
+    Internal {
+        /// Left child hash.
+        left: H256,
+        /// Right child hash.
+        right: H256,
+    },
+}
+
+impl Node {
+    /// This node's hash: the chunk hash for a chunk, the hash of the two
+    /// children for an internal node.
+    pub fn hash(&self) -> H256 {
+        match self {
+            Self::Chunk(data) => hash_leaf(data),
+            Self::Internal { left, right } => hash_children(*left, *right),
+        }
+    }
+
+    /// Build a node from the `data` and `children` of a `/node` response.
+    /// `VerificationFailed` if an internal node does not have exactly two
+    /// children or its `data` is not the left child hash followed by the right
+    /// child hash.
+    fn from_wire(data: Vec<u8>, children: Option<Vec<H256>>) -> ClientResult<Self> {
+        let Some(children) = children else {
+            return Ok(Self::Chunk(data));
+        };
+        let [left, right]: [H256; 2] = children
+            .try_into()
+            .map_err(|_| ClientError::VerificationFailed)?;
+        if data != [left.as_bytes(), right.as_bytes()].concat() {
+            return Err(ClientError::VerificationFailed);
+        }
+        Ok(Self::Internal { left, right })
+    }
+}
+
 #[derive(serde::Serialize)]
 struct UploadNodeRequest {
     bucket_id: u64,
@@ -726,8 +746,8 @@ pub struct CommitResponse {
     #[serde(deserialize_with = "h256_from_hex")]
     pub mmr_root: H256,
     pub start_seq: u64,
-    /// Leaves in the MMR after this commit. Needed when the resulting
-    /// signature is submitted via `challenge_offchain`.
+    /// Leaf count signed into the commitment; `challenge_offchain` binds the
+    /// challenged leaf to it.
     pub leaf_count: u64,
     pub leaf_indices: Vec<u64>,
     #[serde(deserialize_with = "multi_signature_from_hex")]
@@ -805,6 +825,41 @@ impl CommitmentResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn node_from_wire_checks_child_count_and_data() {
+        let (left, right) = (H256::repeat_byte(1), H256::repeat_byte(2));
+        let data = [left.as_bytes(), right.as_bytes()].concat();
+
+        assert_eq!(
+            Node::from_wire(vec![1, 2, 3], None).unwrap(),
+            Node::Chunk(vec![1, 2, 3])
+        );
+        assert_eq!(
+            Node::from_wire(data.clone(), Some(vec![left, right])).unwrap(),
+            Node::Internal { left, right }
+        );
+        for (data, children) in [
+            (data.clone(), vec![left]),
+            (data, vec![left, right, left]),
+            (Vec::new(), vec![left, right]),
+        ] {
+            assert!(matches!(
+                Node::from_wire(data, Some(children)),
+                Err(ClientError::VerificationFailed)
+            ));
+        }
+    }
+
+    #[test]
+    fn node_hash_is_the_chunk_hash_or_the_hash_of_the_children() {
+        let (left, right) = (H256::repeat_byte(1), H256::repeat_byte(2));
+        assert_eq!(Node::Chunk(vec![1, 2, 3]).hash(), hash_leaf(&[1, 2, 3]));
+        assert_eq!(
+            Node::Internal { left, right }.hash(),
+            storage_primitives::hash_children(left, right)
+        );
+    }
 
     fn commitment_json(mmr_root: &str, signature: &str) -> String {
         format!(

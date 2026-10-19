@@ -29,7 +29,6 @@ interface ManageAccessDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   bucketId: bigint;
-  driveName: string;
 }
 
 function roleBadge(role: string) {
@@ -51,7 +50,6 @@ export default function ManageAccessDialog({
   open,
   onOpenChange,
   bucketId,
-  driveName,
 }: ManageAccessDialogProps) {
   const signerAddress = useSignerAddress();
 
@@ -182,7 +180,7 @@ export default function ManageAccessDialog({
             Manage Access
           </DialogTitle>
           <DialogDescription>
-            Members of "{driveName}" (Bucket #{bucketId.toString()})
+            Members of Bucket #{bucketId.toString()}
           </DialogDescription>
         </DialogHeader>
 
