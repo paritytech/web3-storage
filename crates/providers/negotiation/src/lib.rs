@@ -27,6 +27,8 @@ use sp_crypto_hashing::blake2_256;
 use sp_runtime::{AccountId32, MultiSignature};
 use storage_primitives::{AgreementTerms, BucketId};
 
+pub use storage_primitives::BucketTarget;
+
 /// Concrete [`AgreementTerms`] type for the storage parachain.
 ///
 /// Balance is `u128`, BlockNumber is `u32`; matches
@@ -37,30 +39,34 @@ pub type AgreementTermsOf = AgreementTerms<AccountId32, u128, u32>;
 /// `(Balance, BlockNumber) = (u128, u32)`.
 pub type ReplicaTermsOf = storage_primitives::ReplicaTerms<u128, u32>;
 
-/// The owner proposes the agreement shape they want; the provider node
-/// allocates a fresh nonce and a validity window from its own state,
-/// builds the full [`AgreementTermsOf`], signs it, and returns
-/// [`SignedTerms`].
+/// The owner proposes the agreement shape they want, including the nonce
+/// they expect to redeem it at (their next expected value in the pallet's
+/// per-owner agreement nonce); the provider node builds the full
+/// [`AgreementTermsOf`], signs it, and returns [`SignedTerms`].
 #[serde_as]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NegotiateRequest {
     /// Account that will own the resulting bucket.
     pub owner: AccountId32,
     /// Storage quota requested, in bytes.
-    /// FIX: Safely handles the JS BigInt sent as a string
+    /// JSON number or decimal string
     #[serde_as(as = "PickFirst<(DisplayFromStr, _)>")]
     pub max_bytes: u64,
     /// Agreement duration in blocks from activation.
     pub duration: u32,
     /// Price per byte per block the owner is willing to lock in.
-    /// FIX: Safely handles the JS BigInt sent as a string
+    /// JSON number or decimal string
     #[serde_as(as = "PickFirst<(DisplayFromStr, _)>")]
     pub price_per_byte: u128,
-    /// Bucket the quote is bound to.
-    /// - `None` for primary terms;
-    /// - `Some(id)` for replica terms — must match the bucket targeted by
-    ///   the extrinsic.
-    pub bucket_id: Option<BucketId>,
+    /// The owner's next expected agreement nonce.
+    /// JSON number or decimal string
+    #[serde_as(as = "PickFirst<(DisplayFromStr, _)>")]
+    pub nonce: u64,
+    /// Bucket the quote is for: the id of an existing bucket, or `None` for
+    /// a bucket created when the quote is redeemed. Maps to
+    /// [`storage_primitives::BucketTarget`] in the signed terms.
+    #[serde_as(as = "Option<PickFirst<(DisplayFromStr, _)>>")]
+    pub bucket: Option<BucketId>,
     /// `Some(_)` to negotiate a replica agreement (per-sync funding +
     /// minimum sync interval); `None` for a primary agreement.
     pub replica_params: Option<ReplicaTermsOf>,
@@ -127,24 +133,54 @@ mod tests {
             max_bytes: 1_000_000_000,
             duration: 500,
             price_per_byte: 1,
-            bucket_id: None,
+            nonce: 0,
+            bucket: Some(7),
             replica_params: None,
         };
         let json = serde_json::to_string(&req).unwrap();
         let decoded: NegotiateRequest = serde_json::from_str(&json).unwrap();
         assert_eq!(decoded.max_bytes, req.max_bytes);
         assert_eq!(decoded.price_per_byte, req.price_per_byte);
+        assert_eq!(decoded.nonce, req.nonce);
+        assert_eq!(decoded.bucket, req.bucket);
     }
 
     // JS clients send BigInt fields as decimal strings (commit 17528eb).
     #[test]
     fn negotiate_request_accepts_js_bigint_strings() {
         let json = format!(
-            r#"{{"owner":"{}","max_bytes":"1073741824","duration":50,"price_per_byte":"340282366920938463463374607431768211455","bucket_id":null,"replica_params":null}}"#,
+            r#"{{"owner":"{}","max_bytes":"1073741824","duration":50,"price_per_byte":"340282366920938463463374607431768211455","nonce":"18446744073709551615","bucket":null,"replica_params":null}}"#,
             AccountId32::new([0u8; 32])
         );
         let decoded: NegotiateRequest = serde_json::from_str(&json).unwrap();
         assert_eq!(decoded.max_bytes, 1_073_741_824);
         assert_eq!(decoded.price_per_byte, u128::MAX);
+        assert_eq!(decoded.nonce, u64::MAX);
+    }
+
+    #[test]
+    fn negotiate_request_accepts_bucket_as_string_or_number() {
+        let body = |bucket: &str| {
+            format!(
+                r#"{{"owner":"{}","max_bytes":1024,"duration":50,"price_per_byte":1,"nonce":0,"bucket":{bucket},"replica_params":null}}"#,
+                AccountId32::new([0u8; 32])
+            )
+        };
+
+        let from_string: NegotiateRequest = serde_json::from_str(&body(r#""7""#)).unwrap();
+        assert_eq!(from_string.bucket, Some(7));
+
+        let from_number: NegotiateRequest = serde_json::from_str(&body("7")).unwrap();
+        assert_eq!(from_number.bucket, Some(7));
+
+        let null: NegotiateRequest = serde_json::from_str(&body("null")).unwrap();
+        assert_eq!(null.bucket, None);
+
+        let omitted = format!(
+            r#"{{"owner":"{}","max_bytes":1024,"duration":50,"price_per_byte":1,"nonce":0,"replica_params":null}}"#,
+            AccountId32::new([0u8; 32])
+        );
+        let omitted: NegotiateRequest = serde_json::from_str(&omitted).unwrap();
+        assert_eq!(omitted.bucket, None);
     }
 }

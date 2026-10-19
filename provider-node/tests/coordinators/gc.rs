@@ -8,13 +8,13 @@
 
 use parking_lot::Mutex;
 use provider_chain::EVENT_CHANNEL_CAPACITY;
-use provider_storage::DeletionReceipt;
+use provider_storage::{ChunkTreeNode, DeletionReceipt};
 use provider_types::ChainClientError;
 use sp_core::H256;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
-use storage_primitives::{blake2_256, BucketId};
+use storage_primitives::{hash_leaf, BucketId};
 use storage_provider_node::{
     CanonicalBucketState, GcChainClient, GcCoordinator, GcCoordinatorConfig, ProviderState,
 };
@@ -91,10 +91,10 @@ fn seed_bucket(state: &Arc<ProviderState>, bucket_id: BucketId, n: u8) -> Vec<H2
     (0..n)
         .map(|i| {
             let data = vec![i; 8];
-            let hash = blake2_256(&data);
+            let hash = hash_leaf(&data);
             state
                 .storage
-                .store_node(bucket_id, hash, data, None)
+                .store_node(bucket_id, hash, ChunkTreeNode::Chunk(data))
                 .unwrap();
             state.storage.commit(bucket_id, vec![hash]).unwrap();
             hash
@@ -287,9 +287,11 @@ async fn quota_synced_from_agreement() {
     assert!(
         wait_for(5, 25, || async {
             let data = vec![9u8; 8];
-            let hash = blake2_256(&data);
+            let hash = hash_leaf(&data);
             matches!(
-                state.storage.store_node(1, hash, data, None),
+                state
+                    .storage
+                    .store_node(1, hash, ChunkTreeNode::Chunk(data)),
                 Err(provider_storage::Error::QuotaExceeded { .. })
             )
         })
@@ -344,11 +346,13 @@ async fn top_up_raises_the_enforced_quota() {
 
     // Quota 10 lands and blocks the next 8-byte store (8 used + 8 > 10).
     let data = vec![9u8; 8];
-    let hash = blake2_256(&data);
+    let hash = hash_leaf(&data);
     assert!(
         wait_for(5, 25, || async {
             matches!(
-                state.storage.store_node(1, hash, vec![9u8; 8], None),
+                state
+                    .storage
+                    .store_node(1, hash, ChunkTreeNode::Chunk(vec![9u8; 8])),
                 Err(provider_storage::Error::QuotaExceeded { .. })
             )
         })
@@ -367,7 +371,7 @@ async fn top_up_raises_the_enforced_quota() {
         wait_for(5, 25, || async {
             state
                 .storage
-                .store_node(1, hash, vec![9u8; 8], None)
+                .store_node(1, hash, ChunkTreeNode::Chunk(vec![9u8; 8]))
                 .is_ok()
         })
         .await,

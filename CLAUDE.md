@@ -31,6 +31,10 @@ Link, don't copy.
   what an error means and how to get past it, what an event reports. Keep
   each one short. Every public pallet item must carry one; the `missing_docs`
   CI gate that enforces this lands with #403.
+- **When a change edits `docs/design/`, update `docs/site/` in the same PR**
+  with the `/generate-docs` skill. The `Docs Site` CI check
+  (`scripts/check-docs-site.sh`) fails until `docs/site/design.sha256`
+  matches `docs/design/`.
 - **`docs/drafts/`** is unratified / WIP — don't treat it as authoritative or
   reason from it as if it were the spec.
 
@@ -44,6 +48,7 @@ Link, don't copy.
 | Extrinsics, errors, events, storage items (API reference) | rustdoc on `crates/pallets/*` (`cargo doc -p pallet-storage-provider --no-deps --open`); the same text is in the runtime metadata, so IDE hover on PAPI/subxt bindings and polkadot.js Apps show it |
 | Payment math | `Pallet::calculate_payment` in `crates/pallets/storage-provider/src/impls/agreements.rs` — the code is the formula |
 | Layer 1 file system (drives, manifests, commit strategies) | rustdoc on `crates/primitives/file-system` and `crates/pallets/drive-registry`; [`clients/file-system/README.md`](clients/file-system/README.md) |
+| Architecture diagrams and the dApp developer guide, derived from `docs/design/` | [`docs/site/`](docs/site/); update with the `/generate-docs` skill |
 | WIP designs: marketplace/discovery, checkpoint protocol, smart contracts, encryption | [`docs/drafts/`](docs/drafts/) — **not authoritative** |
 | Review criteria (Parity Standards) | the `/review` skill — authoritative; not restated here |
 | TypeScript SDK layering, tx semantics, PAPI patterns | [`packages/sdk/README.md`](packages/sdk/README.md) |
@@ -83,6 +88,21 @@ design doc.
   `/review` skill. Use it for every review. From a session that wrote the
   code, delegate to the `reviewer` agent so the review starts from a clean
   context.
+
+**Addressing PR review comments:**
+- For each comment, first check whether it is a GitHub suggestion (a
+  `suggestion` block). If it is and the change is correct, apply it as
+  written. Do not rewrite it into a different change. If it is wrong, do
+  not apply it; tell the user why.
+- For a free-form comment, make the fix the comment requests. If the fix
+  is unclear or you disagree, ask the user before changing code.
+- Every comment you fix and push must end in one of two states: the
+  thread has a reply `Fixed by: <commit_hash>` and is resolved, or your
+  report to the user lists the thread and says the user has to resolve it.
+  Never push a fix and leave the thread unmentioned.
+- Replying to or resolving a thread is a GitHub write. Do it only when the
+  user's current message asks for it (see the work flow rules); otherwise
+  list the threads for the user to resolve manually.
 
 **Conventions**
 

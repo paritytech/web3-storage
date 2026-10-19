@@ -230,7 +230,8 @@ fn escalate_membership_decode_failure(
 mod tests {
     use super::*;
     use storage_subxt::api::runtime_types::storage_primitives::{
-        agreement_term::AgreementTerms, ChallengeId, Commitment,
+        agreement_term::{AgreementTerms, BucketTarget},
+        ChallengeId, Commitment,
     };
 
     #[test]
@@ -246,7 +247,7 @@ mod tests {
                 price_per_byte: 1,
                 valid_until: 50,
                 nonce: 1,
-                bucket_id: Some(11),
+                bucket: BucketTarget::Existing(11),
                 replica_params: None,
             },
             expires_at: 150,
@@ -344,7 +345,7 @@ mod tests {
                     price_per_byte: 1,
                     valid_until: 50,
                     nonce: 1,
-                    bucket_id: Some(48),
+                    bucket: BucketTarget::Existing(48),
                     replica_params: None,
                 },
                 expires_at: 150,

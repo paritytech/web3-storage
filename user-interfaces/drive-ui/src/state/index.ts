@@ -75,7 +75,6 @@ export {
   retryCreation,
   canRetryCreation,
   listAvailableProviders,
-  deleteDrive,
   fetchMembers,
   addMember,
   removeMember,
