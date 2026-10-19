@@ -33,7 +33,7 @@ async fn put_then_get_from_a_fresh_client() {
         .await
         .unwrap();
     assert_eq!(put.size, 4);
-    assert_eq!(put.etag, format!("0x{}", hex::encode(put.cid.as_bytes())));
+    assert_eq!(put.etag, format!("{:#x}", put.cid));
 
     let reader = client(&url);
     let object = reader

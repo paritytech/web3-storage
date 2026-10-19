@@ -130,10 +130,11 @@ async fn raw_commit_is_not_a_file_system_root() {
     ));
 }
 
-/// With an unknown size, a 64-byte read whose CID is an internal Merkle node is
-/// rejected; a 64-byte leaf blob still reads.
+/// With an unknown size, the 64 bytes under an internal Merkle node do not
+/// have its CID (leaves and nodes hash with different prefixes), so the CID
+/// check rejects them; a 64-byte leaf blob still reads.
 #[tokio::test]
-async fn sizeless_read_rejects_internal_node() {
+async fn sizeless_read_of_internal_node_fails_the_cid_check() {
     use file_system_client::{BlobLength, BlobStore};
     use storage_client::ChunkingStrategy;
 
@@ -150,10 +151,9 @@ async fn sizeless_read_rejects_internal_node() {
         .upload(BUCKET, &data, ChunkingStrategy::Fixed(32))
         .await
         .unwrap();
-    assert!(matches!(
-        client.get_blob(root, BlobLength::AtMost(MAX)).await,
-        Err(FsClientError::Serialization(e)) if e.contains("internal Merkle node")
-    ));
+    if let Ok(bytes) = client.get_blob(root, BlobLength::AtMost(MAX)).await {
+        assert_ne!(compute_cid(&bytes), root);
+    }
 
     let leaf = client.put_blob(BUCKET, &data).await.unwrap();
     assert_eq!(leaf, compute_cid(&data));

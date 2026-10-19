@@ -60,7 +60,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ChunkingStrategy::default(),
     ).await?;
 
-    println!("Uploaded with root: 0x{}", hex::encode(data_root.as_bytes()));
+    println!("Uploaded with root: {data_root:#x}");
 
     // Commit to chain (makes it official)
     let commitment = client.commit(1, vec![data_root]).await?;
@@ -251,7 +251,7 @@ All client operations return `ClientResult<T>`:
 use storage_client::ClientError;
 
 match client.upload(1, data, Default::default()).await {
-    Ok(data_root) => println!("Success: 0x{}", hex::encode(data_root.as_bytes())),
+    Ok(data_root) => println!("Success: {data_root:#x}"),
     Err(ClientError::ProviderUnavailable(msg)) => eprintln!("Provider issue: {}", msg),
     Err(ClientError::VerificationFailed) => eprintln!("Data integrity check failed!"),
     Err(e) => eprintln!("Error: {}", e),

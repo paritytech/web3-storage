@@ -10,7 +10,7 @@ description = "Off-chain negotiation wire protocol between storage clients and p
 [dependencies]
 storage-primitives = { workspace = true, features = ["serde", "std"] }
 codec = { workspace = true, features = ["std"] }
-hex = { workspace = true, features = ["std"] }
+array-bytes = { workspace = true }
 serde = { workspace = true, features = ["std"] }
 serde_with = { workspace = true }
 sp-core = { workspace = true, features = ["std"] }

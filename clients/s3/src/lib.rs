@@ -541,7 +541,7 @@ async fn head_object_in<S: BlobStore>(tree: &Tree<S>, key: &str) -> Result<HeadO
 }
 
 fn etag(content_root: H256) -> String {
-    format!("0x{}", hex::encode(content_root.as_bytes()))
+    format!("{content_root:#x}")
 }
 
 /// Map a tree read error for `key` to the S3 error.

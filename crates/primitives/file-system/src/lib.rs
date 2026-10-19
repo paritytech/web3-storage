@@ -363,7 +363,7 @@ impl DirectoryNode {
 )]
 #[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
 pub struct FileChunk {
-    /// blake2-256 hash of the chunk
+    /// Merkle leaf hash of the chunk
     pub cid: Cid,
     /// Position in the file (0-indexed)
     pub sequence: u32,
@@ -430,11 +430,11 @@ impl FileManifest {
         })
     }
 
-    /// Data root of the content: the padded Merkle root over the chunk hashes.
+    /// Data root of the content: the Merkle root over the chunk hashes.
     /// Equals [`compute_cid`] of the content.
     pub fn content_root(&self) -> Cid {
         let leaves: Vec<H256> = self.chunks.iter().map(|c| c.cid).collect();
-        storage_primitives::padded_merkle_tree(&leaves).0
+        storage_primitives::merkle_root(&leaves)
     }
 
     /// The MIME type as a string; [`DEFAULT_MIME_TYPE`] if the stored one is
@@ -792,21 +792,21 @@ pub struct DriveInfo<
 /// CID of a blob: its Layer 0 `data_root`.
 ///
 /// Splits `data` into 256 KiB chunks (empty data is one empty chunk), hashes
-/// each chunk with blake2-256, and returns the root of
-/// `storage_primitives::padded_merkle_tree` over the chunk hashes. For a blob
-/// of at most 256 KiB this is the blake2-256 hash of the blob.
+/// each chunk as a Merkle leaf, and returns `storage_primitives::merkle_root`
+/// over the chunk hashes. For a blob
+/// of at most 256 KiB this is the leaf hash of the blob.
 pub fn compute_cid(data: &[u8]) -> Cid {
-    storage_primitives::padded_merkle_tree(&chunk_hashes(data)).0
+    storage_primitives::merkle_root(&chunk_hashes(data))
 }
 
-/// blake2-256 hashes of the 256 KiB chunks of `data`, in order. Empty data is
+/// Leaf hashes of the 256 KiB chunks of `data`, in order. Empty data is
 /// one empty chunk.
 pub fn chunk_hashes(data: &[u8]) -> Vec<Cid> {
     if data.is_empty() {
-        return alloc::vec![storage_primitives::blake2_256(&[])];
+        return alloc::vec![storage_primitives::hash_leaf(&[])];
     }
     data.chunks(CHUNK_SIZE)
-        .map(storage_primitives::blake2_256)
+        .map(storage_primitives::hash_leaf)
         .collect()
 }
 
@@ -827,19 +827,14 @@ pub fn validate_entry_name(name: &[u8]) -> Result<(), FileSystemError> {
 
 /// Convert CID to hex string (for protobuf storage)
 pub fn cid_to_string(cid: &Cid) -> String {
-    alloc::format!("0x{}", hex::encode(cid.as_bytes()))
+    alloc::format!("{cid:#x}")
 }
 
 /// Parse hex string to CID
 pub fn string_to_cid(s: &str) -> Result<Cid, FileSystemError> {
-    let s = s.strip_prefix("0x").unwrap_or(s);
-    let bytes = hex::decode(s).map_err(|_| FileSystemError::InvalidCid)?;
-    if bytes.len() != 32 {
-        return Err(FileSystemError::InvalidCid);
-    }
-    let mut hash = [0u8; 32];
-    hash.copy_from_slice(&bytes);
-    Ok(H256::from(hash))
+    array_bytes::hex2array(s)
+        .map(H256::from)
+        .map_err(|_| FileSystemError::InvalidCid)
 }
 
 // ============================================================================
@@ -851,7 +846,7 @@ mod tests {
     use super::*;
 
     fn h(data: &[u8]) -> H256 {
-        storage_primitives::blake2_256(data)
+        storage_primitives::hash_leaf(data)
     }
 
     fn entry(name: &str, entry_type: EntryType, size: u64) -> DirectoryEntry {
@@ -884,7 +879,7 @@ mod tests {
         .unwrap();
         assert_eq!(dir.children[0].name_str(), "a.txt");
         assert_eq!(
-            hex::encode(dir.to_scale_bytes()),
+            array_bytes::bytes2hex("", dir.to_scale_bytes()),
             DIRECTORY_NODE_HEX,
             "encoding"
         );
@@ -905,7 +900,7 @@ mod tests {
         assert_eq!(manifest.chunks[0].cid, h(b"a"));
         assert_eq!(manifest.content_root(), h(b"a"));
         assert_eq!(
-            hex::encode(manifest.to_scale_bytes()),
+            array_bytes::bytes2hex("", manifest.to_scale_bytes()),
             FILE_MANIFEST_HEX,
             "encoding"
         );
@@ -916,15 +911,15 @@ mod tests {
         );
     }
 
-    const DIRECTORY_NODE_HEX: &str = "07000000000000000814612e747874008928aae63c84d87ea098564d1e03ad813f107add474e56aedd286349c0c03ea4010000000000000000f153650000000010646f63730100d116515f37a4c0ac872096c8b7412c80693cc5cee2e99e83a7e760dc1ece91000000000000000001f153650000000000";
+    const DIRECTORY_NODE_HEX: &str = "07000000000000000814612e747874007234082e1dd0b5ec0acd71875d61c9f374af30c100bc4de7aa4eb3f15bbed686010000000000000000f153650000000010646f6373019fa96117cda5187dd7699a57a16cbf37bb3353c1385e7854ab6e131df63cc659000000000000000001f153650000000000";
     const DIRECTORY_NODE_CID: &str =
-        "0x2a05cb11a13c3962071e9843a1840b8f2a7948c2b404481f01e252d4f3ce6af9";
-    const FILE_MANIFEST_HEX: &str = "070000000000000028746578742f706c61696e0100000000000000048928aae63c84d87ea098564d1e03ad813f107add474e56aedd286349c0c03ea4000000000004186f726967696e1074657374";
+        "0xdc2e9cfcc2612da5c6090a9d8f1ff953ef6f14fbb19a9e32a65bdffb990e50a5";
+    const FILE_MANIFEST_HEX: &str = "070000000000000028746578742f706c61696e0100000000000000047234082e1dd0b5ec0acd71875d61c9f374af30c100bc4de7aa4eb3f15bbed686000000000004186f726967696e1074657374";
     const FILE_MANIFEST_CID: &str =
-        "0x4060dec5812cb094e14f3566f175faa0aeda15346f731a971a5c75ad6a345a02";
+        "0xf7ea0f16d55dedab276a539b951c87b065a0d90c4f8c99510545bd2afc04e62e";
 
     #[test]
-    fn compute_cid_is_the_padded_data_root() {
+    fn compute_cid_is_the_data_root() {
         assert_eq!(compute_cid(b""), h(b""));
         assert_eq!(compute_cid(b"hello"), h(b"hello"));
         let exact = vec![1u8; CHUNK_SIZE];
@@ -939,7 +934,7 @@ mod tests {
         assert_eq!(chunk_hashes(&data), leaves);
         let expected = storage_primitives::hash_children(
             storage_primitives::hash_children(leaves[0], leaves[1]),
-            storage_primitives::hash_children(leaves[2], H256::zero()),
+            leaves[2],
         );
         assert_eq!(compute_cid(&data), expected);
         assert_ne!(compute_cid(&data), h(&data));

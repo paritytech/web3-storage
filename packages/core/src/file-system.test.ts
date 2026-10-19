@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-import { blake2b256 } from "@polkadot-labs/hdkd-helpers";
 import {
   decodeDirectoryNode,
   DIRECTORY_NODE_MAX_SIZE,
@@ -17,7 +16,7 @@ import {
   type DirectoryNode,
   type FileManifest,
 } from "./file-system.js";
-import { computeDataRoot } from "./merkle.js";
+import { computeDataRoot, hashLeaf } from "./merkle.js";
 import { ScaleError } from "./scale.js";
 import { hexToBytes, toHex } from "./bytes.js";
 
@@ -27,29 +26,29 @@ const te = new TextEncoder();
 const VECTOR_DIRECTORY: DirectoryNode = {
   driveId: 7n,
   children: [
-    { name: te.encode("a.txt"), entryType: "file", cid: blake2b256(te.encode("a")), size: 1n, mtime: 1700000000n },
-    { name: te.encode("docs"), entryType: "directory", cid: blake2b256(te.encode("d")), size: 0n, mtime: 1700000001n },
+    { name: te.encode("a.txt"), entryType: "file", cid: hashLeaf(te.encode("a")), size: 1n, mtime: 1700000000n },
+    { name: te.encode("docs"), entryType: "directory", cid: hashLeaf(te.encode("d")), size: 0n, mtime: 1700000001n },
   ],
   metadata: [],
 };
 const VECTOR_DIRECTORY_HEX =
-  "0x07000000000000000814612e747874008928aae63c84d87ea098564d1e03ad813f107add474e56aedd286349c0c03ea4" +
-  "010000000000000000f153650000000010646f63730100d116515f37a4c0ac872096c8b7412c80693cc5cee2e99e83a7e7" +
-  "60dc1ece91000000000000000001f153650000000000";
-const VECTOR_DIRECTORY_CID = "0x2a05cb11a13c3962071e9843a1840b8f2a7948c2b404481f01e252d4f3ce6af9";
+  "0x07000000000000000814612e747874007234082e1dd0b5ec0acd71875d61c9f374af30c100bc4de7aa4eb3f15bbed686" +
+  "010000000000000000f153650000000010646f6373019fa96117cda5187dd7699a57a16cbf37bb3353c1385e7854ab6e13" +
+  "1df63cc659000000000000000001f153650000000000";
+const VECTOR_DIRECTORY_CID = "0xdc2e9cfcc2612da5c6090a9d8f1ff953ef6f14fbb19a9e32a65bdffb990e50a5";
 
 const VECTOR_MANIFEST: FileManifest = {
   driveId: 7n,
   mimeType: te.encode("text/plain"),
   totalSize: 1n,
-  chunks: [{ cid: blake2b256(te.encode("a")), sequence: 0 }],
+  chunks: [{ cid: hashLeaf(te.encode("a")), sequence: 0 }],
   encryptionParams: new Uint8Array(0),
   userMetadata: [{ key: te.encode("origin"), value: te.encode("test") }],
 };
 const VECTOR_MANIFEST_HEX =
-  "0x070000000000000028746578742f706c61696e0100000000000000048928aae63c84d87ea098564d1e03ad813f107add" +
-  "474e56aedd286349c0c03ea4000000000004186f726967696e1074657374";
-const VECTOR_MANIFEST_CID = "0x4060dec5812cb094e14f3566f175faa0aeda15346f731a971a5c75ad6a345a02";
+  "0x070000000000000028746578742f706c61696e0100000000000000047234082e1dd0b5ec0acd71875d61c9f374af30c1" +
+  "00bc4de7aa4eb3f15bbed686000000000004186f726967696e1074657374";
+const VECTOR_MANIFEST_CID = "0xf7ea0f16d55dedab276a539b951c87b065a0d90c4f8c99510545bd2afc04e62e";
 
 describe("shared test vectors", () => {
   it("DirectoryNode encoding and CID", () => {

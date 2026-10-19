@@ -131,7 +131,7 @@ pub struct MetadataEntry {
 /// Object metadata stored on-chain.
 #[derive(Clone, Encode, Decode, TypeInfo, MaxEncodedLen, Debug, PartialEq, Eq)]
 pub struct ObjectMetadata {
-    /// Content identifier (blake2-256 hash of data).
+    /// Content identifier (Merkle leaf hash of the data).
     pub cid: H256,
     /// Size of the object in bytes.
     pub size: u64,
@@ -218,15 +218,15 @@ pub enum S3Error {
 // Helper Functions
 // ============================================================================
 
-/// Compute CID from data using blake2-256.
+/// Compute the CID of data: its Merkle leaf hash.
 pub fn compute_cid(data: &[u8]) -> H256 {
-    sp_crypto_hashing::blake2_256(data).into()
+    storage_primitives::hash_leaf(data)
 }
 
 /// Compute ETag from CID (hex string without 0x prefix).
 #[cfg(feature = "std")]
 pub fn compute_etag(cid: &H256) -> alloc::vec::Vec<u8> {
-    hex::encode(cid.as_bytes()).into_bytes()
+    array_bytes::bytes2hex("", cid).into_bytes()
 }
 
 /// Validate object key according to S3 naming rules.

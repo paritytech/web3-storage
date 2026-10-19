@@ -10,7 +10,8 @@ mod common;
 
 use common::{make_client, start_test_provider};
 use sp_core::H256;
-use storage_client::{ChunkingStrategy, EncryptionKey, ENCRYPTION_OVERHEAD};
+use storage_client::{ChunkingStrategy, ClientError, EncryptionKey, Node, ENCRYPTION_OVERHEAD};
+use storage_primitives::DEFAULT_CHUNK_SIZE;
 
 // ============================================================================
 // Health
@@ -53,67 +54,8 @@ async fn test_upload_empty_data_is_one_empty_chunk() {
         .unwrap();
 
     // Same as the provider and the TS SDK: empty data is a single empty chunk.
-    assert_eq!(data_root, storage_primitives::blake2_256(b""));
-}
-
-/// Three chunks pad to a four-leaf tree. The client must upload that tree
-/// (not one that moves the odd chunk up a level), or the provider cannot
-/// serve the last chunk and chunk proofs do not verify.
-#[tokio::test]
-async fn test_upload_odd_chunk_count_uses_padded_tree() {
-    let url = start_test_provider().await;
-    let client = make_client(url.clone());
-
-    let chunk_size = 256 * 1024;
-    let data: Vec<u8> = (0..chunk_size * 2 + 100).map(|i| (i % 251) as u8).collect();
-
-    let data_root = client
-        .upload(1, &data, ChunkingStrategy::default())
-        .await
-        .unwrap();
-
-    let leaves: Vec<H256> = data
-        .chunks(chunk_size)
-        .map(storage_primitives::blake2_256)
-        .collect();
-    assert_eq!(data_root, storage_primitives::padded_merkle_tree(&leaves).0);
-
-    let downloaded = client
-        .download_full(&data_root, data.len() as u64)
-        .await
-        .unwrap();
-    assert_eq!(downloaded, data);
-
-    // The provider's proof for the last chunk verifies against the client's root.
-    let response: serde_json::Value = reqwest::get(format!(
-        "{url}/chunk_proof?data_root={data_root:?}&chunk_index=2"
-    ))
-    .await
-    .unwrap()
-    .json()
-    .await
-    .unwrap();
-    let hash = |v: &serde_json::Value| -> H256 {
-        let hex = v.as_str().unwrap().trim_start_matches("0x");
-        H256::from_slice(&hex::decode(hex).unwrap())
-    };
-    let proof = storage_primitives::MerkleProof {
-        siblings: response["proof"]["siblings"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(hash)
-            .collect(),
-        path: response["proof"]["path"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|b| b.as_bool().unwrap())
-            .collect(),
-    };
-    assert!(storage_primitives::verify_merkle_proof(
-        leaves[2], 2, &proof, &data_root
-    ));
+    assert_eq!(data_root, storage_primitives::hash_leaf(b""));
+    client.commit(1, vec![data_root]).await.unwrap();
 }
 
 #[tokio::test]
@@ -130,6 +72,23 @@ async fn test_upload_large_data_multiple_chunks() {
         .unwrap();
 
     assert_ne!(data_root, H256::zero());
+}
+
+#[tokio::test]
+async fn test_upload_rejects_chunk_size_outside_the_allowed_range() {
+    // Nothing listens here, so a request would fail with `ClientError::Http`.
+    let client = make_client("http://127.0.0.1:1".to_string());
+
+    for chunk_size in [0, DEFAULT_CHUNK_SIZE as usize + 1] {
+        let err = client
+            .upload(1, b"data", ChunkingStrategy::Fixed(chunk_size))
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, ClientError::Config(_)),
+            "chunk size {chunk_size}: {err:?}"
+        );
+    }
 }
 
 #[tokio::test]
@@ -188,6 +147,27 @@ async fn test_upload_then_commit() {
     assert_ne!(commit.mmr_root, sp_core::H256::zero());
     assert_eq!(commit.start_seq, 0);
     assert_eq!(commit.leaf_indices, vec![0]);
+}
+
+#[tokio::test]
+async fn test_commit_rejects_upload_with_non_default_chunk_size() {
+    let url = start_test_provider().await;
+    let client = make_client(url);
+
+    let chunk_size = 1024usize;
+    let data: Vec<u8> = (0..chunk_size * 2).map(|i| (i % 251) as u8).collect();
+
+    let data_root = client
+        .upload(1, &data, ChunkingStrategy::Fixed(chunk_size))
+        .await
+        .unwrap();
+
+    let err = client
+        .commit(1, vec![data_root])
+        .await
+        .err()
+        .expect("commit must be rejected");
+    assert!(err.to_string().contains("400 Bad Request"), "got {err}");
 }
 
 #[tokio::test]
@@ -302,16 +282,15 @@ async fn test_download_partial_offset() {
     let url = start_test_provider().await;
     let client = make_client(url);
 
-    // Use a small fixed chunk size so we get predictable chunk boundaries.
-    let chunk_size = 16usize;
-    let data: Vec<u8> = (0u8..64).collect(); // 64 bytes, 4 chunks of 16
+    let chunk_size = storage_primitives::DEFAULT_CHUNK_SIZE as usize;
+    let data: Vec<u8> = (0..chunk_size * 2).map(|i| (i % 251) as u8).collect();
     let data_root = client
-        .upload(1, &data, ChunkingStrategy::Fixed(chunk_size))
+        .upload(1, &data, ChunkingStrategy::default())
         .await
         .unwrap();
     client.commit(1, vec![data_root]).await.unwrap();
 
-    // Download chunk 0 (bytes 0..16)
+    // Download chunk 0
     let chunk0 = client
         .download(&data_root, 0, chunk_size as u64)
         .await
@@ -335,9 +314,9 @@ async fn test_read_node_returns_leaf_data() {
         .await
         .unwrap();
 
-    let (node_data, _children) = client.read_node(&data_root).await.unwrap();
+    let node = client.read_node(&data_root).await.unwrap();
 
-    assert_eq!(node_data, data);
+    assert_eq!(node, Node::Chunk(data.to_vec()));
 }
 
 #[tokio::test]
@@ -351,9 +330,31 @@ async fn test_read_node_verified_passes_for_valid_hash() {
         .await
         .unwrap();
 
-    let verified_data = client.read_node_verified(&data_root).await.unwrap();
+    let verified = client.read_node_verified(&data_root).await.unwrap();
 
-    assert_eq!(verified_data, data);
+    assert_eq!(verified, Node::Chunk(data.to_vec()));
+}
+
+#[tokio::test]
+async fn test_read_node_verified_checks_an_internal_node_by_its_children() {
+    let url = start_test_provider().await;
+    let client = make_client(url);
+
+    let chunk_size = 1024usize;
+    let data: Vec<u8> = (0..chunk_size * 2).map(|i| (i % 251) as u8).collect();
+    let data_root = client
+        .upload(1, &data, ChunkingStrategy::Fixed(chunk_size))
+        .await
+        .unwrap();
+
+    // The root of a two-chunk file is an internal node; its data is the
+    // concatenation of its two child hashes.
+    let node = client.read_node(&data_root).await.unwrap();
+    assert!(
+        matches!(node, Node::Internal { .. }),
+        "a two-chunk root is an internal node"
+    );
+    assert_eq!(client.read_node_verified(&data_root).await.unwrap(), node);
 }
 
 #[tokio::test]
@@ -380,17 +381,13 @@ async fn test_read_internal_node_has_children() {
         .await
         .unwrap();
 
-    let (_node_data, children) = client.read_node(&data_root).await.unwrap();
+    let node = client.read_node(&data_root).await.unwrap();
 
     assert!(
-        children.is_some(),
-        "internal node should report its children"
-    );
-    assert_eq!(
-        children.unwrap().len(),
-        2,
+        matches!(node, Node::Internal { .. }),
         "two-chunk upload should produce a root with two children"
     );
+    assert_eq!(client.read_node_verified(&data_root).await.unwrap(), node);
 }
 
 // ============================================================================
@@ -695,7 +692,97 @@ async fn test_mmr_proof_of_last_leaf_verifies_against_commitment() {
         .unwrap();
     assert_eq!(proof.leaf.data_root, second);
     assert!(storage_primitives::verify_mmr_proof(
-        &proof,
-        &commitment.mmr_root
+        proof,
+        commitment.leaf_count - 1,
+        &storage_primitives::Commitment {
+            mmr_root: commitment.mmr_root,
+            start_seq: 0,
+            leaf_count: commitment.leaf_count,
+        }
     ));
+}
+
+// ============================================================================
+// Non-power-of-two Merkle tree (odd-node promotion)
+// ============================================================================
+
+#[tokio::test]
+async fn test_non_power_of_two_upload_matches_provider_root_and_verifies() {
+    let url = start_test_provider().await;
+    let client = make_client(url.clone());
+
+    // Three chunks, so the last leaf has no sibling.
+    let chunk_size = DEFAULT_CHUNK_SIZE as usize;
+    let data: Vec<u8> = (0..chunk_size * 2 + 10).map(|i| (i % 251) as u8).collect();
+
+    let data_root = client
+        .upload(1, &data, ChunkingStrategy::default())
+        .await
+        .unwrap();
+
+    let leaf_hashes: Vec<H256> = data
+        .chunks(chunk_size)
+        .map(storage_primitives::hash_leaf)
+        .collect();
+    assert_eq!(
+        leaf_hashes.len(),
+        3,
+        "test data must produce a non-power-of-two chunk count"
+    );
+
+    assert_eq!(data_root, storage_primitives::merkle_root(&leaf_hashes));
+
+    let commit = client.commit(1, vec![data_root]).await.unwrap();
+    assert_eq!(commit.leaf_indices, vec![0]);
+
+    // The client uploaded the internal nodes of the tree.
+    let http = reqwest::Client::new();
+    let mut stack = vec![data_root];
+    let mut internal_count = 0;
+    while let Some(hash) = stack.pop() {
+        if let Node::Internal { left, right } = client.read_node(&hash).await.unwrap() {
+            internal_count += 1;
+            stack.extend([left, right]);
+        }
+    }
+    assert!(internal_count > 0, "a 3-leaf tree must have internal nodes");
+
+    // A proof for each leaf verifies against the client's root.
+    for chunk_index in 0..leaf_hashes.len() as u64 {
+        let proof_response: serde_json::Value = http
+            .get(format!("{url}/chunk_proof"))
+            .query(&[
+                ("data_root", format!("{data_root:#x}")),
+                ("chunk_index", chunk_index.to_string()),
+            ])
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+
+        let chunk_hash: H256 = proof_response["chunk_hash"]
+            .as_str()
+            .unwrap()
+            .parse()
+            .unwrap();
+
+        let proof: Vec<H256> = proof_response["proof"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| s.as_str().unwrap().parse().unwrap())
+            .collect();
+        assert!(
+            storage_primitives::verify_merkle_proof(
+                chunk_hash,
+                chunk_index,
+                leaf_hashes.len() as u64,
+                &proof,
+                &data_root
+            ),
+            "chunk {chunk_index} proof must verify against the client's root"
+        );
+    }
 }

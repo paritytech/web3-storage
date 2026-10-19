@@ -10,7 +10,6 @@ description = "Storage engine for provider nodes: backends and MMR commitments"
 [dependencies]
 storage-primitives = { workspace = true, features = ["serde", "std"] }
 codec = { workspace = true, features = ["std"] }
-hex = { workspace = true, features = ["std"] }
 rocksdb = { workspace = true }
 serde = { workspace = true, features = ["std"] }
 sp-core = { workspace = true, features = ["std"] }
@@ -22,4 +21,5 @@ tracing = { workspace = true, features = ["std"] }
 test-helpers = ["dep:tempfile"]
 
 [dev-dependencies]
+array-bytes = { workspace = true }
 tempfile = { workspace = true }

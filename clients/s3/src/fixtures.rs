@@ -43,12 +43,11 @@ fn generate(size: usize) -> Vec<u8> {
 }
 
 fn hex_cid(cid: &Cid) -> String {
-    format!("0x{}", hex::encode(cid.as_bytes()))
+    format!("{cid:#x}")
 }
 
 fn parse_cid(s: &str) -> Cid {
-    let bytes = hex::decode(s.strip_prefix("0x").unwrap()).unwrap();
-    Cid::from_slice(&bytes)
+    s.parse().unwrap()
 }
 
 /// In-memory Layer 0: blobs by CID and the committed `data_roots`.
@@ -179,7 +178,7 @@ async fn expected(store: &MemoryStore) -> Value {
             json!({
                 "size": stat.size(),
                 "content_type": stat.content_type(),
-                "blake2_256": hex_cid(&storage_primitives::blake2_256(&file.data)),
+                "leaf_hash": hex_cid(&storage_primitives::hash_leaf(&file.data)),
                 "content_root": hex_cid(&stat.content_root()),
                 "manifest_cid": hex_cid(&stat.entry.cid),
                 "mtime": stat.mtime(),
@@ -200,7 +199,7 @@ async fn expected(store: &MemoryStore) -> Value {
             "size": object.size,
             "last_modified": object.last_modified,
             "metadata": metadata,
-            "blake2_256": hex_cid(&storage_primitives::blake2_256(&object.data)),
+            "leaf_hash": hex_cid(&storage_primitives::hash_leaf(&object.data)),
         }
     });
 
