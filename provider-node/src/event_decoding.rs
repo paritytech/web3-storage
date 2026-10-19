@@ -49,7 +49,6 @@ pub fn decode_block_events(
     events
         .iter()
         .filter_map(|event| event.ok())
-        .filter(|event| event.pallet_name() == "StorageProvider")
         .filter_map(|event| match event.decode_as::<Event>() {
             Ok(Event::StorageProvider(decoded)) => block_event(decoded),
             Ok(_) => None,
@@ -106,16 +105,18 @@ fn block_event(event: StorageProviderEvent) -> Option<BlockEvent> {
         | StorageProviderEvent::BucketVisibilityChanged { bucket_id, .. } => {
             Some(BlockEvent::BucketMembershipChanged { bucket_id })
         }
+        // A new arm above also needs a check in `is_membership_event` or
+        // `is_other_relevant_event`.
         _ => None,
     }
 }
 
 /// A membership event that failed to decode against the static bindings is
-/// treated as unknown-scope rather than dropped: which
-/// bucket changed can no longer be named, so every cached member set is
-/// invalidated instead, the same reaction as a lagged or restarted feed - but
-/// via a variant of its own, since nothing actually reconnected and the other
-/// coordinators have no reason to run their full-scan reaction to this.
+/// treated as unknown-scope rather than dropped: which bucket changed can no
+/// longer be named, so every cached member set is invalidated instead, the
+/// same reaction as a lagged or restarted feed - but via a variant of its own,
+/// since nothing actually reconnected and the other coordinators have no
+/// reason to run their full-scan reaction to this.
 fn escalate_membership_decode_failure(
     pallet: &str,
     event_name: &str,
