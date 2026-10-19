@@ -64,8 +64,7 @@ pub mod pallet {
     use sp_runtime::TryRuntimeError;
     use storage_primitives::{
         BucketId, BucketSnapshot, ChallengeId, ChunkLocation, Commitment, CommitmentPayload,
-        EndAction, MerkleProof, MmrProof, ProviderRole, RemovalReason, ReplicaSyncRecord, Role,
-        Visibility,
+        EndAction, MmrProof, ProviderRole, RemovalReason, ReplicaSyncRecord, Role, Visibility,
     };
 
     /// Balance type of the configured currency.
@@ -745,8 +744,9 @@ pub mod pallet {
             chunk_data: BoundedVec<u8, T::MaxChunkSize>,
             /// Proves the leaf is part of the committed MMR.
             mmr_proof: MmrProof,
-            /// Proves the chunk is part of the leaf.
-            chunk_proof: MerkleProof,
+            /// Proves the chunk is part of the leaf: the sibling hashes from
+            /// the chunk up to `mmr_proof.leaf.data_root`.
+            chunk_proof: Vec<H256>,
         },
         /// Data was deleted - show newer commitment without this seq.
         Deleted {

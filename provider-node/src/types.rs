@@ -195,7 +195,8 @@ pub struct ChunkProofResponse {
     /// Base64-encoded chunk data (included for challenge responses)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub chunk_data: Option<String>,
-    pub proof: storage_primitives::MerkleProof,
+    /// Sibling hashes from the chunk up to `data_root`.
+    pub proof: Vec<H256>,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

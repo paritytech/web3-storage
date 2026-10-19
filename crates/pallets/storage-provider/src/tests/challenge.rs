@@ -1179,7 +1179,7 @@ mod challenge_tests {
     use sp_core::{Pair, H256};
     use storage_primitives::{
         hash_children, hash_leaf, mmr, BucketSnapshot, ChallengeId, ChunkLocation, Commitment,
-        EndAction, MerkleProof, MmrLeaf, MmrProof, ProviderRole, ReplicaSyncRecord,
+        EndAction, MmrLeaf, MmrProof, ProviderRole, ReplicaSyncRecord,
     };
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -1189,13 +1189,10 @@ mod challenge_tests {
     /// Build a valid (MMR root, MMR proof, chunk merkle proof) for a single-leaf
     /// MMR containing a single chunk. With one chunk, the data_root collapses to
     /// the chunk hash and the MMR root collapses to the leaf hash.
-    fn single_chunk_proof(chunk_data: &[u8]) -> (H256, MmrProof, MerkleProof) {
+    fn single_chunk_proof(chunk_data: &[u8]) -> (H256, MmrProof, Vec<H256>) {
         // Single chunk → data_root is the chunk hash (no intermediate nodes).
         let (mmr_root, mmr_proof) = single_leaf_mmr(hash_leaf(chunk_data), chunk_data.len() as u64);
-        let chunk_proof = MerkleProof {
-            siblings: vec![],
-            path: vec![],
-        };
+        let chunk_proof = vec![];
         (mmr_root, mmr_proof, chunk_proof)
     }
 
@@ -1484,10 +1481,7 @@ mod challenge_tests {
                 ChallengeResponse::Proof {
                     chunk_data: make_chunk_bv(&[0u8]),
                     mmr_proof,
-                    chunk_proof: MerkleProof {
-                        siblings: vec![leaves[1], right],
-                        path: vec![false, false],
-                    },
+                    chunk_proof: vec![leaves[1], right],
                 },
             ));
 
@@ -1527,10 +1521,7 @@ mod challenge_tests {
                     ChallengeResponse::Proof {
                         chunk_data: make_chunk_bv(&node_bytes),
                         mmr_proof,
-                        chunk_proof: MerkleProof {
-                            siblings: vec![right],
-                            path: vec![false],
-                        },
+                        chunk_proof: vec![right],
                     },
                 ),
                 Error::<Test>::InvalidProof
@@ -1560,10 +1551,7 @@ mod challenge_tests {
             ));
 
             // Bogus chunk proof — extra sibling won't recombine to the data root.
-            let bad_chunk_proof = MerkleProof {
-                siblings: vec![H256::repeat_byte(0xab)],
-                path: vec![true],
-            };
+            let bad_chunk_proof = vec![H256::repeat_byte(0xab)];
             assert_noop!(
                 StorageProvider::respond_to_challenge(
                     RuntimeOrigin::signed(2),
@@ -1586,7 +1574,7 @@ mod challenge_tests {
     /// Proof data for a 3-chunk leaf (`data_size = 2 * DEFAULT_CHUNK_SIZE + 10`)
     /// with chunk tree `H(H(c0, c1), c2)`. Returns the MMR root, the MMR proof,
     /// the last chunk and its Merkle proof.
-    fn three_chunk_proof() -> (H256, MmrProof, Vec<u8>, MerkleProof) {
+    fn three_chunk_proof() -> (H256, MmrProof, Vec<u8>, Vec<H256>) {
         let size = storage_primitives::DEFAULT_CHUNK_SIZE as u64;
         let c0 = storage_primitives::hash_leaf(b"chunk-0");
         let c1 = storage_primitives::hash_leaf(b"chunk-1");
@@ -1595,10 +1583,7 @@ mod challenge_tests {
         let left = storage_primitives::hash_children(c0, c1);
         let data_root = storage_primitives::hash_children(left, c2);
         let (mmr_root, mmr_proof) = single_leaf_mmr(data_root, 2 * size + 10);
-        let chunk_proof = MerkleProof {
-            siblings: vec![left],
-            path: vec![true],
-        };
+        let chunk_proof = vec![left];
         (mmr_root, mmr_proof, last_chunk, chunk_proof)
     }
 
@@ -2496,10 +2481,7 @@ mod challenge_tests {
             assert_eq!(PendingChallenges::<Test>::get(2), 1);
             assert_eq!(PendingChallengesByBucket::<Test>::get(0, 2), 1);
 
-            let bad_proof = MerkleProof {
-                siblings: vec![H256::repeat_byte(0xab)],
-                path: vec![true],
-            };
+            let bad_proof = vec![H256::repeat_byte(0xab)];
             assert_noop!(
                 StorageProvider::respond_to_challenge(
                     RuntimeOrigin::signed(2),
@@ -2993,10 +2975,7 @@ mod challenge_tests {
         ChallengeResponse::Proof {
             chunk_data: make_chunk_bv(&leaves[index].0),
             mmr_proof,
-            chunk_proof: MerkleProof {
-                siblings: vec![],
-                path: vec![],
-            },
+            chunk_proof: vec![],
         }
     }
 

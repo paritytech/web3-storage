@@ -1907,7 +1907,8 @@ pub enum ChallengeResponse<T: Config> {
     Proof {
         chunk_data: BoundedVec<u8, T::MaxChunkSize>,
         mmr_proof: MmrProof,
-        chunk_proof: MerkleProof,
+        /// Sibling hashes from the chunk up to `mmr_proof.leaf.data_root`.
+        chunk_proof: Vec<H256>,
     },
     /// Data was deleted - show newer commitment without this seq.
     /// Admin signature proves the admin authorized the deletion (new MMR excludes the challenged data).
@@ -2196,7 +2197,7 @@ GET /chunk_proof?data_root=0x...&chunk_index=3
 Response:
 {
   "chunk_hash": "0xabc...",
-  "proof": { "siblings": [...], "path": [...] }
+  "proof": ["0x...", ...]
 }
 
 Response (404 Not Found):
@@ -2496,14 +2497,11 @@ pub struct MmrLeaf {
 
 ### Merkle Proofs
 
-```rust
-pub struct MerkleProof {
-    /// Sibling hashes from leaf to root
-    pub siblings: Vec<H256>,
-    /// Path bits (0 = left, 1 = right)
-    pub path: Vec<bool>,
-}
+A chunk proof is a `Vec<H256>`: the sibling hashes from the chunk up to
+`data_root`. The verifier takes the side of each sibling from `chunk_index` and
+`chunk_count(data_size)`, so the proof contains no directions.
 
+```rust
 pub struct MmrProof {
     /// The leaf being proven.
     pub leaf: MmrLeaf,
@@ -2601,7 +2599,11 @@ fn verify_challenge_response(
             // The chunk must sit in the leaf and the leaf in the committed MMR.
             let chunk_hash = blake2_256(chunk_data);
             let chunk_ok = verify_merkle_proof(
-                chunk_hash, challenge.target.chunk_index, chunk_proof, &mmr_proof.leaf.data_root,
+                chunk_hash,
+                challenge.target.chunk_index,
+                chunk_count(mmr_proof.leaf.data_size),
+                chunk_proof,
+                &mmr_proof.leaf.data_root,
             );
             // Bound to the challenged leaf: the leaf position and the MMR shape
             // come from (target.leaf_index, commitment.leaf_count), not from the

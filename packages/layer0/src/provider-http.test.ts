@@ -153,7 +153,7 @@ describe("fetchChallengeProof", () => {
   const item = toHex(new Uint8Array(32).fill(2));
   const chunkProof = {
     chunk_data: bytesToBase64(enc.encode("chunk")),
-    proof: { siblings: [item], path: [true] },
+    proof: [item],
   };
 
   it("builds the proof from /mmr_proof and /chunk_proof", async () => {
@@ -164,7 +164,7 @@ describe("fetchChallengeProof", () => {
     expect(proof).toEqual({
       chunk_data: enc.encode("chunk"),
       mmr_proof: { leaf: { data_root: leaf.data_root, data_size: 5n, total_size: 5n }, items: [item] },
-      chunk_proof: { siblings: [item], path: [true] },
+      chunk_proof: [item],
     });
     expect(getValue).toHaveBeenCalledWith(10, 0, expect.anything());
     expect(fetchMock).toHaveBeenCalledTimes(2);
@@ -183,5 +183,16 @@ describe("fetchChallengeProof", () => {
       "the provider node is older than this client",
     );
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("throws for a /chunk_proof response with siblings and path", async () => {
+    stubFetch((url) =>
+      url.pathname === "/mmr_proof"
+        ? { leaf, items: [item] }
+        : { ...chunkProof, proof: { siblings: [item], path: [true] } },
+    );
+    await expect(fetchChallengeProof(api, PROVIDER, challengeId)).rejects.toThrow(
+      "the provider node is older than this client",
+    );
   });
 });

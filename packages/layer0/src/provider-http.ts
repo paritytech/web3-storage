@@ -247,6 +247,10 @@ export async function fetchChallengeProof(
       chunk_index: challenge.target.chunk_index,
     },
   });
+  if (!Array.isArray(chunk.proof))
+    throw new Error(
+      "Provider /chunk_proof response `proof` is not a list of hashes: the provider node is older than this client",
+    );
 
   return {
     chunk_data: base64ToBytes(chunk.chunk_data),
@@ -258,9 +262,6 @@ export async function fetchChallengeProof(
       },
       items: mmr.items.map((h: string) => asHex(h)),
     },
-    chunk_proof: {
-      siblings: chunk.proof.siblings.map((h: string) => asHex(h)),
-      path: chunk.proof.path,
-    },
+    chunk_proof: chunk.proof.map((h: string) => asHex(h)),
   };
 }

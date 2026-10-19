@@ -357,7 +357,7 @@ async fn read_chunks(
         .map(|(hash, data, proof)| ChunkWithProof {
             hash,
             data: BASE64.encode(&data),
-            proof: proof.siblings,
+            proof,
         })
         .collect();
 

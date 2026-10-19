@@ -406,12 +406,12 @@ pub mod extrinsics {
         challenge_id: (u32, u16),
         chunk_data: &[u8],
         mmr_proof: &storage_primitives::MmrProof,
-        chunk_proof: &storage_primitives::MerkleProof,
+        chunk_proof: &[H256],
     ) -> impl Payload {
         let response = runtime_types::pallet_storage_provider::pallet::ChallengeResponse::Proof {
             chunk_data: convert::bounded(chunk_data.to_vec()),
             mmr_proof: convert::mmr_proof(mmr_proof),
-            chunk_proof: convert::merkle_proof(chunk_proof),
+            chunk_proof: chunk_proof.to_vec(),
         };
 
         api::tx().storage_provider().respond_to_challenge(

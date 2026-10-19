@@ -720,20 +720,12 @@ async fn test_non_power_of_two_upload_matches_provider_root_and_verifies() {
             .parse()
             .unwrap();
 
-        let siblings: Vec<H256> = proof_response["proof"]["siblings"]
+        let proof: Vec<H256> = proof_response["proof"]
             .as_array()
             .unwrap()
             .iter()
             .map(|s| s.as_str().unwrap().parse().unwrap())
             .collect();
-        let path: Vec<bool> = proof_response["proof"]["path"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|p| p.as_bool().unwrap())
-            .collect();
-
-        let proof = storage_primitives::MerkleProof { siblings, path };
         assert!(
             storage_primitives::verify_merkle_proof(
                 chunk_hash,

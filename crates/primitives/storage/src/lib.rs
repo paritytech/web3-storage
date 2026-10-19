@@ -225,20 +225,6 @@ pub struct ChallengeId<BlockNumber> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Merkle Types
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Merkle proof for verifying inclusion.
-#[derive(Clone, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo, Debug)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct MerkleProof {
-    /// Sibling hashes from leaf to root
-    pub siblings: Vec<H256>,
-    /// Path bits (false = left, true = right)
-    pub path: Vec<bool>,
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // Commitment Types
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -702,26 +688,24 @@ mod tests {
         let root = hash_children(left, right);
 
         // The honest proof for chunk 0 verifies.
-        let honest = MerkleProof {
-            siblings: vec![leaves[1], right],
-            path: vec![false, false],
-        };
-        assert!(verify_merkle_proof(leaves[0], 0, 4, &honest, &root));
+        assert!(verify_merkle_proof(
+            leaves[0],
+            0,
+            4,
+            &[leaves[1], right],
+            &root
+        ));
 
         // The bytes of `left` presented as chunk data with one sibling. A
         // count of 2 makes one sibling the right length, so only the prefix
         // rejects the proof.
         let mut node_bytes = leaves[0].as_bytes().to_vec();
         node_bytes.extend_from_slice(leaves[1].as_bytes());
-        let forged = MerkleProof {
-            siblings: vec![right],
-            path: vec![false],
-        };
         assert!(!verify_merkle_proof(
             hash_leaf(&node_bytes),
             0,
             2,
-            &forged,
+            &[right],
             &root
         ));
     }

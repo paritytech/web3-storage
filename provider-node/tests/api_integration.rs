@@ -1124,8 +1124,7 @@ common::backend_tests! {
         let body: Value = resp.json().await.unwrap();
         assert!(body["chunk_hash"].is_string());
         assert!(body["chunk_data"].is_string()); // base64
-        assert!(body["proof"]["siblings"].is_array());
-        assert!(body["proof"]["path"].is_array());
+        assert!(body["proof"].is_array());
     }
 }
 

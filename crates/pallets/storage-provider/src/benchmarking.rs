@@ -1017,10 +1017,7 @@ mod benchmarks {
             leaf: mmr_leaf,
             items,
         };
-        let chunk_proof = storage_primitives::MerkleProof {
-            path: alloc::vec![false; siblings.len()],
-            siblings,
-        };
+        let chunk_proof = siblings;
 
         let challenge_id = insert_challenge::<T>(
             bucket_id,

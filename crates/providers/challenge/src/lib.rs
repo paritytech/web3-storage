@@ -16,7 +16,7 @@ use sp_runtime::AccountId32;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use storage_primitives::{BucketId, ChunkLocation, Commitment, MerkleProof, MmrProof};
+use storage_primitives::{BucketId, ChunkLocation, Commitment, MmrProof};
 use tokio::sync::{broadcast, mpsc};
 
 /// Errors surfaced by the challenge responder.
@@ -47,12 +47,13 @@ pub trait ChallengeProofSource: Send + Sync {
         leaf_index: u64,
     ) -> Result<MmrProof, ChallengeError>;
 
-    /// Fetch a chunk and its Merkle proof under the given data root.
+    /// Fetch a chunk and its Merkle proof (sibling hashes up to the data root)
+    /// under the given data root.
     fn get_chunk_at_index(
         &self,
         data_root: H256,
         chunk_index: u64,
-    ) -> Result<(Vec<u8>, MerkleProof), ChallengeError>;
+    ) -> Result<(Vec<u8>, Vec<H256>), ChallengeError>;
 }
 
 /// Configuration for the challenge responder.
@@ -148,7 +149,7 @@ pub trait ChallengeChainClient: Send + Sync {
         challenge_id: (u32, u16),
         chunk_data: Vec<u8>,
         mmr_proof: MmrProof,
-        chunk_proof: MerkleProof,
+        chunk_proof: Vec<H256>,
     ) -> Result<H256, ChallengeError>;
 }
 
@@ -171,7 +172,7 @@ impl<T: ChallengeChainClient> ChallengeChainClient for Arc<T> {
         challenge_id: (u32, u16),
         chunk_data: Vec<u8>,
         mmr_proof: MmrProof,
-        chunk_proof: MerkleProof,
+        chunk_proof: Vec<H256>,
     ) -> Result<H256, ChallengeError> {
         self.as_ref()
             .submit_response(challenge_id, chunk_data, mmr_proof, chunk_proof)
