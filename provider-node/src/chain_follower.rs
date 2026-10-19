@@ -7,11 +7,10 @@
 //! new connection to the other chain consumers through a watch channel.
 
 use crate::chain_connection::{self, ChainHandle, ChainTransport};
-use crate::event_decoding::decode_block_events;
+use crate::event_decoding::decode_block_contents;
 use crate::subxt_client::{fetch_current_anchor_block, subxt_account};
 use provider_coordinator::{
-    BlockContents, ChainConnection, ChainFollower, ChainStateChainClient, FinalizedBlock,
-    FinalizedBlocks,
+    ChainConnection, ChainFollower, ChainStateChainClient, FinalizedBlock, FinalizedBlocks,
 };
 use provider_types::{ChainClientError, ProviderInfo, ProviderSettings, ProviderStats};
 use sp_runtime::AccountId32;
@@ -127,58 +126,6 @@ impl ChainStateChainClient for SubxtChainStateClient {
     }
 }
 
-// ── provider lifecycle events ─────────────────────────────────────────────────
-
-/// Decode a finalized block's events down to the provider accounts of its
-/// provider-lifecycle events, via the generated `storage-subxt` event types.
-fn parse_provider_lifecycle_events(
-    events: &subxt::events::Events<PolkadotConfig>,
-) -> Vec<AccountId32> {
-    events
-        .iter()
-        .filter_map(|event| event.ok())
-        .filter_map(|event| lifecycle_event(&event))
-        .collect()
-}
-
-/// The provider account of `event` if it is a provider-lifecycle event, or
-/// `None` if it is not one.
-///
-/// A decode failure (event fields that differ from the bindings) is logged and
-/// skipped. The next relevant event triggers a new `refresh_provider_state`,
-/// except after `ProviderDeregistered`: then only the bootstrap refresh on
-/// reconnect corrects the state.
-fn lifecycle_event(event: &subxt::events::Event<'_, PolkadotConfig>) -> Option<AccountId32> {
-    use storage_subxt::api::{storage_provider::Event as StorageProviderEvent, Event};
-
-    if event.pallet_name() != "StorageProvider" {
-        return None;
-    }
-    let decoded = match event.decode_as::<Event>() {
-        Ok(Event::StorageProvider(decoded)) => decoded,
-        Ok(_) => return None,
-        Err(e) => {
-            tracing::warn!(
-                "chain-state coordinator: failed to decode {}::{} against the static bindings: {e}",
-                event.pallet_name(),
-                event.event_name(),
-            );
-            return None;
-        }
-    };
-    match decoded {
-        StorageProviderEvent::ProviderDeregistered { provider, .. }
-        | StorageProviderEvent::ProviderRegistered { provider, .. }
-        | StorageProviderEvent::ProviderSettingsUpdated { provider, .. }
-        | StorageProviderEvent::ProviderMultiaddrUpdated { provider, .. }
-        | StorageProviderEvent::DeregisterAnnounced { provider, .. }
-        | StorageProviderEvent::DeregisterCancelled { provider } => {
-            Some(AccountId32::new(provider.0))
-        }
-        _ => None,
-    }
-}
-
 // ── chain follower ───────────────────────────────────────────────────────────
 
 /// [`ChainFollower`] over a subxt connection to `transport`. Publishes each
@@ -273,10 +220,7 @@ impl FinalizedBlocks for SubxtFinalizedBlocks {
         };
 
         let contents = match at.events().fetch().await {
-            Ok(events) => Some(BlockContents {
-                events: decode_block_events(&events, number),
-                lifecycle: parse_provider_lifecycle_events(&events),
-            }),
+            Ok(events) => Some(decode_block_contents(&events, number)),
             Err(e) => {
                 tracing::warn!(
                     "chain-state coordinator: failed to fetch events for block {number}: {e}"
@@ -506,10 +450,11 @@ mod tests {
         )
     }
 
-    /// The `BucketMembershipChanged` bucket ids [`decode_block_events`]
+    /// The `BucketMembershipChanged` bucket ids [`decode_block_contents`]
     /// produces from `events`, in encounter order.
     fn membership_changed_bucket_ids(events: &subxt::events::Events<PolkadotConfig>) -> Vec<u64> {
-        decode_block_events(events, 0)
+        decode_block_contents(events, 0)
+            .events
             .into_iter()
             .filter_map(|event| match event {
                 BlockEvent::BucketMembershipChanged { bucket_id } => Some(bucket_id),
@@ -794,7 +739,7 @@ mod tests {
         let events = at.events().fetch().await.expect("events fetch");
 
         assert_eq!(
-            parse_provider_lifecycle_events(&events),
+            decode_block_contents(&events, 0).lifecycle,
             vec![account.clone(), account]
         );
     }

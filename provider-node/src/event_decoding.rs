@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
-//! Decoding raw on-chain events into [`BlockEvent`]s.
+//! Decoding a finalized block's raw events into [`BlockContents`]: the
+//! [`BlockEvent`]s for the coordinators and the provider-lifecycle accounts.
 //!
 //! Events decode through the static `storage-subxt` bindings, so a runtime
 //! change that reshapes one of these events surfaces as a decode failure
 //! (logged, backstopped by the safety-net scans) instead of silently
 //! yielding `None` on dynamic field lookups.
 
+use provider_coordinator::BlockContents;
 use provider_events::BlockEvent;
 use sp_runtime::AccountId32;
 use storage_subxt::api::{
@@ -27,49 +29,79 @@ fn is_membership_event(event: &RawEvent<'_, PolkadotConfig>) -> bool {
 }
 
 /// Whether `event` is a storage-provider event that maps to a [`BlockEvent`]
-/// other than a membership change.
+/// other than a membership change, or to a provider-lifecycle account.
 fn is_other_relevant_event(event: &RawEvent<'_, PolkadotConfig>) -> bool {
     event.is::<pallet_events::ChallengeCreated>()
         || event.is::<pallet_events::ReplicaAgreementEstablished>()
         || event.is::<pallet_events::BucketCheckpointed>()
+        || event.is::<pallet_events::ProviderRegistered>()
+        || event.is::<pallet_events::ProviderSettingsUpdated>()
+        || event.is::<pallet_events::ProviderMultiaddrUpdated>()
+        || event.is::<pallet_events::DeregisterAnnounced>()
+        || event.is::<pallet_events::DeregisterCancelled>()
+        || event.is::<pallet_events::ProviderDeregistered>()
 }
 
-/// Decode one block's events into the coordinator-relevant [`BlockEvent`]s.
+/// Decode one block's events into [`BlockContents`], decoding each event once.
 ///
 /// A membership-changing event whose fields fail to decode is escalated
 /// rather than dropped: unlike the other event kinds, silently missing one
 /// means a revocation is never applied and survives for the full
 /// `--auth-cache-ttl` on a node that is otherwise connected and healthy. Any
-/// other relevant event that fails to decode is logged and skipped; the
-/// coordinators' safety-net scans cover the miss.
-pub fn decode_block_events(
+/// other relevant event that fails to decode is logged and skipped:
+/// - a missed [`BlockEvent`] is covered by the coordinators' safety-net scans;
+/// - a missed lifecycle account is covered by the next lifecycle event for
+///   the provider, except after `ProviderDeregistered`: then only the
+///   bootstrap refresh on reconnect corrects the state.
+pub fn decode_block_contents(
     events: &subxt::events::Events<PolkadotConfig>,
     block_number: u32,
-) -> Vec<BlockEvent> {
-    events
-        .iter()
-        .filter_map(|event| event.ok())
-        .filter_map(|event| match event.decode_as::<Event>() {
-            Ok(Event::StorageProvider(decoded)) => block_event(decoded),
-            Ok(_) => None,
-            Err(e) if is_membership_event(&event) => Some(escalate_membership_decode_failure(
+) -> BlockContents {
+    let mut contents = BlockContents {
+        events: Vec::new(),
+        lifecycle: Vec::new(),
+    };
+    for event in events.iter().filter_map(|event| event.ok()) {
+        match event.decode_as::<Event>() {
+            Ok(Event::StorageProvider(decoded)) => {
+                contents.lifecycle.extend(lifecycle_account(&decoded));
+                contents.events.extend(block_event(decoded));
+            }
+            Ok(_) => {}
+            Err(e) if is_membership_event(&event) => {
+                contents.events.push(escalate_membership_decode_failure(
+                    event.pallet_name(),
+                    event.event_name(),
+                    block_number,
+                    e,
+                ))
+            }
+            Err(e) if is_other_relevant_event(&event) => tracing::warn!(
+                "failed to decode {}::{} against the static bindings: {e}",
                 event.pallet_name(),
                 event.event_name(),
-                block_number,
-                e,
-            )),
-            Err(e) => {
-                if is_other_relevant_event(&event) {
-                    tracing::warn!(
-                        "failed to decode {}::{} against the static bindings: {e}",
-                        event.pallet_name(),
-                        event.event_name(),
-                    );
-                }
-                None
-            }
-        })
-        .collect()
+            ),
+            Err(_) => {}
+        }
+    }
+    contents
+}
+
+/// The provider account of a provider-lifecycle event, or `None` for any
+/// other event.
+fn lifecycle_account(event: &StorageProviderEvent) -> Option<AccountId32> {
+    match event {
+        StorageProviderEvent::ProviderDeregistered { provider, .. }
+        | StorageProviderEvent::ProviderRegistered { provider, .. }
+        | StorageProviderEvent::ProviderSettingsUpdated { provider, .. }
+        | StorageProviderEvent::ProviderMultiaddrUpdated { provider, .. }
+        | StorageProviderEvent::DeregisterAnnounced { provider, .. }
+        | StorageProviderEvent::DeregisterCancelled { provider } => {
+            Some(AccountId32::new(provider.0))
+        }
+        // A new arm above also needs a check in `is_other_relevant_event`.
+        _ => None,
+    }
 }
 
 /// The coordinator-relevant [`BlockEvent`] for a decoded storage-provider
