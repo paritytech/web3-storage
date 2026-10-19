@@ -39,7 +39,7 @@
           "proof",
           "replica_confirm"
         ],
-        "note": "Challenges and replica sync confirmations verify against the committed roots."
+        "note": "Challenges and replica sync confirmations verify against the committed roots; a commitment is void once its agreement ends."
       }
     ],
     "legend": {
@@ -126,10 +126,10 @@
       "id": "historical",
       "type": "database",
       "label": "historical_roots",
-      "sublabel": "3, 7, 11, 23, 47, 113",
+      "sublabel": "(quotient, Commitment)",
       "stage": 3,
       "row": 2,
-      "tag": "prime intervals"
+      "tag": "primes 3, 7, 11, 23, 47, 113"
     },
     {
       "id": "proof",
@@ -143,7 +143,7 @@
       "id": "replica_confirm",
       "type": "backend",
       "label": "Replica Sync",
-      "sublabel": "signed roots array",
+      "sublabel": "signed ReplicaSyncPayload",
       "stage": 4,
       "row": 2
     }
@@ -177,7 +177,7 @@
       "from": "data_root",
       "to": "mmr",
       "label": "POST /commit appends MmrLeaf",
-      "classification": "CommitmentPayload signed",
+      "classification": "signed CommitmentPayload",
       "variant": "emphasis",
       "labelDy": 24
     },
@@ -194,7 +194,7 @@
       "from": "snapshot",
       "to": "historical",
       "label": "checkpoint updates at prime intervals",
-      "classification": "anti-race",
+      "classification": "whole commitment stored",
       "labelDy": 140
     },
     {
@@ -211,7 +211,7 @@
       "from": "historical",
       "to": "replica_confirm",
       "label": "confirm_replica_sync(roots)",
-      "classification": "matched root is new",
+      "classification": "advances over last_sync",
       "labelDy": 53
     }
   ],
@@ -229,9 +229,19 @@
       "dot": "emerald",
       "title": "One MMR per bucket",
       "items": [
-        "Append adds a leaf; delete raises start_seq; freeze locks start_seq",
-        "Canonical range: [start_seq, start_seq + leaf_count)",
+        "Append adds a leaf; freeze locks start_seq",
+        "Delete: a new MMR starts at the current end (start_seq + leaf_count); the kept leaves are appended again with new sequence numbers",
+        "Canonical range: [start_seq, start_seq + leaf_count); an append checkpoint proves the old MMR is a prefix (MmrConsistencyProof)",
         "Non-canonical [A, A+N) is prunable once canonical [B, B+M) has B+M > A+N"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Signed CommitmentPayload",
+      "items": [
+        "CommitmentPayload { version (2), genesis_hash, bucket_id, agreement_id, commitment }; BucketId is a u64 newtype, AgreementId a u32 newtype",
+        "genesis_hash is in the signed preimage only: it is never transmitted, the chain reconstructs it with its own genesis hash, so a signature verifies on one chain only",
+        "agreement_id binds the commitment to one agreement; when that agreement ends, the commitment is void"
       ]
     },
     {
@@ -240,7 +250,8 @@
       "items": [
         "chunk_proof (MerkleProof): the chunk is in the leaf's data_root",
         "mmr_proof (MmrProof): peaks, leaf and leaf_proof to the mmr_root",
-        "If either check fails, the response is rejected with InvalidProof and the challenge stays open"
+        "If either check fails, the response is rejected with InvalidProof and the challenge stays open",
+        "Every proof list is bounded: at most 64 tree levels and 64 MMR peaks (MaxProofDepth)"
       ]
     }
   ]

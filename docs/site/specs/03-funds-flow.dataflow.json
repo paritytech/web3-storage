@@ -14,7 +14,7 @@
           "treasury",
           "challenger_out"
         ],
-        "note": "An unanswered challenge slashes the full stake to the Treasury; the challenger is made whole from the slash."
+        "note": "An unanswered challenge slashes stake to the Treasury: all of a physical provider's, per_provider_stake per liable virtual member."
       },
       {
         "id": "agreement",
@@ -31,6 +31,16 @@
         "note": "The prepaid fee and a replica's sync_balance are held on the agreement owner until settlement."
       },
       {
+        "id": "replacement",
+        "label": "Replacement escrow",
+        "focus": [
+          "owner_acct",
+          "replacement",
+          "owner_lapse"
+        ],
+        "note": "create_replacement holds the successor's payment on the owner; it is released to the owner if the old agreement settles first."
+      },
+      {
         "id": "challenge",
         "label": "Challenge deposit",
         "focus": [
@@ -44,7 +54,7 @@
     ],
     "viewBox": [
       1068,
-      604
+      720
     ],
     "legend": {
       "entries": {
@@ -138,6 +148,14 @@
       "row": 3
     },
     {
+      "id": "replacement",
+      "type": "database",
+      "label": "AgreementPayment",
+      "sublabel": "pending_replacement",
+      "stage": 1,
+      "row": 4
+    },
+    {
       "id": "challenger_out",
       "type": "external",
       "label": "Challenger",
@@ -170,6 +188,14 @@
       "row": 3
     },
     {
+      "id": "owner_lapse",
+      "type": "frontend",
+      "label": "Agreement owner",
+      "sublabel": "free balance",
+      "stage": 3,
+      "row": 4
+    },
+    {
       "id": "treasury",
       "type": "cloud",
       "label": "Treasury",
@@ -183,7 +209,7 @@
       "id": "stake-in",
       "from": "provider_acct",
       "to": "stake",
-      "label": "register_provider, add_stake",
+      "label": "register_provider, set_stake",
       "classification": "stake + ED free",
       "variant": "emphasis",
       "labelAt": [
@@ -223,6 +249,7 @@
       "classification": "add_replica_provider",
       "fromSide": "bottom",
       "toSide": "left",
+      "variant": "emphasis",
       "via": [
         [
           100,
@@ -232,8 +259,31 @@
       "labelAt": [
         180,
         499
+      ]
+    },
+    {
+      "id": "repl-in",
+      "from": "owner_acct",
+      "to": "replacement",
+      "label": "create_replacement",
+      "classification": "additional_duration at the current price",
+      "fromSide": "left",
+      "toSide": "left",
+      "variant": "emphasis",
+      "via": [
+        [
+          20,
+          385
+        ],
+        [
+          20,
+          613
+        ]
       ],
-      "variant": "emphasis"
+      "labelAt": [
+        140,
+        613
+      ]
     },
     {
       "id": "made-whole",
@@ -248,7 +298,7 @@
       "id": "slash",
       "from": "stake",
       "to": "treasury",
-      "label": "slash: full stake",
+      "label": "slash",
       "classification": "unanswered challenge",
       "variant": "security",
       "fromSide": "top",
@@ -303,8 +353,8 @@
       "id": "pay",
       "from": "payment",
       "to": "provider_out",
-      "label": "Pay / Burn remainder / claim",
-      "classification": "extend_agreement: elapsed period",
+      "label": "Pay / claim_expired_agreement",
+      "classification": "extend_agreement, replacement activation: elapsed period",
       "variant": "emphasis",
       "fromSide": "top",
       "toSide": "bottom",
@@ -327,8 +377,8 @@
       "id": "burn",
       "from": "payment",
       "to": "treasury",
-      "label": "Burn { burn_percent }",
-      "classification": "end_agreement",
+      "label": "Burn: whole payment",
+      "classification": "end_agreement; BurnPremium from owner",
       "fromSide": "bottom",
       "toSide": "left",
       "via": [
@@ -354,7 +404,7 @@
       "id": "refund",
       "from": "payment",
       "to": "owner_out",
-      "label": "remove_slashed",
+      "label": "refund_agreement, remove_slashed",
       "classification": "remaining payment",
       "route": "straight"
     },
@@ -366,6 +416,14 @@
       "classification": "per confirm_replica_sync",
       "route": "straight",
       "variant": "emphasis"
+    },
+    {
+      "id": "repl-lapse",
+      "from": "replacement",
+      "to": "owner_lapse",
+      "label": "ReplacementExpired",
+      "classification": "old agreement settled first",
+      "route": "straight"
     }
   ],
   "cards": [
@@ -374,7 +432,7 @@
       "title": "Three hold reasons",
       "items": [
         "ProviderStake: provider collateral",
-        "AgreementPayment: fee and sync_balance, on the owner; moves on transfer_agreement_ownership",
+        "AgreementPayment: fee, sync_balance and a pending replacement's payment, on the owner; moves on transfer_agreement_ownership",
         "ChallengeDeposit: challenger deposit"
       ]
     },
@@ -382,10 +440,23 @@
       "dot": "rose",
       "title": "Stake and challenges",
       "items": [
-        "Unanswered challenge: resolve_expired_challenge slashes the full stake to the Treasury",
+        "Unanswered challenge: resolve_expired_challenge slashes to the Treasury; a physical provider loses its whole held stake, each liable member of a virtual provider its per_provider_stake",
         "Challenger made whole from the slash, no reward",
         "Any response leaves the stake untouched; an invalid one is rejected",
-        "complete_deregister releases the stake"
+        "Each agreement snapshots the stake at creation; set_stake lowers the figure for new agreements only, and the old one stays locked until cur_until, the latest expiry struck under it",
+        "While the provider has an open challenge (pending_challenges > 0) every stake lock stays active and deregister_provider fails",
+        "A slash bumps version; a provider below MinProviderStake takes no new or extended agreement (StakeBelowMinimum)"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Agreement payment",
+      "items": [
+        "Prepaid at creation and extension at the provider's current price; the client pins expected_version (ProviderVersionMismatch)",
+        "refund_agreement: the provider returns the remaining payment; the agreement runs on unpaid and stays challengeable",
+        "Replacement: at activation the old agreement's unelapsed remainder moves into the successor's escrow; the successor is then paid as any agreement",
+        "Virtual provider: settlement pays the snapshotted members equally",
+        "Open challenges do not hold the payment: settlement, burn, refund, extension and replacement activation proceed"
       ]
     },
     {

@@ -15,7 +15,7 @@
   <p class="lede">
     How an application stores, reads and verifies data. Your client uploads data to providers over HTTP and
     submits transactions to the storage pallet only for setup, checkpoints and disputes.
-    Names on this page follow design v2.5. Check the runtime metadata of the chain you connect to for the
+    Names on this page follow design v2.6. Check the runtime metadata of the chain you connect to for the
     exact call signatures.
   </p>
 </header>
@@ -39,10 +39,12 @@
 <section id="guarantees">
 <h2>What you can rely on</h2>
 <ul>
-  <li><strong>After commit</strong>: the provider returns a signature over the new bucket state (MMR root) that includes your data. With this signature you can challenge the provider on-chain (<code>challenge_offchain</code>). You get this guarantee without a transaction.</li>
-  <li><strong>After checkpoint</strong>: the MMR root is on-chain. Anyone can challenge the providers that signed it (on a private bucket: members and primary-agreement owners), and the commitment remains in chain history if you lose the signature.</li>
-  <li><strong>Stake</strong>: a provider that does not answer a challenge by the deadline loses its entire stake, which covers all of its agreements. An invalid answer is rejected and the challenge stays open.</li>
-  <li><strong>Duration</strong>: agreements bind both sides until expiry. The provider cannot leave early. You cannot cancel and reclaim the payment.</li>
+  <li><strong>After commit</strong>: the provider returns signatures over the new bucket state (MMR root) that includes your data, bound to your agreement (<code>agreement_id</code>) and to this chain. With these signatures you can challenge the provider on-chain (<code>challenge_offchain</code>) while the agreement is live. You get this guarantee without a transaction.</li>
+  <li><strong>After checkpoint</strong>: the MMR root is on-chain. Anyone can challenge the providers that signed it (on a private bucket: members and primary-agreement owners), and the commitment remains in chain history if you lose the signatures.</li>
+  <li><strong>Stake</strong>: each agreement records the provider's stake at creation, and the provider stays liable at that amount until the agreement ends, whatever it sets for new agreements later. A physical provider that does not answer a challenge by the deadline loses its entire stake; for a virtual provider, each liable member loses <code>per_provider_stake</code>. An invalid answer is rejected and the challenge stays open.</li>
+  <li><strong>Stake under challenge</strong>: you can challenge only while the agreement is live. The stake your agreement recorded stays locked until the agreement expires, and longer while any challenge against the provider is open: the provider cannot lower it or deregister (<code>deregister_provider</code>) until the challenge is resolved. A challenged virtual provider keeps the stake of all its members locked.</li>
+  <li><strong>Duration</strong>: agreements bind both sides until expiry. The provider cannot leave early. You cannot cancel and reclaim the payment. A provider may refund the remaining payment (<code>refund_agreement</code>); the agreement then continues unpaid and the provider stays liable.</li>
+  <li><strong>After a slash</strong>: a slash bumps the provider's <code>version</code> and <code>last_stake_event</code>, so you see it from provider state. If a slash leaves a physical provider with less stake than your live agreement recorded, anyone can call <code>remove_slashed</code> and the remaining payment returns to you.</li>
 </ul>
 <p class="muted">The chain does not check that providers serve reads fast. Your client checks that, and punishes a slow provider with a burn at settlement, a challenge, or by not extending the agreement.</p>
 <p class="see">Diagram: <a href="01-system-architecture.html">01 System architecture</a></p>
@@ -57,12 +59,13 @@
     <tr><td>Bucket</td><td>On-chain container with a permanent <code>bucket_id</code>. It lists members, providers and the current snapshot. Providers can change; the id does not.</td></tr>
     <tr><td>Roles</td><td><code>Admin</code> (members, settings, delete data), <code>Writer</code> (append), <code>Reader</code> (read, only meaningful on a private bucket). Each role includes the next.</td></tr>
     <tr><td>Visibility</td><td><code>Public</code> or <code>Private</code>. On a private bucket, primaries serve reads only to members. See <a href="#private">Private buckets</a>.</td></tr>
-    <tr><td>Primary provider</td><td>Added by the admin. Receives writes from clients and signs checkpoints. At most <code>MaxPrimaryProviders</code> (5) per bucket.</td></tr>
+    <tr><td>Primary provider</td><td>Added by the admin. Receives writes from clients and signs checkpoints. A bucket has at most <code>MaxPrimarySlots</code> (8) signing slots: a physical primary takes one, a virtual primary one per member.</td></tr>
     <tr><td>Replica provider</td><td>Added by any account that gets a replica quote from the provider (the quote names that account). Syncs data from other providers, confirms sync on-chain, and receives a payment per confirmation. No limit per bucket.</td></tr>
-    <tr><td>Storage agreement</td><td>One per provider per bucket: quota (<code>max_bytes</code>), locked price, expiry, role, and owner. The payment is held on the owner until settlement.</td></tr>
+    <tr><td>Virtual provider</td><td>One provider identity backed by several physical providers (members) that share its stake. It has a synthetic account and you address it like a physical provider. Its quotes, commitments and checkpoint signatures are sets of at least <code>k</code> member signatures. It has no address of its own: you connect to a member. <code>ProviderInfoResponse</code> reports <code>per_provider_stake</code>, <code>k</code> and <code>member_count</code>.</td></tr>
+    <tr><td>Storage agreement</td><td>One per provider per bucket, with a per-bucket <code>agreement_id</code>: quota (<code>max_bytes</code>), prepaid payment, the provider's stake at creation, expiry, role, and owner. The payment is held on the owner until settlement.</td></tr>
     <tr><td><code>data_root</code></td><td>Merkle root of a chunk tree. Chunks are at most 256 KiB and addressed by <code>blake2_256</code> hash.</td></tr>
     <tr><td>MMR and commitment</td><td>Each bucket has one Merkle Mountain Range. Each leaf holds a <code>data_root</code>. A <code>Commitment</code> is <code>(mmr_root, start_seq, leaf_count)</code>.</td></tr>
-    <tr><td>Checkpoint</td><td>A commitment written on-chain with signatures from at least <code>min_providers</code> primaries.</td></tr>
+    <tr><td>Checkpoint</td><td>A commitment written on-chain with signatures from at least <code>min_providers</code> signing slots (physical signers; a virtual primary's members count individually).</td></tr>
     <tr><td>Challenge</td><td>An on-chain request that forces a provider to post one chunk with Merkle proofs, or lose its stake.</td></tr>
   </tbody>
 </table>
@@ -71,7 +74,7 @@
 <pre><code>bucket://42/&lt;data_root&gt;              immutable: pins exact content
 bucket://42/latest/leaf/17            mutable: current leaf 17
 bucket://42/fs/my_website/logo.png    mutable: path in the latest snapshot</code></pre>
-<p>Your client looks up the bucket on-chain to find which providers store it, their stake, and their agreement expiry, with one chain query.</p>
+<p>Your client looks up the bucket on-chain (<code>bucket_info</code>, <code>bucket_agreements</code>) to find which providers store it and their agreements.</p>
 <p class="see">Diagrams: <a href="09-data-commitment.html">09 From bytes to on-chain commitment</a>, <a href="07-bucket-lifecycle.html">07 Bucket lifecycle</a></p>
 </section>
 
@@ -81,32 +84,35 @@ bucket://42/fs/my_website/logo.png    mutable: path in the latest snapshot</code
 <ol class="steps">
   <li>
     <h3>Choose providers</h3>
-    <p>Query the runtime API: <code>find_matching_providers(requirements, limit)</code> returns providers sorted by match score; <code>providers_with_capacity</code> and <code>provider_info</code> return settings, stake and stats.</p>
-    <p>Compare stake, agreements extended against agreements burned, and <code>challenges_failed</code>. Do not mix high-stake and low-stake providers in one bucket: the low-stake provider can copy from the other and risk little. Pick providers in different regions and track read latency over time.</p>
+    <p>Discovery is off-chain. Page the runtime API <code>providers(offset, limit)</code> (or read one with <code>provider_info</code>) and filter and rank the <code>ProviderInfoResponse</code> entries yourself: settings (price, duration limits, accepting flags), <code>stake</code> (the figure for new agreements), <code>locked_stake</code>, <code>committed_bytes</code>, <code>stats</code>, and <code>version</code>. Record <code>version</code>: you pass it as <code>expected_version</code> in every call that binds you to the provider's terms.</p>
+    <p>Compare stake, agreements extended against agreements burned and refunded, and <code>challenges_failed</code>. Do not mix high-stake and low-stake providers in one bucket: the low-stake provider can copy from the other and risk little. Pick providers in different regions and track read latency over time. A virtual provider needs no special treatment here: compare it on <code>stake</code> like any other.</p>
   </li>
   <li>
     <h3>Get a signed quote</h3>
-    <p>Call <code>POST /negotiate</code> on the provider with the owner account, <code>bucket</code> (<code>null</code> for a new bucket, or the bucket id), <code>max_bytes</code>, <code>duration</code>, <code>price_per_byte</code>, <code>nonce</code> (your current <code>AgreementNonces</code> value, read from chain at the best block), and <code>replica_params</code> for a replica. The provider returns signed <code>AgreementTerms</code>.</p>
+    <p>Call <code>POST /negotiate</code> on the provider (for a virtual provider, on one of its members) with <code>owner</code>, <code>bucket</code> (<code>null</code> for a new bucket, or the bucket id), <code>max_bytes</code>, <code>duration</code>, <code>nonce</code> (your current <code>AgreementNonces</code> value, read from chain at the best block), and <code>replica_params</code> for a replica. The response contains <code>provider</code>, the signed <code>terms</code> (<code>AgreementTerms</code>) and <code>provider_signatures</code>.</p>
+    <p>The quote contains no price and no version. The chain reads price, replica sync price and stake from the provider at redemption and rejects the call with <code>ProviderVersionMismatch</code> if the provider's <code>version</code> differs from your <code>expected_version</code>. The version changes only when terms get worse (price or replica sync price up, stake down, a slash, or for a virtual provider a member leaving or <code>k</code> rising), so you never get an agreement on worse terms than you read.</p>
     <p>The quote is for one owner and one bucket target. You can redeem it once, until <code>valid_until</code>. Only one quote per nonce can be redeemed: on <code>NonceMismatch</code>, read the nonce again and request a new quote. At redemption the chain requires <code>valid_until</code> to be at most <code>RequestTimeout</code> (6 hours) after the current anchor block.</p>
   </li>
   <li>
     <h3>Create the bucket</h3>
-    <p>One transaction: <code>create_bucket_with_primary(provider, terms, sig, visibility)</code> with a quote for <code>bucket: null</code>. Or two: <code>create_bucket(min_providers, visibility)</code>, then <code>add_primary_provider(bucket_id, provider, terms, sig)</code> as admin with a quote for that bucket id.</p>
-    <p>The pallet holds <code>price_per_byte × max_bytes × duration</code> on the owner. Add more primaries the same way. Add members with <code>set_member(bucket_id, member, role)</code>. If your wrapper lets the user skip the visibility choice, default to <code>Private</code>.</p>
+    <p>One transaction: <code>create_bucket_with_primary(provider, terms, sigs, expected_version, visibility)</code> with a quote for <code>bucket: null</code>. Or two: <code>create_bucket(min_providers, visibility)</code>, then <code>add_primary_provider(bucket_id, provider, terms, sigs, expected_version)</code> as admin with a quote for that bucket id.</p>
+    <p>The pallet holds the provider's current <code>price_per_byte × max_bytes × duration</code> on the owner and records the provider's current stake in the agreement. The agreement gets an <code>agreement_id</code> (in <code>StorageAgreementEstablished</code>, or via <code>agreement_info</code>); you pass it to <code>/commit</code>, <code>/commitment</code>, <code>/checkpoint-signature</code> and <code>challenge_offchain</code>. Add more primaries the same way. Add members with <code>set_member(bucket_id, member, role)</code>. If your wrapper lets the user skip the visibility choice, default to <code>Private</code>.</p>
     <p class="see">Diagram: <a href="06-bucket-and-providers.html">06 Bucket creation and provider assignment</a></p>
   </li>
   <li>
     <h3>Upload</h3>
     <p>Split data into chunks of at most 256 KiB and build the Merkle tree. Call <code>POST /exists</code> with hashes, top-down, to skip subtrees the provider already has. Upload missing nodes bottom-up with <code>PUT /node</code>: a parent is rejected (<code>children_missing</code>) until its children exist. Uploads above the agreement quota fail with <code>507 quota_exceeded</code>.</p>
-    <p>Primaries do not sync with each other. Upload to every primary that must store the data.</p>
+    <p>Primaries do not sync with each other. Upload to every primary that must store the data. For a virtual provider, upload to one member; it distributes the data to the other members.</p>
   </li>
   <li>
     <h3>Commit</h3>
-    <p>Call <code>POST /commit</code> with the <code>data_roots</code> to append. The response contains the new <code>mmr_root</code>, <code>start_seq</code>, <code>leaf_count</code>, the <code>leaf_indices</code> of your roots, and <code>provider_signature</code>. Store the signature: it is the evidence for <code>challenge_offchain</code>.</p>
+    <p>Call <code>POST /commit</code> with the <code>agreement_id</code> and the <code>data_roots</code> to append. The response contains the new <code>mmr_root</code>, <code>start_seq</code>, <code>leaf_count</code>, the <code>leaf_indices</code> of your roots, and <code>provider_signatures</code> (one entry from a physical provider, at least <code>k</code> from a virtual one). Store the signatures with the commitment and <code>agreement_id</code>: they are the evidence for <code>challenge_offchain</code>.</p>
+    <p>Providers sign <code>CommitmentPayload { version, genesis_hash, bucket_id, agreement_id, commitment }</code>. The genesis hash is never transmitted: if you verify a signature yourself, insert the hash of the chain you connect to. A signature from another chain does not verify.</p>
   </li>
   <li>
     <h3>Checkpoint</h3>
-    <p>Get a signature from each primary with <code>GET /checkpoint-signature</code>, then submit <code>checkpoint(bucket_id, commitment, signatures)</code> as a writer or admin, with at least <code>min_providers</code> primary signatures. Anyone can add more signatures to the current snapshot later with <code>extend_checkpoint</code>.</p>
+    <p>Get signatures from each primary with <code>GET /checkpoint-signature?bucket_id=…&amp;agreement_id=…&amp;prev_start_seq=…&amp;prev_leaf_count=…</code>, where <code>prev_*</code> is the on-chain snapshot. Then submit <code>checkpoint(bucket_id, commitment, consistency_proof, signatures, activate_replacements)</code> as a writer or admin. <code>signatures</code> is a list of <code>(AccountId, Signature)</code> pairs; at least <code>min_providers</code> signing slots must be present, and a virtual primary's members enter all-or-nothing (at least <code>k</code> or none). Set <code>activate_replacements</code> to <code>false</code> unless you activate a replacement (see <a href="#keep-stored">Keep the data stored</a>). Anyone can add more signatures to the current snapshot later with <code>extend_checkpoint</code>.</p>
+    <p>The commitment must equal the snapshot's or append to it: same <code>start_seq</code>, larger <code>leaf_count</code>. For an append, pass the <code>consistency_proof</code> from one primary's response; it proves that the snapshot's MMR is a prefix of the new one. Otherwise pass none. A primary answers <code>400 prev_out_of_range</code> if its state is behind the snapshot and <code>409 not_prefix</code> if it holds a different branch. Every checkpoint needs <code>min_providers</code> on its own and replaces the snapshot's signers.</p>
     <p>Checkpoints are optional and can be infrequent. Without one, <code>challenge_checkpoint</code> is not available and providers must keep every state they signed.</p>
     <p class="see">Diagram: <a href="08-write-commit-checkpoint.html">08 Upload, commit, checkpoint</a></p>
   </li>
@@ -119,32 +125,36 @@ bucket://42/fs/my_website/logo.png    mutable: path in the latest snapshot</code
     <h3>Challenge a provider that does not serve</h3>
     <p>Use a challenge only when the provider does not serve data. Pick the mode:</p>
     <ul>
-      <li><code>challenge_offchain</code>: with a commit signature. Use it on buckets with frequent writes.</li>
+      <li><code>challenge_offchain(bucket_id, provider, agreement_id, commitment, target, provider_signatures)</code>: with the commit signatures. Pass <code>commitment</code> and <code>agreement_id</code> exactly as returned by <code>/commit</code> or <code>/commitment</code>; the chain rebuilds the signed payload from them. It fails with <code>AgreementExpired</code> once that agreement has expired, and with <code>AgreementNotFound</code> once its record is gone. Use it on buckets with frequent writes.</li>
       <li><code>challenge_checkpoint</code>: against the on-chain snapshot. Use it on buckets with infrequent writes. It fails if a new checkpoint no longer lists the provider.</li>
       <li><code>challenge_replica</code>: against the root a replica confirmed on-chain.</li>
     </ul>
-    <p>You lock a deposit that covers the provider's response cost. The provider has <code>ChallengeTimeout</code> (48 hours) to respond. If it does not, anyone can call <code>resolve_expired_challenge</code> (free on success) to slash it. An invalid response is rejected and the challenge stays open. See <a href="#costs">Costs</a> for who pays.</p>
+    <p><code>challenge_offchain</code> and <code>challenge_replica</code> fail with <code>ChallengedLeafDeleted</code> for a leaf below the snapshot's <code>start_seq</code>: an admin deleted it.</p>
+    <p>You lock a deposit that covers the provider's response cost. The provider has <code>ChallengeTimeout</code> (48 hours) to respond; for a virtual provider, any member named in the agreement may respond. If nobody responds, anyone can call <code>resolve_expired_challenge</code> (free on success) to slash it. The chain rejects an invalid response and the challenge stays open. If the provider serves the data off-chain after all, call <code>cancel_challenge</code>; your deposit is refunded. The transaction pool drops a response that races your cancellation and charges no fee for it. Against a virtual provider, anyone can add further member signatures over the same commitment with <code>extend_challenge</code>, so every signer is slashed if the challenge times out. See <a href="#costs">Costs</a> for who pays.</p>
     <p class="see">Diagrams: <a href="12-challenge-protocol.html">12 Challenge protocol</a>, <a href="13-challenge-sequence.html">13 Challenge, response and slash</a></p>
   </li>
   <li>
-    <h3>Keep the data stored</h3>
+    <h3 id="keep-stored">Keep the data stored</h3>
     <ul>
-      <li><code>extend_agreement</code> before expiry. Anyone can extend if the provider's price did not increase; otherwise only the owner.</li>
-      <li><code>top_up_agreement</code> to raise the quota.</li>
-      <li><code>add_replica_provider</code> to add a replica with a replica quote; fund its syncs with <code>top_up_replica_sync_balance</code>.</li>
+      <li><code>extend_agreement(bucket_id, provider, additional_duration, expected_version)</code> before expiry, owner only. It pays the provider for the elapsed period and locks the payment for the added period at the provider's current price. The provider can block extensions (<code>accepting_extensions</code>, <code>set_extensions_blocked</code>). A provider whose stake is below <code>MinProviderStake</code>, for example after a slash, takes no new or extended agreement (<code>StakeBelowMinimum</code>).</li>
+      <li><code>top_up_agreement(bucket_id, provider, additional_bytes, expected_version)</code> to raise the quota, owner only.</li>
+      <li><code>add_replica_provider(bucket_id, provider, terms, sigs, expected_version)</code> to add a replica with a replica quote; anyone can fund its syncs with <code>top_up_replica_sync_balance</code>.</li>
       <li>To change a primary without downtime, add the new primary first, upload the data to it, and checkpoint with its signature before the old agreement ends.</li>
+      <li>Virtual providers only: the owner can replace an agreement's member set without a gap with <code>create_replacement(bucket_id, provider, additional_duration, expected_version)</code> (<code>additional_duration</code> may be 0). The successor becomes live when it proves it has the data: for a primary, a <code>checkpoint</code> with <code>activate_replacements</code> set and signatures requested with the successor's <code>agreement_id</code>; for a replica, the replica's <code>confirm_replica_sync</code> with <code>activate_replacement</code> set. While a replacement is pending, <code>extend_agreement</code> and <code>top_up_agreement</code> fail with <code>ReplacementPending</code>, and it cannot be cancelled. If the old agreement expires first, the successor's payment returns to you (<code>ReplacementExpired</code>).</li>
     </ul>
     <p class="see">Diagrams: <a href="14-change-provider.html">14 Changing a primary provider</a>, <a href="11-replica-sync.html">11 Replica sync</a></p>
   </li>
   <li>
     <h3>Settle</h3>
-    <p>After expiry, the owner calls <code>end_agreement</code> with <code>Pay</code> or <code>Burn { burn_percent }</code> within <code>SettlementTimeout</code> (24 hours). A burn costs the owner an extra premium. After the window, the provider can call <code>claim_expired_agreement</code> and receive the payment. The admin can end a primary agreement early; the full remaining payment is then paid or burned. Replica agreements cannot end early.</p>
+    <p>After expiry, the owner calls <code>end_agreement</code> with <code>Pay</code> or <code>Burn</code> within <code>SettlementTimeout</code> (48 hours). A burn costs the owner an extra premium (<code>BurnPremium</code>). After the window, the provider can call <code>claim_expired_agreement</code> and receive the payment. An open challenge does not block settlement: the challenge contains everything its resolution needs. No agreement ends early, except through a replacement on a virtual provider.</p>
+    <p>A provider that cannot serve adequately may call <code>refund_agreement</code> at any time before settlement (<code>AgreementRefunded</code>): the remaining payment returns to the owner, the agreement continues until expiry, and the provider stays challengeable. At settlement there is nothing to pay or burn.</p>
     <p>When the last agreement ends, the bucket remains on-chain with its members and snapshot. The admin can add a new primary later and upload the data again.</p>
     <p class="see">Diagram: <a href="15-agreement-settlement.html">15 Agreement settlement</a></p>
   </li>
   <li>
     <h3>Delete data or freeze</h3>
-    <p>An admin deletes old leaves with <code>POST /delete</code> and a <code>new_start_seq</code>; the provider returns a new commitment. <code>freeze_bucket</code> makes the bucket append-only. Freezing cannot be undone.</p>
+    <p>An admin deletes leaves with <code>POST /delete</code>, the <code>agreement_id</code> and <code>keep_from_seq</code>. The provider starts a new MMR at the snapshot's end (<code>start_seq + leaf_count</code>), appends the snapshot's leaves from <code>keep_from_seq</code> to it again with new sequence numbers, and returns the new signed commitment. Every primary builds the same root; check it before you submit, because the chain cannot check the kept leaves. The deletion takes effect when an admin submits it as a <code>checkpoint</code> with no consistency proof; providers prune the deleted leaves only then.</p>
+    <p><code>freeze_bucket</code> makes the bucket append-only. Freezing cannot be undone. Admins can delete a frozen bucket only once it has no agreements left, primary or replica.</p>
   </li>
 </ol>
 </section>
@@ -167,13 +177,14 @@ bucket://42/fs/my_website/logo.png    mutable: path in the latest snapshot</code
 <table>
   <thead><tr><th>Cost</th><th>Who pays</th><th>Rule</th></tr></thead>
   <tbody>
-    <tr><td>Storage payment</td><td>Agreement owner</td><td><code>price_per_byte × max_bytes × duration</code>, held on the owner, paid to the provider at settlement</td></tr>
-    <tr><td>Replica sync</td><td>Agreement owner (anyone can top up)</td><td><code>sync_price</code> per accepted sync confirmation, drawn from <code>sync_balance</code></td></tr>
+    <tr><td>Storage payment</td><td>Agreement owner</td><td><code>price_per_byte × max_bytes × duration</code> at the provider's price at creation (or extension), prepaid and held on the owner, paid to the provider at settlement</td></tr>
+    <tr><td>Replica sync</td><td>Agreement owner (anyone can top up)</td><td><code>sync_price</code> (the provider's <code>replica_sync_price</code> at creation or extension) per accepted sync confirmation that advances over the last confirmed commitment, drawn from <code>sync_balance</code></td></tr>
+    <tr><td>Refund</td><td>Provider</td><td>The provider returns the remaining payment to the owner; the agreement continues unpaid</td></tr>
     <tr><td>Challenge response, public challenger</td><td>Challenger: 100%</td><td>The deposit reimburses the provider's response fee in full</td></tr>
     <tr><td>Challenge response, member or agreement owner</td><td>Challenger: at least 50%. Provider: the rest</td><td>A slower response makes the provider pay a larger share. The design gives example tiers from 90% / 10% to 50% / 50%</td></tr>
     <tr><td>Invalid challenge response</td><td>Provider</td><td>The response is rejected and the provider pays its transaction fee; the challenge stays open</td></tr>
-    <tr><td>No response by the deadline</td><td>Provider</td><td>The provider loses its full stake. The challenger gets the deposit and fees back, with no reward</td></tr>
-    <tr><td>Burn</td><td>Agreement owner</td><td>The locked payment plus a premium from the owner's free balance. Without the premium funds, the burn fails</td></tr>
+    <tr><td>No response by the deadline</td><td>Provider</td><td>A physical provider loses its full stake; each liable member of a virtual provider loses <code>per_provider_stake</code>. The challenger gets the deposit and fees back, with no reward</td></tr>
+    <tr><td>Burn</td><td>Agreement owner</td><td>The locked payment plus <code>BurnPremium</code> (10%) from the owner's free balance. Without the premium funds, the burn fails</td></tr>
   </tbody>
 </table>
 </div>
@@ -183,7 +194,7 @@ bucket://42/fs/my_website/logo.png    mutable: path in the latest snapshot</code
   <tbody>
     <tr><td><code>RequestTimeout</code>: maximum quote validity</td><td>6 hours</td></tr>
     <tr><td><code>ChallengeTimeout</code>: response window</td><td>48 hours</td></tr>
-    <tr><td><code>SettlementTimeout</code>: owner window after expiry</td><td>24 hours</td></tr>
+    <tr><td><code>SettlementTimeout</code>: owner window after expiry</td><td>48 hours</td></tr>
   </tbody>
 </table>
 </div>
@@ -192,7 +203,7 @@ bucket://42/fs/my_website/logo.png    mutable: path in the latest snapshot</code
 
 <section id="http">
 <h2>Provider HTTP API</h2>
-<p>JSON over HTTP. A local provider node listens on <code>http://localhost:3333</code>. The provider's address is in its on-chain <code>multiaddr</code>.</p>
+<p>JSON over HTTP. A local provider node listens on <code>http://localhost:3333</code>. A physical provider's address is in its on-chain <code>endpoint</code>; a virtual provider has none, so you call one of its members. Every endpoint that returns a provider signature returns <code>provider_signatures</code>, a list of <code>{ signer, signature }</code>: one entry from a physical provider, at least <code>k</code> from a virtual one.</p>
 <div class="table-wrap">
 <table>
   <thead><tr><th>Endpoint</th><th>Role required</th><th>Use</th></tr></thead>
@@ -200,12 +211,12 @@ bucket://42/fs/my_website/logo.png    mutable: path in the latest snapshot</code
     <tr><td><code>POST /negotiate</code></td><td>—</td><td>Get signed agreement terms</td></tr>
     <tr><td><code>POST /exists</code></td><td>—</td><td>Find which hashes the provider is missing</td></tr>
     <tr><td><code>PUT /node</code></td><td>Writer</td><td>Upload a chunk or internal node</td></tr>
-    <tr><td><code>POST /commit</code></td><td>Writer</td><td>Append <code>data_roots</code> to the MMR; returns a signed commitment</td></tr>
-    <tr><td><code>GET /checkpoint-signature</code></td><td>—</td><td>Signature for the <code>checkpoint</code> call</td></tr>
-    <tr><td><code>GET /commitment</code></td><td>—</td><td>Signed commitment for <code>challenge_offchain</code></td></tr>
+    <tr><td><code>POST /commit</code></td><td>Writer</td><td>Append <code>data_roots</code> to the MMR under an <code>agreement_id</code>; returns a signed commitment</td></tr>
+    <tr><td><code>GET /checkpoint-signature</code></td><td>—</td><td>Signatures for the <code>checkpoint</code> call, by <code>bucket_id</code> and <code>agreement_id</code>; with <code>prev_start_seq</code> and <code>prev_leaf_count</code>, also the <code>consistency_proof</code> for an append</td></tr>
+    <tr><td><code>GET /commitment</code></td><td>—</td><td>Signed commitment for <code>challenge_offchain</code>, by <code>bucket_id</code> and <code>agreement_id</code></td></tr>
     <tr><td><code>GET /read</code>, <code>GET /node</code></td><td>Reader on a private bucket</td><td>Read chunks</td></tr>
     <tr><td><code>GET /mmr_proof</code>, <code>GET /chunk_proof</code></td><td>—</td><td>Proofs that a chunk is in a committed root</td></tr>
-    <tr><td><code>POST /delete</code></td><td>Admin</td><td>Delete leaves before <code>new_start_seq</code></td></tr>
+    <tr><td><code>POST /delete</code></td><td>Admin</td><td>Start a new MMR that keeps the snapshot's leaves from <code>keep_from_seq</code>, under an <code>agreement_id</code></td></tr>
     <tr><td><code>GET /health</code>, <code>GET /info</code></td><td>—</td><td>Status</td></tr>
   </tbody>
 </table>

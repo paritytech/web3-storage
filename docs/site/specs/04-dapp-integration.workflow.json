@@ -13,7 +13,7 @@
           "quote",
           "create"
         ],
-        "note": "Pick providers on-chain, get a signed quote over HTTP, redeem it in one or two transactions."
+        "note": "Page the provider directory and rank it off-chain, get a signed quote over HTTP, redeem it with the provider version you read."
       },
       {
         "id": "write",
@@ -24,7 +24,7 @@
           "commit",
           "checkpoint"
         ],
-        "note": "Upload to every primary, keep each provider_signature from POST /commit, checkpoint with at least min_providers signatures."
+        "note": "Upload to every primary, keep the provider_signatures from POST /commit, checkpoint with at least min_providers signing slots."
       },
       {
         "id": "verify",
@@ -97,9 +97,9 @@
       "col": 0,
       "type": "frontend",
       "label": "Choose Providers",
-      "sublabel": "find_matching_providers",
-      "tag": "runtime API",
-      "width": 140
+      "sublabel": "providers(offset, limit)",
+      "tag": "ranked off-chain",
+      "width": 150
     },
     {
       "id": "quote",
@@ -108,7 +108,8 @@
       "type": "backend",
       "label": "POST /negotiate",
       "sublabel": "signed AgreementTerms",
-      "width": 140
+      "tag": "nonce: AgreementNonces",
+      "width": 150
     },
     {
       "id": "create",
@@ -117,7 +118,7 @@
       "type": "database",
       "label": "Create Bucket",
       "sublabel": "create_bucket_with_primary",
-      "tag": "or create_bucket",
+      "tag": "expected_version",
       "width": 150
     },
     {
@@ -136,8 +137,8 @@
       "col": 3,
       "type": "backend",
       "label": "POST /commit",
-      "sublabel": "keep provider_signature",
-      "width": 140
+      "sublabel": "keep provider_signatures",
+      "width": 150
     },
     {
       "id": "checkpoint",
@@ -145,9 +146,9 @@
       "col": 3,
       "type": "database",
       "label": "checkpoint",
-      "sublabel": "min_providers signatures",
+      "sublabel": "(AccountId, Signature) pairs",
       "tag": "GET /checkpoint-signature",
-      "width": 150
+      "width": 160
     },
     {
       "id": "replica",
@@ -156,6 +157,7 @@
       "type": "database",
       "label": "add_replica_provider",
       "sublabel": "with a replica quote",
+      "tag": "expected_version",
       "width": 150
     },
     {
@@ -194,7 +196,8 @@
       "type": "security",
       "label": "Challenge",
       "sublabel": "challenge_* (3 modes)",
-      "width": 140
+      "tag": "timeout: resolve_expired_challenge",
+      "width": 150
     }
   ],
   "edges": [
@@ -283,10 +286,13 @@
       "dot": "cyan",
       "title": "Setup and write",
       "items": [
+        "Discovery is off-chain: page providers(offset, limit) from the runtime API and rank by stake, price and stats yourself",
+        "A quote has no price and no version. Read ProviderInfoResponse.version and pass it as expected_version to create_bucket_with_primary, add_primary_provider, add_replica_provider, extend_agreement, top_up_agreement and create_replacement; ProviderVersionMismatch means the provider worsened its terms",
+        "The quote nonce is the owner's AgreementNonces value; one quote per nonce is redeemable, NonceMismatch otherwise",
         "Create the bucket with create_bucket_with_primary, or create_bucket then add_primary_provider",
         "Primaries do not sync with each other: upload to every primary",
-        "Keep the provider_signature from POST /commit: it is the evidence for challenge_offchain",
-        "checkpoint takes a GET /checkpoint-signature signature from at least min_providers primaries"
+        "Keep the provider_signatures from POST /commit: they are the evidence for challenge_offchain",
+        "checkpoint takes (AccountId, Signature) pairs from GET /checkpoint-signature for at least min_providers signing slots, the consistency_proof from one primary for an append, and activate_replacements (false unless you activate a pending replacement)"
       ]
     },
     {
@@ -296,7 +302,8 @@
         "challenge_offchain: with a commit signature; for buckets with frequent writes",
         "challenge_checkpoint: against the on-chain snapshot; for cold buckets",
         "challenge_replica: against the root a replica confirmed on-chain",
-        "The provider has ChallengeTimeout to respond (12 Challenge protocol)"
+        "The provider has ChallengeTimeout to respond; an invalid response is rejected and the challenge stays open (12 Challenge protocol)",
+        "Only a timeout slashes: anyone calls resolve_expired_challenge after the deadline"
       ]
     },
     {

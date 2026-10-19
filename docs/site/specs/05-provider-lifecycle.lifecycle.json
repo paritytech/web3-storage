@@ -19,18 +19,16 @@
           "idle",
           "deregistered"
         ],
-        "note": "The ordered path from staking in to releasing the stake."
+        "note": "The ordered path from staking in to releasing the stake. set_stake changes the stake for new agreements at any point on it."
       },
       {
-        "id": "two-step-exit",
-        "label": "Two-step exit",
+        "id": "one-step-exit",
+        "label": "One-step exit",
         "focus": [
           "idle",
-          "announced",
-          "deregistered",
-          "slashed"
+          "deregistered"
         ],
-        "note": "complete_deregister runs after DeregisterAnnouncementPeriod with PendingChallenges == 0; cancel_deregister returns to Idle."
+        "note": "deregister_provider fails while committed_bytes > 0 or pending_challenges > 0; then it releases the stake at once."
       },
       {
         "id": "slash-path",
@@ -40,7 +38,7 @@
           "slashed",
           "removed"
         ],
-        "note": "An unanswered challenge slashes the entire stake. Exit Announced stays slashable too."
+        "note": "Only a timeout slashes: after the deadline, anyone calls resolve_expired_challenge and the entire stake is slashed."
       }
     ],
     "legend": {
@@ -58,7 +56,7 @@
     },
     {
       "id": "terminal",
-      "label": "Exit and cleanup"
+      "label": "Cleanup"
     }
   ],
   "states": [
@@ -75,7 +73,7 @@
       "id": "registered",
       "type": "active",
       "label": "Registered",
-      "sublabel": "stake held",
+      "sublabel": "stake held, version = 0",
       "lane": "main",
       "col": 1,
       "step": "02",
@@ -104,20 +102,11 @@
       "id": "deregistered",
       "type": "success",
       "label": "Deregistered",
-      "sublabel": "stake released",
-      "lane": "terminal",
-      "col": 2,
-      "step": "05",
-      "yOffset": -60
-    },
-    {
-      "id": "announced",
-      "type": "waiting",
-      "label": "Exit Announced",
-      "sublabel": "settings frozen",
+      "sublabel": "stake released at once",
       "lane": "gates",
       "col": 1,
-      "tag": "still slashable"
+      "step": "05",
+      "tag": "ProviderDeregistered"
     },
     {
       "id": "slashed",
@@ -135,6 +124,7 @@
       "sublabel": "payment to owner",
       "lane": "terminal",
       "col": 0,
+      "tag": "SlashedProviderRemoved",
       "yOffset": -60
     }
   ],
@@ -161,45 +151,30 @@
       "labelDy": -25
     },
     {
-      "id": "announce",
+      "id": "deregister",
       "from": "idle",
-      "to": "announced",
+      "to": "deregistered",
       "label": "deregister_provider",
       "fromSide": "bottom",
       "toSide": "top",
+      "variant": "emphasis",
       "labelAt": [
-        478,
-        240
+        640,
+        233
       ]
-    },
-    {
-      "id": "complete",
-      "from": "announced",
-      "to": "deregistered",
-      "label": "complete_deregister",
-      "fromSide": "bottom",
-      "toSide": "top",
-      "variant": "emphasis"
-    },
-    {
-      "id": "cancel",
-      "from": "announced",
-      "to": "idle",
-      "label": "cancel_deregister",
-      "fromSide": "right",
-      "toSide": "right",
-      "route": "right-channel",
-      "channelX": 660
     },
     {
       "id": "slash",
       "from": "serving",
       "to": "slashed",
-      "label": "no response by the deadline",
+      "label": "resolve_expired_challenge",
       "variant": "security",
       "fromSide": "bottom",
       "toSide": "top",
-      "labelDy": 24
+      "labelAt": [
+        305,
+        233
+      ]
     },
     {
       "id": "cleanup",
@@ -208,35 +183,42 @@
       "label": "remove_slashed (anyone)",
       "fromSide": "bottom",
       "toSide": "top",
-      "labelDy": 24
+      "labelAt": [
+        310,
+        356
+      ]
     }
   ],
   "cards": [
     {
       "dot": "emerald",
-      "title": "Entry and settings",
+      "title": "Entry and stake",
       "items": [
-        "stake >= MinProviderStake",
-        "add_stake only increases stake",
-        "if max_capacity > 0: stake >= max_capacity * MinStakePerByte"
+        "register_provider: stake >= MinProviderStake; no stake-per-byte rule, max_capacity is advisory",
+        "set_stake raises at any time; lowering needs an inactive higher_stake_lock (StakeStillLocked otherwise) and bumps version",
+        "Each agreement snapshots the stake at creation; the old figure stays locked until cur_until, the latest expiry struck under it, and while a challenge against the provider is open",
+        "A registered physical provider may also join a virtual provider (join_virtual)"
       ]
     },
     {
       "dot": "amber",
-      "title": "Two-step exit",
+      "title": "One-step exit",
       "items": [
-        "Announce needs committed_bytes == 0",
-        "DeregisterAnnouncementPeriod > ChallengeTimeout",
-        "Completion needs PendingChallenges == 0; the provider may call resolve_expired_challenge itself"
+        "deregister_provider fails while committed_bytes > 0 (agreements not settled) or pending_challenges > 0; a member also needs no Active and no active Leaving entry. Then the stake is released immediately",
+        "To offboard, stop accepting new agreements and extensions (accepting_primary = false, replica_sync_price = None, accepting_extensions, set_extensions_blocked) and let agreements expire",
+        "An open challenge keeps the stake locked, not the payment; the provider may call resolve_expired_challenge against itself to release its locks",
+        "refund_agreement returns the remaining payment to the owner; the agreement stays live and challengeable"
       ]
     },
     {
       "dot": "rose",
-      "title": "Slash path",
+      "title": "Slash path and terms",
       "items": [
-        "An unanswered challenge slashes the entire stake",
-        "Exit Announced is still slashable",
-        "remove_slashed returns payment to owner"
+        "Only a timeout slashes: an invalid response is rejected and the challenge stays open until the deadline",
+        "After the deadline anyone calls resolve_expired_challenge: entire stake to the Treasury, challenger deposit refunded",
+        "remove_slashed (anyone, physical providers only): valid on a live agreement whose snapshotted stake is above locked_stake; the remaining payment returns to the owner",
+        "Below MinProviderStake the provider takes no new or extended agreement until it raises its stake (StakeBelowMinimum)",
+        "Worse terms bump ProviderInfo.version (price up, replica_sync_price up, stake down, a slash); clients pin it as expected_version"
       ]
     }
   ]

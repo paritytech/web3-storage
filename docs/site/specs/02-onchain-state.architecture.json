@@ -17,20 +17,29 @@
           "providers",
           "buckets"
         ],
-        "note": "StorageAgreements is a double map keyed by BucketId and provider AccountId."
+        "note": "StorageAgreements is keyed by BucketId and provider AccountId. Each agreement has an AgreementId and snapshots the stake at creation."
+      },
+      {
+        "id": "virtuals",
+        "label": "Virtual providers",
+        "focus": [
+          "providers",
+          "virtuals",
+          "providervirtuals",
+          "agreements"
+        ],
+        "note": "A virtual provider is a Providers entry with endpoint Virtual. VirtualProviders lists its members; ProviderVirtuals is the reverse index."
       },
       {
         "id": "challenges",
-        "label": "Challenge gates",
+        "label": "Challenges and stake",
         "focus": [
           "challenges",
-          "pending",
-          "pendingbybucket",
           "providers",
           "agreements",
           "anchor"
         ],
-        "note": "Open challenges increment two counters that block provider exit and agreement teardown."
+        "note": "A challenge copies what it needs from the agreement and increments pending_challenges, which keeps every stake lock active."
       },
       {
         "id": "reads",
@@ -79,14 +88,14 @@
       "id": "providers",
       "type": "database",
       "label": "Providers",
-      "sublabel": "AccountId \u2192 ProviderInfo",
-      "tag": "stake, committed_bytes, settings, deregister_at",
+      "sublabel": "AccountId → ProviderInfo",
+      "tag": "stake, cur_until, higher_stake_lock, pending_challenges, version",
       "pos": [
         330,
         30
       ],
       "size": [
-        220,
+        250,
         110
       ]
     },
@@ -94,8 +103,8 @@
       "id": "agreements",
       "type": "database",
       "label": "StorageAgreements",
-      "sublabel": "BucketId \u00d7 AccountId",
-      "tag": "owner, max_bytes, payment_locked, expires_at, role",
+      "sublabel": "BucketId × AccountId",
+      "tag": "agreement_id, owner, payment_locked, stake, role",
       "pos": [
         330,
         255
@@ -109,8 +118,8 @@
       "id": "buckets",
       "type": "database",
       "label": "Buckets",
-      "sublabel": "BucketId \u2192 Bucket",
-      "tag": "members, primary_providers, snapshot",
+      "sublabel": "BucketId → Bucket",
+      "tag": "members, next_agreement_id, primary_providers, snapshot",
       "pos": [
         330,
         480
@@ -121,38 +130,40 @@
       ]
     },
     {
-      "id": "pending",
+      "id": "virtuals",
       "type": "database",
-      "label": "PendingChallenges",
-      "sublabel": "AccountId \u2192 u32",
+      "label": "VirtualProviders",
+      "sublabel": "AccountId → VirtualProvider",
+      "tag": "members, per_provider_stake, higher_pps_lock",
       "pos": [
         740,
-        40
+        30
       ],
       "size": [
-        200,
-        90
+        180,
+        110
       ]
     },
     {
-      "id": "pendingbybucket",
+      "id": "providervirtuals",
       "type": "database",
-      "label": "PendingChallengesByBucket",
-      "sublabel": "BucketId \u00d7 AccountId \u2192 u32",
+      "label": "ProviderVirtuals",
+      "sublabel": "AccountId → memberships",
+      "tag": "Active or Leaving per virtual",
       "pos": [
-        740,
-        265
+        1030,
+        30
       ],
       "size": [
-        200,
-        90
+        170,
+        110
       ]
     },
     {
       "id": "memberbuckets",
       "type": "database",
       "label": "MemberBuckets",
-      "sublabel": "AccountId \u2192 BucketIds",
+      "sublabel": "AccountId → BucketIds",
       "pos": [
         740,
         490
@@ -166,11 +177,11 @@
       "id": "challenges",
       "type": "database",
       "label": "Challenges",
-      "sublabel": "deadline \u00d7 index \u2192 Challenge",
+      "sublabel": "deadline × index → Challenge",
       "tag": "NextChallengeIndex",
       "pos": [
         1030,
-        120
+        190
       ],
       "size": [
         170,
@@ -203,6 +214,14 @@
     },
     {
       "kind": "region",
+      "label": "Virtual providers",
+      "wraps": [
+        "virtuals",
+        "providervirtuals"
+      ]
+    },
+    {
+      "kind": "region",
       "label": "Agreements",
       "wraps": [
         "agreements"
@@ -220,8 +239,6 @@
       "kind": "region",
       "label": "Challenges",
       "wraps": [
-        "pending",
-        "pendingbybucket",
         "challenges"
       ]
     }
@@ -256,36 +273,35 @@
       "labelDx": 95
     },
     {
-      "id": "gate-deregister",
-      "from": "pending",
+      "id": "virtual-entry",
+      "from": "virtuals",
       "to": "providers",
-      "label": "gates complete_deregister",
-      "variant": "security",
+      "label": "same key: endpoint Virtual",
       "fromSide": "left",
       "toSide": "right"
     },
     {
-      "id": "gate-teardown",
-      "from": "pendingbybucket",
-      "to": "agreements",
-      "label": "gates end_agreement",
-      "variant": "security",
+      "id": "membership",
+      "from": "providervirtuals",
+      "to": "virtuals",
+      "label": "member of",
       "fromSide": "left",
       "toSide": "right"
     },
     {
-      "id": "count-provider",
+      "id": "challenge-copy",
+      "from": "agreements",
+      "to": "challenges",
+      "label": "copied at creation",
+      "fromSide": "right",
+      "toSide": "left"
+    },
+    {
+      "id": "challenge-count",
       "from": "challenges",
-      "to": "pending",
-      "label": "per provider",
-      "fromSide": "left",
-      "toSide": "right"
-    },
-    {
-      "id": "count-bucket",
-      "from": "challenges",
-      "to": "pendingbybucket",
-      "label": "per bucket, provider",
+      "to": "providers",
+      "label": "pending_challenges",
+      "variant": "security",
       "fromSide": "left",
       "toSide": "right"
     },
@@ -339,9 +355,11 @@
       "dot": "cyan",
       "title": "Providers and agreements",
       "items": [
-        "ProviderInfo also has multiaddr, public_key, stats",
-        "role: Primary, or Replica { sync_balance, sync_price, min_sync_interval, last_sync }",
-        "PendingChallengesByBucket also gates claim_expired_agreement",
+        "ProviderInfo also has endpoint (Physical multiaddr or Virtual), public_key, committed_bytes, last_stake_event, stats",
+        "stake applies to new agreements; set_stake lowers it only while higher_stake_lock is not active, then the old figure stays locked until cur_until, the latest expiry struck under it",
+        "lock_active(until, p) = now < until or p.pending_challenges > 0, for higher_stake_lock, higher_pps_lock and members' ProviderVirtuals entries",
+        "role: Primary, or Replica { sync_balance, sync_price, min_sync_interval, last_sync: ReplicaSyncRecord { commitment, block }, last_sync_signers }",
+        "pending_replacement: Option<PendingReplacement>; virtual_snapshot: Option<VirtualSnapshot> (members, per_provider_stake)",
         "AgreementNonces: AccountId → next expected terms.nonce; redemption advances it (NonceMismatch)"
       ]
     },
@@ -349,18 +367,28 @@
       "dot": "emerald",
       "title": "Buckets",
       "items": [
-        "Bucket also has visibility, frozen_start_seq, min_providers, historical_roots",
-        "snapshot.primary_signers: bit i set if primary_providers[i] signed",
-        "NextBucketId allocates each BucketId"
+        "Bucket also has visibility, frozen_start_seq, min_providers, historical_roots: [(u32, Commitment); 6]",
+        "snapshot.primary_signers: bit i set if slot i signed; a virtual primary takes one slot per member",
+        "NextBucketId allocates each BucketId(u64); Bucket.next_agreement_id each AgreementId(u32)"
       ]
     },
     {
       "dot": "rose",
       "title": "Challenges",
       "items": [
-        "Challenge includes bucket_id, provider, challenger, mmr_root, start_seq, target, deposit, authorized",
-        "Hold: deposit as ChallengeDeposit",
-        "resolve_expired_challenge (anyone, free on success) slashes a provider whose challenge expired"
+        "Challenge: bucket_id, provider, challenger, agreement_id, snapshot (virtual), commitment, liable (virtual), kind, target, deposit, authorized, all recorded at creation; agreement_id, snapshot, commitment, liable and kind are copies, so the challenge needs no agreement record",
+        "kind: Checkpoint, Offchain or Replica; Superseded is not a valid response to Replica",
+        "Agreements and payments ignore open challenges: the agreement can settle, extend or be replaced while one is open",
+        "Creation increments the challenged provider's pending_challenges (virtual: the synthetic account); defence, cancel_challenge or resolve_expired_challenge decrements it once",
+        "Hold: deposit as ChallengeDeposit"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "Virtual providers",
+      "items": [
+        "VirtualProviders: keyed by the synthetic account (PalletId + virtual id); stake = k × per_provider_stake",
+        "ProviderVirtuals: read by set_stake and deregister_provider; a Leaving entry keeps stake_at_risk locked until its until block and while the virtual is challenged"
       ]
     }
   ]

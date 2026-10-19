@@ -1,0 +1,361 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Virtual Provider",
+    "quality_profile": "showcase",
+    "viewBox": [
+      1380,
+      660
+    ],
+    "views": [
+      {
+        "id": "signing",
+        "label": "Signing",
+        "focus": [
+          "client",
+          "coordinator",
+          "members",
+          "pallet",
+          "agreement"
+        ],
+        "note": "A quote, commitment, checkpoint or replica sync of a virtual provider is valid with at least k member signatures over one payload."
+      },
+      {
+        "id": "liability",
+        "label": "Liability",
+        "focus": [
+          "challenger",
+          "pallet",
+          "agreement",
+          "member-stake",
+          "provider-virtuals",
+          "members"
+        ],
+        "note": "Any snapshotted member may respond. Timeout: each signer loses per_provider_stake and leaves every virtual whose slice it no longer covers."
+      },
+      {
+        "id": "payment",
+        "label": "Payment",
+        "focus": [
+          "agreement",
+          "members",
+          "virtual"
+        ],
+        "note": "Settlement pays the snapshotted members in equal split from escrow; the synthetic account never receives funds."
+      },
+      {
+        "id": "governance",
+        "label": "Governance",
+        "focus": [
+          "members",
+          "pallet",
+          "virtual-providers",
+          "provider-virtuals"
+        ],
+        "note": "Seniority majority: join, kick, settings, dissolve, refund. leave_virtual: none. If a member left, a replacement changes the member set."
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "client",
+      "type": "frontend",
+      "label": "Client",
+      "sublabel": "bucket owner",
+      "pos": [
+        40,
+        40
+      ],
+      "size": [
+        210,
+        90
+      ]
+    },
+    {
+      "id": "coordinator",
+      "type": "backend",
+      "label": "Coordinator Member",
+      "sublabel": "chosen per write, collects signatures",
+      "tag": "bundle to client and members",
+      "pos": [
+        360,
+        40
+      ],
+      "size": [
+        220,
+        90
+      ]
+    },
+    {
+      "id": "members",
+      "type": "backend",
+      "label": "Members",
+      "sublabel": "registered Physical providers",
+      "tag": "max MaxPhysicalMembers per virtual",
+      "pos": [
+        740,
+        40
+      ],
+      "size": [
+        220,
+        90
+      ]
+    },
+    {
+      "id": "challenger",
+      "type": "external",
+      "label": "Challenger",
+      "sublabel": "challenges the virtual account",
+      "pos": [
+        40,
+        470
+      ],
+      "size": [
+        210,
+        90
+      ]
+    },
+    {
+      "id": "pallet",
+      "type": "backend",
+      "label": "Storage Pallet",
+      "sublabel": "needs at least k member signatures",
+      "tag": "k: strict majority of the members",
+      "pos": [
+        360,
+        250
+      ],
+      "size": [
+        220,
+        110
+      ]
+    },
+    {
+      "id": "virtual-providers",
+      "type": "database",
+      "label": "VirtualProviders",
+      "sublabel": "per_provider_stake, live members",
+      "tag": "keyed by the synthetic account",
+      "pos": [
+        740,
+        260
+      ],
+      "size": [
+        220,
+        90
+      ]
+    },
+    {
+      "id": "agreement",
+      "type": "database",
+      "label": "StorageAgreement",
+      "sublabel": "VirtualSnapshot at creation",
+      "tag": "payment in escrow until settlement",
+      "pos": [
+        1120,
+        260
+      ],
+      "size": [
+        210,
+        90
+      ]
+    },
+    {
+      "id": "member-stake",
+      "type": "security",
+      "label": "Member Stake",
+      "sublabel": "ProviderStake hold of each member",
+      "tag": "per_provider_stake at risk",
+      "pos": [
+        360,
+        470
+      ],
+      "size": [
+        220,
+        90
+      ]
+    },
+    {
+      "id": "provider-virtuals",
+      "type": "database",
+      "label": "ProviderVirtuals",
+      "sublabel": "Active / Leaving, seniority",
+      "tag": "limits set_stake lowering; blocks deregister_provider",
+      "pos": [
+        740,
+        470
+      ],
+      "size": [
+        220,
+        90
+      ]
+    },
+    {
+      "id": "virtual",
+      "type": "cloud",
+      "label": "Virtual Provider",
+      "sublabel": "PalletId + virtual id; no balance",
+      "tag": "endpoint = Virtual; no address",
+      "pos": [
+        1120,
+        470
+      ],
+      "size": [
+        210,
+        90
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "On-chain",
+      "wraps": [
+        "pallet",
+        "virtual-providers",
+        "agreement",
+        "member-stake",
+        "provider-virtuals",
+        "virtual"
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "client-upload",
+      "from": "client",
+      "to": "coordinator",
+      "label": "upload, POST /negotiate; bundle of at least k signatures back",
+      "variant": "emphasis",
+      "fromSide": "right",
+      "toSide": "left",
+      "labelDy": 69
+    },
+    {
+      "id": "fan-out",
+      "from": "coordinator",
+      "to": "members",
+      "label": "fan out data, collect signatures",
+      "variant": "emphasis",
+      "fromSide": "right",
+      "toSide": "left",
+      "labelDy": 69
+    },
+    {
+      "id": "client-chain",
+      "from": "client",
+      "to": "pallet",
+      "label": "checkpoint: (AccountId, Signature) pairs; redeem quote: ProviderSignatures",
+      "variant": "emphasis",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "member-calls",
+      "from": "members",
+      "to": "pallet",
+      "label": "respond_to_challenge, confirm_replica_sync, governance calls",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "challenge",
+      "from": "challenger",
+      "to": "pallet",
+      "label": "challenge against the virtual account",
+      "variant": "security",
+      "fromSide": "right",
+      "toSide": "left",
+      "labelDx": -40
+    },
+    {
+      "id": "governance",
+      "from": "pallet",
+      "to": "virtual-providers",
+      "label": "join_virtual, kick_member, set_virtual_settings, leave_virtual, dissolve_virtual",
+      "fromSide": "right",
+      "toSide": "left",
+      "labelDy": 79,
+      "labelDx": 20
+    },
+    {
+      "id": "snapshot",
+      "from": "virtual-providers",
+      "to": "agreement",
+      "label": "live members snapshotted at creation",
+      "fromSide": "right",
+      "toSide": "left",
+      "labelDy": -39
+    },
+    {
+      "id": "slash",
+      "from": "pallet",
+      "to": "member-stake",
+      "label": "timeout: slash every signer by per_provider_stake",
+      "variant": "security",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelDy": 60
+    },
+    {
+      "id": "cascade",
+      "from": "member-stake",
+      "to": "provider-virtuals",
+      "label": "cascade: auto-removal where stake < per_provider_stake",
+      "variant": "dashed",
+      "fromSide": "right",
+      "toSide": "left",
+      "labelDy": 69
+    },
+    {
+      "id": "provider-ref",
+      "from": "agreement",
+      "to": "virtual",
+      "label": "provider = synthetic account",
+      "variant": "dashed",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelDy": 30
+    },
+    {
+      "id": "settle",
+      "from": "agreement",
+      "to": "members",
+      "label": "settle: equal split to snapshotted members",
+      "fromSide": "top",
+      "toSide": "right"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Model",
+      "items": [
+        "Synthetic account (PalletId + virtual id): buckets, agreements and challenges reference it; it never has a balance",
+        "Members are registered Physical providers; up to MaxPhysicalMembers per virtual, up to MaxVirtualsPerProvider per provider",
+        "stake = k * per_provider_stake; k is a strict majority of the members"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Liability",
+      "items": [
+        "A quote, commitment, checkpoint or replica sync needs at least k member signatures; one stolen key cannot forge one",
+        "Each agreement snapshots the member set and per_provider_stake (VirtualSnapshot); a challenge copies that snapshot and the liable signers at creation",
+        "No response by the deadline: every signer loses per_provider_stake; then every member whose remaining stake is below a virtual's per_provider_stake is removed from that virtual, the challenged one included",
+        "An open challenge counts in the virtual's pending_challenges: while it is above 0, higher_pps_lock and every member's ProviderVirtuals entry stay active, so members cannot lower their stake below the slice or deregister"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Payment and governance",
+      "items": [
+        "Settlement pays the snapshotted members in equal split, directly from escrow",
+        "create_virtual and leave_virtual need no approval; join_virtual, kick_member, set_virtual_settings, dissolve_virtual and refund_agreement pass by seniority majority",
+        "extend_agreement re-snapshots the live members in place only if no snapshotted member left; otherwise only a replacement agreement changes the member set. A leaver remains liable until Leaving.until and while the virtual is challenged",
+        "dissolve_virtual: once committed_bytes is 0 and no challenge is open; anyone may dissolve an empty virtual"
+      ]
+    }
+  ]
+}

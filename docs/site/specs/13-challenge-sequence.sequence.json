@@ -6,7 +6,7 @@
     "quality_profile": "showcase",
     "viewBox": [
       1380,
-      762
+      826
     ],
     "column_fit": "spread",
     "legend": {
@@ -28,7 +28,7 @@
           "provider",
           "pallet"
         ],
-        "note": "A provider signature from POST /commit or GET /commitment, or the on-chain snapshot for a cold bucket."
+        "note": "Provider signatures over CommitmentPayload from POST /commit or GET /commitment, or the on-chain snapshot for a cold bucket."
       },
       {
         "id": "create",
@@ -39,17 +39,18 @@
           "challenges",
           "holds"
         ],
-        "note": "The pallet checks the caller, holds ChallengeDeposit and stores the challenge under its deadline."
+        "note": "The pallet checks the caller, the live agreement and the leaf, holds ChallengeDeposit and stores the challenge under its deadline."
       },
       {
         "id": "defend",
         "label": "Defend",
         "focus": [
+          "challenger",
           "provider",
           "pallet",
           "holds"
         ],
-        "note": "A valid response before the deadline leaves the stake untouched. The deposit reimburses the response fee."
+        "note": "A valid response before the deadline leaves the stake untouched. The pool drops a second response, or one racing a cancel, without a fee."
       },
       {
         "id": "timeout",
@@ -60,7 +61,7 @@
           "challenges",
           "holds"
         ],
-        "note": "After the deadline anyone calls resolve_expired_challenge; it slashes the full stake of a provider that did not respond."
+        "note": "After the deadline anyone calls resolve_expired_challenge: full stake of a physical provider, per_provider_stake per signer of a virtual."
       }
     ]
   },
@@ -99,17 +100,17 @@
     },
     {
       "from": 278,
-      "to": 406,
-      "label": "Create: checks, deposit, deadline"
+      "to": 438,
+      "label": "Create: checks, deposit, deadline, further signers"
     },
     {
-      "from": 418,
-      "to": 514,
-      "label": "Defend: respond before the deadline"
+      "from": 450,
+      "to": 578,
+      "label": "Before the deadline: challenger cancels or provider responds"
     },
     {
-      "from": 526,
-      "to": 688,
+      "from": 590,
+      "to": 752,
       "label": "Timeout: resolve_expired_challenge slashes, then remove"
     }
   ],
@@ -119,7 +120,7 @@
       "from": "challenger",
       "to": "provider",
       "y": 186,
-      "label": "POST /commit (data_roots) or GET /commitment",
+      "label": "POST /commit (bucket_id, agreement_id, data_roots) or GET /commitment",
       "variant": "default"
     },
     {
@@ -127,8 +128,9 @@
       "from": "provider",
       "to": "challenger",
       "y": 218,
-      "label": "mmr_root, start_seq, leaf_count, leaf_indices, provider_signature",
-      "variant": "return"
+      "label": "mmr_root, start_seq, leaf_count, leaf_indices, provider_signatures",
+      "variant": "return",
+      "note": "signed over CommitmentPayload { version, genesis_hash, bucket_id, agreement_id, commitment }"
     },
     {
       "id": "snapshot",
@@ -143,9 +145,9 @@
       "from": "challenger",
       "to": "pallet",
       "y": 298,
-      "label": "challenge_checkpoint | challenge_offchain | challenge_replica",
+      "label": "challenge_checkpoint | challenge_offchain(agreement_id, commitment, provider_signatures) | challenge_replica",
       "variant": "emphasis",
-      "note": "checks SelfChallenge, NotAuthorizedForPrivateBucket; tier to Challenge.authorized"
+      "note": "checks SelfChallenge, NotAuthorizedForPrivateBucket, AgreementNotFound, AgreementExpired, ChallengedLeafDeleted"
     },
     {
       "id": "deposit",
@@ -160,9 +162,9 @@
       "from": "pallet",
       "to": "challenges",
       "y": 362,
-      "label": "Challenges[deadline, index]",
+      "label": "Challenges[deadline, index]; provider pending_challenges += 1",
       "variant": "default",
-      "note": "deadline = now + ChallengeTimeout (48h, anchor blocks)"
+      "note": "deadline = now + ChallengeTimeout; copies agreement_id, commitment, kind, snapshot, liable, authorized"
     },
     {
       "id": "created",
@@ -173,19 +175,37 @@
       "variant": "return"
     },
     {
+      "id": "extend",
+      "from": "challenger",
+      "to": "pallet",
+      "y": 426,
+      "label": "extend_challenge(challenge_id, additional_signatures)",
+      "variant": "dashed",
+      "note": "anyone; virtual provider, off-chain challenge only: adds snapshotted members to the liable set"
+    },
+    {
+      "id": "cancel",
+      "from": "challenger",
+      "to": "pallet",
+      "y": 470,
+      "label": "cancel_challenge(challenge_id)",
+      "variant": "dashed",
+      "note": "challenger only; full deposit refunded, only the tx fee is lost"
+    },
+    {
       "id": "respond",
       "from": "provider",
       "to": "pallet",
-      "y": 438,
+      "y": 502,
       "label": "respond_to_challenge(challenge_id, response)",
       "variant": "emphasis",
-      "note": "Proof (chunk_data, chunk_proof, mmr_proof) | Deleted | Superseded"
+      "note": "Proof (chunk_data, chunk_proof, mmr_proof) | Deleted | Superseded (not for a replica challenge); virtual: any snapshotted member"
     },
     {
       "id": "settle",
       "from": "pallet",
       "to": "holds",
-      "y": 470,
+      "y": 534,
       "label": "fee share to provider, excess to challenger",
       "variant": "default",
       "note": "public 100%; authorized per table, challenger >= 50%"
@@ -194,7 +214,7 @@
       "id": "defended",
       "from": "pallet",
       "to": "provider",
-      "y": 502,
+      "y": 566,
       "label": "ChallengeDefended",
       "variant": "return",
       "note": "response_time_blocks, challenger_cost, provider_cost"
@@ -203,7 +223,7 @@
       "id": "resolve",
       "from": "challenger",
       "to": "pallet",
-      "y": 546,
+      "y": 610,
       "label": "resolve_expired_challenge(challenge_id)",
       "variant": "emphasis",
       "note": "anyone may call, free on success; ChallengeNotExpired while anchor <= deadline"
@@ -212,16 +232,16 @@
       "id": "slash",
       "from": "pallet",
       "to": "holds",
-      "y": 578,
-      "label": "slash full ProviderStake to the Treasury, release ChallengeDeposit",
+      "y": 642,
+      "label": "slash to the Treasury, release ChallengeDeposit",
       "variant": "security",
-      "note": "challenger made whole, no reward"
+      "note": "physical: full ProviderStake; virtual: per_provider_stake per signer; challenger made whole, no reward"
     },
     {
       "id": "slashed",
       "from": "pallet",
       "to": "provider",
-      "y": 610,
+      "y": 674,
       "label": "ChallengeSlashed { slashed_amount }",
       "variant": "return"
     },
@@ -229,16 +249,16 @@
       "id": "remove",
       "from": "challenger",
       "to": "pallet",
-      "y": 642,
+      "y": 706,
       "label": "remove_slashed(bucket_id, provider)",
       "variant": "dashed",
-      "note": "anyone may call"
+      "note": "anyone; physical provider, live agreement, locked_stake < agreement.stake"
     },
     {
       "id": "payment",
       "from": "pallet",
       "to": "holds",
-      "y": 674,
+      "y": 738,
       "label": "remaining AgreementPayment to owner",
       "variant": "default"
     }
@@ -253,25 +273,25 @@
     {
       "participant": "pallet",
       "from": 293,
-      "to": 399,
+      "to": 431,
       "type": "backend"
     },
     {
       "participant": "pallet",
-      "from": 433,
-      "to": 507,
+      "from": 465,
+      "to": 571,
       "type": "backend"
     },
     {
       "participant": "pallet",
-      "from": 541,
-      "to": 615,
-      "type": "backend"
-    },
-    {
-      "participant": "pallet",
-      "from": 637,
+      "from": 605,
       "to": 679,
+      "type": "backend"
+    },
+    {
+      "participant": "pallet",
+      "from": 701,
+      "to": 743,
       "type": "backend"
     }
   ],
@@ -281,26 +301,28 @@
       "title": "Which challenge extrinsic",
       "items": [
         "challenge_checkpoint: cold buckets, snapshot as evidence",
-        "challenge_offchain: hot buckets, signed commitment",
-        "challenge_replica: replicas, confirmed sync root as evidence"
+        "challenge_offchain: hot buckets, the signed commitment and its agreement_id; the chain rebuilds CommitmentPayload with its own genesis hash and rejects a commitment whose agreement is no longer live",
+        "challenge_replica: replicas, confirmed sync root as evidence (virtual: last_sync_signers are liable)",
+        "extend_challenge: anyone adds further snapshotted members' signatures to an open off-chain challenge against a virtual provider"
       ]
     },
     {
       "dot": "rose",
-      "title": "Invalid response",
+      "title": "Invalid and duplicate responses",
       "items": [
         "Rejected with InvalidProof, InvalidDeletionClaim or InvalidSupersededClaim; the provider pays the tx fee",
         "The challenge stays open; the provider may answer again before the deadline",
-        "Only a timeout slashes: resolve_expired_challenge after the deadline"
+        "Only a timeout slashes: resolve_expired_challenge after the deadline",
+        "Transaction extension for raced calls: the pool drops a second response to the same challenge, or one racing cancel_challenge, without a fee"
       ]
     },
     {
       "dot": "amber",
-      "title": "PendingChallenges",
+      "title": "pending_challenges",
       "items": [
-        "Gates complete_deregister; the provider may call resolve_expired_challenge itself",
-        "PendingChallengesByBucket gates end_agreement, claim_expired_agreement",
-        "Each resolution decrements both once"
+        "Counts open challenges per provider (virtual: the synthetic account); decremented once per resolution: defended, cancelled or timed out",
+        "While above 0, every stake lock of the provider stays active and deregister_provider fails; a challenged virtual provider locks all its members' stake",
+        "The payment is not held: the challenge contains everything its resolution needs, so the agreement can settle while it is open"
       ]
     }
   ]

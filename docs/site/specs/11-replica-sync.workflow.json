@@ -7,7 +7,7 @@
     "views": [
       { "id": "happy-path", "label": "Chain-first sync", "focus": ["snapshot", "read_chain", "fetch_peaks", "verify", "traverse", "fetch_nodes", "confirm", "sync_check"], "note": "The replica reads the trusted root from the chain and verifies every fetched node against it." },
       { "id": "untrusted-sources", "label": "Untrusted sources", "focus": ["peak_source", "node_source", "verify", "mismatch"], "note": "Any data holder can serve. The replica rejects a source whose peaks do not hash to the chain root." },
-      { "id": "payment", "label": "Confirmation and payment", "focus": ["confirm", "sync_check", "sync_balance"], "note": "confirm_replica_sync pays sync_price from sync_balance when the root is new and min_sync_interval has passed." }
+      { "id": "payment", "label": "Confirmation and payment", "focus": ["confirm", "sync_check", "sync_balance"], "note": "sync_price is paid from sync_balance when the matched commitment advances over last_sync and min_sync_interval has passed." }
     ]
   },
   "lanes": [
@@ -31,7 +31,7 @@
     { "id": "verify", "lane": "replica", "col": 2, "type": "security", "label": "Verify Peaks", "sublabel": "hash(peaks) == root", "width": 140 },
     { "id": "traverse", "lane": "replica", "col": 3, "type": "backend", "label": "Top-Down Walk", "sublabel": "GET /mmr_subtree", "width": 140 },
     { "id": "fetch_nodes", "lane": "replica", "col": 4, "type": "backend", "label": "Fetch Missing Nodes", "sublabel": "POST /fetch_nodes", "width": 150 },
-    { "id": "confirm", "lane": "replica", "col": 5, "type": "backend", "label": "confirm_replica_sync", "sublabel": "roots[7] + signature", "width": 150 },
+    { "id": "confirm", "lane": "replica", "col": 5, "type": "backend", "label": "confirm_replica_sync", "sublabel": "ReplicaSyncPayload", "width": 150 },
     { "id": "peak_source", "lane": "sources", "col": 1, "type": "cloud", "label": "Any Data Holder", "sublabel": "replica or data holder", "width": 150 },
     { "id": "node_source", "lane": "sources", "col": 4, "type": "cloud", "label": "Node Source", "sublabel": "any data holder", "width": 140 },
     { "id": "mismatch", "lane": "recovery", "col": 2, "type": "security", "label": "Peak Mismatch", "sublabel": "source rejected", "width": 140 }
@@ -47,13 +47,14 @@
     { "id": "walk-down", "from": "traverse", "to": "fetch_nodes", "label": "missing hashes", "role": "main" },
     { "id": "nodes-served", "from": "node_source", "to": "fetch_nodes", "label": "nodes", "variant": "dashed" },
     { "id": "sync-done", "from": "fetch_nodes", "to": "confirm", "label": "all verified", "role": "main", "variant": "emphasis" },
-    { "id": "submit", "from": "confirm", "to": "sync_check", "role": "main" },
+    { "id": "submit", "from": "confirm", "to": "sync_check", "label": "roots, signatures", "role": "main" },
     { "id": "fund", "from": "sync_balance", "to": "sync_check", "label": "funds" }
   ],
   "cards": [
     { "dot": "cyan", "title": "Chain first", "items": ["The replica reads the MMR root from the chain, not from a provider", "It checks peaks against that root before the traversal starts", "A source that serves wrong data fails the first hash check"] },
     { "dot": "emerald", "title": "Top-down walk", "items": ["A matching hash skips the whole subtree", "Unchanged subtrees are detected at their first node", "Sync state is the set of missing nodes, so a sync can resume", "POST /exists checks which nodes a provider has"] },
-    { "dot": "amber", "title": "confirm_replica_sync", "items": ["roots: current snapshot plus 6 historical_roots positions (primes 3, 7, 11, 23, 47, 113)", "The first matching position is credited: position_matched 0 is current, 1-6 historical", "Rejected unless the root differs from last_sync and min_sync_interval has passed", "A confirmed root makes the replica challengeable by anyone", "Anyone can fund syncs with top_up_replica_sync_balance"] },
+    { "dot": "amber", "title": "confirm_replica_sync(bucket_id, provider, roots, activate_replacement, signatures)", "items": ["roots: current snapshot plus the 6 historical_roots positions (primes 3, 7, 11, 23, 47, 113); each on-chain entry is a (quotient, Commitment) pair", "The first matching position is credited: position_matched 0 is current, 1-6 historical", "Check 1: the matched commitment advances over last_sync: a larger leaf_count at the same start_seq, or a larger start_seq (a deletion). The same commitment is never paid twice", "Check 2: min_sync_interval must have passed since last_sync.block", "last_sync is ReplicaSyncRecord { commitment, block }; the replica is liable for it and challengeable by anyone. It is always canonical: a prefix of the snapshot or below its start_seq", "activate_replacement set: verified against the pending replacement; the match may also equal the old last_sync, min_sync_interval does not apply, and it is paid only if it advances", "Anyone can fund syncs with top_up_replica_sync_balance"] },
+    { "dot": "rose", "title": "Signatures and virtual replicas", "items": ["The replica signs ReplicaSyncPayload { version, genesis_hash, bucket_id, agreement_id, roots }; genesis_hash is in the preimage only, the chain reconstructs it", "signatures is a ProviderSignatures set: one entry for a physical provider, at least k members of the agreement's snapshot for a virtual one", "Any snapshotted member submits: a member proposes the roots it has, headed by the current tip, and members sign once they have synced to them", "Concurrent rounds are harmless: the transaction pool keeps one sync per agreement and drops the rest uncharged"] },
     { "dot": "violet", "title": "Private buckets", "items": ["Primaries serve reads only to members; provider accounts are not members", "A replica syncs from other replicas or any data holder instead of the primaries", "Replicas serve everyone, on public and private buckets"] }
   ]
 }

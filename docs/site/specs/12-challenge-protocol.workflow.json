@@ -26,7 +26,7 @@
           "gate",
           "denied"
         ],
-        "note": "The chain rejects a self-challenge, and a private-bucket primary challenge from a non-member without a primary agreement."
+        "note": "The chain rejects self-challenges, unauthorized primary challenges on private buckets, expired or missing agreements and deleted leaves."
       },
       {
         "id": "failure",
@@ -38,17 +38,18 @@
           "expire",
           "slashed"
         ],
-        "note": "Invalid responses are rejected; the challenge stays open. After the deadline, resolve_expired_challenge (anyone) slashes the full stake."
+        "note": "The chain rejects an invalid response. Timeout slash: a physical provider's whole stake, per_provider_stake per liable virtual member."
       },
       {
         "id": "exit",
-        "label": "Cancel",
+        "label": "Cancel and extend",
         "focus": [
           "open",
           "window",
-          "cancelled"
+          "cancelled",
+          "extend"
         ],
-        "note": "The design doc allows cancel before the response. The implementation doc defines no cancel extrinsic yet."
+        "note": "cancel_challenge (challenger) refunds the full deposit. extend_challenge (anyone) adds snapshotted signers to an open off-chain challenge."
       }
     ]
   },
@@ -117,10 +118,20 @@
       "lane": "challenger",
       "col": 2,
       "type": "messagebus",
-      "label": "Cancel",
-      "sublabel": "design doc only",
-      "tag": "no extrinsic",
+      "label": "cancel_challenge",
+      "sublabel": "challenger only",
+      "tag": "full deposit refunded",
       "width": 140
+    },
+    {
+      "id": "extend",
+      "lane": "challenger",
+      "col": 3,
+      "type": "messagebus",
+      "label": "extend_challenge",
+      "sublabel": "anyone; off-chain challenge",
+      "tag": "adds snapshotted signers",
+      "width": 150
     },
     {
       "id": "gate",
@@ -129,6 +140,7 @@
       "type": "security",
       "label": "Authorization Gate",
       "sublabel": "tier fixed at creation",
+      "tag": "agreement must be live",
       "width": 140
     },
     {
@@ -166,6 +178,7 @@
       "type": "backend",
       "label": "respond_to_challenge",
       "sublabel": "Proof, Deleted, Superseded",
+      "tag": "virtual: any snapshotted member",
       "width": 150
     },
     {
@@ -174,7 +187,7 @@
       "col": 1,
       "type": "security",
       "label": "Call Rejected",
-      "sublabel": "SelfChallenge",
+      "sublabel": "SelfChallenge, AgreementNotFound",
       "width": 150,
       "tag": "NotAuthorizedForPrivateBucket"
     },
@@ -204,8 +217,9 @@
       "col": 5,
       "type": "security",
       "label": "ChallengeSlashed",
-      "sublabel": "full stake slashed",
-      "width": 140
+      "sublabel": "physical: full stake",
+      "tag": "virtual: per_provider_stake each",
+      "width": 150
     }
   ],
   "edges": [
@@ -243,6 +257,14 @@
       "from": "window",
       "to": "cancelled",
       "label": "cancel before response",
+      "role": "branch",
+      "variant": "dashed"
+    },
+    {
+      "id": "extend-edge",
+      "from": "window",
+      "to": "extend",
+      "label": "add signatures while open",
       "role": "branch",
       "variant": "dashed"
     },
@@ -291,9 +313,11 @@
       "title": "Three challenge modes",
       "items": [
         "challenge_checkpoint: a provider in the current snapshot; for cold buckets",
-        "challenge_offchain: a provider-signed Commitment; for hot buckets",
+        "challenge_offchain(bucket_id, provider, agreement_id, commitment, target, provider_signatures): the chain rebuilds CommitmentPayload with its own genesis hash; for hot buckets",
         "challenge_replica: the root the replica confirmed in last_sync",
-        "Use a challenge after off-chain requests fail"
+        "All modes: AgreementNotFound if the provider has no agreement for the bucket, AgreementExpired if it has expired (challenge_offchain: checked for agreement_id)",
+        "challenge_offchain, challenge_replica: ChallengedLeafDeleted if the leaf is below the snapshot's start_seq",
+        "extend_challenge (anyone): adds verified signatures of the agreement's snapshotted members to an open off-chain challenge; fails for a physical provider"
       ]
     },
     {
@@ -323,8 +347,10 @@
       "title": "Responses and rejections",
       "items": [
         "Proof: chunk in leaf, leaf in committed MMR; else InvalidProof",
-        "Deleted: admin-signed commitment with new_start_seq above the challenged leaf; else InvalidDeletionClaim",
-        "Superseded: a newer canonical snapshot covers the leaf; else InvalidSupersededClaim",
+        "Deleted: the snapshot's start_seq is past the challenged leaf, or the bucket was deleted; else InvalidDeletionClaim",
+        "Superseded: a newer canonical snapshot covers the leaf; not valid against challenge_replica (ChallengeKind::Replica); else InvalidSupersededClaim",
+        "Virtual provider: any member of the challenged agreement's snapshot may respond; the responder's non-reimbursed share goes to its response_cost_borne",
+        "The transaction pool drops a second response to the same challenge (or a response racing cancel_challenge) without a fee (see Transaction extension for raced calls)",
         "A rejected response costs the provider its tx fee; the challenge stays open until the deadline",
         "No response by the deadline: anyone calls resolve_expired_challenge (free on success); only a timeout slashes"
       ]
@@ -333,9 +359,21 @@
       "dot": "orange",
       "title": "After a slash",
       "items": [
-        "The provider loses its full stake, not a per-bucket share",
+        "Physical provider: loses its full stake, not a per-bucket share",
+        "Virtual provider: every signer of the challenged commitment (bundle, checkpoint set bits or last_sync_signers) loses the snapshotted per_provider_stake",
         "The challenger gets the deposit and tx fees back, with no reward",
-        "Anyone can call remove_slashed; the owner gets the remaining agreement payment back"
+        "remove_slashed (anyone, physical providers only): on a live agreement whose snapshotted stake is above locked_stake; the owner gets the remaining payment back",
+        "A slash bumps the provider's version"
+      ]
+    },
+    {
+      "dot": "slate",
+      "title": "Open challenges lock stake, not payment",
+      "items": [
+        "Creation increments pending_challenges of the challenged provider (virtual: the synthetic account); defence, cancel or timeout decrements it once",
+        "While it is above 0 every stake lock of the provider stays active and deregister_provider fails; a challenged virtual provider locks all its members' stake",
+        "The challenge copies agreement_id, commitment, kind, snapshot and liable at creation, so settlement, burn, refund, extension and replacement activation proceed",
+        "Creation needs a live agreement, so a lock until cur_until covers every challenge not yet created"
       ]
     }
   ]

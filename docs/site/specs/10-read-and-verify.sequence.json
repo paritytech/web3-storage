@@ -11,7 +11,7 @@
         "id": "discovery",
         "label": "Discovery",
         "focus": ["client", "chain"],
-        "note": "The client reads the bucket, its agreements and each provider's multiaddr from the chain through the runtime API."
+        "note": "The client reads the bucket, its agreements and each provider's endpoint (a virtual provider: its members') through the runtime API."
       },
       {
         "id": "read",
@@ -43,7 +43,7 @@
     { "id": "bucket-state", "from": "chain", "to": "client", "y": 226, "label": "snapshot, visibility, members", "variant": "return" },
     { "id": "agreements", "from": "client", "to": "chain", "y": 262, "label": "bucket_agreements(bucket_id)", "variant": "default", "note": "primary and replica agreements" },
     { "id": "provider-info", "from": "client", "to": "chain", "y": 298, "label": "provider_info(provider)", "variant": "default" },
-    { "id": "endpoint", "from": "chain", "to": "client", "y": 334, "label": "multiaddr, public_key", "variant": "return" },
+    { "id": "endpoint", "from": "chain", "to": "client", "y": 334, "label": "endpoint, public_key", "variant": "return" },
     { "id": "read", "from": "client", "to": "primary", "y": 395, "label": "GET /read?data_root&offset&length", "variant": "emphasis", "note": "private: Authorization header, Reader role" },
     { "id": "members", "from": "primary", "to": "chain", "y": 431, "label": "bucket.members (TTL-cached)", "variant": "security" },
     { "id": "chunks", "from": "primary", "to": "client", "y": 467, "label": "chunks: hash, data, proof", "variant": "return", "note": "client checks blake2_256 and Merkle path" },

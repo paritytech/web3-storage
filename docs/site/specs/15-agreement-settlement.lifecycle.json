@@ -37,19 +37,20 @@
         "label": "Before expiry",
         "focus": [
           "active",
-          "ended-early"
+          "refunded",
+          "replaced",
+          "expired"
         ],
-        "note": "Only a bucket admin can end a primary agreement before expiry."
+        "note": "A refunded agreement runs to expiry unpaid and the provider stays liable. A replacement (virtual providers only) is the one early end."
       },
       {
-        "id": "challenge-guard",
-        "label": "Challenge guard",
+        "id": "slash-removal",
+        "label": "Slashed provider",
         "focus": [
-          "expired",
-          "blocked",
-          "settlement"
+          "active",
+          "removed"
         ],
-        "note": "An unresolved challenge blocks end_agreement and claim_expired_agreement."
+        "note": "remove_slashed ends a live agreement of a physical provider slashed below its stake snapshot; the owner gets the payment back."
       }
     ]
   },
@@ -60,11 +61,11 @@
     },
     {
       "id": "gates",
-      "label": "Guard and burn"
+      "label": "Slash and burn"
     },
     {
       "id": "terminal",
-      "label": "Admin and provider exits"
+      "label": "Provider exits and replacement"
     }
   ],
   "states": [
@@ -81,7 +82,7 @@
       "id": "active",
       "type": "active",
       "label": "Active",
-      "sublabel": "escrow held on owner",
+      "sublabel": "escrow and stake snapshot",
       "lane": "main",
       "col": 1,
       "step": "02",
@@ -116,10 +117,18 @@
       "step": "05"
     },
     {
-      "id": "blocked",
-      "type": "waiting",
-      "label": "Settlement Blocked",
-      "sublabel": "AgreementHasPendingChallenge",
+      "id": "replaced",
+      "type": "neutral",
+      "label": "Replaced",
+      "sublabel": "ReplacementActivated",
+      "lane": "terminal",
+      "col": 1
+    },
+    {
+      "id": "removed",
+      "type": "failure",
+      "label": "Removed After Slash",
+      "sublabel": "SlashedProviderRemoved",
       "lane": "gates",
       "col": 0
     },
@@ -127,15 +136,15 @@
       "id": "burned",
       "type": "failure",
       "label": "Burned",
-      "sublabel": "burn_percent to Treasury",
+      "sublabel": "EndAction::Burn, BurnPremium",
       "lane": "gates",
       "col": 2
     },
     {
-      "id": "ended-early",
+      "id": "refunded",
       "type": "neutral",
-      "label": "Ended Early",
-      "sublabel": "PrimaryAgreementEndedEarly",
+      "label": "Refunded, Still Live",
+      "sublabel": "AgreementRefunded",
       "lane": "terminal",
       "col": 0
     },
@@ -145,7 +154,7 @@
       "label": "Claimed By Provider",
       "sublabel": "AgreementExpiredClaimed",
       "lane": "terminal",
-      "col": 1
+      "col": 2
     }
   ],
   "transitions": [
@@ -153,7 +162,7 @@
       "id": "redeem",
       "from": "quoted",
       "to": "active",
-      "label": "terms redeemed",
+      "label": "terms redeemed, expected_version pinned",
       "labelDy": -25,
       "route": "straight"
     },
@@ -189,7 +198,7 @@
       "toSide": "left",
       "labelAt": [
         640,
-        350
+        250
       ]
     },
     {
@@ -199,46 +208,77 @@
       "label": "after SettlementTimeout: claim",
       "fromSide": "bottom",
       "toSide": "top",
+      "channelY": 365,
       "labelAt": [
-        556,
-        400
+        633,
+        348
       ]
     },
     {
-      "id": "hold",
-      "from": "expired",
-      "to": "blocked",
-      "label": "pending challenge",
-      "variant": "security",
+      "id": "replace",
+      "from": "active",
+      "to": "replaced",
+      "label": "replacement activated",
       "fromSide": "bottom",
       "toSide": "top",
-      "labelDy": 24
-    },
-    {
-      "id": "clear",
-      "from": "blocked",
-      "to": "settlement",
-      "label": "challenge resolved",
-      "variant": "dashed",
-      "fromSide": "right",
-      "toSide": "bottom",
+      "channelY": 405,
       "labelAt": [
-        500,
-        265
+        402,
+        388
       ]
     },
     {
-      "id": "terminate",
+      "id": "refund",
       "from": "active",
-      "to": "ended-early",
-      "label": "admin: end_agreement",
-      "variant": "security",
+      "to": "refunded",
+      "label": "provider: refund_agreement",
+      "variant": "dashed",
       "fromSide": "bottom",
       "toSide": "left",
       "labelAt": [
-        312,
-        400
+        300,
+        435
       ]
+    },
+    {
+      "id": "refunded-expiry",
+      "from": "refunded",
+      "to": "expired",
+      "label": "runs to expiry, nothing to pay",
+      "variant": "dashed",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "via": [
+        [
+          402,
+          545
+        ],
+        [
+          810,
+          545
+        ],
+        [
+          810,
+          96
+        ],
+        [
+          402,
+          96
+        ]
+      ],
+      "labelAt": [
+        606,
+        545
+      ]
+    },
+    {
+      "id": "remove",
+      "from": "active",
+      "to": "removed",
+      "label": "remove_slashed (anyone)",
+      "variant": "security",
+      "fromSide": "bottom",
+      "toSide": "top"
     }
   ],
   "cards": [
@@ -246,29 +286,37 @@
       "dot": "emerald",
       "title": "While active",
       "items": [
-        "top_up_agreement (owner only) raises max_bytes for the remaining duration",
-        "extend_agreement: anyone if the current price is at or below the locked price, else owner only; fails once expired",
-        "set_extensions_blocked lets the provider refuse extensions for one bucket",
-        "transfer_agreement_ownership moves the escrow hold to the new owner; bucket membership stays"
+        "extend_agreement (owner only): pays the elapsed period, locks payment for additional_duration at the current price, re-snapshots stake; needs expected_version and stake >= MinProviderStake; fails once expired",
+        "top_up_agreement (owner only) buys more max_bytes for the remaining duration; needs expected_version",
+        "Both are rejected while a replacement is pending; set_extensions_blocked lets the provider reject extensions and replacements for one agreement",
+        "transfer_agreement_ownership moves the escrow hold to the new owner; bucket membership stays",
+        "Open challenges block nothing here: settlement, burn, refund, extension and replacement activation proceed while one is open"
       ]
     },
     {
       "dot": "amber",
       "title": "Pay or burn",
       "items": [
-        "EndAction::Burn { burn_percent } burns that share to Treasury and pays the rest",
-        "A burn also charges the owner a governance-set premium; without the funds the burn fails",
+        "EndAction::Burn burns the locked payment and charges the owner BurnPremium; without the funds the burn fails",
         "After SettlementTimeout the provider calls claim_expired_agreement and the owner loses the burn option"
       ]
     },
     {
       "dot": "rose",
-      "title": "Early exits and guards",
+      "title": "Early exits",
       "items": [
-        "Before expiry only a bucket admin can end an agreement, and only a primary; the full remaining payment is paid or burned",
-        "Replica agreements cannot be ended early",
-        "AgreementHasPendingChallenge blocks end_agreement and claim_expired_agreement",
-        "Anyone can call remove_slashed; the remaining payment returns to the owner"
+        "Binding commitment: no early end by the owner or the provider; the only early end is a replacement (virtual providers only)",
+        "refund_agreement (provider only) returns the remaining payment to the owner at any time before settlement; the agreement runs on unpaid and the provider stays liable. Replaces the burn as the provider-side exit",
+        "Replacement activation settles the old agreement as an extension would: elapsed period paid, remainder moved into the successor's escrow",
+        "remove_slashed (anyone, physical providers only): valid while the agreement is live and a slash left locked_stake below its stake snapshot; the remaining payment returns to the owner"
+      ]
+    },
+    {
+      "dot": "slate",
+      "title": "After the last agreement",
+      "items": [
+        "A provider offboards by not accepting new agreements or extensions and letting the existing ones expire",
+        "deregister_provider is one step once committed_bytes is 0 and no challenge is open: no announcement window, stake released, Providers entry removed"
       ]
     }
   ]
