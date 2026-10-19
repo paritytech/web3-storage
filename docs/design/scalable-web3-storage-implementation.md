@@ -2694,8 +2694,10 @@ fn verify_challenge_response(
         }
 
         ChallengeResponse::ChunkOutOfRange { mmr_proof } => {
-            // The leaf must be in the committed MMR and have no chunk at the index.
-            let mmr_ok = verify_mmr_proof(mmr_proof, &challenge.mmr_root);
+            // The challenged leaf must be in the committed MMR and have no chunk at
+            // the index. Bound to target.leaf_index like the Proof arm, so the
+            // prover cannot pick a shorter leaf to claim the index is out of range.
+            let mmr_ok = verify_mmr_proof(mmr_proof, challenge.target.leaf_index, &challenge.commitment);
             let out_of_range = challenge.target.chunk_index >= chunk_count(&mmr_proof.leaf);
             if mmr_ok && out_of_range { Ok(()) } else { Err(Error::InvalidProof) }
         }
