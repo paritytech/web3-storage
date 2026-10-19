@@ -2520,9 +2520,6 @@ pub struct MmrProof {
 }
 ```
 
-Hashing: leaf `blake2_256(0x00 ++ leaf.encode())`, node
-`blake2_256(0x01 ++ left ++ right)`, peak bagging
-`blake2_256(0x02 ++ peak ++ rest)`, the same rules that build the MMR root.
 Reference implementation: `polkadot-ckb-merkle-mountain-range` with
 `StorageMerge` (`gen_proof(..).proof_items()` to build, `MerkleProof::verify` to
 check).
