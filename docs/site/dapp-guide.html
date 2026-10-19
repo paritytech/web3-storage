@@ -145,7 +145,7 @@ bucket://42/fs/my_website/logo.png    mutable: path in the latest snapshot</code
   </li>
   <li>
     <h3>Delete data or freeze</h3>
-    <p>An admin deletes old leaves with <code>POST /delete</code> and a <code>new_start_seq</code>; the provider returns a new commitment. <code>freeze_bucket</code> makes the bucket append-only. Freezing cannot be undone.</p>
+    <p>An admin deletes old leaves with <code>POST /delete</code> and a <code>new_start_seq</code>; the provider returns a new commitment for the <code>checkpoint</code> call. The provider keeps the pruned leaves until three conditions hold: a canonical checkpoint has passed the pruned range, the admin's signed deletion authorization is stored with <code>POST /delete/confirm</code>, and no challenge is pending. It then erases the bytes, and the bucket's <code>used_bytes</code> goes down, which frees quota. Deletion never refunds money; only bucket teardown refunds the unused paid period. <code>freeze_bucket</code> pins <code>start_seq</code>, so the bucket becomes append-only and can no longer be torn down. Freezing cannot be undone.</p>
   </li>
 </ol>
 </section>
@@ -207,11 +207,12 @@ bucket://42/fs/my_website/logo.png    mutable: path in the latest snapshot</code
     <tr><td><code>GET /read</code>, <code>GET /node</code></td><td>Reader on a private bucket</td><td>Read chunks</td></tr>
     <tr><td><code>GET /mmr_proof</code>, <code>GET /chunk_proof</code></td><td>—</td><td>Proofs that a chunk is in a committed root</td></tr>
     <tr><td><code>POST /delete</code></td><td>Admin</td><td>Delete leaves before <code>new_start_seq</code></td></tr>
+    <tr><td><code>POST /delete/confirm</code></td><td>Admin</td><td>Store the admin's signed deletion authorization</td></tr>
     <tr><td><code>GET /health</code>, <code>GET /info</code></td><td>—</td><td>Status</td></tr>
   </tbody>
 </table>
 </div>
-<p class="muted">The design requires a signed header for <code>PUT /node</code>, <code>POST /commit</code>, <code>POST /delete</code> and reads of access-controlled data. A dash means the design does not list a role.</p>
+<p class="muted">The design requires a signed header for <code>PUT /node</code>, <code>POST /commit</code>, <code>POST /delete</code>, <code>POST /delete/confirm</code> and reads of access-controlled data. A dash means the design does not list a role.</p>
 <h3>Authentication</h3>
 <pre><code>Authorization: Web3Storage &lt;pubkey_hex&gt;:&lt;signature_hex&gt;:&lt;unix_timestamp&gt;
 Signed message: "web3storage:&lt;METHOD&gt;:&lt;bucket_id&gt;:&lt;unix_timestamp&gt;"</code></pre>

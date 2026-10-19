@@ -231,7 +231,16 @@
       "items": [
         "checkpoint needs min_providers primary signatures and records primary_signers",
         "freeze_bucket: admin only, irreversible, needs a snapshot with min_providers acknowledgments",
-        "Frozen: start_seq cannot decrease below frozen_start_seq"
+        "Frozen: start_seq is pinned to frozen_start_seq; only leaf_count grows"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Teardown",
+      "items": [
+        "delete_drive and delete_s3_bucket tear the bucket down through cleanup_bucket_internal",
+        "Every agreement settles: prorated refund to the owner, time-served payment to the provider",
+        "Refused for a frozen bucket or with a pending challenge; emits BucketDeleted"
       ]
     },
     {
