@@ -2520,7 +2520,7 @@ pub struct MmrProof {
 
 Reference implementation: `polkadot-ckb-merkle-mountain-range` with
 `StorageMerge` (`gen_proof(..).proof_items()` to build, `MerkleProof::verify` to
-check).
+verify, after the item-count check above).
 
 ---
 
