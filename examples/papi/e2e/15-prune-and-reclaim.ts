@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * E2E Workflow 12 — Prune & Reclaim (deletion reclaims paid capacity)
+ * E2E Workflow 15 — Prune & Reclaim (deletion reclaims paid capacity)
  *
  * Accounts: //Alice (provider), //Bob (client)
  *
@@ -15,7 +15,7 @@
  * agreement on bucket-related events *after* the bucket exists locally, so
  * the first checkpoint (a BucketCheckpointed event) is what arms the quota.
  *
- * Usage: node e2e/12-prune-and-reclaim.js [chain_ws] [provider_url]
+ * Usage: node e2e/15-prune-and-reclaim.js [chain_ws] [provider_url]
  */
 
 import assert from "node:assert";
@@ -180,7 +180,7 @@ async function main() {
     });
   }
 
-  await runSuite("12 — Prune & Reclaim", tests, { api, papi });
+  await runSuite("15 — Prune & Reclaim", tests, { api, papi });
 
   try {
     await restore();
