@@ -247,7 +247,6 @@ impl FinalizedBlocks for SubxtFinalizedBlocks {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use provider_coordinator::BlockContents;
     use provider_events::BlockEvent;
     use std::sync::Arc;
     use subxt::backend::LegacyBackend;
@@ -835,9 +834,12 @@ mod tests {
         prefixed.encode()
     }
 
-    /// Decode `records`, encoded against `metadata`, through a mock chain
-    /// that serves `metadata`.
-    async fn decode_with_metadata(metadata: Vec<u8>, records: Vec<Value>) -> BlockContents {
+    /// The events of `records`, encoded against `metadata`, fetched through a
+    /// mock chain that serves `metadata`.
+    async fn events_with_metadata(
+        metadata: Vec<u8>,
+        records: Vec<Value>,
+    ) -> subxt::events::Events<PolkadotConfig> {
         let md = {
             use codec::Decode;
             subxt::Metadata::decode(&mut &metadata[..]).expect("edited metadata decodes")
@@ -854,8 +856,7 @@ mod tests {
         .await;
 
         let at = api.at_current_block().await.expect("block handle");
-        let events = at.events().fetch().await.expect("events fetch");
-        decode_block_contents(&events, 42)
+        at.events().fetch().await.expect("events fetch")
     }
 
     /// A membership event whose fields do not match the static bindings
@@ -869,11 +870,12 @@ mod tests {
                 ("member", Value::from_bytes([3u8; 32])),
             ],
         ));
-        let contents = decode_with_metadata(
+        let events = events_with_metadata(
             metadata_without_event_field("MemberSet", "role"),
             vec![member_set],
         )
         .await;
+        let contents = decode_block_contents(&events, 42);
 
         assert!(matches!(
             contents.events.as_slice(),
@@ -882,8 +884,9 @@ mod tests {
         assert!(contents.lifecycle.is_empty());
     }
 
-    /// A lifecycle event whose fields do not match the static bindings is
-    /// skipped, and the other events of the block still decode.
+    /// A lifecycle event whose fields do not match the static bindings reaches
+    /// the decode, fails it and adds no lifecycle account; the other events of
+    /// the block still decode.
     #[tokio::test]
     async fn undecodable_lifecycle_event_is_skipped() {
         let registered = event_record(Value::named_variant(
@@ -897,12 +900,24 @@ mod tests {
             "BucketDeleted",
             [("bucket_id", Value::u128(8))],
         ));
-        let contents = decode_with_metadata(
+        let events = events_with_metadata(
             metadata_without_event_field("ProviderRegistered", "stake"),
             vec![registered, bucket_deleted],
         )
         .await;
 
+        // The event passes the relevance check and then fails to decode, so
+        // `decode_block_contents` takes its decode-failure branch, not the
+        // skip.
+        let registered = events
+            .iter()
+            .next()
+            .expect("first event")
+            .expect("event iterates");
+        assert!(crate::event_decoding::is_other_relevant_event(&registered));
+        assert!(registered.decode_as::<storage_subxt::api::Event>().is_err());
+
+        let contents = decode_block_contents(&events, 42);
         assert!(contents.lifecycle.is_empty());
         assert!(matches!(
             contents.events.as_slice(),

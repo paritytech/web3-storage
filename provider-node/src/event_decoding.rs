@@ -30,7 +30,7 @@ fn is_membership_event(event: &RawEvent<'_, PolkadotConfig>) -> bool {
 
 /// Whether `event` is a storage-provider event that maps to a [`BlockEvent`]
 /// other than a membership change, or to a provider-lifecycle account.
-fn is_other_relevant_event(event: &RawEvent<'_, PolkadotConfig>) -> bool {
+pub(crate) fn is_other_relevant_event(event: &RawEvent<'_, PolkadotConfig>) -> bool {
     event.is::<pallet_events::ChallengeCreated>()
         || event.is::<pallet_events::ReplicaAgreementEstablished>()
         || event.is::<pallet_events::BucketCheckpointed>()
@@ -42,7 +42,8 @@ fn is_other_relevant_event(event: &RawEvent<'_, PolkadotConfig>) -> bool {
         || event.is::<pallet_events::ProviderDeregistered>()
 }
 
-/// Decode one block's events into [`BlockContents`], decoding each event once.
+/// Decode the relevant events of one block into [`BlockContents`], each once;
+/// other events are skipped without decoding.
 ///
 /// A membership-changing event whose fields fail to decode is escalated
 /// rather than dropped: unlike the other event kinds, silently missing one
