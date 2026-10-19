@@ -129,7 +129,7 @@
       </div>
     </div>
 
-    <script id="archify-guided-views-data" type="application/json">[{"id":"happy-path","label":"Chain-first sync","focus":["snapshot","read_chain","fetch_peaks","verify","traverse","fetch_nodes","confirm","sync_check"],"note":"The replica reads the trusted root from the chain and verifies every fetched node against it."},{"id":"untrusted-sources","label":"Untrusted sources","focus":["peak_source","node_source","verify","mismatch"],"note":"Any data holder can serve. The replica rejects a source whose peaks do not hash to the chain root."},{"id":"payment","label":"Confirmation and payment","focus":["confirm","sync_check","sync_balance"],"note":"confirm_replica_sync pays sync_price from sync_balance when the root is new and min_sync_interval has passed."}]</script>
+    <script id="archify-guided-views-data" type="application/json">[{"id":"happy-path","label":"Chain-first sync","focus":["snapshot","read_chain","fetch_peaks","verify","traverse","fetch_nodes","confirm","sync_check"],"note":"The replica reads the trusted root from the chain and verifies every fetched node against it."},{"id":"untrusted-sources","label":"Untrusted sources","focus":["peak_source","node_source","verify","mismatch"],"note":"Any data holder can serve. The replica rejects a source whose peaks do not hash to the chain root."},{"id":"payment","label":"Confirmation and payment","focus":["confirm","sync_check","sync_balance"],"note":"sync_price is paid from sync_balance when the matched commitment advances over last_sync and min_sync_interval has passed."}]</script>
 
     <script src="assets/archify/i18n.js?v=b331908a8a55"></script>
     <div class="guided-views no-print" id="guided-views" hidden aria-label="Guided diagram views">
@@ -236,7 +236,7 @@
         <path data-edge-from="peak_source" data-edge-to="fetch_peaks" data-edge-label="peaks" data-edge-key="5" data-edge-id="peaks-served" data-composition-points="291,346;291,272" d="M 291 346 L 291 272" class="a-dashed" stroke-width="1.4" marker-end="url(#arrowhead-dashed)"/>
         <path data-edge-from="mismatch" data-edge-to="fetch_peaks" data-edge-label="try another holder" data-edge-key="6" data-edge-id="retry-source" data-composition-points="459,524;459,552;377,552;377,246;361,246" d="M 459 524 L 459 552 L 377 552 L 377 246 L 361 246" class="a-dashed" stroke-width="1.4" marker-end="url(#arrowhead-dashed)"/>
         <path data-edge-from="read_chain" data-edge-to="fetch_peaks" data-edge-key="7" data-edge-id="start-sync" data-composition-points="123,272;123,288;291,288;291,272" d="M 123 272 L 123 288 L 291 288 L 291 272" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
-        <path data-edge-from="confirm" data-edge-to="sync_check" data-edge-key="8" data-edge-id="submit" data-composition-points="1130.3999999999999,220;1130.3999999999999,154" d="M 1130.3999999999999 220 L 1130.3999999999999 154" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="confirm" data-edge-to="sync_check" data-edge-label="roots, signatures" data-edge-key="8" data-edge-id="submit" data-composition-points="1130.3999999999999,220;1130.3999999999999,154" d="M 1130.3999999999999 220 L 1130.3999999999999 154" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
         <path data-edge-from="fetch_nodes" data-edge-to="confirm" data-edge-label="all verified" data-edge-key="9" data-edge-id="sync-done" data-composition-points="979.8,246;1055.3999999999999,246" d="M 979.8 246 L 1055.3999999999999 246" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
         <path data-edge-from="snapshot" data-edge-to="read_chain" data-edge-label="trusted root" data-edge-key="10" data-edge-id="trusted-root" data-composition-points="123,146;123,168;37,168;37,246;53,246" d="M 123 146 L 123 168 L 37 168 L 37 246 L 53 246" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
         <path data-edge-from="traverse" data-edge-to="fetch_nodes" data-edge-label="missing hashes" data-edge-key="11" data-edge-id="walk-down" data-composition-points="744.6,246;829.8,246" d="M 744.6 246 L 829.8 246" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
@@ -335,15 +335,15 @@
           <text data-detail="context" x="904.8" y="258" class="t-muted" font-size="8" text-anchor="middle">POST /fetch_nodes</text>
         </g>
 
-        <g id="node-confirm" data-node-id="confirm" data-node-label="confirm_replica_sync" tabindex="0" role="button" aria-label="Focus confirm_replica_sync, roots[7] + signature, Replica Provider › Fetch and confirm" aria-pressed="false" data-node-kind="backend" data-node-sublabel="roots[7] + signature" data-node-context="Replica Provider › Fetch and confirm">
-          <title>confirm_replica_sync · roots[7] + signature · Replica Provider › Fetch and confirm</title>
+        <g id="node-confirm" data-node-id="confirm" data-node-label="confirm_replica_sync" tabindex="0" role="button" aria-label="Focus confirm_replica_sync, ReplicaSyncPayload, Replica Provider › Fetch and confirm" aria-pressed="false" data-node-kind="backend" data-node-sublabel="ReplicaSyncPayload" data-node-context="Replica Provider › Fetch and confirm">
+          <title>confirm_replica_sync · ReplicaSyncPayload · Replica Provider › Fetch and confirm</title>
           <rect x="1055.3999999999999" y="220" width="150" height="52" rx="6" class="c-mask"/>
           <rect x="1055.3999999999999" y="220" width="150" height="52" rx="6" class="c-backend" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(1061.3999999999999 226) scale(0.6875)">
             <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
           </g>
           <text data-node-label="" data-detail-anchor="" x="1130.3999999999999" y="241" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">confirm_replica_sync</text>
-          <text data-detail="context" x="1130.3999999999999" y="258" class="t-muted" font-size="8" text-anchor="middle">roots[7] + signature</text>
+          <text data-detail="context" x="1130.3999999999999" y="258" class="t-muted" font-size="8" text-anchor="middle">ReplicaSyncPayload</text>
         </g>
 
         <g id="node-peak_source" data-node-id="peak_source" data-node-label="Any Data Holder" tabindex="0" role="button" aria-label="Focus Any Data Holder, replica or data holder, Data Sources › Trusted root" aria-pressed="false" data-node-kind="cloud" data-node-sublabel="replica or data holder" data-node-context="Data Sources › Trusted root">
@@ -407,7 +407,10 @@
           <text x="418" y="542" class="t-database" font-size="8" text-anchor="middle">try another holder</text>
         </g>
 
-
+        <g data-detail="context" data-edge-from="confirm" data-edge-to="sync_check" data-edge-label="roots, signatures" data-edge-key="8" data-edge-id="submit">
+          <rect x="1084.6" y="200" width="91.6" height="14" rx="3" class="c-mask"/>
+          <text x="1130.3999999999999" y="210" class="t-muted" font-size="8" text-anchor="middle">roots, signatures</text>
+        </g>
         <g data-detail="context" data-edge-from="fetch_nodes" data-edge-to="confirm" data-edge-label="all verified" data-edge-key="9" data-edge-id="sync-done">
           <rect x="983.8" y="226" width="67.6" height="14" rx="3" class="c-mask"/>
           <text x="1017.5999999999999" y="236" class="t-backend" font-size="8" text-anchor="middle">all verified</text>
@@ -655,14 +658,29 @@
       <div class="card">
         <div class="card-header">
           <div class="card-dot amber"></div>
-          <h3>confirm_replica_sync</h3>
+          <h3>confirm_replica_sync(bucket_id, provider, roots, activate_replacement, signatures)</h3>
         </div>
         <ul>
-          <li>&bull; roots: current snapshot plus 6 historical_roots positions (primes 3, 7, 11, 23, 47, 113)</li>
+          <li>&bull; roots: current snapshot plus the 6 historical_roots positions (primes 3, 7, 11, 23, 47, 113); each on-chain entry is a (quotient, Commitment) pair</li>
           <li>&bull; The first matching position is credited: position_matched 0 is current, 1-6 historical</li>
-          <li>&bull; Rejected unless the root differs from last_sync and min_sync_interval has passed</li>
-          <li>&bull; A confirmed root makes the replica challengeable by anyone</li>
+          <li>&bull; Check 1: the matched commitment advances over last_sync: a larger leaf_count at the same start_seq, or a larger start_seq (a deletion). The same commitment is never paid twice</li>
+          <li>&bull; Check 2: min_sync_interval must have passed since last_sync.block</li>
+          <li>&bull; last_sync is ReplicaSyncRecord { commitment, block }; the replica is liable for it and challengeable by anyone. It is always canonical: a prefix of the snapshot or below its start_seq</li>
+          <li>&bull; activate_replacement set: verified against the pending replacement; the match may also equal the old last_sync, min_sync_interval does not apply, and it is paid only if it advances</li>
           <li>&bull; Anyone can fund syncs with top_up_replica_sync_balance</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot rose"></div>
+          <h3>Signatures and virtual replicas</h3>
+        </div>
+        <ul>
+          <li>&bull; The replica signs ReplicaSyncPayload { version, genesis_hash, bucket_id, agreement_id, roots }; genesis_hash is in the preimage only, the chain reconstructs it</li>
+          <li>&bull; signatures is a ProviderSignatures set: one entry for a physical provider, at least k members of the agreement&#39;s snapshot for a virtual one</li>
+          <li>&bull; Any snapshotted member submits: a member proposes the roots it has, headed by the current tip, and members sign once they have synced to them</li>
+          <li>&bull; Concurrent rounds are harmless: the transaction pool keeps one sync per agreement and drops the rest uncharged</li>
         </ul>
       </div>
 

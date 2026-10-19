@@ -129,7 +129,7 @@
       </div>
     </div>
 
-    <script id="archify-guided-views-data" type="application/json">[{"id":"addressing","label":"Content addressing","focus":["file","chunks","internal","data_root"],"note":"Chunks and internal nodes are addressed by hash and uploaded children first."},{"id":"commitment","label":"Commitment","focus":["data_root","mmr","snapshot"],"note":"One canonical MMR per bucket. A checkpoint records it as the BucketSnapshot."},{"id":"consumers","label":"Verified use","focus":["snapshot","historical","proof","replica_confirm"],"note":"Challenges and replica sync confirmations verify against the committed roots."}]</script>
+    <script id="archify-guided-views-data" type="application/json">[{"id":"addressing","label":"Content addressing","focus":["file","chunks","internal","data_root"],"note":"Chunks and internal nodes are addressed by hash and uploaded children first."},{"id":"commitment","label":"Commitment","focus":["data_root","mmr","snapshot"],"note":"One canonical MMR per bucket. A checkpoint records it as the BucketSnapshot."},{"id":"consumers","label":"Verified use","focus":["snapshot","historical","proof","replica_confirm"],"note":"Challenges and replica sync confirmations verify against the committed roots; a commitment is void once its agreement ends."}]</script>
 
     <script src="assets/archify/i18n.js?v=b331908a8a55"></script>
     <div class="guided-views no-print" id="guided-views" hidden aria-label="Guided diagram views">
@@ -304,8 +304,8 @@
         <text data-detail="fine" x="745" y="175" class="t-database" font-size="7" text-anchor="middle">primary_signers</text>
         </g>
 
-        <g id="node-historical" data-node-id="historical" data-node-label="historical_roots" tabindex="0" role="button" aria-label="Focus historical_roots, 3, 7, 11, 23, 47, 113, 04 / On-chain state" aria-pressed="false" data-node-kind="database" data-node-sublabel="3, 7, 11, 23, 47, 113" data-node-tag="prime intervals" data-node-context="04 / On-chain state">
-          <title>historical_roots · 3, 7, 11, 23, 47, 113 · 04 / On-chain state · prime intervals</title>
+        <g id="node-historical" data-node-id="historical" data-node-label="historical_roots" tabindex="0" role="button" aria-label="Focus historical_roots, (quotient, Commitment), 04 / On-chain state" aria-pressed="false" data-node-kind="database" data-node-sublabel="(quotient, Commitment)" data-node-tag="primes 3, 7, 11, 23, 47, 113" data-node-context="04 / On-chain state">
+          <title>historical_roots · (quotient, Commitment) · 04 / On-chain state · primes 3, 7, 11, 23, 47, 113</title>
           <rect x="689" y="356" width="112" height="58" rx="6" class="c-mask"/>
           <rect x="689" y="356" width="112" height="58" rx="6" class="c-database" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="database" class="semantic-sigil s-database" transform="translate(695 362) scale(0.6875)">
@@ -313,8 +313,8 @@
             <path d="M3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8c0 1.1 2.2 2 5 2s5-.9 5-2"/>
           </g>
           <text data-node-label="" data-detail-anchor="" x="745" y="377" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">historical_roots</text>
-          <text data-detail="context" x="745" y="393" class="t-muted" font-size="7" text-anchor="middle">3, 7, 11, 23, 47, 113</text>
-        <text data-detail="fine" x="745" y="403" class="t-database" font-size="7" text-anchor="middle">prime intervals</text>
+          <text data-detail="context" x="745" y="393" class="t-muted" font-size="7" text-anchor="middle">(quotient, Commitment)</text>
+        <text data-detail="fine" x="745" y="403" class="t-database" font-size="6.1" text-anchor="middle">primes 3, 7, 11, 23, 47, 113</text>
         </g>
 
         <g id="node-proof" data-node-id="proof" data-node-label="Challenge Proof" tabindex="0" role="button" aria-label="Focus Challenge Proof, chunk_proof + mmr_proof, 05 / Verified use" aria-pressed="false" data-node-kind="security" data-node-sublabel="chunk_proof + mmr_proof" data-node-context="05 / Verified use">
@@ -329,15 +329,15 @@
           <text data-detail="context" x="960" y="165" class="t-muted" font-size="7" text-anchor="middle">chunk_proof + mmr_proof</text>
         </g>
 
-        <g id="node-replica_confirm" data-node-id="replica_confirm" data-node-label="Replica Sync" tabindex="0" role="button" aria-label="Focus Replica Sync, signed roots array, 05 / Verified use" aria-pressed="false" data-node-kind="backend" data-node-sublabel="signed roots array" data-node-context="05 / Verified use">
-          <title>Replica Sync · signed roots array · 05 / Verified use</title>
+        <g id="node-replica_confirm" data-node-id="replica_confirm" data-node-label="Replica Sync" tabindex="0" role="button" aria-label="Focus Replica Sync, signed ReplicaSyncPayload, 05 / Verified use" aria-pressed="false" data-node-kind="backend" data-node-sublabel="signed ReplicaSyncPayload" data-node-context="05 / Verified use">
+          <title>Replica Sync · signed ReplicaSyncPayload · 05 / Verified use</title>
           <rect x="904" y="356" width="112" height="58" rx="6" class="c-mask"/>
           <rect x="904" y="356" width="112" height="58" rx="6" class="c-backend" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(910 362) scale(0.6875)">
             <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
           </g>
           <text data-node-label="" data-detail-anchor="" x="960" y="377" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">Replica Sync</text>
-          <text data-detail="context" x="960" y="393" class="t-muted" font-size="7" text-anchor="middle">signed roots array</text>
+          <text data-detail="context" x="960" y="393" class="t-muted" font-size="6.9" text-anchor="middle">signed ReplicaSyncPayload</text>
         </g>
 
         <!-- Flow labels -->
@@ -359,7 +359,7 @@
         <g data-detail="context" data-edge-from="data_root" data-edge-to="mmr" data-edge-label="POST /commit appends MmrLeaf" data-edge-key="3" data-edge-id="append-leaf">
           <rect x="455.4" y="189" width="149.2" height="27" rx="4" class="c-mask"/>
           <text x="530" y="200" class="t-backend" font-size="8" text-anchor="middle">POST /commit appends MmrLeaf</text>
-        <text data-detail="fine" x="530" y="211" class="t-dim" font-size="7" text-anchor="middle">CommitmentPayload signed</text>
+        <text data-detail="fine" x="530" y="211" class="t-dim" font-size="7" text-anchor="middle">signed CommitmentPayload</text>
         </g>
         <g data-detail="context" data-edge-from="mmr" data-edge-to="snapshot" data-edge-label="checkpoint(commitment, signatures)" data-edge-key="4" data-edge-id="checkpoint-root">
           <rect x="548.2" y="250" width="178.6" height="27" rx="4" class="c-mask"/>
@@ -369,7 +369,7 @@
         <g data-detail="context" data-edge-from="snapshot" data-edge-to="historical" data-edge-label="checkpoint updates at prime intervals" data-edge-key="5" data-edge-id="history">
           <rect x="648.35" y="305" width="193.3" height="27" rx="4" class="c-mask"/>
           <text x="745" y="316" class="t-muted" font-size="8" text-anchor="middle">checkpoint updates at prime intervals</text>
-        <text data-detail="fine" x="745" y="327" class="t-dim" font-size="7" text-anchor="middle">anti-race</text>
+        <text data-detail="fine" x="745" y="327" class="t-dim" font-size="7" text-anchor="middle">whole commitment stored</text>
         </g>
         <g data-detail="context" data-edge-from="snapshot" data-edge-to="proof" data-edge-label="ChunkLocation" data-edge-key="6" data-edge-id="challenge-target">
           <rect x="790.15" y="189" width="124.7" height="27" rx="4" class="c-mask"/>
@@ -379,7 +379,7 @@
         <g data-detail="context" data-edge-from="historical" data-edge-to="replica_confirm" data-edge-label="confirm_replica_sync(roots)" data-edge-key="7" data-edge-id="confirm">
           <rect x="780.35" y="417" width="144.3" height="27" rx="4" class="c-mask"/>
           <text x="852.5" y="428" class="t-muted" font-size="8" text-anchor="middle">confirm_replica_sync(roots)</text>
-        <text data-detail="fine" x="852.5" y="439" class="t-dim" font-size="7" text-anchor="middle">matched root is new</text>
+        <text data-detail="fine" x="852.5" y="439" class="t-dim" font-size="7" text-anchor="middle">advances over last_sync</text>
         </g>
 
         <!-- Legend -->
@@ -606,9 +606,22 @@
           <h3>One MMR per bucket</h3>
         </div>
         <ul>
-          <li>&bull; Append adds a leaf; delete raises start_seq; freeze locks start_seq</li>
-          <li>&bull; Canonical range: [start_seq, start_seq + leaf_count)</li>
+          <li>&bull; Append adds a leaf; freeze locks start_seq</li>
+          <li>&bull; Delete: a new MMR starts at the current end (start_seq + leaf_count); the kept leaves are appended again with new sequence numbers</li>
+          <li>&bull; Canonical range: [start_seq, start_seq + leaf_count); an append checkpoint proves the old MMR is a prefix (MmrConsistencyProof)</li>
           <li>&bull; Non-canonical [A, A+N) is prunable once canonical [B, B+M) has B+M &gt; A+N</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot amber"></div>
+          <h3>Signed CommitmentPayload</h3>
+        </div>
+        <ul>
+          <li>&bull; CommitmentPayload { version (2), genesis_hash, bucket_id, agreement_id, commitment }; BucketId is a u64 newtype, AgreementId a u32 newtype</li>
+          <li>&bull; genesis_hash is in the signed preimage only: it is never transmitted, the chain reconstructs it with its own genesis hash, so a signature verifies on one chain only</li>
+          <li>&bull; agreement_id binds the commitment to one agreement; when that agreement ends, the commitment is void</li>
         </ul>
       </div>
 
@@ -621,6 +634,7 @@
           <li>&bull; chunk_proof (MerkleProof): the chunk is in the leaf&#39;s data_root</li>
           <li>&bull; mmr_proof (MmrProof): peaks, leaf and leaf_proof to the mmr_root</li>
           <li>&bull; If either check fails, the response is rejected with InvalidProof and the challenge stays open</li>
+          <li>&bull; Every proof list is bounded: at most 64 tree levels and 64 MMR peaks (MaxProofDepth)</li>
         </ul>
       </div>
     </div>

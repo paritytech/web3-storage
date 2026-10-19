@@ -129,7 +129,7 @@
       </div>
     </div>
 
-    <script id="archify-guided-views-data" type="application/json">[{"id":"main-path","label":"Pay path","focus":["quoted","active","expired","settlement","paid"],"note":"From provider-signed terms to payment after expiry."},{"id":"owner-choice","label":"Pay or burn","focus":["settlement","paid","burned","claimed"],"note":"The owner settles within SettlementTimeout; after that the provider claims."},{"id":"early-exits","label":"Before expiry","focus":["active","ended-early"],"note":"Only a bucket admin can end a primary agreement before expiry."},{"id":"challenge-guard","label":"Challenge guard","focus":["expired","blocked","settlement"],"note":"An unresolved challenge blocks end_agreement and claim_expired_agreement."}]</script>
+    <script id="archify-guided-views-data" type="application/json">[{"id":"main-path","label":"Pay path","focus":["quoted","active","expired","settlement","paid"],"note":"From provider-signed terms to payment after expiry."},{"id":"owner-choice","label":"Pay or burn","focus":["settlement","paid","burned","claimed"],"note":"The owner settles within SettlementTimeout; after that the provider claims."},{"id":"early-exits","label":"Before expiry","focus":["active","refunded","replaced","expired"],"note":"A refunded agreement runs to expiry unpaid and the provider stays liable. A replacement (virtual providers only) is the one early end."},{"id":"slash-removal","label":"Slashed provider","focus":["active","removed"],"note":"remove_slashed ends a live agreement of a physical provider slashed below its stake snapshot; the owner gets the payment back."}]</script>
 
     <script src="assets/archify/i18n.js?v=b331908a8a55"></script>
     <div class="guided-views no-print" id="guided-views" hidden aria-label="Guided diagram views">
@@ -203,23 +203,24 @@
         <path d="M 72 112 L 928 112" class="a-default" stroke-width="0.8" stroke-dasharray="3,8"/>
         <text x="72" y="100" class="t-dim" font-size="10" font-weight="600">01 / Agreement</text>
         <path d="M 72 264 L 928 264" class="a-default" stroke-width="0.8" stroke-dasharray="3,8"/>
-        <text x="72" y="252" class="t-dim" font-size="10" font-weight="600">02 / Guard and burn</text>
+        <text x="72" y="252" class="t-dim" font-size="10" font-weight="600">02 / Slash and burn</text>
         <path d="M 72 436 L 928 436" class="a-default" stroke-width="0.8" stroke-dasharray="3,8"/>
-        <text x="72" y="424" class="t-dim" font-size="10" font-weight="600">03 / Admin and provider exits</text>
+        <text x="72" y="424" class="t-dim" font-size="10" font-weight="600">03 / Provider exits and replacement</text>
 
         <!-- Primary lifecycle rail -->
         <path d="M 154 157 L 748 157" class="a-emphasis" stroke-width="2.2" marker-end="url(#arrowhead-emphasis)"/>
 
         <!-- Transition paths -->
-        <path data-edge-from="quoted" data-edge-to="active" data-edge-label="terms redeemed" data-edge-key="0" data-edge-id="redeem" data-composition-points="153,157;189,157" d="M 153 157 L 189 157" class="a-default" stroke-width="1.1" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="quoted" data-edge-to="active" data-edge-label="terms redeemed, expected_version pinned" data-edge-key="0" data-edge-id="redeem" data-composition-points="153,157;189,157" d="M 153 157 L 189 157" class="a-default" stroke-width="1.1" marker-end="url(#arrowhead)"/>
         <path data-edge-from="active" data-edge-to="expired" data-edge-label="duration elapses" data-edge-key="1" data-edge-id="run" data-composition-points="307,157;343,157" d="M 307 157 L 343 157" class="a-default" stroke-width="1.1" marker-end="url(#arrowhead)"/>
         <path data-edge-from="expired" data-edge-to="settlement" data-edge-label="SettlementTimeout starts" data-edge-key="2" data-edge-id="settle-open" data-composition-points="461,157;497,157" d="M 461 157 L 497 157" class="a-default" stroke-width="1.1" marker-end="url(#arrowhead)"/>
         <path data-edge-from="settlement" data-edge-to="paid" data-edge-label="owner: end_agreement(Pay)" data-edge-key="3" data-edge-id="pay" data-composition-points="615,157;651,157" d="M 615 157 L 651 157" class="a-emphasis" stroke-width="2" marker-end="url(#arrowhead-emphasis)"/>
         <path data-edge-from="settlement" data-edge-to="burned" data-edge-label="owner: end_agreement(Burn)" data-edge-key="4" data-edge-id="burn" data-composition-points="556,188;556,307;647,307" d="M 556 188 L 556 297 Q 556 307 566 307 L 647 307" class="a-security" stroke-width="1.1" marker-end="url(#arrowhead-security)"/>
-        <path data-edge-from="settlement" data-edge-to="claimed" data-edge-label="after SettlementTimeout: claim" data-edge-key="5" data-edge-id="timeout" data-composition-points="556,188;556,450" d="M 556 188 L 556 450" class="a-default" stroke-width="1.1" marker-end="url(#arrowhead)"/>
-        <path data-edge-from="expired" data-edge-to="blocked" data-edge-label="pending challenge" data-edge-key="6" data-edge-id="hold" data-composition-points="402,188;402,278" d="M 402 188 L 402 278" class="a-security" stroke-width="1.1" marker-end="url(#arrowhead-security)"/>
-        <path data-edge-from="blocked" data-edge-to="settlement" data-edge-label="challenge resolved" data-edge-key="7" data-edge-id="clear" data-composition-points="465,307;556,307;556,188" d="M 465 307 L 546 307 Q 556 307 556 297 L 556 188" class="a-dashed" stroke-width="1.1" marker-end="url(#arrowhead-dashed)"/>
-        <path data-edge-from="active" data-edge-to="ended-early" data-edge-label="admin: end_agreement" data-edge-key="8" data-edge-id="terminate" data-composition-points="248,188;248,479;343,479" d="M 248 188 L 248 469 Q 248 479 258 479 L 343 479" class="a-security" stroke-width="1.1" marker-end="url(#arrowhead-security)"/>
+        <path data-edge-from="settlement" data-edge-to="claimed" data-edge-label="after SettlementTimeout: claim" data-edge-key="5" data-edge-id="timeout" data-composition-points="556,188;556,365;710,365;710,450" d="M 556 188 L 556 355 Q 556 365 566 365 L 700 365 Q 710 365 710 375 L 710 450" class="a-default" stroke-width="1.1" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="active" data-edge-to="replaced" data-edge-label="replacement activated" data-edge-key="6" data-edge-id="replace" data-composition-points="248,188;248,405;556,405;556,450" d="M 248 188 L 248 395 Q 248 405 258 405 L 546 405 Q 556 405 556 415 L 556 450" class="a-default" stroke-width="1.1" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="active" data-edge-to="refunded" data-edge-label="provider: refund_agreement" data-edge-key="7" data-edge-id="refund" data-composition-points="248,188;248,479;343,479" d="M 248 188 L 248 469 Q 248 479 258 479 L 343 479" class="a-dashed" stroke-width="1.1" marker-end="url(#arrowhead-dashed)"/>
+        <path data-edge-from="refunded" data-edge-to="expired" data-edge-label="runs to expiry, nothing to pay" data-edge-key="8" data-edge-id="refunded-expiry" data-composition-points="402,508;402,545;810,545;810,96;402,96;402,126" d="M 402 508 L 402 535 Q 402 545 412 545 L 800 545 Q 810 545 810 535 L 810 106 Q 810 96 800 96 L 412 96 Q 402 96 402 106 L 402 126" class="a-dashed" stroke-width="1.1" marker-end="url(#arrowhead-dashed)"/>
+        <path data-edge-from="active" data-edge-to="removed" data-edge-label="remove_slashed (anyone)" data-edge-key="9" data-edge-id="remove" data-composition-points="248,188;248,233;402,233;402,278" d="M 248 188 L 248 223 Q 248 233 258 233 L 392 233 Q 402 233 402 243 L 402 278" class="a-security" stroke-width="1.1" marker-end="url(#arrowhead-security)"/>
 
         <!-- States -->
         <g id="node-quoted" data-node-id="quoted" data-node-label="Terms Quoted" tabindex="0" role="button" aria-label="Focus Terms Quoted, signed, valid_until, Agreement" aria-pressed="false" data-node-kind="start" data-node-sublabel="signed, valid_until" data-node-context="Agreement">
@@ -235,8 +236,8 @@
           <text data-detail="context" x="94" y="163" class="t-muted" font-size="7" text-anchor="middle">signed, valid_until</text>
         </g>
 
-        <g id="node-active" data-node-id="active" data-node-label="Active" tabindex="0" role="button" aria-label="Focus Active, escrow held on owner, Agreement" aria-pressed="false" data-node-kind="active" data-node-sublabel="escrow held on owner" data-node-tag="binding" data-node-context="Agreement">
-          <title>Active · escrow held on owner · Agreement · binding</title>
+        <g id="node-active" data-node-id="active" data-node-label="Active" tabindex="0" role="button" aria-label="Focus Active, escrow and stake snapshot, Agreement" aria-pressed="false" data-node-kind="active" data-node-sublabel="escrow and stake snapshot" data-node-tag="binding" data-node-context="Agreement">
+          <title>Active · escrow and stake snapshot · Agreement · binding</title>
           <rect x="189" y="126" width="118" height="62" rx="7" class="c-mask"/>
           <rect x="189" y="126" width="118" height="62" rx="7" class="c-backend" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="active" class="semantic-sigil s-backend" transform="translate(290 132) scale(0.6875)">
@@ -244,7 +245,7 @@
           </g>
         <text data-detail="fine" x="199" y="140" class="t-backend" font-size="7" font-weight="700">02</text>
           <text data-node-label="" data-detail-anchor="" x="248" y="147" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">Active</text>
-          <text data-detail="context" x="248" y="163" class="t-muted" font-size="7" text-anchor="middle">escrow held on owner</text>
+          <text data-detail="context" x="248" y="163" class="t-muted" font-size="7" text-anchor="middle">escrow and stake snapshot</text>
         <text data-detail="fine" x="248" y="177" class="t-backend" font-size="7" text-anchor="middle">binding</text>
         </g>
 
@@ -287,19 +288,32 @@
           <text data-detail="context" x="710" y="163" class="t-muted" font-size="7" text-anchor="middle">AgreementEnded</text>
         </g>
 
-        <g id="node-blocked" data-node-id="blocked" data-node-label="Settlement Blocked" tabindex="0" role="button" aria-label="Focus Settlement Blocked, AgreementHasPendingChallenge, Guard and burn" aria-pressed="false" data-node-kind="waiting" data-node-sublabel="AgreementHasPendingChallenge" data-node-context="Guard and burn">
-          <title>Settlement Blocked · AgreementHasPendingChallenge · Guard and burn</title>
-          <rect x="339" y="278" width="126" height="58" rx="7" class="c-mask"/>
-          <rect x="339" y="278" width="126" height="58" rx="7" class="c-cloud" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="waiting" class="semantic-sigil s-cloud" transform="translate(448 284) scale(0.6875)">
-            <path d="M4 2.5h8M4 13.5h8M5 3c0 2.8 2 3.2 3 5-1 1.8-3 2.2-3 5M11 3c0 2.8-2 3.2-3 5 1 1.8 3 2.2 3 5"/>
+        <g id="node-replaced" data-node-id="replaced" data-node-label="Replaced" tabindex="0" role="button" aria-label="Focus Replaced, ReplacementActivated, Provider exits and replacement" aria-pressed="false" data-node-kind="neutral" data-node-sublabel="ReplacementActivated" data-node-context="Provider exits and replacement">
+          <title>Replaced · ReplacementActivated · Provider exits and replacement</title>
+          <rect x="497" y="450" width="118" height="58" rx="7" class="c-mask"/>
+          <rect x="497" y="450" width="118" height="58" rx="7" class="c-external" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="neutral" class="semantic-sigil s-external" transform="translate(598 456) scale(0.6875)">
+            <rect x="3" y="3" width="10" height="10" rx="2"/>
+            <circle cx="8" cy="8" r="1.2" class="sigil-fill"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="402" y="299" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">Settlement Blocked</text>
-          <text data-detail="context" x="402" y="315" class="t-muted" font-size="7" text-anchor="middle">AgreementHasPendingChallenge</text>
+          <text data-node-label="" data-detail-anchor="" x="556" y="471" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">Replaced</text>
+          <text data-detail="context" x="556" y="487" class="t-muted" font-size="7" text-anchor="middle">ReplacementActivated</text>
         </g>
 
-        <g id="node-burned" data-node-id="burned" data-node-label="Burned" tabindex="0" role="button" aria-label="Focus Burned, burn_percent to Treasury, Guard and burn" aria-pressed="false" data-node-kind="failure" data-node-sublabel="burn_percent to Treasury" data-node-context="Guard and burn">
-          <title>Burned · burn_percent to Treasury · Guard and burn</title>
+        <g id="node-removed" data-node-id="removed" data-node-label="Removed After Slash" tabindex="0" role="button" aria-label="Focus Removed After Slash, SlashedProviderRemoved, Slash and burn" aria-pressed="false" data-node-kind="failure" data-node-sublabel="SlashedProviderRemoved" data-node-context="Slash and burn">
+          <title>Removed After Slash · SlashedProviderRemoved · Slash and burn</title>
+          <rect x="339" y="278" width="126" height="58" rx="7" class="c-mask"/>
+          <rect x="339" y="278" width="126" height="58" rx="7" class="c-security" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="failure" class="semantic-sigil s-security" transform="translate(448 284) scale(0.6875)">
+            <circle cx="8" cy="8" r="5.3"/>
+            <path d="m5.7 5.7 4.6 4.6m0-4.6-4.6 4.6"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="402" y="299" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">Removed After Slash</text>
+          <text data-detail="context" x="402" y="315" class="t-muted" font-size="7" text-anchor="middle">SlashedProviderRemoved</text>
+        </g>
+
+        <g id="node-burned" data-node-id="burned" data-node-label="Burned" tabindex="0" role="button" aria-label="Focus Burned, EndAction::Burn, BurnPremium, Slash and burn" aria-pressed="false" data-node-kind="failure" data-node-sublabel="EndAction::Burn, BurnPremium" data-node-context="Slash and burn">
+          <title>Burned · EndAction::Burn, BurnPremium · Slash and burn</title>
           <rect x="647" y="278" width="126" height="58" rx="7" class="c-mask"/>
           <rect x="647" y="278" width="126" height="58" rx="7" class="c-security" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="failure" class="semantic-sigil s-security" transform="translate(756 284) scale(0.6875)">
@@ -307,37 +321,37 @@
             <path d="m5.7 5.7 4.6 4.6m0-4.6-4.6 4.6"/>
           </g>
           <text data-node-label="" data-detail-anchor="" x="710" y="299" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">Burned</text>
-          <text data-detail="context" x="710" y="315" class="t-muted" font-size="7" text-anchor="middle">burn_percent to Treasury</text>
+          <text data-detail="context" x="710" y="315" class="t-muted" font-size="7" text-anchor="middle">EndAction::Burn, BurnPremium</text>
         </g>
 
-        <g id="node-ended-early" data-node-id="ended-early" data-node-label="Ended Early" tabindex="0" role="button" aria-label="Focus Ended Early, PrimaryAgreementEndedEarly, Admin and provider exits" aria-pressed="false" data-node-kind="neutral" data-node-sublabel="PrimaryAgreementEndedEarly" data-node-context="Admin and provider exits">
-          <title>Ended Early · PrimaryAgreementEndedEarly · Admin and provider exits</title>
+        <g id="node-refunded" data-node-id="refunded" data-node-label="Refunded, Still Live" tabindex="0" role="button" aria-label="Focus Refunded, Still Live, AgreementRefunded, Provider exits and replacement" aria-pressed="false" data-node-kind="neutral" data-node-sublabel="AgreementRefunded" data-node-context="Provider exits and replacement">
+          <title>Refunded, Still Live · AgreementRefunded · Provider exits and replacement</title>
           <rect x="343" y="450" width="118" height="58" rx="7" class="c-mask"/>
           <rect x="343" y="450" width="118" height="58" rx="7" class="c-external" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="neutral" class="semantic-sigil s-external" transform="translate(444 456) scale(0.6875)">
             <rect x="3" y="3" width="10" height="10" rx="2"/>
             <circle cx="8" cy="8" r="1.2" class="sigil-fill"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="402" y="471" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">Ended Early</text>
-          <text data-detail="context" x="402" y="487" class="t-muted" font-size="7" text-anchor="middle">PrimaryAgreementEndedEarly</text>
+          <text data-node-label="" data-detail-anchor="" x="402" y="471" class="t-primary" font-size="9.1" font-weight="600" text-anchor="middle">Refunded, Still Live</text>
+          <text data-detail="context" x="402" y="487" class="t-muted" font-size="7" text-anchor="middle">AgreementRefunded</text>
         </g>
 
-        <g id="node-claimed" data-node-id="claimed" data-node-label="Claimed By Provider" tabindex="0" role="button" aria-label="Focus Claimed By Provider, AgreementExpiredClaimed, Admin and provider exits" aria-pressed="false" data-node-kind="neutral" data-node-sublabel="AgreementExpiredClaimed" data-node-context="Admin and provider exits">
-          <title>Claimed By Provider · AgreementExpiredClaimed · Admin and provider exits</title>
-          <rect x="497" y="450" width="118" height="58" rx="7" class="c-mask"/>
-          <rect x="497" y="450" width="118" height="58" rx="7" class="c-external" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="neutral" class="semantic-sigil s-external" transform="translate(598 456) scale(0.6875)">
+        <g id="node-claimed" data-node-id="claimed" data-node-label="Claimed By Provider" tabindex="0" role="button" aria-label="Focus Claimed By Provider, AgreementExpiredClaimed, Provider exits and replacement" aria-pressed="false" data-node-kind="neutral" data-node-sublabel="AgreementExpiredClaimed" data-node-context="Provider exits and replacement">
+          <title>Claimed By Provider · AgreementExpiredClaimed · Provider exits and replacement</title>
+          <rect x="651" y="450" width="118" height="58" rx="7" class="c-mask"/>
+          <rect x="651" y="450" width="118" height="58" rx="7" class="c-external" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="neutral" class="semantic-sigil s-external" transform="translate(752 456) scale(0.6875)">
             <rect x="3" y="3" width="10" height="10" rx="2"/>
             <circle cx="8" cy="8" r="1.2" class="sigil-fill"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="556" y="471" class="t-primary" font-size="9.6" font-weight="600" text-anchor="middle">Claimed By Provider</text>
-          <text data-detail="context" x="556" y="487" class="t-muted" font-size="7" text-anchor="middle">AgreementExpiredClaimed</text>
+          <text data-node-label="" data-detail-anchor="" x="710" y="471" class="t-primary" font-size="9.6" font-weight="600" text-anchor="middle">Claimed By Provider</text>
+          <text data-detail="context" x="710" y="487" class="t-muted" font-size="7" text-anchor="middle">AgreementExpiredClaimed</text>
         </g>
 
         <!-- Transition labels -->
-        <g data-detail="context" data-edge-from="quoted" data-edge-to="active" data-edge-label="terms redeemed" data-edge-key="0" data-edge-id="redeem">
-          <rect x="130.7" y="111" width="80.60000000000001" height="16" rx="4" class="c-mask"/>
-          <text x="171" y="122" class="t-muted" font-size="8" text-anchor="middle">terms redeemed</text>
+        <g data-detail="context" data-edge-from="quoted" data-edge-to="active" data-edge-label="terms redeemed, expected_version pinned" data-edge-key="0" data-edge-id="redeem">
+          <rect x="69.44999999999999" y="111" width="203.10000000000002" height="16" rx="4" class="c-mask"/>
+          <text x="171" y="122" class="t-muted" font-size="8" text-anchor="middle">terms redeemed, expected_version pinned</text>
         </g>
         <g data-detail="context" data-edge-from="active" data-edge-to="expired" data-edge-label="duration elapses" data-edge-key="1" data-edge-id="run">
           <rect x="279.8" y="111" width="90.4" height="16" rx="4" class="c-mask"/>
@@ -352,24 +366,28 @@
           <text x="633" y="122" class="t-backend" font-size="8" text-anchor="middle">owner: end_agreement(Pay)</text>
         </g>
         <g data-detail="context" data-edge-from="settlement" data-edge-to="burned" data-edge-label="owner: end_agreement(Burn)" data-edge-key="4" data-edge-id="burn">
-          <rect x="570.3" y="339" width="139.4" height="16" rx="4" class="c-mask"/>
-          <text x="640" y="350" class="t-security" font-size="8" text-anchor="middle">owner: end_agreement(Burn)</text>
+          <rect x="570.3" y="239" width="139.4" height="16" rx="4" class="c-mask"/>
+          <text x="640" y="250" class="t-security" font-size="8" text-anchor="middle">owner: end_agreement(Burn)</text>
         </g>
         <g data-detail="context" data-edge-from="settlement" data-edge-to="claimed" data-edge-label="after SettlementTimeout: claim" data-edge-key="5" data-edge-id="timeout">
-          <rect x="476.5" y="389" width="159" height="16" rx="4" class="c-mask"/>
-          <text x="556" y="400" class="t-muted" font-size="8" text-anchor="middle">after SettlementTimeout: claim</text>
+          <rect x="553.5" y="337" width="159" height="16" rx="4" class="c-mask"/>
+          <text x="633" y="348" class="t-muted" font-size="8" text-anchor="middle">after SettlementTimeout: claim</text>
         </g>
-        <g data-detail="context" data-edge-from="expired" data-edge-to="blocked" data-edge-label="pending challenge" data-edge-key="6" data-edge-id="hold">
-          <rect x="354.35" y="191" width="95.30000000000001" height="16" rx="4" class="c-mask"/>
-          <text x="402" y="202" class="t-security" font-size="8" text-anchor="middle">pending challenge</text>
+        <g data-detail="context" data-edge-from="active" data-edge-to="replaced" data-edge-label="replacement activated" data-edge-key="6" data-edge-id="replace">
+          <rect x="344.55" y="377" width="114.9" height="16" rx="4" class="c-mask"/>
+          <text x="402" y="388" class="t-muted" font-size="8" text-anchor="middle">replacement activated</text>
         </g>
-        <g data-detail="context" data-edge-from="blocked" data-edge-to="settlement" data-edge-label="challenge resolved" data-edge-key="7" data-edge-id="clear">
-          <rect x="449.9" y="254" width="100.2" height="16" rx="4" class="c-mask"/>
-          <text x="500" y="265" class="t-messagebus" font-size="8" text-anchor="middle">challenge resolved</text>
+        <g data-detail="context" data-edge-from="active" data-edge-to="refunded" data-edge-label="provider: refund_agreement" data-edge-key="7" data-edge-id="refund">
+          <rect x="230.3" y="424" width="139.4" height="16" rx="4" class="c-mask"/>
+          <text x="300" y="435" class="t-messagebus" font-size="8" text-anchor="middle">provider: refund_agreement</text>
         </g>
-        <g data-detail="context" data-edge-from="active" data-edge-to="ended-early" data-edge-label="admin: end_agreement" data-edge-key="8" data-edge-id="terminate">
-          <rect x="257" y="389" width="110" height="16" rx="4" class="c-mask"/>
-          <text x="312" y="400" class="t-security" font-size="8" text-anchor="middle">admin: end_agreement</text>
+        <g data-detail="context" data-edge-from="refunded" data-edge-to="expired" data-edge-label="runs to expiry, nothing to pay" data-edge-key="8" data-edge-id="refunded-expiry">
+          <rect x="526.5" y="534" width="159" height="16" rx="4" class="c-mask"/>
+          <text x="606" y="545" class="t-messagebus" font-size="8" text-anchor="middle">runs to expiry, nothing to pay</text>
+        </g>
+        <g data-detail="context" data-edge-from="active" data-edge-to="removed" data-edge-label="remove_slashed (anyone)" data-edge-key="9" data-edge-id="remove">
+          <rect x="262.65" y="212" width="124.7" height="16" rx="4" class="c-mask"/>
+          <text x="325" y="223" class="t-security" font-size="8" text-anchor="middle">remove_slashed (anyone)</text>
         </g>
 
         <!-- Legend -->
@@ -596,10 +614,11 @@
           <h3>While active</h3>
         </div>
         <ul>
-          <li>&bull; top_up_agreement (owner only) raises max_bytes for the remaining duration</li>
-          <li>&bull; extend_agreement: anyone if the current price is at or below the locked price, else owner only; fails once expired</li>
-          <li>&bull; set_extensions_blocked lets the provider refuse extensions for one bucket</li>
+          <li>&bull; extend_agreement (owner only): pays the elapsed period, locks payment for additional_duration at the current price, re-snapshots stake; needs expected_version and stake &gt;= MinProviderStake; fails once expired</li>
+          <li>&bull; top_up_agreement (owner only) buys more max_bytes for the remaining duration; needs expected_version</li>
+          <li>&bull; Both are rejected while a replacement is pending; set_extensions_blocked lets the provider reject extensions and replacements for one agreement</li>
           <li>&bull; transfer_agreement_ownership moves the escrow hold to the new owner; bucket membership stays</li>
+          <li>&bull; Open challenges block nothing here: settlement, burn, refund, extension and replacement activation proceed while one is open</li>
         </ul>
       </div>
 
@@ -609,8 +628,7 @@
           <h3>Pay or burn</h3>
         </div>
         <ul>
-          <li>&bull; EndAction::Burn { burn_percent } burns that share to Treasury and pays the rest</li>
-          <li>&bull; A burn also charges the owner a governance-set premium; without the funds the burn fails</li>
+          <li>&bull; EndAction::Burn burns the locked payment and charges the owner BurnPremium; without the funds the burn fails</li>
           <li>&bull; After SettlementTimeout the provider calls claim_expired_agreement and the owner loses the burn option</li>
         </ul>
       </div>
@@ -618,13 +636,24 @@
       <div class="card">
         <div class="card-header">
           <div class="card-dot rose"></div>
-          <h3>Early exits and guards</h3>
+          <h3>Early exits</h3>
         </div>
         <ul>
-          <li>&bull; Before expiry only a bucket admin can end an agreement, and only a primary; the full remaining payment is paid or burned</li>
-          <li>&bull; Replica agreements cannot be ended early</li>
-          <li>&bull; AgreementHasPendingChallenge blocks end_agreement and claim_expired_agreement</li>
-          <li>&bull; Anyone can call remove_slashed; the remaining payment returns to the owner</li>
+          <li>&bull; Binding commitment: no early end by the owner or the provider; the only early end is a replacement (virtual providers only)</li>
+          <li>&bull; refund_agreement (provider only) returns the remaining payment to the owner at any time before settlement; the agreement runs on unpaid and the provider stays liable. Replaces the burn as the provider-side exit</li>
+          <li>&bull; Replacement activation settles the old agreement as an extension would: elapsed period paid, remainder moved into the successor&#39;s escrow</li>
+          <li>&bull; remove_slashed (anyone, physical providers only): valid while the agreement is live and a slash left locked_stake below its stake snapshot; the remaining payment returns to the owner</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot slate"></div>
+          <h3>After the last agreement</h3>
+        </div>
+        <ul>
+          <li>&bull; A provider offboards by not accepting new agreements or extensions and letting the existing ones expire</li>
+          <li>&bull; deregister_provider is one step once committed_bytes is 0 and no challenge is open: no announcement window, stake released, Providers entry removed</li>
         </ul>
       </div>
     </div>

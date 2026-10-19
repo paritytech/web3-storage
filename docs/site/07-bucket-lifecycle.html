@@ -583,7 +583,7 @@
         <ul>
           <li>&bull; create_bucket: anyone; caller is sole admin; bucket_id assigned and never changes</li>
           <li>&bull; create_bucket_with_primary: bucket and first primary in one call, min_providers = 1</li>
-          <li>&bull; add_primary_provider: bucket admin, below MaxPrimaryProviders</li>
+          <li>&bull; add_primary_provider: bucket admin, within MaxPrimarySlots (one slot per virtual member)</li>
         </ul>
       </div>
 
@@ -593,9 +593,9 @@
           <h3>Checkpoint and freeze</h3>
         </div>
         <ul>
-          <li>&bull; checkpoint needs min_providers primary signatures and records primary_signers</li>
+          <li>&bull; checkpoint needs min_providers signing slots of the layout and replaces the snapshot&#39;s primary_signers</li>
           <li>&bull; freeze_bucket: admin only, irreversible, needs a snapshot with min_providers acknowledgments</li>
-          <li>&bull; Frozen: start_seq cannot decrease below frozen_start_seq</li>
+          <li>&bull; Frozen: start_seq stays at frozen_start_seq, so no data can be deleted; admins can delete a frozen bucket only once it has no agreements</li>
         </ul>
       </div>
 

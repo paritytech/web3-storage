@@ -129,7 +129,7 @@
       </div>
     </div>
 
-    <script id="archify-guided-views-data" type="application/json">[{"id":"setup","label":"Bucket setup","focus":["client","primaries","pallet","bucket"],"note":"create_bucket makes an empty bucket; a primary joins when the admin redeems its signed quote from POST /negotiate."},{"id":"write-path","label":"Write path","focus":["client","primaries","pallet","bucket"],"note":"The client uploads and commits to primaries off-chain, then submits their signatures in a checkpoint."},{"id":"redundancy","label":"Read redundancy","focus":["funder","client","primaries","replica","pallet"],"note":"Any account adds a replica with add_replica_provider; the replica syncs and calls confirm_replica_sync to get paid."},{"id":"enforcement","label":"Enforcement","focus":["funder","pallet","stake","primaries","replica"],"note":"A challenge requires an on-chain response; no response by the deadline slashes the full stake."}]</script>
+    <script id="archify-guided-views-data" type="application/json">[{"id":"setup","label":"Bucket setup","focus":["client","primaries","pallet","bucket"],"note":"create_bucket makes an empty bucket; a primary joins when the admin redeems its signed quote from POST /negotiate."},{"id":"write-path","label":"Write path","focus":["client","primaries","pallet","bucket"],"note":"The client uploads and commits to primaries off-chain, then submits their signatures in a checkpoint."},{"id":"redundancy","label":"Read redundancy","focus":["funder","client","primaries","replica","pallet"],"note":"Any account adds a replica with add_replica_provider; the replica syncs and calls confirm_replica_sync to get paid."},{"id":"enforcement","label":"Enforcement","focus":["funder","pallet","stake","primaries","replica"],"note":"A challenge requires an on-chain response; no response by the deadline slashes the stake."}]</script>
 
     <script src="assets/archify/i18n.js?v=b331908a8a55"></script>
     <div class="guided-views no-print" id="guided-views" hidden aria-label="Guided diagram views">
@@ -243,8 +243,8 @@
         <text data-detail="fine" x="235" y="214" class="t-frontend" font-size="7" text-anchor="middle">uploads, reads, verifies hashes</text>
         </g>
 
-        <g id="node-primaries" data-node-id="primaries" data-node-label="Primary Providers" tabindex="0" role="button" aria-label="Focus Primary Providers, receive writes, sign checkpoints, Architecture component" aria-pressed="false" data-node-kind="backend" data-node-sublabel="receive writes, sign checkpoints" data-node-tag="admin or bucket creator, max 5" data-node-context="Architecture component">
-          <title>Primary Providers · receive writes, sign checkpoints · Architecture component · admin or bucket creator, max 5</title>
+        <g id="node-primaries" data-node-id="primaries" data-node-label="Primary Providers" tabindex="0" role="button" aria-label="Focus Primary Providers, receive writes, sign checkpoints, Architecture component" aria-pressed="false" data-node-kind="backend" data-node-sublabel="receive writes, sign checkpoints" data-node-tag="added by admin, max MaxPrimarySlots slots" data-node-context="Architecture component">
+          <title>Primary Providers · receive writes, sign checkpoints · Architecture component · added by admin, max MaxPrimarySlots slots</title>
           <rect x="140" y="290" width="190" height="92" rx="6" class="c-mask"/>
           <rect x="140" y="290" width="190" height="92" rx="6" class="c-backend" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(146 296) scale(0.6875)">
@@ -252,7 +252,7 @@
           </g>
           <text data-node-label="" data-detail-anchor="" x="235" y="334" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Primary Providers</text>
         <text data-detail="context" x="235" y="350" class="t-muted" font-size="9" text-anchor="middle">receive writes, sign checkpoints</text>
-        <text data-detail="fine" x="235" y="374" class="t-backend" font-size="7" text-anchor="middle">admin or bucket creator, max 5</text>
+        <text data-detail="fine" x="235" y="374" class="t-backend" font-size="7" text-anchor="middle">added by admin, max MaxPrimarySlots slots</text>
         </g>
 
         <g id="node-replica" data-node-id="replica" data-node-label="Replica Providers" tabindex="0" role="button" aria-label="Focus Replica Providers, permissionless, serve everyone, Architecture component" aria-pressed="false" data-node-kind="backend" data-node-sublabel="permissionless, serve everyone" data-node-tag="permissionless" data-node-context="Architecture component">
@@ -598,7 +598,7 @@
           <h3>Enforcement</h3>
         </div>
         <ul>
-          <li>&bull; An unanswered challenge slashes the entire stake</li>
+          <li>&bull; An unanswered challenge slashes a physical provider&#39;s entire stake, or per_provider_stake per liable member of a virtual one</li>
           <li>&bull; Private bucket: members and primary-agreement owners challenge primaries</li>
           <li>&bull; Counterparty challenges cost the provider part of the response fee</li>
         </ul>

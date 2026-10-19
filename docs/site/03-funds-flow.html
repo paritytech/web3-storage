@@ -129,7 +129,7 @@
       </div>
     </div>
 
-    <script id="archify-guided-views-data" type="application/json">[{"id":"stake","label":"Provider stake","focus":["provider_acct","stake","treasury","challenger_out"],"note":"An unanswered challenge slashes the full stake to the Treasury; the challenger is made whole from the slash."},{"id":"agreement","label":"Agreement payment","focus":["owner_acct","payment","sync_hold","provider_out","replica_out","treasury","owner_out"],"note":"The prepaid fee and a replica's sync_balance are held on the agreement owner until settlement."},{"id":"challenge","label":"Challenge deposit","focus":["challenger_acct","deposit","provider_out","challenger_out"],"note":"The deposit reimburses the provider's response fee; the excess returns to the challenger."}]</script>
+    <script id="archify-guided-views-data" type="application/json">[{"id":"stake","label":"Provider stake","focus":["provider_acct","stake","treasury","challenger_out"],"note":"An unanswered challenge slashes stake to the Treasury: all of a physical provider's, per_provider_stake per liable virtual member."},{"id":"agreement","label":"Agreement payment","focus":["owner_acct","payment","sync_hold","provider_out","replica_out","treasury","owner_out"],"note":"The prepaid fee and a replica's sync_balance are held on the agreement owner until settlement."},{"id":"replacement","label":"Replacement escrow","focus":["owner_acct","replacement","owner_lapse"],"note":"create_replacement holds the successor's payment on the owner; it is released to the owner if the old agreement settles first."},{"id":"challenge","label":"Challenge deposit","focus":["challenger_acct","deposit","provider_out","challenger_out"],"note":"The deposit reimburses the provider's response fee; the excess returns to the challenger."}]</script>
 
     <script src="assets/archify/i18n.js?v=b331908a8a55"></script>
     <div class="guided-views no-print" id="guided-views" hidden aria-label="Guided diagram views">
@@ -174,7 +174,7 @@
     <!-- Main Diagram -->
     <div class="diagram-container" data-detail-level="read"
          data-preset-badge-editorial-plate="WEB3 STORAGE / PLATE 04">
-      <svg viewBox="0 0 1068 604" role="img" lang="en" aria-labelledby="archify-diagram-title archify-diagram-description" data-preset="classic" data-quality-profile="showcase">
+      <svg viewBox="0 0 1068 720" role="img" lang="en" aria-labelledby="archify-diagram-title archify-diagram-description" data-preset="classic" data-quality-profile="showcase">
         <title id="archify-diagram-title">Funds Flow</title>
         <desc id="archify-diagram-description">A data-flow diagram.</desc>
         <!-- Definitions -->
@@ -200,34 +200,36 @@
         <rect width="100%" height="100%" fill="url(#grid)" />
 
         <!-- Data Stages -->
-        <rect data-graph-role="structural-frame" data-composition-frame-kind="stage" data-composition-frame-id="0" x="16" y="46" width="168" height="484" rx="10" class="c-lane" stroke-width="1"/>
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="stage" data-composition-frame-id="0" x="16" y="46" width="168" height="600" rx="10" class="c-lane" stroke-width="1"/>
         <text x="100" y="68" class="t-dim" font-size="9" font-weight="600" text-anchor="middle">01 / Free balance</text>
 
-        <rect data-graph-role="structural-frame" data-composition-frame-kind="stage" data-composition-frame-id="1" x="231" y="46" width="168" height="484" rx="10" class="c-lane" stroke-width="1"/>
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="stage" data-composition-frame-id="1" x="231" y="46" width="168" height="600" rx="10" class="c-lane" stroke-width="1"/>
         <text x="315" y="68" class="t-dim" font-size="9" font-weight="600" text-anchor="middle">02 / Hold (HoldReason)</text>
 
-        <rect data-graph-role="structural-frame" data-composition-frame-kind="stage" data-composition-frame-id="2" x="446" y="46" width="168" height="484" rx="10" class="c-lane" stroke-width="1"/>
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="stage" data-composition-frame-id="2" x="446" y="46" width="168" height="600" rx="10" class="c-lane" stroke-width="1"/>
         <text x="530" y="68" class="t-dim" font-size="9" font-weight="600" text-anchor="middle">03 / Trigger</text>
 
-        <rect data-graph-role="structural-frame" data-composition-frame-kind="stage" data-composition-frame-id="3" x="661" y="46" width="168" height="484" rx="10" class="c-lane" stroke-width="1"/>
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="stage" data-composition-frame-id="3" x="661" y="46" width="168" height="600" rx="10" class="c-lane" stroke-width="1"/>
         <text x="745" y="68" class="t-dim" font-size="9" font-weight="600" text-anchor="middle">04 / Payout</text>
 
-        <rect data-graph-role="structural-frame" data-composition-frame-kind="stage" data-composition-frame-id="4" x="876" y="46" width="168" height="484" rx="10" class="c-lane" stroke-width="1"/>
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="stage" data-composition-frame-id="4" x="876" y="46" width="168" height="600" rx="10" class="c-lane" stroke-width="1"/>
         <text x="960" y="68" class="t-dim" font-size="9" font-weight="600" text-anchor="middle">05 / Burn / slash</text>
 
         <!-- Flow paths -->
-        <path data-edge-from="provider_acct" data-edge-to="stake" data-edge-label="register_provider, add_stake" data-edge-key="0" data-edge-id="stake-in" data-composition-points="156,157;259,157" d="M 156 157 L 259 157" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <path data-edge-from="provider_acct" data-edge-to="stake" data-edge-label="register_provider, set_stake" data-edge-key="0" data-edge-id="stake-in" data-composition-points="156,157;259,157" d="M 156 157 L 259 157" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
         <path data-edge-from="challenger_acct" data-edge-to="deposit" data-edge-label="challenge_*" data-edge-key="1" data-edge-id="deposit-in" data-composition-points="156,271;259,271" d="M 156 271 L 259 271" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
         <path data-edge-from="owner_acct" data-edge-to="payment" data-edge-label="redeem terms" data-edge-key="2" data-edge-id="escrow-in" data-composition-points="156,385;259,385" d="M 156 385 L 259 385" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
         <path data-edge-from="owner_acct" data-edge-to="sync_hold" data-edge-label="sync_balance" data-edge-key="3" data-edge-id="sync-in" data-composition-points="100,414;100,499;259,499" d="M 100 414 L 100 499 L 259 499" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
-        <path data-edge-from="stake" data-edge-to="challenger_out" data-edge-label="tx fees from slash" data-edge-key="4" data-edge-id="made-whole" data-composition-points="371,157;689,157" d="M 371 157 L 689 157" class="a-security" stroke-width="1.4" marker-end="url(#arrowhead-security)"/>
-        <path data-edge-from="stake" data-edge-to="treasury" data-edge-label="slash: full stake" data-edge-key="5" data-edge-id="slash" data-composition-points="315,128;315,105;960,105;960,356" d="M 315 128 L 315 105 L 960 105 L 960 356" class="a-security" stroke-width="1.4" marker-end="url(#arrowhead-security)"/>
-        <path data-edge-from="deposit" data-edge-to="challenger_out" data-edge-label="excess deposit" data-edge-key="6" data-edge-id="excess" data-composition-points="315,242;315,214;745,214;745,186" d="M 315 242 L 315 214 L 745 214 L 745 186" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
-        <path data-edge-from="deposit" data-edge-to="provider_out" data-edge-label="response fee reimbursed" data-edge-key="7" data-edge-id="fee" data-composition-points="371,271;689,271" d="M 371 271 L 689 271" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
-        <path data-edge-from="payment" data-edge-to="provider_out" data-edge-label="Pay / Burn remainder / claim" data-edge-key="8" data-edge-id="pay" data-composition-points="315,356;315,328;745,328;745,300" d="M 315 356 L 315 328 L 745 328 L 745 300" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
-        <path data-edge-from="payment" data-edge-to="treasury" data-edge-label="Burn { burn_percent }" data-edge-key="9" data-edge-id="burn" data-composition-points="315,414;315,442;850,442;850,385;904,385" d="M 315 414 L 315 442 L 850 442 L 850 385 L 904 385" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
-        <path data-edge-from="payment" data-edge-to="owner_out" data-edge-label="remove_slashed" data-edge-key="10" data-edge-id="refund" data-composition-points="371,385;689,385" d="M 371 385 L 689 385" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
-        <path data-edge-from="sync_hold" data-edge-to="replica_out" data-edge-label="sync_price" data-edge-key="11" data-edge-id="sync-pay" data-composition-points="371,499;689,499" d="M 371 499 L 689 499" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <path data-edge-from="owner_acct" data-edge-to="replacement" data-edge-label="create_replacement" data-edge-key="4" data-edge-id="repl-in" data-composition-points="44,385;20,385;20,613;259,613" d="M 44 385 L 20 385 L 20 613 L 259 613" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <path data-edge-from="stake" data-edge-to="challenger_out" data-edge-label="tx fees from slash" data-edge-key="5" data-edge-id="made-whole" data-composition-points="371,157;689,157" d="M 371 157 L 689 157" class="a-security" stroke-width="1.4" marker-end="url(#arrowhead-security)"/>
+        <path data-edge-from="stake" data-edge-to="treasury" data-edge-label="slash" data-edge-key="6" data-edge-id="slash" data-composition-points="315,128;315,105;960,105;960,356" d="M 315 128 L 315 105 L 960 105 L 960 356" class="a-security" stroke-width="1.4" marker-end="url(#arrowhead-security)"/>
+        <path data-edge-from="deposit" data-edge-to="challenger_out" data-edge-label="excess deposit" data-edge-key="7" data-edge-id="excess" data-composition-points="315,242;315,214;745,214;745,186" d="M 315 242 L 315 214 L 745 214 L 745 186" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="deposit" data-edge-to="provider_out" data-edge-label="response fee reimbursed" data-edge-key="8" data-edge-id="fee" data-composition-points="371,271;689,271" d="M 371 271 L 689 271" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="payment" data-edge-to="provider_out" data-edge-label="Pay / claim_expired_agreement" data-edge-key="9" data-edge-id="pay" data-composition-points="315,356;315,328;745,328;745,300" d="M 315 356 L 315 328 L 745 328 L 745 300" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <path data-edge-from="payment" data-edge-to="treasury" data-edge-label="Burn: whole payment" data-edge-key="10" data-edge-id="burn" data-composition-points="315,414;315,442;850,442;850,385;904,385" d="M 315 414 L 315 442 L 850 442 L 850 385 L 904 385" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="payment" data-edge-to="owner_out" data-edge-label="refund_agreement, remove_slashed" data-edge-key="11" data-edge-id="refund" data-composition-points="371,385;689,385" d="M 371 385 L 689 385" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="sync_hold" data-edge-to="replica_out" data-edge-label="sync_price" data-edge-key="12" data-edge-id="sync-pay" data-composition-points="371,499;689,499" d="M 371 499 L 689 499" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <path data-edge-from="replacement" data-edge-to="owner_lapse" data-edge-label="ReplacementExpired" data-edge-key="13" data-edge-id="repl-lapse" data-composition-points="371,613;689,613" d="M 371 613 L 689 613" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
 
         <!-- Nodes -->
         <g id="node-provider_acct" data-node-id="provider_acct" data-node-label="Provider" tabindex="0" role="button" aria-label="Focus Provider, free balance, 01 / Free balance" aria-pressed="false" data-node-kind="external" data-node-sublabel="free balance" data-node-context="01 / Free balance">
@@ -316,6 +318,18 @@
           <text data-detail="context" x="315" y="507" class="t-muted" font-size="7" text-anchor="middle">sync_balance</text>
         </g>
 
+        <g id="node-replacement" data-node-id="replacement" data-node-label="AgreementPayment" tabindex="0" role="button" aria-label="Focus AgreementPayment, pending_replacement, 02 / Hold (HoldReason)" aria-pressed="false" data-node-kind="database" data-node-sublabel="pending_replacement" data-node-context="02 / Hold (HoldReason)">
+          <title>AgreementPayment · pending_replacement · 02 / Hold (HoldReason)</title>
+          <rect x="259" y="584" width="112" height="58" rx="6" class="c-mask"/>
+          <rect x="259" y="584" width="112" height="58" rx="6" class="c-database" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="database" class="semantic-sigil s-database" transform="translate(265 590) scale(0.6875)">
+            <ellipse cx="8" cy="4" rx="5" ry="2"/>
+            <path d="M3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8c0 1.1 2.2 2 5 2s5-.9 5-2"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="315" y="605" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">AgreementPayment</text>
+          <text data-detail="context" x="315" y="621" class="t-muted" font-size="7" text-anchor="middle">pending_replacement</text>
+        </g>
+
         <g id="node-challenger_out" data-node-id="challenger_out" data-node-label="Challenger" tabindex="0" role="button" aria-label="Focus Challenger, free balance, 04 / Payout" aria-pressed="false" data-node-kind="external" data-node-sublabel="free balance" data-node-context="04 / Payout">
           <title>Challenger · free balance · 04 / Payout</title>
           <rect x="689" y="128" width="112" height="58" rx="6" class="c-mask"/>
@@ -366,6 +380,20 @@
           <text data-detail="context" x="745" y="507" class="t-muted" font-size="7" text-anchor="middle">free balance</text>
         </g>
 
+        <g id="node-owner_lapse" data-node-id="owner_lapse" data-node-label="Agreement owner" tabindex="0" role="button" aria-label="Focus Agreement owner, free balance, 04 / Payout" aria-pressed="false" data-node-kind="frontend" data-node-sublabel="free balance" data-node-context="04 / Payout">
+          <title>Agreement owner · free balance · 04 / Payout</title>
+          <rect x="689" y="584" width="112" height="58" rx="6" class="c-mask"/>
+          <rect x="689" y="584" width="112" height="58" rx="6" class="c-frontend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="frontend" class="semantic-sigil s-frontend" transform="translate(695 590) scale(0.6875)">
+            <rect x="2" y="3" width="12" height="10" rx="2"/>
+            <path d="M2 6.5h12"/>
+            <circle cx="4.1" cy="4.8" r=".7" class="sigil-fill"/>
+            <circle cx="6.3" cy="4.8" r=".7" class="sigil-fill"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="745" y="605" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">Agreement owner</text>
+          <text data-detail="context" x="745" y="621" class="t-muted" font-size="7" text-anchor="middle">free balance</text>
+        </g>
+
         <g id="node-treasury" data-node-id="treasury" data-node-label="Treasury" tabindex="0" role="button" aria-label="Focus Treasury, burn and slash, 05 / Burn / slash" aria-pressed="false" data-node-kind="cloud" data-node-sublabel="burn and slash" data-node-context="05 / Burn / slash">
           <title>Treasury · burn and slash · 05 / Burn / slash</title>
           <rect x="904" y="356" width="112" height="58" rx="6" class="c-mask"/>
@@ -378,9 +406,9 @@
         </g>
 
         <!-- Flow labels -->
-        <g data-detail="context" data-edge-from="provider_acct" data-edge-to="stake" data-edge-label="register_provider, add_stake" data-edge-key="0" data-edge-id="stake-in">
+        <g data-detail="context" data-edge-from="provider_acct" data-edge-to="stake" data-edge-label="register_provider, set_stake" data-edge-key="0" data-edge-id="stake-in">
           <rect x="133.4" y="94" width="149.2" height="27" rx="4" class="c-mask"/>
-          <text x="208" y="105" class="t-backend" font-size="8" text-anchor="middle">register_provider, add_stake</text>
+          <text x="208" y="105" class="t-backend" font-size="8" text-anchor="middle">register_provider, set_stake</text>
         <text data-detail="fine" x="208" y="116" class="t-dim" font-size="7" text-anchor="middle">stake + ED free</text>
         </g>
         <g data-detail="context" data-edge-from="challenger_acct" data-edge-to="deposit" data-edge-label="challenge_*" data-edge-key="1" data-edge-id="deposit-in">
@@ -398,65 +426,75 @@
           <text x="180" y="499" class="t-backend" font-size="8" text-anchor="middle">sync_balance</text>
         <text data-detail="fine" x="180" y="510" class="t-dim" font-size="7" text-anchor="middle">add_replica_provider</text>
         </g>
-        <g data-detail="context" data-edge-from="stake" data-edge-to="challenger_out" data-edge-label="tx fees from slash" data-edge-key="4" data-edge-id="made-whole">
+        <g data-detail="context" data-edge-from="owner_acct" data-edge-to="replacement" data-edge-label="create_replacement" data-edge-key="4" data-edge-id="repl-in">
+          <rect x="36" y="602" width="208" height="27" rx="4" class="c-mask"/>
+          <text x="140" y="613" class="t-backend" font-size="8" text-anchor="middle">create_replacement</text>
+        <text data-detail="fine" x="140" y="624" class="t-dim" font-size="7" text-anchor="middle">additional_duration at the current price</text>
+        </g>
+        <g data-detail="context" data-edge-from="stake" data-edge-to="challenger_out" data-edge-label="tx fees from slash" data-edge-key="5" data-edge-id="made-whole">
           <rect x="479.9" y="136" width="100.2" height="27" rx="4" class="c-mask"/>
           <text x="530" y="147" class="t-security" font-size="8" text-anchor="middle">tx fees from slash</text>
         <text data-detail="fine" x="530" y="158" class="t-dim" font-size="7" text-anchor="middle">no reward</text>
         </g>
-        <g data-detail="context" data-edge-from="stake" data-edge-to="treasury" data-edge-label="slash: full stake" data-edge-key="5" data-edge-id="slash">
+        <g data-detail="context" data-edge-from="stake" data-edge-to="treasury" data-edge-label="slash" data-edge-key="6" data-edge-id="slash">
           <rect x="585" y="94" width="110" height="27" rx="4" class="c-mask"/>
-          <text x="640" y="105" class="t-security" font-size="8" text-anchor="middle">slash: full stake</text>
+          <text x="640" y="105" class="t-security" font-size="8" text-anchor="middle">slash</text>
         <text data-detail="fine" x="640" y="116" class="t-dim" font-size="7" text-anchor="middle">unanswered challenge</text>
         </g>
-        <g data-detail="context" data-edge-from="deposit" data-edge-to="challenger_out" data-edge-label="excess deposit" data-edge-key="6" data-edge-id="excess">
+        <g data-detail="context" data-edge-from="deposit" data-edge-to="challenger_out" data-edge-label="excess deposit" data-edge-key="7" data-edge-id="excess">
           <rect x="475" y="203" width="110" height="27" rx="4" class="c-mask"/>
           <text x="530" y="214" class="t-muted" font-size="8" text-anchor="middle">excess deposit</text>
         <text data-detail="fine" x="530" y="225" class="t-dim" font-size="7" text-anchor="middle">refund on resolution</text>
         </g>
-        <g data-detail="context" data-edge-from="deposit" data-edge-to="provider_out" data-edge-label="response fee reimbursed" data-edge-key="7" data-edge-id="fee">
+        <g data-detail="context" data-edge-from="deposit" data-edge-to="provider_out" data-edge-label="response fee reimbursed" data-edge-key="8" data-edge-id="fee">
           <rect x="450.5" y="250" width="159" height="27" rx="4" class="c-mask"/>
           <text x="530" y="261" class="t-muted" font-size="8" text-anchor="middle">response fee reimbursed</text>
         <text data-detail="fine" x="530" y="272" class="t-dim" font-size="7" text-anchor="middle">public 100% / authorized split</text>
         </g>
-        <g data-detail="context" data-edge-from="payment" data-edge-to="provider_out" data-edge-label="Pay / Burn remainder / claim" data-edge-key="8" data-edge-id="pay">
-          <rect x="445.6" y="317" width="168.8" height="27" rx="4" class="c-mask"/>
-          <text x="530" y="328" class="t-backend" font-size="8" text-anchor="middle">Pay / Burn remainder / claim</text>
-        <text data-detail="fine" x="530" y="339" class="t-dim" font-size="7" text-anchor="middle">extend_agreement: elapsed period</text>
+        <g data-detail="context" data-edge-from="payment" data-edge-to="provider_out" data-edge-label="Pay / claim_expired_agreement" data-edge-key="9" data-edge-id="pay">
+          <rect x="386.8" y="317" width="286.4" height="27" rx="4" class="c-mask"/>
+          <text x="530" y="328" class="t-backend" font-size="8" text-anchor="middle">Pay / claim_expired_agreement</text>
+        <text data-detail="fine" x="530" y="339" class="t-dim" font-size="7" text-anchor="middle">extend_agreement, replacement activation: elapsed period</text>
         </g>
-        <g data-detail="context" data-edge-from="payment" data-edge-to="treasury" data-edge-label="Burn { burn_percent }" data-edge-key="9" data-edge-id="burn">
-          <rect x="542.55" y="431" width="114.9" height="27" rx="4" class="c-mask"/>
-          <text x="600" y="442" class="t-muted" font-size="8" text-anchor="middle">Burn { burn_percent }</text>
-        <text data-detail="fine" x="600" y="453" class="t-dim" font-size="7" text-anchor="middle">end_agreement</text>
+        <g data-detail="context" data-edge-from="payment" data-edge-to="treasury" data-edge-label="Burn: whole payment" data-edge-key="10" data-edge-id="burn">
+          <rect x="503.35" y="431" width="193.3" height="27" rx="4" class="c-mask"/>
+          <text x="600" y="442" class="t-muted" font-size="8" text-anchor="middle">Burn: whole payment</text>
+        <text data-detail="fine" x="600" y="453" class="t-dim" font-size="7" text-anchor="middle">end_agreement; BurnPremium from owner</text>
         </g>
-        <g data-detail="context" data-edge-from="payment" data-edge-to="owner_out" data-edge-label="remove_slashed" data-edge-key="10" data-edge-id="refund">
-          <rect x="482.35" y="364" width="95.3" height="27" rx="4" class="c-mask"/>
-          <text x="530" y="375" class="t-muted" font-size="8" text-anchor="middle">remove_slashed</text>
+        <g data-detail="context" data-edge-from="payment" data-edge-to="owner_out" data-edge-label="refund_agreement, remove_slashed" data-edge-key="11" data-edge-id="refund">
+          <rect x="445.6" y="364" width="168.8" height="27" rx="4" class="c-mask"/>
+          <text x="530" y="375" class="t-muted" font-size="8" text-anchor="middle">refund_agreement, remove_slashed</text>
         <text data-detail="fine" x="530" y="386" class="t-dim" font-size="7" text-anchor="middle">remaining payment</text>
         </g>
-        <g data-detail="context" data-edge-from="sync_hold" data-edge-to="replica_out" data-edge-label="sync_price" data-edge-key="11" data-edge-id="sync-pay">
+        <g data-detail="context" data-edge-from="sync_hold" data-edge-to="replica_out" data-edge-label="sync_price" data-edge-key="12" data-edge-id="sync-pay">
           <rect x="465.2" y="478" width="129.6" height="27" rx="4" class="c-mask"/>
           <text x="530" y="489" class="t-backend" font-size="8" text-anchor="middle">sync_price</text>
         <text data-detail="fine" x="530" y="500" class="t-dim" font-size="7" text-anchor="middle">per confirm_replica_sync</text>
         </g>
+        <g data-detail="context" data-edge-from="replacement" data-edge-to="owner_lapse" data-edge-label="ReplacementExpired" data-edge-key="13" data-edge-id="repl-lapse">
+          <rect x="457.85" y="592" width="144.3" height="27" rx="4" class="c-mask"/>
+          <text x="530" y="603" class="t-muted" font-size="8" text-anchor="middle">ReplacementExpired</text>
+        <text data-detail="fine" x="530" y="614" class="t-dim" font-size="7" text-anchor="middle">old agreement settled first</text>
+        </g>
 
         <!-- Legend -->
         <g data-legend="" data-legend-bridge="">
-          <text x="40" y="548" class="t-primary" font-size="12" font-weight="650">Legend</text>
-          <g data-legend-semantic-kind="emphasis" data-legend-x="40" data-legend-baseline="568" data-legend-width="123">
-            <path d="M 40 565 L 74 565" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
-            <text x="83" y="568" class="t-muted" font-size="10" font-weight="500">funding / payout</text>
+          <text x="40" y="664" class="t-primary" font-size="12" font-weight="650">Legend</text>
+          <g data-legend-semantic-kind="emphasis" data-legend-x="40" data-legend-baseline="684" data-legend-width="123">
+            <path d="M 40 681 L 74 681" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+            <text x="83" y="684" class="t-muted" font-size="10" font-weight="500">funding / payout</text>
           </g>
-          <g data-legend-semantic-kind="security" data-legend-x="185" data-legend-baseline="568" data-legend-width="68">
-            <path d="M 185 565 L 219 565" class="a-security" stroke-width="1.4" marker-end="url(#arrowhead-security)"/>
-            <text x="228" y="568" class="t-muted" font-size="10" font-weight="500">slash</text>
+          <g data-legend-semantic-kind="security" data-legend-x="185" data-legend-baseline="684" data-legend-width="68">
+            <path d="M 185 681 L 219 681" class="a-security" stroke-width="1.4" marker-end="url(#arrowhead-security)"/>
+            <text x="228" y="684" class="t-muted" font-size="10" font-weight="500">slash</text>
           </g>
-          <g data-legend-semantic-kind="database" data-legend-kind="database" data-legend-label="hold" data-legend-x="275" data-legend-baseline="568" data-legend-width="63">
-            <rect x="275" y="560" width="14" height="9" rx="2" class="c-database" stroke-width="1"/>
-            <text x="297" y="568" class="t-muted" font-size="10" font-weight="500">hold</text>
+          <g data-legend-semantic-kind="database" data-legend-kind="database" data-legend-label="hold" data-legend-x="275" data-legend-baseline="684" data-legend-width="63">
+            <rect x="275" y="676" width="14" height="9" rx="2" class="c-database" stroke-width="1"/>
+            <text x="297" y="684" class="t-muted" font-size="10" font-weight="500">hold</text>
           </g>
-          <g data-legend-semantic-kind="default" data-legend-x="360" data-legend-baseline="568" data-legend-width="177">
-            <path d="M 360 565 L 394 565" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
-            <text x="403" y="568" class="t-muted" font-size="10" font-weight="500">refund, reimbursement, burn</text>
+          <g data-legend-semantic-kind="default" data-legend-x="360" data-legend-baseline="684" data-legend-width="177">
+            <path d="M 360 681 L 394 681" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
+            <text x="403" y="684" class="t-muted" font-size="10" font-weight="500">refund, reimbursement, burn</text>
           </g>
         </g>
       </svg>
@@ -652,7 +690,7 @@
         </div>
         <ul>
           <li>&bull; ProviderStake: provider collateral</li>
-          <li>&bull; AgreementPayment: fee and sync_balance, on the owner; moves on transfer_agreement_ownership</li>
+          <li>&bull; AgreementPayment: fee, sync_balance and a pending replacement&#39;s payment, on the owner; moves on transfer_agreement_ownership</li>
           <li>&bull; ChallengeDeposit: challenger deposit</li>
         </ul>
       </div>
@@ -663,10 +701,26 @@
           <h3>Stake and challenges</h3>
         </div>
         <ul>
-          <li>&bull; Unanswered challenge: resolve_expired_challenge slashes the full stake to the Treasury</li>
+          <li>&bull; Unanswered challenge: resolve_expired_challenge slashes to the Treasury; a physical provider loses its whole held stake, each liable member of a virtual provider its per_provider_stake</li>
           <li>&bull; Challenger made whole from the slash, no reward</li>
           <li>&bull; Any response leaves the stake untouched; an invalid one is rejected</li>
-          <li>&bull; complete_deregister releases the stake</li>
+          <li>&bull; Each agreement snapshots the stake at creation; set_stake lowers the figure for new agreements only, and the old one stays locked until cur_until, the latest expiry struck under it</li>
+          <li>&bull; While the provider has an open challenge (pending_challenges &gt; 0) every stake lock stays active and deregister_provider fails</li>
+          <li>&bull; A slash bumps version; a provider below MinProviderStake takes no new or extended agreement (StakeBelowMinimum)</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot emerald"></div>
+          <h3>Agreement payment</h3>
+        </div>
+        <ul>
+          <li>&bull; Prepaid at creation and extension at the provider&#39;s current price; the client pins expected_version (ProviderVersionMismatch)</li>
+          <li>&bull; refund_agreement: the provider returns the remaining payment; the agreement runs on unpaid and stays challengeable</li>
+          <li>&bull; Replacement: at activation the old agreement&#39;s unelapsed remainder moves into the successor&#39;s escrow; the successor is then paid as any agreement</li>
+          <li>&bull; Virtual provider: settlement pays the snapshotted members equally</li>
+          <li>&bull; Open challenges do not hold the payment: settlement, burn, refund, extension and replacement activation proceed</li>
         </ul>
       </div>
 
