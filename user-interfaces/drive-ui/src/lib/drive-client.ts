@@ -18,6 +18,7 @@ import {
   getBucketVisibility as getBucketVisibilityQuery,
   setBucketVisibility as setBucketVisibilityTx,
   toSs58,
+  type BucketUsage,
   type ChainSigner,
   type Keypair,
   type NegotiateRequest,
@@ -32,7 +33,7 @@ export type Signer = ChainSigner["signer"];
 // Re-export the SDK negotiate primitives + types the create-drive components
 // (NewDriveDialog, ProviderPickerPanel) and the state layer import from here.
 export { buildSignedTermsArgs, negotiateTerms };
-export type { NegotiateRequest, SignedTerms, Visibility };
+export type { BucketUsage, NegotiateRequest, SignedTerms, Visibility };
 
 /** `parseMultiaddrToHttp` is the SDK's `parseMultiaddrToUrl` under the old name. */
 export const parseMultiaddrToHttp = parseMultiaddrToUrl;
@@ -378,6 +379,11 @@ export class DriveClient {
 
   getDrive(bucketId: bigint): Promise<DriveInfo | null> {
     return this.requireFs().getDrive(bucketId);
+  }
+
+  /** Physical usage vs paid quota, read from the drive's provider node. */
+  getDriveUsage(bucketId: bigint): Promise<BucketUsage> {
+    return this.requireFs().getDriveUsage(bucketId);
   }
 
   // ── FS HTTP operations ────────────────────────────────────────────────────

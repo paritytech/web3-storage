@@ -20,8 +20,10 @@ import { httpFetch } from "@web3-storage/core";
 import {
   createBucketWithPrimary as createBucketWithPrimaryTx,
   downloadChunk,
+  fetchBucketUsage,
   removeMember as removeMemberTx,
   setMember as setMemberTx,
+  type BucketUsage,
   type WaitOpts,
 } from "@web3-storage/layer0";
 
@@ -112,6 +114,14 @@ export class FileSystemClient extends Layer1Client {
     const info = await this.getDrive(bucketId);
     if (!info) throw new Error(`Bucket ${bucketId} not found`);
     return info.members;
+  }
+
+  /**
+   * The drive's physical usage against its paid quota, read from the
+   * provider node (a can-fail, provider-side read — not chain state).
+   */
+  async getDriveUsage(bucketId: bigint): Promise<BucketUsage> {
+    return fetchBucketUsage(await this.getProviderUrl(bucketId), bucketId);
   }
 
   // ── Provider resolution ─────────────────────────────────────────────────

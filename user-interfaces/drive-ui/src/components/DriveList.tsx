@@ -9,7 +9,7 @@ import {
   ContextMenuContent,
   ContextMenuItem,
 } from "@/components/ui/context-menu";
-import { useDrives, useSelectedDrive, selectDrive } from "@/state";
+import { useDrives, useDriveUsage, useSelectedDrive, selectDrive } from "@/state";
 import { formatBytes } from "@web3-storage/format";
 import type { DriveInfo } from "@/lib/drive-client";
 import NewDriveDialog from "./NewDriveDialog";
@@ -48,6 +48,7 @@ function providerTitle(providers: DriveInfo["providerInfo"]): string {
 
 export default function DriveList() {
   const drives = useDrives();
+  const usage = useDriveUsage();
   const selected = useSelectedDrive();
   const [showNewDrive, setShowNewDrive] = useState(false);
   const [accessDrive, setAccessDrive] = useState<DriveInfo | null>(null);
@@ -84,9 +85,33 @@ export default function DriveList() {
                   <HardDrive className={`h-4 w-4 flex-shrink-0 ${isSelected ? "text-primary" : "text-muted-foreground"}`} />
                   <div className="flex-1 min-w-0">
                     <p className="truncate">{name}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {formatBytes(Number(drive.maxCapacity))}
-                    </p>
+                    {(() => {
+                      const u = usage.get(drive.bucketId.toString());
+                      if (!u) {
+                        // Provider usage unavailable: fall back to quota only.
+                        return (
+                          <p className="text-xs text-muted-foreground">
+                            {formatBytes(Number(drive.maxCapacity))}
+                          </p>
+                        );
+                      }
+                      const max = u.quotaSynced ? u.maxBytes : drive.maxCapacity;
+                      const pct =
+                        max > 0n ? Math.min(Number((u.usedBytes * 100n) / max), 100) : 0;
+                      return (
+                        <div data-testid={`drive-list-usage-${drive.bucketId}`}>
+                          <p className="text-xs text-muted-foreground">
+                            {formatBytes(u.usedBytes)} of {formatBytes(max)} used
+                          </p>
+                          <div className="mt-0.5 h-1 w-full rounded bg-muted">
+                            <div
+                              className="h-1 rounded bg-primary"
+                              style={{ width: `${pct}%` }}
+                            />
+                          </div>
+                        </div>
+                      );
+                    })()}
                     {(() => {
                       const p = providerParts(drive.providerInfo);
                       return (

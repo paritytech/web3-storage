@@ -18,6 +18,8 @@
 import { httpFetch } from "@web3-storage/core";
 import {
   createBucketWithPrimary as createBucketWithPrimaryTx,
+  fetchBucketUsage,
+  type BucketUsage,
   type WaitOpts,
 } from "@web3-storage/layer0";
 
@@ -89,6 +91,14 @@ export class S3Client extends Layer1Client {
 
   getProviderUrl(bucketId: bigint): Promise<string> {
     return this.providers.get(bucketId);
+  }
+
+  /**
+   * The bucket's physical usage against its paid quota, read from the
+   * provider node (a can-fail, provider-side read — not chain state).
+   */
+  async getBucketUsage(bucketId: bigint): Promise<BucketUsage> {
+    return fetchBucketUsage(await this.getProviderUrl(bucketId), bucketId);
   }
 
   invalidateProviderUrl(bucketId?: bigint): void {
