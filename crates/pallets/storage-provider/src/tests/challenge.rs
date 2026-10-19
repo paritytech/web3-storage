@@ -1178,7 +1178,7 @@ mod challenge_tests {
     use frame_support::{dispatch::Pays, pallet_prelude::DispatchResult, BoundedVec};
     use sp_core::{Pair, H256};
     use storage_primitives::{
-        hash_children, hash_leaf, BucketSnapshot, ChallengeId, ChunkLocation, Commitment,
+        hash_children, hash_leaf, mmr, BucketSnapshot, ChallengeId, ChunkLocation, Commitment,
         EndAction, MerkleProof, MmrLeaf, MmrProof, ProviderRole, ReplicaSyncRecord,
     };
 
@@ -1219,12 +1219,7 @@ mod challenge_tests {
             data_size,
             total_size: data_size,
         };
-        let leaf_hash = hash_leaf(&leaf.encode());
-        let mmr_proof = MmrProof {
-            leaf,
-            items: vec![],
-        };
-        (leaf_hash, mmr_proof)
+        mmr::proof(&[leaf], 0).unwrap().unwrap()
     }
 
     fn make_chunk_bv(data: &[u8]) -> BoundedVec<u8, <Test as Config>::MaxChunkSize> {
@@ -2973,8 +2968,8 @@ mod challenge_tests {
     }
 
     /// A two-leaf MMR of single-chunk leaves: the root and, per leaf, its
-    /// chunk, `MmrLeaf` and leaf hash.
-    fn two_leaf_mmr() -> (H256, [(Vec<u8>, MmrLeaf, H256); 2]) {
+    /// chunk and `MmrLeaf`.
+    fn two_leaf_mmr() -> (H256, [(Vec<u8>, MmrLeaf); 2]) {
         let chunk0 = b"file0".to_vec();
         let chunk1 = b"file1".to_vec();
         let leaf0 = MmrLeaf {
@@ -2987,25 +2982,17 @@ mod challenge_tests {
             data_size: 5,
             total_size: 10,
         };
-        let hash0 = storage_primitives::hash_leaf(&leaf0.encode());
-        let hash1 = storage_primitives::hash_leaf(&leaf1.encode());
-        let root = storage_primitives::hash_children(hash0, hash1);
-        (root, [(chunk0, leaf0, hash0), (chunk1, leaf1, hash1)])
+        let root = mmr::root(&[leaf0.clone(), leaf1.clone()]).unwrap();
+        (root, [(chunk0, leaf0), (chunk1, leaf1)])
     }
 
     /// `Proof` response for leaf `index` of `two_leaf_mmr`.
-    fn two_leaf_proof(
-        leaves: &[(Vec<u8>, MmrLeaf, H256); 2],
-        index: usize,
-    ) -> ChallengeResponse<Test> {
-        let (chunk, leaf, _) = &leaves[index];
-        let (_, _, sibling) = &leaves[1 - index];
+    fn two_leaf_proof(leaves: &[(Vec<u8>, MmrLeaf); 2], index: usize) -> ChallengeResponse<Test> {
+        let mmr_leaves: Vec<MmrLeaf> = leaves.iter().map(|(_, leaf)| leaf.clone()).collect();
+        let (_, mmr_proof) = mmr::proof(&mmr_leaves, index as u64).unwrap().unwrap();
         ChallengeResponse::Proof {
-            chunk_data: make_chunk_bv(chunk),
-            mmr_proof: MmrProof {
-                leaf: leaf.clone(),
-                items: vec![*sibling],
-            },
+            chunk_data: make_chunk_bv(&leaves[index].0),
+            mmr_proof,
             chunk_proof: MerkleProof {
                 siblings: vec![],
                 path: vec![],

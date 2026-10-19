@@ -18,6 +18,8 @@ use sp_core::H256;
 
 pub mod agreement_term;
 pub mod merkle;
+#[cfg(feature = "std")]
+pub mod mmr;
 
 pub use agreement_term::*;
 pub use merkle::*;
@@ -841,32 +843,18 @@ mod tests {
         }
     }
 
-    /// Build the MMR over `leaf_count` test leaves with the library. Returns
-    /// its commitment and the proof for the leaf at `index`.
+    /// Build the MMR over `leaf_count` test leaves. Returns its commitment
+    /// and the proof for the leaf at `index`.
     fn mmr_commitment_and_proof(leaf_count: u64, index: u64) -> (Commitment, MmrProof) {
-        use mmr_lib::{util::MemStore, MMR};
-
-        let store = MemStore::default();
-        let mut mmr = MMR::<H256, StorageMerge, _>::new(0, &store);
-        let positions: Vec<u64> = (0..leaf_count)
-            .map(|i| mmr.push(hash_leaf(&test_leaf(i).encode())).unwrap())
-            .collect();
-        let commitment = Commitment {
-            mmr_root: mmr.get_root().unwrap(),
-            start_seq: 0,
-            leaf_count,
-        };
-        let items = mmr
-            .gen_proof(vec![positions[index as usize]])
-            .unwrap()
-            .proof_items()
-            .to_vec();
+        let leaves: Vec<MmrLeaf> = (0..leaf_count).map(test_leaf).collect();
+        let (mmr_root, proof) = crate::mmr::proof(&leaves, index).unwrap().unwrap();
         (
-            commitment,
-            MmrProof {
-                leaf: test_leaf(index),
-                items,
+            Commitment {
+                mmr_root,
+                start_seq: 0,
+                leaf_count,
             },
+            proof,
         )
     }
 

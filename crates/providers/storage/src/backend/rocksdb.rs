@@ -7,7 +7,6 @@
 //!
 //! [`types`]: super::types
 
-use super::mmr::{mmr_peaks, mmr_proof, mmr_root};
 use super::types::FORMAT_VERSION;
 use super::{BucketInfo, BucketState, BucketStats, BucketSummary, ChunkTreeNode, StorageBackend};
 use crate::error::Error;
@@ -16,7 +15,7 @@ use rocksdb::{Options, DB};
 use sp_core::H256;
 use std::path::Path;
 use std::sync::Arc;
-use storage_primitives::{BucketId, MmrLeaf};
+use storage_primitives::{mmr, BucketId, MmrLeaf, MmrProof};
 
 /// Column families for organizing data
 const CF_NODES: &str = "nodes";
@@ -392,7 +391,7 @@ impl DiskStorage {
             bucket.leaves.push(leaf);
         }
 
-        bucket.mmr_root = mmr_root(&bucket.leaves)?;
+        bucket.mmr_root = mmr::root(&bucket.leaves)?;
 
         // Update bucket
         self.update_bucket(bucket_id, &bucket)?;
@@ -423,7 +422,7 @@ impl DiskStorage {
             bucket.leaves.drain(0..to_remove);
             bucket.start_seq = new_start_seq;
 
-            bucket.mmr_root = mmr_root(&bucket.leaves)?;
+            bucket.mmr_root = mmr::root(&bucket.leaves)?;
 
             self.update_bucket(bucket_id, &bucket)?;
         }
@@ -440,7 +439,7 @@ impl DiskStorage {
         let bucket = self
             .get_bucket(bucket_id)
             .ok_or(Error::BucketNotFound(bucket_id))?;
-        Ok(mmr_proof(&bucket.leaves, leaf_index)?.1)
+        Ok(leaf_proof(&bucket.leaves, leaf_index)?.1)
     }
 
     /// See [`StorageBackend::get_mmr_proof_for_commitment`].
@@ -480,7 +479,7 @@ impl DiskStorage {
             )));
         }
 
-        let (root, proof) = mmr_proof(&bucket.leaves[offset..end], leaf_index)?;
+        let (root, proof) = leaf_proof(&bucket.leaves[offset..end], leaf_index)?;
         // The rebuilt prefix must reproduce the cited root; a mismatch means
         // the local history diverged from what was signed, and any proof from
         // it would fail on-chain verification anyway.
@@ -499,7 +498,7 @@ impl DiskStorage {
             .get_bucket(bucket_id)
             .ok_or(Error::BucketNotFound(bucket_id))?;
 
-        mmr_peaks(&bucket.leaves)
+        Ok(mmr::peaks(&bucket.leaves)?)
     }
 }
 
@@ -586,6 +585,11 @@ impl StorageBackend for DiskStorage {
     fn get_mmr_peaks(&self, bucket_id: BucketId) -> Result<(H256, Vec<H256>), Error> {
         self.get_mmr_peaks(bucket_id)
     }
+}
+
+/// Root of the MMR over `leaves` and the proof for the leaf at `leaf_index`.
+fn leaf_proof(leaves: &[MmrLeaf], leaf_index: u64) -> Result<(H256, MmrProof), Error> {
+    mmr::proof(leaves, leaf_index)?.ok_or_else(|| Error::NodeNotFound(format!("leaf_{leaf_index}")))
 }
 
 #[cfg(test)]
@@ -1017,6 +1021,24 @@ mod tests {
                 .unwrap();
             storage.commit(bucket_id, vec![hash]).unwrap();
         }
+    }
+
+    #[test]
+    fn proof_for_a_missing_leaf_is_node_not_found() {
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        bucket_with_leaves(&storage, 1, 0);
+        bucket_with_leaves(&storage, 2, 4);
+
+        assert!(matches!(
+            storage.get_mmr_proof(1, 0),
+            Err(Error::NodeNotFound(_))
+        ));
+        assert!(matches!(
+            storage.get_mmr_proof(2, 4),
+            Err(Error::NodeNotFound(_))
+        ));
+        assert!(storage.get_mmr_proof(2, 3).is_ok());
     }
 
     #[test]
