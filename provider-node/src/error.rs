@@ -97,8 +97,9 @@ pub enum Error {
     )]
     ChainStateNotReady,
 
+    /// The node has not connected to the chain yet.
     #[error(transparent)]
-    Chain(#[from] provider_chain::Error),
+    ChainNotConnected(#[from] crate::chain_connection::NotConnected),
 
     /// The node cannot sign with its registered key. Each reason keeps the
     /// response code it had when these were three separate variants.
@@ -132,7 +133,6 @@ struct ErrorResponse {
 
 impl IntoResponse for Error {
     fn into_response(self) -> Response {
-        use provider_chain::Error as ChainError;
         use provider_storage::Error as StorageError;
         let (status, error_response) = match &self {
             // Exhaustive on purpose — no wildcard — so a new storage variant
@@ -454,24 +454,15 @@ impl IntoResponse for Error {
                     })),
                 },
             ),
-            Error::Chain(err) => match err {
-                ChainError::NotConnected => (
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    ErrorResponse {
-                        error: "chain_unavailable".to_string(),
-                        details: Some(serde_json::json!({
-                            "message": "the node has not yet established a connection to the chain"
-                        })),
-                    },
-                ),
-                ChainError::Connection(_) | ChainError::Internal(_) => (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    ErrorResponse {
-                        error: "internal_error".to_string(),
-                        details: Some(serde_json::json!({ "message": err.to_string() })),
-                    },
-                ),
-            },
+            Error::ChainNotConnected(_) => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                ErrorResponse {
+                    error: "chain_unavailable".to_string(),
+                    details: Some(serde_json::json!({
+                        "message": "the node has not yet established a connection to the chain"
+                    })),
+                },
+            ),
             Error::ProviderDeregistering => (
                 StatusCode::SERVICE_UNAVAILABLE,
                 ErrorResponse {
@@ -658,15 +649,10 @@ mod tests {
             status_of(SigningRefused::NoKey.into()),
             StatusCode::SERVICE_UNAVAILABLE
         );
-        // A connection that was never established is retryable; a failed
-        // connect attempt is a bug. They must not share a status code.
+        // A connection that was never established is retryable.
         assert_eq!(
-            status_of(provider_chain::Error::NotConnected.into()),
+            status_of(crate::chain_connection::NotConnected.into()),
             StatusCode::SERVICE_UNAVAILABLE
-        );
-        assert_eq!(
-            status_of(provider_chain::Error::Internal("boom".into()).into()),
-            StatusCode::INTERNAL_SERVER_ERROR
         );
     }
 

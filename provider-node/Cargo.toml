@@ -9,9 +9,9 @@ description = "Off-chain provider node for scalable Web3 storage"
 
 [dependencies]
 provider-auth = { workspace = true }
-provider-chain = { workspace = true, features = ["all"] }
 provider-challenge = { workspace = true }
 provider-coordinator = { workspace = true }
+provider-events = { workspace = true }
 provider-negotiation = { workspace = true }
 provider-replica = { workspace = true }
 provider-storage = { workspace = true }
@@ -28,6 +28,7 @@ sp-core = { workspace = true, features = ["std"] }
 sp-crypto-hashing = { workspace = true, features = ["std"] }
 sp-runtime = { workspace = true, features = ["std"] }
 subxt = { workspace = true, features = ["light-client"] }
+subxt-rpcs = { workspace = true }
 subxt-signer = { workspace = true }
 base64 = { workspace = true }
 thiserror = { workspace = true }
@@ -41,6 +42,7 @@ codec = { workspace = true, features = ["std"] }
 async-trait = { workspace = true }
 
 [dev-dependencies]
+scale-info = { workspace = true, features = ["std"] }
 provider-storage = { workspace = true, features = ["test-helpers"] }
 subxt-rpcs = { workspace = true, features = ["mock-rpc-client"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util", "time"] }
