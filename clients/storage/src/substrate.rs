@@ -502,3 +502,17 @@ pub fn parse_h256(hex: &str) -> Result<H256, ClientError> {
 pub fn h256_to_hex(hash: &H256) -> String {
     format!("0x{}", hex::encode(hash.as_bytes()))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_h256_rejects_a_hash_of_wrong_length() {
+        assert!(parse_h256(&format!("0x{}", "ab".repeat(31))).is_err());
+        assert_eq!(
+            parse_h256(&format!("0x{}", "ab".repeat(32))).unwrap(),
+            H256::repeat_byte(0xab)
+        );
+    }
+}

@@ -14,8 +14,8 @@ prost = { workspace = true, optional = true }
 codec = { workspace = true }
 scale-info = { workspace = true }
 sp-core = { workspace = true }
-sp-crypto-hashing = { workspace = true }
 sp-runtime = { workspace = true }
+storage-primitives = { workspace = true }
 serde = { workspace = true, optional = true }
 
 # Utilities
@@ -36,7 +36,7 @@ std = [
 	"scale-info/std",
 	"serde/std",
 	"sp-core/std",
-	"sp-crypto-hashing/std",
 	"sp-runtime/std",
+	"storage-primitives/std",
 	"thiserror",
 ]

@@ -940,8 +940,10 @@ Internal nodes in Merkle trees are also chunks—their content is child hashes:
 ```
 Internal Node
 ├── hash: H256 = blake2_256(child_hashes)
-├── children: [H256, H256, ...]
+├── children: [H256, H256]
 ```
+
+In a committed tree, an internal node has exactly two children.
 
 **Why content-addressed?**
 - Deduplication: Identical chunks stored once
