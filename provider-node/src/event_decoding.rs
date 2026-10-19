@@ -5,8 +5,8 @@
 //!
 //! Events decode through the static `storage-subxt` bindings, so a runtime
 //! change that reshapes one of these events surfaces as a decode failure
-//! (logged, backstopped by the safety-net scans) instead of silently
-//! yielding `None` on dynamic field lookups.
+//! instead of silently yielding `None` on dynamic field lookups. See
+//! [`decode_block_contents`] for how each kind of failure is handled.
 
 use provider_coordinator::BlockContents;
 use provider_events::BlockEvent;
@@ -99,7 +99,8 @@ fn lifecycle_account(event: &StorageProviderEvent) -> Option<AccountId32> {
         | StorageProviderEvent::DeregisterCancelled { provider } => {
             Some(AccountId32::new(provider.0))
         }
-        // A new arm above also needs a check in `is_other_relevant_event`.
+        // A new arm above also needs a check in `is_other_relevant_event`;
+        // without it, a decode failure of that event is not logged.
         _ => None,
     }
 }

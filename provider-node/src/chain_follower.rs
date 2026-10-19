@@ -797,7 +797,8 @@ mod tests {
 
     /// The tracked metadata with the `role` field removed from the
     /// `StorageProvider::MemberSet` event, so a `MemberSet` record encoded
-    /// against it no longer decodes against the static bindings.
+    /// against it no longer decodes against the static bindings. Expects the
+    /// snapshot to be V16 metadata.
     fn metadata_without_member_set_role() -> Vec<u8> {
         use codec::{Decode, Encode};
         use subxt::ext::frame_metadata::{RuntimeMetadata, RuntimeMetadataPrefixed};
