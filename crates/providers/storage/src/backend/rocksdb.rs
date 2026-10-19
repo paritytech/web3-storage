@@ -1043,7 +1043,11 @@ mod tests {
             leaf_count: 2,
         };
         let proof = storage.get_mmr_proof_for_commitment(1, &cited, 1).unwrap();
-        assert!(storage_primitives::verify_mmr_proof(&proof, 1, &cited));
+        assert!(storage_primitives::verify_mmr_proof(
+            proof.clone(),
+            1,
+            &cited
+        ));
         // The same proof must not satisfy a challenge citing the current
         // 3-leaf commitment: it was built for the two-leaf MMR.
         let current = storage_primitives::Commitment {
@@ -1051,7 +1055,7 @@ mod tests {
             start_seq: 0,
             leaf_count: 3,
         };
-        assert!(!storage_primitives::verify_mmr_proof(&proof, 1, &current));
+        assert!(!storage_primitives::verify_mmr_proof(proof, 1, &current));
 
         // A leaf index outside the cited commitment is rejected even though
         // the bucket currently holds it.
@@ -1115,7 +1119,7 @@ mod tests {
         };
         let proof = storage.get_mmr_proof_for_commitment(1, &cited, 1).unwrap();
         assert_eq!(proof.leaf.data_root, expected.data_root);
-        assert!(storage_primitives::verify_mmr_proof(&proof, 1, &cited));
+        assert!(storage_primitives::verify_mmr_proof(proof, 1, &cited));
     }
 
     #[test]

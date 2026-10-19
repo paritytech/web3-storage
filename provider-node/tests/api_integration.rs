@@ -1171,7 +1171,7 @@ common::backend_tests! {
             start_seq: commit["start_seq"].as_u64().unwrap(),
             leaf_count: commit["leaf_count"].as_u64().unwrap(),
         };
-        assert!(storage_primitives::verify_mmr_proof(&proof, 1, &commitment));
+        assert!(storage_primitives::verify_mmr_proof(proof, 1, &commitment));
     }
 }
 

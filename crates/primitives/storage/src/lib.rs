@@ -558,7 +558,7 @@ impl Merge for StorageMerge {
 /// proof items. If `commitment.mmr_root` is the root of an MMR with
 /// `leaf_count` leaves, a proof for another leaf, or for an MMR of another
 /// size, fails.
-pub fn verify_mmr_proof(proof: &MmrProof, leaf_index: u64, commitment: &Commitment) -> bool {
+pub fn verify_mmr_proof(proof: MmrProof, leaf_index: u64, commitment: &Commitment) -> bool {
     // Reject `leaf_count > u64::MAX / 2`: `leaf_index_to_mmr_size` computes
     // `2 * leaf_count`, which overflows above that.
     if leaf_index >= commitment.leaf_count || commitment.leaf_count > u64::MAX / 2 {
@@ -573,7 +573,7 @@ pub fn verify_mmr_proof(proof: &MmrProof, leaf_index: u64, commitment: &Commitme
     }
 
     let leaf = (leaf_pos, hash_leaf(&proof.leaf.encode()));
-    mmr_lib::MerkleProof::<H256, StorageMerge>::new(mmr_size, proof.items.clone())
+    mmr_lib::MerkleProof::<H256, StorageMerge>::new(mmr_size, proof.items)
         .verify(commitment.mmr_root, alloc::vec![leaf])
         .unwrap_or(false)
 }
@@ -878,7 +878,7 @@ mod tests {
                 let (commitment, proof) = mmr_commitment_and_proof(leaf_count, index);
                 for other in 0..leaf_count {
                     assert_eq!(
-                        verify_mmr_proof(&proof, other, &commitment),
+                        verify_mmr_proof(proof.clone(), other, &commitment),
                         other == index,
                         "proof for leaf {index} checked as leaf {other} of {leaf_count}"
                     );
@@ -899,7 +899,7 @@ mod tests {
                 let (_, proof) = mmr_commitment_and_proof(leaf_count, index);
                 for other in (index + 1..=17).filter(|other| *other != leaf_count) {
                     assert!(
-                        !verify_mmr_proof(&proof, index, &commitments[other as usize - 1]),
+                        !verify_mmr_proof(proof.clone(), index, &commitments[other as usize - 1]),
                         "proof for leaf {index} of {leaf_count} verified in {other} leaves"
                     );
                 }
@@ -933,35 +933,35 @@ mod tests {
     #[test]
     fn tampered_mmr_proof_does_not_verify() {
         let (commitment, proof) = mmr_commitment_and_proof(7, 2);
-        assert!(verify_mmr_proof(&proof, 2, &commitment));
+        assert!(verify_mmr_proof(proof.clone(), 2, &commitment));
 
         let mut wrong_leaf = proof.clone();
         wrong_leaf.leaf.data_size += 1;
-        assert!(!verify_mmr_proof(&wrong_leaf, 2, &commitment));
+        assert!(!verify_mmr_proof(wrong_leaf, 2, &commitment));
 
         let mut wrong_item = proof.clone();
         wrong_item.items[0] = H256::repeat_byte(0x44);
-        assert!(!verify_mmr_proof(&wrong_item, 2, &commitment));
+        assert!(!verify_mmr_proof(wrong_item, 2, &commitment));
 
         let mut missing_item = proof.clone();
         missing_item.items.pop();
-        assert!(!verify_mmr_proof(&missing_item, 2, &commitment));
+        assert!(!verify_mmr_proof(missing_item, 2, &commitment));
 
         let mut extra_item = proof.clone();
         extra_item.items.push(H256::repeat_byte(0x55));
-        assert!(!verify_mmr_proof(&extra_item, 2, &commitment));
+        assert!(!verify_mmr_proof(extra_item, 2, &commitment));
 
         // A 1-leaf MMR takes no items.
         let (single, mut single_proof) = mmr_commitment_and_proof(1, 0);
-        assert!(verify_mmr_proof(&single_proof, 0, &single));
+        assert!(verify_mmr_proof(single_proof.clone(), 0, &single));
         single_proof.items.push(H256::repeat_byte(0x55));
-        assert!(!verify_mmr_proof(&single_proof, 0, &single));
+        assert!(!verify_mmr_proof(single_proof, 0, &single));
 
         let wrong_root = Commitment {
             mmr_root: H256::repeat_byte(0x66),
             ..commitment
         };
-        assert!(!verify_mmr_proof(&proof, 2, &wrong_root));
+        assert!(!verify_mmr_proof(proof.clone(), 2, &wrong_root));
     }
 
     /// The largest MMR `verify_mmr_proof` accepts (`u64::MAX / 2` leaves, 63
@@ -1014,7 +1014,7 @@ mod tests {
                 };
 
                 assert!(
-                    verify_mmr_proof(&proof, leaf_index, &commitment),
+                    verify_mmr_proof(proof.clone(), leaf_index, &commitment),
                     "leaf {leaf_index} in the height-{height} peak"
                 );
                 if proof.items.is_empty() {
@@ -1024,7 +1024,7 @@ mod tests {
                     let mut tampered = proof.clone();
                     tampered.items[changed] = H256::repeat_byte(0xEE);
                     assert!(
-                        !verify_mmr_proof(&tampered, leaf_index, &commitment),
+                        !verify_mmr_proof(tampered, leaf_index, &commitment),
                         "leaf {leaf_index}, item {changed} changed"
                     );
                 }
@@ -1036,8 +1036,8 @@ mod tests {
     fn mmr_proof_rejects_invalid_leaf_position_without_panicking() {
         let (commitment, proof) = mmr_commitment_and_proof(4, 1);
 
-        assert!(!verify_mmr_proof(&proof, 4, &commitment));
-        assert!(!verify_mmr_proof(&proof, u64::MAX, &commitment));
+        assert!(!verify_mmr_proof(proof.clone(), 4, &commitment));
+        assert!(!verify_mmr_proof(proof.clone(), u64::MAX, &commitment));
 
         for leaf_count in [0, u64::MAX / 2 + 1, u64::MAX] {
             let resized = Commitment {
@@ -1045,7 +1045,7 @@ mod tests {
                 ..commitment
             };
             assert!(
-                !verify_mmr_proof(&proof, 0, &resized),
+                !verify_mmr_proof(proof.clone(), 0, &resized),
                 "{leaf_count} leaves"
             );
         }
