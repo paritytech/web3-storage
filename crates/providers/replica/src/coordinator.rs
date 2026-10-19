@@ -14,7 +14,7 @@
 use crate::sync::ReplicaSync;
 use crate::sync_roots::{SignedSyncRoots, SyncRootsSigner};
 use crate::Error;
-use provider_chain::{BlockEvent, BlockEventRx};
+use provider_events::{BlockEvent, BlockEventRx};
 use provider_storage::StorageBackend;
 use provider_types::ChainClientError;
 use sp_core::H256;
