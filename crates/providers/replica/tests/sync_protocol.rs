@@ -18,20 +18,20 @@ use common::{
     spawn_primary_with_nodes, status, Reply,
 };
 use provider_replica::{Error, ReplicaSync};
-use provider_storage::{temp_rocksdb, StorageBackend};
+use provider_storage::{temp_rocksdb, ChunkTreeNode, StorageBackend};
 use sp_core::H256;
 use std::collections::HashMap;
 use std::sync::Arc;
-use storage_primitives::{blake2_256, BucketId, MmrLeaf};
+use storage_primitives::{hash_children, hash_leaf, BucketId, MmrLeaf};
 use tempfile::TempDir;
 
 const BUCKET: BucketId = 1;
 
 /// Asserts the error matches `$pattern`, printing it when it does not.
 macro_rules! assert_err {
-    ($result:expr, $pattern:pat) => {
+    ($result:expr, $pattern:pat $(if $guard:expr)?) => {
         let err = $result.unwrap_err();
-        assert!(matches!(err, $pattern), "got {err}");
+        assert!(matches!(err, $pattern $(if $guard)?), "got {err}");
     };
 }
 
@@ -176,6 +176,23 @@ async fn non_base64_node_data_is_a_decode_error() {
 }
 
 #[tokio::test]
+async fn child_hash_of_wrong_length_is_a_decode_error() {
+    let peak = H256::repeat_byte(0x11);
+    let reply = node_body(
+        &hex_hash(peak),
+        &base64(b"payload"),
+        Some(vec![format!("0x{}", "ab".repeat(31))]),
+    );
+    assert_err!(
+        sync_serving_node(peak, reply).await,
+        Error::Decode {
+            what: "child hash",
+            ..
+        }
+    );
+}
+
+#[tokio::test]
 async fn non_hex_child_hash_is_a_decode_error() {
     let peak = H256::repeat_byte(0x11);
     let reply = node_body(
@@ -202,12 +219,66 @@ async fn a_node_whose_hash_does_not_match_its_data_is_rejected() {
     );
     assert_err!(
         sync_serving_node(claimed, reply).await,
-        Error::Backend(provider_storage::Error::InvalidHash { .. })
+        Error::NodeHashMismatch { expected, actual }
+            if expected == claimed && actual == hash_leaf(b"payload hashing to something else")
+    );
+}
+
+#[tokio::test]
+async fn an_internal_node_with_the_wrong_hash_is_rejected_before_its_children_are_stored() {
+    let left_data = b"left-chunk".to_vec();
+    let left = hash_leaf(&left_data);
+    let right_data = b"right-chunk".to_vec();
+    let right = hash_leaf(&right_data);
+    // The primary serves a well-formed internal node under a hash that is not
+    // the hash of its children.
+    let requested = H256::repeat_byte(0x11);
+    assert_ne!(requested, hash_children(left, right));
+
+    let nodes = HashMap::from([
+        (
+            hex_hash(requested),
+            node_body(
+                &hex_hash(requested),
+                &base64(&[left.as_bytes(), right.as_bytes()].concat()),
+                Some(vec![hex_hash(left), hex_hash(right)]),
+            ),
+        ),
+        (
+            hex_hash(left),
+            node_body(&hex_hash(left), &base64(&left_data), None),
+        ),
+        (
+            hex_hash(right),
+            node_body(&hex_hash(right), &base64(&right_data), None),
+        ),
+    ]);
+    let f = fixture();
+    let url = spawn_primary_with_nodes(
+        peaks_body(&hex_hash(unheld_root()), &[hex_hash(requested)]),
+        nodes,
+    )
+    .await;
+
+    assert_err!(
+        f.sync.sync_from_primary(BUCKET, &url).await,
+        Error::NodeHashMismatch { expected, actual }
+            if expected == requested && actual == hash_children(left, right)
+    );
+    assert_eq!(
+        f.storage.get_node(&left),
+        None,
+        "children must not be stored"
+    );
+    assert_eq!(
+        f.storage.get_node(&right),
+        None,
+        "children must not be stored"
     );
 }
 
 /// KNOWN DEFECT: `/mmr_peaks` answers with MMR hashes - the provider builds
-/// them as `blake2_256(MmrLeaf.encode())` plus internal MMR hashes that are
+/// them as `hash_leaf(MmrLeaf.encode())` plus internal MMR hashes that are
 /// never persisted - while `/node` is keyed by chunk-data hash. So every sync
 /// of a non-empty bucket ends at this 404, whatever the tree shape. Described
 /// in #392 (closed as not planned), fixed by the rework in #65, caught by the
@@ -216,9 +287,9 @@ async fn a_node_whose_hash_does_not_match_its_data_is_rejected() {
 async fn peak_hashes_are_not_node_keys_so_every_real_sync_404s() {
     // An MMR peak: the hash of a leaf record, not of any stored chunk, so the
     // mock has no `/node` entry for it - exactly as a real primary would not.
-    let peak = blake2_256(
+    let peak = hash_leaf(
         &MmrLeaf {
-            data_root: blake2_256(b"chunk"),
+            data_root: hash_leaf(b"chunk"),
             data_size: 5,
             total_size: 5,
         }
@@ -236,16 +307,16 @@ async fn peak_hashes_are_not_node_keys_so_every_real_sync_404s() {
     );
 }
 
-/// KNOWN DEFECT: `fetch_subtree` stores a node before recursing into its
-/// children, but `store_node` rejects an internal node whose children are not
-/// yet stored. Reachable only with the mock below; against a real primary the
-/// 404 above happens first. Part of the rework in #65.
 #[tokio::test]
-async fn an_internal_peak_fails_because_the_parent_is_stored_first() {
-    let child_data = b"child payload".to_vec();
-    let child = blake2_256(&child_data);
-    let parent_data = b"parent payload".to_vec();
-    let parent = blake2_256(&parent_data);
+async fn an_internal_peak_is_stored_after_the_children_beneath_it() {
+    let left_data = b"left-chunk".to_vec();
+    let left = hash_leaf(&left_data);
+    let right_data = b"right-chunk".to_vec();
+    let right = hash_leaf(&right_data);
+    // An internal node is identified by its children, and a real primary
+    // serves their concatenation as its `data`.
+    let parent = hash_children(left, right);
+    let parent_data = [left.as_bytes(), right.as_bytes()].concat();
 
     let nodes = HashMap::from([
         (
@@ -253,24 +324,40 @@ async fn an_internal_peak_fails_because_the_parent_is_stored_first() {
             node_body(
                 &hex_hash(parent),
                 &base64(&parent_data),
-                Some(vec![hex_hash(child)]),
+                Some(vec![hex_hash(left), hex_hash(right)]),
             ),
         ),
         (
-            hex_hash(child),
-            node_body(&hex_hash(child), &base64(&child_data), None),
+            hex_hash(left),
+            node_body(&hex_hash(left), &base64(&left_data), None),
+        ),
+        (
+            hex_hash(right),
+            node_body(&hex_hash(right), &base64(&right_data), None),
         ),
     ]);
     let f = fixture();
-    let url = spawn_primary_with_nodes(
-        peaks_body(&hex_hash(unheld_root()), &[hex_hash(parent)]),
-        nodes,
-    )
-    .await;
+    f.storage.init_bucket(BUCKET, u64::MAX).unwrap();
+    let target = unheld_root();
+    let url =
+        spawn_primary_with_nodes(peaks_body(&hex_hash(target), &[hex_hash(parent)]), nodes).await;
 
-    assert_err!(
-        f.sync.sync_from_primary(BUCKET, &url).await,
-        Error::Backend(provider_storage::Error::ChildrenMissing(_))
+    assert_eq!(
+        f.sync.sync_from_primary(BUCKET, &url).await.unwrap(),
+        target
+    );
+    assert_eq!(
+        f.storage.get_node(&parent),
+        Some(ChunkTreeNode::Internal { left, right }),
+        "the parent must be stored once its children are present"
+    );
+    assert_eq!(
+        f.storage.get_node(&left),
+        Some(ChunkTreeNode::Chunk(left_data))
+    );
+    assert_eq!(
+        f.storage.get_node(&right),
+        Some(ChunkTreeNode::Chunk(right_data))
     );
 }
 
@@ -278,10 +365,12 @@ async fn an_internal_peak_fails_because_the_parent_is_stored_first() {
 async fn a_root_we_already_hold_returns_without_fetching_any_node() {
     let f = fixture();
     let data = b"already stored".to_vec();
-    let leaf = blake2_256(&data);
+    let leaf = hash_leaf(&data);
     f.storage.init_bucket(BUCKET, u64::MAX).unwrap();
-    f.storage.store_node(BUCKET, leaf, data, None).unwrap();
-    let (local_root, _, _) = f.storage.commit(BUCKET, vec![leaf]).unwrap();
+    f.storage
+        .store_node(BUCKET, leaf, ChunkTreeNode::Chunk(data))
+        .unwrap();
+    let local_root = f.storage.commit(BUCKET, vec![leaf]).unwrap().mmr_root;
 
     // Answering the leaf with an error proves `/node` is never requested.
     let nodes = HashMap::from([(hex_hash(leaf), status(StatusCode::INTERNAL_SERVER_ERROR))]);
@@ -298,9 +387,11 @@ async fn a_root_we_already_hold_returns_without_fetching_any_node() {
 async fn a_node_we_already_hold_is_not_refetched() {
     let f = fixture();
     let data = b"cached payload".to_vec();
-    let leaf = blake2_256(&data);
+    let leaf = hash_leaf(&data);
     f.storage.init_bucket(BUCKET, u64::MAX).unwrap();
-    f.storage.store_node(BUCKET, leaf, data, None).unwrap();
+    f.storage
+        .store_node(BUCKET, leaf, ChunkTreeNode::Chunk(data))
+        .unwrap();
 
     let nodes = HashMap::from([(hex_hash(leaf), status(StatusCode::INTERNAL_SERVER_ERROR))]);
     let target = unheld_root();
@@ -320,7 +411,7 @@ async fn a_node_we_already_hold_is_not_refetched() {
 async fn a_peak_naming_a_stored_node_is_fetched_and_stored() {
     let f = fixture();
     let data = b"leaf payload".to_vec();
-    let leaf = blake2_256(&data);
+    let leaf = hash_leaf(&data);
     let target = unheld_root();
 
     let nodes = HashMap::from([(
@@ -336,5 +427,8 @@ async fn a_peak_naming_a_stored_node_is_fetched_and_stored() {
         f.sync.sync_from_primary(BUCKET, &url).await.unwrap(),
         target
     );
-    assert_eq!(f.storage.get_node(&leaf).unwrap().data, b"leaf payload");
+    assert_eq!(
+        f.storage.get_node(&leaf),
+        Some(ChunkTreeNode::Chunk(b"leaf payload".to_vec()))
+    );
 }

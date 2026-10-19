@@ -18,6 +18,7 @@ use axum::{
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use codec::Encode;
 use provider_auth::RequiredRole;
+use provider_storage::ChunkTreeNode;
 use provider_types::SigningRefused;
 use sp_core::H256;
 use std::net::SocketAddr;
@@ -226,29 +227,14 @@ async fn get_node(
     State(state): State<Arc<ProviderState>>,
     Query(query): Query<GetNodeQuery>,
 ) -> Result<Json<DownloadNodeResponse>, Error> {
-    let hash_bytes =
-        hex::decode(query.hash.strip_prefix("0x").unwrap_or(&query.hash)).map_err(|_| {
-            Error::InvalidHash {
-                expected: query.hash.clone(),
-                actual: "invalid hex".to_string(),
-            }
-        })?;
-    let hash = H256::from_slice(&hash_bytes);
+    let hash = decode_hash(&query.hash)?;
 
     let node = state
         .storage
         .get_node(&hash)
         .ok_or_else(|| provider_storage::Error::NodeNotFound(query.hash.clone()))?;
 
-    Ok(Json(DownloadNodeResponse {
-        hash: query.hash,
-        data: BASE64.encode(&node.data),
-        children: node.children.map(|c| {
-            c.iter()
-                .map(|h| format!("0x{}", hex::encode(h.as_bytes())))
-                .collect()
-        }),
-    }))
+    Ok(Json(DownloadNodeResponse::new(query.hash, &node)))
 }
 
 async fn upload_node(
@@ -265,13 +251,7 @@ async fn upload_node(
     )
     .await?;
 
-    // Decode hash
-    let hash_bytes = hex::decode(request.hash.strip_prefix("0x").unwrap_or(&request.hash))
-        .map_err(|_| Error::InvalidHash {
-            expected: request.hash.clone(),
-            actual: "invalid hex".to_string(),
-        })?;
-    let hash = H256::from_slice(&hash_bytes);
+    let hash = decode_hash(&request.hash)?;
 
     // Decode data
     let data = BASE64
@@ -283,26 +263,18 @@ async fn upload_node(
         .children
         .map(|c| {
             c.iter()
-                .map(|h| {
-                    let bytes = hex::decode(h.strip_prefix("0x").unwrap_or(h)).map_err(|_| {
-                        Error::InvalidHash {
-                            expected: h.clone(),
-                            actual: "invalid hex".to_string(),
-                        }
-                    })?;
-                    Ok(H256::from_slice(&bytes))
-                })
+                .map(|h| decode_hash(h))
                 .collect::<Result<Vec<_>, Error>>()
         })
         .transpose()?;
+
+    let node = ChunkTreeNode::from_wire(data, children)?;
 
     // Initialize bucket if needed
     state.storage.init_bucket(request.bucket_id, u64::MAX)?;
 
     // Store node
-    state
-        .storage
-        .store_node(request.bucket_id, hash, data, children)?;
+    state.storage.store_node(request.bucket_id, hash, node)?;
 
     Ok(Json(UploadNodeResponse { stored: true }))
 }
@@ -314,14 +286,7 @@ async fn check_exists(
     let hashes: Vec<H256> = request
         .hashes
         .iter()
-        .map(|h| {
-            let bytes =
-                hex::decode(h.strip_prefix("0x").unwrap_or(h)).map_err(|_| Error::InvalidHash {
-                    expected: h.clone(),
-                    actual: "invalid hex".to_string(),
-                })?;
-            Ok(H256::from_slice(&bytes))
-        })
+        .map(|h| decode_hash(h))
         .collect::<Result<Vec<_>, Error>>()?;
 
     let (exists, missing) = state.storage.check_exists(request.bucket_id, &hashes);
@@ -359,44 +324,26 @@ async fn commit(
     let data_roots: Vec<H256> = request
         .data_roots
         .iter()
-        .map(|h| {
-            let bytes =
-                hex::decode(h.strip_prefix("0x").unwrap_or(h)).map_err(|_| Error::InvalidHash {
-                    expected: h.clone(),
-                    actual: "invalid hex".to_string(),
-                })?;
-            Ok(H256::from_slice(&bytes))
-        })
+        .map(|h| decode_hash(h))
         .collect::<Result<Vec<_>, Error>>()?;
 
-    let (mmr_root, start_seq, leaf_indices) =
-        state.storage.commit(request.bucket_id, data_roots)?;
-
-    // Read the post-commit `leaf_count` so the signed payload matches what
-    // the pallet reconstructs from the challenger's args. Previously this
-    // signed with `leaf_count = 0` as a workaround for the pallet using `0`
-    // as a placeholder; now the pallet honours the real value.
-    let leaf_count = state
-        .storage
-        .get_bucket(request.bucket_id)
-        .map(|b| b.leaf_count)
-        .unwrap_or(0);
+    let outcome = state.storage.commit(request.bucket_id, data_roots)?;
 
     let payload = CommitmentPayload::new(
         request.bucket_id,
         Commitment {
-            mmr_root,
-            start_seq,
-            leaf_count,
+            mmr_root: outcome.mmr_root,
+            start_seq: outcome.start_seq,
+            leaf_count: outcome.leaf_count,
         },
     );
     let signature = state.sign(&payload.encode())?;
 
     Ok(Json(CommitResponse {
-        mmr_root: format!("0x{}", hex::encode(mmr_root.as_bytes())),
-        start_seq,
-        leaf_count,
-        leaf_indices,
+        mmr_root: format!("0x{}", hex::encode(outcome.mmr_root.as_bytes())),
+        start_seq: outcome.start_seq,
+        leaf_count: outcome.leaf_count,
+        leaf_indices: outcome.leaf_indices,
         provider_signature: signature,
     }))
 }
@@ -405,43 +352,27 @@ async fn read_chunks(
     State(state): State<Arc<ProviderState>>,
     Query(query): Query<ReadQuery>,
 ) -> Result<Json<ReadResponse>, Error> {
-    let root_bytes = hex::decode(
-        query
-            .data_root
-            .strip_prefix("0x")
-            .unwrap_or(&query.data_root),
-    )
-    .map_err(|_| Error::InvalidHash {
-        expected: query.data_root.clone(),
-        actual: "invalid hex".to_string(),
-    })?;
-    let data_root = H256::from_slice(&root_bytes);
+    let data_root = decode_hash(&query.data_root)?;
 
     // Calculate chunk indices
     let chunk_size = storage_primitives::DEFAULT_CHUNK_SIZE as u64;
     let start_chunk = query.offset / chunk_size;
     let end_chunk = (query.offset + query.length).div_ceil(chunk_size);
 
-    let mut chunks = Vec::new();
-    for chunk_idx in start_chunk..end_chunk {
-        match state.storage.get_chunk_at_index(data_root, chunk_idx) {
-            Ok((data, proof)) => {
-                chunks.push(ChunkWithProof {
-                    hash: format!(
-                        "0x{}",
-                        hex::encode(storage_primitives::blake2_256(&data).as_bytes())
-                    ),
-                    data: BASE64.encode(&data),
-                    proof: proof
-                        .siblings
-                        .iter()
-                        .map(|h| format!("0x{}", hex::encode(h.as_bytes())))
-                        .collect(),
-                });
-            }
-            Err(_) => break,
-        }
-    }
+    let chunks = state
+        .storage
+        .get_chunks_in_range(data_root, start_chunk..end_chunk)?
+        .into_iter()
+        .map(|(hash, data, proof)| ChunkWithProof {
+            hash: format!("0x{}", hex::encode(hash.as_bytes())),
+            data: BASE64.encode(&data),
+            proof: proof
+                .siblings
+                .iter()
+                .map(|h| format!("0x{}", hex::encode(h.as_bytes())))
+                .collect(),
+        })
+        .collect();
 
     Ok(Json(ReadResponse { chunks }))
 }
@@ -459,8 +390,6 @@ async fn get_commitment(
         .get_bucket(query.bucket_id)
         .ok_or(provider_storage::Error::BucketNotFound(query.bucket_id))?;
 
-    // Sign with the real leaf_count — the pallet's `challenge_offchain` now
-    // honours leaf_count rather than hardcoding `0`.
     let payload = CommitmentPayload::new(
         query.bucket_id,
         Commitment {
@@ -480,11 +409,8 @@ async fn get_commitment(
     }))
 }
 
-/// Return a checkpoint-compatible signature (signs with real leaf_count).
-///
-/// Signs the same payload as `/commitment` (both use the real leaf_count now
-/// that the pallet honours it); kept as a separate endpoint for the checkpoint
-/// workflow, where the signature goes into the on-chain `checkpoint` call.
+/// Return a signature over the bucket's current commitment, for the on-chain
+/// `checkpoint` extrinsic.
 async fn get_checkpoint_signature(
     State(state): State<Arc<ProviderState>>,
     Query(query): Query<CommitmentQuery>,
@@ -551,22 +477,12 @@ async fn get_chunk_proof(
     State(state): State<Arc<ProviderState>>,
     Query(query): Query<ChunkProofQuery>,
 ) -> Result<Json<ChunkProofResponse>, Error> {
-    let root_bytes = hex::decode(
-        query
-            .data_root
-            .strip_prefix("0x")
-            .unwrap_or(&query.data_root),
-    )
-    .map_err(|_| Error::InvalidHash {
-        expected: query.data_root.clone(),
-        actual: "invalid hex".to_string(),
-    })?;
-    let data_root = H256::from_slice(&root_bytes);
+    let data_root = decode_hash(&query.data_root)?;
 
     let (chunk_data, proof) = state
         .storage
         .get_chunk_at_index(data_root, query.chunk_index)?;
-    let chunk_hash = storage_primitives::blake2_256(&chunk_data);
+    let chunk_hash = storage_primitives::hash_leaf(&chunk_data);
 
     Ok(Json(ChunkProofResponse {
         chunk_hash: format!("0x{}", hex::encode(chunk_hash.as_bytes())),
@@ -615,7 +531,6 @@ async fn delete_data(
         .storage
         .delete_before(request.bucket_id, request.new_start_seq)?;
 
-    // Sign with the real post-delete leaf_count — pallet honours it now.
     let payload = CommitmentPayload::new(
         request.bucket_id,
         Commitment {
@@ -680,25 +595,10 @@ async fn fetch_nodes(
     let mut nodes = Vec::new();
 
     for hash_str in &request.hashes {
-        let hash_bytes =
-            hex::decode(hash_str.strip_prefix("0x").unwrap_or(hash_str)).map_err(|_| {
-                Error::InvalidHash {
-                    expected: hash_str.clone(),
-                    actual: "invalid hex".to_string(),
-                }
-            })?;
-        let hash = H256::from_slice(&hash_bytes);
+        let hash = decode_hash(hash_str)?;
 
         if let Some(node) = state.storage.get_node(&hash) {
-            nodes.push(FetchedNode {
-                hash: hash_str.clone(),
-                data: BASE64.encode(&node.data),
-                children: node.children.map(|c| {
-                    c.iter()
-                        .map(|h| format!("0x{}", hex::encode(h.as_bytes())))
-                        .collect()
-                }),
-            });
+            nodes.push(DownloadNodeResponse::new(hash_str.clone(), &node));
         }
     }
 

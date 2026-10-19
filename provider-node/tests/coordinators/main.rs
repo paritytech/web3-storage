@@ -9,11 +9,11 @@ mod event_fanout;
 mod membership;
 
 use provider_auth::{Authenticator, StaticMembershipResolver};
-use provider_storage::{build_padded_merkle_tree, temp_rocksdb, StorageBackend};
+use provider_storage::{build_merkle_tree, temp_rocksdb, ChunkTreeNode, StorageBackend};
 use sp_runtime::AccountId32;
 use std::str::FromStr;
 use std::sync::Arc;
-use storage_primitives::blake2_256;
+use storage_primitives::hash_leaf;
 use storage_provider_node::{DetectedChallenge, ProviderDeps, ProviderState};
 use tempfile::TempDir;
 
@@ -72,26 +72,30 @@ pub fn test_state_with_data() -> (Arc<ProviderState>, DetectedChallenge, TempDir
         .expect("bucket initialises");
 
     let chunk_data = b"test-chunk-data-for-challenge";
-    let chunk_hash = blake2_256(chunk_data);
+    let chunk_hash = hash_leaf(chunk_data);
     storage
-        .store_node(1, chunk_hash, chunk_data.to_vec(), None)
+        .store_node(1, chunk_hash, ChunkTreeNode::Chunk(chunk_data.to_vec()))
         .unwrap();
 
-    let data_root = build_padded_merkle_tree(storage.as_ref(), 1, &[chunk_hash]);
+    let data_root = build_merkle_tree(storage.as_ref(), 1, &[chunk_hash]).unwrap();
     assert_eq!(data_root, chunk_hash);
 
-    let (mmr_root, start_seq, leaf_indices) = storage.commit(1, vec![data_root]).unwrap();
-    assert_eq!(leaf_indices, vec![0]);
+    let commit = storage.commit(1, vec![data_root]).unwrap();
+    assert_eq!(commit.leaf_indices, vec![0]);
 
     let challenge = DetectedChallenge {
         bucket_id: 1,
         deadline: 1000,
         index: 0,
-        mmr_root,
-        start_seq,
-        leaf_index: 0,
-        chunk_index: 0,
-        challenger: ALICE_SS58.to_string(),
+        commitment: storage_primitives::Commitment {
+            mmr_root: commit.mmr_root,
+            start_seq: commit.start_seq,
+            leaf_count: commit.leaf_count,
+        },
+        target: storage_primitives::ChunkLocation {
+            leaf_index: 0,
+            chunk_index: 0,
+        },
     };
 
     let state = Arc::new(ProviderState::with_provider_id(
