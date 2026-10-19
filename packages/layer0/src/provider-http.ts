@@ -265,19 +265,10 @@ export async function fetchChallengeProof(
         challengeId.index,
     );
 
-  const mmr = await providerFetch(providerUrl, "/mmr_proof", {
-    params: {
-      bucket_id: challenge.bucket_id,
-      leaf_index: challenge.target.leaf_index,
-    },
-  });
-  if (!Array.isArray(mmr.items))
-    throw new Error(
-      "Provider /mmr_proof response has no `items`: the provider node is older than this client",
-    );
+  const mmr = await getMmrProof(providerUrl, challenge.bucket_id, challenge.target.leaf_index);
   const chunk = await providerFetch(providerUrl, "/chunk_proof", {
     params: {
-      data_root: mmr.leaf.data_root,
+      data_root: toHex(mmr.leaf.dataRoot),
       chunk_index: challenge.target.chunk_index,
     },
   });
@@ -290,11 +281,11 @@ export async function fetchChallengeProof(
     chunk_data: base64ToBytes(chunk.chunk_data),
     mmr_proof: {
       leaf: {
-        data_root: asHex(mmr.leaf.data_root),
-        data_size: BigInt(mmr.leaf.data_size),
-        total_size: BigInt(mmr.leaf.total_size),
+        data_root: asHex(mmr.leaf.dataRoot),
+        data_size: mmr.leaf.dataSize,
+        total_size: mmr.leaf.totalSize,
       },
-      items: mmr.items.map((h: string) => asHex(h)),
+      items: mmr.items.map((h) => asHex(h)),
     },
     chunk_proof: chunk.proof.map((h: string) => asHex(h)),
   };
