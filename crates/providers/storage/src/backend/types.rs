@@ -13,14 +13,23 @@
 //! [`MmrLeaf`] - changes that format, and a provider restarted on data written
 //! by the previous build will fail to decode it. The golden-vector tests in
 //! [`tests::compatibility_tests`] pin the encoding byte-for-byte so such a change breaks the build
-//! instead of a live provider; when one is intended, it needs a versioning and
-//! migration story (see issue #375) alongside the new vectors.
+//! instead of a live provider; when one is intended, bump [`FORMAT_VERSION`]
+//! alongside the new vectors.
 //!
 //! [`StorageBackend`]: super::StorageBackend
 
+use crate::error::Error;
 use codec::{Decode, Encode};
 use sp_core::H256;
-use storage_primitives::MmrLeaf;
+use std::borrow::Cow;
+use storage_primitives::{hash_children, MmrLeaf, DEFAULT_CHUNK_SIZE};
+
+/// Version of the on-disk encoding of the records in this module.
+///
+/// Bump it whenever a change alters what [`ChunkTreeNode`] or [`BucketState`]
+/// encode to, so a build fails on a database in another format instead of
+/// misreading its bytes.
+pub const FORMAT_VERSION: u32 = 1;
 
 /// Per-bucket state a backend persists: the bucket's MMR and its quota usage.
 #[derive(Debug, Clone, PartialEq, Encode, Decode)]
@@ -55,13 +64,71 @@ impl BucketState {
     }
 }
 
-/// A stored node: a chunk (no children) or an internal Merkle node.
+/// A node in a bucket's content-addressed chunk tree: a leaf chunk, or an
+/// internal node over exactly two children.
+///
+/// An internal node's preimage (`concat(children)`) is derived rather than
+/// stored, so a node whose children disagree with its data is unrepresentable,
+/// it cannot be constructed, encoded, or decoded.
 #[derive(Debug, Clone, PartialEq, Encode, Decode)]
-pub struct StoredNode {
-    /// The raw data
-    pub data: Vec<u8>,
-    /// Child hashes for internal nodes
-    pub children: Option<Vec<H256>>,
+pub enum ChunkTreeNode {
+    /// Leaf: hash = hash_leaf(data) = blake2_256(0x00 ++ data)
+    Chunk(Vec<u8>),
+    /// Internal: hash = hash_children(left, right) = blake2_256(0x01 ++ left ++ right)
+    Internal {
+        /// Left child.
+        left: H256,
+        /// Right child.
+        right: H256,
+    },
+}
+
+impl ChunkTreeNode {
+    /// Build a node from the `data` and optional `children` a peer sent.
+    ///
+    /// Without children the node is a chunk of at most `DEFAULT_CHUNK_SIZE`
+    /// bytes. With children it is an internal node: it must have exactly two
+    /// children, and `data` must be the concatenation of the two child hashes.
+    pub fn from_wire(data: Vec<u8>, children: Option<Vec<H256>>) -> Result<Self, Error> {
+        let Some(children) = children else {
+            if data.len() > DEFAULT_CHUNK_SIZE as usize {
+                return Err(Error::ChunkTooLarge {
+                    size: data.len() as u64,
+                });
+            }
+            return Ok(Self::Chunk(data));
+        };
+        let count = children.len();
+        let [left, right]: [H256; 2] = children
+            .try_into()
+            .map_err(|_| Error::InvalidChildCount(count))?;
+        let node = Self::Internal { left, right };
+        if *node.preimage() != *data {
+            return Err(Error::InvalidInternalNodeData);
+        }
+        Ok(node)
+    }
+
+    /// The bytes this node serves as data: `data` for a chunk,
+    /// `concat(children)` for an internal node. The node's hash is taken over
+    /// these bytes behind a prefix that depends on the node kind, see
+    /// [`Self::hash`]. A chunk's bytes are borrowed, not copied.
+    pub fn preimage(&self) -> Cow<'_, [u8]> {
+        match self {
+            Self::Chunk(data) => Cow::Borrowed(data),
+            Self::Internal { left, right } => {
+                Cow::Owned([left.as_bytes(), right.as_bytes()].concat())
+            }
+        }
+    }
+
+    /// This node's content hash.
+    pub fn hash(&self) -> H256 {
+        match self {
+            Self::Chunk(data) => storage_primitives::hash_leaf(data),
+            Self::Internal { left, right } => hash_children(*left, *right),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -70,9 +137,8 @@ mod tests {
     use codec::DecodeAll;
 
     /// Pins the exact bytes these records encode to. A failure here means
-    /// existing provider databases can no longer be decoded - a storage
-    /// version/migration is required
-    /// (see <https://github.com/paritytech/web3-storage/issues/375>).
+    /// existing provider databases can no longer be decoded - bump
+    /// `FORMAT_VERSION`.
     ///
     /// The raw keys and values a backend writes around them are pinned by that
     /// backend, e.g. `rocksdb::tests::on_disk_bytes`.
@@ -124,34 +190,36 @@ mod tests {
         }
 
         #[test]
-        fn stored_node() {
+        fn chunk_tree_node() {
             assert_golden(
-                StoredNode {
-                    data: vec![1, 2, 3, 4, 5],
-                    children: Some(vec![H256::repeat_byte(0x11)]),
-                },
+                ChunkTreeNode::Chunk(vec![1, 2, 3, 4, 5]),
                 concat!(
+                    // variant 0 (Chunk)
+                    "00",
                     // data: Vec<u8>, compact length 5, then the bytes
                     "14",
                     "0102030405",
-                    // children: Option<Vec<H256>> = Some, compact length 1
-                    "01",
-                    "04",
-                    "1111111111111111111111111111111111111111111111111111111111111111",
                 ),
             );
+            assert_golden(ChunkTreeNode::Chunk(vec![]), "0000");
             assert_golden(
-                StoredNode {
-                    data: vec![],
-                    children: None,
+                ChunkTreeNode::Internal {
+                    left: H256::repeat_byte(0x11),
+                    right: H256::repeat_byte(0x22),
                 },
-                "0000",
+                concat!(
+                    // variant 1 (Internal)
+                    "01",
+                    // left, right: H256 each, fixed-size, no length prefix
+                    "1111111111111111111111111111111111111111111111111111111111111111",
+                    "2222222222222222222222222222222222222222222222222222222222222222",
+                ),
             );
         }
 
         #[test]
         fn mmr_leaf() {
-            // Also hashed (`blake2_256(leaf.encode())`) to build the MMR, so a
+            // Also hashed (`hash_leaf(leaf.encode())`) to build the MMR, so a
             // layout change breaks on-chain MMR root reproducibility too.
             assert_golden(
                 MmrLeaf {
@@ -176,13 +244,9 @@ mod tests {
             encoded.extend_from_slice(&[0xff, 0xff]);
             assert!(BucketState::decode_all(&mut &encoded[..]).is_err());
 
-            let mut encoded = StoredNode {
-                data: vec![1, 2, 3],
-                children: None,
-            }
-            .encode();
+            let mut encoded = ChunkTreeNode::Chunk(vec![1, 2, 3]).encode();
             encoded.push(0x00);
-            assert!(StoredNode::decode_all(&mut &encoded[..]).is_err());
+            assert!(ChunkTreeNode::decode_all(&mut &encoded[..]).is_err());
         }
     }
 
@@ -203,5 +267,72 @@ mod tests {
             total_size: 222,
         });
         assert_eq!(bucket.leaf_count(), 1);
+    }
+
+    #[test]
+    fn from_wire_without_children_is_a_chunk() {
+        assert_eq!(
+            ChunkTreeNode::from_wire(vec![1, 2, 3], None).unwrap(),
+            ChunkTreeNode::Chunk(vec![1, 2, 3])
+        );
+    }
+
+    #[test]
+    fn from_wire_rejects_a_chunk_above_default_chunk_size() {
+        let max = DEFAULT_CHUNK_SIZE as usize;
+        assert!(ChunkTreeNode::from_wire(vec![7; max], None).is_ok());
+        assert!(matches!(
+            ChunkTreeNode::from_wire(vec![7; max + 1], None),
+            Err(Error::ChunkTooLarge { size }) if size == max as u64 + 1
+        ));
+    }
+
+    #[test]
+    fn from_wire_accepts_internal_node_whose_data_is_its_children() {
+        let (left, right) = (H256::repeat_byte(1), H256::repeat_byte(2));
+        let data = [left.as_bytes(), right.as_bytes()].concat();
+        assert_eq!(
+            ChunkTreeNode::from_wire(data, Some(vec![left, right])).unwrap(),
+            ChunkTreeNode::Internal { left, right }
+        );
+    }
+
+    #[test]
+    fn from_wire_rejects_wrong_child_count() {
+        let child = H256::repeat_byte(1);
+        for children in [vec![], vec![child], vec![child, child, child]] {
+            let count = children.len();
+            let data = children.iter().flat_map(|h| h.0).collect();
+            let err = ChunkTreeNode::from_wire(data, Some(children)).unwrap_err();
+            assert!(matches!(err, Error::InvalidChildCount(n) if n == count));
+        }
+    }
+
+    #[test]
+    fn from_wire_rejects_internal_node_data_that_differs_from_its_children() {
+        let (left, right) = (H256::repeat_byte(1), H256::repeat_byte(2));
+        assert!(matches!(
+            ChunkTreeNode::from_wire(Vec::new(), Some(vec![left, right])),
+            Err(Error::InvalidInternalNodeData)
+        ));
+    }
+
+    #[test]
+    fn chunk_preimage_and_hash_are_its_data() {
+        let node = ChunkTreeNode::Chunk(vec![1, 2, 3]);
+        assert_eq!(*node.preimage(), [1, 2, 3]);
+        assert_eq!(node.hash(), storage_primitives::hash_leaf(&[1, 2, 3]));
+    }
+
+    #[test]
+    fn internal_preimage_and_hash_are_derived_from_children() {
+        let left = H256::repeat_byte(0x11);
+        let right = H256::repeat_byte(0x22);
+        let node = ChunkTreeNode::Internal { left, right };
+
+        let mut expected_preimage = left.as_bytes().to_vec();
+        expected_preimage.extend_from_slice(right.as_bytes());
+        assert_eq!(*node.preimage(), *expected_preimage);
+        assert_eq!(node.hash(), hash_children(left, right));
     }
 }

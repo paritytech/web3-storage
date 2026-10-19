@@ -6,10 +6,14 @@
  * consumers can typecheck and use these directly.
  */
 
-import { blake2b256 } from "@polkadot-labs/hdkd-helpers";
 import {
   base64ToBytes,
   bytesToBase64,
+  CidMismatchError,
+  DEFAULT_CHUNK_SIZE,
+  hashChildren,
+  hashLeaf,
+  nodeHash,
   signProviderRequest,
   type ProviderRequestSigner,
 } from "@web3-storage/core";
@@ -64,8 +68,6 @@ export async function providerFetch(
 export interface ProviderNodeReadiness {
   /** The node holds a signing keypair (from --keyfile). */
   signing_configured: boolean;
-  /** The replay-nonce counter is bootstrapped, so /negotiate can issue quotes. */
-  nonce_counter_ready: boolean;
   /** The node has synced its on-chain registration from a finalized block. */
   provider_info_loaded: boolean;
   /** The synced registration is in its deregister-announcement window. */
@@ -108,16 +110,27 @@ export interface PutChunkResult {
  *
  * `signer` authenticates the `PUT /node` request; it must hold a Writer/Admin
  * role on `bucketId` (the provider always enforces this).
+ *
+ * Pass `children` to store an internal node instead of a leaf chunk. The
+ * provider requires every child to exist already.
+ *
+ * Throws `RangeError` for a leaf above `DEFAULT_CHUNK_SIZE`, before any request.
  */
 export async function putChunk(
   providerUrl: string,
   bucketId: bigint | number,
   data: Uint8Array | string,
   signer: ChainSigner,
+  children: [Uint8Array, Uint8Array] | null = null,
 ): Promise<PutChunkResult> {
   const sign = { signer: signer.signer, bucketId };
   const bytes = data instanceof Uint8Array ? data : new TextEncoder().encode(data);
-  const cid = blake2b256(bytes);
+  if (!children && bytes.length > DEFAULT_CHUNK_SIZE) {
+    throw new RangeError(
+      `chunk is ${bytes.length} bytes, above the ${DEFAULT_CHUNK_SIZE} byte maximum; split the data into ${DEFAULT_CHUNK_SIZE} byte chunks`,
+    );
+  }
+  const cid = children ? hashChildren(children[0], children[1]) : hashLeaf(bytes);
   const hash = toHex(cid);
   await providerFetch(providerUrl, "/node", {
     method: "PUT",
@@ -125,7 +138,7 @@ export async function putChunk(
       bucket_id: Number(bucketId),
       hash,
       data: bytesToBase64(bytes),
-      children: null,
+      children: children ? children.map((c) => toHex(c)) : null,
     },
     sign,
   });
@@ -139,6 +152,8 @@ export async function putChunk(
  *
  * `signer` authenticates the `PUT /node` and `POST /commit` requests; it must
  * hold a Writer/Admin role on `bucketId` (the provider always enforces this).
+ *
+ * Throws `RangeError` for a leaf above `DEFAULT_CHUNK_SIZE`, before any request.
  */
 export async function uploadChunk(
   providerUrl: string,
@@ -146,27 +161,20 @@ export async function uploadChunk(
   data: Uint8Array | string,
   signer: ChainSigner,
 ): Promise<{ hash: string; data: Uint8Array; commit: any }> {
-  const sign = { signer: signer.signer, bucketId };
-  const bytes = data instanceof Uint8Array ? data : new TextEncoder().encode(data);
-  const hash = toHex(blake2b256(bytes));
-  await providerFetch(providerUrl, "/node", {
-    method: "PUT",
-    body: {
-      bucket_id: Number(bucketId),
-      hash,
-      data: bytesToBase64(bytes),
-      children: null,
-    },
-    sign,
-  });
+  const { hash, data: bytes } = await putChunk(providerUrl, bucketId, data, signer);
   const commit = await providerFetch(providerUrl, "/commit", {
     method: "POST",
     body: { bucket_id: Number(bucketId), data_roots: [hash] },
-    sign,
+    sign: { signer: signer.signer, bucketId },
   });
   return { hash, data: bytes, commit };
 }
 
+/**
+ * Download a node by hash and verify it: bytes without children must hash as
+ * a leaf, and a node with two children must hold exactly their concatenation
+ * and hash as a node over them. Throws {@link CidMismatchError} otherwise.
+ */
 export async function downloadChunk(
   providerUrl: string,
   chunkHashHex: string,
@@ -174,7 +182,13 @@ export async function downloadChunk(
   const downloaded = await providerFetch(providerUrl, "/node", {
     params: { hash: chunkHashHex },
   });
-  return base64ToBytes(downloaded.data);
+  const data = base64ToBytes(downloaded.data);
+  const expected = asHex(chunkHashHex).toLowerCase();
+  const hash = nodeHash(data, downloaded.children ?? null);
+  if (!hash) throw new CidMismatchError(expected, "malformed internal node");
+  const actual = toHex(hash);
+  if (actual !== expected) throw new CidMismatchError(expected, actual);
+  return data;
 }
 
 export async function fetchCheckpointSignature(

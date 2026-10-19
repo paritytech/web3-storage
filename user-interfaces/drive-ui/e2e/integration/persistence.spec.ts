@@ -9,33 +9,27 @@
  *
  * Tests 3 and 4 both need a drive to render the file browser; they share
  * one drive created in beforeAll instead of each creating their own
- * (saves ~30s of provider settlement per duplicate create).
+ * (saves ~30s of provider settlement per duplicate create). The selected
+ * drive is saved as its bucket id under "drive-ui-selected-bucket".
  */
 import { test, expect } from "../fixtures";
-import { Bob, cleanupDrives } from "@web3-storage/test-helpers";
 import { createDriveInFreshContext } from "../helpers/createDriveViaUi";
 
 test.describe.configure({ mode: "serial" });
 test.setTimeout(180_000);
 
-let sharedDriveId: bigint | null = null;
+let sharedBucketId: bigint | null = null;
 
 test.beforeAll(async ({ browser }) => {
   test.setTimeout(120_000);
-  sharedDriveId = await createDriveInFreshContext(browser, `persistence-${Date.now()}`);
+  sharedBucketId = await createDriveInFreshContext(browser);
 });
 
-test.afterAll(async () => {
-  test.setTimeout(60_000);
-  await cleanupDrives(Bob);
-  sharedDriveId = null;
-});
-
-function requireDriveId(): bigint {
-  if (sharedDriveId === null) {
-    throw new Error("sharedDriveId not initialized — beforeAll did not run");
+function requireBucketId(): bigint {
+  if (sharedBucketId === null) {
+    throw new Error("sharedBucketId not initialized — beforeAll did not run");
   }
-  return sharedDriveId;
+  return sharedBucketId;
 }
 
 test("endpoint selection persists across reload", async ({ localPage }) => {
@@ -65,34 +59,34 @@ test("account name persists across reload", async ({ localPage }) => {
 test("view mode toggle persists across reload", async ({ localPage }) => {
   // The view mode toggle is in the file-browser; only renders when a drive is
   // selected.
-  const driveId = requireDriveId();
+  const bucketId = requireBucketId();
 
   await localPage.reload();
-  await localPage.getByTestId(`drive-list-item-${driveId}`).click();
+  await localPage.getByTestId(`drive-list-item-${bucketId}`).click();
   const toggle = localPage.getByTestId("view-mode-toggle");
   await expect(toggle).toBeVisible();
   // Capture current mode (text varies per toggle UI), click to toggle, reload, verify.
   await toggle.click();
   await localPage.reload();
-  await localPage.getByTestId(`drive-list-item-${driveId}`).click();
+  await localPage.getByTestId(`drive-list-item-${bucketId}`).click();
   // After reload, the same drive should be selected (selected-drive persists too).
-  await expect(localPage.getByTestId(`drive-list-item-${driveId}`)).toBeVisible();
+  await expect(localPage.getByTestId(`drive-list-item-${bucketId}`)).toBeVisible();
   // localStorage drive-ui-view-mode should be "grid" after one toggle from default "list".
   const stored = await localPage.evaluate(() => localStorage.getItem("drive-ui-view-mode"));
   expect(stored === "grid" || stored === "list").toBe(true);
 });
 
 test("selected drive persists across reload", async ({ localPage }) => {
-  const driveId = requireDriveId();
+  const bucketId = requireBucketId();
 
   await localPage.reload();
-  await localPage.getByTestId(`drive-list-item-${driveId}`).click();
+  await localPage.getByTestId(`drive-list-item-${bucketId}`).click();
   await expect(localPage.getByTestId("file-browser")).toBeVisible();
   await localPage.reload();
   // After reload, file-browser should still be visible (drive auto-selected).
   await expect(localPage.getByTestId("file-browser")).toBeVisible({ timeout: 30_000 });
   const stored = await localPage.evaluate(() =>
-    localStorage.getItem("drive-ui-selected-drive"),
+    localStorage.getItem("drive-ui-selected-bucket"),
   );
-  expect(stored).toBe(driveId.toString());
+  expect(stored).toBe(bucketId.toString());
 });
