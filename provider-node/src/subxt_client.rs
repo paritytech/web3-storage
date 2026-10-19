@@ -25,9 +25,9 @@ use storage_primitives::{BucketId, ChunkLocation, Commitment};
 use storage_subxt::api::runtime_types::bounded_collections::bounded_vec::BoundedVec;
 use storage_subxt::api::runtime_types::pallet_storage_provider::pallet::ChallengeResponse as RuntimeChallengeResponse;
 use storage_subxt::api::runtime_types::storage_primitives::{
+    mmr::{MmrLeaf as RuntimeMmrLeaf, MmrProof as RuntimeMmrProof},
     ChallengeId as RuntimeChallengeId, ChunkLocation as RuntimeChunkLocation,
-    Commitment as RuntimeCommitment, MerkleProof as RuntimeMerkleProof, MmrLeaf as RuntimeMmrLeaf,
-    MmrProof as RuntimeMmrProof,
+    Commitment as RuntimeCommitment,
 };
 use subxt::dynamic::Value;
 use subxt::error::{DispatchError, TransactionEventsError, TransactionFinalizedSuccessError};
@@ -815,13 +815,6 @@ fn to_runtime_hash(hash: H256) -> subxt::utils::H256 {
     subxt::utils::H256(hash.0)
 }
 
-fn to_runtime_merkle_proof(proof: storage_primitives::MerkleProof) -> RuntimeMerkleProof {
-    RuntimeMerkleProof {
-        siblings: proof.siblings.into_iter().map(to_runtime_hash).collect(),
-        path: proof.path,
-    }
-}
-
 fn commitment(commitment: RuntimeCommitment) -> Commitment {
     Commitment {
         mmr_root: H256::from(commitment.mmr_root.0),
@@ -986,22 +979,21 @@ impl ChallengeChainClient for SubxtChainClient {
         challenge_id: (u32, u16),
         chunk_data: Vec<u8>,
         mmr_proof: storage_primitives::MmrProof,
-        chunk_proof: storage_primitives::MerkleProof,
+        chunk_proof: Vec<H256>,
     ) -> Result<H256, ChallengeError> {
         let (deadline, index) = challenge_id;
 
         let response = RuntimeChallengeResponse::Proof {
             chunk_data: BoundedVec(chunk_data),
             mmr_proof: RuntimeMmrProof {
-                peaks: mmr_proof.peaks.into_iter().map(to_runtime_hash).collect(),
                 leaf: RuntimeMmrLeaf {
                     data_root: to_runtime_hash(mmr_proof.leaf.data_root),
                     data_size: mmr_proof.leaf.data_size,
                     total_size: mmr_proof.leaf.total_size,
                 },
-                leaf_proof: to_runtime_merkle_proof(mmr_proof.leaf_proof),
+                items: mmr_proof.items.into_iter().map(to_runtime_hash).collect(),
             },
-            chunk_proof: to_runtime_merkle_proof(chunk_proof),
+            chunk_proof: chunk_proof.into_iter().map(to_runtime_hash).collect(),
         };
 
         let tx = storage_subxt::api::tx()

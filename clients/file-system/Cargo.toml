@@ -21,8 +21,6 @@ tokio = { workspace = true }
 reqwest = { workspace = true }
 
 # Substrate/Polkadot
-sp-core = { workspace = true, features = ["std"] }
-sp-crypto-hashing = { workspace = true, features = ["std"] }
 sp-runtime = { workspace = true, features = ["std"] }
 subxt = { workspace = true }
 
@@ -36,10 +34,10 @@ axum = { workspace = true }
 provider-auth = { workspace = true }
 provider-storage = { workspace = true, features = ["test-helpers"] }
 provider-types = { workspace = true }
+sp-core = { workspace = true, features = ["std"] }
 storage-provider-node = { workspace = true }
 subxt-signer = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
-tokio-test = { workspace = true }
 
 [[example]]
 name = "basic_usage"

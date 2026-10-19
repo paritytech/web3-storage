@@ -279,7 +279,7 @@ mod tests {
     fn key_prefix(pallet: &str, entry: &str) -> String {
         let mut key = sp_crypto_hashing::twox_128(pallet.as_bytes()).to_vec();
         key.extend(sp_crypto_hashing::twox_128(entry.as_bytes()));
-        format!("0x{}", hex::encode(key))
+        array_bytes::bytes2hex("0x", &key)
     }
 
     /// Look up the value type of a storage entry in the runtime metadata.
@@ -501,7 +501,7 @@ mod tests {
         metadata: Vec<u8>,
         storage: Vec<(String, String)>,
     ) -> subxt::OnlineClient<PolkadotConfig> {
-        let metadata_hex = format!("0x{}", hex::encode(&metadata));
+        let metadata_hex = array_bytes::bytes2hex("0x", &metadata);
         let metadata = Arc::new(metadata);
         let mock = MockRpcClient::builder()
             .method_handler("state_getMetadata", move |_params| {
@@ -542,7 +542,7 @@ mod tests {
                             .encode(),
                         other => panic!("mock RPC: unhandled state_call {other}"),
                     };
-                    Json(format!("0x{}", hex::encode(response)))
+                    Json(array_bytes::bytes2hex("0x", &response))
                 }
             })
             .method_handler("chain_getBlockHash", |_params| async {
@@ -675,7 +675,7 @@ mod tests {
         let client = SubxtChainStateClient {
             api: mock_api(vec![(
                 key_prefix(PALLET_NAME, "Providers"),
-                format!("0x{}", hex::encode(encoded)),
+                array_bytes::bytes2hex("0x", &encoded),
             )])
             .await,
         };
@@ -744,7 +744,7 @@ mod tests {
 
         let api = mock_api(vec![(
             key_prefix("System", "Events"),
-            format!("0x{}", hex::encode(events_bytes)),
+            array_bytes::bytes2hex("0x", &events_bytes),
         )])
         .await;
         let at = api.at_current_block().await.expect("block handle");
@@ -761,10 +761,7 @@ mod tests {
         let md = metadata();
         let api = mock_api(vec![(
             key_prefix("System", "Events"),
-            format!(
-                "0x{}",
-                hex::encode(encoded_membership_events(&md, &provider_account()))
-            ),
+            array_bytes::bytes2hex("0x", encoded_membership_events(&md, &provider_account())),
         )])
         .await;
 
@@ -782,10 +779,7 @@ mod tests {
         let md = metadata();
         let api = mock_api(vec![(
             key_prefix("System", "Events"),
-            format!(
-                "0x{}",
-                hex::encode(encoded_events(&md, &provider_account()))
-            ),
+            array_bytes::bytes2hex("0x", encoded_events(&md, &provider_account())),
         )])
         .await;
 
@@ -850,7 +844,7 @@ mod tests {
             metadata,
             vec![(
                 key_prefix("System", "Events"),
-                format!("0x{}", hex::encode(events_bytes)),
+                array_bytes::bytes2hex("0x", &events_bytes),
             )],
         )
         .await;
@@ -938,7 +932,7 @@ mod tests {
 
         let api = mock_api(vec![(
             key_prefix("System", "Events"),
-            format!("0x{}", hex::encode(events_bytes)),
+            array_bytes::bytes2hex("0x", &events_bytes),
         )])
         .await;
 

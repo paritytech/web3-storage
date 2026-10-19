@@ -959,9 +959,8 @@ mod benchmarks {
         );
     }
 
-    /// `Proof` response — hashes MaxChunkSize bytes and verifies MMR + Merkle proofs.
-    /// Uses a worst-case MMR proof (max 64 peaks, 63-level climb) so the flat weight
-    /// bounds the deepest verification, not just the single-leaf case.
+    /// `Proof` response — hashes MaxChunkSize bytes and verifies MMR + Merkle proofs
+    /// in their worst case, so the flat weight bounds every verification.
     #[benchmark]
     fn respond_to_challenge_proof() {
         let admin = funded_account::<T>("admin", 0);
@@ -972,10 +971,11 @@ mod benchmarks {
         // of that tree has a sibling at every level, so the chunk proof has the
         // most siblings the pallet accepts.
         //
-        // MMR: leaf_count = u64::MAX has 64 peaks and leaf 0 is in the tallest
-        // peak (height 63), so the verifier climbs 63 siblings and bags 64 peaks.
-        // The proof is synthetic: the climbed peak and the bagged root are
-        // computed so `verify_mmr_proof` returns true without 2^64 leaves.
+        // MMR: leaf_count = u64::MAX / 2 is the largest `verify_mmr_proof`
+        // accepts. It has 63 peaks and leaf 0 is in the tallest peak (height
+        // 62), so the verifier climbs 62 siblings and then bags that peak with
+        // one item for the peaks to its right. The proof is synthetic: the root
+        // is computed so `verify_mmr_proof` returns true without 2^63 leaves.
         let chunk_size = T::MaxChunkSize::get() as usize;
         let chunk_bytes = alloc::vec![0xBEu8; chunk_size];
         let chunk_data: BoundedVec<u8, T::MaxChunkSize> =
@@ -998,40 +998,26 @@ mod benchmarks {
         };
         let leaf_hash = storage_primitives::hash_leaf(&codec::Encode::encode(&mmr_leaf));
 
-        let leaf_count = u64::MAX; // 64 peaks; challenged leaf 0 lives in the height-63 peak
+        let leaf_count = u64::MAX / 2; // 63 peaks; challenged leaf 0 is in the height-62 peak
         let leaf_index = 0u64;
-        let height = 63u32;
+        let height = 62u8;
 
-        // Climb 63 levels to the tallest peak (local_index 0 => every step is a left child).
-        let mmr_siblings: alloc::vec::Vec<H256> = (0..height)
-            .map(|k| H256::repeat_byte((k + 1) as u8))
-            .collect();
-        let mmr_path = alloc::vec![false; height as usize];
+        // Proof items: the siblings from leaf 0 up to its peak (every step is a
+        // left child), then one item for the bagged peaks to the right.
+        let mut items: alloc::vec::Vec<H256> = (1..=height).map(H256::repeat_byte).collect();
         let mut peak0 = leaf_hash;
-        for sibling in &mmr_siblings {
+        for sibling in &items {
             peak0 = storage_primitives::hash_children(peak0, *sibling);
         }
-
-        // 64 peaks total: the climbed peak first (peak_index 0) plus 63 fillers; the
-        // root is their bag, so verify's peak-count / peak-position / bag checks pass.
-        let mut peaks = alloc::vec![peak0];
-        for i in 1..leaf_count.count_ones() {
-            peaks.push(H256::repeat_byte((0x80 + i) as u8));
-        }
-        let mmr_root = storage_primitives::bag_peaks(&peaks);
+        let right_peaks = H256::repeat_byte(0xFF);
+        items.push(right_peaks);
+        let mmr_root = storage_primitives::bag_peaks(&[peak0, right_peaks]);
 
         let mmr_proof = storage_primitives::MmrProof {
-            peaks,
             leaf: mmr_leaf,
-            leaf_proof: storage_primitives::MerkleProof {
-                siblings: mmr_siblings,
-                path: mmr_path,
-            },
+            items,
         };
-        let chunk_proof = storage_primitives::MerkleProof {
-            path: alloc::vec![false; siblings.len()],
-            siblings,
-        };
+        let chunk_proof = siblings;
 
         let challenge_id = insert_challenge::<T>(
             bucket_id,

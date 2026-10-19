@@ -8,8 +8,8 @@
 //   - `crates/providers/storage/src/index/fs.rs`     → `metadata_merkle_root`
 //   - `crates/primitives/storage/src/merkle.rs`      → `merkle_root`, `merkle_tree`, `chunk_count`,
 //                                                       `verify_merkle_proof`
-//   - `crates/primitives/storage/src/lib.rs`         → `hash_leaf`, `hash_children`, `bag_peaks`,
-//                                                       `verify_mmr_proof`, `DEFAULT_CHUNK_SIZE`
+//   - `crates/primitives/storage/src/lib.rs`         → `hash_leaf`, `hash_children`, `DEFAULT_CHUNK_SIZE`
+//   - `crates/primitives/storage/src/mmr.rs`         → `bag_peaks`, `verify_mmr_proof`
 //
 // Pure functions, no I/O, browser-safe.
 
@@ -31,6 +31,9 @@ const LEAF_PREFIX = 0x00;
 
 /** Prefix of an MMR peak-bagging preimage. */
 const PEAK_PREFIX = 0x02;
+
+/** `u64::MAX / 2`: `verify_mmr_proof` rejects every proof for a larger MMR. */
+const MAX_MMR_LEAVES = (1n << 63n) - 1n;
 
 /** One drive entry as it contributes to the metadata Merkle tree. */
 export interface MerkleEntry {
@@ -185,13 +188,14 @@ export interface MmrLeaf {
   totalSize: bigint;
 }
 
-/** `MmrProof` of `storage_primitives`, with the leaf proof flattened. */
+/** `MmrProof` of `storage_primitives`. */
 export interface MmrProof {
-  peaks: Uint8Array[];
   leaf: MmrLeaf;
-  siblings: Uint8Array[];
-  /** Path bits, leaf to peak: `true` = the current node is the right child. */
-  path: boolean[];
+  /**
+   * The peaks left of the leaf's peak (left to right), the siblings from the
+   * leaf up to its peak, then one hash of the bagged peaks to its right.
+   */
+  items: Uint8Array[];
 }
 
 /**
@@ -204,12 +208,13 @@ export function verifyLastMmrLeaf(proof: MmrProof, mmrRoot: Uint8Array, leafCoun
 
 /**
  * Port of `storage_primitives::verify_mmr_proof`: the proof is for leaf
- * `leafIndex` of an MMR with `leafCount` leaves, the leaf hashes up to the
- * peak at its expected position, and the peaks bag to `mmrRoot`. A proof for
- * another leaf of the same MMR fails.
+ * `leafIndex` of an MMR with `leafCount` leaves, has the item count that
+ * shape requires, and the leaf hashes up to `mmrRoot`. A proof for another
+ * leaf of the same MMR fails, and so does every proof for more than
+ * `u64::MAX / 2` leaves.
  */
 export function verifyMmrProof(proof: MmrProof, leafIndex: bigint, mmrRoot: Uint8Array, leafCount: bigint): boolean {
-  if (leafIndex < 0n || leafIndex >= leafCount) return false;
+  if (leafIndex < 0n || leafIndex >= leafCount || leafCount > MAX_MMR_LEAVES) return false;
 
   // The leaf's peak, its index within that peak's subtree, and the subtree height.
   let remaining = leafCount;
@@ -225,21 +230,19 @@ export function verifyMmrProof(proof: MmrProof, leafIndex: bigint, mmrRoot: Uint
     peakIndex++;
   }
   const localIndex = leafIndex - offset;
-
-  const peakCount = leafCount.toString(2).split("").filter((b) => b === "1").length;
-  if (proof.siblings.length !== height || proof.path.length !== height || proof.peaks.length !== peakCount) {
-    return false;
-  }
+  const hasRightPeaks = remaining > 1n << BigInt(height);
+  if (proof.items.length !== peakIndex + height + (hasRightPeaks ? 1 : 0)) return false;
 
   const leafBytes = concatBytes(proof.leaf.dataRoot, u64le(proof.leaf.dataSize), u64le(proof.leaf.totalSize));
   let current = hashLeaf(leafBytes);
   for (let k = 0; k < height; k++) {
-    const isRight = proof.path[k];
-    if (isRight !== (((localIndex >> BigInt(k)) & 1n) === 1n)) return false;
-    current = isRight ? hashChildren(proof.siblings[k], current) : hashChildren(current, proof.siblings[k]);
+    const sibling = proof.items[peakIndex + k];
+    const isRight = ((localIndex >> BigInt(k)) & 1n) === 1n;
+    current = isRight ? hashChildren(sibling, current) : hashChildren(current, sibling);
   }
-  if (!bytesEq(proof.peaks[peakIndex], current)) return false;
-  return bytesEq(bagPeaks(proof.peaks), mmrRoot);
+  // The bagged right peaks count as one peak: bagging folds from the right.
+  const peaks = [...proof.items.slice(0, peakIndex), current, ...proof.items.slice(peakIndex + height)];
+  return bytesEq(bagPeaks(peaks), mmrRoot);
 }
 
 /**

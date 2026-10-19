@@ -27,7 +27,7 @@ tokio = { workspace = true }
 subxt = { workspace = true }
 
 # Utilities
-hex = { workspace = true, features = ["std"] }
+array-bytes = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }

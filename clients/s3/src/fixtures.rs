@@ -43,12 +43,11 @@ fn generate(size: usize) -> Vec<u8> {
 }
 
 fn hex_cid(cid: &Cid) -> String {
-    format!("0x{}", hex::encode(cid.as_bytes()))
+    format!("{cid:#x}")
 }
 
 fn parse_cid(s: &str) -> Cid {
-    let bytes = hex::decode(s.strip_prefix("0x").unwrap()).unwrap();
-    Cid::from_slice(&bytes)
+    s.parse().unwrap()
 }
 
 /// In-memory Layer 0: blobs by CID and the committed `data_roots`.

@@ -19,8 +19,12 @@ use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::Arc;
 use storage_primitives::{
-    build_merkle_proofs, merkle_root, merkle_tree, BucketId, MerkleProof, DEFAULT_CHUNK_SIZE,
+    build_merkle_proofs, merkle_root, merkle_tree, BucketId, DEFAULT_CHUNK_SIZE,
 };
+
+/// A chunk's hash, its data and its Merkle proof (sibling hashes up to the
+/// data root).
+pub type ProvenChunk = (H256, Vec<u8>, Vec<H256>);
 
 /// Which backend to build, and what that backend needs.
 ///
@@ -191,10 +195,7 @@ pub trait StorageBackend: Send + Sync {
             }
         };
         if !fixed_sizes || merkle_root(&chunk_hashes) != root {
-            return Err(Error::NonCanonicalTree(format!(
-                "0x{}",
-                hex::encode(root.as_bytes())
-            )));
+            return Err(Error::NonCanonicalTree(format!("{:#x}", root)));
         }
         Ok(chunk_sizes.iter().map(|size| *size as u64).sum())
     }
@@ -204,7 +205,7 @@ pub trait StorageBackend: Send + Sync {
         &self,
         data_root: H256,
         chunk_index: u64,
-    ) -> Result<(Vec<u8>, MerkleProof), Error> {
+    ) -> Result<(Vec<u8>, Vec<H256>), Error> {
         let (_, data, proof) = self
             .get_chunks_in_range(data_root, chunk_index..chunk_index.saturating_add(1))?
             .pop()
@@ -218,7 +219,7 @@ pub trait StorageBackend: Send + Sync {
         &self,
         data_root: H256,
         range: Range<u64>,
-    ) -> Result<Vec<(H256, Vec<u8>, MerkleProof)>, Error> {
+    ) -> Result<Vec<ProvenChunk>, Error> {
         let chunk_hashes: Vec<H256> = self
             .collect_leaves(data_root)
             .into_iter()

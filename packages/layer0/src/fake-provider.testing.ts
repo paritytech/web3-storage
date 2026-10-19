@@ -66,7 +66,7 @@ function levels(leaves: Uint8Array[]): Uint8Array[][] {
   return out;
 }
 
-/** MMR over `hashes` as in `crates/providers/storage/src/mmr.rs`: peaks of perfect subtrees, largest first. */
+/** MMR over `hashes` as in `crates/primitives/storage/src/mmr.rs`: peaks of perfect subtrees, largest first. */
 function mmrPeaks(hashes: Uint8Array[]): { start: number; size: number; levels: Uint8Array[][] }[] {
   const out = [];
   let start = 0;
@@ -234,18 +234,18 @@ export class FakeProvider {
     const leaf = leaves[leafIndex];
     if (!leaf) return json(404, { error: "not_found" });
     const peaks = mmrPeaks(leaves.map(leafHash));
-    const peak = peaks.find((p) => leafIndex >= p.start && leafIndex < p.start + p.size)!;
-    const siblings: string[] = [];
-    const path: boolean[] = [];
-    let idx = leafIndex - peak.start;
-    for (const level of peak.levels.slice(0, -1)) {
-      siblings.push(toHex(level[idx ^ 1]));
-      path.push(idx % 2 === 1);
+    const peakIndex = peaks.findIndex((p) => leafIndex >= p.start && leafIndex < p.start + p.size);
+    const peakRoots = peaks.map((p) => p.levels[p.levels.length - 1][0]);
+    const items = peakRoots.slice(0, peakIndex);
+    let idx = leafIndex - peaks[peakIndex].start;
+    for (const level of peaks[peakIndex].levels.slice(0, -1)) {
+      items.push(level[idx ^ 1]);
       idx >>= 1;
     }
+    if (peakIndex + 1 < peaks.length) items.push(bagPeaks(peakRoots.slice(peakIndex + 1)));
     return json(200, {
       leaf: { data_root: leaf.dataRoot, data_size: Number(leaf.dataSize), total_size: Number(leaf.totalSize) },
-      proof: { peaks: peaks.map((p) => toHex(p.levels[p.levels.length - 1][0])), siblings, path },
+      items: items.map(toHex),
     });
   }
 }

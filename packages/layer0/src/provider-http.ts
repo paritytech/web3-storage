@@ -234,6 +234,12 @@ export async function fetchCheckpointSignature(
   });
 }
 
+/** The `Proof` payload of a `respond_to_challenge` response. */
+export type ChallengeProof = Extract<
+  Parameters<ParachainApi["tx"]["StorageProvider"]["respond_to_challenge"]>[0]["response"],
+  { type: "Proof" }
+>["value"];
+
 /**
  * Build the proof payload for `respond_to_challenge` by reading the challenge
  * from chain state and fetching MMR + chunk proofs from the provider node.
@@ -242,7 +248,7 @@ export async function fetchChallengeProof(
   api: ParachainApi,
   providerUrl: string,
   challengeId: { deadline: number; index: number },
-): Promise<any> {
+): Promise<ChallengeProof> {
   // Best block: a finalized read would lag the just-created challenge.
   // Challenges is a StorageDoubleMap keyed by (deadline, index), so the single
   // challenge is read directly with both keys.
@@ -265,31 +271,32 @@ export async function fetchChallengeProof(
       leaf_index: challenge.target.leaf_index,
     },
   });
+  if (!Array.isArray(mmr.items))
+    throw new Error(
+      "Provider /mmr_proof response has no `items`: the provider node is older than this client",
+    );
   const chunk = await providerFetch(providerUrl, "/chunk_proof", {
     params: {
       data_root: mmr.leaf.data_root,
       chunk_index: challenge.target.chunk_index,
     },
   });
+  if (!Array.isArray(chunk.proof))
+    throw new Error(
+      "Provider /chunk_proof response `proof` is not a list of hashes: the provider node is older than this client",
+    );
 
   return {
     chunk_data: base64ToBytes(chunk.chunk_data),
     mmr_proof: {
-      peaks: mmr.proof.peaks.map((h: string) => asHex(h)),
       leaf: {
         data_root: asHex(mmr.leaf.data_root),
         data_size: BigInt(mmr.leaf.data_size),
         total_size: BigInt(mmr.leaf.total_size),
       },
-      leaf_proof: {
-        siblings: mmr.proof.siblings.map((h: string) => asHex(h)),
-        path: mmr.proof.path,
-      },
+      items: mmr.items.map((h: string) => asHex(h)),
     },
-    chunk_proof: {
-      siblings: chunk.proof.siblings.map((h: string) => asHex(h)),
-      path: chunk.proof.path,
-    },
+    chunk_proof: chunk.proof.map((h: string) => asHex(h)),
   };
 }
 
@@ -495,15 +502,15 @@ export async function getMmrProof(
     fetch: opts.fetch,
     signal: opts.signal,
   });
+  if (!Array.isArray(res.items))
+    throw new Error("Provider /mmr_proof response has no `items`: the provider node is older than this client");
   return {
-    peaks: (res.proof.peaks as string[]).map(hexToBytes),
     leaf: {
       dataRoot: hexToBytes(res.leaf.data_root),
       dataSize: BigInt(res.leaf.data_size),
       totalSize: BigInt(res.leaf.total_size),
     },
-    siblings: (res.proof.siblings as string[]).map(hexToBytes),
-    path: res.proof.path as boolean[],
+    items: (res.items as string[]).map(hexToBytes),
   };
 }
 

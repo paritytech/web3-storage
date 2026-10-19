@@ -119,6 +119,12 @@ sp-storage = { version = "25.0.0", default-features = false }
 sp-transaction-pool = { version = "43.0.0", default-features = false }
 sp-version = { version = "46.0.0", default-features = false }
 
+# Hex encoding, as used across the Polkadot SDK
+array-bytes = { version = "6.2.3", default-features = false }
+
+# Merkle Mountain Range
+polkadot-ckb-merkle-mountain-range = { version = "0.8.2", default-features = false }
+
 # Polkadot
 pallet-xcm = { version = "29.0.0", default-features = false }
 pallet-xcm-benchmarks = { version = "29.0.0", default-features = false }
@@ -163,7 +169,6 @@ async-trait = "0.1"
 base64 = "0.22"
 clap = { version = "4" }
 futures = "0.3"
-hex = { version = "0.4", default-features = false }
 prost = "0.13"
 serde = { version = "1.0", default-features = false, features = ["derive"] }
 serde_json = { version = "1.0", default-features = false }
@@ -199,7 +204,6 @@ subxt-signer = { version = "0.50.2", features = ["sr25519"] }
 sp-keyring = { version = "48.0.0", default-features = false }
 sp-keystore = { version = "0.49.0", default-features = false }
 tempfile = "3"
-tokio-test = "0.4"
 
 
 [profile.release]

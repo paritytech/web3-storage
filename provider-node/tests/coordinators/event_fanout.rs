@@ -65,7 +65,7 @@ impl ChallengeChainClient for MockChallengeClient {
         challenge_id: (u32, u16),
         _chunk_data: Vec<u8>,
         _mmr_proof: storage_primitives::MmrProof,
-        _chunk_proof: storage_primitives::MerkleProof,
+        _chunk_proof: Vec<H256>,
     ) -> Result<H256, ChallengeError> {
         self.submitted.lock().unwrap().push(challenge_id);
         Ok(H256::zero())

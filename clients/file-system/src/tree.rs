@@ -152,17 +152,18 @@ impl BlobStore for StorageUserClient {
             .get_mmr_proof(bucket_id, commitment.leaf_count - 1)
             .await
             .map_err(storage_error)?;
-        if !verify_last_mmr_leaf(&proof, &commitment.mmr_root, commitment.leaf_count) {
+        let data_root = proof.leaf.data_root;
+        if !verify_last_mmr_leaf(proof, &commitment.mmr_root, commitment.leaf_count) {
             return Err(FsClientError::InvalidMmrProof(bucket_id));
         }
-        Ok(Some(proof.leaf.data_root))
+        Ok(Some(data_root))
     }
 }
 
 /// Check that `proof` proves the last leaf of an MMR with `leaf_count`
 /// leaves and root `mmr_root`.
 pub fn verify_last_mmr_leaf(
-    proof: &storage_primitives::MmrProof,
+    proof: storage_primitives::MmrProof,
     mmr_root: &Cid,
     leaf_count: u64,
 ) -> bool {
@@ -752,82 +753,36 @@ mod tests {
         }
     }
 
-    fn mmr_leaf(n: u8) -> storage_primitives::MmrLeaf {
-        storage_primitives::MmrLeaf {
-            data_root: storage_primitives::hash_leaf(&[n]),
-            data_size: 1,
-            total_size: n as u64,
-        }
-    }
-
-    fn leaf_hash(leaf: &storage_primitives::MmrLeaf) -> Cid {
-        storage_primitives::hash_leaf(&codec::Encode::encode(leaf))
-    }
-
-    fn mmr_proof(
-        peaks: Vec<Cid>,
-        leaf: storage_primitives::MmrLeaf,
-        siblings: Vec<Cid>,
-        path: Vec<bool>,
-    ) -> storage_primitives::MmrProof {
-        storage_primitives::MmrProof {
-            peaks,
-            leaf,
-            leaf_proof: storage_primitives::MerkleProof { siblings, path },
-        }
-    }
-
-    fn commitment(mmr_root: Cid, leaf_count: u64) -> storage_primitives::Commitment {
-        storage_primitives::Commitment {
-            mmr_root,
-            start_seq: 0,
-            leaf_count,
-        }
-    }
-
     #[test]
     fn last_mmr_leaf_check_rejects_other_leaves() {
-        use storage_primitives::hash_children;
-        let leaves: Vec<_> = (0..4).map(mmr_leaf).collect();
-        let h: Vec<Cid> = leaves.iter().map(leaf_hash).collect();
+        use storage_primitives::{mmr, verify_mmr_proof, Commitment};
+        let leaves: Vec<_> = (0..4u8)
+            .map(|n| storage_primitives::MmrLeaf {
+                data_root: storage_primitives::hash_leaf(&[n]),
+                data_size: 1,
+                total_size: n as u64,
+            })
+            .collect();
+        let proof =
+            |count: usize, index: u64| mmr::proof(&leaves[..count], index).unwrap().unwrap();
 
-        // Three leaves: peaks [h0h1, h2].
-        let peaks = vec![hash_children(h[0], h[1]), h[2]];
-        let root = storage_primitives::bag_peaks(&peaks);
-        let last = mmr_proof(peaks.clone(), leaves[2].clone(), vec![], vec![]);
-        assert!(verify_last_mmr_leaf(&last, &root, 3));
-        assert!(!verify_last_mmr_leaf(&last, &root, 4));
-        assert!(!verify_last_mmr_leaf(&last, &root, 0));
-        let first = mmr_proof(peaks.clone(), leaves[0].clone(), vec![h[1]], vec![false]);
-        assert!(storage_primitives::verify_mmr_proof(
-            &first,
-            0,
-            &commitment(root, 3)
-        ));
-        assert!(!verify_last_mmr_leaf(&first, &root, 3));
+        // Three leaves: two peaks. Four leaves: one peak.
+        for count in [3, 4] {
+            let (root, last) = proof(count, count as u64 - 1);
+            let leaf_count = count as u64;
+            assert!(verify_last_mmr_leaf(last.clone(), &root, leaf_count));
+            assert!(!verify_last_mmr_leaf(last.clone(), &root, leaf_count + 1));
+            assert!(!verify_last_mmr_leaf(last, &root, 0));
 
-        // Four leaves: one peak.
-        let left = hash_children(h[0], h[1]);
-        let peak = hash_children(left, hash_children(h[2], h[3]));
-        let last = mmr_proof(
-            vec![peak],
-            leaves[3].clone(),
-            vec![h[2], left],
-            vec![true, true],
-        );
-        assert!(verify_last_mmr_leaf(&last, &peak, 4));
-        let third = mmr_proof(
-            vec![peak],
-            leaves[2].clone(),
-            vec![h[3], left],
-            vec![false, true],
-        );
-        assert!(storage_primitives::verify_mmr_proof(
-            &third,
-            2,
-            &commitment(peak, 4)
-        ));
-        assert!(!verify_last_mmr_leaf(&third, &peak, 4));
+            let (_, other) = proof(count, 0);
+            let commitment = Commitment {
+                mmr_root: root,
+                start_seq: 0,
+                leaf_count,
+            };
+            assert!(verify_mmr_proof(other.clone(), 0, &commitment));
+            assert!(!verify_last_mmr_leaf(other, &root, leaf_count));
+        }
     }
 
     #[test]

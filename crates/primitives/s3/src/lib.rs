@@ -226,7 +226,7 @@ pub fn compute_cid(data: &[u8]) -> H256 {
 /// Compute ETag from CID (hex string without 0x prefix).
 #[cfg(feature = "std")]
 pub fn compute_etag(cid: &H256) -> alloc::vec::Vec<u8> {
-    hex::encode(cid.as_bytes()).into_bytes()
+    array_bytes::bytes2hex("", cid).into_bytes()
 }
 
 /// Validate object key according to S3 naming rules.

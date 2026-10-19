@@ -9,6 +9,7 @@ description = "Shared primitives for scalable Web3 storage"
 
 [dependencies]
 codec = { workspace = true }
+polkadot-ckb-merkle-mountain-range = { workspace = true }
 scale-info = { workspace = true }
 sp-core = { workspace = true }
 sp-io = { workspace = true }
@@ -16,5 +17,12 @@ serde = { workspace = true, optional = true }
 
 [features]
 default = ["std"]
-std = ["codec/std", "scale-info/std", "serde/std", "sp-core/std", "sp-io/std"]
+std = [
+	"codec/std",
+	"polkadot-ckb-merkle-mountain-range/std",
+	"scale-info/std",
+	"serde/std",
+	"sp-core/std",
+	"sp-io/std",
+]
 serde = ["dep:serde", "sp-core/serde"]

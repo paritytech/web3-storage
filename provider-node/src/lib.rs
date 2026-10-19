@@ -163,7 +163,7 @@ impl ProviderState {
     /// cryptographically invalid commitment masquerading as a real one.
     pub fn sign(&self, message: &[u8]) -> Result<String, Error> {
         let keypair = self.signing_keypair()?;
-        Ok(format!("0x{}", hex::encode(keypair.sign(message).encode())))
+        Ok(array_bytes::bytes2hex("0x", keypair.sign(message).encode()))
     }
 
     /// The keypair every signing path goes through, once the guard below
@@ -200,8 +200,8 @@ impl ProviderState {
         };
         if &info.public_key != local {
             tracing::warn!(
-                registered = %hex::encode(&info.public_key),
-                local = %hex::encode(local),
+                registered = %array_bytes::bytes2hex("", &info.public_key),
+                local = %array_bytes::bytes2hex("", local),
                 "local signing key does not match registered on-chain public_key"
             );
             return Err(SigningRefused::KeyMismatch);
@@ -306,7 +306,7 @@ mod tests {
         let message = b"commitment-payload-bytes";
 
         let sig_hex = state.sign(message).expect("signing succeeds with keypair");
-        let sig_bytes = hex::decode(sig_hex.strip_prefix("0x").unwrap()).unwrap();
+        let sig_bytes = array_bytes::hex2bytes(&sig_hex).unwrap();
         assert_eq!(
             sig_bytes.len(),
             65,
@@ -362,7 +362,7 @@ mod tests {
     /// `sr25519::Signature`, asserting the variant tag.
     fn sig_from_hex(sig_hex: &str) -> sr25519::Signature {
         use codec::Decode;
-        let bytes = hex::decode(sig_hex.strip_prefix("0x").unwrap()).unwrap();
+        let bytes = array_bytes::hex2bytes(sig_hex).unwrap();
         match MultiSignature::decode(&mut &bytes[..]).expect("valid SCALE MultiSignature") {
             MultiSignature::Sr25519(sig) => sig,
             other => panic!("expected an Sr25519 signature, got {other:?}"),
@@ -390,7 +390,7 @@ mod tests {
         let sig_b = state.sign(msg).unwrap();
 
         for sig_hex in [&sig_a, &sig_b] {
-            let bytes = hex::decode(sig_hex.strip_prefix("0x").unwrap()).unwrap();
+            let bytes = array_bytes::hex2bytes(sig_hex).unwrap();
             assert_ne!(bytes, vec![0u8; 64]);
             let sig = sig_from_hex(sig_hex);
             assert!(sr25519::Pair::verify(&sig, msg, &alice_pub));

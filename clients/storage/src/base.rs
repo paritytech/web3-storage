@@ -140,17 +140,6 @@ impl BaseClient {
             .map(|s| s.as_str())
             .ok_or_else(|| ClientError::Config("No provider URLs configured".to_string()))
     }
-
-    /// Helper to decode hex strings.
-    pub(crate) fn hex_decode(s: &str) -> Result<Vec<u8>, ClientError> {
-        let s = s.strip_prefix("0x").unwrap_or(s);
-        hex::decode(s).map_err(|e| ClientError::Serialization(format!("Invalid hex: {e}")))
-    }
-
-    /// Helper to encode to hex strings.
-    pub(crate) fn hex_encode(data: &[u8]) -> String {
-        format!("0x{}", hex::encode(data))
-    }
 }
 
 // Common API types used across clients

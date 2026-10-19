@@ -108,7 +108,7 @@ pub async fn s3_put_object(
         .unwrap_or_default()
         .as_secs();
 
-    let etag = format!("0x{}", hex::encode(data_root.as_bytes()));
+    let etag = format!("{data_root:#x}");
 
     // 6. Create ObjectMeta and insert into index
     let meta = ObjectMeta {
@@ -125,7 +125,7 @@ pub async fn s3_put_object(
 
     Ok(Json(PutObjectResponse {
         etag,
-        data_root: format!("0x{}", hex::encode(data_root.as_bytes())),
+        data_root,
         size,
         leaf_index,
     }))
@@ -244,7 +244,7 @@ pub async fn s3_head_object(
     );
     headers.insert(
         "x-amz-data-root",
-        format!("0x{}", hex::encode(meta.data_root.as_bytes()))
+        format!("{:#x}", meta.data_root)
             .parse()
             .unwrap_or_else(|_| "".parse().unwrap()),
     );
@@ -311,7 +311,7 @@ pub async fn s3_index_root(
 
     Ok(Json(IndexRootResponse {
         bucket_id,
-        metadata_merkle_root: format!("0x{}", hex::encode(root.as_bytes())),
+        metadata_merkle_root: root,
         object_count,
         total_size,
     }))
@@ -324,7 +324,7 @@ pub async fn s3_index_root(
 #[derive(Debug, Serialize)]
 pub struct PutObjectResponse {
     pub etag: String,
-    pub data_root: String,
+    pub data_root: H256,
     pub size: u64,
     pub leaf_index: u64,
 }
@@ -346,7 +346,7 @@ pub struct ListObjectsParams {
 #[derive(Debug, Serialize)]
 pub struct IndexRootResponse {
     pub bucket_id: BucketId,
-    pub metadata_merkle_root: String,
+    pub metadata_merkle_root: H256,
     pub object_count: u64,
     pub total_size: u64,
 }

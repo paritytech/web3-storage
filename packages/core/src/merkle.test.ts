@@ -229,34 +229,49 @@ describe("verifyMmrProof", () => {
   }));
   const hashes = leaves.map(leafHash);
   const peak0 = hashChildren(hashes[0], hashes[1]);
-  const peaks = [peak0, hashes[2]];
-  const mmrRoot = bagPeaks(peaks);
+  const mmrRoot = bagPeaks([peak0, hashes[2]]);
+  // Items: left peaks, siblings up to the leaf's peak, the bagged right peaks.
+  const proof1 = { leaf: leaves[1], items: [hashes[0], hashes[2]] };
+  const proof2 = { leaf: leaves[2], items: [peak0] };
 
   it("accepts a leaf under the first and the last peak", () => {
-    expect(verifyMmrProof({ peaks, leaf: leaves[1], siblings: [hashes[0]], path: [true] }, 1n, mmrRoot, 3n)).toBe(true);
-    expect(verifyMmrProof({ peaks, leaf: leaves[2], siblings: [], path: [] }, 2n, mmrRoot, 3n)).toBe(true);
+    expect(verifyMmrProof(proof1, 1n, mmrRoot, 3n)).toBe(true);
+    expect(verifyMmrProof(proof2, 2n, mmrRoot, 3n)).toBe(true);
+  });
+
+  it("bags the peaks right of the leaf's peak into one item", () => {
+    // 7 leaves: peaks of 4, 2 and 1 leaves. Leaf 0 has one item for the two right peaks.
+    const more = [4, 5, 6, 7].map((n) => leafHash({ dataRoot: computeCid(new Uint8Array([n])), dataSize: 1n, totalSize: 0n }));
+    const all = [...hashes, ...more];
+    const p4 = hashChildren(hashChildren(all[0], all[1]), hashChildren(all[2], all[3]));
+    const p2 = hashChildren(all[4], all[5]);
+    const root7 = bagPeaks([p4, p2, all[6]]);
+    const items = [all[1], hashChildren(all[2], all[3]), bagPeaks([p2, all[6]])];
+    expect(verifyMmrProof({ leaf: leaves[0], items }, 0n, root7, 7n)).toBe(true);
+    // The same right peaks as two items fail.
+    expect(verifyMmrProof({ leaf: leaves[0], items: [...items.slice(0, 2), p2, all[6]] }, 0n, root7, 7n)).toBe(false);
   });
 
   it("rejects a proof for another leaf index", () => {
-    expect(verifyMmrProof({ peaks, leaf: leaves[1], siblings: [hashes[0]], path: [true] }, 0n, mmrRoot, 3n)).toBe(false);
-    expect(verifyMmrProof({ peaks, leaf: leaves[2], siblings: [], path: [] }, 3n, mmrRoot, 3n)).toBe(false);
+    expect(verifyMmrProof(proof1, 0n, mmrRoot, 3n)).toBe(false);
+    expect(verifyMmrProof(proof2, 3n, mmrRoot, 3n)).toBe(false);
   });
 
   it("verifyLastMmrLeaf accepts only the last leaf", () => {
-    expect(verifyLastMmrLeaf({ peaks, leaf: leaves[2], siblings: [], path: [] }, mmrRoot, 3n)).toBe(true);
-    expect(verifyLastMmrLeaf({ peaks, leaf: leaves[1], siblings: [hashes[0]], path: [true] }, mmrRoot, 3n)).toBe(false);
-    expect(verifyLastMmrLeaf({ peaks, leaf: leaves[2], siblings: [], path: [] }, mmrRoot, 4n)).toBe(false);
-    expect(verifyLastMmrLeaf({ peaks, leaf: leaves[2], siblings: [], path: [] }, mmrRoot, 0n)).toBe(false);
+    expect(verifyLastMmrLeaf(proof2, mmrRoot, 3n)).toBe(true);
+    expect(verifyLastMmrLeaf(proof1, mmrRoot, 3n)).toBe(false);
+    expect(verifyLastMmrLeaf(proof2, mmrRoot, 4n)).toBe(false);
+    expect(verifyLastMmrLeaf(proof2, mmrRoot, 0n)).toBe(false);
     // Two leaves: the last leaf is the right child under the single peak.
     const root2 = hashChildren(hashes[0], hashes[1]);
-    expect(verifyLastMmrLeaf({ peaks: [root2], leaf: leaves[1], siblings: [hashes[0]], path: [true] }, root2, 2n)).toBe(true);
-    expect(verifyLastMmrLeaf({ peaks: [root2], leaf: leaves[0], siblings: [hashes[1]], path: [false] }, root2, 2n)).toBe(false);
+    expect(verifyLastMmrLeaf({ leaf: leaves[1], items: [hashes[0]] }, root2, 2n)).toBe(true);
+    expect(verifyLastMmrLeaf({ leaf: leaves[0], items: [hashes[1]] }, root2, 2n)).toBe(false);
   });
 
   it("rejects a changed leaf or root", () => {
     const changed = { ...leaves[2], dataSize: 2n };
-    expect(verifyMmrProof({ peaks, leaf: changed, siblings: [], path: [] }, 2n, mmrRoot, 3n)).toBe(false);
-    expect(verifyMmrProof({ peaks, leaf: leaves[2], siblings: [], path: [] }, 2n, ZERO32, 3n)).toBe(false);
+    expect(verifyMmrProof({ ...proof2, leaf: changed }, 2n, mmrRoot, 3n)).toBe(false);
+    expect(verifyMmrProof(proof2, 2n, ZERO32, 3n)).toBe(false);
   });
 });
 

@@ -292,8 +292,8 @@ fn build_para_spec(
 
 /// SCALE-encoded `ParaId` storage value (e.g. `"0x40060000"`) → `u32`.
 fn decode_para_id(hex_value: &str) -> Option<u32> {
-    let bytes = hex::decode(hex_value.strip_prefix("0x")?).ok()?;
-    Some(u32::from_le_bytes(bytes.try_into().ok()?))
+    let bytes = array_bytes::hex2array(hex_value.strip_prefix("0x")?).ok()?;
+    Some(u32::from_le_bytes(bytes))
 }
 
 /// The `id` field of a chain spec.

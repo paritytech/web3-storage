@@ -827,19 +827,14 @@ pub fn validate_entry_name(name: &[u8]) -> Result<(), FileSystemError> {
 
 /// Convert CID to hex string (for protobuf storage)
 pub fn cid_to_string(cid: &Cid) -> String {
-    alloc::format!("0x{}", hex::encode(cid.as_bytes()))
+    alloc::format!("{cid:#x}")
 }
 
 /// Parse hex string to CID
 pub fn string_to_cid(s: &str) -> Result<Cid, FileSystemError> {
-    let s = s.strip_prefix("0x").unwrap_or(s);
-    let bytes = hex::decode(s).map_err(|_| FileSystemError::InvalidCid)?;
-    if bytes.len() != 32 {
-        return Err(FileSystemError::InvalidCid);
-    }
-    let mut hash = [0u8; 32];
-    hash.copy_from_slice(&bytes);
-    Ok(H256::from(hash))
+    array_bytes::hex2array(s)
+        .map(H256::from)
+        .map_err(|_| FileSystemError::InvalidCid)
 }
 
 // ============================================================================
@@ -884,7 +879,7 @@ mod tests {
         .unwrap();
         assert_eq!(dir.children[0].name_str(), "a.txt");
         assert_eq!(
-            hex::encode(dir.to_scale_bytes()),
+            array_bytes::bytes2hex("", dir.to_scale_bytes()),
             DIRECTORY_NODE_HEX,
             "encoding"
         );
@@ -905,7 +900,7 @@ mod tests {
         assert_eq!(manifest.chunks[0].cid, h(b"a"));
         assert_eq!(manifest.content_root(), h(b"a"));
         assert_eq!(
-            hex::encode(manifest.to_scale_bytes()),
+            array_bytes::bytes2hex("", manifest.to_scale_bytes()),
             FILE_MANIFEST_HEX,
             "encoding"
         );
