@@ -61,13 +61,12 @@ impl TestServer {
             .prefix(provider_storage::TEMP_DIR_PREFIX)
             .tempdir()
             .expect("temp dir");
-        let (storage, nonce_store) = backend
+        let storage = backend
             .spec(dir.path().to_path_buf())
             .build()
             .expect("backend opens");
         let deps = ProviderDeps {
             storage,
-            nonce_store,
             auth: Arc::new(Authenticator::new(StaticMembershipResolver(vec![(
                 test_member_account(),
                 Role::Admin,

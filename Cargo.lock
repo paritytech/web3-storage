@@ -3336,8 +3336,8 @@ dependencies = [
  "scale-info",
  "serde",
  "sp-core",
- "sp-crypto-hashing",
  "sp-runtime",
+ "storage-primitives",
  "thiserror 2.0.18",
 ]
 
@@ -7230,19 +7230,10 @@ name = "provider-coordinator"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "hex",
- "parity-scale-codec",
  "parking_lot",
  "provider-chain",
- "provider-storage",
  "provider-types",
- "serde_json",
- "sp-crypto-hashing",
  "sp-runtime",
- "storage-subxt",
- "subxt",
- "subxt-rpcs",
- "tempfile",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -8154,10 +8145,12 @@ dependencies = [
  "futures",
  "hex",
  "reqwest",
- "s3-primitives",
+ "serde",
+ "serde_json",
  "sp-core",
  "sp-runtime",
  "storage-client",
+ "storage-primitives",
  "storage-subxt",
  "subxt",
  "subxt-signer 0.50.2",
@@ -8175,8 +8168,8 @@ dependencies = [
  "parity-scale-codec",
  "scale-info",
  "sp-core",
- "sp-crypto-hashing",
  "sp-runtime",
+ "storage-primitives",
 ]
 
 [[package]]
@@ -9941,6 +9934,24 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
+name = "storage-cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "hex",
+ "rand 0.8.8",
+ "serde",
+ "serde_json",
+ "sp-core",
+ "sp-runtime",
+ "storage-client",
+ "tempfile",
+ "tokio",
+ "tracing-subscriber 0.3.23",
+]
+
+[[package]]
 name = "storage-client"
 version = "0.1.0"
 dependencies = [
@@ -10138,7 +10149,7 @@ dependencies = [
  "scale-info",
  "serde",
  "sp-core",
- "sp-crypto-hashing",
+ "sp-io",
 ]
 
 [[package]]
@@ -10169,6 +10180,7 @@ dependencies = [
  "storage-primitives",
  "storage-subxt",
  "subxt",
+ "subxt-rpcs",
  "subxt-signer 0.50.2",
  "tempfile",
  "thiserror 2.0.18",

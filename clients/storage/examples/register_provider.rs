@@ -3,7 +3,7 @@
 //! Provider registration and settings update.
 //!
 //! Mirrors the `registerProvider` + `updateProviderSettings` steps from
-//! `examples/papi/full-flow.js`: registers the provider if not already present,
+//! `examples/papi/full-flow.ts`: registers the provider if not already present,
 //! then sets price_per_byte=1 and accepting_primary=true.
 //!
 //! Usage: cargo run --example register_provider [chain_ws] [provider_url] [multiaddr] [keyfile] [scheme]

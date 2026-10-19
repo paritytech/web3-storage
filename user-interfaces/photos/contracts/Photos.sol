@@ -2,90 +2,89 @@
 
 pragma solidity ^0.8.34;
 
-import "./IDriveRegistry.sol";
+import "./IWeb3Storage.sol";
 
 /// @title Photos
-/// @notice Per-user control plane for the Photos dApp. The contract owns a
-///         drive per user via the drive-registry precompile, grants the user a
-///         Writer role so their browser can drive the provider's `/fs` API
-///         directly, and anchors the album-tree root CID on-chain — a job the
-///         bare drive registry does not do.
+/// @notice Per-user control plane for the Photos dApp. The contract creates one
+///         Layer 0 bucket per user through the storage-provider precompile,
+///         grants the user a Writer role so their browser can call the
+///         provider's `/fs` API directly, and anchors the album-tree root CID
+///         on-chain.
 ///
 ///         Origin model: precompile calls dispatch as
-///         `RawOrigin::Signed(contract_account)`, so the *contract* owns every
-///         user's drive. Per-user attribution lives here (`libraries`,
-///         `driveOwner`). Custodial-by-ownership only: the transparent contract
-///         enforces "only you manage your library".
+///         `RawOrigin::Signed(contract_account)`, so the *contract* is the
+///         admin of every user's bucket. Per-user attribution lives here
+///         (`libraries`, `bucketOwner`). The contract code enforces that only
+///         the user manages their library.
 ///
-/// Mirrors the proven `SharedTeamDrive.sol` pattern (drive creation from
-/// provider-signed terms + a membership grant), adding the on-chain root anchor.
+/// Follows the `SharedTeamDrive.sol` pattern (bucket creation from
+/// provider-signed terms plus a membership grant) and adds the on-chain root
+/// anchor.
 contract Photos {
-    IDriveRegistry constant DRIVES =
-        IDriveRegistry(0x0000000000000000000000000000000009020000);
-
+    IWeb3Storage constant STORAGE =
+        IWeb3Storage(0x0000000000000000000000000000000009010000);
 
     struct Library {
-        uint64 driveId;
+        uint64 bucketId;
         bytes32 rootCid;
         bool exists;
     }
 
-    // user (EVM address — the caller's substrate-mapped account) → their library.
+    // user (EVM address: the caller's substrate-mapped account) → their library.
     mapping(address => Library) public libraries;
-    // ownership guard. `exists` (not `driveId != 0`) is the sentinel because the
-    // chain assigns drive ids starting at 0.
-    mapping(uint64 => address) public driveOwner;
+    // Ownership guard. `exists` (not `bucketId != 0`) is the sentinel because
+    // the chain assigns bucket ids starting at 0.
+    mapping(uint64 => address) public bucketOwner;
 
-    event LibraryCreated(address indexed user, uint64 indexed driveId, bytes32 provider);
-    event RootUpdated(address indexed user, uint64 indexed driveId, bytes32 rootCid);
+    event LibraryCreated(address indexed user, uint64 indexed bucketId, bytes32 provider);
+    event RootUpdated(address indexed user, uint64 indexed bucketId, bytes32 rootCid);
 
     /// Create my library with a provider I chose. `msg.value` funds the
     /// agreement payment, reserved from the contract's balance when the
-    /// precompile dispatches. The contract owns the drive and grants me
-    /// (`userAccount`, my substrate AccountId32) a Writer role so my browser can
-    /// upload/list directly against the provider's `/fs` API.
+    /// precompile dispatches. The contract is the bucket admin and grants me
+    /// (`userAccount`, my substrate AccountId32) a Writer role so my browser
+    /// can upload and list directly against the provider's `/fs` API.
     ///
-    /// `terms.owner` must be the contract's substrate-mapped account (the drive
-    /// owner). For a primary agreement, `hasBucketId == false` — the drive's
-    /// bucket is created at redemption.
+    /// `terms.owner` must be the contract's substrate-mapped account (the
+    /// bucket admin). `terms.hasBucketId` must be false: the bucket is created
+    /// at redemption.
     function createLibrary(
         bytes32 userAccount,
-        string calldata name,
         bytes32 provider,
-        IDriveRegistry.PrimitiveAgreementTerms calldata terms,
+        IWeb3Storage.PrimitiveAgreementTerms calldata terms,
         bytes calldata signature
-    ) external payable returns (uint64 driveId) {
+    ) external payable returns (uint64 bucketId) {
         require(!libraries[msg.sender].exists, "library exists");
         require(!terms.hasBucketId, "primary terms must not be bucket-bound");
         // A photo library is member-only by default.
-        driveId = DRIVES.createDrive(
-            name, provider, terms, signature, IDriveRegistry.Visibility.Private
+        bucketId = STORAGE.createBucketWithPrimary(
+            provider, terms, signature, IWeb3Storage.Visibility.Private
         );
-        DRIVES.shareDrive(driveId, userAccount, IDriveRegistry.Role.Writer);
-        libraries[msg.sender] = Library(driveId, bytes32(0), true);
-        driveOwner[driveId] = msg.sender;
-        emit LibraryCreated(msg.sender, driveId, provider);
+        STORAGE.setMember(bucketId, userAccount, IWeb3Storage.Role.Writer);
+        libraries[msg.sender] = Library(bucketId, bytes32(0), true);
+        bucketOwner[bucketId] = msg.sender;
+        emit LibraryCreated(msg.sender, bucketId, provider);
     }
 
-    /// Anchor the current album-tree root on-chain after the client mutated the
-    /// tree off-chain (upload / new album / edit / delete). `rootCid` is the
-    /// metadata Merkle root the client computes itself over the drive's sorted
+    /// Anchor the current album-tree root on-chain after the client changed the
+    /// tree off-chain (upload, new album, edit, delete). `rootCid` is the
+    /// metadata Merkle root the client computes over the bucket's sorted
     /// (path, data_root, size) entries.
     function setRoot(bytes32 rootCid) external {
         Library storage lib = libraries[msg.sender];
         require(lib.exists, "no library");
         lib.rootCid = rootCid;
-        emit RootUpdated(msg.sender, lib.driveId, rootCid);
+        emit RootUpdated(msg.sender, lib.bucketId, rootCid);
     }
 
-    /// UI reads this unsigned via `ReviveApi.call` (no signature, no gas) for
-    /// state detection and to fetch the integrity anchor.
+    /// The UI reads this unsigned via `ReviveApi.call` (no signature, no gas)
+    /// to detect state and to fetch the integrity anchor.
     function libraryOf(address user)
         external
         view
-        returns (uint64 driveId, bytes32 rootCid, bool exists)
+        returns (uint64 bucketId, bytes32 rootCid, bool exists)
     {
         Library memory l = libraries[user];
-        return (l.driveId, l.rootCid, l.exists);
+        return (l.bucketId, l.rootCid, l.exists);
     }
 }

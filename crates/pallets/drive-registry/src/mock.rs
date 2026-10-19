@@ -79,7 +79,7 @@ parameter_types! {
     pub const MaxMultiaddrLength: u32 = 100;
     pub const MaxMembers: u32 = 10;
     pub const MaxPrimaryProviders: u32 = 3;
-    pub const MaxChunkSize: u32 = 256 * 1024; // 256 KiB
+    pub const MaxChunkSize: u32 = storage_primitives::DEFAULT_CHUNK_SIZE;
     pub const ChallengeTimeout: u64 = 100;
     pub const ChallengeDeposit: u64 = 100;
     pub const SettlementTimeout: u64 = 50;
