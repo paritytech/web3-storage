@@ -62,26 +62,29 @@ pub fn decode_block_contents(
         lifecycle: Vec::new(),
     };
     for event in events.iter().filter_map(|event| event.ok()) {
+        // Only events a coordinator uses are decoded; the check compares
+        // names, which is cheaper than a decode.
+        let membership = is_membership_event(&event);
+        if !membership && !is_other_relevant_event(&event) {
+            continue;
+        }
         match event.decode_as::<Event>() {
             Ok(Event::StorageProvider(decoded)) => {
                 contents.lifecycle.extend(lifecycle_account(&decoded));
                 contents.events.extend(block_event(decoded));
             }
             Ok(_) => {}
-            Err(e) if is_membership_event(&event) => {
-                contents.events.push(escalate_membership_decode_failure(
-                    event.pallet_name(),
-                    event.event_name(),
-                    block_number,
-                    e,
-                ))
-            }
-            Err(e) if is_other_relevant_event(&event) => tracing::warn!(
+            Err(e) if membership => contents.events.push(escalate_membership_decode_failure(
+                event.pallet_name(),
+                event.event_name(),
+                block_number,
+                e,
+            )),
+            Err(e) => tracing::warn!(
                 "failed to decode {}::{} against the static bindings: {e}",
                 event.pallet_name(),
                 event.event_name(),
             ),
-            Err(_) => {}
         }
     }
     contents
@@ -100,7 +103,7 @@ fn lifecycle_account(event: &StorageProviderEvent) -> Option<AccountId32> {
             Some(AccountId32::new(provider.0))
         }
         // A new arm above also needs a check in `is_other_relevant_event`;
-        // without it, a decode failure of that event is not logged.
+        // without it, `decode_block_contents` skips that event.
         _ => None,
     }
 }
@@ -139,7 +142,8 @@ fn block_event(event: StorageProviderEvent) -> Option<BlockEvent> {
             Some(BlockEvent::BucketMembershipChanged { bucket_id })
         }
         // A new arm above also needs a check in `is_membership_event` or
-        // `is_other_relevant_event`.
+        // `is_other_relevant_event`; without it, `decode_block_contents`
+        // skips that event.
         _ => None,
     }
 }
