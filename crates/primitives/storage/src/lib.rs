@@ -265,8 +265,6 @@ pub struct MmrProof {
     /// Proof items: the peaks left of the leaf's peak, the siblings from the
     /// leaf up to its peak, then one hash of the bagged peaks to its right (see
     /// the `MmrProof` section of the implementation design doc).
-    /// `polkadot-ckb-merkle-mountain-range`'s `gen_proof(..).proof_items()`
-    /// with [`StorageMerge`] produces them.
     pub items: Vec<H256>,
 }
 
@@ -509,9 +507,8 @@ pub fn hash_children(left: H256, right: H256) -> H256 {
 
 /// Combine MMR peaks into the MMR root.
 ///
-/// Peaks fold from right to left with `blake2_256(0x02 ++ peak ++ rest)`, the
-/// library's bagging with [`StorageMerge`]. One peak is the root itself and
-/// no peaks give the zero root.
+/// Peaks fold from right to left with `blake2_256(0x02 ++ peak ++ rest)`. One
+/// peak is the root itself and no peaks give the zero root.
 pub fn bag_peaks(peaks: &[H256]) -> H256 {
     mmr_lib::ancestry_proof::bagging_peaks_hashes::<H256, StorageMerge>(peaks.to_vec())
         .unwrap_or_default()
@@ -559,7 +556,8 @@ impl Merge for StorageMerge {
 /// `commitment.leaf_count` fixes the MMR shape and with it the number of
 /// proof items. If `commitment.mmr_root` is the root of an MMR with
 /// `leaf_count` leaves, a proof for another leaf, or for an MMR of another
-/// size, fails.
+/// size, fails. A commitment with more than `u64::MAX / 2` leaves fails
+/// every proof.
 pub fn verify_mmr_proof(proof: MmrProof, leaf_index: u64, commitment: &Commitment) -> bool {
     // Reject `leaf_count > u64::MAX / 2`: `leaf_index_to_mmr_size` computes
     // `2 * leaf_count`, which overflows above that.
