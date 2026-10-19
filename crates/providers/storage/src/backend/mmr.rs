@@ -6,11 +6,14 @@
 
 use crate::error::Error;
 use codec::Encode;
-use polkadot_ckb_merkle_mountain_range::{self as mmr_lib, util::MemStore, MMR};
+use polkadot_ckb_merkle_mountain_range::{
+    self as mmr_lib,
+    util::{MemMMR, MemStore},
+};
 use sp_core::H256;
 use storage_primitives::{hash_leaf, MmrLeaf, MmrProof, StorageMerge};
 
-type LeafMmr<'a> = MMR<H256, StorageMerge, &'a MemStore<H256>>;
+type LeafMmr<'a> = MemMMR<'a, H256, StorageMerge>;
 
 /// The MMR over `leaves`, with its nodes in `store`.
 fn build<'a>(store: &'a MemStore<H256>, leaves: &[MmrLeaf]) -> Result<LeafMmr<'a>, Error> {
@@ -144,7 +147,7 @@ mod tests {
                 assert_eq!(root, commitment.mmr_root);
                 assert_eq!(proof.leaf, all[leaf_index as usize]);
                 assert!(
-                    storage_primitives::verify_mmr_proof(&proof, leaf_index, &commitment),
+                    storage_primitives::verify_mmr_proof(proof.clone(), leaf_index, &commitment),
                     "leaf {leaf_index} of {leaf_count}"
                 );
             }
