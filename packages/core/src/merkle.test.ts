@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { blake2b256 } from "@polkadot-labs/hdkd-helpers";
 import {
@@ -20,7 +21,7 @@ import {
   type MerkleEntry,
 } from "./merkle.js";
 import { computeCid } from "./verify.js";
-import { concatBytes, toHex } from "./bytes.js";
+import { concatBytes, hexToBytes, toHex } from "./bytes.js";
 
 const ZERO32 = new Uint8Array(32);
 
@@ -266,6 +267,26 @@ describe("verifyMmrProof", () => {
     const root2 = hashChildren(hashes[0], hashes[1]);
     expect(verifyLastMmrLeaf({ leaf: leaves[1], items: [hashes[0]] }, root2, 2n)).toBe(true);
     expect(verifyLastMmrLeaf({ leaf: leaves[0], items: [hashes[1]] }, root2, 2n)).toBe(false);
+  });
+
+  it("accepts every proof in the Rust fixture, only at its own leaf index", () => {
+    // Written by `crates/primitives/storage/src/mmr.rs` (`proof_fixture_is_current`).
+    const url = new URL("../../../crates/primitives/storage/fixtures/mmr-proofs.json", import.meta.url);
+    const fixture = JSON.parse(readFileSync(url, "utf8")) as {
+      vectors: { leaf_count: number; leaf_index: number; root: string; items: string[] }[];
+    };
+    expect(fixture.vectors).toHaveLength(24);
+    for (const v of fixture.vectors) {
+      const index = BigInt(v.leaf_index);
+      const count = BigInt(v.leaf_count);
+      const proof = {
+        leaf: { dataRoot: new Uint8Array(32).fill(v.leaf_index + 1), dataSize: index, totalSize: 2n * index },
+        items: v.items.map(hexToBytes),
+      };
+      const root = hexToBytes(v.root);
+      expect(verifyMmrProof(proof, index, root, count), JSON.stringify(v)).toBe(true);
+      if (count > 1n) expect(verifyMmrProof(proof, (index + 1n) % count, root, count)).toBe(false);
+    }
   });
 
   it("rejects a changed leaf or root", () => {

@@ -495,4 +495,43 @@ mod tests {
             );
         }
     }
+
+    const UPDATE_ENV: &str = "UPDATE_MMR_FIXTURES";
+
+    /// `fixtures/mmr-proofs.json` contains the proof of every leaf of MMRs
+    /// with 1, 2, 3, 7 and 11 leaves. `packages/core/src/merkle.test.ts`
+    /// checks that the TypeScript `verifyMmrProof` accepts each one.
+    /// Regenerate with `UPDATE_MMR_FIXTURES=1 cargo test -p storage-primitives mmr`.
+    #[test]
+    fn proof_fixture_is_current() {
+        let mut vectors = Vec::new();
+        for leaf_count in [1u64, 2, 3, 7, 11] {
+            let leaves = leaves(leaf_count);
+            for leaf_index in 0..leaf_count {
+                let (root, proof) = proof(&leaves, leaf_index).unwrap().unwrap();
+                let items: Vec<String> =
+                    proof.items.iter().map(|h| format!("\"{h:#x}\"")).collect();
+                vectors.push(format!(
+                    "    {{ \"leaf_count\": {leaf_count}, \"leaf_index\": {leaf_index}, \"root\": \"{root:#x}\", \"items\": [{}] }}",
+                    items.join(", ")
+                ));
+            }
+        }
+        let produced = format!(
+            "{{\n  \"about\": \"Written by crates/primitives/storage/src/mmr.rs; read by packages/core/src/merkle.test.ts. Leaf i: data_root = 32 bytes of i + 1, data_size = i, total_size = 2 * i. Regenerate: {UPDATE_ENV}=1 cargo test -p storage-primitives mmr\",\n  \"vectors\": [\n{}\n  ]\n}}\n",
+            vectors.join(",\n")
+        );
+
+        let path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/mmr-proofs.json");
+        if std::env::var_os(UPDATE_ENV).is_some() {
+            std::fs::write(&path, &produced).unwrap();
+        }
+        let checked_in = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            checked_in == produced,
+            "{} is out of date; regenerate it with {UPDATE_ENV}=1",
+            path.display()
+        );
+    }
 }
