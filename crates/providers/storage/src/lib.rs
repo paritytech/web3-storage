@@ -10,8 +10,8 @@ pub mod index;
 pub mod mmr;
 
 pub use backend::{
-    build_padded_merkle_tree, BucketInfo, BucketState, BucketStats, BucketSummary, DiskStorage,
-    StorageBackend, StorageBackendSpec, StoredNode,
+    build_merkle_tree, BucketInfo, BucketState, BucketStats, BucketSummary, ChunkTreeNode,
+    CommitOutcome, DiskStorage, StorageBackend, StorageBackendSpec,
 };
 pub use error::Error;
 pub use index::{

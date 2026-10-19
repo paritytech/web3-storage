@@ -179,7 +179,7 @@ async fn expected(store: &MemoryStore) -> Value {
             json!({
                 "size": stat.size(),
                 "content_type": stat.content_type(),
-                "blake2_256": hex_cid(&storage_primitives::blake2_256(&file.data)),
+                "leaf_hash": hex_cid(&storage_primitives::hash_leaf(&file.data)),
                 "content_root": hex_cid(&stat.content_root()),
                 "manifest_cid": hex_cid(&stat.entry.cid),
                 "mtime": stat.mtime(),
@@ -200,7 +200,7 @@ async fn expected(store: &MemoryStore) -> Value {
             "size": object.size,
             "last_modified": object.last_modified,
             "metadata": metadata,
-            "blake2_256": hex_cid(&storage_primitives::blake2_256(&object.data)),
+            "leaf_hash": hex_cid(&storage_primitives::hash_leaf(&object.data)),
         }
     });
 

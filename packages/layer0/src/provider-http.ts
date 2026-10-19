@@ -6,25 +6,27 @@
  * consumers can typecheck and use these directly.
  */
 
-import { blake2b256 } from "@polkadot-labs/hdkd-helpers";
 import {
   base64ToBytes,
   bytesEq,
   bytesToBase64,
   chunkCount,
+  CidMismatchError,
   computeCid,
   concatBytes,
   createLimiter,
   DEFAULT_CHUNK_SIZE,
+  hashChildren,
+  hashLeaf,
   hexToBytes,
   HttpError,
   httpFetch,
-  paddedMerkleRoot,
-  paddedMerkleTree,
+  merkleRoot,
+  merkleTree,
+  nodeHash,
   signProviderRequest,
   splitChunks,
   verifyChunkProof,
-  verifyCid,
   type MmrProof,
   type ProviderRequestSigner,
 } from "@web3-storage/core";
@@ -142,16 +144,27 @@ export interface PutChunkResult {
  *
  * `signer` authenticates the `PUT /node` request; it must hold a Writer/Admin
  * role on `bucketId` (the provider always enforces this).
+ *
+ * Pass `children` to store an internal node instead of a leaf chunk. The
+ * provider requires every child to exist already.
+ *
+ * Throws `RangeError` for a leaf above `DEFAULT_CHUNK_SIZE`, before any request.
  */
 export async function putChunk(
   providerUrl: string,
   bucketId: bigint | number,
   data: Uint8Array | string,
   signer: ChainSigner,
+  children: [Uint8Array, Uint8Array] | null = null,
 ): Promise<PutChunkResult> {
   const sign = { signer: signer.signer, bucketId };
   const bytes = data instanceof Uint8Array ? data : new TextEncoder().encode(data);
-  const cid = blake2b256(bytes);
+  if (!children && bytes.length > DEFAULT_CHUNK_SIZE) {
+    throw new RangeError(
+      `chunk is ${bytes.length} bytes, above the ${DEFAULT_CHUNK_SIZE} byte maximum; split the data into ${DEFAULT_CHUNK_SIZE} byte chunks`,
+    );
+  }
+  const cid = children ? hashChildren(children[0], children[1]) : hashLeaf(bytes);
   const hash = toHex(cid);
   await providerFetch(providerUrl, "/node", {
     method: "PUT",
@@ -159,7 +172,7 @@ export async function putChunk(
       bucket_id: Number(bucketId),
       hash,
       data: bytesToBase64(bytes),
-      children: null,
+      children: children ? children.map((c) => toHex(c)) : null,
     },
     sign,
   });
@@ -173,6 +186,8 @@ export async function putChunk(
  *
  * `signer` authenticates the `PUT /node` and `POST /commit` requests; it must
  * hold a Writer/Admin role on `bucketId` (the provider always enforces this).
+ *
+ * Throws `RangeError` for a leaf above `DEFAULT_CHUNK_SIZE`, before any request.
  */
 export async function uploadChunk(
   providerUrl: string,
@@ -180,30 +195,19 @@ export async function uploadChunk(
   data: Uint8Array | string,
   signer: ChainSigner,
 ): Promise<{ hash: string; data: Uint8Array; commit: any }> {
-  const sign = { signer: signer.signer, bucketId };
-  const bytes = data instanceof Uint8Array ? data : new TextEncoder().encode(data);
-  const hash = toHex(blake2b256(bytes));
-  await providerFetch(providerUrl, "/node", {
-    method: "PUT",
-    body: {
-      bucket_id: Number(bucketId),
-      hash,
-      data: bytesToBase64(bytes),
-      children: null,
-    },
-    sign,
-  });
+  const { hash, data: bytes } = await putChunk(providerUrl, bucketId, data, signer);
   const commit = await providerFetch(providerUrl, "/commit", {
     method: "POST",
     body: { bucket_id: Number(bucketId), data_roots: [hash] },
-    sign,
+    sign: { signer: signer.signer, bucketId },
   });
   return { hash, data: bytes, commit };
 }
 
 /**
- * `GET /node` for one stored node (a chunk or an internal node). Throws
- * `CidMismatchError` unless the bytes hash to `chunkHashHex`.
+ * Download a node by hash and verify it: bytes without children must hash as
+ * a leaf, and a node with two children must hold exactly their concatenation
+ * and hash as a node over them. Throws {@link CidMismatchError} otherwise.
  */
 export async function downloadChunk(
   providerUrl: string,
@@ -213,7 +217,11 @@ export async function downloadChunk(
     params: { hash: chunkHashHex },
   });
   const data = base64ToBytes(downloaded.data);
-  verifyCid(data, chunkHashHex);
+  const expected = asHex(chunkHashHex).toLowerCase();
+  const hash = nodeHash(data, downloaded.children ?? null);
+  if (!hash) throw new CidMismatchError(expected, "malformed internal node");
+  const actual = toHex(hash);
+  if (actual !== expected) throw new CidMismatchError(expected, actual);
   return data;
 }
 
@@ -287,7 +295,7 @@ export async function fetchChallengeProof(
 
 // ── Blobs: upload, commit, read ─────────────────────────────────────────────
 // A blob of any size is stored as its 256 KiB chunks plus the internal nodes
-// of its padded Merkle tree (`storage_primitives::padded_merkle_tree`). Its
+// of its Merkle tree (`storage_primitives::merkle_tree`). Its
 // CID is the tree root (`computeDataRoot`). Reads are unauthenticated: a
 // blob's hash is enough to read it (#383/#396).
 
@@ -334,13 +342,13 @@ export interface UploadBlobResult {
   /** The blob's CID (`data_root`), 0x-hex. */
   dataRoot: string;
   size: number;
-  /** blake2-256 of each chunk, in order. */
+  /** Leaf hash of each chunk, in order. */
   chunkHashes: Uint8Array[];
 }
 
 /**
  * Store a blob of any size with `PUT /node`: every chunk, then the internal
- * nodes of its padded Merkle tree, bottom-up. Does not commit; pass the
+ * nodes of its Merkle tree, bottom-up. Does not commit; pass the
  * returned `dataRoot` to {@link commitDataRoots}.
  *
  * `signer` must hold a Writer or Admin role on `bucketId`.
@@ -354,7 +362,7 @@ export async function uploadBlob(
 ): Promise<UploadBlobResult> {
   const chunks = splitChunks(bytes);
   const hashes = chunks.map((c) => computeCid(c));
-  const { root, nodes } = paddedMerkleTree(hashes);
+  const { root, nodes } = merkleTree(hashes);
   const sent = new Set<string>();
   const once = <T>(items: T[], hashOf: (item: T) => Uint8Array): T[] =>
     items.filter((item) => {
@@ -372,10 +380,13 @@ export async function uploadBlob(
     putNode(providerUrl, bucketId, c.hash, c.data, null, signer, opts),
   );
   // `nodes` is level by level; a level can go up once the one below is stored.
+  // A level of `width` hashes has `floor(width / 2)` nodes; an odd last hash
+  // moves up unchanged.
   let offset = 0;
-  for (let width = nodes.length + 1; width > 1; width /= 2) {
-    const level = once(nodes.slice(offset, offset + width / 2), (n) => n.hash);
-    offset += width / 2;
+  for (let width = hashes.length; width > 1; width = Math.ceil(width / 2)) {
+    const count = Math.floor(width / 2);
+    const level = once(nodes.slice(offset, offset + count), (n) => n.hash);
+    offset += count;
     await runLimited(level, BLOB_CONCURRENCY, (n) =>
       putNode(
         providerUrl,
@@ -516,12 +527,7 @@ export interface ReadBlobOpts extends ProviderHttpOpts {
   /**
    * The blob's size in bytes, when known. With a size, the chunks come from
    * `GET /read` with Merkle proofs; without one, from a `GET /node` walk of
-   * the blob's tree.
-   *
-   * Without a size the result is not fully verified: the padded tree has no
-   * leaf/internal domain separation, so a provider can answer for an
-   * internal node as if it were a single 64-byte chunk. Pass the size for
-   * content reads.
+   * the blob's tree. Both paths verify every chunk.
    */
   size?: bigint | number;
   /**
@@ -534,7 +540,7 @@ export interface ReadBlobOpts extends ProviderHttpOpts {
 
 /**
  * Read a whole blob by its CID and check it: every chunk must hash to its
- * place in the blob's padded Merkle tree with root `dataRoot`, and every
+ * place in the blob's Merkle tree with root `dataRoot`, and every
  * chunk except the last must be full. Throws {@link BlobVerificationError}
  * on a mismatch.
  */
@@ -605,17 +611,15 @@ async function readBlobWithProofs(
 }
 
 /**
- * Walk the blob's tree with `GET /node`. Every node must hash to its id, an
- * internal node's data must be its two children, and the leaves must rebuild
- * `root` as a padded tree (this rejects a leaf posing as an internal node,
- * but not an internal node posing as a leaf; see `ReadBlobOpts.size`).
+ * Walk the blob's tree with `GET /node`. Every node must hash to its id (a
+ * chunk as a leaf, an internal node over its two children, which must be its
+ * data), and the chunks must rebuild `root`.
  */
 async function walkBlob(providerUrl: string, root: Uint8Array, opts: ReadBlobOpts): Promise<Uint8Array[]> {
   const rootHex = toHex(root);
-  const zero = new Uint8Array(32);
   const limit = createLimiter(BLOB_CONCURRENCY);
   const maxSize = opts.maxSize === undefined ? undefined : BigInt(opts.maxSize);
-  // A padded tree over n chunks has depth ceil(log2(n)).
+  // A tree over n chunks has depth ceil(log2(n)).
   let maxDepth = Number.POSITIVE_INFINITY;
   if (maxSize !== undefined) {
     const maxChunks = chunkCount(maxSize);
@@ -637,7 +641,8 @@ async function walkBlob(providerUrl: string, root: Uint8Array, opts: ReadBlobOpt
       }),
     );
     const data = base64ToBytes(node.data);
-    if (!bytesEq(computeCid(data), hash)) {
+    const actual = nodeHash(data, node.children ?? null);
+    if (!actual || !bytesEq(actual, hash)) {
       throw new BlobVerificationError(rootHex, `node ${hashHex} does not match its hash`);
     }
     if (!node.children) {
@@ -648,14 +653,11 @@ async function walkBlob(providerUrl: string, root: Uint8Array, opts: ReadBlobOpt
       return [data];
     }
     const children = (node.children as string[]).map(hexToBytes);
-    if (children.length !== 2 || !bytesEq(concatBytes(children[0], children[1]), data)) {
-      throw new BlobVerificationError(rootHex, `node ${hashHex} has invalid children`);
-    }
-    const parts = await Promise.all(children.filter((c) => !bytesEq(c, zero)).map((c) => walk(c, depth + 1)));
+    const parts = await Promise.all(children.map((c) => walk(c, depth + 1)));
     return parts.flat();
   };
   const chunks = await walk(root, 0);
-  if (!bytesEq(paddedMerkleRoot(chunks.map((c) => computeCid(c))), root)) {
+  if (!bytesEq(merkleRoot(chunks.map((c) => computeCid(c))), root)) {
     throw new BlobVerificationError(rootHex, "chunks do not rebuild the root");
   }
   return chunks;

@@ -4,9 +4,8 @@ use crate::Member;
 use crate::*;
 use alloc::vec::Vec;
 use frame_support::pallet_prelude::*;
-use sp_core::H256;
 use sp_runtime::traits::{SaturatedConversion, Saturating, Zero};
-use storage_primitives::{BucketId, ProviderRole, Role, Visibility};
+use storage_primitives::{BucketId, Commitment, ProviderRole, Role, Visibility};
 
 impl<T: Config> Pallet<T> {
     /// Internal function to cleanup a bucket and all its agreements.
@@ -179,7 +178,7 @@ impl<T: Config> Pallet<T> {
             min_providers,
             primary_providers,
             snapshot: None,
-            historical_roots: [(0, H256::zero()); 6],
+            historical_roots: [(0, Commitment::default()); 6],
             total_snapshots: 0,
             visibility,
         };

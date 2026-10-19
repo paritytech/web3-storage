@@ -72,7 +72,7 @@ pub enum BlobLength {
 /// The Layer 0 operations the tree uses.
 #[async_trait::async_trait]
 pub trait BlobStore: Send + Sync {
-    /// Upload `data` to the bucket (chunks and padded Merkle tree nodes) and
+    /// Upload `data` to the bucket (chunks and Merkle tree nodes) and
     /// return its data root.
     async fn put_blob(&self, bucket_id: BucketId, data: &[u8]) -> Result<Cid>;
 
@@ -117,25 +117,13 @@ impl BlobStore for StorageUserClient {
     }
 
     /// With [`BlobLength::AtMost`], the read requests one byte more than
-    /// the maximum. A 64-byte result has the same CID as an internal Merkle
-    /// node over two hashes, so the read then also checks with `GET /node`
-    /// that `cid` is a leaf. A provider that lies in both responses is not
-    /// detected; only an exact size rules that out.
+    /// the maximum.
     async fn get_blob(&self, cid: Cid, length: BlobLength) -> Result<Vec<u8>> {
         let max = match length {
             BlobLength::Exact(size) => size,
             BlobLength::AtMost(max) => max.saturating_add(1),
         };
-        let data = self.download(&cid, 0, max).await.map_err(storage_error)?;
-        if matches!(length, BlobLength::AtMost(_)) && data.len() == 64 {
-            let (_, children) = self.read_node(&cid).await.map_err(storage_error)?;
-            if children.is_some() {
-                return Err(FsClientError::Serialization(format!(
-                    "{cid:?} is an internal Merkle node, not a blob"
-                )));
-            }
-        }
-        Ok(data)
+        self.download(&cid, 0, max).await.map_err(storage_error)
     }
 
     async fn commit(&self, bucket_id: BucketId, data_roots: Vec<Cid>) -> Result<()> {
@@ -173,34 +161,17 @@ impl BlobStore for StorageUserClient {
 
 /// Check that `proof` proves the last leaf of an MMR with `leaf_count`
 /// leaves and root `mmr_root`.
-///
-/// [`storage_primitives::verify_mmr_proof`] accepts a proof of any leaf. The
-/// last leaf is the rightmost leaf of the lowest peak, whose height is the
-/// number of trailing zero bits of `leaf_count`: the proof has that many
-/// siblings, every step goes up from the right, the result is the last peak,
-/// and there is one peak per set bit of `leaf_count`.
 pub fn verify_last_mmr_leaf(
     proof: &storage_primitives::MmrProof,
     mmr_root: &Cid,
     leaf_count: u64,
 ) -> bool {
-    if leaf_count == 0 || !storage_primitives::verify_mmr_proof(proof, mmr_root) {
-        return false;
-    }
-    let height = leaf_count.trailing_zeros() as usize;
-    let path = &proof.leaf_proof;
-    if proof.peaks.len() != leaf_count.count_ones() as usize
-        || path.siblings.len() != height
-        || path.path.len() != height
-        || !path.path.iter().all(|right| *right)
-    {
-        return false;
-    }
-    let leaf_hash = storage_primitives::blake2_256(&codec::Encode::encode(&proof.leaf));
-    let peak = path.siblings.iter().fold(leaf_hash, |current, sibling| {
-        storage_primitives::hash_children(*sibling, current)
-    });
-    proof.peaks.last() == Some(&peak)
+    let commitment = storage_primitives::Commitment {
+        mmr_root: *mmr_root,
+        start_seq: 0,
+        leaf_count,
+    };
+    leaf_count > 0 && storage_primitives::verify_mmr_proof(proof, leaf_count - 1, &commitment)
 }
 
 fn storage_error(e: storage_client::ClientError) -> FsClientError {
@@ -783,14 +754,14 @@ mod tests {
 
     fn mmr_leaf(n: u8) -> storage_primitives::MmrLeaf {
         storage_primitives::MmrLeaf {
-            data_root: storage_primitives::blake2_256(&[n]),
+            data_root: storage_primitives::hash_leaf(&[n]),
             data_size: 1,
             total_size: n as u64,
         }
     }
 
     fn leaf_hash(leaf: &storage_primitives::MmrLeaf) -> Cid {
-        storage_primitives::blake2_256(&codec::Encode::encode(leaf))
+        storage_primitives::hash_leaf(&codec::Encode::encode(leaf))
     }
 
     fn mmr_proof(
@@ -806,6 +777,14 @@ mod tests {
         }
     }
 
+    fn commitment(mmr_root: Cid, leaf_count: u64) -> storage_primitives::Commitment {
+        storage_primitives::Commitment {
+            mmr_root,
+            start_seq: 0,
+            leaf_count,
+        }
+    }
+
     #[test]
     fn last_mmr_leaf_check_rejects_other_leaves() {
         use storage_primitives::hash_children;
@@ -814,13 +793,17 @@ mod tests {
 
         // Three leaves: peaks [h0h1, h2].
         let peaks = vec![hash_children(h[0], h[1]), h[2]];
-        let root = hash_children(peaks[0], peaks[1]);
+        let root = storage_primitives::bag_peaks(&peaks);
         let last = mmr_proof(peaks.clone(), leaves[2].clone(), vec![], vec![]);
         assert!(verify_last_mmr_leaf(&last, &root, 3));
         assert!(!verify_last_mmr_leaf(&last, &root, 4));
         assert!(!verify_last_mmr_leaf(&last, &root, 0));
         let first = mmr_proof(peaks.clone(), leaves[0].clone(), vec![h[1]], vec![false]);
-        assert!(storage_primitives::verify_mmr_proof(&first, &root));
+        assert!(storage_primitives::verify_mmr_proof(
+            &first,
+            0,
+            &commitment(root, 3)
+        ));
         assert!(!verify_last_mmr_leaf(&first, &root, 3));
 
         // Four leaves: one peak.
@@ -839,7 +822,11 @@ mod tests {
             vec![h[3], left],
             vec![false, true],
         );
-        assert!(storage_primitives::verify_mmr_proof(&third, &peak));
+        assert!(storage_primitives::verify_mmr_proof(
+            &third,
+            2,
+            &commitment(peak, 4)
+        ));
         assert!(!verify_last_mmr_leaf(&third, &peak, 4));
     }
 

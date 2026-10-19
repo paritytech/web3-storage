@@ -135,8 +135,8 @@ Rules for callers:
 | Path | Verified? | How |
 | --- | --- | --- |
 | `downloadChunk` | **Yes, throws `CidMismatchError`** | the requested hash is the node's hash |
-| `readBlob` / `fs.downloadByCid` with a size | **Yes, throws `BlobVerificationError`** | every chunk is checked against the blob's padded Merkle tree |
-| `readBlob` / `fs.downloadByCid` without a size | Partly | the tree is checked, but a provider can return an internal node as a 64-byte blob |
+| `readBlob` / `fs.downloadByCid` with a size | **Yes, throws `BlobVerificationError`** | every chunk is checked against the blob's Merkle tree |
+| `readBlob` / `fs.downloadByCid` without a size | **Yes, throws `BlobVerificationError`** | every node is checked against its hash (a chunk as a leaf, an internal node over its children), and the chunks must rebuild the root |
 | `fs.downloadFile`, `s3.getObject` | **Yes** | the path resolves through CID-checked directory and manifest blobs from the root CID |
 
 The root CID comes from the provider's last MMR leaf, checked against the

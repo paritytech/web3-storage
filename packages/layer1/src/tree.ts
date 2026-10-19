@@ -41,7 +41,7 @@ import {
   FS_LIMITS,
   hexToBytes,
   isWellFormedString,
-  paddedMerkleRoot,
+  merkleRoot,
   toHex,
   createLimiter,
   validateDirectoryNode,
@@ -510,7 +510,7 @@ export class FsTree {
       manifest.chunks.length === chunkCount(manifest.totalSize) &&
       manifest.chunks.every((c, i) => c.sequence === i);
     if (!valid) throw new FileSystemError("NotAFileSystem", `${path}: file manifest chunk list is inconsistent`);
-    const contentRoot = paddedMerkleRoot(manifest.chunks.map((c) => c.cid));
+    const contentRoot = merkleRoot(manifest.chunks.map((c) => c.cid));
     return {
       entry,
       manifest,

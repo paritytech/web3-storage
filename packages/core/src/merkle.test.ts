@@ -3,11 +3,15 @@
 import { describe, expect, it } from "vitest";
 import { blake2b256 } from "@polkadot-labs/hdkd-helpers";
 import {
+  bagPeaks,
+  chunkCount,
   computeDataRoot,
+  DEFAULT_CHUNK_SIZE,
   hashChildren,
+  hashLeaf,
+  merkleRoot,
   metadataMerkleRoot,
-  paddedMerkleRoot,
-  paddedMerkleTree,
+  merkleTree,
   splitChunks,
   u64le,
   verifyChunkProof,
@@ -20,84 +24,174 @@ import { concatBytes, toHex } from "./bytes.js";
 
 const ZERO32 = new Uint8Array(32);
 
-describe("paddedMerkleRoot", () => {
+// Expected values come from an independent blake2b-256 computation over the
+// documented preimages; the Rust tests in crates/primitives/storage assert the
+// same leaf, node and root values.
+describe("golden vectors", () => {
+  const enc = new TextEncoder();
+  const leafA = hashLeaf(enc.encode("a"));
+  const leafB = hashLeaf(enc.encode("b"));
+  const leafC = hashLeaf(enc.encode("c"));
+
+  it("hashes a leaf with the 0x00 prefix", () => {
+    expect(toHex(hashLeaf(new Uint8Array(0)))).toBe(
+      "0x03170a2e7597b7b7e3d84c05391d139a62b157e78786d8c082f29dcf4c111314",
+    );
+    expect(toHex(hashLeaf(enc.encode("abc")))).toBe(
+      "0x4b44b5a5f9e6fafead231e4d609a8e88053a6053c087b68e24e31faf0fb8dfe7",
+    );
+    expect(toHex(computeCid(enc.encode("abc")))).toBe(toHex(hashLeaf(enc.encode("abc"))));
+    expect(toHex(hashLeaf(enc.encode("abc")))).not.toBe(toHex(blake2b256(enc.encode("abc"))));
+    expect(toHex(leafA)).toBe("0x7234082e1dd0b5ec0acd71875d61c9f374af30c100bc4de7aa4eb3f15bbed686");
+    expect(toHex(leafB)).toBe("0xb3d5dedf654e9fc853bdc5daf79330c5a1eaf2b910f2a36c72ef8ea999ccf953");
+    expect(toHex(leafC)).toBe("0x960259f5c0885e7b7967cc25158bc9069db1ca8222e7beffdfffe5dea0297966");
+  });
+
+  it("hashes an internal node with the 0x01 prefix", () => {
+    expect(toHex(hashChildren(leafA, leafB))).toBe(
+      "0xee616625a590167bc4b3dc703ab4f3f2ddecbee6b9d05fee9281f02046e6082e",
+    );
+  });
+
+  it("moves the odd leaf of a 3-chunk root up a level", () => {
+    expect(toHex(merkleRoot([leafA, leafB, leafC]))).toBe(
+      "0x17321db51c1ef3ec1f77e271aa300b4e5c6091708bcba37e46025774a26142ee",
+    );
+  });
+
+  it("tags metadata leaves and nodes", () => {
+    const entries: MerkleEntry[] = [
+      { path: "/a.jpg", dataRoot: leafA, size: 1n },
+      { path: "/b.jpg", dataRoot: leafB, size: 2n },
+    ];
+    expect(toHex(metadataMerkleRoot(entries))).toBe(
+      "0xa179f8563e699338a92ca5e7836273a048160ed61ce8bd4eb9af12b5b275da94",
+    );
+  });
+
+  it("does not let node bytes verify as a leaf", () => {
+    const nodeBytes = concatBytes(leafA, leafB);
+    expect(toHex(hashLeaf(nodeBytes))).not.toBe(toHex(hashChildren(leafA, leafB)));
+  });
+
+  it("bags MMR peaks right to left with the 0x02 prefix", () => {
+    const peaks = [1, 2, 3].map((b) => new Uint8Array(32).fill(b));
+    expect(toHex(bagPeaks(peaks.slice(0, 2)))).toBe(
+      "0x39ffd1718a7a2d0f61de8f7902cb47d9661392d004d5b91e835ccd3d475cd035",
+    );
+    expect(toHex(bagPeaks(peaks))).toBe(
+      "0xde6b5def5927714c7e957d45b39ba6b3cb1b24c08d3d72e038387f46268eb23f",
+    );
+  });
+
+  it("returns one peak as the root and zero for no peaks", () => {
+    const peak = new Uint8Array(32).fill(7);
+    expect(bagPeaks([peak])).toEqual(peak);
+    expect(bagPeaks([])).toEqual(ZERO32);
+  });
+});
+
+describe("merkleRoot", () => {
   it("empty → 32 zero bytes", () => {
-    expect(toHex(paddedMerkleRoot([]))).toBe(toHex(ZERO32));
+    expect(toHex(merkleRoot([]))).toBe(toHex(ZERO32));
   });
 
   it("single leaf → that leaf verbatim", () => {
     const leaf = computeCid(new TextEncoder().encode("leaf"));
-    expect(toHex(paddedMerkleRoot([leaf]))).toBe(toHex(leaf));
+    expect(toHex(merkleRoot([leaf]))).toBe(toHex(leaf));
   });
 
   it("two leaves → hash of the pair; matches hashChildren", () => {
     const a = computeCid(new TextEncoder().encode("a"));
     const b = computeCid(new TextEncoder().encode("b"));
-    expect(toHex(paddedMerkleRoot([a, b]))).toBe(toHex(hashChildren(a, b)));
+    expect(toHex(merkleRoot([a, b]))).toBe(toHex(hashChildren(a, b)));
   });
 
-  it("three leaves pad to four with a zero hash", () => {
+  it("three leaves move the odd leaf up a level", () => {
     const a = computeCid(new TextEncoder().encode("a"));
     const b = computeCid(new TextEncoder().encode("b"));
     const c = computeCid(new TextEncoder().encode("c"));
-    const expected = hashChildren(hashChildren(a, b), hashChildren(c, ZERO32));
-    expect(toHex(paddedMerkleRoot([a, b, c]))).toBe(toHex(expected));
+    const expected = hashChildren(hashChildren(a, b), c);
+    expect(toHex(merkleRoot([a, b, c]))).toBe(toHex(expected));
   });
 
-  // Same vector as `padded_merkle_tree_matches_ts_vector` in
-  // crates/primitives/storage, so the Rust and TS trees stay identical.
-  it("matches the Rust padded_merkle_tree vector", () => {
-    const leaf = (n: number) => computeCid(new Uint8Array([n]));
-    expect(toHex(paddedMerkleRoot([leaf(1), leaf(2), leaf(3)]))).toBe(
-      "0xb00ba4725e9a6c357dfffcf32d0ea9f2b73418705bdab4ea5a602cac23fbc650",
-    );
+  // Roots over blake2b256([i]) for i in 1..=n, from the same independent
+  // computation as the Rust golden vectors in crates/primitives/storage/src/merkle.rs.
+  it("matches the Rust golden roots for 1 to 9 leaves", () => {
+    const golden = [
+      "ee155ace9c40292074cb6aff8c9ccdd273c81648ff1149ef36bcea6ebb8a3e25",
+      "5632fced358a72ed6fd53ada497c9980a010c7e82c8386a10c12f2f27f9195f3",
+      "56d7f37e08c1fac178a24ff1a5cc3413e35e4816ad2ce2a79120f3072bc9c618",
+      "226e43e73fc2eb5cb50dc8f74106275685bf54f1aabd6e07e67c285f6f1032f9",
+      "96c211dab54f3b6abd7a0f240df556dc810fc28d216c3b60dde7f491bbb5805e",
+      "ea39f530b256e22bbff141464469eca0da922437cbab3e08fc706ac147ddc002",
+      "470b3383b4658c30ba2466cc75dba6f0316fbe66e0e711708b47a85650f803b1",
+      "734ed4bd23af21a41d23be13e369e592f49499fd2ef89e1b33b96a4540daa0f7",
+      "c487902011078c0f151b8986afe18f487d7c69f46d58fd4ce293ade5b2a40ce5",
+    ];
+    golden.forEach((expected, i) => {
+      const leaves = Array.from({ length: i + 1 }, (_, j) => blake2b256(Uint8Array.of(j + 1)));
+      expect(toHex(merkleRoot(leaves)).replace(/^0x/, "")).toBe(expected);
+    });
+  });
+});
+
+describe("chunkCount", () => {
+  it("rounds up and has a minimum of one", () => {
+    const chunk = DEFAULT_CHUNK_SIZE;
+    expect(chunkCount(0)).toBe(1);
+    expect(chunkCount(1)).toBe(1);
+    expect(chunkCount(chunk)).toBe(1);
+    expect(chunkCount(chunk + 1)).toBe(2);
+    expect(chunkCount(2 * chunk + 10)).toBe(3);
   });
 });
 
 describe("computeDataRoot", () => {
   it("empty file hashes a single empty chunk", () => {
-    expect(toHex(computeDataRoot(new Uint8Array(0)))).toBe(toHex(blake2b256(new Uint8Array(0))));
+    expect(toHex(computeDataRoot(new Uint8Array(0)))).toBe(toHex(hashLeaf(new Uint8Array(0))));
   });
 
   it("single sub-chunk file → its own chunk hash", () => {
     const bytes = new TextEncoder().encode("hello world");
-    expect(toHex(computeDataRoot(bytes))).toBe(toHex(blake2b256(bytes)));
+    expect(toHex(computeDataRoot(bytes))).toBe(toHex(hashLeaf(bytes)));
   });
 
-  it("multi-chunk file folds chunk hashes via the padded tree", () => {
-    const chunk = 256 * 1024;
+  it("multi-chunk file folds chunk hashes via the Merkle tree", () => {
+    const chunk = DEFAULT_CHUNK_SIZE;
     const bytes = new Uint8Array(chunk + 100).fill(7);
-    const h0 = blake2b256(bytes.subarray(0, chunk));
-    const h1 = blake2b256(bytes.subarray(chunk));
+    const h0 = hashLeaf(bytes.subarray(0, chunk));
+    const h1 = hashLeaf(bytes.subarray(chunk));
     expect(toHex(computeDataRoot(bytes))).toBe(toHex(hashChildren(h0, h1)));
   });
 });
 
-describe("paddedMerkleTree", () => {
+describe("merkleTree", () => {
   const leaf = (n: number) => computeCid(new Uint8Array([n]));
 
   it("returns no nodes for zero or one leaf", () => {
-    expect(paddedMerkleTree([]).nodes).toEqual([]);
-    expect(paddedMerkleTree([leaf(1)])).toEqual({ root: leaf(1), nodes: [] });
+    expect(merkleTree([]).nodes).toEqual([]);
+    expect(merkleTree([leaf(1)])).toEqual({ root: leaf(1), nodes: [] });
   });
 
-  it("returns the internal nodes bottom-up, including zero-padded ones", () => {
+  it("returns the internal nodes bottom-up; an odd leaf moves up without a node", () => {
     const [a, b, c] = [leaf(1), leaf(2), leaf(3)];
     const ab = hashChildren(a, b);
-    const c0 = hashChildren(c, ZERO32);
-    const { root, nodes } = paddedMerkleTree([a, b, c]);
+    const { root, nodes } = merkleTree([a, b, c]);
     expect(nodes).toEqual([
       { hash: ab, left: a, right: b },
-      { hash: c0, left: c, right: ZERO32 },
-      { hash: root, left: ab, right: c0 },
+      { hash: root, left: ab, right: c },
     ]);
+    expect(toHex(root)).toBe(toHex(merkleRoot([a, b, c])));
   });
 
-  it("five leaves produce a node with two zero children", () => {
-    const leaves = [1, 2, 3, 4, 5].map(leaf);
-    const { nodes } = paddedMerkleTree(leaves);
-    expect(nodes).toHaveLength(7);
-    expect(nodes[3]).toEqual({ hash: hashChildren(ZERO32, ZERO32), left: ZERO32, right: ZERO32 });
+  it("n leaves have n - 1 internal nodes, the root last", () => {
+    for (let n = 2; n <= 9; n++) {
+      const leaves = Array.from({ length: n }, (_, i) => leaf(i + 1));
+      const { root, nodes } = merkleTree(leaves);
+      expect(nodes).toHaveLength(n - 1);
+      expect(toHex(nodes[nodes.length - 1].hash)).toBe(toHex(root));
+    }
   });
 });
 
@@ -110,20 +204,24 @@ describe("splitChunks", () => {
 
 describe("verifyChunkProof", () => {
   const leaves = [1, 2, 3].map((n) => computeCid(new Uint8Array([n])));
-  const root = paddedMerkleRoot(leaves);
+  const root = merkleRoot(leaves);
   const ab = hashChildren(leaves[0], leaves[1]);
 
-  it("accepts the padded-tree proof and rejects a wrong index or depth", () => {
-    expect(verifyChunkProof(leaves[2], 2, [ZERO32, ab], root, 3)).toBe(true);
-    expect(verifyChunkProof(leaves[2], 3, [ZERO32, ab], root, 3)).toBe(false);
-    expect(verifyChunkProof(leaves[2], 2, [ZERO32, ab], root, 5)).toBe(false);
+  it("accepts proofs for every leaf and rejects a wrong index, count or length", () => {
+    expect(verifyChunkProof(leaves[0], 0, [leaves[1], leaves[2]], root, 3)).toBe(true);
+    expect(verifyChunkProof(leaves[1], 1, [leaves[0], leaves[2]], root, 3)).toBe(true);
+    // The odd last leaf has no sibling at the bottom level.
+    expect(verifyChunkProof(leaves[2], 2, [ab], root, 3)).toBe(true);
+    expect(verifyChunkProof(leaves[2], 3, [ab], root, 3)).toBe(false);
+    expect(verifyChunkProof(leaves[2], 2, [ab], root, 4)).toBe(false);
+    expect(verifyChunkProof(leaves[2], 2, [ab, ab], root, 3)).toBe(false);
     expect(verifyChunkProof(leaves[0], 0, [], leaves[0], 1)).toBe(true);
   });
 });
 
 describe("verifyMmrProof", () => {
   const leafHash = (l: { dataRoot: Uint8Array; dataSize: bigint; totalSize: bigint }) =>
-    blake2b256(concatBytes(l.dataRoot, u64le(l.dataSize), u64le(l.totalSize)));
+    hashLeaf(concatBytes(l.dataRoot, u64le(l.dataSize), u64le(l.totalSize)));
   const leaves = [1, 2, 3].map((n) => ({
     dataRoot: computeCid(new Uint8Array([n])),
     dataSize: 1n,
@@ -131,18 +229,24 @@ describe("verifyMmrProof", () => {
   }));
   const hashes = leaves.map(leafHash);
   const peak0 = hashChildren(hashes[0], hashes[1]);
-  const mmrRoot = hashChildren(peak0, hashes[2]);
+  const peaks = [peak0, hashes[2]];
+  const mmrRoot = bagPeaks(peaks);
 
   it("accepts a leaf under the first and the last peak", () => {
-    expect(verifyMmrProof({ peaks: [peak0, hashes[2]], leaf: leaves[1], siblings: [hashes[0]], path: [true] }, mmrRoot)).toBe(true);
-    expect(verifyMmrProof({ peaks: [peak0, hashes[2]], leaf: leaves[2], siblings: [], path: [] }, mmrRoot)).toBe(true);
+    expect(verifyMmrProof({ peaks, leaf: leaves[1], siblings: [hashes[0]], path: [true] }, 1n, mmrRoot, 3n)).toBe(true);
+    expect(verifyMmrProof({ peaks, leaf: leaves[2], siblings: [], path: [] }, 2n, mmrRoot, 3n)).toBe(true);
+  });
+
+  it("rejects a proof for another leaf index", () => {
+    expect(verifyMmrProof({ peaks, leaf: leaves[1], siblings: [hashes[0]], path: [true] }, 0n, mmrRoot, 3n)).toBe(false);
+    expect(verifyMmrProof({ peaks, leaf: leaves[2], siblings: [], path: [] }, 3n, mmrRoot, 3n)).toBe(false);
   });
 
   it("verifyLastMmrLeaf accepts only the last leaf", () => {
-    const peaks = [peak0, hashes[2]];
     expect(verifyLastMmrLeaf({ peaks, leaf: leaves[2], siblings: [], path: [] }, mmrRoot, 3n)).toBe(true);
     expect(verifyLastMmrLeaf({ peaks, leaf: leaves[1], siblings: [hashes[0]], path: [true] }, mmrRoot, 3n)).toBe(false);
     expect(verifyLastMmrLeaf({ peaks, leaf: leaves[2], siblings: [], path: [] }, mmrRoot, 4n)).toBe(false);
+    expect(verifyLastMmrLeaf({ peaks, leaf: leaves[2], siblings: [], path: [] }, mmrRoot, 0n)).toBe(false);
     // Two leaves: the last leaf is the right child under the single peak.
     const root2 = hashChildren(hashes[0], hashes[1]);
     expect(verifyLastMmrLeaf({ peaks: [root2], leaf: leaves[1], siblings: [hashes[0]], path: [true] }, root2, 2n)).toBe(true);
@@ -151,8 +255,8 @@ describe("verifyMmrProof", () => {
 
   it("rejects a changed leaf or root", () => {
     const changed = { ...leaves[2], dataSize: 2n };
-    expect(verifyMmrProof({ peaks: [peak0, hashes[2]], leaf: changed, siblings: [], path: [] }, mmrRoot)).toBe(false);
-    expect(verifyMmrProof({ peaks: [peak0, hashes[2]], leaf: leaves[2], siblings: [], path: [] }, ZERO32)).toBe(false);
+    expect(verifyMmrProof({ peaks, leaf: changed, siblings: [], path: [] }, 2n, mmrRoot, 3n)).toBe(false);
+    expect(verifyMmrProof({ peaks, leaf: leaves[2], siblings: [], path: [] }, 2n, ZERO32, 3n)).toBe(false);
   });
 });
 
@@ -164,10 +268,10 @@ describe("metadataMerkleRoot", () => {
   it("orders entries by UTF-8 path bytes regardless of input order", () => {
     const enc = new TextEncoder();
     const leafFor = (e: MerkleEntry) =>
-      blake2b256(concatBytes(enc.encode(e.path), e.dataRoot, u64le(e.size)));
+      hashLeaf(concatBytes(enc.encode(e.path), e.dataRoot, u64le(e.size)));
     const a: MerkleEntry = { path: "/a.jpg", dataRoot: ZERO32, size: 1n };
     const b: MerkleEntry = { path: "/b.jpg", dataRoot: ZERO32, size: 2n };
-    const expected = toHex(paddedMerkleRoot([leafFor(a), leafFor(b)]));
+    const expected = toHex(merkleRoot([leafFor(a), leafFor(b)]));
     expect(toHex(metadataMerkleRoot([a, b]))).toBe(expected);
     expect(toHex(metadataMerkleRoot([b, a]))).toBe(expected);
   });

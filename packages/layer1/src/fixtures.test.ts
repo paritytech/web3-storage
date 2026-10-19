@@ -20,6 +20,7 @@ import {
   computeCid,
   computeDataRoot,
   DEFAULT_CHUNK_SIZE,
+  hashLeaf,
   splitChunks,
   toHex,
 } from "@web3-storage/core";
@@ -117,7 +118,7 @@ async function expected(provider: FakeProvider): Promise<Json> {
     files[path] = {
       size: Number(file.size),
       content_type: file.contentType,
-      blake2_256: toHex(computeCid(file.bytes)),
+      leaf_hash: toHex(hashLeaf(file.bytes)),
       content_root: file.contentRoot,
       manifest_cid: file.manifestCid,
       mtime: Number(file.mtime),
@@ -138,7 +139,7 @@ async function expected(provider: FakeProvider): Promise<Json> {
         size: object.size,
         last_modified: object.lastModified / 1000,
         metadata: object.metadata,
-        blake2_256: toHex(computeCid(data)),
+        leaf_hash: toHex(hashLeaf(data)),
       },
     },
   };

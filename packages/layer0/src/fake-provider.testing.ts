@@ -10,17 +10,17 @@
  */
 
 import {
+  bagPeaks,
   base64ToBytes,
   bytesToBase64,
   computeCid,
   DEFAULT_CHUNK_SIZE,
   hashChildren,
   hexToBytes,
+  nodeHash,
   toHex,
   u64le,
 } from "@web3-storage/core";
-
-const ZERO = toHex(new Uint8Array(32));
 
 interface StoredNode {
   data: Uint8Array;
@@ -52,13 +52,15 @@ function leafHash(leaf: Leaf): Uint8Array {
   return computeCid(bytes);
 }
 
-/** Levels of a perfect binary tree over `leaves` (length a power of two), bottom-up. */
+/** Levels of the Merkle tree over `leaves`, bottom-up; an odd last node moves up unchanged. */
 function levels(leaves: Uint8Array[]): Uint8Array[][] {
   const out = [leaves];
   while (out[out.length - 1].length > 1) {
     const prev = out[out.length - 1];
     const next: Uint8Array[] = [];
-    for (let i = 0; i < prev.length; i += 2) next.push(hashChildren(prev[i], prev[i + 1]));
+    for (let i = 0; i < prev.length; i += 2) {
+      next.push(i + 1 < prev.length ? hashChildren(prev[i], prev[i + 1]) : prev[i]);
+    }
     out.push(next);
   }
   return out;
@@ -77,12 +79,6 @@ function mmrPeaks(hashes: Uint8Array[]): { start: number; size: number; levels: 
     remaining -= size;
   }
   return out;
-}
-
-function bag(peaks: Uint8Array[]): Uint8Array {
-  let acc: Uint8Array | null = null;
-  for (let i = peaks.length - 1; i >= 0; i--) acc = acc ? hashChildren(peaks[i], acc) : peaks[i];
-  return acc ?? new Uint8Array(32);
 }
 
 export class FakeProvider {
@@ -132,9 +128,10 @@ export class FakeProvider {
   private putNode(body: { bucket_id: number; hash: string; data: string; children: string[] | null }): Response {
     const hash = body.hash.toLowerCase();
     const data = base64ToBytes(body.data);
-    if (toHex(computeCid(data)) !== hash) return json(400, { error: "invalid_hash" });
     const children = body.children?.map((c) => c.toLowerCase()) ?? null;
-    const missing = (children ?? []).filter((c) => c !== ZERO && !this.nodes.has(c));
+    const actual = nodeHash(data, children);
+    if (!actual || toHex(actual) !== hash) return json(400, { error: "invalid_hash" });
+    const missing = (children ?? []).filter((c) => !this.nodes.has(c));
     if (missing.length) return json(400, { error: "children_missing", details: { missing } });
     if (!this.buckets.has(String(body.bucket_id))) this.buckets.set(String(body.bucket_id), []);
     if (!this.nodes.has(hash)) this.nodes.set(hash, { data, children });
@@ -175,7 +172,7 @@ export class FakeProvider {
   }
 
   private mmrRoot(leaves: Leaf[]): Uint8Array {
-    return bag(mmrPeaks(leaves.map(leafHash)).map((p) => p.levels[p.levels.length - 1][0]));
+    return bagPeaks(mmrPeaks(leaves.map(leafHash)).map((p) => p.levels[p.levels.length - 1][0]));
   }
 
   private getNode(hash: string): Response {
@@ -184,13 +181,12 @@ export class FakeProvider {
     return json(200, { hash, data: bytesToBase64(node.data), children: node.children });
   }
 
-  /** Chunk hashes under `root` in order, skipping zero hashes (`collect_chunk_hashes`). */
+  /** Chunk hashes under `root` in order (`collect_chunk_hashes`). */
   private chunkHashes(root: string): string[] {
     const out: string[] = [];
     const stack = [root];
     while (stack.length) {
       const hash = stack.pop()!;
-      if (hash === ZERO) continue;
       const node = this.nodes.get(hash);
       if (!node) continue;
       if (node.children) stack.push(...[...node.children].reverse());
@@ -204,18 +200,14 @@ export class FakeProvider {
     const size = BigInt(DEFAULT_CHUNK_SIZE);
     const start = Number(offset / size);
     const end = Number((offset + length + size - 1n) / size);
-    let padded = 1;
-    while (padded < hashes.length) padded *= 2;
-    const tree = levels([
-      ...hashes.map(hexToBytes),
-      ...Array.from({ length: padded - hashes.length }, () => new Uint8Array(32)),
-    ]);
+    const tree = levels(hashes.map(hexToBytes));
     const chunks = [];
     for (let i = start; i < end && i < hashes.length; i++) {
       const proof: string[] = [];
       let idx = i;
       for (const level of tree.slice(0, -1)) {
-        proof.push(toHex(level[idx ^ 1]));
+        // An odd last node moves up without a sibling.
+        if ((idx ^ 1) < level.length) proof.push(toHex(level[idx ^ 1]));
         idx >>= 1;
       }
       const data = this.nodes.get(hashes[i])!.data;

@@ -11,10 +11,10 @@
  */
 
 import assert from "node:assert";
-import { blake2b256 } from "@polkadot-labs/hdkd-helpers";
 import {
   downloadChunk,
   ensureProviderRegistered,
+  hashLeaf,
   makeSigner,
   signProviderRequest,
   toHex,
@@ -225,13 +225,13 @@ async function main() {
   });
 
   tests.push({
-    name: "4.12 Verify blake2-256 hash",
+    name: "4.12 Verify leaf hash",
     fn: async () => {
       const data = "verify hash computation";
       const bytes = new TextEncoder().encode(data);
-      const expectedHash = toHex(blake2b256(bytes));
+      const expectedHash = toHex(hashLeaf(bytes));
       const { hash } = await uploadChunk(PROVIDER_URL, bucketId, data, client);
-      assert.strictEqual(hash, expectedHash, "Provider hash should match local blake2-256");
+      assert.strictEqual(hash, expectedHash, "Provider hash should match the local leaf hash");
     },
   });
 
