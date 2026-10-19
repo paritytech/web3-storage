@@ -62,7 +62,7 @@ pub struct StorageParams {
     #[arg(long, value_enum, default_value_t = StorageBackendKind::RocksDb)]
     pub storage_backend: StorageBackendKind,
 
-    /// Directory holding the chunks, the MMR state and the nonce counter.
+    /// Directory holding the chunks and the MMR state.
     #[arg(long, default_value = "./provider-data", env = "STORAGE_PATH")]
     pub storage_path: PathBuf,
 }

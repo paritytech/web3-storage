@@ -16,7 +16,7 @@ fn setup_provider_with_replicas(provider: u64, stake: u64) {
 }
 
 #[test]
-fn establish_replica_agreement_works() {
+fn add_replica_provider_works() {
     new_test_ext().execute_with(|| {
         setup_provider_with_replicas(2, 200);
         let bucket_id = create_bucket(1, 0);
@@ -47,14 +47,15 @@ fn establish_replica_agreement_works() {
 }
 
 #[test]
-fn establish_replica_agreement_fails_no_replica_sync_price() {
+fn add_replica_provider_fails_no_replica_sync_price() {
     new_test_ext().execute_with(|| {
         // Provider without replica_sync_price
         register_provider(2, 200);
         let bucket_id = create_bucket(1, 0);
 
-        // The sync-price check runs after the nonce window advances, so
-        // storage is mutated even on failure — assert the error only.
+        // The sync-price check runs after the owner's nonce counter
+        // advances, so storage is mutated even on failure — assert the
+        // error only.
         let (terms, sig) = signed_replica_terms(
             2,
             1,
@@ -68,7 +69,7 @@ fn establish_replica_agreement_fails_no_replica_sync_price() {
             },
         );
         assert_err!(
-            StorageProvider::establish_replica_agreement(
+            StorageProvider::add_replica_provider(
                 RuntimeOrigin::signed(1),
                 bucket_id,
                 2,
@@ -81,7 +82,7 @@ fn establish_replica_agreement_fails_no_replica_sync_price() {
 }
 
 #[test]
-fn establish_replica_agreement_fails_deregister_announced() {
+fn add_replica_provider_fails_deregister_announced() {
     new_test_ext().execute_with(|| {
         setup_provider_with_replicas(2, 200);
         let bucket_id = create_bucket(1, 0);
@@ -104,7 +105,7 @@ fn establish_replica_agreement_fails_deregister_announced() {
             },
         );
         assert_err!(
-            StorageProvider::establish_replica_agreement(
+            StorageProvider::add_replica_provider(
                 RuntimeOrigin::signed(1),
                 bucket_id,
                 2,
@@ -117,7 +118,7 @@ fn establish_replica_agreement_fails_deregister_announced() {
 }
 
 #[test]
-fn establish_replica_agreement_fails_duplicate() {
+fn add_replica_provider_fails_duplicate() {
     new_test_ext().execute_with(|| {
         setup_provider_with_replicas(2, 200);
         let bucket_id = create_bucket(1, 0);
@@ -150,7 +151,7 @@ fn establish_replica_agreement_fails_duplicate() {
             },
         );
         assert_noop!(
-            StorageProvider::establish_replica_agreement(
+            StorageProvider::add_replica_provider(
                 RuntimeOrigin::signed(1),
                 bucket_id,
                 2,
@@ -163,7 +164,7 @@ fn establish_replica_agreement_fails_duplicate() {
 }
 
 #[test]
-fn establish_replica_agreement_fails_bucket_not_found() {
+fn add_replica_provider_fails_bucket_not_found() {
     new_test_ext().execute_with(|| {
         setup_provider_with_replicas(2, 200);
 
@@ -180,20 +181,14 @@ fn establish_replica_agreement_fails_bucket_not_found() {
             },
         );
         assert_noop!(
-            StorageProvider::establish_replica_agreement(
-                RuntimeOrigin::signed(1),
-                999,
-                2,
-                terms,
-                sig
-            ),
+            StorageProvider::add_replica_provider(RuntimeOrigin::signed(1), 999, 2, terms, sig),
             Error::<Test>::BucketNotFound
         );
     });
 }
 
 #[test]
-fn establish_replica_agreement_fails_terms_bucket_mismatch() {
+fn add_replica_provider_fails_terms_bucket_mismatch() {
     new_test_ext().execute_with(|| {
         setup_provider_with_replicas(2, 200);
         let bucket_id = create_bucket(1, 0);
@@ -213,7 +208,7 @@ fn establish_replica_agreement_fails_terms_bucket_mismatch() {
             },
         );
         assert_noop!(
-            StorageProvider::establish_replica_agreement(
+            StorageProvider::add_replica_provider(
                 RuntimeOrigin::signed(1),
                 bucket_id,
                 2,
@@ -226,19 +221,18 @@ fn establish_replica_agreement_fails_terms_bucket_mismatch() {
 }
 
 #[test]
-fn establish_replica_agreement_fails_missing_replica_terms() {
+fn add_replica_provider_fails_missing_replica_terms() {
     new_test_ext().execute_with(|| {
         setup_provider_with_replicas(2, 200);
         let bucket_id = create_bucket(1, 0);
 
         // Bucket-bound terms without replica params.
         let pair = provider_signer(2);
-        let mut terms = primary_terms(1, 50, 100, 0);
-        terms.bucket_id = Some(bucket_id);
+        let terms = primary_terms(1, BucketTarget::Existing(bucket_id), 50, 100, 0);
         let sig = sign_terms(&pair, &terms);
 
         assert_noop!(
-            StorageProvider::establish_replica_agreement(
+            StorageProvider::add_replica_provider(
                 RuntimeOrigin::signed(1),
                 bucket_id,
                 2,
@@ -431,9 +425,12 @@ fn confirm_replica_sync_happy_path() {
             } => {
                 assert_eq!(*sync_balance, 490); // 500 - 10
                 assert!(last_sync.is_some());
-                let record = last_sync.unwrap();
+                let record = last_sync.as_ref().unwrap();
                 assert_eq!(record.commitment.mmr_root, sp_core::H256::repeat_byte(0xAB));
                 assert_eq!(record.block, 1);
+                // Synced to the current snapshot: its range is recorded.
+                assert_eq!(record.commitment.start_seq, 0);
+                assert_eq!(record.commitment.leaf_count, 10);
             }
             _ => panic!("expected replica"),
         }
@@ -469,6 +466,132 @@ fn confirm_replica_sync_rejects_bad_roots_signature() {
         assert_noop!(
             StorageProvider::confirm_replica_sync(RuntimeOrigin::signed(2), bucket_id, roots, sig),
             Error::<Test>::InvalidSignature
+        );
+    });
+}
+
+#[test]
+fn challenge_replica_binds_to_synced_range() {
+    use sp_core::H256;
+    new_test_ext().execute_with(|| {
+        frame_system::Pallet::<Test>::set_block_number(1);
+        let bucket_id = setup_replica_with_snapshot();
+
+        // Replica (provider 2) syncs to the current snapshot (start_seq 0, leaf_count 10).
+        let mut roots = [None; 7];
+        roots[0] = Some(H256::repeat_byte(0xAB));
+        assert_ok!(StorageProvider::confirm_replica_sync(
+            RuntimeOrigin::signed(2),
+            bucket_id,
+            roots,
+            sign_sync_roots(2, &roots),
+        ));
+
+        // Anyone can challenge the replica; the challenge is bound to the synced range.
+        assert_ok!(StorageProvider::challenge_replica(
+            RuntimeOrigin::signed(4),
+            bucket_id,
+            2,
+            storage_primitives::ChunkLocation {
+                leaf_index: 3,
+                chunk_index: 1,
+            },
+        ));
+
+        assert_eq!(Challenges::<Test>::iter_prefix(101).count(), 1);
+        let c = Challenges::<Test>::get(101, 0).unwrap();
+        assert_eq!(c.provider, 2);
+        assert_eq!(c.commitment.mmr_root, H256::repeat_byte(0xAB));
+        assert_eq!(c.commitment.start_seq, 0);
+        // Bound to the snapshot's real leaf_count, not a placeholder.
+        assert_eq!(c.commitment.leaf_count, 10);
+        assert_eq!(c.target.leaf_index, 3);
+        assert_eq!(c.target.chunk_index, 1);
+    });
+}
+
+#[test]
+fn challenge_replica_binds_to_historical_sync_range() {
+    use sp_core::H256;
+    use storage_primitives::{ChunkLocation, Commitment, ProviderRole};
+    new_test_ext().execute_with(|| {
+        frame_system::Pallet::<Test>::set_block_number(1);
+        let bucket_id = setup_replica_with_snapshot();
+
+        // A historical entry distinct from the current snapshot, with its own range.
+        let historical = Commitment {
+            mmr_root: H256::repeat_byte(0x11),
+            start_seq: 2,
+            leaf_count: 5,
+        };
+        Buckets::<Test>::mutate(bucket_id, |bucket| {
+            bucket.as_mut().unwrap().historical_roots[0] = (1, historical);
+        });
+
+        // The replica syncs to the historical root (position 1), not the snapshot.
+        let mut roots = [None; 7];
+        roots[1] = Some(historical.mmr_root);
+        assert_ok!(StorageProvider::confirm_replica_sync(
+            RuntimeOrigin::signed(2),
+            bucket_id,
+            roots,
+            sign_sync_roots(2, &roots),
+        ));
+        let agreement = StorageAgreements::<Test>::get(bucket_id, 2).unwrap();
+        let ProviderRole::Replica { last_sync, .. } = &agreement.role else {
+            panic!("expected replica");
+        };
+        assert_eq!(last_sync.as_ref().unwrap().commitment, historical);
+
+        // A challenge binds to that range: its last leaf is in, the next is out.
+        assert_noop!(
+            StorageProvider::challenge_replica(
+                RuntimeOrigin::signed(4),
+                bucket_id,
+                2,
+                ChunkLocation {
+                    leaf_index: 5,
+                    chunk_index: 0,
+                },
+            ),
+            Error::<Test>::LeafNotInCommitment
+        );
+        assert_ok!(StorageProvider::challenge_replica(
+            RuntimeOrigin::signed(4),
+            bucket_id,
+            2,
+            ChunkLocation {
+                leaf_index: 4,
+                chunk_index: 0,
+            },
+        ));
+        assert_eq!(
+            Challenges::<Test>::get(101, 0).unwrap().commitment,
+            historical
+        );
+    });
+}
+
+#[test]
+fn confirm_replica_sync_rejects_an_unwritten_historical_entry() {
+    use sp_core::H256;
+    new_test_ext().execute_with(|| {
+        frame_system::Pallet::<Test>::set_block_number(1);
+        let bucket_id = setup_replica_with_snapshot();
+
+        // No checkpoint has written position 1 yet; its zero root is not a
+        // commitment, so claiming it must not earn a sync payment or a
+        // last_sync the replica cannot be challenged on.
+        let mut roots = [None; 7];
+        roots[1] = Some(H256::zero());
+        assert_noop!(
+            StorageProvider::confirm_replica_sync(
+                RuntimeOrigin::signed(2),
+                bucket_id,
+                roots,
+                sign_sync_roots(2, &roots),
+            ),
+            Error::<Test>::InvalidSyncRoot
         );
     });
 }
@@ -698,7 +821,7 @@ fn confirm_replica_sync_after_interval_with_new_root() {
                 ..
             } => {
                 assert_eq!(*sync_balance, 480); // 500 - 10 - 10
-                let record = last_sync.unwrap();
+                let record = last_sync.as_ref().unwrap();
                 assert_eq!(record.commitment.mmr_root, sp_core::H256::repeat_byte(0xCD));
                 assert_eq!(record.block, 12);
             }

@@ -10,8 +10,9 @@ extern crate alloc;
 use alloc::vec::Vec;
 use codec::{Decode, Encode};
 use scale_info::TypeInfo;
-use sp_core::H256;
-use storage_primitives::{BucketId, BucketSnapshot, ProviderRole, Role, Visibility};
+use storage_primitives::{
+    BucketId, BucketSnapshot, ChunkLocation, Commitment, ProviderRole, Role, Visibility,
+};
 
 /// Provider information returned by runtime API.
 #[derive(Clone, PartialEq, Eq, Encode, Decode, TypeInfo, Debug)]
@@ -224,14 +225,11 @@ pub struct ChallengeResponse {
     pub provider: Vec<u8>,
     /// SCALE-encoded account id of the challenger.
     pub challenger: Vec<u8>,
-    /// Commitment root the provider must prove against.
-    pub mmr_root: H256,
-    /// Start sequence of that commitment.
-    pub start_seq: u64,
-    /// Challenged leaf.
-    pub leaf_index: u64,
-    /// Challenged chunk within the leaf.
-    pub chunk_index: u64,
+    /// Commitment the provider must prove against; its `leaf_count` binds the
+    /// proof to `target.leaf_index`.
+    pub commitment: Commitment,
+    /// Challenged leaf and chunk.
+    pub target: ChunkLocation,
     /// Anchor block the response is due by.
     pub deadline: u32,
     /// Stable per-deadline index, forming `ChallengeId { deadline, index }`.
@@ -244,11 +242,7 @@ pub struct ChallengeResponse {
 
 sp_api::decl_runtime_apis! {
     /// Runtime API for the storage provider pallet.
-    ///
-    /// v2 reshaped `ProviderInfoResponse` (`deregister_at`, `reputation`) and added
-    /// `challenge_candidates`. Declared explicitly so callers can probe the version
-    /// instead of decoding a v1 shape that no longer exists.
-    #[api_version(3)]
+    #[api_version(1)]
     pub trait StorageProviderApi<AccountId, BlockNumber, Balance>
     where
         AccountId: Encode + Decode,
@@ -286,7 +280,8 @@ sp_api::decl_runtime_apis! {
         /// Get all challenges for a specific bucket.
         fn bucket_challenges(bucket_id: BucketId) -> Vec<ChallengeResponse>;
 
-        /// Get all challenges targeting a specific provider.
+        /// Challenges targeting a provider that it can still answer; expired
+        /// ones are omitted.
         fn provider_challenges(provider: AccountId) -> Vec<ChallengeResponse>;
 
         /// Get all challenges created by a specific challenger.

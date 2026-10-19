@@ -70,6 +70,33 @@ fn checkpoint_works_with_zero_min_providers() {
 }
 
 #[test]
+fn checkpoint_records_the_commitment_in_historical_roots() {
+    new_test_ext().execute_with(|| {
+        create_bucket(1, 0);
+        // Anchor block 7 crosses the prime-3 and prime-7 boundaries only.
+        System::set_block_number(7);
+        let commitment = Commitment {
+            mmr_root: H256::repeat_byte(0xAA),
+            start_seq: 4,
+            leaf_count: 10,
+        };
+        assert_ok!(StorageProvider::checkpoint(
+            RuntimeOrigin::signed(1),
+            0,
+            commitment,
+            Default::default(),
+        ));
+
+        let roots = Buckets::<Test>::get(0).unwrap().historical_roots;
+        // The whole commitment is stored, so a replica syncing to this root
+        // later records a range challenge_replica can bind to.
+        assert_eq!(roots[0], (2, commitment));
+        assert_eq!(roots[1], (1, commitment));
+        assert_eq!(roots[2], (0, Commitment::default()));
+    });
+}
+
+#[test]
 fn extend_checkpoint_fails_no_snapshot() {
     new_test_ext().execute_with(|| {
         create_bucket(1, 0);
