@@ -15,7 +15,10 @@ use rocksdb::{Options, DB};
 use sp_core::H256;
 use std::path::Path;
 use std::sync::Arc;
-use storage_primitives::{mmr, BucketId, MmrLeaf, MmrProof};
+use storage_primitives::{
+    mmr::{self, MmrLeaf, MmrProof},
+    BucketId,
+};
 
 /// Column families for organizing data
 const CF_NODES: &str = "nodes";
