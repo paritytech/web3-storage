@@ -11,7 +11,7 @@ pub mod mmr;
 
 pub use backend::{
     build_merkle_tree, commit_blob, BucketInfo, BucketState, BucketStats, BucketSummary,
-    ChunkTreeNode, CommitOutcome, DiskStorage, StorageBackend, StorageBackendSpec,
+    ChunkTreeNode, CommitOutcome, DeletionReceipt, DiskStorage, StorageBackend, StorageBackendSpec,
 };
 pub use error::Error;
 pub use index::{

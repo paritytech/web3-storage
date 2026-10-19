@@ -9,7 +9,7 @@ pub mod rocksdb;
 pub mod types;
 
 pub use rocksdb::DiskStorage;
-pub use types::{BucketState, ChunkTreeNode};
+pub use types::{BucketState, ChunkTreeNode, DeletionReceipt, PrunedRange};
 
 use crate::error::Error;
 use serde::{Deserialize, Serialize};
@@ -103,6 +103,29 @@ pub struct BucketStats {
     pub leaf_count: u64,
     pub node_count: u64,
     pub bytes_stored: u64,
+}
+
+/// View of one pruned-but-not-yet-erased leaf range (the GC work queue).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PrunedRangeInfo {
+    /// Global sequence number of the first stashed leaf.
+    pub first_seq: u64,
+    /// One past the last stashed leaf (`first_seq + len`).
+    pub end_seq: u64,
+    /// The start_seq the prune advanced the bucket to.
+    pub new_start_seq: u64,
+    /// Whether an admin-signed deletion receipt covering this range is held
+    /// (required before the range may be physically erased).
+    pub has_receipt: bool,
+}
+
+/// Result of physically erasing one pruned range.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct EraseOutcome {
+    /// Nodes whose refcount reached zero and were deleted.
+    pub nodes_deleted: u64,
+    /// Bytes credited back to bucket quotas (sum over charged buckets).
+    pub bytes_freed: u64,
 }
 
 /// Storage engine interface. Callers hold an `Arc<dyn StorageBackend>` rather
@@ -199,28 +222,9 @@ pub trait StorageBackend: Send + Sync {
         Ok(leaves)
     }
 
-    /// Byte size of the data under `root`. Fails with `NonCanonicalTree` unless
-    /// `root` is `merkle_root` over chunks of `DEFAULT_CHUNK_SIZE` bytes, except
-    /// the last, which can be shorter but not empty when there are several.
+    /// Byte size of the data under `root`; see [`canonical_size`].
     fn canonical_data_size(&self, root: H256) -> Result<u64, Error> {
-        let (chunk_hashes, chunk_sizes): (Vec<H256>, Vec<usize>) =
-            self.collect_leaves(root)?.into_iter().unzip();
-        let chunk_size = DEFAULT_CHUNK_SIZE as usize;
-        let fixed_sizes = match chunk_sizes.split_last() {
-            None => false,
-            Some((last, rest)) => {
-                rest.iter().all(|size| *size == chunk_size)
-                    && *last <= chunk_size
-                    && (rest.is_empty() || *last > 0)
-            }
-        };
-        if !fixed_sizes || merkle_root(&chunk_hashes) != root {
-            return Err(Error::NonCanonicalTree(format!(
-                "0x{}",
-                hex::encode(root.as_bytes())
-            )));
-        }
-        Ok(chunk_sizes.iter().map(|size| *size as u64).sum())
+        canonical_size(root, &self.collect_leaves(root)?)
     }
 
     /// Get chunk data and Merkle proof at the given index from a data root.
@@ -264,9 +268,59 @@ pub trait StorageBackend: Send + Sync {
             .collect()
     }
 
-    /// Delete data before a sequence number. Returns the commitment after
-    /// the prune.
+    /// Delete data before a sequence number.
+    ///
+    /// The pruned leaves are moved into a retention stash, not erased: the
+    /// provider stays able to prove challenges against commitments covering
+    /// them until an admin-signed deletion receipt is held and the canonical
+    /// checkpoint has passed the range.
     fn delete_before(&self, bucket_id: BucketId, new_start_seq: u64) -> Result<Commitment, Error>;
+
+    /// Store an admin-signed deletion receipt for a stashed range (matched
+    /// by `new_start_seq`). Replaces a previous receipt for the same range.
+    fn attach_deletion_receipt(
+        &self,
+        bucket_id: BucketId,
+        receipt: DeletionReceipt,
+    ) -> Result<(), Error>;
+
+    /// The stored receipt with the smallest `new_start_seq` strictly greater
+    /// than `seq` — the evidence defending a challenge on leaf `seq` after
+    /// its bytes were erased.
+    fn deletion_receipt_covering(&self, bucket_id: BucketId, seq: u64) -> Option<DeletionReceipt>;
+
+    /// Set/refresh the bucket quota learned from the chain agreement.
+    /// Never creates a bucket; errors if it does not exist.
+    fn set_bucket_quota(&self, bucket_id: BucketId, max_bytes: u64) -> Result<(), Error>;
+
+    /// Pruned ranges awaiting physical erasure, oldest first.
+    fn pruned_ranges(&self, bucket_id: BucketId) -> Vec<PrunedRangeInfo>;
+
+    /// Whether the bucket was condemned (deleted on-chain / agreement gone).
+    fn is_condemned(&self, bucket_id: BucketId) -> bool;
+
+    /// Physically erase one stashed range: decrement refcounts along each
+    /// leaf's tree, delete zero-ref nodes, credit `used_bytes` back to each
+    /// node's charged bucket, and drop the range — one atomic write.
+    /// Idempotent: an unknown `first_seq` is a no-op `Ok`. On a condemned
+    /// bucket, removes the bucket row once nothing stashed or live remains.
+    ///
+    /// Callers are responsible for checking that liability has passed
+    /// (canonical checkpoint past the range, the admin's deletion receipt
+    /// held, no pending challenges).
+    fn erase_pruned_range(
+        &self,
+        bucket_id: BucketId,
+        first_seq: u64,
+    ) -> Result<EraseOutcome, Error>;
+
+    /// Bucket teardown, first half: stash all remaining leaves as one pruned
+    /// range and mark the bucket condemned. The second half is the caller
+    /// (the GC) invoking [`erase_pruned_range`](Self::erase_pruned_range)
+    /// once liability has passed — on a condemned bucket that also removes
+    /// the bucket row itself. Idempotent; `Ok` if the bucket is already
+    /// condemned or already gone.
+    fn condemn_bucket(&self, bucket_id: BucketId) -> Result<(), Error>;
 
     /// Get MMR proof for a leaf.
     fn get_mmr_proof(
@@ -291,6 +345,30 @@ pub trait StorageBackend: Send + Sync {
 
     /// Get MMR peaks.
     fn get_mmr_peaks(&self, bucket_id: BucketId) -> Result<(H256, Vec<H256>), Error>;
+}
+
+/// Byte size of the chunks `leaves` (hash and byte size, in leaf order) under
+/// `root`. Fails with `NonCanonicalTree` unless `root` is `merkle_root` over
+/// chunks of `DEFAULT_CHUNK_SIZE` bytes, except the last, which can be shorter
+/// but not empty when there are several.
+pub(crate) fn canonical_size(root: H256, leaves: &[(H256, usize)]) -> Result<u64, Error> {
+    let (chunk_hashes, chunk_sizes): (Vec<H256>, Vec<usize>) = leaves.iter().copied().unzip();
+    let chunk_size = DEFAULT_CHUNK_SIZE as usize;
+    let fixed_sizes = match chunk_sizes.split_last() {
+        None => false,
+        Some((last, rest)) => {
+            rest.iter().all(|size| *size == chunk_size)
+                && *last <= chunk_size
+                && (rest.is_empty() || *last > 0)
+        }
+    };
+    if !fixed_sizes || merkle_root(&chunk_hashes) != root {
+        return Err(Error::NonCanonicalTree(format!(
+            "0x{}",
+            hex::encode(root.as_bytes())
+        )));
+    }
+    Ok(chunk_sizes.iter().map(|size| *size as u64).sum())
 }
 
 /// Chunk `data` at [`DEFAULT_CHUNK_SIZE`], store the chunks and their Merkle
