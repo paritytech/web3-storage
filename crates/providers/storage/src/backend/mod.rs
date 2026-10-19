@@ -19,8 +19,17 @@ use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::Arc;
 use storage_primitives::{
-    build_merkle_proofs, merkle_root, merkle_tree, BucketId, MerkleProof, DEFAULT_CHUNK_SIZE,
+    build_merkle_proofs, hash_leaf, merkle_root, merkle_tree, BucketId, Commitment, MerkleProof,
+    DEFAULT_CHUNK_SIZE,
 };
+
+/// Upper bound on the nodes one content-tree traversal visits.
+///
+/// Deduplication lets many parents reference one stored subtree, so the
+/// logical node count of a tree is not bounded by the bytes stored under it.
+/// This bound caps the work of `commit` and of chunk reads. At the default
+/// chunk size it admits roughly 512 GiB under one data root.
+pub const MAX_TREE_NODES: u64 = 1 << 22;
 
 /// Which backend to build, and what that backend needs.
 ///
@@ -134,45 +143,60 @@ pub trait StorageBackend: Send + Sync {
     /// Commit data roots to the bucket's MMR.
     fn commit(&self, bucket_id: BucketId, data_roots: Vec<H256>) -> Result<CommitOutcome, Error>;
 
-    /// Collect actual chunk data under a data root (DFS, leaf data in order).
-    fn collect_chunks(&self, root: H256) -> Vec<Vec<u8>> {
-        let mut chunks = Vec::new();
-        let mut stack = vec![root];
-
-        while let Some(hash) = stack.pop() {
-            if let Some(node) = self.get_node(&hash) {
-                match node {
-                    ChunkTreeNode::Internal { left, right } => {
-                        stack.push(right);
-                        stack.push(left);
-                    }
-                    ChunkTreeNode::Chunk(data) => chunks.push(data),
-                }
-            }
-        }
-
-        chunks
+    /// Node budget for one content-tree traversal; see [`MAX_TREE_NODES`].
+    fn max_tree_nodes(&self) -> u64 {
+        MAX_TREE_NODES
     }
 
-    /// Hash and byte size of each chunk under `root`, in leaf order. Skips
-    /// nodes missing from storage.
-    fn collect_leaves(&self, root: H256) -> Vec<(H256, usize)> {
-        let mut leaves = Vec::new();
+    /// Visit every node under `root` in DFS order, once per path that reaches
+    /// it. Fails with [`Error::NodeNotFound`] on a missing node and with
+    /// [`Error::TreeTooLarge`] once the visit count passes
+    /// [`Self::max_tree_nodes`].
+    fn walk_tree(
+        &self,
+        root: H256,
+        visit: &mut dyn FnMut(H256, &ChunkTreeNode),
+    ) -> Result<(), Error> {
+        let max_nodes = self.max_tree_nodes();
+        let mut visited = 0u64;
         let mut stack = vec![root];
-
         while let Some(hash) = stack.pop() {
-            if let Some(node) = self.get_node(&hash) {
-                match node {
-                    ChunkTreeNode::Internal { left, right } => {
-                        stack.push(right);
-                        stack.push(left);
-                    }
-                    ChunkTreeNode::Chunk(data) => leaves.push((hash, data.len())),
-                }
+            visited += 1;
+            if visited > max_nodes {
+                return Err(Error::TreeTooLarge { max_nodes });
             }
+            let node = self.get_node(&hash).ok_or_else(|| {
+                Error::NodeNotFound(format!("0x{}", hex::encode(hash.as_bytes())))
+            })?;
+            if let ChunkTreeNode::Internal { left, right } = node {
+                stack.push(right);
+                stack.push(left);
+            }
+            visit(hash, &node);
         }
+        Ok(())
+    }
 
-        leaves
+    /// Collect chunk data under a data root, in leaf order.
+    fn collect_chunks(&self, root: H256) -> Result<Vec<Vec<u8>>, Error> {
+        let mut chunks = Vec::new();
+        self.walk_tree(root, &mut |_, node| {
+            if let ChunkTreeNode::Chunk(data) = node {
+                chunks.push(data.clone());
+            }
+        })?;
+        Ok(chunks)
+    }
+
+    /// Hash and byte size of each chunk under `root`, in leaf order.
+    fn collect_leaves(&self, root: H256) -> Result<Vec<(H256, usize)>, Error> {
+        let mut leaves = Vec::new();
+        self.walk_tree(root, &mut |hash, node| {
+            if let ChunkTreeNode::Chunk(data) = node {
+                leaves.push((hash, data.len()));
+            }
+        })?;
+        Ok(leaves)
     }
 
     /// Byte size of the data under `root`. Fails with `NonCanonicalTree` unless
@@ -180,7 +204,7 @@ pub trait StorageBackend: Send + Sync {
     /// the last, which can be shorter but not empty when there are several.
     fn canonical_data_size(&self, root: H256) -> Result<u64, Error> {
         let (chunk_hashes, chunk_sizes): (Vec<H256>, Vec<usize>) =
-            self.collect_leaves(root).into_iter().unzip();
+            self.collect_leaves(root)?.into_iter().unzip();
         let chunk_size = DEFAULT_CHUNK_SIZE as usize;
         let fixed_sizes = match chunk_sizes.split_last() {
             None => false,
@@ -220,7 +244,7 @@ pub trait StorageBackend: Send + Sync {
         range: Range<u64>,
     ) -> Result<Vec<(H256, Vec<u8>, MerkleProof)>, Error> {
         let chunk_hashes: Vec<H256> = self
-            .collect_leaves(data_root)
+            .collect_leaves(data_root)?
             .into_iter()
             .map(|(hash, _)| hash)
             .collect();
@@ -240,12 +264,9 @@ pub trait StorageBackend: Send + Sync {
             .collect()
     }
 
-    /// Delete data before a sequence number.
-    fn delete_before(
-        &self,
-        bucket_id: BucketId,
-        new_start_seq: u64,
-    ) -> Result<(H256, u64, u64), Error>;
+    /// Delete data before a sequence number. Returns the commitment after
+    /// the prune.
+    fn delete_before(&self, bucket_id: BucketId, new_start_seq: u64) -> Result<Commitment, Error>;
 
     /// Get MMR proof for a leaf.
     fn get_mmr_proof(
@@ -270,6 +291,42 @@ pub trait StorageBackend: Send + Sync {
 
     /// Get MMR peaks.
     fn get_mmr_peaks(&self, bucket_id: BucketId) -> Result<(H256, Vec<H256>), Error>;
+}
+
+/// Chunk `data` at [`DEFAULT_CHUNK_SIZE`], store the chunks and their Merkle
+/// tree, and commit the root to the bucket's MMR. Creates the bucket with an
+/// unlimited quota if it does not exist. Returns the data root and its leaf
+/// index.
+pub fn commit_blob(
+    storage: &dyn StorageBackend,
+    bucket_id: BucketId,
+    data: &[u8],
+) -> Result<(H256, u64), Error> {
+    storage.init_bucket(bucket_id, u64::MAX)?;
+    let chunks: Vec<&[u8]> = if data.is_empty() {
+        vec![&[]]
+    } else {
+        data.chunks(DEFAULT_CHUNK_SIZE as usize).collect()
+    };
+    let chunk_hashes = chunks
+        .iter()
+        .map(|chunk| {
+            let hash = hash_leaf(chunk);
+            storage.store_node(bucket_id, hash, ChunkTreeNode::Chunk(chunk.to_vec()))?;
+            Ok(hash)
+        })
+        .collect::<Result<Vec<_>, Error>>()?;
+    let data_root = build_merkle_tree(storage, bucket_id, &chunk_hashes)?;
+    let leaf_index = storage
+        .commit(bucket_id, vec![data_root])?
+        .leaf_indices
+        .first()
+        .copied()
+        .ok_or(Error::RootNotFound(format!(
+            "0x{}",
+            hex::encode(data_root.as_bytes())
+        )))?;
+    Ok((data_root, leaf_index))
 }
 
 /// Store the internal nodes of `storage_primitives::merkle_tree` over `leaves`
@@ -378,5 +435,31 @@ mod tests {
         let (_dir, storage, leaves) = storage_with_chunks(64, &chunks(2));
         let err = build_merkle_tree(&storage, 1, &leaves).unwrap_err();
         assert!(matches!(err, Error::QuotaExceeded { .. }), "got {err:?}");
+    }
+
+    /// Storing a blob under one data root must commit its full length as
+    /// `data_size` (the signed leaf describes what was uploaded), an empty
+    /// blob still yields one leaf, and each call appends one leaf.
+    #[test]
+    fn commit_blob_commits_body_length_and_appends_leaves() {
+        let dir = TempDir::new().unwrap();
+        let storage = StorageBackendSpec::RocksDb {
+            path: dir.path().to_path_buf(),
+        }
+        .build()
+        .unwrap();
+        let body = vec![7u8; DEFAULT_CHUNK_SIZE as usize * 2 + 1];
+
+        let (root, leaf_index) = commit_blob(storage.as_ref(), 1, &body).unwrap();
+        let (_, empty_leaf_index) = commit_blob(storage.as_ref(), 1, &[]).unwrap();
+
+        assert_eq!(leaf_index, 0);
+        assert_eq!(empty_leaf_index, 1);
+        assert_eq!(storage.collect_chunks(root).unwrap().concat(), body);
+        assert_eq!(
+            storage.canonical_data_size(root).unwrap(),
+            body.len() as u64
+        );
+        assert_eq!(storage.get_bucket(1).unwrap().leaf_count, 2);
     }
 }
