@@ -194,9 +194,10 @@ web3-storage/
 │   │                       #   each with a precompiles/ subfolder (pallet_revive precompiles)
 │   ├── primitives/         # Shared types: storage, file-system, s3
 │   ├── providers/          # Provider-node library crates
-│   └── storage-subxt/      # Static subxt runtime bindings
+│   ├── storage-subxt/      # Static subxt runtime bindings
+│   └── utils/              # Ultility crates
 ├── runtimes/               # Parachain runtimes: web3-storage-local, web3-storage-paseo
-├── provider-node/          # Off-chain HTTP storage server
+├── provider-node/          # Off-chain provider binary
 ├── clients/                # Rust client SDKs: storage (Layer 0), file-system, s3 (Layer 1)
 ├── packages/               # JS/TS workspace: @web3-storage/{core,layer0,layer1,papi,sdk}
 ├── user-interfaces/        # Web apps: landing, explorer, drive-ui, provider, s3-ui, photos, shared
@@ -204,7 +205,7 @@ web3-storage/
 ├── scripts/                # Helper scripts (chain spec, health checks, smoke test)
 ├── chain-specs/            # Chain specification files
 ├── zombienet/              # Local relay+parachain network configs (zombienet-parachain-local.toml, storage-paseo-local.toml)
-└── docs/                   # getting-started, reference, design (review-gated), drafts, filesystems
+└── docs/                   # getting-started, design (review-gated), drafts
 ```
 
 ## Development

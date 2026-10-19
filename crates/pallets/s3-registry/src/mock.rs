@@ -79,7 +79,7 @@ parameter_types! {
     pub const MaxMultiaddrLength: u32 = 128;
     pub const MaxMembers: u32 = 100;
     pub const MaxPrimaryProviders: u32 = 5;
-    pub const MaxChunkSize: u32 = 262144;
+    pub const MaxChunkSize: u32 = storage_primitives::DEFAULT_CHUNK_SIZE;
     pub const ChallengeTimeout: u64 = 100;
     pub const ChallengeDeposit: u64 = 100;
     pub const SettlementTimeout: u64 = 50;
@@ -97,7 +97,7 @@ impl pallet_storage_provider::Config for Test {
     type MaxPrimaryProviders = ConstU32<5>;
     type MaxBucketsPerMember = ConstU32<100>;
     type MinProviderStake = MinProviderStake;
-    type MaxChunkSize = ConstU32<262144>;
+    type MaxChunkSize = MaxChunkSize;
     type ChallengeTimeout = ChallengeTimeout;
     type ChallengeDeposit = ChallengeDeposit;
     type SettlementTimeout = SettlementTimeout;

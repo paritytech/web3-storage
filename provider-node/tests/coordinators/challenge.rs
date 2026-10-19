@@ -2,7 +2,7 @@
 
 //! Integration tests for the challenge responder.
 
-use super::{alice_account, test_state, test_state_with_data, wait_for, ALICE_SS58};
+use super::{alice_account, test_state, test_state_with_data, wait_for};
 use sp_core::H256;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -97,11 +97,15 @@ fn make_challenge(bucket_id: BucketId, deadline: u32, index: u16) -> DetectedCha
         bucket_id,
         deadline,
         index,
-        mmr_root: H256::zero(),
-        start_seq: 0,
-        leaf_index: 5,
-        chunk_index: 0,
-        challenger: ALICE_SS58.to_string(),
+        commitment: storage_primitives::Commitment {
+            mmr_root: H256::zero(),
+            start_seq: 0,
+            leaf_count: 6,
+        },
+        target: storage_primitives::ChunkLocation {
+            leaf_index: 5,
+            chunk_index: 0,
+        },
     }
 }
 
@@ -118,7 +122,7 @@ fn test_detected_challenge() {
     let challenge = make_challenge(1, 1000, 0);
     assert_eq!(challenge.bucket_id, 1);
     assert_eq!(challenge.deadline, 1000);
-    assert_eq!(challenge.leaf_index, 5);
+    assert_eq!(challenge.target.leaf_index, 5);
 }
 
 #[tokio::test(start_paused = true)]
@@ -217,11 +221,7 @@ async fn erased_leaves_are_defended_with_the_deletion_receipt() {
         .unwrap();
     state.storage.erase_pruned_range(1, 0).unwrap();
 
-    // Challenge leaf 0 of the erased (pre-prune) commitment.
-    let challenge = DetectedChallenge {
-        leaf_index: 0,
-        ..challenge
-    };
+    // `challenge` cites leaf 0 of the erased (pre-prune) commitment.
     let mock = Arc::new(MockChallengeChainClient::new().with_challenges(vec![challenge]));
 
     let config = ChallengeResponderConfig {
@@ -305,11 +305,15 @@ async fn test_proof_generation_failed_no_bucket() {
         bucket_id: 999,
         deadline: 1000,
         index: 0,
-        mmr_root: H256::zero(),
-        start_seq: 0,
-        leaf_index: 0,
-        chunk_index: 0,
-        challenger: ALICE_SS58.to_string(),
+        commitment: storage_primitives::Commitment {
+            mmr_root: H256::zero(),
+            start_seq: 0,
+            leaf_count: 1,
+        },
+        target: storage_primitives::ChunkLocation {
+            leaf_index: 0,
+            chunk_index: 0,
+        },
     };
 
     let mock = Arc::new(MockChallengeChainClient::new().with_challenges(vec![challenge]));
@@ -363,7 +367,7 @@ async fn test_proof_generation_failed_no_bucket() {
 #[tokio::test(start_paused = true)]
 async fn test_data_not_found_bad_chunk_index() {
     let (state, mut challenge, _dir) = test_state_with_data();
-    challenge.chunk_index = 999;
+    challenge.target.chunk_index = 999;
 
     let result: Arc<Mutex<Option<ChallengeResponseResult>>> = Arc::new(Mutex::new(None));
     let result_clone = Arc::clone(&result);

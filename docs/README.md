@@ -4,6 +4,7 @@
 docs/
 ├── getting-started/   — quickstart
 ├── design/            — canonical system design (review-gated)
+├── site/              — architecture diagrams and dApp guide, derived from design/
 └── drafts/            — unratified / WIP notes (need triage)
 ```
 
@@ -24,6 +25,7 @@ Every public pallet item must carry a doc comment; the `missing_docs` CI gate th
 
 - **[Quick Start](./getting-started/FILE_SYSTEM_QUICKSTART.md)** — three-terminal setup (chain → provider → demo).
 - **[`CLAUDE.md`](../CLAUDE.md)** (repo root) — agent/contributor rules and the source-of-truth map.
+- **[Contributing](../CONTRIBUTING.md)** - setup, PR process, and `/cmd` bot usage (`/cmd fmt`, `/cmd bench`).
 
 ## Design
 
@@ -31,6 +33,10 @@ The canonical system design. Changes require review (see [`.github/CODEOWNERS`](
 
 - **[Scalable Web3 Storage](./design/scalable-web3-storage.md)** — architecture, economic model, comparisons with Filecoin/IPFS/Arweave, rebuttals to common review concerns.
 - **[Implementation Details](./design/scalable-web3-storage-implementation.md)** — pallet extrinsics, provider HTTP API, MMR layout, challenge mechanism, replica sync.
+
+## Site
+
+**[`site/`](./site/)** — architecture and workflow diagrams for web3-storage developers, and a guide for dApp developers. Every page is derived from `design/`; when `design/` changes, update the site in the same PR (`/generate-docs` skill, checked in CI by [`scripts/check-docs-site.sh`](../scripts/check-docs-site.sh)).
 
 ## Drafts
 

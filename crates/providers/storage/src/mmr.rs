@@ -8,7 +8,7 @@
 //! `n.trailing_zeros()`.
 
 use sp_core::H256;
-use storage_primitives::hash_children;
+use storage_primitives::{bag_peaks, hash_children};
 
 /// A Merkle Mountain Range for storing bucket data.
 #[derive(Debug, Clone)]
@@ -30,25 +30,7 @@ impl Mmr {
 
     /// Get the current root hash (bagged peaks).
     pub fn root(&self) -> H256 {
-        if self.nodes.is_empty() {
-            return H256::zero();
-        }
-
-        let peaks = self.peaks();
-        if peaks.is_empty() {
-            return H256::zero();
-        }
-
-        peaks
-            .iter()
-            .rev()
-            .fold(None, |acc: Option<H256>, &peak| {
-                Some(match acc {
-                    None => peak,
-                    Some(right) => hash_children(peak, right),
-                })
-            })
-            .unwrap_or(H256::zero())
+        bag_peaks(&self.peaks())
     }
 
     /// Get the peaks of the MMR (left to right, highest to lowest height).
@@ -105,36 +87,21 @@ impl Mmr {
         self.nodes.get(pos as usize).copied()
     }
 
-    /// Generate a proof for a leaf at the given index.
-    pub fn proof(&self, leaf_index: u64) -> Option<MmrProof> {
-        let (siblings, path, peaks) = self.proof_with_path(leaf_index)?;
-        Some(MmrProof {
-            leaf_index,
-            siblings,
-            path,
-            peaks,
-        })
-    }
-
     /// Generate a proof with path bits for a leaf at the given index.
     ///
     /// Returns `(siblings, path_bits, peaks)` suitable for constructing
     /// a `storage_primitives::MmrProof`. At each level, `is_right = true`
     /// means the current node is the right child (sibling is to its left).
     pub fn proof_with_path(&self, leaf_index: u64) -> Option<(Vec<H256>, Vec<bool>, Vec<H256>)> {
-        if leaf_index >= self.leaf_count {
-            return None;
-        }
-
-        let (peak_height, local_leaf_index) = self.locate_leaf(leaf_index);
+        let position = storage_primitives::mmr_leaf_position(leaf_index, self.leaf_count)?;
         let leaf_pos = Self::leaf_index_to_pos(leaf_index);
 
         let mut siblings = Vec::new();
         let mut path = Vec::new();
         let mut pos = leaf_pos;
 
-        for h in 0..peak_height {
-            let is_right = (local_leaf_index >> h) & 1 == 1;
+        for h in 0..position.height {
+            let is_right = (position.local_index >> h) & 1 == 1;
             let subtree_size = (1u64 << (h + 1)) - 1;
 
             let sibling_pos = if is_right {
@@ -157,65 +124,6 @@ impl Mmr {
         Some((siblings, path, self.peaks()))
     }
 
-    /// Verify a proof against an MMR root.
-    pub fn verify_proof(root: H256, leaf_hash: H256, proof: &MmrProof) -> bool {
-        if proof.siblings.len() != proof.path.len() {
-            return false;
-        }
-
-        let mut current = leaf_hash;
-
-        for (sibling, is_right) in proof.siblings.iter().zip(proof.path.iter()) {
-            current = if *is_right {
-                hash_children(*sibling, current)
-            } else {
-                hash_children(current, *sibling)
-            };
-        }
-
-        if !proof.peaks.contains(&current) {
-            return false;
-        }
-
-        let bagged_root = proof
-            .peaks
-            .iter()
-            .rev()
-            .fold(None, |acc: Option<H256>, &peak| {
-                Some(match acc {
-                    None => peak,
-                    Some(right) => hash_children(peak, right),
-                })
-            })
-            .unwrap_or(H256::zero());
-
-        bagged_root == root
-    }
-
-    /// Determine which peak subtree a leaf belongs to.
-    ///
-    /// Returns `(peak_height, local_leaf_index)` where peak_height is the
-    /// height of the peak's perfect binary subtree and local_leaf_index is
-    /// the leaf's 0-based index within that subtree.
-    fn locate_leaf(&self, leaf_index: u64) -> (u32, u64) {
-        let mut remaining = self.leaf_count;
-        let mut leaf_offset = 0u64;
-
-        while remaining > 0 {
-            let h = 63 - remaining.leading_zeros();
-            let subtree_leaves = 1u64 << h;
-
-            if leaf_index < leaf_offset + subtree_leaves {
-                return (h, leaf_index - leaf_offset);
-            }
-
-            leaf_offset += subtree_leaves;
-            remaining -= subtree_leaves;
-        }
-
-        unreachable!("leaf_index should be < leaf_count")
-    }
-
     /// Convert a 0-based leaf index to its position in the nodes array.
     fn leaf_index_to_pos(leaf_index: u64) -> u64 {
         2 * leaf_index - (leaf_index.count_ones() as u64)
@@ -228,27 +136,15 @@ impl Default for Mmr {
     }
 }
 
-/// Proof of inclusion in an MMR.
-#[derive(Debug, Clone)]
-pub struct MmrProof {
-    /// Index of the leaf in the MMR
-    pub leaf_index: u64,
-    /// Sibling hashes on the path to the peak
-    pub siblings: Vec<H256>,
-    /// Path bits (true = current node is right child)
-    pub path: Vec<bool>,
-    /// Peaks of the MMR
-    pub peaks: Vec<H256>,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use storage_primitives::blake2_256;
+    use storage_primitives::{blake2_256, hash_leaf};
 
     #[test]
     fn test_mmr_basic() {
         let mut mmr = Mmr::new();
+        assert_eq!(mmr.root(), H256::zero());
 
         let leaf1 = blake2_256(b"leaf1");
         let leaf2 = blake2_256(b"leaf2");
@@ -282,67 +178,121 @@ mod tests {
         }
     }
 
+    // `verify_mmr_proof(proof, leaf_index, commitment)` accepts a leaf
+    // only when it is presented at its own index.
     #[test]
-    fn test_mmr_proof() {
-        let mut mmr = Mmr::new();
+    fn challenge_binds_leaf_index() {
+        use codec::Encode;
+        use storage_primitives::{
+            verify_merkle_proof, verify_mmr_proof, Commitment, MerkleProof, MmrLeaf, MmrProof,
+        };
 
-        let leaves: Vec<H256> = (0..5)
-            .map(|i| blake2_256(format!("leaf{i}").as_bytes()))
+        // A bucket MMR of 6 single-chunk "files". For a single chunk,
+        // data_root == hash_leaf(chunk), so the chunk proof is empty and
+        // verify_merkle_proof(chunk_hash, 0, 1, [], &data_root) reduces to
+        // chunk_hash == data_root.
+        let files: Vec<Vec<u8>> = (0..6)
+            .map(|i| format!("file {i} contents").into_bytes())
             .collect();
+        let leaf_count = files.len() as u64;
 
-        for leaf in &leaves {
-            mmr.push(*leaf);
-        }
-
-        let root = mmr.root();
-
-        for (i, leaf) in leaves.iter().enumerate() {
-            let proof = mmr.proof(i as u64).expect("proof should exist");
-            assert!(
-                Mmr::verify_proof(root, *leaf, &proof),
-                "proof should verify for leaf {i}"
-            );
-        }
-    }
-
-    #[test]
-    fn test_proof_with_path() {
         let mut mmr = Mmr::new();
-
-        let leaves: Vec<H256> = (0..5)
-            .map(|i| blake2_256(format!("leaf{i}").as_bytes()))
-            .collect();
-
-        for leaf in &leaves {
-            mmr.push(*leaf);
+        let mut leaves: Vec<MmrLeaf> = Vec::new();
+        let mut total = 0u64;
+        for f in &files {
+            let data_root = hash_leaf(f);
+            let data_size = f.len() as u64;
+            total += data_size;
+            let leaf = MmrLeaf {
+                data_root,
+                data_size,
+                total_size: total,
+            };
+            mmr.push(hash_leaf(&leaf.encode()));
+            leaves.push(leaf);
         }
-
         let root = mmr.root();
+        let commitment = |leaf_count: u64| Commitment {
+            mmr_root: root,
+            start_seq: 0,
+            leaf_count,
+        };
 
-        for (i, leaf) in leaves.iter().enumerate() {
-            let (siblings, path, _peaks) =
-                mmr.proof_with_path(i as u64).expect("proof should exist");
+        // Build an on-chain `storage_primitives::MmrProof` for a chosen leaf index.
+        let make_proof = |idx: u64| -> MmrProof {
+            let (siblings, path, peaks) = mmr.proof_with_path(idx).unwrap();
+            MmrProof {
+                peaks,
+                leaf: leaves[idx as usize].clone(),
+                leaf_proof: MerkleProof { siblings, path },
+            }
+        };
 
-            // Verify via Mmr::verify_proof
-            let proof = mmr.proof(i as u64).expect("proof should exist");
-            assert!(
-                Mmr::verify_proof(root, *leaf, &proof),
-                "basic proof should verify for leaf {i}"
-            );
+        // The two checks the pallet runs for a `Proof` response (chunk_index 0,
+        // empty chunk proof), now BOUND to the challenged (leaf_index, leaf_count).
+        let empty = MerkleProof {
+            siblings: vec![],
+            path: vec![],
+        };
+        let pallet_accepts = |chunk_data: &[u8], challenged_leaf: u64, proof: &MmrProof| -> bool {
+            let chunk_hash = hash_leaf(chunk_data);
+            let chunk_count = storage_primitives::chunk_count(proof.leaf.data_size);
+            verify_merkle_proof(chunk_hash, 0, chunk_count, &empty, &proof.leaf.data_root)
+                && verify_mmr_proof(proof, challenged_leaf, &commitment(leaf_count))
+        };
 
-            assert_eq!(
-                siblings.len(),
-                path.len(),
-                "siblings and path length mismatch for leaf {i}"
-            );
+        // HONEST: challenge for leaf 5, answer with leaf 5 -> accepted.
+        assert!(
+            pallet_accepts(&files[5], 5, &make_proof(5)),
+            "honest proof for the challenged leaf must pass"
+        );
+
+        // SUBSTITUTION (the fix): challenge for leaf 5, answer with leaf 2's proof
+        // + data -> REJECTED, because the proof's path/peak don't match the path
+        // derived from leaf_index 5.
+        assert!(
+            !pallet_accepts(&files[2], 5, &make_proof(2)),
+            "a substituted leaf must be rejected for the challenged index"
+        );
+
+        // Exhaustive: a proof for leaf `answer` verifies against a leaf-`challenged`
+        // challenge IFF answer == challenged. No off-diagonal substitution survives.
+        for answer in 0..leaf_count {
+            for challenged in 0..leaf_count {
+                let accepted =
+                    pallet_accepts(&files[answer as usize], challenged, &make_proof(answer));
+                assert_eq!(
+                    accepted,
+                    answer == challenged,
+                    "leaf {answer} answering a leaf-{challenged} challenge"
+                );
+            }
         }
+
+        // Tampered chunk bytes fail (chunk content is bound).
+        assert!(
+            !pallet_accepts(b"forged bytes", 5, &make_proof(5)),
+            "forged chunk bytes must fail"
+        );
+
+        // Out-of-range challenged leaf_index fails (the leaf does not exist).
+        assert!(
+            !pallet_accepts(&files[3], leaf_count, &make_proof(3)),
+            "an out-of-range leaf_index must fail"
+        );
+
+        // A wrong leaf_count (peak-structure mismatch) fails.
+        assert!(
+            !verify_mmr_proof(&make_proof(5), 5, &commitment(leaf_count + 1)),
+            "a mismatched leaf_count must fail"
+        );
     }
 
     #[test]
     fn test_proof_with_path_primitives_verify() {
         use codec::Encode;
 
-        // This test mirrors how the pallet verifies: push blake2_256(&leaf.encode())
+        // This test mirrors how the pallet verifies: push hash_leaf(&leaf.encode())
         // into MMR, then verify with storage_primitives::verify_mmr_proof
         let mut mmr = Mmr::new();
 
@@ -355,10 +305,14 @@ mod tests {
             .collect();
 
         for leaf in &mmr_leaves {
-            mmr.push(blake2_256(&leaf.encode()));
+            mmr.push(hash_leaf(&leaf.encode()));
         }
 
-        let root = mmr.root();
+        let commitment = storage_primitives::Commitment {
+            mmr_root: mmr.root(),
+            start_seq: 0,
+            leaf_count: 5,
+        };
 
         for (i, leaf) in mmr_leaves.iter().enumerate() {
             let (siblings, path, peaks) =
@@ -371,7 +325,7 @@ mod tests {
             };
 
             assert!(
-                storage_primitives::verify_mmr_proof(&mmr_proof, &root),
+                storage_primitives::verify_mmr_proof(&mmr_proof, i as u64, &commitment),
                 "verify_mmr_proof failed for leaf {i}"
             );
         }
