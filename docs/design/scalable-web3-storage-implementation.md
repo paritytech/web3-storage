@@ -35,7 +35,7 @@ primaries (replicas stay challengeable by anyone).
 
 **Redundancy**: A bucket can have storage agreements with multiple providers. The `min_providers` setting controls how many providers must acknowledge a state before it can be checkpointed. This ensures minimum redundancy for critical data.
 
-**Append-only mode**: When `frozen_start_seq` is set, the bucket becomes append-only from that point. The start_seq can never decrease below the frozen value, preventing deletion of historical data. This is irreversible and requires the current snapshot to meet `min_providers` threshold.
+**Append-only mode**: When `frozen_start_seq` is set, the bucket becomes append-only from that point. The start_seq stays at the frozen value, preventing deletion of historical data. This is irreversible and requires the current snapshot to still meet `min_providers` (its remaining signer bits are counted again, since primaries may have left or `min_providers` may have risen since the checkpoint), so the state the admin can no longer delete is held by at least that many liable providers when it is frozen. Admins can delete a frozen bucket only once it has no agreements left (one `StorageAgreements` prefix read); after a deletion the `Deleted` defense applies.
 
 ### Storage Model
 
@@ -781,10 +781,18 @@ pub struct Challenge<T: Config> {
     pub provider: T::AccountId,
     /// Account that issued the challenge
     pub challenger: T::AccountId,
-    /// MMR root the provider committed to
-    pub mmr_root: H256,
-    /// Start sequence of the commitment (needed to compute challenged_seq = start_seq + target.leaf_index)
-    pub start_seq: u64,
+    /// The challenged agreement. Responders and slashed members resolve
+    /// against its snapshot, even if a replacement activates meanwhile.
+    pub agreement_id: AgreementId,
+    /// The challenged commitment, copied at creation (challenged_seq =
+    /// commitment.start_seq + target.leaf_index).
+    pub commitment: Commitment,
+    /// Virtual provider: members liable for the challenged commitment, a
+    /// bitmask over the agreement's snapshot — the accepted signers
+    /// (`challenge_offchain`, extended by `extend_challenge`), the snapshot's
+    /// set bits (`challenge_checkpoint`) or `last_sync_signers`
+    /// (`challenge_replica`), copied at creation. Unused for a physical provider.
+    pub liable: u8,
     /// Leaf + chunk being challenged (see `ChunkLocation`)
     pub target: ChunkLocation,
     /// Deposit locked by the challenger when the challenge was created.
@@ -1155,10 +1163,8 @@ so use flat `(AccountId, Signature)` pairs instead:
 is valid only while that agreement is live; when the agreement ends the commitment
 is void. That is the whole replay model — there is no time-based nonce or recency
 window. A provider stays responsible for what it signed exactly as it stays
-responsible for the data: to delete data it must hold the admin-signed deletion
-commitment (the `Deleted` defense), and keeping that evidence is its own duty,
-just like keeping the data. Losing it is self-inflicted, no different from losing
-the data — not a replay the protocol guards against by expiring signatures.
+responsible for the data: it prunes deleted data only once a checkpoint has
+raised `start_seq` past it (the `Deleted` defense checks the snapshot).
 
 ### Events
 
@@ -2105,6 +2111,9 @@ impl<T: Config> Pallet<T> {
     /// `activate_replacements` set, every primary that has a pending
     /// replacement is verified against it and activated ("Replacement
     /// agreements").
+    /// `start_seq` never decreases. Raising it deletes the leaves before it
+    /// and requires an admin; providers prune deleted data only once such a
+    /// checkpoint has landed.
     /// For frozen buckets: start_seq must equal frozen_start_seq (only leaf_count can increase).
     pub fn checkpoint(
         origin: OriginFor<T>,
@@ -2386,7 +2395,7 @@ impl<T: Config> Pallet<T> {
     /// Provider responds to challenge with proof.
     /// 
     /// Must provide the challenged chunk with Merkle proofs, or prove the data
-    /// was legitimately deleted (newer commitment with higher start_seq), or
+    /// was legitimately deleted (the snapshot's start_seq is past it), or
     /// show the challenged state has been superseded by canonical. An invalid
     /// response is rejected (`InvalidProof`, `InvalidDeletionClaim`,
     /// `InvalidSupersededClaim`) and the challenge stays open until the
@@ -2453,16 +2462,10 @@ pub enum ChallengeResponse<T: Config> {
         mmr_proof: MmrProof,
         chunk_proof: MerkleProof,
     },
-    /// Data was deleted - show newer commitment without this seq.
-    /// Admin signature proves the admin authorized the deletion (new MMR excludes the challenged data).
-    /// Only admins can delete data (by increasing start_seq), so the signature must be from an admin.
-    /// Provider signature not needed - they're submitting this response.
-    Deleted {
-        new_mmr_root: H256,
-        new_start_seq: u64,
-        admin: T::AccountId,
-        admin_signature: Signature,
-    },
+    /// Data was deleted: the current snapshot's `start_seq` is past the
+    /// challenged leaf. Only an admin's checkpoint raises `start_seq`
+    /// (`checkpoint`), so the chain checks this from state; no evidence needed.
+    Deleted,
     /// Challenged state has been superseded by a larger canonical checkpoint.
     /// Valid when: canonical.mmr_root != challenged mmr_root AND
     /// canonical.start_seq <= challenged_seq < canonical.start_seq + canonical.leaf_count
@@ -2795,9 +2798,9 @@ Response (400 Bad Request):
 Response (403 Forbidden):
 { "error": "not_admin" }
 
-Note: Only bucket admins can delete data. This triggers deletion of data before
-new_start_seq. Provider returns new commitment covering remaining data. Admin
-signature authorizes the deletion and serves as proof if challenged later.
+Note: Provider returns new commitment covering remaining data. The deletion
+takes effect once a checkpoint with the new `start_seq` lands (admin only);
+the provider prunes the data before `new_start_seq` only then.
 
 List Buckets
 ────────────
@@ -3157,8 +3160,8 @@ pub struct MmrProof {
     └─ Challenger obtains the chunk via the on-chain proof (full on-chain
        cost applies—a last-resort recovery path, not a cheap bulk channel)
 
-3b. Provider responds with deletion proof
-    └─ Shows newer admin-signed commitment with start_seq > challenged seq
+3b. Provider responds with `Deleted`
+    └─ The current snapshot's start_seq is past the challenged seq
     └─ Challenge rejected (data was legitimately deleted)
     └─ Treated as a valid response: provider's fee reimbursed as in 3a,
        remainder returned to challenger; stake untouched
@@ -3198,7 +3201,7 @@ fn verify_challenge_response(
     response: &ChallengeResponse,
     bucket: &Bucket,
 ) -> Result<(), Error> {
-    let challenged_seq = challenge.start_seq + challenge.target.leaf_index;
+    let challenged_seq = challenge.commitment.start_seq + challenge.target.leaf_index;
     match response {
         ChallengeResponse::Proof { chunk_data, mmr_proof, chunk_proof } => {
             // The chunk must sit in the leaf and the leaf in the committed MMR.
@@ -3206,48 +3209,26 @@ fn verify_challenge_response(
             let chunk_ok = verify_merkle_proof(
                 chunk_hash, challenge.target.chunk_index, chunk_proof, &mmr_proof.leaf.data_root,
             );
-            let mmr_ok = verify_mmr_proof(mmr_proof, &challenge.mmr_root);
+            let mmr_ok = verify_mmr_proof(mmr_proof, &challenge.commitment.mmr_root);
             if chunk_ok && mmr_ok { Ok(()) } else { Err(Error::InvalidProof) }
         }
 
-        ChallengeResponse::Deleted { new_mmr_root, new_start_seq, admin, admin_signature } => {
-            // Note: We don't check frozen_start_seq here. Freeze protects canonical
-            // checkpoints (enforced at checkpoint time), but off-chain deletions can
-            // race with freeze. If admin signed a deletion, provider has valid defense
-            // regardless of freeze state. Off-chain is "messy but functional."
-            //
-            // `admin` must be a bucket admin (dispatch error otherwise, see above).
-
-            // The purge must actually cover the challenged leaf.
-            if challenged_seq >= *new_start_seq {
-                return Err(Error::InvalidDeletionClaim);
-            }
-            // And the admin must have signed the newer commitment.
-            let payload = CommitmentPayload::new(
-                challenge.bucket_id,
-                Commitment { mmr_root: *new_mmr_root, start_seq: *new_start_seq, leaf_count: 0 },
-            );
-            if verify_signature(admin_signature, &payload.encode(), admin) {
-                Ok(())
-            } else {
-                Err(Error::InvalidDeletionClaim)
+        ChallengeResponse::Deleted => {
+            // A checkpoint raised start_seq past the challenged leaf: only an
+            // admin can do that, and start_seq never decreases.
+            match bucket.snapshot.as_ref() {
+                Some(snapshot) if challenged_seq < snapshot.commitment.start_seq => Ok(()),
+                _ => Err(Error::InvalidDeletionClaim),
             }
         }
 
         ChallengeResponse::Superseded => {
             // Provider can defend if the challenged commitment was replaced by a
             // newer canonical snapshot that still covers the challenged leaf:
-            // same data re-committed, or a forked branch that lost. No admin
-            // signature is needed — canonical may have evolved without this
-            // provider.
+            // same data re-committed, or a forked branch that lost.
             //
-            // Deleted vs Superseded:
-            // - Deleted: requires admin signature, works without canonical snapshot,
-            //   covers data purged from the front (challenged_seq < new_start_seq)
-            // - Superseded: requires canonical snapshot, works without admin signature,
-            //   covers data still inside the canonical range
-            // Data rolled off the front of canonical is NOT a Superseded defense;
-            // it must go through the admin-signed Deleted path.
+            // Deleted covers data before the snapshot's start_seq; Superseded
+            // covers data inside the canonical range.
             //
             // Provider IS liable when the challenged root is still canonical (the
             // data is live, only a Proof defends it) or when challenged_seq lies
