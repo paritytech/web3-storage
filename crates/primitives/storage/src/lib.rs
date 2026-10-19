@@ -444,13 +444,8 @@ pub(crate) const PEAK_PREFIX: u8 = 0x02;
 /// Leaves and internal nodes use different prefixes, so the bytes of an
 /// internal node never hash to the same value as a leaf.
 pub fn hash_leaf(data: &[u8]) -> H256 {
-    hash_prefixed(LEAF_PREFIX, data)
-}
-
-/// `blake2_256(prefix ++ data)`.
-fn hash_prefixed(prefix: u8, data: &[u8]) -> H256 {
     let mut preimage = Vec::with_capacity(1 + data.len());
-    preimage.push(prefix);
+    preimage.push(LEAF_PREFIX);
     preimage.extend_from_slice(data);
     blake2_256(&preimage)
 }
