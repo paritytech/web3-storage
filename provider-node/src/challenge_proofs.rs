@@ -18,13 +18,14 @@ impl StorageProofSource {
 }
 
 impl ChallengeProofSource for StorageProofSource {
-    fn get_mmr_proof(
+    fn get_mmr_proof_for_commitment(
         &self,
         bucket_id: storage_primitives::BucketId,
+        commitment: &storage_primitives::Commitment,
         leaf_index: u64,
     ) -> Result<storage_primitives::MmrProof, ChallengeError> {
         self.0
-            .get_mmr_proof(bucket_id, leaf_index)
+            .get_mmr_proof_for_commitment(bucket_id, commitment, leaf_index)
             .map_err(|e| ChallengeError::Storage(e.to_string()))
     }
 
@@ -42,8 +43,8 @@ impl ChallengeProofSource for StorageProofSource {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use provider_storage::temp_rocksdb;
-    use storage_primitives::blake2_256;
+    use provider_storage::{temp_rocksdb, ChunkTreeNode};
+    use storage_primitives::hash_leaf;
 
     /// Constructing this from a bare `Arc<dyn StorageBackend>`, with no
     /// `ProviderState` in sight, is the point of the newtype.
@@ -52,9 +53,9 @@ mod tests {
         storage.init_bucket(1, 1024 * 1024).unwrap();
 
         let chunk_data = b"proof-source-test-chunk".to_vec();
-        let chunk_hash = blake2_256(&chunk_data);
+        let chunk_hash = hash_leaf(&chunk_data);
         storage
-            .store_node(1, chunk_hash, chunk_data.clone(), None)
+            .store_node(1, chunk_hash, ChunkTreeNode::Chunk(chunk_data.clone()))
             .unwrap();
         storage.commit(1, vec![chunk_hash]).unwrap();
 
@@ -67,16 +68,35 @@ mod tests {
     fn get_mmr_proof_matches_the_backend() {
         let (storage, _dir) = temp_rocksdb();
         storage.init_bucket(1, 1024 * 1024).unwrap();
-        let chunk_hash = blake2_256(b"mmr-proof-test-chunk");
+        let chunk_hash = hash_leaf(b"mmr-proof-test-chunk");
         storage
-            .store_node(1, chunk_hash, b"mmr-proof-test-chunk".to_vec(), None)
+            .store_node(
+                1,
+                chunk_hash,
+                ChunkTreeNode::Chunk(b"mmr-proof-test-chunk".to_vec()),
+            )
             .unwrap();
         storage.commit(1, vec![chunk_hash]).unwrap();
 
-        let expected = storage.get_mmr_proof(1, 0).unwrap();
+        let commitment = {
+            let info = storage.get_bucket(1).unwrap();
+            storage_primitives::Commitment {
+                mmr_root: info.mmr_root,
+                start_seq: info.start_seq,
+                leaf_count: info.leaf_count,
+            }
+        };
+        let expected = storage
+            .get_mmr_proof_for_commitment(1, &commitment, 0)
+            .unwrap();
         let source = StorageProofSource::new(Arc::clone(&storage));
 
-        assert_eq!(source.get_mmr_proof(1, 0).unwrap(), expected);
+        assert_eq!(
+            source
+                .get_mmr_proof_for_commitment(1, &commitment, 0)
+                .unwrap(),
+            expected
+        );
     }
 
     #[test]

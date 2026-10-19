@@ -9,16 +9,18 @@ pub mod rocksdb;
 pub mod types;
 
 pub use rocksdb::DiskStorage;
-pub use types::{BucketState, StoredNode};
+pub use types::{BucketState, ChunkTreeNode};
 
 use crate::error::Error;
-use crate::merkle::build_merkle_proof;
 use serde::{Deserialize, Serialize};
 use sp_core::H256;
 use std::fmt;
+use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::Arc;
-use storage_primitives::{hash_children, BucketId};
+use storage_primitives::{
+    build_merkle_proofs, merkle_root, merkle_tree, BucketId, MerkleProof, DEFAULT_CHUNK_SIZE,
+};
 
 /// Which backend to build, and what that backend needs.
 ///
@@ -45,6 +47,24 @@ impl fmt::Display for StorageBackendSpec {
             Self::RocksDb { path } => write!(f, "RocksDB at {}", path.display()),
         }
     }
+}
+
+/// Result of committing data roots to a bucket's MMR.
+///
+/// `mmr_root` and `leaf_count` come from the same bucket state, so they are
+/// consistent with each other; a separate read could see a later commit or
+/// delete.
+#[derive(Debug, Clone)]
+pub struct CommitOutcome {
+    /// MMR root after the commit.
+    pub mmr_root: H256,
+    /// First live sequence number of the bucket's window.
+    pub start_seq: u64,
+    /// Leaf count backing `mmr_root`.
+    pub leaf_count: u64,
+    /// Leaf indices of the committed leaves within this commitment (relative to
+    /// `start_seq`).
+    pub leaf_indices: Vec<u64>,
 }
 
 /// Bucket information returned by the storage backend.
@@ -97,27 +117,22 @@ pub trait StorageBackend: Send + Sync {
     /// Get total bytes stored across all nodes.
     fn total_bytes(&self) -> u64;
 
-    /// Store a node (chunk or internal node).
+    /// Store a node under the hash the caller claims for it.
     fn store_node(
         &self,
         bucket_id: BucketId,
         expected_hash: H256,
-        data: Vec<u8>,
-        children: Option<Vec<H256>>,
+        node: ChunkTreeNode,
     ) -> Result<(), Error>;
 
     /// Get a node by hash.
-    fn get_node(&self, hash: &H256) -> Option<StoredNode>;
+    fn get_node(&self, hash: &H256) -> Option<ChunkTreeNode>;
 
     /// Check which hashes exist in storage.
     fn check_exists(&self, bucket_id: BucketId, hashes: &[H256]) -> (Vec<H256>, Vec<H256>);
 
     /// Commit data roots to the bucket's MMR.
-    fn commit(
-        &self,
-        bucket_id: BucketId,
-        data_roots: Vec<H256>,
-    ) -> Result<(H256, u64, Vec<u64>), Error>;
+    fn commit(&self, bucket_id: BucketId, data_roots: Vec<H256>) -> Result<CommitOutcome, Error>;
 
     /// Collect actual chunk data under a data root (DFS, leaf data in order).
     fn collect_chunks(&self, root: H256) -> Vec<Vec<u8>> {
@@ -125,16 +140,13 @@ pub trait StorageBackend: Send + Sync {
         let mut stack = vec![root];
 
         while let Some(hash) = stack.pop() {
-            if hash == H256::zero() {
-                continue;
-            }
             if let Some(node) = self.get_node(&hash) {
-                if let Some(ref children) = node.children {
-                    for child in children.iter().rev() {
-                        stack.push(*child);
+                match node {
+                    ChunkTreeNode::Internal { left, right } => {
+                        stack.push(right);
+                        stack.push(left);
                     }
-                } else {
-                    chunks.push(node.data.clone());
+                    ChunkTreeNode::Chunk(data) => chunks.push(data),
                 }
             }
         }
@@ -142,27 +154,49 @@ pub trait StorageBackend: Send + Sync {
         chunks
     }
 
-    /// Collect leaf chunk hashes under a data root (DFS, in order).
-    fn collect_chunk_hashes(&self, root: H256) -> Vec<H256> {
-        let mut hashes = Vec::new();
+    /// Hash and byte size of each chunk under `root`, in leaf order. Skips
+    /// nodes missing from storage.
+    fn collect_leaves(&self, root: H256) -> Vec<(H256, usize)> {
+        let mut leaves = Vec::new();
         let mut stack = vec![root];
 
         while let Some(hash) = stack.pop() {
-            if hash == H256::zero() {
-                continue;
-            }
             if let Some(node) = self.get_node(&hash) {
-                if let Some(ref children) = node.children {
-                    for child in children.iter().rev() {
-                        stack.push(*child);
+                match node {
+                    ChunkTreeNode::Internal { left, right } => {
+                        stack.push(right);
+                        stack.push(left);
                     }
-                } else {
-                    hashes.push(hash);
+                    ChunkTreeNode::Chunk(data) => leaves.push((hash, data.len())),
                 }
             }
         }
 
-        hashes
+        leaves
+    }
+
+    /// Byte size of the data under `root`. Fails with `NonCanonicalTree` unless
+    /// `root` is `merkle_root` over chunks of `DEFAULT_CHUNK_SIZE` bytes, except
+    /// the last, which can be shorter but not empty when there are several.
+    fn canonical_data_size(&self, root: H256) -> Result<u64, Error> {
+        let (chunk_hashes, chunk_sizes): (Vec<H256>, Vec<usize>) =
+            self.collect_leaves(root).into_iter().unzip();
+        let chunk_size = DEFAULT_CHUNK_SIZE as usize;
+        let fixed_sizes = match chunk_sizes.split_last() {
+            None => false,
+            Some((last, rest)) => {
+                rest.iter().all(|size| *size == chunk_size)
+                    && *last <= chunk_size
+                    && (rest.is_empty() || *last > 0)
+            }
+        };
+        if !fixed_sizes || merkle_root(&chunk_hashes) != root {
+            return Err(Error::NonCanonicalTree(format!(
+                "0x{}",
+                hex::encode(root.as_bytes())
+            )));
+        }
+        Ok(chunk_sizes.iter().map(|size| *size as u64).sum())
     }
 
     /// Get chunk data and Merkle proof at the given index from a data root.
@@ -170,22 +204,40 @@ pub trait StorageBackend: Send + Sync {
         &self,
         data_root: H256,
         chunk_index: u64,
-    ) -> Result<(Vec<u8>, storage_primitives::MerkleProof), Error> {
-        let chunk_hashes = self.collect_chunk_hashes(data_root);
+    ) -> Result<(Vec<u8>, MerkleProof), Error> {
+        let (_, data, proof) = self
+            .get_chunks_in_range(data_root, chunk_index..chunk_index.saturating_add(1))?
+            .pop()
+            .ok_or_else(|| Error::NodeNotFound(format!("chunk_{chunk_index}")))?;
+        Ok((data, proof))
+    }
 
-        if chunk_index as usize >= chunk_hashes.len() {
-            return Err(Error::NodeNotFound(format!("chunk_{chunk_index}")));
-        }
+    /// Hash, data and Merkle proof of each chunk of `data_root` with an index
+    /// in `range`. Leaves out indices past the last chunk.
+    fn get_chunks_in_range(
+        &self,
+        data_root: H256,
+        range: Range<u64>,
+    ) -> Result<Vec<(H256, Vec<u8>, MerkleProof)>, Error> {
+        let chunk_hashes: Vec<H256> = self
+            .collect_leaves(data_root)
+            .into_iter()
+            .map(|(hash, _)| hash)
+            .collect();
 
-        let chunk_hash = chunk_hashes[chunk_index as usize];
-        let chunk_data = self
-            .get_node(&chunk_hash)
-            .ok_or_else(|| Error::NodeNotFound(format!("chunk_data_{chunk_index}")))?
-            .data;
+        let chunk_count = chunk_hashes.len() as u64;
+        let start = range.start.min(chunk_count) as usize;
+        let proofs = build_merkle_proofs(&chunk_hashes, start..range.end.min(chunk_count) as usize);
 
-        let proof = build_merkle_proof(&chunk_hashes, chunk_index as usize);
-
-        Ok((chunk_data, proof))
+        chunk_hashes[start..]
+            .iter()
+            .zip(proofs)
+            .enumerate()
+            .map(|(i, (hash, proof))| match self.get_node(hash) {
+                Some(ChunkTreeNode::Chunk(data)) => Ok((*hash, data, proof)),
+                _ => Err(Error::NodeNotFound(format!("chunk_data_{}", start + i))),
+            })
+            .collect()
     }
 
     /// Delete data before a sequence number.
@@ -202,59 +254,129 @@ pub trait StorageBackend: Send + Sync {
         leaf_index: u64,
     ) -> Result<storage_primitives::MmrProof, Error>;
 
+    /// Rebuild the MMR proof for the exact commitment a challenge cites.
+    ///
+    /// A challenge references a signed commitment's `(mmr_root, start_seq,
+    /// leaf_count)` and a `leaf_index` relative to that `start_seq` — not the
+    /// bucket's current state, which may have moved on through later commits
+    /// or prunes. The proof must therefore be generated against the cited MMR
+    /// state, reconstructed from that exact prefix of the leaf history.
+    fn get_mmr_proof_for_commitment(
+        &self,
+        bucket_id: BucketId,
+        commitment: &storage_primitives::Commitment,
+        leaf_index: u64,
+    ) -> Result<storage_primitives::MmrProof, Error>;
+
     /// Get MMR peaks.
     fn get_mmr_peaks(&self, bucket_id: BucketId) -> Result<(H256, Vec<H256>), Error>;
-
-    /// Calculate the total data size of a content tree by traversing stored nodes.
-    fn calculate_tree_size(&self, root: H256) -> u64 {
-        let mut size = 0u64;
-        let mut stack = vec![root];
-
-        while let Some(hash) = stack.pop() {
-            if let Some(node) = self.get_node(&hash) {
-                if let Some(ref children) = node.children {
-                    stack.extend(children.iter().copied());
-                } else {
-                    size = size.saturating_add(node.data.len() as u64);
-                }
-            }
-        }
-
-        size
-    }
 }
 
-/// Build a balanced Merkle tree from leaf hashes, storing intermediate nodes in storage.
-///
-/// Pads to the next power of 2 with `H256::zero()`. Returns the tree root hash.
-pub fn build_padded_merkle_tree(
+/// Store the internal nodes of `storage_primitives::merkle_tree` over `leaves`
+/// and return the root. Returns the first `store_node` error.
+pub fn build_merkle_tree(
     storage: &dyn StorageBackend,
     bucket_id: BucketId,
     leaves: &[H256],
-) -> H256 {
-    if leaves.is_empty() {
-        return H256::zero();
+) -> Result<H256, Error> {
+    let (root, nodes) = merkle_tree(leaves);
+    for node in nodes {
+        storage.store_node(
+            bucket_id,
+            node.hash,
+            ChunkTreeNode::Internal {
+                left: node.left,
+                right: node.right,
+            },
+        )?;
     }
-    if leaves.len() == 1 {
-        return leaves[0];
+    Ok(root)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use storage_primitives::{hash_leaf, verify_merkle_proof};
+    use tempfile::TempDir;
+
+    /// A database with bucket 1 of `quota` bytes that stores `chunks`, and the
+    /// chunk hashes.
+    fn storage_with_chunks(quota: u64, chunks: &[Vec<u8>]) -> (TempDir, DiskStorage, Vec<H256>) {
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        storage.init_bucket(1, quota).unwrap();
+        let hashes = chunks
+            .iter()
+            .map(|data| {
+                let hash = hash_leaf(data);
+                storage
+                    .store_node(1, hash, ChunkTreeNode::Chunk(data.clone()))
+                    .unwrap();
+                hash
+            })
+            .collect();
+        (dir, storage, hashes)
     }
 
-    let padded_len = leaves.len().next_power_of_two();
-    let mut current_level = leaves.to_vec();
-    current_level.resize(padded_len, H256::zero());
+    fn chunks(n: u8) -> Vec<Vec<u8>> {
+        (1..=n).map(|i| vec![i; 32]).collect()
+    }
 
-    while current_level.len() > 1 {
-        let mut next_level = Vec::new();
-        for pair in current_level.chunks(2) {
-            let parent = hash_children(pair[0], pair[1]);
-            let mut node_data = Vec::new();
-            node_data.extend_from_slice(pair[0].as_bytes());
-            node_data.extend_from_slice(pair[1].as_bytes());
-            let _ = storage.store_node(bucket_id, parent, node_data, Some(vec![pair[0], pair[1]]));
-            next_level.push(parent);
+    #[test]
+    fn stored_tree_root_matches_merkle_root() {
+        for n in [0, 1, 2, 3, 5, 8] {
+            let (_dir, storage, leaves) = storage_with_chunks(1024 * 1024, &chunks(n));
+            assert_eq!(
+                build_merkle_tree(&storage, 1, &leaves).unwrap(),
+                storage_primitives::merkle_root(&leaves),
+                "{n} leaves"
+            );
         }
-        current_level = next_level;
     }
 
-    current_level[0]
+    #[test]
+    fn chunks_in_range_match_single_chunks_and_clip_to_the_last_chunk() {
+        let chunks = chunks(5);
+        let (_dir, storage, leaves) = storage_with_chunks(1024 * 1024, &chunks);
+        let root = build_merkle_tree(&storage, 1, &leaves).unwrap();
+
+        let range = storage.get_chunks_in_range(root, 1..4).unwrap();
+        assert_eq!(range.len(), 3);
+        for (index, (hash, data, proof)) in (1..4).zip(&range) {
+            assert_eq!(*data, chunks[index as usize]);
+            assert_eq!(*hash, leaves[index as usize]);
+            assert!(verify_merkle_proof(*hash, index, 5, proof, &root));
+            assert_eq!(
+                *proof,
+                storage.get_chunk_at_index(root, index).unwrap().1,
+                "index {index}"
+            );
+        }
+
+        let clipped: Vec<Vec<u8>> = storage
+            .get_chunks_in_range(root, 3..10)
+            .unwrap()
+            .into_iter()
+            .map(|(_, data, _)| data)
+            .collect();
+        assert_eq!(clipped, chunks[3..]);
+        assert!(storage.get_chunks_in_range(root, 7..9).unwrap().is_empty());
+        let reversed = Range { start: 3, end: 1 };
+        assert!(storage
+            .get_chunks_in_range(root, reversed)
+            .unwrap()
+            .is_empty());
+        assert!(matches!(
+            storage.get_chunk_at_index(root, 5),
+            Err(Error::NodeNotFound(_))
+        ));
+    }
+
+    #[test]
+    fn build_merkle_tree_returns_store_error() {
+        // Room for the two 32-byte leaves but not for their 64-byte parent.
+        let (_dir, storage, leaves) = storage_with_chunks(64, &chunks(2));
+        let err = build_merkle_tree(&storage, 1, &leaves).unwrap_err();
+        assert!(matches!(err, Error::QuotaExceeded { .. }), "got {err:?}");
+    }
 }

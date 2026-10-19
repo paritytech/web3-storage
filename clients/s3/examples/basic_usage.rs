@@ -81,36 +81,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         signed.terms.nonce, signed.terms.valid_until
     );
 
-    let bucket_name = format!(
-        "test-bucket-{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)?
-            .as_secs()
-    );
-
-    println!("Creating bucket: {bucket_name}");
-    let bucket = client
+    println!("Creating bucket...");
+    let bucket_id = client
         .create_bucket(
-            &bucket_name,
             provider,
             signed.terms,
             signed.signature,
-            storage_client::Visibility::Private,
+            s3_client::Visibility::Private,
         )
         .await?;
-    println!("Bucket created:");
-    println!("  S3 Bucket ID: {}", bucket.s3_bucket_id);
-    println!("  Layer 0 Bucket ID: {}", bucket.layer0_bucket_id);
-    println!();
+    println!("Bucket created: {bucket_id}\n");
 
     println!("Uploading object: hello.txt");
     let content = b"Hello, Web3 Storage!";
     let mut metadata = HashMap::new();
-    metadata.insert("x-custom-key".to_string(), "custom-value".to_string());
+    metadata.insert("custom-key".to_string(), "custom-value".to_string());
 
     let put_result = client
         .put_object(
-            &bucket_name,
+            bucket_id,
             "hello.txt",
             content,
             PutObjectOptions {
@@ -127,18 +116,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!();
 
     println!("Downloading object: hello.txt");
-    let get_result = client.get_object(&bucket_name, "hello.txt").await?;
+    let get_result = client.get_object(bucket_id, "hello.txt").await?;
     println!("Object downloaded:");
     println!("  Content: {}", String::from_utf8_lossy(&get_result.data));
     println!("  Size: {} bytes", get_result.size);
     println!();
 
-    println!("Cleaning up...");
-    client.delete_object(&bucket_name, "hello.txt").await?;
+    println!("Deleting object: hello.txt");
+    client.delete_object(bucket_id, "hello.txt").await?;
     println!("Object deleted");
-
-    client.delete_bucket(&bucket_name).await?;
-    println!("Bucket deleted");
     println!();
 
     println!("=== Example completed successfully! ===");
