@@ -80,18 +80,22 @@ pub fn test_state_with_data() -> (Arc<ProviderState>, DetectedChallenge, TempDir
     let data_root = build_merkle_tree(storage.as_ref(), 1, &[chunk_hash]).unwrap();
     assert_eq!(data_root, chunk_hash);
 
-    let (mmr_root, start_seq, leaf_indices) = storage.commit(1, vec![data_root]).unwrap();
-    assert_eq!(leaf_indices, vec![0]);
+    let commit = storage.commit(1, vec![data_root]).unwrap();
+    assert_eq!(commit.leaf_indices, vec![0]);
 
     let challenge = DetectedChallenge {
         bucket_id: 1,
         deadline: 1000,
         index: 0,
-        mmr_root,
-        start_seq,
-        leaf_index: 0,
-        chunk_index: 0,
-        challenger: ALICE_SS58.to_string(),
+        commitment: storage_primitives::Commitment {
+            mmr_root: commit.mmr_root,
+            start_seq: commit.start_seq,
+            leaf_count: commit.leaf_count,
+        },
+        target: storage_primitives::ChunkLocation {
+            leaf_index: 0,
+            chunk_index: 0,
+        },
     };
 
     let state = Arc::new(ProviderState::with_provider_id(

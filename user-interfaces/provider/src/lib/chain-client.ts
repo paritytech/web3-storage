@@ -453,9 +453,9 @@ export async function getBucketDetails(
       : null
 
     const historicalRoots: Array<{ position: number; root: string }> = []
-    for (const [pos, root] of bucket.historical_roots) {
+    for (const [pos, commitment] of bucket.historical_roots) {
       const posNum = Number(pos)
-      const rootStr = root
+      const rootStr = commitment.mmr_root
       if (posNum > 0 || (rootStr !== '0x' && !/^0x0+$/.test(rootStr))) {
         historicalRoots.push({ position: posNum, root: rootStr })
       }
@@ -494,8 +494,8 @@ export async function getProviderChallenges(address: string): Promise<OnChainCha
       provider: ch.provider,
       leafIndex: Number(ch.target.leaf_index),
       chunkIndex: Number(ch.target.chunk_index),
-      mmrRoot: ch.mmr_root,
-      startSeq: Number(ch.start_seq),
+      mmrRoot: ch.commitment.mmr_root,
+      startSeq: Number(ch.commitment.start_seq),
       status: anchorBlock > deadline ? 'expired' : 'pending',
       authorized: ch.authorized,
       createdAt: 0,

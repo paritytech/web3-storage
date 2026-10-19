@@ -646,7 +646,7 @@
         <ul>
           <li>&bull; challenge_checkpoint: cold buckets, snapshot as evidence</li>
           <li>&bull; challenge_offchain: hot buckets, signed commitment</li>
-          <li>&bull; challenge_replica: replicas, confirmed sync root as evidence</li>
+          <li>&bull; challenge_replica: replicas, confirmed sync commitment as evidence</li>
         </ul>
       </div>
 
@@ -657,6 +657,7 @@
         </div>
         <ul>
           <li>&bull; Rejected with InvalidProof, InvalidDeletionClaim or InvalidSupersededClaim; the provider pays the tx fee</li>
+          <li>&bull; A proof for another leaf is InvalidProof: verification is bound to the challenged leaf_index and the commitment&#39;s leaf_count</li>
           <li>&bull; The challenge stays open; the provider may answer again before the deadline</li>
           <li>&bull; Only a timeout slashes: resolve_expired_challenge after the deadline</li>
         </ul>

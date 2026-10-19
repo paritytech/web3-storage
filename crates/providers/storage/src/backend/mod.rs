@@ -49,6 +49,24 @@ impl fmt::Display for StorageBackendSpec {
     }
 }
 
+/// Result of committing data roots to a bucket's MMR.
+///
+/// `mmr_root` and `leaf_count` come from the same bucket state, so they are
+/// consistent with each other; a separate read could see a later commit or
+/// delete.
+#[derive(Debug, Clone)]
+pub struct CommitOutcome {
+    /// MMR root after the commit.
+    pub mmr_root: H256,
+    /// First live sequence number of the bucket's window.
+    pub start_seq: u64,
+    /// Leaf count backing `mmr_root`.
+    pub leaf_count: u64,
+    /// Leaf indices of the committed leaves within this commitment (relative to
+    /// `start_seq`).
+    pub leaf_indices: Vec<u64>,
+}
+
 /// Bucket information returned by the storage backend.
 #[derive(Debug, Clone)]
 pub struct BucketInfo {
@@ -114,11 +132,7 @@ pub trait StorageBackend: Send + Sync {
     fn check_exists(&self, bucket_id: BucketId, hashes: &[H256]) -> (Vec<H256>, Vec<H256>);
 
     /// Commit data roots to the bucket's MMR.
-    fn commit(
-        &self,
-        bucket_id: BucketId,
-        data_roots: Vec<H256>,
-    ) -> Result<(H256, u64, Vec<u64>), Error>;
+    fn commit(&self, bucket_id: BucketId, data_roots: Vec<H256>) -> Result<CommitOutcome, Error>;
 
     /// Collect actual chunk data under a data root (DFS, leaf data in order).
     fn collect_chunks(&self, root: H256) -> Vec<Vec<u8>> {
@@ -237,6 +251,20 @@ pub trait StorageBackend: Send + Sync {
     fn get_mmr_proof(
         &self,
         bucket_id: BucketId,
+        leaf_index: u64,
+    ) -> Result<storage_primitives::MmrProof, Error>;
+
+    /// Rebuild the MMR proof for the exact commitment a challenge cites.
+    ///
+    /// A challenge references a signed commitment's `(mmr_root, start_seq,
+    /// leaf_count)` and a `leaf_index` relative to that `start_seq` — not the
+    /// bucket's current state, which may have moved on through later commits
+    /// or prunes. The proof must therefore be generated against the cited MMR
+    /// state, reconstructed from that exact prefix of the leaf history.
+    fn get_mmr_proof_for_commitment(
+        &self,
+        bucket_id: BucketId,
+        commitment: &storage_primitives::Commitment,
         leaf_index: u64,
     ) -> Result<storage_primitives::MmrProof, Error>;
 

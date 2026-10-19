@@ -338,7 +338,7 @@ async fn test_already_synced() {
     let data = b"test data".to_vec();
     let data_root = hash_leaf(&data);
     let _ = storage.store_node(1, data_root, ChunkTreeNode::Chunk(data));
-    let (mmr_root, _, _) = storage.commit(1, vec![data_root]).unwrap();
+    let mmr_root = storage.commit(1, vec![data_root]).unwrap().mmr_root;
 
     let duty = SyncDuty {
         bucket_id: 1,
@@ -611,7 +611,7 @@ async fn test_duties_filter_already_synced() {
     storage
         .store_node(1, data_root, ChunkTreeNode::Chunk(data))
         .unwrap();
-    let (mmr_root, _, _) = storage.commit(1, vec![data_root]).unwrap();
+    let mmr_root = storage.commit(1, vec![data_root]).unwrap().mmr_root;
 
     let agreement = ReplicaAgreementInfo {
         bucket_id: 1,
