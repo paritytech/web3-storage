@@ -19,19 +19,21 @@ use thiserror::Error;
 /// Error connecting to the chain or building a connection's chain spec.
 #[derive(Error, Debug)]
 pub enum Error {
-    /// Connecting to the chain RPC endpoint failed (500).
+    /// Connecting to the chain RPC endpoint failed.
     #[error("Failed to connect to chain: {0}")]
     Connection(#[from] subxt::error::OnlineClientError),
 
-    /// The node has not connected to the chain yet. Retry later (503).
-    #[error("Chain connection not established yet")]
-    NotConnected,
-
     /// Fetching or building a chain spec failed, or the light client failed to
-    /// start, connect or sync (500).
+    /// start, connect or sync.
     #[error("Internal error: {0}")]
     Internal(String),
 }
+
+/// No connection has been published yet: the node has not reached the chain
+/// since it started. Retry later.
+#[derive(Error, Debug)]
+#[error("Chain connection not established yet")]
+pub struct NotConnected;
 
 /// How the provider node talks to the chain.
 #[derive(Clone, Debug)]
@@ -387,12 +389,12 @@ pub async fn connect(transport: &ChainTransport) -> Result<ChainHandle, Error> {
 
 /// Borrow the current connection from a watch receiver, or fail if the chain
 /// has never been reached yet.
-pub fn current_api(chain_rx: &ChainWatch) -> Result<OnlineClient<PolkadotConfig>, Error> {
+pub fn current_api(chain_rx: &ChainWatch) -> Result<OnlineClient<PolkadotConfig>, NotConnected> {
     chain_rx
         .borrow()
         .as_ref()
         .map(|h| h.api.clone())
-        .ok_or(Error::NotConnected)
+        .ok_or(NotConnected)
 }
 
 #[cfg(test)]
@@ -418,11 +420,7 @@ mod tests {
     #[test]
     fn current_api_errors_before_first_connect() {
         let (_tx, rx) = tokio::sync::watch::channel(None);
-        let err = current_api(&rx).expect_err("no connection published yet");
-        assert!(
-            matches!(err, Error::NotConnected),
-            "unexpected error: {err}"
-        );
+        assert!(current_api(&rx).is_err(), "no connection published yet");
     }
 
     #[tokio::test]
