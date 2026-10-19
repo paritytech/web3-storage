@@ -506,13 +506,16 @@ mod tests {
         )
     }
 
-    /// The `BucketMembershipChanged` bucket ids [`decode_block_events`]
-    /// produces from `events`, in encounter order.
+    /// The membership-invalidating bucket ids [`decode_block_events`]
+    /// produces from `events`, in encounter order. `BucketDeleted` is its
+    /// own event (the GC consumes it too) but still invalidates cached
+    /// membership for the bucket.
     fn membership_changed_bucket_ids(events: &subxt::events::Events<PolkadotConfig>) -> Vec<u64> {
         decode_block_events(events, 0)
             .into_iter()
             .filter_map(|event| match event {
-                BlockEvent::BucketMembershipChanged { bucket_id } => Some(bucket_id),
+                BlockEvent::BucketMembershipChanged { bucket_id }
+                | BlockEvent::BucketDeleted { bucket_id } => Some(bucket_id),
                 _ => None,
             })
             .collect()
