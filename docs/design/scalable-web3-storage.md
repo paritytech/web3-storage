@@ -11,7 +11,7 @@
 
 | Version | Changes |
 |---------|---------|
-| 2.6 | Stake, agreements and provider signatures reworked for virtual providers (stake changeable and snapshotted per agreement; no stake-per-byte rule; quotes carry no price or version, the client pins `expected_version`; per-owner quote nonce; one-step deregistration; owner-only extension; replacement agreements (virtual providers only); provider refund; `ProviderSignatures` sets; `MaxPrimarySlots` counts physical signers; duplicate challenge responses dropped for free; `extend_challenge`; replica syncs must advance the commitment end, `historical_roots` keep commitments; replacement agreements for replicas activate by `confirm_replica_sync`; an activation flag on `checkpoint` and `confirm_replica_sync` selects the pending replacement; replica syncs sign `ReplicaSyncPayload` (`version`, `genesis_hash`, `bucket_id`, `agreement_id`, `roots`); every provider-signed payload includes the genesis hash; `BucketId` and `AgreementId` are newtypes; provider discovery off-chain; `create_bucket_with_storage`, provider-initiated checkpoints, `find_matching_providers`, `challenge_candidates` removed; typed runtime API responses). **Read**: "Provider Stake", "Storage Agreements" here; impl doc "Changeable Stake", "Stake vs. capacity", "Term Pinning", "Replacement agreements", `confirm_replica_sync`, "Provider Public Key & Signature Type", `CommitmentPayload` ("Chain binding"), "Transaction extension for raced calls", "Runtime API", "Off-Chain: Provider Node API"; [Virtual Provider Extension](./001-virtual-provider-extension.md). |
+| 2.6 | Stake, agreements and provider signatures reworked for virtual providers (stake changeable and snapshotted per agreement; no stake-per-byte rule; quotes contain no price or version, the client pins `expected_version`; per-owner quote nonce; one-step deregistration; owner-only extension; replacement agreements (virtual providers only); provider refund; `ProviderSignatures` sets; `MaxPrimarySlots` counts physical signers; duplicate challenge responses dropped for free; `extend_challenge`; replica syncs must advance the commitment, `historical_roots` keep commitments; replacement agreements for replicas activate by `confirm_replica_sync`; an activation flag on `checkpoint` and `confirm_replica_sync` selects the pending replacement; replica syncs sign `ReplicaSyncPayload` (`version`, `genesis_hash`, `bucket_id`, `agreement_id`, `roots`); every provider-signed payload includes the genesis hash; `BucketId` and `AgreementId` are newtypes; every checkpoint meets the signature rules on its own and replaces the snapshot's signers; it repeats the current commitment or appends to its MMR with a consistency proof (`MmrConsistencyProof`), so canonical history is linear; a deletion is an admin checkpoint that starts a new MMR at the current end and re-appends the kept leaves, `Deleted` checks the snapshot; proof types use bounded lists; `/delete` takes `keep_from_seq` and `/checkpoint-signature` returns the consistency proof; a challenge records its kind, agreement, commitment, the virtual snapshot and liable signers (replica challenges cannot be answered with `Superseded`), so agreements and payments ignore open challenges; `Deleted` also applies once the bucket is deleted, and a frozen bucket can be deleted only with no agreements left; a slash bumps `version`, and calls that snapshot stake require `MinProviderStake`; a challenged provider keeps its stake locks, and a challenged virtual provider locks its members' stake (`pending_challenges`), which replaces the per-bucket pending-challenge map; provider discovery off-chain; `create_bucket_with_storage`, provider-initiated checkpoints, `find_matching_providers`, `challenge_candidates` removed; typed runtime API responses). **Read**: "Provider Stake", "Storage Agreements", "MMR Commitments", "Freeze" here; impl doc "Append-only mode", "Commitment liability", "Changeable Stake" (incl. "Stake under open challenges"), "Stake vs. capacity", "Storage Model" (pruning rule), `Challenge`, `checkpoint`, "Merkle Proofs", `remove_slashed`, "Verification", "Term Pinning", "Replacement agreements", `confirm_replica_sync`, "Provider Public Key & Signature Type", `CommitmentPayload` ("Chain binding"), "Transaction extension for raced calls", "Runtime API", "Off-Chain: Provider Node API"; [Virtual Provider Extension](./001-virtual-provider-extension.md). |
 | 2.5 | Challenge resolution and slashing are lazy: an unanswered challenge is slashed by the permissionless `resolve_expired_challenge` call (no per-block sweep). A timeout is the only slash reason. **Read**: "The Challenge Game", Resolution; `resolve_expired_challenge` in [Implementation Details](./scalable-web3-storage-implementation.md). |
 | 2.4 | Bucket creation and provider assignment are separate on-chain operations: `create_bucket`, `create_bucket_with_primary`, `add_primary_provider`, `add_replica_provider`. Provider-signed quotes name the bucket they are for. A bucket remains after its last agreement ends and can get new providers later; the client moves the data when a provider is added. **Read**: "Buckets: Stable Identity in a Fluid Provider Market"; "Two Classes of Providers"; "Provider Lifecycle in Bucket" in [Implementation Details](./scalable-web3-storage-implementation.md) for the four calls. |
 | 2.3 | Private buckets clarified (visibility flag, Reader role, primary challenges gated to members + primary-agreement owners, tier-split challenge stats). **Read**: new "Bucket Visibility & Access" section; "The Challenge Game". |
@@ -368,8 +368,8 @@ A content hash names data but doesn't guarantee anyone stores it. A bucket makes
 
 - **Stable identity**: The bucket_id never changes, even as providers come and go. Applications reference buckets, not
   providers. Switch providers without breaking links. Each provider joins a bucket with one agreement, at bucket
-  creation or later, and a bucket whose agreements have all ended remains on-chain; the admin can add a new provider
-  later.
+  creation or later, and a bucket whose agreements have all ended remains on-chain until its admins delete it; the
+  admin can add a new provider later.
 
 - **Explicit availability**: On-chain state shows exactly which providers have agreements. No guessing, no DHT lookups,
   no hoping.
@@ -379,7 +379,7 @@ A content hash names data but doesn't guarantee anyone stores it. A bucket makes
 
 - **Permissionless persistence**: A frozen bucket (append-only) can be funded by anyone—not just the owner. You care
   about open-source documentation, or historical records? Fund a replica (permissionless), and the data survives even
-  if the original owner disappears. (Extending an existing *primary* agreement is owner-only — a third party keeps data
+  if the original owner disappears. A frozen bucket can be deleted only while no agreement, primary or replica, exists. (Extending an existing *primary* agreement is owner-only — a third party keeps data
   alive by adding its own replica, not by mutating someone else's agreement.)
 
 ### Two Classes of Providers
@@ -616,7 +616,8 @@ stake.
 **Stake is changeable, agreements snapshot it.** A provider can raise stake any time and lower it without weakening
 existing agreements: each agreement records the stake in force when it was struck (as it already does for price), and the
 provider stays liable at each agreement's snapshot until that agreement ends. `stake` is just the figure applied to *new*
-agreements; a lowering only frees capital once the agreements made under the higher figure expire. (This is done with
+agreements; a lowering only frees capital once the agreements made under the higher figure expire and no open
+challenge can slash the provider. (This is done with
 O(1) bookkeeping, not by scanning agreements — see the implementation doc's "Changeable Stake".)
 
 **Stake is not tied to capacity.** No stake-per-byte requirement is enforced, against either `committed_bytes` or the
@@ -998,8 +999,8 @@ MmrLeaf
 ```
 
 **Append**: Add new leaf with new data_root
-**Delete**: Increase start_seq (old leaves no longer in range)
-**Freeze**: Lock start_seq—bucket becomes append-only forever
+**Delete**: Start a new MMR at the current end (start_seq + leaf_count); leaves to keep are appended to it again with new sequence numbers. Old leaves are below the new start_seq.
+**Freeze**: Lock start_seq—bucket becomes append-only forever. A frozen bucket can be deleted by its admins only once it has no agreements left (no primary, no replica).
 
 ### Client-Controlled Layout
 
@@ -1103,7 +1104,7 @@ Verification:
 ├── On-chain checkpoints = timestamped proof
 
 Compliance:
-├── Frozen = deletions impossible
+├── Frozen = deletions impossible (the bucket can be deleted only once no agreements are left)
 ├── Checkpoints = provider acknowledgments recorded
 ├── Slashing = accountability for data loss
 ```
