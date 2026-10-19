@@ -964,6 +964,24 @@ mod tests {
         assert!(!verify_mmr_proof(proof.clone(), 2, &wrong_root));
     }
 
+    /// The library accepts the peaks right of the leaf's peak as separate
+    /// items instead of one bagged item. The item count check rejects that
+    /// form, so every accepted proof costs at most the benchmarked hashing.
+    #[test]
+    fn mmr_proof_with_unbagged_right_peaks_does_not_verify() {
+        // 7 leaves: peaks over leaves 0..4, 4..6 and 6.
+        let (commitment, proof) = mmr_commitment_and_proof(7, 2);
+        let (_, last) = mmr_commitment_and_proof(7, 6);
+        let middle_peak = last.items[1];
+        let last_peak = hash_leaf(&last.leaf.encode());
+
+        let mut unbagged = proof.clone();
+        unbagged.items.truncate(2);
+        unbagged.items.extend([middle_peak, last_peak]);
+        assert_eq!(unbagged.items.len(), proof.items.len() + 1);
+        assert!(!verify_mmr_proof(unbagged, 2, &commitment));
+    }
+
     /// The largest MMR `verify_mmr_proof` accepts (`u64::MAX / 2` leaves, 63
     /// peaks of heights 62 down to 0): the first and the last leaf of a peak
     /// of every height verify with a synthetic proof, and a changed first or
