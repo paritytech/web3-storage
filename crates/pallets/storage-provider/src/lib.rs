@@ -2461,7 +2461,10 @@ pub mod pallet {
         }
 
         /// Writer or admin. Add signatures from primary providers that signed
-        /// the current snapshot late.
+        /// the current snapshot late. A primary added after the checkpoint
+        /// becomes challengeable for this snapshot once its signature is added
+        /// here. Signers already in the bitfield are skipped without
+        /// verification.
         #[pallet::call_index(31)]
         #[pallet::weight(T::WeightInfo::extend_checkpoint())]
         pub fn extend_checkpoint(
