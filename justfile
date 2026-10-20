@@ -226,16 +226,10 @@ start-provider BACKEND=PROVIDER_BACKEND PORT=PROVIDER_PORT STORAGE_PATH=PROVIDER
         --bind-addr "0.0.0.0:{{PORT}}" \
         --chain-rpc "{{ CHAIN_WS }}"
 
-# Register on-chain, then start the provider node. Uses the same PROVIDER_*
-# variables as start-provider. Registration must come first: start-provider
-# runs in the foreground and never returns.
-register-then-start-provider: (register-provider PROVIDER_KEYFILE PROVIDER_KEY_SCHEME) start-provider
-
 # Register provider on-chain (idempotent). Requires a running chain.
-# Called automatically by register-then-start-provider, or run standalone.
 # KEY_SCHEME registers a non-sr25519 signing key (the node's --key-scheme
 # must match); extrinsics are still submitted from the sr25519 account.
-register-provider KEYFILE="" KEY_SCHEME="":
+register-provider KEYFILE=PROVIDER_KEYFILE KEY_SCHEME=PROVIDER_KEY_SCHEME:
     #!/usr/bin/env bash
     set -euo pipefail
     ARGS=("{{ CHAIN_WS }}" "{{ PROVIDER_URL }}" "{{ PROVIDER_MULTI_ADDR }}")
