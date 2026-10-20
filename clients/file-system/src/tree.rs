@@ -333,10 +333,10 @@ impl<S: BlobStore> Tree<S> {
             .map_err(|e| not_fs(format!("last leaf is not a directory node: {e}")))?;
         node.validate()
             .map_err(|e| not_fs(format!("last leaf is not a valid directory node: {e}")))?;
-        if node.drive_id != self.bucket_id {
+        if node.bucket_id != self.bucket_id {
             return Err(not_fs(format!(
-                "root directory belongs to drive {}",
-                node.drive_id
+                "root directory belongs to bucket {}",
+                node.bucket_id
             )));
         }
         Ok(Root {

@@ -297,7 +297,7 @@ export class FsTree {
   ) {}
 
   private emptyDirectory(): DirectoryNode {
-    return { driveId: this.store.bucketId, children: [], metadata: [] };
+    return { bucketId: this.store.bucketId, children: [], metadata: [] };
   }
 
   /**
@@ -349,8 +349,8 @@ export class FsTree {
       }
       throw err;
     }
-    if (node.driveId !== this.store.bucketId) {
-      throw this.notAFileSystem(cid, `the root directory belongs to drive ${node.driveId}`);
+    if (node.bucketId !== this.store.bucketId) {
+      throw this.notAFileSystem(cid, `the root directory belongs to bucket ${node.bucketId}`);
     }
     return { cid, node };
   }
@@ -553,7 +553,7 @@ export class FsTree {
     if (existing?.entryType === "directory") throw new FileSystemError("IsADirectory", `Is a directory: ${path}`);
 
     const manifestBase = {
-      driveId: this.store.bucketId,
+      bucketId: this.store.bucketId,
       mimeType: encoder.encode(opts.contentType || DEFAULT_CONTENT_TYPE),
       totalSize: BigInt(bytes.length),
       encryptionParams: new Uint8Array(0),

@@ -133,7 +133,7 @@ export interface DirectoryEntry {
 
 export interface DirectoryNode {
   /** The Layer 0 bucket id. */
-  driveId: bigint;
+  bucketId: bigint;
   /** Sorted by name bytes ascending; names are unique. */
   children: DirectoryEntry[];
   /** Reserved; always empty. */
@@ -147,7 +147,7 @@ export interface FileChunk {
 }
 
 export interface FileManifest {
-  driveId: bigint;
+  bucketId: bigint;
   mimeType: Uint8Array;
   totalSize: bigint;
   /** Content chunk hashes in order. Empty content has one chunk: the hash of the empty chunk. */
@@ -173,7 +173,7 @@ function readMetadata(r: ScaleReader, field: string): MetadataEntry[] {
 
 export function encodeDirectoryNode(node: DirectoryNode): Uint8Array {
   const w = new ScaleWriter();
-  w.u64(node.driveId);
+  w.u64(node.bucketId);
   w.vec(node.children, FS_LIMITS.maxDirectoryChildren, "directory children", (w, e) => {
     w.bytes(e.name, FS_LIMITS.maxEntryNameLength, "entry name");
     w.u8(e.entryType === "file" ? 0 : 1);
@@ -187,7 +187,7 @@ export function encodeDirectoryNode(node: DirectoryNode): Uint8Array {
 
 export function decodeDirectoryNode(bytes: Uint8Array): DirectoryNode {
   const r = new ScaleReader(bytes);
-  const driveId = r.u64();
+  const bucketId = r.u64();
   const children = r.vec(FS_LIMITS.maxDirectoryChildren, "directory children", (r) => {
     const name = r.bytes(FS_LIMITS.maxEntryNameLength, "entry name");
     const tag = r.u8();
@@ -202,12 +202,12 @@ export function decodeDirectoryNode(bytes: Uint8Array): DirectoryNode {
   });
   const metadata = readMetadata(r, "directory metadata");
   r.end();
-  return { driveId, children, metadata };
+  return { bucketId, children, metadata };
 }
 
 export function encodeFileManifest(manifest: FileManifest): Uint8Array {
   const w = new ScaleWriter();
-  w.u64(manifest.driveId);
+  w.u64(manifest.bucketId);
   w.bytes(manifest.mimeType, FS_LIMITS.maxMimeTypeLength, "mime type");
   w.u64(manifest.totalSize);
   w.vec(manifest.chunks, FS_LIMITS.maxFileChunks, "file chunks", (w, c) => {
@@ -221,14 +221,14 @@ export function encodeFileManifest(manifest: FileManifest): Uint8Array {
 
 export function decodeFileManifest(bytes: Uint8Array): FileManifest {
   const r = new ScaleReader(bytes);
-  const driveId = r.u64();
+  const bucketId = r.u64();
   const mimeType = r.bytes(FS_LIMITS.maxMimeTypeLength, "mime type");
   const totalSize = r.u64();
   const chunks = r.vec(FS_LIMITS.maxFileChunks, "file chunks", (r) => ({ cid: r.h256(), sequence: r.u32() }));
   const encryptionParams = r.bytes(FS_LIMITS.maxEncryptionParamsLength, "encryption params");
   const userMetadata = readMetadata(r, "user metadata");
   r.end();
-  return { driveId, mimeType, totalSize, chunks, encryptionParams, userMetadata };
+  return { bucketId, mimeType, totalSize, chunks, encryptionParams, userMetadata };
 }
 
 /** CID of an encoded `DirectoryNode`: the `data_root` of its encoding. */

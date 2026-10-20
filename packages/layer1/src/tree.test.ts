@@ -63,8 +63,8 @@ describe("root discovery", () => {
 
   it("rejects a root directory of another drive", async () => {
     const { provider, tree } = setup();
-    await commitRoot(provider, encodeDirectoryNode({ driveId: BUCKET + 1n, children: [], metadata: [] }));
-    await expect(tree.rootCid()).rejects.toThrow(/belongs to drive 4/);
+    await commitRoot(provider, encodeDirectoryNode({ bucketId: BUCKET + 1n, children: [], metadata: [] }));
+    await expect(tree.rootCid()).rejects.toThrow(/belongs to bucket 4/);
   });
 
   it("rejects a root directory that breaks the format rules", async () => {
@@ -76,7 +76,7 @@ describe("root discovery", () => {
       size: 0n,
       mtime: 0n,
     });
-    await commitRoot(provider, encodeDirectoryNode({ driveId: BUCKET, children: [entry("b"), entry("a")], metadata: [] }));
+    await commitRoot(provider, encodeDirectoryNode({ bucketId: BUCKET, children: [entry("b"), entry("a")], metadata: [] }));
     await expect(tree.list("/")).rejects.toMatchObject({ code: "NotAFileSystem" });
   });
 
@@ -202,7 +202,7 @@ describe("writes", () => {
     expect(toHex(e.children[0].cid)).toBe(r.manifestCid);
     expect(toHex(d.children[0].cid)).toBe(roots[2]);
     expect(toHex(root.children[0].cid)).toBe(roots[3]);
-    expect(root.driveId).toBe(BUCKET);
+    expect(root.bucketId).toBe(BUCKET);
   });
 
   it("dedupes CIDs within one commit and keeps the root last", () => {

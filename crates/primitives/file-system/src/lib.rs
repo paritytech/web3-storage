@@ -41,6 +41,7 @@ use codec::{Decode, DecodeWithMemTracking, Encode, MaxEncodedLen};
 use scale_info::TypeInfo;
 use sp_core::H256;
 use sp_runtime::{traits::Get, BoundedVec};
+use storage_primitives::BucketId;
 
 // ============================================================================
 // Protobuf types (std only)
@@ -266,7 +267,7 @@ impl MetadataEntry {
 #[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
 pub struct DirectoryNode {
     /// Layer 0 bucket id of the drive
-    pub drive_id: DriveId,
+    pub bucket_id: BucketId,
     /// Child entries, sorted by name bytes
     pub children: BoundedVec<DirectoryEntry, MaxDirectoryChildren>,
     /// Reserved, empty
@@ -275,9 +276,9 @@ pub struct DirectoryNode {
 
 impl DirectoryNode {
     /// Create a new empty directory
-    pub fn new_empty(drive_id: DriveId) -> Self {
+    pub fn new_empty(bucket_id: BucketId) -> Self {
         Self {
-            drive_id,
+            bucket_id,
             children: BoundedVec::default(),
             metadata: BoundedVec::default(),
         }
@@ -380,7 +381,7 @@ pub struct FileChunk {
 #[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
 pub struct FileManifest {
     /// Layer 0 bucket id of the drive
-    pub drive_id: DriveId,
+    pub bucket_id: BucketId,
     /// MIME type (e.g., "image/png"); [`DEFAULT_MIME_TYPE`] if none was given
     pub mime_type: BoundedVec<u8, MaxMimeTypeLength>,
     /// Total file size in bytes
@@ -400,7 +401,7 @@ impl FileManifest {
     /// the MIME type is over 128 bytes, the content has more than 65536
     /// chunks, or there are more than 64 metadata entries.
     pub fn for_content(
-        drive_id: DriveId,
+        bucket_id: BucketId,
         content: &[u8],
         mime_type: &str,
         user_metadata: Vec<MetadataEntry>,
@@ -419,7 +420,7 @@ impl FileManifest {
             mime_type
         };
         Ok(Self {
-            drive_id,
+            bucket_id,
             mime_type: BoundedVec::try_from(mime_type.as_bytes().to_vec())
                 .map_err(|_| FileSystemError::BoundsExceeded)?,
             total_size: content.len() as u64,
@@ -543,7 +544,7 @@ impl TryFrom<&proto::DirectoryEntry> for DirectoryEntry {
 impl From<&DirectoryNode> for proto::DirectoryNode {
     fn from(node: &DirectoryNode) -> Self {
         Self {
-            drive_id: node.drive_id.to_string(),
+            drive_id: node.bucket_id.to_string(),
             children: node
                 .children
                 .iter()
@@ -568,7 +569,7 @@ impl TryFrom<&proto::DirectoryNode> for DirectoryNode {
     type Error = FileSystemError;
 
     fn try_from(node: &proto::DirectoryNode) -> Result<Self, Self::Error> {
-        let drive_id: DriveId = node
+        let bucket_id: BucketId = node
             .drive_id
             .parse()
             .map_err(|_| FileSystemError::InvalidPath)?;
@@ -588,7 +589,7 @@ impl TryFrom<&proto::DirectoryNode> for DirectoryNode {
             .collect();
 
         Ok(Self {
-            drive_id,
+            bucket_id,
             children: BoundedVec::try_from(children?).map_err(|_| FileSystemError::InvalidPath)?,
             metadata: BoundedVec::try_from(metadata?).map_err(|_| FileSystemError::InvalidPath)?,
         })
@@ -599,7 +600,7 @@ impl TryFrom<&proto::DirectoryNode> for DirectoryNode {
 impl From<&FileManifest> for proto::FileManifest {
     fn from(manifest: &FileManifest) -> Self {
         Self {
-            drive_id: manifest.drive_id.to_string(),
+            drive_id: manifest.bucket_id.to_string(),
             mime_type: manifest.mime_type_str(),
             total_size: manifest.total_size,
             chunks: manifest
@@ -628,7 +629,7 @@ impl TryFrom<&proto::FileManifest> for FileManifest {
     type Error = FileSystemError;
 
     fn try_from(manifest: &proto::FileManifest) -> Result<Self, Self::Error> {
-        let drive_id: DriveId = manifest
+        let bucket_id: BucketId = manifest
             .drive_id
             .parse()
             .map_err(|_| FileSystemError::InvalidPath)?;
@@ -649,7 +650,7 @@ impl TryFrom<&proto::FileManifest> for FileManifest {
             .collect::<Result<Vec<_>, _>>()?;
 
         Ok(Self {
-            drive_id,
+            bucket_id,
             mime_type: BoundedVec::try_from(manifest.mime_type.clone().into_bytes())
                 .map_err(|_| FileSystemError::InvalidPath)?,
             total_size: manifest.total_size,
