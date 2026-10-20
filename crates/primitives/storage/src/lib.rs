@@ -444,13 +444,8 @@ pub(crate) const PEAK_PREFIX: u8 = 0x02;
 /// Leaves and internal nodes use different prefixes, so the bytes of an
 /// internal node never hash to the same value as a leaf.
 pub fn hash_leaf(data: &[u8]) -> H256 {
-    hash_prefixed(LEAF_PREFIX, data)
-}
-
-/// `blake2_256(prefix ++ data)`.
-fn hash_prefixed(prefix: u8, data: &[u8]) -> H256 {
     let mut preimage = Vec::with_capacity(1 + data.len());
-    preimage.push(prefix);
+    preimage.push(LEAF_PREFIX);
     preimage.extend_from_slice(data);
     blake2_256(&preimage)
 }
@@ -627,10 +622,6 @@ mod tests {
         const ROOT_3_CHUNKS: &str =
             "17321db51c1ef3ec1f77e271aa300b4e5c6091708bcba37e46025774a26142ee";
         const MMR_LEAF: &str = "3fbff3e341e04b94439e2f793f6983fda1cb58b7e8cc09b73670245f7e816f8d";
-        const BAG_2_PEAKS: &str =
-            "39ffd1718a7a2d0f61de8f7902cb47d9661392d004d5b91e835ccd3d475cd035";
-        const BAG_3_PEAKS: &str =
-            "de6b5def5927714c7e957d45b39ba6b3cb1b24c08d3d72e038387f46268eb23f";
 
         #[test]
         fn leaf_hash_uses_the_leaf_prefix() {
@@ -662,20 +653,6 @@ mod tests {
                 total_size: 2,
             };
             assert_eq!(hash_leaf(&leaf.encode()), h(MMR_LEAF));
-        }
-
-        #[test]
-        fn peaks_bag_right_to_left_with_the_peak_prefix() {
-            let peaks: Vec<H256> = (1..=3).map(H256::repeat_byte).collect();
-            assert_eq!(bag_peaks(&peaks[..2]), h(BAG_2_PEAKS));
-            assert_eq!(bag_peaks(&peaks), h(BAG_3_PEAKS));
-        }
-
-        #[test]
-        fn one_peak_is_the_root_and_no_peaks_give_zero() {
-            let peak = H256::repeat_byte(7);
-            assert_eq!(bag_peaks(&[peak]), peak);
-            assert_eq!(bag_peaks(&[]), H256::zero());
         }
     }
 

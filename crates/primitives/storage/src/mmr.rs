@@ -255,25 +255,27 @@ mod tests {
         }
     }
 
+    /// Expected values come from an independent blake2b-256 computation over
+    /// `0x02 ++ peak ++ rest`, folding from the right.
+    /// `packages/core/src/merkle.test.ts` asserts the same values.
     #[test]
-    fn proofs_verify_for_every_leaf() {
-        for leaf_count in 1..=33u64 {
-            let all = leaves(leaf_count);
-            let commitment = Commitment {
-                mmr_root: root(&all).unwrap(),
-                start_seq: 0,
-                leaf_count,
-            };
-            for leaf_index in 0..leaf_count {
-                let (mmr_root, mmr_proof) = proof(&all, leaf_index).unwrap().unwrap();
-                assert_eq!(mmr_root, commitment.mmr_root);
-                assert_eq!(mmr_proof.leaf, all[leaf_index as usize]);
-                assert!(
-                    verify_mmr_proof(mmr_proof, leaf_index, &commitment),
-                    "leaf {leaf_index} of {leaf_count}"
-                );
-            }
-        }
+    fn peaks_bag_right_to_left_with_the_peak_prefix() {
+        let peaks: Vec<H256> = (1..=3).map(H256::repeat_byte).collect();
+        assert_eq!(
+            bag_peaks(&peaks[..2]),
+            h("39ffd1718a7a2d0f61de8f7902cb47d9661392d004d5b91e835ccd3d475cd035")
+        );
+        assert_eq!(
+            bag_peaks(&peaks),
+            h("de6b5def5927714c7e957d45b39ba6b3cb1b24c08d3d72e038387f46268eb23f")
+        );
+    }
+
+    #[test]
+    fn one_peak_is_the_root_and_no_peaks_give_zero() {
+        let peak = H256::repeat_byte(7);
+        assert_eq!(bag_peaks(&[peak]), peak);
+        assert_eq!(bag_peaks(&[]), H256::zero());
     }
 
     #[test]
@@ -301,8 +303,18 @@ mod tests {
     #[test]
     fn mmr_proof_verifies_only_for_its_leaf_index() {
         for leaf_count in 1u64..=33 {
+            let all = leaves(leaf_count);
             for index in 0..leaf_count {
                 let (commitment, proof) = mmr_commitment_and_proof(leaf_count, index);
+                assert_eq!(
+                    commitment.mmr_root,
+                    root(&all).unwrap(),
+                    "leaf {index} of {leaf_count}"
+                );
+                assert_eq!(
+                    proof.leaf, all[index as usize],
+                    "leaf {index} of {leaf_count}"
+                );
                 for other in 0..leaf_count {
                     assert_eq!(
                         verify_mmr_proof(proof.clone(), other, &commitment),
