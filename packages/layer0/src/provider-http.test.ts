@@ -149,7 +149,12 @@ describe("fetchChallengeProof", () => {
   const api = {
     query: { StorageProvider: { Challenges: { getValue } } },
   } as unknown as ParachainApi;
-  const leaf = { data_root: toHex(new Uint8Array(32).fill(1)), data_size: 5, total_size: 5 };
+  const leaf = {
+    leaf_version: 1,
+    data_root: toHex(new Uint8Array(32).fill(1)),
+    data_size: 5,
+    total_size: 5,
+  };
   const item = toHex(new Uint8Array(32).fill(2));
   const chunkProof = {
     chunk_data: bytesToBase64(enc.encode("chunk")),
@@ -163,7 +168,10 @@ describe("fetchChallengeProof", () => {
     const proof = await fetchChallengeProof(api, PROVIDER, challengeId);
     expect(proof).toEqual({
       chunk_data: enc.encode("chunk"),
-      mmr_proof: { leaf: { data_root: leaf.data_root, data_size: 5n, total_size: 5n }, items: [item] },
+      mmr_proof: {
+        leaf: { leaf_version: 1, data_root: leaf.data_root, data_size: 5n, total_size: 5n },
+        items: [item],
+      },
       chunk_proof: [item],
     });
     expect(getValue).toHaveBeenCalledWith(10, 0, expect.anything());

@@ -987,6 +987,7 @@ impl ChallengeChainClient for SubxtChainClient {
             chunk_data: BoundedVec(chunk_data),
             mmr_proof: RuntimeMmrProof {
                 leaf: RuntimeMmrLeaf {
+                    leaf_version: mmr_proof.leaf.leaf_version,
                     data_root: to_runtime_hash(mmr_proof.leaf.data_root),
                     data_size: mmr_proof.leaf.data_size,
                     total_size: mmr_proof.leaf.total_size,

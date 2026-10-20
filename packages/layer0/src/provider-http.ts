@@ -256,6 +256,7 @@ export async function fetchChallengeProof(
     chunk_data: base64ToBytes(chunk.chunk_data),
     mmr_proof: {
       leaf: {
+        leaf_version: mmr.leaf.leaf_version,
         data_root: asHex(mmr.leaf.data_root),
         data_size: BigInt(mmr.leaf.data_size),
         total_size: BigInt(mmr.leaf.total_size),
