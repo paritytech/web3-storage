@@ -3,6 +3,7 @@
 //! Node startup and runtime orchestration.
 
 use crate::{
+    chain_connection::{self, ChainHandle},
     chain_follower::SubxtChainFollower,
     chain_state_coordinator::ChainStateCoordinator,
     cli::{Cli, DEFAULT_PROVIDER_ID},
@@ -15,10 +16,7 @@ use crate::{
 };
 use clap::Parser;
 use provider_auth::Authenticator;
-use provider_chain::{
-    chain_connection::{self, ChainHandle},
-    BlockEvent, BlockEventRx, BlockEventTx, EVENT_CHANNEL_CAPACITY,
-};
+use provider_events::{BlockEvent, BlockEventRx, BlockEventTx, EVENT_CHANNEL_CAPACITY};
 use std::net::SocketAddr;
 use std::str::FromStr;
 use std::sync::Arc;

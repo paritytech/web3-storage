@@ -240,7 +240,7 @@ async fn get_node(
         .get_node(&hash)
         .ok_or_else(|| provider_storage::Error::NodeNotFound(query.hash.clone()))?;
 
-    Ok(Json(DownloadNodeResponse::new(query.hash, &node)))
+    Ok(Json(DownloadNodeResponse::new(hash, &node)))
 }
 
 async fn upload_node(
@@ -307,16 +307,7 @@ async fn check_exists(
 
     let (exists, missing) = state.storage.check_exists(request.bucket_id, &hashes);
 
-    Ok(Json(ExistsResponse {
-        exists: exists
-            .iter()
-            .map(|h| format!("0x{}", hex::encode(h.as_bytes())))
-            .collect(),
-        missing: missing
-            .iter()
-            .map(|h| format!("0x{}", hex::encode(h.as_bytes())))
-            .collect(),
-    }))
+    Ok(Json(ExistsResponse { exists, missing }))
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -356,7 +347,7 @@ async fn commit(
     let signature = state.sign(&payload.encode())?;
 
     Ok(Json(CommitResponse {
-        mmr_root: format!("0x{}", hex::encode(outcome.mmr_root.as_bytes())),
+        mmr_root: outcome.mmr_root,
         start_seq: outcome.start_seq,
         leaf_count: outcome.leaf_count,
         leaf_indices: outcome.leaf_indices,
@@ -381,13 +372,9 @@ async fn read_chunks(
         .get_chunks_in_range(data_root, start_chunk..end_chunk)?
         .into_iter()
         .map(|(hash, data, proof)| ChunkWithProof {
-            hash: format!("0x{}", hex::encode(hash.as_bytes())),
+            hash,
             data: BASE64.encode(&data),
-            proof: proof
-                .siblings
-                .iter()
-                .map(|h| format!("0x{}", hex::encode(h.as_bytes())))
-                .collect(),
+            proof,
         })
         .collect();
 
@@ -429,7 +416,7 @@ async fn get_commitment(
 
     Ok(Json(CommitmentResponse {
         bucket_id: query.bucket_id,
-        mmr_root: format!("0x{}", hex::encode(bucket.mmr_root.as_bytes())),
+        mmr_root: bucket.mmr_root,
         start_seq: bucket.start_seq,
         leaf_count: bucket.leaf_count,
         provider_signature: signature,
@@ -472,7 +459,7 @@ async fn get_checkpoint_signature(
 
     Ok(Json(CheckpointSignatureResponse {
         bucket_id: query.bucket_id,
-        mmr_root: format!("0x{}", hex::encode(bucket.mmr_root.as_bytes())),
+        mmr_root: bucket.mmr_root,
         start_seq: bucket.start_seq,
         leaf_count,
         provider_signature: signature,
@@ -483,7 +470,7 @@ async fn get_mmr_proof(
     State(state): State<Arc<ProviderState>>,
     headers: axum::http::HeaderMap,
     Query(query): Query<MmrProofQuery>,
-) -> Result<Json<MmrProofResponse>, Error> {
+) -> Result<Json<storage_primitives::MmrProof>, Error> {
     check_role(
         &state,
         &headers,
@@ -493,31 +480,11 @@ async fn get_mmr_proof(
     )
     .await?;
 
-    let mmr_proof = state
-        .storage
-        .get_mmr_proof(query.bucket_id, query.leaf_index)?;
-
-    Ok(Json(MmrProofResponse {
-        leaf: MmrLeafData {
-            data_root: format!("0x{}", hex::encode(mmr_proof.leaf.data_root.as_bytes())),
-            data_size: mmr_proof.leaf.data_size,
-            total_size: mmr_proof.leaf.total_size,
-        },
-        proof: MmrProofData {
-            peaks: mmr_proof
-                .peaks
-                .iter()
-                .map(|h| format!("0x{}", hex::encode(h.as_bytes())))
-                .collect(),
-            siblings: mmr_proof
-                .leaf_proof
-                .siblings
-                .iter()
-                .map(|h| format!("0x{}", hex::encode(h.as_bytes())))
-                .collect(),
-            path: mmr_proof.leaf_proof.path,
-        },
-    }))
+    Ok(Json(
+        state
+            .storage
+            .get_mmr_proof(query.bucket_id, query.leaf_index)?,
+    ))
 }
 
 async fn get_chunk_proof(
@@ -533,16 +500,9 @@ async fn get_chunk_proof(
     let chunk_hash = storage_primitives::hash_leaf(&chunk_data);
 
     Ok(Json(ChunkProofResponse {
-        chunk_hash: format!("0x{}", hex::encode(chunk_hash.as_bytes())),
+        chunk_hash,
         chunk_data: Some(BASE64.encode(&chunk_data)),
-        proof: MerkleProofData {
-            siblings: proof
-                .siblings
-                .iter()
-                .map(|h| format!("0x{}", hex::encode(h.as_bytes())))
-                .collect(),
-            path: proof.path,
-        },
+        proof,
     }))
 }
 
@@ -584,7 +544,7 @@ async fn delete_data(
     let signature = state.sign(&payload.encode())?;
 
     Ok(Json(DeleteResponse {
-        mmr_root: format!("0x{}", hex::encode(mmr_root.as_bytes())),
+        mmr_root,
         start_seq,
         leaf_count,
         provider_signature: signature,
@@ -613,11 +573,8 @@ async fn get_mmr_peaks(
 
     Ok(Json(MmrPeaksResponse {
         bucket_id: query.bucket_id,
-        mmr_root: format!("0x{}", hex::encode(mmr_root.as_bytes())),
-        peaks: peaks
-            .iter()
-            .map(|h| format!("0x{}", hex::encode(h.as_bytes())))
-            .collect(),
+        mmr_root,
+        peaks,
     }))
 }
 
@@ -632,7 +589,7 @@ async fn fetch_nodes(
         let hash = decode_hash(hash_str)?;
 
         if let Some(node) = state.storage.get_node(&hash) {
-            nodes.push(DownloadNodeResponse::new(hash_str.clone(), &node));
+            nodes.push(DownloadNodeResponse::new(hash, &node));
         }
     }
 
@@ -668,7 +625,7 @@ async fn get_historical_roots(
 
     Ok(Json(HistoricalRootsResponse {
         bucket_id: query.bucket_id,
-        current_root: format!("0x{}", hex::encode(bucket.mmr_root.as_bytes())),
+        current_root: bucket.mmr_root,
         // Provider node doesn't track historical roots - chain does
         historical_roots: [
             String::new(),
@@ -785,7 +742,7 @@ async fn get_replica_sync_status(
 
     Ok(Json(BucketSyncStatusResponse {
         bucket_id: query.bucket_id,
-        local_mmr_root: format!("0x{}", hex::encode(bucket.mmr_root.as_bytes())),
+        local_mmr_root: bucket.mmr_root,
         local_leaf_count: bucket.leaf_count,
         last_sync_block: None, // Would be tracked by coordinator
         syncing: false,        // Would check coordinator state

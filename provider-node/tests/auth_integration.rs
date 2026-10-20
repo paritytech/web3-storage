@@ -586,7 +586,7 @@ fn node_body(bucket_id: u64, data: &[u8]) -> Value {
     let hash = storage_primitives::hash_leaf(data);
     serde_json::json!({
         "bucket_id": bucket_id,
-        "hash": format!("0x{}", hex::encode(hash.as_bytes())),
+        "hash": format!("{hash:#x}"),
         "data": BASE64.encode(data),
     })
 }
@@ -651,10 +651,7 @@ async fn commit_writer_can_commit() {
 
     // Upload a node first (Writer), then commit it.
     let data = b"committed chunk";
-    let hash_hex = format!(
-        "0x{}",
-        hex::encode(storage_primitives::hash_leaf(data).as_bytes())
-    );
+    let hash_hex = format!("{:#x}", storage_primitives::hash_leaf(data));
     let ts = current_timestamp();
     let header = make_auth_header(&alice, "PUT", 1, ts);
     server
@@ -736,7 +733,7 @@ async fn node_non_member_returns_forbidden() {
 async fn upload_and_commit_as(server: &AuthTestServer, keypair: &sr25519::Pair) -> String {
     let data = b"l0-gate-test-data";
     let hash = storage_primitives::hash_leaf(data);
-    let hash_hex = format!("0x{}", hex::encode(hash.as_bytes()));
+    let hash_hex = format!("{hash:#x}");
 
     let header = make_auth_header(keypair, "PUT", 1, current_timestamp());
     let resp = server

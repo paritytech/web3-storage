@@ -15,7 +15,10 @@ use rocksdb::{Options, DB};
 use sp_core::H256;
 use std::path::Path;
 use std::sync::Arc;
-use storage_primitives::{bag_peaks, hash_leaf, BucketId, MmrLeaf};
+use storage_primitives::{
+    mmr::{self, MmrLeaf, MmrProof},
+    BucketId,
+};
 
 /// Column families for organizing data
 const CF_NODES: &str = "nodes";
@@ -222,8 +225,8 @@ impl DiskStorage {
         let actual_hash = node.hash();
         if actual_hash != expected_hash {
             return Err(Error::InvalidHash {
-                expected: format!("0x{}", hex::encode(expected_hash.as_bytes())),
-                actual: format!("0x{}", hex::encode(actual_hash.as_bytes())),
+                expected: format!("{:#x}", expected_hash),
+                actual: format!("{:#x}", actual_hash),
             });
         }
 
@@ -243,7 +246,7 @@ impl DiskStorage {
                         .flatten()
                         .is_none()
                 })
-                .map(|h| format!("0x{}", hex::encode(h.as_bytes())))
+                .map(|h| format!("{:#x}", h))
                 .collect();
 
             if !missing.is_empty() {
@@ -295,7 +298,7 @@ impl DiskStorage {
         match ChunkTreeNode::decode_all(&mut &value[..]) {
             Ok(node) => Some(node),
             Err(e) => {
-                tracing::warn!(hash = %format!("0x{}", hex::encode(hash.as_bytes())), error = %e, "Failed to deserialize node");
+                tracing::warn!(hash = %format!("{:#x}", hash), error = %e, "Failed to deserialize node");
                 None
             }
         }
@@ -338,10 +341,7 @@ impl DiskStorage {
         for root in &data_roots {
             let key = root.as_bytes();
             if self.db.get_cf(&cf_nodes, key)?.is_none() {
-                return Err(Error::RootNotFound(format!(
-                    "0x{}",
-                    hex::encode(root.as_bytes())
-                )));
+                return Err(Error::RootNotFound(format!("{:#x}", root)));
             }
         }
 
@@ -358,12 +358,6 @@ impl DiskStorage {
 
         let start_seq = bucket.start_seq;
         let mut leaf_indices = Vec::new();
-        let mut mmr = crate::mmr::Mmr::new();
-
-        // Rebuild MMR from existing leaves
-        for leaf in &bucket.leaves {
-            mmr.push(hash_leaf(&leaf.encode()));
-        }
 
         // Add new leaves
         let start_index = bucket.leaves.len() as u64;
@@ -382,12 +376,10 @@ impl DiskStorage {
                 data_size,
                 total_size,
             };
-            let leaf_hash = hash_leaf(&leaf.encode());
-            mmr.push(leaf_hash);
             bucket.leaves.push(leaf);
         }
 
-        bucket.mmr_root = mmr.root();
+        bucket.mmr_root = mmr::root(&bucket.leaves)?;
 
         // Update bucket
         self.update_bucket(bucket_id, &bucket)?;
@@ -418,12 +410,7 @@ impl DiskStorage {
             bucket.leaves.drain(0..to_remove);
             bucket.start_seq = new_start_seq;
 
-            // Recalculate MMR
-            let mut mmr = crate::mmr::Mmr::new();
-            for leaf in &bucket.leaves {
-                mmr.push(hash_leaf(&leaf.encode()));
-            }
-            bucket.mmr_root = mmr.root();
+            bucket.mmr_root = mmr::root(&bucket.leaves)?;
 
             self.update_bucket(bucket_id, &bucket)?;
         }
@@ -440,7 +427,7 @@ impl DiskStorage {
         let bucket = self
             .get_bucket(bucket_id)
             .ok_or(Error::BucketNotFound(bucket_id))?;
-        mmr_proof(&bucket.leaves, leaf_index)
+        Ok(leaf_proof(&bucket.leaves, leaf_index)?.1)
     }
 
     /// See [`StorageBackend::get_mmr_proof_for_commitment`].
@@ -480,14 +467,14 @@ impl DiskStorage {
             )));
         }
 
-        let proof = mmr_proof(&bucket.leaves[offset..end], leaf_index)?;
+        let (root, proof) = leaf_proof(&bucket.leaves[offset..end], leaf_index)?;
         // The rebuilt prefix must reproduce the cited root; a mismatch means
         // the local history diverged from what was signed, and any proof from
         // it would fail on-chain verification anyway.
-        if bag_peaks(&proof.peaks) != commitment.mmr_root {
+        if root != commitment.mmr_root {
             return Err(Error::CommitmentNotReproducible(format!(
-                "commitment_root 0x{} not reproducible from local leaves",
-                hex::encode(commitment.mmr_root.as_bytes())
+                "commitment_root {:#x} not reproducible from local leaves",
+                commitment.mmr_root
             )));
         }
         Ok(proof)
@@ -499,36 +486,8 @@ impl DiskStorage {
             .get_bucket(bucket_id)
             .ok_or(Error::BucketNotFound(bucket_id))?;
 
-        let mut mmr = crate::mmr::Mmr::new();
-        for leaf in &bucket.leaves {
-            mmr.push(hash_leaf(&leaf.encode()));
-        }
-
-        Ok((mmr.root(), mmr.peaks()))
+        Ok(mmr::peaks(&bucket.leaves)?)
     }
-}
-
-/// Build the MMR over `leaves` and prove the leaf at `leaf_index`.
-fn mmr_proof(leaves: &[MmrLeaf], leaf_index: u64) -> Result<storage_primitives::MmrProof, Error> {
-    let leaf = leaves
-        .get(leaf_index as usize)
-        .ok_or(Error::NodeNotFound(format!("leaf_{leaf_index}")))?
-        .clone();
-
-    let mut mmr = crate::mmr::Mmr::new();
-    for l in leaves {
-        mmr.push(hash_leaf(&l.encode()));
-    }
-
-    let (siblings, path, peaks) = mmr
-        .proof_with_path(leaf_index)
-        .ok_or(Error::NodeNotFound(format!("mmr_proof_{leaf_index}")))?;
-
-    Ok(storage_primitives::MmrProof {
-        peaks,
-        leaf,
-        leaf_proof: storage_primitives::MerkleProof { siblings, path },
-    })
 }
 
 impl StorageBackend for DiskStorage {
@@ -612,11 +571,16 @@ impl StorageBackend for DiskStorage {
     }
 }
 
+/// Root of the MMR over `leaves` and the proof for the leaf at `leaf_index`.
+fn leaf_proof(leaves: &[MmrLeaf], leaf_index: u64) -> Result<(H256, MmrProof), Error> {
+    mmr::proof(leaves, leaf_index)?.ok_or_else(|| Error::NodeNotFound(format!("leaf_{leaf_index}")))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::backend::build_merkle_tree;
-    use storage_primitives::DEFAULT_CHUNK_SIZE;
+    use storage_primitives::{hash_leaf, DEFAULT_CHUNK_SIZE};
     use tempfile::TempDir;
 
     /// Open the database at `path` directly, bypassing `DiskStorage::new` and
@@ -654,14 +618,14 @@ mod tests {
         let bucket_id: BucketId = 0x0102030405060708;
         storage.init_bucket(bucket_id, 1_000).unwrap();
         let cf = storage.db.cf_handle(CF_BUCKETS).unwrap();
-        let key = hex::decode("0807060504030201").unwrap();
+        let key = [8u8, 7, 6, 5, 4, 3, 2, 1];
         let raw = storage
             .db
             .get_cf(&cf, key)
             .unwrap()
             .expect("bucket must be stored under the little-endian bucket_id key");
         assert_eq!(
-            hex::encode(&raw),
+            array_bytes::bytes2hex("", &raw),
             // BucketState::new(1_000): zero root, no leaves, max_bytes = 1_000
             "0000000000000000000000000000000000000000000000000000000000000000\
              0000000000000000\
@@ -683,7 +647,7 @@ mod tests {
             .unwrap()
             .unwrap();
         // variant 0 (Chunk), compact length 5, then the bytes
-        assert_eq!(hex::encode(&raw), "00140102030405");
+        assert_eq!(array_bytes::bytes2hex("", &raw), "00140102030405");
 
         // CF_NODES: an internal node's value is 65 B - the variant tag plus
         // the two child hashes, no stored preimage.
@@ -708,11 +672,11 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(
-            hex::encode(&raw),
+            array_bytes::bytes2hex("", &raw),
             format!(
                 "01{}{}",
-                hex::encode(chunk_hash.as_bytes()),
-                hex::encode(other_hash.as_bytes())
+                array_bytes::bytes2hex("", chunk_hash),
+                array_bytes::bytes2hex("", other_hash)
             )
         );
     }
@@ -1044,6 +1008,24 @@ mod tests {
     }
 
     #[test]
+    fn proof_for_a_missing_leaf_is_node_not_found() {
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        bucket_with_leaves(&storage, 1, 0);
+        bucket_with_leaves(&storage, 2, 4);
+
+        assert!(matches!(
+            storage.get_mmr_proof(1, 0),
+            Err(Error::NodeNotFound(_))
+        ));
+        assert!(matches!(
+            storage.get_mmr_proof(2, 4),
+            Err(Error::NodeNotFound(_))
+        ));
+        assert!(storage.get_mmr_proof(2, 3).is_ok());
+    }
+
+    #[test]
     fn proof_for_older_commitment_matches_cited_root() {
         let dir = TempDir::new().unwrap();
         let storage = DiskStorage::new(dir.path()).unwrap();
@@ -1067,15 +1049,19 @@ mod tests {
             leaf_count: 2,
         };
         let proof = storage.get_mmr_proof_for_commitment(1, &cited, 1).unwrap();
-        assert!(storage_primitives::verify_mmr_proof(&proof, 1, &cited));
+        assert!(storage_primitives::verify_mmr_proof(
+            proof.clone(),
+            1,
+            &cited
+        ));
         // The same proof must not satisfy a challenge citing the current
-        // 3-leaf commitment: its peaks bag to the cited two-leaf root.
+        // 3-leaf commitment: it was built for the two-leaf MMR.
         let current = storage_primitives::Commitment {
             mmr_root: roots[2],
             start_seq: 0,
             leaf_count: 3,
         };
-        assert!(!storage_primitives::verify_mmr_proof(&proof, 1, &current));
+        assert!(!storage_primitives::verify_mmr_proof(proof, 1, &current));
 
         // A leaf index outside the cited commitment is rejected even though
         // the bucket currently holds it.
@@ -1139,7 +1125,7 @@ mod tests {
         };
         let proof = storage.get_mmr_proof_for_commitment(1, &cited, 1).unwrap();
         assert_eq!(proof.leaf.data_root, expected.data_root);
-        assert!(storage_primitives::verify_mmr_proof(&proof, 1, &cited));
+        assert!(storage_primitives::verify_mmr_proof(proof, 1, &cited));
     }
 
     #[test]

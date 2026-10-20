@@ -151,8 +151,13 @@ mod tests {
             value: T,
             golden: &str,
         ) {
-            assert_eq!(hex::encode(value.encode()), golden, "encoding changed");
-            let bytes = hex::decode(golden).unwrap();
+            let encoded = value.encode();
+            assert_eq!(
+                array_bytes::bytes2hex("", &encoded),
+                golden,
+                "encoding changed"
+            );
+            let bytes = array_bytes::hex2bytes(golden).unwrap();
             assert_eq!(T::decode_all(&mut &bytes[..]).unwrap(), value);
         }
 

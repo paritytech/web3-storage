@@ -590,15 +590,14 @@ fn current_timestamp() -> u64 {
 
 /// Convert AccountId32 to hex string.
 fn account_id_to_string(account_id: &AccountId32) -> String {
-    let bytes: &[u8; 32] = account_id.as_ref();
-    format!("0x{}", hex::encode(bytes))
+    let bytes: &[u8] = account_id.as_ref();
+    array_bytes::bytes2hex("0x", bytes)
 }
 
 /// Convert hex string to AccountId32.
 fn string_to_account_id(s: &str) -> Result<AccountId32, ClientError> {
-    let s = s.strip_prefix("0x").unwrap_or(s);
-    let bytes =
-        hex::decode(s).map_err(|e| ClientError::Storage(format!("Invalid account ID hex: {e}")))?;
+    let bytes = array_bytes::hex2bytes(s)
+        .map_err(|e| ClientError::Storage(format!("Invalid account ID hex: {e:?}")))?;
 
     if bytes.len() != 32 {
         return Err(ClientError::Storage(format!(
@@ -616,7 +615,7 @@ fn string_to_account_id(s: &str) -> Result<AccountId32, ClientError> {
 fn result_to_string(result: &CheckpointResult) -> String {
     match result {
         CheckpointResult::Submitted { block_hash, .. } => {
-            format!("Submitted(0x{})", hex::encode(block_hash.as_bytes()))
+            format!("Submitted({block_hash:#x})")
         }
         CheckpointResult::InsufficientConsensus {
             agreeing, required, ..

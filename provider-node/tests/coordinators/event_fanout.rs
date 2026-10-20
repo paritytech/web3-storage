@@ -5,7 +5,7 @@
 //! including the bootstrap scan on `Resubscribed` and lag recovery.
 
 use super::{alice_account, test_state, test_state_with_data, wait_for};
-use provider_chain::BlockEvent;
+use provider_events::BlockEvent;
 use provider_replica::coordinator::{BucketSnapshot, ReplicaAgreementInfo};
 use sp_core::H256;
 use sp_runtime::AccountId32;
@@ -65,7 +65,7 @@ impl ChallengeChainClient for MockChallengeClient {
         challenge_id: (u32, u16),
         _chunk_data: Vec<u8>,
         _mmr_proof: storage_primitives::MmrProof,
-        _chunk_proof: storage_primitives::MerkleProof,
+        _chunk_proof: Vec<H256>,
     ) -> Result<H256, ChallengeError> {
         self.submitted.lock().unwrap().push(challenge_id);
         Ok(H256::zero())

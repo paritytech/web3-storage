@@ -34,7 +34,7 @@ pub fn body(body: impl Into<String>) -> Reply {
 
 /// `0x`-prefixed hex, the form both provider endpoints use for hashes.
 pub fn hex_hash(hash: H256) -> String {
-    format!("0x{}", hex::encode(hash.as_bytes()))
+    format!("{hash:#x}")
 }
 
 pub fn base64(data: &[u8]) -> String {

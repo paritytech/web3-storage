@@ -776,7 +776,7 @@ impl FileSystemClient {
             "fetch_blob: cid={:?}, data_len={}, data_hex={}",
             cid,
             data.len(),
-            hex::encode(&data)
+            array_bytes::bytes2hex("", &data)
         );
 
         Ok(data)

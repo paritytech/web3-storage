@@ -46,7 +46,7 @@
     { "id": "endpoint", "from": "chain", "to": "client", "y": 334, "label": "multiaddr, public_key", "variant": "return" },
     { "id": "mmr-proof", "from": "client", "to": "primary", "y": 395, "label": "GET /mmr_proof?bucket_id&leaf_index", "variant": "emphasis", "note": "private: Authorization header, Reader role" },
     { "id": "members", "from": "primary", "to": "chain", "y": 431, "label": "bucket.members (TTL-cached)", "variant": "security" },
-    { "id": "mmr-leaf", "from": "primary", "to": "client", "y": 467, "label": "leaf (data_root), peaks, siblings", "variant": "return", "note": "client checks against the snapshot or the signed commit mmr_root" },
+    { "id": "mmr-leaf", "from": "primary", "to": "client", "y": 467, "label": "leaf (data_root), items", "variant": "return", "note": "client checks against the snapshot or the signed commit mmr_root" },
     { "id": "read", "from": "client", "to": "primary", "y": 503, "label": "GET /read?bucket_id&data_root&offset&length", "variant": "default", "note": "no auth: the data_root is the read key" },
     { "id": "chunks", "from": "primary", "to": "client", "y": 539, "label": "chunks: hash, data, proof", "variant": "return", "note": "client checks blake2_256 and Merkle path" },
     { "id": "replica-read", "from": "client", "to": "replica", "y": 600, "label": "GET /read (same range)", "variant": "default", "note": "replicas serve everyone" },
