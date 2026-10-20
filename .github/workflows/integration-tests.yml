@@ -700,21 +700,15 @@ jobs:
         with:
           label: utils
 
-      # Seed: //Bob negotiates terms and opens a bucket + primary agreement
-      # against the //Alice provider, giving the CLI something to upload to.
-      - name: Seed bucket + agreement (//Bob → //Alice provider)
-        run: |
-          cargo run --release -p storage-client --example complete_workflow \
-            ws://127.0.0.1:2222 http://127.0.0.1:3333 //Bob
-
-      # Run the CLI's stress-test upload command against the //Alice provider using 
-      # the //Bob key.
+      # The CLI opens its own buckets, so no seeding step: the job exercises
+      # the tool from a clean chain, as an operator would.
       - name: storage-cli stress-test upload
         run: |
           cargo run --release -p storage-cli -- \
             --suri //Bob \
             stress-test upload \
             --provider 5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY \
+            --prepare-buckets 2 \
             --users 2 \
             --uploads-per-user 5 \
             --payload-size 1048576 \
