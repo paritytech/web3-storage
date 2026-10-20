@@ -2502,16 +2502,18 @@ pub mod pallet {
                         .position(|p| p == signer)
                         .ok_or(Error::<T>::ProviderNotInSnapshot)?;
 
-                    let byte_idx = idx / 8;
-                    let bit_idx = idx % 8;
-                    if primary_signers[byte_idx] & (1 << bit_idx) != 0 {
+                    let byte = primary_signers
+                        .get_mut(idx / 8)
+                        .ok_or(Error::<T>::ProviderNotInSnapshot)?;
+                    let bit = 1 << (idx % 8);
+                    if *byte & bit != 0 {
                         continue;
                     }
 
                     // Verify signature
                     Self::verify_signature(signature, &encoded_payload, signer)?;
 
-                    primary_signers[byte_idx] |= 1 << bit_idx;
+                    *byte |= bit;
                     added_providers.push(signer.clone());
                 }
 
