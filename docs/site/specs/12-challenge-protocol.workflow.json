@@ -303,7 +303,8 @@
         "Any signed account except the challenged provider (SelfChallenge)",
         "Private bucket, primary provider: member or primary-agreement owner only (NotAuthorizedForPrivateBucket)",
         "The gate reads the provider's role from its current agreement; replicas are open to anyone",
-        "Tier: authorized (member or any agreement owner) or public, stored in Challenge.authorized at creation"
+        "Tier: authorized (member or any agreement owner) or public, stored in Challenge.authorized at creation",
+        "The target leaf must exist: leaf_index below the commitment's leaf_count, else LeafNotInCommitment"
       ]
     },
     {
@@ -322,7 +323,7 @@
       "dot": "rose",
       "title": "Responses and rejections",
       "items": [
-        "Proof: chunk in leaf, leaf in committed MMR; else InvalidProof",
+        "Proof: chunk in leaf, leaf at the challenged leaf_index in the committed MMR; else InvalidProof",
         "Deleted: admin-signed commitment with new_start_seq above the challenged leaf; else InvalidDeletionClaim",
         "Superseded: a newer canonical snapshot covers the leaf; else InvalidSupersededClaim",
         "A rejected response costs the provider its tx fee; the challenge stays open until the deadline",

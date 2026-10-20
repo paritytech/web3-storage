@@ -177,7 +177,7 @@ pub const VERSION: RuntimeVersion = RuntimeVersion {
     spec_name: Cow::Borrowed("paseo-web3-storage-runtime"),
     impl_name: Cow::Borrowed("paseo-web3-storage-runtime"),
     authoring_version: 1,
-    spec_version: 4_011,
+    spec_version: 4_013,
     impl_version: 0,
     apis: RUNTIME_API_VERSIONS,
     // Bumped whenever call encoding changes, so offline signers and stale-metadata
@@ -190,9 +190,11 @@ pub const VERSION: RuntimeVersion = RuntimeVersion {
     // * 4 for the `visibility` argument appended to `establish_storage_agreement`
     //   (now `create_bucket_with_primary`),
     //   `create_drive` and `create_s3_bucket` (#330);
-    // * 5 for removing `DriveRegistry` and `S3Registry` with all their calls (#475);
-    //   also covers the `nonce` field added to `AgreementTerms` (#447).
-    transaction_version: 5,
+    // * 5 for the `MmrProof` argument of `respond_to_challenge`, which now
+    //   contains library proof `items` instead of `peaks` and `leaf_proof` (#517);
+    //   also covers the `nonce` field added to `AgreementTerms` (#447);
+    // * 6 for removing `DriveRegistry` and `S3Registry` with all their calls (#475).
+    transaction_version: 6,
     system_version: 1,
 };
 

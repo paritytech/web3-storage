@@ -48,7 +48,7 @@
     { "id": "members", "from": "primary", "to": "chain", "y": 431, "label": "bucket.members (TTL-cached)", "variant": "security" },
     { "id": "chunks", "from": "primary", "to": "client", "y": 467, "label": "chunks: hash, data, proof", "variant": "return", "note": "client checks blake2_256 and Merkle path" },
     { "id": "mmr-proof", "from": "client", "to": "primary", "y": 503, "label": "GET /mmr_proof?bucket_id&leaf_index", "variant": "default", "note": "data_root from a checkpoint or a signed commit" },
-    { "id": "mmr-leaf", "from": "primary", "to": "client", "y": 539, "label": "leaf, peaks, siblings", "variant": "return", "note": "client checks against the snapshot or the signed commit mmr_root" },
+    { "id": "mmr-leaf", "from": "primary", "to": "client", "y": 539, "label": "leaf, items", "variant": "return", "note": "client checks against the snapshot or the signed commit mmr_root" },
     { "id": "replica-read", "from": "client", "to": "replica", "y": 600, "label": "GET /read (same range)", "variant": "default", "note": "replicas serve everyone" },
     { "id": "replica-chunks", "from": "replica", "to": "client", "y": 636, "label": "chunks with proofs", "variant": "return" },
     { "id": "challenge", "from": "client", "to": "chain", "y": 672, "label": "challenge (persistent failure)", "variant": "dashed", "note": "see pages 12 and 13" }

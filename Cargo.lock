@@ -3307,11 +3307,9 @@ dependencies = [
 name = "file-system-client"
 version = "0.1.0"
 dependencies = [
+ "array-bytes 6.2.3",
  "file-system-primitives",
- "hex",
  "reqwest",
- "sp-core",
- "sp-crypto-hashing",
  "sp-runtime",
  "storage-client",
  "storage-primitives",
@@ -3320,7 +3318,6 @@ dependencies = [
  "subxt-signer 0.50.2",
  "thiserror 2.0.18",
  "tokio",
- "tokio-test",
  "tracing",
  "tracing-subscriber 0.3.23",
 ]
@@ -3329,15 +3326,15 @@ dependencies = [
 name = "file-system-primitives"
 version = "0.1.0"
 dependencies = [
- "hex",
+ "array-bytes 6.2.3",
  "parity-scale-codec",
  "prost",
  "prost-build",
  "scale-info",
  "serde",
  "sp-core",
- "sp-crypto-hashing",
  "sp-runtime",
+ "storage-primitives",
  "thiserror 2.0.18",
 ]
 
@@ -5976,7 +5973,6 @@ dependencies = [
  "sp-api",
  "sp-core",
  "sp-io",
- "sp-keyring",
  "sp-keystore",
  "sp-runtime",
  "storage-primitives",
@@ -5991,7 +5987,6 @@ dependencies = [
  "pallet-revive",
  "pallet-storage-provider",
  "parity-scale-codec",
- "sp-core",
  "sp-runtime",
  "storage-primitives",
  "tracing",
@@ -7113,28 +7108,11 @@ dependencies = [
 name = "provider-auth"
 version = "0.1.0"
 dependencies = [
+ "array-bytes 6.2.3",
  "async-trait",
- "hex",
  "moka",
  "sp-core",
  "storage-primitives",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "provider-chain"
-version = "0.1.0"
-dependencies = [
- "hex",
- "serde_json",
- "sp-runtime",
- "storage-primitives",
- "storage-subxt",
- "subxt",
- "subxt-rpcs",
- "tempfile",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -7145,7 +7123,7 @@ name = "provider-challenge"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "provider-chain",
+ "provider-events",
  "sp-core",
  "sp-runtime",
  "storage-primitives",
@@ -7160,7 +7138,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "parking_lot",
- "provider-chain",
+ "provider-events",
  "provider-types",
  "sp-runtime",
  "thiserror 2.0.18",
@@ -7169,10 +7147,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "provider-events"
+version = "0.1.0"
+dependencies = [
+ "sp-runtime",
+ "storage-primitives",
+ "tokio",
+]
+
+[[package]]
 name = "provider-negotiation"
 version = "0.1.0"
 dependencies = [
- "hex",
+ "array-bytes 6.2.3",
  "parity-scale-codec",
  "serde",
  "serde_json",
@@ -7190,9 +7177,8 @@ dependencies = [
  "async-trait",
  "axum",
  "base64",
- "hex",
  "parity-scale-codec",
- "provider-chain",
+ "provider-events",
  "provider-storage",
  "provider-types",
  "reqwest",
@@ -7211,8 +7197,8 @@ dependencies = [
 name = "provider-storage"
 version = "0.1.0"
 dependencies = [
+ "array-bytes 6.2.3",
  "dashmap",
- "hex",
  "parity-scale-codec",
  "parking_lot",
  "rocksdb",
@@ -8071,8 +8057,8 @@ checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
 name = "s3-client"
 version = "0.1.0"
 dependencies = [
+ "array-bytes 6.2.3",
  "futures",
- "hex",
  "reqwest",
  "serde",
  "serde_json",
@@ -9855,8 +9841,8 @@ name = "storage-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "array-bytes 6.2.3",
  "clap",
- "hex",
  "rand 0.8.8",
  "serde",
  "serde_json",
@@ -9872,12 +9858,12 @@ dependencies = [
 name = "storage-client"
 version = "0.1.0"
 dependencies = [
+ "array-bytes 6.2.3",
  "async-trait",
  "axum",
  "base64",
  "chacha20poly1305",
  "futures",
- "hex",
  "parity-scale-codec",
  "provider-auth",
  "provider-negotiation",
@@ -9888,7 +9874,6 @@ dependencies = [
  "serde",
  "serde_json",
  "sp-core",
- "sp-crypto-hashing",
  "sp-runtime",
  "storage-indexers",
  "storage-primitives",
@@ -9957,7 +9942,6 @@ dependencies = [
  "polkadot-parachain-primitives",
  "polkadot-runtime-common",
  "scale-info",
- "serde",
  "serde_json",
  "sp-api",
  "sp-block-builder",
@@ -10024,7 +10008,6 @@ dependencies = [
  "polkadot-parachain-primitives",
  "polkadot-runtime-common",
  "scale-info",
- "serde",
  "serde_json",
  "sp-api",
  "sp-block-builder",
@@ -10055,32 +10038,34 @@ name = "storage-primitives"
 version = "0.1.0"
 dependencies = [
  "parity-scale-codec",
+ "polkadot-ckb-merkle-mountain-range",
  "scale-info",
  "serde",
  "sp-core",
- "sp-crypto-hashing",
+ "sp-io",
 ]
 
 [[package]]
 name = "storage-provider-node"
 version = "0.4.1"
 dependencies = [
+ "array-bytes 6.2.3",
  "async-trait",
  "axum",
  "base64",
  "clap",
- "hex",
  "parity-scale-codec",
  "parking_lot",
  "provider-auth",
- "provider-chain",
  "provider-challenge",
  "provider-coordinator",
+ "provider-events",
  "provider-negotiation",
  "provider-replica",
  "provider-storage",
  "provider-types",
  "reqwest",
+ "scale-info",
  "serde",
  "serde_json",
  "sp-core",
@@ -10778,17 +10763,6 @@ dependencies = [
  "futures-core",
  "pin-project-lite",
  "tokio",
-]
-
-[[package]]
-name = "tokio-test"
-version = "0.4.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3f6d24790a10a7af737693a3e8f1d03faef7e6ca0cc99aae5066f533766de545"
-dependencies = [
- "futures-core",
- "tokio",
- "tokio-stream",
 ]
 
 [[package]]

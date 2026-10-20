@@ -501,14 +501,14 @@ pub struct Bucket<T: Config> {
     /// Position 4: updated every 47 blocks (prime = 47)
     /// Position 5: updated every 113 blocks (prime = 113)
     /// 
-    /// Each entry stores (quotient, mmr_root) where quotient = block_number / prime.
+    /// Each entry stores (quotient, commitment) where quotient = block_number / prime.
     /// On each checkpoint, if current_block / prime != stored quotient, the entry
-    /// is updated with (new_quotient, current_snapshot_root). This means each
-    /// position remembers the root from the last time its prime boundary was crossed.
+    /// is updated with (new_quotient, new_snapshot_commitment). This means each
+    /// position remembers the commitment from the last time its prime boundary was crossed.
     /// 
     /// Primes ensure positions don't align, maximizing coverage. A slow replica
     /// can match against older positions; `position_matched` in events tracks this.
-    pub historical_roots: [(u32, H256); 6],
+    pub historical_roots: [(u32, Commitment); 6],
     /// Total snapshots created for this bucket (for statistics)
     pub total_snapshots: u32,
 }
@@ -582,9 +582,8 @@ pub enum ProviderRole<T: Config> {
         /// Set at agreement creation based on expected bucket activity.
         /// 0 means no time-based limit (only "new root" check applies).
         min_sync_interval: BlockNumberFor<T>,
-        /// Last confirmed sync: (mmr_root, block_number).
-        /// None if replica hasn't confirmed sync yet.
-        last_sync: Option<(H256, BlockNumberFor<T>)>,
+        /// Last confirmed sync. None if the replica hasn't confirmed sync yet.
+        last_sync: Option<ReplicaSyncRecord<BlockNumberFor<T>>>,
     },
 }
 
@@ -682,10 +681,12 @@ pub struct Challenge<T: Config> {
     pub provider: T::AccountId,
     /// Account that issued the challenge
     pub challenger: T::AccountId,
-    /// MMR root the provider committed to
-    pub mmr_root: H256,
-    /// Start sequence of the commitment (needed to compute challenged_seq = start_seq + target.leaf_index)
-    pub start_seq: u64,
+    /// The commitment being challenged: the snapshot's (challenge_checkpoint),
+    /// the provider-signed one (challenge_offchain) or the replica's last synced
+    /// one (challenge_replica). `challenged_seq = commitment.start_seq +
+    /// target.leaf_index`; `leaf_count` binds the proof to `target.leaf_index`
+    /// in `respond_to_challenge`.
+    pub commitment: Commitment,
     /// Leaf + chunk being challenged (see `ChunkLocation`)
     pub target: ChunkLocation,
     /// Deposit locked by the challenger when the challenge was created.
@@ -1690,6 +1691,10 @@ impl<T: Config> Pallet<T> {
     // Game"). The gate reads the challenged provider's role from its *current*
     // agreement—the same lookup that yields `AgreementNotFound`—so an ended
     // agreement means no challenge, never a stale role.
+    // In all three modes the target leaf must exist: `target.leaf_index` must
+    // be below the commitment's `leaf_count`, else `LeafNotInCommitment`. A
+    // challenge on a leaf that does not exist has no valid response and
+    // would only resolve by timeout slash.
     // The challenger's deposit must cover the
     // provider's on-chain response cost (generously over-estimated; excess is
     // refunded on resolution). On a valid response the provider's stake is
@@ -1795,8 +1800,8 @@ impl<T: Config> Pallet<T> {
     /// 
     /// **Rate limiting:**
     /// Two checks prevent excessive sync confirmations:
-    /// 1. The matched root must differ from `last_sync.0` (must be new state)
-    /// 2. `current_block >= last_sync.1 + min_sync_interval` (per-agreement)
+    /// 1. The matched root must differ from `last_sync.commitment.mmr_root` (must be new state)
+    /// 2. `current_block >= last_sync.block + min_sync_interval` (per-agreement)
     /// 
     /// The first check ensures payment only for actual sync work. The second
     /// prevents hot buckets (writes every block) from causing excessive on-chain
@@ -1812,7 +1817,9 @@ impl<T: Config> Pallet<T> {
     /// failures) should be negligible if the replica syncs regularly.
     /// 
     /// On success (both checks pass):
-    /// - Updates replica's `last_sync` to `(matched_root, current_block)`
+    /// - Updates replica's `last_sync` to the matched commitment and `current_block`;
+    ///   a historical match records that entry's full commitment, so
+    ///   `challenge_replica` can bind a proof to it as well
     /// - Pays sync_price from replica's sync_balance
     /// - Emits ReplicaSynced event with position_matched for performance tracking
     ///   (position 0 = current snapshot, 1-6 = historical positions, higher = more lag)
@@ -1900,7 +1907,8 @@ pub enum ChallengeResponse<T: Config> {
     Proof {
         chunk_data: BoundedVec<u8, T::MaxChunkSize>,
         mmr_proof: MmrProof,
-        chunk_proof: MerkleProof,
+        /// Sibling hashes from the chunk up to `mmr_proof.leaf.data_root`.
+        chunk_proof: Vec<H256>,
     },
     /// Data was deleted - show newer commitment without this seq.
     /// Admin signature proves the admin authorized the deletion (new MMR excludes the challenged data).
@@ -2146,10 +2154,14 @@ Response:
   "provider_signature": "0x..."
 }
 
-Note: The returned signature covers a `CommitmentPayload` with the real
-`leaf_count`; `challenge_offchain` reconstructs the payload from the
-`commitment` the challenger passes, so the same values returned here must be
-passed on-chain unchanged.
+Note: The returned signature covers a `CommitmentPayload` with the **real**
+`leaf_count`, so it can back a bound `challenge_offchain` — the
+pallet reconstructs the payload from the `commitment` the challenger passes and
+verifies the signature over it, then uses that `leaf_count` to bind the proof to
+`leaf_index` in `respond_to_challenge`. The values returned here must therefore be
+passed on-chain unchanged. The `/commit` and `/delete` responses sign the same way
+and also return `leaf_count`; `/checkpoint-signature` is equivalent and is used for
+the on-chain `checkpoint` extrinsic.
 
 Get Checkpoint Signature (for checkpoint extrinsic)
 ───────────────────────────────────────────────────
@@ -2175,7 +2187,7 @@ GET /mmr_proof?bucket_id=0x...&leaf_index=5
 Response:
 {
   "leaf": { "data_root": "0x...", "data_size": 2097152, "total_size": 52428800 },
-  "proof": { "peaks": [...], "siblings": [...] }
+  "items": ["0x...", ...]
 }
 
 Get Chunk Proof
@@ -2185,7 +2197,7 @@ GET /chunk_proof?data_root=0x...&chunk_index=3
 Response:
 {
   "chunk_hash": "0xabc...",
-  "proof": { "siblings": [...], "path": [...] }
+  "proof": ["0x...", ...]
 }
 
 Response (404 Not Found):
@@ -2485,24 +2497,30 @@ pub struct MmrLeaf {
 
 ### Merkle Proofs
 
-```rust
-pub struct MerkleProof {
-    /// Sibling hashes from leaf to root
-    pub siblings: Vec<H256>,
-    /// Path bits (0 = left, 1 = right)
-    pub path: Vec<bool>,
-}
+A chunk proof is a `Vec<H256>`: the sibling hashes from the chunk up to
+`data_root`. The verifier takes the side of each sibling from `chunk_index` and
+`chunk_count(data_size)`, so the proof contains no directions.
 
+```rust
 pub struct MmrProof {
-    /// Peaks of the MMR
-    pub peaks: Vec<H256>,
-    /// The leaf being proven. Verification hashes `leaf.encode()` as the
-    /// proof's starting point, so the leaf content is part of the proof.
+    /// The leaf being proven.
     pub leaf: MmrLeaf,
-    /// Proof from leaf to peak
-    pub leaf_proof: MerkleProof,
+    /// Proof for leaf `leaf_index` of an MMR with `leaf_count` leaves. Both
+    /// values come from the challenge and its commitment, not from the proof.
+    /// Items, in this order:
+    /// 1. the root of each peak left of the leaf's peak, left to right;
+    /// 2. the sibling at each level from the leaf up to its peak, bottom up;
+    /// 3. if any peaks are right of the leaf's peak, one hash of them, bagged
+    ///    right to left.
+    /// A proof with any other number of items is rejected, and so is any
+    /// proof against a commitment with more than `u64::MAX / 2` leaves.
+    pub items: Vec<H256>,
 }
 ```
+
+Reference implementation: `polkadot-ckb-merkle-mountain-range` with
+`StorageMerge` (`gen_proof(..).proof_items()` to build, `MerkleProof::verify` to
+check).
 
 ---
 
@@ -2575,15 +2593,22 @@ fn verify_challenge_response(
     response: &ChallengeResponse,
     bucket: &Bucket,
 ) -> Result<(), Error> {
-    let challenged_seq = challenge.start_seq + challenge.target.leaf_index;
+    let challenged_seq = challenge.commitment.start_seq + challenge.target.leaf_index;
     match response {
         ChallengeResponse::Proof { chunk_data, mmr_proof, chunk_proof } => {
             // The chunk must sit in the leaf and the leaf in the committed MMR.
             let chunk_hash = blake2_256(chunk_data);
             let chunk_ok = verify_merkle_proof(
-                chunk_hash, challenge.target.chunk_index, chunk_proof, &mmr_proof.leaf.data_root,
+                chunk_hash,
+                challenge.target.chunk_index,
+                chunk_count(mmr_proof.leaf.data_size),
+                chunk_proof,
+                &mmr_proof.leaf.data_root,
             );
-            let mmr_ok = verify_mmr_proof(mmr_proof, &challenge.mmr_root);
+            // Bound to the challenged leaf: the leaf position and the MMR shape
+            // come from (target.leaf_index, commitment.leaf_count), not from the
+            // proof, so a proof for a different leaf of the same MMR does not verify.
+            let mmr_ok = verify_mmr_proof(mmr_proof, challenge.target.leaf_index, &challenge.commitment);
             if chunk_ok && mmr_ok { Ok(()) } else { Err(Error::InvalidProof) }
         }
 
@@ -2633,7 +2658,7 @@ fn verify_challenge_response(
                 // Nothing canonical to lean on: the claim is unsupported.
                 return Err(Error::InvalidSupersededClaim);
             };
-            if challenge.mmr_root != snapshot.commitment.mmr_root
+            if challenge.commitment.mmr_root != snapshot.commitment.mmr_root
                 && snapshot.contains_seq(challenged_seq)
             {
                 Ok(())

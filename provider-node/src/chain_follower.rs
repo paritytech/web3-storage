@@ -6,12 +6,11 @@
 //! [`SubxtChainFollower`] owns the node's chain connection and publishes each
 //! new connection to the other chain consumers through a watch channel.
 
+use crate::chain_connection::{self, ChainHandle, ChainTransport};
+use crate::event_decoding::decode_block_contents;
 use crate::subxt_client::{fetch_current_anchor_block, subxt_account};
-use provider_chain::chain_connection::{self, ChainHandle, ChainTransport};
-use provider_chain::decode_block_events;
 use provider_coordinator::{
-    BlockContents, ChainConnection, ChainFollower, ChainStateChainClient, FinalizedBlock,
-    FinalizedBlocks,
+    ChainConnection, ChainFollower, ChainStateChainClient, FinalizedBlock, FinalizedBlocks,
 };
 use provider_types::{ChainClientError, ProviderInfo, ProviderSettings, ProviderStats};
 use sp_runtime::AccountId32;
@@ -127,58 +126,6 @@ impl ChainStateChainClient for SubxtChainStateClient {
     }
 }
 
-// ── provider lifecycle events ─────────────────────────────────────────────────
-
-/// Decode a finalized block's events down to the provider accounts of its
-/// provider-lifecycle events, via the generated `storage-subxt` event types.
-fn parse_provider_lifecycle_events(
-    events: &subxt::events::Events<PolkadotConfig>,
-) -> Vec<AccountId32> {
-    events
-        .iter()
-        .filter_map(|event| event.ok())
-        .filter_map(|event| lifecycle_event(&event))
-        .collect()
-}
-
-/// The provider account of `event` if it is a provider-lifecycle event, or
-/// `None` if it is not one.
-///
-/// A decode failure (event fields that differ from the bindings) is logged and
-/// skipped. The next relevant event triggers a new `refresh_provider_state`,
-/// except after `ProviderDeregistered`: then only the bootstrap refresh on
-/// reconnect corrects the state.
-fn lifecycle_event(event: &subxt::events::Event<'_, PolkadotConfig>) -> Option<AccountId32> {
-    use storage_subxt::api::{storage_provider::Event as StorageProviderEvent, Event};
-
-    if event.pallet_name() != "StorageProvider" {
-        return None;
-    }
-    let decoded = match event.decode_as::<Event>() {
-        Ok(Event::StorageProvider(decoded)) => decoded,
-        Ok(_) => return None,
-        Err(e) => {
-            tracing::warn!(
-                "chain-state coordinator: failed to decode {}::{} against the static bindings: {e}",
-                event.pallet_name(),
-                event.event_name(),
-            );
-            return None;
-        }
-    };
-    match decoded {
-        StorageProviderEvent::ProviderDeregistered { provider, .. }
-        | StorageProviderEvent::ProviderRegistered { provider, .. }
-        | StorageProviderEvent::ProviderSettingsUpdated { provider, .. }
-        | StorageProviderEvent::ProviderMultiaddrUpdated { provider, .. }
-        | StorageProviderEvent::DeregisterAnnounced { provider, .. }
-        | StorageProviderEvent::DeregisterCancelled { provider } => {
-            Some(AccountId32::new(provider.0))
-        }
-        _ => None,
-    }
-}
-
 // ── chain follower ───────────────────────────────────────────────────────────
 
 /// [`ChainFollower`] over a subxt connection to `transport`. Publishes each
@@ -273,10 +220,7 @@ impl FinalizedBlocks for SubxtFinalizedBlocks {
         };
 
         let contents = match at.events().fetch().await {
-            Ok(events) => Some(BlockContents {
-                events: decode_block_events(&events, number),
-                lifecycle: parse_provider_lifecycle_events(&events),
-            }),
+            Ok(events) => Some(decode_block_contents(&events, number)),
             Err(e) => {
                 tracing::warn!(
                     "chain-state coordinator: failed to fetch events for block {number}: {e}"
@@ -303,7 +247,7 @@ impl FinalizedBlocks for SubxtFinalizedBlocks {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use provider_chain::BlockEvent;
+    use provider_events::BlockEvent;
     use std::sync::Arc;
     use subxt::backend::LegacyBackend;
     use subxt::ext::scale_value::scale::encode_as_type;
@@ -335,7 +279,7 @@ mod tests {
     fn key_prefix(pallet: &str, entry: &str) -> String {
         let mut key = sp_crypto_hashing::twox_128(pallet.as_bytes()).to_vec();
         key.extend(sp_crypto_hashing::twox_128(entry.as_bytes()));
-        format!("0x{}", hex::encode(key))
+        array_bytes::bytes2hex("0x", &key)
     }
 
     /// Look up the value type of a storage entry in the runtime metadata.
@@ -506,10 +450,11 @@ mod tests {
         )
     }
 
-    /// The `BucketMembershipChanged` bucket ids [`decode_block_events`]
+    /// The `BucketMembershipChanged` bucket ids [`decode_block_contents`]
     /// produces from `events`, in encounter order.
     fn membership_changed_bucket_ids(events: &subxt::events::Events<PolkadotConfig>) -> Vec<u64> {
-        decode_block_events(events, 0)
+        decode_block_contents(events, 0)
+            .events
             .into_iter()
             .filter_map(|event| match event {
                 BlockEvent::BucketMembershipChanged { bucket_id } => Some(bucket_id),
@@ -548,45 +493,57 @@ mod tests {
     /// mocked header carries block number 42; the runtime API always answers
     /// `4242` for the anchor block, so a test can tell the two apart.
     async fn mock_api(storage: Vec<(String, String)>) -> subxt::OnlineClient<PolkadotConfig> {
-        let metadata_hex = format!("0x{}", hex::encode(METADATA));
+        mock_api_with_metadata(METADATA.to_vec(), storage).await
+    }
+
+    /// [`mock_api`] serving `metadata` instead of the tracked snapshot.
+    async fn mock_api_with_metadata(
+        metadata: Vec<u8>,
+        storage: Vec<(String, String)>,
+    ) -> subxt::OnlineClient<PolkadotConfig> {
+        let metadata_hex = array_bytes::bytes2hex("0x", &metadata);
+        let metadata = Arc::new(metadata);
         let mock = MockRpcClient::builder()
             .method_handler("state_getMetadata", move |_params| {
                 let metadata_hex = metadata_hex.clone();
                 async move { Json(metadata_hex) }
             })
-            .method_handler("state_call", move |params| async move {
-                use codec::Encode;
-                let raw = params.map(|p| p.get().to_string()).unwrap_or_default();
-                let function: String = serde_json::from_str::<Vec<serde_json::Value>>(&raw)
-                    .ok()
-                    .and_then(|p| p.first().and_then(|f| f.as_str().map(str::to_string)))
-                    .unwrap_or_default();
-                let response = match function.as_str() {
-                    // The runtime metadata version(s) this "node" serves:
-                    // exactly the tracked snapshot's version.
-                    "Metadata_metadata_versions" => vec![u32::from(METADATA[4])].encode(),
-                    "Metadata_metadata_at_version" => Some(METADATA.to_vec()).encode(),
-                    "Metadata_metadata" => METADATA.to_vec().encode(),
-                    // Anchor block the follower reads per finalized block.
-                    // Deliberately distinct from the mocked header number (42)
-                    // so a test fails if a decode ever regresses to reading
-                    // the parachain height instead of the runtime API.
-                    "StorageProviderApi_current_anchor_block" => 4242u32.encode(),
-                    // sp_version::RuntimeVersion, field by field.
-                    "Core_version" => (
-                        "test".to_string(),           // spec_name
-                        "test".to_string(),           // impl_name
-                        1u32,                         // authoring_version
-                        1u32,                         // spec_version
-                        1u32,                         // impl_version
-                        Vec::<([u8; 8], u32)>::new(), // apis
-                        1u32,                         // transaction_version
-                        1u8,                          // system_version
-                    )
-                        .encode(),
-                    other => panic!("mock RPC: unhandled state_call {other}"),
-                };
-                Json(format!("0x{}", hex::encode(response)))
+            .method_handler("state_call", move |params| {
+                let metadata = Arc::clone(&metadata);
+                async move {
+                    use codec::Encode;
+                    let raw = params.map(|p| p.get().to_string()).unwrap_or_default();
+                    let function: String = serde_json::from_str::<Vec<serde_json::Value>>(&raw)
+                        .ok()
+                        .and_then(|p| p.first().and_then(|f| f.as_str().map(str::to_string)))
+                        .unwrap_or_default();
+                    let response = match function.as_str() {
+                        // The runtime metadata version(s) this "node" serves:
+                        // exactly the tracked snapshot's version.
+                        "Metadata_metadata_versions" => vec![u32::from(metadata[4])].encode(),
+                        "Metadata_metadata_at_version" => Some(metadata.to_vec()).encode(),
+                        "Metadata_metadata" => metadata.to_vec().encode(),
+                        // Anchor block the follower reads per finalized block.
+                        // Deliberately distinct from the mocked header number (42)
+                        // so a test fails if a decode ever regresses to reading
+                        // the parachain height instead of the runtime API.
+                        "StorageProviderApi_current_anchor_block" => 4242u32.encode(),
+                        // sp_version::RuntimeVersion, field by field.
+                        "Core_version" => (
+                            "test".to_string(),           // spec_name
+                            "test".to_string(),           // impl_name
+                            1u32,                         // authoring_version
+                            1u32,                         // spec_version
+                            1u32,                         // impl_version
+                            Vec::<([u8; 8], u32)>::new(), // apis
+                            1u32,                         // transaction_version
+                            1u8,                          // system_version
+                        )
+                            .encode(),
+                        other => panic!("mock RPC: unhandled state_call {other}"),
+                    };
+                    Json(array_bytes::bytes2hex("0x", &response))
+                }
             })
             .method_handler("chain_getBlockHash", |_params| async {
                 Json(GENESIS_HASH.to_string())
@@ -718,7 +675,7 @@ mod tests {
         let client = SubxtChainStateClient {
             api: mock_api(vec![(
                 key_prefix(PALLET_NAME, "Providers"),
-                format!("0x{}", hex::encode(encoded)),
+                array_bytes::bytes2hex("0x", &encoded),
             )])
             .await,
         };
@@ -787,14 +744,14 @@ mod tests {
 
         let api = mock_api(vec![(
             key_prefix("System", "Events"),
-            format!("0x{}", hex::encode(events_bytes)),
+            array_bytes::bytes2hex("0x", &events_bytes),
         )])
         .await;
         let at = api.at_current_block().await.expect("block handle");
         let events = at.events().fetch().await.expect("events fetch");
 
         assert_eq!(
-            parse_provider_lifecycle_events(&events),
+            decode_block_contents(&events, 0).lifecycle,
             vec![account.clone(), account]
         );
     }
@@ -804,10 +761,7 @@ mod tests {
         let md = metadata();
         let api = mock_api(vec![(
             key_prefix("System", "Events"),
-            format!(
-                "0x{}",
-                hex::encode(encoded_membership_events(&md, &provider_account()))
-            ),
+            array_bytes::bytes2hex("0x", encoded_membership_events(&md, &provider_account())),
         )])
         .await;
 
@@ -825,10 +779,7 @@ mod tests {
         let md = metadata();
         let api = mock_api(vec![(
             key_prefix("System", "Events"),
-            format!(
-                "0x{}",
-                hex::encode(encoded_events(&md, &provider_account()))
-            ),
+            array_bytes::bytes2hex("0x", encoded_events(&md, &provider_account())),
         )])
         .await;
 
@@ -836,6 +787,136 @@ mod tests {
         let events = at.events().fetch().await.expect("events fetch");
 
         assert!(membership_changed_bucket_ids(&events).is_empty());
+    }
+
+    /// The tracked metadata with `field` removed from the
+    /// `StorageProvider::<event>` event, so a record of that event encoded
+    /// against it no longer decodes against the static bindings. Expects the
+    /// snapshot to be V16 metadata.
+    fn metadata_without_event_field(event: &str, field: &str) -> Vec<u8> {
+        use codec::{Decode, Encode};
+        use subxt::ext::frame_metadata::{RuntimeMetadata, RuntimeMetadataPrefixed};
+
+        let mut prefixed =
+            RuntimeMetadataPrefixed::decode(&mut &METADATA[..]).expect("tracked metadata decodes");
+        let RuntimeMetadata::V16(md) = &mut prefixed.1 else {
+            panic!("tracked metadata is not V16");
+        };
+        let event_ty = md
+            .pallets
+            .iter()
+            .find(|pallet| pallet.name == PALLET_NAME)
+            .and_then(|pallet| pallet.event.as_ref())
+            .expect("pallet has events")
+            .ty
+            .id;
+        let ty = md
+            .types
+            .types
+            .iter_mut()
+            .find(|ty| ty.id == event_ty)
+            .expect("event type in registry");
+        let scale_info::TypeDef::Variant(variants) = &mut ty.ty.type_def else {
+            panic!("event type is not an enum");
+        };
+        let variant = variants
+            .variants
+            .iter_mut()
+            .find(|variant| variant.name == event)
+            .expect("event variant");
+        variant.fields.retain(|f| f.name.as_deref() != Some(field));
+        prefixed.encode()
+    }
+
+    /// The events of `records`, encoded against `metadata`, fetched through a
+    /// mock chain that serves `metadata`.
+    async fn events_with_metadata(
+        metadata: Vec<u8>,
+        records: Vec<Value>,
+    ) -> subxt::events::Events<PolkadotConfig> {
+        let md = {
+            use codec::Decode;
+            subxt::Metadata::decode(&mut &metadata[..]).expect("edited metadata decodes")
+        };
+        let ty = storage_value_type(&md, "System", "Events");
+        let events_bytes = encode_value(&md, ty, &Value::unnamed_composite(records));
+        let api = mock_api_with_metadata(
+            metadata,
+            vec![(
+                key_prefix("System", "Events"),
+                array_bytes::bytes2hex("0x", &events_bytes),
+            )],
+        )
+        .await;
+
+        let at = api.at_current_block().await.expect("block handle");
+        at.events().fetch().await.expect("events fetch")
+    }
+
+    /// A membership event whose fields do not match the static bindings
+    /// escalates to `MembershipScopeUnknown` instead of being dropped.
+    #[tokio::test]
+    async fn undecodable_membership_event_escalates() {
+        let member_set = event_record(Value::named_variant(
+            "MemberSet",
+            [
+                ("bucket_id", Value::u128(7)),
+                ("member", Value::from_bytes([3u8; 32])),
+            ],
+        ));
+        let events = events_with_metadata(
+            metadata_without_event_field("MemberSet", "role"),
+            vec![member_set],
+        )
+        .await;
+        let contents = decode_block_contents(&events, 42);
+
+        assert!(matches!(
+            contents.events.as_slice(),
+            [BlockEvent::MembershipScopeUnknown { at_block: 42 }]
+        ));
+        assert!(contents.lifecycle.is_empty());
+    }
+
+    /// A lifecycle event whose fields do not match the static bindings reaches
+    /// the decode, fails it and adds no lifecycle account; the other events of
+    /// the block still decode.
+    #[tokio::test]
+    async fn undecodable_lifecycle_event_is_skipped() {
+        let registered = event_record(Value::named_variant(
+            "ProviderRegistered",
+            [(
+                "provider",
+                Value::from_bytes(<AccountId32 as AsRef<[u8]>>::as_ref(&provider_account())),
+            )],
+        ));
+        let bucket_deleted = event_record(Value::named_variant(
+            "BucketDeleted",
+            [("bucket_id", Value::u128(8))],
+        ));
+        let events = events_with_metadata(
+            metadata_without_event_field("ProviderRegistered", "stake"),
+            vec![registered, bucket_deleted],
+        )
+        .await;
+
+        // The event passes the relevance check and then fails to decode, so
+        // `decode_block_contents` takes its decode-failure branch, not the
+        // skip.
+        let registered = events
+            .iter()
+            .next()
+            .expect("first event")
+            .expect("event iterates");
+        assert!(crate::event_decoding::is_other_relevant_event(&registered));
+        assert!(registered.decode_as::<storage_subxt::api::Event>().is_err());
+
+        let contents = decode_block_contents(&events, 42);
+        assert!(contents.lifecycle.is_empty());
+        assert!(matches!(
+            contents.events.as_slice(),
+            [BlockEvent::BucketMembershipChanged { bucket_id: 8 }]
+        ));
     }
 
     /// End-to-end through [`SubxtFinalizedBlocks::next`]: the anchor block
@@ -851,7 +932,7 @@ mod tests {
 
         let api = mock_api(vec![(
             key_prefix("System", "Events"),
-            format!("0x{}", hex::encode(events_bytes)),
+            array_bytes::bytes2hex("0x", &events_bytes),
         )])
         .await;
 

@@ -22,7 +22,6 @@ export LC_ALL=C
 COV_PACKAGES=(
 	pallet-storage-provider
 	storage-provider-node
-	provider-chain
 	provider-coordinator
 	provider-negotiation
 	provider-auth
@@ -39,6 +38,7 @@ COV_SKIP_PACKAGES=(
 	s3-client # chain-bound layer-1 SDK
 	storage-primitives # pure types; enters reports only via dep graph (see COV_IGNORE)
 	file-system-primitives # pure types; enters reports only via dep graph (see COV_IGNORE)
+	provider-events # pure types; no tests of its own
 	storage-parachain-runtime # exercised out of process (zombienet e2e)
 	storage-paseo-runtime # exercised out of process (zombienet e2e)
 	pallet-storage-provider-precompile # exercised out of process (`just sc-demo`)
