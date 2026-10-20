@@ -448,8 +448,12 @@ s3-demo-ci:
 # Unit tests + Playwright e2e for drive-ui, provider, and explorer.
 # Requires a running local chain + provider node.
 
+# Write the MMR proof vectors that packages/core/src/merkle.test.ts reads
+mmr-proof-vectors:
+    MMR_PROOF_VECTORS="{{justfile_directory()}}/.test-vectors/mmr-proofs.json" cargo test -q -p storage-primitives mmr::tests::proof_vectors
+
 # Run all UI unit tests (Vitest)
-test-ui-unit:
+test-ui-unit: mmr-proof-vectors
     pnpm run test:unit
 
 # Run drive-ui Playwright e2e (requires chain + provider running)

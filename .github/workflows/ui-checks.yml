@@ -38,6 +38,8 @@ jobs:
             ui:
               - 'user-interfaces/**'
               - 'packages/**'
+              # packages/core/src/merkle.test.ts reads proof vectors written by this crate
+              - 'crates/primitives/storage/**'
               - 'examples/papi/**'
               - 'pnpm-lock.yaml'
               - 'pnpm-workspace.yaml'
@@ -68,6 +70,20 @@ jobs:
 
       - name: Typecheck sdk packages + examples
         run: pnpm run typecheck:packages
+
+      # Written by `crates/primitives/storage/src/mmr.rs`, read by
+      # packages/core/src/merkle.test.ts. Cached so a hit skips the Rust
+      # toolchain install and build.
+      - name: Cache MMR proof vectors
+        id: mmr-proof-vectors
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5
+        with:
+          path: .test-vectors/mmr-proofs.json
+          key: mmr-proof-vectors-${{ hashFiles('crates/primitives/storage/**', 'Cargo.lock', 'rust-toolchain.toml') }}
+
+      - name: Write MMR proof vectors
+        if: steps.mmr-proof-vectors.outputs.cache-hit != 'true'
+        run: MMR_PROOF_VECTORS="$PWD/.test-vectors/mmr-proofs.json" cargo test -q -p storage-primitives mmr::tests::proof_vectors
 
       - name: Run unit tests
         run: pnpm run test:unit

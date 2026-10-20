@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { blake2b256 } from "@polkadot-labs/hdkd-helpers";
 import {
@@ -269,10 +269,12 @@ describe("verifyMmrProof", () => {
     expect(verifyLastMmrLeaf({ leaf: leaves[0], items: [hashes[1]] }, root2, 2n)).toBe(false);
   });
 
-  it("accepts every proof in the Rust fixture, only at its own leaf index", () => {
-    // Written by `crates/primitives/storage/src/mmr.rs` (`proof_fixture_is_current`).
-    const url = new URL("../../../crates/primitives/storage/fixtures/mmr-proofs.json", import.meta.url);
-    const fixture = JSON.parse(readFileSync(url, "utf8")) as {
+  // Written by `crates/primitives/storage/src/mmr.rs` (`proof_vectors`): run
+  // `just mmr-proof-vectors`. Skipped locally if missing; required in CI.
+  const vectorsUrl = new URL("../../../.test-vectors/mmr-proofs.json", import.meta.url);
+  const vectorsMissing = !process.env.CI && !existsSync(vectorsUrl);
+  it.skipIf(vectorsMissing)("accepts every proof from Rust, only at its own leaf index", () => {
+    const fixture = JSON.parse(readFileSync(vectorsUrl, "utf8")) as {
       vectors: { leaf_count: number; leaf_index: number; root: string; items: string[] }[];
     };
     expect(fixture.vectors).toHaveLength(24);

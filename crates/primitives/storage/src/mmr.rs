@@ -508,19 +508,23 @@ mod tests {
         }
     }
 
-    const UPDATE_ENV: &str = "UPDATE_MMR_FIXTURES";
-
-    /// `fixtures/mmr-proofs.json` contains the proof of every leaf of MMRs
-    /// with 1, 2, 3, 7 and 11 leaves. `packages/core/src/merkle.test.ts`
-    /// checks that the TypeScript `verifyMmrProof` accepts each one.
-    /// Regenerate with `UPDATE_MMR_FIXTURES=1 cargo test -p storage-primitives mmr`.
+    /// Proofs of every leaf of MMRs with 1, 2, 3, 7 and 11 leaves, as JSON.
+    /// `packages/core/src/merkle.test.ts` checks that the TypeScript
+    /// `verifyMmrProof` accepts each one. Set `MMR_PROOF_VECTORS` to a file
+    /// path to write them: `just mmr-proof-vectors` does that.
     #[test]
-    fn proof_fixture_is_current() {
+    fn proof_vectors() {
         let mut vectors = Vec::new();
         for leaf_count in [1u64, 2, 3, 7, 11] {
             let leaves = leaves(leaf_count);
             for leaf_index in 0..leaf_count {
                 let (root, proof) = proof(&leaves, leaf_index).unwrap().unwrap();
+                let commitment = Commitment {
+                    mmr_root: root,
+                    start_seq: 0,
+                    leaf_count,
+                };
+                assert!(verify_mmr_proof(proof.clone(), leaf_index, &commitment));
                 let items: Vec<String> =
                     proof.items.iter().map(|h| format!("\"{h:#x}\"")).collect();
                 vectors.push(format!(
@@ -529,21 +533,17 @@ mod tests {
                 ));
             }
         }
-        let produced = format!(
-            "{{\n  \"about\": \"Written by crates/primitives/storage/src/mmr.rs; read by packages/core/src/merkle.test.ts. Leaf i: data_root = 32 bytes of i + 1, data_size = i, total_size = 2 * i. Regenerate: {UPDATE_ENV}=1 cargo test -p storage-primitives mmr\",\n  \"vectors\": [\n{}\n  ]\n}}\n",
+        let Some(path) = std::env::var_os("MMR_PROOF_VECTORS") else {
+            return;
+        };
+        let json = format!(
+            "{{\n  \"about\": \"Written by crates/primitives/storage/src/mmr.rs; read by packages/core/src/merkle.test.ts. Leaf i: data_root = 32 bytes of i + 1, data_size = i, total_size = 2 * i.\",\n  \"vectors\": [\n{}\n  ]\n}}\n",
             vectors.join(",\n")
         );
-
-        let path =
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/mmr-proofs.json");
-        if std::env::var_os(UPDATE_ENV).is_some() {
-            std::fs::write(&path, &produced).unwrap();
+        let path = std::path::Path::new(&path);
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir).unwrap();
         }
-        let checked_in = std::fs::read_to_string(&path).unwrap();
-        assert!(
-            checked_in == produced,
-            "{} is out of date; regenerate it with {UPDATE_ENV}=1",
-            path.display()
-        );
+        std::fs::write(path, json).unwrap();
     }
 }
