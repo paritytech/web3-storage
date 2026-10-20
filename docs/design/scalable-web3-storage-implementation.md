@@ -2569,10 +2569,10 @@ last, which has 1 to `CHUNK_SIZE` bytes, so `n = ceil(data_size / CHUNK_SIZE)`
 and `n >= 1`. Empty data has no chunks: the client does not upload it, and a
 root whose last chunk is empty fails the `/commit` check.
 
-`binary_merkle_tree` (polkadot-sdk) builds this shape when it is called with
-pre-hashed leaves (its `*_raw` functions) and a hasher that prefixes `0x01`:
-it pairs nodes left to right and moves an unpaired last node up unchanged,
-which is the same tree.
+Pairing nodes left to right at each level and moving an unpaired last node up
+unchanged builds the same tree. Reference implementation:
+`storage_primitives::merkle` (`merkle_root`, `build_merkle_proofs`,
+`verify_merkle_proof`).
 
 A chunk proof is the RFC 9162 inclusion proof (section 2.1.3.1): the sibling
 hashes from the chunk to the root, and nothing else. The verifier runs the
@@ -2580,10 +2580,8 @@ algorithm of section 2.1.3.2 with `leaf_index = chunk_index` and
 `tree_size = n`; it derives every left/right direction from those two values,
 so the prover cannot choose them and the proof is bound to the chunk count
 that `data_size` implies. A proof against a tree of another size fails.
-`MerkleProof` below, with its path bits, is the MMR leaf proof type; a chunk
-proof does not use it.
 
-### Merkle Proofs
+### MMR Proof
 
 ```rust
 pub struct MmrProof {
