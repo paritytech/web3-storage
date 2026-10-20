@@ -1216,7 +1216,9 @@ pub mod pallet {
         InvalidSupersededClaim,
         /// The provider did not sign the bucket's current snapshot, so there
         /// is no on-chain commitment to challenge; use `challenge_offchain`
-        /// with a signed commitment instead.
+        /// with a signed commitment instead. `checkpoint` and
+        /// `extend_checkpoint` return it when a signer is not a primary of
+        /// the bucket.
         ProviderNotInSnapshot,
         /// `target.leaf_index` is not below the commitment's `leaf_count`: the
         /// leaf does not exist, so no proof could defend the challenge. Pick a
