@@ -992,6 +992,7 @@ mod benchmarks {
         );
 
         let mmr_leaf = storage_primitives::MmrLeaf {
+            leaf_version: storage_primitives::LEAF_VERSION,
             data_root,
             data_size,
             total_size: data_size,

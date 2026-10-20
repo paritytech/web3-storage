@@ -387,6 +387,7 @@ impl DiskStorage {
                 .saturating_add(data_size);
 
             let leaf = MmrLeaf {
+                leaf_version: storage_primitives::LEAF_VERSION,
                 data_root: *data_root,
                 data_size,
                 total_size,
@@ -987,7 +988,7 @@ mod tests {
         assert_eq!(outcome.leaf_indices, vec![0]);
         assert_eq!(
             outcome.mmr_root,
-            "5892aeee490d7378e4dcabfaf79053c3073ece6437f74c001c82a55de8ac977c"
+            "1ea55ee1bc91a98868211d99dbe4ddf1e42b21655f5d76360cd09f0bfc53535a"
                 .parse::<H256>()
                 .unwrap()
         );

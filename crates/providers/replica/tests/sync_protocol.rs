@@ -22,7 +22,7 @@ use provider_storage::{temp_rocksdb, ChunkTreeNode, StorageBackend};
 use sp_core::H256;
 use std::collections::HashMap;
 use std::sync::Arc;
-use storage_primitives::{hash_children, hash_leaf, BucketId, MmrLeaf};
+use storage_primitives::{hash_children, hash_leaf, BucketId, MmrLeaf, LEAF_VERSION};
 use tempfile::TempDir;
 
 const BUCKET: BucketId = 1;
@@ -289,6 +289,7 @@ async fn peak_hashes_are_not_node_keys_so_every_real_sync_404s() {
     // mock has no `/node` entry for it - exactly as a real primary would not.
     let peak = hash_leaf(
         &MmrLeaf {
+            leaf_version: LEAF_VERSION,
             data_root: hash_leaf(b"chunk"),
             data_size: 5,
             total_size: 5,

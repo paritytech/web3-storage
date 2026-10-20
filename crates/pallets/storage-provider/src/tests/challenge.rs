@@ -1212,6 +1212,7 @@ mod challenge_tests {
     /// Root and proof of a single-leaf MMR over `data_root` and `data_size`.
     fn single_leaf_mmr(data_root: H256, data_size: u64) -> (H256, MmrProof) {
         let leaf = MmrLeaf {
+            leaf_version: storage_primitives::LEAF_VERSION,
             data_root,
             data_size,
             total_size: data_size,
@@ -1394,6 +1395,49 @@ mod challenge_tests {
             assert_eq!(provider.stats.challenges_failed, 0);
             assert_eq!(provider.stats.challenges_received_public, 1);
             assert_eq!(provider.stats.challenges_received_authorized, 0);
+        });
+    }
+
+    /// A leaf whose `leaf_version` the pallet does not know has an undefined
+    /// chunk size and tree shape, so no proof for it verifies.
+    #[test]
+    fn unknown_leaf_version_is_an_invalid_proof() {
+        new_test_ext().execute_with(|| {
+            System::set_block_number(1);
+            let chunk_data = b"chunk-0".to_vec();
+            let leaf = MmrLeaf {
+                leaf_version: storage_primitives::LEAF_VERSION + 1,
+                data_root: hash_leaf(&chunk_data),
+                data_size: chunk_data.len() as u64,
+                total_size: chunk_data.len() as u64,
+            };
+            let (mmr_root, mmr_proof) = mmr::proof(&[leaf], 0).unwrap().unwrap();
+            setup_primary_with_snapshot(mmr_root, 0, 1);
+
+            assert_ok!(StorageProvider::challenge_checkpoint(
+                RuntimeOrigin::signed(3),
+                0,
+                2,
+                ChunkLocation {
+                    leaf_index: 0,
+                    chunk_index: 0,
+                },
+            ));
+            assert_noop!(
+                StorageProvider::respond_to_challenge(
+                    RuntimeOrigin::signed(2),
+                    ChallengeId {
+                        deadline: 101u64,
+                        index: 0u16,
+                    },
+                    ChallengeResponse::Proof {
+                        chunk_data: make_chunk_bv(&chunk_data),
+                        mmr_proof,
+                        chunk_proof: vec![],
+                    },
+                ),
+                Error::<Test>::InvalidProof
+            );
         });
     }
 
@@ -1666,6 +1710,7 @@ mod challenge_tests {
             // An MMR proof for a different leaf — its bagged root won't match
             // the challenged root.
             let bad_leaf = MmrLeaf {
+                leaf_version: storage_primitives::LEAF_VERSION,
                 data_root: H256::repeat_byte(0xff),
                 data_size: 1,
                 total_size: 1,
@@ -2955,11 +3000,13 @@ mod challenge_tests {
         let chunk0 = b"file0".to_vec();
         let chunk1 = b"file1".to_vec();
         let leaf0 = MmrLeaf {
+            leaf_version: storage_primitives::LEAF_VERSION,
             data_root: storage_primitives::hash_leaf(&chunk0),
             data_size: 5,
             total_size: 5,
         };
         let leaf1 = MmrLeaf {
+            leaf_version: storage_primitives::LEAF_VERSION,
             data_root: storage_primitives::hash_leaf(&chunk1),
             data_size: 5,
             total_size: 10,
