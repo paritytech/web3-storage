@@ -141,7 +141,6 @@ parachain-info = { version = "0.28.0", default-features = false, package = "stag
 parachains-common = { version = "32.0.0", default-features = false }
 
 # Build dependencies
-prost-build = "0.13"
 substrate-wasm-builder = { version = "34.0.0" }
 
 # Codec
@@ -159,7 +158,6 @@ async-trait = "0.1"
 base64 = "0.22"
 clap = { version = "4" }
 futures = "0.3"
-prost = "0.13"
 serde = { version = "1.0", default-features = false, features = ["derive"] }
 serde_json = { version = "1.0", default-features = false }
 serde_with = { version = "3.20.0" }

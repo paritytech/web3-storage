@@ -14,16 +14,9 @@
 //! # Key Concepts
 //!
 //! - **Drive**: A user's logical file system, mapped to a Layer 0 bucket
-//! - **RootCID**: The content ID of the root directory, stored on-chain
 //! - **DirectoryNode**: A directory containing references to children
 //! - **FileManifest**: Metadata about a file and its chunks
 //! - **CID**: Content Identifier (Merkle leaf hash)
-//!
-//! # Type System
-//!
-//! This crate provides two sets of types:
-//! - **SCALE types** (always available): Used for on-chain storage, `no_std` compatible
-//! - **Proto types** (std only): Used for off-chain serialization via protobuf
 
 #![cfg_attr(not(feature = "std"), no_std)]
 
@@ -37,29 +30,11 @@ use codec::{Decode, DecodeWithMemTracking, Encode, MaxEncodedLen};
 use scale_info::TypeInfo;
 use sp_core::H256;
 use sp_runtime::{traits::Get, BoundedVec};
-
-// ============================================================================
-// Protobuf types (std only)
-// ============================================================================
-
-#[cfg(feature = "std")]
-use prost::Message;
-
-/// Protobuf-generated types for off-chain serialization (std only)
-#[cfg(feature = "std")]
-pub mod proto {
-    include!(concat!(env!("OUT_DIR"), "/filesystem.rs"));
-}
+use storage_primitives::BucketId;
 
 // ============================================================================
 // SCALE-encoded types (no_std compatible, used on-chain)
 // ============================================================================
-
-/// Drive identifier (unique ID for each drive)
-pub type DriveId = u64;
-
-/// Agreement identifier from Layer 0
-pub type AgreementId = u64;
 
 /// Content Identifier (Merkle leaf hash)
 pub type Cid = H256;
@@ -94,14 +69,6 @@ pub struct MaxEntryNameLength;
 impl Get<u32> for MaxEntryNameLength {
     fn get() -> u32 {
         256
-    }
-}
-
-/// Maximum length for CID strings (66 bytes for "0x" + 64 hex chars)
-pub struct MaxCidStringLength;
-impl Get<u32> for MaxCidStringLength {
-    fn get() -> u32 {
-        66
     }
 }
 
@@ -224,8 +191,8 @@ pub struct MetadataEntry {
 )]
 #[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
 pub struct DirectoryNode {
-    /// Drive ID this directory belongs to
-    pub drive_id: DriveId,
+    /// Layer 0 bucket id of the drive
+    pub drive_id: BucketId,
     /// Child entries
     pub children: BoundedVec<DirectoryEntry, MaxDirectoryChildren>,
     /// Custom metadata (tags, colors, etc.)
@@ -234,7 +201,7 @@ pub struct DirectoryNode {
 
 impl DirectoryNode {
     /// Create a new empty directory
-    pub fn new_empty(drive_id: DriveId) -> Self {
+    pub fn new_empty(drive_id: BucketId) -> Self {
         Self {
             drive_id,
             children: BoundedVec::default(),
@@ -308,8 +275,8 @@ pub struct FileChunk {
 )]
 #[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
 pub struct FileManifest {
-    /// Drive ID this file belongs to
-    pub drive_id: DriveId,
+    /// Layer 0 bucket id of the drive
+    pub drive_id: BucketId,
     /// MIME type (e.g., "image/png")
     pub mime_type: BoundedVec<u8, MaxMimeTypeLength>,
     /// Total file size in bytes
@@ -323,7 +290,7 @@ pub struct FileManifest {
 impl FileManifest {
     /// Create a new file manifest
     #[cfg(feature = "std")]
-    pub fn new(drive_id: DriveId, mime_type: String, total_size: u64) -> Self {
+    pub fn new(drive_id: BucketId, mime_type: String, total_size: u64) -> Self {
         Self {
             drive_id,
             mime_type: BoundedVec::try_from(mime_type.into_bytes()).unwrap_or_default(),
@@ -360,218 +327,6 @@ impl FileManifest {
 }
 
 // ============================================================================
-// Conversion between SCALE and Proto types (std only)
-// ============================================================================
-
-#[cfg(feature = "std")]
-impl From<EntryType> for proto::EntryType {
-    fn from(entry_type: EntryType) -> Self {
-        match entry_type {
-            EntryType::File => proto::EntryType::File,
-            EntryType::Directory => proto::EntryType::Directory,
-        }
-    }
-}
-
-#[cfg(feature = "std")]
-impl From<proto::EntryType> for EntryType {
-    fn from(entry_type: proto::EntryType) -> Self {
-        match entry_type {
-            proto::EntryType::File => EntryType::File,
-            proto::EntryType::Directory => EntryType::Directory,
-        }
-    }
-}
-
-#[cfg(feature = "std")]
-impl From<&DirectoryEntry> for proto::DirectoryEntry {
-    fn from(entry: &DirectoryEntry) -> Self {
-        Self {
-            name: entry.name_str(),
-            r#type: proto::EntryType::from(entry.entry_type) as i32,
-            cid: cid_to_string(&entry.cid),
-            size: entry.size,
-            mtime: entry.mtime,
-        }
-    }
-}
-
-#[cfg(feature = "std")]
-impl TryFrom<&proto::DirectoryEntry> for DirectoryEntry {
-    type Error = FileSystemError;
-
-    fn try_from(entry: &proto::DirectoryEntry) -> Result<Self, Self::Error> {
-        let entry_type = match entry.r#type {
-            0 => EntryType::File,
-            1 => EntryType::Directory,
-            _ => EntryType::File,
-        };
-        Ok(Self {
-            name: BoundedVec::try_from(entry.name.clone().into_bytes())
-                .map_err(|_| FileSystemError::InvalidPath)?,
-            entry_type,
-            cid: string_to_cid(&entry.cid)?,
-            size: entry.size,
-            mtime: entry.mtime,
-        })
-    }
-}
-
-#[cfg(feature = "std")]
-impl From<&DirectoryNode> for proto::DirectoryNode {
-    fn from(node: &DirectoryNode) -> Self {
-        Self {
-            drive_id: node.drive_id.to_string(),
-            children: node
-                .children
-                .iter()
-                .map(proto::DirectoryEntry::from)
-                .collect(),
-            metadata: node
-                .metadata
-                .iter()
-                .map(|m| {
-                    (
-                        String::from_utf8_lossy(&m.key).into_owned(),
-                        String::from_utf8_lossy(&m.value).into_owned(),
-                    )
-                })
-                .collect(),
-        }
-    }
-}
-
-#[cfg(feature = "std")]
-impl TryFrom<&proto::DirectoryNode> for DirectoryNode {
-    type Error = FileSystemError;
-
-    fn try_from(node: &proto::DirectoryNode) -> Result<Self, Self::Error> {
-        let drive_id: DriveId = node
-            .drive_id
-            .parse()
-            .map_err(|_| FileSystemError::InvalidPath)?;
-        let children: Result<Vec<DirectoryEntry>, _> =
-            node.children.iter().map(DirectoryEntry::try_from).collect();
-        let metadata: Result<Vec<MetadataEntry>, _> = node
-            .metadata
-            .iter()
-            .map(|(k, v)| {
-                Ok(MetadataEntry {
-                    key: BoundedVec::try_from(k.clone().into_bytes())
-                        .map_err(|_| FileSystemError::InvalidPath)?,
-                    value: BoundedVec::try_from(v.clone().into_bytes())
-                        .map_err(|_| FileSystemError::InvalidPath)?,
-                })
-            })
-            .collect();
-
-        Ok(Self {
-            drive_id,
-            children: BoundedVec::try_from(children?).map_err(|_| FileSystemError::InvalidPath)?,
-            metadata: BoundedVec::try_from(metadata?).map_err(|_| FileSystemError::InvalidPath)?,
-        })
-    }
-}
-
-#[cfg(feature = "std")]
-impl From<&FileManifest> for proto::FileManifest {
-    fn from(manifest: &FileManifest) -> Self {
-        Self {
-            drive_id: manifest.drive_id.to_string(),
-            mime_type: manifest.mime_type_str(),
-            total_size: manifest.total_size,
-            chunks: manifest
-                .chunks
-                .iter()
-                .map(|c| proto::FileChunk {
-                    cid: cid_to_string(&c.cid),
-                    sequence: c.sequence,
-                })
-                .collect(),
-            encryption_params: String::from_utf8_lossy(&manifest.encryption_params).into_owned(),
-        }
-    }
-}
-
-#[cfg(feature = "std")]
-impl TryFrom<&proto::FileManifest> for FileManifest {
-    type Error = FileSystemError;
-
-    fn try_from(manifest: &proto::FileManifest) -> Result<Self, Self::Error> {
-        let drive_id: DriveId = manifest
-            .drive_id
-            .parse()
-            .map_err(|_| FileSystemError::InvalidPath)?;
-        let chunks: Result<Vec<FileChunk>, _> = manifest
-            .chunks
-            .iter()
-            .map(|c| {
-                Ok(FileChunk {
-                    cid: string_to_cid(&c.cid)?,
-                    sequence: c.sequence,
-                })
-            })
-            .collect();
-
-        Ok(Self {
-            drive_id,
-            mime_type: BoundedVec::try_from(manifest.mime_type.clone().into_bytes())
-                .map_err(|_| FileSystemError::InvalidPath)?,
-            total_size: manifest.total_size,
-            chunks: BoundedVec::try_from(chunks?).map_err(|_| FileSystemError::InvalidPath)?,
-            encryption_params: BoundedVec::try_from(
-                manifest.encryption_params.clone().into_bytes(),
-            )
-            .map_err(|_| FileSystemError::InvalidPath)?,
-        })
-    }
-}
-
-// ============================================================================
-// Protobuf serialization helpers (std only)
-// ============================================================================
-
-#[cfg(feature = "std")]
-impl DirectoryNode {
-    /// Serialize to protobuf bytes
-    pub fn to_proto_bytes(&self) -> Result<Vec<u8>, FileSystemError> {
-        let proto_node = proto::DirectoryNode::from(self);
-        let mut buf = Vec::new();
-        proto_node
-            .encode(&mut buf)
-            .map_err(|_| FileSystemError::SerializationError)?;
-        Ok(buf)
-    }
-
-    /// Deserialize from protobuf bytes
-    pub fn from_proto_bytes(bytes: &[u8]) -> Result<Self, FileSystemError> {
-        let proto_node = proto::DirectoryNode::decode(bytes)
-            .map_err(|_| FileSystemError::DeserializationError)?;
-        Self::try_from(&proto_node)
-    }
-}
-
-#[cfg(feature = "std")]
-impl FileManifest {
-    /// Serialize to protobuf bytes
-    pub fn to_proto_bytes(&self) -> Result<Vec<u8>, FileSystemError> {
-        let proto_manifest = proto::FileManifest::from(self);
-        let mut buf = Vec::new();
-        proto_manifest
-            .encode(&mut buf)
-            .map_err(|_| FileSystemError::SerializationError)?;
-        Ok(buf)
-    }
-
-    /// Deserialize from protobuf bytes
-    pub fn from_proto_bytes(bytes: &[u8]) -> Result<Self, FileSystemError> {
-        let proto_manifest = proto::FileManifest::decode(bytes)
-            .map_err(|_| FileSystemError::DeserializationError)?;
-        Self::try_from(&proto_manifest)
-    }
-}
-
-// ============================================================================
 // Error types
 // ============================================================================
 
@@ -579,15 +334,6 @@ impl FileManifest {
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, TypeInfo)]
 #[cfg_attr(feature = "std", derive(thiserror::Error))]
 pub enum FileSystemError {
-    #[cfg_attr(feature = "std", error("Invalid CID format"))]
-    InvalidCid,
-
-    #[cfg_attr(feature = "std", error("Serialization failed"))]
-    SerializationError,
-
-    #[cfg_attr(feature = "std", error("Deserialization failed"))]
-    DeserializationError,
-
     #[cfg_attr(feature = "std", error("Entry not found: {0}"))]
     EntryNotFound(String),
 
@@ -601,34 +347,6 @@ pub enum FileSystemError {
     NotAFile,
 }
 
-/// Drive information stored on-chain (user's virtual drive)
-///
-/// File/directory metadata is managed off-chain by the provider node (fs_index).
-/// Only drive lifecycle (create/delete) and storage parameters live on-chain.
-#[derive(Clone, Encode, Decode, Eq, PartialEq, Debug, TypeInfo, MaxEncodedLen)]
-#[scale_info(skip_type_params(MaxNameLength, Balance))]
-#[codec(mel_bound())]
-pub struct DriveInfo<
-    AccountId: Encode + Decode + MaxEncodedLen,
-    BlockNumber: Encode + Decode + MaxEncodedLen,
-    MaxNameLength: Get<u32>,
-> {
-    /// Owner of the drive
-    pub owner: AccountId,
-    /// Layer 0 bucket ID this drive uses
-    pub bucket_id: u64,
-    /// Block number when drive was created
-    pub created_at: BlockNumber,
-    /// Optional human-readable name (bounded)
-    pub name: Option<BoundedVec<u8, MaxNameLength>>,
-    /// Maximum storage capacity in bytes
-    pub max_capacity: u64,
-    /// Storage period in blocks
-    pub storage_period: BlockNumber,
-    /// Expiry block number (created_at + storage_period)
-    pub expires_at: BlockNumber,
-}
-
 // ============================================================================
 // Utility functions
 // ============================================================================
@@ -637,18 +355,6 @@ pub struct DriveInfo<
 /// single-chunk blob.
 pub fn compute_cid(data: &[u8]) -> Cid {
     storage_primitives::hash_leaf(data)
-}
-
-/// Convert CID to hex string (for protobuf storage)
-pub fn cid_to_string(cid: &Cid) -> String {
-    alloc::format!("{cid:#x}")
-}
-
-/// Parse hex string to CID
-pub fn string_to_cid(s: &str) -> Result<Cid, FileSystemError> {
-    array_bytes::hex2array(s)
-        .map(H256::from)
-        .map_err(|_| FileSystemError::InvalidCid)
 }
 
 // ============================================================================
@@ -723,14 +429,6 @@ mod tests {
     }
 
     #[test]
-    fn test_cid_string_conversion() {
-        let cid = compute_cid(b"test");
-        let s = cid_to_string(&cid);
-        let decoded = string_to_cid(&s).unwrap();
-        assert_eq!(cid, decoded);
-    }
-
-    #[test]
     fn test_directory_operations() {
         let mut dir = DirectoryNode::new_empty(1);
 
@@ -761,51 +459,5 @@ mod tests {
         let removed = dir.remove_child("file1.txt");
         assert!(removed.is_some());
         assert_eq!(dir.children.len(), 1);
-    }
-
-    #[cfg(feature = "std")]
-    #[test]
-    fn test_proto_conversion() {
-        let mut dir = DirectoryNode::new_empty(456);
-        let entry = DirectoryEntry {
-            name: BoundedVec::try_from(b"test.txt".to_vec()).unwrap(),
-            entry_type: EntryType::File,
-            cid: compute_cid(b"content"),
-            size: 512,
-            mtime: 1000000,
-        };
-        dir.add_child(entry).unwrap();
-
-        // Convert to proto and back
-        let proto_node = proto::DirectoryNode::from(&dir);
-        let converted_back = DirectoryNode::try_from(&proto_node).unwrap();
-
-        assert_eq!(dir.drive_id, converted_back.drive_id);
-        assert_eq!(dir.children.len(), converted_back.children.len());
-        assert_eq!(
-            dir.children[0].name_str(),
-            converted_back.children[0].name_str()
-        );
-    }
-
-    #[cfg(feature = "std")]
-    #[test]
-    fn test_proto_bytes_serialization() {
-        let mut dir = DirectoryNode::new_empty(789);
-        let entry = DirectoryEntry {
-            name: BoundedVec::try_from(b"doc.pdf".to_vec()).unwrap(),
-            entry_type: EntryType::File,
-            cid: compute_cid(b"pdf_content"),
-            size: 4096,
-            mtime: 2000000,
-        };
-        dir.add_child(entry).unwrap();
-
-        // Serialize to proto bytes and back
-        let proto_bytes = dir.to_proto_bytes().unwrap();
-        let decoded = DirectoryNode::from_proto_bytes(&proto_bytes).unwrap();
-
-        assert_eq!(dir.drive_id, decoded.drive_id);
-        assert_eq!(dir.children.len(), decoded.children.len());
     }
 }
