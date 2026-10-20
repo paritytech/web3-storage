@@ -47,7 +47,7 @@ pub fn peaks_body(mmr_root: &str, peaks: &[String]) -> Reply {
 }
 
 /// A `/node` body carrying `data` and `children` verbatim.
-pub fn node_body(hash: &str, data: &str, children: Option<Vec<String>>) -> Reply {
+pub fn node_body(hash: &str, data: Option<&str>, children: Option<Vec<String>>) -> Reply {
     body(serde_json::json!({ "hash": hash, "data": data, "children": children }).to_string())
 }
 

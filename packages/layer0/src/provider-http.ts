@@ -13,6 +13,7 @@ import {
   DEFAULT_CHUNK_SIZE,
   hashChildren,
   hashLeaf,
+  hexToBytes,
   nodeHash,
   signProviderRequest,
   type ProviderRequestSigner,
@@ -111,8 +112,9 @@ export interface PutChunkResult {
  * `signer` authenticates the `PUT /node` request; it must hold a Writer/Admin
  * role on `bucketId` (the provider always enforces this).
  *
- * Pass `children` to store an internal node instead of a leaf chunk. The
- * provider requires every child to exist already.
+ * Pass `children` to store an internal node instead of a leaf chunk: the
+ * request then carries the two child hashes and no data. The provider requires
+ * every child to exist already.
  *
  * Throws `RangeError` for a leaf above `DEFAULT_CHUNK_SIZE`, before any request.
  */
@@ -137,8 +139,7 @@ export async function putChunk(
     body: {
       bucket_id: Number(bucketId),
       hash,
-      data: bytesToBase64(bytes),
-      children: children ? children.map((c) => toHex(c)) : null,
+      ...(children ? { children: children.map((c) => toHex(c)) } : { data: bytesToBase64(bytes) }),
     },
     sign,
   });
@@ -171,9 +172,10 @@ export async function uploadChunk(
 }
 
 /**
- * Download a node by hash and verify it: bytes without children must hash as
- * a leaf, and a node with two children must hold exactly their concatenation
- * and hash as a node over them. Throws {@link CidMismatchError} otherwise.
+ * Download a node by hash and verify it: a chunk's bytes must hash as a leaf,
+ * and an internal node's two children must hash as a node over them. Returns
+ * the chunk bytes, or the two child hashes concatenated for an internal node.
+ * Throws {@link CidMismatchError} otherwise.
  */
 export async function downloadChunk(
   providerUrl: string,
@@ -182,13 +184,15 @@ export async function downloadChunk(
   const downloaded = await providerFetch(providerUrl, "/node", {
     params: { hash: chunkHashHex },
   });
-  const data = base64ToBytes(downloaded.data);
+  const children: string[] | null = downloaded.children ?? null;
+  const data = downloaded.data != null ? base64ToBytes(downloaded.data) : null;
   const expected = asHex(chunkHashHex).toLowerCase();
-  const hash = nodeHash(data, downloaded.children ?? null);
-  if (!hash) throw new CidMismatchError(expected, "malformed internal node");
+  const hash = nodeHash(data, children);
+  if (!hash) throw new CidMismatchError(expected, "malformed node");
   const actual = toHex(hash);
   if (actual !== expected) throw new CidMismatchError(expected, actual);
-  return data;
+  if (data) return data;
+  return new Uint8Array((children ?? []).flatMap((child) => [...hexToBytes(child)]));
 }
 
 export async function fetchCheckpointSignature(

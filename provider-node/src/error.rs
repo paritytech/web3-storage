@@ -169,10 +169,10 @@ impl IntoResponse for Error {
                         })),
                     },
                 ),
-                StorageError::InvalidInternalNodeData => (
+                StorageError::InvalidNode => (
                     StatusCode::BAD_REQUEST,
                     ErrorResponse {
-                        error: "invalid_internal_node_data".to_string(),
+                        error: "invalid_node".to_string(),
                         details: None,
                     },
                 ),

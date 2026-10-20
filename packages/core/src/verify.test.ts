@@ -3,7 +3,7 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_CHUNK_SIZE, hashChildren, hashLeaf } from "./merkle.js";
 import { CidMismatchError, computeCid, nodeHash, verifyCid } from "./verify.js";
-import { concatBytes, toHex } from "./bytes.js";
+import { toHex } from "./bytes.js";
 
 describe("verifyCid", () => {
   const data = new TextEncoder().encode("content addressed");
@@ -39,16 +39,17 @@ describe("nodeHash", () => {
   const right = hashLeaf(enc.encode("right"));
   const children = [toHex(left), toHex(right)];
 
-  it("hashes bytes without children as a leaf", () => {
+  it("hashes data without children as a leaf", () => {
     expect(nodeHash(enc.encode("chunk"), null)).toEqual(hashLeaf(enc.encode("chunk")));
   });
 
-  it("hashes two matching children as a node", () => {
-    expect(nodeHash(concatBytes(left, right), children)).toEqual(hashChildren(left, right));
+  it("hashes two children without data as a node", () => {
+    expect(nodeHash(null, children)).toEqual(hashChildren(left, right));
   });
 
-  it("returns null for a wrong child count or data that is not the children", () => {
-    expect(nodeHash(left, [toHex(left)])).toBeNull();
+  it("returns null for a wrong child count, both data and children, or neither", () => {
+    expect(nodeHash(null, [toHex(left)])).toBeNull();
     expect(nodeHash(enc.encode("other"), children)).toBeNull();
+    expect(nodeHash(null, null)).toBeNull();
   });
 });

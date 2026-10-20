@@ -11,7 +11,7 @@
  * implemented here; callers surface those as "unverified".
  */
 
-import { asHex, bytesEq, concatBytes, hexToBytes, toHex } from "./bytes.js";
+import { asHex, hexToBytes, toHex } from "./bytes.js";
 import { hashChildren, hashLeaf } from "./merkle.js";
 
 export class CidMismatchError extends Error {
@@ -43,13 +43,15 @@ export function verifyCid(data: Uint8Array, expectedCid: string | Uint8Array): v
 }
 
 /**
- * Hash of a downloaded node: a leaf hash when there are no children, or a
- * node hash over exactly two children whose concatenation equals the data.
- * Returns null when children are present but do not match.
+ * Hash of a downloaded node: a leaf hash over `data` for a chunk, or a node
+ * hash over exactly two `children` for an internal node. Returns null when the
+ * node has both or neither, or a wrong child count.
  */
-export function nodeHash(data: Uint8Array, children: string[] | null): Uint8Array | null {
-  if (!children) return hashLeaf(data);
-  if (children.length !== 2) return null;
-  const [left, right] = children.map(hexToBytes);
-  return bytesEq(data, concatBytes(left, right)) ? hashChildren(left, right) : null;
+export function nodeHash(data: Uint8Array | null, children: string[] | null): Uint8Array | null {
+  if (data && !children) return hashLeaf(data);
+  if (children && !data && children.length === 2) {
+    const [left, right] = children.map(hexToBytes);
+    return hashChildren(left, right);
+  }
+  return null;
 }

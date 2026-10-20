@@ -39,12 +39,13 @@ describe("downloadChunk", () => {
     await expect(downloadChunk(PROVIDER, toHex(hashLeaf(chunk)))).resolves.toEqual(chunk);
   });
 
-  it("returns an internal node that hashes over its two children", async () => {
+  it("returns an internal node as its two child hashes", async () => {
     const left = hashLeaf(enc.encode("left"));
     const right = hashLeaf(enc.encode("right"));
-    const data = new Uint8Array([...left, ...right]);
-    stubFetch(() => ({ data: bytesToBase64(data), children: [toHex(left), toHex(right)] }));
-    await expect(downloadChunk(PROVIDER, toHex(hashChildren(left, right)))).resolves.toEqual(data);
+    stubFetch(() => ({ children: [toHex(left), toHex(right)] }));
+    await expect(downloadChunk(PROVIDER, toHex(hashChildren(left, right)))).resolves.toEqual(
+      new Uint8Array([...left, ...right]),
+    );
   });
 
   it("throws CidMismatchError for tampered chunk bytes", async () => {
@@ -55,11 +56,11 @@ describe("downloadChunk", () => {
     );
   });
 
-  it("throws CidMismatchError when a node's data is not its children", async () => {
+  it("throws CidMismatchError when a node has both data and children", async () => {
     const left = hashLeaf(enc.encode("left"));
     const right = hashLeaf(enc.encode("right"));
     stubFetch(() => ({
-      data: bytesToBase64(enc.encode("something else")),
+      data: bytesToBase64(new Uint8Array([...left, ...right])),
       children: [toHex(left), toHex(right)],
     }));
     await expect(downloadChunk(PROVIDER, toHex(hashChildren(left, right)))).rejects.toBeInstanceOf(
@@ -69,7 +70,7 @@ describe("downloadChunk", () => {
 
   it("throws CidMismatchError when a node does not have exactly two children", async () => {
     const left = hashLeaf(enc.encode("left"));
-    stubFetch(() => ({ data: bytesToBase64(left), children: [toHex(left)] }));
+    stubFetch(() => ({ children: [toHex(left)] }));
     await expect(downloadChunk(PROVIDER, toHex(hashLeaf(left)))).rejects.toBeInstanceOf(CidMismatchError);
   });
 
@@ -96,7 +97,8 @@ describe("chunk uploads", () => {
     expect(result.hash).toBe(expected);
     const body = JSON.parse(fetchMock.mock.calls[0][1]?.body as string);
     expect(body.hash).toBe(expected);
-    expect(body.children).toBeNull();
+    expect(body.data).toBe(bytesToBase64(enc.encode("payload")));
+    expect(body.children).toBeUndefined();
   });
 
   it("putChunk with children sends the node hash and the child hashes", async () => {
@@ -110,6 +112,7 @@ describe("chunk uploads", () => {
     const body = JSON.parse(fetchMock.mock.calls[0][1]?.body as string);
     expect(body.hash).toBe(expected);
     expect(body.children).toEqual([toHex(left), toHex(right)]);
+    expect(body.data).toBeUndefined();
   });
 
   it("uploadChunk sends the leaf hash and commits it as the data root", async () => {

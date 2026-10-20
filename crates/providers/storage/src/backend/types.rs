@@ -84,29 +84,30 @@ pub enum ChunkTreeNode {
 }
 
 impl ChunkTreeNode {
-    /// Build a node from the `data` and optional `children` a peer sent.
+    /// Build a node from the `data` or the `children` a peer sent.
     ///
-    /// Without children the node is a chunk of at most `DEFAULT_CHUNK_SIZE`
-    /// bytes. With children it is an internal node: it must have exactly two
-    /// children, and `data` must be the concatenation of the two child hashes.
-    pub fn from_wire(data: Vec<u8>, children: Option<Vec<H256>>) -> Result<Self, Error> {
-        let Some(children) = children else {
-            if data.len() > DEFAULT_CHUNK_SIZE as usize {
-                return Err(Error::ChunkTooLarge {
-                    size: data.len() as u64,
-                });
+    /// `data` alone is a chunk of at most `DEFAULT_CHUNK_SIZE` bytes. `children`
+    /// alone is an internal node over exactly two child hashes. Both or neither
+    /// is `InvalidNode`.
+    pub fn from_wire(data: Option<Vec<u8>>, children: Option<Vec<H256>>) -> Result<Self, Error> {
+        match (data, children) {
+            (Some(data), None) => {
+                if data.len() > DEFAULT_CHUNK_SIZE as usize {
+                    return Err(Error::ChunkTooLarge {
+                        size: data.len() as u64,
+                    });
+                }
+                Ok(Self::Chunk(data))
             }
-            return Ok(Self::Chunk(data));
-        };
-        let count = children.len();
-        let [left, right]: [H256; 2] = children
-            .try_into()
-            .map_err(|_| Error::InvalidChildCount(count))?;
-        let node = Self::Internal { left, right };
-        if *node.preimage() != *data {
-            return Err(Error::InvalidInternalNodeData);
+            (None, Some(children)) => {
+                let count = children.len();
+                let [left, right]: [H256; 2] = children
+                    .try_into()
+                    .map_err(|_| Error::InvalidChildCount(count))?;
+                Ok(Self::Internal { left, right })
+            }
+            _ => Err(Error::InvalidNode),
         }
-        Ok(node)
     }
 
     /// The bytes this node serves as data: `data` for a chunk,
@@ -275,9 +276,9 @@ mod tests {
     }
 
     #[test]
-    fn from_wire_without_children_is_a_chunk() {
+    fn from_wire_with_data_only_is_a_chunk() {
         assert_eq!(
-            ChunkTreeNode::from_wire(vec![1, 2, 3], None).unwrap(),
+            ChunkTreeNode::from_wire(Some(vec![1, 2, 3]), None).unwrap(),
             ChunkTreeNode::Chunk(vec![1, 2, 3])
         );
     }
@@ -285,19 +286,18 @@ mod tests {
     #[test]
     fn from_wire_rejects_a_chunk_above_default_chunk_size() {
         let max = DEFAULT_CHUNK_SIZE as usize;
-        assert!(ChunkTreeNode::from_wire(vec![7; max], None).is_ok());
+        assert!(ChunkTreeNode::from_wire(Some(vec![7; max]), None).is_ok());
         assert!(matches!(
-            ChunkTreeNode::from_wire(vec![7; max + 1], None),
+            ChunkTreeNode::from_wire(Some(vec![7; max + 1]), None),
             Err(Error::ChunkTooLarge { size }) if size == max as u64 + 1
         ));
     }
 
     #[test]
-    fn from_wire_accepts_internal_node_whose_data_is_its_children() {
+    fn from_wire_with_children_only_is_an_internal_node() {
         let (left, right) = (H256::repeat_byte(1), H256::repeat_byte(2));
-        let data = [left.as_bytes(), right.as_bytes()].concat();
         assert_eq!(
-            ChunkTreeNode::from_wire(data, Some(vec![left, right])).unwrap(),
+            ChunkTreeNode::from_wire(None, Some(vec![left, right])).unwrap(),
             ChunkTreeNode::Internal { left, right }
         );
     }
@@ -307,18 +307,21 @@ mod tests {
         let child = H256::repeat_byte(1);
         for children in [vec![], vec![child], vec![child, child, child]] {
             let count = children.len();
-            let data = children.iter().flat_map(|h| h.0).collect();
-            let err = ChunkTreeNode::from_wire(data, Some(children)).unwrap_err();
+            let err = ChunkTreeNode::from_wire(None, Some(children)).unwrap_err();
             assert!(matches!(err, Error::InvalidChildCount(n) if n == count));
         }
     }
 
     #[test]
-    fn from_wire_rejects_internal_node_data_that_differs_from_its_children() {
+    fn from_wire_rejects_both_or_neither_of_data_and_children() {
         let (left, right) = (H256::repeat_byte(1), H256::repeat_byte(2));
         assert!(matches!(
-            ChunkTreeNode::from_wire(Vec::new(), Some(vec![left, right])),
-            Err(Error::InvalidInternalNodeData)
+            ChunkTreeNode::from_wire(Some(vec![1]), Some(vec![left, right])),
+            Err(Error::InvalidNode)
+        ));
+        assert!(matches!(
+            ChunkTreeNode::from_wire(None, None),
+            Err(Error::InvalidNode)
         ));
     }
 
