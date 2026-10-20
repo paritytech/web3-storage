@@ -210,7 +210,12 @@ fn add_primary_to_bucket<T: Config>(
 
     Buckets::<T>::mutate(bucket_id, |maybe| {
         if let Some(b) = maybe {
-            let _ = b.primary_providers.try_push(provider.clone());
+            b.primary_providers
+                .try_push(provider.clone())
+                .expect("bucket has room for another primary");
+            if let Some(snapshot) = b.snapshot.as_mut() {
+                snapshot.primary_signers.push(false);
+            }
         }
     });
 
