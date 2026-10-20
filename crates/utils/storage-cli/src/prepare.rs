@@ -214,8 +214,9 @@ pub async fn prepare_buckets(
 
     let mut buckets = Vec::with_capacity(params.count);
     for i in 1..=params.count {
-        // Each created agreement consumes the owner's next nonce, so read it
-        // from chain per bucket instead of counting locally.
+        // Each redeemed quote advances the owner's nonce by one. Re-read it per
+        // bucket so an agreement opened by this owner elsewhere does not cause
+        // `NonceMismatch`.
         let nonce = admin
             .agreement_nonce(&params.owner)
             .await
