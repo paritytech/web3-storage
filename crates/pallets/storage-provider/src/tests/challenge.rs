@@ -1174,7 +1174,6 @@ fn challenge_count_per_deadline_is_capped() {
 // ─────────────────────────────────────────────────────────────────────────────
 mod challenge_tests {
     use super::*;
-    use codec::Encode;
     use frame_support::{dispatch::Pays, pallet_prelude::DispatchResult, BoundedVec};
     use sp_core::H256;
     use storage_primitives::{
