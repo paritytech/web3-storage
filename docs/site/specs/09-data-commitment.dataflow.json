@@ -129,7 +129,7 @@
       "sublabel": "3, 7, 11, 23, 47, 113",
       "stage": 3,
       "row": 2,
-      "tag": "prime intervals"
+      "tag": "commitments, prime intervals"
     },
     {
       "id": "proof",
@@ -238,8 +238,8 @@
       "dot": "rose",
       "title": "What a proof must show",
       "items": [
-        "chunk_proof (MerkleProof): the chunk is in the leaf's data_root",
-        "mmr_proof (MmrProof): peaks, leaf and leaf_proof to the mmr_root",
+        "chunk_proof (sibling hashes): the chunk is in the leaf's data_root",
+        "mmr_proof (MmrProof): leaf and items to the mmr_root; leaf_index and leaf_count come from the challenge",
         "If either check fails, the response is rejected with InvalidProof and the challenge stays open"
       ]
     }

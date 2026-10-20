@@ -22,7 +22,6 @@ serde = { workspace = true, features = ["alloc"] }
 
 [dev-dependencies]
 serde_json = { workspace = true, features = ["std"] }
-sp-keyring = { workspace = true, features = ["std"] }
 sp-keystore = { workspace = true, features = ["std"] }
 pallet-balances = { workspace = true, features = ["std"] }
 
@@ -40,7 +39,6 @@ std = [
 	"sp-api/std",
 	"sp-core/std",
 	"sp-io/std",
-	"sp-keyring/std",
 	"sp-keystore/std",
 	"sp-runtime/std",
 	"storage-primitives/std",

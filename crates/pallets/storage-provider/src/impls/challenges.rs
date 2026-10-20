@@ -52,6 +52,9 @@ impl<T: Config> Pallet<T> {
         )
     }
 
+    /// Common entry for the three `challenge_*` extrinsics: validates
+    /// the target, reserves the challenger's deposit, and stores the challenge
+    /// under a stable `(deadline, index)` id.
     pub(crate) fn create_challenge(
         challenger: T::AccountId,
         bucket_id: BucketId,
@@ -62,6 +65,12 @@ impl<T: Config> Pallet<T> {
         target: ChunkLocation,
     ) -> Result<ChallengeId<BlockNumberFor<T>>, DispatchError> {
         ensure!(challenger != provider, Error::<T>::SelfChallenge);
+        // A challenge on a leaf the commitment does not cover has no defense
+        // and would resolve only by timeout slash.
+        ensure!(
+            target.leaf_index < commitment.leaf_count,
+            Error::<T>::LeafNotInCommitment
+        );
 
         // Private-bucket gate: the public has no legitimate reliance on data
         // it cannot read, and must not be able to force private bytes
@@ -97,8 +106,7 @@ impl<T: Config> Pallet<T> {
             bucket_id,
             provider: provider.clone(),
             challenger: challenger.clone(),
-            mmr_root: commitment.mmr_root,
-            start_seq: commitment.start_seq,
+            commitment,
             target,
             deposit,
             authorized,

@@ -17,6 +17,7 @@ import { parachain } from "@polkadot-api/descriptors";
 import { getSs58AddressInfo } from "@polkadot-api/substrate-bindings";
 import {
   buildSignedTermsArgs,
+  chunkCount,
   httpFetch,
   negotiateTerms,
   parseMultiaddrToUrl,
@@ -510,8 +511,7 @@ export class S3Client {
     }
     const result = await response.json();
     const dataSize: number = result.leaf?.data_size ?? 0;
-    const chunkSize = 262144; // 256 KiB — DEFAULT_CHUNK_SIZE
-    return dataSize === 0 ? 1 : Math.ceil(dataSize / chunkSize);
+    return chunkCount(dataSize);
   }
 
   /** Slash the provider of a challenge that expired unanswered; anyone may call it. */
