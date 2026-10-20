@@ -12,6 +12,7 @@ use std::num::NonZeroUsize;
 use std::time::Instant;
 
 use anyhow::{bail, Context, Result};
+use clap::ValueEnum;
 use serde::{Serialize, Serializer};
 use sp_runtime::AccountId32;
 use storage_client::{AdminClient, NegotiateRequest, ProviderClient, Visibility};
@@ -19,21 +20,40 @@ use storage_client::{AdminClient, NegotiateRequest, ProviderClient, Visibility};
 use crate::common::BucketId;
 
 /// Where `stress-test upload` takes its target buckets from.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum BucketSource {
     /// Only buckets the account already has an agreement with the provider for.
     Discover,
     /// Only buckets prepared by this run (`--prepare-buckets` required).
     Create,
+    /// Discovered buckets first; prepare more only if fewer than
+    /// `--prepare-buckets` exist.
+    Auto,
 }
 
 impl BucketSource {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Discover => "discover",
+            Self::Create => "create",
+            Self::Auto => "auto",
+        }
+    }
+
+    /// Resolve the effective source. Without an explicit `--bucket-source`,
     /// `--prepare-buckets N` means `create`, otherwise `discover`.
-    pub fn resolve(prepare_buckets: usize) -> Self {
-        if prepare_buckets == 0 {
-            Self::Discover
-        } else {
-            Self::Create
+    pub fn resolve(explicit: Option<Self>, prepare_buckets: usize) -> Result<Self> {
+        match (explicit, prepare_buckets) {
+            (None, 0) | (Some(Self::Discover), 0) => Ok(Self::Discover),
+            (None, _) => Ok(Self::Create),
+            (Some(Self::Discover), _) => {
+                bail!("--prepare-buckets needs --bucket-source create or auto")
+            }
+            (Some(source), 0) => bail!(
+                "--bucket-source {} needs --prepare-buckets >= 1",
+                source.name()
+            ),
+            (Some(source), _) => Ok(source),
         }
     }
 }
@@ -78,6 +98,17 @@ pub fn plan_targets(
             Ok(TargetPlan {
                 existing: Vec::new(),
                 to_prepare: requested,
+            })
+        }
+        BucketSource::Auto => {
+            if let Some(cap) = cap {
+                discovered.truncate(cap);
+            }
+            let target = cap.map_or(requested, |cap| requested.min(cap));
+            let to_prepare = target.saturating_sub(discovered.len());
+            Ok(TargetPlan {
+                existing: discovered,
+                to_prepare,
             })
         }
     }
@@ -239,8 +270,25 @@ mod tests {
 
     #[test]
     fn source_defaults_follow_prepare_buckets() {
-        assert_eq!(BucketSource::resolve(0), BucketSource::Discover);
-        assert_eq!(BucketSource::resolve(3), BucketSource::Create);
+        assert_eq!(
+            BucketSource::resolve(None, 0).unwrap(),
+            BucketSource::Discover
+        );
+        assert_eq!(
+            BucketSource::resolve(None, 3).unwrap(),
+            BucketSource::Create
+        );
+    }
+
+    #[test]
+    fn explicit_source_is_validated_against_prepare_buckets() {
+        assert!(BucketSource::resolve(Some(BucketSource::Discover), 2).is_err());
+        assert!(BucketSource::resolve(Some(BucketSource::Create), 0).is_err());
+        assert!(BucketSource::resolve(Some(BucketSource::Auto), 0).is_err());
+        assert_eq!(
+            BucketSource::resolve(Some(BucketSource::Auto), 2).unwrap(),
+            BucketSource::Auto
+        );
     }
 
     #[test]
@@ -270,6 +318,24 @@ mod tests {
     #[test]
     fn create_rejects_cap_below_requested() {
         assert!(plan_targets(BucketSource::Create, 3, vec![], cap(2)).is_err());
+    }
+
+    #[test]
+    fn auto_prepares_only_the_shortfall() {
+        let plan = plan_targets(BucketSource::Auto, 3, vec![1], None).unwrap();
+        assert_eq!(plan.existing, vec![1]);
+        assert_eq!(plan.to_prepare, 2);
+
+        let plan = plan_targets(BucketSource::Auto, 3, vec![1, 2, 3, 4, 5], None).unwrap();
+        assert_eq!(plan.existing.len(), 5);
+        assert_eq!(plan.to_prepare, 0);
+    }
+
+    #[test]
+    fn auto_never_exceeds_cap() {
+        let plan = plan_targets(BucketSource::Auto, 5, vec![1, 2, 3], cap(4)).unwrap();
+        assert_eq!(plan.existing, vec![1, 2, 3]);
+        assert_eq!(plan.to_prepare, 1);
     }
 
     #[test]
