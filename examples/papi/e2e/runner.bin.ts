@@ -8,7 +8,7 @@
  * Runs each numbered workflow file as a child process, collects exit codes,
  * and prints a summary table at the end.
  *
- * Usage: npx tsx e2e/runner.bin.ts [chain_ws] [provider_url]
+ * Usage: npx tsx e2e/runner.bin.ts [chain_ws] [provider_url] [second_provider_url]
  */
 
 import { execFileSync } from "node:child_process";
@@ -20,6 +20,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const CHAIN_WS = process.argv[2] || "ws://127.0.0.1:2222";
 const PROVIDER_URL = process.argv[3] || "http://127.0.0.1:3333";
+const SECOND_PROVIDER_URL = process.argv[4] || "http://127.0.0.1:3334";
 
 // Discover workflow files: XX-*.ts in this directory, sorted by name.
 const files = readdirSync(__dirname)
@@ -35,6 +36,7 @@ console.log(`\n${"═".repeat(70)}`);
 console.log("  E2E Test Suite — %d workflows", files.length);
 console.log("  Chain: %s", CHAIN_WS);
 console.log("  Provider: %s", PROVIDER_URL);
+console.log("  Second provider: %s", SECOND_PROVIDER_URL);
 console.log(`${"═".repeat(70)}\n`);
 
 const results = [];
@@ -48,7 +50,7 @@ for (const file of files) {
       process.execPath,
       // Workflows import the raw-TS @web3-storage/sdk, so each child needs
       // the tsx loader just like the justfile invocations do.
-      ["--import", "tsx", resolve(__dirname, file), CHAIN_WS, PROVIDER_URL],
+      ["--import", "tsx", resolve(__dirname, file), CHAIN_WS, PROVIDER_URL, SECOND_PROVIDER_URL],
       {
         stdio: "inherit",
         timeout: 10 * 60 * 1000, // 10 minutes per workflow
