@@ -3,17 +3,10 @@
 //! Single-block storage migrations for the Paseo Web3 Storage runtime.
 //!
 //! Wired into the runtime via `frame_system::Config::SingleBlockMigrations`.
-//! The SDK entries are gated on an on-chain storage version. The
-//! `RemovePallet` entries are not gated; remove them once the upgrade that
-//! adds them is deployed.
+//! Each entry is gated on an on-chain storage version, so the tuple is safe to
+//! leave in place across releases.
 
 use crate::Runtime;
-use frame_support::parameter_types;
-
-parameter_types! {
-    pub const DriveRegistryPalletName: &'static str = "DriveRegistry";
-    pub const S3RegistryPalletName: &'static str = "S3Registry";
-}
 
 /// Storage migrations run on runtime upgrade, in order.
 pub type Migrations = (
