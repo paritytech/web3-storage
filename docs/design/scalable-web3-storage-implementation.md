@@ -204,8 +204,14 @@ pub trait Config: frame_system::Config<RuntimeEvent: From<Event<Self>>> {
     /// The runtime's overarching hold reason.
     type RuntimeHoldReason: From<HoldReason>;
 
-    /// Treasury account to receive burned payments.
-    type Treasury: Get<Self::AccountId>;
+    /// Receives slashed stake. The runtime decides the destination; on a
+    /// Polkadot system parachain the convention is
+    /// `pallet_accumulate_and_forward`, which forwards to the DAP on Asset Hub.
+    type OnSlash: OnUnbalanced<Credit<Self::AccountId, Self::Currency>>;
+
+    /// Receives burned payments and the `BurnPremium`. Same destination
+    /// convention as `OnSlash`.
+    type OnBurn: OnUnbalanced<Credit<Self::AccountId, Self::Currency>>;
 
     /// Premium the owner pays from free balance, on top of the locked
     /// payment, when it burns an agreement (design doc "The Burn Option").
@@ -291,7 +297,7 @@ parachain `HOURS`:
 | `RequestTimeout` | `6 * RC_HOURS` |
 | `MaxChallengesPerDeadline` | `1_000` |
 | `AnchorBlockTimeMillis` | `6_000` |
-| `Treasury` | derived from `PalletId(*b"py/trsry")` |
+| `OnSlash`, `OnBurn` | `ResolveTo` the account derived from `PalletId(*b"py/trsry")` |
 | `BurnPremium` | `Permill::from_percent(10)` |
 
 ### Funds on Hold
@@ -374,9 +380,11 @@ pub struct ProviderInfo<T: Config> {
     /// "Term Pinning".
     pub version: u32,
     /// Block of the last slash that may have reduced the backing behind this
-    /// provider's agreements: a slash of the provider itself or, for a virtual
-    /// provider, of one of its members anywhere. `None` if never slashed. Lets
-    /// a client detect a slash from state instead of the event log
+    /// provider's agreements: a slash of the provider itself, a failed challenge against
+    /// it (virtual provider), or a slash elsewhere that left one of its members
+    /// with less stake than the member's `ProviderVirtuals` entry for this
+    /// virtual owes. `None` if never bumped. Lets a client detect a slash from
+    /// state instead of the event log
     /// (virtual-provider extension, "Stake and Slashing").
     pub last_stake_event: Option<BlockNumberFor<T>>,
     /// Provider settings
@@ -815,7 +823,7 @@ pub struct Challenge<T: Config> {
     /// Deposit locked by the challenger when the challenge was created.
     /// Returned (in part) on successful defense, forfeited on invalid challenge,
     /// refunded in full — with no reward — if the provider is slashed (the
-    /// slash goes to the Treasury; see "no reward beyond actual costs").
+    /// slash goes to `T::OnSlash`; the challenger pays its own creation fee).
     pub deposit: BalanceOf<T>,
     /// Whether the challenger was authorized (bucket member or agreement owner,
     /// via `is_authorized`) at challenge creation. Snapshotted here so
@@ -932,8 +940,9 @@ it is resolved: an over-lock bounded by the challenge.
 **A slash** reduces `stake` and `higher_stake_lock.stake` by the slashed amount
 (saturating at 0). A physical provider loses its whole held stake, so both
 fields reach 0; a member loses the challenge snapshot's `per_provider_stake`. A voluntary lowering never brings
-`locked_stake` below a live agreement's snapshot; only a slash does
-(`remove_slashed`). A slash bumps `version` like any stake decrease ("Term
+`locked_stake` below a live agreement's snapshot; only a slash does. The
+agreement then continues to expiry; the owner decides on payment as usual
+(`end_agreement`). A slash bumps `version` like any stake decrease ("Term
 Pinning"). Every call that snapshots the stake — the three redemption calls,
 `extend_agreement`, `create_replacement` — requires `stake >= MinProviderStake`,
 so a provider slashed below it takes no new or extended agreement until it
@@ -1310,11 +1319,6 @@ pub enum Event<T: Config> {
         provider: T::AccountId,
         reason: RemovalReason,
     },
-    SlashedProviderRemoved {
-        bucket_id: BucketId,
-        provider: T::AccountId,
-        payment_returned_to_owner: BalanceOf<T>,
-    },
 
     // ─────────────────────────────────────────────────────────────
     // Replica events
@@ -1455,7 +1459,7 @@ pub enum Event<T: Config> {
         provider_cost: BalanceOf<T>,
     },
     /// Provider did not respond before the deadline; the challenger's deposit
-    /// was refunded. Physical provider: its whole stake went to the Treasury.
+    /// was refunded. Physical provider: its whole stake went to `T::OnSlash`.
     /// Virtual provider (`provider` is the virtual's account): each member in
     /// `liable` lost `per_provider_stake`; `slashed_amount` is the total.
     ChallengeSlashed {
@@ -2132,35 +2136,6 @@ impl<T: Config> Pallet<T> {
         approvals: BoundedVec<(T::AccountId, Signature), T::MaxPhysicalMembers>,
     ) -> DispatchResult;
 
-    /// Remove a slashed provider from a bucket (anyone can call).
-    /// 
-    /// After a provider is slashed (failed a challenge), they should be removed
-    /// from the bucket's provider lists. This is permissionless because:
-    /// - Slashing is already a clear on-chain signal of failure
-    /// - Keeping slashed providers in lists is misleading
-    /// - No payment/burn decision needed (the slash already handled consequences)
-    /// 
-    /// Removes the agreement entirely. For primary providers, also removes from
-    /// bucket.primary_providers and adjusts the snapshot bitfield if they were in it.
-    /// 
-    /// The agreement's remaining payment is handled as follows:
-    /// - If slashed while agreement was active: remaining payment returned to owner
-    ///   (provider already punished via stake slash, client shouldn't also lose payment)
-    ///
-    /// Physical providers only (a virtual provider's slash takes the liable
-    /// members' slices and the agreement continues). Valid iff the agreement
-    /// is live (`now < expires_at`; an expired one is settled normally) and
-    /// `locked_stake(provider) < agreement.stake`: a slash — on any bucket, or
-    /// of the provider's slice in a virtual provider — left less stake than
-    /// the agreement snapshotted. A voluntary lowering cannot cause this while
-    /// the agreement is live ("Changeable Stake").
-    #[pallet::weight(...)]
-    pub fn remove_slashed(
-        origin: OriginFor<T>,
-        bucket_id: BucketId,
-        provider: T::AccountId,
-    ) -> DispatchResult;
-
     // ─────────────────────────────────────────────────────────────
     // Checkpoints
     // ─────────────────────────────────────────────────────────────
@@ -2526,7 +2501,7 @@ impl<T: Config> Pallet<T> {
     ///
     /// Anyone may call this; it is free on success. Slashes the provider's
     /// whole stake (for a virtual provider: each member in `liable` by the
-    /// snapshot's `per_provider_stake`) to the Treasury, refunds the
+    /// snapshot's `per_provider_stake`) to `T::OnSlash`, refunds the
     /// challenger's deposit and decrements the provider's `pending_challenges`. A provider may call it against itself to
     /// release its locks and unblock `deregister_provider`.
     /// Fails with `ChallengeNotExpired` while the provider may still respond
@@ -2541,15 +2516,13 @@ impl<T: Config> Pallet<T> {
 pub enum EndAction {
     /// Pay provider in full
     Pay,
-    /// Burn locked payment entirely.
-    /// Additionally deducts `T::BurnPremium` (e.g., 10%) from caller's free balance.
+    /// Burn locked payment entirely (to `T::OnBurn`).
+    /// Additionally deducts `T::BurnPremium` (e.g., 10%) from caller's free balance, also to `T::OnBurn`.
     /// Fails if caller has insufficient funds for the premium.
     Burn,
 }
 
 pub enum RemovalReason {
-    /// Provider was slashed for failing a challenge
-    Slashed,
     /// Agreement expired naturally
     Expired,
 }
@@ -3323,9 +3296,9 @@ pub struct MmrConsistencyProof {
     └─ Anyone submits `resolve_expired_challenge` (free on success; the
        challenger has the deposit as a reason to)
     └─ Provider's contract stake fully slashed
-    └─ Challenger made whole from the slash: deposit refunded, tx fees
-       reimbursed—but no reward beyond actual costs (no profit motive
-       for forcing slashes), regardless of tier
+    └─ Challenger's deposit refunded in full; it pays its own fee for
+       creating the challenge, and resolving is free. No reward from the
+       slash (no profit motive for forcing slashes), regardless of tier
     └─ Clear on-chain evidence of provider fault
 ```
 
@@ -3463,9 +3436,9 @@ garbage; for a sync only the provider or a snapshotted member can take the tag
   the fee to the primaries that served the sync.
 - **Early termination of primaries by the admin.** Primaries are
   admin-controlled for write coordination, so the admin must keep control over
-  who accepts writes; without early termination a hostile or misbehaving
-  primary keeps its slot until expiry. `MaxPrimarySlots` may make that rare
-  enough to ignore. If it is added, it should be exceptional: burn, not pay,
-  and only when the bucket is at capacity. Not in the design today; the
-  pallet still has `RemovalReason::AdminTerminated` and an early-termination
-  path in `end_agreement`, to be removed.
+  who accepts writes; without early termination a hostile, misbehaving
+  or slashed primary keeps its slot until expiry. `MaxPrimarySlots` may
+  make that rare enough to ignore. If it is added, it should be
+  exceptional: burn, not pay, and only when the bucket is at capacity. Not
+  in the design today; the pallet still has `RemovalReason::AdminTerminated`
+  and an early-termination path in `end_agreement`, to be removed.
