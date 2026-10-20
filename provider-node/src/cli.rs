@@ -2,8 +2,8 @@
 
 //! CLI argument parsing for the storage provider node.
 
+use crate::chain_connection::{ChainTransport, SpecSource};
 use clap::Parser;
-use provider_chain::chain_connection::{ChainTransport, SpecSource};
 use provider_storage::StorageBackendSpec;
 use std::path::PathBuf;
 
@@ -62,7 +62,7 @@ pub struct StorageParams {
     #[arg(long, value_enum, default_value_t = StorageBackendKind::RocksDb)]
     pub storage_backend: StorageBackendKind,
 
-    /// Directory holding the chunks, the MMR state and the nonce counter.
+    /// Directory holding the chunks and the MMR state.
     #[arg(long, default_value = "./provider-data", env = "STORAGE_PATH")]
     pub storage_path: PathBuf,
 }

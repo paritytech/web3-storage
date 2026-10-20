@@ -12,7 +12,7 @@ import { PHOTOS_ABI } from '@/contract/photos-abi'
 const LS_CONTRACT_KEY = 'photos.contract'
 
 export interface LibraryState {
-  driveId: bigint
+  bucketId: bigint
   rootCid: `0x${string}`
   exists: boolean
 }
@@ -99,7 +99,7 @@ export async function readLibraryOf(
     functionName: 'libraryOf',
     data: toHex(res.result.value.data) as `0x${string}`,
   }) as unknown as readonly [bigint, `0x${string}`, boolean]
-  return { driveId: decoded[0], rootCid: decoded[1], exists: decoded[2] }
+  return { bucketId: decoded[0], rootCid: decoded[1], exists: decoded[2] }
 }
 
 /** True when a 32-byte rootCid is all-zero (library exists but nothing anchored yet). */

@@ -177,7 +177,7 @@ pub const VERSION: RuntimeVersion = RuntimeVersion {
     spec_name: Cow::Borrowed("paseo-web3-storage-runtime"),
     impl_name: Cow::Borrowed("paseo-web3-storage-runtime"),
     authoring_version: 1,
-    spec_version: 4_008,
+    spec_version: 4_012,
     impl_version: 0,
     apis: RUNTIME_API_VERSIONS,
     // Bumped whenever call encoding changes, so offline signers and stale-metadata
@@ -187,9 +187,12 @@ pub const VERSION: RuntimeVersion = RuntimeVersion {
     // * 3 for dropping the commitment nonce: `checkpoint` and `challenge_offchain` each lost
     //   a `nonce` argument, and `respond_to_challenge`'s `ChallengeResponse::Deleted` variant
     //   lost its `nonce` field (#339);
-    // * 4 for the `visibility` argument appended to `establish_storage_agreement`,
-    //   `create_drive` and `create_s3_bucket` (#330).
-    transaction_version: 4,
+    // * 4 for the `visibility` argument appended to `establish_storage_agreement`
+    //   (now `create_bucket_with_primary`),
+    //   `create_drive` and `create_s3_bucket` (#330);
+    // * 5 for the `MmrProof` argument of `respond_to_challenge`, which now
+    //   contains library proof `items` instead of `peaks` and `leaf_proof` (#517).
+    transaction_version: 5,
     system_version: 1,
 };
 
@@ -262,7 +265,7 @@ impl frame_system::Config for Runtime {
     type Version = Version;
     type PalletInfo = PalletInfo;
     type OnNewAccount = ();
-    type OnKilledAccount = ();
+    type OnKilledAccount = StorageProvider;
     type AccountData = pallet_balances::AccountData<Balance>;
     type SystemWeightInfo = weights::frame_system::WeightInfo<Runtime>;
     type ExtensionsWeightInfo = weights::frame_system_extensions::WeightInfo<Runtime>;

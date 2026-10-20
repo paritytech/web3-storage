@@ -5,16 +5,14 @@
 
 use super::{Pallet as StorageProvider, *};
 use frame_benchmarking::v2::*;
-use frame_support::{
-    pallet_prelude::*,
-    traits::{fungible::Mutate, Hooks},
-};
+use frame_support::{pallet_prelude::*, traits::fungible::Mutate};
 use frame_system::{Pallet as System, RawOrigin};
 use sp_core::H256;
 use sp_runtime::traits::{Bounded, SaturatedConversion};
 use sp_runtime::Saturating;
 use storage_primitives::{
-    AgreementTerms, BucketId, ChunkLocation, Commitment, ProviderRole, ReplicaTerms, Visibility,
+    AgreementTerms, BucketId, BucketTarget, ChunkLocation, Commitment, ProviderRole, ReplicaTerms,
+    Visibility,
 };
 
 const SEED: u32 = 0;
@@ -88,12 +86,13 @@ fn setup_bucket<T: Config>(admin: &T::AccountId) -> BucketId {
         .expect("create_bucket_internal succeeds")
 }
 
-/// Build primary [`AgreementTerms`] suitable for a benchmark agreement.
+/// Build primary [`AgreementTerms`] suitable for a benchmark agreement, at
+/// the owner's next expected nonce.
 fn build_primary_terms<T: Config>(
     owner: &T::AccountId,
+    bucket: BucketTarget,
     max_bytes: u64,
     duration: BlockNumberFor<T>,
-    nonce: u64,
 ) -> AgreementTermsOf<T> {
     AgreementTerms {
         owner: owner.clone(),
@@ -102,19 +101,19 @@ fn build_primary_terms<T: Config>(
         price_per_byte: 1u32.into(),
         valid_until: StorageProvider::<T>::current_anchor_block()
             .saturating_add(T::RequestTimeout::get()),
-        nonce,
-        bucket_id: None,
+        nonce: AgreementNonces::<T>::get(owner),
+        bucket,
         replica_params: None,
     }
 }
 
-/// Build replica [`AgreementTerms`] suitable for a benchmark agreement.
+/// Build replica [`AgreementTerms`] suitable for a benchmark agreement, at
+/// the owner's next expected nonce.
 fn build_replica_terms<T: Config>(
     owner: &T::AccountId,
     bucket_id: BucketId,
     max_bytes: u64,
     duration: BlockNumberFor<T>,
-    nonce: u64,
 ) -> AgreementTermsOf<T> {
     AgreementTerms {
         owner: owner.clone(),
@@ -123,8 +122,8 @@ fn build_replica_terms<T: Config>(
         price_per_byte: 1u32.into(),
         valid_until: StorageProvider::<T>::current_anchor_block()
             .saturating_add(T::RequestTimeout::get()),
-        nonce,
-        bucket_id: Some(bucket_id),
+        nonce: AgreementNonces::<T>::get(owner),
+        bucket: BucketTarget::Existing(bucket_id),
         replica_params: Some(ReplicaTerms {
             sync_balance: funding::<T>() / 20u32.into(),
             min_sync_interval: 10u32.into(),
@@ -151,27 +150,22 @@ fn setup_primary_agreement<T: Config>(
     provider_index: u32,
 ) -> BucketId {
     let key = register_sr25519_key::<T>(provider, KEY_TYPE, provider_index);
-    let terms = build_primary_terms::<T>(
-        admin,
-        1_000_000u64,
-        100u32.into(),
-        provider_index as u64 + 1,
-    );
+    let terms = build_primary_terms::<T>(admin, BucketTarget::New, 1_000_000u64, 100u32.into());
     let sig = sign_terms::<T>(&key, &terms);
-    Pallet::<T>::establish_storage_agreement_internal(
+    Pallet::<T>::create_bucket_with_primary_internal(
         admin,
         provider,
         terms,
         &sig,
         Visibility::Private,
     )
-    .expect("establish_storage_agreement_internal succeeds")
+    .expect("create_bucket_with_primary_internal succeeds")
 }
 
 /// Open a replica agreement against an existing bucket.
 ///
 /// Generates an sr25519 key for the replica provider, signs replica terms,
-/// and calls `establish_replica_agreement_internal`.
+/// and calls `add_replica_provider_internal`.
 fn setup_replica_agreement<T: Config>(
     admin: &T::AccountId,
     bucket_id: BucketId,
@@ -179,16 +173,10 @@ fn setup_replica_agreement<T: Config>(
     replica_index: u32,
 ) -> sp_core::sr25519::Public {
     let key = register_sr25519_key::<T>(replica, KEY_TYPE, replica_index);
-    let terms = build_replica_terms::<T>(
-        admin,
-        bucket_id,
-        1_000_000u64,
-        100u32.into(),
-        replica_index as u64 + 1,
-    );
+    let terms = build_replica_terms::<T>(admin, bucket_id, 1_000_000u64, 100u32.into());
     let sig = sign_terms::<T>(&key, &terms);
-    Pallet::<T>::establish_replica_agreement_internal(admin, bucket_id, replica, terms, &sig)
-        .expect("establish_replica_agreement_internal succeeds");
+    Pallet::<T>::add_replica_provider_internal(admin, bucket_id, replica, terms, &sig)
+        .expect("add_replica_provider_internal succeeds");
     key
 }
 
@@ -204,13 +192,12 @@ fn sign_sync_roots(
 }
 
 /// Direct-storage helper: register `provider` as a primary on an existing
-/// bucket without going through `establish_storage_agreement_internal`.
+/// bucket without a provider-signed quote.
 ///
-/// `establish_storage_agreement_internal` always creates a fresh
-/// single-primary bucket, so it can't grow the primary set on an existing
-/// bucket. The checkpoint benchmarks need *N* primaries on the *same*
-/// bucket to exercise worst-case signature verification, so we synthesize
-/// that shape directly.
+/// The checkpoint benchmarks need *N* primaries on the *same* bucket to
+/// exercise worst-case signature verification. `add_primary_provider` would
+/// need a signed quote per provider, so this helper writes the agreement and
+/// the primary entry directly.
 fn add_primary_to_bucket<T: Config>(
     admin: &T::AccountId,
     provider: &T::AccountId,
@@ -248,26 +235,20 @@ fn add_primary_to_bucket<T: Config>(
 }
 
 /// Insert a single challenge at `deadline = 200` and return its `ChallengeId`.
-///
-/// Used by the three `respond_to_challenge_*` benchmarks to share challenge
-/// setup so each can focus on the response-variant payload it exercises.
 fn insert_challenge<T: Config>(
     bucket_id: BucketId,
     provider: &T::AccountId,
     challenger: &T::AccountId,
-    mmr_root: H256,
+    commitment: Commitment,
+    target: ChunkLocation,
 ) -> storage_primitives::ChallengeId<BlockNumberFor<T>> {
     let deadline: BlockNumberFor<T> = 200u32.into();
     let challenge = pallet::Challenge::<T> {
         bucket_id,
         provider: provider.clone(),
         challenger: challenger.clone(),
-        mmr_root,
-        start_seq: 0,
-        target: ChunkLocation {
-            leaf_index: 0,
-            chunk_index: 0,
-        },
+        commitment,
+        target,
         deposit: 100u32.into(),
         authorized: true,
     };
@@ -519,21 +500,30 @@ mod benchmarks {
     // Agreement Management
     // ─────────────────────────────────────────────────────────────────────────
 
-    /// Worst case: full signature verification + replay-window mutation +
-    /// bucket creation + agreement insertion.
     #[benchmark]
-    fn establish_storage_agreement() {
+    fn create_bucket() {
+        let admin = funded_account::<T>("admin", 0);
+
+        #[extrinsic_call]
+        create_bucket(RawOrigin::Signed(admin), 1, Visibility::Private);
+    }
+
+    /// Worst case: full signature verification + owner-nonce check and
+    /// increment + bucket creation + agreement insertion.
+    #[benchmark]
+    fn create_bucket_with_primary() {
         let admin = funded_account::<T>("admin", 0);
         let provider = create_provider::<T>(0);
 
         // Generate an sr25519 key for the provider and store it so
         // verify_terms_signature can resolve a valid signer.
         let key = register_sr25519_key::<T>(&provider, KEY_TYPE, 0);
-        let terms = build_primary_terms::<T>(&admin, 1_000_000u64, 100u32.into(), 1);
+        let terms =
+            build_primary_terms::<T>(&admin, BucketTarget::New, 1_000_000u64, 100u32.into());
         let signature = sign_terms::<T>(&key, &terms);
 
         #[extrinsic_call]
-        establish_storage_agreement(
+        create_bucket_with_primary(
             RawOrigin::Signed(admin),
             provider,
             terms,
@@ -542,21 +532,58 @@ mod benchmarks {
         );
     }
 
-    /// Worst case: replica signature verification + replay-window
-    /// mutation + agreement insertion on top of an existing bucket.
+    /// Worst case: full signature verification + owner-nonce check and
+    /// increment + agreement insertion + push onto a primary set one below
+    /// `MaxPrimaryProviders`.
     #[benchmark]
-    fn establish_replica_agreement() {
+    fn add_primary_provider() {
+        let admin = funded_account::<T>("admin", 0);
+        let first = create_provider::<T>(0);
+        let bucket_id = setup_primary_agreement::<T>(&admin, &first, 0);
+
+        // `Buckets` is measured, so both the read and the write scale with
+        // `primary_providers`. Fill it to `MaxPrimaryProviders - 1` so the
+        // call pushes onto the largest allowed set.
+        for i in 1..T::MaxPrimaryProviders::get().saturating_sub(1) {
+            let filler = funded_account::<T>("filler", i);
+            add_primary_to_bucket::<T>(&admin, &filler, bucket_id, 1_000u64);
+        }
+
+        let provider = create_provider::<T>(1);
+        let key = register_sr25519_key::<T>(&provider, KEY_TYPE, 1);
+        let terms = build_primary_terms::<T>(
+            &admin,
+            BucketTarget::Existing(bucket_id),
+            1_000_000u64,
+            100u32.into(),
+        );
+        let signature = sign_terms::<T>(&key, &terms);
+
+        #[extrinsic_call]
+        add_primary_provider(
+            RawOrigin::Signed(admin),
+            bucket_id,
+            provider,
+            terms,
+            signature,
+        );
+    }
+
+    /// Worst case: replica signature verification + owner-nonce check
+    /// and increment + agreement insertion on top of an existing bucket.
+    #[benchmark]
+    fn add_replica_provider() {
         let admin = funded_account::<T>("admin", 0);
         let primary = create_provider::<T>(0);
         let bucket_id = setup_primary_agreement::<T>(&admin, &primary, 0);
 
         let replica = create_provider::<T>(1);
         let key = register_sr25519_key::<T>(&replica, KEY_TYPE, 1);
-        let terms = build_replica_terms::<T>(&admin, bucket_id, 1_000_000u64, 100u32.into(), 1);
+        let terms = build_replica_terms::<T>(&admin, bucket_id, 1_000_000u64, 100u32.into());
         let signature = sign_terms::<T>(&key, &terms);
 
         #[extrinsic_call]
-        establish_replica_agreement(
+        add_replica_provider(
             RawOrigin::Signed(admin),
             bucket_id,
             replica,
@@ -786,7 +813,7 @@ mod benchmarks {
         let bucket_id = setup_primary_agreement::<T>(&admin, &provider, 0);
 
         // Drop min_providers to 0 so the bootstrapping checkpoint with
-        // empty signatures is accepted (establish_storage_agreement_internal
+        // empty signatures is accepted (create_bucket_with_primary_internal
         // anchors the bucket at min_providers=1).
         let _ =
             Pallet::<T>::set_min_providers(RawOrigin::Signed(admin.clone()).into(), bucket_id, 0);
@@ -848,12 +875,14 @@ mod benchmarks {
             }
         });
 
-        // Sign the commitment payload via host function
+        // Sign the commitment payload via host function. leaf_count = 1 (with
+        // leaf_index 0 below) so create_challenge's leaf_index < leaf_count guard
+        // is satisfied.
         let mmr_root = H256::repeat_byte(0xAB);
         let commitment = Commitment {
             mmr_root,
             start_seq: 0,
-            leaf_count: 0,
+            leaf_count: 1,
         };
         let payload = storage_primitives::CommitmentPayload::new(bucket_id, commitment);
         let encoded = codec::Encode::encode(&payload);
@@ -930,51 +959,80 @@ mod benchmarks {
         );
     }
 
-    /// `Proof` response — hashes MaxChunkSize bytes and verifies MMR + Merkle proofs.
+    /// `Proof` response — hashes MaxChunkSize bytes and verifies MMR + Merkle proofs
+    /// in their worst case, so the flat weight bounds every verification.
     #[benchmark]
     fn respond_to_challenge_proof() {
         let admin = funded_account::<T>("admin", 0);
         let provider = create_provider::<T>(0);
         let bucket_id = setup_primary_agreement::<T>(&admin, &provider, 0);
 
-        // Construct a single-chunk / single-leaf MMR so all proof verifications pass.
+        // Chunk tree: the largest `data_size` gives the most chunks, and chunk 0
+        // of that tree has a sibling at every level, so the chunk proof has the
+        // most siblings the pallet accepts.
         //
-        // Chunk tree (1 chunk):  data_root = blake2_256(chunk_data)
-        //   chunk_proof = empty (leaf IS the root, no siblings)
-        //
-        // MMR (1 leaf):  mmr_root = blake2_256(encode(mmr_leaf))
-        //   leaf_proof = empty (leaf IS the single peak, no siblings)
-        //   peaks = [mmr_root]
+        // MMR: leaf_count = u64::MAX / 2 is the largest `verify_mmr_proof`
+        // accepts. It has 63 peaks and leaf 0 is in the tallest peak (height
+        // 62), so the verifier climbs 62 siblings and then bags that peak with
+        // one item for the peaks to its right. The proof is synthetic: the root
+        // is computed so `verify_mmr_proof` returns true without 2^63 leaves.
         let chunk_size = T::MaxChunkSize::get() as usize;
         let chunk_bytes = alloc::vec![0xBEu8; chunk_size];
         let chunk_data: BoundedVec<u8, T::MaxChunkSize> =
             BoundedVec::try_from(chunk_bytes.clone()).unwrap();
 
-        let chunk_hash = storage_primitives::blake2_256(&chunk_bytes);
-        let data_root = chunk_hash; // single-element Merkle tree
+        let data_size = u64::MAX;
+        let depth = storage_primitives::chunk_count(data_size).ilog2();
+        let siblings: alloc::vec::Vec<H256> = (0..depth)
+            .map(|level| H256::from_low_u64_be(u64::from(level) + 1))
+            .collect();
+        let data_root = siblings.iter().fold(
+            storage_primitives::hash_leaf(&chunk_bytes),
+            |node, sibling| storage_primitives::hash_children(node, *sibling),
+        );
 
         let mmr_leaf = storage_primitives::MmrLeaf {
             data_root,
-            data_size: chunk_size as u64,
-            total_size: chunk_size as u64,
+            data_size,
+            total_size: data_size,
         };
-        let leaf_hash = storage_primitives::blake2_256(&codec::Encode::encode(&mmr_leaf));
-        let mmr_root = leaf_hash; // single-peak MMR, root == peak == leaf_hash
+        let leaf_hash = storage_primitives::hash_leaf(&codec::Encode::encode(&mmr_leaf));
+
+        let leaf_count = u64::MAX / 2; // 63 peaks; challenged leaf 0 is in the height-62 peak
+        let leaf_index = 0u64;
+        let height = 62u8;
+
+        // Proof items: the siblings from leaf 0 up to its peak (every step is a
+        // left child), then one item for the bagged peaks to the right.
+        let mut items: alloc::vec::Vec<H256> = (1..=height).map(H256::repeat_byte).collect();
+        let mut peak0 = leaf_hash;
+        for sibling in &items {
+            peak0 = storage_primitives::hash_children(peak0, *sibling);
+        }
+        let right_peaks = H256::repeat_byte(0xFF);
+        items.push(right_peaks);
+        let mmr_root = storage_primitives::bag_peaks(&[peak0, right_peaks]);
 
         let mmr_proof = storage_primitives::MmrProof {
-            peaks: alloc::vec![leaf_hash],
             leaf: mmr_leaf,
-            leaf_proof: storage_primitives::MerkleProof {
-                siblings: alloc::vec![],
-                path: alloc::vec![],
-            },
+            items,
         };
-        let chunk_proof = storage_primitives::MerkleProof {
-            siblings: alloc::vec![],
-            path: alloc::vec![],
-        };
+        let chunk_proof = siblings;
 
-        let challenge_id = insert_challenge::<T>(bucket_id, &provider, &admin, mmr_root);
+        let challenge_id = insert_challenge::<T>(
+            bucket_id,
+            &provider,
+            &admin,
+            Commitment {
+                mmr_root,
+                start_seq: 0,
+                leaf_count,
+            },
+            ChunkLocation {
+                leaf_index,
+                chunk_index: 0,
+            },
+        );
 
         let response: pallet::ChallengeResponse<T> = pallet::ChallengeResponse::Proof {
             chunk_data,
@@ -1003,11 +1061,23 @@ mod benchmarks {
         );
         let admin_key = register_sr25519_key::<T>(&admin, KEY_TYPE, u32::MAX);
 
-        let challenge_id =
-            insert_challenge::<T>(bucket_id, &provider, &admin, H256::repeat_byte(0xCD));
+        let challenge_id = insert_challenge::<T>(
+            bucket_id,
+            &provider,
+            &admin,
+            Commitment {
+                mmr_root: H256::repeat_byte(0xCD),
+                start_seq: 0,
+                leaf_count: 1,
+            },
+            ChunkLocation {
+                leaf_index: 0,
+                chunk_index: 0,
+            },
+        );
 
         let new_mmr_root = H256::repeat_byte(0xEF);
-        let new_start_seq: u64 = 1; // must be > challenge.start_seq (0) + leaf_index (0)
+        let new_start_seq: u64 = 1; // must be > challenge.commitment.start_seq (0) + leaf_index (0)
         let payload = storage_primitives::CommitmentPayload::new(
             bucket_id,
             Commitment {
@@ -1064,8 +1134,20 @@ mod benchmarks {
             signatures,
         );
 
-        let challenge_id =
-            insert_challenge::<T>(bucket_id, &provider, &admin, H256::repeat_byte(0xCD));
+        let challenge_id = insert_challenge::<T>(
+            bucket_id,
+            &provider,
+            &admin,
+            Commitment {
+                mmr_root: H256::repeat_byte(0xCD),
+                start_seq: 0,
+                leaf_count: 1,
+            },
+            ChunkLocation {
+                leaf_index: 0,
+                chunk_index: 0,
+            },
+        );
 
         let response: pallet::ChallengeResponse<T> = pallet::ChallengeResponse::Superseded;
 
@@ -1145,78 +1227,44 @@ mod benchmarks {
         );
     }
 
-    /// `on_initialize` slash sweep: drains and slashes every challenge expiring
-    /// at a single deadline key. Linear in the challenge count `c`; each entry
-    /// is drained, its pending counters decremented, and its provider slashed.
-    /// The upper bound is the effective per-block slash budget
-    /// `min(MaxChallengesPerDeadline, MAX_SWEEP_SLASH_BUDGET)` — the most the
-    /// sweep ever slashes for one key in a block — so the linear fit covers the
-    /// true worst case rather than extrapolating to it. The sweep applies this
-    /// per key, so a small fixed hook overhead is counted here and again in the
-    /// hook's base weight — conservative.
     #[benchmark]
-    fn on_initialize_slash_challenges(
-        c: Linear<
-            0,
-            {
-                let cap = T::MaxChallengesPerDeadline::get() as u32;
-                if cap < crate::pallet::MAX_SWEEP_SLASH_BUDGET {
-                    cap
-                } else {
-                    crate::pallet::MAX_SWEEP_SLASH_BUDGET
-                }
-            },
-        >,
-    ) {
+    fn resolve_expired_challenge() {
         let deadline: BlockNumberFor<T> = 200u32.into();
         let deposit: BalanceOf<T> = 100u32.into();
-        for i in 0..c {
-            // Distinct slashable provider (stake reserved) + challenger per
-            // challenge — the worst case (each touches a distinct `Providers`
-            // and pending-counter entry).
-            let provider = create_provider::<T>(i);
-            let challenger = funded_account::<T>("challenger", i);
-            // The slash releases the challenger's deposit, so hold it first.
-            let _ = StorageProvider::<T>::hold_challenge_deposit(&challenger, deposit);
-            let bucket_id: BucketId = i as u64;
-            let challenge = pallet::Challenge::<T> {
-                bucket_id,
-                provider: provider.clone(),
-                challenger,
+        let provider = create_provider::<T>(0);
+        let challenger = funded_account::<T>("challenger", 0);
+        let _ = StorageProvider::<T>::hold_challenge_deposit(&challenger, deposit);
+        let bucket_id: BucketId = 0;
+        let challenge = pallet::Challenge::<T> {
+            bucket_id,
+            provider: provider.clone(),
+            challenger,
+            commitment: Commitment {
                 mmr_root: H256::zero(),
                 start_seq: 0,
-                target: ChunkLocation {
-                    leaf_index: 0,
-                    chunk_index: 0,
-                },
-                deposit,
-                authorized: false,
-            };
-            Challenges::<T>::insert(deadline, i as u16, challenge);
-            PendingChallenges::<T>::insert(&provider, 1u32);
-            PendingChallengesByBucket::<T>::insert(bucket_id, &provider, 1u32);
-        }
-        NextChallengeIndex::<T>::insert(deadline, c as u16);
+                leaf_count: 1,
+            },
+            target: ChunkLocation {
+                leaf_index: 0,
+                chunk_index: 0,
+            },
+            deposit,
+            authorized: false,
+        };
+        Challenges::<T>::insert(deadline, 0u16, challenge);
+        PendingChallenges::<T>::insert(&provider, 1u32);
+        PendingChallengesByBucket::<T>::insert(bucket_id, &provider, 1u32);
+        NextChallengeIndex::<T>::insert(deadline, 1u16);
+        let caller = funded_account::<T>("caller", 0);
+        set_block_number::<T>(deadline.saturating_add(1u32.into()));
 
-        // Drive the real sweep over exactly one key. Anchor the cursor one
-        // below `deadline`, then set the relay clock so the sweepable range
-        // (keys < previous relay parent) is exactly `{deadline}`:
-        // `sweepable = current_anchor_block() - 1 = deadline`, `end = deadline`.
-        LastSweptChallengeBlock::<T>::put(deadline.saturating_sub(1u32.into()));
-        let now = deadline.saturating_add(1u32.into());
-        set_block_number::<T>(now);
+        #[extrinsic_call]
+        resolve_expired_challenge(
+            RawOrigin::Signed(caller),
+            storage_primitives::ChallengeId { deadline, index: 0 },
+        );
 
-        #[block]
-        {
-            StorageProvider::<T>::on_initialize(now);
-        }
-
-        // Guard against the sweep silently no-op'ing (the bug this benchmark
-        // had while it still called the dropped `on_finalize`): every challenge
-        // at the deadline must have been drained. (At the worst-case component
-        // `c == MaxChallengesPerDeadline` the slash budget is exactly spent, so
-        // the cursor parks at `deadline - 1` and carries over — expected.)
-        assert_eq!(Challenges::<T>::iter_prefix(deadline).count(), 0);
+        assert!(Challenges::<T>::get(deadline, 0).is_none());
     }
 
     impl_benchmark_test_suite!(Pallet, crate::mock::new_test_ext(), crate::mock::Test);

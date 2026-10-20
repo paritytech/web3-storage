@@ -86,8 +86,8 @@ export default function ChallengeOutcomeDialog() {
                 <div className="grid grid-cols-2 gap-x-4 gap-y-1">
                   <span className="text-muted-foreground">Slashed amount</span>
                   <span className="text-right font-medium">{formatUnits(slash.slashedAmount)} tokens</span>
-                  <span className="text-muted-foreground">Your reward</span>
-                  <span className="text-right font-medium">{formatUnits(slash.challengerReward)} tokens</span>
+                  <span className="text-muted-foreground">Your deposit</span>
+                  <span className="text-right font-medium">Refunded (no reward)</span>
                 </div>
                 <div className="border-t pt-2 text-xs text-muted-foreground">
                   Block:{" "}

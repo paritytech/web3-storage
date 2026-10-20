@@ -110,8 +110,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "provider already registered with a different key: on-chain 0x{} vs 0x{} derived \
                  for scheme '{scheme}'. Deregister first, or rerun with the seed/scheme that \
                  produced the registered key.",
-                hex::encode(&info.public_key),
-                hex::encode(&signing_key),
+                array_bytes::bytes2hex("", &info.public_key),
+                array_bytes::bytes2hex("", &signing_key),
             )
             .into());
         }

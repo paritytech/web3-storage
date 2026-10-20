@@ -242,33 +242,6 @@ impl ProviderClient {
     // Term Negotiation (off-chain)
     // ═════════════════════════════════════════════════════════════════════════
 
-    /// Read a provider's on-chain `ProviderReplayState.hsn`. Returns
-    /// `Ok(None)` if the provider has no replay state yet (never signed
-    /// any terms).
-    pub async fn fetch_replay_hsn(
-        chain_ws_url: &str,
-        provider: &AccountId32,
-    ) -> ClientResult<Option<u64>> {
-        let chain = SubstrateClient::connect(chain_ws_url).await?;
-        let at = chain.at_current_block().await?;
-        let value = at
-            .storage()
-            .try_fetch(
-                api::storage().storage_provider().provider_replay_states(),
-                (convert::to_subxt_account(provider),),
-            )
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to fetch replay state: {e}")))?;
-
-        let Some(value) = value else {
-            return Ok(None);
-        };
-        let window = value
-            .decode()
-            .map_err(|e| ClientError::Chain(format!("Failed to decode replay state: {e}")))?;
-        Ok(Some(window.hsn))
-    }
-
     /// Read the chain's `StorageProvider::RequestTimeout` runtime constant —
     /// the validity window (in blocks) applied to provider-signed terms.
     ///
@@ -295,9 +268,9 @@ impl ProviderClient {
 
     /// Negotiate provider-signed agreement terms over HTTP.
     ///
-    /// Owner posts the proposed shape; the provider node allocates nonce + validity window from
-    /// its own state, signs, returns a [`SignedTerms`](crate::agreement::SignedTerms) ready for
-    /// [`AdminClient::establish_storage_agreement`](crate::admin::AdminClient::establish_storage_agreement).
+    /// Owner posts the proposed shape and its next agreement nonce; the provider node sets the
+    /// validity window, signs, and returns a [`SignedTerms`](crate::agreement::SignedTerms) ready for
+    /// [`AdminClient::create_bucket_with_primary`](crate::admin::AdminClient::create_bucket_with_primary).
     pub async fn negotiate_terms(
         provider_url: &str,
         req: &crate::agreement::NegotiateRequest,
@@ -436,12 +409,13 @@ impl ProviderClient {
     /// - `chunk_data`: The actual chunk data being proven
     /// - `mmr_proof`: MMR proof showing the leaf is in the committed MMR
     /// - `chunk_proof`: Merkle proof showing the chunk is in the leaf's data tree
+    ///   (sibling hashes from the chunk up to the data root)
     pub async fn respond_to_challenge(
         &self,
         challenge_id: (u32, u16),
         chunk_data: Vec<u8>,
         mmr_proof: &storage_primitives::MmrProof,
-        chunk_proof: &storage_primitives::MerkleProof,
+        chunk_proof: &[H256],
     ) -> ClientResult<()> {
         let chain = self.base.chain()?;
         let signer = chain.signer()?;
@@ -505,8 +479,8 @@ impl ProviderClient {
                 challenge_id: (c.deadline, c.index),
                 bucket_id: c.bucket_id,
                 deadline: c.deadline,
-                leaf_index: c.leaf_index,
-                chunk_index: c.chunk_index,
+                leaf_index: c.target.leaf_index,
+                chunk_index: c.target.chunk_index,
             })
             .collect())
     }

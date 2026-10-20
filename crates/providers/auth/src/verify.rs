@@ -84,29 +84,13 @@ fn verify_signature(
     }
 
     // Decode public key
-    let pubkey_bytes = hex::decode(pubkey_hex.strip_prefix("0x").unwrap_or(pubkey_hex))
-        .map_err(|_| AuthError::AuthRequired)?;
-    if pubkey_bytes.len() != 32 {
-        return Err(AuthError::AuthRequired);
-    }
     let pubkey = sr25519::Public::from_raw(
-        pubkey_bytes
-            .as_slice()
-            .try_into()
-            .map_err(|_| AuthError::AuthRequired)?,
+        array_bytes::hex2array(pubkey_hex).map_err(|_| AuthError::AuthRequired)?,
     );
 
     // Decode signature
-    let sig_bytes = hex::decode(sig_hex.strip_prefix("0x").unwrap_or(sig_hex))
-        .map_err(|_| AuthError::AuthRequired)?;
-    if sig_bytes.len() != 64 {
-        return Err(AuthError::AuthRequired);
-    }
     let signature = sr25519::Signature::from_raw(
-        sig_bytes
-            .as_slice()
-            .try_into()
-            .map_err(|_| AuthError::AuthRequired)?,
+        array_bytes::hex2array(sig_hex).map_err(|_| AuthError::AuthRequired)?,
     );
 
     // Verify signature. Two signing surfaces reach this endpoint:
@@ -272,9 +256,9 @@ mod tests {
         let message = auth_message("PUT", 1, &ts.to_string());
         let sig = keypair.sign(&wrap_bytes(message.as_bytes()));
         let header = format!(
-            "Web3Storage 0x{}:0x{}:{}",
-            hex::encode(keypair.public().0),
-            hex::encode(sig.0),
+            "Web3Storage {}:{}:{}",
+            array_bytes::bytes2hex("0x", keypair.public().0),
+            array_bytes::bytes2hex("0x", sig.0),
             ts
         );
 

@@ -24,7 +24,7 @@ import {
   OnChainChallenge,
   OnChainBucketDetails,
 } from '@/lib/chain-client'
-import { isSameAddress } from '@web3-storage/sdk'
+import { fetchChallengeProof, isSameAddress } from '@web3-storage/sdk'
 import { getProviderHttp } from '@/state/network.state'
 import { challengeKey } from '@/state/challengeKey'
 
@@ -531,31 +531,41 @@ export async function respondToChallenge(
   signer: import('polkadot-api/pjs-signer').InjectedPolkadotAccount,
   onProgress?: (status: import('@/lib/chain-client').TxStatus) => void,
 ): Promise<void> {
-  const { fetchChallengeProof, submitRespondToChallenge } = await import('@/lib/chain-client')
+  const { requireApi, submitRespondToChallenge } = await import('@/lib/chain-client')
+  const challengeId = { deadline: challenge.deadline, index: challenge.id }
 
   // Step 1: Fetch proofs from provider node
   onProgress?.({ type: 'signing', message: 'Fetching proof from provider node...' })
-  const proof = await fetchChallengeProof(
-    getProviderHttp(),
-    challenge.bucketId,
-    challenge.leafIndex,
-    challenge.chunkIndex,
-  )
+  const proof = await fetchChallengeProof(requireApi(), getProviderHttp(), challengeId)
 
   // Step 2: Submit on-chain
-  await submitRespondToChallenge(
+  await submitRespondToChallenge(challengeId, proof, signer, onProgress)
+
+  setChallengeStatus(challenge, 'responded')
+}
+
+/**
+ * Resolve an expired challenge against this provider: slashes the stake and
+ * clears the pending counter that blocks deregistration.
+ */
+export async function resolveExpiredChallenge(
+  challenge: Challenge,
+  signer: import('polkadot-api/pjs-signer').InjectedPolkadotAccount,
+  onProgress?: (status: import('@/lib/chain-client').TxStatus) => void,
+): Promise<void> {
+  const { submitResolveExpiredChallenge } = await import('@/lib/chain-client')
+  await submitResolveExpiredChallenge(
     { deadline: challenge.deadline, index: challenge.id },
-    proof,
     signer,
     onProgress,
   )
+  setChallengeStatus(challenge, 'slashed')
+}
 
-  // Step 3: Update local state
-  const key = challengeKey(challenge)
-  const existing = challenges$.getValue()
+function setChallengeStatus(challenge: Challenge, status: Challenge['status']): void {
   const merged = new Map<string, Challenge>()
-  for (const c of existing) merged.set(challengeKey(c), c)
-  merged.set(key, { ...challenge, status: 'responded' })
+  for (const c of challenges$.getValue()) merged.set(challengeKey(c), c)
+  merged.set(challengeKey(challenge), { ...challenge, status })
   challenges$.next(Array.from(merged.values()).sort((a, b) => b.deadline - a.deadline))
 }
 

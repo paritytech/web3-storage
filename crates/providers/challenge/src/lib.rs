@@ -10,13 +10,13 @@
 //! on a slow safety-net interval — a missed challenge means getting slashed,
 //! so the event path is backstopped rather than trusted blindly.
 
-use provider_chain::{BlockEvent, BlockEventRx};
+use provider_events::{BlockEvent, BlockEventRx};
 use sp_core::H256;
 use sp_runtime::AccountId32;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use storage_primitives::{BucketId, MerkleProof, MmrProof};
+use storage_primitives::{BucketId, ChunkLocation, Commitment, MmrProof};
 use tokio::sync::{broadcast, mpsc};
 
 /// Errors surfaced by the challenge responder.
@@ -38,19 +38,22 @@ pub enum ChallengeError {
 /// Backed by the provider node's storage backend; kept narrow so this crate
 /// stays decoupled from the full storage engine.
 pub trait ChallengeProofSource: Send + Sync {
-    /// Generate an MMR proof for the given leaf of a bucket's commitment.
-    fn get_mmr_proof(
+    /// Generate an MMR proof for `leaf_index` against the exact cited
+    /// commitment state (which later commits or prunes may have moved past).
+    fn get_mmr_proof_for_commitment(
         &self,
         bucket_id: BucketId,
+        commitment: &Commitment,
         leaf_index: u64,
     ) -> Result<MmrProof, ChallengeError>;
 
-    /// Fetch a chunk and its Merkle proof under the given data root.
+    /// Fetch a chunk and its Merkle proof (sibling hashes up to the data root)
+    /// under the given data root.
     fn get_chunk_at_index(
         &self,
         data_root: H256,
         chunk_index: u64,
-    ) -> Result<(Vec<u8>, MerkleProof), ChallengeError>;
+    ) -> Result<(Vec<u8>, Vec<H256>), ChallengeError>;
 }
 
 /// Configuration for the challenge responder.
@@ -91,16 +94,11 @@ pub struct DetectedChallenge {
     pub deadline: u32,
     /// Challenge index within the deadline.
     pub index: u16,
-    /// MMR root being challenged.
-    pub mmr_root: H256,
-    /// Start sequence of the commitment.
-    pub start_seq: u64,
-    /// Leaf index in the MMR to prove.
-    pub leaf_index: u64,
-    /// Chunk index within the leaf to prove.
-    pub chunk_index: u64,
-    /// Challenger's account.
-    pub challenger: String,
+    /// The commitment being challenged; on-chain proof verification is bound
+    /// to the exact `(target.leaf_index, commitment.leaf_count)` position.
+    pub commitment: Commitment,
+    /// Leaf + chunk to prove.
+    pub target: ChunkLocation,
 }
 
 /// Result of responding to a challenge.
@@ -136,7 +134,7 @@ pub trait ChallengeChainClient: Send + Sync {
     async fn poll_challenges(&self) -> Result<Vec<DetectedChallenge>, ChallengeError>;
 
     /// Point-read a single challenge by id, `None` if it is gone (already
-    /// responded / reaped) or targets another provider. Backs the
+    /// responded / resolved) or targets another provider. Backs the
     /// event-driven path, where `ChallengeCreated` carries the id but not
     /// the proof parameters.
     async fn fetch_challenge(
@@ -151,7 +149,7 @@ pub trait ChallengeChainClient: Send + Sync {
         challenge_id: (u32, u16),
         chunk_data: Vec<u8>,
         mmr_proof: MmrProof,
-        chunk_proof: MerkleProof,
+        chunk_proof: Vec<H256>,
     ) -> Result<H256, ChallengeError>;
 }
 
@@ -174,7 +172,7 @@ impl<T: ChallengeChainClient> ChallengeChainClient for Arc<T> {
         challenge_id: (u32, u16),
         chunk_data: Vec<u8>,
         mmr_proof: MmrProof,
-        chunk_proof: MerkleProof,
+        chunk_proof: Vec<H256>,
     ) -> Result<H256, ChallengeError> {
         self.as_ref()
             .submit_response(challenge_id, chunk_data, mmr_proof, chunk_proof)
@@ -336,9 +334,10 @@ impl ChallengeResponder {
                 // While paused, stop consuming so events stay queued instead of
                 // being dropped. Replaying them on resume is safe: each one is
                 // point-read against live chain state, so anything already
-                // resolved is a no-op. A pause longer than the channel's
-                // capacity surfaces as `Lagged` below, which reconciles with a
-                // full scan.
+                // resolved is a no-op; an expired, unresolved one costs one
+                // rejected response (`ChallengeExpired`). A pause longer than
+                // the channel's capacity surfaces as `Lagged` below, which
+                // reconciles with a full scan.
                 event = events_rx.recv(), if events_open && !paused => {
                     if matches!(event, Err(broadcast::error::RecvError::Closed)) {
                         events_open = false;
@@ -430,11 +429,15 @@ impl ChallengeResponder {
             challenge.bucket_id
         );
 
-        // Step 1: Generate MMR proof (includes the leaf with data_root)
-        let mmr_proof = match self
-            .proof_source
-            .get_mmr_proof(challenge.bucket_id, challenge.leaf_index)
-        {
+        // Step 1: Generate MMR proof (includes the leaf with data_root).
+        // The challenged leaf_index is relative to the cited commitment's
+        // start_seq, and the cited root may predate later commits or prunes,
+        // so the proof is rebuilt for that exact commitment state.
+        let mmr_proof = match self.proof_source.get_mmr_proof_for_commitment(
+            challenge.bucket_id,
+            &challenge.commitment,
+            challenge.target.leaf_index,
+        ) {
             Ok(proof) => proof,
             Err(e) => {
                 tracing::error!("Failed to generate MMR proof: {}", e);
@@ -449,7 +452,7 @@ impl ChallengeResponder {
         let data_root = mmr_proof.leaf.data_root;
         let (chunk_data, chunk_proof) = match self
             .proof_source
-            .get_chunk_at_index(data_root, challenge.chunk_index)
+            .get_chunk_at_index(data_root, challenge.target.chunk_index)
         {
             Ok(data) => data,
             Err(e) => {
@@ -457,7 +460,7 @@ impl ChallengeResponder {
                 return ChallengeResponseResult::DataNotFound {
                     challenge_id,
                     bucket_id: challenge.bucket_id,
-                    leaf_index: challenge.leaf_index,
+                    leaf_index: challenge.target.leaf_index,
                 };
             }
         };

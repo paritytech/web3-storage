@@ -64,14 +64,14 @@ pub enum Error {
     #[error(transparent)]
     Auth(#[from] AuthError),
 
-    #[error("Nonce counter unavailable; provider has not bootstrapped replay state")]
-    NonceCounterUnavailable,
-
     #[error("Provider is not accepting new primary agreements")]
     NotAcceptingPrimary,
 
     #[error("Provider is not accepting replica agreements")]
     NotAcceptingReplicas,
+
+    #[error("A replica quote requires an existing bucket: set `bucket`")]
+    ReplicaRequiresBucket,
 
     #[error("Proposed price_per_byte {proposed} is below the provider's listed price {listed}")]
     PriceBelowListed { proposed: u128, listed: u128 },
@@ -97,11 +97,9 @@ pub enum Error {
     )]
     ChainStateNotReady,
 
+    /// The node has not connected to the chain yet.
     #[error(transparent)]
-    Chain(#[from] provider_chain::Error),
-
-    #[error(transparent)]
-    Coordinator(#[from] provider_coordinator::Error),
+    ChainNotConnected(#[from] crate::chain_connection::NotConnected),
 
     /// The node cannot sign with its registered key. Each reason keeps the
     /// response code it had when these were three separate variants.
@@ -135,8 +133,6 @@ struct ErrorResponse {
 
 impl IntoResponse for Error {
     fn into_response(self) -> Response {
-        use provider_chain::Error as ChainError;
-        use provider_coordinator::Error as CoordinatorError;
         use provider_storage::Error as StorageError;
         let (status, error_response) = match &self {
             // Exhaustive on purpose — no wildcard — so a new storage variant
@@ -154,6 +150,30 @@ impl IntoResponse for Error {
                     ErrorResponse {
                         error: "children_missing".to_string(),
                         details: Some(serde_json::json!({ "missing": children })),
+                    },
+                ),
+                StorageError::InvalidChildCount(count) => (
+                    StatusCode::BAD_REQUEST,
+                    ErrorResponse {
+                        error: "invalid_child_count".to_string(),
+                        details: Some(serde_json::json!({ "expected": 2, "actual": count })),
+                    },
+                ),
+                StorageError::ChunkTooLarge { size } => (
+                    StatusCode::BAD_REQUEST,
+                    ErrorResponse {
+                        error: "chunk_too_large".to_string(),
+                        details: Some(serde_json::json!({
+                            "size": size,
+                            "max": storage_primitives::DEFAULT_CHUNK_SIZE,
+                        })),
+                    },
+                ),
+                StorageError::InvalidInternalNodeData => (
+                    StatusCode::BAD_REQUEST,
+                    ErrorResponse {
+                        error: "invalid_internal_node_data".to_string(),
+                        details: None,
                     },
                 ),
                 StorageError::QuotaExceeded { used, max } => (
@@ -177,6 +197,13 @@ impl IntoResponse for Error {
                         details: Some(serde_json::json!({ "data_root": root })),
                     },
                 ),
+                StorageError::CommitmentNotReproducible(reason) => (
+                    StatusCode::NOT_FOUND,
+                    ErrorResponse {
+                        error: "commitment_not_reproducible".to_string(),
+                        details: Some(serde_json::json!({ "reason": reason })),
+                    },
+                ),
                 StorageError::InvalidHash { expected, actual } => (
                     StatusCode::BAD_REQUEST,
                     ErrorResponse {
@@ -187,7 +214,17 @@ impl IntoResponse for Error {
                         })),
                     },
                 ),
-                e @ (StorageError::RocksDb(_) | StorageError::ColumnFamilyMissing(_)) => (
+                StorageError::NonCanonicalTree(root) => (
+                    StatusCode::BAD_REQUEST,
+                    ErrorResponse {
+                        error: "non_canonical_tree".to_string(),
+                        details: Some(serde_json::json!({ "data_root": root })),
+                    },
+                ),
+                e @ (StorageError::RocksDb(_)
+                | StorageError::ColumnFamilyMissing(_)
+                | StorageError::IncompatibleFormat(_)
+                | StorageError::Mmr(_)) => (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     ErrorResponse {
                         error: "internal_error".to_string(),
@@ -343,17 +380,6 @@ impl IntoResponse for Error {
                     },
                 },
             ),
-            Error::NonceCounterUnavailable => (
-                StatusCode::SERVICE_UNAVAILABLE,
-                ErrorResponse {
-                    error: "nonce_counter_unavailable".to_string(),
-                    details: Some(serde_json::json!({
-                        "message": "provider node has not bootstrapped its nonce counter from \
-                                    on-chain replay state; ensure the provider is registered and \
-                                    the chain is reachable, then retry"
-                    })),
-                },
-            ),
             Error::NotAcceptingPrimary => (
                 StatusCode::UNPROCESSABLE_ENTITY,
                 ErrorResponse {
@@ -365,6 +391,13 @@ impl IntoResponse for Error {
                 StatusCode::UNPROCESSABLE_ENTITY,
                 ErrorResponse {
                     error: "not_accepting_replicas".to_string(),
+                    details: None,
+                },
+            ),
+            Error::ReplicaRequiresBucket => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                ErrorResponse {
+                    error: "replica_requires_bucket".to_string(),
                     details: None,
                 },
             ),
@@ -422,33 +455,13 @@ impl IntoResponse for Error {
                     })),
                 },
             ),
-            // A chain error reaching us through the coordinator is the same
-            // failure as a direct one, so both map to the same status.
-            Error::Chain(err) | Error::Coordinator(CoordinatorError::Chain(err)) => match err {
-                ChainError::NotConnected => (
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    ErrorResponse {
-                        error: "chain_unavailable".to_string(),
-                        details: Some(serde_json::json!({
-                            "message": "the node has not yet established a connection to the chain"
-                        })),
-                    },
-                ),
-                ChainError::Connection(_) | ChainError::Internal(_) => (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    ErrorResponse {
-                        error: "internal_error".to_string(),
-                        details: Some(serde_json::json!({ "message": err.to_string() })),
-                    },
-                ),
-            },
-            // Destructured rather than stringified: the inner message is already
-            // the full text, so `to_string()` would prefix it a second time.
-            Error::Coordinator(CoordinatorError::Internal(msg)) => (
-                StatusCode::INTERNAL_SERVER_ERROR,
+            Error::ChainNotConnected(_) => (
+                StatusCode::SERVICE_UNAVAILABLE,
                 ErrorResponse {
-                    error: "internal_error".to_string(),
-                    details: Some(serde_json::json!({ "message": msg })),
+                    error: "chain_unavailable".to_string(),
+                    details: Some(serde_json::json!({
+                        "message": "the node has not yet established a connection to the chain"
+                    })),
                 },
             ),
             Error::ProviderDeregistering => (
@@ -500,6 +513,18 @@ mod tests {
             StatusCode::BAD_REQUEST
         );
         assert_eq!(
+            status_of(Error::from(provider_storage::Error::NonCanonicalTree(
+                "x".into()
+            ))),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            status_of(Error::from(provider_storage::Error::ChunkTooLarge {
+                size: 2
+            })),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
             status_of(Error::from(provider_storage::Error::QuotaExceeded {
                 used: 0,
                 max: 0
@@ -508,6 +533,12 @@ mod tests {
         );
         assert_eq!(
             status_of(Error::from(provider_storage::Error::BucketNotFound(1))),
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(
+            status_of(Error::from(
+                provider_storage::Error::CommitmentNotReproducible("x".into())
+            )),
             StatusCode::NOT_FOUND
         );
         assert_eq!(
@@ -619,23 +650,10 @@ mod tests {
             status_of(SigningRefused::NoKey.into()),
             StatusCode::SERVICE_UNAVAILABLE
         );
+        // A connection that was never established is retryable.
         assert_eq!(
-            status_of(Error::NonceCounterUnavailable),
+            status_of(crate::chain_connection::NotConnected.into()),
             StatusCode::SERVICE_UNAVAILABLE
-        );
-        // A connection that was never established is retryable; a failed
-        // connect attempt is a bug. They must not share a status code.
-        assert_eq!(
-            status_of(provider_chain::Error::NotConnected.into()),
-            StatusCode::SERVICE_UNAVAILABLE
-        );
-        assert_eq!(
-            status_of(provider_chain::Error::Internal("boom".into()).into()),
-            StatusCode::INTERNAL_SERVER_ERROR
-        );
-        assert_eq!(
-            status_of(provider_coordinator::Error::Internal("boom".into()).into()),
-            StatusCode::INTERNAL_SERVER_ERROR
         );
     }
 
@@ -703,22 +721,5 @@ mod tests {
             status_of(SigningRefused::KeyMismatch.into()),
             StatusCode::SERVICE_UNAVAILABLE
         );
-    }
-
-    #[test]
-    fn test_nonce_counter_unavailable_503() {
-        let resp = Error::NonceCounterUnavailable.into_response();
-        let (parts, body) = resp.into_parts();
-        assert_eq!(parts.status, StatusCode::SERVICE_UNAVAILABLE);
-
-        let body_bytes = tokio::runtime::Runtime::new()
-            .unwrap()
-            .block_on(async { axum::body::to_bytes(body, usize::MAX).await.unwrap() });
-        let json: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
-        assert_eq!(json["error"], "nonce_counter_unavailable");
-        assert!(json["details"]["message"]
-            .as_str()
-            .unwrap()
-            .contains("nonce counter"));
     }
 }
