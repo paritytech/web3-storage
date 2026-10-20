@@ -158,7 +158,7 @@ impl ClientVerifier {
         let start = Instant::now();
 
         // Read the chunk
-        let chunk_size = 256 * 1024; // 256 KiB
+        let chunk_size = u64::from(storage_primitives::DEFAULT_CHUNK_SIZE);
         let offset = chunk_index * chunk_size;
         let result = client.read_data(data_root, offset, chunk_size).await;
 
@@ -167,10 +167,7 @@ impl ClientVerifier {
 
         // Record the request
         match &result {
-            Ok(data) => {
-                // Verify chunk hash
-                let _expected_hash = storage_primitives::blake2_256(data);
-
+            Ok(_) => {
                 // Get the expected hash from the proof
                 // In a full implementation, we would fetch the chunk with proof
                 // and verify the proof chain up to the data_root

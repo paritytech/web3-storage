@@ -73,7 +73,7 @@ together maximise concurrency (bounded by `--max-concurrency` if set).
    reads its buckets from chain (`MemberBuckets[account]`) and keeps those with a
    `StorageAgreements[bucket][provider]` entry for the given `--provider`.
 2. With `--prepare-buckets N`, negotiates terms with the provider node
-   (`POST /negotiate`) and redeems them on-chain (`establish_storage_agreement`)
+   (`POST /negotiate`) and redeems them on-chain (`create_bucket_with_primary`)
    once per bucket, the same path as the SDK's `complete_workflow` example.
    Preparation runs before the measurement clock starts and never appears in the
    throughput or latency numbers. A preparation failure exits non-zero with no

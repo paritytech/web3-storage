@@ -299,7 +299,7 @@ pub async fn upload(
 
     let provider_hex = SubstrateClient::parse_account(&args.provider)
         .map_err(|e: storage_client::ClientError| anyhow!("invalid --provider account: {e}"))
-        .map(|ac| format!("0x{}", hex::encode(ac.as_ref() as &[u8])))?;
+        .map(|ac| array_bytes::bytes2hex("0x", ac.as_ref() as &[u8]))?;
 
     let config = build_config(global);
 

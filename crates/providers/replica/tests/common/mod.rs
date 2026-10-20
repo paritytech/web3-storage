@@ -13,11 +13,9 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::Router;
 use base64::Engine;
-use provider_storage::{temp_rocksdb, StorageBackend};
 use sp_core::H256;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tempfile::TempDir;
 
 /// One canned answer from the mock primary: a status and a body. Tests serve
 /// bodies a real primary could not produce, so this is a raw string rather
@@ -34,16 +32,9 @@ pub fn body(body: impl Into<String>) -> Reply {
     (StatusCode::OK, body.into())
 }
 
-/// Fresh empty storage backend. The returned `TempDir` must outlive the
-/// backend - dropping it takes the database with it.
-pub fn test_storage() -> (Arc<dyn StorageBackend>, TempDir) {
-    let (storage, _nonce_store, dir) = temp_rocksdb();
-    (storage, dir)
-}
-
 /// `0x`-prefixed hex, the form both provider endpoints use for hashes.
 pub fn hex_hash(hash: H256) -> String {
-    format!("0x{}", hex::encode(hash.as_bytes()))
+    format!("{hash:#x}")
 }
 
 pub fn base64(data: &[u8]) -> String {

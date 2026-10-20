@@ -2,7 +2,11 @@
 
 //! API types for the provider node.
 
+use crate::error::Error;
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
+use provider_storage::ChunkTreeNode;
 use serde::{Deserialize, Serialize};
+use sp_core::H256;
 use storage_primitives::BucketId;
 
 pub use provider_storage::{BucketStats, BucketSummary};
@@ -12,16 +16,28 @@ pub use provider_types::ProviderInfo;
 // Node Upload/Download Types
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Decode a `0x`-prefixed or bare hex hash. Returns `InvalidHash` if the hex is
+/// invalid or the length is not 32 bytes.
+pub(crate) fn decode_hash(hash: &str) -> Result<H256, Error> {
+    hash.parse::<H256>().map_err(|e| Error::InvalidHash {
+        expected: hash.to_string(),
+        actual: e.to_string(),
+    })
+}
+
 /// Request to upload a node (chunk or internal node).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UploadNodeRequest {
     /// Bucket this node belongs to
     pub bucket_id: BucketId,
-    /// Expected hash of the node data
+    /// Expected hash of the node: the chunk hash for a chunk, the hash of
+    /// the two children for an internal node
     pub hash: String,
-    /// Base64-encoded node data
+    /// Base64-encoded node data: the chunk bytes for a chunk, the left child
+    /// hash followed by the right child hash for an internal node. The
+    /// provider rejects an internal node whose data differs.
     pub data: String,
-    /// Child hashes for internal nodes, null for leaf chunks
+    /// Left and right child hashes for an internal node, null for a chunk
     pub children: Option<Vec<String>>,
 }
 
@@ -34,9 +50,25 @@ pub struct UploadNodeResponse {
 /// Response from downloading a node.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DownloadNodeResponse {
-    pub hash: String,
+    pub hash: H256,
     pub data: String,
-    pub children: Option<Vec<String>>,
+    pub children: Option<Vec<H256>>,
+}
+
+impl DownloadNodeResponse {
+    /// The wire form of `node`, which is stored under `hash`.
+    pub fn new(hash: H256, node: &ChunkTreeNode) -> Self {
+        let children = match node {
+            ChunkTreeNode::Chunk(_) => None,
+            ChunkTreeNode::Internal { left, right } => Some(vec![*left, *right]),
+        };
+
+        Self {
+            hash,
+            data: BASE64.encode(node.preimage()),
+            children,
+        }
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -53,8 +85,8 @@ pub struct ExistsRequest {
 /// Response with existing and missing nodes.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExistsResponse {
-    pub exists: Vec<String>,
-    pub missing: Vec<String>,
+    pub exists: Vec<H256>,
+    pub missing: Vec<H256>,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -72,9 +104,9 @@ pub struct CommitRequest {
 /// Response from commit operation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CommitResponse {
-    pub mmr_root: String,
+    pub mmr_root: H256,
     pub start_seq: u64,
-    /// Number of leaves in the MMR after the commit.
+    /// Leaf count of the MMR after this commit (signed into the commitment).
     pub leaf_count: u64,
     /// Leaf indices assigned to each data root
     pub leaf_indices: Vec<u64>,
@@ -97,9 +129,9 @@ pub struct ReadQuery {
 /// A chunk with its proof.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChunkWithProof {
-    pub hash: String,
+    pub hash: H256,
     pub data: String,
-    pub proof: Vec<String>,
+    pub proof: Vec<H256>,
 }
 
 /// Response with chunks.
@@ -122,7 +154,7 @@ pub struct CommitmentQuery {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CommitmentResponse {
     pub bucket_id: BucketId,
-    pub mmr_root: String,
+    pub mmr_root: H256,
     pub start_seq: u64,
     pub leaf_count: u64,
     pub provider_signature: String,
@@ -132,7 +164,7 @@ pub struct CommitmentResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CheckpointSignatureResponse {
     pub bucket_id: BucketId,
-    pub mmr_root: String,
+    pub mmr_root: H256,
     pub start_seq: u64,
     pub leaf_count: u64,
     pub provider_signature: String,
@@ -149,29 +181,6 @@ pub struct MmrProofQuery {
     pub leaf_index: u64,
 }
 
-/// MMR leaf data.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MmrLeafData {
-    pub data_root: String,
-    pub data_size: u64,
-    pub total_size: u64,
-}
-
-/// MMR proof response.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MmrProofResponse {
-    pub leaf: MmrLeafData,
-    pub proof: MmrProofData,
-}
-
-/// MMR proof data.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MmrProofData {
-    pub peaks: Vec<String>,
-    pub siblings: Vec<String>,
-    pub path: Vec<bool>,
-}
-
 /// Query for chunk proof.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ChunkProofQuery {
@@ -182,18 +191,12 @@ pub struct ChunkProofQuery {
 /// Chunk proof response.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChunkProofResponse {
-    pub chunk_hash: String,
+    pub chunk_hash: H256,
     /// Base64-encoded chunk data (included for challenge responses)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub chunk_data: Option<String>,
-    pub proof: MerkleProofData,
-}
-
-/// Merkle proof data.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MerkleProofData {
-    pub siblings: Vec<String>,
-    pub path: Vec<bool>,
+    /// Sibling hashes from the chunk up to `data_root`.
+    pub proof: Vec<H256>,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -213,7 +216,7 @@ pub struct DeleteRequest {
 /// Response from delete operation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeleteResponse {
-    pub mmr_root: String,
+    pub mmr_root: H256,
     pub start_seq: u64,
     pub leaf_count: u64,
     pub provider_signature: String,
@@ -250,8 +253,6 @@ pub struct InfoResponse {
 pub struct ProviderReadiness {
     /// A signing keypair is configured (node started with `--keyfile`).
     pub signing_configured: bool,
-    /// The nonce counter is bootstrapped from on-chain replay state.
-    pub nonce_counter_ready: bool,
     /// On-chain provider registration info has been loaded.
     pub provider_info_loaded: bool,
     /// The provider has announced deregistration; `/negotiate` is disabled and
@@ -290,8 +291,8 @@ pub struct MmrPeaksQuery {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MmrPeaksResponse {
     pub bucket_id: BucketId,
-    pub mmr_root: String,
-    pub peaks: Vec<String>,
+    pub mmr_root: H256,
+    pub peaks: Vec<H256>,
 }
 
 /// Query for MMR subtree.
@@ -306,7 +307,7 @@ pub struct MmrSubtreeQuery {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MmrNode {
     pub position: u64,
-    pub hash: String,
+    pub hash: H256,
     pub children: Option<Vec<u64>>,
 }
 
@@ -323,18 +324,10 @@ pub struct FetchNodesRequest {
     pub hashes: Vec<String>,
 }
 
-/// Fetched node data.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FetchedNode {
-    pub hash: String,
-    pub data: String,
-    pub children: Option<Vec<String>>,
-}
-
 /// Response with fetched nodes.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FetchNodesResponse {
-    pub nodes: Vec<FetchedNode>,
+    pub nodes: Vec<DownloadNodeResponse>,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -352,7 +345,7 @@ pub struct HistoricalRootsQuery {
 pub struct HistoricalRootsResponse {
     pub bucket_id: BucketId,
     /// Current MMR root (position 0).
-    pub current_root: String,
+    pub current_root: H256,
     /// Historical roots (positions 1-6).
     pub historical_roots: [String; 6],
     /// Block number of the snapshot.
@@ -370,7 +363,7 @@ pub struct BucketSyncStatusQuery {
 pub struct BucketSyncStatusResponse {
     pub bucket_id: BucketId,
     /// Local MMR root.
-    pub local_mmr_root: String,
+    pub local_mmr_root: H256,
     /// Local leaf count.
     pub local_leaf_count: u64,
     /// Block number of last sync (if any).
@@ -404,4 +397,22 @@ pub struct ReplicaSyncCoordinatorStatusResponse {
     pub active_syncs: usize,
     /// Buckets being tracked as replica.
     pub tracked_buckets: Vec<BucketId>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn decode_hash_accepts_32_bytes_with_or_without_prefix() {
+        let hex = "ab".repeat(32);
+        assert_eq!(decode_hash(&hex).unwrap(), H256::repeat_byte(0xab));
+        assert_eq!(
+            decode_hash(&format!("0x{hex}")).unwrap(),
+            H256::repeat_byte(0xab)
+        );
+        for bad in ["ab".repeat(31), "ab".repeat(33), "zz".repeat(32)] {
+            assert!(matches!(decode_hash(&bad), Err(Error::InvalidHash { .. })));
+        }
+    }
 }

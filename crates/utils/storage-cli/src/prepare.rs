@@ -214,6 +214,17 @@ pub async fn prepare_buckets(
 
     let mut buckets = Vec::with_capacity(params.count);
     for i in 1..=params.count {
+        // Each created agreement consumes the owner's next nonce, so read it
+        // from chain per bucket instead of counting locally.
+        let nonce = admin
+            .agreement_nonce(&params.owner)
+            .await
+            .with_context(|| {
+                format!(
+                    "failed to read the agreement nonce for bucket {i}/{}",
+                    params.count
+                )
+            })?;
         let signed = ProviderClient::negotiate_terms(
             params.provider_url,
             &NegotiateRequest {
@@ -221,8 +232,9 @@ pub async fn prepare_buckets(
                 max_bytes: params.max_bytes,
                 duration: params.duration,
                 price_per_byte: params.price_per_byte,
-                bucket_id: None,
+                nonce,
                 replica_params: None,
+                bucket: None,
             },
         )
         .await
@@ -234,7 +246,7 @@ pub async fn prepare_buckets(
         })?;
 
         let bucket_id = admin
-            .establish_storage_agreement(params.provider.to_string(), signed, Visibility::Private)
+            .create_bucket_with_primary(params.provider.to_string(), signed, Visibility::Private)
             .await
             .with_context(|| {
                 format!(
