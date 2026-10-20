@@ -481,3 +481,29 @@ pub fn setup_added_primary(
         sig
     ));
 }
+
+/// Helper: register providers 2 and 3, open a primary agreement for 2 with
+/// admin 1 and checkpoint the bucket with 2's signature. Provider 3 is free
+/// for `setup_added_primary`.
+#[allow(dead_code)]
+pub fn setup_signed_checkpoint() -> (u64, storage_primitives::Commitment) {
+    use frame_support::assert_ok;
+    run_to_block(1);
+    register_provider(2, 200);
+    register_provider(3, 200);
+    let bucket_id = setup_agreement(2, 1, 50, 100);
+    let commitment = storage_primitives::Commitment {
+        mmr_root: H256::repeat_byte(0xAB),
+        start_seq: 0,
+        leaf_count: 10,
+    };
+    assert_ok!(StorageProvider::checkpoint(
+        RuntimeOrigin::signed(1),
+        bucket_id,
+        commitment,
+        vec![(2, sign_commitment(2, bucket_id, commitment))]
+            .try_into()
+            .unwrap(),
+    ));
+    (bucket_id, commitment)
+}

@@ -137,25 +137,7 @@ fn extend_checkpoint_works_after_initial_checkpoint() {
 #[test]
 fn extend_checkpoint_skips_primary_that_already_signed() {
     new_test_ext().execute_with(|| {
-        // Signature checks need real primaries, so set up agreements.
-        run_to_block(1);
-        register_provider(2, 200);
-        register_provider(3, 200);
-        let bucket_id = setup_agreement(2, 1, 50, 100);
-
-        let commitment = Commitment {
-            mmr_root: H256::repeat_byte(0xAB),
-            start_seq: 0,
-            leaf_count: 10,
-        };
-        assert_ok!(StorageProvider::checkpoint(
-            RuntimeOrigin::signed(1),
-            bucket_id,
-            commitment,
-            vec![(2, sign_commitment(2, bucket_id, commitment))]
-                .try_into()
-                .unwrap(),
-        ));
+        let (bucket_id, commitment) = setup_signed_checkpoint();
         setup_added_primary(3, 1, bucket_id, 50, 100);
 
         // Provider 2 already signed, so its invalid signature is not verified.
@@ -190,25 +172,7 @@ fn extend_checkpoint_skips_primary_that_already_signed() {
 #[test]
 fn extend_checkpoint_skips_duplicate_signer_in_same_call() {
     new_test_ext().execute_with(|| {
-        // Signature checks need real primaries, so set up agreements.
-        run_to_block(1);
-        register_provider(2, 200);
-        register_provider(3, 200);
-        let bucket_id = setup_agreement(2, 1, 50, 100);
-
-        let commitment = Commitment {
-            mmr_root: H256::repeat_byte(0xAB),
-            start_seq: 0,
-            leaf_count: 10,
-        };
-        assert_ok!(StorageProvider::checkpoint(
-            RuntimeOrigin::signed(1),
-            bucket_id,
-            commitment,
-            vec![(2, sign_commitment(2, bucket_id, commitment))]
-                .try_into()
-                .unwrap(),
-        ));
+        let (bucket_id, commitment) = setup_signed_checkpoint();
         setup_added_primary(3, 1, bucket_id, 50, 100);
 
         // The first entry sets provider 3's bit, so the second (invalid) entry

@@ -5,8 +5,7 @@
 
 use super::*;
 use frame_support::traits::Get;
-use sp_core::H256;
-use storage_primitives::{ChunkLocation, Commitment, EndAction, Visibility};
+use storage_primitives::{ChunkLocation, EndAction, Visibility};
 
 /// Signed primary terms for an existing bucket. Build the quote before
 /// `assert_noop!`: `provider_signer` writes the provider's key into storage.
@@ -322,24 +321,7 @@ fn add_primary_provider_works_on_a_frozen_bucket() {
 #[test]
 fn added_primary_is_challengeable_only_after_it_signs_the_snapshot() {
     new_test_ext().execute_with(|| {
-        run_to_block(1);
-        register_provider(2, 200);
-        register_provider(3, 200);
-        let bucket_id = setup_agreement(2, 1, 50, 100);
-
-        let commitment = Commitment {
-            mmr_root: H256::repeat_byte(0xAB),
-            start_seq: 0,
-            leaf_count: 10,
-        };
-        assert_ok!(StorageProvider::checkpoint(
-            RuntimeOrigin::signed(1),
-            bucket_id,
-            commitment,
-            vec![(2, sign_commitment(2, bucket_id, commitment))]
-                .try_into()
-                .unwrap(),
-        ));
+        let (bucket_id, commitment) = setup_signed_checkpoint();
 
         setup_added_primary(3, 1, bucket_id, 50, 100);
         let bucket = Buckets::<Test>::get(bucket_id).unwrap();
@@ -378,24 +360,7 @@ fn added_primary_is_challengeable_only_after_it_signs_the_snapshot() {
 #[test]
 fn primary_added_after_the_only_signer_left_becomes_challengeable_after_it_signs() {
     new_test_ext().execute_with(|| {
-        run_to_block(1);
-        register_provider(2, 200);
-        register_provider(3, 200);
-        let bucket_id = setup_agreement(2, 1, 50, 100);
-
-        let commitment = Commitment {
-            mmr_root: H256::repeat_byte(0xAB),
-            start_seq: 0,
-            leaf_count: 10,
-        };
-        assert_ok!(StorageProvider::checkpoint(
-            RuntimeOrigin::signed(1),
-            bucket_id,
-            commitment,
-            vec![(2, sign_commitment(2, bucket_id, commitment))]
-                .try_into()
-                .unwrap(),
-        ));
+        let (bucket_id, commitment) = setup_signed_checkpoint();
 
         assert_ok!(StorageProvider::end_agreement(
             RuntimeOrigin::signed(1),
