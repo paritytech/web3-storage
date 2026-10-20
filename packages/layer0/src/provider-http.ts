@@ -9,6 +9,7 @@
 import {
   base64ToBytes,
   bytesToBase64,
+  chunkCount,
   CidMismatchError,
   DEFAULT_CHUNK_SIZE,
   hashChildren,
@@ -17,6 +18,7 @@ import {
   signProviderRequest,
   type ProviderRequestSigner,
 } from "@web3-storage/core";
+import { Enum } from "polkadot-api";
 
 import { asHex, toHex, type ParachainApi } from "./address.js";
 import type { ChainSigner } from "./signers.js";
@@ -200,21 +202,25 @@ export async function fetchCheckpointSignature(
   });
 }
 
+/** The `response` argument of `respond_to_challenge`. */
+export type ChallengeResponse = Parameters<
+  ParachainApi["tx"]["StorageProvider"]["respond_to_challenge"]
+>[0]["response"];
+
 /** The `Proof` payload of a `respond_to_challenge` response. */
-export type ChallengeProof = Extract<
-  Parameters<ParachainApi["tx"]["StorageProvider"]["respond_to_challenge"]>[0]["response"],
-  { type: "Proof" }
->["value"];
+export type ChallengeProof = Extract<ChallengeResponse, { type: "Proof" }>["value"];
 
 /**
- * Build the proof payload for `respond_to_challenge` by reading the challenge
- * from chain state and fetching MMR + chunk proofs from the provider node.
+ * Build the response for `respond_to_challenge` by reading the challenge from
+ * chain state and fetching the proofs from the provider node: a `Proof` with
+ * the chunk, or `ChunkOutOfRange` with the leaf's MMR proof alone when the
+ * challenged `chunk_index` is at or past the leaf's chunk count.
  */
 export async function fetchChallengeProof(
   api: ParachainApi,
   providerUrl: string,
   challengeId: { deadline: number; index: number },
-): Promise<ChallengeProof> {
+): Promise<ChallengeResponse> {
   // Best block: a finalized read would lag the just-created challenge.
   // Challenges is a StorageDoubleMap keyed by (deadline, index), so the single
   // challenge is read directly with both keys.
@@ -241,6 +247,18 @@ export async function fetchChallengeProof(
     throw new Error(
       "Provider /mmr_proof response has no `items`: the provider node is older than this client",
     );
+  const mmr_proof = {
+    leaf: {
+      data_root: asHex(mmr.leaf.data_root),
+      data_size: BigInt(mmr.leaf.data_size),
+      total_size: BigInt(mmr.leaf.total_size),
+    },
+    items: mmr.items.map((h: string) => asHex(h)),
+  };
+  if (challenge.target.chunk_index >= BigInt(chunkCount(Number(mmr.leaf.data_size)))) {
+    return Enum("ChunkOutOfRange", { mmr_proof });
+  }
+
   const chunk = await providerFetch(providerUrl, "/chunk_proof", {
     params: {
       data_root: mmr.leaf.data_root,
@@ -252,16 +270,9 @@ export async function fetchChallengeProof(
       "Provider /chunk_proof response `proof` is not a list of hashes: the provider node is older than this client",
     );
 
-  return {
+  return Enum("Proof", {
     chunk_data: base64ToBytes(chunk.chunk_data),
-    mmr_proof: {
-      leaf: {
-        data_root: asHex(mmr.leaf.data_root),
-        data_size: BigInt(mmr.leaf.data_size),
-        total_size: BigInt(mmr.leaf.total_size),
-      },
-      items: mmr.items.map((h: string) => asHex(h)),
-    },
+    mmr_proof,
     chunk_proof: chunk.proof.map((h: string) => asHex(h)),
-  };
+  });
 }

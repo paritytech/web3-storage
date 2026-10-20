@@ -26,6 +26,7 @@
  */
 
 import assert from "node:assert";
+import { Enum } from "polkadot-api";
 import {
   bytesEq,
   challengeOffchain,
@@ -114,14 +115,15 @@ async function main() {
           // Keep the real MMR proof; replace the chunk with the bytes of `L`
           // and the 2-step chunk proof with the 1-step proof `[R]`.
           const real = await fetchChallengeProof(api, PROVIDER_URL, challengeId);
+          assert.strictEqual(real.type, "Proof");
           const nodeBytes = new Uint8Array(64);
           nodeBytes.set(leaves[0], 0);
           nodeBytes.set(leaves[1], 32);
-          const forged = {
-            ...real,
+          const forged = Enum("Proof", {
+            ...real.value,
             chunk_data: nodeBytes,
             chunk_proof: [toHex(right)],
-          };
+          });
 
           await assert.rejects(
             respondToChallenge(api, provider, challengeId, forged),

@@ -477,17 +477,18 @@ export async function challengeCheckpoint(
   ).challenge_id;
 }
 
+/** Submit `response`, as built by `fetchChallengeProof`, for `challengeId`. */
 export async function respondToChallenge(
   api: ParachainApi,
   provider: ChainSigner,
   challengeId: any,
-  proof: any,
+  response: any,
   opts: SubmitOpts = {},
 ) {
   return submitTx(
     api.tx.StorageProvider.respond_to_challenge({
       challenge_id: challengeId,
-      response: Enum("Proof", proof),
+      response,
     }),
     provider.signer,
     { label: "respond_to_challenge", ...opts },
