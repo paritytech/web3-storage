@@ -8,7 +8,7 @@
 //! a failed upload.
 
 use std::fmt;
-use std::num::NonZeroUsize;
+use std::num::{NonZeroU64, NonZeroUsize};
 use std::time::Instant;
 
 use anyhow::{bail, Context, Result};
@@ -138,6 +138,32 @@ pub fn default_max_bytes(needed: u64) -> Result<u64> {
     needed
         .checked_add(needed / 10)
         .context("agreement quota overflows u64")
+}
+
+/// `--prepare-max-bytes` without `--prepare-buckets` would be ignored; reject
+/// it, like `--bucket-source create` without `--prepare-buckets`.
+pub fn check_prepare_flags(
+    prepare_buckets: usize,
+    prepare_max_bytes: Option<NonZeroU64>,
+) -> Result<()> {
+    if prepare_buckets == 0 && prepare_max_bytes.is_some() {
+        bail!("--prepare-max-bytes needs --prepare-buckets >= 1");
+    }
+    Ok(())
+}
+
+/// The quota to negotiate: the explicit `--prepare-max-bytes` if it covers the
+/// per-bucket load, else the default. Checked up front because the provider
+/// would accept the agreement and then reject uploads past the quota.
+pub fn resolve_max_bytes(given: Option<NonZeroU64>, needed: u64) -> Result<u64> {
+    match given {
+        Some(given) if given.get() < needed => bail!(
+            "--prepare-max-bytes {given} is below the {needed} bytes this run writes to a \
+             single bucket"
+        ),
+        Some(given) => Ok(given.get()),
+        None => default_max_bytes(needed),
+    }
 }
 
 /// Terms of the agreements to open.
@@ -350,5 +376,21 @@ mod tests {
     fn default_quota_adds_ten_percent() {
         assert_eq!(default_max_bytes(1_000).unwrap(), 1_100);
         assert!(default_max_bytes(u64::MAX).is_err());
+    }
+
+    #[test]
+    fn explicit_quota_must_cover_the_load() {
+        let given = |n: u64| NonZeroU64::new(n);
+        assert!(resolve_max_bytes(given(999), 1_000).is_err());
+        assert_eq!(resolve_max_bytes(given(1_000), 1_000).unwrap(), 1_000);
+        assert_eq!(resolve_max_bytes(given(5_000), 1_000).unwrap(), 5_000);
+        assert_eq!(resolve_max_bytes(None, 1_000).unwrap(), 1_100);
+    }
+
+    #[test]
+    fn quota_flag_needs_prepare_buckets() {
+        assert!(check_prepare_flags(0, NonZeroU64::new(1)).is_err());
+        assert!(check_prepare_flags(0, None).is_ok());
+        assert!(check_prepare_flags(2, NonZeroU64::new(1)).is_ok());
     }
 }
