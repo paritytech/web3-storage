@@ -1129,6 +1129,26 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
+    async fn test_chunk_proof_past_the_last_chunk_is_out_of_range(backend) {
+        let server = TestServer::new(backend).await;
+        let (hash_hex, _body) = upload_and_commit(&server, 1).await;
+
+        let resp = server
+            .client
+            .get(server.url(&format!("/chunk_proof?data_root={hash_hex}&chunk_index=1")))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+        let body: Value = resp.json().await.unwrap();
+        assert_eq!(body["error"], "chunk_index_out_of_range");
+        assert_eq!(body["details"]["chunk_index"], 1);
+        assert_eq!(body["details"]["chunk_count"], 1);
+    }
+}
+
+common::backend_tests! {
     async fn test_chunk_proof_invalid_root(backend) {
         let server = TestServer::new(backend).await;
 

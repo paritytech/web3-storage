@@ -33,6 +33,11 @@ pub enum Error {
     #[error("Chunk too large: {size} bytes, max {max}", max = storage_primitives::DEFAULT_CHUNK_SIZE)]
     ChunkTooLarge { size: u64 },
 
+    /// `chunk_index` is at or beyond the chunk count of the tree under the
+    /// data root: the leaf has no such chunk.
+    #[error("Chunk index {chunk_index} out of range: the tree has {chunk_count} chunks")]
+    ChunkIndexOutOfRange { chunk_index: u64, chunk_count: u64 },
+
     #[error("Bucket not found: {0}")]
     BucketNotFound(u64),
 

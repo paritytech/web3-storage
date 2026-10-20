@@ -815,6 +815,17 @@ fn to_runtime_hash(hash: H256) -> subxt::utils::H256 {
     subxt::utils::H256(hash.0)
 }
 
+fn to_runtime_mmr_proof(mmr_proof: storage_primitives::MmrProof) -> RuntimeMmrProof {
+    RuntimeMmrProof {
+        leaf: RuntimeMmrLeaf {
+            data_root: to_runtime_hash(mmr_proof.leaf.data_root),
+            data_size: mmr_proof.leaf.data_size,
+            total_size: mmr_proof.leaf.total_size,
+        },
+        items: mmr_proof.items.into_iter().map(to_runtime_hash).collect(),
+    }
+}
+
 fn commitment(commitment: RuntimeCommitment) -> Commitment {
     Commitment {
         mmr_root: H256::from(commitment.mmr_root.0),
@@ -985,28 +996,44 @@ impl ChallengeChainClient for SubxtChainClient {
 
         let response = RuntimeChallengeResponse::Proof {
             chunk_data: BoundedVec(chunk_data),
-            mmr_proof: RuntimeMmrProof {
-                leaf: RuntimeMmrLeaf {
-                    data_root: to_runtime_hash(mmr_proof.leaf.data_root),
-                    data_size: mmr_proof.leaf.data_size,
-                    total_size: mmr_proof.leaf.total_size,
-                },
-                items: mmr_proof.items.into_iter().map(to_runtime_hash).collect(),
-            },
+            mmr_proof: to_runtime_mmr_proof(mmr_proof),
             chunk_proof: chunk_proof.into_iter().map(to_runtime_hash).collect(),
         };
+        self.submit_challenge_response(deadline, index, response)
+            .await
+    }
 
+    async fn submit_chunk_out_of_range(
+        &self,
+        challenge_id: (u32, u16),
+        mmr_proof: storage_primitives::MmrProof,
+    ) -> Result<H256, ChallengeError> {
+        let (deadline, index) = challenge_id;
+        let response = RuntimeChallengeResponse::ChunkOutOfRange {
+            mmr_proof: to_runtime_mmr_proof(mmr_proof),
+        };
+        self.submit_challenge_response(deadline, index, response)
+            .await
+    }
+}
+
+impl SubxtChainClient {
+    /// Submit `response` for the challenge `(deadline, index)` and return the
+    /// block that took it. Zero only when success was inferred from a
+    /// duplicate rejection, where that block is unknown.
+    async fn submit_challenge_response(
+        &self,
+        deadline: u32,
+        index: u16,
+        response: RuntimeChallengeResponse,
+    ) -> Result<H256, ChallengeError> {
         let tx = storage_subxt::api::tx()
             .storage_provider()
             .respond_to_challenge(RuntimeChallengeId { deadline, index }, response);
-
-        // Zero only when success was inferred from a duplicate rejection, where
-        // the block that took the response is genuinely unknown.
         let block_hash = self
             .submit_and_finalize(&tx, "respond_to_challenge")
             .await
             .map_err(|e| ChallengeError::Chain(e.to_string()))?;
-
         Ok(block_hash.unwrap_or_default())
     }
 }

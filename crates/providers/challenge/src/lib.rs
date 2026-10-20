@@ -151,6 +151,15 @@ pub trait ChallengeChainClient: Send + Sync {
         mmr_proof: MmrProof,
         chunk_proof: Vec<H256>,
     ) -> Result<H256, ChallengeError>;
+
+    /// Submit a `ChunkOutOfRange` response: the challenged `chunk_index` is at
+    /// or beyond the leaf's chunk count, so only the leaf's MMR proof goes on
+    /// chain.
+    async fn submit_chunk_out_of_range(
+        &self,
+        challenge_id: (u32, u16),
+        mmr_proof: MmrProof,
+    ) -> Result<H256, ChallengeError>;
 }
 
 #[async_trait::async_trait]
@@ -176,6 +185,16 @@ impl<T: ChallengeChainClient> ChallengeChainClient for Arc<T> {
     ) -> Result<H256, ChallengeError> {
         self.as_ref()
             .submit_response(challenge_id, chunk_data, mmr_proof, chunk_proof)
+            .await
+    }
+
+    async fn submit_chunk_out_of_range(
+        &self,
+        challenge_id: (u32, u16),
+        mmr_proof: MmrProof,
+    ) -> Result<H256, ChallengeError> {
+        self.as_ref()
+            .submit_chunk_out_of_range(challenge_id, mmr_proof)
             .await
     }
 }
@@ -448,29 +467,36 @@ impl ChallengeResponder {
             }
         };
 
-        // Step 2: Get chunk data and Merkle proof using data_root from MMR leaf
-        let data_root = mmr_proof.leaf.data_root;
-        let (chunk_data, chunk_proof) = match self
-            .proof_source
-            .get_chunk_at_index(data_root, challenge.target.chunk_index)
-        {
-            Ok(data) => data,
-            Err(e) => {
-                tracing::error!("Failed to get chunk data: {}", e);
-                return ChallengeResponseResult::DataNotFound {
-                    challenge_id,
-                    bucket_id: challenge.bucket_id,
-                    leaf_index: challenge.target.leaf_index,
-                };
-            }
+        // Step 2: a chunk index at or past the leaf's chunk count has no chunk
+        // to prove, so the leaf's MMR proof alone answers it. Otherwise fetch
+        // the chunk and its Merkle proof under the leaf's data_root.
+        let chunk_count = storage_primitives::chunk_count(mmr_proof.leaf.data_size);
+        let submitted = if challenge.target.chunk_index >= chunk_count {
+            self.chain_client
+                .submit_chunk_out_of_range(challenge_id, mmr_proof)
+                .await
+        } else {
+            let (chunk_data, chunk_proof) = match self
+                .proof_source
+                .get_chunk_at_index(mmr_proof.leaf.data_root, challenge.target.chunk_index)
+            {
+                Ok(data) => data,
+                Err(e) => {
+                    tracing::error!("Failed to get chunk data: {}", e);
+                    return ChallengeResponseResult::DataNotFound {
+                        challenge_id,
+                        bucket_id: challenge.bucket_id,
+                        leaf_index: challenge.target.leaf_index,
+                    };
+                }
+            };
+            self.chain_client
+                .submit_response(challenge_id, chunk_data, mmr_proof, chunk_proof)
+                .await
         };
 
-        // Step 3: Submit response transaction
-        match self
-            .chain_client
-            .submit_response(challenge_id, chunk_data, mmr_proof, chunk_proof)
-            .await
-        {
+        // Step 3: report the submission outcome
+        match submitted {
             Ok(block_hash) => {
                 tracing::info!(
                     "Successfully responded to challenge {:?} in block {:?}",
