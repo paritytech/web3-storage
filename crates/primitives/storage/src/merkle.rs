@@ -23,10 +23,10 @@ pub struct MerkleNode {
 
 /// Number of chunks (tree leaves) of data with `data_size` bytes.
 ///
-/// Every chunk is `DEFAULT_CHUNK_SIZE` bytes except the last, and empty data is
-/// one empty chunk.
+/// Every chunk is `DEFAULT_CHUNK_SIZE` bytes except the last, which has 1 to
+/// `DEFAULT_CHUNK_SIZE` bytes. Empty data has no chunks and no tree.
 pub fn chunk_count(data_size: u64) -> u64 {
-    data_size.div_ceil(DEFAULT_CHUNK_SIZE as u64).max(1)
+    data_size.div_ceil(DEFAULT_CHUNK_SIZE as u64)
 }
 
 /// Every level of the tree, from the leaves (first) to the root (last, one
@@ -387,9 +387,9 @@ mod tests {
     }
 
     #[test]
-    fn chunk_count_rounds_up_and_has_a_minimum_of_one() {
+    fn chunk_count_rounds_up_and_is_zero_for_empty_data() {
         let chunk = DEFAULT_CHUNK_SIZE as u64;
-        assert_eq!(chunk_count(0), 1);
+        assert_eq!(chunk_count(0), 0);
         assert_eq!(chunk_count(1), 1);
         assert_eq!(chunk_count(chunk), 1);
         assert_eq!(chunk_count(chunk + 1), 2);

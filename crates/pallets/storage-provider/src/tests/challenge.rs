@@ -1397,6 +1397,43 @@ mod challenge_tests {
         });
     }
 
+    /// A leaf with `data_size == 0` has no chunk: `chunk_count(0)` is 0, so no
+    /// `Proof` verifies for any `chunk_index`. The provider must not commit
+    /// such a leaf (`/commit` rejects a tree whose only chunk is empty).
+    #[test]
+    fn empty_leaf_has_no_chunk_to_prove() {
+        new_test_ext().execute_with(|| {
+            System::set_block_number(1);
+            let (mmr_root, mmr_proof) = single_leaf_mmr(hash_leaf(&[]), 0);
+            setup_primary_with_snapshot(mmr_root, 0, 1);
+
+            assert_ok!(StorageProvider::challenge_checkpoint(
+                RuntimeOrigin::signed(3),
+                0,
+                2,
+                ChunkLocation {
+                    leaf_index: 0,
+                    chunk_index: 0,
+                },
+            ));
+            assert_noop!(
+                StorageProvider::respond_to_challenge(
+                    RuntimeOrigin::signed(2),
+                    ChallengeId {
+                        deadline: 101u64,
+                        index: 0u16,
+                    },
+                    ChallengeResponse::Proof {
+                        chunk_data: make_chunk_bv(&[]),
+                        mmr_proof,
+                        chunk_proof: vec![],
+                    },
+                ),
+                Error::<Test>::InvalidProof
+            );
+        });
+    }
+
     #[test]
     fn respond_to_nonexistent_challenge_fails() {
         new_test_ext().execute_with(|| {

@@ -90,26 +90,23 @@ export function merkleRoot(leaves: Uint8Array[]): Uint8Array {
 }
 
 /**
- * Number of chunks (tree leaves) of data with `dataSize` bytes; empty data is
- * one chunk. Mirrors `chunk_count` in `crates/primitives/storage/src/merkle.rs`.
+ * Number of chunks (tree leaves) of data with `dataSize` bytes; empty data has
+ * no chunks. Mirrors `chunk_count` in `crates/primitives/storage/src/merkle.rs`.
  */
 export function chunkCount(dataSize: number): number {
-  return Math.max(1, Math.ceil(dataSize / DEFAULT_CHUNK_SIZE));
+  return Math.ceil(dataSize / DEFAULT_CHUNK_SIZE);
 }
 
 /**
  * A file's `data_root`: chunk the bytes at `DEFAULT_CHUNK_SIZE`, leaf-hash each
- * chunk, then `merkleRoot` over the chunk hashes. An empty file hashes a
- * single empty chunk; a single chunk yields its own hash. Mirrors `fs_put_file`.
+ * chunk, then `merkleRoot` over the chunk hashes. A single chunk yields its own
+ * hash. Empty data has no chunk tree and throws. Mirrors `fs_put_file`.
  */
 export function computeDataRoot(bytes: Uint8Array): Uint8Array {
+  if (bytes.length === 0) throw new Error("empty data has no chunk tree");
   const chunkHashes: Uint8Array[] = [];
-  if (bytes.length === 0) {
-    chunkHashes.push(hashLeaf(new Uint8Array(0)));
-  } else {
-    for (let off = 0; off < bytes.length; off += DEFAULT_CHUNK_SIZE) {
-      chunkHashes.push(hashLeaf(bytes.subarray(off, Math.min(off + DEFAULT_CHUNK_SIZE, bytes.length))));
-    }
+  for (let off = 0; off < bytes.length; off += DEFAULT_CHUNK_SIZE) {
+    chunkHashes.push(hashLeaf(bytes.subarray(off, Math.min(off + DEFAULT_CHUNK_SIZE, bytes.length))));
   }
   return merkleRoot(chunkHashes);
 }

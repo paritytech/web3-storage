@@ -181,7 +181,7 @@ pub trait StorageBackend: Send + Sync {
 
     /// Byte size of the data under `root`. Fails with `NonCanonicalTree` unless
     /// `root` is `merkle_root` over chunks of `DEFAULT_CHUNK_SIZE` bytes, except
-    /// the last, which can be shorter but not empty when there are several.
+    /// the last, which has 1 to `DEFAULT_CHUNK_SIZE` bytes.
     fn canonical_data_size(&self, root: H256) -> Result<u64, Error> {
         let (chunk_hashes, chunk_sizes): (Vec<H256>, Vec<usize>) =
             self.collect_leaves(root).into_iter().unzip();
@@ -189,9 +189,7 @@ pub trait StorageBackend: Send + Sync {
         let fixed_sizes = match chunk_sizes.split_last() {
             None => false,
             Some((last, rest)) => {
-                rest.iter().all(|size| *size == chunk_size)
-                    && *last <= chunk_size
-                    && (rest.is_empty() || *last > 0)
+                rest.iter().all(|size| *size == chunk_size) && (1..=chunk_size).contains(last)
             }
         };
         if !fixed_sizes || merkle_root(&chunk_hashes) != root {

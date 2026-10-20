@@ -111,6 +111,9 @@ pub enum Error {
 
     #[error("Too many requests")]
     RateLimited,
+
+    #[error("Empty request body: empty data has no chunk tree")]
+    EmptyBody,
 }
 
 impl Error {
@@ -320,6 +323,13 @@ impl IntoResponse for Error {
                 ErrorResponse {
                     error: "invalid_path".to_string(),
                     details: Some(serde_json::json!({ "message": msg })),
+                },
+            ),
+            Error::EmptyBody => (
+                StatusCode::BAD_REQUEST,
+                ErrorResponse {
+                    error: "empty_body".to_string(),
+                    details: None,
                 },
             ),
             Error::Auth(AuthError::AuthRequired | AuthError::TimestampExpired) => (
@@ -598,6 +608,7 @@ mod tests {
             status_of(Error::InvalidObjectKey("k".into())),
             StatusCode::BAD_REQUEST
         );
+        assert_eq!(status_of(Error::EmptyBody), StatusCode::BAD_REQUEST);
         assert_eq!(
             status_of(Error::FileNotFound {
                 bucket_id: 1,

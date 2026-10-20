@@ -132,9 +132,9 @@ describe("merkleRoot", () => {
 });
 
 describe("chunkCount", () => {
-  it("rounds up and has a minimum of one", () => {
+  it("rounds up and is zero for empty data", () => {
     const chunk = DEFAULT_CHUNK_SIZE;
-    expect(chunkCount(0)).toBe(1);
+    expect(chunkCount(0)).toBe(0);
     expect(chunkCount(1)).toBe(1);
     expect(chunkCount(chunk)).toBe(1);
     expect(chunkCount(chunk + 1)).toBe(2);
@@ -143,8 +143,8 @@ describe("chunkCount", () => {
 });
 
 describe("computeDataRoot", () => {
-  it("empty file hashes a single empty chunk", () => {
-    expect(toHex(computeDataRoot(new Uint8Array(0)))).toBe(toHex(hashLeaf(new Uint8Array(0))));
+  it("empty data has no chunk tree", () => {
+    expect(() => computeDataRoot(new Uint8Array(0))).toThrow("empty data has no chunk tree");
   });
 
   it("single sub-chunk file → its own chunk hash", () => {

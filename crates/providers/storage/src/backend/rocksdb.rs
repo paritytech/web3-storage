@@ -771,11 +771,10 @@ mod tests {
     }
 
     #[test]
-    fn commit_accepts_a_single_empty_chunk() {
+    fn commit_rejects_a_single_empty_chunk() {
         let (storage, _dir) = storage_with_bucket(COMMIT_QUOTA);
         let root = store_chunk_of_len(&storage, 0, 0);
-        storage.commit(BUCKET, vec![root]).unwrap();
-        assert_eq!(storage.get_bucket(BUCKET).unwrap().leaves[0].data_size, 0);
+        assert_rejected_and_bucket_unchanged(&storage, root);
     }
 
     #[test]
