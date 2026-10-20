@@ -266,7 +266,7 @@ impl MetadataEntry {
 )]
 #[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
 pub struct DirectoryNode {
-    /// Layer 0 bucket id of the drive
+    /// Layer 0 bucket id
     pub bucket_id: BucketId,
     /// Child entries, sorted by name bytes
     pub children: BoundedVec<DirectoryEntry, MaxDirectoryChildren>,
@@ -380,7 +380,7 @@ pub struct FileChunk {
 )]
 #[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
 pub struct FileManifest {
-    /// Layer 0 bucket id of the drive
+    /// Layer 0 bucket id
     pub bucket_id: BucketId,
     /// MIME type (e.g., "image/png"); [`DEFAULT_MIME_TYPE`] if none was given
     pub mime_type: BoundedVec<u8, MaxMimeTypeLength>,

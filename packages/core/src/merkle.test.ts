@@ -270,10 +270,12 @@ describe("verifyMmrProof", () => {
   });
 
   // Written by `crates/primitives/storage/src/mmr.rs` (`proof_vectors`): run
-  // `just mmr-proof-vectors`. Skipped locally if missing; required in CI.
+  // `just mmr-proof-vectors`, and again after `mmr.rs` changes. Skipped
+  // locally if missing; required in CI.
   const vectorsUrl = new URL("../../../.test-vectors/mmr-proofs.json", import.meta.url);
   const vectorsMissing = !process.env.CI && !existsSync(vectorsUrl);
   it.skipIf(vectorsMissing)("accepts every proof from Rust, only at its own leaf index", () => {
+    expect(existsSync(vectorsUrl), "MMR proof vectors missing; run `just mmr-proof-vectors`").toBe(true);
     const fixture = JSON.parse(readFileSync(vectorsUrl, "utf8")) as {
       vectors: { leaf_count: number; leaf_index: number; root: string; items: string[] }[];
     };

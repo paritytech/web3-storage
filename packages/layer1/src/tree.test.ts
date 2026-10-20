@@ -61,7 +61,7 @@ describe("root discovery", () => {
     await commitDataRoots(PROVIDER, BUCKET, [dataRoot], signer, { fetch: provider.fetch });
   }
 
-  it("rejects a root directory of another drive", async () => {
+  it("rejects a root directory of another bucket", async () => {
     const { provider, tree } = setup();
     await commitRoot(provider, encodeDirectoryNode({ bucketId: BUCKET + 1n, children: [], metadata: [] }));
     await expect(tree.rootCid()).rejects.toThrow(/belongs to bucket 4/);

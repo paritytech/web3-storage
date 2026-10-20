@@ -443,14 +443,15 @@ s3-test-all:
 # S3 integration test (used by CI; assumes chain + provider already running)
 s3-demo-ci:
     cargo run --release -p s3-client --example ci_integration_test -- "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}"
-# ─── UI Tests ─────────────────────────────────────────────────────────────────
-#
-# Unit tests + Playwright e2e for drive-ui, provider, and explorer.
-# Requires a running local chain + provider node.
 
 # Write the MMR proof vectors that packages/core/src/merkle.test.ts reads
 mmr-proof-vectors:
     MMR_PROOF_VECTORS="{{justfile_directory()}}/.test-vectors/mmr-proofs.json" cargo test -q -p storage-primitives mmr::tests::proof_vectors
+
+# ─── UI Tests ─────────────────────────────────────────────────────────────────
+#
+# Unit tests + Playwright e2e for drive-ui, provider, and explorer.
+# Requires a running local chain + provider node.
 
 # Run all UI unit tests (Vitest)
 test-ui-unit: mmr-proof-vectors
