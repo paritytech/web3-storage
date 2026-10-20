@@ -292,10 +292,12 @@ fn add_primary_provider_appends_without_disturbing_snapshot_bits() {
         setup_added_primary(3, 1, bucket_id, 50, 100);
 
         let bucket = Buckets::<Test>::get(bucket_id).unwrap();
-        // `primary_signers` is unchanged: the new provider at index 1 has no
-        // bit until it signs a checkpoint.
+        // The new provider at index 1 has an unset bit until it signs.
         assert_eq!(bucket.primary_providers.to_vec(), vec![2, 3]);
-        assert_eq!(bucket.snapshot.unwrap().primary_signers, vec![0x01]);
+        assert_eq!(
+            bucket.snapshot.unwrap().primary_signers,
+            bitvec::bitvec![u8, Lsb0; 1, 0]
+        );
     });
 }
 
@@ -326,7 +328,7 @@ fn added_primary_is_challengeable_only_after_it_signs_the_snapshot() {
         setup_added_primary(3, 1, bucket_id, 50, 100);
         let bucket = Buckets::<Test>::get(bucket_id).unwrap();
         assert_eq!(bucket.primary_providers.to_vec(), vec![2, 3]);
-        assert!(!bucket.snapshot.unwrap().has_provider_signed(1));
+        assert!(!bucket.snapshot.unwrap().primary_signers[1]);
 
         let target = ChunkLocation {
             leaf_index: 0,
@@ -393,7 +395,7 @@ fn primary_added_after_the_only_signer_left_becomes_challengeable_after_it_signs
         );
         let bucket = Buckets::<Test>::get(bucket_id).unwrap();
         assert_eq!(bucket.primary_providers.to_vec(), vec![3]);
-        assert!(bucket.snapshot.unwrap().has_provider_signed(0));
+        assert!(bucket.snapshot.unwrap().primary_signers[0]);
 
         assert_ok!(StorageProvider::challenge_checkpoint(
             RuntimeOrigin::signed(4),

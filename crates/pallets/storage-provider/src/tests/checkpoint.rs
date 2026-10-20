@@ -164,8 +164,8 @@ fn extend_checkpoint_skips_primary_that_already_signed() {
             .into(),
         );
         let snapshot = Buckets::<Test>::get(bucket_id).unwrap().snapshot.unwrap();
-        assert!(snapshot.has_provider_signed(0));
-        assert!(snapshot.has_provider_signed(1));
+        assert!(snapshot.primary_signers[0]);
+        assert!(snapshot.primary_signers[1]);
     });
 }
 
@@ -200,6 +200,6 @@ fn extend_checkpoint_skips_duplicate_signer_in_same_call() {
             .into(),
         );
         let snapshot = Buckets::<Test>::get(bucket_id).unwrap().snapshot.unwrap();
-        assert!(snapshot.has_provider_signed(1));
+        assert!(snapshot.primary_signers[1]);
     });
 }

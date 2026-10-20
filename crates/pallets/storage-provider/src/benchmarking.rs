@@ -840,10 +840,7 @@ mod benchmarks {
         Buckets::<T>::mutate(bucket_id, |maybe_bucket| {
             if let Some(bucket) = maybe_bucket {
                 if let Some(snapshot) = bucket.snapshot.as_mut() {
-                    if snapshot.primary_signers.is_empty() {
-                        snapshot.primary_signers.push(0);
-                    }
-                    snapshot.primary_signers[0] |= 1; // Set bit 0
+                    snapshot.primary_signers.set(0, true);
                 }
             }
         });

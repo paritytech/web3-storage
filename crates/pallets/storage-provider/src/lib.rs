@@ -47,8 +47,8 @@ mod tests;
 #[allow(clippy::too_many_arguments)]
 pub mod pallet {
     use crate::weights::WeightInfo;
-    use alloc::vec;
     use alloc::vec::Vec;
+    use bitvec::prelude::{BitVec, Lsb0};
     use frame_support::{
         pallet_prelude::*,
         traits::fungible::{BalancedHold, Inspect, Mutate, MutateHold},
@@ -1717,8 +1717,7 @@ pub mod pallet {
                 // Require snapshot with min_providers
                 let snapshot = bucket.snapshot.as_ref().ok_or(Error::<T>::NoSnapshot)?;
 
-                // Count set bits in the bitfield
-                let signer_count = snapshot.count_signers();
+                let signer_count = snapshot.primary_signers.count_ones();
                 ensure!(
                     signer_count >= bucket.min_providers as usize,
                     Error::<T>::MinProvidersNotMet
@@ -1908,17 +1907,7 @@ pub mod pallet {
             // Remove from bucket's primary providers if primary
             // TODO(no-primary-provider-left)
             if matches!(agreement.role, ProviderRole::Primary) {
-                Buckets::<T>::mutate(bucket_id, |maybe_bucket| {
-                    if let Some(bucket) = maybe_bucket {
-                        // Capture the position before removal so the snapshot's
-                        // positional signer bitfield can be re-indexed to match.
-                        let pos = bucket.primary_providers.iter().position(|p| p == &provider);
-                        bucket.primary_providers.retain(|p| p != &provider);
-                        if let (Some(pos), Some(snapshot)) = (pos, bucket.snapshot.as_mut()) {
-                            snapshot.remove_provider_bit(pos);
-                        }
-                    }
-                });
+                Self::remove_primary_from_bucket(bucket_id, &provider);
 
                 Self::deposit_event(Event::PrimaryProviderRemoved {
                     bucket_id,
@@ -2399,10 +2388,8 @@ pub mod pallet {
                 let payload = CommitmentPayload::new(bucket_id, commitment);
                 let encoded_payload = payload.encode();
 
-                // Create bitfield using Vec<u8>
-                let num_providers = bucket.primary_providers.len();
-                let num_bytes = num_providers.div_ceil(8);
-                let mut primary_signers = vec![0u8; num_bytes];
+                let mut primary_signers =
+                    BitVec::<u8, Lsb0>::repeat(false, bucket.primary_providers.len());
                 let mut signing_count = 0usize;
                 let mut signing_providers = Vec::new();
 
@@ -2417,10 +2404,10 @@ pub mod pallet {
                     // Verify the signature using the provider's registered public key
                     Self::verify_signature(signature, &encoded_payload, signer)?;
 
-                    // Set bit at position idx using manual bit manipulation
-                    let byte_idx = idx / 8;
-                    let bit_idx = idx % 8;
-                    primary_signers[byte_idx] |= 1 << bit_idx;
+                    primary_signers
+                        .get_mut(idx)
+                        .ok_or(Error::<T>::ProviderNotInSnapshot)?
+                        .set(true);
                     // TODO(#388): this counts signature entries, not distinct
                     // providers, so one provider's signature repeated N times
                     // satisfies `min_providers = N`. Count `primary_signers`
@@ -2492,9 +2479,7 @@ pub mod pallet {
                 let payload = CommitmentPayload::new(bucket_id, snapshot.commitment);
                 let encoded_payload = payload.encode();
 
-                // A primary added after the checkpoint can be past the stored length.
                 let mut primary_signers = snapshot.primary_signers.clone();
-                primary_signers.resize(bucket.primary_providers.len().div_ceil(8), 0);
                 let mut added_providers = Vec::new();
 
                 for (signer, signature) in additional_signatures.iter() {
@@ -2505,18 +2490,17 @@ pub mod pallet {
                         .position(|p| p == signer)
                         .ok_or(Error::<T>::ProviderNotInSnapshot)?;
 
-                    let byte = primary_signers
-                        .get_mut(idx / 8)
+                    let mut signed = primary_signers
+                        .get_mut(idx)
                         .ok_or(Error::<T>::ProviderNotInSnapshot)?;
-                    let bit = 1 << (idx % 8);
-                    if *byte & bit != 0 {
+                    if *signed {
                         continue;
                     }
 
                     // Verify signature
                     Self::verify_signature(signature, &encoded_payload, signer)?;
 
-                    *byte |= bit;
+                    *signed = true;
                     added_providers.push(signer.clone());
                 }
 

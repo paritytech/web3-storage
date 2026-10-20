@@ -19,7 +19,7 @@ pub(super) fn setup_with_snapshot(provider: u64, client: u64) -> u64 {
                     leaf_count: 10,
                 },
                 checkpoint_block: 1,
-                primary_signers: vec![0x01], // bit 0 set = provider at index 0 signed
+                primary_signers: bitvec::bitvec![u8, Lsb0; 1], // bit 0 set = provider at index 0 signed
             });
         }
     });
@@ -42,7 +42,7 @@ pub(super) fn advance_snapshot_root(bucket_id: u64) {
                 leaf_count: 10,
             },
             checkpoint_block: 1,
-            primary_signers: vec![0x01],
+            primary_signers: bitvec::bitvec![u8, Lsb0; 1],
         });
     });
 }
@@ -168,7 +168,7 @@ fn challenge_checkpoint_fails_provider_not_signed() {
                         leaf_count: 10,
                     },
                     checkpoint_block: 1,
-                    primary_signers: vec![0x01], // only bit 0 set
+                    primary_signers: bitvec::bitvec![u8, Lsb0; 1, 0], // only bit 0 set
                 });
             }
         });
@@ -306,7 +306,7 @@ fn respond_to_challenge_superseded_works() {
                     leaf_count: 10,
                 },
                 checkpoint_block: 1,
-                primary_signers: vec![0x01],
+                primary_signers: bitvec::bitvec![u8, Lsb0; 1],
             });
         });
 
@@ -697,7 +697,7 @@ fn two_challenges_same_deadline_resolve_independently() {
                         leaf_count: 10,
                     },
                     checkpoint_block: 1,
-                    primary_signers: vec![0x03], // bits 0 and 1 set
+                    primary_signers: bitvec::bitvec![u8, Lsb0; 1, 1], // bits 0 and 1 set
                 });
             }
         });
@@ -782,7 +782,7 @@ fn responding_to_sibling_preserves_other_challenge_index() {
                         leaf_count: 10,
                     },
                     checkpoint_block: 1,
-                    primary_signers: vec![0x03],
+                    primary_signers: bitvec::bitvec![u8, Lsb0; 1, 1],
                 });
             }
         });
@@ -822,7 +822,7 @@ fn responding_to_sibling_preserves_other_challenge_index() {
                     leaf_count: 10,
                 },
                 checkpoint_block: 1,
-                primary_signers: vec![0x03],
+                primary_signers: bitvec::bitvec![u8, Lsb0; 1, 1],
             });
         });
 
@@ -966,7 +966,7 @@ fn respond_to_challenge_superseded_emits_defended_event() {
                     leaf_count: 10,
                 },
                 checkpoint_block: 1,
-                primary_signers: vec![0x01],
+                primary_signers: bitvec::bitvec![u8, Lsb0; 1],
             });
         });
 
@@ -997,7 +997,7 @@ fn respond_to_challenge_superseded_emits_defended_event() {
 //
 // `primary_signers` is positional: bit `i` belongs to `primary_providers[i]`.
 // Removing a primary shifts every later provider down one index, so the
-// bitfield must be re-indexed to match — otherwise `has_provider_signed` reads
+// bitfield must be re-indexed to match — otherwise `primary_signers[i]` is
 // the wrong bit for every surviving provider after the removed one.
 //
 // Both removal paths (`finalize_agreement` via admin early-termination, and
@@ -1029,7 +1029,7 @@ fn setup_three_primaries_snapshot() -> u64 {
             },
             checkpoint_block: 1,
             // bits {0, 2} set: provider 2 (idx 0) and 4 (idx 2) signed.
-            primary_signers: vec![0b0000_0101],
+            primary_signers: bitvec::bitvec![u8, Lsb0; 1, 0, 1],
         });
     });
 
@@ -1045,11 +1045,11 @@ fn assert_reindexed_after_removing_lead(bucket_id: u64) {
     // New layout: idx 0 -> old bit 1 (provider 3, unsigned) = clear;
     // idx 1 -> old bit 2 (provider 4, signed) = set => 0b0000_0010.
     assert!(
-        !snapshot.has_provider_signed(0),
+        !snapshot.primary_signers[0],
         "provider 3 (new index 0) must read as not-signed"
     );
     assert!(
-        snapshot.has_provider_signed(1),
+        snapshot.primary_signers[1],
         "provider 4 (new index 1) must read as signed"
     );
 
@@ -1245,7 +1245,7 @@ mod challenge_tests {
                 leaf_count,
             },
             checkpoint_block: System::block_number(),
-            primary_signers: vec![0b0000_0001],
+            primary_signers: bitvec::bitvec![u8, Lsb0; 1],
         };
         Buckets::<Test>::mutate(0u64, |bucket| {
             let bucket = bucket.as_mut().expect("bucket exists");
@@ -1715,7 +1715,7 @@ mod challenge_tests {
                         leaf_count: 1,
                     },
                     checkpoint_block: 1,
-                    primary_signers: vec![0b0000_0001],
+                    primary_signers: bitvec::bitvec![u8, Lsb0; 1],
                 });
             });
 
@@ -1904,7 +1904,7 @@ mod challenge_tests {
                         leaf_count: 10,
                     },
                     checkpoint_block: 1,
-                    primary_signers: vec![0b0000_0001],
+                    primary_signers: bitvec::bitvec![u8, Lsb0; 1],
                 });
             });
 
@@ -1993,7 +1993,7 @@ mod challenge_tests {
                         leaf_count: 10,
                     },
                     checkpoint_block: 1,
-                    primary_signers: vec![0b0000_0001],
+                    primary_signers: bitvec::bitvec![u8, Lsb0; 1],
                 });
             });
 
