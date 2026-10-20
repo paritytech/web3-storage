@@ -174,7 +174,7 @@ pub const VERSION: RuntimeVersion = RuntimeVersion {
     spec_name: Cow::Borrowed("web3-storage-parachain"),
     impl_name: Cow::Borrowed("web3-storage-parachain"),
     authoring_version: 1,
-    spec_version: 4_011,
+    spec_version: 4_012,
     impl_version: 0,
     apis: RUNTIME_API_VERSIONS,
     // Bumped whenever call encoding changes, so offline signers and stale-metadata
@@ -186,8 +186,10 @@ pub const VERSION: RuntimeVersion = RuntimeVersion {
     //   lost its `nonce` field (#339);
     // * 4 for the `visibility` argument appended to `establish_storage_agreement`
     //   (now `create_bucket_with_primary`),
-    //   `create_drive` and `create_s3_bucket` (#330).
-    transaction_version: 4,
+    //   `create_drive` and `create_s3_bucket` (#330);
+    // * 5 for the `MmrProof` argument of `respond_to_challenge`, which now
+    //   contains library proof `items` instead of `peaks` and `leaf_proof` (#517).
+    transaction_version: 5,
     system_version: 1,
 };
 

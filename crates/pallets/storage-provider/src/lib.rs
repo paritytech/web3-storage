@@ -64,8 +64,7 @@ pub mod pallet {
     use sp_runtime::TryRuntimeError;
     use storage_primitives::{
         BucketId, BucketSnapshot, ChallengeId, ChunkLocation, Commitment, CommitmentPayload,
-        EndAction, MerkleProof, MmrProof, ProviderRole, RemovalReason, ReplicaSyncRecord, Role,
-        Visibility,
+        EndAction, MmrProof, ProviderRole, RemovalReason, ReplicaSyncRecord, Role, Visibility,
     };
 
     /// Balance type of the configured currency.
@@ -745,8 +744,9 @@ pub mod pallet {
             chunk_data: BoundedVec<u8, T::MaxChunkSize>,
             /// Proves the leaf is part of the committed MMR.
             mmr_proof: MmrProof,
-            /// Proves the chunk is part of the leaf.
-            chunk_proof: MerkleProof,
+            /// Proves the chunk is part of the leaf: the sibling hashes from
+            /// the chunk up to `mmr_proof.leaf.data_root`.
+            chunk_proof: Vec<H256>,
         },
         /// Data was deleted - show newer commitment without this seq.
         Deleted {
@@ -2709,18 +2709,18 @@ pub mod pallet {
             let bucket =
                 Buckets::<T>::get(challenge.bucket_id).ok_or(Error::<T>::BucketNotFound)?;
 
-            match &response {
+            match response {
                 ChallengeResponse::Proof {
                     chunk_data,
                     mmr_proof,
                     chunk_proof,
                 } => {
-                    let chunk_hash = storage_primitives::hash_leaf(chunk_data);
+                    let chunk_hash = storage_primitives::hash_leaf(&chunk_data);
                     let chunk_ok = storage_primitives::verify_merkle_proof(
                         chunk_hash,
                         challenge.target.chunk_index,
                         storage_primitives::chunk_count(mmr_proof.leaf.data_size),
-                        chunk_proof,
+                        &chunk_proof,
                         &mmr_proof.leaf.data_root,
                     );
                     let mmr_ok = storage_primitives::verify_mmr_proof(
@@ -2736,27 +2736,31 @@ pub mod pallet {
                     admin,
                     admin_signature,
                 } => {
-                    Self::ensure_admin(admin, &bucket)?;
+                    Self::ensure_admin(&admin, &bucket)?;
 
                     let challenged_seq = challenge
                         .commitment
                         .start_seq
                         .saturating_add(challenge.target.leaf_index);
                     ensure!(
-                        challenged_seq < *new_start_seq,
+                        challenged_seq < new_start_seq,
                         Error::<T>::InvalidDeletionClaim
                     );
                     let deletion_payload = CommitmentPayload::new(
                         challenge.bucket_id,
                         Commitment {
-                            mmr_root: *new_mmr_root,
-                            start_seq: *new_start_seq,
+                            mmr_root: new_mmr_root,
+                            start_seq: new_start_seq,
                             leaf_count: 0, // not needed for deletion proof
                         },
                     );
                     ensure!(
-                        Self::verify_signature(admin_signature, &deletion_payload.encode(), admin)
-                            .is_ok(),
+                        Self::verify_signature(
+                            &admin_signature,
+                            &deletion_payload.encode(),
+                            &admin
+                        )
+                        .is_ok(),
                         Error::<T>::InvalidDeletionClaim
                     );
                 }

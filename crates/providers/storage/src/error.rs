@@ -52,6 +52,10 @@ pub enum Error {
     #[error("Serialization error: {0}")]
     Serialization(String),
 
+    /// Building the bucket MMR or a proof from it failed.
+    #[error("MMR error: {0}")]
+    Mmr(#[from] storage_primitives::mmr::Error),
+
     /// The RocksDB engine itself failed. Carries the engine's error as
     /// `source()` so the cause survives instead of being flattened into a
     /// message.

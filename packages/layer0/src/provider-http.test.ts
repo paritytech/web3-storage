@@ -9,8 +9,9 @@ import {
   hashLeaf,
   toHex,
 } from "@web3-storage/core";
+import type { ParachainApi } from "./address.js";
 import type { ChainSigner } from "./signers.js";
-import { downloadChunk, putChunk, uploadChunk } from "./provider-http.js";
+import { downloadChunk, fetchChallengeProof, putChunk, uploadChunk } from "./provider-http.js";
 
 const PROVIDER = "http://provider.test";
 const enc = new TextEncoder();
@@ -136,5 +137,62 @@ describe("chunk uploads", () => {
     await uploadChunk(PROVIDER, 1n, leaf, signer);
     // One PUT from putChunk, then a PUT and a commit from uploadChunk.
     expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe("fetchChallengeProof", () => {
+  const challengeId = { deadline: 10, index: 0 };
+  const getValue = vi.fn(async () => ({
+    bucket_id: 1n,
+    target: { leaf_index: 2n, chunk_index: 3n },
+  }));
+  const api = {
+    query: { StorageProvider: { Challenges: { getValue } } },
+  } as unknown as ParachainApi;
+  const leaf = { data_root: toHex(new Uint8Array(32).fill(1)), data_size: 5, total_size: 5 };
+  const item = toHex(new Uint8Array(32).fill(2));
+  const chunkProof = {
+    chunk_data: bytesToBase64(enc.encode("chunk")),
+    proof: [item],
+  };
+
+  it("builds the proof from /mmr_proof and /chunk_proof", async () => {
+    const fetchMock = stubFetch((url) =>
+      url.pathname === "/mmr_proof" ? { leaf, items: [item] } : chunkProof,
+    );
+    const proof = await fetchChallengeProof(api, PROVIDER, challengeId);
+    expect(proof).toEqual({
+      chunk_data: enc.encode("chunk"),
+      mmr_proof: { leaf: { data_root: leaf.data_root, data_size: 5n, total_size: 5n }, items: [item] },
+      chunk_proof: [item],
+    });
+    expect(getValue).toHaveBeenCalledWith(10, 0, expect.anything());
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const [mmrUrl, chunkUrl] = fetchMock.mock.calls.map((call) => new URL(call[0]));
+    expect(mmrUrl.pathname).toBe("/mmr_proof");
+    expect(mmrUrl.searchParams.get("bucket_id")).toBe("1");
+    expect(mmrUrl.searchParams.get("leaf_index")).toBe("2");
+    expect(chunkUrl.pathname).toBe("/chunk_proof");
+    expect(chunkUrl.searchParams.get("data_root")).toBe(leaf.data_root);
+    expect(chunkUrl.searchParams.get("chunk_index")).toBe("3");
+  });
+
+  it("throws for an /mmr_proof response without items, before /chunk_proof", async () => {
+    const fetchMock = stubFetch(() => ({ leaf, peaks: [item], leaf_proof: { siblings: [] } }));
+    await expect(fetchChallengeProof(api, PROVIDER, challengeId)).rejects.toThrow(
+      "the provider node is older than this client",
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("throws for a /chunk_proof response with siblings and path", async () => {
+    stubFetch((url) =>
+      url.pathname === "/mmr_proof"
+        ? { leaf, items: [item] }
+        : { ...chunkProof, proof: { siblings: [item], path: [true] } },
+    );
+    await expect(fetchChallengeProof(api, PROVIDER, challengeId)).rejects.toThrow(
+      "the provider node is older than this client",
+    );
   });
 });

@@ -220,10 +220,9 @@
       "dot": "cyan",
       "title": "Content addressing",
       "items": [
-        "Binary RFC 9162 tree over 256 KiB chunks, no padding; chunk count = ceil(data_size / CHUNK_SIZE)",
-        "Chunk hash blake2_256(0x00 ++ data), node hash blake2_256(0x01 ++ left ++ right)",
+        "Chunks and internal nodes are both addressed by hash",
         "Upload is bottom-up: children must exist before the parent",
-        "POST /commit rejects another shape or chunk size: non_canonical_tree"
+        "If the root hash exists, the whole tree is present"
       ]
     },
     {
@@ -239,8 +238,8 @@
       "dot": "rose",
       "title": "What a proof must show",
       "items": [
-        "chunk_proof (RFC 9162 sibling hashes): the chunk is in the leaf's data_root",
-        "mmr_proof (MmrProof): peaks, leaf and leaf_proof to the mmr_root",
+        "chunk_proof (sibling hashes): the chunk is in the leaf's data_root",
+        "mmr_proof (MmrProof): leaf and items to the mmr_root; leaf_index and leaf_count come from the challenge",
         "If either check fails, the response is rejected with InvalidProof and the challenge stays open"
       ]
     }

@@ -704,10 +704,7 @@ async fn test_non_power_of_two_upload_matches_provider_root_and_verifies() {
         let proof_response: serde_json::Value = http
             .get(format!("{url}/chunk_proof"))
             .query(&[
-                (
-                    "data_root",
-                    format!("0x{}", hex::encode(data_root.as_bytes())),
-                ),
+                ("data_root", format!("{data_root:#x}")),
                 ("chunk_index", chunk_index.to_string()),
             ])
             .send()
@@ -717,32 +714,18 @@ async fn test_non_power_of_two_upload_matches_provider_root_and_verifies() {
             .await
             .unwrap();
 
-        let chunk_hash_bytes = hex::decode(
-            proof_response["chunk_hash"]
-                .as_str()
-                .unwrap()
-                .trim_start_matches("0x"),
-        )
-        .unwrap();
-        let chunk_hash = H256::from_slice(&chunk_hash_bytes);
+        let chunk_hash: H256 = proof_response["chunk_hash"]
+            .as_str()
+            .unwrap()
+            .parse()
+            .unwrap();
 
-        let siblings: Vec<H256> = proof_response["proof"]["siblings"]
+        let proof: Vec<H256> = proof_response["proof"]
             .as_array()
             .unwrap()
             .iter()
-            .map(|s| {
-                let bytes = hex::decode(s.as_str().unwrap().trim_start_matches("0x")).unwrap();
-                H256::from_slice(&bytes)
-            })
+            .map(|s| s.as_str().unwrap().parse().unwrap())
             .collect();
-        let path: Vec<bool> = proof_response["proof"]["path"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|p| p.as_bool().unwrap())
-            .collect();
-
-        let proof = storage_primitives::MerkleProof { siblings, path };
         assert!(
             storage_primitives::verify_merkle_proof(
                 chunk_hash,

@@ -120,7 +120,7 @@ async function main() {
           const forged = {
             ...real,
             chunk_data: nodeBytes,
-            chunk_proof: { siblings: [toHex(right)], path: [false] },
+            chunk_proof: [toHex(right)],
           };
 
           await assert.rejects(

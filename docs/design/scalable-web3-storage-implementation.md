@@ -2215,7 +2215,7 @@ GET /mmr_proof?bucket_id=0x...&leaf_index=5
 Response:
 {
   "leaf": { "leaf_version": 1, "data_root": "0x...", "data_size": 2097152, "total_size": 52428800 },
-  "proof": { "peaks": [...], "siblings": [...] }
+  "items": ["0x...", ...]
 }
 
 Get Chunk Proof
@@ -2586,24 +2586,25 @@ proof does not use it.
 ### Merkle Proofs
 
 ```rust
-/// Proof of an MMR leaf up to its peak.
-pub struct MerkleProof {
-    /// Sibling hashes from leaf to peak
-    pub siblings: Vec<H256>,
-    /// Path bits (0 = left, 1 = right)
-    pub path: Vec<bool>,
-}
-
 pub struct MmrProof {
-    /// Peaks of the MMR
-    pub peaks: Vec<H256>,
-    /// The leaf being proven. Verification hashes `0x00 ++ leaf.encode()` as
-    /// the proof's starting point, so the leaf content is part of the proof.
+    /// The leaf being proven.
     pub leaf: MmrLeaf,
-    /// Proof from leaf to peak
-    pub leaf_proof: MerkleProof,
+    /// Proof for leaf `leaf_index` of an MMR with `leaf_count` leaves. Both
+    /// values come from the challenge and its commitment, not from the proof.
+    /// Items, in this order:
+    /// 1. the root of each peak left of the leaf's peak, left to right;
+    /// 2. the sibling at each level from the leaf up to its peak, bottom up;
+    /// 3. if any peaks are right of the leaf's peak, one hash of them, bagged
+    ///    right to left.
+    /// A proof with any other number of items is rejected, and so is any
+    /// proof against a commitment with more than `u64::MAX / 2` leaves.
+    pub items: Vec<H256>,
 }
 ```
+
+Reference implementation: `polkadot-ckb-merkle-mountain-range` with
+`StorageMerge` (`gen_proof(..).proof_items()` to build, `MerkleProof::verify` to
+check).
 
 ---
 
@@ -2684,11 +2685,15 @@ fn verify_challenge_response(
             let chunk_count = chunk_count(&mmr_proof.leaf); // ceil(data_size / CHUNK_SIZE of leaf_version)
             let chunk_hash = hash_leaf(chunk_data); // blake2_256(0x00 ++ chunk_data)
             let chunk_ok = verify_merkle_proof(
-                chunk_hash, challenge.target.chunk_index, chunk_count, chunk_proof, &mmr_proof.leaf.data_root,
+                chunk_hash,
+                challenge.target.chunk_index,
+                chunk_count,
+                chunk_proof,
+                &mmr_proof.leaf.data_root,
             );
-            // Bound to the challenged leaf: the expected path and peak are derived
-            // from (target.leaf_index, commitment.leaf_count), so a proof for a
-            // different leaf of the same MMR does not verify.
+            // Bound to the challenged leaf: the leaf position and the MMR shape
+            // come from (target.leaf_index, commitment.leaf_count), not from the
+            // proof, so a proof for a different leaf of the same MMR does not verify.
             let mmr_ok = verify_mmr_proof(mmr_proof, challenge.target.leaf_index, &challenge.commitment);
             if chunk_ok && mmr_ok { Ok(()) } else { Err(Error::InvalidProof) }
         }

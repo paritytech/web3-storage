@@ -409,12 +409,13 @@ impl ProviderClient {
     /// - `chunk_data`: The actual chunk data being proven
     /// - `mmr_proof`: MMR proof showing the leaf is in the committed MMR
     /// - `chunk_proof`: Merkle proof showing the chunk is in the leaf's data tree
+    ///   (sibling hashes from the chunk up to the data root)
     pub async fn respond_to_challenge(
         &self,
         challenge_id: (u32, u16),
         chunk_data: Vec<u8>,
         mmr_proof: &storage_primitives::MmrProof,
-        chunk_proof: &storage_primitives::MerkleProof,
+        chunk_proof: &[H256],
     ) -> ClientResult<()> {
         let chain = self.base.chain()?;
         let signer = chain.signer()?;

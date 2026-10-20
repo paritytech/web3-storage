@@ -125,7 +125,7 @@ impl ReplicaSync {
             let response = self
                 .http
                 .get(format!("{primary_url}/node"))
-                .query(&[("hash", format!("0x{}", hex::encode(root_hash.as_bytes())))])
+                .query(&[("hash", format!("{root_hash:#x}"))])
                 .send()
                 .await
                 .map_err(|e| Error::primary_request("node", e))?;
@@ -205,13 +205,5 @@ struct DownloadNodeResponse {
 /// Decode a hex string (with or without 0x prefix) into a 32-byte hash.
 /// `what` names the value being decoded, for the error message.
 fn hash_decode(what: &'static str, s: &str) -> Result<H256, Error> {
-    let bytes =
-        hex::decode(s.strip_prefix("0x").unwrap_or(s)).map_err(|e| Error::decode(what, e))?;
-    if bytes.len() != 32 {
-        return Err(Error::decode(
-            what,
-            format!("expected 32 bytes, got {}", bytes.len()),
-        ));
-    }
-    Ok(H256::from_slice(&bytes))
+    s.parse().map_err(|e| Error::decode(what, e))
 }
