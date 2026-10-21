@@ -18,7 +18,7 @@ use axum::{
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use codec::Encode;
 use provider_auth::RequiredRole;
-use provider_storage::ChunkTreeNode;
+use provider_storage::{BucketInfo, ChunkTreeNode};
 use provider_types::SigningRefused;
 use sp_core::H256;
 use std::net::SocketAddr;
@@ -171,6 +171,16 @@ pub(crate) async fn check_role(
         .map_err(Into::into)
 }
 
+/// [`check_role`] at [`RequiredRole::Reader`].
+async fn require_reader(
+    state: &ProviderState,
+    headers: &axum::http::HeaderMap,
+    method: &str,
+    bucket_id: u64,
+) -> Result<(), Error> {
+    check_role(state, headers, method, bucket_id, RequiredRole::Reader).await
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Health and Info
 // ─────────────────────────────────────────────────────────────────────────────
@@ -220,12 +230,11 @@ struct GetNodeQuery {
     hash: String,
 }
 
-fn require_bucket(state: &ProviderState, bucket_id: BucketId) -> Result<(), Error> {
-    state
+fn require_bucket(state: &ProviderState, bucket_id: BucketId) -> Result<BucketInfo, Error> {
+    Ok(state
         .storage
         .get_bucket(bucket_id)
-        .ok_or(provider_storage::Error::BucketNotFound(bucket_id))?;
-    Ok(())
+        .ok_or(provider_storage::Error::BucketNotFound(bucket_id))?)
 }
 
 async fn get_node(
@@ -290,14 +299,7 @@ async fn check_exists(
     headers: axum::http::HeaderMap,
     Json(request): Json<ExistsRequest>,
 ) -> Result<Json<ExistsResponse>, Error> {
-    check_role(
-        &state,
-        &headers,
-        "POST",
-        request.bucket_id,
-        RequiredRole::Reader,
-    )
-    .await?;
+    require_reader(&state, &headers, "POST", request.bucket_id).await?;
 
     let hashes: Vec<H256> = request
         .hashes
@@ -390,19 +392,9 @@ async fn get_commitment(
     headers: axum::http::HeaderMap,
     Query(query): Query<CommitmentQuery>,
 ) -> Result<Json<CommitmentResponse>, Error> {
-    check_role(
-        &state,
-        &headers,
-        "GET",
-        query.bucket_id,
-        RequiredRole::Reader,
-    )
-    .await?;
+    require_reader(&state, &headers, "GET", query.bucket_id).await?;
 
-    let bucket = state
-        .storage
-        .get_bucket(query.bucket_id)
-        .ok_or(provider_storage::Error::BucketNotFound(query.bucket_id))?;
+    let bucket = require_bucket(&state, query.bucket_id)?;
 
     let payload = CommitmentPayload::new(
         query.bucket_id,
@@ -430,19 +422,9 @@ async fn get_checkpoint_signature(
     headers: axum::http::HeaderMap,
     Query(query): Query<CommitmentQuery>,
 ) -> Result<Json<CheckpointSignatureResponse>, Error> {
-    check_role(
-        &state,
-        &headers,
-        "GET",
-        query.bucket_id,
-        RequiredRole::Reader,
-    )
-    .await?;
+    require_reader(&state, &headers, "GET", query.bucket_id).await?;
 
-    let bucket = state
-        .storage
-        .get_bucket(query.bucket_id)
-        .ok_or(provider_storage::Error::BucketNotFound(query.bucket_id))?;
+    let bucket = require_bucket(&state, query.bucket_id)?;
 
     let leaf_count = bucket.leaf_count;
 
@@ -471,14 +453,7 @@ async fn get_mmr_proof(
     headers: axum::http::HeaderMap,
     Query(query): Query<MmrProofQuery>,
 ) -> Result<Json<storage_primitives::MmrProof>, Error> {
-    check_role(
-        &state,
-        &headers,
-        "GET",
-        query.bucket_id,
-        RequiredRole::Reader,
-    )
-    .await?;
+    require_reader(&state, &headers, "GET", query.bucket_id).await?;
 
     Ok(Json(
         state
@@ -560,14 +535,7 @@ async fn get_mmr_peaks(
     headers: axum::http::HeaderMap,
     Query(query): Query<MmrPeaksQuery>,
 ) -> Result<Json<MmrPeaksResponse>, Error> {
-    check_role(
-        &state,
-        &headers,
-        "GET",
-        query.bucket_id,
-        RequiredRole::Reader,
-    )
-    .await?;
+    require_reader(&state, &headers, "GET", query.bucket_id).await?;
 
     let (mmr_root, peaks) = state.storage.get_mmr_peaks(query.bucket_id)?;
 
@@ -609,19 +577,9 @@ async fn get_historical_roots(
     headers: axum::http::HeaderMap,
     Query(query): Query<HistoricalRootsQuery>,
 ) -> Result<Json<HistoricalRootsResponse>, Error> {
-    check_role(
-        &state,
-        &headers,
-        "GET",
-        query.bucket_id,
-        RequiredRole::Reader,
-    )
-    .await?;
+    require_reader(&state, &headers, "GET", query.bucket_id).await?;
 
-    let bucket = state
-        .storage
-        .get_bucket(query.bucket_id)
-        .ok_or(provider_storage::Error::BucketNotFound(query.bucket_id))?;
+    let bucket = require_bucket(&state, query.bucket_id)?;
 
     Ok(Json(HistoricalRootsResponse {
         bucket_id: query.bucket_id,
@@ -726,19 +684,9 @@ async fn get_replica_sync_status(
     headers: axum::http::HeaderMap,
     Query(query): Query<BucketSyncStatusQuery>,
 ) -> Result<Json<BucketSyncStatusResponse>, Error> {
-    check_role(
-        &state,
-        &headers,
-        "GET",
-        query.bucket_id,
-        RequiredRole::Reader,
-    )
-    .await?;
+    require_reader(&state, &headers, "GET", query.bucket_id).await?;
 
-    let bucket = state
-        .storage
-        .get_bucket(query.bucket_id)
-        .ok_or(provider_storage::Error::BucketNotFound(query.bucket_id))?;
+    let bucket = require_bucket(&state, query.bucket_id)?;
 
     Ok(Json(BucketSyncStatusResponse {
         bucket_id: query.bucket_id,
