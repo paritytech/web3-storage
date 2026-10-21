@@ -17,7 +17,7 @@ import {
   getAgreementNonce,
   hashChildren,
   negotiateTerms,
-  putChunk,
+  putInternalNode,
   READ_OPTS,
   waitForBlockProduction,
   waitForChainReady,
@@ -279,10 +279,7 @@ export async function putInternal(
   left: Uint8Array,
   right: Uint8Array,
 ): Promise<Uint8Array> {
-  const data = new Uint8Array(64);
-  data.set(left, 0);
-  data.set(right, 32);
-  const { cid } = await putChunk(providerUrl, bucketId, data, signer, [left, right]);
+  const { cid } = await putInternalNode(providerUrl, bucketId, left, right, signer);
   assert.ok(bytesEq(cid, hashChildren(left, right)), "internal node hash must equal H(left, right)");
   return cid;
 }

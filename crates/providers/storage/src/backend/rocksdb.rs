@@ -274,8 +274,7 @@ impl DiskStorage {
             .get_bucket(bucket_id)
             .ok_or(Error::BucketNotFound(bucket_id))?;
 
-        // A node costs its preimage length.
-        let charge = node.preimage().len() as u64;
+        let charge = node.size();
 
         let new_size = bucket.used_bytes.saturating_add(charge);
         if new_size > bucket.max_bytes {
@@ -387,6 +386,7 @@ impl DiskStorage {
                 .saturating_add(data_size);
 
             let leaf = MmrLeaf {
+                leaf_version: storage_primitives::LEAF_VERSION,
                 data_root: *data_root,
                 data_size,
                 total_size,
@@ -668,8 +668,8 @@ mod tests {
         // variant 0 (Chunk), compact length 5, then the bytes
         assert_eq!(array_bytes::bytes2hex("", &raw), "00140102030405");
 
-        // CF_NODES: an internal node's value is 65 B - the variant tag plus
-        // the two child hashes, no stored preimage.
+        // CF_NODES: an internal node's value is 65 B: the variant tag plus
+        // the two child hashes.
         let other_hash = hash_leaf(&[9u8]);
         storage
             .store_node(bucket_id, other_hash, ChunkTreeNode::Chunk(vec![9]))
@@ -771,11 +771,10 @@ mod tests {
     }
 
     #[test]
-    fn commit_accepts_a_single_empty_chunk() {
+    fn commit_rejects_a_single_empty_chunk() {
         let (storage, _dir) = storage_with_bucket(COMMIT_QUOTA);
         let root = store_chunk_of_len(&storage, 0, 0);
-        storage.commit(BUCKET, vec![root]).unwrap();
-        assert_eq!(storage.get_bucket(BUCKET).unwrap().leaves[0].data_size, 0);
+        assert_rejected_and_bucket_unchanged(&storage, root);
     }
 
     #[test]
@@ -987,7 +986,7 @@ mod tests {
         assert_eq!(outcome.leaf_indices, vec![0]);
         assert_eq!(
             outcome.mmr_root,
-            "5892aeee490d7378e4dcabfaf79053c3073ece6437f74c001c82a55de8ac977c"
+            "1ea55ee1bc91a98868211d99dbe4ddf1e42b21655f5d76360cd09f0bfc53535a"
                 .parse::<H256>()
                 .unwrap()
         );

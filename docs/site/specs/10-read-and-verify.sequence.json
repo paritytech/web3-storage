@@ -63,7 +63,7 @@
       "dot": "emerald",
       "title": "What the client verifies",
       "items": [
-        "blake2_256(chunk) equals its hash",
+        "blake2_256(0x00 ++ chunk) equals its hash",
         "Merkle path from chunk to data_root",
         "MMR proof from data_root to mmr_root"
       ]
