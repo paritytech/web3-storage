@@ -535,6 +535,9 @@ impl SubxtChainClient {
     ) -> Result<Vec<String>, ChainClientError> {
         use subxt::ext::scale_value::At;
 
+        if provider_bytes_list.is_empty() {
+            return Ok(Vec::new());
+        }
         let at = self.at_current_block().await?;
         let mut endpoints = Vec::new();
         for provider_bytes in provider_bytes_list {
