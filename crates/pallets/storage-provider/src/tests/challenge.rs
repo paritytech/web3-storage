@@ -1211,8 +1211,17 @@ mod challenge_tests {
 
     /// Root and proof of a single-leaf MMR over `data_root` and `data_size`.
     fn single_leaf_mmr(data_root: H256, data_size: u64) -> (H256, MmrProof) {
+        single_leaf_mmr_of_version(storage_primitives::LEAF_VERSION, data_root, data_size)
+    }
+
+    /// [`single_leaf_mmr`] with a leaf of `leaf_version`.
+    fn single_leaf_mmr_of_version(
+        leaf_version: u8,
+        data_root: H256,
+        data_size: u64,
+    ) -> (H256, MmrProof) {
         let leaf = MmrLeaf {
-            leaf_version: storage_primitives::LEAF_VERSION,
+            leaf_version,
             data_root,
             data_size,
             total_size: data_size,
@@ -1405,13 +1414,11 @@ mod challenge_tests {
         new_test_ext().execute_with(|| {
             System::set_block_number(1);
             let chunk_data = b"chunk-0".to_vec();
-            let leaf = MmrLeaf {
-                leaf_version: storage_primitives::LEAF_VERSION + 1,
-                data_root: hash_leaf(&chunk_data),
-                data_size: chunk_data.len() as u64,
-                total_size: chunk_data.len() as u64,
-            };
-            let (mmr_root, mmr_proof) = mmr::proof(&[leaf], 0).unwrap().unwrap();
+            let (mmr_root, mmr_proof) = single_leaf_mmr_of_version(
+                storage_primitives::LEAF_VERSION + 1,
+                hash_leaf(&chunk_data),
+                chunk_data.len() as u64,
+            );
             setup_primary_with_snapshot(mmr_root, 0, 1);
 
             assert_ok!(StorageProvider::challenge_checkpoint(
@@ -1438,6 +1445,7 @@ mod challenge_tests {
                 ),
                 Error::<Test>::InvalidProof
             );
+            assert_challenge_still_open();
         });
     }
 
