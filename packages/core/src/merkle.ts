@@ -6,9 +6,9 @@
 //
 // Mirrors, byte for byte:
 //   - `crates/providers/storage/src/index/fs.rs`     → `metadata_merkle_root`
-//   - `crates/primitives/storage/src/merkle.rs`      → `merkle_root`, `chunk_count`
+//   - `crates/primitives/storage/src/merkle.rs`      → `merkle_root`
 //   - `crates/primitives/storage/src/lib.rs`         → `hash_leaf`, `hash_children`, `DEFAULT_CHUNK_SIZE`
-//   - `crates/primitives/storage/src/mmr.rs`         → `bag_peaks`
+//   - `crates/primitives/storage/src/mmr.rs`         → `bag_peaks`, `LEAF_VERSION`, `MmrLeaf::chunk_count`
 //
 // This is the multi-chunk Merkle DAG walk that `verify.ts` documents as the
 // missing "Rust-client parity" piece. Pure functions, no I/O — browser-safe.
@@ -89,12 +89,19 @@ export function merkleRoot(leaves: Uint8Array[]): Uint8Array {
   return level[0];
 }
 
+/** Mirror of `LEAF_VERSION` in `crates/primitives/storage/src/mmr.rs`. */
+export const LEAF_VERSION = 1;
+
 /**
- * Number of chunks (tree leaves) of data with `dataSize` bytes; empty data is
- * one chunk. Mirrors `chunk_count` in `crates/primitives/storage/src/merkle.rs`.
+ * Number of chunks under a committed MMR leaf: every chunk has the chunk size
+ * of the leaf's `leaf_version` except the last, and empty data is one chunk.
+ * Mirrors `MmrLeaf::chunk_count`. Throws for an unknown version.
  */
-export function chunkCount(dataSize: number): number {
-  return Math.max(1, Math.ceil(dataSize / DEFAULT_CHUNK_SIZE));
+export function leafChunkCount(leaf: { leaf_version: number; data_size: number | bigint }): number {
+  if (leaf.leaf_version !== LEAF_VERSION) {
+    throw new Error(`unknown MMR leaf version ${leaf.leaf_version}`);
+  }
+  return Math.max(1, Math.ceil(Number(leaf.data_size) / DEFAULT_CHUNK_SIZE));
 }
 
 /**

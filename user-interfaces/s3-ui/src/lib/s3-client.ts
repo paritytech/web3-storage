@@ -17,8 +17,8 @@ import { parachain } from "@polkadot-api/descriptors";
 import { getSs58AddressInfo } from "@polkadot-api/substrate-bindings";
 import {
   buildSignedTermsArgs,
-  chunkCount,
   httpFetch,
+  leafChunkCount,
   negotiateTerms,
   parseMultiaddrToUrl,
   removeMember as removeMemberTx,
@@ -510,8 +510,8 @@ export class S3Client {
       throw new Error(`MMR proof request failed: ${response.status}`);
     }
     const result = await response.json();
-    const dataSize: number = result.leaf?.data_size ?? 0;
-    return chunkCount(dataSize);
+    if (!result.leaf) throw new Error("MMR proof response has no leaf");
+    return leafChunkCount(result.leaf);
   }
 
   /** Slash the provider of a challenge that expired unanswered; anyone may call it. */
