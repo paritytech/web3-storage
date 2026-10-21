@@ -1449,6 +1449,43 @@ mod challenge_tests {
         });
     }
 
+    /// A `ChunkOutOfRange` response for a leaf with an unknown `leaf_version`
+    /// is rejected: the pallet cannot count that leaf's chunks.
+    #[test]
+    fn unknown_leaf_version_rejects_chunk_out_of_range() {
+        new_test_ext().execute_with(|| {
+            System::set_block_number(1);
+            let (mmr_root, mmr_proof) = single_leaf_mmr_of_version(
+                storage_primitives::LEAF_VERSION + 1,
+                hash_leaf(b"chunk-0"),
+                7,
+            );
+            setup_primary_with_snapshot(mmr_root, 0, 1);
+
+            assert_ok!(StorageProvider::challenge_checkpoint(
+                RuntimeOrigin::signed(3),
+                0,
+                2,
+                ChunkLocation {
+                    leaf_index: 0,
+                    chunk_index: 1,
+                },
+            ));
+            assert_noop!(
+                StorageProvider::respond_to_challenge(
+                    RuntimeOrigin::signed(2),
+                    ChallengeId {
+                        deadline: 101u64,
+                        index: 0u16,
+                    },
+                    ChallengeResponse::ChunkOutOfRange { mmr_proof },
+                ),
+                Error::<Test>::InvalidProof
+            );
+            assert_challenge_still_open();
+        });
+    }
+
     #[test]
     fn respond_to_nonexistent_challenge_fails() {
         new_test_ext().execute_with(|| {
