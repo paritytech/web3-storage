@@ -190,7 +190,9 @@ pub const VERSION: RuntimeVersion = RuntimeVersion {
     // * 5 for the `MmrProof` argument of `respond_to_challenge`, which now
     //   contains library proof `items` instead of `peaks` and `leaf_proof` (#517);
     // * 6 for `leaf_version`, the new first field of the `MmrLeaf` inside that
-    //   `MmrProof`.
+    //   `MmrProof`;
+    // * 7 for the `ChunkOutOfRange` variant of `ChallengeResponse`, which moves
+    //   `Deleted` and `Superseded` to the next variant index.
     transaction_version: 7,
     system_version: 1,
 };
