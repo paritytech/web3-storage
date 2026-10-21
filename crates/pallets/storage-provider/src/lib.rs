@@ -752,8 +752,8 @@ pub mod pallet {
         },
         /// The challenged `chunk_index` is at or beyond the leaf's chunk count,
         /// so the leaf has no such chunk. Valid when the proof is for the
-        /// challenged `leaf_index` and the count derived from `leaf.data_size`
-        /// is at most the index.
+        /// challenged `leaf_index` and the leaf's chunk count (from
+        /// `data_size` and `leaf_version`) is at most the index.
         ChunkOutOfRange {
             /// Proves the leaf is part of the committed MMR.
             mmr_proof: MmrProof,
