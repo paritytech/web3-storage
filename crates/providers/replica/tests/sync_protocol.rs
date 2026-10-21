@@ -167,7 +167,11 @@ async fn malformed_node_body_is_a_decode_error() {
 async fn non_base64_node_data_is_a_decode_error() {
     let peak = H256::repeat_byte(0x11);
     assert_err!(
-        sync_serving_node(peak, node_body(&hex_hash(peak), Some("not base64 !!"), None)).await,
+        sync_serving_node(
+            peak,
+            node_body(&hex_hash(peak), Some("not base64 !!"), None)
+        )
+        .await,
         Error::Decode {
             what: "node data",
             ..
