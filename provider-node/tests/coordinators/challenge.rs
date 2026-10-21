@@ -571,3 +571,85 @@ async fn test_unknown_leaf_version_fails_without_submission() {
     );
     assert!(mock.submitted.lock().unwrap().is_empty());
 }
+
+/// Reports the challenged leaf with `data_size == 0`, as a leaf committed
+/// before `/commit` rejected empty data.
+struct EmptyLeaf(Arc<dyn ChallengeProofSource>);
+
+impl ChallengeProofSource for EmptyLeaf {
+    fn get_mmr_proof_for_commitment(
+        &self,
+        bucket_id: BucketId,
+        commitment: &storage_primitives::Commitment,
+        leaf_index: u64,
+    ) -> Result<storage_primitives::MmrProof, ChallengeError> {
+        let mut proof = self
+            .0
+            .get_mmr_proof_for_commitment(bucket_id, commitment, leaf_index)?;
+        proof.leaf.data_size = 0;
+        Ok(proof)
+    }
+
+    fn get_chunk_at_index(
+        &self,
+        data_root: H256,
+        chunk_index: u64,
+    ) -> Result<(Vec<u8>, Vec<H256>), ChallengeError> {
+        self.0.get_chunk_at_index(data_root, chunk_index)
+    }
+}
+
+/// An empty leaf has no chunks, so the responder answers chunk index 0 with
+/// `ChunkOutOfRange`.
+#[tokio::test(start_paused = true)]
+async fn test_empty_leaf_is_answered_as_out_of_range() {
+    let (state, challenge, _dir) = test_state_with_data();
+    assert_eq!(challenge.target.chunk_index, 0);
+
+    let result: Arc<Mutex<Option<ChallengeResponseResult>>> = Arc::new(Mutex::new(None));
+    let result_clone = Arc::clone(&result);
+    let callback: Arc<dyn Fn(ChallengeResponseResult) + Send + Sync> = Arc::new(move |r| {
+        let mut guard = result_clone.lock().unwrap();
+        if guard.is_none() {
+            *guard = Some(r);
+        }
+    });
+
+    let mock = Arc::new(MockChallengeChainClient::new().with_challenges(vec![challenge]));
+    let config = ChallengeResponderConfig {
+        poll_interval: Duration::from_millis(50),
+        auto_respond: true,
+        ..ChallengeResponderConfig::new(alice_account())
+    };
+    let responder = ChallengeResponder::new(
+        config,
+        Arc::new(EmptyLeaf(state.challenge_proof_source())),
+        Box::new(Arc::clone(&mock)),
+    );
+    let handle = responder
+        .start(tokio::sync::broadcast::channel(16).1, Some(callback))
+        .await
+        .unwrap();
+
+    let result_ref = Arc::clone(&result);
+    assert!(
+        wait_for(5, 10, || {
+            let r = Arc::clone(&result_ref);
+            async move { r.lock().unwrap().is_some() }
+        })
+        .await,
+        "timed out waiting for callback"
+    );
+    handle.stop().await.unwrap();
+
+    let r = result.lock().unwrap();
+    assert!(
+        matches!(&*r, Some(ChallengeResponseResult::Success { .. })),
+        "expected Success, got {:?}",
+        r
+    );
+    assert!(matches!(
+        mock.submitted.lock().unwrap().as_slice(),
+        [((1000, 0), ChallengeResponse::ChunkOutOfRange { .. })]
+    ));
+}

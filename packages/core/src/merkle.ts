@@ -107,8 +107,9 @@ export function leafChunkSize(version: number): number | undefined {
 
 /**
  * Number of chunks under a committed MMR leaf: every chunk has the chunk size
- * of the leaf's `leaf_version` except the last, and empty data is one chunk.
- * Mirrors `MmrLeaf::chunk_count`. Throws for an unknown version.
+ * of the leaf's `leaf_version` except the last, which has 1 to chunk size
+ * bytes. Empty data has no chunks. Mirrors `MmrLeaf::chunk_count`. Throws for
+ * an unknown version.
  */
 export function leafChunkCount(leaf: { leaf_version: number; data_size: number | bigint }): number {
   const chunkSize = leafChunkSize(leaf.leaf_version);
@@ -117,7 +118,7 @@ export function leafChunkCount(leaf: { leaf_version: number; data_size: number |
   }
   const size = BigInt(leaf.data_size);
   const count = (size + BigInt(chunkSize) - 1n) / BigInt(chunkSize);
-  return Number(count > 0n ? count : 1n);
+  return Number(count);
 }
 
 /**

@@ -241,6 +241,19 @@ describe("fetchChallengeProof", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it("answers chunk index 0 of an empty leaf with ChunkOutOfRange", async () => {
+    const empty = { ...leaf, data_size: 0, total_size: 0 };
+    const fetchMock = stubFetch(() => ({ leaf: empty, items: [item] }));
+    const response = await fetchChallengeProof(api, PROVIDER, challengeId);
+    expect(response).toEqual({
+      type: "ChunkOutOfRange",
+      value: {
+        mmr_proof: { leaf: { ...empty, data_size: 0n, total_size: 0n }, items: [item] },
+      },
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("throws for an /mmr_proof response without items, before /chunk_proof", async () => {
     const fetchMock = stubFetch(() => ({ leaf, peaks: [item], leaf_proof: { siblings: [] } }));
     await expect(fetchChallengeProof(api, PROVIDER, challengeId)).rejects.toThrow(

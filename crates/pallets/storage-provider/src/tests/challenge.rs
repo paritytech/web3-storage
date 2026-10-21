@@ -3143,6 +3143,54 @@ mod challenge_tests {
         });
     }
 
+    /// A leaf with `data_size == 0` has no chunks: no `Proof` verifies for
+    /// chunk index 0, and `ChunkOutOfRange` defends the challenge.
+    #[test]
+    fn empty_leaf_is_defended_by_chunk_out_of_range() {
+        new_test_ext().execute_with(|| {
+            System::set_block_number(1);
+            let (mmr_root, mmr_proof) = single_leaf_mmr(hash_leaf(&[]), 0);
+            setup_primary_with_snapshot(mmr_root, 0, 1);
+
+            assert_ok!(StorageProvider::challenge_checkpoint(
+                RuntimeOrigin::signed(3),
+                0,
+                2,
+                ChunkLocation {
+                    leaf_index: 0,
+                    chunk_index: 0,
+                },
+            ));
+            let challenge_id = ChallengeId {
+                deadline: 101u64,
+                index: 0u16,
+            };
+            assert_noop!(
+                StorageProvider::respond_to_challenge(
+                    RuntimeOrigin::signed(2),
+                    challenge_id,
+                    ChallengeResponse::Proof {
+                        chunk_data: make_chunk_bv(&[]),
+                        mmr_proof: mmr_proof.clone(),
+                        chunk_proof: vec![],
+                    },
+                ),
+                Error::<Test>::InvalidProof
+            );
+            assert_ok!(StorageProvider::respond_to_challenge(
+                RuntimeOrigin::signed(2),
+                challenge_id,
+                ChallengeResponse::ChunkOutOfRange { mmr_proof },
+            ));
+
+            assert!(Challenges::<Test>::get(101, 0).is_none());
+            assert_eq!(
+                Providers::<Test>::get(2).unwrap().stats.challenges_failed,
+                0
+            );
+        });
+    }
+
     /// `ChunkOutOfRange` is bound to the challenged `leaf_index`: the proof of
     /// another leaf is rejected even when that leaf has no such chunk either,
     /// so a provider cannot pick a shorter leaf to claim the index is out of

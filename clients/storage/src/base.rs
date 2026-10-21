@@ -183,8 +183,8 @@ pub struct AgreementInfo {
 #[derive(Debug, Clone, Copy)]
 pub enum ChunkingStrategy {
     /// Fixed-size chunks (default: `DEFAULT_CHUNK_SIZE`). The provider commits
-    /// only chunks of `DEFAULT_CHUNK_SIZE` bytes, except a shorter last chunk,
-    /// which is empty only when it is the only chunk. Use `DEFAULT_CHUNK_SIZE`.
+    /// only chunks of `DEFAULT_CHUNK_SIZE` bytes, except a last chunk of 1 to
+    /// `DEFAULT_CHUNK_SIZE` bytes. Use `DEFAULT_CHUNK_SIZE`.
     Fixed(usize),
     /// TODO: Content-defined chunking (not yet implemented)
     ///
