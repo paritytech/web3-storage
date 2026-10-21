@@ -50,10 +50,12 @@ impl MmrLeaf {
         }
     }
 
-    /// Number of chunks under `data_root` for this leaf's chunk size. `None`
-    /// for an unknown version.
+    /// Number of chunks under `data_root`: every chunk has this leaf's chunk
+    /// size except the last, and empty data is one empty chunk. `None` for an
+    /// unknown version.
     pub fn chunk_count(&self) -> Option<u64> {
-        Some(crate::chunk_count(self.data_size, self.chunk_size()?))
+        let chunk_size = u64::from(self.chunk_size()?);
+        Some(self.data_size.div_ceil(chunk_size).max(1))
     }
 }
 
@@ -235,9 +237,11 @@ mod tests {
         };
         assert_eq!(with_size(0).chunk_size(), Some(crate::DEFAULT_CHUNK_SIZE));
         assert_eq!(with_size(0).chunk_count(), Some(1));
+        assert_eq!(with_size(1).chunk_count(), Some(1));
         assert_eq!(with_size(chunk).chunk_count(), Some(1));
         assert_eq!(with_size(chunk + 1).chunk_count(), Some(2));
-        assert_eq!(with_size(3 * chunk).chunk_count(), Some(3));
+        assert_eq!(with_size(2 * chunk).chunk_count(), Some(2));
+        assert_eq!(with_size(2 * chunk + 10).chunk_count(), Some(3));
 
         let unknown = MmrLeaf {
             leaf_version: LEAF_VERSION + 1,
