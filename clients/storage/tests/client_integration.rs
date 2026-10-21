@@ -88,6 +88,18 @@ async fn test_upload_rejects_chunk_size_outside_the_allowed_range() {
 }
 
 #[tokio::test]
+async fn test_upload_rejects_empty_data() {
+    // Nothing listens here, so a request would fail with `ClientError::Http`.
+    let client = make_client("http://127.0.0.1:1".to_string());
+
+    let err = client
+        .upload(1, b"", ChunkingStrategy::default())
+        .await
+        .unwrap_err();
+    assert!(matches!(err, ClientError::Config(_)), "{err:?}");
+}
+
+#[tokio::test]
 async fn test_same_data_produces_same_root() {
     let url = start_test_provider().await;
     let client = make_client(url);
@@ -343,8 +355,8 @@ async fn test_read_node_verified_checks_an_internal_node_by_its_children() {
         .await
         .unwrap();
 
-    // The root of a two-chunk file is an internal node; its data is the
-    // concatenation of its two child hashes.
+    // The root of a two-chunk file is an internal node; the provider serves
+    // its two child hashes.
     let node = client.read_node(1, &data_root).await.unwrap();
     assert!(
         matches!(node, Node::Internal { .. }),

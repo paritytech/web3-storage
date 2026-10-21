@@ -15,8 +15,9 @@ use std::time::Duration;
 use storage_primitives::BucketId;
 use storage_provider_node::challenge_responder::ChallengeError;
 use storage_provider_node::{
-    ChallengeChainClient, ChallengeResponder, ChallengeResponderConfig, DetectedChallenge,
-    ReplicaSyncChainClient, ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig,
+    ChallengeChainClient, ChallengeResponder, ChallengeResponderConfig, ChallengeResponse,
+    DetectedChallenge, ReplicaSyncChainClient, ReplicaSyncCoordinator,
+    ReplicaSyncCoordinatorConfig,
 };
 
 // ── challenge responder ───────────────────────────────────────────────────────
@@ -63,9 +64,7 @@ impl ChallengeChainClient for MockChallengeClient {
     async fn submit_response(
         &self,
         challenge_id: (u32, u16),
-        _chunk_data: Vec<u8>,
-        _mmr_proof: storage_primitives::MmrProof,
-        _chunk_proof: Vec<H256>,
+        _response: ChallengeResponse,
     ) -> Result<H256, ChallengeError> {
         self.submitted.lock().unwrap().push(challenge_id);
         Ok(H256::zero())

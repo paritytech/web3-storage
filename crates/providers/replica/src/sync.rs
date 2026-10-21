@@ -150,12 +150,14 @@ impl ReplicaSync {
                 .await
                 .map_err(|e| Error::decode("node response", e))?;
 
-            // Decode node data
-            let data = base64::engine::general_purpose::STANDARD
-                .decode(&node_response.data)
-                .map_err(|e| Error::decode("node data", e))?;
-
-            // Decode children if present
+            let data = node_response
+                .data
+                .map(|data| {
+                    base64::engine::general_purpose::STANDARD
+                        .decode(data)
+                        .map_err(|e| Error::decode("node data", e))
+                })
+                .transpose()?;
             let children = node_response
                 .children
                 .map(|c| {
@@ -165,7 +167,9 @@ impl ReplicaSync {
                 })
                 .transpose()?;
 
-            let node = ChunkTreeNode::from_wire(data, children)?;
+            // from_wire only checks the shape of the primary's reply.
+            let node =
+                ChunkTreeNode::from_wire(data, children).map_err(|e| Error::decode("node", e))?;
 
             // Verify the node before following its children, so a sync source
             // cannot make this replica fetch subtrees under a wrong hash.
@@ -206,7 +210,7 @@ struct MmrPeaksResponse {
 #[allow(dead_code)]
 struct DownloadNodeResponse {
     hash: String,
-    data: String,
+    data: Option<String>,
     children: Option<Vec<String>>,
 }
 

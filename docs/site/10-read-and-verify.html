@@ -604,7 +604,7 @@
           <h3>What the client verifies</h3>
         </div>
         <ul>
-          <li>&bull; blake2_256(chunk) equals its hash</li>
+          <li>&bull; blake2_256(0x00 ++ chunk) equals its hash</li>
           <li>&bull; Merkle path from chunk to data_root</li>
           <li>&bull; MMR proof from data_root to mmr_root</li>
         </ul>
