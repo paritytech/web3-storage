@@ -2,8 +2,8 @@
 
 import { describe, expect, it } from "vitest";
 import { DEFAULT_CHUNK_SIZE, hashChildren, hashLeaf } from "./merkle.js";
-import { CidMismatchError, computeCid, nodeHash, verifyCid } from "./verify.js";
-import { toHex } from "./bytes.js";
+import { CidMismatchError, computeCid, nodeHash, parseNode, verifyCid } from "./verify.js";
+import { bytesToBase64, toHex } from "./bytes.js";
 
 describe("verifyCid", () => {
   const data = new TextEncoder().encode("content addressed");
@@ -33,23 +33,35 @@ describe("verifyCid", () => {
   });
 });
 
-describe("nodeHash", () => {
+describe("parseNode and nodeHash", () => {
   const enc = new TextEncoder();
   const left = hashLeaf(enc.encode("left"));
   const right = hashLeaf(enc.encode("right"));
   const children = [toHex(left), toHex(right)];
+  const data = bytesToBase64(enc.encode("chunk"));
 
-  it("hashes data without children as a leaf", () => {
-    expect(nodeHash(enc.encode("chunk"), null)).toEqual(hashLeaf(enc.encode("chunk")));
+  it("parses data without children as a chunk and hashes it as a leaf", () => {
+    const node = parseNode({ data, children: null });
+    expect(node).toEqual({ data: enc.encode("chunk") });
+    expect(nodeHash(node!)).toEqual(hashLeaf(enc.encode("chunk")));
   });
 
-  it("hashes two children without data as a node", () => {
-    expect(nodeHash(null, children)).toEqual(hashChildren(left, right));
+  it("parses two children without data as an internal node and hashes it as a node", () => {
+    const node = parseNode({ children });
+    expect(node).toEqual({ children: [left, right] });
+    expect(nodeHash(node!)).toEqual(hashChildren(left, right));
   });
 
   it("returns null for a wrong child count, both data and children, or neither", () => {
-    expect(nodeHash(null, [toHex(left)])).toBeNull();
-    expect(nodeHash(enc.encode("other"), children)).toBeNull();
-    expect(nodeHash(null, null)).toBeNull();
+    expect(parseNode({ children: [toHex(left)] })).toBeNull();
+    expect(parseNode({ data, children })).toBeNull();
+    expect(parseNode({})).toBeNull();
+  });
+
+  it("returns null for children that are not 32-byte hex hashes", () => {
+    // Same bytes as [left, right], boundary shifted by one byte.
+    const shifted = [toHex(new Uint8Array([...left, right[0]])), toHex(right.slice(1))];
+    expect(parseNode({ children: shifted })).toBeNull();
+    expect(parseNode({ children: [toHex(left), "0x" + "zz".repeat(32)] })).toBeNull();
   });
 });
