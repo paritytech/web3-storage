@@ -2730,37 +2730,23 @@ pub mod pallet {
                     mmr_proof,
                     chunk_proof,
                 } => {
-                    let chunk_count = mmr_proof
-                        .leaf
-                        .chunk_count()
-                        .ok_or(Error::<T>::InvalidProof)?;
-                    let chunk_hash = storage_primitives::hash_leaf(&chunk_data);
+                    let (data_root, chunk_count) =
+                        Self::verify_challenged_leaf(&challenge, mmr_proof)?;
                     let chunk_ok = storage_primitives::verify_merkle_proof(
-                        chunk_hash,
+                        storage_primitives::hash_leaf(&chunk_data),
                         challenge.target.chunk_index,
                         chunk_count,
                         &chunk_proof,
-                        &mmr_proof.leaf.data_root,
+                        &data_root,
                     );
-                    let mmr_ok = storage_primitives::verify_mmr_proof(
-                        mmr_proof,
-                        challenge.target.leaf_index,
-                        &challenge.commitment,
-                    );
-                    ensure!(chunk_ok && mmr_ok, Error::<T>::InvalidProof);
+                    ensure!(chunk_ok, Error::<T>::InvalidProof);
                 }
                 ChallengeResponse::ChunkOutOfRange { mmr_proof } => {
-                    let chunk_count = mmr_proof
-                        .leaf
-                        .chunk_count()
-                        .ok_or(Error::<T>::InvalidProof)?;
-                    let out_of_range = challenge.target.chunk_index >= chunk_count;
-                    let mmr_ok = storage_primitives::verify_mmr_proof(
-                        mmr_proof,
-                        challenge.target.leaf_index,
-                        &challenge.commitment,
+                    let (_, chunk_count) = Self::verify_challenged_leaf(&challenge, mmr_proof)?;
+                    ensure!(
+                        challenge.target.chunk_index >= chunk_count,
+                        Error::<T>::InvalidProof
                     );
-                    ensure!(out_of_range && mmr_ok, Error::<T>::InvalidProof);
                 }
                 ChallengeResponse::Deleted {
                     new_mmr_root,
