@@ -88,6 +88,18 @@ async fn test_upload_rejects_chunk_size_outside_the_allowed_range() {
 }
 
 #[tokio::test]
+async fn test_upload_rejects_empty_data() {
+    // Nothing listens here, so a request would fail with `ClientError::Http`.
+    let client = make_client("http://127.0.0.1:1".to_string());
+
+    let err = client
+        .upload(1, b"", ChunkingStrategy::default())
+        .await
+        .unwrap_err();
+    assert!(matches!(err, ClientError::Config(_)), "{err:?}");
+}
+
+#[tokio::test]
 async fn test_same_data_produces_same_root() {
     let url = start_test_provider().await;
     let client = make_client(url);
