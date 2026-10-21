@@ -327,27 +327,6 @@ impl FileManifest {
 }
 
 // ============================================================================
-// Error types
-// ============================================================================
-
-/// Error types for file system operations
-#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, TypeInfo)]
-#[cfg_attr(feature = "std", derive(thiserror::Error))]
-pub enum FileSystemError {
-    #[cfg_attr(feature = "std", error("Entry not found: {0}"))]
-    EntryNotFound(String),
-
-    #[cfg_attr(feature = "std", error("Invalid path"))]
-    InvalidPath,
-
-    #[cfg_attr(feature = "std", error("Not a directory"))]
-    NotADirectory,
-
-    #[cfg_attr(feature = "std", error("Not a file"))]
-    NotAFile,
-}
-
-// ============================================================================
 // Utility functions
 // ============================================================================
 

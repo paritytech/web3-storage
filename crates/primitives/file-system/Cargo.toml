@@ -15,9 +15,6 @@ sp-runtime = { workspace = true }
 storage-primitives = { workspace = true }
 serde = { workspace = true, optional = true }
 
-# Error handling (std only)
-thiserror = { workspace = true, optional = true }
-
 [dev-dependencies]
 array-bytes = { workspace = true }
 
@@ -30,5 +27,4 @@ std = [
 	"sp-core/std",
 	"sp-runtime/std",
 	"storage-primitives/std",
-	"thiserror",
 ]

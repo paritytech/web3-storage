@@ -3333,7 +3333,6 @@ dependencies = [
  "sp-core",
  "sp-runtime",
  "storage-primitives",
- "thiserror 2.0.18",
 ]
 
 [[package]]
