@@ -174,7 +174,7 @@ pub const VERSION: RuntimeVersion = RuntimeVersion {
     spec_name: Cow::Borrowed("web3-storage-parachain"),
     impl_name: Cow::Borrowed("web3-storage-parachain"),
     authoring_version: 1,
-    spec_version: 4_013,
+    spec_version: 4_014,
     impl_version: 0,
     apis: RUNTIME_API_VERSIONS,
     // Bumped whenever call encoding changes, so offline signers and stale-metadata
@@ -191,7 +191,7 @@ pub const VERSION: RuntimeVersion = RuntimeVersion {
     //   contains library proof `items` instead of `peaks` and `leaf_proof` (#517);
     // * 6 for `leaf_version`, the new first field of the `MmrLeaf` inside that
     //   `MmrProof`.
-    transaction_version: 6,
+    transaction_version: 7,
     system_version: 1,
 };
 
