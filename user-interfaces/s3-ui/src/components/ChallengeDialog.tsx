@@ -171,15 +171,17 @@ export default function ChallengeDialog({ open, onOpenChange, providers }: Chall
               data-testid="challenge-chunk-index"
               type="number"
               min="0"
-              max={chunkCount !== null ? (chunkCount - 1).toString() : undefined}
+              max={chunkCount ? (chunkCount - 1).toString() : undefined}
               value={chunkIndex}
               onChange={(e) => setChunkIndex(e.target.value)}
               placeholder="0"
             />
             <p className="text-xs text-muted-foreground">
-              {chunkCount !== null
-                ? `This leaf has ${chunkCount} chunk${chunkCount !== 1 ? "s" : ""} (valid: 0 to ${chunkCount - 1}).`
-                : "Index of the chunk within the leaf."}
+              {chunkCount === null
+                ? "Index of the chunk within the leaf."
+                : chunkCount === 0
+                  ? "This leaf is empty and has no chunks."
+                  : `This leaf has ${chunkCount} chunk${chunkCount !== 1 ? "s" : ""} (valid: 0 to ${chunkCount - 1}).`}
             </p>
           </div>
 
