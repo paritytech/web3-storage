@@ -231,9 +231,6 @@ export type ChallengeResponse = Parameters<
   ParachainApi["tx"]["StorageProvider"]["respond_to_challenge"]
 >[0]["response"];
 
-/** The `Proof` payload of a `respond_to_challenge` response. */
-export type ChallengeProof = Extract<ChallengeResponse, { type: "Proof" }>["value"];
-
 /**
  * Build the response for `respond_to_challenge` by reading the challenge from
  * chain state and fetching the proofs from the provider node: a `Proof` with

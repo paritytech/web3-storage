@@ -16,7 +16,7 @@ import { signedTermsBucketId } from "@web3-storage/papi";
 export { signedTermsBucketId };
 
 import { asHex, hexToBytes, type ParachainApi } from "../address.js";
-import { getProviderNodeInfo } from "../provider-http.js";
+import { getProviderNodeInfo, type ChallengeResponse } from "../provider-http.js";
 import type { ChainSigner } from "../signers.js";
 import { READ_OPTS, requireOneEvent, submitTx, submitTxFinalized, type SubmitOpts } from "../tx.js";
 
@@ -482,7 +482,7 @@ export async function respondToChallenge(
   api: ParachainApi,
   provider: ChainSigner,
   challengeId: any,
-  response: any,
+  response: ChallengeResponse,
   opts: SubmitOpts = {},
 ) {
   return submitTx(
