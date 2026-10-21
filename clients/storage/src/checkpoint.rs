@@ -1216,9 +1216,7 @@ impl CheckpointManager {
                 req = req.header("Authorization", signer.auth_header("GET", bucket_id));
             }
 
-            let result =
-                tokio::time::timeout(self.config.provider_timeout, async { req.send().await })
-                    .await;
+            let result = tokio::time::timeout(self.config.provider_timeout, req.send()).await;
 
             match result {
                 Ok(Ok(response)) => {
